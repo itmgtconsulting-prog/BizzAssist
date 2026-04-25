@@ -39,7 +39,7 @@ import { useLanguage } from '@/app/context/LanguageContext';
 import { useSetAIPageContext } from '@/app/context/AIPageContext';
 import type { DomainCaseSummary } from './DomainCaseList';
 import { CustomerSearchPicker, type CustomerLink } from './CustomerSearchPicker';
-import SkabelonPickerModal from '@/app/components/sager/SkabelonPickerModal';
+import SkabelonPickerPanel from '@/app/components/sager/SkabelonPickerPanel';
 
 interface CaseDocSummary {
   id: string;
@@ -319,13 +319,19 @@ export function DomainWorkspaceSplitView({
     const selectedDocs = caseDocs
       .filter((d) => selectedDocIds.has(d.id))
       .map((d) => ({ id: d.id, name: d.name }));
+    // BIZZ-930: Inkluder valgte skabeloner i AI-kontekst
+    const selectedTmpls = Array.from(selectedTemplateIds).map((id) => ({
+      id,
+      name: templateNameCache.get(id) ?? id.slice(0, 8),
+    }));
     setAICtx({
       pageType: 'domain',
       currentCaseId: caseDetail.id,
       currentCaseName: caseDetail.name,
       selectedDocuments: selectedDocs,
+      selectedTemplates: selectedTmpls.length > 0 ? selectedTmpls : undefined,
     });
-  }, [caseDetail, caseDocs, selectedDocIds, setAICtx]);
+  }, [caseDetail, caseDocs, selectedDocIds, selectedTemplateIds, templateNameCache, setAICtx]);
 
   const [editing, setEditing] = useState(false);
   // BIZZ-807: inline edit-mode for selve sagsnavn — klik på header-titel
@@ -689,13 +695,25 @@ export function DomainWorkspaceSplitView({
           )}
           {caseDetail && !editing && !inlineEditingName && (
             <>
-              {/* BIZZ-929: "Vælg skabelon" knap i sags-header for hurtig adgang */}
+              {/* BIZZ-929/930: Toggle skabelon-panel (3. kolonne). */}
               <button
                 type="button"
-                onClick={() => setTemplatePickerOpen(true)}
-                aria-label={da ? 'Vælg skabelon' : 'Select template'}
-                title={da ? 'Vælg skabelon' : 'Select template'}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 transition-colors shrink-0"
+                onClick={() => setTemplatePickerOpen((prev) => !prev)}
+                aria-label={da ? 'Skabelon-panel' : 'Template panel'}
+                title={
+                  templatePickerOpen
+                    ? da
+                      ? 'Luk skabelon-panel'
+                      : 'Close template panel'
+                    : da
+                      ? 'Åbn skabelon-panel'
+                      : 'Open template panel'
+                }
+                className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] border transition-colors shrink-0 ${
+                  templatePickerOpen
+                    ? 'bg-blue-600/20 hover:bg-blue-600/30 border-blue-500/40 text-blue-300'
+                    : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200'
+                }`}
               >
                 <FileText size={10} />
                 {da ? 'Skabelon' : 'Template'}
@@ -1071,31 +1089,30 @@ export function DomainWorkspaceSplitView({
         </div>
       </div>
 
-      {/* BIZZ-900: Skabelon-picker modal — renderes uden for split-layout
-          så den ikke er begrænset af scroll-containers. onConfirm-callback
-          cache'er navne fra template-listen så chips kan vise dem. */}
-      <SkabelonPickerModal
-        domainId={domainId}
-        open={templatePickerOpen}
-        onClose={() => setTemplatePickerOpen(false)}
-        selectedIds={selectedTemplateIds}
-        onConfirm={(ids) => {
-          commitTemplateSelection(ids);
-          // Modal henter listen internt — men for chip-rendering caller vi
-          // også /api/domain/[id]/templates en gang for at bygge navn-cache.
-          // Fire-and-forget: chips viser ID som fallback indtil data ankommer.
-          void (async () => {
-            try {
-              const r = await fetch(`/api/domain/${domainId}/templates`);
-              if (!r.ok) return;
-              const tmpls = (await r.json()) as Array<{ id: string; name: string }>;
-              setTemplateNameCache(new Map(tmpls.map((t) => [t.id, t.name])));
-            } catch {
-              /* non-fatal — chips falder tilbage til id-prefix */
-            }
-          })();
-        }}
-      />
+      {/* BIZZ-930: Skabelon-picker panel — 3. kolonne i split-layout.
+          Renderes inline (ikke modal) når templatePickerOpen er true.
+          Live-selection: hvert klik opdaterer state + URL med det samme. */}
+      {templatePickerOpen && (
+        <SkabelonPickerPanel
+          domainId={domainId}
+          selectedIds={selectedTemplateIds}
+          onSelectionChange={(ids) => {
+            commitTemplateSelection(ids);
+            // Byg navn-cache fra template-listen (fire-and-forget)
+            void (async () => {
+              try {
+                const r = await fetch(`/api/domain/${domainId}/templates`);
+                if (!r.ok) return;
+                const tmpls = (await r.json()) as Array<{ id: string; name: string }>;
+                setTemplateNameCache(new Map(tmpls.map((t) => [t.id, t.name])));
+              } catch {
+                /* non-fatal */
+              }
+            })();
+          }}
+          onClose={() => setTemplatePickerOpen(false)}
+        />
+      )}
     </div>
   );
 }

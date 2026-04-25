@@ -315,6 +315,18 @@ function AIChatPanel() {
             lines.push(`- ${d.name} (docId: ${d.id})`);
           }
         }
+        // BIZZ-930: Skabelon-kontekst — AI ved hvilke skabeloner der er valgt
+        if (pageData.selectedTemplates && pageData.selectedTemplates.length > 0) {
+          lines.push(
+            `Brugeren har valgt ${pageData.selectedTemplates.length} skabelon${pageData.selectedTemplates.length === 1 ? '' : 'er'} til denne sag:`
+          );
+          for (const t of pageData.selectedTemplates) {
+            lines.push(`- ${t.name} (templateId: ${t.id})`);
+          }
+          lines.push(
+            'Du kan hjælpe brugeren med at udfylde skabelon-felter baseret på sags-dokumenter og BizzAssist-data.'
+          );
+        }
         parts.push(lines.join('\n'));
       }
 

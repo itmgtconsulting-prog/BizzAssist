@@ -83,6 +83,8 @@ export interface AIPageData {
    * tekst-payload i hver chat-request.
    */
   selectedDocuments?: Array<{ id: string; name: string }>;
+  /** BIZZ-930: Valgte skabeloner for den aktuelle sag. */
+  selectedTemplates?: Array<{ id: string; name: string }>;
 }
 
 // ─── Context ─────────────────────────────────────────────────────────────────

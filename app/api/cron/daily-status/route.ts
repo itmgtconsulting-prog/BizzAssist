@@ -66,6 +66,15 @@ interface StatusStats {
   aiTokens24h: number | null;
   /** BIZZ-308: Database size in MB */
   dbSizeMb: number | null;
+  /** BIZZ-909: Data-pipeline stale-detection */
+  dataPipelines: {
+    bbrRows: number | null;
+    bbrLastRefresh: string | null;
+    bbrStale: boolean;
+    deltagerRows: number | null;
+    deltagerLastBerigelse: string | null;
+    deltagerStale: boolean;
+  } | null;
 }
 
 /** Minimal shape of a row from public.tenants needed by this route. */
@@ -338,6 +347,48 @@ async function collectStats(since: Date): Promise<StatusStats> {
     redisHealthy = false;
   }
 
+  // BIZZ-909: Data-pipeline stale-detection
+  const STALE_THRESHOLD_DAYS = 14;
+  let dataPipelines: StatusStats['dataPipelines'] = null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const a = admin as any;
+    const [bbrResult, deltagerResult] = await Promise.all([
+      a
+        .from('bbr_ejendom_status')
+        .select('status_last_checked_at')
+        .order('status_last_checked_at', { ascending: false })
+        .limit(1),
+      a
+        .from('cvr_deltager')
+        .select('berigelse_sidst')
+        .order('berigelse_sidst', { ascending: false })
+        .limit(1),
+    ]);
+    const bbrCount = await a
+      .from('bbr_ejendom_status')
+      .select('bfe_nummer', { count: 'exact', head: true });
+    const deltagerCount = await a
+      .from('cvr_deltager')
+      .select('enhedsnummer', { count: 'exact', head: true });
+
+    const bbrLast = bbrResult.data?.[0]?.status_last_checked_at ?? null;
+    const deltagerLast = deltagerResult.data?.[0]?.berigelse_sidst ?? null;
+    const staleMs = STALE_THRESHOLD_DAYS * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+
+    dataPipelines = {
+      bbrRows: bbrCount.count ?? null,
+      bbrLastRefresh: bbrLast,
+      bbrStale: !bbrLast || now - new Date(bbrLast).getTime() > staleMs,
+      deltagerRows: deltagerCount.count ?? null,
+      deltagerLastBerigelse: deltagerLast,
+      deltagerStale: !deltagerLast || now - new Date(deltagerLast).getTime() > staleMs,
+    };
+  } catch {
+    /* non-fatal */
+  }
+
   return {
     tenantCount,
     newSignups24h,
@@ -348,6 +399,7 @@ async function collectStats(since: Date): Promise<StatusStats> {
     certificates,
     aiTokens24h,
     dbSizeMb,
+    dataPipelines,
   };
 }
 
@@ -515,6 +567,23 @@ function buildEmailHtml(stats: StatusStats, reportDate: Date): string {
       </div>`;
         })
         .join('\n')}
+    </div>`
+        : ''
+    }
+
+    <!-- BIZZ-909: Data-pipeline status -->
+    ${
+      stats.dataPipelines
+        ? `<div style="margin-bottom: 28px;">
+      <h3 style="margin: 0 0 12px 0; color: #94a3b8; font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600;">Data-pipelines</h3>
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: #1e293b; border-radius: 8px; margin-bottom: 8px;">
+        <span style="color: #94a3b8; font-size: 13px;">BBR ejendomsstatus</span>
+        <span style="font-size: 13px; font-weight: 700; color: ${stats.dataPipelines.bbrStale ? '#ef4444' : '#22c55e'};">${fmt(stats.dataPipelines.bbrRows)} rows ${stats.dataPipelines.bbrStale ? '&mdash; STALE' : '&mdash; OK'}</span>
+      </div>
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: #1e293b; border-radius: 8px; margin-bottom: 8px;">
+        <span style="color: #94a3b8; font-size: 13px;">CVR deltager-berigelse</span>
+        <span style="font-size: 13px; font-weight: 700; color: ${stats.dataPipelines.deltagerStale ? '#ef4444' : '#22c55e'};">${fmt(stats.dataPipelines.deltagerRows)} rows ${stats.dataPipelines.deltagerStale ? '&mdash; STALE' : '&mdash; OK'}</span>
+      </div>
     </div>`
         : ''
     }

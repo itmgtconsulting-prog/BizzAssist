@@ -276,7 +276,8 @@ export const translations = {
       sendLabel: 'Send besked',
       stopLabel: 'Stop streaming',
       stopped: '*(stoppet)*',
-      connectionError: 'Der opstod en forbindelsesfejl. Prøv igen.',
+      connectionError:
+        'Der opstod en forbindelsesfejl. Hvis samtalen er lang, prøv at starte en ny samtale med + knappen.',
       serverError: 'Serverfejl',
       genericError: 'Der opstod en fejl.',
       noStream: 'Ingen stream',
@@ -892,7 +893,8 @@ export const translations = {
       sendLabel: 'Send message',
       stopLabel: 'Stop streaming',
       stopped: '*(stopped)*',
-      connectionError: 'A connection error occurred. Please try again.',
+      connectionError:
+        'A connection error occurred. If the conversation is long, try starting a new one with the + button.',
       serverError: 'Server error',
       genericError: 'An error occurred.',
       noStream: 'No stream',

@@ -2576,11 +2576,39 @@ export async function POST(request: NextRequest): Promise<Response> {
     logger.warn('[ai/chat] domain-templates fetch failed (non-fatal):', tmplErr);
   }
 
-  // Map to Anthropic format (only simple text messages from the client)
-  const anthropicMessages: Anthropic.MessageParam[] = messages.map((m) => ({
+  // BIZZ-940: Context compaction — begræns antal beskeder sendt til Claude
+  // for at undgå at ramme context window (200K tokens). Behold altid de
+  // seneste 30 beskeder. Hvis historikken er længere, inkluder en
+  // opsummerings-besked i starten.
+  const MAX_HISTORY_MESSAGES = 30;
+  let compactedMessages = messages;
+  let compactionNote = '';
+  if (messages.length > MAX_HISTORY_MESSAGES) {
+    const trimmed = messages.length - MAX_HISTORY_MESSAGES;
+    compactedMessages = messages.slice(-MAX_HISTORY_MESSAGES);
+    compactionNote = `[Samtalehistorik komprimeret: ${trimmed} ældre beskeder fjernet for at holde sig inden for context-grænsen. Kun de seneste ${MAX_HISTORY_MESSAGES} beskeder er inkluderet.]`;
+    // Ensure first message is from user (Anthropic API requirement)
+    if (compactedMessages[0]?.role !== 'user') {
+      compactedMessages = [
+        { role: 'user' as const, content: compactionNote },
+        ...compactedMessages,
+      ];
+      compactionNote = '';
+    }
+  }
+
+  const anthropicMessages: Anthropic.MessageParam[] = compactedMessages.map((m) => ({
     role: m.role,
     content: m.content,
   }));
+
+  // Inject compaction note as first user message if needed
+  if (compactionNote && anthropicMessages.length > 0 && anthropicMessages[0].role === 'user') {
+    anthropicMessages[0] = {
+      role: 'user',
+      content: compactionNote + '\n\n' + String(anthropicMessages[0].content),
+    };
+  }
 
   const client = new Anthropic({ apiKey });
   const encoder = new TextEncoder();
@@ -2678,10 +2706,16 @@ export async function POST(request: NextRequest): Promise<Response> {
 
           if (toolUseBlocks.length === 0) {
             // ── Final text response — stream it to client ──
-            const text = response.content
+            let text = response.content
               .filter((b): b is Anthropic.TextBlock => b.type === 'text')
               .map((b) => b.text)
               .join('');
+
+            // BIZZ-940: Detect truncated response (Claude ran out of max_tokens)
+            if (response.stop_reason === 'max_tokens') {
+              text +=
+                '\n\n---\n*Svaret blev afbrudt fordi det overskred max-længden. Start gerne en ny samtale for at fortsætte.*';
+            }
 
             // Stream in chunks — 200 chars reduces SSE overhead vs. perceived smoothness
             const CHUNK = 200;

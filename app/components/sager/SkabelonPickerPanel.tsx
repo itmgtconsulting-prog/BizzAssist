@@ -28,6 +28,8 @@ interface Props {
   onSelectionChange: (ids: Set<string>) => void;
   /** Lukker panelet. */
   onClose: () => void;
+  /** BIZZ-936: Panel-bredde i pixels (styret af parent resize-handler). */
+  width?: number;
 }
 
 /**
@@ -38,6 +40,7 @@ export default function SkabelonPickerPanel({
   selectedIds,
   onSelectionChange,
   onClose,
+  width = 320,
 }: Props) {
   const { lang } = useLanguage();
   const da = lang === 'da';
@@ -85,7 +88,10 @@ export default function SkabelonPickerPanel({
   }
 
   return (
-    <div className="flex flex-col min-h-0 overflow-hidden border-l border-slate-700/40 bg-slate-900/30 w-[320px] shrink-0">
+    <div
+      className="flex flex-col min-h-0 overflow-hidden bg-slate-900/30 shrink-0"
+      style={{ width }}
+    >
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700/40 bg-slate-900/50 shrink-0">
         <p className="text-xs font-semibold text-white flex items-center gap-1.5">

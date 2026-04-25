@@ -95,6 +95,12 @@ export function DomainWorkspaceSplitView({
   // BIZZ-877: Skift fra vertikal split (topPct) til horisontal split (leftPct).
   // Default 38% = ~380px paa 1000px skaerm. Clamp 25-55% for laesbarhed.
   const [leftPct, setLeftPct] = useState(38);
+  // BIZZ-936: Skabelon-panel bredde i pixels. Clamp 200-500px.
+  const [templatePanelWidth, setTemplatePanelWidth] = useState(() => {
+    if (typeof window === 'undefined') return 320;
+    const saved = window.localStorage.getItem('bizz-domain-ws-templateW');
+    return saved ? Math.max(200, Math.min(500, parseInt(saved, 10))) : 320;
+  });
 
   // BIZZ-898: Ref til højre-panel så vi kan scrollTo-top når brugeren
   // skifter sag. Ellers beholder panel sin nuværende scroll-position som
@@ -287,6 +293,30 @@ export function DomainWorkspaceSplitView({
       const clamped = Math.max(25, Math.min(55, pct));
       setLeftPct(clamped);
       window.localStorage.setItem(STORAGE.leftPct, String(Math.round(clamped)));
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, []);
+
+  // BIZZ-936: Resize handler for skabelon-panel (højre divider)
+  const startTemplateResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const el = colRef.current;
+    if (!el) return;
+    const onMove = (ev: MouseEvent) => {
+      const rect = el.getBoundingClientRect();
+      const fromRight = rect.right - ev.clientX;
+      const clamped = Math.max(200, Math.min(500, fromRight));
+      setTemplatePanelWidth(clamped);
+      window.localStorage.setItem('bizz-domain-ws-templateW', String(Math.round(clamped)));
     };
     const onUp = () => {
       window.removeEventListener('mousemove', onMove);
@@ -1089,13 +1119,30 @@ export function DomainWorkspaceSplitView({
         </div>
       </div>
 
-      {/* BIZZ-930: Skabelon-picker panel — 3. kolonne i split-layout.
-          Renderes inline (ikke modal) når templatePickerOpen er true.
-          Live-selection: hvert klik opdaterer state + URL med det samme. */}
+      {/* BIZZ-930/936: Skabelon-picker panel — 3. kolonne i split-layout.
+          Resizable divider + panel. Live-selection ved hvert klik. */}
+      {templatePickerOpen && (
+        <>
+          {/* BIZZ-936: Resize divider mellem sags-detaljer og skabelon-panel */}
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            onMouseDown={startTemplateResize}
+            className="group shrink-0 cursor-col-resize bg-slate-800/40 hover:bg-blue-500/40 relative transition-colors w-1.5 hidden md:block"
+            title={da ? 'Træk venstre/højre' : 'Drag left/right'}
+          >
+            <GripHorizontal
+              size={12}
+              className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-600 group-hover:text-blue-300 rotate-90"
+            />
+          </div>
+        </>
+      )}
       {templatePickerOpen && (
         <SkabelonPickerPanel
           domainId={domainId}
           selectedIds={selectedTemplateIds}
+          width={templatePanelWidth}
           onSelectionChange={(ids) => {
             commitTemplateSelection(ids);
             // Byg navn-cache fra template-listen (fire-and-forget)

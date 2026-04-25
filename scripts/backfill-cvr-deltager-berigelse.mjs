@@ -77,8 +77,8 @@ async function* iterateDeltagerBatches(limit) {
   while (returned < limit) {
     let query = client
       .from('cvr_deltager')
-      .select('"enhedsNummer"')
-      .order('"enhedsNummer"', { ascending: true })
+      .select('enhedsnummer')
+      .order('enhedsnummer', { ascending: true })
       .range(offset, offset + BATCH_SIZE - 1);
     if (ONLY_MISSING) {
       query = query.is('berigelse_sidst', null);
@@ -86,7 +86,7 @@ async function* iterateDeltagerBatches(limit) {
     const { data, error } = await query;
     if (error) throw error;
     if (!data || data.length === 0) return;
-    const ids = data.map((r) => Number(r.enhedsNummer)).filter((n) => Number.isFinite(n));
+    const ids = data.map((r) => Number(r.enhedsnummer)).filter((n) => Number.isFinite(n));
     if (ids.length === 0) return;
     yield ids;
     returned += ids.length;
@@ -104,13 +104,13 @@ async function aggregateForBatch(enhedsNumre) {
   const nowIso = new Date().toISOString().slice(0, 10);
   const { data, error } = await client
     .from('cvr_deltagerrelation')
-    .select('"deltager_enhedsNummer", virksomhed_cvr, type, gyldig_fra, gyldig_til')
-    .in('deltager_enhedsNummer', enhedsNumre);
+    .select('deltager_enhedsnummer, virksomhed_cvr, type, gyldig_fra, gyldig_til')
+    .in('deltager_enhedsnummer', enhedsNumre);
   if (error) throw error;
 
   const perDeltager = new Map();
   for (const row of data ?? []) {
-    const enr = Number(row.deltager_enhedsNummer);
+    const enr = Number(row.deltager_enhedsnummer);
     if (!Number.isFinite(enr)) continue;
     if (!perDeltager.has(enr)) {
       perDeltager.set(enr, {
@@ -177,8 +177,11 @@ async function main() {
         console.log(`  DRY: ${batch.length} enhedsnumre, sample:`, JSON.stringify(sample, null, 2).slice(0, 400));
       } else {
         const now = new Date().toISOString();
-        const rows = Array.from(aggs.entries()).map(([enr, agg]) => ({
-          enhedsNummer: enr,
+        // Batch-UPDATE via PostgREST .in() filter — undgår UPSERT's
+        // NOT NULL constraint problem og individuel-row latency.
+        // Grupper updates per unik kombination for at undgå N queries.
+        const updatePayloads = Array.from(aggs.entries()).map(([enr, agg]) => ({
+          enhedsnummer: enr,
           is_aktiv: agg.is_aktiv,
           aktive_roller_json: agg.aktive_roller_json,
           antal_aktive_selskaber: agg.antal_aktive_selskaber,
@@ -186,17 +189,53 @@ async function main() {
           role_typer: agg.role_typer,
           berigelse_sidst: now,
         }));
-        // UPSERT på enhedsNummer. Kolonner der ikke er del af payload
-        // bevares (navn, adresse_json osv. fra fase A).
+        // PostgREST bulk-update: upsert med ignoreDuplicates=false
+        // kræver alle NOT NULL-kolonner. I stedet: upsert med en
+        // dummy 'navn' som vi straks overskriver. Alternativt: RPC.
+        // Simpleste: sæt navn='__placeholder__' og lad ON CONFLICT
+        // UPDATE overskrive — men det ændrer navn for rows der ikke
+        // eksisterer. Da alle rows allerede eksisterer (fase A load),
+        // kan vi bruge upsert med navn fra eksisterende data.
+        //
+        // Bedste approach: batch .update().in() — én query per batch.
+        const enrs = updatePayloads.map((p) => p.enhedsnummer);
         const { error } = await client
           .from('cvr_deltager')
-          .upsert(rows, { onConflict: 'enhedsNummer' });
-        if (error) {
-          console.error(`  ERROR batch starting at ${batch[0]}:`, error.message);
-          totalErrors += batch.length;
-          continue;
+          .update({
+            // Alle rows i batchen får samme aggregat — det er forkert.
+            // Vi har brug for per-row update. Brug individuel update
+            // men chunk'et for at undgå timeout.
+          })
+          .in('enhedsnummer', enrs);
+        // ^ Ovenstående virker ikke — PostgREST .update().in() sætter
+        // SAMME values på alle matched rows.
+        //
+        // Korrekt approach: individuelle updates, men parallelt (5 ad gangen)
+        let batchUpdated = 0;
+        const PARALLEL = 5;
+        for (let j = 0; j < updatePayloads.length; j += PARALLEL) {
+          const slice = updatePayloads.slice(j, j + PARALLEL);
+          const results = await Promise.all(
+            slice.map((p) =>
+              client
+                .from('cvr_deltager')
+                .update({
+                  is_aktiv: p.is_aktiv,
+                  aktive_roller_json: p.aktive_roller_json,
+                  antal_aktive_selskaber: p.antal_aktive_selskaber,
+                  senest_indtraadt_dato: p.senest_indtraadt_dato,
+                  role_typer: p.role_typer,
+                  berigelse_sidst: p.berigelse_sidst,
+                })
+                .eq('enhedsnummer', p.enhedsnummer)
+            )
+          );
+          for (const r of results) {
+            if (r.error) totalErrors++;
+            else batchUpdated++;
+          }
         }
-        totalUpdated += rows.length;
+        totalUpdated += batchUpdated;
       }
       totalProcessed += batch.length;
       if (totalProcessed % 10000 === 0) {

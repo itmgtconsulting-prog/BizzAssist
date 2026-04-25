@@ -354,12 +354,32 @@ export function DomainWorkspaceSplitView({
       id,
       name: templateNameCache.get(id) ?? id.slice(0, 8),
     }));
+    // BIZZ-937: Inkluder klient-info + sags-metadata i AI-kontekst
+    const caseClient =
+      caseDetail.client_kind && caseDetail.client_name
+        ? {
+            kind: caseDetail.client_kind,
+            name: caseDetail.client_name,
+            cvr:
+              caseDetail.client_kind === 'company' && caseDetail.client_cvr
+                ? caseDetail.client_cvr
+                : undefined,
+            enhedsNummer:
+              caseDetail.client_kind === 'person' && caseDetail.client_person_id
+                ? caseDetail.client_person_id
+                : undefined,
+          }
+        : undefined;
     setAICtx({
       pageType: 'domain',
       currentCaseId: caseDetail.id,
       currentCaseName: caseDetail.name,
       selectedDocuments: selectedDocs,
       selectedTemplates: selectedTmpls.length > 0 ? selectedTmpls : undefined,
+      caseClient,
+      caseStatus: caseDetail.status,
+      caseTags: caseDetail.tags.length > 0 ? caseDetail.tags : undefined,
+      caseClientRef: caseDetail.client_ref ?? undefined,
     });
   }, [caseDetail, caseDocs, selectedDocIds, selectedTemplateIds, templateNameCache, setAICtx]);
 

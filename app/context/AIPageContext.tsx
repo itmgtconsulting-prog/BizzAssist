@@ -85,6 +85,17 @@ export interface AIPageData {
   selectedDocuments?: Array<{ id: string; name: string }>;
   /** BIZZ-930: Valgte skabeloner for den aktuelle sag. */
   selectedTemplates?: Array<{ id: string; name: string }>;
+  /** BIZZ-937: Linket klient på sagen (person eller virksomhed). */
+  caseClient?: {
+    kind: 'company' | 'person';
+    name: string;
+    cvr?: string;
+    enhedsNummer?: string;
+  };
+  /** BIZZ-937: Sags-status og metadata. */
+  caseStatus?: string;
+  caseTags?: string[];
+  caseClientRef?: string;
 }
 
 // ─── Context ─────────────────────────────────────────────────────────────────

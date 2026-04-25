@@ -307,6 +307,24 @@ function AIChatPanel() {
         const lines = [
           `\n[DOMAIN-SAG] Bruger arbejder i sagen "${pageData.currentCaseName}" (ID: ${pageData.currentCaseId}).`,
         ];
+        if (pageData.caseStatus) lines.push(`Sags-status: ${pageData.caseStatus}.`);
+        if (pageData.caseClientRef) lines.push(`Klient-reference: ${pageData.caseClientRef}.`);
+        if (pageData.caseTags && pageData.caseTags.length > 0)
+          lines.push(`Tags: ${pageData.caseTags.join(', ')}.`);
+        // BIZZ-937: Klient-kontekst — AI skal kende den linkede kunde
+        if (pageData.caseClient) {
+          const c = pageData.caseClient;
+          const id = c.kind === 'person' ? `enhedsNummer: ${c.enhedsNummer}` : `CVR: ${c.cvr}`;
+          lines.push(
+            `Linket klient: ${c.name} (${c.kind === 'person' ? 'PERSON' : 'VIRKSOMHED'}, ${id}). ` +
+              'Du KENDER allerede klienten — bed IKKE brugeren om CVR eller navn. ' +
+              (c.kind === 'person' && c.enhedsNummer
+                ? `Brug enhedsNummer=${c.enhedsNummer} til hent_ejendomme_for_person og andre person-tools.`
+                : c.kind === 'company' && c.cvr
+                  ? `Brug CVR=${c.cvr} til hent_ejendomme_for_virksomhed og andre virksomheds-tools.`
+                  : '')
+          );
+        }
         if (pageData.selectedDocuments && pageData.selectedDocuments.length > 0) {
           lines.push(
             `Brugeren har VALGT ${pageData.selectedDocuments.length} dokument${pageData.selectedDocuments.length === 1 ? '' : 'er'} som AI-kontekst — brug disse som primær reference. Kald hent_dokument_indhold(docId) for at læse indholdet. Bed IKKE brugeren om at vælge dokumenter igen.`

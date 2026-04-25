@@ -1402,8 +1402,10 @@ function DiagramForce({
       // BIZZ-552: Tillad højere max-zoom (2.5x) så små grafer (2-3 noder)
       // fylder canvas i stedet for at flyde ude i hjørnet. Cap'et på 1.5x
       // efterlod for meget tom plads.
+      // BIZZ-931/932: Minimum zoom floor sat til 0.5 (50%) så noder
+      // altid er læsbare. Ved 0.15 var 320px noder kun ~48px — usynlige.
       const fit = Math.min((cW - 40) / viewBox.w, (cH - 40) / viewBox.h, 2.5);
-      const z = Math.max(fit, 0.15);
+      const z = Math.max(fit, 0.5);
       const scaledW = viewBox.w * z + 32;
       const scaledH = viewBox.h * z + 32;
       const panX = Math.round((cW - scaledW) / 2);

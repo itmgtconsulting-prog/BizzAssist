@@ -158,6 +158,14 @@ function DiagramForce({
    * at se node'er "hoppe" på plads. Fade-in sker via CSS-transition.
    */
   const [simulationReady, setSimulationReady] = useState(false);
+  // BIZZ-932: Safety fallback — force simulationReady efter 2s.
+  // Dækker edge-cases hvor async data-deps genstarter simulation
+  // og cancelled-flag forhindrer setSimulationReady(true).
+  useEffect(() => {
+    if (simulationReady) return;
+    const t = setTimeout(() => setSimulationReady(true), 2000);
+    return () => clearTimeout(t);
+  }, [simulationReady]);
   /** User-dragged node positions — preserved across simulation re-runs.
    * Cleared when user clicks Reset. */
   const userPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
@@ -1134,10 +1142,11 @@ function DiagramForce({
   useEffect(() => {
     if (filteredGraph.nodes.length === 0) return;
 
-    // BIZZ-865: Ved ny data-load skjul SVG igen indtil ny simulation er
-    // konvergeret. Uden dette ville brugeren se gamle positioner blandet
-    // med nye nodes mens simulationen kører.
-    setSimulationReady(false);
+    // BIZZ-865/932: Skjul SVG KUN under allererste simulation-run (mount).
+    // Efterfølgende restarts (pga. async data som personalBfes eller
+    // noeglePersonerMap) holder SVG synlig — brugeren ser evt. et kort
+    // layout-hop, men det er langt bedre end usynligt diagram (BIZZ-932).
+    // initialFitDone bruges som proxy: hvis vi aldrig har fitted = første run.
 
     // Group by Y position (from nodeYMap) for initial X spread — ensures
     // persons and companies on separate sub-rows get independent X layouts

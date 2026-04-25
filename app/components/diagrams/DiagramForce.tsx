@@ -1970,30 +1970,48 @@ function DiagramForce({
         >
           {isFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
         </button>
-        {/* BIZZ-867: Eksport af diagram som SVG. Serialize SVG-DOM til
-            blob og trigger download. Kan bruges som udgangspunkt for
-            Excel/Word-export via ekstern konvertering eller via AI-chat. */}
+        {/* BIZZ-867/934: Eksport af diagram som PNG billede.
+            Serialiserer SVG → Canvas → PNG blob → download. */}
         <button
-          onClick={() => {
+          onClick={async () => {
             const svgEl = svgRef.current;
             if (!svgEl) return;
             const serializer = new XMLSerializer();
             const svgString = serializer.serializeToString(svgEl);
-            const blob = new Blob([`<?xml version="1.0" encoding="UTF-8"?>\n${svgString}`], {
+            const svgBlob = new Blob([`<?xml version="1.0" encoding="UTF-8"?>\n${svgString}`], {
               type: 'image/svg+xml;charset=utf-8',
             });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `diagram-${Date.now()}.svg`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            const svgUrl = URL.createObjectURL(svgBlob);
+            const img = new Image();
+            img.onload = () => {
+              const scale = 2; // 2x for high-DPI
+              const canvas = document.createElement('canvas');
+              canvas.width = img.width * scale;
+              canvas.height = img.height * scale;
+              const ctx = canvas.getContext('2d');
+              if (!ctx) return;
+              ctx.fillStyle = '#0f172a'; // dark background
+              ctx.fillRect(0, 0, canvas.width, canvas.height);
+              ctx.scale(scale, scale);
+              ctx.drawImage(img, 0, 0);
+              canvas.toBlob((blob) => {
+                if (!blob) return;
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `diagram-${Date.now()}.png`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+              }, 'image/png');
+              URL.revokeObjectURL(svgUrl);
+            };
+            img.src = svgUrl;
           }}
           className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-white bg-slate-800 border border-slate-700/50 rounded-lg transition ml-1"
-          aria-label={lang === 'da' ? 'Eksportér diagram som SVG' : 'Export diagram as SVG'}
-          title={lang === 'da' ? 'Eksportér som SVG-fil' : 'Export as SVG file'}
+          aria-label={lang === 'da' ? 'Eksportér diagram som PNG' : 'Export diagram as PNG'}
+          title={lang === 'da' ? 'Eksportér som PNG-billede' : 'Export as PNG image'}
         >
           <Download size={13} />
         </button>

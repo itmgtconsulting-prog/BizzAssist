@@ -359,14 +359,15 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['cvr'],
     },
   },
-  // BIZZ-864: hent_ejendomme_for_person — giver AI samme adgang som
-  // person-detaljesidens Ejendomme-tab. Bruger /api/ejendomme-by-owner
-  // med enhedsNummer-param, som går mod EJF GraphQL med
-  // ejendePersonEnhedsNummer-filter. VIRKER UDEN CPR-nummer.
+  // BIZZ-864/933: hent_ejendomme_for_person — giver AI ALLE ejendomme
+  // (personligt ejede + via selskaber) i ÉT kald. Henter først personens
+  // virksomheder fra CVR, derefter kalder /api/ejendomme-by-owner med
+  // både enhedsNummer OG CVR-liste. Løser BIZZ-933 hvor AI kun viste
+  // virksomhedsejede eller kun personligt ejede ejendomme.
   {
     name: 'hent_ejendomme_for_person',
     description:
-      'Lister alle ejendomme en person ejer personligt (i eget navn) via EJF-registret. Kræver enhedsNummer (CVR-person-identifier, findes i kontekst på /dashboard/owners/[enhedsNummer] eller via soeg_person_cvr). VIRKER UDEN CPR-nummer — EJF returnerer BFE-numre direkte pr. enhedsNummer. Returnerer adresse, BFE, ejendomstype og ejerandel (fx 50% for par-ejede boliger). Brug dette til at sammensætte en persons samlede ejendomsportefølje — kombiner med hent_person_virksomheder + hent_ejendomme_for_virksomhed for fuldt billede (personligt ejede + via selskaber).',
+      'Lister ALLE ejendomme en person ejer — både personligt ejede (i eget navn) OG ejendomme via virksomheder personen ejer. Ét kald giver fuldt billede. Kræver enhedsNummer (CVR-person-identifier). Returnerer ejendomme grupperet i "personligt" og "viaVirksomhed" med adresse, BFE, type og ejerandel. Brug ALTID dette tool (ikke hent_ejendomme_for_virksomhed) for person-ejendomsspørgsmål.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -1841,13 +1842,44 @@ async function executeTool(
       }
 
       case 'hent_ejendomme_for_person': {
-        // BIZZ-864: Wraps /api/ejendomme-by-owner så AI kan liste en
-        // persons personligt ejede ejendomme via EJF (enhedsNummer-filter).
-        // Uden dette tool svarer AI fejlagtigt at det kræver CPR-nummer.
-        const res = await fetch(
-          `${baseUrl}/api/ejendomme-by-owner?enhedsNummer=${encodeURIComponent(input.enhedsNummer)}`,
-          internalFetchOpts
-        );
+        // BIZZ-864/933: Henter ALLE ejendomme for en person — personligt
+        // ejede + via virksomheder. Ét kald erstatter behov for at AI
+        // separat kalder hent_person_virksomheder + hent_ejendomme_for_virksomhed.
+        //
+        // Trin 1: Hent personens virksomheder for at finde CVR-numre
+        // Trin 2: Kald /api/ejendomme-by-owner med BÅDE enhedsNummer OG CVR-liste
+        const enr = input.enhedsNummer;
+
+        // Trin 1: Hent personens virksomheder (ejer-roller)
+        let companyCvrs: string[] = [];
+        try {
+          const personRes = await fetch(
+            `${baseUrl}/api/cvr-public/person?enhedsNummer=${encodeURIComponent(enr)}`,
+            internalFetchOpts
+          );
+          if (personRes.ok) {
+            const personData = (await personRes.json()) as {
+              roller?: Array<{ cvr?: number; aktiv?: boolean }>;
+            };
+            const cvrs = new Set<string>();
+            for (const r of personData.roller ?? []) {
+              if (r.cvr && r.aktiv !== false) {
+                cvrs.add(String(r.cvr).padStart(8, '0'));
+              }
+            }
+            companyCvrs = Array.from(cvrs).slice(0, 30);
+          }
+        } catch {
+          // Non-fatal — vi henter stadig personligt ejede ejendomme
+        }
+
+        // Trin 2: Hent ejendomme med begge parametre
+        const params = new URLSearchParams();
+        params.set('enhedsNummer', enr);
+        if (companyCvrs.length > 0) params.set('cvr', companyCvrs.join(','));
+        params.set('limit', '50');
+
+        const res = await fetch(`${baseUrl}/api/ejendomme-by-owner?${params}`, internalFetchOpts);
         if (!res.ok) {
           result = { fejl: toolErrorMessage('Ejendomme-by-person', res.status) };
           break;
@@ -1873,27 +1905,38 @@ async function executeTool(
           result = { fejl: data.fejl };
           break;
         }
-        // BIZZ-869: Cap 50 (samme som virksomhed-varianten) for fuldere
-        // dokument-generering-coverage. AI skal informere om afkortning.
         const MAX_EJENDOMME_PERSON = 50;
-        const ejendomme = (data.ejendomme ?? [])
-          .filter((e) => e.aktiv !== false)
-          .slice(0, MAX_EJENDOMME_PERSON)
-          .map((e) => ({
-            bfe: e.bfeNummer,
-            adresse: e.etage && e.doer ? `${e.adresse ?? ''}, ${e.etage}. ${e.doer}` : e.adresse,
-            postnr: e.postnr,
-            by: e.by,
-            kommune: e.kommune,
-            type: e.ejendomstype,
-            ejerandel: e.ejerandel,
-          }));
+        const aktive = (data.ejendomme ?? []).filter((e) => e.aktiv !== false);
+
+        // Kategoriser: personligt ejet vs via virksomhed
+        const personPrefix = `person-${enr}`;
+        const personlige = aktive
+          .filter((e) => e.ownerCvr === personPrefix || e.ownerCvr === enr)
+          .slice(0, MAX_EJENDOMME_PERSON);
+        const viaVirksomhed = aktive
+          .filter((e) => e.ownerCvr !== personPrefix && e.ownerCvr !== enr)
+          .slice(0, MAX_EJENDOMME_PERSON);
+
+        const mapEjendom = (e: (typeof aktive)[0]) => ({
+          bfe: e.bfeNummer,
+          adresse: e.etage && e.doer ? `${e.adresse ?? ''}, ${e.etage}. ${e.doer}` : e.adresse,
+          postnr: e.postnr,
+          by: e.by,
+          kommune: e.kommune,
+          type: e.ejendomstype,
+          ejerandel: e.ejerandel,
+          ejerCvr: e.ownerCvr !== personPrefix && e.ownerCvr !== enr ? e.ownerCvr : undefined,
+        });
+
         result = {
-          enhedsNummer: input.enhedsNummer,
-          antal: ejendomme.length,
-          total: data.totalBfe ?? ejendomme.length,
-          afkortet: (data.ejendomme ?? []).length > MAX_EJENDOMME_PERSON,
-          ejendomme,
+          enhedsNummer: enr,
+          antalPersonlige: personlige.length,
+          antalViaVirksomhed: viaVirksomhed.length,
+          antalTotal: personlige.length + viaVirksomhed.length,
+          total: data.totalBfe ?? aktive.length,
+          virksomhederSoegt: companyCvrs.length,
+          personligtEjede: personlige.map(mapEjendom),
+          viaVirksomhed: viaVirksomhed.map(mapEjendom),
         };
         break;
       }

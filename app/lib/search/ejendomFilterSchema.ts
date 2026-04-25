@@ -131,6 +131,96 @@ export function buildEnergimaerkeSchema(lang: 'da' | 'en'): FilterSchema {
 }
 
 /**
+ * Erhvervsareal-range-filter. Dækker samlet erhvervsareal (m²) fra byg040.
+ * Populeret via backfill-bbr-ejendom.mjs (migration 076: samlet_erhvervsareal).
+ */
+export function buildErhvervsarealSchema(lang: 'da' | 'en'): FilterSchema {
+  const da = lang === 'da';
+  return {
+    type: 'range',
+    key: 'erhvervsareal',
+    label: da ? 'Erhvervsareal' : 'Commercial area',
+    min: 0,
+    max: 5000,
+    step: 50,
+    unit: 'm²',
+  };
+}
+
+/**
+ * Grundareal-range-filter. Dækker matrikulært grundareal (m²).
+ * NB: Kolonnen eksisterer i DB (migration 076) men er endnu ikke populeret
+ * — kræver BBR_Grund-opslag (deferred til iter 2b). Filteret tilføjes nu
+ * så UI er klar når data lander.
+ */
+export function buildGrundarealSchema(lang: 'da' | 'en'): FilterSchema {
+  const da = lang === 'da';
+  return {
+    type: 'range',
+    key: 'grundareal',
+    label: da ? 'Grundareal' : 'Site area',
+    min: 0,
+    max: 10000,
+    step: 100,
+    unit: 'm²',
+  };
+}
+
+/**
+ * Bebygget areal-range-filter. Dækker samlet bebygget areal (m²) fra byg041.
+ * Populeret via backfill-bbr-ejendom.mjs (migration 076: bebygget_areal).
+ */
+export function buildBebyggetArealSchema(lang: 'da' | 'en'): FilterSchema {
+  const da = lang === 'da';
+  return {
+    type: 'range',
+    key: 'bebyggetAreal',
+    label: da ? 'Bebygget areal' : 'Built-up area',
+    min: 0,
+    max: 2000,
+    step: 25,
+    unit: 'm²',
+  };
+}
+
+/**
+ * Om/tilbygningsår-range-filter. MAX af byg027 (seneste renovering).
+ * Populeret via backfill-bbr-ejendom.mjs (migration 076: ombygningsaar).
+ */
+export function buildOmbygningsaarSchema(lang: 'da' | 'en'): FilterSchema {
+  const currentYear = new Date().getFullYear();
+  const da = lang === 'da';
+  return {
+    type: 'range',
+    key: 'ombygningsaar',
+    label: da ? 'Om/tilbygningsår' : 'Renovation year',
+    min: 1850,
+    max: currentYear,
+    step: 1,
+  };
+}
+
+/**
+ * Alders-preset — mutually exclusive tags der sætter opførelsesår-range.
+ * Beregnes fra currentYear - opfoerelsesaar. Klik på preset = clear andre +
+ * sæt opfoerelsesaar range automatisk.
+ */
+export function buildAldersPresetSchema(lang: 'da' | 'en'): FilterSchema {
+  const da = lang === 'da';
+  return {
+    type: 'multi-select',
+    key: 'aldersPreset',
+    label: da ? 'Bygningsalder' : 'Building age',
+    options: [
+      { value: 'nybyggeri', label: da ? 'Nybyggeri (< 5 år)' : 'New build (< 5 years)' },
+      { value: 'moderne', label: da ? 'Moderne (5-30 år)' : 'Modern (5-30 years)' },
+      { value: 'aeldre', label: da ? 'Ældre (30-80 år)' : 'Older (30-80 years)' },
+      { value: 'foer1950', label: da ? 'Før 1950' : 'Before 1950' },
+    ],
+  };
+}
+
+/**
  * Anvendelse — BBR byg021-kode gruppeperet til makro-kategorier.
  * Value er kategori-nøgle; caller oversætter via bbrKoder ved filter-apply.
  */
@@ -168,7 +258,12 @@ export function buildEjendomFilterSchemas(
     buildKommuneSchema(lang, kommuneOptions),
     // BIZZ-821 phase-2 filtre
     buildArealSchema(lang),
+    buildErhvervsarealSchema(lang),
+    buildGrundarealSchema(lang),
+    buildBebyggetArealSchema(lang),
     buildOpfoerelsesaarSchema(lang),
+    buildOmbygningsaarSchema(lang),
+    buildAldersPresetSchema(lang),
     buildEnergimaerkeSchema(lang),
     buildAnvendelseSchema(lang),
   ];
@@ -182,7 +277,12 @@ export interface EjendomFilterState {
   kommune?: string[];
   // BIZZ-821 phase-2 filter-state
   boligareal?: { min?: number; max?: number };
+  erhvervsareal?: { min?: number; max?: number };
+  grundareal?: { min?: number; max?: number };
+  bebyggetAreal?: { min?: number; max?: number };
   opfoerelsesaar?: { min?: number; max?: number };
+  ombygningsaar?: { min?: number; max?: number };
+  aldersPreset?: string[];
   energimaerke?: string[];
   anvendelse?: string[];
 }
@@ -203,9 +303,22 @@ export function narrowEjendomFilters(raw: Record<string, unknown>): EjendomFilte
     boligareal: isRange(raw.boligareal)
       ? (raw.boligareal as { min?: number; max?: number })
       : undefined,
+    erhvervsareal: isRange(raw.erhvervsareal)
+      ? (raw.erhvervsareal as { min?: number; max?: number })
+      : undefined,
+    grundareal: isRange(raw.grundareal)
+      ? (raw.grundareal as { min?: number; max?: number })
+      : undefined,
+    bebyggetAreal: isRange(raw.bebyggetAreal)
+      ? (raw.bebyggetAreal as { min?: number; max?: number })
+      : undefined,
     opfoerelsesaar: isRange(raw.opfoerelsesaar)
       ? (raw.opfoerelsesaar as { min?: number; max?: number })
       : undefined,
+    ombygningsaar: isRange(raw.ombygningsaar)
+      ? (raw.ombygningsaar as { min?: number; max?: number })
+      : undefined,
+    aldersPreset: Array.isArray(raw.aldersPreset) ? (raw.aldersPreset as string[]) : undefined,
     energimaerke: Array.isArray(raw.energimaerke) ? (raw.energimaerke as string[]) : undefined,
     anvendelse: Array.isArray(raw.anvendelse) ? (raw.anvendelse as string[]) : undefined,
   };
@@ -228,10 +341,18 @@ export interface FilterableEjendom {
   ejendomstype?: 'sfe' | 'bygning' | 'ejerlejlighed' | null;
   adresse?: { kommunenavn?: string };
   // BIZZ-821 phase-2: BBR-berigelses-felter fra bbr_ejendom_status (migration 076)
-  /** Samlet boligareal i m² */
+  /** Samlet boligareal i m² (byg039 sum) */
   boligareal?: number | null;
-  /** Opførelsesår */
+  /** Samlet erhvervsareal i m² (byg040 sum) */
+  erhvervsareal?: number | null;
+  /** Matrikulært grundareal i m² (BBR_Grund) */
+  grundareal?: number | null;
+  /** Bebygget areal i m² (byg041 sum) */
+  bebyggetAreal?: number | null;
+  /** Opførelsesår (byg026 min) */
   opfoerelsesaar?: number | null;
+  /** Om/tilbygningsår (byg027 max) */
+  ombygningsaar?: number | null;
   /** Energimærke som bogstav (A-G), eller A2020/B2015 osv. */
   energimaerke?: string | null;
   /** BBR byg021 anvendelses-kode (numerisk) */
@@ -270,11 +391,49 @@ export function matchEjendomFilter(item: FilterableEjendom, filters: EjendomFilt
     if (filters.boligareal.min != null && item.boligareal < filters.boligareal.min) return false;
     if (filters.boligareal.max != null && item.boligareal > filters.boligareal.max) return false;
   }
+  if (filters.erhvervsareal && item.erhvervsareal != null) {
+    if (filters.erhvervsareal.min != null && item.erhvervsareal < filters.erhvervsareal.min)
+      return false;
+    if (filters.erhvervsareal.max != null && item.erhvervsareal > filters.erhvervsareal.max)
+      return false;
+  }
+  if (filters.grundareal && item.grundareal != null) {
+    if (filters.grundareal.min != null && item.grundareal < filters.grundareal.min) return false;
+    if (filters.grundareal.max != null && item.grundareal > filters.grundareal.max) return false;
+  }
+  if (filters.bebyggetAreal && item.bebyggetAreal != null) {
+    if (filters.bebyggetAreal.min != null && item.bebyggetAreal < filters.bebyggetAreal.min)
+      return false;
+    if (filters.bebyggetAreal.max != null && item.bebyggetAreal > filters.bebyggetAreal.max)
+      return false;
+  }
   if (filters.opfoerelsesaar && item.opfoerelsesaar != null) {
     if (filters.opfoerelsesaar.min != null && item.opfoerelsesaar < filters.opfoerelsesaar.min)
       return false;
     if (filters.opfoerelsesaar.max != null && item.opfoerelsesaar > filters.opfoerelsesaar.max)
       return false;
+  }
+  if (filters.ombygningsaar && item.ombygningsaar != null) {
+    if (filters.ombygningsaar.min != null && item.ombygningsaar < filters.ombygningsaar.min)
+      return false;
+    if (filters.ombygningsaar.max != null && item.ombygningsaar > filters.ombygningsaar.max)
+      return false;
+  }
+  // Alders-preset: beregnet fra opførelsesår. Mutually exclusive.
+  if (filters.aldersPreset && filters.aldersPreset.length > 0 && item.opfoerelsesaar != null) {
+    const age = new Date().getFullYear() - item.opfoerelsesaar;
+    const preset = filters.aldersPreset[0];
+    const match =
+      preset === 'nybyggeri'
+        ? age < 5
+        : preset === 'moderne'
+          ? age >= 5 && age <= 30
+          : preset === 'aeldre'
+            ? age > 30 && age <= 80
+            : preset === 'foer1950'
+              ? item.opfoerelsesaar < 1950
+              : true;
+    if (!match) return false;
   }
   if (filters.energimaerke && filters.energimaerke.length > 0 && item.energimaerke) {
     // Normaliser A2020/A2015/A2010 → A for matching

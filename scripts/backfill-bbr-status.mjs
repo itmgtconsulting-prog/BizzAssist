@@ -53,6 +53,12 @@ const LIMIT = (() => {
   return a ? parseInt(a.split('=')[1], 10) : Infinity;
 })();
 const DRY_RUN = args.includes('--dry-run');
+// BIZZ-904: --bfe-file=path/to/bfes.json bypasser langsom PostgREST-
+// paginering af 7.6M ejf_ejerskab rows. Filen er et JSON-array af numbers.
+const BFE_FILE = (() => {
+  const a = args.find((x) => x.startsWith('--bfe-file='));
+  return a ? a.split('=')[1] : null;
+})();
 
 // BIZZ-824 iter 2b: Centrale status-koder (mapping-konsistens koordineres
 // med BIZZ-825 iter 2c der konsoliderer bbrKoder.ts).
@@ -361,12 +367,25 @@ async function fetchBbrStatusForBfeBatch(bfeNumre) {
 }
 
 async function main() {
-  console.log(`[backfill] Starting — limit=${LIMIT === Infinity ? 'ALL' : LIMIT}, dry-run=${DRY_RUN}`);
-  const unique = new Set();
-  for await (const bfe of iterateBfeNumbers(LIMIT)) {
-    unique.add(bfe);
+  console.log(`[backfill] Starting — limit=${LIMIT === Infinity ? 'ALL' : LIMIT}, dry-run=${DRY_RUN}, bfe-file=${BFE_FILE ?? 'none'}`);
+
+  let all;
+  if (BFE_FILE) {
+    // BIZZ-904: Læs pre-genereret BFE-liste (fra Management API SQL)
+    const fs = await import('node:fs');
+    const raw = fs.readFileSync(BFE_FILE, 'utf-8');
+    const parsed = JSON.parse(raw);
+    all = Array.isArray(parsed) ? parsed.map(Number).filter(Number.isFinite) : [];
+    if (LIMIT < all.length) all = all.slice(0, LIMIT);
+    console.log(`[backfill] Loaded ${all.length} BFE-numre fra ${BFE_FILE}`);
+  } else {
+    const unique = new Set();
+    for await (const bfe of iterateBfeNumbers(LIMIT)) {
+      unique.add(bfe);
+    }
+    all = Array.from(unique);
+    console.log(`[backfill] ${all.length} unike BFE-numre fra DB.`);
   }
-  console.log(`[backfill] ${unique.size} unike BFE-numre at process.`);
 
   const all = Array.from(unique);
   let processed = 0;

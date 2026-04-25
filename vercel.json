@@ -71,6 +71,10 @@
     {
       "path": "/api/cron/refresh-ejendom-status",
       "schedule": "0 2 * * 0"
+    },
+    {
+      "path": "/api/cron/refresh-deltager-berigelse",
+      "schedule": "15 4 * * *"
     }
   ]
 }

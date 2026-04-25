@@ -8,9 +8,12 @@
  * tjekket de sidste 7 dage. Paginér derigennem over 7 søndage → komplet
  * dækning ~hver 2. måned givet typisk ~46k ejendomme.
  *
- * BBR-query patterneret identisk med scripts/backfill-bbr-status.mjs
- * (BIZZ-824): BBR_Grund.bestemtFastEjendomBFENr → BBR_Bygning join,
- * konsolidér is_udfaset = alle bygninger har retired-status {4,10,11}.
+ * BIZZ-907: Refaktoreret til BBR v2 3-step pipeline via fetchBBRGraphQL
+ * (API-key + proxy). Matcher scripts/backfill-bbr-status.mjs (BIZZ-903):
+ *   1. BBR_Ejendomsrelation(bfeNummer) → ejendoms-UUID
+ *   2. BBR_Grund(bestemtFastEjendom) → grund-UUID + kommunekode
+ *   3. BBR_Bygning(grund) → status + areal + aar + anvendelse
+ * Konsolidér is_udfaset = alle bygninger har retired-status {4,10,11}.
  *
  * Schedule: søndag 02:00 UTC = '0 2 * * 0' i vercel.json.
  *
@@ -24,6 +27,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { BBR_STATUS_UDFASET } from '@/app/lib/bbrKoder';
+import { fetchBBRGraphQL } from '@/app/lib/fetchBbrData';
 
 const BATCH_SIZE = 50; // BFE'er pr BBR-kald
 const PER_RUN_CAP = 5000; // max rows pr cron-tur
@@ -42,179 +46,187 @@ function verifyCronSecret(request: NextRequest): boolean {
   return safeCompare(auth, `Bearer ${secret}`);
 }
 
+/** BIZZ-907: Resultat-shape fra v2 3-step BBR-lookup */
 interface BbrStatusResult {
   is_udfaset: boolean;
   bbr_status_code: number | null;
   adgangsadresse_id: string | null;
   kommune_kode: number | null;
+  samlet_boligareal: number | null;
+  opfoerelsesaar: number | null;
+  byg021_anvendelse: number | null;
 }
 
 /**
- * Kalder BBR GraphQL for en batch BFE'er og konsoliderer status-signal.
- * Matcher scripts/backfill-bbr-status.mjs fetchBbrStatusForBfeBatch.
+ * BIZZ-907: BBR v2 3-step lookup for en batch BFE'er.
+ *
+ * Bruger fetchBBRGraphQL fra fetchBbrData.ts (API-key + proxy) i stedet
+ * for direkte Basic auth (BIZZ-903 pattern).
+ *
+ *   1. BBR_Ejendomsrelation(bfeNummer) → ejendoms-UUID
+ *   2. BBR_Grund(bestemtFastEjendom) → grund-UUID + kommunekode + husnummer
+ *   3. BBR_Bygning(grund) → status + areal + aar + anvendelse
+ *
+ * Dedup bygninger (BIZZ-575: v2 returnerer duplikater).
  */
 async function fetchBbrStatusForBfeBatch(
   bfeNumre: number[]
 ): Promise<Map<number, BbrStatusResult>> {
   if (bfeNumre.length === 0) return new Map();
-
-  const bbrUser = process.env.DATAFORDELER_USER;
-  const bbrPass = process.env.DATAFORDELER_PASS;
-  if (!bbrUser || !bbrPass) {
-    logger.error('[refresh-ejendom-status] Missing DATAFORDELER credentials');
-    return new Map();
-  }
-  const auth = Buffer.from(`${bbrUser}:${bbrPass}`).toString('base64');
-
-  const query = `query($vt: DafDateTime!, $bfes: [Int!]!) {
-    BBR_Grund(first: 500, virkningstid: $vt, where: { bestemtFastEjendomBFENr: { in: $bfes } }) {
-      nodes {
-        bestemtFastEjendomBFENr
-        kommunekode
-        husnummer { id_lokalId }
-        bygningPaaGrund {
-          bygning {
-            nodes {
-              id_lokalId
-              status
-              byg038SamletBygningsareal
-            }
-          }
-        }
-      }
-    }
-  }`;
-
   const vt = new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z';
-  let res: Response;
-  try {
-    res = await fetch('https://services.datafordeler.dk/BBR/BBRPublic/1/rest/GraphQL/ejendom', {
-      method: 'POST',
-      headers: {
-        Authorization: `Basic ${auth}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({ query, variables: { vt, bfes: bfeNumre } }),
-      signal: AbortSignal.timeout(30000),
-    });
-  } catch (err) {
-    logger.warn(
-      '[refresh-ejendom-status] BBR network error:',
-      (err as Error)?.message ?? 'unknown'
-    );
-    return new Map();
+
+  // Step 1: BFE → Ejendomsrelation
+  const bfeList = bfeNumre.join(',');
+  const ejNodes = (await fetchBBRGraphQL(
+    `{ BBR_Ejendomsrelation(first: 500, virkningstid: "${vt}", where: { bfeNummer: { in: [${bfeList}] } }) {
+        nodes { bfeNummer ejendomstype id_lokalId }
+    } }`,
+    {}
+  )) as Array<{ bfeNummer: number; ejendomstype: string; id_lokalId: string }> | null;
+
+  if (!ejNodes || ejNodes.length === 0) return new Map();
+
+  const bfeToEjd = new Map<number, string>();
+  for (const e of ejNodes) {
+    const bfe = Number(e.bfeNummer);
+    if (Number.isFinite(bfe) && !bfeToEjd.has(bfe)) bfeToEjd.set(bfe, e.id_lokalId);
   }
 
-  if (!res.ok) {
-    logger.warn(`[refresh-ejendom-status] BBR HTTP ${res.status}`);
-    return new Map();
-  }
+  // Step 2: Ejendoms-UUID → Grund
+  const ejdIds = [...new Set(bfeToEjd.values())];
+  const idList = ejdIds.map((id) => `"${id}"`).join(',');
+  const grundNodes = (await fetchBBRGraphQL(
+    `{ BBR_Grund(first: 500, virkningstid: "${vt}", where: { bestemtFastEjendom: { in: [${idList}] } }) {
+        nodes { id_lokalId kommunekode bestemtFastEjendom husnummer }
+    } }`,
+    {}
+  )) as Array<{
+    id_lokalId: string;
+    kommunekode: string | null;
+    bestemtFastEjendom: string;
+    husnummer: string | null;
+  }> | null;
 
-  let json: unknown;
-  try {
-    json = await res.json();
-  } catch {
-    logger.warn('[refresh-ejendom-status] BBR JSON parse error');
-    return new Map();
-  }
-
-  const data = json as {
-    data?: {
-      BBR_Grund?: {
-        nodes?: Array<{
-          bestemtFastEjendomBFENr?: number | string;
-          kommunekode?: number | string | null;
-          husnummer?: { id_lokalId?: string | null } | null;
-          bygningPaaGrund?: Array<{
-            bygning?: {
-              nodes?: Array<{
-                status?: number | string | null;
-                byg038SamletBygningsareal?: number | null;
-              }>;
-            };
-          }> | null;
-        }>;
-      };
-    };
-    errors?: unknown;
-  };
-
-  if (data.errors) {
-    logger.warn(
-      '[refresh-ejendom-status] GraphQL errors:',
-      JSON.stringify(data.errors).slice(0, 300)
-    );
-    return new Map();
-  }
-
-  const grunde = data.data?.BBR_Grund?.nodes ?? [];
-  const byBfe = new Map<
-    number,
-    {
-      bygninger: Array<{
-        status?: number | string | null;
-        byg038SamletBygningsareal?: number | null;
-      }>;
-      adgangsadresse_id: string | null;
-      kommune_kode: number | null;
-    }
+  const ejdToGrund = new Map<
+    string,
+    { grundIds: string[]; kommune_kode: number | null; adgangsadresse_id: string | null }
   >();
-
-  for (const g of grunde) {
-    const bfe = Number(g.bestemtFastEjendomBFENr);
-    if (!Number.isFinite(bfe)) continue;
-
-    const kommuneKode = g.kommunekode != null ? parseInt(String(g.kommunekode), 10) : null;
-    const adgangsId = g.husnummer?.id_lokalId ?? null;
-    const bygninger = (g.bygningPaaGrund ?? [])
-      .flatMap((bp) => bp?.bygning?.nodes ?? [])
-      .filter((b) => b != null);
-
-    if (!byBfe.has(bfe)) {
-      byBfe.set(bfe, { bygninger: [], adgangsadresse_id: null, kommune_kode: null });
+  for (const g of grundNodes ?? []) {
+    const ejdId = g.bestemtFastEjendom;
+    if (!ejdId) continue;
+    if (!ejdToGrund.has(ejdId)) {
+      ejdToGrund.set(ejdId, { grundIds: [], kommune_kode: null, adgangsadresse_id: null });
     }
-    const entry = byBfe.get(bfe)!;
-    entry.bygninger.push(...bygninger);
-    if (!entry.adgangsadresse_id && adgangsId) entry.adgangsadresse_id = adgangsId;
-    if (entry.kommune_kode == null && kommuneKode != null && Number.isFinite(kommuneKode)) {
-      entry.kommune_kode = kommuneKode;
+    const entry = ejdToGrund.get(ejdId)!;
+    if (g.id_lokalId && !entry.grundIds.includes(g.id_lokalId)) entry.grundIds.push(g.id_lokalId);
+    if (!entry.kommune_kode && g.kommunekode != null) {
+      entry.kommune_kode = parseInt(String(g.kommunekode), 10) || null;
+    }
+    if (!entry.adgangsadresse_id && g.husnummer) entry.adgangsadresse_id = g.husnummer;
+  }
+
+  // Step 3: Grund-UUID → Bygninger
+  const allGrundIds = [...new Set([...ejdToGrund.values()].flatMap((e) => e.grundIds))];
+  const bygNodes: Array<{
+    id_lokalId: string;
+    status: string;
+    grund: string;
+    byg038SamletBygningsareal: number | null;
+    byg039BygningensSamledeBoligAreal: number | null;
+    byg026Opfoerelsesaar: number | null;
+    byg021BygningensAnvendelse: string | null;
+  }> = [];
+
+  if (allGrundIds.length > 0) {
+    const gidList = allGrundIds.map((id) => `"${id}"`).join(',');
+    const raw = (await fetchBBRGraphQL(
+      `{ BBR_Bygning(first: 500, virkningstid: "${vt}", where: { grund: { in: [${gidList}] } }) {
+          nodes {
+            id_lokalId status grund
+            byg038SamletBygningsareal byg039BygningensSamledeBoligAreal
+            byg026Opfoerelsesaar byg021BygningensAnvendelse
+          }
+      } }`,
+      {}
+    )) as typeof bygNodes | null;
+    // Dedup (BIZZ-575)
+    const seen = new Set<string>();
+    for (const b of raw ?? []) {
+      if (b.id_lokalId && seen.has(b.id_lokalId)) continue;
+      if (b.id_lokalId) seen.add(b.id_lokalId);
+      bygNodes.push(b);
     }
   }
 
+  // Grupper bygninger per grund
+  const grundToByg = new Map<string, typeof bygNodes>();
+  for (const b of bygNodes) {
+    if (!b.grund) continue;
+    if (!grundToByg.has(b.grund)) grundToByg.set(b.grund, []);
+    grundToByg.get(b.grund)!.push(b);
+  }
+
+  // Konsolider per BFE
   const result = new Map<number, BbrStatusResult>();
-  for (const [bfe, entry] of byBfe) {
-    if (entry.bygninger.length === 0) {
+  for (const [bfe, ejdId] of bfeToEjd) {
+    const grundInfo = ejdToGrund.get(ejdId);
+    const bygninger = (grundInfo?.grundIds ?? []).flatMap((gid) => grundToByg.get(gid) ?? []);
+
+    if (bygninger.length === 0) {
       result.set(bfe, {
         is_udfaset: false,
         bbr_status_code: null,
-        adgangsadresse_id: entry.adgangsadresse_id,
-        kommune_kode: entry.kommune_kode,
+        adgangsadresse_id: grundInfo?.adgangsadresse_id ?? null,
+        kommune_kode: grundInfo?.kommune_kode ?? null,
+        samlet_boligareal: null,
+        opfoerelsesaar: null,
+        byg021_anvendelse: null,
       });
       continue;
     }
 
-    const allRetired = entry.bygninger.every((b) => {
-      const s = Number(b.status);
-      return BBR_STATUS_UDFASET.has(s);
-    });
+    const allRetired = bygninger.every((b) => BBR_STATUS_UDFASET.has(Number(b.status)));
 
     let primaryStatus: number | null = null;
+    let primaryAnvendelse: number | null = null;
     let maxArea = -1;
-    for (const b of entry.bygninger) {
+    let sumBoligareal = 0;
+    let hasBoligareal = false;
+    let minOpfoerelsesaar = Infinity;
+    let hasOpfoerelsesaar = false;
+
+    for (const b of bygninger) {
       const area = Number(b.byg038SamletBygningsareal) || 0;
       const s = Number(b.status);
       if (Number.isFinite(s) && area > maxArea) {
         maxArea = area;
         primaryStatus = s;
+        const anv =
+          b.byg021BygningensAnvendelse != null
+            ? parseInt(String(b.byg021BygningensAnvendelse), 10)
+            : null;
+        if (anv != null && Number.isFinite(anv)) primaryAnvendelse = anv;
+      }
+      const bolig = Number(b.byg039BygningensSamledeBoligAreal);
+      if (Number.isFinite(bolig) && bolig > 0) {
+        sumBoligareal += bolig;
+        hasBoligareal = true;
+      }
+      const aar = Number(b.byg026Opfoerelsesaar);
+      if (Number.isFinite(aar) && aar > 1000 && aar < minOpfoerelsesaar) {
+        minOpfoerelsesaar = aar;
+        hasOpfoerelsesaar = true;
       }
     }
 
     result.set(bfe, {
       is_udfaset: allRetired,
       bbr_status_code: primaryStatus,
-      adgangsadresse_id: entry.adgangsadresse_id,
-      kommune_kode: entry.kommune_kode,
+      adgangsadresse_id: grundInfo?.adgangsadresse_id ?? null,
+      kommune_kode: grundInfo?.kommune_kode ?? null,
+      samlet_boligareal: hasBoligareal ? sumBoligareal : null,
+      opfoerelsesaar: hasOpfoerelsesaar ? minOpfoerelsesaar : null,
+      byg021_anvendelse: primaryAnvendelse,
     });
   }
 
@@ -303,6 +315,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         bbr_status_code: entry.bbr_status_code,
         kommune_kode: entry.kommune_kode,
         status_last_checked_at: nowIso,
+        // BIZZ-907: berigelse-felter (BIZZ-821 phase-2)
+        samlet_boligareal: entry.samlet_boligareal,
+        opfoerelsesaar: entry.opfoerelsesaar,
+        byg021_anvendelse: entry.byg021_anvendelse,
+        berigelse_sidst: nowIso,
       });
     }
 

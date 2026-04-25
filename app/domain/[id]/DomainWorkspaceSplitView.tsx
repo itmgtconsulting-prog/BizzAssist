@@ -33,6 +33,7 @@ import {
   User,
   Upload,
   Maximize2,
+  FileText,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { useSetAIPageContext } from '@/app/context/AIPageContext';
@@ -688,6 +689,22 @@ export function DomainWorkspaceSplitView({
           )}
           {caseDetail && !editing && !inlineEditingName && (
             <>
+              {/* BIZZ-929: "Vælg skabelon" knap i sags-header for hurtig adgang */}
+              <button
+                type="button"
+                onClick={() => setTemplatePickerOpen(true)}
+                aria-label={da ? 'Vælg skabelon' : 'Select template'}
+                title={da ? 'Vælg skabelon' : 'Select template'}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 transition-colors shrink-0"
+              >
+                <FileText size={10} />
+                {da ? 'Skabelon' : 'Template'}
+                {selectedTemplateIds.size > 0 && (
+                  <span className="px-1 py-0.5 rounded bg-blue-500/20 text-blue-300 text-[9px] leading-none">
+                    {selectedTemplateIds.size}
+                  </span>
+                )}
+              </button>
               {/* BIZZ-883: Expand-knap giver fokuseret arbejde med én sag —
                   samme destination som eksisterende "Åbn i fuld visning"-link
                   i bunden, men synlig i header. */}
@@ -787,28 +804,18 @@ export function DomainWorkspaceSplitView({
                 )}
               </div>
 
-              {/* BIZZ-900: Skabelon-picker sektion. Knap + chips med valgte
-                  skabeloner. Skabelon-IDs persisteres i URL som ?skabelon=... */}
+              {/* BIZZ-900/929: Skabelon-sektion viser valgte skabeloner som chips.
+                  Knap er flyttet til sags-header (BIZZ-929). */}
               <div>
-                <div className="flex items-center justify-between mb-1.5 gap-2">
-                  <p className="text-[11px] uppercase tracking-wide text-slate-500">
-                    {da ? 'Skabeloner' : 'Templates'}
-                    {selectedTemplateIds.size > 0 && (
-                      <span className="ml-1.5 px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 text-[10px] normal-case tracking-normal">
-                        {selectedTemplateIds.size}{' '}
-                        {da ? (selectedTemplateIds.size === 1 ? 'valgt' : 'valgte') : 'selected'}
-                      </span>
-                    )}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setTemplatePickerOpen(true)}
-                    className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 transition-colors"
-                  >
-                    <Pencil size={10} />
-                    {da ? 'Vælg skabelon' : 'Select template'}
-                  </button>
-                </div>
+                <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-1.5">
+                  {da ? 'Skabeloner' : 'Templates'}
+                  {selectedTemplateIds.size > 0 && (
+                    <span className="ml-1.5 px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 text-[10px] normal-case tracking-normal">
+                      {selectedTemplateIds.size}{' '}
+                      {da ? (selectedTemplateIds.size === 1 ? 'valgt' : 'valgte') : 'selected'}
+                    </span>
+                  )}
+                </p>
                 {selectedTemplateIds.size === 0 ? (
                   <p className="text-xs text-slate-500">
                     {da ? 'Ingen skabeloner valgt.' : 'No templates selected.'}

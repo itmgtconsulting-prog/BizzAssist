@@ -386,8 +386,6 @@ async function main() {
     all = Array.from(unique);
     console.log(`[backfill] ${all.length} unike BFE-numre fra DB.`);
   }
-
-  const all = Array.from(unique);
   let processed = 0;
   let upserted = 0;
   // BIZZ-903: Reduceret fra 50 til 30 fordi v2 kræver 3 queries per

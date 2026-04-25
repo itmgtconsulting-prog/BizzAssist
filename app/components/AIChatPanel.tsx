@@ -382,6 +382,34 @@ function AIChatPanel() {
           parts.push(lines.join('\n'));
         }
       }
+
+      // BIZZ-941: Pre-loaded ejendomme — AI behøver ikke re-fetche
+      if (pageData.preloadedEjendomme && pageData.preloadedEjendomme.length > 0) {
+        const personlige = pageData.preloadedEjendomme.filter((e) => e.personligtEjet);
+        const viaVirk = pageData.preloadedEjendomme.filter((e) => !e.personligtEjet);
+        const lines = [
+          `\n[EJENDOMME PRE-LOADED] ${pageData.preloadedEjendomme.length} ejendomme allerede loaded (total: ${pageData.ejendommeTotal ?? pageData.preloadedEjendomme.length}). Brug disse data direkte — kald IKKE hent_ejendomme_for_person medmindre du har brug for yderligere detaljer.`,
+        ];
+        if (personlige.length > 0) {
+          lines.push(`Personligt ejede (${personlige.length}):`);
+          for (const e of personlige.slice(0, 20)) {
+            lines.push(
+              `- BFE ${e.bfe}: ${e.adresse ?? 'Ukendt'} (${e.type ?? '?'})${e.ejerandel ? ` [${e.ejerandel}]` : ''}`
+            );
+          }
+          if (personlige.length > 20) lines.push(`  (+ ${personlige.length - 20} flere)`);
+        }
+        if (viaVirk.length > 0) {
+          lines.push(`Via virksomheder (${viaVirk.length}):`);
+          for (const e of viaVirk.slice(0, 30)) {
+            lines.push(
+              `- BFE ${e.bfe}: ${e.adresse ?? 'Ukendt'} (${e.type ?? '?'})${e.ejerandel ? ` [${e.ejerandel}]` : ''}`
+            );
+          }
+          if (viaVirk.length > 30) lines.push(`  (+ ${viaVirk.length - 30} flere)`);
+        }
+        parts.push(lines.join('\n'));
+      }
     }
 
     return parts.length > 0 ? parts.join('\n\n') : undefined;

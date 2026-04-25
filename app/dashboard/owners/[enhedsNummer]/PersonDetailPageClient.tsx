@@ -1013,15 +1013,39 @@ export default function PersonDetailPageClient({
       roller: v.roller.filter((r) => !r.til).map((r) => r.rolle),
     }));
 
+    // BIZZ-941: Send pre-loaded ejendomme så AI ikke re-fetcher dem.
+    // Cap 50 for at holde system-prompt kompakt.
+    const preloadedEjendomme = ejendommeFetchComplete
+      ? ejendommeData
+          .filter((e) => e.aktiv !== false)
+          .slice(0, 50)
+          .map((e) => ({
+            bfe: e.bfeNummer,
+            adresse: e.adresse ?? null,
+            type: e.ejendomstype ?? null,
+            ejerandel: e.ejerandel ?? null,
+            personligtEjet: typeof e.ownerCvr === 'string' && e.ownerCvr.startsWith('person-'),
+          }))
+      : undefined;
+
     setAICtx({
       enhedsNummer: enhedsStr,
       personNavn: data?.navn ?? undefined,
       personVirksomheder: personVirksomheder ?? undefined,
-      // BIZZ-874: Tab-kontekst så AI matcher "ejendomme tab" til rigtige tools.
       pageType: 'person',
       activeTab: aktivTab,
+      preloadedEjendomme,
+      ejendommeTotal: ejendommeFetchComplete ? ejendommeTotalBfe : undefined,
     });
-  }, [enhedsStr, data, aktivTab, setAICtx]);
+  }, [
+    enhedsStr,
+    data,
+    aktivTab,
+    ejendommeData,
+    ejendommeFetchComplete,
+    ejendommeTotalBfe,
+    setAICtx,
+  ]);
 
   // ─── Fetch related companies ────────────────────────────────────────────────
   const fetchRelated = useCallback(async () => {

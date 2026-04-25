@@ -96,6 +96,19 @@ export interface AIPageData {
   caseStatus?: string;
   caseTags?: string[];
   caseClientRef?: string;
+  /**
+   * BIZZ-941: Pre-loaded ejendomme fra aktiv record. Kompakt summary
+   * så AI ikke behøver re-fetche via tools.
+   */
+  preloadedEjendomme?: Array<{
+    bfe: number;
+    adresse: string | null;
+    type: string | null;
+    ejerandel?: string | null;
+    personligtEjet?: boolean;
+  }>;
+  /** BIZZ-941: Antal ejendomme total (kan være flere end preloaded pga. cap). */
+  ejendommeTotal?: number;
 }
 
 // ─── Context ─────────────────────────────────────────────────────────────────

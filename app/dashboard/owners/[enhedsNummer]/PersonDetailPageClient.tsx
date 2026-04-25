@@ -1265,6 +1265,13 @@ export default function PersonDetailPageClient({
    */
   const personDiagramGraph = useMemo(() => {
     if (!data) return { nodes: [], edges: [], mainId: '' };
+    // BIZZ-925: Vent med diagram-build til ejendomme-fetch er komplet.
+    // Progressiv loading kalder setEjendommeData flere gange (batch 5 → 10),
+    // og hvert kald skabte ny graf-reference → DiagramForce cancelerede sin
+    // igangværende D3-simulation → positions forblev tom → blank canvas.
+    // Ved at gate på ejendommeFetchComplete bygger vi kun grafen én gang
+    // med komplet data, så simulationen kan køre uforstyrret.
+    if (!ejendommeFetchComplete) return { nodes: [], edges: [], mainId: '' };
     // BIZZ-571: Person-diagram ekskluderer solgte ejendomme — samme regel
     // som virksomheds-diagrammet.
     // BIZZ-849: ejendommeData indeholder BÅDE virksomheds-ejede (numeric
@@ -1305,6 +1312,7 @@ export default function PersonDetailPageClient({
     );
   }, [
     data,
+    ejendommeFetchComplete,
     topLevelEjer,
     relatedCompanies,
     noeglePersonerMap,

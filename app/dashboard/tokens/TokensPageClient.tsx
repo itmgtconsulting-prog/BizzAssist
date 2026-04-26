@@ -821,15 +821,7 @@ export default function TokensPageClient() {
               >
                 <ArrowLeft size={16} /> {t.back}
               </button>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={fetchAiData}
-                  className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-sm transition-all bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300"
-                >
-                  <RefreshCw size={14} />
-                  {t.refresh}
-                </button>
-              </div>
+              {/* BIZZ-979: Dobbelt Opdater-knap fjernet — beholdes kun i balance-kortet */}
             </div>
 
             <h1 className="text-white text-xl sm:text-2xl font-bold mb-2">{t.title}</h1>
@@ -977,27 +969,13 @@ export default function TokensPageClient() {
                     </div>
                   )}
 
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {/* BIZZ-979: Komprimeret fra 6 kort til 3 — plan+bonus samlet, topup+akkumuleret samlet */}
+                  <div className="grid grid-cols-3 gap-3">
                     <BreakdownCard
                       label={t.planAllocation}
-                      value={isUnlimited ? t.unlimited : formatTokens(planMonthly)}
+                      value={isUnlimited ? t.unlimited : formatTokens(planMonthly + bonus)}
                       sub={plan ? (lang === 'da' ? plan.nameDa : plan.nameEn) + t.perMonth : ''}
                       color="text-blue-400"
-                    />
-                    <BreakdownCard
-                      label={t.accumulated}
-                      value={formatTokens(accumulated)}
-                      color="text-purple-400"
-                    />
-                    <BreakdownCard
-                      label={t.topUp}
-                      value={formatTokens(topUp)}
-                      color="text-amber-400"
-                    />
-                    <BreakdownCard
-                      label={t.bonus}
-                      value={formatTokens(bonus)}
-                      color="text-emerald-400"
                     />
                     <BreakdownCard
                       label={t.usedThisPeriod}

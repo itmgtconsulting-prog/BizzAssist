@@ -125,8 +125,8 @@ export interface EjendommeByOwnerResponse {
 
 /** Maks antal CVR-numre der accepteres per kald */
 const MAX_CVR = 30;
-/** Maks antal BFE-numre per batch (sikkerhedsloft) */
-const MAX_BATCH = 50;
+/** Maks antal BFE-numre per batch (sikkerhedsloft) — BIZZ-982: hævet fra 50 til 200 */
+const MAX_BATCH = 200;
 /** Standard antal BFE-numre i første batch */
 const DEFAULT_LIMIT = 5;
 /** Maks antal samtidige DAWA BFE-opslag */

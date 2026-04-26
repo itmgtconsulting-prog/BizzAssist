@@ -1951,7 +1951,8 @@ async function executeTool(
         const params = new URLSearchParams();
         params.set('enhedsNummer', enr);
         if (companyCvrs.length > 0) params.set('cvr', companyCvrs.join(','));
-        params.set('limit', '50');
+        // BIZZ-982: Hævet fra 50 til 200 for at fange alle ejendomme per person
+        params.set('limit', '200');
 
         const res = await fetch(`${baseUrl}/api/ejendomme-by-owner?${params}`, internalFetchOpts);
         if (!res.ok) {
@@ -1979,7 +1980,8 @@ async function executeTool(
           result = { fejl: data.fejl };
           break;
         }
-        const MAX_EJENDOMME_PERSON = 50;
+        // BIZZ-982: Hævet fra 50 til 100 per kategori (personligt + via virksomhed)
+        const MAX_EJENDOMME_PERSON = 100;
         const aktive = (data.ejendomme ?? []).filter((e) => e.aktiv !== false);
 
         // Kategoriser: personligt ejet vs via virksomhed

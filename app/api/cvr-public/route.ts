@@ -631,6 +631,78 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
     });
   }
 
+  // BIZZ-945: Kapitalhistorik fra attributter
+  const kapitalAttr = attributter.find((a) => (a as Record<string, unknown>).type === 'KAPITAL') as
+    | Record<string, unknown>
+    | undefined;
+  if (kapitalAttr) {
+    const kapValuter = attributter.find(
+      (a) => (a as Record<string, unknown>).type === 'KAPITALVALUTA'
+    ) as Record<string, unknown> | undefined;
+    const valuta = (kapValuter?.vaerdier as Array<{ vaerdi?: string }>)?.[0]?.vaerdi ?? 'DKK';
+    for (const v of (kapitalAttr.vaerdier ?? []) as Array<{
+      vaerdi?: string;
+      periode?: { gyldigFra?: string; gyldigTil?: string | null };
+    }>) {
+      if (v.vaerdi) {
+        const beloeb = parseInt(v.vaerdi, 10);
+        historik.push({
+          type: 'kapital',
+          fra: v.periode?.gyldigFra ?? '',
+          til: v.periode?.gyldigTil ?? null,
+          vaerdi: `${isNaN(beloeb) ? v.vaerdi : beloeb.toLocaleString('da-DK')} ${valuta}`,
+        });
+      }
+    }
+  }
+
+  // BIZZ-945: Revisor-historik fra deltagerRelation (organisationsNavn=Revision)
+  // Parses revisorer separat for historik-timeline
+  const revisionRelationer = Array.isArray(src.deltagerRelation)
+    ? (src.deltagerRelation as Record<string, unknown>[]).filter((r) => {
+        const orgs = Array.isArray(r.organisationer)
+          ? (r.organisationer as Record<string, unknown>[])
+          : [];
+        return orgs.some((o) => {
+          const navne = Array.isArray(o.organisationsNavn)
+            ? (o.organisationsNavn as Array<{ navn?: string }>)
+            : [];
+          return navne.some((n) => n.navn?.toUpperCase().includes('REVISION'));
+        });
+      })
+    : [];
+  for (const rel of revisionRelationer) {
+    const deltager = rel.deltager as Record<string, unknown> | undefined;
+    if (!deltager) continue;
+    const navne = Array.isArray(deltager.navne)
+      ? (deltager.navne as Array<{
+          navn?: string;
+          periode?: { gyldigFra?: string; gyldigTil?: string | null };
+        }>)
+      : [];
+    const aktivtNavn = navne.find((n) => !n.periode?.gyldigTil) ?? navne[navne.length - 1];
+    const orgs = Array.isArray(rel.organisationer)
+      ? (rel.organisationer as Record<string, unknown>[])
+      : [];
+    for (const o of orgs) {
+      const orgNavne = Array.isArray(o.organisationsNavn)
+        ? (o.organisationsNavn as Array<{
+            navn?: string;
+            periode?: { gyldigFra?: string; gyldigTil?: string | null };
+          }>)
+        : [];
+      const revNavne = orgNavne.filter((n) => n.navn?.toUpperCase().includes('REVISION'));
+      for (const rn of revNavne) {
+        historik.push({
+          type: 'revisor',
+          fra: rn.periode?.gyldigFra ?? '',
+          til: rn.periode?.gyldigTil ?? null,
+          vaerdi: aktivtNavn?.navn ?? 'Revisor',
+        });
+      }
+    }
+  }
+
   // ── Ejere / Deltagere (deltagerRelation) ──
   const relationer = Array.isArray(src.deltagerRelation)
     ? (src.deltagerRelation as Record<string, unknown>[])

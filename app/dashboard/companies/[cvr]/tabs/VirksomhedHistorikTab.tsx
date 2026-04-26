@@ -10,6 +10,8 @@ import {
   ArrowRightLeft,
   Briefcase,
   CheckCircle,
+  Coins,
+  FileSearch,
   Clock,
   ExternalLink,
   Factory,
@@ -39,6 +41,8 @@ const historikTypeConfig: Record<string, { icon: React.ReactNode; color: string 
   ejerskab: { icon: <Shield size={14} />, color: 'text-orange-400' },
   fusion: { icon: <ArrowRightLeft size={14} />, color: 'text-rose-400' },
   spaltning: { icon: <ArrowRightLeft size={14} />, color: 'text-pink-400' },
+  kapital: { icon: <Coins size={14} />, color: 'text-yellow-400' },
+  revisor: { icon: <FileSearch size={14} />, color: 'text-teal-400' },
 };
 
 interface Props {

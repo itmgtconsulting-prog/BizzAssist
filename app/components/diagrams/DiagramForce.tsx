@@ -2047,8 +2047,8 @@ function DiagramForce({
             });
             const prompt =
               lang === 'da'
-                ? 'Jeg har vedhæftet mit ejerskabs-diagram som JSON. Giv mig en kort opsummering af strukturen, og generér en Excel-fil med alle nodes (ét ark) og edges (ét ark).'
-                : 'I have attached my ownership diagram as JSON. Give me a short summary of the structure and generate an Excel file with all nodes (one sheet) and edges (one sheet).';
+                ? 'Jeg har vedhæftet mit ejerskabs-diagram som JSON. Giv mig en kort opsummering af strukturen, og spørg mig om jeg vil have en Excel-fil (alle nodes + edges) eller en Word-rapport med ejerskabsoversigten.'
+                : 'I have attached my ownership diagram as JSON. Give me a short summary of the structure, and ask me whether I want an Excel file (all nodes + edges) or a Word report with the ownership overview.';
             window.dispatchEvent(
               new CustomEvent('bizz:ai-attach-files', {
                 detail: { files: [file], prompt },

@@ -57,7 +57,15 @@ const ScratchInputSchema = z
     // format-specifikt nedenfor.
     columns: z.array(z.object({ key: z.string(), header: z.string() })).optional(),
     rows: z.array(z.record(z.string(), z.unknown())).optional(),
-    sections: z.array(z.object({ heading: z.string(), body: z.string() })).optional(),
+    sections: z
+      .array(
+        z.object({
+          heading: z.string(),
+          body: z.string(),
+          imageBase64: z.string().max(5_000_000).optional(),
+        })
+      )
+      .optional(),
     subtitle: z.string().optional(),
     sheetName: z.string().optional(),
     // BIZZ-935: PPTX slides input

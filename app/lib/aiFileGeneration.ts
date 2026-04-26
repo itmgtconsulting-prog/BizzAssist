@@ -80,6 +80,8 @@ export const GenerateDocxInputSchema = z.object({
       z.object({
         heading: z.string().min(1).max(200),
         body: z.string().max(50_000),
+        /** BIZZ-934: Valgfri base64-encoded PNG til indlejring i DOCX. */
+        imageBase64: z.string().max(5_000_000).optional(),
       })
     )
     .min(1)
@@ -274,6 +276,9 @@ export async function generateDocx(input: GenerateDocxInput): Promise<GeneratedF
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&apos;');
 
+  // BIZZ-934: Track image files for DOCX embedding
+  const imageFiles: Array<{ rId: string; buf: Buffer }> = [];
+
   // Body XML
   const paragraphs: string[] = [];
   paragraphs.push(
@@ -293,7 +298,28 @@ export async function generateDocx(input: GenerateDocxInput): Promise<GeneratedF
     for (const line of bodyLines) {
       paragraphs.push(`<w:p><w:r><w:t xml:space="preserve">${esc(line)}</w:t></w:r></w:p>`);
     }
+    // BIZZ-934: Indlejr PNG-billede i DOCX hvis imageBase64 er sat
+    if (section.imageBase64) {
+      const imgIdx = imageFiles.length + 1;
+      const rIdImg = `rIdImg${imgIdx}`;
+      const imgBuf = Buffer.from(section.imageBase64, 'base64');
+      imageFiles.push({ rId: rIdImg, buf: imgBuf });
+      // EMU: 1 inch = 914400 EMU. ~6 inches wide, auto height (aspect ratio maintained by Word)
+      const widthEmu = 5486400; // ~6 inches
+      const heightEmu = 3200400; // ~3.5 inches (default — Word auto-scales)
+      paragraphs.push(
+        `<w:p><w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><wp:extent cx="${widthEmu}" cy="${heightEmu}"/><wp:docPr id="${imgIdx}" name="Diagram ${imgIdx}"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="${imgIdx}" name="diagram.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${rIdImg}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${widthEmu}" cy="${heightEmu}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`
+      );
+    }
   }
+
+  // Build image relationships
+  const imageRels = imageFiles
+    .map(
+      (img) =>
+        `<Relationship Id="${img.rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${img.rId}.png"/>`
+    )
+    .join('\n  ');
 
   const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
@@ -306,6 +332,7 @@ export async function generateDocx(input: GenerateDocxInput): Promise<GeneratedF
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
+  <Default Extension="png" ContentType="image/png"/>
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
 </Types>`;
 
@@ -314,10 +341,21 @@ export async function generateDocx(input: GenerateDocxInput): Promise<GeneratedF
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
 </Relationships>`;
 
+  const wordRelsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  ${imageRels}
+</Relationships>`;
+
   const zip = new PizZip();
   zip.file('[Content_Types].xml', contentTypesXml);
   zip.file('_rels/.rels', relsXml);
   zip.file('word/document.xml', documentXml);
+  if (imageFiles.length > 0) {
+    zip.file('word/_rels/document.xml.rels', wordRelsXml);
+    for (const img of imageFiles) {
+      zip.file(`word/media/${img.rId}.png`, img.buf);
+    }
+  }
 
   const buffer = Buffer.from(zip.generate({ type: 'nodebuffer', compression: 'DEFLATE' }));
   if (buffer.length > MAX_OUTPUT_BYTES) {

@@ -27,6 +27,7 @@ import type { VurderingData } from '@/app/api/vurdering/route';
 import type { ForelobigVurdering } from '@/app/api/vurdering-forelobig/route';
 import type { DawaAdresse, DawaJordstykke } from '@/app/lib/dawa';
 import type { CVRVirksomhed } from '@/app/api/cvr/route';
+import OmraadeProfilSektion from '@/app/components/ejendomme/OmraadeProfilSektion';
 import type { Ejerlejlighed } from '@/app/api/ejerlejligheder/route';
 
 interface TinglysningSnapshot {
@@ -70,6 +71,8 @@ interface Props {
   visOphoerte: boolean;
   /** Setter for visOphoerte */
   setVisOphoerte: React.Dispatch<React.SetStateAction<boolean>>;
+  /** BIZZ-947: Kommunekode for områdeprofil */
+  kommunekode?: string | null;
 }
 
 /**
@@ -94,6 +97,7 @@ export default function EjendomOverblikTab({
   cvrApiDown,
   visOphoerte,
   setVisOphoerte,
+  kommunekode,
 }: Props) {
   const da = lang === 'da';
 
@@ -723,6 +727,8 @@ export default function EjendomOverblikTab({
           </div>
         </div>
       )}
+      {/* BIZZ-947: Områdeprofil fra Danmarks Statistik */}
+      <OmraadeProfilSektion kommunekode={kommunekode ?? null} lang={lang} />
     </div>
   );
 }

@@ -380,6 +380,23 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['enhedsNummer'],
     },
   },
+  // BIZZ-947: Områdeprofil fra Danmarks Statistik
+  {
+    name: 'hent_omraadeprofil',
+    description:
+      'Hent nøgletal for en kommune fra Danmarks Statistik: befolkning, gennemsnitsindkomst og antal boliger. Kræver kommunekode (3-4 cifre, fx "167" for Hvidovre). Brug dette til spørgsmål om demografi, indkomst og boligmarked i et område.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        kommunekode: {
+          type: 'string',
+          description:
+            'Kommunekode (3-4 cifre). Findes i kontekst på ejendomssider, eller via dawa_adresse_detaljer.',
+        },
+      },
+      required: ['kommunekode'],
+    },
+  },
   // BIZZ-890 (audit G2): Virksomheds-historik (navn/adresse/form/status/
   // branche/fusion/spaltning) via /api/cvr-public. Historik-tab i UI
   // viser dette men AI havde ingen tool → kunne ikke svare "hvornår
@@ -614,6 +631,7 @@ const TOOL_STATUS: Record<string, string> = {
   // BIZZ-889
   hent_ejendomsadmin: 'Henter ejendomsadministrator…',
   // BIZZ-890
+  hent_omraadeprofil: 'Henter områdeprofil…',
   hent_virksomhed_historik: 'Henter virksomhedshistorik…',
   // BIZZ-891
   hent_virksomhed_ejere: 'Henter virksomhedens ejere…',
@@ -1057,6 +1075,20 @@ async function executeTool(
       // BIZZ-890 (audit G2): virksomhedshistorik via /api/cvr-public.
       // Returnerer tidslinje fra periodiserede arrays (navne, adresse,
       // form, status, branche) + fusioner/spaltninger.
+      case 'hent_omraadeprofil': {
+        // BIZZ-947: Hent nøgletal fra Danmarks Statistik via intern API
+        const res = await fetch(
+          `${baseUrl}/api/statistik/omraade?kommunekode=${encodeURIComponent(input.kommunekode)}`,
+          internalFetchOpts
+        );
+        if (!res.ok) {
+          result = { fejl: toolErrorMessage('Områdeprofil', res.status) };
+          break;
+        }
+        result = await res.json();
+        break;
+      }
+
       case 'hent_virksomhed_historik': {
         const cvr = input.cvr?.trim();
         if (!cvr || !/^\d{8}$/.test(cvr)) {

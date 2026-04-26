@@ -2177,6 +2177,9 @@ export default function EjendomDetaljeClient({
                 cvrApiDown={cvrApiDown}
                 visOphoerte={visOphoerte}
                 setVisOphoerte={setVisOphoerte}
+                kommunekode={
+                  dawaJordstykke?.kommune?.kode ? String(dawaJordstykke.kommune.kode) : null
+                }
               />
             )}
 

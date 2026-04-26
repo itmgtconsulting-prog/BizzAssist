@@ -110,15 +110,19 @@ const VERCEL_API = 'https://api.vercel.com';
  *
  * @returns Array of deployments, or null if credentials are missing.
  */
-async function fetchVercelDeployments(): Promise<VercelDeployment[] | null> {
+async function fetchVercelDeployments(limit = 50): Promise<VercelDeployment[] | null> {
   const token = process.env.VERCEL_API_TOKEN;
   const projectId = process.env.VERCEL_PROJECT_ID;
   if (!token || !projectId) return null;
 
   const teamId = process.env.VERCEL_TEAM_ID;
+  // BIZZ-769: pagination — load up to 100 deployments so client can page
+  // through them. Vercel v6 caps limit at 100 per request; larger histories
+  // would need cursor-based "until" pagination, tracked as follow-up.
+  const capped = Math.max(10, Math.min(100, limit));
   const params = new URLSearchParams({
     projectId,
-    limit: '10',
+    limit: String(capped),
     ...(teamId ? { teamId } : {}),
   });
 
@@ -143,17 +147,23 @@ async function fetchVercelDeployments(): Promise<VercelDeployment[] | null> {
  *
  * Returns recent deployments from Vercel and the last 20 scan records.
  */
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: Request): Promise<NextResponse> {
   try {
     const user = await verifyAdmin();
     if (!user) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
+    // BIZZ-769: accept ?limit=N (10-100) so the UI can request bigger
+    // deployment pages. Scans stay capped at 20 for now.
+    const url = new URL(request.url);
+    const limitParam = parseInt(url.searchParams.get('limit') ?? '50', 10);
+    const limit = Number.isFinite(limitParam) ? limitParam : 50;
+
     // Fetch deployments and scan history in parallel.
     const adminAny = createAdminClient();
     const [deployments, scansResult] = await Promise.all([
-      fetchVercelDeployments(),
+      fetchVercelDeployments(limit),
       adminAny
         .from('service_manager_scans')
         .select('*')

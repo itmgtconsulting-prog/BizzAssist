@@ -15,12 +15,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { darAutocomplete } from '@/app/lib/dar';
+import { expandAddressQueryVariants, hasInitialPrefix } from '@/app/lib/search/normalizeQuery';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logActivity } from '@/app/lib/activityLog';
 import { logger } from '@/app/lib/logger';
 import { parseQuery } from '@/app/lib/validate';
+import { fetchBbrStatusForAdresser } from '@/app/lib/bbrEjendomStatus';
+import { DAR_STATUS } from '@/app/lib/bbrKoder';
 
 /** Zod schema for autocomplete query params */
 const autocompleteSchema = z.object({
@@ -50,7 +53,52 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const results = await darAutocomplete(q);
+    // BIZZ-843: Initialer-normalisering. Brugere skriver ofte "HC
+    // Møllersvej" / "H.C. Andersens" hvor DAR har "H C Møllersvej".
+    // Når query har et initialer-mønster prøver vi begge varianter
+    // parallelt og merger resultater (dedup på adresse.id).
+    const variants = hasInitialPrefix(q) ? expandAddressQueryVariants(q) : [q];
+    const variantResults = await Promise.all(variants.map((v) => darAutocomplete(v)));
+    const seenIds = new Set<string>();
+    const results = [];
+    for (const batch of variantResults) {
+      for (const r of batch) {
+        if (seenIds.has(r.adresse.id)) continue;
+        seenIds.add(r.adresse.id);
+        results.push(r);
+      }
+    }
+    // BIZZ-785 iter 2a: berig med server-side is_udfaset flag fra
+    // lokal bbr_ejendom_status-tabel. Batch-lookup pr. adresse-ID.
+    // Tabellen er populated af backfill-scriptet + cron-refresh.
+    // Missing row → status bliver ikke overskrevet (ukendt = aktiv).
+    const adgangsadresseIds = results
+      .filter((r) => r.type === 'adgangsadresse' && r.adresse.id.length >= 20)
+      .map((r) => r.adresse.id);
+    if (adgangsadresseIds.length > 0) {
+      const statusMap = await fetchBbrStatusForAdresser(adgangsadresseIds);
+      for (const r of results) {
+        const entry = statusMap.get(r.adresse.id.toLowerCase());
+        if (entry) {
+          // Server-side verificeret udfaset-flag — overskriver DAR-
+          // status-proxy hvis tilgængelig.
+          if (entry.isUdfaset) {
+            r.status = DAR_STATUS.Nedlagt;
+          }
+          // BIZZ-831: Pass BFE through for SFE href routing
+          if (entry.bfeNummer) {
+            r.bfe = entry.bfeNummer;
+          }
+          // BIZZ-821: Berig med filter-felter fra bbr_ejendom_status
+          // (migration 076). Null-felter falder igennem filtre (vis som
+          // "ukendt" → inkludér i resultat).
+          if (entry.samletBoligareal != null) r.boligareal = entry.samletBoligareal;
+          if (entry.opfoerelsesaar != null) r.opfoerelsesaar = entry.opfoerelsesaar;
+          if (entry.energimaerke != null) r.energimaerke = entry.energimaerke;
+          if (entry.anvendelseskode != null) r.anvendelseskode = entry.anvendelseskode;
+        }
+      }
+    }
     return NextResponse.json(results, {
       headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120' },
     });

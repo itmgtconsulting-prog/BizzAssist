@@ -832,4 +832,20 @@ export async function provisionTenantSchema(schemaName: string, tenantId: string
       `[provisionTenantSchema] ai_tables ikke oprettet for "${schemaName}": ${aiErr.message}`
     );
   }
+
+  // BIZZ-818: AI chat-historik tabeller (ai_chat_sessions + ai_chat_messages)
+  // oprettes via separat RPC af samme grund som provision_tenant_ai_tables —
+  // bevarer monolitisk provision_tenant_schema uændret. Idempotent via
+  // CREATE TABLE IF NOT EXISTS i provision_ai_chat_tables (migration 073).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error: chatErr } = await (admin.rpc as any)('provision_ai_chat_tables', {
+    p_schema_name: schemaName,
+    p_tenant_id: tenantId,
+  });
+
+  if (chatErr) {
+    logger.warn(
+      `[provisionTenantSchema] ai_chat_tables ikke oprettet for "${schemaName}": ${chatErr.message}`
+    );
+  }
 }

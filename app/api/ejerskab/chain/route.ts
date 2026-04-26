@@ -60,13 +60,18 @@ interface ChainNode {
   bfeNummer?: number;
 }
 
-/** Status-tekster fra Tinglysning der ikke er faktiske ejere */
-const STATUS_TEKSTER = [
-  'opdelt i ejerlejlighed', // matcher både "ejerlejligheder" og "ejerlejlighed 1-4, 8-56"
-  'opdelt i ideelle anparter',
-  'opdelt i ideel anpart',
-  'del af samlet ejendom',
-];
+/**
+ * Status-tekster fra Tinglysning der ikke er faktiske ejere.
+ *
+ * BIZZ-726: Udvidet til regex så alle varianter rammes — "Opdelt i anpart 1-2"
+ * (uden "ideelle") slap tidligere igennem filteret og blev fejlagtigt vist som
+ * privatperson-ejer på ejendommens ejerskabs-tab. Dækker nu:
+ *   - opdelt i ejerlejlighed / ejerlejligheder (med eller uden nr.-range)
+ *   - opdelt i (ideel|ideelle)? anpart / anparter (med eller uden nr.-range)
+ *   - del af samlet ejendom
+ */
+export const STATUS_TEKST_RE =
+  /^\s*(opdelt i (ejerlejlighed(er)?|(ideel(le)? )?anpart(er)?)|del af samlet ejendom)\b/i;
 
 interface ChainEdge {
   from: string;
@@ -432,9 +437,7 @@ export async function GET(req: NextRequest) {
                 });
               } else {
                 // Tjek om "ejeren" egentlig er en status-tekst (fx "Opdelt i ejerlejligheder")
-                const erStatus = STATUS_TEKSTER.some((s) =>
-                  (ejer.navn ?? '').toLowerCase().includes(s)
-                );
+                const erStatus = STATUS_TEKST_RE.test(ejer.navn ?? '');
 
                 if (erStatus) {
                   const id = `status-${nodes.length}`;

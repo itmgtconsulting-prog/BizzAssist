@@ -49,6 +49,8 @@ import { saveRecentPerson } from '@/app/lib/recentPersons';
 import { recordRecentVisit } from '@/app/lib/recordRecentVisit';
 import { buildPersonDiagramGraph } from '@/app/components/diagrams/DiagramData';
 import type { DiagramPropertySummary } from '@/app/components/diagrams/DiagramData';
+import CreateCaseModal from '@/app/components/sager/CreateCaseModal';
+import { useDomainMemberships } from '@/app/hooks/useDomainMemberships';
 import dynamic from 'next/dynamic';
 import VerifiedLinks from '@/app/components/VerifiedLinks';
 import { useSubscription } from '@/app/context/SubscriptionContext';
@@ -870,6 +872,9 @@ export default function PersonDetailPageClient({
 
   /** BIZZ-374: Følg-knap state — synced med Supabase saved_entities */
   const [erFulgt, setErFulgt] = useState(false);
+  // BIZZ-808: Opret sag-modal state
+  const [opretSagOpen, setOpretSagOpen] = useState(false);
+  const { memberships: domainMemberships } = useDomainMemberships();
   const [foelgToggling, setFoelgToggling] = useState(false);
 
   /** Sync følg-tilstand fra Supabase ved mount */
@@ -1008,12 +1013,39 @@ export default function PersonDetailPageClient({
       roller: v.roller.filter((r) => !r.til).map((r) => r.rolle),
     }));
 
+    // BIZZ-941: Send pre-loaded ejendomme så AI ikke re-fetcher dem.
+    // Cap 50 for at holde system-prompt kompakt.
+    const preloadedEjendomme = ejendommeFetchComplete
+      ? ejendommeData
+          .filter((e) => e.aktiv !== false)
+          .slice(0, 50)
+          .map((e) => ({
+            bfe: e.bfeNummer,
+            adresse: e.adresse ?? null,
+            type: e.ejendomstype ?? null,
+            ejerandel: e.ejerandel ?? null,
+            personligtEjet: typeof e.ownerCvr === 'string' && e.ownerCvr.startsWith('person-'),
+          }))
+      : undefined;
+
     setAICtx({
       enhedsNummer: enhedsStr,
       personNavn: data?.navn ?? undefined,
       personVirksomheder: personVirksomheder ?? undefined,
+      pageType: 'person',
+      activeTab: aktivTab,
+      preloadedEjendomme,
+      ejendommeTotal: ejendommeFetchComplete ? ejendommeTotalBfe : undefined,
     });
-  }, [enhedsStr, data, setAICtx]);
+  }, [
+    enhedsStr,
+    data,
+    aktivTab,
+    ejendommeData,
+    ejendommeFetchComplete,
+    ejendommeTotalBfe,
+    setAICtx,
+  ]);
 
   // ─── Fetch related companies ────────────────────────────────────────────────
   const fetchRelated = useCallback(async () => {
@@ -1257,18 +1289,41 @@ export default function PersonDetailPageClient({
    */
   const personDiagramGraph = useMemo(() => {
     if (!data) return { nodes: [], edges: [], mainId: '' };
+    // BIZZ-925: Vent med diagram-build til ejendomme-fetch er komplet.
+    // Progressiv loading kalder setEjendommeData flere gange (batch 5 → 10),
+    // og hvert kald skabte ny graf-reference → DiagramForce cancelerede sin
+    // igangværende D3-simulation → positions forblev tom → blank canvas.
+    // Ved at gate på ejendommeFetchComplete bygger vi kun grafen én gang
+    // med komplet data, så simulationen kan køre uforstyrret.
+    if (!ejendommeFetchComplete) return { nodes: [], edges: [], mainId: '' };
     // BIZZ-571: Person-diagram ekskluderer solgte ejendomme — samme regel
     // som virksomheds-diagrammet.
+    // BIZZ-849: ejendommeData indeholder BÅDE virksomheds-ejede (numeric
+    // ownerCvr) OG personligt ejede (ownerCvr='person-<enhedsNummer>').
+    // parseInt på "person-..." gav NaN og entries blev grupperet under
+    // NaN-key der aldrig matchede nogen node. Separer de to kilder:
     const aktiveEjendomme = ejendommeData.filter((p) => p.aktiv !== false);
-    const propertiesByCvr =
-      aktiveEjendomme.length > 0
-        ? aktiveEjendomme.reduce((map, p) => {
-            const cvrNum = parseInt(p.ownerCvr, 10);
-            if (!map.has(cvrNum)) map.set(cvrNum, []);
-            map.get(cvrNum)!.push(p as DiagramPropertySummary);
-            return map;
-          }, new Map<number, DiagramPropertySummary[]>())
-        : undefined;
+    const propertiesByCvr = new Map<number, DiagramPropertySummary[]>();
+    const personlyOwnedFromEnhedLookup: DiagramPropertySummary[] = [];
+    for (const p of aktiveEjendomme) {
+      if (typeof p.ownerCvr === 'string' && p.ownerCvr.startsWith('person-')) {
+        personlyOwnedFromEnhedLookup.push(p as DiagramPropertySummary);
+        continue;
+      }
+      const cvrNum = parseInt(p.ownerCvr, 10);
+      if (!Number.isFinite(cvrNum)) continue; // skip invalid ownerCvr-strenge
+      if (!propertiesByCvr.has(cvrNum)) propertiesByCvr.set(cvrNum, []);
+      propertiesByCvr.get(cvrNum)!.push(p as DiagramPropertySummary);
+    }
+    // Merge enhedsNummer-lookup-resultater med personalBfes (bulk-data-lookup).
+    // Dedup på bfeNummer så samme ejendom ikke rendres to gange.
+    const seenBfe = new Set<number>();
+    const mergedPersonal: DiagramPropertySummary[] = [];
+    for (const p of [...personalBfes, ...personlyOwnedFromEnhedLookup]) {
+      if (seenBfe.has(p.bfeNummer)) continue;
+      seenBfe.add(p.bfeNummer);
+      mergedPersonal.push(p);
+    }
     return buildPersonDiagramGraph(
       data.navn,
       data.enhedsNummer,
@@ -1276,11 +1331,12 @@ export default function PersonDetailPageClient({
       relatedCompanies,
       noeglePersonerMap,
       derived?.andreVirksomheder ?? [],
-      propertiesByCvr,
-      personalBfes
+      propertiesByCvr.size > 0 ? propertiesByCvr : undefined,
+      mergedPersonal
     );
   }, [
     data,
+    ejendommeFetchComplete,
     topLevelEjer,
     relatedCompanies,
     noeglePersonerMap,
@@ -1441,7 +1497,12 @@ export default function PersonDetailPageClient({
    * også vises i Ejendomme-tab.
    */
   useEffect(() => {
-    if ((aktivTab !== 'properties' && aktivTab !== 'relations') || !derived) return;
+    // BIZZ-732: Ikke længere tab-gated — prefetch ejendomme + relaterede
+    // virksomheder så snart derived er klar, så Ejendomme- og Diagram-fanen
+    // ikke kræver ny venten ved tab-klik. fetchEjendommeProgressively har
+    // sin egen key-based deduplication (ejendomFetchKeyRef) så effekten
+    // genkøres ikke unødigt.
+    if (!derived) return;
 
     /* Saml CVR-numre for direkte ejede virksomheder */
     const ejerCvrs = derived.ejerVirksomheder.map((v) => String(v.cvr).padStart(8, '0'));
@@ -1505,7 +1566,7 @@ export default function PersonDetailPageClient({
         .finally(() => setHandlerLoading(false));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aktivTab, derived, relatedCompanies, fetchEjendommeProgressively]);
+  }, [derived, relatedCompanies, fetchEjendommeProgressively]);
 
   /**
    * BIZZ-597 Fase 2: Batch-enrichment når properties-tab aktiveres.
@@ -1513,9 +1574,14 @@ export default function PersonDetailPageClient({
    * PropertyOwnerCard sit eget /enrich-kald = N+1 fetches med cold-start-
    * latency. Batch-endpointet henter areal, vurdering, købspris m.v. i ét
    * kald for alle savnede BFE'er.
+   *
+   * BIZZ-851: Guarden "aktivTab !== 'properties'" fjernet så enrichment
+   * starter så snart ejendomme-data er loaded, ikke først ved tab-klik.
+   * Resultat: Ejendomme-tab er klar uden ventetid når brugeren først
+   * klikker derhen.
    */
   useEffect(() => {
-    if (aktivTab !== 'properties') return;
+    // BIZZ-851: Start enrichment straks ejendomme-data er klar (ingen tab-guard).
     // BIZZ-638: Enrich BÅDE virksomhedsejede (ejendommeData) OG personligt
     // ejede (personalBfes) — sidstnævnte kommer fra ejf_ejerskab-bulkdata
     // (BIZZ-534/595) og blev tidligere glemt i enrich-loopet så de 9
@@ -1579,7 +1645,9 @@ export default function PersonDetailPageClient({
       .catch(() => {});
 
     return () => controller.abort();
-  }, [aktivTab, ejendommeData, personalBfes, preEnrichedByBfe]);
+    // BIZZ-851: aktivTab-dependency fjernet fordi guarden blev fjernet i
+    // useEffect-body. prefetch trigger nu ved ejendomme-data-changes alene.
+  }, [ejendommeData, personalBfes, preEnrichedByBfe]);
 
   /**
    * BIZZ-594: Fetch personligt ejede ejendomme (bulk-data) når diagram eller
@@ -1902,6 +1970,20 @@ export default function PersonDetailPageClient({
                     ? 'Følg'
                     : 'Follow'}
               </button>
+              {/* BIZZ-808: Opret sag-knap — kun synlig for domain-brugere */}
+              {domainMemberships.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setOpretSagOpen(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-sm transition-all bg-emerald-600/20 hover:bg-emerald-600/30 border-emerald-500/40 text-emerald-300"
+                  aria-label={
+                    lang === 'da' ? 'Opret sag for denne person' : 'Create case for this person'
+                  }
+                >
+                  <Briefcase size={14} />
+                  {lang === 'da' ? 'Opret sag' : 'Create case'}
+                </button>
+              )}
             </div>
           </div>
 
@@ -2356,15 +2438,14 @@ export default function PersonDetailPageClient({
               // D3-simulering genstarter nu kun når diagram-data reelt ændrer sig.
               graph={personDiagramGraph}
               lang={lang}
-              // BIZZ-571: Person-diagram åbnede tidligere uden ejendomme
-              // synlige for at undgå overfyldt view.
-              // BIZZ-619: Revideret — ejendomme skal vises fra start så
-              // persondiagrammet er symmetrisk med virksomhedsdiagrammets
-              // opførsel. Antal pr. virksomhed er begrænset til 3 via
-              // MAX_PROPS_PER_COMPANY, så overfyldt-risikoen er mindre
-              // relevant end konsistens. Brugeren kan stadig skjule
-              // ejendomme via toolbar-toggle.
-              defaultShowProperties={true}
+              // BIZZ-571: Person-diagram aabnede tidligere uden ejendomme
+              // synlige for at undgaa overfyldt view.
+              // BIZZ-619: Revideret — ejendomme skulle vises fra start for
+              // konsistens med virksomhedsdiagrammet.
+              // BIZZ-847: Ændret tilbage — for personer med mange personligt
+              // ejede ejendomme (fx Jakob med 9) blev diagrammet for tungt.
+              // Default OFF; brugeren kan toggle via toolbar eller Udvid.
+              defaultShowProperties={false}
               onNodeClick={(node) => {
                 // BIZZ-368: clicking a company node in the person diagram should switch to
                 // the overview tab (staying on this page) rather than navigating to the
@@ -2988,6 +3069,17 @@ export default function PersonDetailPageClient({
             </p>
           </div>
         </div>
+      )}
+      {/* BIZZ-808: Opret sag-modal — person pre-populeres som kunde */}
+      {opretSagOpen && data && (
+        <CreateCaseModal
+          initialEntity={{
+            kind: 'person',
+            id: String(enhedsNummer),
+            label: data.navn,
+          }}
+          onClose={() => setOpretSagOpen(false)}
+        />
       )}
     </div>
   );

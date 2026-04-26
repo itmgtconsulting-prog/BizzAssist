@@ -55,6 +55,26 @@
     {
       "path": "/api/cron/pull-cvr-aendringer",
       "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/api/cron/domain-anomalies",
+      "schedule": "45 4 * * *"
+    },
+    {
+      "path": "/api/cron/domain-retention",
+      "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/api/cron/purge-ai-files",
+      "schedule": "7 * * * *"
+    },
+    {
+      "path": "/api/cron/refresh-ejendom-status",
+      "schedule": "0 2 * * 0"
+    },
+    {
+      "path": "/api/cron/refresh-deltager-berigelse",
+      "schedule": "15 4 * * *"
     }
   ]
 }

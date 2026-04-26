@@ -120,6 +120,19 @@ Every function, component, hook, and API route MUST have a JSDoc comment block:
 
 See `docs/architecture/SAAS.md` for full folder structure.
 
+## Ejendoms-terminologi (BIZZ-859 — authoritative)
+
+Dansk ejendomshierarki har 4 niveauer. Brug disse navne konsistent i kode, UI og kommentarer:
+
+| Niveau | Dansk label   | Engelsk label | Farve   | Ikon      | Beskrivelse                           |
+| ------ | ------------- | ------------- | ------- | --------- | ------------------------------------- |
+| 1      | SFE           | SFE           | amber   | Building2 | Samlet Fast Ejendom — matrikel-niveau |
+| 2      | Hovedejendom  | Main property | amber   | Building2 | Ejerlejlighed der selv er opdelt      |
+| 3      | Ejerlejlighed | Condominium   | emerald | Home      | Leaf-niveau enhed med etage/dør       |
+| –      | Bygning       | Building      | blue    | Building2 | Bygning på SFE uden opdelt-status     |
+
+Definitioner og style-konstanter: `app/lib/entityStyles.ts` → `EjendomKind` + `getEjendomKindStyle()`.
+
 ## Release Process (mandatory — no exceptions)
 
 Full process: `docs/agents/RELEASE_PROCESS.md`
@@ -182,10 +195,12 @@ These are the authoritative sources. Never assume — read first.
 
 **Approved `localStorage` exceptions** (primary store, no Supabase sync required):
 
-| Key                    | Component         | Justification                                                                                                                                             | Ticket   |
-| ---------------------- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
-| `bizzassist-map-style` | `PropertyMap.tsx` | Map style (satellite/street/BBR) is a device-local UI preference with no cross-device value. Storing in Supabase would add latency for a cosmetic toggle. | BIZZ-187 |
-| `bizzassist-map-zoom`  | `PropertyMap.tsx` | Zoom level is a transient navigation preference that is meaningless on other screen sizes/devices.                                                        | BIZZ-187 |
+| Key                              | Component                       | Justification                                                                                                                                             | Ticket   |
+| -------------------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| `bizzassist-map-style`           | `PropertyMap.tsx`               | Map style (satellite/street/BBR) is a device-local UI preference with no cross-device value. Storing in Supabase would add latency for a cosmetic toggle. | BIZZ-187 |
+| `bizzassist-map-zoom`            | `PropertyMap.tsx`               | Zoom level is a transient navigation preference that is meaningless on other screen sizes/devices.                                                        | BIZZ-187 |
+| `bizzassist-search-filters-open` | `UniversalSearchPageClient.tsx` | Open/closed state for the right-side filter panel is a per-device layout preference — screen width differs between phone/laptop/desktop.                  | BIZZ-786 |
+| `bizzassist-search-filter-width` | `UniversalSearchPageClient.tsx` | Resizable divider width is a per-device preference — optimal width differs by viewport size; syncing across devices would feel wrong.                     | BIZZ-786 |
 
 New exceptions require a JIRA ticket and an entry in this table before they may be merged.
 

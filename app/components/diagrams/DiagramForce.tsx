@@ -8,6 +8,7 @@
  */
 
 import { memo, useMemo, useRef, useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import {
   forceSimulation,
@@ -26,6 +27,8 @@ import {
   RotateCcw,
   Clock,
   X,
+  Download,
+  Sparkles,
 } from 'lucide-react';
 import type { DiagramVariantProps, DiagramNode, DiagramEdge } from './DiagramData';
 import type { PersonPublicData } from '@/app/api/cvr-public/person/route';
@@ -147,6 +150,22 @@ function DiagramForce({
   const svgRef = useRef<SVGSVGElement>(null);
   const [zoom, setZoom] = useState(1);
   const [positions, setPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
+  /**
+   * BIZZ-865: "Simulation ready" flag for at skjule layout-hop. Under
+   * force-sim'ens 120 async ticks render'er noder i foreløbige positioner
+   * der ændrer sig pr. tick-batch. Ved at holde SVG usynlig (opacity 0)
+   * indtil simulation er konvergeret og fitView er kørt, undgår brugeren
+   * at se node'er "hoppe" på plads. Fade-in sker via CSS-transition.
+   *
+   * BIZZ-932: Brug hasEverSimulated ref i stedet for oscillerende state.
+   * Async data-deps (noeglePersonerMap, personalBfes) genstartede simulation
+   * gentagne gange → cancelled-flag forhindrede setSimulationReady(true) →
+   * 2s fallback satte true → ny restart satte false → uendelig oscillation
+   * med opacity=0 permanent. Nu: første completion sætter ref=true og SVG
+   * forbliver synlig — efterfølgende sim-restarts opdaterer positions
+   * in-place uden at skjule diagrammet.
+   */
+  const hasEverSimulated = useRef(false);
   /** User-dragged node positions — preserved across simulation re-runs.
    * Cleared when user clicks Reset. */
   const userPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
@@ -387,6 +406,37 @@ function DiagramForce({
           }
         }
 
+        // BIZZ-688: Indskyd virtuel container-node "Personligt ejede ejendomme"
+        // mellem personen og dens direkte-ejede ejendomme så de renderes på
+        // en selvstændig linje/layer i diagrammet, adskilt fra virksomhedsnoder.
+        // Uden denne container får ejendomme samme dybde som virksomheder (begge
+        // er direkte children af personId) og blandes sammen på samme y-række.
+        // Same pattern som buildPersonGraph i DiagramData.ts (BIZZ-594/730).
+        const propertyEdgesFromPerson = newEdges.filter(
+          (e) => e.from === personId && e.to.startsWith('bfe-')
+        );
+        if (propertyEdgesFromPerson.length > 0) {
+          const propGroupId = `personal-props-group-${personId}`;
+          newNodes.push({
+            id: propGroupId,
+            label: lang === 'da' ? 'Personligt ejede ejendomme' : 'Personally owned properties',
+            sublabel:
+              lang === 'da'
+                ? `${propertyEdgesFromPerson.length} ejendomme`
+                : `${propertyEdgesFromPerson.length} properties`,
+            type: 'status',
+          });
+          // Edge person → container (personallyOwned flag for visuel adskillelse)
+          newEdges.push({ from: personId, to: propGroupId, personallyOwned: true });
+          // Re-route property-edges: person→property bliver container→property
+          for (const edge of newEdges) {
+            if (edge.from === personId && edge.to.startsWith('bfe-')) {
+              edge.from = propGroupId;
+              edge.personallyOwned = true;
+            }
+          }
+        }
+
         if (newNodes.length > 0) {
           setExtensionNodes((prev) => [...prev, ...newNodes]);
           setExtensionEdges((prev) => [...prev, ...newEdges]);
@@ -402,7 +452,7 @@ function DiagramForce({
         });
       }
     },
-    [expandedDynamic, loadingExpansion, graph.nodes, extensionNodes]
+    [expandedDynamic, loadingExpansion, graph.nodes, extensionNodes, lang]
   );
 
   /**
@@ -1092,6 +1142,12 @@ function DiagramForce({
   useEffect(() => {
     if (filteredGraph.nodes.length === 0) return;
 
+    // BIZZ-865/932: Skjul SVG KUN under allererste simulation-run (mount).
+    // Efterfølgende restarts (pga. async data som personalBfes eller
+    // noeglePersonerMap) holder SVG synlig — brugeren ser evt. et kort
+    // layout-hop, men det er langt bedre end usynligt diagram (BIZZ-932).
+    // initialFitDone bruges som proxy: hvis vi aldrig har fitted = første run.
+
     // Group by Y position (from nodeYMap) for initial X spread — ensures
     // persons and companies on separate sub-rows get independent X layouts
     const byY = new Map<number, DiagramNode[]>();
@@ -1240,7 +1296,12 @@ function DiagramForce({
       .force('centerX', forceCenter(0, 0).strength(0.05))
       .force('hierarchy', () => forceHierarchy())
       .alpha(1)
-      .alphaDecay(0.03);
+      .alphaDecay(0.03)
+      // BIZZ-690: Højere velocityDecay (0.6) gør simulering mere dæmpet.
+      // Default 0.4 tillod noder at drifte videre mellem ticks — i samspil
+      // med alphaDecay gav det langvarig jitter før convergence. 0.6 giver
+      // hurtig stabilisering uden at påvirke final position væsentligt.
+      .velocityDecay(0.6);
 
     // BIZZ-401: Run simulation in async chunks to avoid blocking the main thread.
     // Previously 120 synchronous ticks blocked navigation for large diagrams.
@@ -1280,6 +1341,13 @@ function DiagramForce({
       setTimeout(() => {
         if (!cancelled) setFitTrigger((t) => t + 1);
       }, 80);
+      // BIZZ-865/932: Marker simulation complete via ref (ikke state).
+      // Ref flipper til true ved første completion og forbliver true —
+      // efterfølgende simulation-restarts skjuler IKKE diagrammet.
+      // Kort delay (180ms) sikrer fitView-transformet er applied først.
+      setTimeout(() => {
+        if (!cancelled) hasEverSimulated.current = true;
+      }, 180);
     };
 
     runBatch();
@@ -1344,8 +1412,10 @@ function DiagramForce({
       // BIZZ-552: Tillad højere max-zoom (2.5x) så små grafer (2-3 noder)
       // fylder canvas i stedet for at flyde ude i hjørnet. Cap'et på 1.5x
       // efterlod for meget tom plads.
+      // BIZZ-931/932: Minimum zoom floor sat til 0.5 (50%) så noder
+      // altid er læsbare. Ved 0.15 var 320px noder kun ~48px — usynlige.
       const fit = Math.min((cW - 40) / viewBox.w, (cH - 40) / viewBox.h, 2.5);
-      const z = Math.max(fit, 0.15);
+      const z = Math.max(fit, 0.5);
       const scaledW = viewBox.w * z + 32;
       const scaledH = viewBox.h * z + 32;
       const panX = Math.round((cW - scaledW) / 2);
@@ -1709,7 +1779,9 @@ function DiagramForce({
 
   /** Toolbar with zoom controls + fullscreen toggle */
   const toolbar = (
-    <div className="flex items-center justify-between sticky top-0 z-10 bg-[#0a1020]/95 backdrop-blur-sm py-2 -mt-2">
+    <div
+      className={`flex items-center justify-between py-2 -mt-2 ${isFullscreen ? 'z-10 bg-[#0a1020]' : 'sticky top-0 z-10 bg-[#0a1020]/95 backdrop-blur-sm'}`}
+    >
       <h2 className="text-white font-semibold text-base flex items-center gap-2">
         <Briefcase size={16} className="text-blue-400" />
         {effectiveGraph.nodes.some((n) => n.type === 'property')
@@ -1898,6 +1970,97 @@ function DiagramForce({
         >
           {isFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
         </button>
+        {/* BIZZ-867/934: Eksport af diagram som PNG billede.
+            Serialiserer SVG → Canvas → PNG blob → download. */}
+        <button
+          onClick={async () => {
+            const svgEl = svgRef.current;
+            if (!svgEl) return;
+            const serializer = new XMLSerializer();
+            const svgString = serializer.serializeToString(svgEl);
+            const svgBlob = new Blob([`<?xml version="1.0" encoding="UTF-8"?>\n${svgString}`], {
+              type: 'image/svg+xml;charset=utf-8',
+            });
+            const svgUrl = URL.createObjectURL(svgBlob);
+            const img = new Image();
+            img.onload = () => {
+              const scale = 2; // 2x for high-DPI
+              const canvas = document.createElement('canvas');
+              canvas.width = img.width * scale;
+              canvas.height = img.height * scale;
+              const ctx = canvas.getContext('2d');
+              if (!ctx) return;
+              ctx.fillStyle = '#0f172a'; // dark background
+              ctx.fillRect(0, 0, canvas.width, canvas.height);
+              ctx.scale(scale, scale);
+              ctx.drawImage(img, 0, 0);
+              canvas.toBlob((blob) => {
+                if (!blob) return;
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `diagram-${Date.now()}.png`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+              }, 'image/png');
+              URL.revokeObjectURL(svgUrl);
+            };
+            img.src = svgUrl;
+          }}
+          className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-white bg-slate-800 border border-slate-700/50 rounded-lg transition ml-1"
+          aria-label={lang === 'da' ? 'Eksportér diagram som PNG' : 'Export diagram as PNG'}
+          title={lang === 'da' ? 'Eksportér som PNG-billede' : 'Export as PNG image'}
+        >
+          <Download size={13} />
+        </button>
+        {/* BIZZ-867 iter 5: Send diagram til AI. Serialiserer nodes+edges
+            til JSON-fil, uploader via /api/ai/attach (kilde for content),
+            og fyrer custom-event 'bizz:ai-attach-files' som AIChatPanel
+            lytter efter. Panelet modtager filen, folder preview ud, og
+            åbner drawer med pre-fillet prompt. AI kan nu genbruge
+            generate_document-tool til xlsx/docx-eksport. */}
+        <button
+          onClick={() => {
+            const payload = {
+              generated_at: new Date().toISOString(),
+              node_count: effectiveGraph.nodes.length,
+              edge_count: effectiveGraph.edges.length,
+              nodes: effectiveGraph.nodes.map((n) => ({
+                id: n.id,
+                type: n.type,
+                label: n.label,
+                cvr: 'cvr' in n ? n.cvr : undefined,
+                bfe: 'bfeNummer' in n ? n.bfeNummer : undefined,
+              })),
+              edges: effectiveGraph.edges.map((e) => ({
+                from: e.from,
+                to: e.to,
+                ejerandel: e.ejerandel ?? null,
+                personallyOwned: e.personallyOwned ?? false,
+              })),
+            };
+            const json = JSON.stringify(payload, null, 2);
+            const file = new File([json], `diagram-${Date.now()}.json`, {
+              type: 'application/json',
+            });
+            const prompt =
+              lang === 'da'
+                ? 'Jeg har vedhæftet mit ejerskabs-diagram som JSON. Giv mig en kort opsummering af strukturen, og spørg mig om jeg vil have en Excel-fil (alle nodes + edges) eller en Word-rapport med ejerskabsoversigten.'
+                : 'I have attached my ownership diagram as JSON. Give me a short summary of the structure, and ask me whether I want an Excel file (all nodes + edges) or a Word report with the ownership overview.';
+            window.dispatchEvent(
+              new CustomEvent('bizz:ai-attach-files', {
+                detail: { files: [file], prompt },
+              })
+            );
+          }}
+          className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-blue-300 bg-slate-800 border border-slate-700/50 rounded-lg transition ml-1"
+          aria-label={lang === 'da' ? 'Send diagram til AI' : 'Send diagram to AI'}
+          title={lang === 'da' ? 'Send diagram til AI Chat' : 'Send diagram to AI Chat'}
+        >
+          <Sparkles size={13} />
+        </button>
       </div>
     </div>
   );
@@ -1940,18 +2103,32 @@ function DiagramForce({
         // ejendom-relationer. Brugeren kan dermed hurtigt identificere
         // hvilke ejendomme der ejes direkte af personen vs via selskab.
         const isPersonToProperty = isPropertyEdge && fromNode?.type === 'person';
-        const strokeColor = isCoOwnerEdge
-          ? 'rgba(167,139,250,0.55)'
-          : isPersonToProperty
-            ? 'rgba(110,231,183,0.75)' // Lysere emerald-400
-            : isPropertyEdge
-              ? 'rgba(52,211,153,0.65)'
-              : edge.from === effectiveGraph.mainId || edge.to === effectiveGraph.mainId
-                ? 'rgba(96,165,250,0.85)'
-                : 'rgba(148,163,184,0.75)';
+        // BIZZ-689: crossOwnership-edges (krydsejerskab mellem virksomheder
+        // i samme graf) bruger amber-farve + dashed for visuel distinktion
+        // fra primary parent→child-edges.
+        const isCrossOwnership = !!edge.crossOwnership;
+        const strokeColor = isCrossOwnership
+          ? 'rgba(251,191,36,0.75)' // amber-400
+          : isCoOwnerEdge
+            ? 'rgba(167,139,250,0.55)'
+            : isPersonToProperty
+              ? 'rgba(110,231,183,0.75)' // Lysere emerald-400
+              : isPropertyEdge
+                ? 'rgba(52,211,153,0.65)'
+                : edge.from === effectiveGraph.mainId || edge.to === effectiveGraph.mainId
+                  ? 'rgba(96,165,250,0.85)'
+                  : 'rgba(148,163,184,0.75)';
         // BIZZ-585: Dashed stroke for person→property — samme signaleringsstil
         // som co-owner-edges men med emerald i stedet for lilla.
-        const dashArray = isCoOwnerEdge ? '4 3' : isPersonToProperty ? '5 3' : undefined;
+        // BIZZ-689: cross-ownership bruger længere dash-pattern (6 4) for at
+        // være tydeligt distinkt fra person→property (5 3) og co-owner (4 3).
+        const dashArray = isCrossOwnership
+          ? '6 4'
+          : isCoOwnerEdge
+            ? '4 3'
+            : isPersonToProperty
+              ? '5 3'
+              : undefined;
 
         return (
           <g key={`e-${i}`}>
@@ -2535,12 +2712,28 @@ function DiagramForce({
           padding: 16,
         }}
       >
+        {/* BIZZ-865/932: Loading-dot vises kun ved allerførste render
+            (ingen positions endnu). Efterfølgende sim-restarts viser
+            eksisterende layout mens nyt beregnes. */}
+        {!hasEverSimulated.current && positions.size === 0 && filteredGraph.nodes.length > 0 && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div className="w-2 h-2 rounded-full bg-blue-400/60 animate-pulse" />
+          </div>
+        )}
         <svg
           ref={svgRef}
           width={viewBox.w}
           height={viewBox.h}
           viewBox={`${viewBox.minX} ${viewBox.minY} ${viewBox.w} ${viewBox.h}`}
-          style={{ overflow: 'visible' }}
+          // BIZZ-932: SVG synlig så snart positions er beregnet (positions.size > 0)
+          // ELLER hasEverSimulated er true. Undgår permanent opacity:0 fra
+          // oscillerende simulationReady state. Første render fade'r ind via
+          // CSS-transition; efterfølgende restarts holder SVG synlig.
+          style={{
+            overflow: 'visible',
+            opacity: hasEverSimulated.current || positions.size > 0 ? 1 : 0,
+            transition: 'opacity 180ms ease-out',
+          }}
         >
           {svgContent}
         </svg>
@@ -2611,9 +2804,13 @@ function DiagramForce({
   ) : null;
 
   // ── Fullscreen overlay (BIZZ-248: topbar with close button) ──
+  // BIZZ-850: Portal til document.body saa overlay ikke bliver trapped
+  // i <main>.z-0 stacking context. <header> i dashboard-layout er z-10
+  // sibling og ville ellers dække vores z-50 selvom tal er højere —
+  // fordi `<main>` creates en ny stacking-context der isolerer z-50.
   if (isFullscreen) {
-    return (
-      <div className="fixed inset-0 z-50 bg-slate-950/95 flex flex-col">
+    const overlay = (
+      <div className="fixed inset-0 z-[100] bg-slate-950/95 flex flex-col">
         {/* Topbar with title + close button */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-slate-700/40 shrink-0">
           <h2 className="text-white text-sm font-medium">
@@ -2639,6 +2836,9 @@ function DiagramForce({
         {overflowModal}
       </div>
     );
+    // createPortal kun i browser-kontekst — SSR render returnerer null
+    // (overlay vises kun ved user-klik, saa SSR-path bliver aldrig ramt).
+    return typeof document !== 'undefined' ? createPortal(overlay, document.body) : null;
   }
 
   // ── Normal inline mode ──

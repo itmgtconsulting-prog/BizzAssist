@@ -12,6 +12,7 @@
  */
 
 import { useState } from 'react';
+import { AdminNavTabs } from '../AdminNavTabs';
 import {
   GitBranch,
   PlayCircle,
@@ -128,6 +129,14 @@ export default function ReleaseManagerClient() {
 
   return (
     <div className="p-6 space-y-8 max-w-4xl">
+      {/* BIZZ-749: shared admin tab-bar — activeTab=release-manager is not in
+          TABS so no tab highlights; users can still navigate out. */}
+      <AdminNavTabs
+        activeTab="release-manager"
+        da={false}
+        className="flex gap-1 -mb-px overflow-x-auto"
+      />
+
       <div>
         <h1 className="text-2xl font-bold text-white mb-1">Release Manager</h1>
         <p className="text-slate-400 text-sm">BIZZ-86 · Service Manager + Release Agent</p>

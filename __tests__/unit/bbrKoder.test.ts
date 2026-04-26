@@ -32,6 +32,12 @@ import {
   boligtypeTekst,
   energiforsyningTekst,
   ejerforholdTekst,
+  isUdfasetStatusCode,
+  udfasetLabelForCode,
+  BBR_STATUS_UDFASET,
+  BBR_STATUS_RETIRED,
+  BBR_STATUS_AKTIV,
+  DAR_STATUS,
 } from '@/app/lib/bbrKoder';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -382,5 +388,118 @@ describe('ejerforholdTekst', () => {
 
   it('returns "Ukendt (1)" for unknown code "1"', () => {
     expect(ejerforholdTekst('1')).toBe('Ukendt (1)');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BIZZ-825: Udfaset-kode-mapping
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('BBR_STATUS_UDFASET constant', () => {
+  it('contains exactly {4, 10, 11}', () => {
+    expect(BBR_STATUS_UDFASET.has(4)).toBe(true);
+    expect(BBR_STATUS_UDFASET.has(10)).toBe(true);
+    expect(BBR_STATUS_UDFASET.has(11)).toBe(true);
+    expect(BBR_STATUS_UDFASET.size).toBe(3);
+  });
+});
+
+describe('isUdfasetStatusCode', () => {
+  it('returns true for retired codes', () => {
+    expect(isUdfasetStatusCode(4)).toBe(true);
+    expect(isUdfasetStatusCode(10)).toBe(true);
+    expect(isUdfasetStatusCode(11)).toBe(true);
+  });
+
+  it('returns false for active codes', () => {
+    expect(isUdfasetStatusCode(1)).toBe(false);
+    expect(isUdfasetStatusCode(3)).toBe(false);
+    expect(isUdfasetStatusCode(5)).toBe(false);
+  });
+
+  it('accepts numeric strings for robustness', () => {
+    expect(isUdfasetStatusCode('4')).toBe(true);
+    expect(isUdfasetStatusCode('10')).toBe(true);
+    expect(isUdfasetStatusCode('3')).toBe(false);
+  });
+
+  it('returns false for null/undefined/non-numeric', () => {
+    expect(isUdfasetStatusCode(null)).toBe(false);
+    expect(isUdfasetStatusCode(undefined)).toBe(false);
+    expect(isUdfasetStatusCode('abc')).toBe(false);
+    expect(isUdfasetStatusCode('')).toBe(false);
+  });
+});
+
+describe('udfasetLabelForCode', () => {
+  it('returns DA label by default', () => {
+    expect(udfasetLabelForCode(4)).toBe('Nedrevet/slettet');
+    expect(udfasetLabelForCode(10)).toBe('Bygning nedrevet');
+    expect(udfasetLabelForCode(11)).toBe('Bygning bortfaldet');
+  });
+
+  it('returns EN label when requested', () => {
+    expect(udfasetLabelForCode(4, 'en')).toBe('Demolished/deleted');
+    expect(udfasetLabelForCode(10, 'en')).toBe('Building demolished');
+    expect(udfasetLabelForCode(3, 'en')).toBe('Building constructed');
+  });
+
+  it('returns null for unknown/missing', () => {
+    expect(udfasetLabelForCode(null)).toBeNull();
+    expect(udfasetLabelForCode(undefined)).toBeNull();
+    expect(udfasetLabelForCode(999)).toBeNull();
+    expect(udfasetLabelForCode('abc')).toBeNull();
+  });
+
+  it('accepts numeric strings', () => {
+    expect(udfasetLabelForCode('4')).toBe('Nedrevet/slettet');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BIZZ-836: BBR_STATUS_RETIRED, BBR_STATUS_AKTIV, DAR_STATUS
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('BBR_STATUS_RETIRED', () => {
+  it('contains all retired status labels', () => {
+    expect(BBR_STATUS_RETIRED.has('Nedrevet/slettet')).toBe(true);
+    expect(BBR_STATUS_RETIRED.has('Bygning nedrevet')).toBe(true);
+    expect(BBR_STATUS_RETIRED.has('Bygning bortfaldet')).toBe(true);
+  });
+
+  it('does not contain active labels', () => {
+    expect(BBR_STATUS_RETIRED.has('Bygning opført')).toBe(false);
+    expect(BBR_STATUS_RETIRED.has('Projekteret bygning')).toBe(false);
+  });
+
+  it('is consistent with BBR_STATUS_UDFASET code set', () => {
+    expect(BBR_STATUS_RETIRED.size).toBe(BBR_STATUS_UDFASET.size);
+  });
+});
+
+describe('BBR_STATUS_AKTIV', () => {
+  it('contains active status codes as strings', () => {
+    for (const code of ['1', '2', '3', '6', '7']) {
+      expect(BBR_STATUS_AKTIV.has(code)).toBe(true);
+    }
+  });
+
+  it('excludes retired codes', () => {
+    for (const code of ['4', '10', '11']) {
+      expect(BBR_STATUS_AKTIV.has(code)).toBe(false);
+    }
+  });
+});
+
+describe('DAR_STATUS', () => {
+  it('has correct Danish status values', () => {
+    expect(DAR_STATUS.Gaeldende).toBe('Gældende');
+    expect(DAR_STATUS.Forelobig).toBe('Foreløbig');
+    expect(DAR_STATUS.Nedlagt).toBe('Nedlagt');
+    expect(DAR_STATUS.Henlagt).toBe('Henlagt');
+  });
+
+  it('has exactly 4 entries', () => {
+    expect(Object.keys(DAR_STATUS)).toHaveLength(4);
   });
 });

@@ -64,6 +64,61 @@ export async function fetchDawa(
 export interface DawaAutocompleteResult {
   type: 'adresse' | 'adgangsadresse' | 'vejnavn';
   tekst: string;
+  /**
+   * BIZZ-785: DAR status for the underlying address object. Common values:
+   * "Gældende" (active), "Nedlagt" (retired), "Foreløbig" (preliminary),
+   * "Henlagt" (suspended). Null for vejnavn-type (no per-vej status) and
+   * for the DAWA fallback path (DAWA doesn't expose status). Consumers
+   * should treat null as "unknown → show".
+   */
+  status?: string | null;
+  /**
+   * BIZZ-794: Ejendomshierarki-klassifikation.
+   *   - 'sfe': Samlet Fast Ejendom — container uden egen VUR-vurdering
+   *     (fx matrikulær opgangs-struktur med ejerlejligheder underneden).
+   *   - 'bygning': Reel ejendom med egen vurdering (typisk enfamiliehus
+   *     eller erhvervsbygning).
+   *   - 'ejerlejlighed': Enhed med etage/dør under en hovedejendom.
+   * Null for vejnavn-type eller når VUR-opslag ikke var tilgængeligt
+   * (fx DAWA fallback path eller ES timeout). Null skal fortolkes som
+   * "ukendt — vis hit normalt" af UI.
+   */
+  ejendomstype?: 'sfe' | 'bygning' | 'ejerlejlighed' | null;
+  /**
+   * BIZZ-794: Hvorvidt denne adresse har en egen VUR-vurdering (fra
+   * Vurderingsportalen ES). Null når vurderings-lookup ikke kunne
+   * afgøres. Konsistent med ejendomstype:
+   *   - 'bygning' / 'ejerlejlighed' → harVurdering=true
+   *   - 'sfe'                       → harVurdering=false
+   *   - null                        → harVurdering=null
+   */
+  harVurdering?: boolean | null;
+  /**
+   * BIZZ-831: BFE-nummer (Bestemt Fast Ejendom). Populeret server-side
+   * fra bbr_ejendom_status-tabellen når tilgængeligt. Bruges til at
+   * linke SFE-hits direkte til /dashboard/ejendomme/sfe/[bfe].
+   * Null/undefined hvis BFE ikke er bekendt.
+   */
+  bfe?: number | null;
+  /**
+   * BIZZ-821: Samlet boligareal i m² (sum af byg039 for aktive bygninger).
+   * Populeret server-side fra bbr_ejendom_status berigelsesfelter.
+   */
+  boligareal?: number | null;
+  /**
+   * BIZZ-821: Opførelsesår — ældste byg026 blandt aktive bygninger.
+   */
+  opfoerelsesaar?: number | null;
+  /**
+   * BIZZ-821: Energimærke (A-G / A2020/B2015 etc.) fra EMO via bbr_ejendom_status.
+   * Null indtil EMO-integration er implementeret.
+   */
+  energimaerke?: string | null;
+  /**
+   * BIZZ-821: BBR byg021 anvendelseskode (primær bygning). Bruges af
+   * matchEjendomFilter til kategori-gruppering (helårsbeboelse, erhverv etc.).
+   */
+  anvendelseskode?: number | null;
   adresse: {
     id: string; // 'vejnavn:…' for vejnavn-type, UUID for adresse/adgangsadresse
     vejnavn: string;

@@ -227,6 +227,110 @@ const bygStatus: Record<number, string> = {
   11: 'Bygning bortfaldet',
 };
 
+// ─── DAR status-værdier (BIZZ-836) ────────────────────────────────────────
+/**
+ * BIZZ-836: DAR-statusværdier som konstanter. Bruges af filter-logic
+ * og adresse-autocomplete i stedet for spredte string-literals.
+ */
+export const DAR_STATUS = {
+  Gaeldende: 'Gældende',
+  Forelobig: 'Foreløbig',
+  Nedlagt: 'Nedlagt',
+  Henlagt: 'Henlagt',
+} as const;
+
+// ─── BBR Status — udfaset-logik (BIZZ-825) ────────────────────────────────
+/**
+ * BIZZ-825: Centraliseret status-kode-mapping så alle call-sites
+ * bruger samme sandhed. Tidligere var der string-drift — migration 069
+ * brugte numeriske koder {4,10,11} mens filter-schema + backfill script
+ * brugte tekst-set som "Nedrevet" (matchede aldrig noget).
+ *
+ * En BBR-bygning betragtes som "udfaset" hvis dens status er én af:
+ *   - 4  = Nedrevet/slettet
+ *   - 10 = Bygning nedrevet
+ *   - 11 = Bygning bortfaldet
+ *
+ * Kilde: BBR kodeliste BYG_STATUS (teknik.bbr.dk/kodelister/0/1/0).
+ */
+export const BBR_STATUS_UDFASET: ReadonlySet<number> = new Set([4, 10, 11]);
+
+/**
+ * BIZZ-836: String-baseret set af udfaset-labels. Bruges af call-sites
+ * der har BBR-status som streng (fra bygStatusTekst) i stedet for kode.
+ */
+export const BBR_STATUS_RETIRED: ReadonlySet<string> = new Set([
+  'Nedrevet/slettet',
+  'Bygning nedrevet',
+  'Bygning bortfaldet',
+]);
+
+/**
+ * BIZZ-836: Numeriske BYG_STATUS koder for aktive bygninger.
+ * Complement af BBR_STATUS_UDFASET + kondemneret (5).
+ * Bruges af PropertyMap til at afgøre cirkelfarve.
+ */
+export const BBR_STATUS_AKTIV: ReadonlySet<string> = new Set(['1', '2', '3', '6', '7']);
+
+/**
+ * BIZZ-825: Bilingual status-labels. Brugt af filter-kataloget +
+ * property-detail sider hvor vi skal vise "Udfaset bygning"-badge.
+ */
+export const BBR_STATUS_LABELS: Readonly<
+  Record<number, { readonly da: string; readonly en: string }>
+> = {
+  1: { da: 'Projekteret bygning', en: 'Planned building' },
+  2: { da: 'Bygning under opførelse', en: 'Building under construction' },
+  3: { da: 'Bygning opført', en: 'Building constructed' },
+  4: { da: 'Nedrevet/slettet', en: 'Demolished/deleted' },
+  5: { da: 'Kondemneret', en: 'Condemned' },
+  6: { da: 'Bygning opført', en: 'Building constructed' },
+  7: { da: 'Midlertidig opførelse', en: 'Temporary construction' },
+  10: { da: 'Bygning nedrevet', en: 'Building demolished' },
+  11: { da: 'Bygning bortfaldet', en: 'Building lapsed' },
+};
+
+/**
+ * BIZZ-825: Predicate der returnerer true hvis koden repræsenterer en
+ * udfaset bygning. Accepter også numerisk-strenge for robusthed (BBR
+ * returnerer sometimes string, sometimes number).
+ */
+export function isUdfasetStatusCode(code: number | string | null | undefined): boolean {
+  if (code == null) return false;
+  const n = typeof code === 'number' ? code : parseInt(String(code), 10);
+  if (!Number.isFinite(n)) return false;
+  return BBR_STATUS_UDFASET.has(n);
+}
+
+/**
+ * BIZZ-825: Returnér bilingual label for en status-kode. Null hvis ukendt.
+ */
+export function udfasetLabelForCode(
+  code: number | string | null | undefined,
+  lang: 'da' | 'en' = 'da'
+): string | null {
+  if (code == null) return null;
+  const n = typeof code === 'number' ? code : parseInt(String(code), 10);
+  if (!Number.isFinite(n)) return null;
+  return BBR_STATUS_LABELS[n]?.[lang] ?? null;
+}
+
+/**
+ * BIZZ-825: Predicate der returnerer true hvis en STRING-label
+ * repræsenterer en udfaset bygning. Bruges af call-sites hvor status
+ * allerede er konverteret til DA-label via bygStatusTekst (fx data
+ * hentet via fetchBygning.ts). Tjekker mod både DA og EN labels.
+ */
+export function isUdfasetStatusLabel(label: string | null | undefined): boolean {
+  if (!label) return false;
+  for (const code of BBR_STATUS_UDFASET) {
+    const labels = BBR_STATUS_LABELS[code];
+    if (!labels) continue;
+    if (labels.da === label || labels.en === label) return true;
+  }
+  return false;
+}
+
 // ─── Enhedsstatus (ENH_STATUS) ────────────────────────────────────────────
 const enhedStatus: Record<number, string> = {
   1: 'Til udlejning',

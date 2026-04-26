@@ -203,6 +203,13 @@ export interface LiveBBREnhed {
   status: string | null;
   energimaerke: string | null;
   varmeinstallation: string;
+  /**
+   * BIZZ-879 (845b): Denormaliseret anvendelses-streng fra LiveBBRBygning
+   * (joined via bygningId). Fx "Etagebolig til helårsbeboelse" — undgår
+   * at UI skal lookup bygning separat. Null hvis bygningId er null eller
+   * bygning ikke findes i response.
+   */
+  bygningAnvendelse?: string | null;
 }
 
 /** A single BBR building point for map display */
@@ -242,6 +249,14 @@ export interface EjendomApiResponse {
   ejerlejlighedBfe: number | null;
   /** BFE-nummer for moderejendommen (null hvis det ikke er en ejerlejlighed) */
   moderBfe: number | null;
+  /**
+   * BIZZ-728: Adgangsadresse-UUID for hovedejendommen når vi er på en enhed
+   * (adresse med etage/dør). Null når vi allerede er på adgangsadresse-niveau
+   * eller ikke kan opløse parent. Bruges til "Gå til hovedejendom"-knap uden
+   * at kræve Vurderingsportalen-match — virker derfor også for erhvervsenheder
+   * og andre units hvor Vurderingsportalen ikke har opdeling.
+   */
+  parentAdgangsadresseId: string | null;
   /** BIZZ-486: Opgange (stairwells) per bygning */
   opgange: LiveBBROpgang[] | null;
   /** BIZZ-486: Etager (floors) per bygning */
@@ -257,6 +272,36 @@ export interface EjendomApiResponse {
     status: string | null;
   }> | null;
   bbrFejl: string | null;
+  /**
+   * BIZZ-881 (858a): True hvis denne BFE eller dens moder er opdelt i
+   * ejerlejligheder. Kilde: MAT_SamletFastEjendom.hovedejendomOpdeltIEjerlejligh.
+   * Bruges af UI til at vise "Opdelt ejendom"-badge og til at trigge
+   * komponent-listen på detaljesiden (BIZZ-857).
+   */
+  opdeltIEjerlejligheder?: boolean;
+  /**
+   * BIZZ-879 (845b): Primary bygning når vi står på enkelt-enhed-niveau
+   * (fx én ejerlejlighed). Bruges af UI til at vise "Denne enhed er i
+   * Bygning X" uden at iterere over bbr-arrayet. Null når vi er på SFE-
+   * niveau eller ingen bygning kan resolves.
+   */
+  primaryBygningId?: string | null;
+  primaryBygningAnvendelse?: string | null;
+  primaryBygningsBetegnelse?: string | null;
+  /**
+   * BIZZ-881 (858a): Hierarki-kæde fra leaf (denne ejendom) til SFE.
+   * 2-niveau baglæns kompatibel — fuld rekursion kommer i BIZZ-882.
+   *   niveau 'leaf'  → aktuel BFE (denne ejendom, hvis ejerlejlighed)
+   *   niveau 'sfe'   → moder-SFE (hovedejendom på matrikel-niveau)
+   * Tom array hvis vi allerede er på SFE-niveau.
+   * moderBfe forbliver tilgængelig for bagudkompatibilitet —
+   *   moderBfe === hierarkiChain[hierarkiChain.length - 1]?.bfe
+   */
+  hierarkiChain?: Array<{
+    bfe: number;
+    adresse: string | null;
+    niveau: 'leaf' | 'hovedejendom' | 'sfe';
+  }>;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -426,7 +471,7 @@ async function fetchDatafordelerGraphQL(
  * Sender en GraphQL-forespørgsel til Datafordeler BBR v2.
  * Wrapper om fetchDatafordelerGraphQL med BBR base URL.
  */
-async function fetchBBRGraphQL(
+export async function fetchBBRGraphQL(
   query: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   variables: Record<string, any>
@@ -946,6 +991,78 @@ export async function fetchBbrAreasByBfe(
     // Ignorer BBR_Enhed-fejl — fald igennem til Bygning-opslaget nedenfor.
   }
 
+  // BIZZ-731: For ejerlejligheder gav den første BBR_Enhed-query med
+  // adresseIdentificerer = adresse-UUID (med etage/dør) ofte 0 matches
+  // fordi BBR_Enhed.adresseIdentificerer i praksis lagrer adgangsadresse-
+  // UUID'en for nogle registreringer. I stedet for at falde direkte ned til
+  // BBR_Bygning (hvor byg039 ofte er null for bygninger med ejerlejligheder),
+  // prøv at resolve adresse → adgangsadresse og hente ALLE enheder i
+  // bygningen, for derefter at matche på ejerlejlighedens adresse-UUID.
+  try {
+    const { fetchDawa: fd } = await import('@/app/lib/dawa');
+    // Probe current effectiveDawaId: er det en adresse (med etage/dør) eller adgangsadresse?
+    const probeRes = await fd(
+      `${DAWA_BASE_URL}/adresser/${effectiveDawaId}?struktur=mini`,
+      { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+      { caller: 'fetchBbrAreasByBfe.probe-unit' }
+    );
+    if (probeRes.ok) {
+      const adresse = (await probeRes.json()) as {
+        adgangsadresseid?: string | null;
+        id?: string;
+      };
+      const adgangsId = adresse.adgangsadresseid;
+      if (adgangsId && adgangsId !== effectiveDawaId) {
+        // Vi er på en specifik enhed. Hent alle enheder i bygningen (via
+        // adgangsadresse) og filtrér til den der matcher vores adresse-UUID.
+        const buildingEnheder = await fetchBBRGraphQL(
+          `query($vt: DafDateTime!, $id: String!) {
+            BBR_Enhed(first: 200, virkningstid: $vt, where: { adresseIdentificerer: { eq: $id } }) {
+              nodes {
+                id_lokalId
+                adresseIdentificerer
+                enh026EnhedensSamledeAreal
+                enh027ArealTilBeboelse
+                enh028ArealTilErhverv
+                status
+              }
+            }
+          }`,
+          { vt, id: adgangsId }
+        );
+        if (Array.isArray(buildingEnheder) && buildingEnheder.length > 0) {
+          // Find enhed der matcher vores oprindelige adresse-UUID (effectiveDawaId)
+          const match = (
+            buildingEnheder as Array<{
+              id_lokalId?: string;
+              adresseIdentificerer?: string;
+              enh026EnhedensSamledeAreal?: number | null;
+              enh027ArealTilBeboelse?: number | null;
+              enh028ArealTilErhverv?: number | null;
+              status?: string | number | null;
+            }>
+          ).find(
+            (n) => n.adresseIdentificerer === effectiveDawaId && String(n.status ?? '') !== '7'
+          );
+          if (match) {
+            const bolig = Number(match.enh027ArealTilBeboelse ?? 0);
+            const erhverv = Number(match.enh028ArealTilErhverv ?? 0);
+            const samlet = Number(match.enh026EnhedensSamledeAreal ?? 0);
+            if (bolig > 0 || erhverv > 0 || samlet > 0) {
+              return {
+                boligAreal: bolig > 0 ? bolig : null,
+                erhvervsAreal: erhverv > 0 ? erhverv : null,
+                samletBygningsareal: samlet > 0 ? samlet : null,
+              };
+            }
+          }
+        }
+      }
+    }
+  } catch {
+    // Ignorer — fald igennem til Bygning-opslaget nedenfor.
+  }
+
   const bbrQuery = `query($vt: DafDateTime!, $id: String!) {
       BBR_Bygning(first: 100, virkningstid: $vt, where: { husnummer: { eq: $id } }) {
         nodes {
@@ -1193,6 +1310,231 @@ export async function fetchBbrAreasByDawaId(dawaId: string): Promise<{
   };
 }
 
+/**
+ * BIZZ-724: Resolve enhed-specific BFE + areal for a single unit adresse-UUID.
+ * Used by /api/ejerlejligheder to enrich the lejligheds-liste with real BFE
+ * numbers and m² for each unit. Unlike fetchBbrAreasByDawaId (which sums at
+ * the bygning level), this targets BBR_Enhed — the unit-level source.
+ *
+ * @param dawaId - Adresse-UUID med etage/dør (specific unit)
+ * @returns {bfe, areal} or null if no unit match
+ */
+export async function resolveEnhedByDawaId(dawaId: string): Promise<{
+  bfe: number | null;
+  areal: number | null;
+  /** BIZZ-880 (845c): Bygning-UUID fra BBR_Enhed.bygning — brugt af /api/ejerlejligheder */
+  bygningId: string | null;
+} | null> {
+  if (!dawaId) return null;
+  const vt = nowDafDateTime();
+
+  type EnhedNode = {
+    id_lokalId?: string;
+    adresseIdentificerer?: string;
+    enh026EnhedensSamledeAreal?: number | null;
+    enh027ArealTilBeboelse?: number | null;
+    enh028ArealTilErhverv?: number | null;
+    status?: string | number | null;
+    /** BIZZ-880: BBR_Enhed.bygning returnerer UUID for ejende bygning. */
+    bygning?: string | null;
+  };
+
+  const pickAreal = (n: EnhedNode): number | null => {
+    const bolig = Number(n.enh027ArealTilBeboelse ?? 0);
+    const erhverv = Number(n.enh028ArealTilErhverv ?? 0);
+    const samlet = Number(n.enh026EnhedensSamledeAreal ?? 0);
+    return bolig > 0 ? bolig : erhverv > 0 ? erhverv : samlet > 0 ? samlet : null;
+  };
+
+  // Step 1: Try direct BBR_Enhed match by adresseIdentificerer = dawaId
+  let matchedAreal: number | null = null;
+  let matchedBygningId: string | null = null;
+  try {
+    const directNodes = await fetchBBRGraphQL(
+      `query($vt: DafDateTime!, $id: String!) {
+        BBR_Enhed(first: 20, virkningstid: $vt, where: { adresseIdentificerer: { eq: $id } }) {
+          nodes {
+            id_lokalId
+            enh026EnhedensSamledeAreal
+            enh027ArealTilBeboelse
+            enh028ArealTilErhverv
+            status
+            bygning
+          }
+        }
+      }`,
+      { vt, id: dawaId }
+    );
+    const directList = Array.isArray(directNodes) ? (directNodes as EnhedNode[]) : [];
+    const directMatch = directList.find((n) => String(n.status ?? '') !== '7');
+    if (directMatch) {
+      matchedAreal = pickAreal(directMatch);
+      // BIZZ-880: bevar bygning-UUID hvis det passer UUID-mønster
+      if (directMatch.bygning && UUID_RE.test(directMatch.bygning)) {
+        matchedBygningId = directMatch.bygning;
+      }
+    }
+  } catch {
+    /* fall through */
+  }
+
+  // Step 2: If no direct match, probe adgangsadresse and filter by adresseIdentificerer
+  if (matchedAreal == null) {
+    try {
+      const { fetchDawa: fd } = await import('@/app/lib/dawa');
+      const probeRes = await fd(
+        `${DAWA_BASE_URL}/adresser/${dawaId}?struktur=mini`,
+        { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+        { caller: 'resolveEnhedByDawaId.probe' }
+      );
+      if (probeRes.ok) {
+        const adresse = (await probeRes.json()) as { adgangsadresseid?: string | null };
+        const adgangsId = adresse.adgangsadresseid;
+        if (adgangsId && adgangsId !== dawaId) {
+          const buildingNodes = await fetchBBRGraphQL(
+            `query($vt: DafDateTime!, $id: String!) {
+              BBR_Enhed(first: 200, virkningstid: $vt, where: { adresseIdentificerer: { eq: $id } }) {
+                nodes {
+                  id_lokalId
+                  adresseIdentificerer
+                  enh026EnhedensSamledeAreal
+                  enh027ArealTilBeboelse
+                  enh028ArealTilErhverv
+                  status
+                  bygning
+                }
+              }
+            }`,
+            { vt, id: adgangsId }
+          );
+          const list = Array.isArray(buildingNodes) ? (buildingNodes as EnhedNode[]) : [];
+          const match = list.find(
+            (n) => n.adresseIdentificerer === dawaId && String(n.status ?? '') !== '7'
+          );
+          if (match) {
+            matchedAreal = pickAreal(match);
+            // BIZZ-880: populate bygningId fra bygning-feltet hvis gyldig UUID
+            if (match.bygning && UUID_RE.test(match.bygning)) {
+              matchedBygningId = match.bygning;
+            }
+          }
+        }
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+
+  // Step 3: Resolve BFE via Vurderingsportalen ES — their index maps
+  // (vejnavn, husnr, etage, dør) → specific ejerlejligheds-BFE.
+  // Reuse the existing DAWA-resolve pattern: probe for adresse-betegnelse
+  // then match the VP row that has a bfeNumber we can parse.
+  let matchedBfe: number | null = null;
+  try {
+    const { fetchDawa: fd } = await import('@/app/lib/dawa');
+    const adrRes = await fd(
+      `${DAWA_BASE_URL}/adresser/${dawaId}?struktur=mini`,
+      { signal: AbortSignal.timeout(3000), next: { revalidate: 86400 } },
+      { caller: 'resolveEnhedByDawaId.vp-prep' }
+    );
+    if (adrRes.ok) {
+      const adr = (await adrRes.json()) as {
+        betegnelse?: string;
+        adressebetegnelse?: string;
+        etage?: string;
+        dør?: string;
+      };
+      const betegnelse = (adr.betegnelse ?? adr.adressebetegnelse ?? '').split(',')[0].trim();
+      if (betegnelse) {
+        const esRes = await fetch(
+          'https://api-fs.vurderingsportalen.dk/preliminaryproperties/_search',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            },
+            body: JSON.stringify({
+              size: 20,
+              query: { bool: { must: [{ match_phrase: { address: betegnelse } }] } },
+            }),
+            signal: AbortSignal.timeout(5000),
+          }
+        );
+        if (esRes.ok) {
+          const esData = (await esRes.json()) as {
+            hits?: {
+              hits?: Array<{ _source: { bfeNumbers?: unknown; floor?: string; door?: string } }>;
+            };
+          };
+          const targetFloor = (adr.etage ?? '').toLowerCase();
+          const targetDoor = (adr.dør ?? '').toLowerCase();
+          for (const hit of esData.hits?.hits ?? []) {
+            const s = hit._source;
+            if (!s.bfeNumbers) continue;
+            const hitFloor = String(s.floor ?? '').toLowerCase();
+            const hitDoor = String(s.door ?? '').toLowerCase();
+            if (hitFloor !== targetFloor) continue;
+            if (targetDoor && hitDoor !== targetDoor) continue;
+            const candidate = parseInt(String(s.bfeNumbers), 10);
+            if (!isNaN(candidate)) {
+              matchedBfe = candidate;
+              break;
+            }
+          }
+        }
+      }
+    }
+  } catch {
+    /* VP is optional — non-fatal */
+  }
+
+  // Step 4: BIZZ-724 last-resort BFE fallback — resolve the matrikel's
+  // (jordstykke) BFE via DAWA. Chained lookup: /adresser/{id} → adgangsadresse
+  // jordstykke.ejerlav + matrikelnr → /jordstykker/{ejerlav}/{matrikelnr} →
+  // bfenummer. Not ideal (ejerlejligheds-specific BFE would be better) but
+  // for erhvervsenheder not in BBR_Enhed *and* not in Vurderingsportalen ES,
+  // this is the pragmatic match that lets downstream enrichment proceed.
+  if (matchedBfe == null) {
+    try {
+      const { fetchDawa: fd } = await import('@/app/lib/dawa');
+      const adrRes = await fd(
+        `${DAWA_BASE_URL}/adresser/${dawaId}`,
+        { signal: AbortSignal.timeout(3000), next: { revalidate: 86400 } },
+        { caller: 'resolveEnhedByDawaId.matrikel-fallback' }
+      );
+      if (adrRes.ok) {
+        const adr = (await adrRes.json()) as {
+          adgangsadresse?: {
+            jordstykke?: { ejerlav?: { kode?: number }; matrikelnr?: string };
+          };
+        };
+        const jord = adr.adgangsadresse?.jordstykke;
+        const ejerlavKode = jord?.ejerlav?.kode;
+        const matrikelnr = jord?.matrikelnr;
+        if (ejerlavKode && matrikelnr) {
+          const jordRes = await fd(
+            `${DAWA_BASE_URL}/jordstykker/${ejerlavKode}/${encodeURIComponent(matrikelnr)}`,
+            { signal: AbortSignal.timeout(3000), next: { revalidate: 86400 } },
+            { caller: 'resolveEnhedByDawaId.jordstykke-bfe' }
+          );
+          if (jordRes.ok) {
+            const jordData = (await jordRes.json()) as { bfenummer?: number };
+            if (typeof jordData.bfenummer === 'number' && jordData.bfenummer > 0) {
+              matchedBfe = jordData.bfenummer;
+            }
+          }
+        }
+      }
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  if (matchedBfe == null && matchedAreal == null && matchedBygningId == null) return null;
+  return { bfe: matchedBfe, areal: matchedAreal, bygningId: matchedBygningId };
+}
+
 /** Returns a DafDateTime string for the current moment (CET/CEST). */
 function nowDafDateTime(): string {
   // Datafordeler requires timezone offset format: 2026-03-23T12:00:00+01:00
@@ -1289,7 +1631,10 @@ export function normaliseEnhed(raw: RawBBREnhed): LiveBBREnhed {
 
   return {
     id: raw.id_lokalId ?? '',
-    bygningId: (raw.bygning && !UUID_RE.test(raw.bygning) ? null : raw.bygning) ?? null,
+    // BIZZ-878: raw.bygning ER en UUID fra BBR GraphQL. Tidligere invertere
+    // vi checket og satte feltet til null for alle gyldige UUIDs → bygningId
+    // var altid null. Nu: behold kun hvis det ER en gyldig UUID.
+    bygningId: raw.bygning && UUID_RE.test(raw.bygning) ? raw.bygning : null,
     etage: etageValue,
     doer: null, // udfyldes fra DAWA efter fetch
     adressebetegnelse: null, // udfyldes fra DAWA efter fetch
@@ -1558,6 +1903,121 @@ async function fetchDAWAEnhedAdresser(
 /**
  * Henter og aggregerer BBR-data for en given DAWA adgangsadresse UUID.
  *
+/**
+ * BIZZ-882 (858b): Rekursiv resolveHierarkiChain.
+ *
+ * Tager en leaf-BFE + optional initial moderBfe og walker opad via
+ * MAT-lookup til yderste SFE. Safety-guards:
+ *   - maxDepth = 5 (stopper dyb rekursion)
+ *   - seenBfe Set forhindrer cycles (logger.warn ved detected cycle)
+ *   - tidlig exit: når hovedejendomOpdeltIEjerlejligh=false, stop walk
+ *
+ * Kaldt sekventielt (én MAT-lookup pr niveau). Batch-optimering via
+ * MAT_SamletFastEjendom(where: { BFEnummer: { in: [...] } }) parkes til
+ * iter 2 — sekventielle kald er acceptable for typiske 1-2-niveau chains
+ * og giver ikke markant latency ved dobbelt-opdelt ejendomme.
+ *
+ * @param leafBfe - BFE for leaf-niveau (typisk ejerlejlighedBfe)
+ * @param initialModerBfe - Første parent-BFE (fra bbrData.moderBfe)
+ * @returns Array af hierarki-noder fra leaf til SFE — tom hvis intet hierarki
+ */
+async function resolveHierarkiChain(
+  leafBfe: number,
+  initialModerBfe: number | null
+): Promise<NonNullable<EjendomApiResponse['hierarkiChain']>> {
+  const MAX_DEPTH = 5;
+  const chain: NonNullable<EjendomApiResponse['hierarkiChain']> = [];
+  const seenBfe = new Set<number>();
+
+  // Start altid med leaf
+  chain.push({ bfe: leafBfe, adresse: null, niveau: 'leaf' });
+  seenBfe.add(leafBfe);
+
+  if (initialModerBfe == null || initialModerBfe === leafBfe) {
+    return chain;
+  }
+
+  // Walk opad via MAT_SamletFastEjendom lookups. Hver iteration: hent
+  // parent-BFE's egen opdelt-status og evt dens moderBfe.
+  const currentBfe: number | null = initialModerBfe;
+  let depth = 0;
+  while (currentBfe != null && depth < MAX_DEPTH) {
+    if (seenBfe.has(currentBfe)) {
+      console.warn(
+        `[resolveHierarkiChain] cycle detected at bfe=${currentBfe} depth=${depth} — break`
+      );
+      break;
+    }
+    seenBfe.add(currentBfe);
+    // Fetch MAT_SamletFastEjendom for at afgøre om current selv er opdelt.
+    // Hvis ja: det er en hovedejendom (mellem-niveau); hvis nej: det er SFE (top).
+    const query = `query($vt: DafDateTime!, $bfe: Int!) {
+      MAT_SamletFastEjendom(virkningstid: $vt, where: { BFEnummer: { eq: $bfe } }) {
+        nodes {
+          BFEnummer
+          hovedejendomOpdeltIEjerlejligh
+        }
+      }
+    }`;
+    try {
+      const resp = await fetch(
+        `https://services.datafordeler.dk/MATRIKEL2/MatGraphQL/1/rest/GraphQL?username=${process.env.DATAFORDELER_USER ?? ''}&password=${process.env.DATAFORDELER_PASS ?? ''}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query,
+            variables: { vt: nowDafDateTime(), bfe: currentBfe },
+          }),
+          signal: AbortSignal.timeout(8_000),
+        }
+      );
+      if (!resp.ok) {
+        // Fallback: tilføj BFE som SFE (top-niveau uden mere info)
+        chain.push({ bfe: currentBfe, adresse: null, niveau: 'sfe' });
+        break;
+      }
+      const data = (await resp.json()) as {
+        data?: {
+          MAT_SamletFastEjendom?: {
+            nodes?: Array<{ BFEnummer: number; hovedejendomOpdeltIEjerlejligh: boolean | null }>;
+          };
+        };
+      };
+      const node = data.data?.MAT_SamletFastEjendom?.nodes?.[0];
+      if (!node) {
+        // Ingen MAT-data for denne BFE — fald tilbage til 'sfe' og stop
+        chain.push({ bfe: currentBfe, adresse: null, niveau: 'sfe' });
+        break;
+      }
+      const erOpdelt = !!node.hovedejendomOpdeltIEjerlejligh;
+      // Er current en mellem-hovedejendom (opdelt selv)? Eller er den yderste SFE?
+      // Hvis opdelt + har en parent → mellem-hovedejendom. Ellers SFE.
+      // For dette simple-iter har vi ikke info om parent-moderBfe fra MAT_SamletFastEjendom
+      // selv — vi kan derfor ikke gå dybere end ét niveau op fra initialModerBfe.
+      // (Fuldt recursive multi-level walk kræver forbindelse mellem ejerlejligheder
+      // og deres mellem-hovedejendomme, som ikke er direkte i MAT. Parkes til iter 3.)
+      chain.push({
+        bfe: currentBfe,
+        adresse: null,
+        niveau: erOpdelt && depth > 0 ? 'hovedejendom' : 'sfe',
+      });
+      // Stop walk — vi har ikke en direkte måde at finde parent fra MAT alene
+      // i den nuværende schema-version. Iter 3 vil kræve EJF-query via child-BFE.
+      break;
+    } catch (err) {
+      logger.warn(`[resolveHierarkiChain] fetch fejl ved bfe=${currentBfe}:`, err);
+      chain.push({ bfe: currentBfe, adresse: null, niveau: 'sfe' });
+      break;
+    }
+    // currentBfe = ... (parkes — mangler parent-lookup)
+    depth++;
+  }
+
+  return chain;
+}
+
+/**
  * Kan kaldes direkte fra server components uden HTTP round-trip — modsat
  * /api/ejendom/[id] som kræver en kørende server at kalde.
  *
@@ -1893,16 +2353,88 @@ export async function fetchBbrForAddress(
       ? 'BBR-data ikke tilgængeligt. Tjek at DATAFORDELER_API_KEY er sat i .env.local.'
       : null;
 
+  // BIZZ-728: Parent adgangsadresse — sat når input-dawaId er en "adresse" (med etage/dør)
+  // og adgangsadresseId derfor er forskellig. Bruges til "Gå til hovedejendom"-navigation
+  // uafhængigt af Vurderingsportalen-opslag, så det også virker for erhvervsenheder o.lign.
+  const parentAdgangsadresseId =
+    adgangsadresseId && adgangsadresseId !== dawaId ? adgangsadresseId : null;
+
+  // BIZZ-881 (858a): Byg hierarkiChain (leaf → sfe).
+  // BIZZ-882 (858b): Brug resolveHierarkiChain-helper til at klassificere
+  // parent som 'hovedejendom' (hvis opdelt selv) eller 'sfe' (yderste).
+  // Fuld multi-level walk parkes til iter 3 — kræver EJF-link fra parent
+  // til dens egen moderBfe, som MAT_SamletFastEjendom alene ikke eksponerer.
+  let hierarkiChain: EjendomApiResponse['hierarkiChain'] = [];
+  if (ejerlejlighedBfe != null && moderBfe != null && ejerlejlighedBfe !== moderBfe) {
+    // Vi er på en leaf-ejerlejlighed der har en moder. Kald recursive
+    // resolver som klassificerer parent korrekt (sfe vs mellem-hovedejendom).
+    try {
+      hierarkiChain = await resolveHierarkiChain(ejerlejlighedBfe, moderBfe);
+    } catch {
+      // Fallback til simple 2-niveau chain ved fetch-fejl
+      hierarkiChain = [
+        { bfe: ejerlejlighedBfe, adresse: null, niveau: 'leaf' },
+        { bfe: moderBfe, adresse: null, niveau: 'sfe' },
+      ];
+    }
+  } else if (moderBfe != null) {
+    // Vi er på SFE-niveau (moderBfe = vores egen BFE)
+    hierarkiChain = [{ bfe: moderBfe, adresse: null, niveau: 'sfe' }];
+  }
+
+  // BIZZ-879 (845b): Denormaliseret bygnings-info på enheder (join via bygningId)
+  // og primaryBygning-felter på top-niveau til single-enhed-views.
+  const bbrById = new Map<string, LiveBBRBygning>();
+  if (bbr) {
+    for (const b of bbr) {
+      if (b.id) bbrById.set(b.id, b);
+    }
+  }
+  const enrichedEnheder = enheder
+    ? enheder.map((e) => ({
+        ...e,
+        bygningAnvendelse: e.bygningId ? (bbrById.get(e.bygningId)?.anvendelse ?? null) : null,
+      }))
+    : null;
+
+  // Resolve primary bygning fra første enhed med ikke-null bygningId
+  let primaryBygningId: string | null = null;
+  let primaryBygningAnvendelse: string | null = null;
+  let primaryBygningsBetegnelse: string | null = null;
+  if (enrichedEnheder && enrichedEnheder.length > 0) {
+    const firstWithBuilding = enrichedEnheder.find((e) => e.bygningId);
+    if (firstWithBuilding?.bygningId) {
+      const byg = bbrById.get(firstWithBuilding.bygningId);
+      if (byg) {
+        primaryBygningId = byg.id;
+        primaryBygningAnvendelse = byg.anvendelse ?? null;
+        // Betegnelse kan udledes fra byg.id_lokalId eller anvendelse — brug
+        // anvendelse som display-label indtil en dedikeret betegnelses-kolonne
+        // er tilgængelig fra BBR (ADR-parkeret til BIZZ-845 full-scope).
+        primaryBygningsBetegnelse = byg.anvendelse ?? null;
+      }
+    }
+  }
+
   return {
     bbr,
-    enheder,
+    enheder: enrichedEnheder,
     bygningPunkter,
     ejendomsrelationer,
     ejerlejlighedBfe,
     moderBfe,
+    parentAdgangsadresseId,
     opgange,
     etager,
     tekniskeAnlaeg,
     bbrFejl,
+    // BIZZ-881 (858a): hierarki-data på response
+    opdeltIEjerlejligheder:
+      ejerlejlighedBfe != null && moderBfe != null && ejerlejlighedBfe !== moderBfe,
+    hierarkiChain,
+    // BIZZ-879 (845b): primary-bygning top-level
+    primaryBygningId,
+    primaryBygningAnvendelse,
+    primaryBygningsBetegnelse,
   };
 }

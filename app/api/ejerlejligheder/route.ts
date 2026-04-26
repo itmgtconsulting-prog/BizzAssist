@@ -20,6 +20,8 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
 import { fetchDawa } from '@/app/lib/dawa';
 import { darResolveAdresseId } from '@/app/lib/dar';
+import { resolveEnhedByDawaId } from '@/app/lib/fetchBbrData';
+import { fetchTinglysningPriceRowsByBfe } from '@/app/lib/tinglysningPrices';
 // EJF/Datafordeler er ikke nødvendig — alt data hentes fra tinglysning summarisk XML
 
 // ─── Query param validation ─────────────────────────────────────────────────
@@ -29,6 +31,12 @@ const ejerlejlighederQuerySchema = z.object({
   matrikelnr: z.string().min(1, 'matrikelnr er påkrævet'),
   /** BIZZ-695: Optional moderBfe for DAWA fallback owner lookup */
   moderBfe: z.coerce.number().int().positive().optional(),
+  /**
+   * BIZZ-784: When false (default), the response filters out properties
+   * flagged udfaset=true. Clients pass true to get the full list including
+   * retired registrations.
+   */
+  includeUdfasede: z.coerce.boolean().optional().default(false),
 });
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -47,6 +55,26 @@ export interface Ejerlejlighed {
   koebsdato: string | null;
   /** DAWA adresse-UUID for navigation til ejendomsdetalje */
   dawaId: string | null;
+  /**
+   * BIZZ-784: Heuristic "udfaset" marker. For Tinglysning-path we use
+   * ejendomsVurdering=0 AND grundVaerdi=0 as a proxy for a retired
+   * property (proper BBR-status lookup is deferred to iter 2). Null when
+   * the data is insufficient to decide.
+   */
+  udfaset: boolean | null;
+  /**
+   * BIZZ-880 (845c): BBR bygning-id (UUID) som ejerlejligheden fysisk
+   * ligger i. Resolves via BBR_Enhed.bygning-feltet når dawaId → UUID
+   * mapping findes. Bruges af BIZZ-846 til at gruppere komponenter på
+   * ægte FK i stedet for adresse-prefix-parsing.
+   */
+  bygningId: string | null;
+  /**
+   * BIZZ-880 (845c): Menneske-læsbar bygnings-betegnelse (typisk
+   * anvendelses-tekst fra LiveBBRBygning). Null hvis bygningId ikke
+   * kunne resolves.
+   */
+  bygningBetegnelse: string | null;
 }
 
 /** API-svar fra denne route */
@@ -300,8 +328,170 @@ async function resolveLejlighederViaDawa(
         koebspris: null,
         koebsdato: null,
         dawaId: unit.id,
+        // BIZZ-784: DAWA-fallback path has no valuation data — mark null so
+        // the filter neither includes nor excludes these by heuristic.
+        udfaset: null,
+        // BIZZ-880 (845c): bygningId/betegnelse ikke tilgængelig i DAWA-
+        // fallback path — BBR_Enhed-enrichment nedenfor kan populere
+        // via dedikeret lookup når path er aktiveret.
+        bygningId: null,
+        bygningBetegnelse: null,
       });
     }
+  }
+
+  // BIZZ-724 iter 3: Primær per-lejlighed-berigelse via Tinglysning
+  // /ejendom/adresse — returnerer den specifikke ejerlejligheds-BFE + UUID
+  // pr. adresse med etage/dør. Det er vejen til korrekt lejligheds-BFE
+  // (fx 226629 for 62B, 226630 for 62A) og samtidig gateway til summarisk-XML
+  // med areal + købspris + købsdato. Fejl på en enkelt lejlighed logges som
+  // non-fatal og falder tilbage til BBR_Enhed/matrikel-fallback.
+  await Promise.all(
+    lejligheder.map(async (lej) => {
+      try {
+        // Parse vejnavn + husnr fra betegnelse ("Arnold Nielsens Blvd 62A, st., 2650 Hvidovre")
+        const addrPart = lej.adresse.split(',')[0].trim();
+        const m = addrPart.match(/^(.+?)\s+(\d+\w*)$/);
+        const postMatch = lej.adresse.match(/(\d{4})/);
+        if (!m || !postMatch) return;
+        const [, vejnavn, husnummer] = m;
+        const postnummer = postMatch[1];
+        // Tinglysning test-miljø returnerer {} når etage/sidedoer er sat, selv
+        // om ejerlejligheden findes uden disse filtre. Vi søger uden etage/dør
+        // og filtrerer derefter på vedroerende='Ejerlejlighed:' — alle etager
+        // i samme opgang hører typisk til samme juridiske ejerlejlighed.
+        const params = new URLSearchParams({ vejnavn, husnummer, postnummer });
+        const res = await tlFetch(`/ejendom/adresse?${params.toString()}`);
+        if (res.status !== 200 || !res.body) return;
+        let items: TLSearchItem[] = [];
+        try {
+          const parsed = JSON.parse(res.body) as TLSearchResponse;
+          items = parsed.items ?? [];
+        } catch {
+          return;
+        }
+        // Prefer the ejerlejlighed entry over hovedejendom — hovedejendom har
+        // typisk ejendomsVurdering=0 og vedroerende indeholder 'Hovedejendom'.
+        const tlItem =
+          items.find((it) => /ejerlejlighed/i.test(it.vedroerende)) ??
+          items.find((it) => !/hovedejendom/i.test(it.vedroerende)) ??
+          items[0];
+        if (!tlItem) return;
+        // ejendomsnummer is the unit-specific BFE
+        const bfe = tlItem.ejendomsnummer ? parseInt(tlItem.ejendomsnummer, 10) : 0;
+        if (bfe > 0) lej.bfe = bfe;
+
+        // Fetch summarisk XML → areal + købspris + købsdato + ejer-navn
+        const sumRes = await tlFetch(`/ejdsummarisk/${tlItem.uuid}`);
+        if (sumRes.status === 200 && sumRes.body) {
+          const xml = sumRes.body;
+          // Ejerlejlighedens areal (primær) eller generisk areal
+          const ejlAreal = xml.match(
+            /[Ee]jerlejlighedens\s+tinglyste?\s+areal[^<]*<[^>]*>[^<]*<[^>]*>(\d+)\s*kvm/i
+          );
+          if (ejlAreal) {
+            lej.areal = parseInt(ejlAreal[1], 10);
+          } else {
+            const alt = xml.match(/<(?:ns\d+:)?Areal>(\d+)<\/(?:ns\d+:)?Areal>/);
+            if (alt) lej.areal = parseInt(alt[1], 10);
+          }
+
+          // Seneste adkomst: koebspris + koebsdato + ejer
+          const adkomstSection =
+            xml.match(/AdkomstSummariskSamling[\s\S]*?<\/[^:]*:?AdkomstSummariskSamling/)?.[0] ??
+            '';
+          const adkomstEntries = [
+            ...adkomstSection.matchAll(/AdkomstSummarisk>([\s\S]*?)<\/[^:]*:?AdkomstSummarisk/g),
+          ];
+          if (adkomstEntries.length > 0) {
+            const last = adkomstEntries[adkomstEntries.length - 1][1];
+            const kontant = last.match(/KontantKoebesum[^>]*>([^<]+)/)?.[1];
+            const iAlt = last.match(/IAltKoebesum[^>]*>([^<]+)/)?.[1];
+            const price = kontant ? parseInt(kontant, 10) : iAlt ? parseInt(iAlt, 10) : null;
+            if (price != null && !isNaN(price)) lej.koebspris = price;
+            const dato =
+              last.match(/KoebsaftaleDato[^>]*>([^<]+)/)?.[1]?.split('+')[0] ??
+              last.match(/SkoedeOvertagelsesDato[^>]*>([^<]+)/)?.[1]?.split('+')[0] ??
+              last.match(/TinglysningsDato[^>]*>([^<]+)/)?.[1]?.split('T')[0] ??
+              null;
+            if (dato) lej.koebsdato = dato;
+          }
+        }
+      } catch (err) {
+        logger.warn('[ejerlejligheder] per-lejlighed TL enrichment fejl:', err);
+      }
+    })
+  );
+
+  // Fallback: for lejligheder der stadig mangler BFE eller areal, prøv
+  // BBR_Enhed → adgangsadresse → matrikel-BFE chain'en. Kun et sikkerhedsnet
+  // — primær-pathen ovenfor dækker ejerlejligheder som er tinglyst med
+  // individuel ejendomsnummer, hvilket er ~alle bolig-ejerlejligheder.
+  await Promise.all(
+    lejligheder.map(async (lej) => {
+      // BIZZ-880: vi henter stadig enhed hvis bygningId mangler — selv når
+      // bfe+areal allerede er sat — så SFE-gruppering kan ske på ægte FK.
+      const alreadyEnriched = lej.bfe > 0 && lej.areal != null && lej.bygningId != null;
+      if (alreadyEnriched) return;
+      if (!lej.dawaId) return;
+      try {
+        const enhed = await resolveEnhedByDawaId(lej.dawaId);
+        if (enhed?.bfe && lej.bfe === 0) lej.bfe = enhed.bfe;
+        if (enhed?.areal != null && lej.areal == null) lej.areal = enhed.areal;
+        if (enhed?.bygningId && lej.bygningId == null) lej.bygningId = enhed.bygningId;
+      } catch {
+        /* non-fatal */
+      }
+    })
+  );
+
+  // Sidste skridt: for lejligheder med BFE men ingen koebspris/koebsdato fra
+  // summarisk, prøv salgshistorik-API (BIZZ-685) som nu indeholder Tinglysning
+  // /dokaktuel pris-enrichment + reverse-inference. Giver pris på rækker hvor
+  // den seneste adkomst var en arv/gave uden pris, men tidligere handler havde.
+  try {
+    const { createAdminClient } = await import('@/lib/supabase/admin');
+    const admin = createAdminClient();
+    await Promise.all(
+      lejligheder.map(async (lej) => {
+        if (!lej.bfe || lej.bfe === 0) return;
+        if (lej.koebspris != null && lej.koebsdato) return;
+        try {
+          const priceRows = await fetchTinglysningPriceRowsByBfe(lej.bfe);
+          if (priceRows.length > 0) {
+            const latest = priceRows[priceRows.length - 1];
+            if (lej.koebspris == null) {
+              lej.koebspris = latest.kontantKoebesum ?? latest.iAltKoebesum ?? null;
+            }
+            if (!lej.koebsdato) {
+              lej.koebsdato =
+                latest.overtagelsesdato ??
+                latest.koebsaftaleDato ??
+                latest.tinglysningsdato ??
+                null;
+            }
+          }
+
+          // Ejf_ejerskab fallback for koebsdato når summarisk mangler
+          if (!lej.koebsdato) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: rows } = (await (admin as any)
+              .from('ejf_ejerskab')
+              .select('virkning_fra')
+              .eq('bfe_nummer', lej.bfe)
+              .eq('status', 'gældende')
+              .order('virkning_fra', { ascending: false })
+              .limit(1)) as { data: Array<{ virkning_fra: string | null }> | null };
+            const virkningFra = rows?.[0]?.virkning_fra ?? null;
+            if (virkningFra) lej.koebsdato = virkningFra;
+          }
+        } catch {
+          /* non-fatal */
+        }
+      })
+    );
+  } catch (err) {
+    logger.warn('[ejerlejligheder] Salgshistorik-fallback fejlede:', err);
   }
 
   // Sort: by adresse → etage → dør
@@ -326,7 +516,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
 
   const parsed = parseQuery(request, ejerlejlighederQuerySchema);
   if (!parsed.success) return parsed.response as NextResponse<EjerlejlighederResponse>;
-  const { ejerlavKode, matrikelnr, moderBfe } = parsed.data;
+  const { ejerlavKode, matrikelnr, moderBfe, includeUdfasede } = parsed.data;
 
   if ((!CERT_PATH && !CERT_B64) || !CERT_PASSWORD) {
     return NextResponse.json(
@@ -567,6 +757,15 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
         const bfe = item.ejendomsnummer ? parseInt(item.ejendomsnummer, 10) : 0;
         const sum = summariskMap.get(item.uuid);
 
+        // BIZZ-784: heuristic — Tinglysning doesn't expose an explicit
+        // "retired" status but valuation=0 AND grundVærdi=0 is a reliable
+        // proxy: active properties are always assessed with non-zero values.
+        // Proper BBR-status lookup (status codes 4/10/11) is iter 2.
+        const udfaset =
+          item.ejendomsVurdering != null && item.grundVaerdi != null
+            ? item.ejendomsVurdering === 0 && item.grundVaerdi === 0
+            : null;
+
         return {
           bfe: bfe || 0,
           adresse: item.adresse,
@@ -579,6 +778,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
           koebspris: sum?.koebspris ?? null,
           koebsdato: sum?.koebsdato ?? null,
           dawaId: dawaIdMap.get(item.uuid) ?? null,
+          udfaset,
+          // BIZZ-880: bygningId populeres via BBR_Enhed-enrichment (efter denne map)
+          bygningId: null,
+          bygningBetegnelse: null,
         };
       })
       .sort((a, b) => {
@@ -594,8 +797,13 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
         return parseDoerSortValue(a.doer) - parseDoerSortValue(b.doer);
       });
 
+    // BIZZ-784: filter udfasede ejerlejligheder unless klienten eksplicit
+    // beder om dem. `udfaset=null` (ukendt) tæller som aktiv så vi ikke
+    // skjuler enheder på basis af en heuristic der ikke kunne afgøres.
+    const filtered = includeUdfasede ? lejligheder : lejligheder.filter((l) => l.udfaset !== true);
+
     return NextResponse.json(
-      { lejligheder, fejl: null },
+      { lejligheder: filtered, fejl: null },
       {
         status: 200,
         headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },

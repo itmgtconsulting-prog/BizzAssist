@@ -20,6 +20,7 @@ import Link from 'next/link';
 import { ChevronRight, TrendingUp } from 'lucide-react';
 import SektionLoader from '@/app/components/SektionLoader';
 import { formatDKK } from '@/app/lib/mock/ejendomme';
+import { getHandelstypeInfo, handelstypeBadgeClasses } from '@/app/lib/ejfKoder';
 import type { VurderingData, VurderingResponse } from '@/app/api/vurdering/route';
 import type { ForelobigVurdering } from '@/app/api/vurdering-forelobig/route';
 
@@ -72,6 +73,15 @@ interface Props {
   tlTestFallback: boolean;
   mergedSalgshistorik: MergedHandel[];
   bbrData: { ejendomsrelationer?: { bfeNummer: number | null }[] | null } | null;
+  /**
+   * BIZZ-860: Signalerer at denne ejendom er opdelt i ejerlejligheder — i så
+   * fald har moderejendommen typisk 0 DKK ejendomsværdi/grundværdi (VUR
+   * fordeler dem på de enkelte lejligheder). Vi skjuler så 0 DKK-boksene til
+   * fordel for en forklaring + henvisning til komponent-listen.
+   */
+  opdeltIEjerlejligheder?: boolean;
+  /** BIZZ-860: Antal komponenter (ejerlejligheder) — vises i forklaring */
+  lejlighederCount?: number;
 }
 
 /** Render Økonomi-fanen. Ren præsentations-komponent. */
@@ -93,8 +103,19 @@ export default function EjendomOekonomiTab(props: Props) {
     tlTestFallback,
     mergedSalgshistorik,
     bbrData,
+    opdeltIEjerlejligheder,
+    lejlighederCount,
   } = props;
   const da = lang === 'da';
+
+  // BIZZ-860: Kombineret signal — opdelt-flag OG vurdering=0 på hovedejendom.
+  // Moderejendomme registrerer ikke vurdering på sig selv (fordeles på
+  // enheder), så 0 DKK er teknisk korrekt men misvisende for brugeren.
+  const skjulNulBoxes =
+    !!opdeltIEjerlejligheder &&
+    !!vurdering &&
+    (vurdering.ejendomsvaerdi == null || vurdering.ejendomsvaerdi === 0) &&
+    (vurdering.grundvaerdi == null || vurdering.grundvaerdi === 0);
 
   const t = {
     propertyValuation: da ? 'Ejendomsvurdering' : 'Property valuation',
@@ -142,32 +163,59 @@ export default function EjendomOekonomiTab(props: Props) {
           </div>
         ) : vurdering ? (
           <>
-            {/* Aktuelle tal */}
-            <div className="grid grid-cols-3 gap-3 mb-3">
-              <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                <p className="text-slate-400 text-xs mb-1">
-                  {t.propertyValue}
-                  {vurdering.aar && <span className="ml-1 text-slate-500">({vurdering.aar})</span>}
+            {/* BIZZ-860: Forklaring-card når ejendommen er opdelt og derfor
+                ikke har egen vurdering. Erstatter misvisende 0 DKK-bokse. */}
+            {skjulNulBoxes ? (
+              <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-5 mb-3 space-y-2">
+                <p className="text-blue-300 text-sm font-medium">
+                  {da
+                    ? 'Vurdering fordelt på ejerlejligheder'
+                    : 'Valuation distributed to condominiums'}
                 </p>
-                <p className="text-white text-lg font-bold">
-                  {vurdering.ejendomsvaerdi ? formatDKK(vurdering.ejendomsvaerdi) : formatDKK(0)}
+                <p className="text-slate-400 text-xs max-w-2xl">
+                  {da
+                    ? `Denne ejendom er opdelt i ${lejlighederCount ?? 'flere'} ejerlejligheder. Vurderingsstyrelsen registrerer ikke en samlet ejendoms- eller grundværdi på hovedejendommen — vurderinger fordeles i stedet på de enkelte lejligheder. Se individuelle vurderinger i Ejerforhold-fanen.`
+                    : `This property is divided into ${lejlighederCount ?? 'multiple'} condominiums. The Danish Valuation Agency registers no combined property or land value on the main property — valuations are distributed to individual units instead. See per-unit valuations in the Ownership tab.`}
                 </p>
+                {vurdering.vurderetAreal != null && (
+                  <p className="text-slate-500 text-xs">
+                    {da ? 'Grundareal:' : 'Plot area:'}{' '}
+                    <span className="text-slate-300 font-medium">
+                      {vurdering.vurderetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²
+                    </span>
+                  </p>
+                )}
               </div>
-              <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                <p className="text-slate-400 text-xs mb-1">{t.landValue}</p>
-                <p className="text-white text-lg font-bold">
-                  {vurdering.grundvaerdi ? formatDKK(vurdering.grundvaerdi) : formatDKK(0)}
-                </p>
+            ) : (
+              /* Aktuelle tal — vises når ejendommen har egne vurderinger */
+              <div className="grid grid-cols-3 gap-3 mb-3">
+                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                  <p className="text-slate-400 text-xs mb-1">
+                    {t.propertyValue}
+                    {vurdering.aar && (
+                      <span className="ml-1 text-slate-500">({vurdering.aar})</span>
+                    )}
+                  </p>
+                  <p className="text-white text-lg font-bold">
+                    {vurdering.ejendomsvaerdi ? formatDKK(vurdering.ejendomsvaerdi) : formatDKK(0)}
+                  </p>
+                </div>
+                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                  <p className="text-slate-400 text-xs mb-1">{t.landValue}</p>
+                  <p className="text-white text-lg font-bold">
+                    {vurdering.grundvaerdi ? formatDKK(vurdering.grundvaerdi) : formatDKK(0)}
+                  </p>
+                </div>
+                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                  <p className="text-slate-400 text-xs mb-1">{t.plotArea}</p>
+                  <p className="text-white text-lg font-bold">
+                    {vurdering.vurderetAreal != null
+                      ? `${vurdering.vurderetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                      : formatDKK(0)}
+                  </p>
+                </div>
               </div>
-              <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                <p className="text-slate-400 text-xs mb-1">{t.plotArea}</p>
-                <p className="text-white text-lg font-bold">
-                  {vurdering.vurderetAreal != null
-                    ? `${vurdering.vurderetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                    : formatDKK(0)}
-                </p>
-              </div>
-            </div>
+            )}
 
             {/* BIZZ-494: Fradrag for forbedringer — vises under Grundværdi */}
             {vurFradrag && vurFradrag.vaerdiSum != null && vurFradrag.vaerdiSum > 0 && (
@@ -467,17 +515,39 @@ export default function EjendomOekonomiTab(props: Props) {
                         </td>
                         <td className="px-4 py-2.5">
                           <div className="flex flex-col gap-1">
-                            <span
-                              className={`text-xs px-2 py-0.5 rounded-full inline-block w-fit ${
-                                overdragelse?.toLowerCase().includes('frit')
-                                  ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
-                                  : overdragelse?.toLowerCase().includes('tvang')
-                                    ? 'text-red-400 bg-red-500/10 border border-red-500/20'
-                                    : 'text-slate-400 bg-slate-500/10 border border-slate-500/20'
-                              }`}
-                            >
-                              {overdragelse ?? '—'}
-                            </span>
+                            {(() => {
+                              // BIZZ-842: oversæt EJF-numeriske koder (10/20/30/40)
+                              // til human-readable label + tooltip. Fallback til den
+                              // eksisterende frit/tvang-heuristik hvis overdragelse er
+                              // en fritekstet streng (pre-EJF-kodeformat).
+                              const info = getHandelstypeInfo(overdragelse);
+                              if (info) {
+                                return (
+                                  <span
+                                    className={`text-xs px-2 py-0.5 rounded-full inline-block w-fit border ${handelstypeBadgeClasses(info.color)}`}
+                                    title={da ? info.description : info.descriptionEn}
+                                  >
+                                    {da ? info.label : info.labelEn}
+                                    <span className="ml-1 text-[10px] opacity-60">
+                                      ({overdragelse})
+                                    </span>
+                                  </span>
+                                );
+                              }
+                              return (
+                                <span
+                                  className={`text-xs px-2 py-0.5 rounded-full inline-block w-fit ${
+                                    overdragelse?.toLowerCase().includes('frit')
+                                      ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
+                                      : overdragelse?.toLowerCase().includes('tvang')
+                                        ? 'text-red-400 bg-red-500/10 border border-red-500/20'
+                                        : 'text-slate-400 bg-slate-500/10 border border-slate-500/20'
+                                  }`}
+                                >
+                                  {overdragelse ?? '—'}
+                                </span>
+                              );
+                            })()}
                             {/* BIZZ-481: Betinget-badge med frist-dato — vigtigt
                                 advarselsflag på tinglyste handler med uopfyldte
                                 betingelser (købesum ikke fuldt betalt, skøder

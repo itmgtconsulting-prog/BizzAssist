@@ -1,4 +1,5 @@
 import { logger } from '@/app/lib/logger';
+import { loadConversations } from '@/app/lib/chatStorage';
 
 /**
  * One-time migration of localStorage data to Supabase.
@@ -11,6 +12,9 @@ import { logger } from '@/app/lib/logger';
  */
 
 const MIGRATION_KEY = 'ba-migrated-to-supabase';
+const CHAT_MIGRATION_KEY = 'ba-chat-migrated';
+const CHAT_MIGRATION_PROGRESS_KEY = 'ba-chat-migration-progress';
+const CHAT_HISTORY_KEY = 'ba-chat-history';
 
 /**
  * Check if migration has already been performed.
@@ -170,4 +174,111 @@ export async function migrateLocalStorageToSupabase(): Promise<void> {
     // Don't set the flag — retry next time
     logger.error('[migrateLocalStorage] Migration failed, will retry');
   }
+}
+
+// ─── BIZZ-820: AI-chat-historik migration ───────────────────────────────────
+
+/** Map local conversation-id → remote session-id for idempotens */
+type ChatProgressMap = Record<string, string>;
+
+/**
+ * BIZZ-820: Engangs-migration af localStorage chat-historik
+ * (ba-chat-history) til Supabase via /api/ai/sessions. Separat flag fra
+ * den øvrige localStorage-migration fordi chat-migration kræver auth +
+ * kan fejle delvist (mange messages per session) og skal kunne
+ * genoptages.
+ *
+ * Idempotent: tracker hvilke conversations der er uploaded i
+ * ba-chat-migration-progress så vi kan genoptage efter fejl. Når alt er
+ * klaret: sæt ba-chat-migrated=done og slet gamle localStorage-nøgler.
+ *
+ * @returns Antal conversations der blev migreret i dette run (0 = done
+ *   eller intet at gøre).
+ */
+export async function migrateChatHistoryToSupabase(): Promise<number> {
+  if (typeof window === 'undefined') return 0;
+
+  try {
+    if (localStorage.getItem(CHAT_MIGRATION_KEY) === 'done') return 0;
+  } catch {
+    return 0;
+  }
+
+  const conversations = loadConversations();
+
+  if (conversations.length === 0) {
+    try {
+      localStorage.setItem(CHAT_MIGRATION_KEY, 'done');
+    } catch {
+      /* ignore */
+    }
+    return 0;
+  }
+
+  // Load progress-map (lokal-id → remote-session-id)
+  let progress: ChatProgressMap = {};
+  try {
+    const raw = localStorage.getItem(CHAT_MIGRATION_PROGRESS_KEY);
+    if (raw) progress = JSON.parse(raw) as ChatProgressMap;
+  } catch {
+    progress = {};
+  }
+
+  let migrated = 0;
+
+  for (const conv of conversations) {
+    if (progress[conv.id]) continue; // allerede uploaded
+
+    try {
+      // 1. Opret session
+      const sessionRes = await fetch('/api/ai/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: conv.title || 'Migreret samtale' }),
+      });
+      if (!sessionRes.ok) {
+        // 401 = ikke logget ind → afbryd migration (prøv igen næste gang)
+        if (sessionRes.status === 401) return migrated;
+        continue;
+      }
+      const data = (await sessionRes.json()) as { session?: { id?: string } };
+      const newId = data.session?.id;
+      if (!newId) continue;
+
+      // 2. Append messages sekventielt (bevar rækkefølge)
+      for (const msg of conv.messages || []) {
+        await fetch(`/api/ai/sessions/${newId}/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            role: msg.role,
+            content: { text: msg.content },
+          }),
+        }).catch(() => null);
+      }
+
+      // 3. Registrér fremdrift (idempotens)
+      progress[conv.id] = newId;
+      try {
+        localStorage.setItem(CHAT_MIGRATION_PROGRESS_KEY, JSON.stringify(progress));
+      } catch {
+        /* quota */
+      }
+      migrated += 1;
+    } catch {
+      // Netværksfejl — afbryd så vi kan genoptage
+      return migrated;
+    }
+  }
+
+  // Alle conversations klaret — markér og slet gamle data
+  try {
+    localStorage.setItem(CHAT_MIGRATION_KEY, 'done');
+    localStorage.removeItem(CHAT_HISTORY_KEY);
+    localStorage.removeItem(CHAT_MIGRATION_PROGRESS_KEY);
+  } catch {
+    /* ignore */
+  }
+
+  return migrated;
 }

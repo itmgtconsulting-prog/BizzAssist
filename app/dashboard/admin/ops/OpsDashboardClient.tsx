@@ -121,7 +121,7 @@ export default function OpsDashboardClient() {
 
   return (
     <div className="min-h-full bg-[#0a1020] text-white">
-      <div className="max-w-6xl mx-auto px-4 py-8">
+      <div className="max-w-7xl mx-auto px-4 py-8">
         {/* Back link */}
         <Link
           href="/dashboard/admin/users"

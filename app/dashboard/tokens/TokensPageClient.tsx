@@ -41,6 +41,7 @@ import {
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { formatTokens, resolvePlan, type PlanId } from '@/app/lib/subscriptions';
+import { scopeColor } from '@/app/lib/scopeColors';
 import type { ApiTokenRecord } from '@/app/api/tokens/route';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -380,8 +381,8 @@ function CreateKeyModal({
         aria-hidden="true"
       />
 
-      {/* Panel */}
-      <div className="relative w-full max-w-md rounded-xl bg-slate-800 border border-slate-700/50 shadow-2xl p-6 space-y-5">
+      {/* Panel — BIZZ-782: accent-border som øvrige modals */}
+      <div className="relative w-full max-w-md rounded-xl bg-slate-800 border border-blue-500/30 shadow-2xl p-6 space-y-5">
         {/* Header */}
         <div className="flex items-center justify-between">
           <h2
@@ -786,6 +787,16 @@ export default function TokensPageClient() {
     }
   }
 
+  // ── Scroll-reset ved tab-skift ──
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  /** Reset scroll position when switching tabs */
+  useEffect(() => {
+    if (contentRef.current) {
+      contentRef.current.scrollTop = 0;
+    }
+  }, [activeTab]);
+
   // ── Render ──
 
   if (loading && activeTab === 'ai') {
@@ -799,353 +810,413 @@ export default function TokensPageClient() {
 
   return (
     <>
-      <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
-        {/* ── Back button ── */}
-        <button
-          onClick={() => router.push('/dashboard')}
-          className="flex items-center gap-2 text-slate-400 hover:text-slate-100 transition-colors text-sm"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          {t.back}
-        </button>
-
-        {/* ── Page header ── */}
-        <div>
-          <h1 className="text-2xl font-bold text-white flex items-center gap-3">
-            <Coins className="w-7 h-7 text-amber-400" />
-            {t.title}
-          </h1>
-        </div>
-
-        {/* ── Tab bar ── */}
-        <div role="tablist" className="flex gap-1 p-1 rounded-lg bg-slate-800/50 w-fit">
-          <button
-            role="tab"
-            aria-selected={activeTab === 'ai'}
-            id="tab-ai"
-            aria-controls="panel-ai"
-            onClick={() => setActiveTab('ai')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              activeTab === 'ai' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-100'
-            }`}
-          >
-            <Zap className="w-4 h-4" />
-            {t.tabAi}
-          </button>
-          <button
-            role="tab"
-            aria-selected={activeTab === 'api'}
-            id="tab-api"
-            aria-controls="panel-api"
-            onClick={() => setActiveTab('api')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              activeTab === 'api' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-100'
-            }`}
-          >
-            <Key className="w-4 h-4" />
-            {t.tabApi}
-          </button>
-        </div>
-
-        {/* ════════════════════════════════════
-            TAB: AI Tokens
-            ════════════════════════════════════ */}
-        <div
-          role="tabpanel"
-          id="panel-ai"
-          aria-labelledby="tab-ai"
-          hidden={activeTab !== 'ai'}
-          className="space-y-8"
-        >
-          {/* Payment result banners */}
-          {paymentResult === 'success' && (
-            <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-              <CheckCircle className="w-5 h-5 text-emerald-400 shrink-0" />
-              <span className="text-emerald-300 text-sm">{t.paymentSuccess}</span>
-            </div>
-          )}
-          {paymentResult === 'cancelled' && (
-            <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
-              <ShoppingCart className="w-5 h-5 text-amber-400 shrink-0" />
-              <span className="text-amber-300 text-sm">{t.paymentCancelled}</span>
-            </div>
-          )}
-
-          {/* Token Balance Overview */}
-          {!sub ? (
-            <div className="rounded-xl bg-slate-800/40 border border-slate-700/40 p-8 text-center text-slate-400">
-              {t.noSubscription}
-            </div>
-          ) : (
-            <div className="rounded-xl bg-slate-800/40 border border-slate-700/40 p-6 space-y-6">
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                  <Zap className="w-5 h-5 text-blue-400" />
-                  {t.balanceTitle}
-                </h2>
+      <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+          {/* ─── Sticky Header ─── */}
+          <div className="px-3 sm:px-6 pt-5 pb-0 border-b border-slate-700/50 bg-slate-900/30">
+            <div className="flex items-center justify-between mb-3">
+              <button
+                onClick={() => router.push('/dashboard')}
+                className="flex items-center gap-2 text-slate-400 hover:text-white text-sm transition-colors"
+              >
+                <ArrowLeft size={16} /> {t.back}
+              </button>
+              <div className="flex items-center gap-2">
                 <button
                   onClick={fetchAiData}
-                  className="flex items-center gap-1.5 text-slate-400 hover:text-slate-200 transition-colors text-xs"
+                  className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-sm transition-all bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300"
                 >
-                  <RefreshCw className="w-3.5 h-3.5" />
+                  <RefreshCw size={14} />
                   {t.refresh}
                 </button>
               </div>
+            </div>
 
-              {isUnlimited ? (
-                <div className="text-center py-4">
-                  <span className="text-3xl font-bold text-emerald-400">{t.unlimited}</span>
+            <h1 className="text-white text-xl sm:text-2xl font-bold mb-2">{t.title}</h1>
+
+            {/* BIZZ-782: info-chips matching company/ejendom/person detail-page
+                pattern — plan navn + månedligt AI-forbrug vs. tilgængeligt. */}
+            {sub && plan && (
+              <div className="flex flex-wrap items-center gap-2 mb-4">
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-600/20 text-blue-300 border border-blue-500/30">
+                  <Zap size={12} />
+                  {lang === 'da' ? plan.nameDa : plan.nameEn}
+                </span>
+                {isUnlimited ? (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+                    <Coins size={12} />
+                    {t.unlimited}
+                  </span>
+                ) : (
+                  <span
+                    className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium border ${
+                      usagePct < 20
+                        ? 'bg-red-500/10 text-red-300 border-red-500/20'
+                        : usagePct < 50
+                          ? 'bg-amber-500/10 text-amber-300 border-amber-500/20'
+                          : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'
+                    }`}
+                  >
+                    <Coins size={12} />
+                    {formatTokens(remaining)} / {formatTokens(totalAvailable)} {t.tokens}
+                  </span>
+                )}
+              </div>
+            )}
+            {/* Spacer when no badges */}
+            {!(sub && plan) && <div className="mb-4" />}
+
+            {/* ── Tab bar ── BIZZ-876/928: Underlined horizontal pattern matching
+                detail-side-tabs (ejendom/virksomhed/person) — border-b-2 aktiv,
+                transparent default. Konsistent på tværs af dashboard. */}
+            <div
+              role="tablist"
+              aria-label={lang === 'da' ? 'Token-side faner' : 'Token page tabs'}
+              className="flex gap-1 -mb-px overflow-x-auto scrollbar-hide"
+            >
+              <button
+                role="tab"
+                aria-selected={activeTab === 'ai'}
+                id="tab-ai"
+                aria-controls="panel-ai"
+                onClick={() => setActiveTab('ai')}
+                className={`flex items-center gap-1 px-2 py-1.5 text-xs font-medium border-b-2 transition-all whitespace-nowrap ${
+                  activeTab === 'ai'
+                    ? 'border-blue-500 text-blue-300'
+                    : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600'
+                }`}
+              >
+                <Zap size={12} />
+                {t.tabAi}
+              </button>
+              <button
+                role="tab"
+                aria-selected={activeTab === 'api'}
+                id="tab-api"
+                aria-controls="panel-api"
+                onClick={() => setActiveTab('api')}
+                className={`flex items-center gap-1 px-2 py-1.5 text-xs font-medium border-b-2 transition-all whitespace-nowrap ${
+                  activeTab === 'api'
+                    ? 'border-blue-500 text-blue-300'
+                    : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600'
+                }`}
+              >
+                <Key size={12} />
+                {t.tabApi}
+              </button>
+            </div>
+          </div>
+
+          {/* ─── Scrollable Content ─── */}
+          <div ref={contentRef} className="flex-1 overflow-y-auto px-3 sm:px-6 py-5">
+            {/* ════════════════════════════════════
+                TAB: AI Tokens
+                ════════════════════════════════════ */}
+            <div
+              role="tabpanel"
+              id="panel-ai"
+              aria-labelledby="tab-ai"
+              hidden={activeTab !== 'ai'}
+              className="space-y-8"
+            >
+              {/* Payment result banners */}
+              {paymentResult === 'success' && (
+                <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                  <CheckCircle className="w-5 h-5 text-emerald-400 shrink-0" />
+                  <span className="text-emerald-300 text-sm">{t.paymentSuccess}</span>
+                </div>
+              )}
+              {paymentResult === 'cancelled' && (
+                <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                  <ShoppingCart className="w-5 h-5 text-amber-400 shrink-0" />
+                  <span className="text-amber-300 text-sm">{t.paymentCancelled}</span>
+                </div>
+              )}
+
+              {/* Token Balance Overview */}
+              {!sub ? (
+                <div className="rounded-xl bg-slate-800/40 border border-slate-700/40 p-8 text-center text-slate-400">
+                  {t.noSubscription}
                 </div>
               ) : (
-                <div className="space-y-2">
-                  <div className="flex items-baseline justify-between">
-                    <span className={`text-3xl font-bold ${textColor(usagePct)}`}>
-                      {formatTokens(remaining)}
-                    </span>
-                    <span className="text-slate-400 text-sm">
-                      {t.of} {formatTokens(totalAvailable)} — {formatTokens(used)} {t.used}
-                    </span>
+                <div className="rounded-xl bg-slate-800/40 border border-slate-700/40 p-6 space-y-6">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                      <Zap className="w-5 h-5 text-blue-400" />
+                      {t.balanceTitle}
+                    </h2>
+                    <button
+                      onClick={fetchAiData}
+                      className="flex items-center gap-1.5 text-slate-400 hover:text-slate-200 transition-colors text-xs"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      {t.refresh}
+                    </button>
                   </div>
-                  <div className="w-full h-3 rounded-full bg-slate-700/40 overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all duration-500 ${meterColor(usagePct)}`}
-                      style={{ width: `${Math.min(100, usagePct)}%` }}
+
+                  {isUnlimited ? (
+                    <div className="text-center py-4">
+                      <span className="text-3xl font-bold text-emerald-400">{t.unlimited}</span>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="flex items-baseline justify-between">
+                        <span className={`text-3xl font-bold ${textColor(usagePct)}`}>
+                          {formatTokens(remaining)}
+                        </span>
+                        <span className="text-slate-400 text-sm">
+                          {t.of} {formatTokens(totalAvailable)} — {formatTokens(used)} {t.used}
+                        </span>
+                      </div>
+                      <div className="w-full h-3 rounded-full bg-slate-700/40 overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-500 ${meterColor(usagePct)}`}
+                          style={{ width: `${Math.min(100, usagePct)}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    <BreakdownCard
+                      label={t.planAllocation}
+                      value={isUnlimited ? t.unlimited : formatTokens(planMonthly)}
+                      sub={plan ? (lang === 'da' ? plan.nameDa : plan.nameEn) + t.perMonth : ''}
+                      color="text-blue-400"
+                    />
+                    <BreakdownCard
+                      label={t.accumulated}
+                      value={formatTokens(accumulated)}
+                      color="text-purple-400"
+                    />
+                    <BreakdownCard
+                      label={t.topUp}
+                      value={formatTokens(topUp)}
+                      color="text-amber-400"
+                    />
+                    <BreakdownCard
+                      label={t.bonus}
+                      value={formatTokens(bonus)}
+                      color="text-emerald-400"
+                    />
+                    <BreakdownCard
+                      label={t.usedThisPeriod}
+                      value={formatTokens(used)}
+                      color="text-red-400"
+                    />
+                    <BreakdownCard
+                      label={t.available}
+                      value={isUnlimited ? t.unlimited : formatTokens(remaining)}
+                      color={isUnlimited ? 'text-emerald-400' : textColor(usagePct)}
+                      highlight
                     />
                   </div>
                 </div>
               )}
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                <BreakdownCard
-                  label={t.planAllocation}
-                  value={isUnlimited ? t.unlimited : formatTokens(planMonthly)}
-                  sub={plan ? (lang === 'da' ? plan.nameDa : plan.nameEn) + t.perMonth : ''}
-                  color="text-blue-400"
-                />
-                <BreakdownCard
-                  label={t.accumulated}
-                  value={formatTokens(accumulated)}
-                  color="text-purple-400"
-                />
-                <BreakdownCard label={t.topUp} value={formatTokens(topUp)} color="text-amber-400" />
-                <BreakdownCard
-                  label={t.bonus}
-                  value={formatTokens(bonus)}
-                  color="text-emerald-400"
-                />
-                <BreakdownCard
-                  label={t.usedThisPeriod}
-                  value={formatTokens(used)}
-                  color="text-red-400"
-                />
-                <BreakdownCard
-                  label={t.available}
-                  value={isUnlimited ? t.unlimited : formatTokens(remaining)}
-                  color={isUnlimited ? 'text-emerald-400' : textColor(usagePct)}
-                  highlight
-                />
+              {/* Buy More Tokens */}
+              <div className="rounded-xl bg-slate-800/40 border border-slate-700/40 p-6 space-y-5">
+                <div>
+                  <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                    <ShoppingCart className="w-5 h-5 text-amber-400" />
+                    {t.buyTitle}
+                  </h2>
+                  <p className="text-slate-400 text-sm mt-1">{t.buySubtitle}</p>
+                </div>
+
+                {packs.length === 0 ? (
+                  <div className="text-center py-8 text-slate-500 text-sm">{t.noPacks}</div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {packs.map((pack) => {
+                      const isBuying = buyingPackId === pack.id;
+                      return (
+                        <div
+                          key={pack.id}
+                          className="rounded-lg bg-slate-800/40 border border-slate-700/40 p-5 flex flex-col items-center gap-3 hover:border-blue-500/30 transition-colors"
+                        >
+                          <Coins className="w-8 h-8 text-amber-400" />
+                          <span className="text-2xl font-bold text-white">
+                            {formatTokens(pack.tokenAmount)}
+                          </span>
+                          <span className="text-slate-400 text-xs">{t.tokens}</span>
+                          <span className="text-slate-200 text-sm font-medium">
+                            {pack.priceDkk.toLocaleString('da-DK')} {t.dkk}
+                          </span>
+                          <button
+                            onClick={() => handleBuy(pack.id)}
+                            disabled={isBuying || buyingPackId !== null}
+                            className="w-full mt-1 px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                          >
+                            {isBuying ? (
+                              <>
+                                <RefreshCw className="w-4 h-4 animate-spin" />
+                                {t.redirecting}
+                              </>
+                            ) : (
+                              <>
+                                <ShoppingCart className="w-4 h-4" />
+                                {t.buy}
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
-          )}
 
-          {/* Buy More Tokens */}
-          <div className="rounded-xl bg-slate-800/40 border border-slate-700/40 p-6 space-y-5">
-            <div>
-              <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                <ShoppingCart className="w-5 h-5 text-amber-400" />
-                {t.buyTitle}
-              </h2>
-              <p className="text-slate-400 text-sm mt-1">{t.buySubtitle}</p>
-            </div>
-
-            {packs.length === 0 ? (
-              <div className="text-center py-8 text-slate-500 text-sm">{t.noPacks}</div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {packs.map((pack) => {
-                  const isBuying = buyingPackId === pack.id;
-                  return (
-                    <div
-                      key={pack.id}
-                      className="rounded-lg bg-slate-800/40 border border-slate-700/40 p-5 flex flex-col items-center gap-3 hover:border-blue-500/30 transition-colors"
-                    >
-                      <Coins className="w-8 h-8 text-amber-400" />
-                      <span className="text-2xl font-bold text-white">
-                        {formatTokens(pack.tokenAmount)}
-                      </span>
-                      <span className="text-slate-400 text-xs">{t.tokens}</span>
-                      <span className="text-slate-200 text-sm font-medium">
-                        {pack.priceDkk.toLocaleString('da-DK')} {t.dkk}
-                      </span>
-                      <button
-                        onClick={() => handleBuy(pack.id)}
-                        disabled={isBuying || buyingPackId !== null}
-                        className="w-full mt-1 px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors flex items-center justify-center gap-2"
-                      >
-                        {isBuying ? (
-                          <>
-                            <RefreshCw className="w-4 h-4 animate-spin" />
-                            {t.redirecting}
-                          </>
-                        ) : (
-                          <>
-                            <ShoppingCart className="w-4 h-4" />
-                            {t.buy}
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* ════════════════════════════════════
+            {/* ════════════════════════════════════
             TAB: API Keys (BIZZ-54)
             ════════════════════════════════════ */}
-        <div
-          role="tabpanel"
-          id="panel-api"
-          aria-labelledby="tab-api"
-          hidden={activeTab !== 'api'}
-          className="space-y-6"
-        >
-          {/* Section header */}
-          <div className="rounded-xl bg-slate-800/40 border border-slate-700/40 p-6">
-            <div className="flex items-start justify-between gap-4">
-              <div className="space-y-1">
-                <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                  <Shield className="w-5 h-5 text-blue-400" />
-                  {t.apiTitle}
-                </h2>
-                <p className="text-slate-400 text-sm">{t.apiSubtitle}</p>
+            <div
+              role="tabpanel"
+              id="panel-api"
+              aria-labelledby="tab-api"
+              hidden={activeTab !== 'api'}
+              className="space-y-6"
+            >
+              {/* Section header */}
+              <div className="rounded-xl bg-slate-800/40 border border-slate-700/40 p-6">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                      <Shield className="w-5 h-5 text-blue-400" />
+                      {t.apiTitle}
+                    </h2>
+                    <p className="text-slate-400 text-sm">{t.apiSubtitle}</p>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <a
+                      href="/api-docs"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-2 rounded-lg border border-slate-700/50 text-slate-400 hover:text-slate-100 hover:border-slate-600 transition-colors text-xs"
+                    >
+                      {t.apiDocsLink}
+                    </a>
+                    <button
+                      onClick={() => setShowCreateModal(true)}
+                      className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors"
+                    >
+                      <Plus className="w-4 h-4" />
+                      {t.apiCreate}
+                    </button>
+                  </div>
+                </div>
               </div>
-              <div className="flex items-center gap-3 shrink-0">
-                <a
-                  href="/api-docs"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-3 py-2 rounded-lg border border-slate-700/50 text-slate-400 hover:text-slate-100 hover:border-slate-600 transition-colors text-xs"
-                >
-                  {t.apiDocsLink}
-                </a>
-                <button
-                  onClick={() => setShowCreateModal(true)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors"
-                >
-                  <Plus className="w-4 h-4" />
-                  {t.apiCreate}
-                </button>
-              </div>
+
+              {/* Keys list */}
+              {apiLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <RefreshCw className="w-5 h-5 text-blue-400 animate-spin" />
+                  <span className="ml-3 text-slate-400 text-sm">{t.loading}</span>
+                </div>
+              ) : apiKeys.length === 0 ? (
+                <div className="rounded-xl bg-slate-800/40 border border-slate-700/40 p-12 text-center">
+                  <Key className="w-10 h-10 text-white/20 mx-auto mb-3" />
+                  <p className="text-slate-500 text-sm">{t.apiNoKeys}</p>
+                </div>
+              ) : (
+                <div className="rounded-xl bg-slate-800/40 border border-slate-700/40 overflow-hidden">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-slate-700/40">
+                        <th className="text-left text-xs text-slate-400 font-medium px-4 py-3">
+                          {t.apiColName}
+                        </th>
+                        <th className="text-left text-xs text-slate-400 font-medium px-4 py-3">
+                          {t.apiColPrefix}
+                        </th>
+                        <th className="text-left text-xs text-slate-400 font-medium px-4 py-3 hidden sm:table-cell">
+                          {t.apiColScopes}
+                        </th>
+                        <th className="text-left text-xs text-slate-400 font-medium px-4 py-3 hidden md:table-cell">
+                          {t.apiColCreated}
+                        </th>
+                        <th className="text-left text-xs text-slate-400 font-medium px-4 py-3 hidden lg:table-cell">
+                          {t.apiColLastUsed}
+                        </th>
+                        <th className="text-right text-xs text-slate-400 font-medium px-4 py-3">
+                          {t.apiColActions}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {apiKeys.map((key) => (
+                        <tr
+                          key={key.id}
+                          className="border-b border-white/[0.03] last:border-0 hover:bg-white/[0.02] transition-colors"
+                        >
+                          {/* Name */}
+                          <td className="px-4 py-3">
+                            <span className="text-white text-sm font-medium">{key.name}</span>
+                          </td>
+
+                          {/* Prefix */}
+                          <td className="px-4 py-3">
+                            <code className="text-emerald-400 text-xs font-mono bg-black/20 px-2 py-0.5 rounded">
+                              {key.prefix}...
+                            </code>
+                          </td>
+
+                          {/* Scopes — BIZZ-782: farvekodede chips per scope-type */}
+                          <td className="px-4 py-3 hidden sm:table-cell">
+                            <div className="flex flex-wrap gap-1">
+                              {key.scopes.map((scope) => {
+                                const c = scopeColor(scope);
+                                return (
+                                  <span
+                                    key={scope}
+                                    className={`text-[10px] px-1.5 py-0.5 rounded border ${c.bg} ${c.text} ${c.border}`}
+                                  >
+                                    {scope}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </td>
+
+                          {/* Created */}
+                          <td className="px-4 py-3 hidden md:table-cell">
+                            <span className="text-slate-400 text-xs">
+                              {fmtDate(key.created_at, lang, '—')}
+                            </span>
+                          </td>
+
+                          {/* Last used */}
+                          <td className="px-4 py-3 hidden lg:table-cell">
+                            <span className="text-slate-400 text-xs">
+                              {fmtDate(key.last_used, lang, t.apiNeverUsed)}
+                            </span>
+                          </td>
+
+                          {/* Actions */}
+                          <td className="px-4 py-3 text-right">
+                            <button
+                              onClick={() => handleRevoke(key.id)}
+                              disabled={revokingId === key.id}
+                              aria-label={`${t.apiRevoke} ${key.name}`}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors text-xs disabled:opacity-40"
+                            >
+                              {revokingId === key.id ? (
+                                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Trash2 className="w-3.5 h-3.5" />
+                              )}
+                              {t.apiRevoke}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
-
-          {/* Keys list */}
-          {apiLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <RefreshCw className="w-5 h-5 text-blue-400 animate-spin" />
-              <span className="ml-3 text-slate-400 text-sm">{t.loading}</span>
-            </div>
-          ) : apiKeys.length === 0 ? (
-            <div className="rounded-xl bg-slate-800/40 border border-slate-700/40 p-12 text-center">
-              <Key className="w-10 h-10 text-white/20 mx-auto mb-3" />
-              <p className="text-slate-500 text-sm">{t.apiNoKeys}</p>
-            </div>
-          ) : (
-            <div className="rounded-xl bg-slate-800/40 border border-slate-700/40 overflow-hidden">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-slate-700/40">
-                    <th className="text-left text-xs text-slate-400 font-medium px-4 py-3">
-                      {t.apiColName}
-                    </th>
-                    <th className="text-left text-xs text-slate-400 font-medium px-4 py-3">
-                      {t.apiColPrefix}
-                    </th>
-                    <th className="text-left text-xs text-slate-400 font-medium px-4 py-3 hidden sm:table-cell">
-                      {t.apiColScopes}
-                    </th>
-                    <th className="text-left text-xs text-slate-400 font-medium px-4 py-3 hidden md:table-cell">
-                      {t.apiColCreated}
-                    </th>
-                    <th className="text-left text-xs text-slate-400 font-medium px-4 py-3 hidden lg:table-cell">
-                      {t.apiColLastUsed}
-                    </th>
-                    <th className="text-right text-xs text-slate-400 font-medium px-4 py-3">
-                      {t.apiColActions}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {apiKeys.map((key) => (
-                    <tr
-                      key={key.id}
-                      className="border-b border-white/[0.03] last:border-0 hover:bg-white/[0.02] transition-colors"
-                    >
-                      {/* Name */}
-                      <td className="px-4 py-3">
-                        <span className="text-white text-sm font-medium">{key.name}</span>
-                      </td>
-
-                      {/* Prefix */}
-                      <td className="px-4 py-3">
-                        <code className="text-emerald-400 text-xs font-mono bg-black/20 px-2 py-0.5 rounded">
-                          {key.prefix}...
-                        </code>
-                      </td>
-
-                      {/* Scopes */}
-                      <td className="px-4 py-3 hidden sm:table-cell">
-                        <div className="flex flex-wrap gap-1">
-                          {key.scopes.map((scope) => (
-                            <span
-                              key={scope}
-                              className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/20"
-                            >
-                              {scope}
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-
-                      {/* Created */}
-                      <td className="px-4 py-3 hidden md:table-cell">
-                        <span className="text-slate-400 text-xs">
-                          {fmtDate(key.created_at, lang, '—')}
-                        </span>
-                      </td>
-
-                      {/* Last used */}
-                      <td className="px-4 py-3 hidden lg:table-cell">
-                        <span className="text-slate-400 text-xs">
-                          {fmtDate(key.last_used, lang, t.apiNeverUsed)}
-                        </span>
-                      </td>
-
-                      {/* Actions */}
-                      <td className="px-4 py-3 text-right">
-                        <button
-                          onClick={() => handleRevoke(key.id)}
-                          disabled={revokingId === key.id}
-                          aria-label={`${t.apiRevoke} ${key.name}`}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors text-xs disabled:opacity-40"
-                        >
-                          {revokingId === key.id ? (
-                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Trash2 className="w-3.5 h-3.5" />
-                          )}
-                          {t.apiRevoke}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
         </div>
       </div>
 

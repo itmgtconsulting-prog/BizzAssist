@@ -8,8 +8,7 @@
 
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import {
   Plus,
@@ -21,9 +20,14 @@ import {
   AlertTriangle,
   CheckCircle,
   XCircle,
+  Search,
+  Archive,
   ArrowLeft,
+  GripVertical,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { AdminNavTabs } from '../AdminNavTabs';
+import { DomainDetailPanel } from './DomainDetailPanel';
 
 /** Domain from API */
 interface DomainRow {
@@ -44,10 +48,75 @@ interface DomainRow {
 export default function DomainsListClient() {
   const { lang } = useLanguage();
   const da = lang === 'da';
-  const router = useRouter();
   const [domains, setDomains] = useState<DomainRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // BIZZ-739: search + status filter — pattern matches /dashboard/admin/users
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'suspended' | 'archived'>(
+    'all'
+  );
+
+  // BIZZ-785: Split-view state — clicking a row opens a detail panel to the
+  // right of the list. Left keeps the full list UI unchanged; only its
+  // effective width shrinks. URL carries `?d=<id>` so a fresh reload restores
+  // the selection and the view is deep-linkable.
+  const [selectedDomainId, setSelectedDomainId] = useState<string | null>(null);
+  const [leftPct, setLeftPct] = useState(55);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Initial sync from URL on mount + persisted divider position.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const sp = new URLSearchParams(window.location.search);
+    const d = sp.get('d');
+    if (d) setSelectedDomainId(d);
+    const saved = Number(window.localStorage.getItem('bizz-domains-split-pct'));
+    if (saved >= 20 && saved <= 80) setLeftPct(saved);
+  }, []);
+
+  // Keep URL in sync with selection without a router navigation so the
+  // existing list state (scroll, search, filter) stays intact.
+  const setSelectionWithUrl = useCallback((id: string | null) => {
+    setSelectedDomainId(id);
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (id) url.searchParams.set('d', id);
+    else url.searchParams.delete('d');
+    window.history.replaceState(null, '', url.toString());
+  }, []);
+
+  // Divider drag handler — updates leftPct while dragging and persists it.
+  const startResize = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const container = containerRef.current;
+      if (!container) return;
+      const onMove = (ev: MouseEvent) => {
+        const rect = container.getBoundingClientRect();
+        const pct = ((ev.clientX - rect.left) / rect.width) * 100;
+        const clamped = Math.max(25, Math.min(80, pct));
+        setLeftPct(clamped);
+      };
+      const onUp = () => {
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        window.localStorage.setItem('bizz-domains-split-pct', String(Math.round(leftPct)));
+      };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    },
+    [leftPct]
+  );
+
+  // Resolve the selected domain object for the detail-panel header.
+  const selectedDomain = selectedDomainId
+    ? (domains.find((d) => d.id === selectedDomainId) ?? null)
+    : null;
 
   /** Fetch domains from API */
   const fetchDomains = useCallback(async () => {
@@ -128,31 +197,161 @@ export default function DomainsListClient() {
     }
   };
 
-  return (
-    <div className="max-w-6xl mx-auto px-4 py-8 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => router.push('/dashboard/admin/users')}
-            className="text-slate-400 hover:text-slate-200 transition-colors"
-            aria-label={da ? 'Tilbage' : 'Back'}
-          >
-            <ArrowLeft size={20} />
-          </button>
-          <h1 className="text-xl font-bold text-white flex items-center gap-2">
-            <Building2 size={22} className="text-blue-400" />
-            {da ? 'Domain Management' : 'Domain Management'}
-          </h1>
-        </div>
-        <Link
-          href="/dashboard/admin/domains/new"
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
-        >
-          <Plus size={16} />
-          {da ? 'Opret Domain' : 'Create Domain'}
-        </Link>
+  // BIZZ-739: stats for KPI row
+  const totalCount = domains.length;
+  const activeCount = domains.filter((d) => d.status === 'active').length;
+  const suspendedCount = domains.filter((d) => d.status === 'suspended').length;
+  const archivedCount = domains.filter((d) => d.status === 'archived').length;
+
+  // BIZZ-739: apply search + status filter
+  const filteredDomains = domains.filter((d) => {
+    if (statusFilter !== 'all' && d.status !== statusFilter) return false;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      if (!d.name.toLowerCase().includes(q) && !d.slug.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  // BIZZ-783: Stats as clickable filter pills instead of static KPI cards.
+  // Clicking a pill sets statusFilter so the table below filters to that status.
+  const statPills: Array<{
+    label: string;
+    value: number;
+    icon: typeof Building2;
+    color: string;
+    filter: 'all' | 'active' | 'suspended' | 'archived';
+  }> = [
+    {
+      label: da ? 'Total' : 'Total',
+      value: totalCount,
+      icon: Building2,
+      color: 'text-blue-400',
+      filter: 'all',
+    },
+    {
+      label: da ? 'Aktive' : 'Active',
+      value: activeCount,
+      icon: CheckCircle,
+      color: 'text-emerald-400',
+      filter: 'active',
+    },
+    {
+      label: da ? 'Suspenderede' : 'Suspended',
+      value: suspendedCount,
+      icon: AlertTriangle,
+      color: 'text-amber-400',
+      filter: 'suspended',
+    },
+    {
+      label: da ? 'Arkiveret' : 'Archived',
+      value: archivedCount,
+      icon: Archive,
+      color: 'text-slate-400',
+      filter: 'archived',
+    },
+  ];
+
+  const listContent = (
+    <div className="w-full px-4 py-8 space-y-6">
+      {/* BIZZ-782: Header-struktur matcher Cron-status — back-link + page
+          header (titel + subtitle + action-knap) OVER admin tab-bar. */}
+      <Link
+        href="/dashboard/admin/users"
+        className="inline-flex items-center gap-1.5 text-slate-400 hover:text-white text-sm transition-colors"
+      >
+        <ArrowLeft size={14} />
+        {da ? 'Tilbage til admin' : 'Back to admin'}
+      </Link>
+
+      {/* BIZZ-791: "Opret Domain"-knap flyttet ned til søgefelt-rækken —
+          øverste hjørne er nu kun titel + count. */}
+      <div>
+        <h1 className="text-white text-xl font-bold flex items-center gap-2">
+          <Building2 size={22} className="text-blue-400" />
+          {da ? 'Domain Management' : 'Domain Management'}
+        </h1>
+        <p className="text-slate-400 text-sm mt-0.5">
+          {loading
+            ? da
+              ? 'Henter domains…'
+              : 'Loading domains…'
+            : da
+              ? `${totalCount} total · ${activeCount} aktive${suspendedCount > 0 ? ` · ${suspendedCount} suspenderede` : ''}${archivedCount > 0 ? ` · ${archivedCount} arkiveret` : ''}`
+              : `${totalCount} total · ${activeCount} active${suspendedCount > 0 ? ` · ${suspendedCount} suspended` : ''}${archivedCount > 0 ? ` · ${archivedCount} archived` : ''}`}
+        </p>
       </div>
+
+      {/* BIZZ-782: Admin tab-bar i samme variant som cron-status (border-b) */}
+      <AdminNavTabs
+        activeTab="domains"
+        da={da}
+        className="flex gap-1 -mb-px overflow-x-auto border-b border-slate-700/50"
+      />
+
+      {/* BIZZ-783: Stat-pills — clickable filter tags replacing static KPI cards.
+          Active pill gets blue outline + stronger background; clicking toggles
+          statusFilter and filters the table below. */}
+      {!loading && !error && (
+        <div className="flex flex-wrap gap-2">
+          {statPills.map((p) => {
+            const isActive = statusFilter === p.filter;
+            return (
+              <button
+                key={p.filter}
+                type="button"
+                onClick={() => setStatusFilter(p.filter)}
+                aria-pressed={isActive}
+                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-medium transition-colors ${
+                  isActive
+                    ? 'bg-blue-500/20 border-blue-400/60 text-white'
+                    : 'bg-slate-900/50 border-slate-700/40 text-slate-300 hover:bg-slate-800/60 hover:border-slate-600'
+                }`}
+              >
+                <p.icon size={13} className={p.color} />
+                <span>{p.label}</span>
+                <span
+                  className={`ml-1 px-1.5 py-0.5 rounded-md text-[11px] font-semibold ${
+                    isActive ? 'bg-blue-500/30 text-white' : 'bg-slate-800/80 text-slate-200'
+                  }`}
+                >
+                  {p.value}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* BIZZ-739: Search (status-filter moved into clickable pills above — BIZZ-783).
+          BIZZ-791: "Opret Domain"-knap nu placeret på samme linje som søgefeltet
+          (flyttet fra header). Mobile: knap falder under søgefeltet via flex-wrap. */}
+      {!loading && !error && (
+        <div className="flex flex-wrap gap-3 items-center">
+          {totalCount > 0 && (
+            <div className="relative flex-1 max-w-xs min-w-[200px]">
+              <Search
+                size={14}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
+              />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={da ? 'Søg navn eller slug…' : 'Search name or slug…'}
+                className="w-full bg-slate-800/60 border border-slate-700/50 rounded-lg pl-9 pr-3 py-2 text-white text-xs placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+          )}
+          <Link
+            href="/dashboard/admin/domains/new"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors ml-auto"
+          >
+            <Plus size={16} />
+            {da ? 'Opret Domain' : 'Create Domain'}
+          </Link>
+        </div>
+      )}
 
       {/* Table */}
       {loading ? (
@@ -166,6 +365,13 @@ export default function DomainsListClient() {
           <Building2 size={40} className="text-slate-600 mx-auto mb-3" />
           <p className="text-slate-400 text-sm">
             {da ? 'Ingen domains oprettet endnu.' : 'No domains created yet.'}
+          </p>
+        </div>
+      ) : filteredDomains.length === 0 ? (
+        <div className="text-center py-20">
+          <Search size={32} className="text-slate-600 mx-auto mb-3" />
+          <p className="text-slate-400 text-sm">
+            {da ? 'Ingen domains matcher filteret.' : 'No domains match the filter.'}
           </p>
         </div>
       ) : (
@@ -195,18 +401,35 @@ export default function DomainsListClient() {
               </tr>
             </thead>
             <tbody>
-              {domains.map((d) => (
+              {filteredDomains.map((d) => (
                 <tr
                   key={d.id}
-                  className="border-b border-slate-700/20 hover:bg-slate-700/10 transition-colors"
+                  onClick={(e) => {
+                    // BIZZ-746: row click → open detail. BIZZ-785: open in split
+                    // panel on the right instead of a full-page navigation so
+                    // the list stays visible. Skip when the click target is an
+                    // action button/link.
+                    const target = e.target as HTMLElement;
+                    if (target.closest('button') || target.closest('a')) return;
+                    setSelectionWithUrl(d.id);
+                  }}
+                  className={`border-b border-slate-700/20 transition-colors cursor-pointer ${
+                    d.id === selectedDomainId
+                      ? 'bg-blue-500/10 hover:bg-blue-500/15'
+                      : 'hover:bg-slate-700/10'
+                  }`}
                 >
                   <td className="px-4 py-3">
-                    <Link
-                      href={`/dashboard/admin/domains/${d.id}`}
-                      className="text-white font-medium hover:text-blue-300 transition-colors"
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setSelectionWithUrl(d.id);
+                      }}
+                      className="text-white font-medium hover:text-blue-300 transition-colors text-left"
                     >
                       {d.name}
-                    </Link>
+                    </button>
                     <p className="text-slate-500 text-xs">{d.slug}</p>
                   </td>
                   <td className="px-4 py-3">{statusBadge(d.status)}</td>
@@ -220,7 +443,7 @@ export default function DomainsListClient() {
                       year: 'numeric',
                     })}
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-end gap-2">
                       <button
                         onClick={() => toggleStatus(d.id, d.status)}
@@ -248,6 +471,50 @@ export default function DomainsListClient() {
           </table>
         </div>
       )}
+    </div>
+  );
+
+  // BIZZ-785: When no selection, render the list at full width (unchanged
+  // behaviour). When a selection exists, split the viewport into a left
+  // column (list — pressed together but otherwise identical) and a right
+  // column (detail panel). A draggable divider between the two lets the
+  // super-admin choose their preferred split.
+  if (!selectedDomainId) {
+    return listContent;
+  }
+
+  return (
+    <div ref={containerRef} className="flex w-full" style={{ minHeight: 'calc(100vh - 140px)' }}>
+      {/* LEFT: existing list content, just narrower */}
+      <div className="min-w-0 overflow-hidden" style={{ width: `${leftPct}%` }}>
+        {listContent}
+      </div>
+
+      {/* DIVIDER: mouse-drag to resize. Full-height with subtle hover + grip. */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-valuenow={Math.round(leftPct)}
+        aria-valuemin={25}
+        aria-valuemax={80}
+        onMouseDown={startResize}
+        className="group relative w-1.5 shrink-0 cursor-col-resize bg-slate-800/40 hover:bg-blue-500/40 transition-colors"
+        title={da ? 'Træk for at justere opdelingen' : 'Drag to resize split'}
+      >
+        <GripVertical
+          size={14}
+          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-600 group-hover:text-blue-300"
+        />
+      </div>
+
+      {/* RIGHT: detail panel */}
+      <div className="min-w-0 overflow-hidden px-4 py-8" style={{ width: `${100 - leftPct}%` }}>
+        <DomainDetailPanel
+          domainId={selectedDomainId}
+          domainName={selectedDomain?.name}
+          onClose={() => setSelectionWithUrl(null)}
+        />
+      </div>
     </div>
   );
 }

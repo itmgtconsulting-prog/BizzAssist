@@ -33,6 +33,7 @@ import { createAdminClient, tenantDb, type TenantDb } from '@/lib/supabase/admin
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/lib/supabase/types';
 import { logActivity } from '@/app/lib/activityLog';
+import { logger } from '@/app/lib/logger';
 import { assertAiAllowed } from '@/app/lib/aiGate';
 
 export const runtime = 'nodejs';
@@ -45,9 +46,46 @@ interface ChatMessage {
   content: string;
 }
 
+/** BIZZ-812: attachment reference til tool-use (generate_document). */
+interface ChatAttachmentRef {
+  file_id: string;
+  name: string;
+  file_type: string;
+}
+
+/**
+ * BIZZ-869 part 2: Metadata for AI-genererede filer emittet under en
+ * turn. Akkumuleres i streaming-loopen og persisteres sammen med
+ * assistant-beskeden i ai_chat_messages.content så download-chippen
+ * overlever reload + cross-device.
+ */
+interface GeneratedFileRef {
+  file_id: string;
+  file_name: string;
+  download_url?: string;
+  preview_text?: string;
+  preview_kind?: 'text' | 'table' | 'html';
+  preview_columns?: string[];
+  preview_rows?: string[][];
+  preview_html?: string;
+  bytes: number;
+  format: string;
+}
+
 interface ChatRequestBody {
   messages: ChatMessage[];
   context?: string;
+  /** BIZZ-812: Persistede attachments (ai_file-ids). Tool-dispatcher i
+   *  BIZZ-813 bruger dem til template-fill. Optional + baglæns-kompatibel. */
+  attachments?: ChatAttachmentRef[];
+  /**
+   * BIZZ-819: Valgfri session_id — når sat, persisterer vi user-prompt +
+   * assistant-svar til ai_chat_messages efter streaming er færdig. Hvis
+   * feltet mangler (fx legacy-klient), kører chat i stateless-mode som
+   * før og caller holder historik i localStorage. Migration-path:
+   * BIZZ-820 UI skifter gradvist til at sende session_id.
+   */
+  session_id?: string;
 }
 
 // ─── Tool definitions ───────────────────────────────────────────────────────
@@ -85,7 +123,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'hent_bbr_data',
     description:
-      'Hent BBR-bygningsdata (opførelsesår, areal, materialer, etager, opvarmning, supplerende varme, vandforsyning, bevaringsværdighed, enheder med boligtype og energiforsyning) for en ejendom via DAWA-adresse-ID. Returnerer også ejendomsrelationer med BFE-nummer.',
+      'Hent BBR-bygningsdata (opførelsesår, areal, materialer, etager, opvarmning, supplerende varme, vandforsyning, bevaringsværdighed, enheder med boligtype og energiforsyning) for en ejendom via DAWA-adresse-ID. Returnerer også ejendomsrelationer med BFE-nummer, samt hierarki-chain (BIZZ-895: SFE → hovedejendom → leaf-BFE) når ejendommen er del af en samlet fast ejendom. Felterne er: ejendomstype (sfe/bygning/ejerlejlighed), hovedejendomOpdeltIEjerlejligheder, moderBfe, hierarkiChain (array fra leaf til SFE med niveau-label).',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -97,7 +135,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'hent_vurdering',
     description:
-      'Hent offentlig ejendomsvurdering med udvidede data fra Datafordeler. Returnerer: ejendomsværdi, grundværdi, afgiftspligtige beløb, estimeret grundskyld, grundskyldspromille, juridisk kategori, vurderingshistorik (alle år), PLUS: ejerboligfordeling, grundværdispecifikation (areal × enhedspris nedbrydning), grundskatteloft (loftansættelse), skattefritagelser, og fradrag for forbedringer. Kræver BFE-nummer og kommunekode.',
+      'Hent offentlig ejendomsvurdering med udvidede data fra Datafordeler. Returnerer: ejendomsværdi, grundværdi, afgiftspligtige beløb, estimeret grundskyld, grundskyldspromille, juridisk kategori, vurderingshistorik (alle år), PLUS: ejerboligfordeling, grundværdispecifikation (areal × enhedspris nedbrydning), grundskatteloft (loftansættelse), skattefritagelser, og fradrag for forbedringer. BIZZ-892: Bruger kan bede om grundskyld/dækningsafgift/ejendomsværdiskat — kald hent_forelobig_vurdering FØRST (giver faktiske nye system-beløb), dette tool er fallback for ældre/estimerede tal. Kræver BFE-nummer og kommunekode.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -189,6 +227,27 @@ const TOOLS: Anthropic.Tool[] = [
       type: 'object' as const,
       properties: {
         cvr: { type: 'string', description: '8-cifret CVR-nummer' },
+      },
+      required: ['cvr'],
+    },
+  },
+  {
+    name: 'hent_virksomhed_personer',
+    // BIZZ-875: Lukker kritisk gap — AI kunne ikke besvare "hvem er
+    // direktør?" uden et tool til deltager-listen. cvr-public route
+    // returnerer allerede deltagere med roller; dette tool eksponerer det.
+    description:
+      'Lister alle personer og virksomheder tilknyttet et CVR-nummer som deltagere (direktion, bestyrelse, stifter, revision, ejer osv.). Returnerer navn, enhedsNummer, rolle(r), startdato, slutdato (hvis ophørt), ejerandel og stemmeandel. Brug dette når brugeren spørger "hvem er direktør", "hvem sidder i bestyrelsen", "hvem er ejere" eller lignende. Kombiner med soeg_person_cvr hvis brugeren vil drill ned på én person.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        cvr: { type: 'string', description: '8-cifret CVR-nummer' },
+        /** BIZZ-875: Optional filter — hvis angivet, returner kun deltagere med aktiv rolle. */
+        kunAktive: {
+          type: 'boolean',
+          description:
+            'Hvis true (default): returner kun deltagere med mindst én aktiv rolle (til=null). Hvis false: inkluder også historiske deltagere.',
+        },
       },
       required: ['cvr'],
     },
@@ -300,6 +359,248 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['cvr'],
     },
   },
+  // BIZZ-864/933: hent_ejendomme_for_person — giver AI ALLE ejendomme
+  // (personligt ejede + via selskaber) i ÉT kald. Henter først personens
+  // virksomheder fra CVR, derefter kalder /api/ejendomme-by-owner med
+  // både enhedsNummer OG CVR-liste. Løser BIZZ-933 hvor AI kun viste
+  // virksomhedsejede eller kun personligt ejede ejendomme.
+  {
+    name: 'hent_ejendomme_for_person',
+    description:
+      'Lister ALLE ejendomme en person ejer — både personligt ejede (i eget navn) OG ejendomme via virksomheder personen ejer. Ét kald giver fuldt billede. Kræver enhedsNummer (CVR-person-identifier). Returnerer ejendomme grupperet i "personligt" og "viaVirksomhed" med adresse, BFE, type og ejerandel. Brug ALTID dette tool (ikke hent_ejendomme_for_virksomhed) for person-ejendomsspørgsmål.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        enhedsNummer: {
+          type: 'string',
+          description:
+            'CVR enhedsnummer for personen (numerisk streng, fx "4000115446"). Findes typisk i konteksten på person-detaljesider, eller via soeg_person_cvr.',
+        },
+      },
+      required: ['enhedsNummer'],
+    },
+  },
+  // BIZZ-890 (audit G2): Virksomheds-historik (navn/adresse/form/status/
+  // branche/fusion/spaltning) via /api/cvr-public. Historik-tab i UI
+  // viser dette men AI havde ingen tool → kunne ikke svare "hvornår
+  // skiftede X navn" eller "er virksomheden fusioneret".
+  {
+    name: 'hent_virksomhed_historik',
+    description:
+      'Hent virksomhedens historik (navneskifter, adresseskifter, form-ændringer, status-ændringer, brancheskifter, fusioner, spaltninger). Returnerer tidslinje sorteret nyeste først. Brug dette når brugeren spørger "hvornår skiftede X navn", "er X fusioneret med nogen", "hvad er virksomhedens historik". Kan filtreres på type.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        cvr: { type: 'string', description: '8-cifret CVR-nummer.' },
+        type: {
+          type: 'string',
+          description:
+            'Valgfri filter: navn | adresse | form | status | branche | fusion | spaltning | ejerskab. Default: alle.',
+        },
+        max_results: {
+          type: 'string',
+          description: 'Maksimum antal entries (default 30, max 100).',
+        },
+      },
+      required: ['cvr'],
+    },
+  },
+  // BIZZ-891 (audit G3): Ejere af virksomhed (UP-retning i koncern-chain).
+  // Eksisterende hent_datterselskaber dækker DOWN. Dette tool dækker
+  // "hvem ejer virksomhed X" — ét niveau op. AI kan rekursere selv
+  // ved at kalde hent_virksomhed_ejere for hvert firma-ejer-CVR.
+  {
+    name: 'hent_virksomhed_ejere',
+    description:
+      'Hent de aktuelle ejere af en virksomhed (én niveau op i koncern-strukturen). Returnerer personer + virksomheder med ejerandel-interval, stemmeandel, role og fra/til-periode. Brug dette til at finde "hvem ejer X i sidste ende" (ultimate-ejer) — hvis en ejer selv er en virksomhed, kald toolet igen med dennes CVR for at walke op. Stop ved person-ejer eller når en ejer ikke selv har en CVR (udenlandsk entity).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        cvr: { type: 'string', description: '8-cifret CVR-nummer.' },
+        kun_aktuelle: {
+          type: 'string',
+          description:
+            'Hvis "true" (default): filtrer til ejer-roller hvor til-dato er null. Hvis "false": inkludér historiske ejere.',
+        },
+      },
+      required: ['cvr'],
+    },
+  },
+  // BIZZ-902 (parent BIZZ-896): Hent extracted_text for et domain_case_doc.
+  // Bruges når bruger har valgt dokumenter via checkbox (BIZZ-899) i sager-
+  // workspace — AI får adgang til parsed tekst så den kan besvare spørgsmål
+  // om dokumentets indhold uden at bruger skal paste det ind selv.
+  {
+    name: 'hent_dokument_indhold',
+    description:
+      'Hent den parsed tekst fra et domain-dokument (docx/pdf/txt/eml/msg). Brug dette når brugeren har valgt dokumenter i sagen og spørger om deres indhold — fx "hvad står der i det første dokument", "opsummer vedhæftningerne". Returnerer tekst, filnavn og filtype. Kræver at brugeren er medlem af dokumentets domain.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        docId: { type: 'string', description: 'domain_case_doc.id (UUID)' },
+      },
+      required: ['docId'],
+    },
+  },
+  // BIZZ-894 (audit G6): Person-netværk via cvr_deltagerrelation.
+  // UI relationer-sektion viser co-direktører + medejere — AI havde
+  // ingen tool. Data-kilde: public.cvr_deltagerrelation (BIZZ-830).
+  {
+    name: 'hent_person_netvaerk',
+    description:
+      'Hent personens netværk: andre personer som oftest er deltager (direktør/ejer/bestyrelsesmedlem) i de samme virksomheder. Sorteret efter antal fælles virksomheder. Brug dette til at svare "hvem arbejder X sammen med" eller "hvem er i netværk med X". Stopper ved top-20 (default, cap 50).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        enhedsNummer: {
+          type: 'string',
+          description: 'Personens enhedsNummer fra CVR ES (ikke CPR!).',
+        },
+        max_results: {
+          type: 'string',
+          description: 'Maksimum antal netværks-personer (default 20, cap 50).',
+        },
+      },
+      required: ['enhedsNummer'],
+    },
+  },
+  // BIZZ-893 (audit G5): Nyheder om virksomhed via aggregator.
+  // UI viser seneste nyheder på virksomhed/overblik — AI havde
+  // ingen vej til at citere artikler. /api/news aggregerer Ritzau +
+  // Ritzau Via + danske RSS-feeds + Google News.
+  {
+    name: 'hent_virksomhed_nyheder',
+    description:
+      'Hent seneste nyhedsartikler om en virksomhed fra danske kilder (Ritzau, Ritzau Via, RSS-feeds, Google News). Returnerer titel, URL, kilde, publiceringsdato og snippet. Brug dette når brugeren spørger "hvad står der i pressen om X" eller "hvad er nyt om X". Returnerer max 10 artikler (sorteret nyeste først).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        navn: {
+          type: 'string',
+          description: 'Virksomhedsnavn (uden juridiske suffikser som A/S, ApS — vi renser selv).',
+        },
+        max_results: {
+          type: 'string',
+          description: 'Maksimum antal artikler (default 10, max 20).',
+        },
+      },
+      required: ['navn'],
+    },
+  },
+  // BIZZ-889 (audit G1): ejendomsadministrator / ejerforening tool.
+  // UI viser det på SFE-detaljeside + ejerforholds-tab via /api/ejendomsadmin
+  // — AI havde ingen vej til denne data før. Bruges til at svare
+  // "hvem administrerer ejendom X" uden at lede brugeren gennem UI.
+  {
+    name: 'hent_ejendomsadmin',
+    description:
+      'Hent ejendomsadministrator (ejerforening) for en ejendom. Returnerer aktuelle administratorer (virksomhed eller person) med CVR-nummer, navn og type. Brug dette når brugeren spørger "hvem administrerer ejendom X" eller "hvilken ejerforening hører ejendom X til". Tjekker kun aktuelle (virkningTil=null).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        bfeNummer: {
+          type: 'string',
+          description: 'BFE-nummer på ejendommen (kan være SFE eller bygnings-BFE).',
+        },
+      },
+      required: ['bfeNummer'],
+    },
+  },
+  // BIZZ-813 (AI DocGen 4/8): generate_document tool.
+  // Claude kalder dette når brugeren eksplicit beder om en fil
+  // (XLSX/CSV/DOCX). Returnerer file_id + download_url via SSE-event.
+  {
+    name: 'generate_document',
+    description:
+      'Genererer en Word/Excel/CSV-fil som brugeren kan downloade. Kald dette KUN når brugeren eksplicit beder om en fil (fx "lav en Excel", "eksportér til Word", "generer CSV"). Vælg sensibelt format baseret på brugerens verb. Brug IKKE ved "vis mig en liste" — svar i stedet med markdown. Efter tool-call: kvittér kort og henvis brugeren til download-chippen i chatten.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        format: {
+          type: 'string',
+          enum: ['xlsx', 'csv', 'docx', 'pptx'],
+          description:
+            'Output-format. xlsx til talldata/tabeller, csv til simple lister, docx til tekst/rapporter, pptx til præsentationer.',
+        },
+        mode: {
+          type: 'string',
+          enum: ['scratch', 'attached_template', 'domain_template'],
+          description:
+            'scratch = generér fra scratch. attached_template = fyld en template som brugeren har vedhæftet (iter 1: kun DOCX). domain_template = brug en pre-gemt domain-skabelon (kun tilgængelig hvis "Domain templates tilgængelige" sektionen findes i din kontekst).',
+        },
+        title: {
+          type: 'string',
+          description: 'Filnavn uden extension (max 100 tegn). Skal være beskrivende.',
+        },
+        scratch: {
+          type: 'object',
+          description:
+            'For mode=scratch. For xlsx/csv: {columns:[{key,header}], rows:[Record<key,value>]}. For docx: {subtitle?, sections:[{heading,body}]}. For pptx: {slides:[{title, bullets?:string[], table?:{columns:string[], rows:string[][]}}]}.',
+          properties: {
+            columns: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  key: { type: 'string' },
+                  header: { type: 'string' },
+                },
+                required: ['key', 'header'],
+              },
+            },
+            rows: { type: 'array' },
+            sections: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  heading: { type: 'string' },
+                  body: { type: 'string' },
+                },
+                required: ['heading', 'body'],
+              },
+            },
+            subtitle: { type: 'string' },
+          },
+        },
+        attached_template: {
+          type: 'object',
+          description:
+            'For mode=attached_template. file_id fra en tidligere uploaded fil + placeholders-map.',
+          properties: {
+            file_id: { type: 'string' },
+            placeholders: {
+              type: 'object',
+              description: 'Map af placeholder-navne → værdier til template-fill.',
+            },
+          },
+          required: ['file_id'],
+        },
+        domain_template: {
+          type: 'object',
+          description:
+            'For mode=domain_template. domain_id + domain_template_id + case_id refererer til en pre-gemt skabelon i users domain. Alle tre UUIDs skal være i samme domain. case_id bruges til at hente dokumenter der beriger template-fill via Claude.',
+          properties: {
+            domain_id: { type: 'string', description: 'Domain UUID' },
+            domain_template_id: {
+              type: 'string',
+              description: 'Template UUID fra Domain templates-listen',
+            },
+            case_id: {
+              type: 'string',
+              description: 'Sag UUID i samme domain — template fylder mod denne sags kontekst',
+            },
+            user_instructions: {
+              type: 'string',
+              description: 'Valgfri fri tekst der guider Claude i placeholder-fill',
+            },
+          },
+          required: ['domain_id', 'domain_template_id', 'case_id'],
+        },
+      },
+      required: ['format', 'mode', 'title'],
+    },
+  },
 ];
 
 // ─── Tool labels (for status messages) ──────────────────────────────────────
@@ -310,11 +611,25 @@ const TOOL_STATUS: Record<string, string> = {
   hent_bbr_data: 'Henter BBR-bygningsdata…',
   hent_vurdering: 'Henter ejendomsvurdering…',
   hent_ejerskab: 'Henter ejerskabsdata…',
+  // BIZZ-889
+  hent_ejendomsadmin: 'Henter ejendomsadministrator…',
+  // BIZZ-890
+  hent_virksomhed_historik: 'Henter virksomhedshistorik…',
+  // BIZZ-891
+  hent_virksomhed_ejere: 'Henter virksomhedens ejere…',
+  // BIZZ-894
+  hent_person_netvaerk: 'Henter personens netværk…',
+  // BIZZ-902
+  hent_dokument_indhold: 'Læser dokumentets indhold…',
+  // BIZZ-893
+  hent_virksomhed_nyheder: 'Søger nyheder om virksomheden…',
   hent_salgshistorik: 'Henter salgshistorik…',
   hent_energimaerke: 'Henter energimærke…',
   hent_jordforurening: 'Henter jordforureningsdata…',
   hent_plandata: 'Henter plandata…',
   hent_cvr_virksomhed: 'Henter CVR-data…',
+  // BIZZ-875
+  hent_virksomhed_personer: 'Henter virksomhedens personer…',
   hent_matrikeldata: 'Henter matrikeldata…',
   hent_person_virksomheder: 'Henter personens virksomhedstilknytninger…',
   hent_regnskab_noegletal: 'Henter regnskabsnøgletal…',
@@ -322,6 +637,10 @@ const TOOL_STATUS: Record<string, string> = {
   soeg_person_cvr: 'Søger efter person i CVR…',
   hent_tinglysning: 'Henter tinglysningsdata…',
   hent_ejendomme_for_virksomhed: 'Henter ejendomme for virksomhed…',
+  // BIZZ-864
+  hent_ejendomme_for_person: 'Henter personens ejendomme…',
+  // BIZZ-813
+  generate_document: 'Genererer fil…',
 };
 
 // ─── System prompt ──────────────────────────────────────────────────────────
@@ -351,6 +670,38 @@ VIGTIGT: Kald så mange tools som muligt i SAMME runde for at spare tid. Vent ik
 - Kombiner begge vurderings-kilder: endelige for historisk overblik, foreløbige for nuværende og fremtidig beskatning.
 - **Matrikeldata**: Brug \`hent_matrikeldata\` for at se jordstykker, matrikelnumre, registrerede arealer, og noteringstyper (fredskov, strandbeskyttelse, klitfredning, jordrente, landbrugsnotering). Kræver BFE-nummer.
 
+## Fil-generering (BIZZ-813, prompt-tuning BIZZ-817)
+Hvis brugeren EKSPLICIT beder om en fil (fx "lav en Excel", "eksportér til Word", "generer CSV", "jeg vil downloade", "giv mig det i xlsx") → KALD generate_document tool.
+
+### Eksempler — hvornår kalde tool vs markdown
+
+**Kald generate_document** (file-intent):
+- "Lav en Excel med de 5 ejendomme" → mode=scratch format=xlsx
+- "Eksportér listen til csv" → mode=scratch format=csv
+- "Generer et Word-dokument med resuméet" → mode=scratch format=docx
+- "Downloade som xlsx" → mode=scratch format=xlsx
+- "Fyld den vedhæftede skabelon med disse navne" (user har uploaded docx) → mode=attached_template format=docx
+- "Brug Ejendomsliste-skabelonen for Kunde 1 sagen" (domain admin) → mode=domain_template format=xlsx
+
+**IKKE kald tool** (list/display-intent — svar med markdown):
+- "Vis mig en liste over ejendommene" → markdown-liste
+- "Hvilke selskaber ejer denne ejendom?" → markdown-tabel
+- "Kan du lave en oversigt?" → markdown-tabel (medmindre bruger specificerer format)
+- "Hvad er ejendomsværdien?" → markdown-tekst
+
+Format-valg:
+- "excel" / "xlsx" / "regneark" / tal-data / tabeller → xlsx
+- "word" / "docx" / "dokument" / "rapport" / tekst-heavy → docx
+- "csv" / simple-lister / import-til-andet-system → csv
+
+Mode-valg:
+- scratch: brugeren beskriver hvad de vil have (fx "excel med alle ejendomme på Vej X")
+- attached_template: brugeren har vedhæftet en template og beder dig fylde den (fx "brug den skabelon jeg uploadede og sæt navnene ind"). Kun DOCX understøttet i iter 1.
+
+VIGTIGT:
+- Brug KUN generate_document når brugeren EKSPLICIT beder om en fil. Hvis de bare siger "vis mig en liste" → svar med markdown.
+- Efter tool-kald: giv en KORT kvittering ("Jeg har lavet Excel-filen med 42 ejendomme — den er klar til download") og henvis til download-chippen. Inkludér ALDRIG download_url eller file_id i dit markdown-svar; klienten viser chippen automatisk.
+
 ## Regler
 - BRUG ALTID dine tools til at hente rigtig data — gæt aldrig
 - Svar ALTID på dansk medmindre brugeren skriver på engelsk
@@ -362,6 +713,16 @@ VIGTIGT: Kald så mange tools som muligt i SAMME runde for at spare tid. Vent ik
 - Kald gerne flere tools for at give et komplet billede
 - BFE-nummer findes i resultatet fra hent_bbr_data (feltet "bfeNummer" i ejendomsrelationer). Kald altid hent_bbr_data efter dawa_adresse_detaljer for at få BFE-nummeret.
 
+## Afklarende spørgsmål (BIZZ-938)
+Når brugerens forespørgsel kan fortolkes på flere måder, STIL et kort afklarende spørgsmål med 2-3 konkrete valgmuligheder i stedet for at gætte. Regler:
+- Spørg KUN når det er nødvendigt. Hvis konteksten er klar nok (fx sags-kontekst med valgt kunde og skabelon), kør direkte uden at spørge.
+- Hold spørgsmål korte — giv 2-3 nummerede valgmuligheder brugeren kan vælge.
+- Stil max 1-2 spørgsmål ad gangen, ikke en lang liste.
+- Brug side-kontekst (pageType, activeTab, linket kunde, valgte dokumenter) til at reducere tvetydighed.
+- ALDRIG gæt på kritiske parametre: kunde-identifikation, ejendomsvalg, filformat.
+- Eksempel: Brugeren siger "lav en oversigt" → Spørg: "Oversigt over hvad? (1) Ejendomme, (2) Virksomheder og roller, eller (3) Samlet formue?"
+- Eksempel: Brugeren siger "eksporter til excel" → Hvis der er flere mulige data-kilder, spørg: "Hvad skal eksporten indeholde? (1) Ejendomsliste, (2) Virksomhedsoversigt, eller (3) Ejerskabsstruktur?"
+
 ## Ærlighed om ukendte felter
 - Hvis du ikke kender betydningen af et teknisk felt (fx plandata-zonekategori, BBR-kode), sig at du ikke kender det — OPFIND IKKE forklaringer.
 - Spekulér ikke om hvorfor et felt har en bestemt værdi; rapportér kun den registrerede værdi og lad brugeren tolke den.
@@ -370,6 +731,35 @@ VIGTIGT: Kald så mange tools som muligt i SAMME runde for at spare tid. Vent ik
 ## Virksomheds-ejendomme
 - Brug hent_ejendomme_for_virksomhed(cvr) til at liste ALLE ejendomme ejet af et CVR (samme data som Virksomhed → Ejendomme-fanen).
 - For holdingselskaber der selv ikke ejer ejendomme direkte: kald først hent_datterselskaber, dernæst hent_ejendomme_for_virksomhed med alle datter-CVR kommasepareret for at få koncernens samlede portefølje.
+
+## Personligt ejede ejendomme (BIZZ-864)
+- Brug hent_ejendomme_for_person(enhedsNummer) for at liste ejendomme en person ejer PERSONLIGT (i eget navn).
+- VIRKER UDEN CPR-nummer — EJF returnerer BFE direkte via enhedsNummer-filter. Sig ALDRIG at det kræver CPR/Tingbog.
+- På /dashboard/owners/[enhedsNummer] har du enhedsNummer i kontekst — brug det direkte uden at spørge brugeren.
+- For fuldt billede af en persons ejendomsportefølje: kald både hent_ejendomme_for_person (personligt ejede) OG hent_person_virksomheder + hent_ejendomme_for_virksomhed (via selskaber) parallelt.
+
+## Tab-kontekst og dokument-generering (BIZZ-874)
+Konteksten kan indeholde \`activeTab\` + \`pageType\` der angiver hvad brugeren ser. Når brugeren refererer til "oversigt tab", "ejendomme tab", "det her tab" osv.:
+- **pageType=virksomhed + activeTab=ejendomme**: Brug hent_ejendomme_for_virksomhed(cvr) på context-cvr. Inkluder datterselskabers ejendomme kun hvis brugeren eksplicit beder om det.
+- **pageType=virksomhed + activeTab=regnskab**: Brug hent_regnskab_noegletal(cvr) — fokus på omsætning/resultat/egenkapital.
+- **pageType=virksomhed + activeTab=oversigt**: Inkluder både stamdata OG ejendomme OG personer (overblik).
+- **pageType=person + activeTab=ejendomme**: Kald hent_ejendomme_for_person(enhedsNummer) — dette ene tool returnerer ALLE ejendomme (personlige + via virksomheder).
+- **pageType=person + activeTab=relations (diagram)**: Brugeren ser ejerskabsdiagrammet. Når de siger "eksporter diagram" eller "diagram til word/pptx", generer en struktureret fil med ejerskabshierarkiet. Kald hent_person_virksomheder for at få virksomhedslisten, derefter generate_document med format=docx (sektioner: Ejerskabsoversigt, Virksomheder med roller/ejerandel) eller format=pptx (slides pr. virksomhed). "Diagram" = ejerskabsdiagrammet — IKKE et billede.
+- **pageType=virksomhed + activeTab=diagram**: Brugeren ser virksomheds-ejerskabsdiagrammet. "Eksporter diagram" = generer struktureret ejerskabsoversigt via hent_datterselskaber + hent_ejeroplysninger. Brug docx/pptx format.
+
+### Ved dokument-generering (generate_document tool)
+VIGTIGT — undgå fejlagtigt indhold:
+1. **Match brugerens eksplicitte instruktion**: Hvis brugeren siger "ejendomme fra ejendomstab" → brug hent_ejendomme_for_virksomhed/hent_ejendomme_for_person, IKKE stamdata eller regnskab.
+2. **Ved tvetydighed — bekræft FØR du genererer**: Hvis brugeren siger "eksporter data" uden at specificere scope, spørg:
+   "Vil du have (a) kun ejendomme ejet direkte af denne virksomhed, (b) også datterselskabers ejendomme, eller (c) stifternes personlige ejendomme også?"
+3. **Post-generation rapportering**: Efter tool-kald inkluder tydelig scope-rapport: "Dokumentet indeholder X ejendomme — Y direkte ejede + Z via datterselskaber." Så brugeren straks kan se om scope er rigtigt.
+4. **Aldrig gætte**: Hvis context-tabben ikke matcher det brugeren beder om, bekræft i stedet for at vælge den "tætteste" fortolkning.
+
+### Håndtering af afkortede tool-resultater (BIZZ-869)
+Flere tools returnerer \`afkortet: true\` + \`total: N\` når resultatet er trimmet for at holde context kompakt.
+- **ALTID informer brugeren** når \`afkortet: true\` — fx: "Jeg fik 50 af total 73 ejendomme i denne forespørgsel. Sig til hvis du vil have den komplette liste i mindre segmenter."
+- **Ved dokument-generering med afkortet data**: Sig tydeligt at dokumentet er ufuldstændigt, spørg om brugeren vil have resten i efterfølgende kald.
+- **Aldrig sig "Jakob har 8 ejendomme"** hvis total=21 — rapportér altid total og afkortning.
 
 ## Workflow ved formueanalyse for en person
 
@@ -627,6 +1017,280 @@ async function executeTool(
         break;
       }
 
+      // BIZZ-889 (audit G1): ejendomsadministrator / ejerforening lookup.
+      // Filtrerer aktuelle kun (virkningTil=null) så AI ikke præsenterer
+      // historiske administratorer som "ejerforeningen lige nu".
+      case 'hent_ejendomsadmin': {
+        const res = await fetch(
+          `${baseUrl}/api/ejendomsadmin?bfeNummer=${encodeURIComponent(input.bfeNummer)}`,
+          internalFetchOpts
+        );
+        if (!res.ok) {
+          result = { fejl: toolErrorMessage('Ejendomsadmin-API', res.status) };
+          break;
+        }
+        const data = (await res.json()) as {
+          administratorer?: Array<{
+            cvr: string | null;
+            navn: string | null;
+            type: string;
+            virkningFra: string | null;
+            virkningTil: string | null;
+          }>;
+        };
+        // Kun aktuelle administratorer med type + navn/cvr
+        const aktuelle = (data.administratorer ?? []).filter(
+          (a) => a.virkningTil === null && a.type !== 'ukendt' && (a.cvr || a.navn)
+        );
+        result = {
+          antal: aktuelle.length,
+          administratorer: aktuelle.map((a) => ({
+            cvr: a.cvr,
+            navn: a.navn,
+            type: a.type,
+            virkningFra: a.virkningFra,
+          })),
+        };
+        break;
+      }
+
+      // BIZZ-890 (audit G2): virksomhedshistorik via /api/cvr-public.
+      // Returnerer tidslinje fra periodiserede arrays (navne, adresse,
+      // form, status, branche) + fusioner/spaltninger.
+      case 'hent_virksomhed_historik': {
+        const cvr = input.cvr?.trim();
+        if (!cvr || !/^\d{8}$/.test(cvr)) {
+          result = { fejl: 'CVR skal være 8 cifre' };
+          break;
+        }
+        const res = await fetch(
+          `${baseUrl}/api/cvr-public?vat=${encodeURIComponent(cvr)}`,
+          internalFetchOpts
+        );
+        if (!res.ok) {
+          result = { fejl: toolErrorMessage('CVR-public API', res.status) };
+          break;
+        }
+        const data = (await res.json()) as {
+          error?: string;
+          historik?: Array<{
+            type: string;
+            fra: string;
+            til: string | null;
+            vaerdi: string;
+            modpartEnhedsNummer?: number | null;
+            fusionRetning?: 'ind' | 'ud' | null;
+          }>;
+        };
+        if (data.error) {
+          result = { fejl: data.error };
+          break;
+        }
+        const maxParsed = input.max_results ? parseInt(input.max_results, 10) : 30;
+        const max = Number.isFinite(maxParsed) ? Math.min(Math.max(1, maxParsed), 100) : 30;
+        const typeFilter = input.type?.toLowerCase();
+        let entries = data.historik ?? [];
+        if (typeFilter) entries = entries.filter((h) => h.type === typeFilter);
+        // Sortér nyeste først + cap
+        entries = entries
+          .slice()
+          .sort((a, b) => new Date(b.fra).getTime() - new Date(a.fra).getTime())
+          .slice(0, max);
+        result = { cvr, antal: entries.length, historik: entries };
+        break;
+      }
+
+      // BIZZ-891 (audit G3): ejere af virksomhed (UP-retning). AI kan
+      // rekursere via gentagne tool-calls for at finde ultimate-ejer.
+      case 'hent_virksomhed_ejere': {
+        const cvr = input.cvr?.trim();
+        if (!cvr || !/^\d{8}$/.test(cvr)) {
+          result = { fejl: 'CVR skal være 8 cifre' };
+          break;
+        }
+        const kunAktuelle = input.kun_aktuelle !== 'false';
+        const res = await fetch(
+          `${baseUrl}/api/cvr-public?vat=${encodeURIComponent(cvr)}`,
+          internalFetchOpts
+        );
+        if (!res.ok) {
+          result = { fejl: toolErrorMessage('CVR-public API', res.status) };
+          break;
+        }
+        const data = (await res.json()) as {
+          error?: string;
+          deltagere?: Array<{
+            navn: string;
+            enhedsNummer: number | null;
+            erVirksomhed: boolean;
+            roller: Array<{
+              rolle: string;
+              fra: string | null;
+              til: string | null;
+              ejerandel: string | null;
+              stemmeandel: string | null;
+            }>;
+          }>;
+        };
+        if (data.error) {
+          result = { fejl: data.error };
+          break;
+        }
+        // Find deltagere med EJER-rolle. Én deltager kan have flere roller —
+        // vi tager første EJER-rolle per deltager (den aktuelle/seneste).
+        const ejere = (data.deltagere ?? [])
+          .map((d) => {
+            const ejerRoller = d.roller.filter((r) => r.rolle === 'EJER');
+            if (ejerRoller.length === 0) return null;
+            const aktuel = ejerRoller.find((r) => r.til === null);
+            const relevant = kunAktuelle ? aktuel : (aktuel ?? ejerRoller[0]);
+            if (!relevant) return null;
+            return {
+              navn: d.navn,
+              enhedsNummer: d.enhedsNummer,
+              erVirksomhed: d.erVirksomhed,
+              ejerandel: relevant.ejerandel,
+              stemmeandel: relevant.stemmeandel,
+              fra: relevant.fra,
+              til: relevant.til,
+            };
+          })
+          .filter((e): e is NonNullable<typeof e> => e !== null);
+        result = {
+          cvr,
+          antal: ejere.length,
+          ejere,
+          vejledning: ejere.some((e) => e.erVirksomhed)
+            ? 'Mindst én ejer er en virksomhed. For at walke op mod ultimate-ejer: kald hent_virksomhed_ejere med den virksomhed-ejers CVR. Stop ved person-ejer.'
+            : 'Alle ejere er personer — ingen yderligere op-walk mulig.',
+        };
+        break;
+      }
+
+      // BIZZ-902: hent extracted_text fra domain_case_doc.
+      case 'hent_dokument_indhold': {
+        const docId = input.docId?.trim();
+        if (!docId) {
+          result = { fejl: 'docId skal angives' };
+          break;
+        }
+        const res = await fetch(
+          `${baseUrl}/api/ai/doc-text?docId=${encodeURIComponent(docId)}`,
+          internalFetchOpts
+        );
+        if (!res.ok) {
+          result = { fejl: toolErrorMessage('Dokument-tekst-API', res.status) };
+          break;
+        }
+        const data = (await res.json()) as {
+          docId: string;
+          name: string;
+          fileType: string;
+          extractedText: string | null;
+          textLength: number;
+          createdAt: string;
+          fejl?: string;
+        };
+        if (data.fejl) {
+          result = { fejl: data.fejl };
+          break;
+        }
+        // Cap teksten ved 20KB for token-budget — claude kan altid bede
+        // om flere dokumenter hvis nødvendigt. Uncapped docs kan være
+        // hundrede-sider-pdf'er der sprænger context-window.
+        const MAX_CHARS = 20_000;
+        const text = data.extractedText ?? '';
+        const truncated = text.length > MAX_CHARS;
+        result = {
+          docId: data.docId,
+          navn: data.name,
+          filtype: data.fileType,
+          tekst: truncated ? text.slice(0, MAX_CHARS) : text,
+          tekstLaengde: data.textLength,
+          afkortet: truncated,
+          oprettet: data.createdAt,
+        };
+        break;
+      }
+
+      // BIZZ-894 (audit G6): person-netværk via cvr_deltagerrelation.
+      case 'hent_person_netvaerk': {
+        const eid = input.enhedsNummer?.trim();
+        if (!eid || !/^\d+$/.test(eid)) {
+          result = { fejl: 'enhedsNummer skal være et positivt heltal' };
+          break;
+        }
+        const params = new URLSearchParams({ enhedsNummer: eid });
+        if (input.max_results) params.set('max_results', input.max_results);
+        const res = await fetch(`${baseUrl}/api/person/netvaerk?${params}`, internalFetchOpts);
+        if (!res.ok) {
+          result = { fejl: toolErrorMessage('Netvaerk-API', res.status) };
+          break;
+        }
+        const data = (await res.json()) as {
+          enhedsNummer: number;
+          antalDinevirksomheder: number;
+          antalNetvaerk: number;
+          netvaerk: Array<{
+            enhedsNummer: number;
+            navn: string;
+            antalFaellesVirksomheder: number;
+            faellesCvrListe: string[];
+            roller: string[];
+          }>;
+          fejl?: string;
+        };
+        if (data.fejl) {
+          result = { fejl: data.fejl };
+          break;
+        }
+        result = {
+          enhedsNummer: data.enhedsNummer,
+          antalPersonligeVirksomheder: data.antalDinevirksomheder,
+          antalNetvaerk: data.antalNetvaerk,
+          netvaerk: data.netvaerk,
+        };
+        break;
+      }
+
+      // BIZZ-893 (audit G5): nyheder om virksomhed via aggregator.
+      // Claude vælger selv de mest relevante efter læsning.
+      case 'hent_virksomhed_nyheder': {
+        const navn = input.navn?.trim();
+        if (!navn) {
+          result = { fejl: 'Virksomhedsnavn skal angives' };
+          break;
+        }
+        const res = await fetch(
+          `${baseUrl}/api/news?q=${encodeURIComponent(navn)}`,
+          internalFetchOpts
+        );
+        if (!res.ok) {
+          result = { fejl: toolErrorMessage('Nyheder-API', res.status) };
+          break;
+        }
+        // /api/news returnerer array af { title, url, source, pubDate?, description? }.
+        // Cap til max 20 (default 10) så Claude ikke får overvældende payload.
+        const maxParsed = input.max_results ? parseInt(input.max_results, 10) : 10;
+        const max = Number.isFinite(maxParsed) ? Math.min(Math.max(1, maxParsed), 20) : 10;
+        const articles = (await res.json()) as Array<{
+          title?: string;
+          url?: string;
+          source?: string;
+          pubDate?: string;
+          description?: string;
+        }>;
+        const trimmed = (articles ?? []).slice(0, max).map((a) => ({
+          title: a.title ?? '(uden titel)',
+          url: a.url ?? '',
+          kilde: a.source ?? 'Ukendt',
+          dato: a.pubDate ?? null,
+          uddrag: a.description ?? null,
+        }));
+        result = { antal: trimmed.length, artikler: trimmed };
+        break;
+      }
+
       case 'hent_salgshistorik': {
         const res = await fetch(
           `${baseUrl}/api/salgshistorik?bfeNummer=${encodeURIComponent(input.bfeNummer)}`,
@@ -690,6 +1354,57 @@ async function executeTool(
           break;
         }
         result = await res.json();
+        break;
+      }
+
+      case 'hent_virksomhed_personer': {
+        // BIZZ-875: Wraps /api/cvr-public deltagere-feltet.
+        // input.kunAktive kommer som string fra Claude tool-input. Default true.
+        const kunAktiveRaw = input.kunAktive;
+        const kunAktive = kunAktiveRaw !== 'false' && kunAktiveRaw !== String(false);
+        const res = await fetch(
+          `${baseUrl}/api/cvr-public?cvr=${encodeURIComponent(input.cvr)}`,
+          internalFetchOpts
+        );
+        if (!res.ok) {
+          result = { fejl: toolErrorMessage('CVR-public-API', res.status) };
+          break;
+        }
+        const data = (await res.json()) as {
+          name?: string;
+          deltagere?: Array<{
+            navn: string;
+            enhedsNummer: number | null;
+            erVirksomhed: boolean;
+            roller: Array<{
+              rolle: string;
+              fra: string | null;
+              til: string | null;
+              ejerandel: string | null;
+              stemmeandel: string | null;
+            }>;
+          }>;
+        };
+        const deltagere = (data.deltagere ?? []).map((d) => ({
+          navn: d.navn,
+          enhedsNummer: d.enhedsNummer,
+          erVirksomhed: d.erVirksomhed,
+          // Filter roller: kun aktive hvis kunAktive=true (til=null betyder stadig aktiv)
+          roller: kunAktive ? d.roller.filter((r) => r.til === null) : d.roller,
+        }));
+        // Cap max 50 deltagere i AI-svar
+        const trimmed = deltagere.slice(0, 50);
+        // Filter ud deltagere der ikke har nogen aktiv rolle (når kunAktive=true)
+        const filtered = kunAktive ? trimmed.filter((d) => d.roller.length > 0) : trimmed;
+        result = {
+          cvr: input.cvr,
+          navn: data.name ?? null,
+          antal: filtered.length,
+          total: deltagere.length,
+          afkortet: deltagere.length > 50,
+          kunAktive,
+          deltagere: filtered,
+        };
         break;
       }
 
@@ -1111,11 +1826,13 @@ async function executeTool(
           result = { fejl: data.fejl };
           break;
         }
-        // Begræns til maks 20 ejendomme i AI-svar så tool-result forbliver kompakt.
-        // Fuld liste kan tilgås via Ejendomme-fanen i UI.
+        // BIZZ-869: Cap udvidet fra 20 til 50 så dokument-generering har
+        // fuld-portefølje-coverage for typiske virksomheder. AI SKAL
+        // informere brugeren når afkortet=true (system prompt-regel).
+        const MAX_EJENDOMME = 50;
         const ejendomme = (data.ejendomme ?? [])
           .filter((e) => e.aktiv !== false)
-          .slice(0, 20)
+          .slice(0, MAX_EJENDOMME)
           .map((e) => ({
             bfe: e.bfeNummer,
             ownerCvr: e.ownerCvr,
@@ -1130,9 +1847,136 @@ async function executeTool(
           cvr: input.cvr,
           antal: ejendomme.length,
           total: data.totalBfe ?? ejendomme.length,
-          afkortet: (data.ejendomme ?? []).length > 20,
+          afkortet: (data.ejendomme ?? []).length > MAX_EJENDOMME,
           ejendomme,
         };
+        break;
+      }
+
+      case 'hent_ejendomme_for_person': {
+        // BIZZ-864/933: Henter ALLE ejendomme for en person — personligt
+        // ejede + via virksomheder. Ét kald erstatter behov for at AI
+        // separat kalder hent_person_virksomheder + hent_ejendomme_for_virksomhed.
+        //
+        // Trin 1: Hent personens virksomheder for at finde CVR-numre
+        // Trin 2: Kald /api/ejendomme-by-owner med BÅDE enhedsNummer OG CVR-liste
+        const enr = input.enhedsNummer;
+
+        // Trin 1: Hent personens virksomheder (ejer-roller)
+        let companyCvrs: string[] = [];
+        try {
+          const personRes = await fetch(
+            `${baseUrl}/api/cvr-public/person?enhedsNummer=${encodeURIComponent(enr)}`,
+            internalFetchOpts
+          );
+          if (personRes.ok) {
+            const personData = (await personRes.json()) as {
+              roller?: Array<{ cvr?: number; aktiv?: boolean }>;
+            };
+            const cvrs = new Set<string>();
+            for (const r of personData.roller ?? []) {
+              if (r.cvr && r.aktiv !== false) {
+                cvrs.add(String(r.cvr).padStart(8, '0'));
+              }
+            }
+            companyCvrs = Array.from(cvrs).slice(0, 30);
+          }
+        } catch {
+          // Non-fatal — vi henter stadig personligt ejede ejendomme
+        }
+
+        // Trin 2: Hent ejendomme med begge parametre
+        const params = new URLSearchParams();
+        params.set('enhedsNummer', enr);
+        if (companyCvrs.length > 0) params.set('cvr', companyCvrs.join(','));
+        params.set('limit', '50');
+
+        const res = await fetch(`${baseUrl}/api/ejendomme-by-owner?${params}`, internalFetchOpts);
+        if (!res.ok) {
+          result = { fejl: toolErrorMessage('Ejendomme-by-person', res.status) };
+          break;
+        }
+        const data = (await res.json()) as {
+          ejendomme?: Array<{
+            bfeNummer: number;
+            ownerCvr: string;
+            adresse: string | null;
+            postnr: string | null;
+            by: string | null;
+            kommune: string | null;
+            ejendomstype: string | null;
+            etage: string | null;
+            doer: string | null;
+            ejerandel?: string | null;
+            aktiv?: boolean;
+          }>;
+          totalBfe?: number;
+          fejl?: string | null;
+        };
+        if (data.fejl) {
+          result = { fejl: data.fejl };
+          break;
+        }
+        const MAX_EJENDOMME_PERSON = 50;
+        const aktive = (data.ejendomme ?? []).filter((e) => e.aktiv !== false);
+
+        // Kategoriser: personligt ejet vs via virksomhed
+        const personPrefix = `person-${enr}`;
+        const personlige = aktive
+          .filter((e) => e.ownerCvr === personPrefix || e.ownerCvr === enr)
+          .slice(0, MAX_EJENDOMME_PERSON);
+        const viaVirksomhed = aktive
+          .filter((e) => e.ownerCvr !== personPrefix && e.ownerCvr !== enr)
+          .slice(0, MAX_EJENDOMME_PERSON);
+
+        const mapEjendom = (e: (typeof aktive)[0]) => ({
+          bfe: e.bfeNummer,
+          adresse: e.etage && e.doer ? `${e.adresse ?? ''}, ${e.etage}. ${e.doer}` : e.adresse,
+          postnr: e.postnr,
+          by: e.by,
+          kommune: e.kommune,
+          type: e.ejendomstype,
+          ejerandel: e.ejerandel,
+          ejerCvr: e.ownerCvr !== personPrefix && e.ownerCvr !== enr ? e.ownerCvr : undefined,
+        });
+
+        result = {
+          enhedsNummer: enr,
+          antalPersonlige: personlige.length,
+          antalViaVirksomhed: viaVirksomhed.length,
+          antalTotal: personlige.length + viaVirksomhed.length,
+          total: data.totalBfe ?? aktive.length,
+          virksomhederSoegt: companyCvrs.length,
+          personligtEjede: personlige.map(mapEjendom),
+          viaVirksomhed: viaVirksomhed.map(mapEjendom),
+        };
+        break;
+      }
+
+      case 'generate_document': {
+        // BIZZ-813: POST til /api/ai/generate-file med Claude's input.
+        // Returnerer HELE response-objektet inkl. download_url —
+        // wrapper-laget emitterer SSE-event med download_url før den
+        // sender et SANITIZED tool_result tilbage til Claude (uden URL,
+        // så Claude ikke inkluderer det i markdown-svar).
+        const fileInput = input as unknown as Record<string, unknown>;
+        const res = await fetch(`${baseUrl}/api/ai/generate-file`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+          },
+          body: JSON.stringify(fileInput),
+          signal: AbortSignal.timeout(30_000),
+        });
+        if (!res.ok) {
+          const errJson = (await res.json().catch(() => ({}))) as { error?: string };
+          result = { fejl: errJson.error ?? `generate-file fejlede (${res.status})` };
+          break;
+        }
+        const json = await res.json();
+        // Returner hele objektet — wrapper-laget splitter det.
+        result = json;
         break;
       }
 
@@ -1218,6 +2062,103 @@ function recordTenantTokenUsage(
       });
     } catch {
       // Non-critical — best-effort tracking
+    }
+  })();
+}
+
+/**
+ * BIZZ-819: Fire-and-forget persistence af user-prompt + assistant-svar
+ * til ai_chat_messages. Kaldes efter SSE [DONE] så streaming-respons-
+ * tiden ikke forlænges. Fejl logges stille men blokerer ikke chat-flow.
+ *
+ * Verificerer ownership via session-id lookup før INSERT, og bumper
+ * session.last_msg_at til nu. Service_role bypasser RLS men vi gør
+ * eksplicit user_id-check for defense-in-depth.
+ */
+function persistChatMessages(
+  adminClient: SupabaseClient<Database>,
+  sessionId: string,
+  userId: string,
+  // Full messages-array fra klienten (user + eventuelle tidligere assistant).
+  // Sidste user-message er prompten for denne tur.
+  messages: ChatMessage[],
+  assistantText: string,
+  tokensIn: number,
+  tokensOut: number,
+  // BIZZ-869 part 2: AI-genererede filer fra denne turn (fx xlsx/docx/csv).
+  // Tom array hvis ingen tools kaldte generate_document. Gemmes i assistant-
+  // beskedens content JSONB som `generatedFiles`-felt så klienten kan
+  // re-rendre download-chips efter reload eller login på ny device.
+  generatedFiles: GeneratedFileRef[] = []
+): void {
+  void (async () => {
+    try {
+      // Resolve user's tenant schema så vi skriver til rigtig tabel
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: membership } = (await (adminClient as any)
+        .from('tenant_memberships')
+        .select('tenants(schema_name)')
+        .eq('user_id', userId)
+        .limit(1)
+        .single()) as {
+        data: { tenants: { schema_name: string } | null } | null;
+      };
+      const schemaName = membership?.tenants?.schema_name;
+      if (!schemaName) return;
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const db = (adminClient as any).schema(schemaName);
+
+      // Ownership-check: session skal tilhøre user + være i samme tenant
+      const { data: session } = await db
+        .from('ai_chat_sessions')
+        .select('user_id')
+        .eq('id', sessionId)
+        .maybeSingle();
+      if (!session || session.user_id !== userId) return;
+
+      // Find sidste user-message (prompten for denne tur)
+      const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user');
+      if (!lastUserMsg) return;
+
+      // BIZZ-869 part 2: Hvis turnen har genereret filer, inkludér dem i
+      // assistant-beskedens content så klienten kan re-hydrate chips.
+      const assistantContent: { text: string; generatedFiles?: GeneratedFileRef[] } = {
+        text: assistantText,
+      };
+      if (generatedFiles.length > 0) {
+        assistantContent.generatedFiles = generatedFiles;
+      }
+
+      const rows = [
+        {
+          session_id: sessionId,
+          role: 'user' as const,
+          content: { text: lastUserMsg.content },
+          tokens_in: null,
+          tokens_out: null,
+          model: null,
+          tool_calls: null,
+        },
+        {
+          session_id: sessionId,
+          role: 'assistant' as const,
+          content: assistantContent,
+          tokens_in: tokensIn,
+          tokens_out: tokensOut,
+          model: 'claude-sonnet-4-6',
+          tool_calls: null,
+        },
+      ];
+      await db.from('ai_chat_messages').insert(rows);
+
+      // Bump session.last_msg_at så sidebar-sortering virker
+      await db
+        .from('ai_chat_sessions')
+        .update({ last_msg_at: new Date().toISOString() })
+        .eq('id', sessionId);
+    } catch {
+      // Ikke-kritisk — chat-flow blev afsluttet OK
     }
   })();
 }
@@ -1553,10 +2494,16 @@ export async function POST(request: NextRequest): Promise<Response> {
     return Response.json({ error: 'Ugyldig JSON' }, { status: 400 });
   }
 
-  const { messages, context } = body;
+  const { messages, context, attachments, session_id: sessionId } = body;
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     return Response.json({ error: 'Ingen beskeder' }, { status: 400 });
   }
+  // BIZZ-812: attachments-array er optional. Hver entry er
+  // { file_id, name, file_type } der refererer til public.ai_file.
+  // Tool-dispatcher i BIZZ-813 læser denne og henter binær til
+  // template-fill. I denne ticket er attachments kun pass-through
+  // (landes ikke på tool-context endnu).
+  void attachments;
 
   // ── Input validation — guard against oversized payloads ──────────────────
   /** Maximum number of messages accepted per request (prevents token amplification). */
@@ -1602,11 +2549,76 @@ export async function POST(request: NextRequest): Promise<Response> {
     systemPrompt += `\n\n## Aktuel kontekst\nBrugeren kigger på: ${context}`;
   }
 
-  // Map to Anthropic format (only simple text messages from the client)
-  const anthropicMessages: Anthropic.MessageParam[] = messages.map((m) => ({
+  // BIZZ-816: injicér user's domain-templates så AI kender deres
+  // navne/id'er og kan kalde generate_document med mode='domain_template'.
+  // Bruger listUserDomains (BIZZ-711) + per-domain domainScopedQuery
+  // så vi respekterer BIZZ-722 mandatory-domain-filter enforcement.
+  // Fejler stille — hvis user ikke er domain-member eller query fejler,
+  // skipper vi sektionen og AI falder tilbage til scratch/attached_template.
+  try {
+    const { listUserDomains } = await import('@/app/lib/domainAuth');
+    const { domainScopedQuery } = await import('@/app/lib/domainScopedQuery');
+    const domains = await listUserDomains();
+    if (domains.length > 0) {
+      type TemplateRow = { id: string; domain_id: string; name: string; file_type: string };
+      const templatesByDomain: TemplateRow[] = [];
+      for (const d of domains) {
+        const scoped = domainScopedQuery(d.id);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data } = (await (scoped('domain_template') as any)
+          .select('id, domain_id, name, file_type')
+          .limit(20)) as { data: TemplateRow[] | null };
+        if (Array.isArray(data)) templatesByDomain.push(...data);
+      }
+      if (templatesByDomain.length > 0) {
+        const domainNameById = new Map(domains.map((d) => [d.id, d.name]));
+        const lines = templatesByDomain
+          .slice(0, 30)
+          .map((t) => {
+            const dn = domainNameById.get(t.domain_id) ?? t.domain_id.slice(0, 8);
+            return `[domain: ${dn}] id=${t.id} name="${t.name}" (${t.file_type.toUpperCase()})`;
+          })
+          .join('\n');
+        systemPrompt += `\n\n## Domain templates tilgængelige\n${lines}\n\nHvis brugeren refererer til en af disse ved navn → kald generate_document med mode='domain_template' + domain_template_id (ikke navnet). Du skal også give case_id — hvis den ikke er i pageContext, bed brugeren om at vælge en sag først.`;
+      }
+    }
+  } catch (tmplErr) {
+    logger.warn('[ai/chat] domain-templates fetch failed (non-fatal):', tmplErr);
+  }
+
+  // BIZZ-940: Context compaction — begræns antal beskeder sendt til Claude
+  // for at undgå at ramme context window (200K tokens). Behold altid de
+  // seneste 30 beskeder. Hvis historikken er længere, inkluder en
+  // opsummerings-besked i starten.
+  const MAX_HISTORY_MESSAGES = 30;
+  let compactedMessages = messages;
+  let compactionNote = '';
+  if (messages.length > MAX_HISTORY_MESSAGES) {
+    const trimmed = messages.length - MAX_HISTORY_MESSAGES;
+    compactedMessages = messages.slice(-MAX_HISTORY_MESSAGES);
+    compactionNote = `[Samtalehistorik komprimeret: ${trimmed} ældre beskeder fjernet for at holde sig inden for context-grænsen. Kun de seneste ${MAX_HISTORY_MESSAGES} beskeder er inkluderet.]`;
+    // Ensure first message is from user (Anthropic API requirement)
+    if (compactedMessages[0]?.role !== 'user') {
+      compactedMessages = [
+        { role: 'user' as const, content: compactionNote },
+        ...compactedMessages,
+      ];
+      compactionNote = '';
+    }
+  }
+
+  const anthropicMessages: Anthropic.MessageParam[] = compactedMessages.map((m) => ({
     role: m.role,
     content: m.content,
   }));
+
+  // Inject compaction note as first user message if needed
+  if (compactionNote && anthropicMessages.length > 0 && anthropicMessages[0].role === 'user') {
+    anthropicMessages[0] = {
+      role: 'user',
+      content: compactionNote + '\n\n' + String(anthropicMessages[0].content),
+    };
+  }
 
   const client = new Anthropic({ apiKey });
   const encoder = new TextEncoder();
@@ -1616,8 +2628,31 @@ export async function POST(request: NextRequest): Promise<Response> {
     controller.enqueue(encoder.encode(`data: ${data}\n\n`));
   };
 
+  // BIZZ-939: SSE keepalive — sender heartbeat comment hvert 15s for at
+  // forhindre idle-timeout på mobil Safari. SSE spec: linjer der starter
+  // med ":" er comments og ignoreres af EventSource-klienter.
+  let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  const startHeartbeat = (ctrl: ReadableStreamDefaultController) => {
+    heartbeatInterval = setInterval(() => {
+      try {
+        ctrl.enqueue(encoder.encode(': heartbeat\n\n'));
+      } catch {
+        // Stream allerede lukket — stop heartbeat
+        if (heartbeatInterval) clearInterval(heartbeatInterval);
+      }
+    }, 15_000);
+  };
+  const stopHeartbeat = () => {
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+      heartbeatInterval = null;
+    }
+  };
+
   const stream = new ReadableStream({
     async start(controller) {
+      // BIZZ-939: Start SSE heartbeat for at holde forbindelsen åben
+      startHeartbeat(controller);
       try {
         const MAX_TOOL_ROUNDS = 15;
         // BIZZ-590: Soft time-budget. Vercel hard-kill ved maxDuration (120s)
@@ -1640,6 +2675,15 @@ export async function POST(request: NextRequest): Promise<Response> {
         let totalInputTokens = 0;
         let totalOutputTokens = 0;
 
+        /**
+         * BIZZ-869 part 2: Akkumulerer generate_document-tool-outputs
+         * i turnen så vi kan gemme dem i assistant-beskedens content
+         * JSONB. Uden dette mister brugeren adgang til genererede
+         * filer efter reload (kun download_url SSE-event var observer-
+         * bar i klient-memory).
+         */
+        const turnGeneratedFiles: GeneratedFileRef[] = [];
+
         while (round < MAX_TOOL_ROUNDS) {
           round++;
 
@@ -1657,12 +2701,30 @@ export async function POST(request: NextRequest): Promise<Response> {
             });
           }
 
-          // Call Claude (non-streaming for tool rounds, streaming for final)
+          // BIZZ-866: Anthropic prompt caching. System-prompten er stor
+          // (~5-10K tokens) og genbruges på tværs af tool-runde og efterfølgende
+          // requests. Marker som ephemeral (5min TTL) for 90% cache-hit og
+          // 50-90% latency/cost-besparelse. Tools cached separat med samme
+          // breakpoint-mønster. Cache-opbygning koster ~25% ekstra ved cache-miss
+          // men amortiseres efter blot 2 requests.
           const response = await client.messages.create({
             model: 'claude-sonnet-4-6',
             max_tokens: 4096,
-            system: systemPrompt,
-            tools: forceFinalSynthesis ? undefined : TOOLS,
+            system: [
+              {
+                type: 'text',
+                text: systemPrompt,
+                cache_control: { type: 'ephemeral' },
+              },
+            ],
+            tools: forceFinalSynthesis
+              ? undefined
+              : TOOLS.map((t, idx) =>
+                  idx === TOOLS.length - 1
+                    ? // Cache-breakpoint på sidste tool dækker hele tool-blokken
+                      { ...t, cache_control: { type: 'ephemeral' } as const }
+                    : t
+                ),
             messages: anthropicMessages,
           });
 
@@ -1677,10 +2739,16 @@ export async function POST(request: NextRequest): Promise<Response> {
 
           if (toolUseBlocks.length === 0) {
             // ── Final text response — stream it to client ──
-            const text = response.content
+            let text = response.content
               .filter((b): b is Anthropic.TextBlock => b.type === 'text')
               .map((b) => b.text)
               .join('');
+
+            // BIZZ-940: Detect truncated response (Claude ran out of max_tokens)
+            if (response.stop_reason === 'max_tokens') {
+              text +=
+                '\n\n---\n*Svaret blev afbrudt fordi det overskred max-længden. Start gerne en ny samtale for at fortsætte.*';
+            }
 
             // Stream in chunks — 200 chars reduces SSE overhead vs. perceived smoothness
             const CHUNK = 200;
@@ -1715,6 +2783,7 @@ export async function POST(request: NextRequest): Promise<Response> {
             );
 
             sse(controller, '[DONE]');
+            stopHeartbeat();
             controller.close();
 
             // Fire-and-forget: persist token usage so quota check works next request
@@ -1739,6 +2808,26 @@ export async function POST(request: NextRequest): Promise<Response> {
               );
             }
 
+            // BIZZ-819: Fire-and-forget — persistér user-prompt +
+            // assistant-svar til ai_chat_messages hvis klienten sendte
+            // session_id. Holder chat-historik server-side så brugeren
+            // kan tilgå den på tværs af devices (BIZZ-820 UI-layer).
+            if (sessionId && resolvedTenantId) {
+              persistChatMessages(
+                adminClient,
+                sessionId,
+                userId,
+                messages,
+                text,
+                totalInputTokens,
+                totalOutputTokens,
+                // BIZZ-869 part 2: Lad assistant-beskeden indeholde de
+                // filer vi har genereret i denne turn, så download-chippen
+                // kommer tilbage efter reload + cross-device.
+                turnGeneratedFiles
+              );
+            }
+
             return;
           }
 
@@ -1747,6 +2836,27 @@ export async function POST(request: NextRequest): Promise<Response> {
           for (const toolBlock of toolUseBlocks) {
             const label = TOOL_STATUS[toolBlock.name] ?? 'Henter data…';
             sse(controller, JSON.stringify({ status: label }));
+
+            // BIZZ-817: Sentry breadcrumb per tool-call. User input
+            // masked — kun tool-navn + stripped-struktur logges.
+            try {
+              const input = toolBlock.input as Record<string, unknown>;
+              const maskedInput: Record<string, unknown> = {};
+              if (typeof input.format === 'string') maskedInput.format = input.format;
+              if (typeof input.mode === 'string') maskedInput.mode = input.mode;
+              // Title-length kun, ikke værdi (kan indeholde PII)
+              if (typeof input.title === 'string') {
+                maskedInput.titleLength = input.title.length;
+              }
+              Sentry.addBreadcrumb({
+                category: 'ai.tool_call',
+                message: toolBlock.name,
+                level: 'info',
+                data: maskedInput,
+              });
+            } catch {
+              // Sentry fejl-håndtering er ikke-fatal
+            }
           }
 
           // Add assistant response (with tool_use blocks) to message history
@@ -1761,6 +2871,118 @@ export async function POST(request: NextRequest): Promise<Response> {
                 baseUrl,
                 request.headers.get('cookie')
               );
+
+              // BIZZ-813: generate_document returnerer download_url —
+              // emit SSE-event med URL så klienten kan vise chippen
+              // straks, og strip URL'en fra tool_result så Claude ikke
+              // inkluderer det i markdown-svaret.
+              // BIZZ-817: fang generate_document tool-fejl i Sentry
+              // separat fra success-path. Claude ser fortsat result som
+              // tool_result og kan forsøge igen.
+              if (
+                toolBlock.name === 'generate_document' &&
+                typeof result === 'object' &&
+                result !== null &&
+                'fejl' in result
+              ) {
+                Sentry.captureMessage('ai.generate_document.error', {
+                  level: 'warning',
+                  extra: {
+                    error: (result as { fejl: string }).fejl,
+                    mode: (toolBlock.input as { mode?: string }).mode,
+                    format: (toolBlock.input as { format?: string }).format,
+                  },
+                });
+              }
+              if (
+                toolBlock.name === 'generate_document' &&
+                typeof result === 'object' &&
+                result !== null &&
+                'file_id' in result
+              ) {
+                const fileResult = result as {
+                  file_id: string;
+                  file_name: string;
+                  download_url?: string;
+                  preview_text?: string;
+                  // BIZZ-868: 'html' tilføjet for docx preview via mammoth
+                  preview_kind?: 'text' | 'table' | 'html';
+                  preview_columns?: string[];
+                  preview_rows?: string[][];
+                  /** BIZZ-868: sanitiseret html for docx-filer */
+                  preview_html?: string;
+                  bytes: number;
+                  format: string;
+                };
+                // BIZZ-817: flat token-fee per tool-call som proxy for
+                // compute-omkostning. Prices: XLSX=500, DOCX=800, CSV=200.
+                // Recorded som tokens_out i ai_token_usage så det tæller
+                // mod user's månedlige quota og inkluderes i billing-agg.
+                const FEE_BY_FORMAT: Record<string, number> = {
+                  xlsx: 500,
+                  docx: 800,
+                  csv: 200,
+                };
+                const fee = FEE_BY_FORMAT[fileResult.format] ?? 500;
+                totalOutputTokens += fee;
+                if (resolvedTenantId) {
+                  recordTenantTokenUsage(adminClient, resolvedTenantId, userId, 0, fee);
+                }
+                Sentry.addBreadcrumb({
+                  category: 'ai.tool_success',
+                  message: 'generate_document',
+                  level: 'info',
+                  data: {
+                    format: fileResult.format,
+                    bytes: fileResult.bytes,
+                    fee_tokens: fee,
+                  },
+                });
+                sse(
+                  controller,
+                  JSON.stringify({
+                    generated_file: {
+                      file_id: fileResult.file_id,
+                      file_name: fileResult.file_name,
+                      download_url: fileResult.download_url,
+                      preview_text: fileResult.preview_text,
+                      preview_kind: fileResult.preview_kind,
+                      preview_columns: fileResult.preview_columns,
+                      preview_rows: fileResult.preview_rows,
+                      bytes: fileResult.bytes,
+                      format: fileResult.format,
+                    },
+                  })
+                );
+                // BIZZ-869 part 2: Akkumulér referencen så persistChat-
+                // Messages kan gemme den i assistant-beskeden.
+                turnGeneratedFiles.push({
+                  file_id: fileResult.file_id,
+                  file_name: fileResult.file_name,
+                  download_url: fileResult.download_url,
+                  preview_text: fileResult.preview_text,
+                  preview_kind: fileResult.preview_kind,
+                  preview_columns: fileResult.preview_columns,
+                  preview_rows: fileResult.preview_rows,
+                  preview_html: fileResult.preview_html,
+                  bytes: fileResult.bytes,
+                  format: fileResult.format,
+                });
+                // Claude-facing result har INGEN download_url
+                return {
+                  type: 'tool_result' as const,
+                  tool_use_id: toolBlock.id,
+                  content: JSON.stringify({
+                    file_id: fileResult.file_id,
+                    file_name: fileResult.file_name,
+                    bytes: fileResult.bytes,
+                    format: fileResult.format,
+                    status: 'success',
+                    note: 'File generated. Give a short confirmation and tell the user to use the download chip in the chat.',
+                  }),
+                };
+              }
+
               return {
                 type: 'tool_result' as const,
                 tool_use_id: toolBlock.id,
@@ -1804,6 +3026,7 @@ export async function POST(request: NextRequest): Promise<Response> {
           })
         );
         sse(controller, '[DONE]');
+        stopHeartbeat();
         controller.close();
 
         // Fire-and-forget: persist token usage so quota check works next request
@@ -1831,9 +3054,36 @@ export async function POST(request: NextRequest): Promise<Response> {
         if (!(err instanceof Anthropic.APIError)) {
           Sentry.captureException(err);
         }
-        const msg = err instanceof Anthropic.APIError ? 'Ekstern API fejl' : 'AI-tjeneste fejl';
+        // BIZZ-870: Specifik fejl-mapping til dansk brugerbesked uden at
+        // afsløre rå Anthropic error-detaljer (CLAUDE.md security rule).
+        let msg = 'AI-tjeneste fejl';
+        if (err instanceof Anthropic.APIError) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const anthErr = err as any;
+          const errorType: string = anthErr.error?.type ?? '';
+          const status: number | undefined = anthErr.status;
+          if (errorType === 'overloaded_error' || status === 529) {
+            msg = 'AI-tjenesten er midlertidigt overbelastet. Prøv igen om et øjeblik.';
+          } else if (errorType === 'rate_limit_error' || status === 429) {
+            msg = 'Midlertidigt højt træk på AI-tjenesten. Prøv igen om lidt.';
+          } else if (
+            errorType === 'invalid_request_error' &&
+            anthErr.message?.toLowerCase().includes('context')
+          ) {
+            msg =
+              'Samtalen er for lang til at fortsætte. Start gerne en ny samtale for bedste svar.';
+          } else if (status === 401 || status === 403) {
+            msg =
+              'AI-tjenesten er ikke konfigureret korrekt. Kontakt support hvis problemet fortsætter.';
+          } else if (status && status >= 500) {
+            msg = 'AI-tjenesten har midlertidige problemer. Prøv igen om lidt.';
+          } else {
+            msg = 'Ekstern API fejl';
+          }
+        }
         sse(controller, JSON.stringify({ error: msg }));
         sse(controller, '[DONE]');
+        stopHeartbeat();
         controller.close();
       }
     },

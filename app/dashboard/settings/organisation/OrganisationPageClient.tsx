@@ -32,7 +32,6 @@ import {
   ExternalLink,
   Shield,
   Crown,
-  Eye,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { useSubscription } from '@/app/context/SubscriptionContext';
@@ -43,17 +42,28 @@ import { resolvePlan, type UserSubscription } from '@/app/lib/subscriptions';
 /** Tab identifiers for this page */
 type OrgTab = 'virksomhed' | 'team' | 'abonnement';
 
-/** A team member row from /api/admin/users */
-interface TeamMember {
+/**
+ * BIZZ-271: Self-serve team-API shapes. Member-objekt fra /api/team er
+ * lighter-weight end det tidligere /api/admin/users (ingen subscription-info),
+ * og rolle er full 3-valued (admin/member/viewer).
+ */
+interface TeamApiMember {
+  user_id: string;
+  email: string;
+  full_name: string | null;
+  role: 'tenant_admin' | 'tenant_member' | 'tenant_viewer';
+  joined_at: string;
+  is_self: boolean;
+}
+
+interface TeamApiInvitation {
   id: string;
   email: string;
-  fullName: string;
-  createdAt: string;
-  isAdmin: boolean;
-  subscription: {
-    planId: string;
-    status: string;
-  } | null;
+  role: 'tenant_admin' | 'tenant_member' | 'tenant_viewer';
+  invited_by: string | null;
+  expires_at: string;
+  created_at: string;
+  accepted_at: string | null;
 }
 
 /** Response shape from /api/subscription */
@@ -70,28 +80,8 @@ interface SubscriptionResponse {
   subscription?: UserSubscription;
 }
 
-// ─── Role badge helper ────────────────────────────────────────────────────────
-
-/**
- * Renders a role badge for a team member.
- *
- * @param isAdmin - Whether the user has admin privileges
- * @param da - Whether to use Danish strings
- * @returns JSX badge element
- */
-function RoleBadge({ isAdmin, da }: { isAdmin: boolean; da: boolean }) {
-  return isAdmin ? (
-    <span className="flex items-center gap-1 px-2 py-0.5 bg-amber-500/15 text-amber-400 text-xs rounded-full border border-amber-500/20">
-      <Crown size={10} />
-      {da ? 'Admin' : 'Admin'}
-    </span>
-  ) : (
-    <span className="flex items-center gap-1 px-2 py-0.5 bg-slate-700/60 text-slate-400 text-xs rounded-full border border-white/8">
-      <Eye size={10} />
-      {da ? 'Bruger' : 'Member'}
-    </span>
-  );
-}
+// BIZZ-271: RoleBadge-helper fjernet — TeamSection viser rolle inline med
+// 3-valued select/badge i stedet for binær isAdmin-bool.
 
 // ─── Section: Virksomhedsoplysninger ─────────────────────────────────────────
 
@@ -278,48 +268,65 @@ function VirksomhedSection({ da, isAdmin }: { da: boolean; isAdmin: boolean }) {
 // ─── Section: Team ────────────────────────────────────────────────────────────
 
 /**
- * Team section — lists all team members and allows admins to invite new users.
+ * Team section — self-serve team management.
  *
- * Member list is fetched from /api/admin/users (admin endpoint).
- * If the caller is not an admin, a placeholder message is shown.
+ * BIZZ-271: Skiftet fra /api/admin/users (super-admin-only) til nyt
+ * /api/team (tenant-admin). Tenant-admin kan invitere, ændre rolle og
+ * fjerne medlemmer. Non-admin kan se listen + forlade teamet selv.
  *
  * @param da - Whether to use Danish strings
- * @param isAdmin - Whether the current user has admin privileges
+ * @param isAdmin - kept for API compatibility but API echo-bruges til
+ *   authoritative rolle-info via viewer_role.
  */
-function TeamSection({ da, isAdmin }: { da: boolean; isAdmin: boolean }) {
-  const [members, setMembers] = useState<TeamMember[]>([]);
+function TeamSection({ da, isAdmin: _isAdminProp }: { da: boolean; isAdmin: boolean }) {
+  void _isAdminProp;
+  const [members, setMembers] = useState<TeamApiMember[]>([]);
+  const [invitations, setInvitations] = useState<TeamApiInvitation[]>([]);
+  const [viewerRole, setViewerRole] = useState<
+    'tenant_admin' | 'tenant_member' | 'tenant_viewer' | null
+  >(null);
   const [loading, setLoading] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState<'tenant_admin' | 'tenant_member'>('tenant_member');
+  const [inviteRole, setInviteRole] = useState<'tenant_admin' | 'tenant_member' | 'tenant_viewer'>(
+    'tenant_member'
+  );
   const [inviting, setInviting] = useState(false);
   const [inviteStatus, setInviteStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [inviteError, setInviteError] = useState<string | null>(null);
+  /** Per-user "saving"-flag for role-change og remove. */
+  const [busyUserId, setBusyUserId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  /** Fetch team members from admin endpoint */
-  const fetchMembers = useCallback(async () => {
-    if (!isAdmin) return;
+  const canAdmin = viewerRole === 'tenant_admin';
+
+  const fetchTeam = useCallback(async () => {
     setLoading(true);
+    setActionError(null);
     try {
-      const res = await fetch('/api/admin/users');
+      const res = await fetch('/api/team');
       if (res.ok) {
-        const data = (await res.json()) as { users: TeamMember[] };
-        setMembers(data.users ?? []);
+        const data = (await res.json()) as {
+          members: TeamApiMember[];
+          invitations: TeamApiInvitation[];
+          viewer_role: 'tenant_admin' | 'tenant_member' | 'tenant_viewer';
+        };
+        setMembers(data.members ?? []);
+        setInvitations(data.invitations ?? []);
+        setViewerRole(data.viewer_role);
       }
     } catch {
-      /* ignore */
+      /* non-fatal — list-fetch fejl er ikke blokerende */
     } finally {
       setLoading(false);
     }
-  }, [isAdmin]);
+  }, []);
 
   useEffect(() => {
-    fetchMembers();
-  }, [fetchMembers]);
+    void fetchTeam();
+  }, [fetchTeam]);
 
-  /**
-   * Invite a new user by email via /api/admin/users POST.
-   */
+  /** Inviter via nyt /api/team/invite endpoint. */
   const handleInvite = async () => {
     const email = inviteEmail.trim().toLowerCase();
     if (!email || !email.includes('@')) {
@@ -333,27 +340,21 @@ function TeamSection({ da, isAdmin }: { da: boolean; isAdmin: boolean }) {
     setInviteError(null);
 
     try {
-      const res = await fetch('/api/admin/users', {
+      const res = await fetch('/api/team/invite', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email,
-          role: inviteRole,
-          // Temporary password — user must change on first login
-          password: Math.random().toString(36).slice(2) + 'Aa1!',
-        }),
+        body: JSON.stringify({ email, role: inviteRole }),
       });
-
       if (res.ok) {
         setInviteStatus('success');
         setInviteEmail('');
         setShowInvite(false);
-        await fetchMembers();
+        await fetchTeam();
         setTimeout(() => setInviteStatus('idle'), 4000);
       } else {
-        const data = (await res.json()) as { error?: string };
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
         setInviteError(
-          data.error ?? (da ? 'Kunne ikke invitere brugeren.' : 'Could not invite the user.')
+          data.error ?? (da ? 'Kunne ikke sende invitation.' : 'Could not send invitation.')
         );
         setInviteStatus('error');
       }
@@ -365,60 +366,183 @@ function TeamSection({ da, isAdmin }: { da: boolean; isAdmin: boolean }) {
     }
   };
 
+  /** Ændre rolle for medlem. */
+  const handleRoleChange = async (
+    userId: string,
+    newRole: 'tenant_admin' | 'tenant_member' | 'tenant_viewer'
+  ) => {
+    setBusyUserId(userId);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/team/${encodeURIComponent(userId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: newRole }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setActionError(data.error ?? (da ? 'Kunne ikke ændre rolle.' : 'Could not change role.'));
+      } else {
+        await fetchTeam();
+      }
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : 'Unknown error');
+    } finally {
+      setBusyUserId(null);
+    }
+  };
+
+  /** Fjern medlem. */
+  const handleRemove = async (userId: string, email: string) => {
+    const confirmed = window.confirm(
+      da ? `Fjern ${email} fra teamet?` : `Remove ${email} from the team?`
+    );
+    if (!confirmed) return;
+    setBusyUserId(userId);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/team/${encodeURIComponent(userId)}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setActionError(
+          data.error ?? (da ? 'Kunne ikke fjerne medlem.' : 'Could not remove member.')
+        );
+      } else {
+        await fetchTeam();
+      }
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : 'Unknown error');
+    } finally {
+      setBusyUserId(null);
+    }
+  };
+
+  /** Annuller pending invitation. */
+  const handleRevoke = async (inviteId: string) => {
+    const confirmed = window.confirm(da ? 'Annuller denne invitation?' : 'Revoke this invitation?');
+    if (!confirmed) return;
+    try {
+      const res = await fetch(`/api/team/invitations/${encodeURIComponent(inviteId)}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setActionError(data.error ?? 'Kunne ikke annullere invitationen.');
+      } else {
+        await fetchTeam();
+      }
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : 'Unknown error');
+    }
+  };
+
+  /** Selv-leave tenant. */
+  const handleLeave = async () => {
+    const confirmed = window.confirm(
+      da
+        ? 'Er du sikker på at du vil forlade teamet? Du mister adgang til alle tenant-data.'
+        : 'Are you sure you want to leave the team? You will lose access to all tenant data.'
+    );
+    if (!confirmed) return;
+    try {
+      const res = await fetch('/api/team/leave', { method: 'POST' });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setActionError(data.error ?? 'Kunne ikke forlade teamet.');
+      } else {
+        window.location.href = '/login';
+      }
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : 'Unknown error');
+    }
+  };
+
+  const roleLabel = (r: string) =>
+    r === 'tenant_admin'
+      ? da
+        ? 'Admin'
+        : 'Admin'
+      : r === 'tenant_viewer'
+        ? da
+          ? 'Viewer'
+          : 'Viewer'
+        : da
+          ? 'Medlem'
+          : 'Member';
+
   return (
     <div className="bg-white/5 border border-white/8 rounded-2xl p-6 space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
           <Users size={16} className="text-purple-400" />
           <h3 className="text-white font-semibold text-sm">{da ? 'Team' : 'Team'}</h3>
           {members.length > 0 && <span className="text-xs text-slate-500">({members.length})</span>}
         </div>
-
-        {isAdmin && (
-          <button
-            onClick={() => {
-              setShowInvite((v) => !v);
-              setInviteStatus('idle');
-              setInviteError(null);
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/20 text-purple-300 text-xs font-medium rounded-lg transition-colors"
-          >
-            <Mail size={12} />
-            {da ? 'Inviter bruger' : 'Invite user'}
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {canAdmin && (
+            <button
+              onClick={() => {
+                setShowInvite((v) => !v);
+                setInviteStatus('idle');
+                setInviteError(null);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/20 text-purple-300 text-xs font-medium rounded-lg transition-colors"
+            >
+              <Mail size={12} />
+              {da ? 'Inviter bruger' : 'Invite user'}
+            </button>
+          )}
+          {viewerRole && (
+            <button
+              onClick={handleLeave}
+              className="px-3 py-1.5 bg-slate-800 hover:bg-rose-900/40 border border-slate-700 hover:border-rose-500/40 text-slate-300 hover:text-rose-200 text-xs rounded-lg transition-colors"
+            >
+              {da ? 'Forlad team' : 'Leave team'}
+            </button>
+          )}
+        </div>
       </div>
 
+      {actionError && (
+        <p className="flex items-center gap-1.5 text-red-400 text-xs">
+          <AlertCircle size={11} />
+          {actionError}
+        </p>
+      )}
+
       {/* Invite form */}
-      {showInvite && isAdmin && (
+      {showInvite && canAdmin && (
         <div className="bg-slate-900/50 border border-white/8 rounded-xl p-4 space-y-3">
           <p className="text-slate-400 text-xs font-medium">
             {da ? 'Inviter ny bruger' : 'Invite new user'}
           </p>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <input
               id="invite-email"
               type="email"
               value={inviteEmail}
               onChange={(e) => setInviteEmail(e.target.value)}
               placeholder={da ? 'bruger@virksomhed.dk' : 'user@company.com'}
-              className="flex-1 px-3 py-2 bg-slate-800/70 border border-white/10 focus:border-purple-500/60 rounded-lg text-white text-sm placeholder-slate-500 outline-none transition-colors"
+              className="flex-1 min-w-[200px] px-3 py-2 bg-slate-800/70 border border-white/10 focus:border-purple-500/60 rounded-lg text-white text-sm placeholder-slate-500 outline-none transition-colors"
               disabled={inviting}
               aria-label={da ? 'E-mailadresse' : 'Email address'}
             />
-
-            {/* Role select */}
             <div className="relative">
               <select
                 id="invite-role"
                 value={inviteRole}
-                onChange={(e) => setInviteRole(e.target.value as 'tenant_admin' | 'tenant_member')}
+                onChange={(e) =>
+                  setInviteRole(
+                    e.target.value as 'tenant_admin' | 'tenant_member' | 'tenant_viewer'
+                  )
+                }
                 disabled={inviting}
                 aria-label={da ? 'Rolle' : 'Role'}
                 className="appearance-none pl-3 pr-8 py-2 bg-slate-800/70 border border-white/10 focus:border-purple-500/60 rounded-lg text-white text-sm outline-none transition-colors cursor-pointer"
               >
-                <option value="tenant_member">{da ? 'Bruger' : 'Member'}</option>
-                <option value="tenant_admin">{da ? 'Admin' : 'Admin'}</option>
+                <option value="tenant_member">{da ? 'Medlem' : 'Member'}</option>
+                <option value="tenant_admin">Admin</option>
+                <option value="tenant_viewer">{da ? 'Viewer (read-only)' : 'Viewer'}</option>
               </select>
               <ChevronDown
                 size={12}
@@ -426,14 +550,12 @@ function TeamSection({ da, isAdmin }: { da: boolean; isAdmin: boolean }) {
               />
             </div>
           </div>
-
           {inviteStatus === 'error' && inviteError && (
             <p className="flex items-center gap-1.5 text-red-400 text-xs">
               <AlertCircle size={11} />
               {inviteError}
             </p>
           )}
-
           <div className="flex gap-2">
             <button
               onClick={handleInvite}
@@ -461,13 +583,7 @@ function TeamSection({ da, isAdmin }: { da: boolean; isAdmin: boolean }) {
       )}
 
       {/* Members list */}
-      {!isAdmin ? (
-        <p className="text-slate-500 text-sm">
-          {da
-            ? 'Kun administratorer kan se teammedlemmer.'
-            : 'Only administrators can view team members.'}
-        </p>
-      ) : loading ? (
+      {loading ? (
         <div className="space-y-2 animate-pulse">
           {[...Array(3)].map((_, i) => (
             <div key={i} className="h-12 bg-slate-700/40 rounded-xl" />
@@ -479,25 +595,93 @@ function TeamSection({ da, isAdmin }: { da: boolean; isAdmin: boolean }) {
         </p>
       ) : (
         <ul className="space-y-2" role="list">
-          {members.map((member) => (
-            <li
-              key={member.id}
-              className="flex items-center justify-between gap-3 px-4 py-3 bg-slate-900/40 border border-white/6 rounded-xl"
-            >
-              <div className="min-w-0">
-                <p className="text-white text-sm font-medium truncate">
-                  {member.fullName || member.email}
-                </p>
-                {member.fullName && (
-                  <p className="text-slate-500 text-xs truncate">{member.email}</p>
-                )}
-              </div>
-              <div className="shrink-0">
-                <RoleBadge isAdmin={member.isAdmin} da={da} />
-              </div>
-            </li>
-          ))}
+          {members.map((m) => {
+            const busy = busyUserId === m.user_id;
+            return (
+              <li
+                key={m.user_id}
+                className="flex items-center justify-between gap-3 px-4 py-3 bg-slate-900/40 border border-white/6 rounded-xl"
+              >
+                <div className="min-w-0">
+                  <p className="text-white text-sm font-medium truncate">
+                    {m.full_name || m.email}
+                    {m.is_self && (
+                      <span className="ml-1.5 text-[10px] text-slate-500">
+                        ({da ? 'dig' : 'you'})
+                      </span>
+                    )}
+                  </p>
+                  {m.full_name && <p className="text-slate-500 text-xs truncate">{m.email}</p>}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {canAdmin && !m.is_self ? (
+                    <select
+                      value={m.role}
+                      disabled={busy}
+                      onChange={(e) =>
+                        void handleRoleChange(
+                          m.user_id,
+                          e.target.value as 'tenant_admin' | 'tenant_member' | 'tenant_viewer'
+                        )
+                      }
+                      className="appearance-none pl-2 pr-6 py-1 bg-slate-800/70 border border-white/10 focus:border-purple-500/60 rounded text-white text-xs outline-none transition-colors cursor-pointer"
+                    >
+                      <option value="tenant_admin">Admin</option>
+                      <option value="tenant_member">{da ? 'Medlem' : 'Member'}</option>
+                      <option value="tenant_viewer">Viewer</option>
+                    </select>
+                  ) : (
+                    <span className="px-2 py-0.5 bg-slate-700/60 text-slate-300 text-xs rounded">
+                      {roleLabel(m.role)}
+                    </span>
+                  )}
+                  {canAdmin && !m.is_self && (
+                    <button
+                      onClick={() => void handleRemove(m.user_id, m.email)}
+                      disabled={busy}
+                      className="p-1 rounded text-slate-400 hover:text-rose-300 hover:bg-slate-800 disabled:opacity-50"
+                      aria-label={da ? `Fjern ${m.email}` : `Remove ${m.email}`}
+                      title={da ? 'Fjern medlem' : 'Remove member'}
+                    >
+                      {busy ? <Loader2 size={12} className="animate-spin" /> : '✕'}
+                    </button>
+                  )}
+                </div>
+              </li>
+            );
+          })}
         </ul>
+      )}
+
+      {/* Pending invitations — kun admins kan revoke */}
+      {canAdmin && invitations.length > 0 && (
+        <div>
+          <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mt-4 mb-2">
+            {da ? 'Afventende invitationer' : 'Pending invitations'} ({invitations.length})
+          </p>
+          <ul className="space-y-2" role="list">
+            {invitations.map((inv) => (
+              <li
+                key={inv.id}
+                className="flex items-center justify-between gap-3 px-4 py-2 bg-slate-900/40 border border-amber-500/20 rounded-xl"
+              >
+                <div className="min-w-0">
+                  <p className="text-white text-sm truncate">{inv.email}</p>
+                  <p className="text-slate-500 text-xs">
+                    {roleLabel(inv.role)} · {da ? 'Udløber' : 'Expires'}{' '}
+                    {new Date(inv.expires_at).toLocaleDateString(da ? 'da-DK' : 'en-GB')}
+                  </p>
+                </div>
+                <button
+                  onClick={() => void handleRevoke(inv.id)}
+                  className="text-xs px-2 py-1 rounded text-slate-400 hover:text-rose-300 hover:bg-slate-800"
+                >
+                  {da ? 'Annuller' : 'Revoke'}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   );

@@ -217,8 +217,9 @@ export const translations = {
       map: 'Kort',
       search: 'Søg',
       analysis: 'AI Analyse',
-      chat: 'AI Assistent',
+      chat: 'AI Chat',
       tokens: 'Tokens',
+      support: 'Support',
       admin: 'Admin',
       searchPlaceholder: 'Søg adresse, CVR, virksomhed…',
       settings: 'Indstillinger',
@@ -233,10 +234,26 @@ export const translations = {
       typeProperty: 'Ejendom',
     },
 
+    /* ─── Ejendomshierarki (BIZZ-832) ─────────────────────────────── */
+    hierarchy: {
+      dashboard: 'Dashboard',
+      properties: 'Ejendomme',
+      building: 'Bygning',
+      sfe: 'SFE',
+      belongsToMain: 'Tilhører hovedejendom',
+      belongsToMainDesc: 'Denne enhed er en del af en samlet fast ejendom (SFE)',
+      goToMain: 'Gå til hovedejendom',
+      siblingUnits: 'Søster-enheder',
+      siblingUnitsDesc: 'Andre enheder på samme matrikel',
+      mainProperty: 'Hovedejendom',
+      condominium: 'Ejerlejlighed',
+      breadcrumbLabel: 'Brødkrumme',
+    },
+
     /* ─── Universal search page ────────────────────────────────────── */
     searchPage: {
-      title: 'Universel søgning',
-      subtitle: 'Find ejendomme, virksomheder og personer på ét sted',
+      title: 'Søg',
+      subtitle: 'Ejendomme, virksomheder og personer',
       placeholder: 'Søg på ejendomme, virksomheder og personer...',
       tabProperties: 'Ejendomme',
       tabCompanies: 'Virksomheder',
@@ -252,14 +269,15 @@ export const translations = {
 
     /* ─── AI Bizzness Assistent ─────────────────────────────────────── */
     ai: {
-      title: 'AI Assistent',
+      title: 'AI Chat',
       tokenStatus: 'Token status',
       emptyPrompt: 'Spørg om den ejendom, virksomhed eller person du kigger på.',
       inputPlaceholder: 'Stil et spørgsmål…',
       sendLabel: 'Send besked',
       stopLabel: 'Stop streaming',
       stopped: '*(stoppet)*',
-      connectionError: 'Der opstod en forbindelsesfejl. Prøv igen.',
+      connectionError:
+        'Der opstod en forbindelsesfejl. Hvis samtalen er lang, prøv at starte en ny samtale med + knappen.',
       serverError: 'Serverfejl',
       genericError: 'Der opstod en fejl.',
       noStream: 'Ingen stream',
@@ -816,8 +834,9 @@ export const translations = {
       map: 'Map',
       search: 'Search',
       analysis: 'AI Analysis',
-      chat: 'AI Assistent',
+      chat: 'AI Chat',
       tokens: 'Tokens',
+      support: 'Support',
       admin: 'Admin',
       searchPlaceholder: 'Search address, CVR, company…',
       settings: 'Settings',
@@ -832,10 +851,26 @@ export const translations = {
       typeProperty: 'Property',
     },
 
+    /* ─── Ejendomshierarki (BIZZ-832) ─────────────────────────────── */
+    hierarchy: {
+      dashboard: 'Dashboard',
+      properties: 'Properties',
+      building: 'Building',
+      sfe: 'SFE',
+      belongsToMain: 'Belongs to main property',
+      belongsToMainDesc: 'This unit is part of a collective real property (SFE)',
+      goToMain: 'Go to main property',
+      siblingUnits: 'Sibling units',
+      siblingUnitsDesc: 'Other units on the same cadastral parcel',
+      mainProperty: 'Main property',
+      condominium: 'Condominium',
+      breadcrumbLabel: 'Breadcrumb',
+    },
+
     /* ─── Universal search page ────────────────────────────────────── */
     searchPage: {
-      title: 'Universal search',
-      subtitle: 'Find properties, companies and people in one place',
+      title: 'Search',
+      subtitle: 'Properties, companies and people',
       placeholder: 'Search properties, companies and people...',
       tabProperties: 'Properties',
       tabCompanies: 'Companies',
@@ -851,14 +886,15 @@ export const translations = {
 
     /* ─── AI Bizzness Assistent ─────────────────────────────────────── */
     ai: {
-      title: 'AI Assistent',
+      title: 'AI Chat',
       tokenStatus: 'Token status',
       emptyPrompt: 'Ask about the property, company or person you are looking at.',
       inputPlaceholder: 'Ask a question…',
       sendLabel: 'Send message',
       stopLabel: 'Stop streaming',
       stopped: '*(stopped)*',
-      connectionError: 'A connection error occurred. Please try again.',
+      connectionError:
+        'A connection error occurred. If the conversation is long, try starting a new one with the + button.',
       serverError: 'Server error',
       genericError: 'An error occurred.',
       noStream: 'No stream',

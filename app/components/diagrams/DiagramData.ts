@@ -120,6 +120,12 @@ export interface DiagramEdge {
    * person→virksomhed-edges og company→property-edges.
    */
   personallyOwned?: boolean;
+  /**
+   * BIZZ-689: True for krydsejerskab-edges (2nd links). Når virksomhed A
+   * ejer andele i virksomhed B, og begge er i grafen, tegnes en ekstra
+   * edge fra A→B. Distinkt fra primary parent→child-edges (amber dashed).
+   */
+  crossOwnership?: boolean;
 }
 
 /** Complete graph structure for diagram rendering */
@@ -563,6 +569,30 @@ export function buildPersonDiagramGraph(
   // Main path IDs (person + owned companies + their direct subsidiaries)
   const mainPathIds = new Set<string>([mainId]);
 
+  // BIZZ-865: Tilføj personal-props-group-container TIDLIGT (før companies)
+  // så den sorteres først i "otherNodes" layoutet — visuelt placeret øverst/
+  // først blandt person-nodens children ved samme depth. Property-noderne
+  // selv tilføjes stadig senere (efter companies) for at matche eksisterende
+  // data-ordering. Kun container-placeringen flyttes op.
+  const personalPropGroupId = 'personal-props-group';
+  const hasActivePersonalProps =
+    !!personalProperties && personalProperties.some((p) => p.aktiv !== false);
+  if (hasActivePersonalProps) {
+    const activeCount = personalProperties!.filter((p) => p.aktiv !== false).length;
+    nodes.push({
+      id: personalPropGroupId,
+      label: 'Personligt ejede ejendomme',
+      sublabel: `${activeCount} ejendom${activeCount === 1 ? '' : 'me'}`,
+      type: 'status',
+    });
+    edges.push({
+      from: mainId,
+      to: personalPropGroupId,
+      personallyOwned: true,
+    });
+    seenIds.add(personalPropGroupId);
+  }
+
   // ── Owned companies (downward from person) ──
   for (const v of ejerVirksomheder) {
     const id = `cvr-${v.cvr}`;
@@ -683,9 +713,28 @@ export function buildPersonDiagramGraph(
       for (const ejer of sub.ejere ?? []) {
         const ejerId = ejer.erVirksomhed ? `cvr-${ejer.enhedsNummer}` : `en-${ejer.enhedsNummer}`;
 
-        if (seenIds.has(ejerId)) continue;
         if (ejerId === mainId) continue;
         if (ejerId === `cvr-${sub.ejetAfCvr ?? v.cvr}`) continue;
+
+        // BIZZ-689: Hvis ejer allerede er i grafen (fx SJKL Holding er primary
+        // ejer-virksomhed OG ejer andele i JaJR Holding 2 der også er i grafen),
+        // tilføj en cross-ownership-edge i stedet for at springe over. Edgen
+        // tegnes distinkt (dashed amber) så brugeren ser krydsejerskabet.
+        if (seenIds.has(ejerId)) {
+          // Undgå duplikat-edges hvis samme cross-link allerede findes
+          const hasEdge = edges.some(
+            (e) => e.from === ejerId && e.to === childId && e.crossOwnership
+          );
+          if (!hasEdge) {
+            edges.push({
+              from: ejerId,
+              to: childId,
+              ejerandel: ejer.ejerandel ?? undefined,
+              crossOwnership: true,
+            });
+          }
+          continue;
+        }
 
         seenIds.add(ejerId);
         const link = ejer.erVirksomhed
@@ -824,23 +873,34 @@ export function buildPersonDiagramGraph(
   // virksomhed-strukturen (typisk privatbolig, fritidshus og ejendomme
   // købt som privatperson). Data stammer normalt fra ejf_ejerskab-bulk-
   // tabellen (se BIZZ-534).
+  //
+  // BIZZ-730: Tidligere hang ejendommene direkte under person-noden på samme
+  // lag som virksomhederne — visuelt blandet. Ved at indskyde en virtuel
+  // container-node "Personligt ejede ejendomme" (type='status') mellem person
+  // og ejendomme tvinges ejendommene ét lag længere ned i layouten, så de
+  // vises klart adskilt fra virksomhederne uden at ændre ejerskabs-semantikken
+  // (ejendommene ejes stadig af personen, ikke af containeren).
   if (personalProperties && personalProperties.length > 0) {
     const aktive = personalProperties.filter((p) => p.aktiv !== false);
+    // BIZZ-865: Container-node tilføjes nu TIDLIGT (efter person) — kun
+    // property-noderne tilføjes her. propGroupId + container-edge er
+    // allerede i grafen fra blokken ovenfor. personalPropGroupId er i
+    // scope for denne blok.
+    const propGroupId = personalPropGroupId;
     // BIZZ-619: Person-noden har typisk få (< 20) personligt ejede ejendomme
     // — uden cap. Den gamle MAX_PROPS_PER_COMPANY=5-cap gav "5 af 9"
     // på Jakob's persondiagram. Limit'en giver kun mening for virksomheder
     // der kan eje hundredvis af BFE'er; personens liste er altid kort.
     for (const p of aktive) {
       const propId = `bfe-${p.bfeNummer}`;
-      // Hvis noden allerede er tilføjet via et company-ownership-spor,
-      // skipper vi duplikering af selve noden men tilføjer stadig den
-      // direkte person→property-edge så ejerskabet er tydeligt.
+      // Edge går nu fra container-noden, ikke direkte fra person. Det bevarer
+      // layout-adskillelsen (property-noder kommer ét lag længere ned end
+      // virksomhederne). personallyOwned-flaget bibeholdes så stiplet linje
+      // stadig signalerer privat ejerskab.
       edges.push({
-        from: mainId,
+        from: propGroupId,
         to: propId,
         ejerandel: p.ejerandel ?? undefined,
-        // BIZZ-585: Person→sole-owned-ejendom-edge stiples for at adskille
-        // visuelt fra person→virksomhed-edges.
         personallyOwned: true,
       });
       if (seenIds.has(propId)) continue;

@@ -22,7 +22,6 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 import {
   ArrowLeft,
   Users,
@@ -34,15 +33,9 @@ import {
   Plus,
   RotateCcw,
   Trash2,
-  BarChart3,
-  CreditCard,
-  Settings,
   Search,
-  Bot,
-  ShieldCheck,
-  Wrench,
-  Activity,
 } from 'lucide-react';
+import { AdminNavTabs } from '../AdminNavTabs';
 import { useLanguage } from '@/app/context/LanguageContext';
 import {
   PLAN_LIST,
@@ -95,6 +88,9 @@ export default function UsersClient() {
   /** Search & filter state */
   const [searchQuery, setSearchQuery] = useState('');
   const [planFilter, setPlanFilter] = useState<string>('all');
+  // BIZZ-755: sort state — 4 columns, toggleable direction
+  const [sortBy, setSortBy] = useState<'email' | 'name' | 'plan' | 'status'>('email');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
   /** All plans (hardcoded + DB custom plans) for plan pickers */
   const [allPlans, setAllPlans] = useState(PLAN_LIST);
@@ -175,11 +171,23 @@ export default function UsersClient() {
     return true;
   });
 
-  // Separate filtered users by subscription state
-  const withSub = filtered.filter((u) => u.subscription);
+  // BIZZ-755: sort the filtered list before splitting into sub-sections.
+  const sorted = [...filtered].sort((a, b) => {
+    const dir = sortDir === 'asc' ? 1 : -1;
+    if (sortBy === 'email') return a.email.localeCompare(b.email) * dir;
+    if (sortBy === 'name') return (a.fullName ?? '').localeCompare(b.fullName ?? '') * dir;
+    if (sortBy === 'plan')
+      return (a.subscription?.planId ?? 'zzz').localeCompare(b.subscription?.planId ?? 'zzz') * dir;
+    if (sortBy === 'status')
+      return (a.subscription?.status ?? 'zzz').localeCompare(b.subscription?.status ?? 'zzz') * dir;
+    return 0;
+  });
+
+  // Separate filtered+sorted users by subscription state
+  const withSub = sorted.filter((u) => u.subscription);
   const pending = withSub.filter((u) => u.subscription?.status === 'pending');
   const others = withSub.filter((u) => u.subscription?.status !== 'pending');
-  const noSub = filtered.filter((u) => !u.subscription);
+  const noSub = sorted.filter((u) => !u.subscription);
 
   /** Stats */
   const activeCount = withSub.filter((u) => u.subscription?.status === 'active').length;
@@ -214,86 +222,63 @@ export default function UsersClient() {
           </div>
         </div>
 
-        {/* Tab navigation */}
-        <div className="flex gap-1 -mb-px overflow-x-auto mt-4">
-          <span className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-blue-500 text-blue-300 font-medium cursor-default">
-            <Users size={14} /> {da ? 'Brugere' : 'Users'}
-          </span>
-          <Link
-            href="/dashboard/admin/billing"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors"
-          >
-            <CreditCard size={14} /> {da ? 'Fakturering' : 'Billing'}
-          </Link>
-          <Link
-            href="/dashboard/admin/plans"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors"
-          >
-            <Settings size={14} /> {da ? 'Planer' : 'Plans'}
-          </Link>
-          <Link
-            href="/dashboard/admin/analytics"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors"
-          >
-            <BarChart3 size={14} /> {da ? 'Analyse' : 'Analytics'}
-          </Link>
-          <Link
-            href="/dashboard/admin/ai-media-agents"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
-          >
-            <Bot size={14} /> {da ? 'AI-agenter' : 'AI Agents'}
-          </Link>
-          <Link
-            href="/dashboard/admin/security"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
-          >
-            <ShieldCheck size={14} /> {da ? 'Sikkerhed' : 'Security'}
-          </Link>
-          <Link
-            href="/dashboard/admin/service-manager"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
-          >
-            <Wrench size={14} /> Service Manager
-          </Link>
-          <Link
-            href="/dashboard/admin/service-management"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
-          >
-            <Activity size={14} /> {da ? 'Infrastruktur' : 'Infrastructure'}
-          </Link>
-          <Link
-            href="/dashboard/admin/cron-status"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
-          >
-            <Clock size={14} /> {da ? 'Cron-status' : 'Cron Status'}
-          </Link>
-        </div>
+        {/* Tab navigation — BIZZ-737: shared component */}
+        <AdminNavTabs activeTab="users" da={da} />
 
-        {/* Search + plan filter */}
-        <div className="flex gap-3 mt-4 items-center">
-          <div className="relative flex-1 max-w-xs">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={da ? 'Søg navn eller email…' : 'Search name or email…'}
-              className="w-full bg-slate-800/60 border border-slate-700/50 rounded-lg pl-9 pr-3 py-2 text-white text-xs placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
-            />
+        {/* BIZZ-754: Dedicated filter-card (grouped filters + reset), matches
+            ejendomme-style filter pattern. Previously the search + plan-filter
+            sat inline under the tab-bar — easy to miss. */}
+        <div className="mt-4 bg-slate-900/40 border border-slate-700/40 rounded-xl p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-slate-400 text-xs uppercase tracking-wide font-medium">
+              {da ? 'Filtre' : 'Filters'}
+            </p>
+            {(searchQuery || planFilter !== 'all') && (
+              <button
+                onClick={() => {
+                  setSearchQuery('');
+                  setPlanFilter('all');
+                }}
+                className="text-xs text-slate-400 hover:text-blue-300 transition-colors"
+              >
+                {da ? 'Nulstil filtre' : 'Reset filters'}
+              </button>
+            )}
           </div>
-          <select
-            value={planFilter}
-            onChange={(e) => setPlanFilter(e.target.value)}
-            className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-2 text-white text-xs focus:border-blue-500 focus:outline-none"
-          >
-            <option value="all">{da ? 'Alle planer' : 'All plans'}</option>
-            <option value="none">{da ? 'Uden plan' : 'No plan'}</option>
-            {allPlans.map((p) => (
-              <option key={p.id} value={p.id}>
-                {da ? p.nameDa : p.nameEn}
-              </option>
-            ))}
-          </select>
+          <div className="flex gap-3 items-center flex-wrap">
+            <label className="block flex-1 min-w-[180px] max-w-xs">
+              <span className="sr-only">{da ? 'Søg' : 'Search'}</span>
+              <div className="relative">
+                <Search
+                  size={14}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
+                />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={da ? 'Søg navn eller email…' : 'Search name or email…'}
+                  className="w-full bg-slate-800/60 border border-slate-700/50 rounded-lg pl-9 pr-3 py-2 text-white text-xs placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+            </label>
+            <label className="block">
+              <span className="sr-only">{da ? 'Plan' : 'Plan'}</span>
+              <select
+                value={planFilter}
+                onChange={(e) => setPlanFilter(e.target.value)}
+                className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-2 text-white text-xs focus:border-blue-500 focus:outline-none"
+              >
+                <option value="all">{da ? 'Alle planer' : 'All plans'}</option>
+                <option value="none">{da ? 'Uden plan' : 'No plan'}</option>
+                {allPlans.map((pl) => (
+                  <option key={pl.id} value={pl.id}>
+                    {da ? pl.nameDa : pl.nameEn}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
         </div>
 
         {/* Quick stats + add user button */}
@@ -572,10 +557,33 @@ export default function UsersClient() {
 
         {/* All users section */}
         <div>
-          <h2 className="text-white font-semibold text-base mb-4 flex items-center gap-2">
-            <Users size={16} className="text-blue-400" />
-            {da ? 'Alle brugere' : 'All users'}
-          </h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-white font-semibold text-base flex items-center gap-2">
+              <Users size={16} className="text-blue-400" />
+              {da ? 'Alle brugere' : 'All users'}
+            </h2>
+            {/* BIZZ-755: sort dropdown (column + direction) */}
+            <div className="flex items-center gap-2">
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as 'email' | 'name' | 'plan' | 'status')}
+                className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-2 py-1 text-white text-xs focus:border-blue-500 focus:outline-none"
+                aria-label={da ? 'Sortér efter' : 'Sort by'}
+              >
+                <option value="email">Email</option>
+                <option value="name">{da ? 'Navn' : 'Name'}</option>
+                <option value="plan">{da ? 'Plan' : 'Plan'}</option>
+                <option value="status">Status</option>
+              </select>
+              <button
+                onClick={() => setSortDir(sortDir === 'asc' ? 'desc' : 'asc')}
+                className="px-2 py-1 bg-slate-800/60 border border-slate-700/50 rounded-lg text-white text-xs hover:border-slate-500 transition-colors"
+                aria-label={da ? 'Skift sorteringsretning' : 'Toggle sort direction'}
+              >
+                {sortDir === 'asc' ? '↑' : '↓'}
+              </button>
+            </div>
+          </div>
           {others.length === 0 && pending.length === 0 ? (
             <div className="text-center py-16">
               <Users size={32} className="mx-auto mb-3 text-slate-600" />

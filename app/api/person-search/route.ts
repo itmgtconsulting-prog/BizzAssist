@@ -15,6 +15,7 @@ import { parseQuery } from '@/app/lib/validate';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 /** Zod schema for /api/person-search query params */
 const querySchema = z.object({ q: z.string().trim().min(2).max(500) });
@@ -41,6 +42,20 @@ export interface PersonSearchResult {
   antalVirksomheder: number;
   /** Op til 3 roller/virksomheder personen er tilknyttet */
   roller: PersonRolleInfo[];
+  // BIZZ-823: Enrichment-felter fra cvr_deltager (migration 077).
+  // Null = ikke i lokal DB (endnu ikke backfilled).
+  /** Om personen har mindst én aktiv rolle */
+  isAktiv?: boolean | null;
+  /** Antal virksomheder med aktive roller (præcis, fra cvr_deltager) */
+  antalAktiveSelskaber?: number | null;
+  /** Normaliserede rolle-typer (direktør, bestyrelsesmedlem, stifter etc.) */
+  roleTyper?: string[] | null;
+  /** Kommune fra adresse_json (til kommune-filter) */
+  kommunenavn?: string | null;
+  /** BIZZ-823: Antal virksomheder med ophørte roller */
+  antalHistoriskeVirksomheder?: number | null;
+  /** BIZZ-823: Total antal roller (aktive + ophørte) */
+  totalAntalRoller?: number | null;
 }
 
 // ─── Config ──────────────────────────────────────────────────────────────────
@@ -161,6 +176,105 @@ function mapHit(hit: Record<string, unknown>): PersonSearchResult | null {
   return { enhedsNummer, name, erVirksomhed, antalVirksomheder, roller };
 }
 
+// ─── cvr_deltager enrichment ────────────────────────────────────────────────
+
+/**
+ * BIZZ-823: Batch-lookup af enrichment-felter fra cvr_deltager-tabellen
+ * (migration 077). Returnerer Map keyed på enhedsNummer.
+ *
+ * @param enhedsNumre - Array af enhedsNumre fra ES-resultater
+ */
+async function enrichFromCvrDeltager(enhedsNumre: number[]): Promise<
+  Map<
+    number,
+    {
+      isAktiv: boolean | null;
+      antalAktiveSelskaber: number | null;
+      roleTyper: string[] | null;
+      kommunenavn: string | null;
+      antalHistoriskeVirksomheder: number | null;
+      totalAntalRoller: number | null;
+    }
+  >
+> {
+  const result = new Map<
+    number,
+    {
+      isAktiv: boolean | null;
+      antalAktiveSelskaber: number | null;
+      roleTyper: string[] | null;
+      kommunenavn: string | null;
+      antalHistoriskeVirksomheder: number | null;
+      totalAntalRoller: number | null;
+    }
+  >();
+  if (enhedsNumre.length === 0) return result;
+
+  try {
+    const client = createAdminClient() as unknown as {
+      from: (table: string) => {
+        select: (cols: string) => {
+          in: (
+            col: string,
+            values: number[]
+          ) => Promise<{
+            data: Array<Record<string, unknown>> | null;
+            error: { message: string } | null;
+          }>;
+        };
+      };
+    };
+    const { data, error } = await client
+      .from('cvr_deltager')
+      .select(
+        'enhedsNummer, is_aktiv, antal_aktive_selskaber, role_typer, adresse_json, antal_historiske_virksomheder, totalt_antal_roller'
+      )
+      .in('enhedsNummer', enhedsNumre);
+
+    if (error) {
+      logger.warn('[person-search] cvr_deltager enrichment fejlede:', error.message);
+      return result;
+    }
+
+    for (const row of data ?? []) {
+      const enr = Number(row.enhedsNummer);
+      if (!Number.isFinite(enr)) continue;
+
+      // Udtræk kommunenavn fra adresse_json (JSONB) — typisk
+      // { kommuneNavn: "...", ... } eller nested under adresse.
+      let kommunenavn: string | null = null;
+      if (row.adresse_json && typeof row.adresse_json === 'object') {
+        const adr = row.adresse_json as Record<string, unknown>;
+        if (typeof adr.kommuneNavn === 'string') kommunenavn = adr.kommuneNavn;
+        else if (typeof adr.kommune === 'object' && adr.kommune != null) {
+          const k = adr.kommune as Record<string, unknown>;
+          if (typeof k.kommuneNavn === 'string') kommunenavn = k.kommuneNavn;
+        }
+      }
+
+      result.set(enr, {
+        isAktiv: row.is_aktiv != null ? Boolean(row.is_aktiv) : null,
+        antalAktiveSelskaber:
+          row.antal_aktive_selskaber != null ? Number(row.antal_aktive_selskaber) : null,
+        roleTyper: Array.isArray(row.role_typer) ? (row.role_typer as string[]) : null,
+        kommunenavn,
+        antalHistoriskeVirksomheder:
+          row.antal_historiske_virksomheder != null
+            ? Number(row.antal_historiske_virksomheder)
+            : null,
+        totalAntalRoller: row.totalt_antal_roller != null ? Number(row.totalt_antal_roller) : null,
+      });
+    }
+  } catch (err) {
+    logger.warn(
+      '[person-search] cvr_deltager enrichment exception:',
+      err instanceof Error ? err.message : err
+    );
+  }
+
+  return result;
+}
+
 // ─── Route handler ──────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
@@ -258,6 +372,22 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       if (mapped && !seen.has(mapped.enhedsNummer)) {
         seen.add(mapped.enhedsNummer);
         results.push(mapped);
+      }
+    }
+
+    // BIZZ-823: Berig med pre-beregnede felter fra cvr_deltager
+    // (is_aktiv, antal_aktive_selskaber, role_typer, kommunenavn).
+    // Erstatter klient-side heuristik med præcise DB-aggregater.
+    const enrichMap = await enrichFromCvrDeltager(results.map((r) => r.enhedsNummer));
+    for (const r of results) {
+      const enrichment = enrichMap.get(r.enhedsNummer);
+      if (enrichment) {
+        r.isAktiv = enrichment.isAktiv;
+        r.antalAktiveSelskaber = enrichment.antalAktiveSelskaber;
+        r.roleTyper = enrichment.roleTyper;
+        r.kommunenavn = enrichment.kommunenavn;
+        r.antalHistoriskeVirksomheder = enrichment.antalHistoriskeVirksomheder;
+        r.totalAntalRoller = enrichment.totalAntalRoller;
       }
     }
 

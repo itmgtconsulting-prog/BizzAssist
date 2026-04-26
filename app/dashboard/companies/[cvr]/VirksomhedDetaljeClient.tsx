@@ -55,6 +55,8 @@ import type { RegnskabsAar } from '@/app/api/regnskab/xbrl/route';
 import type { RelateretVirksomhed } from '@/app/api/cvr-public/related/route';
 import type { CvrHandelData } from '@/app/api/salgshistorik/cvr/route';
 import type { EjendomSummary } from '@/app/api/ejendomme-by-owner/route';
+import CreateCaseModal from '@/app/components/sager/CreateCaseModal';
+import { useDomainMemberships } from '@/app/hooks/useDomainMemberships';
 import type { PersonbogHaeftelse, PersonbogDokument } from '@/app/api/tinglysning/personbog/route';
 import type { VirksomhedEjendomsrolle } from '@/app/api/tinglysning/virksomhed/route';
 import type { BilbogBil } from '@/app/api/tinglysning/bilbog/route';
@@ -316,6 +318,9 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   const [error, setError] = useState<string | null>(null);
   const [aktivTab, setAktivTab] = useState<TabId>('overview');
   const [erFulgt, setErFulgt] = useState(false);
+  // BIZZ-808: Opret sag-modal state
+  const [opretSagOpen, setOpretSagOpen] = useState(false);
+  const { memberships: domainMemberships } = useDomainMemberships();
 
   /**
    * JS-baseret breakpoint detektion (≥900px).
@@ -521,6 +526,11 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
    * preventing "jumping" as properties stream in progressively. Shows active only. */
   const diagramGraphStable = useMemo(() => {
     if (!data) return { nodes: [], edges: [], mainId: '' };
+    // BIZZ-926: Vent med diagram-build til ejendomme-fetch er komplet.
+    // Uden denne guard bygges grafen med ufuldstændige data ved første
+    // render → DiagramForce cancelerer igangværende D3-simulation →
+    // positions forbliver tom → blank canvas (identisk med BIZZ-925).
+    if (!ejendommeFetchComplete) return { nodes: [], edges: [], mainId: '' };
     const aktiveEjendomme = ejendommeData.filter((p) => p.aktiv !== false);
     const propertiesByCvr =
       aktiveEjendomme.length > 0
@@ -740,11 +750,28 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
    */
   useEffect(() => {
     if (!data) return;
+    // BIZZ-941: Send pre-loaded ejendomme så AI ikke re-fetcher dem.
+    const preloadedEjendomme = ejendommeFetchComplete
+      ? ejendommeData
+          .filter((e) => e.aktiv !== false)
+          .slice(0, 50)
+          .map((e) => ({
+            bfe: e.bfeNummer,
+            adresse: e.adresse ?? null,
+            type: e.ejendomstype ?? null,
+            ejerandel: e.ejerandel ?? null,
+          }))
+      : undefined;
+
     setAICtx({
       cvrNummer: String(data.vat),
       virksomhedNavn: data.name,
+      pageType: 'virksomhed',
+      activeTab: aktivTab,
+      preloadedEjendomme,
+      ejendommeTotal: ejendommeFetchComplete ? ejendommeTotalBfe : undefined,
     });
-  }, [data, setAICtx]);
+  }, [data, aktivTab, ejendommeData, ejendommeFetchComplete, ejendommeTotalBfe, setAICtx]);
 
   /**
    * Lazy-loader regnskabsdata når bruger klikker på Regnskab-tab.
@@ -1084,6 +1111,37 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   }, [aktivTab]);
 
   /**
+   * BIZZ-732: Prefetch de tungeste data-sæt ved sidens mount i stedet for
+   * først ved tab-klik. Diagram- og Ejendomme-fanen kræver normalt fetchRelated
+   * + fetchEjendomshandler som kan tage flere sekunder. Prefetch'es via
+   * requestIdleCallback (eller setTimeout 0 som fallback) så det ikke
+   * konkurrerer med LCP. fetchedRef-mønsteret i hver fetcher dedupliker, så
+   * efterfølgende tab-klik blot læser cached state.
+   * Liens (personbog/fastejendom/bilbog/andelsbog) prefetcher vi IKKE — de er
+   * mindre trafikerede og tungere pr. request.
+   */
+  useEffect(() => {
+    if (!cvr) return;
+    let cancelled = false;
+    const schedule = (fn: () => void) => {
+      if (typeof window === 'undefined') return;
+      const ric = (window as unknown as { requestIdleCallback?: (cb: () => void) => number })
+        .requestIdleCallback;
+      if (typeof ric === 'function') ric(fn);
+      else setTimeout(fn, 0);
+    };
+    schedule(() => {
+      if (cancelled) return;
+      fetchRelated();
+      fetchEjendomshandler();
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cvr]);
+
+  /**
    * Henter ejendomsportefølje progressivt: første batch (5) vises straks,
    * efterfølgende batches tilføjes automatisk i baggrunden.
    * Bruger AbortController til at annullere igangværende hentning ved CVR-ændring.
@@ -1173,9 +1231,12 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
    * BIZZ-569: Batch-enrich alle BFE'er i ÉT endpoint-kald i stedet for ét
    * per kort. Sparer N × Vercel cold-start og giver dramatisk hurtigere
    * card-rendering på sider med mange ejendomme.
+   *
+   * BIZZ-848: aktivTab-guard fjernet så prefetch starter så snart ejendomme-
+   * data er loaded (ikke først ved tab-klik). Ejendomme-tab er nu klar
+   * uden ventetid når brugeren klikker derhen.
    */
   useEffect(() => {
-    if (aktivTab !== 'properties') return;
     if (ejendommeData.length === 0) return;
 
     // Find BFE'er der mangler enriched data
@@ -1216,14 +1277,16 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
       .catch(() => {});
 
     return () => controller.abort();
-  }, [aktivTab, ejendommeData, preEnrichedByBfe]);
+    // BIZZ-848: aktivTab fjernet fra dep-array da guarden er fjernet i body.
+  }, [ejendommeData, preEnrichedByBfe]);
 
   /**
    * Trigger progressiv ejendomshentning når properties-tab aktiveres eller CVR-sæt ændres.
    * Kører igen når relatedCompanies ændres (datterselskaber loader ind).
+   * BIZZ-848: prefetch også ved overview-tab — giver props-tab uden ventetid.
    */
   useEffect(() => {
-    if (aktivTab !== 'properties' && aktivTab !== 'diagram') return;
+    if (aktivTab !== 'properties' && aktivTab !== 'diagram' && aktivTab !== 'overview') return;
 
     /* Saml CVR-numre: hovedvirksomhed + aktive datterselskaber */
     const cvrList = [
@@ -1635,6 +1698,22 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                 <Bell size={14} className={erFulgt ? 'fill-blue-400 text-blue-400' : ''} />
                 {erFulgt ? c.following : c.follow}
               </button>
+              {/* BIZZ-808: Opret sag-knap — kun synlig for domain-brugere */}
+              {domainMemberships.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setOpretSagOpen(true)}
+                  className="flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm transition-all bg-emerald-600/20 hover:bg-emerald-600/30 border-emerald-500/40 text-emerald-300"
+                  aria-label={
+                    lang === 'da'
+                      ? 'Opret sag for denne virksomhed'
+                      : 'Create case for this company'
+                  }
+                >
+                  <Briefcase size={14} />
+                  {lang === 'da' ? 'Opret sag' : 'Create case'}
+                </button>
+              )}
             </div>
           </div>
 
@@ -1731,7 +1810,30 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           )}
 
           {/* ══ RELATIONSDIAGRAM (Force Graph — original) ══ */}
-          {aktivTab === 'diagram' && <DiagramForce graph={diagramGraphStable} lang={lang} />}
+          {aktivTab === 'diagram' && (
+            <div className="relative">
+              <DiagramForce graph={diagramGraphStable} lang={lang} />
+              {/* BIZZ-729: Loading overlay — ejendomme loades progressivt men diagrammet
+                  rebuilds kun ved ejendommeFetchComplete=true for at undgå re-simulation.
+                  Uden denne indikator ser diagrammet "færdigt" ud indtil ejendomme pludselig
+                  popper ind. Viser spinner + progress-counter mens hentning står på. */}
+              {(ejendommeLoading || ejendommeLoadingMore) && (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="absolute top-3 right-3 flex items-center gap-2 px-3 py-2 bg-blue-900/90 backdrop-blur-sm border border-blue-500/40 rounded-lg shadow-lg text-blue-100 text-xs font-medium pointer-events-none animate-pulse"
+                >
+                  <Loader2 size={14} className="animate-spin text-blue-300" />
+                  <span>
+                    {lang === 'da' ? 'Henter ejendomme' : 'Loading properties'}
+                    {ejendommeTotalBfe > 0
+                      ? ` — ${ejendommeData.length}/${ejendommeTotalBfe}`
+                      : '…'}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ══ EJENDOMME ══ */}
           {aktivTab === 'properties' && (
@@ -2476,6 +2578,17 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
             </p>
           </div>
         </div>
+      )}
+      {/* BIZZ-808: Opret sag-modal — virksomhed pre-populeres som kunde */}
+      {opretSagOpen && data && (
+        <CreateCaseModal
+          initialEntity={{
+            kind: 'virksomhed',
+            id: String(data.vat),
+            label: data.name,
+          }}
+          onClose={() => setOpretSagOpen(false)}
+        />
       )}
     </div>
   );

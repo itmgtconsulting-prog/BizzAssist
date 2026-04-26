@@ -82,12 +82,50 @@ const TRANSLATIONS = {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function SupportChatWidget() {
+interface SupportChatWidgetProps {
+  /**
+   * BIZZ-808: controlled open state. Sidebar menu item toggles this.
+   * When undefined (legacy call-sites), the widget falls back to
+   * self-managed state so it can still render as a floating widget.
+   */
+  open?: boolean;
+  onClose?: () => void;
+  /**
+   * When true, skip rendering the floating trigger button — we're
+   * mounted from the dashboard sidebar which owns the trigger instead.
+   */
+  hideFloatingTrigger?: boolean;
+  /**
+   * Optional pixel offset from the left edge so the popup can be
+   * anchored next to the sidebar instead of floating at left:16px.
+   * Defaults to 16 (1rem) to preserve the original floating layout.
+   */
+  anchorLeftPx?: number;
+}
+
+export default function SupportChatWidget({
+  open: openProp,
+  onClose,
+  hideFloatingTrigger = false,
+  anchorLeftPx = 16,
+}: SupportChatWidgetProps = {}) {
   const { lang } = useLanguage();
   const pathname = usePathname();
   const txt = TRANSLATIONS[lang];
 
-  const [open, setOpen] = useState(false);
+  const [openState, setOpenState] = useState(false);
+  const open = openProp ?? openState;
+  const setOpen = (next: boolean | ((o: boolean) => boolean)) => {
+    if (openProp !== undefined) {
+      // Controlled — parent owns state; only surface close via callback.
+      const resolved = typeof next === 'function' ? (next as (o: boolean) => boolean)(open) : next;
+      if (!resolved) onClose?.();
+      return;
+    }
+    setOpenState((prev) =>
+      typeof next === 'function' ? (next as (o: boolean) => boolean)(prev) : next
+    );
+  };
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
@@ -307,41 +345,51 @@ export default function SupportChatWidget() {
 
   return (
     <>
-      {/* ── Floating trigger button ── */}
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className={`fixed bottom-4 left-4 z-40 w-11 h-11 rounded-full shadow-lg hover:shadow-xl transition-all flex items-center justify-center ${
-          open
-            ? 'bg-slate-700 hover:bg-slate-600 text-white'
-            : 'bg-blue-600 hover:bg-blue-500 text-white'
-        }`}
-        aria-label={txt.title}
-      >
-        {open ? <X size={18} /> : <MessageCircle size={18} />}
-      </button>
+      {/* ── Floating trigger button (skjult når parent leverer trigger) ── */}
+      {!hideFloatingTrigger && (
+        <button
+          onClick={() => setOpen((o) => !o)}
+          className={`fixed bottom-4 left-4 z-40 w-11 h-11 rounded-full shadow-lg hover:shadow-xl transition-all flex items-center justify-center ${
+            open
+              ? 'bg-slate-700 hover:bg-slate-600 text-white'
+              : 'bg-blue-600 hover:bg-blue-500 text-white'
+          }`}
+          aria-label={txt.title}
+        >
+          {open ? <X size={18} /> : <MessageCircle size={18} />}
+        </button>
+      )}
 
-      {/* ── Chat panel ── */}
+      {/* ── Chat panel — forankret til sidebar-kanten via anchorLeftPx ── */}
       {open && (
         <div
           role="dialog"
           aria-modal="true"
           aria-labelledby="support-chat-title"
-          className="fixed bottom-20 left-4 z-40 w-80 max-w-[calc(100vw-2rem)] bg-[#1e293b] border border-white/10 rounded-2xl shadow-2xl flex flex-col overflow-hidden"
-          style={{ maxHeight: 'min(440px, calc(100vh - 7rem))' }}
+          className="fixed bottom-4 z-40 w-80 max-w-[calc(100vw-2rem)] bg-[#1e293b] border border-white/10 rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+          style={{ left: `${anchorLeftPx}px`, maxHeight: 'min(520px, calc(100vh - 5rem))' }}
         >
           {/* ── Header ── */}
-          <div className="px-4 py-3 border-b border-white/10 shrink-0">
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 bg-blue-600/25 rounded-lg flex items-center justify-center">
-                <Bot size={14} className="text-blue-400" />
-              </div>
-              <div>
-                <h3 id="support-chat-title" className="text-white text-sm font-semibold">
-                  {txt.title}
-                </h3>
-                <p className="text-slate-500 text-[10px]">{txt.subtitle}</p>
-              </div>
+          <div className="px-4 py-3 border-b border-white/10 shrink-0 flex items-center gap-2">
+            <div className="w-7 h-7 bg-blue-600/25 rounded-lg flex items-center justify-center shrink-0">
+              <Bot size={14} className="text-blue-400" />
             </div>
+            <div className="min-w-0 flex-1">
+              <h3 id="support-chat-title" className="text-white text-sm font-semibold truncate">
+                {txt.title}
+              </h3>
+              <p className="text-slate-500 text-[10px] truncate">{txt.subtitle}</p>
+            </div>
+            {hideFloatingTrigger && (
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                aria-label={lang === 'da' ? 'Luk support' : 'Close support'}
+                className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/5 transition-colors shrink-0"
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
 
           {/* ── Bug report form ── */}

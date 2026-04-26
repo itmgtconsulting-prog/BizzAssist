@@ -57,6 +57,58 @@ export interface AIPageData {
     ejerandel: string | null; // Interval-streng, f.eks. "90-100%"
     roller: string[]; // Aktive rolle-navne
   }>;
+  /**
+   * BIZZ-874: Aktiv tab på detalje-siden (fx "oversigt" / "ejendomme" /
+   * "regnskab" / "diagram"). Sendes til AI så den ved hvad brugeren mener
+   * når de refererer til "det her tab" eller "oversigt-tabbet".
+   */
+  activeTab?: string;
+  /**
+   * BIZZ-874: Type af detaljeside — 'virksomhed' | 'person' | 'ejendom'.
+   * Bruges sammen med activeTab for korrekt tool-dispatch.
+   */
+  pageType?: 'virksomhed' | 'person' | 'ejendom' | 'domain';
+  /**
+   * BIZZ-902 (parent BIZZ-896): Aktuel domain-sag og valgte dokumenter
+   * fra sager-workspace. Når brugeren åbner AI Chat fra /domain/[id]?sag=X
+   * og har checked dokumenter, sendes dette så AI kan bruge dokumenterne
+   * som primær kontekst uden at skulle lede efter dem selv.
+   */
+  currentCaseId?: string;
+  currentCaseName?: string;
+  /**
+   * BIZZ-902: Let-weight summary af de valgte dokumenter (id + navn).
+   * Full extractedText hentes via hent_dokument_indhold tool-call efter
+   * AI beslutter sig for at læse et specifikt doc. Undgår at sende hele
+   * tekst-payload i hver chat-request.
+   */
+  selectedDocuments?: Array<{ id: string; name: string }>;
+  /** BIZZ-930: Valgte skabeloner for den aktuelle sag. */
+  selectedTemplates?: Array<{ id: string; name: string }>;
+  /** BIZZ-937: Linket klient på sagen (person eller virksomhed). */
+  caseClient?: {
+    kind: 'company' | 'person';
+    name: string;
+    cvr?: string;
+    enhedsNummer?: string;
+  };
+  /** BIZZ-937: Sags-status og metadata. */
+  caseStatus?: string;
+  caseTags?: string[];
+  caseClientRef?: string;
+  /**
+   * BIZZ-941: Pre-loaded ejendomme fra aktiv record. Kompakt summary
+   * så AI ikke behøver re-fetche via tools.
+   */
+  preloadedEjendomme?: Array<{
+    bfe: number;
+    adresse: string | null;
+    type: string | null;
+    ejerandel?: string | null;
+    personligtEjet?: boolean;
+  }>;
+  /** BIZZ-941: Antal ejendomme total (kan være flere end preloaded pga. cap). */
+  ejendommeTotal?: number;
 }
 
 // ─── Context ─────────────────────────────────────────────────────────────────

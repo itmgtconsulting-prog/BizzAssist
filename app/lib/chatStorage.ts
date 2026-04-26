@@ -9,10 +9,56 @@
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+/**
+ * BIZZ-812: Metadata about a file the user attached to this message.
+ * We store name/type/size (NOT the extracted text, which is already
+ * folded into `content` and would blow localStorage quotas). The chip
+ * renderer uses this to show vedhæftninger inline with the bubble.
+ */
+export interface ChatAttachmentMeta {
+  name: string;
+  file_type: string;
+  size: number;
+  truncated?: boolean;
+  /**
+   * BIZZ-812: Server-side persistens-reference (public.ai_file.id).
+   * Sendes med i chat-request attachments-array så tool-use i BIZZ-813
+   * kan reference binæret. Null hvis persistens fejlede (fallback er
+   * tekst-injection som før).
+   */
+  file_id?: string | null;
+}
+
+/**
+ * BIZZ-814: Metadata for en AI-genereret fil knyttet til en assistant-
+ * besked. Persisteres i localStorage så chippen overlever reload.
+ *
+ * BIZZ-815: preview_kind + columns/rows for XLSX/CSV så preview-panelet
+ * kan vise HTML-tabel med sticky header i stedet for plain tekst.
+ */
+export interface ChatGeneratedFileMeta {
+  file_id: string;
+  file_name: string;
+  download_url: string;
+  preview_text: string;
+  bytes: number;
+  format: string;
+  /** BIZZ-815/868: 'table' for xlsx/csv, 'html' for docx, 'text' fallback */
+  preview_kind?: 'text' | 'table' | 'html';
+  preview_columns?: string[];
+  preview_rows?: string[][];
+  /** BIZZ-868: sanitiseret html for docx-filer (mammoth convertToHtml) */
+  preview_html?: string;
+}
+
 /** A single chat message */
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  /** BIZZ-812: optional attachment metadata — renders as chips. */
+  attachments?: ChatAttachmentMeta[];
+  /** BIZZ-814: optional AI-generated-file metadata — renders as download chips. */
+  generatedFiles?: ChatGeneratedFileMeta[];
 }
 
 /** A persisted conversation stored in localStorage */

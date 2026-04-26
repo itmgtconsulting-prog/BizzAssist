@@ -33,6 +33,7 @@ import { checkAllCertificates, type CertExpiryInfo } from '@/app/lib/certExpiry'
 import { withCronMonitor } from '@/app/lib/cronMonitor';
 import { companyInfo } from '@/app/lib/companyInfo';
 import { RESEND_ENDPOINT } from '@/app/lib/serviceEndpoints';
+import * as Sentry from '@sentry/nextjs';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -66,6 +67,19 @@ interface StatusStats {
   aiTokens24h: number | null;
   /** BIZZ-308: Database size in MB */
   dbSizeMb: number | null;
+  /** BIZZ-909: Data-pipeline stale-detection + coverage */
+  dataPipelines: {
+    bbrRows: number | null;
+    bbrLastRefresh: string | null;
+    bbrStale: boolean;
+    bbrTotalBfe: number | null;
+    bbrCoveragePct: number | null;
+    deltagerRows: number | null;
+    deltagerLastBerigelse: string | null;
+    deltagerStale: boolean;
+    deltagerTotalEnheder: number | null;
+    deltagerCoveragePct: number | null;
+  } | null;
 }
 
 /** Minimal shape of a row from public.tenants needed by this route. */
@@ -338,6 +352,80 @@ async function collectStats(since: Date): Promise<StatusStats> {
     redisHealthy = false;
   }
 
+  // BIZZ-909: Data-pipeline stale-detection
+  const STALE_THRESHOLD_DAYS = 14;
+  let dataPipelines: StatusStats['dataPipelines'] = null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const a = admin as any;
+    const [bbrResult, deltagerResult] = await Promise.all([
+      a
+        .from('bbr_ejendom_status')
+        .select('status_last_checked_at')
+        .order('status_last_checked_at', { ascending: false })
+        .limit(1),
+      a
+        .from('cvr_deltager')
+        .select('berigelse_sidst')
+        .order('berigelse_sidst', { ascending: false })
+        .limit(1),
+    ]);
+    const [bbrCount, deltagerCount, bbrTotalBfe, deltagerTotalEnheder] = await Promise.all([
+      a.from('bbr_ejendom_status').select('bfe_nummer', { count: 'exact', head: true }),
+      a.from('cvr_deltager').select('enhedsnummer', { count: 'exact', head: true }),
+      // Reference counts for coverage calculation
+      a.from('ejf_ejerskab').select('bfe_nummer', { count: 'exact', head: true }),
+      a.from('cvr_deltager').select('enhedsnummer', { count: 'exact', head: true }),
+    ]);
+
+    const bbrLast = bbrResult.data?.[0]?.status_last_checked_at ?? null;
+    const deltagerLast = deltagerResult.data?.[0]?.berigelse_sidst ?? null;
+    const staleMs = STALE_THRESHOLD_DAYS * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+
+    const bbrRowCount = bbrCount.count ?? null;
+    const bbrTotal = bbrTotalBfe.count ?? null;
+    const deltagerRowCount = deltagerCount.count ?? null;
+    const deltagerTotal = deltagerTotalEnheder.count ?? null;
+    const bbrIsStale = !bbrLast || now - new Date(bbrLast).getTime() > staleMs;
+    const deltagerIsStale = !deltagerLast || now - new Date(deltagerLast).getTime() > staleMs;
+
+    dataPipelines = {
+      bbrRows: bbrRowCount,
+      bbrLastRefresh: bbrLast,
+      bbrStale: bbrIsStale,
+      bbrTotalBfe: bbrTotal,
+      bbrCoveragePct:
+        bbrRowCount != null && bbrTotal != null && bbrTotal > 0
+          ? Math.round((bbrRowCount / bbrTotal) * 1000) / 10
+          : null,
+      deltagerRows: deltagerRowCount,
+      deltagerLastBerigelse: deltagerLast,
+      deltagerStale: deltagerIsStale,
+      deltagerTotalEnheder: deltagerTotal,
+      deltagerCoveragePct:
+        deltagerRowCount != null && deltagerTotal != null && deltagerTotal > 0
+          ? Math.round(((deltagerCount.count ?? 0) / deltagerTotal) * 1000) / 10
+          : null,
+    };
+
+    // BIZZ-909: Sentry-alert ved stale pipeline — ops-team får alert uafhængigt af email
+    if (bbrIsStale) {
+      Sentry.captureMessage(
+        `Data-pipeline STALE: bbr_ejendom_status ikke opdateret i >${STALE_THRESHOLD_DAYS} dage (sidst: ${bbrLast ?? 'aldrig'})`,
+        'warning'
+      );
+    }
+    if (deltagerIsStale) {
+      Sentry.captureMessage(
+        `Data-pipeline STALE: cvr_deltager berigelse ikke opdateret i >${STALE_THRESHOLD_DAYS} dage (sidst: ${deltagerLast ?? 'aldrig'})`,
+        'warning'
+      );
+    }
+  } catch {
+    /* non-fatal */
+  }
+
   return {
     tenantCount,
     newSignups24h,
@@ -348,6 +436,7 @@ async function collectStats(since: Date): Promise<StatusStats> {
     certificates,
     aiTokens24h,
     dbSizeMb,
+    dataPipelines,
   };
 }
 
@@ -515,6 +604,23 @@ function buildEmailHtml(stats: StatusStats, reportDate: Date): string {
       </div>`;
         })
         .join('\n')}
+    </div>`
+        : ''
+    }
+
+    <!-- BIZZ-909: Data-pipeline status -->
+    ${
+      stats.dataPipelines
+        ? `<div style="margin-bottom: 28px;">
+      <h3 style="margin: 0 0 12px 0; color: #94a3b8; font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600;">Data-pipelines</h3>
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: #1e293b; border-radius: 8px; margin-bottom: 8px;">
+        <span style="color: #94a3b8; font-size: 13px;">BBR ejendomsstatus</span>
+        <span style="font-size: 13px; font-weight: 700; color: ${stats.dataPipelines.bbrStale ? '#ef4444' : '#22c55e'};">${fmt(stats.dataPipelines.bbrRows)} / ${fmt(stats.dataPipelines.bbrTotalBfe)} (${stats.dataPipelines.bbrCoveragePct != null ? stats.dataPipelines.bbrCoveragePct + '%' : 'N/A'}) ${stats.dataPipelines.bbrStale ? '&mdash; STALE' : '&mdash; OK'}</span>
+      </div>
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: #1e293b; border-radius: 8px; margin-bottom: 8px;">
+        <span style="color: #94a3b8; font-size: 13px;">CVR deltager-berigelse</span>
+        <span style="font-size: 13px; font-weight: 700; color: ${stats.dataPipelines.deltagerStale ? '#ef4444' : '#22c55e'};">${fmt(stats.dataPipelines.deltagerRows)} / ${fmt(stats.dataPipelines.deltagerTotalEnheder)} (${stats.dataPipelines.deltagerCoveragePct != null ? stats.dataPipelines.deltagerCoveragePct + '%' : 'N/A'}) ${stats.dataPipelines.deltagerStale ? '&mdash; STALE' : '&mdash; OK'}</span>
+      </div>
     </div>`
         : ''
     }

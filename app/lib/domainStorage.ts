@@ -14,6 +14,7 @@
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { assertDomainMember, type DomainContext } from '@/app/lib/domainAuth';
+import { resolveFileType, supportedLabels } from '@/app/lib/domainFileTypes';
 
 /** Bucket name — matches Supabase Storage bucket configuration. */
 const BUCKET = 'domain-files';
@@ -23,15 +24,6 @@ const SIGNED_URL_EXPIRY = 900;
 
 /** Maximum file size in bytes (50 MB). */
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
-
-/** Allowed MIME types for domain uploads. */
-const ALLOWED_MIME_TYPES = [
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
-  'application/pdf',
-  'text/plain',
-  'message/rfc822', // .eml
-  'application/vnd.ms-outlook', // .msg
-] as const;
 
 /**
  * Builds the storage path for a domain file.
@@ -74,9 +66,10 @@ export async function uploadDomainFile(
   // Membership check (throws Forbidden if not member)
   const ctx = await assertDomainMember(domainId);
 
-  // Validate MIME type
-  if (!ALLOWED_MIME_TYPES.includes(contentType as (typeof ALLOWED_MIME_TYPES)[number])) {
-    throw new Error(`Ugyldig filtype: ${contentType}`);
+  // BIZZ-788: Validate MIME/extension via shared resolver. Accepter alle
+  // Claude-readable formater (docx/xlsx/pptx/pdf/txt/md/csv/json/.../.msg/.png).
+  if (!resolveFileType(contentType, fileName)) {
+    throw new Error(`Ugyldig filtype: ${contentType}. Tilladt: ${supportedLabels()}.`);
   }
 
   // Validate file size

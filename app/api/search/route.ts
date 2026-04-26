@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { darAutocomplete } from '@/app/lib/dar';
+import { DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
@@ -169,10 +170,99 @@ function scoreMatch(query: string, text: string): number {
 async function searchAddresses(q: string, normQ: string): Promise<UnifiedSearchResult[]> {
   try {
     const results = await darAutocomplete(q);
-    // BIZZ-608: Behold op til 8 results (hovedejendom + lejligheder) så
-    // brugere kan se begge i dropdown. Tidligere cap (5) kunne skære
-    // ejerlejligheder fra når hovedejendommen også matchede.
-    return results.slice(0, 8).map((r) => {
+
+    // BIZZ-723: DAR_Adresse indekserer ikke alltid alle ejerlejligheder under
+    // en given adgangsadresse (asymmetrisk data — 62B's lejligheder vises, 62A's
+    // ikke). For hver matched adgangsadresse probe DAWA /adresser for under-
+    // liggende enheder og tilføj dem hvis de har etage/dør og ikke allerede er
+    // i resultatsættet. Max 3 parallelle probes for at holde p95 under 500ms.
+    const adgangsadresser = results.filter((r) => r.type === 'adgangsadresse').slice(0, 3);
+    const existingAdresseIds = new Set(
+      results.filter((r) => r.type === 'adresse').map((r) => r.adresse.id)
+    );
+    const extraAdresseResults: Array<{
+      type: 'adresse';
+      tekst: string;
+      adresse: {
+        id: string;
+        vejnavn: string;
+        husnr: string;
+        etage?: string;
+        dør?: string;
+        postnr: string;
+        postnrnavn: string;
+        kommunenavn: string;
+        x: number;
+        y: number;
+      };
+    }> = [];
+    if (adgangsadresser.length > 0) {
+      try {
+        const probeResults = await Promise.all(
+          adgangsadresser.map(async (adg) => {
+            try {
+              // BIZZ-723 v2: Use plain fetch without next: { revalidate } — that
+              // option combined with AbortSignal seemed to cause silent failures
+              // in the Vercel runtime for this specific call. DAWA responses are
+              // small and this only fires once per search, so un-cached is fine.
+              const probeRes = await fetch(
+                `${DAWA_BASE_URL}/adresser?adgangsadresseid=${encodeURIComponent(adg.adresse.id)}&struktur=mini&per_side=10`,
+                { signal: AbortSignal.timeout(3000) }
+              );
+              if (!probeRes.ok) return [];
+              return (await probeRes.json()) as Array<{
+                id?: string;
+                etage?: string;
+                dør?: string;
+                betegnelse?: string;
+                adressebetegnelse?: string;
+              }>;
+            } catch (err) {
+              logger.warn(
+                `[search/723] probe fetch failed for adg ${adg.adresse.id.slice(0, 8)}: ${err instanceof Error ? err.message : err}`
+              );
+              return [];
+            }
+          })
+        );
+        for (let i = 0; i < adgangsadresser.length; i++) {
+          const adg = adgangsadresser[i];
+          const units = probeResults[i];
+          for (const u of units) {
+            // Skip units without etage/dør — they're the same as adgangsadresse.
+            if (!u.id || !(u.etage || u.dør)) continue;
+            if (existingAdresseIds.has(u.id)) continue;
+            existingAdresseIds.add(u.id);
+            const betegnelse = u.betegnelse ?? u.adressebetegnelse ?? '';
+            extraAdresseResults.push({
+              type: 'adresse',
+              tekst:
+                betegnelse ||
+                `${adg.adresse.vejnavn} ${adg.adresse.husnr}${u.etage ? `, ${u.etage}.` : ''}${u.dør ? ` ${u.dør}` : ''}`,
+              adresse: {
+                id: u.id,
+                vejnavn: adg.adresse.vejnavn,
+                husnr: adg.adresse.husnr,
+                etage: u.etage,
+                dør: u.dør,
+                postnr: adg.adresse.postnr,
+                postnrnavn: adg.adresse.postnrnavn,
+                kommunenavn: adg.adresse.kommunenavn,
+                x: 0,
+                y: 0,
+              },
+            });
+          }
+        }
+      } catch (err) {
+        logger.warn('[search] Adgangsadresse unit-probe fejlede:', err);
+      }
+    }
+
+    // Merge extras into results — cap at 12 so the dropdown doesn't overflow
+    // (was 8). Hovedejendomme + alle under-adresser + andre ejerlejligheder.
+    const merged = [...results, ...extraAdresseResults];
+    const mapped = merged.slice(0, 12).map((r) => {
       const normText = normalize(r.tekst);
       // BIZZ-608: Distinguish mellem hovedejendom (adgangsadresse) og
       // ejerlejlighed (adresse med etage/dør) i subtitle så brugeren
@@ -208,6 +298,7 @@ async function searchAddresses(q: string, normQ: string): Promise<UnifiedSearchR
         },
       };
     });
+    return mapped;
   } catch (err) {
     logger.error('[search] Address search failed:', err);
     return [];
@@ -454,9 +545,9 @@ export async function GET(request: NextRequest) {
     searchPeople(q, normQ, baseUrl, cookieHeader),
   ]);
 
-  // Group by type — max 5 per category, sorted by score within each group
-  // Then interleave: addresses first, then companies, then people (each sorted by score)
-  const addrResults = addresses.slice(0, 5).sort((a, b) => b.score - a.score);
+  // Group by type — max 10 addresses (BIZZ-723: hovedejendom + lejligheder på
+  // samme matrikel kan let overstige 5), 5 companies, 5 people. Sorted by score.
+  const addrResults = addresses.slice(0, 10).sort((a, b) => b.score - a.score);
   const compResults = companies.slice(0, 5).sort((a, b) => b.score - a.score);
   const pplResults = people.slice(0, 5).sort((a, b) => b.score - a.score);
 

@@ -17,25 +17,18 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 import {
   ArrowLeft,
-  Bot,
-  Users,
-  CreditCard,
-  Settings,
-  BarChart3,
-  ShieldCheck,
-  Wrench,
-  Activity,
   RefreshCw,
   Save,
+  ShieldCheck,
   CheckCircle,
   AlertCircle,
   Clock,
   Info,
   LogOut,
 } from 'lucide-react';
+import { AdminNavTabs } from '../AdminNavTabs';
 import { useLanguage } from '@/app/context/LanguageContext';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -240,65 +233,64 @@ export default function SecurityClient() {
           </button>
         </div>
 
-        {/* Tab navigation */}
-        <div className="flex gap-1 -mb-px overflow-x-auto mt-4">
-          <Link
-            href="/dashboard/admin/users"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
-          >
-            <Users size={14} /> {da ? 'Brugere' : 'Users'}
-          </Link>
-          <Link
-            href="/dashboard/admin/billing"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
-          >
-            <CreditCard size={14} /> {da ? 'Fakturering' : 'Billing'}
-          </Link>
-          <Link
-            href="/dashboard/admin/plans"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
-          >
-            <Settings size={14} /> {da ? 'Planer' : 'Plans'}
-          </Link>
-          <Link
-            href="/dashboard/admin/analytics"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
-          >
-            <BarChart3 size={14} /> {da ? 'Analyse' : 'Analytics'}
-          </Link>
-          <Link
-            href="/dashboard/admin/ai-media-agents"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
-          >
-            <Bot size={14} /> {da ? 'AI-agenter' : 'AI Agents'}
-          </Link>
-          <span className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-blue-500 text-blue-300 font-medium cursor-default whitespace-nowrap">
-            <ShieldCheck size={14} /> {da ? 'Sikkerhed' : 'Security'}
-          </span>
-          <Link
-            href="/dashboard/admin/service-manager"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
-          >
-            <Wrench size={14} /> Service Manager
-          </Link>
-          <Link
-            href="/dashboard/admin/service-management"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
-          >
-            <Activity size={14} /> {da ? 'Infrastruktur' : 'Infrastructure'}
-          </Link>
-          <Link
-            href="/dashboard/admin/cron-status"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
-          >
-            <Clock size={14} /> {da ? 'Cron-status' : 'Cron Status'}
-          </Link>
-        </div>
+        {/* Tab navigation — BIZZ-737: shared component */}
+        <AdminNavTabs activeTab="security" da={da} />
       </div>
 
       {/* ─── Content ─── */}
       <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-6">
-        <div className="max-w-3xl mx-auto space-y-6">
+        <div className="w-full space-y-6">
+          {/* BIZZ-768: KPI-cards (matches users+billing layout pattern) */}
+          {!loading && !error && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
+                  <Clock size={14} className="text-blue-400" />
+                  {da ? 'Idle-timeout' : 'Idle timeout'}
+                </div>
+                <p className="text-2xl font-bold text-white">
+                  {idleMinutes}
+                  <span className="text-slate-500 text-sm font-normal ml-1">
+                    {da ? 'min' : 'min'}
+                  </span>
+                </p>
+              </div>
+              <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
+                  <Clock size={14} className="text-amber-400" />
+                  {da ? 'Absolut' : 'Absolute'}
+                </div>
+                <p className="text-2xl font-bold text-white">
+                  {absoluteHours}
+                  <span className="text-slate-500 text-sm font-normal ml-1">
+                    {da ? 'timer' : 'h'}
+                  </span>
+                </p>
+              </div>
+              <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
+                  <Clock size={14} className="text-purple-400" />
+                  {da ? 'Refresh' : 'Refresh'}
+                </div>
+                <p className="text-2xl font-bold text-white">
+                  {refreshDays}
+                  <span className="text-slate-500 text-sm font-normal ml-1">
+                    {da ? 'dage' : 'd'}
+                  </span>
+                </p>
+              </div>
+              <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
+                  <ShieldCheck size={14} className="text-emerald-400" />
+                  {da ? '2FA' : '2FA'}
+                </div>
+                <p className="text-sm font-medium text-emerald-300 mt-2">
+                  {da ? 'OAuth via Supabase' : 'OAuth via Supabase'}
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Loading */}
           {loading && <div className="text-center py-12 text-slate-400 text-sm">{t.loading}</div>}
 

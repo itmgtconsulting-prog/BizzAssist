@@ -38,6 +38,49 @@ const eslintConfig = defineConfig([
           ignoreRestSiblings: true,
         },
       ],
+      // BIZZ-722 Lag 4+6: Forbid raw supabase.from('domain_*') calls outside helpers.
+      // All domain table access MUST go through domainScopedQuery / domainEmbedding /
+      // domainStorage helpers to enforce mandatory domain_id filtering.
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            "CallExpression[callee.property.name='from'][arguments.0.type='Literal'][arguments.0.value=/^domain_/]",
+          message:
+            'Direct supabase.from(\'domain_*\') is forbidden. Use domainScopedQuery(), domainEmbedding helpers, or domainStorage — they enforce mandatory domain_id filtering (BIZZ-722).',
+        },
+      ],
+    },
+  },
+  // Allow the restricted pattern inside domain helpers + admin APIs + tests.
+  // Super-admin endpoints operate across domains and membership is checked separately.
+  {
+    files: [
+      'app/lib/domainScopedQuery.ts',
+      'app/lib/domainEmbedding.ts',
+      'app/lib/domainStorage.ts',
+      'app/lib/domainAuth.ts',
+      'app/lib/domainEmbeddingWorker.ts',
+      'app/lib/domainPromptBuilder.ts',
+      'app/lib/domainEnrichEntities.ts',
+      // BIZZ-720: Stripe → domain sync updates domain + domain_audit_log
+      // by primary key; webhook auth is Stripe signature verification.
+      'app/lib/domainStripeSync.ts',
+      // Stripe webhook handlers call syncDomainSubscription directly.
+      'app/api/stripe/webhook/**',
+      // Domain admin API routes — scoped by assertDomainAdmin at entry
+      'app/api/domain/**',
+      // Super-admin API routes — operate across domains by design
+      'app/api/admin/domains/**',
+      // Anomaly-scan cron is super-admin-equivalent (runs under service role)
+      'app/api/cron/domain-anomalies/**',
+      'app/api/cron/domain-retention/**',
+      '__tests__/**',
+      // Build scripts and verification scripts may touch domain tables directly
+      'scripts/**',
+    ],
+    rules: {
+      'no-restricted-syntax': 'off',
     },
   },
 ]);

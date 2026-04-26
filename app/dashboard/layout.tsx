@@ -32,14 +32,17 @@ import {
   BarChart2,
   Sparkles,
   Coins,
+  LifeBuoy,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { isDomainFeatureEnabled } from '@/app/lib/featureFlags';
 import { translations } from '@/app/lib/translations';
 import { erDawaId } from '@/app/lib/dawa';
 import { gemRecentEjendom } from '@/app/lib/recentEjendomme';
 import { getRecentSearches, saveRecentSearch, type RecentSearch } from '@/app/lib/recentSearches';
 import type { UnifiedSearchResult } from '@/app/api/search/route';
 import AIChatPanel from '@/app/components/AIChatPanel';
+import SupportChatWidget from '@/app/components/SupportChatWidget';
 import ErrorBoundary from '@/app/components/ErrorBoundary';
 import NotifikationsDropdown from '@/app/components/NotifikationsDropdown';
 import RecentEntityTagBar from '@/app/components/RecentEntityTagBar';
@@ -53,6 +56,8 @@ import { cachePlans, type UserSubscription, type PlanDef } from '@/app/lib/subsc
 import { SubscriptionProvider, useSubscription } from '@/app/context/SubscriptionContext';
 import { AIPageProvider } from '@/app/context/AIPageContext';
 import { AIChatContextProvider, useAIChatContext } from '@/app/context/AIChatContext';
+import { DocPreviewProvider } from '@/app/context/DocPreviewContext';
+import { DocPreviewPanel } from '@/app/components/DocPreviewPanel';
 import { createClient } from '@/lib/supabase/client';
 import { hasMigrated, migrateLocalStorageToSupabase } from '@/app/lib/migrateLocalStorage';
 import { initCacheUserId, clearCacheUserId } from '@/app/lib/trackedEjendomme';
@@ -106,7 +111,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <SubscriptionProvider>
       <AIPageProvider>
         <AIChatContextProvider>
-          <DashboardLayoutInner>{children}</DashboardLayoutInner>
+          <DocPreviewProvider>
+            <DashboardLayoutInner>{children}</DashboardLayoutInner>
+            {/* BIZZ-807: Global doc preview panel — mounted once, subscribes
+                to DocPreviewContext, renders only when a producer opens it. */}
+            <DocPreviewPanel />
+          </DocPreviewProvider>
         </AIChatContextProvider>
       </AIPageProvider>
     </SubscriptionProvider>
@@ -122,11 +132,22 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   const chatCtx = useAIChatContext();
   const [isPending, startTransition] = useTransition();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  /** BIZZ-808: Support chat state — trigger sidder i sidebar, popup forankres næste sidebar-kanten. */
+  const [supportOpen, setSupportOpen] = useState(false);
   /** Om sidebar er foldet ind til ikoner-only (desktop) */
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  /**
+   * BIZZ-711: Domains the current user is a member of. Used to show the
+   * Domain menu conditionally. Empty array = no menu. Fetch is skipped in
+   * prod via isDomainFeatureEnabled() — even for actual members, the menu
+   * only renders when the feature flag is true (prod-safety).
+   */
+  const [userDomains, setUserDomains] = useState<
+    Array<{ id: string; name: string; slug: string; role: 'admin' | 'member' }>
+  >([]);
   /** Blocks dashboard rendering until subscription check passes */
   const [accessGranted, setAccessGranted] = useState(false);
   /** Whether user has an active paid subscription (gates search + AI) */
@@ -302,6 +323,29 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
             // Admin users bypass all subscription gates
             if (json.isAdmin) {
               setIsAdmin(true);
+            }
+
+            // BIZZ-711: Fetch user's domain memberships only when the feature
+            // flag is on — guarantees prod-safety (menu never renders in prod
+            // until NEXT_PUBLIC_DOMAIN_FEATURE_ENABLED is flipped).
+            if (isDomainFeatureEnabled()) {
+              fetch('/api/domain/mine')
+                .then((r) => (r.ok ? r.json() : []))
+                .then((d) => {
+                  if (Array.isArray(d)) {
+                    setUserDomains(
+                      d as Array<{
+                        id: string;
+                        name: string;
+                        slug: string;
+                        role: 'admin' | 'member';
+                      }>
+                    );
+                  }
+                })
+                .catch(() => {
+                  /* non-fatal — menu just stays hidden */
+                });
             }
 
             if (serverSub && serverSub.planId) {
@@ -682,6 +726,39 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                   </Link>
                 );
               })}
+            {/* BIZZ-711: Domain-menu — kun synlig når (a) feature-flag er true
+                og (b) bruger er medlem af ≥ 1 domain. Flag er kilde til
+                synlighed, ikke membership, så prod-safety er garanteret
+                uanset om brugeren rent faktisk er domain-medlem i DB'en.
+                Single domain → direkte link. Multi → collapsible dropdown. */}
+            {isDomainFeatureEnabled() && userDomains.length > 0 && (
+              <DomainNavMenu
+                domains={userDomains}
+                collapsed={sidebarCollapsed}
+                pathname={pathname}
+                onNavigate={() => setSidebarOpen(false)}
+              />
+            )}
+            {/* BIZZ-808: Support-menupunkt — toggler SupportChatWidget som
+                forankret popup ved siden af sidebaren. Ikke et Link; ikke
+                gated af subscription så også free-brugere kan nå support. */}
+            <button
+              type="button"
+              onClick={() => {
+                setSupportOpen((v) => !v);
+                setSidebarOpen(false);
+              }}
+              title={sidebarCollapsed ? s.support : undefined}
+              aria-pressed={supportOpen}
+              className={`flex items-center rounded-xl text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 w-full ${sidebarCollapsed ? 'justify-center px-0 py-3' : 'gap-3 px-4 py-3'} ${
+                supportOpen
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-400 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              <LifeBuoy size={18} />
+              {!sidebarCollapsed && <span className="truncate">{s.support}</span>}
+            </button>
           </nav>
 
           {/* AI Chat panel moved to topbar drawer — see AIChatDrawer below */}
@@ -1165,8 +1242,14 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
             Rendered above main content so it persists across page navigation. */}
         <PaymentWarningBanner />
 
-        {/* Page content — gated by subscription for non-free pages */}
-        <main id="main-content" className="relative z-0 flex-1 flex overflow-y-auto">
+        {/* Page content — gated by subscription for non-free pages.
+            BIZZ-807: paddingRight reserveres til DocPreviewPanel når det er
+            åbent — CSS-variablen sættes af panelet selv og er 0 ellers. */}
+        <main
+          id="main-content"
+          className="relative z-0 flex-1 flex overflow-y-auto transition-[padding-right] duration-150"
+          style={{ paddingRight: 'var(--bizz-docpreview-w, 0px)' }}
+        >
           {pathname === '/dashboard' ||
           pathname.startsWith('/dashboard/settings') ||
           pathname.startsWith('/dashboard/admin') ||
@@ -1215,6 +1298,15 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
           <AIChatPanel />
         </ErrorBoundary>
       </div>
+
+      {/* BIZZ-808: Support chat popup — controlled af supportOpen state,
+          forankret til sidebar-kanten (ikke floating over resten af appen). */}
+      <SupportChatWidget
+        open={supportOpen}
+        onClose={() => setSupportOpen(false)}
+        hideFloatingTrigger
+        anchorLeftPx={(sidebarCollapsed ? SIDEBAR_COLLAPSED : sidebarBredde) + 12}
+      />
 
       {/* Plan-selection / pending-approval overlay — shown based on subscription state */}
       {overlayMode && <PlanSelectionOverlay lang={lang} mode={overlayMode} />}
@@ -1273,6 +1365,117 @@ interface OverlayPlanOption {
   freeTrialDays: number;
   color: string;
   stripePriceId?: string | null;
+}
+
+/**
+ * BIZZ-711: Sidebar nav-item for the Domain feature.
+ *
+ * Renders:
+ *   - nothing when the user has no domains (caller already guards this)
+ *   - a single Link when the user has exactly one domain
+ *   - a Shield-icon header + nested list when the user has multiple domains
+ *
+ * The header is keyboard-operable (button with aria-expanded) and matches
+ * the visual style of the primary nav items. Collapsed-sidebar mode shows
+ * only the icon.
+ *
+ * @param domains - Domains the current user is a member of
+ * @param collapsed - Sidebar collapsed state (icon-only)
+ * @param pathname - Current route pathname for active-state styling
+ * @param onNavigate - Called after user clicks a link (closes mobile drawer)
+ */
+function DomainNavMenu({
+  domains,
+  collapsed,
+  pathname,
+  onNavigate,
+}: {
+  domains: Array<{ id: string; name: string; slug: string; role: 'admin' | 'member' }>;
+  collapsed: boolean;
+  pathname: string;
+  onNavigate: () => void;
+}) {
+  const { lang } = useLanguage();
+  const da = lang === 'da';
+  const [open, setOpen] = useState(true);
+
+  // Single domain → simple Link, same shape as the other nav items
+  if (domains.length === 1) {
+    const d = domains[0];
+    const href = `/domain/${d.id}`;
+    const active = pathname.startsWith(href);
+    return (
+      <Link
+        href={href}
+        prefetch={false}
+        onClick={onNavigate}
+        title={collapsed ? d.name : undefined}
+        className={`flex items-center rounded-xl text-sm font-medium transition-all ${
+          collapsed ? 'justify-center px-0 py-3' : 'gap-3 px-4 py-3'
+        } ${
+          active ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white hover:bg-white/5'
+        }`}
+      >
+        <Shield size={18} />
+        {!collapsed && <span className="truncate">{da ? 'Domain' : 'Domain'}</span>}
+      </Link>
+    );
+  }
+
+  // Multi-domain → collapsible dropdown with count badge
+  const anyActive = domains.some((d) => pathname.startsWith(`/domain/${d.id}`));
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls="domain-nav-submenu"
+        title={collapsed ? `${da ? 'Domain' : 'Domain'} (${domains.length})` : undefined}
+        className={`w-full flex items-center rounded-xl text-sm font-medium transition-all ${
+          collapsed ? 'justify-center px-0 py-3' : 'gap-3 px-4 py-3'
+        } ${
+          anyActive
+            ? 'bg-blue-600/20 text-white'
+            : 'text-slate-400 hover:text-white hover:bg-white/5'
+        }`}
+      >
+        <Shield size={18} />
+        {!collapsed && (
+          <>
+            <span className="truncate flex-1 text-left">{da ? 'Domain' : 'Domain'}</span>
+            <span className="ml-auto inline-flex items-center justify-center min-w-[20px] px-1.5 py-0.5 bg-slate-700/60 rounded-full text-[10px] font-semibold">
+              {domains.length}
+            </span>
+          </>
+        )}
+      </button>
+      {!collapsed && open && (
+        <ul id="domain-nav-submenu" className="mt-1 ml-7 space-y-0.5">
+          {domains.map((d) => {
+            const href = `/domain/${d.id}`;
+            const active = pathname.startsWith(href);
+            return (
+              <li key={d.id}>
+                <Link
+                  href={href}
+                  prefetch={false}
+                  onClick={onNavigate}
+                  className={`block px-3 py-2 rounded-lg text-xs truncate transition-colors ${
+                    active
+                      ? 'bg-blue-600/20 text-blue-200'
+                      : 'text-slate-400 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  {d.name}
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 /**

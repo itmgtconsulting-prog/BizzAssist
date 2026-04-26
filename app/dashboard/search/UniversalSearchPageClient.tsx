@@ -20,8 +20,9 @@
  * @see /api/person-search       — returns { results: PersonSearchResult[] }
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import {
   Search,
   X,
@@ -33,12 +34,40 @@ import {
   CheckCircle,
   XCircle,
   Briefcase,
+  Home,
+  SlidersHorizontal,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
 import type { DawaAutocompleteResult } from '@/app/lib/dawa';
 import type { CVRSearchResult } from '@/app/api/cvr-search/route';
 import type { PersonSearchResult } from '@/app/api/person-search/route';
+import ResizableDivider from '@/app/components/ResizableDivider';
+import FilterPanel from '@/app/components/search/FilterPanel';
+import { useFiltersFromURL } from '@/app/components/search/useFiltersFromURL';
+import {
+  buildEjendomFilterSchemas,
+  buildKommuneOptions,
+  matchEjendomFilter,
+  narrowEjendomFilters,
+} from '@/app/lib/search/ejendomFilterSchema';
+import {
+  buildVirksomhedFilterSchemas,
+  buildVirksomhedBrancheOptions,
+  buildVirksomhedKommuneOptions,
+  matchVirksomhedFilter,
+  narrowVirksomhedFilters,
+} from '@/app/lib/search/virksomhedFilterSchema';
+import {
+  buildPersonFilterSchemas,
+  buildPersonKommuneOptions,
+  matchPersonFilter,
+  narrowPersonFilters,
+  type FilterablePerson,
+} from '@/app/lib/search/personFilterSchema';
+import type { FilterSchema } from '@/app/lib/search/filterSchema';
 
 // ─── Tab types ────────────────────────────────────────────────────────────────
 
@@ -90,11 +119,45 @@ function SkeletonList({ count = 5 }: { count?: number }) {
 function PropertyCard({ result, lang }: { result: DawaAutocompleteResult; lang: 'da' | 'en' }) {
   const t = translations[lang].searchPage;
   const { adresse } = result;
-  // Property detail page uses the DAWA UUID as the [id] segment
-  const href = `/dashboard/ejendomme/${adresse.id}`;
+  // BIZZ-831: Route SFE-hits til /sfe/[bfe] når BFE er kendt.
+  // BFE populeres server-side fra bbr_ejendom_status-tabellen.
+  // Fallback til standard /ejendomme/[dawaId] hvis BFE mangler.
+  const href =
+    result.ejendomstype === 'sfe' && result.bfe
+      ? `/dashboard/ejendomme/sfe/${result.bfe}`
+      : `/dashboard/ejendomme/${adresse.id}`;
   const subtitle = [adresse.postnr, adresse.postnrnavn, adresse.kommunenavn]
     .filter(Boolean)
     .join(' · ');
+
+  // BIZZ-794: type-badge for ejendomshierarki-klassifikation.
+  // 'sfe'-hits vises normalt kun når ?visAlle=1 er aktiv (debug-mode);
+  // parent-filter nedenfor styrer synlighed. Denne komponent viser
+  // altid badgen når ejendomstype er kendt.
+  const typeBadge = (() => {
+    if (!result.ejendomstype) return null;
+    const da = lang === 'da';
+    switch (result.ejendomstype) {
+      case 'sfe':
+        return {
+          label: da ? 'SFE' : 'SFE',
+          title: da ? 'Samlet Fast Ejendom (hovedejendom)' : 'Samlet Fast Ejendom (main property)',
+          className: 'bg-amber-500/10 text-amber-300 border-amber-500/20',
+        };
+      case 'bygning':
+        return {
+          label: da ? 'Bygning' : 'Building',
+          title: da ? 'Bygning med egen vurdering' : 'Building with own valuation',
+          className: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20',
+        };
+      case 'ejerlejlighed':
+        return {
+          label: da ? 'Lejlighed' : 'Condo',
+          title: da ? 'Ejerlejlighed' : 'Condominium unit',
+          className: 'bg-blue-500/10 text-blue-300 border-blue-500/20',
+        };
+    }
+  })();
 
   return (
     <Link
@@ -105,7 +168,17 @@ function PropertyCard({ result, lang }: { result: DawaAutocompleteResult; lang: 
         <MapPin size={16} />
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-white font-medium text-sm truncate leading-snug">{result.tekst}</p>
+        <div className="flex items-center gap-2 flex-wrap">
+          <p className="text-white font-medium text-sm truncate leading-snug">{result.tekst}</p>
+          {typeBadge && (
+            <span
+              title={typeBadge.title}
+              className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium border flex-shrink-0 ${typeBadge.className}`}
+            >
+              {typeBadge.label}
+            </span>
+          )}
+        </div>
         <p className="text-slate-500 text-xs mt-0.5 truncate">
           {subtitle}
           {adresse.id && adresse.id.length < 20 ? ` · ${t.bfe}: ${adresse.id}` : ''}
@@ -306,12 +379,95 @@ function EmptyState({
  * in parallel (debounced 300 ms). Results are shown in three tabs with badge counts.
  * Clicking a result navigates to the appropriate detail page.
  */
+/** BIZZ-763: Shape of a matrikel-search result row. */
+interface MatrikelLejlighed {
+  bfe: number;
+  adresse: string;
+  etage: string | null;
+  doer: string | null;
+  ejer: string;
+  ejertype: 'person' | 'selskab' | 'ukendt';
+  areal: number | null;
+  koebspris: number | null;
+  koebsdato: string | null;
+  dawaId: string | null;
+}
+
 export default function UniversalSearchPageClient() {
   const { lang } = useLanguage();
   const t = translations[lang].searchPage;
+  const da = lang === 'da';
+
+  // BIZZ-763: When navigated from an ejendom-detail's "find other properties
+  // on matrikel" button, the page opens in matrikel-mode. In this mode the
+  // normal text-search is bypassed and results come from /api/ejerlejligheder.
+  const sp = useSearchParams();
+  const matrikelMode = sp.get('type') === 'matrikel';
+  const matEjerlavKode = sp.get('ejerlavKode') ?? '';
+  const matMatrikelnr = sp.get('matrikelnr') ?? '';
+  const matEjerlavNavn = sp.get('ejerlavNavn') ?? '';
+  const [matLejligheder, setMatLejligheder] = useState<MatrikelLejlighed[]>([]);
+  const [matLoading, setMatLoading] = useState(false);
+  const [matError, setMatError] = useState<string | null>(null);
 
   const [query, setQuery] = useState('');
   const [activeTab, setActiveTab] = useState<Tab>('properties');
+
+  // BIZZ-774 + BIZZ-786: right-side filter-panel state. Open/closed +
+  // bredde persisteres i localStorage (ligesom map-style/-zoom) så brugeren
+  // lander i samme layout næste gang. Default open (iter 1 fra BIZZ-786).
+  // 280-600px clamp matcher BIZZ-786 acceptkriterier.
+  const FILTER_MIN_WIDTH = 280;
+  const FILTER_MAX_WIDTH = 600;
+  const FILTER_DEFAULT_WIDTH = 360;
+  const [filterOpen, setFilterOpen] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    const v = window.localStorage.getItem('bizzassist-search-filters-open');
+    // Default = true (åben) når brugeren aldrig har sat præferencen
+    return v === null ? true : v === 'true';
+  });
+  const [filterWidth, setFilterWidth] = useState<number>(() => {
+    if (typeof window === 'undefined') return FILTER_DEFAULT_WIDTH;
+    const v = window.localStorage.getItem('bizzassist-search-filter-width');
+    const n = v ? parseInt(v, 10) : NaN;
+    if (!Number.isFinite(n)) return FILTER_DEFAULT_WIDTH;
+    return Math.max(FILTER_MIN_WIDTH, Math.min(FILTER_MAX_WIDTH, n));
+  });
+  // Persister valg til localStorage når de ændres
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('bizzassist-search-filters-open', String(filterOpen));
+  }, [filterOpen]);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('bizzassist-search-filter-width', String(filterWidth));
+  }, [filterWidth]);
+  // BIZZ-804 (BIZZ-788b): filter-state migreres fra hideRetiredProperties
+  // og onlyActiveCompanies til URL-persistent FilterPanel-state via
+  // useFiltersFromURL. allSchemas rummer ejendomme + virksomheder
+  // schemas samtidig så URL-params ikke bliver droppet ved tab-skift.
+  // PropertyCard-filtering sker client-side mod autocomplete-resultat
+  // (data er allerede hentet), og samme mønster for companies.
+  const ejendomSchemas = useMemo(
+    () => buildEjendomFilterSchemas(lang, []),
+    // Options opdateres separat via bottom-up schema-rebuild når
+    // properties-liste er kendt — se `currentTabSchemas` nedenfor.
+    [lang]
+  );
+  // BIZZ-805: default virksomhed-schema uden dynamiske options — options
+  // tilføjes i currentTabSchemas når live-resultater er kendt.
+  const virksomhedSchemas = useMemo(() => buildVirksomhedFilterSchemas(lang), [lang]);
+  const allSchemas = useMemo(
+    () => [...ejendomSchemas, ...virksomhedSchemas],
+    [ejendomSchemas, virksomhedSchemas]
+  );
+  const { filters, setFilter, setFilters } = useFiltersFromURL(allSchemas);
+  // Legacy reader — bevares så matrikel-mode (BIZZ-784) fortsat kan
+  // sende includeUdfasede-query-param uden større refactor.
+  // onlyActiveCompanies er droppet fra state — bruges kun via
+  // matchVirksomhedFilter direkte i companies-tab.
+  const hideRetiredProperties =
+    typeof filters.skjulUdfasede === 'boolean' ? filters.skjulUdfasede : true;
 
   // Results state
   const [properties, setProperties] = useState<DawaAutocompleteResult[]>([]);
@@ -327,6 +483,46 @@ export default function UniversalSearchPageClient() {
   const [searched, setSearched] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // BIZZ-763: Matrikel-mode auto-runs one lookup when the page lands with
+  // type=matrikel query params. We call /api/ejerlejligheder which returns
+  // the full list of ejerlejligheder on the jordstykke.
+  useEffect(() => {
+    if (!matrikelMode || !matEjerlavKode || !matMatrikelnr) return;
+    let cancelled = false;
+    setMatLoading(true);
+    setMatError(null);
+    (async () => {
+      try {
+        const params = new URLSearchParams({
+          ejerlavKode: matEjerlavKode,
+          matrikelnr: matMatrikelnr,
+        });
+        // BIZZ-784: når filter-panelet har "Skjul udfasede" slået fra
+        // (hideRetiredProperties=false) beder vi backenden om at inkludere
+        // dem. Default=true betyder filter aktivt → param udelades.
+        if (!hideRetiredProperties) params.set('includeUdfasede', 'true');
+        const res = await fetch(`/api/ejerlejligheder?${params.toString()}`);
+        if (!res.ok) {
+          if (!cancelled) {
+            setMatError(da ? `Fejl ${res.status}` : `Error ${res.status}`);
+          }
+          return;
+        }
+        const json = (await res.json()) as { lejligheder?: MatrikelLejlighed[] };
+        if (!cancelled) setMatLejligheder(json.lejligheder ?? []);
+      } catch (err) {
+        if (!cancelled) {
+          setMatError(err instanceof Error ? err.message : 'Unknown error');
+        }
+      } finally {
+        if (!cancelled) setMatLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [matrikelMode, matEjerlavKode, matMatrikelnr, da, hideRetiredProperties]);
 
   /** Focus the input on mount */
   useEffect(() => {
@@ -440,6 +636,99 @@ export default function UniversalSearchPageClient() {
     }
   }, [searched, anyLoading, properties.length, companies.length, people.length, activeTab]);
 
+  // BIZZ-763: Matrikel-mode dedicated view — shown when arriving from an
+  // ejendom-detail page's "find other properties on matrikel" button.
+  if (matrikelMode) {
+    return (
+      <div className="flex-1 flex flex-col min-h-0 bg-[#0a1020] overflow-auto">
+        <div className="max-w-4xl mx-auto w-full px-6 py-8 space-y-6">
+          <div>
+            <Link
+              href="/dashboard/search"
+              className="text-slate-400 hover:text-white text-sm inline-flex items-center gap-1"
+            >
+              <X size={14} /> {da ? 'Tilbage til fri søgning' : 'Back to free-text search'}
+            </Link>
+            <h1 className="text-2xl font-bold text-white mt-3 mb-1">
+              {da ? 'Ejendomme på matriklen' : 'Properties on matrikel'}
+            </h1>
+            <p className="text-slate-400 text-sm">
+              {da ? 'Matrikel' : 'Matrikel'}{' '}
+              <span className="font-mono text-slate-300">{matMatrikelnr}</span>
+              {matEjerlavNavn && (
+                <>
+                  {', '}
+                  {matEjerlavNavn}
+                </>
+              )}
+              {' · '}
+              {da ? 'Ejerlavkode' : 'Ejerlav code'}{' '}
+              <span className="font-mono text-slate-300">{matEjerlavKode}</span>
+            </p>
+          </div>
+
+          {matLoading ? (
+            <div className="flex items-center gap-2 text-slate-400 text-sm">
+              <Loader2 size={14} className="animate-spin" />
+              {da ? 'Henter ejendomme…' : 'Loading properties…'}
+            </div>
+          ) : matError ? (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-red-300 text-sm">
+              {matError}
+            </div>
+          ) : matLejligheder.length === 0 ? (
+            <div className="text-center py-16 bg-slate-800/40 border border-slate-700/40 rounded-xl">
+              <Home size={32} className="mx-auto text-slate-600 mb-3" />
+              <p className="text-slate-400 text-sm">
+                {da
+                  ? 'Ingen ejerlejligheder fundet på matriklen.'
+                  : 'No properties found on this matrikel.'}
+              </p>
+            </div>
+          ) : (
+            <>
+              <p className="text-slate-400 text-xs">
+                {matLejligheder.length}{' '}
+                {da
+                  ? matLejligheder.length === 1
+                    ? 'ejendom'
+                    : 'ejendomme'
+                  : matLejligheder.length === 1
+                    ? 'property'
+                    : 'properties'}
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {matLejligheder.map((l) => (
+                  <Link
+                    key={`${l.bfe}-${l.dawaId ?? l.adresse}`}
+                    href={
+                      l.dawaId
+                        ? `/dashboard/ejendomme/${l.dawaId}`
+                        : `/dashboard/ejendomme/${l.bfe}`
+                    }
+                    className="block bg-slate-800/40 hover:bg-slate-800/60 border border-slate-700/40 rounded-xl p-4 transition-colors"
+                  >
+                    <div className="flex items-start gap-3">
+                      <Home size={16} className="text-blue-400 mt-0.5 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-white text-sm font-medium truncate">{l.adresse}</p>
+                        <p className="text-slate-400 text-xs mt-0.5">
+                          BFE <span className="font-mono">{l.bfe || '—'}</span>
+                          {l.areal != null && ` · ${l.areal} m²`}
+                          {l.ejer && l.ejer !== '–' && ` · ${l.ejer}`}
+                        </p>
+                      </div>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-[#0a1020]">
       {/* ─── Header + search input ─────────────────────────────────────── */}
@@ -480,6 +769,19 @@ export default function UniversalSearchPageClient() {
         </div>
       </div>
 
+      {/* BIZZ-774: Filter-panel toggle */}
+      <div className="flex items-center justify-end gap-2 px-6 sm:px-8 pt-3 shrink-0">
+        <button
+          onClick={() => setFilterOpen((v) => !v)}
+          className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white px-3 py-1.5 rounded-lg hover:bg-slate-800/50 transition-colors"
+          aria-expanded={filterOpen}
+        >
+          <SlidersHorizontal size={13} />
+          {da ? 'Filtre' : 'Filters'}
+          {filterOpen ? <ChevronRight size={12} /> : <ChevronLeft size={12} />}
+        </button>
+      </div>
+
       {/* ─── Tab bar ───────────────────────────────────────────────────── */}
       <div
         role="tablist"
@@ -512,86 +814,233 @@ export default function UniversalSearchPageClient() {
         />
       </div>
 
-      {/* ─── Results ───────────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
-        {/* Initial state — nothing typed yet */}
-        {!hasQuery && (
-          <div className="flex flex-col items-center justify-center py-20 text-center gap-3">
-            <div className="p-5 bg-slate-800/40 rounded-2xl text-slate-600">
-              <Search size={32} />
+      {/* ─── Results + optional filter side-panel ──────────────────────── */}
+      <div className="flex-1 flex min-h-0">
+        {/* BIZZ-774: Filter-panel right-hand sidebar. Collapsible. 3 columns
+            for ejendomme/virksomheder/personer. Iter 1 ships a handful of
+            working filters + stubs for the rest; full filter backends are
+            tracked as iter 2 (see ticket). */}
+        {filterOpen && (
+          <ResizableDivider
+            width={filterWidth}
+            minWidth={FILTER_MIN_WIDTH}
+            maxWidth={FILTER_MAX_WIDTH}
+            onChange={setFilterWidth}
+            ariaLabel={da ? 'Juster filter-panel bredde' : 'Adjust filter panel width'}
+          />
+        )}
+        {filterOpen && (
+          /* BIZZ-804: Tab-aware FilterPanel — schemas skifter efter
+             activeTab så ejendomme-tab viser ejendoms-filtre, companies-
+             tab viser virksomheds-filtre (iter 1 er kun "kun aktive"),
+             personer-tab viser placeholder (BIZZ-790a udvider).
+             allSchemas på useFiltersFromURL holder begge tabs' filter-
+             keys intakt mellem tab-skift. */
+          <div style={{ width: filterWidth }} className="shrink-0 order-last min-h-0">
+            {(() => {
+              const kommuneOptions = buildKommuneOptions(properties, lang);
+              const ejendomSchemasWithKommune: FilterSchema[] = [
+                ...ejendomSchemas.slice(0, 2),
+                {
+                  type: 'multi-select',
+                  key: 'kommune',
+                  label: da ? 'Kommune' : 'Municipality',
+                  options: kommuneOptions,
+                },
+              ];
+              let currentTabSchemas: FilterSchema[] = [];
+              let matchCount: number | null = null;
+              if (activeTab === 'properties') {
+                currentTabSchemas = ejendomSchemasWithKommune;
+                matchCount = properties.filter((p) =>
+                  matchEjendomFilter(p, narrowEjendomFilters(filters))
+                ).length;
+              } else if (activeTab === 'companies') {
+                // BIZZ-805: dynamiske options for branche + kommune bygges
+                // fra live-resultater så kun relevante valg vises i panelet.
+                currentTabSchemas = buildVirksomhedFilterSchemas(lang, {
+                  brancheOptions: buildVirksomhedBrancheOptions(companies),
+                  kommuneOptions: buildVirksomhedKommuneOptions(companies),
+                });
+                matchCount = companies.filter((c) =>
+                  matchVirksomhedFilter(c, narrowVirksomhedFilters(filters))
+                ).length;
+              } else if (activeTab === 'people') {
+                // BIZZ-823: Person-filter med enrichment-data fra
+                // cvr_deltager (is_aktiv, antal_aktive_selskaber,
+                // role_typer, kommunenavn). Fallback til ES-heuristik
+                // når enrichment mangler (null).
+                const personKommuneOptions = buildPersonKommuneOptions(people);
+                currentTabSchemas = buildPersonFilterSchemas(lang, personKommuneOptions);
+                const filterable: FilterablePerson[] = people.map((p) => ({
+                  isAktiv: p.isAktiv ?? (p.antalVirksomheder > 0 || p.roller.length > 0),
+                  antalAktiveSelskaber: p.antalAktiveSelskaber ?? p.antalVirksomheder,
+                  roleTyper: p.roleTyper ?? null,
+                  adresse: p.kommunenavn ? { kommunenavn: p.kommunenavn } : undefined,
+                  antalHistoriskeVirksomheder: p.antalHistoriskeVirksomheder ?? null,
+                  totalAntalRoller: p.totalAntalRoller ?? null,
+                }));
+                matchCount = filterable.filter((p) =>
+                  matchPersonFilter(p, narrowPersonFilters(filters))
+                ).length;
+              }
+              const handleReset = () => {
+                // Reset kun keys tilhørende current tab — bevar andre
+                // tabs' filter-state så tab-skift ikke mister valg.
+                const next = { ...filters };
+                for (const s of currentTabSchemas) {
+                  if (s.type === 'toggle') next[s.key] = s.default;
+                  else delete next[s.key];
+                }
+                setFilters(next);
+              };
+              return (
+                <FilterPanel
+                  schemas={currentTabSchemas}
+                  filters={filters}
+                  onFilterChange={setFilter}
+                  onReset={handleReset}
+                  matchCount={matchCount}
+                  lang={lang}
+                  onCollapse={() => setFilterOpen(false)}
+                />
+              );
+            })()}
+          </div>
+        )}
+
+        <div className="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
+          {/* Initial state — nothing typed yet */}
+          {!hasQuery && (
+            <div className="flex flex-col items-center justify-center py-20 text-center gap-3">
+              <div className="p-5 bg-slate-800/40 rounded-2xl text-slate-600">
+                <Search size={32} />
+              </div>
+              <p className="text-slate-400 text-sm font-medium">{t.startTyping}</p>
             </div>
-            <p className="text-slate-400 text-sm font-medium">{t.startTyping}</p>
-          </div>
-        )}
+          )}
 
-        {/* Properties tab */}
-        {hasQuery && activeTab === 'properties' && (
-          <div role="tabpanel" aria-label={t.tabProperties}>
-            {loadingProps ? (
-              <SkeletonList count={6} />
-            ) : properties.length > 0 ? (
-              <div className="space-y-3">
-                {properties.map((r) => (
-                  <PropertyCard key={r.adresse.id} result={r} lang={lang} />
-                ))}
-              </div>
-            ) : (
-              searched && (
-                <EmptyState
-                  query={query}
-                  message={`${t.noResultsFor} "${query.trim()}"`}
-                  icon={<MapPin size={28} />}
-                />
-              )
-            )}
-          </div>
-        )}
+          {/* Properties tab */}
+          {hasQuery &&
+            activeTab === 'properties' &&
+            (() => {
+              // BIZZ-804 (BIZZ-788b): apply ejendoms-filters fra FilterPanel
+              // via matchEjendomFilter. Dækker skjul-udfasede (BIZZ-785),
+              // ejendomstype multi-select og kommune multi-select.
+              //
+              // BIZZ-794: filtrér SFE-hits fra primær liste så brugeren kun
+              // ser reelle ejendomme (bygninger + ejerlejligheder). SFE vises
+              // stadig via drill-down fra bygning/lejlighed-detaljeside.
+              // Debug: ?visAlle=1 i URL viser også SFE'er (til QA/test).
+              // Hvis brugeren eksplicit har valgt ejendomstype 'sfe' i
+              // filter-panelet honoreres valget (override af default-skjul).
+              const visAlleDebug = sp.get('visAlle') === '1';
+              const ejendomFilters = narrowEjendomFilters(filters);
+              const userValgteTyper = ejendomFilters.ejendomstype ?? [];
+              const visEksplicitSFE = userValgteTyper.includes('sfe');
+              const filteredProps = properties
+                .filter((r) => matchEjendomFilter(r, ejendomFilters))
+                .filter((r) => visAlleDebug || visEksplicitSFE || r.ejendomstype !== 'sfe');
+              return (
+                <div role="tabpanel" aria-label={t.tabProperties}>
+                  {loadingProps ? (
+                    <SkeletonList count={6} />
+                  ) : filteredProps.length > 0 ? (
+                    <div className="space-y-3">
+                      {filteredProps.map((r) => (
+                        <PropertyCard key={r.adresse.id} result={r} lang={lang} />
+                      ))}
+                    </div>
+                  ) : (
+                    searched && (
+                      <EmptyState
+                        query={query}
+                        message={`${t.noResultsFor} "${query.trim()}"`}
+                        icon={<MapPin size={28} />}
+                      />
+                    )
+                  )}
+                </div>
+              );
+            })()}
 
-        {/* Companies tab */}
-        {hasQuery && activeTab === 'companies' && (
-          <div role="tabpanel" aria-label={t.tabCompanies}>
-            {loadingComps ? (
-              <SkeletonList count={6} />
-            ) : companies.length > 0 ? (
-              <div className="space-y-3">
-                {companies.map((r) => (
-                  <CompanyCard key={r.cvr} result={r} lang={lang} />
-                ))}
-              </div>
-            ) : (
-              searched && (
-                <EmptyState
-                  query={query}
-                  message={`${t.noResultsFor} "${query.trim()}"`}
-                  icon={<Briefcase size={28} />}
-                />
-              )
-            )}
-          </div>
-        )}
+          {/* Companies tab */}
+          {hasQuery &&
+            activeTab === 'companies' &&
+            (() => {
+              // BIZZ-804: companies-tab bruger samme FilterPanel-state via
+              // matchVirksomhedFilter. Iter 1 har kun "kun aktive" toggle;
+              // fuld CVR-filter-katalog kommer med BIZZ-789a.
+              const virksomhedFilters = narrowVirksomhedFilters(filters);
+              const filteredCompanies = companies.filter((r) =>
+                matchVirksomhedFilter(r, virksomhedFilters)
+              );
+              return (
+                <div role="tabpanel" aria-label={t.tabCompanies}>
+                  {loadingComps ? (
+                    <SkeletonList count={6} />
+                  ) : filteredCompanies.length > 0 ? (
+                    <div className="space-y-3">
+                      {filteredCompanies.map((r) => (
+                        <CompanyCard key={r.cvr} result={r} lang={lang} />
+                      ))}
+                    </div>
+                  ) : (
+                    searched && (
+                      <EmptyState
+                        query={query}
+                        message={`${t.noResultsFor} "${query.trim()}"`}
+                        icon={<Briefcase size={28} />}
+                      />
+                    )
+                  )}
+                </div>
+              );
+            })()}
 
-        {/* People tab */}
-        {hasQuery && activeTab === 'people' && (
-          <div role="tabpanel" aria-label={t.tabPeople}>
-            {loadingPeople ? (
-              <SkeletonList count={6} />
-            ) : people.length > 0 ? (
-              <div className="space-y-3">
-                {people.map((r) => (
-                  <PersonCard key={r.enhedsNummer} result={r} lang={lang} />
-                ))}
-              </div>
-            ) : (
-              searched && (
-                <EmptyState
-                  query={query}
-                  message={`${t.noResultsFor} "${query.trim()}"`}
-                  icon={<Users size={28} />}
-                />
-              )
-            )}
-          </div>
-        )}
+          {/* People tab */}
+          {hasQuery &&
+            activeTab === 'people' &&
+            (() => {
+              // BIZZ-823: Anvend person-filter med enrichment-data.
+              // Fallback til ES-heuristik for felter uden enrichment.
+              const personFilters = narrowPersonFilters(filters);
+              const filteredPeople = people.filter((p) =>
+                matchPersonFilter(
+                  {
+                    isAktiv: p.isAktiv ?? (p.antalVirksomheder > 0 || p.roller.length > 0),
+                    antalAktiveSelskaber: p.antalAktiveSelskaber ?? p.antalVirksomheder,
+                    roleTyper: p.roleTyper ?? null,
+                    adresse: p.kommunenavn ? { kommunenavn: p.kommunenavn } : undefined,
+                    antalHistoriskeVirksomheder: p.antalHistoriskeVirksomheder ?? null,
+                    totalAntalRoller: p.totalAntalRoller ?? null,
+                  },
+                  personFilters
+                )
+              );
+              return (
+                <div role="tabpanel" aria-label={t.tabPeople}>
+                  {loadingPeople ? (
+                    <SkeletonList count={6} />
+                  ) : filteredPeople.length > 0 ? (
+                    <div className="space-y-3">
+                      {filteredPeople.map((r) => (
+                        <PersonCard key={r.enhedsNummer} result={r} lang={lang} />
+                      ))}
+                    </div>
+                  ) : (
+                    searched && (
+                      <EmptyState
+                        query={query}
+                        message={`${t.noResultsFor} "${query.trim()}"`}
+                        icon={<Users size={28} />}
+                      />
+                    )
+                  )}
+                </div>
+              );
+            })()}
+        </div>
       </div>
     </div>
   );

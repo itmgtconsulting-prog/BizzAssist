@@ -71,8 +71,8 @@ const STEPS: OnboardingStep[] = [
     icon: Sparkles,
     iconColor: 'text-purple-400',
     iconBg: 'bg-purple-500/20',
-    titleDa: 'AI Assistent',
-    titleEn: 'AI Assistant',
+    titleDa: 'AI Chat',
+    titleEn: 'AI Chat',
     descriptionDa:
       'Stil spørgsmål til AI-assistenten i sidepanelet — den har adgang til alle de datakilder, som BizzAssist bruger, og kan svare med kontekst fra den side du er på.',
     descriptionEn:

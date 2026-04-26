@@ -39,6 +39,7 @@ import {
   Layers,
   X,
 } from 'lucide-react';
+import { BBR_STATUS_AKTIV } from '@/app/lib/bbrKoder';
 
 /**
  * Mapbox basekort-styles.
@@ -142,8 +143,8 @@ export interface BBRBygningPunkt {
   ejerforholdskode: string | null;
 }
 
-/** Statuskoder der anses som aktive bygninger */
-const AKTIV_STATUS = new Set(['1', '2', '3', '6', '7']);
+/** BIZZ-836: Brug central BBR_STATUS_AKTIV fra bbrKoder.ts */
+const AKTIV_STATUS = BBR_STATUS_AKTIV;
 
 /**
  * localStorage-nøgle for kortstil (gadekort / satellitfoto / BBR).
@@ -1123,16 +1124,19 @@ function PropertyMap({
     window.localStorage.setItem(ZOOM_STORAGE_KEY, String(e.viewState.zoom));
   }, []);
 
-  /** Vis fallback UI hvis Mapbox-token mangler */
+  /** Vis fallback UI hvis Mapbox-token mangler (BIZZ-727).
+   *  Bemærk: NEXT_PUBLIC_* vars inlines ved build-time, så tokenet skal være sat
+   *  i Vercel Preview/Production FØR deployment — ikke kun lokalt. */
   if (!harToken) {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 text-center px-6 gap-3">
         <MapIcon size={28} className="text-slate-500" />
         <p className="text-slate-400 text-sm font-medium">Kortvisning ikke aktiveret</p>
-        <p className="text-slate-500 text-xs leading-relaxed">
-          Tilføj{' '}
+        <p className="text-slate-500 text-xs leading-relaxed max-w-xs">
           <code className="bg-slate-800 px-1 rounded text-blue-300">NEXT_PUBLIC_MAPBOX_TOKEN</code>{' '}
-          til <code className="bg-slate-800 px-1 rounded text-blue-300">.env.local</code>
+          mangler i dette miljø. Sæt den i Vercel Dashboard (Preview + Production) og redeploy,
+          eller tilføj den til{' '}
+          <code className="bg-slate-800 px-1 rounded text-blue-300">.env.local</code> i udvikling.
         </p>
       </div>
     );

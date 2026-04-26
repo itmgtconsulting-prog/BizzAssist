@@ -22,11 +22,25 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { MessageSquare, Plus, Trash2, Send, Square, Bot, Sparkles, Loader2, X } from 'lucide-react';
+import {
+  MessageSquare,
+  Plus,
+  Trash2,
+  Send,
+  Square,
+  Bot,
+  Sparkles,
+  Loader2,
+  X,
+  Paperclip,
+  FileText,
+  Eye,
+} from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { useSubscription } from '@/app/context/SubscriptionContext';
 import { useAIPageContext } from '@/app/context/AIPageContext';
 import { useAIChatContext } from '@/app/context/AIChatContext';
+import { useDocPreview } from '@/app/context/DocPreviewContext';
 import { resolvePlan, isSubscriptionFunctional, formatTokens } from '@/app/lib/subscriptions';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -35,6 +49,46 @@ import { resolvePlan, isSubscriptionFunctional, formatTokens } from '@/app/lib/s
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  /** BIZZ-812: Attached files metadata — renders as chips in the bubble. */
+  attachments?: Array<{
+    name: string;
+    file_type: string;
+    size: number;
+    truncated?: boolean;
+  }>;
+  /**
+   * BIZZ-814: AI-genererede filer fra generate_document tool-use.
+   * Rendres som download-chips under assistant-svaret.
+   */
+  generatedFiles?: Array<{
+    file_id: string;
+    file_name: string;
+    download_url: string;
+    preview_text: string;
+    bytes: number;
+    format: string;
+    /** BIZZ-815/868: binary-aware preview felter */
+    preview_kind?: 'text' | 'table' | 'html';
+    preview_columns?: string[];
+    preview_rows?: string[][];
+    preview_html?: string;
+  }>;
+}
+
+/**
+ * BIZZ-811: Attachment queued for the next message. Mirrors the shape
+ * used by AIChatPanel (drawer) so both surfaces behave identically.
+ */
+interface ChatAttachment {
+  id: string;
+  name: string;
+  file_type: string;
+  size: number;
+  extracted_text: string;
+  preview: string;
+  truncated: boolean;
+  /** BIZZ-812: Server-side ai_file row-id for tool-use reference. */
+  file_id?: string | null;
 }
 
 /** A persisted conversation stored in localStorage */
@@ -47,58 +101,10 @@ interface Conversation {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const STORAGE_KEY = 'ba-chat-history';
-const MAX_TITLE_LENGTH = 40;
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-/**
- * Generate a unique conversation ID.
- *
- * @returns A random alphanumeric string prefixed with timestamp
- */
-function generateId(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
-
-/**
- * Load all conversations from localStorage.
- *
- * @returns Array of conversations, newest first
- */
-function loadConversations(): Conversation[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw) as Conversation[];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Save conversations array to localStorage.
- *
- * @param conversations - Full list of conversations to persist
- */
-function saveConversations(conversations: Conversation[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
-  } catch {
-    // Ignore quota errors
-  }
-}
-
-/**
- * Derive conversation title from first user message.
- *
- * @param firstMessage - The first user message text
- * @returns Truncated title string
- */
-function deriveTitle(firstMessage: string): string {
-  const clean = firstMessage.trim().replace(/\n/g, ' ');
-  return clean.length > MAX_TITLE_LENGTH ? clean.slice(0, MAX_TITLE_LENGTH) + '…' : clean;
-}
+// BIZZ-820: STORAGE_KEY + local helpers fjernet. Chat-historik er nu
+// persisteret i Supabase via /api/ai/sessions. AIChatContext ejer state;
+// denne fil læser chatCtx.conversations og kalder chatCtx.createConversation
+// / selectConversation / deleteConversation / titleConversation.
 
 /**
  * Format a date string for the conversation history sidebar.
@@ -304,24 +310,18 @@ export default function ChatPageClient() {
   const { pageData } = useAIPageContext();
   /** Shared conversation context — syncs with drawer panel */
   const chatCtx = useAIChatContext();
+  /** BIZZ-811: Right-side document preview (opens on-demand from chips) */
+  const docPreview = useDocPreview();
 
   // ── Conversation state (synced with AIChatContext) ──
+  // BIZZ-820: Context ejer conversation-listen (API-backed). Lokale
+  // setters er fjernet — al state-mutation sker via context.
   const conversations = chatCtx.conversations;
-  const setConversations = useCallback(
-    (updater: Conversation[] | ((prev: Conversation[]) => Conversation[])) => {
-      // When ChatPageClient updates conversations, sync back to context via localStorage
-      const updated = typeof updater === 'function' ? updater(chatCtx.conversations) : updater;
-      saveConversations(updated);
-      // Force context to re-read (context listens to storage events for cross-tab,
-      // but same-tab needs direct state update — this happens via loadConversations in context)
-    },
-    [chatCtx.conversations]
-  );
   const [activeId, setActiveIdLocal] = useState<string | null>(chatCtx.activeId);
   const setActiveId = useCallback(
     (id: string | null) => {
       setActiveIdLocal(id);
-      if (id) chatCtx.selectConversation(id);
+      if (id) void chatCtx.selectConversation(id);
     },
     [chatCtx]
   );
@@ -331,6 +331,48 @@ export default function ChatPageClient() {
   const [streamTextLocal, setStreamText] = useState('');
   const [toolStatusLocal, setToolStatus] = useState('');
   const [isMounted, setIsMounted] = useState(false);
+  /** BIZZ-811: attachments queued for the next message — parity with AIChatPanel */
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const [attachBusy, setAttachBusy] = useState(false);
+  const [attachError, setAttachError] = useState<string | null>(null);
+
+  /** BIZZ-811: upload one or more files to /api/ai/attach → store the
+   *  returned ChatAttachment in state so sendMessage can fold the
+   *  extracted text into the next user message. */
+  const uploadAttachments = useCallback(
+    async (files: FileList | File[]) => {
+      if (files.length === 0) return;
+      setAttachBusy(true);
+      setAttachError(null);
+      try {
+        for (const f of Array.from(files)) {
+          const fd = new FormData();
+          fd.append('file', f);
+          const r = await fetch('/api/ai/attach', { method: 'POST', body: fd });
+          if (!r.ok) {
+            const j = (await r.json().catch(() => ({ error: 'Ukendt' }))) as { error?: string };
+            setAttachError(j.error ?? (da ? 'Upload fejlede' : 'Upload failed'));
+            continue;
+          }
+          const j = (await r.json()) as Omit<ChatAttachment, 'id'>;
+          setAttachments((prev) => [
+            ...prev,
+            {
+              id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              ...j,
+            },
+          ]);
+        }
+      } finally {
+        setAttachBusy(false);
+      }
+    },
+    [da]
+  );
+
+  const removeAttachment = useCallback((id: string) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
+  }, []);
 
   // Combine local streaming state with context (drawer may be streaming in background)
   const isLoading = isLoadingLocal || chatCtx.isStreaming;
@@ -341,36 +383,39 @@ export default function ChatPageClient() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // ── Load from localStorage on mount — prefer context's active conversation ──
+  // ── BIZZ-820: Sync with context on mount + when context-state changes ──
   useEffect(() => {
     setIsMounted(true);
-    const stored = loadConversations();
-    setConversations(stored);
-    // Prefer context's active conversation (e.g. from drawer), else most recent
-    const targetId = chatCtx.activeId;
-    const target = targetId ? stored.find((c) => c.id === targetId) : null;
-    if (target) {
-      setActiveIdLocal(target.id);
-      setMessages(target.messages);
-    } else if (stored.length > 0) {
-      setActiveId(stored[0].id);
-      setMessages(stored[0].messages);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Sync messages from context when streaming finishes (drawer or local) ──
+  // Auto-vælg seneste samtale når context-listen loader (hvis ingen
+  // aktiv er sat fra URL/drawer).
+  useEffect(() => {
+    if (activeId) return;
+    if (chatCtx.activeId) {
+      setActiveIdLocal(chatCtx.activeId);
+      return;
+    }
+    if (conversations.length > 0) {
+      setActiveId(conversations[0].id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversations.length, chatCtx.activeId]);
+
+  // Adoptér messages fra context når de opdateres (API-fetch eller
+  // Realtime/polling). Overskriv ikke under streaming.
+  useEffect(() => {
+    if (isLoadingLocal) return;
+    setMessages(chatCtx.messages);
+  }, [chatCtx.messages, isLoadingLocal]);
+
+  // ── Detect streaming-finish (drawer or local) ──────────────────────────
+  // Bruges til at rydde streamText, ikke længere til at re-reade lokal data.
   const wasStreamingRef = useRef(false);
   useEffect(() => {
     const nowStreaming = chatCtx.isStreaming || isLoadingLocal;
-    if (wasStreamingRef.current && !nowStreaming) {
-      // Streaming just finished — reload from localStorage to get final messages
-      const fresh = loadConversations();
-      const active = fresh.find((c) => c.id === (activeId ?? chatCtx.activeId));
-      if (active) setMessages(active.messages);
-    }
     wasStreamingRef.current = nowStreaming;
-  }, [chatCtx.isStreaming, isLoadingLocal, activeId, chatCtx.activeId]);
+  }, [chatCtx.isStreaming, isLoadingLocal]);
 
   // ── Pre-fill from URL query param (?context=…) ──
   useEffect(() => {
@@ -387,33 +432,26 @@ export default function ChatPageClient() {
   }, [messages, streamText]);
 
   /**
-   * Persist the current active conversation back to localStorage.
-   *
-   * @param id - Conversation ID to update
-   * @param updatedMessages - New message array
-   * @param currentConvs - Current conversations snapshot
+   * BIZZ-820: Local persistConversation er no-op. Serveren persisterer
+   * user + assistant messages via session_id-hook i /api/ai/chat (BIZZ-819)
+   * og context adopterer via polling (iter 1) / Realtime (iter 2).
+   * Beholdt som stub så sendMessage-flow kan kalde den ubekymret for
+   * fejl-paths (display-only error messages).
    */
-  /**
-   * BIZZ-240 fix: reads conversations from localStorage instead of using
-   * a stale snapshot, so auto-derived titles are preserved after streaming.
-   */
-  const persistConversation = useCallback((id: string, updatedMessages: ChatMessage[]) => {
-    const freshConvs = loadConversations();
-    const updated = freshConvs.map((c) => (c.id === id ? { ...c, messages: updatedMessages } : c));
-    saveConversations(updated);
-    setConversations(updated);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  const persistConversation = useCallback((_id: string | null, _updatedMessages: ChatMessage[]) => {
+    void _id;
+    void _updatedMessages;
   }, []);
 
   /**
    * Create a new empty conversation and select it.
    */
-  const handleNewConversation = useCallback(() => {
+  const handleNewConversation = useCallback(async () => {
     // Don't abort — let streaming finish in background for the old conversation
-    abortRef.current = null; // Detach so stop button doesn't kill background stream
-    // Use context to create conversation — syncs with drawer
-    const newId = chatCtx.createConversation(lang as 'da' | 'en');
-    setActiveIdLocal(newId);
+    abortRef.current = null;
+    // BIZZ-820: createConversation er async (POST /api/ai/sessions).
+    const newId = await chatCtx.createConversation(lang as 'da' | 'en');
+    if (newId) setActiveIdLocal(newId);
     setMessages([]);
     setStreamText('');
     setToolStatus('');
@@ -436,7 +474,8 @@ export default function ChatPageClient() {
       const conv = conversations.find((c) => c.id === id);
       if (!conv) return;
       setActiveId(id);
-      setMessages(conv.messages);
+      // BIZZ-820: context.selectConversation fetcher messages via API.
+      // setMessages opdateres når context.messages ændres (effect ovenfor).
       setStreamText('');
       setToolStatus('');
     },
@@ -450,23 +489,17 @@ export default function ChatPageClient() {
    * @param id - Conversation ID to remove
    */
   const handleDeleteConversation = useCallback(
-    (id: string, e: React.MouseEvent) => {
+    async (id: string, e: React.MouseEvent) => {
       e.stopPropagation();
-      const updated = conversations.filter((c) => c.id !== id);
-      saveConversations(updated);
-      setConversations(updated);
+      // BIZZ-820: context.deleteConversation rammer DELETE-endpointet og
+      // opdaterer listen. Select-handler tager sig af valg af næste.
+      await chatCtx.deleteConversation(id);
       if (activeId === id) {
-        if (updated.length > 0) {
-          setActiveId(updated[0].id);
-          setMessages(updated[0].messages);
-        } else {
-          setActiveId(null);
-          setMessages([]);
-        }
+        setActiveIdLocal(null);
+        setMessages([]);
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [conversations, activeId]
+    [chatCtx, activeId]
   );
 
   /** Stop AI streaming */
@@ -517,35 +550,60 @@ export default function ChatPageClient() {
    */
   const sendMessage = useCallback(async () => {
     const text = input.trim();
-    if (!text || isLoading) return;
+    if ((!text && attachments.length === 0) || isLoading) return;
 
     // Subscription check
     const blockReason = checkSubscriptionLimit();
 
-    // Ensure there is an active conversation
-    let convId = activeId;
-    let currentConvs = conversations;
-
+    // BIZZ-820: Ensure active conversation exists via context (API-backed).
+    // BIZZ-820/839: Best-effort session-creation. Hvis API fejler
+    // (401/403/500 fra /api/ai/sessions) → fortsæt med convId=null i
+    // stateless mode i stedet for silent abort. Chat fungerer stadig;
+    // kun cross-device persistens preller af.
+    let convId: string | null = activeId;
     if (!convId) {
-      const newConv: Conversation = {
-        id: generateId(),
-        title: deriveTitle(text),
-        messages: [],
-        createdAt: new Date().toISOString(),
-      };
-      currentConvs = [newConv, ...conversations];
-      saveConversations(currentConvs);
-      setConversations(currentConvs);
-      convId = newConv.id;
-      setActiveId(convId);
+      const newId = await chatCtx.ensureConversation(lang as 'da' | 'en');
+      if (newId) {
+        convId = newId;
+        setActiveIdLocal(convId);
+      }
     }
 
-    const userMsg: ChatMessage = { role: 'user', content: text };
+    // BIZZ-811: Fold attachments into the user message so Claude sees the
+    // extracted text as ordinary context. Clears the chips immediately.
+    const attachmentBlock = attachments.length
+      ? attachments
+          .map(
+            (att) =>
+              `[Vedhæftet fil: ${att.name} — ${att.file_type.toUpperCase()}, ${Math.round(
+                att.size / 1024
+              )} KB${att.truncated ? ', beskåret' : ''}]\n${att.extracted_text}`
+          )
+          .join('\n\n---\n\n')
+      : '';
+    const composed = attachmentBlock
+      ? `${attachmentBlock}\n\n---\n\n${text || '(ingen prompt — brug vedhæftede filer som kontekst)'}`
+      : text;
+    // BIZZ-812: persist light-weight metadata so chips show in history
+    const attachmentsMeta = attachments.map((att) => ({
+      name: att.name,
+      file_type: att.file_type,
+      size: att.size,
+      truncated: att.truncated,
+    }));
+    setAttachments([]);
+
+    const userMsg: ChatMessage = {
+      role: 'user',
+      content: composed,
+      ...(attachmentsMeta.length > 0 ? { attachments: attachmentsMeta } : {}),
+    };
     const newMessages: ChatMessage[] = [...messages, userMsg];
 
     // Auto-title from first user message — use context for sync with drawer
-    if (messages.length === 0) {
-      chatCtx.titleConversation(convId, text);
+    // BIZZ-839: skip når convId null (stateless mode, ingen session at navngive)
+    if (convId && messages.length === 0) {
+      void chatCtx.titleConversation(convId, text);
     }
 
     setInput('');
@@ -572,6 +630,15 @@ export default function ChatPageClient() {
     abortRef.current = controller;
 
     try {
+      // BIZZ-812: inkluder attachment file_id-array så tool-dispatcher
+      // (BIZZ-813) kan slå op i ai_file + hente binær til template-fill.
+      const attachmentRefs = attachments
+        .filter((a) => a.file_id != null)
+        .map((a) => ({
+          file_id: a.file_id as string,
+          name: a.name,
+          file_type: a.file_type,
+        }));
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -594,6 +661,10 @@ export default function ChatPageClient() {
                   .join('\n'),
               }
             : {}),
+          ...(attachmentRefs.length > 0 ? { attachments: attachmentRefs } : {}),
+          // BIZZ-820/839: session_id kun når vi har en aktiv session.
+          // convId==null → stateless mode (server-hook springer persist over).
+          ...(convId ? { session_id: convId } : {}),
         }),
         signal: controller.signal,
       });
@@ -617,6 +688,8 @@ export default function ChatPageClient() {
       const decoder = new TextDecoder();
       let accumulated = '';
       let buffer = '';
+      // BIZZ-814: buffer generated-files fra SSE til final message
+      const generatedFiles: NonNullable<ChatMessage['generatedFiles']> = [];
 
       try {
         while (true) {
@@ -639,6 +712,17 @@ export default function ChatPageClient() {
                 error?: string;
                 status?: string;
                 usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
+                generated_file?: {
+                  file_id: string;
+                  file_name: string;
+                  download_url: string;
+                  preview_text: string;
+                  bytes: number;
+                  format: string;
+                  preview_kind?: 'text' | 'table';
+                  preview_columns?: string[];
+                  preview_rows?: string[][];
+                };
               };
               const isActive = activeId === convId;
               if (parsed.error) {
@@ -655,6 +739,13 @@ export default function ChatPageClient() {
                 if (isActive) {
                   setToolStatus(parsed.status);
                   chatCtx.setToolStatus(parsed.status);
+                }
+              } else if (parsed.generated_file) {
+                // BIZZ-814: gem til final-message + vis status
+                generatedFiles.push(parsed.generated_file);
+                if (isActive) {
+                  setToolStatus(`Fil genereret: ${parsed.generated_file.file_name}`);
+                  chatCtx.setToolStatus(`Fil genereret: ${parsed.generated_file.file_name}`);
                 }
               } else if (parsed.t) {
                 accumulated += parsed.t;
@@ -676,11 +767,17 @@ export default function ChatPageClient() {
         reader.cancel().catch(() => {});
       }
 
-      if (accumulated) {
-        const assistantMsg: ChatMessage = { role: 'assistant', content: accumulated };
+      if (accumulated || generatedFiles.length > 0) {
+        // BIZZ-814: attach eventuelle genererede filer til message
+        const assistantMsg: ChatMessage = {
+          role: 'assistant',
+          content: accumulated,
+          ...(generatedFiles.length > 0 ? { generatedFiles: [...generatedFiles] } : {}),
+        };
         const finalMessages = [...newMessages, assistantMsg];
         persistConversation(convId, finalMessages);
-        if (activeId === convId) {
+        // BIZZ-839: Update local state if same conversation OR stateless (convId null)
+        if (!convId || activeId === convId) {
           setMessages(finalMessages);
         }
       }
@@ -691,8 +788,8 @@ export default function ChatPageClient() {
         const stoppedMsg: ChatMessage = { role: 'assistant', content: current };
         const finalMessages = [...newMessages, stoppedMsg];
         persistConversation(convId, finalMessages);
-        // Only update UI if still on same conversation (user may have clicked "Ny samtale")
-        if (activeId === convId) {
+        // BIZZ-839: Same fix — always update if stateless mode
+        if (!convId || activeId === convId) {
           setMessages(finalMessages);
         }
       } else {
@@ -713,17 +810,19 @@ export default function ChatPageClient() {
       chatCtx.setIsStreaming(false);
       abortRef.current = null;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     input,
     isLoading,
     messages,
     activeId,
-    conversations,
     checkSubscriptionLimit,
     persistConversation,
     streamText,
     addTokenUsage,
+    attachments,
+    chatCtx,
+    lang,
+    pageData,
   ]);
 
   /**
@@ -751,9 +850,7 @@ export default function ChatPageClient() {
       <aside className="w-64 shrink-0 flex flex-col border-r border-white/8 bg-[#0f172a]">
         {/* Header */}
         <div className="px-4 pt-5 pb-3 border-b border-white/8">
-          <h1 className="text-white font-bold text-base mb-3">
-            {da ? 'AI Assistent' : 'AI Assistant'}
-          </h1>
+          <h1 className="text-white font-bold text-base mb-3">AI Chat</h1>
           <button
             onClick={handleNewConversation}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
@@ -876,6 +973,22 @@ export default function ChatPageClient() {
           </div>
         )}
 
+        {/* BIZZ-872: Warning-banner når persistence-API ikke svarer — samtaler
+            gemmes ikke cross-device. Ephemeral chat bliver tabt ved navigation. */}
+        {chatCtx.persistenceError && (
+          <div
+            className="mx-4 mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300 flex items-start gap-2"
+            role="status"
+          >
+            <span aria-hidden="true">⚠️</span>
+            <div className="flex-1">
+              {da
+                ? 'Chat-historik kan ikke gemmes lige nu. Samtaler er kun tilgængelige i denne session.'
+                : 'Chat history cannot be saved right now. Conversations are only available in this session.'}
+            </div>
+          </div>
+        )}
+
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
           {messages.length === 0 && !isLoading && (
@@ -892,31 +1005,145 @@ export default function ChatPageClient() {
             </div>
           )}
 
-          {messages.map((msg, idx) => (
-            <div
-              key={idx}
-              className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-            >
-              {msg.role === 'assistant' && (
-                <div className="w-7 h-7 rounded-full bg-blue-600/20 flex items-center justify-center shrink-0 mr-2 mt-0.5">
-                  <Bot size={14} className="text-blue-400" />
-                </div>
-              )}
+          {messages.map((msg, idx) => {
+            // BIZZ-812: hide the attachment text-block from the display
+            // (the AI still sees it via `content`). Chips render separately.
+            const displayContent =
+              msg.role === 'user' && msg.attachments && msg.attachments.length > 0
+                ? msg.content
+                    .split(/\n\n---\n\n/)
+                    .slice(-1)[0]
+                    .replace(/^\(ingen prompt.*\)$/u, '')
+                : msg.content;
+            return (
               <div
-                className={`max-w-[70%] rounded-2xl px-4 py-3 ${
-                  msg.role === 'user'
-                    ? 'bg-blue-600 text-white text-sm'
-                    : 'bg-slate-800/80 border border-white/8'
-                }`}
+                key={idx}
+                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
-                {msg.role === 'user' ? (
-                  <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
-                ) : (
-                  <MarkdownContent text={msg.content} />
+                {msg.role === 'assistant' && (
+                  <div className="w-7 h-7 rounded-full bg-blue-600/20 flex items-center justify-center shrink-0 mr-2 mt-0.5">
+                    <Bot size={14} className="text-blue-400" />
+                  </div>
                 )}
+                <div
+                  className={`max-w-[70%] rounded-2xl px-4 py-3 ${
+                    msg.role === 'user'
+                      ? 'bg-blue-600 text-white text-sm'
+                      : 'bg-slate-800/80 border border-white/8'
+                  }`}
+                >
+                  {/* BIZZ-812: attachment chips render before the prompt */}
+                  {msg.attachments && msg.attachments.length > 0 && (
+                    <div className="space-y-1 mb-2">
+                      {msg.attachments.map((att, ai) => (
+                        <div
+                          key={ai}
+                          className={`flex items-center gap-2 rounded-md px-2 py-1.5 ${
+                            msg.role === 'user'
+                              ? 'bg-white/10 text-white'
+                              : 'bg-slate-900/60 text-slate-200'
+                          }`}
+                        >
+                          <FileText size={12} className="shrink-0 opacity-80" />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-xs font-medium">{att.name}</p>
+                            <p className="text-[10px] opacity-70 uppercase">
+                              {att.file_type} · {Math.round(att.size / 1024)} KB
+                              {att.truncated && (da ? ' · beskåret' : ' · truncated')}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {msg.role === 'user' ? (
+                    <p className="text-sm whitespace-pre-wrap leading-relaxed">{displayContent}</p>
+                  ) : (
+                    <MarkdownContent text={displayContent} />
+                  )}
+                  {/* BIZZ-814: AI-genererede filer som download-chips */}
+                  {msg.role === 'assistant' &&
+                    msg.generatedFiles &&
+                    msg.generatedFiles.length > 0 && (
+                      <div className="mt-3 space-y-1.5">
+                        {msg.generatedFiles.map((gf) => (
+                          <div
+                            key={gf.file_id}
+                            className="flex items-center gap-2 rounded-md px-3 py-2 bg-slate-900/60 border border-blue-500/30"
+                          >
+                            <FileText size={14} className="shrink-0 text-blue-300" />
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-medium text-white">
+                                {gf.file_name}
+                              </p>
+                              <p className="text-[10px] uppercase text-slate-400">
+                                {gf.format} · {(gf.bytes / 1024).toFixed(1)} KB
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                docPreview.open({
+                                  name: gf.file_name,
+                                  fileType: gf.format,
+                                  text: gf.preview_text,
+                                  downloadUrl: gf.download_url,
+                                  sizeBytes: gf.bytes,
+                                  // BIZZ-815/868: binary-aware preview
+                                  kind: gf.preview_kind,
+                                  columns: gf.preview_columns,
+                                  rows: gf.preview_rows,
+                                  html: gf.preview_html,
+                                })
+                              }
+                              aria-label="Forhåndsvis"
+                              className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+                              title="Forhåndsvis"
+                            >
+                              <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+                                <circle cx="12" cy="12" r="3" />
+                              </svg>
+                            </button>
+                            <a
+                              href={gf.download_url}
+                              download={gf.file_name}
+                              aria-label="Download"
+                              className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+                              title="Download"
+                            >
+                              <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                <polyline points="7 10 12 15 17 10" />
+                                <line x1="12" y1="15" x2="12" y2="3" />
+                              </svg>
+                            </a>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
 
           {/* Streaming message */}
           {isLoading && (
@@ -951,7 +1178,75 @@ export default function ChatPageClient() {
 
         {/* Input bar */}
         <div className="shrink-0 border-t border-white/8 bg-[#0f172a] px-4 py-3">
+          {/* BIZZ-811: Attachment chips + error (shown over the input) */}
+          {(attachments.length > 0 || attachError) && (
+            <div className="max-w-4xl mx-auto mb-2 space-y-1">
+              {attachments.map((att) => (
+                <div
+                  key={att.id}
+                  className="flex items-center gap-2 bg-slate-800/80 border border-slate-700/40 rounded-lg px-3 py-2"
+                >
+                  <FileText size={14} className="text-blue-400 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm text-slate-200 truncate">{att.name}</p>
+                    <p className="text-[10px] text-slate-500 uppercase">
+                      {att.file_type} · {Math.round(att.size / 1024)} KB
+                      {att.truncated && ` · ${da ? 'beskåret' : 'truncated'}`}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      docPreview.open({
+                        key: `fullpage-chat-attachment-${att.id}`,
+                        name: att.name,
+                        fileType: att.file_type,
+                        sizeBytes: att.size,
+                        text: att.extracted_text,
+                        truncated: att.truncated,
+                      })
+                    }
+                    aria-label={da ? 'Se preview' : 'Preview'}
+                    title={da ? 'Se preview' : 'Preview'}
+                    className="p-1.5 rounded text-slate-400 hover:text-blue-300 hover:bg-slate-700/40 transition-colors shrink-0"
+                  >
+                    <Eye size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeAttachment(att.id)}
+                    aria-label={da ? 'Fjern fil' : 'Remove file'}
+                    className="p-1.5 rounded text-slate-400 hover:text-rose-300 hover:bg-slate-700/40 transition-colors shrink-0"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              ))}
+              {attachError && <p className="text-[11px] text-rose-300 px-1">{attachError}</p>}
+            </div>
+          )}
           <div className="flex items-end gap-2 max-w-4xl mx-auto">
+            {/* BIZZ-811: Attach file */}
+            <label
+              className="shrink-0 w-11 h-11 flex items-center justify-center bg-slate-800/70 hover:bg-slate-700/70 border border-white/10 text-slate-300 hover:text-blue-300 rounded-xl transition-colors cursor-pointer"
+              aria-label={da ? 'Vedhæft fil' : 'Attach file'}
+              title={da ? 'Vedhæft fil' : 'Attach file'}
+            >
+              {attachBusy ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <Paperclip size={16} />
+              )}
+              <input
+                type="file"
+                multiple
+                hidden
+                onChange={(e) => {
+                  if (e.target.files) void uploadAttachments(e.target.files);
+                  e.target.value = '';
+                }}
+              />
+            </label>
             <div className="flex-1 relative">
               <textarea
                 ref={inputRef}
@@ -987,7 +1282,7 @@ export default function ChatPageClient() {
             ) : (
               <button
                 onClick={sendMessage}
-                disabled={!input.trim()}
+                disabled={!input.trim() && attachments.length === 0}
                 aria-label={da ? 'Send besked' : 'Send message'}
                 className="shrink-0 w-11 h-11 flex items-center justify-center bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-xl transition-colors"
               >

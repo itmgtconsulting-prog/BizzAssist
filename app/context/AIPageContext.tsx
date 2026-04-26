@@ -14,8 +14,7 @@
  *   const { pageData } = useAIPageContext();
  */
 
-import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
-import { usePathname } from 'next/navigation';
+import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -123,11 +122,14 @@ export interface AIPageData {
 interface AIPageContextValue {
   pageData: AIPageData | null;
   setPageData: (data: AIPageData | null) => void;
+  /** BIZZ-985: Eksplicit rydning af al kontekst */
+  clearPageData: () => void;
 }
 
 const AIPageContext = createContext<AIPageContextValue>({
   pageData: null,
   setPageData: () => {},
+  clearPageData: () => {},
 });
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
@@ -135,23 +137,43 @@ const AIPageContext = createContext<AIPageContextValue>({
 /**
  * Wrap dashboard layout med denne provider så alle child-sider og
  * AIChatPanel har adgang til den delte side-kontekst.
- * Rydder automatisk data når pathname ændres (navigation til ny side).
+ *
+ * BIZZ-985: Sticky kontekst — data ryddes IKKE automatisk ved navigation.
+ * I stedet merger nye siders data ind i den eksisterende kontekst, så
+ * AI Chat bevarer relevante detaljer fra den senest besøgte side.
+ * Brug `clearPageData()` for eksplicit rydning.
  */
 export function AIPageProvider({ children }: { children: ReactNode }) {
   const [pageData, setPageDataRaw] = useState<AIPageData | null>(null);
-  const pathname = usePathname();
 
-  // Ryd side-data ved navigation — ny side loader sit eget
-  useEffect(() => {
-    setPageDataRaw(null);
-  }, [pathname]);
-
+  // BIZZ-985: Merge-baseret setter — nye felter overskriver, men tomme
+  // felter rydder ikke eksisterende værdier. null rydder alt.
   const setPageData = useCallback((data: AIPageData | null) => {
-    setPageDataRaw(data);
+    if (data === null) {
+      setPageDataRaw(null);
+      return;
+    }
+    setPageDataRaw((prev) => {
+      if (!prev) return data;
+      // Merge: nye non-undefined felter overskriver, resten bevares
+      const merged = { ...prev };
+      for (const [key, value] of Object.entries(data)) {
+        if (value !== undefined) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (merged as any)[key] = value;
+        }
+      }
+      return merged;
+    });
   }, []);
 
+  /** BIZZ-985: Eksplicit rydning af al kontekst */
+  const clearPageData = useCallback(() => setPageDataRaw(null), []);
+
   return (
-    <AIPageContext.Provider value={{ pageData, setPageData }}>{children}</AIPageContext.Provider>
+    <AIPageContext.Provider value={{ pageData, setPageData, clearPageData }}>
+      {children}
+    </AIPageContext.Provider>
   );
 }
 
@@ -168,7 +190,9 @@ export function useAIPageContext() {
 
 /**
  * Sæt side-kontekst fra en page-komponent. Kald i en useEffect når data loader.
- * Data ryddes automatisk ved navigation.
+ *
+ * BIZZ-985: Data er nu sticky — nye felter merger ind i eksisterende kontekst.
+ * Kald med `null` for at rydde alt.
  *
  * @example
  * const setAICtx = useSetAIPageContext();
@@ -179,4 +203,13 @@ export function useAIPageContext() {
 export function useSetAIPageContext() {
   const { setPageData } = useContext(AIPageContext);
   return setPageData;
+}
+
+/**
+ * BIZZ-985: Eksplicit rydning af al AI-kontekst.
+ * Bruges f.eks. af en "ryd kontekst"-knap i AIChatPanel.
+ */
+export function useClearAIPageContext() {
+  const { clearPageData } = useContext(AIPageContext);
+  return clearPageData;
 }

@@ -85,11 +85,34 @@ export default function PropertyOwnerDiagram({
         r.ok ? r.json() : null
       ),
     ])
-      .then(([chainRes, adminRes]) => {
+      .then(async ([chainRes, adminRes]) => {
         const data = chainRes.status === 'fulfilled' ? chainRes.value : null;
         const adminData = adminRes.status === 'fulfilled' ? adminRes.value : null;
         if (!data) return;
         setChainFejl((data.fejl as string | null) ?? null);
+
+        // BIZZ-973: Resolver CVR-navne for administratorer der mangler navn
+        if (adminData?.administratorer) {
+          const nameless = (
+            adminData.administratorer as Array<{ cvr: string | null; navn: string | null }>
+          ).filter((a) => a.cvr && !a.navn);
+          if (nameless.length > 0) {
+            await Promise.allSettled(
+              nameless.map(async (a) => {
+                try {
+                  const r = await fetch(`/api/cvr-public?vat=${a.cvr}`, {
+                    signal: controller.signal,
+                  });
+                  if (!r.ok) return;
+                  const d = await r.json();
+                  if (d.name) a.navn = d.name;
+                } catch {
+                  /* non-fatal */
+                }
+              })
+            );
+          }
+        }
         if (data.nodes?.length > 0) {
           const baseNodes = data.nodes.map((n: Record<string, unknown>) => ({
             id: n.id as string,
@@ -110,13 +133,20 @@ export default function PropertyOwnerDiagram({
           // til admin — personallyOwned-flaget genbruges som indikator for
           // ikke-ejer-relation (stiplet edge).
           const admins = adminData?.administratorer ?? [];
+          // BIZZ-973: Filtrer til aktive administratorer — tjek BÅDE
+          // virkningTil OG status (historisk status med virkningTil=null er en bug i data)
           const aktuelleAdmins = admins.filter(
             (a: {
               virkningTil: string | null;
               type: string;
               navn: string | null;
               cvr: string | null;
-            }) => a.virkningTil === null && a.type !== 'ukendt' && (a.navn || a.cvr)
+              status?: string;
+            }) =>
+              a.virkningTil === null &&
+              a.type !== 'ukendt' &&
+              (a.status === 'gældende' || !a.status) &&
+              (a.navn || a.cvr)
           );
           const mainNodeId = data.mainId as string;
           const adminNodes: typeof baseNodes = [];

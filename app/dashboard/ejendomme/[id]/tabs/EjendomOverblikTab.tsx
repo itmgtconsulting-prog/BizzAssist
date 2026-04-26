@@ -28,6 +28,7 @@ import type { ForelobigVurdering } from '@/app/api/vurdering-forelobig/route';
 import type { DawaAdresse, DawaJordstykke } from '@/app/lib/dawa';
 import type { CVRVirksomhed } from '@/app/api/cvr/route';
 import OmraadeProfilSektion from '@/app/components/ejendomme/OmraadeProfilSektion';
+import StoejBadge from '@/app/components/ejendomme/StoejBadge';
 import type { Ejerlejlighed } from '@/app/api/ejerlejligheder/route';
 
 interface TinglysningSnapshot {
@@ -727,6 +728,8 @@ export default function EjendomOverblikTab({
           </div>
         </div>
       )}
+      {/* BIZZ-961: Støjniveau-badge */}
+      <StoejBadge lat={dawaAdresse?.y ?? null} lng={dawaAdresse?.x ?? null} lang={lang} />
       {/* BIZZ-947: Områdeprofil fra Danmarks Statistik */}
       <OmraadeProfilSektion kommunekode={kommunekode ?? null} lang={lang} />
     </div>

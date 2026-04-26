@@ -19,7 +19,7 @@
 
 'use client';
 
-import { Info, Landmark } from 'lucide-react';
+import { Info, Landmark, Sparkles } from 'lucide-react';
 import SektionLoader from '@/app/components/SektionLoader';
 import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
 import { formatDKK } from '@/app/lib/mock/ejendomme';
@@ -126,6 +126,23 @@ export default function EjendomSkatTab({
 
           return (
             <div className="space-y-4">
+              {/* BIZZ-956: Forklar min vurdering-knap */}
+              <button
+                type="button"
+                onClick={() => {
+                  const prompt = da
+                    ? 'Forklar min ejendomsvurdering i klart sprog — grundværdi, ejendomsværdi, skatteberegning, skatteloft og eventuelle fradrag.'
+                    : 'Explain my property valuation in plain language — land value, property value, tax calculation, tax ceiling and any deductions.';
+                  window.dispatchEvent(
+                    new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt } })
+                  );
+                }}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 text-blue-300 text-sm transition-colors"
+              >
+                <Sparkles size={14} />
+                {da ? 'Forklar min vurdering' : 'Explain my valuation'}
+              </button>
+
               {/* ── {t.currentTaxation} (nyeste foreløbige) ── */}
               {nyeste && (
                 <div>

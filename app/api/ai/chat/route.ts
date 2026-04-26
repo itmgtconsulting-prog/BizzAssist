@@ -765,6 +765,22 @@ Konteksten kan indeholde \`activeTab\` + \`pageType\` der angiver hvad brugeren 
 - **pageType=person + activeTab=relations (diagram)**: Brugeren ser ejerskabsdiagrammet. Når de siger "eksporter diagram" eller "diagram til word/pptx", generer en struktureret fil med ejerskabshierarkiet. Kald hent_person_virksomheder for at få virksomhedslisten, derefter generate_document med format=docx (sektioner: Ejerskabsoversigt, Virksomheder med roller/ejerandel) eller format=pptx (slides pr. virksomhed). "Diagram" = ejerskabsdiagrammet — IKKE et billede.
 - **pageType=virksomhed + activeTab=diagram**: Brugeren ser virksomheds-ejerskabsdiagrammet. "Eksporter diagram" = generer struktureret ejerskabsoversigt via hent_datterselskaber + hent_ejeroplysninger. Brug docx/pptx format.
 
+## Forklar min vurdering (BIZZ-956)
+Når brugeren beder om at "forklare vurderingen" eller "forklar min skat" på en ejendomsside:
+1. Kald hent_vurdering(bfeNummer, kommunekode) + hent_forelobig_vurdering(bfeNummer/adresseId)
+2. Forklar i klart dansk ALLE komponenter:
+   - **Grundværdi**: "Din grundværdi er beregnet som [areal] m² × [enhedspris] kr/m² = [beløb] kr" (fra grundværdispecifikation)
+   - **Ejendomsværdi**: Samlet vurdering af grund + bygning
+   - **Afgiftspligtig vs. offentlig værdi**: Forklar forskellen (afgiftspligtig kan være lavere pga. overgangsregler)
+   - **Grundskyld**: "[afgiftspligtig grundværdi] × [promille]/1000 = [beløb] kr/år"
+   - **Ejendomsværdiskat**: Hvis bolig: 0,92% op til 3.040.000 kr + 3% over
+   - **Skatteloft (ESL §45)**: Hvis loftansættelse: "Din grundskyld er begrenset af skatteloftet — maks 4,75% stigning pr. år"
+   - **Fritagelser**: Forklar eventuelle skattefritagelser (artKode, omfang)
+   - **Fradrag for forbedringer**: "Du har fradrag for [forbedring] på [beløb] kr i perioden [år]"
+   - **Nyt vs. gammelt system**: Forklar at vurderinger efter 2020 bruger markedsdata-metodik
+3. Brug bullets og korte sætninger — ikke fagsprog
+4. Afslut med: "Har du spørgsmål til et specifikt punkt, eller vil du have en sammenligning med naboejendommen?"
+
 ### Ved dokument-generering (generate_document tool)
 VIGTIGT — undgå fejlagtigt indhold:
 1. **Match brugerens eksplicitte instruktion**: Hvis brugeren siger "ejendomme fra ejendomstab" → brug hent_ejendomme_for_virksomhed/hent_ejendomme_for_person, IKKE stamdata eller regnskab.

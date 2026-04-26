@@ -127,22 +127,39 @@ export default function EjendomSkatTab({
 
           return (
             <div className="space-y-4">
-              {/* BIZZ-956: Forklar min vurdering-knap */}
-              <button
-                type="button"
-                onClick={() => {
-                  const prompt = da
-                    ? 'Forklar min ejendomsvurdering i klart sprog — grundværdi, ejendomsværdi, skatteberegning, skatteloft og eventuelle fradrag.'
-                    : 'Explain my property valuation in plain language — land value, property value, tax calculation, tax ceiling and any deductions.';
-                  window.dispatchEvent(
-                    new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt } })
-                  );
-                }}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 text-blue-300 text-sm transition-colors"
-              >
-                <Sparkles size={14} />
-                {da ? 'Forklar min vurdering' : 'Explain my valuation'}
-              </button>
+              {/* BIZZ-956 + BIZZ-959: Vurderings-actions */}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const prompt = da
+                      ? 'Forklar min ejendomsvurdering i klart sprog — grundværdi, ejendomsværdi, skatteberegning, skatteloft og eventuelle fradrag.'
+                      : 'Explain my property valuation in plain language — land value, property value, tax calculation, tax ceiling and any deductions.';
+                    window.dispatchEvent(
+                      new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt } })
+                    );
+                  }}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 text-blue-300 text-sm transition-colors"
+                >
+                  <Sparkles size={14} />
+                  {da ? 'Forklar min vurdering' : 'Explain my valuation'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const prompt = da
+                      ? 'Generer en komplet vurderingsrapport som Word-fil for denne ejendom. Inkluder: ejendomsidentifikation, aktuel vurdering, grundværdispecifikation, skatteberegning, skatteloft, fritagelser, fradrag og vurderingshistorik.'
+                      : 'Generate a complete valuation report as a Word file for this property. Include: property identification, current valuation, land value specification, tax calculation, tax ceiling, exemptions, deductions and valuation history.';
+                    window.dispatchEvent(
+                      new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt } })
+                    );
+                  }}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-300 text-sm transition-colors"
+                >
+                  <Landmark size={14} />
+                  {da ? 'Download vurderingsrapport' : 'Download valuation report'}
+                </button>
+              </div>
 
               {/* BIZZ-957: Step-by-step skatteberegning */}
               <SkatteberegningFlow

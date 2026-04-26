@@ -750,15 +750,28 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
    */
   useEffect(() => {
     if (!data) return;
+    // BIZZ-941: Send pre-loaded ejendomme så AI ikke re-fetcher dem.
+    const preloadedEjendomme = ejendommeFetchComplete
+      ? ejendommeData
+          .filter((e) => e.aktiv !== false)
+          .slice(0, 50)
+          .map((e) => ({
+            bfe: e.bfeNummer,
+            adresse: e.adresse ?? null,
+            type: e.ejendomstype ?? null,
+            ejerandel: e.ejerandel ?? null,
+          }))
+      : undefined;
+
     setAICtx({
       cvrNummer: String(data.vat),
       virksomhedNavn: data.name,
-      // BIZZ-874: Send aktiv tab + pageType så AI kan matche brugerens
-      // "oversigt tab" / "ejendomme tab"-referencer til rigtige tools.
       pageType: 'virksomhed',
       activeTab: aktivTab,
+      preloadedEjendomme,
+      ejendommeTotal: ejendommeFetchComplete ? ejendommeTotalBfe : undefined,
     });
-  }, [data, aktivTab, setAICtx]);
+  }, [data, aktivTab, ejendommeData, ejendommeFetchComplete, ejendommeTotalBfe, setAICtx]);
 
   /**
    * Lazy-loader regnskabsdata når bruger klikker på Regnskab-tab.

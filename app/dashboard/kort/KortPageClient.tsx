@@ -295,7 +295,9 @@ type LagNøgle =
   | 'raastof'
   | 'indsatsplaner'
   | 'omr_klassificering'
-  | 'jordforurening';
+  | 'jordforurening'
+  | 'stoej_vej'
+  | 'stoej_tog';
 
 /** Synlighedstilstand for alle lag */
 type LagSynlighed = Record<LagNøgle, boolean>;
@@ -329,6 +331,8 @@ const LAG_START: LagSynlighed = {
   indsatsplaner: false,
   omr_klassificering: false,
   jordforurening: false,
+  stoej_vej: false,
+  stoej_tog: false,
 };
 
 /** WMS-lag definition — kilde, URL og standard opacity */
@@ -346,7 +350,7 @@ interface WmsLagDef {
  * @param service - 'plandata' eller 'miljo' (whitelistet i /api/wms)
  * @param layers  - Kommasepareret WMS LAYERS-parameter
  */
-function wmsUrl(service: 'plandata' | 'miljo', layers: string): string {
+function wmsUrl(service: 'plandata' | 'miljo' | 'miljoegis', layers: string): string {
   return (
     `/api/wms?service=${service}` +
     `&SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap` +
@@ -437,6 +441,17 @@ const WMS_LAG: WmsLagDef[] = [
   { id: 'omr_klassificering', wmsUrl: wmsUrl('miljo', 'dai:omr_klassificering'), opacity: 0.6 },
   // ── Jordforurening (Miljøportal) ──
   { id: 'jordforurening', wmsUrl: wmsUrl('miljo', 'dai:Jordforurening'), opacity: 0.7 },
+  // ── BIZZ-961: Støjkort (Miljøstyrelsen GIS) ──
+  {
+    id: 'stoej_vej',
+    wmsUrl: wmsUrl('miljoegis', 'theme-dk_noise2022_vej_1_5m'),
+    opacity: 0.65,
+  },
+  {
+    id: 'stoej_tog',
+    wmsUrl: wmsUrl('miljoegis', 'theme-dk_noise2022_jernbane_1_5m'),
+    opacity: 0.65,
+  },
 ];
 
 /** Farveaccenter til gruppeoverskrifter */
@@ -514,6 +529,14 @@ const LAG_GRUPPER: Array<{
       { id: 'raastof', navn: 'Råstofområder' },
       { id: 'indsatsplaner', navn: 'Indsatsplaner' },
       { id: 'omr_klassificering', navn: 'Områdeklassificering' },
+    ],
+  },
+  {
+    navn: 'Støj & Klimarisiko',
+    farve: 'orange',
+    lag: [
+      { id: 'stoej_vej', navn: 'Vejstøj (Lden dB)' },
+      { id: 'stoej_tog', navn: 'Jernbanestøj (Lden dB)' },
     ],
   },
 ];

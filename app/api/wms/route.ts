@@ -26,8 +26,8 @@ export const runtime = 'nodejs';
 // ─── Query param validation ─────────────────────────────────────────────────
 
 const wmsQuerySchema = z.object({
-  service: z.enum(['plandata', 'miljo'], {
-    error: 'service skal være plandata eller miljo',
+  service: z.enum(['plandata', 'miljo', 'miljoegis'], {
+    error: 'service skal være plandata, miljo eller miljoegis',
   }),
 });
 
@@ -40,6 +40,8 @@ const wmsQuerySchema = z.object({
 const WMS_BASES = {
   plandata: 'https://geoserver.plandata.dk/geoserver/wms',
   miljo: 'https://arealeditering-dist-geo.miljoeportal.dk/geoserver/ows',
+  // BIZZ-961: Miljøstyrelsen GIS — støjkort og naturbeskyttelse
+  miljoegis: 'https://tilecache2-miljoegis.mim.dk/gwc/service/wms',
 } as const;
 
 /** @internal Used by Zod schema enum — kept for type documentation */

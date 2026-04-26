@@ -26,8 +26,8 @@ export const runtime = 'nodejs';
 // ─── Query param validation ─────────────────────────────────────────────────
 
 const wmsQuerySchema = z.object({
-  service: z.enum(['plandata', 'miljo', 'miljoegis'], {
-    error: 'service skal være plandata, miljo eller miljoegis',
+  service: z.enum(['plandata', 'miljo', 'miljoegis', 'dhm'], {
+    error: 'service skal være plandata, miljo, miljoegis eller dhm',
   }),
 });
 
@@ -42,6 +42,8 @@ const WMS_BASES = {
   miljo: 'https://arealeditering-dist-geo.miljoeportal.dk/geoserver/ows',
   // BIZZ-961: Miljøstyrelsen GIS — støjkort og naturbeskyttelse
   miljoegis: 'https://tilecache2-miljoegis.mim.dk/gwc/service/wms',
+  // BIZZ-948: Danmarks Højdemodel — oversvømmelseskort (havvand + skybrud)
+  dhm: 'https://api.dataforsyningen.dk/wms/dhm',
 } as const;
 
 /** @internal Used by Zod schema enum — kept for type documentation */
@@ -65,6 +67,16 @@ export async function GET(request: NextRequest): Promise<Response> {
   const wmsParams = new URLSearchParams();
   for (const [key, value] of request.nextUrl.searchParams.entries()) {
     if (key !== 'service') wmsParams.set(key, value);
+  }
+
+  // BIZZ-948: Dataforsyningen kræver API-token i URL
+  if (service === 'dhm') {
+    const token = process.env.DATAFORSYNINGEN_TOKEN;
+    if (!token) {
+      logger.warn('[wms] DATAFORSYNINGEN_TOKEN ikke konfigureret');
+      return new Response(null, { status: 503 });
+    }
+    wmsParams.set('token', token);
   }
 
   const url = `${WMS_BASES[service]}?${wmsParams.toString()}`;

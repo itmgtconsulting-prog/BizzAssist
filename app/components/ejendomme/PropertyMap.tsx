@@ -195,7 +195,9 @@ type OverlayNøgle =
   | 'bnbo'
   | 'raastof'
   | 'indsatsplaner'
-  | 'omr_klassificering';
+  | 'omr_klassificering'
+  | 'havvand_1m'
+  | 'skybrud';
 
 /**
  * Bygger en WMS tile-URL via server-side proxy (/api/wms).
@@ -205,7 +207,7 @@ type OverlayNøgle =
  * @param service - 'plandata' eller 'miljo' (whitelistet i /api/wms)
  * @param layers  - Kommasepareret WMS LAYERS-parameter
  */
-function buildWmsUrl(service: 'plandata' | 'miljo', layers: string): string {
+function buildWmsUrl(service: 'plandata' | 'miljo' | 'miljoegis' | 'dhm', layers: string): string {
   return (
     `/api/wms?service=${service}` +
     `&SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap` +
@@ -392,6 +394,21 @@ const OVERLAY_WMS: Array<{
     opacity: 0.6,
     farveClass: 'bg-pink-600 border-pink-600',
   },
+  // ── Klimarisiko (Dataforsyningen DHM) ──
+  {
+    id: 'havvand_1m',
+    navn: 'Havvand +1 m',
+    url: buildWmsUrl('dhm', 'havvandpaaland_1'),
+    opacity: 0.55,
+    farveClass: 'bg-sky-500 border-sky-500',
+  },
+  {
+    id: 'skybrud',
+    navn: 'Skybrud (bluespot)',
+    url: buildWmsUrl('dhm', 'dhm_bluespot_ekstremregn'),
+    opacity: 0.55,
+    farveClass: 'bg-sky-700 border-sky-700',
+  },
 ];
 
 /** Standard synlighedstilstand — matrikel til, alle WMS-lag fra */
@@ -420,6 +437,8 @@ const OVERLAY_START: Record<OverlayNøgle, boolean> = {
   raastof: false,
   indsatsplaner: false,
   omr_klassificering: false,
+  havvand_1m: false,
+  skybrud: false,
 };
 
 /**
@@ -1575,6 +1594,11 @@ function PropertyMap({
                     label: 'Grundvand & Ressourcer',
                     klasse: 'text-rose-400',
                     ids: ['bnbo', 'raastof', 'indsatsplaner', 'omr_klassificering'],
+                  },
+                  {
+                    label: 'Klimarisiko',
+                    klasse: 'text-sky-400',
+                    ids: ['havvand_1m', 'skybrud'],
                   },
                 ].map((gruppe) => (
                   <div key={gruppe.label}>

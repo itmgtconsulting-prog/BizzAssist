@@ -297,7 +297,9 @@ type LagNøgle =
   | 'omr_klassificering'
   | 'jordforurening'
   | 'stoej_vej'
-  | 'stoej_tog';
+  | 'stoej_tog'
+  | 'havvand_1m'
+  | 'skybrud';
 
 /** Synlighedstilstand for alle lag */
 type LagSynlighed = Record<LagNøgle, boolean>;
@@ -333,6 +335,8 @@ const LAG_START: LagSynlighed = {
   jordforurening: false,
   stoej_vej: false,
   stoej_tog: false,
+  havvand_1m: false,
+  skybrud: false,
 };
 
 /** WMS-lag definition — kilde, URL og standard opacity */
@@ -350,7 +354,7 @@ interface WmsLagDef {
  * @param service - 'plandata' eller 'miljo' (whitelistet i /api/wms)
  * @param layers  - Kommasepareret WMS LAYERS-parameter
  */
-function wmsUrl(service: 'plandata' | 'miljo' | 'miljoegis', layers: string): string {
+function wmsUrl(service: 'plandata' | 'miljo' | 'miljoegis' | 'dhm', layers: string): string {
   return (
     `/api/wms?service=${service}` +
     `&SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap` +
@@ -452,6 +456,17 @@ const WMS_LAG: WmsLagDef[] = [
     wmsUrl: wmsUrl('miljoegis', 'theme-dk_noise2022_jernbane_1_5m'),
     opacity: 0.65,
   },
+  // ── BIZZ-948: Oversvømmelseskort (Dataforsyningen DHM) ──
+  {
+    id: 'havvand_1m',
+    wmsUrl: wmsUrl('dhm', 'havvandpaaland_1'),
+    opacity: 0.55,
+  },
+  {
+    id: 'skybrud',
+    wmsUrl: wmsUrl('dhm', 'dhm_bluespot_ekstremregn'),
+    opacity: 0.55,
+  },
 ];
 
 /** Farveaccenter til gruppeoverskrifter */
@@ -537,6 +552,8 @@ const LAG_GRUPPER: Array<{
     lag: [
       { id: 'stoej_vej', navn: 'Vejstøj (Lden dB)' },
       { id: 'stoej_tog', navn: 'Jernbanestøj (Lden dB)' },
+      { id: 'havvand_1m', navn: 'Havvand +1 m (stormflod)' },
+      { id: 'skybrud', navn: 'Skybrud (bluespot)' },
     ],
   },
 ];

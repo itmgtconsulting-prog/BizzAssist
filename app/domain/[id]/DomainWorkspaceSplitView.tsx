@@ -32,7 +32,6 @@ import {
   Building2,
   User,
   Upload,
-  Maximize2,
   FileText,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
@@ -773,17 +772,7 @@ export function DomainWorkspaceSplitView({
                   </span>
                 )}
               </button>
-              {/* BIZZ-883: Expand-knap giver fokuseret arbejde med én sag —
-                  samme destination som eksisterende "Åbn i fuld visning"-link
-                  i bunden, men synlig i header. */}
-              <Link
-                href={`/domain/${domainId}/case/${selectedCaseId}`}
-                aria-label={da ? 'Åbn i fuld visning' : 'Open in full view'}
-                title={da ? 'Åbn i fuld visning' : 'Open in full view'}
-                className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shrink-0"
-              >
-                <Maximize2 size={12} />
-              </Link>
+              {/* BIZZ-984: Expand-knap fjernet — sager vises kun i split-view */}
               <button
                 type="button"
                 onClick={() => setEditing(true)}
@@ -1012,12 +1001,7 @@ export function DomainWorkspaceSplitView({
                   </ul>
                 )}
               </div>
-              <Link
-                href={`/domain/${domainId}/case/${selectedCaseId}`}
-                className="inline-flex items-center gap-1 text-xs text-blue-300 hover:text-blue-200"
-              >
-                {da ? 'Åbn i fuld visning →' : 'Open in full view →'}
-              </Link>
+              {/* BIZZ-984: "Åbn i fuld visning"-link fjernet — sager vises kun i split-view */}
             </>
           )}
 

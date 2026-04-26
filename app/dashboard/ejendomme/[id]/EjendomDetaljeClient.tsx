@@ -30,6 +30,7 @@ import {
   BarChart3,
   Map as MapIcon,
   Briefcase,
+  RefreshCw,
 } from 'lucide-react';
 /** BIZZ-600: PropertyMap wraps mapbox-gl (browser-only) — dynamic() keeps mapbox-gl out of initial bundle */
 // prettier-ignore
@@ -73,6 +74,7 @@ import EjendomDokumenterTab from './tabs/EjendomDokumenterTab';
 import EjendomEjerforholdTab from './tabs/EjendomEjerforholdTab';
 import EjendomOekonomiTab from './tabs/EjendomOekonomiTab';
 import EjendomBBRTab from './tabs/EjendomBBRTab';
+import DataFreshnessBadge from '@/app/components/DataFreshnessBadge';
 import EjendomOverblikTab from './tabs/EjendomOverblikTab';
 // BIZZ-583: Administrator-kort bruges nu kun via EjendomEjerforholdTab — import fjernet fra master.
 // BIZZ-601: DiagramForce + DiagramGraph-type var kun brugt i
@@ -378,6 +380,12 @@ export default function EjendomDetaljeClient({
   const [bbrData, setBbrData] = useState<EjendomApiResponse | null>(prefetched?.bbrData ?? null);
   /** True mens BBR-data hentes */
   const [bbrLoader, setBbrLoader] = useState(false);
+  /** BIZZ-919: Cache-metadata fra BBR API-response */
+  const [bbrFromCache, setBbrFromCache] = useState(false);
+  const [bbrSyncedAt, setBbrSyncedAt] = useState<string | null>(null);
+  const [bbrRefreshing, setBbrRefreshing] = useState(false);
+  /** BIZZ-919: Incrementing key triggers BBR data re-fetch */
+  const [bbrRefreshKey, setBbrRefreshKey] = useState(0);
 
   /** Tinglysningsdata — tinglyst areal, fordelingstal, ejerlejlighedsnr */
   const [tinglysningData, setTinglysningData] = useState<{
@@ -722,13 +730,20 @@ export default function EjendomDetaljeClient({
    */
   useEffect(() => {
     if (!erDAWA || dawaStatus !== 'ok') return;
-    // Skip BBR fetch hvis server-side prefetch allerede leverede data
-    if (prefetched?.bbrData) return;
+    // Skip BBR fetch hvis server-side prefetch allerede leverede data (undtagen ved refresh)
+    if (prefetched?.bbrData && bbrRefreshKey === 0) return;
     const controller = new AbortController();
     setBbrLoader(true);
     fetch(`/api/ejendom/${id}`, { signal: controller.signal })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data: EjendomApiResponse | null) => {
+      .then((r) => {
+        // BIZZ-919: Læs cache-metadata fra API-response headers
+        const cacheHit = r.headers.get('X-Cache-Hit');
+        const synced = r.headers.get('X-Synced-At');
+        setBbrFromCache(cacheHit === 'true');
+        setBbrSyncedAt(synced);
+        return r.ok ? (r.json() as Promise<EjendomApiResponse>) : null;
+      })
+      .then((data) => {
         if (controller.signal.aborted) return;
         setBbrData(data);
       })
@@ -738,11 +753,20 @@ export default function EjendomDetaljeClient({
         setBbrData(null);
       })
       .finally(() => {
-        if (!controller.signal.aborted) setBbrLoader(false);
+        if (!controller.signal.aborted) {
+          setBbrLoader(false);
+          setBbrRefreshing(false);
+        }
       });
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, erDAWA, dawaStatus]);
+  }, [id, erDAWA, dawaStatus, bbrRefreshKey]);
+
+  /** BIZZ-919: Force-refresh — inkrementer bbrRefreshKey for at gen-trigge BBR useEffect */
+  const handleBbrRefresh = useCallback(() => {
+    setBbrRefreshing(true);
+    setBbrRefreshKey((k) => k + 1);
+  }, []);
 
   /**
    * Henter tinglysningsdata (tinglyst areal, ejerlejlighedsnr, fordelingstal) når BFE er klar.
@@ -2022,6 +2046,17 @@ export default function EjendomDetaljeClient({
                     {t.groundRent}
                   </span>
                 )}
+                {/* BIZZ-919: Data freshness badge + refresh */}
+                <DataFreshnessBadge fromCache={bbrFromCache} syncedAt={bbrSyncedAt} lang={lang} />
+                <button
+                  onClick={handleBbrRefresh}
+                  disabled={bbrRefreshing}
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] text-slate-400 hover:text-blue-400 bg-slate-700/30 border border-slate-700/40 hover:border-blue-500/30 transition-colors disabled:opacity-50"
+                  aria-label={lang === 'da' ? 'Genindlæs data' : 'Refresh data'}
+                  title={lang === 'da' ? 'Genindlæs data' : 'Refresh data'}
+                >
+                  <RefreshCw size={9} className={bbrRefreshing ? 'animate-spin' : ''} />
+                </button>
               </div>
             </div>
 

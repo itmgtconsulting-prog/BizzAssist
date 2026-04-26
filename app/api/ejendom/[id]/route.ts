@@ -88,7 +88,10 @@ export async function GET(
       { dawaId: id, ...result },
       {
         status: 200,
-        headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
+        headers: {
+          'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600',
+          'X-Cache-Hit': 'false',
+        },
       }
     );
   } catch (err) {

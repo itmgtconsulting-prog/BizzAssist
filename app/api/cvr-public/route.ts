@@ -1414,7 +1414,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<CVRPublicData 
       const { fetchCvrFromCache } = await import('@/app/lib/cvrIngest');
       const cached = await fetchCvrFromCache(admin, vat);
       if (cached) {
-        const fakeHit = { _source: { Vrvirksomhed: cached } };
+        const fakeHit = { _source: { Vrvirksomhed: cached.raw } };
         let mapped = mapESHit(fakeHit);
 
         // BIZZ-680: Hvis mapESHit returnerede fallback-navn (CVR NNNNNNNN)
@@ -1433,6 +1433,8 @@ export async function GET(req: NextRequest): Promise<NextResponse<CVRPublicData 
             headers: {
               'Cache-Control': `public, s-maxage=${cacheTime}, stale-while-revalidate=600`,
               'x-cvr-source': 'cache',
+              'X-Cache-Hit': 'true',
+              'X-Synced-At': cached.syncedAt,
             },
           });
         }
@@ -1511,6 +1513,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<CVRPublicData 
         headers: {
           'Cache-Control': `public, s-maxage=${cacheTime}, stale-while-revalidate=600`,
           'x-cvr-source': 'live',
+          'X-Cache-Hit': 'false',
         },
       });
     }
@@ -1526,7 +1529,10 @@ export async function GET(req: NextRequest): Promise<NextResponse<CVRPublicData 
     mapped.productionunits = await fetchProduktionsenheder(mapped.vat, auth);
 
     return NextResponse.json(mapped, {
-      headers: { 'Cache-Control': `public, s-maxage=${cacheTime}, stale-while-revalidate=600` },
+      headers: {
+        'Cache-Control': `public, s-maxage=${cacheTime}, stale-while-revalidate=600`,
+        'X-Cache-Hit': 'false',
+      },
     });
   } catch (err) {
     logger.error('[cvr-public] Error:', err instanceof Error ? err.message : err);

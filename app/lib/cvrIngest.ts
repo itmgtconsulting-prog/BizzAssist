@@ -258,7 +258,7 @@ export async function fetchCvrFromCache(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   admin: any,
   cvr: string
-): Promise<Record<string, unknown> | null> {
+): Promise<{ raw: Record<string, unknown>; syncedAt: string } | null> {
   const maxAgeMs = CVR_CACHE_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
   const minFreshness = new Date(Date.now() - maxAgeMs).toISOString();
 
@@ -274,8 +274,13 @@ export async function fetchCvrFromCache(
     return null;
   }
   if (!data) return null;
-  const raw = (data as { raw_source?: Record<string, unknown> | null }).raw_source;
-  return raw ?? null;
+  const row = data as {
+    raw_source?: Record<string, unknown> | null;
+    sidst_hentet_fra_cvr?: string;
+  };
+  const raw = row.raw_source;
+  if (!raw) return null;
+  return { raw, syncedAt: row.sidst_hentet_fra_cvr ?? new Date().toISOString() };
 }
 
 /**

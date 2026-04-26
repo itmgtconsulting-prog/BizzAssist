@@ -19,6 +19,7 @@
 import Link from 'next/link';
 import { ChevronRight, TrendingUp } from 'lucide-react';
 import SektionLoader from '@/app/components/SektionLoader';
+import VurderingSammenligning from '@/app/components/ejendomme/VurderingSammenligning';
 import { formatDKK } from '@/app/lib/mock/ejendomme';
 import { getHandelstypeInfo, handelstypeBadgeClasses } from '@/app/lib/ejfKoder';
 import type { VurderingData, VurderingResponse } from '@/app/api/vurdering/route';
@@ -82,6 +83,8 @@ interface Props {
   opdeltIEjerlejligheder?: boolean;
   /** BIZZ-860: Antal komponenter (ejerlejligheder) — vises i forklaring */
   lejlighederCount?: number;
+  /** BIZZ-958: Postnummer til vurdering-sammenligning benchmark */
+  postnr?: string | null;
 }
 
 /** Render Økonomi-fanen. Ren præsentations-komponent. */
@@ -105,6 +108,7 @@ export default function EjendomOekonomiTab(props: Props) {
     bbrData,
     opdeltIEjerlejligheder,
     lejlighederCount,
+    postnr,
   } = props;
   const da = lang === 'da';
 
@@ -642,6 +646,17 @@ export default function EjendomOekonomiTab(props: Props) {
             </div>
           )}
         </div>
+      )}
+
+      {/* BIZZ-958: Vurdering sammenligning — benchmark mod postnummer */}
+      {postnr && vurdering && !opdeltIEjerlejligheder && (
+        <VurderingSammenligning
+          postnr={postnr}
+          ejendomsvaerdi={vurdering.ejendomsvaerdi}
+          grundvaerdi={vurdering.grundvaerdi}
+          areal={vurdering.vurderetAreal}
+          lang={lang}
+        />
       )}
 
       {/* Hæftelser fjernet — vises nu under Tinglysning-tab */}

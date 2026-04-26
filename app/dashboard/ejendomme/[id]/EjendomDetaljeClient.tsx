@@ -2293,6 +2293,7 @@ export default function EjendomDetaljeClient({
                   matrikelData?.opdeltIEjerlejligheder ?? bbrData?.opdeltIEjerlejligheder ?? false
                 }
                 lejlighederCount={lejligheder?.length ?? 0}
+                postnr={dawaAdresse?.postnr ?? null}
               />
             )}
 

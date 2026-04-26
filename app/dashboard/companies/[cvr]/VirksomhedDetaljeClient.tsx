@@ -45,6 +45,7 @@ import {
   Sparkles,
   Lock,
   Zap,
+  RefreshCw,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { useSetAIPageContext } from '@/app/context/AIPageContext';
@@ -72,6 +73,7 @@ import type { DiagramPropertySummary } from '@/app/components/diagrams/DiagramDa
 import dynamic from 'next/dynamic';
 import VerifiedLinks from '@/app/components/VerifiedLinks';
 import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
+import DataFreshnessBadge from '@/app/components/DataFreshnessBadge';
 import VirksomhedOverblikTab from './tabs/VirksomhedOverblikTab';
 import VirksomhedEjendommeTab from './tabs/VirksomhedEjendommeTab';
 import VirksomhedGruppeTab from './tabs/VirksomhedGruppeTab';
@@ -316,6 +318,12 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   const [data, setData] = useState<CVRPublicData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /** BIZZ-919: Cache-metadata fra primær API-response */
+  const [cacheFromCache, setCacheFromCache] = useState(false);
+  const [cacheSyncedAt, setCacheSyncedAt] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  /** BIZZ-919: Incrementing key triggers data re-fetch */
+  const [refreshKey, setRefreshKey] = useState(0);
   const [aktivTab, setAktivTab] = useState<TabId>('overview');
   const [erFulgt, setErFulgt] = useState(false);
   // BIZZ-808: Opret sag-modal state
@@ -711,6 +719,12 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
         const company = json as CVRPublicData;
         setData(company);
 
+        // BIZZ-919: Læs cache-metadata fra API-response headers
+        const cacheHit = res.headers?.get?.('X-Cache-Hit');
+        const synced = res.headers?.get?.('X-Synced-At');
+        setCacheFromCache(cacheHit === 'true');
+        setCacheSyncedAt(synced ?? null);
+
         // Gem i seneste besøgte — kun ved faktisk åbning af detaljesiden
         saveRecentCompany({
           cvr: company.vat,
@@ -742,7 +756,18 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cvr, lang]);
+  }, [cvr, lang, refreshKey]);
+
+  /** BIZZ-919: Force-refresh — inkrementer refreshKey for at gen-trigge useEffect */
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    setRefreshKey((k) => k + 1);
+  }, []);
+
+  /** BIZZ-919: Nulstil refreshing-spinner når loading afsluttes */
+  useEffect(() => {
+    if (!loading && refreshing) setRefreshing(false);
+  }, [loading, refreshing]);
 
   /**
    * Sæt AI-kontekst når virksomhedsdata er loadet.
@@ -1773,6 +1798,17 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                   {data.employees} {c.employeesShort}
                 </span>
               )}
+              {/* BIZZ-919: Data freshness badge + refresh */}
+              <DataFreshnessBadge fromCache={cacheFromCache} syncedAt={cacheSyncedAt} lang={lang} />
+              <button
+                onClick={handleRefresh}
+                disabled={refreshing}
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] text-slate-400 hover:text-blue-400 bg-slate-700/30 border border-slate-700/40 hover:border-blue-500/30 transition-colors disabled:opacity-50"
+                aria-label={lang === 'da' ? 'Genindlæs data' : 'Refresh data'}
+                title={lang === 'da' ? 'Genindlæs data' : 'Refresh data'}
+              >
+                <RefreshCw size={9} className={refreshing ? 'animate-spin' : ''} />
+              </button>
             </div>
           </div>
 

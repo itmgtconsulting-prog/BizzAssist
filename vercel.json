@@ -18,7 +18,7 @@
     },
     {
       "path": "/api/cron/pull-bbr-events",
-      "schedule": "0 */6 * * *"
+      "schedule": "0 3 * * *"
     },
     {
       "path": "/api/cron/deep-scan",
@@ -75,6 +75,10 @@
     {
       "path": "/api/cron/refresh-deltager-berigelse",
       "schedule": "15 4 * * *"
+    },
+    {
+      "path": "/api/cron/refresh-materialized-views",
+      "schedule": "0 5 * * *"
     }
   ]
 }

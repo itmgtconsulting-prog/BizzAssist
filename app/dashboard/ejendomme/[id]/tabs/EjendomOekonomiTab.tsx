@@ -20,6 +20,7 @@ import Link from 'next/link';
 import { ChevronRight, TrendingUp } from 'lucide-react';
 import SektionLoader from '@/app/components/SektionLoader';
 import VurderingSammenligning from '@/app/components/ejendomme/VurderingSammenligning';
+import KommuneStatistikWidget from '@/app/components/analyse/KommuneStatistikWidget';
 import { formatDKK } from '@/app/lib/mock/ejendomme';
 import { getHandelstypeInfo, handelstypeBadgeClasses } from '@/app/lib/ejfKoder';
 import type { VurderingData, VurderingResponse } from '@/app/api/vurdering/route';
@@ -85,6 +86,8 @@ interface Props {
   lejlighederCount?: number;
   /** BIZZ-958: Postnummer til vurdering-sammenligning benchmark */
   postnr?: string | null;
+  /** BIZZ-920: Kommunekode til krydsanalyse-widget */
+  kommunekode?: string | null;
 }
 
 /** Render Økonomi-fanen. Ren præsentations-komponent. */
@@ -109,6 +112,7 @@ export default function EjendomOekonomiTab(props: Props) {
     opdeltIEjerlejligheder,
     lejlighederCount,
     postnr,
+    kommunekode,
   } = props;
   const da = lang === 'da';
 
@@ -658,6 +662,9 @@ export default function EjendomOekonomiTab(props: Props) {
           lang={lang}
         />
       )}
+
+      {/* BIZZ-920: Kommune-statistik fra materialized view */}
+      {kommunekode && <KommuneStatistikWidget kommunekode={kommunekode} lang={lang} />}
 
       {/* Hæftelser fjernet — vises nu under Tinglysning-tab */}
       {/* BIZZ-325: Udbudshistorik og Lignende handler fjernet — ingen datakilde tilgængelig endnu */}

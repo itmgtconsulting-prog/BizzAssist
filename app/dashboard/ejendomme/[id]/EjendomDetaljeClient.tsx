@@ -2294,6 +2294,9 @@ export default function EjendomDetaljeClient({
                 }
                 lejlighederCount={lejligheder?.length ?? 0}
                 postnr={dawaAdresse?.postnr ?? null}
+                kommunekode={
+                  dawaJordstykke?.kommune?.kode ? String(dawaJordstykke.kommune.kode) : null
+                }
               />
             )}
 

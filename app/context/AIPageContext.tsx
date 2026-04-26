@@ -109,6 +109,13 @@ export interface AIPageData {
   }>;
   /** BIZZ-941: Antal ejendomme total (kan være flere end preloaded pga. cap). */
   ejendommeTotal?: number;
+  /** BIZZ-941: Pre-loaded datterselskaber fra virksomheds-record. */
+  preloadedDatterselskaber?: Array<{
+    cvr: number;
+    navn: string;
+    aktiv: boolean;
+    branche?: string | null;
+  }>;
 }
 
 // ─── Context ─────────────────────────────────────────────────────────────────

@@ -763,6 +763,17 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           }))
       : undefined;
 
+    // BIZZ-941: Inkluder datterselskaber i AI-kontekst
+    const preloadedDatter =
+      relatedCompanies.length > 0
+        ? relatedCompanies.slice(0, 30).map((v) => ({
+            cvr: v.cvr,
+            navn: v.navn,
+            aktiv: v.aktiv,
+            branche: v.branche ?? null,
+          }))
+        : undefined;
+
     setAICtx({
       cvrNummer: String(data.vat),
       virksomhedNavn: data.name,
@@ -770,8 +781,17 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
       activeTab: aktivTab,
       preloadedEjendomme,
       ejendommeTotal: ejendommeFetchComplete ? ejendommeTotalBfe : undefined,
+      preloadedDatterselskaber: preloadedDatter,
     });
-  }, [data, aktivTab, ejendommeData, ejendommeFetchComplete, ejendommeTotalBfe, setAICtx]);
+  }, [
+    data,
+    aktivTab,
+    ejendommeData,
+    ejendommeFetchComplete,
+    ejendommeTotalBfe,
+    relatedCompanies,
+    setAICtx,
+  ]);
 
   /**
    * Lazy-loader regnskabsdata når bruger klikker på Regnskab-tab.

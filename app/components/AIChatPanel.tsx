@@ -410,6 +410,19 @@ function AIChatPanel() {
         }
         parts.push(lines.join('\n'));
       }
+
+      // BIZZ-941: Pre-loaded datterselskaber
+      if (pageData.preloadedDatterselskaber && pageData.preloadedDatterselskaber.length > 0) {
+        const aktive = pageData.preloadedDatterselskaber.filter((d) => d.aktiv);
+        const lines = [
+          `\n[DATTERSELSKABER PRE-LOADED] ${aktive.length} aktive datterselskaber. Brug disse data direkte — kald IKKE hent_datterselskaber medmindre du har brug for yderligere detaljer.`,
+        ];
+        for (const d of aktive.slice(0, 20)) {
+          lines.push(`- ${d.navn} (CVR: ${d.cvr})${d.branche ? ` — ${d.branche}` : ''}`);
+        }
+        if (aktive.length > 20) lines.push(`  (+ ${aktive.length - 20} flere)`);
+        parts.push(lines.join('\n'));
+      }
     }
 
     return parts.length > 0 ? parts.join('\n\n') : undefined;

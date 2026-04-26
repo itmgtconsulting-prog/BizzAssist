@@ -298,7 +298,15 @@ export default function EjendomOverblikTab({
                     )}
                   </p>
                   <p className="text-white text-base font-bold">
-                    {vurdering.ejendomsvaerdi ? formatDKK(vurdering.ejendomsvaerdi) : formatDKK(0)}
+                    {vurdering.ejendomsvaerdi
+                      ? formatDKK(vurdering.ejendomsvaerdi)
+                      : bbrData?.ejerlejlighedBfe
+                        ? da
+                          ? 'Fordelt på enheder'
+                          : 'Distributed to units'
+                        : da
+                          ? 'Ikke vurderet'
+                          : 'Not assessed'}
                   </p>
                   {vurdering.afgiftspligtigEjendomsvaerdi !== null &&
                     vurdering.afgiftspligtigEjendomsvaerdi !== vurdering.ejendomsvaerdi && (
@@ -315,7 +323,15 @@ export default function EjendomOverblikTab({
                     )}
                   </p>
                   <p className="text-white text-sm font-medium">
-                    {vurdering.grundvaerdi ? formatDKK(vurdering.grundvaerdi) : formatDKK(0)}
+                    {vurdering.grundvaerdi
+                      ? formatDKK(vurdering.grundvaerdi)
+                      : bbrData?.ejerlejlighedBfe
+                        ? da
+                          ? 'Fordelt på enheder'
+                          : 'Distributed to units'
+                        : da
+                          ? 'Ikke vurderet'
+                          : 'Not assessed'}
                   </p>
                   {vurdering.afgiftspligtigGrundvaerdi !== null &&
                     vurdering.afgiftspligtigGrundvaerdi !== vurdering.grundvaerdi && (

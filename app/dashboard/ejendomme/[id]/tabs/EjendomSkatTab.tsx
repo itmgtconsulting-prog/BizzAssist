@@ -20,6 +20,7 @@
 'use client';
 
 import { Info, Landmark, Sparkles } from 'lucide-react';
+import SkatteberegningFlow from '@/app/components/ejendomme/SkatteberegningFlow';
 import SektionLoader from '@/app/components/SektionLoader';
 import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
 import { formatDKK } from '@/app/lib/mock/ejendomme';
@@ -142,6 +143,16 @@ export default function EjendomSkatTab({
                 <Sparkles size={14} />
                 {da ? 'Forklar min vurdering' : 'Explain my valuation'}
               </button>
+
+              {/* BIZZ-957: Step-by-step skatteberegning */}
+              <SkatteberegningFlow
+                lang={lang}
+                vurdering={vurdering}
+                forelobig={nyeste}
+                loft={vurLoft}
+                fritagelser={vurFritagelser}
+                erKolonihave={erKolonihave}
+              />
 
               {/* ── {t.currentTaxation} (nyeste foreløbige) ── */}
               {nyeste && (

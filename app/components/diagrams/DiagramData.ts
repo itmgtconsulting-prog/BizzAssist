@@ -574,6 +574,7 @@ export function buildPersonDiagramGraph(
   // først blandt person-nodens children ved samme depth. Property-noderne
   // selv tilføjes stadig senere (efter companies) for at matche eksisterende
   // data-ordering. Kun container-placeringen flyttes op.
+  // BIZZ-974: Personligt ejede ejendomme skjules bag Udvid (collapseParent)
   const personalPropGroupId = 'personal-props-group';
   const hasActivePersonalProps =
     !!personalProperties && personalProperties.some((p) => p.aktiv !== false);
@@ -584,6 +585,8 @@ export function buildPersonDiagramGraph(
       label: 'Personligt ejede ejendomme',
       sublabel: `${activeCount} ejendom${activeCount === 1 ? '' : 'me'}`,
       type: 'status',
+      isCoOwner: true,
+      collapseParent: mainId,
     });
     edges.push({
       from: mainId,

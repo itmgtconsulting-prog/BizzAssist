@@ -283,6 +283,23 @@ export default function VirksomhedOverblikTab({
                       <p className="text-white text-sm font-medium">{data.statusTekst}</p>
                     </div>
                   )}
+                  {/* BIZZ-967: Risiko-badges for særlige registreringer */}
+                  {data.revisionFravalgt && (
+                    <div className="col-span-2 flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                      <span className="text-amber-400 text-xs font-medium">
+                        {lang === 'da' ? '⚠ Revision fravalgt' : '⚠ Audit opted out'}
+                      </span>
+                    </div>
+                  )}
+                  {data.hvidvaskOmfattet && (
+                    <div className="col-span-2 flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                      <span className="text-blue-400 text-xs font-medium">
+                        {lang === 'da'
+                          ? 'Omfattet af hvidvasklov'
+                          : 'Subject to anti-money laundering law'}
+                      </span>
+                    </div>
+                  )}
                   {/* BIZZ-520: P-enheder count */}
                   {data.productionunits && data.productionunits.length > 0 && (
                     <div>

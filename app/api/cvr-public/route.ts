@@ -100,6 +100,10 @@ export interface CVRPublicData {
 
   /** Om virksomheden er reklamebeskyttet (fra Vrvirksomhed.reklamebeskyttet) */
   reklamebeskyttet: boolean;
+  /** BIZZ-967: Om revision er fravalgt (attribut REVISION_FRAVALGT=true) — risiko-indikator */
+  revisionFravalgt: boolean;
+  /** BIZZ-967: Om virksomheden er omfattet af lov om hvidvask og terrorfinansiering */
+  hvidvaskOmfattet: boolean;
 
   /** Kommune fra beliggenhedsadresse (fra Vrvirksomhed.beliggenhedsadresse[].kommune) */
   kommune: string | null;
@@ -466,6 +470,11 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
   const kapitalValuta = getAttrValue('KAPITALVALUTA');
   const registreretKapitalAttr =
     kapitalStr != null ? { vaerdi: parseFloat(kapitalStr), valuta: kapitalValuta ?? 'DKK' } : null;
+
+  // BIZZ-967: Parse særlige registreringer fra attributter
+  const revisionFravalgt = getAttrValue('REVISION_FRAVALGT') === 'true';
+  const hvidvaskOmfattet =
+    getAttrValue('OMFATTET_AF_LOV_OM_HVIDVASK_OG_TERRORFINANSIERING') === 'true';
 
   // ── Første regnskabsperiode (fra attributter) ──
   const foersteStart = getAttrValue('FØRSTE_REGNSKABSPERIODE_START');
@@ -923,6 +932,8 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
     stiftet,
     sidstOpdateret,
     reklamebeskyttet,
+    revisionFravalgt,
+    hvidvaskOmfattet,
     kommune,
     statusTekst,
     foersteRegnskabsperiode,
@@ -1088,6 +1099,8 @@ async function buildCvrDataFromColumns(
     stiftet: row.stiftet,
     sidstOpdateret: null,
     reklamebeskyttet: false,
+    revisionFravalgt: false,
+    hvidvaskOmfattet: false,
     kommune: addr.kommune?.kommuneNavn ?? null,
     statusTekst: row.status,
     foersteRegnskabsperiode: null,

@@ -781,6 +781,20 @@ Når brugeren beder om at "forklare vurderingen" eller "forklar min skat" på en
 3. Brug bullets og korte sætninger — ikke fagsprog
 4. Afslut med: "Har du spørgsmål til et specifikt punkt, eller vil du have en sammenligning med naboejendommen?"
 
+## Klagehjælper (BIZZ-960)
+Når brugeren beder om "tjek klagegrundlag", "kan jeg klage over vurderingen", eller "klagehjælp":
+1. Hent vurderingsdata (hent_vurdering + hent_forelobig_vurdering) og BBR-data (hent_bbr_data)
+2. Analysér for potentielle klagepunkter:
+   - Forkert areal (vurderet areal ≠ BBR-registreret areal)
+   - Forkert benyttelseskode (BBR vs. vurdering)
+   - Manglende fradrag for forbedringer (kloakering, vej)
+   - Stor stigning uden forklaring (>20% mellem to vurderingsår)
+   - Grundværdi pr. m² virker urimelig høj/lav for området
+3. Præsenter som liste med styrke (Svag/Middel/Stærk) og kort begrundelse
+4. Tilbyd at generere klageskabelon som Word-fil med argumenter og lovhenvisninger
+5. DISCLAIMER: "Dette er ikke juridisk rådgivning. Kontakt en advokat eller revisor for professionel vejledning."
+6. Nævn klagefrist: "Klagefristen er typisk 3 måneder fra modtagelse af vurderingen. Klag via Vurderingsstyrelsen."
+
 ### Ved dokument-generering (generate_document tool)
 VIGTIGT — undgå fejlagtigt indhold:
 1. **Match brugerens eksplicitte instruktion**: Hvis brugeren siger "ejendomme fra ejendomstab" → brug hent_ejendomme_for_virksomhed/hent_ejendomme_for_person, IKKE stamdata eller regnskab.

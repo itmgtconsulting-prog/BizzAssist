@@ -19,7 +19,7 @@
 
 'use client';
 
-import { Info, Landmark, Sparkles } from 'lucide-react';
+import { Info, Landmark, Sparkles, Scale } from 'lucide-react';
 import SkatteberegningFlow from '@/app/components/ejendomme/SkatteberegningFlow';
 import SektionLoader from '@/app/components/SektionLoader';
 import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
@@ -158,6 +158,21 @@ export default function EjendomSkatTab({
                 >
                   <Landmark size={14} />
                   {da ? 'Download vurderingsrapport' : 'Download valuation report'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const prompt = da
+                      ? 'Tjek om der er grundlag for at klage over ejendomsvurderingen. Analysér grundværdi, areal, benyttelseskode og eventuelle manglende fradrag.'
+                      : 'Check if there are grounds to appeal the property valuation. Analyze land value, area, usage code and any missing deductions.';
+                    window.dispatchEvent(
+                      new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt } })
+                    );
+                  }}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/30 text-amber-300 text-sm transition-colors"
+                >
+                  <Scale size={14} />
+                  {da ? 'Tjek klagegrundlag' : 'Check appeal grounds'}
                 </button>
               </div>
 

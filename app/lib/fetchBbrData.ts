@@ -2350,7 +2350,7 @@ export async function fetchBbrForAddress(
   const bbrFejl = !(process.env.DATAFORDELER_API_KEY ?? '')
     ? 'Datafordeler API-nøgle ikke konfigureret.'
     : bbr === null
-      ? 'BBR-data ikke tilgængeligt. Tjek at DATAFORDELER_API_KEY er sat i .env.local.'
+      ? 'BBR-data midlertidigt utilgængeligt — Datafordeler API svarer ikke. Prøv igen om lidt.'
       : null;
 
   // BIZZ-728: Parent adgangsadresse — sat når input-dawaId er en "adresse" (med etage/dør)

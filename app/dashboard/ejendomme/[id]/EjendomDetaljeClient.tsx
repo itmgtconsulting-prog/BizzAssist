@@ -75,6 +75,7 @@ import EjendomEjerforholdTab from './tabs/EjendomEjerforholdTab';
 import EjendomOekonomiTab from './tabs/EjendomOekonomiTab';
 import EjendomBBRTab from './tabs/EjendomBBRTab';
 import DataFreshnessBadge from '@/app/components/DataFreshnessBadge';
+import FloodRiskBadge from '@/app/components/ejendomme/FloodRiskBadge';
 import EjendomOverblikTab from './tabs/EjendomOverblikTab';
 // BIZZ-583: Administrator-kort bruges nu kun via EjendomEjerforholdTab — import fjernet fra master.
 // BIZZ-601: DiagramForce + DiagramGraph-type var kun brugt i
@@ -2057,6 +2058,12 @@ export default function EjendomDetaljeClient({
                 >
                   <RefreshCw size={9} className={bbrRefreshing ? 'animate-spin' : ''} />
                 </button>
+                {/* BIZZ-948: Oversvømmelsesrisiko-badge */}
+                <FloodRiskBadge
+                  lat={dawaAdresse?.y ?? null}
+                  lng={dawaAdresse?.x ?? null}
+                  lang={lang}
+                />
               </div>
             </div>
 

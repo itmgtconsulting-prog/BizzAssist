@@ -424,6 +424,29 @@ function AIChatPanel() {
         parts.push(lines.join('\n'));
       }
 
+      // BIZZ-1023: Preloaded ejendomsdata
+      if (pageData.ejendomVurdering) {
+        const v = pageData.ejendomVurdering;
+        const fmt = (n: number | null | undefined) =>
+          n != null ? `${(n / 1000000).toFixed(2)} mio. kr` : 'N/A';
+        parts.push(
+          `\n[VURDERING] Ejendomsværdi: ${fmt(v.ejendomsvaerdi)} | Grundværdi: ${fmt(v.grundvaerdi)} | År: ${v.vurderingsaar ?? 'N/A'}`
+        );
+      }
+      if (pageData.ejendomBBR) {
+        const b = pageData.ejendomBBR;
+        parts.push(
+          `\n[BBR] ${b.antalBygninger ?? 0} bygning(er) | Areal: ${b.samletAreal ?? 'N/A'} m² | Opført: ${b.opfoerelsesaar ?? 'N/A'} | Anvendelse: ${b.anvendelse ?? 'N/A'}`
+        );
+      }
+      if (pageData.ejendomEjerskab && pageData.ejendomEjerskab.length > 0) {
+        const lines = [`\n[EJERSKAB] ${pageData.ejendomEjerskab.length} ejer(e):`];
+        for (const e of pageData.ejendomEjerskab) {
+          lines.push(`- ${e.navn} (${e.type})${e.ejerandel ? ` — ${e.ejerandel}` : ''}`);
+        }
+        parts.push(lines.join('\n'));
+      }
+
       // BIZZ-1000: Diagram-billede tilgængeligt for Word/PPTX-eksport
       if (pageData.diagramBase64) {
         parts.push(

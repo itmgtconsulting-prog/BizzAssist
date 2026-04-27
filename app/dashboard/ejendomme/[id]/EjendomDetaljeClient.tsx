@@ -573,6 +573,26 @@ export default function EjendomDetaljeClient({
           .filter(Boolean)
           .join(' ')
       : undefined;
+    // BIZZ-1023: Preload vurdering, BBR-summary og ejerskab i AI-kontekst
+    const ejendomVurdering = vurdering
+      ? {
+          ejendomsvaerdi: vurdering.ejendomsvaerdi ?? null,
+          grundvaerdi: vurdering.grundvaerdi ?? null,
+          vurderingsaar: vurdering.aar ?? null,
+        }
+      : undefined;
+
+    const aktiveBygninger = bbrData?.bbr?.filter((b) => !isUdfasetStatusLabel(b.status));
+    const ejendomBBR = aktiveBygninger
+      ? {
+          antalBygninger: aktiveBygninger.length,
+          samletAreal:
+            aktiveBygninger.reduce((sum, b) => sum + (b.samletBygningsareal ?? 0), 0) || null,
+          opfoerelsesaar: aktiveBygninger[0]?.opfoerelsesaar ?? null,
+          anvendelse: aktiveBygninger[0]?.anvendelse ?? null,
+        }
+      : undefined;
+
     setAICtx({
       adresse: adresseStr,
       adresseId,
@@ -580,11 +600,12 @@ export default function EjendomDetaljeClient({
       kommunekode,
       matrikelnr,
       ejerlavKode,
-      // BIZZ-874: Tab-kontekst for dokument-generering matching.
       pageType: 'ejendom',
       activeTab: aktivTab,
+      ejendomVurdering,
+      ejendomBBR,
     });
-  }, [bbrData, dawaAdresse, dawaJordstykke, aktivTab, setAICtx]);
+  }, [bbrData, dawaAdresse, dawaJordstykke, aktivTab, vurdering, setAICtx]);
 
   /**
    * Detekterer om ejendommen er en kolonihave/fritidshytte på lejet grund.

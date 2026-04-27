@@ -155,6 +155,26 @@ export interface AIPageData {
     balancesum?: number | null;
     ansatte?: number | null;
   };
+  /**
+   * BIZZ-1023: Preloaded ejendomsdata (vurdering, BBR-summary, ejerskab).
+   * Reducerer tool-calls for standard ejendomsspørgsmål.
+   */
+  ejendomVurdering?: {
+    ejendomsvaerdi?: number | null;
+    grundvaerdi?: number | null;
+    vurderingsaar?: number | null;
+  };
+  ejendomBBR?: {
+    antalBygninger?: number;
+    samletAreal?: number | null;
+    opfoerelsesaar?: number | null;
+    anvendelse?: string | null;
+  };
+  ejendomEjerskab?: Array<{
+    navn: string;
+    type: string;
+    ejerandel?: string | null;
+  }>;
 }
 
 // ─── Context ─────────────────────────────────────────────────────────────────

@@ -1028,13 +1028,29 @@ export default function PersonDetailPageClient({
           }))
       : undefined;
 
+    // BIZZ-1024: Inkluder enriched ejendomsdata (vurdering/areal per ejendom)
+    const enrichedEjendomme = ejendommeFetchComplete
+      ? ejendommeData
+          .filter((e) => e.aktiv !== false)
+          .slice(0, 50)
+          .map((e) => ({
+            bfe: e.bfeNummer,
+            adresse: e.adresse ?? null,
+            type: e.ejendomstype ?? null,
+            ejerandel: e.ejerandel ?? null,
+            personligtEjet: typeof e.ownerCvr === 'string' && e.ownerCvr.startsWith('person-'),
+            vurdering: e.vurdering ?? null,
+            areal: e.areal ?? null,
+          }))
+      : undefined;
+
     setAICtx({
       enhedsNummer: enhedsStr,
       personNavn: data?.navn ?? undefined,
       personVirksomheder: personVirksomheder ?? undefined,
       pageType: 'person',
       activeTab: aktivTab,
-      preloadedEjendomme,
+      preloadedEjendomme: enrichedEjendomme ?? preloadedEjendomme,
       ejendommeTotal: ejendommeFetchComplete ? ejendommeTotalBfe : undefined,
     });
   }, [

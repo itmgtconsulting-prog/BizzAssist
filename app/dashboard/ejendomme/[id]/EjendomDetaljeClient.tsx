@@ -2148,19 +2148,29 @@ export default function EjendomDetaljeClient({
                         const sibHref = sib.dawaId
                           ? `/dashboard/ejendomme/${sib.dawaId}`
                           : `/dashboard/ejendomme/${sib.bfe}`;
+                        // BIZZ-996: Vis husnr + etage + dør i stedet for etage + m²
+                        const husnr = dawaAdresse?.husnr ?? '';
+                        const label = [husnr, sib.etage, sib.doer].filter(Boolean).join(', ');
                         return (
                           <Link
                             key={sib.bfe}
                             href={sibHref}
                             className="inline-flex items-center gap-1 px-2 py-1 rounded bg-slate-800/80 border border-slate-700/40 text-slate-300 text-xs hover:border-blue-500/40 hover:text-white transition-colors"
                           >
-                            {sib.etage ?? ''}
-                            {sib.doer ? `. ${sib.doer}` : ''}
-                            {sib.areal ? ` · ${sib.areal}m²` : ''}
+                            {label || `BFE ${sib.bfe}`}
                           </Link>
                         );
                       })}
-                      {siblings.length > 20 && (
+                      {siblings.length > 20 && bbrData?.parentAdgangsadresseId && (
+                        <Link
+                          href={`/dashboard/ejendomme/${bbrData.parentAdgangsadresseId}`}
+                          className="text-blue-400 hover:text-blue-300 text-xs self-center"
+                        >
+                          +{siblings.length - 20}{' '}
+                          {da ? 'mere — gå til hovedejendom' : 'more — go to main property'}
+                        </Link>
+                      )}
+                      {siblings.length > 20 && !bbrData?.parentAdgangsadresseId && (
                         <span className="text-slate-500 text-xs self-center">
                           +{siblings.length - 20} {da ? 'mere' : 'more'}
                         </span>

@@ -143,6 +143,9 @@ export default function EjendomSkatTab({
                 >
                   <Sparkles size={14} />
                   {da ? 'Forklar min vurdering' : 'Explain my valuation'}
+                  <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-blue-500/20 text-blue-300 leading-none">
+                    AI
+                  </span>
                 </button>
                 <button
                   type="button"
@@ -158,6 +161,9 @@ export default function EjendomSkatTab({
                 >
                   <Landmark size={14} />
                   {da ? 'Download vurderingsrapport' : 'Download valuation report'}
+                  <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-emerald-500/20 text-emerald-300 leading-none">
+                    AI
+                  </span>
                 </button>
                 <button
                   type="button"
@@ -173,6 +179,9 @@ export default function EjendomSkatTab({
                 >
                   <Scale size={14} />
                   {da ? 'Tjek klagegrundlag' : 'Check appeal grounds'}
+                  <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-amber-500/20 text-amber-300 leading-none">
+                    AI
+                  </span>
                 </button>
               </div>
 

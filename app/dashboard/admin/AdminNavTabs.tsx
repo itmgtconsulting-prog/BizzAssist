@@ -25,6 +25,7 @@ import {
   Activity,
   Clock,
   Shield,
+  Database,
   type LucideIcon,
 } from 'lucide-react';
 import { isDomainFeatureEnabled } from '@/app/lib/featureFlags';
@@ -46,7 +47,8 @@ export type AdminTabId =
   // users have a way back to the main admin surface. Neither value matches
   // a TAB id, so no tab is highlighted — the surface is "in between".
   | 'ai-feedback'
-  | 'release-manager';
+  | 'release-manager'
+  | 'sync-status';
 
 interface TabDef {
   id: AdminTabId;
@@ -121,6 +123,13 @@ const TABS: TabDef[] = [
     icon: Clock,
     labelDa: 'Cron-status',
     labelEn: 'Cron Status',
+  },
+  {
+    id: 'sync-status',
+    href: '/dashboard/admin/sync-status',
+    icon: Database,
+    labelDa: 'Data-sync',
+    labelEn: 'Data Sync',
   },
   {
     id: 'domains',

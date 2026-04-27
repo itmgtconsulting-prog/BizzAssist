@@ -790,6 +790,7 @@ Når brugeren beder om "tjek klagegrundlag", "kan jeg klage over vurderingen", e
    - Manglende fradrag for forbedringer (kloakering, vej)
    - Stor stigning uden forklaring (>20% mellem to vurderingsår)
    - Grundværdi pr. m² virker urimelig høj/lav for området
+   - **Grundværdispecifikation** (grundvaerdispec[] fra hent_vurdering): Tjek areal × enhedpris = beløb. Sammenlign areal med BBR-registreret grundareal — afvigelser kan være klagegrundlag
 3. Præsenter som liste med styrke (Svag/Middel/Stærk) og kort begrundelse
 4. Tilbyd at generere klageskabelon som Word-fil med argumenter og lovhenvisninger
 5. DISCLAIMER: "Dette er ikke juridisk rådgivning. Kontakt en advokat eller revisor for professionel vejledning."

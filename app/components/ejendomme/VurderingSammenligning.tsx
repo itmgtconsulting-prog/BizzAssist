@@ -97,13 +97,18 @@ export default function VurderingSammenligning({
 
   return (
     <section className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-      <h3 className="text-white font-semibold text-sm flex items-center gap-2 mb-3">
+      {/* BIZZ-1017: Tydeliggjort overskrift + datakilde */}
+      <h3 className="text-white font-semibold text-sm flex items-center gap-2 mb-1">
         <BarChart3 size={14} className="text-purple-400" />
-        {da ? 'Sammenligning med postnummer' : 'Comparison with postal area'} {postnr}
-        <span className="text-slate-500 font-normal text-xs">
-          ({data.antalEjendomme} {da ? 'ejendomme' : 'properties'})
-        </span>
+        {da
+          ? `Foreløbig vurdering — postnummer ${postnr}`
+          : `Preliminary valuation — postal area ${postnr}`}
       </h3>
+      <p className="text-[10px] text-slate-600 mb-3">
+        {da
+          ? `Baseret på ${data.antalEjendomme} foreløbige ejendomsvurderinger i postnummer ${postnr} (kilde: Vurderingsstyrelsen). Endelige vurderinger kan afvige.`
+          : `Based on ${data.antalEjendomme} preliminary property valuations in postal area ${postnr} (source: Danish Valuation Agency). Final valuations may differ.`}
+      </p>
 
       <div className="space-y-4">
         {/* Ejendomsværdi sammenligning */}

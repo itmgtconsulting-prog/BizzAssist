@@ -28,6 +28,7 @@ import type { EjendomApiResponse } from '@/app/api/ejendom/[id]/route';
 import type { VurderingData } from '@/app/api/vurdering/route';
 import type { DawaAdresse, DawaJordstykke } from '@/app/lib/dawa';
 import type { MatrikelEjendom } from '@/app/api/matrikel/route';
+import SkraafotoGalleri from '@/app/components/ejendomme/SkraafotoGalleri';
 import type { MatrikelHistorikEvent } from '@/app/api/matrikel/historik/route';
 
 /** Small re-implementation of the parent's SectionTitle for this tab. */
@@ -986,6 +987,9 @@ export default function EjendomBBRTab({
           </div>
         )}
       </div>
+
+      {/* BIZZ-1018: Skråfoto flyttet hertil fra Oversigt-tab */}
+      <SkraafotoGalleri lat={dawaAdresse?.y ?? null} lng={dawaAdresse?.x ?? null} lang={lang} />
     </div>
   );
 }

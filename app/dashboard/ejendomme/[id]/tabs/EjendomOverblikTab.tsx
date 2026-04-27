@@ -29,7 +29,7 @@ import type { DawaAdresse, DawaJordstykke } from '@/app/lib/dawa';
 import type { CVRVirksomhed } from '@/app/api/cvr/route';
 import OmraadeProfilSektion from '@/app/components/ejendomme/OmraadeProfilSektion';
 import StoejBadge from '@/app/components/ejendomme/StoejBadge';
-import SkraafotoGalleri from '@/app/components/ejendomme/SkraafotoGalleri';
+// BIZZ-1018: SkraafotoGalleri flyttet til EjendomBBRTab
 import EjerforeningSektion from '@/app/components/ejendomme/EjerforeningSektion';
 import EnergiWidget from '@/app/components/ejendomme/EnergiWidget';
 import ByggeomkostningBadge from '@/app/components/ejendomme/ByggeomkostningBadge';
@@ -755,8 +755,7 @@ export default function EjendomOverblikTab({
         postnr={dawaAdresse?.postnr ?? null}
         lang={lang}
       />
-      {/* BIZZ-964: Skråfoto-galleri */}
-      <SkraafotoGalleri lat={dawaAdresse?.y ?? null} lng={dawaAdresse?.x ?? null} lang={lang} />
+      {/* BIZZ-1018: Skråfoto flyttet til BBR-tab */}
       {/* BIZZ-961: Støjniveau-badge */}
       <StoejBadge lat={dawaAdresse?.y ?? null} lng={dawaAdresse?.x ?? null} lang={lang} />
       {/* BIZZ-955: Energipris-widget */}

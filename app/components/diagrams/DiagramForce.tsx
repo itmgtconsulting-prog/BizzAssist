@@ -568,8 +568,12 @@ function DiagramForce({
       if (!showCeased && n.isCeased) return false;
       // BIZZ-451: Hide property nodes unless toggle is on
       if (!showProperties && n.type === 'property') return false;
-      // BIZZ-1004: Hide personally owned properties unless toggle is on
-      if (!showPersonalProps && personalPropNodeIds.has(n.id)) return false;
+      // BIZZ-1004/1020: Hide personally owned properties unless toggle is on.
+      // Undtagen når defaultShowProperties=false (person-diagram) — der
+      // styrer "Ejendomme"-toggle begge typer for at undgå dobbelt-toggle.
+      if (!defaultShowProperties ? !showProperties : !showPersonalProps) {
+        if (personalPropNodeIds.has(n.id)) return false;
+      }
       // Always show non-co-owner nodes
       if (!n.isCoOwner) return true;
       // Show co-owner only if its parent is expanded
@@ -597,6 +601,7 @@ function DiagramForce({
     showProperties,
     showPersonalProps,
     personalPropNodeIds,
+    defaultShowProperties,
   ]);
 
   // ── Compute topological depth (owners above, subsidiaries below) ──

@@ -89,7 +89,7 @@ type ActiveTab = 'ai' | 'api';
 const translations = {
   da: {
     back: 'Tilbage',
-    title: 'Tokens & API-nøgler',
+    title: 'Tokens',
     tabAi: 'AI Tokens',
     tabApi: 'API-nøgler',
     // AI tokens
@@ -155,7 +155,7 @@ const translations = {
   },
   en: {
     back: 'Back',
-    title: 'Tokens & API Keys',
+    title: 'Tokens',
     tabAi: 'AI Tokens',
     tabApi: 'API Keys',
     // AI tokens
@@ -274,7 +274,7 @@ function fmtDate(iso: string | null, lang: 'da' | 'en', fallback: string): strin
  * @param color - Tailwind text color class for the value
  * @param highlight - Whether to apply a subtle highlight border
  */
-function BreakdownCard({
+function _BreakdownCard({
   label,
   value,
   sub,
@@ -881,21 +881,7 @@ export default function TokensPageClient() {
                 <Zap size={12} />
                 {t.tabAi}
               </button>
-              <button
-                role="tab"
-                aria-selected={activeTab === 'api'}
-                id="tab-api"
-                aria-controls="panel-api"
-                onClick={() => setActiveTab('api')}
-                className={`flex items-center gap-1 px-2 py-1.5 text-xs font-medium border-b-2 transition-all whitespace-nowrap ${
-                  activeTab === 'api'
-                    ? 'border-blue-500 text-blue-300'
-                    : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600'
-                }`}
-              >
-                <Key size={12} />
-                {t.tabApi}
-              </button>
+              {/* BIZZ-1022: API-nøgler tab fjernet */}
             </div>
           </div>
 
@@ -908,7 +894,7 @@ export default function TokensPageClient() {
               role="tabpanel"
               id="panel-ai"
               aria-labelledby="tab-ai"
-              hidden={activeTab !== 'ai'}
+              hidden={false}
               className="space-y-8"
             >
               {/* Payment result banners */}
@@ -931,64 +917,64 @@ export default function TokensPageClient() {
                   {t.noSubscription}
                 </div>
               ) : (
-                <div className="rounded-xl bg-slate-800/40 border border-slate-700/40 p-6 space-y-6">
+                <div className="rounded-xl bg-slate-800/40 border border-slate-700/40 p-4 space-y-3">
                   <div className="flex items-center justify-between">
-                    <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                      <Zap className="w-5 h-5 text-blue-400" />
+                    <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+                      <Zap className="w-4 h-4 text-blue-400" />
                       {t.balanceTitle}
                     </h2>
                     <button
                       onClick={fetchAiData}
-                      className="flex items-center gap-1.5 text-slate-400 hover:text-slate-200 transition-colors text-xs"
+                      className="flex items-center gap-1 text-slate-500 hover:text-slate-300 transition-colors text-[10px]"
                     >
-                      <RefreshCw className="w-3.5 h-3.5" />
+                      <RefreshCw className="w-3 h-3" />
                       {t.refresh}
                     </button>
                   </div>
 
                   {isUnlimited ? (
-                    <div className="text-center py-4">
-                      <span className="text-3xl font-bold text-emerald-400">{t.unlimited}</span>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xl font-bold text-emerald-400">{t.unlimited}</span>
+                      <span className="text-xs text-slate-500">
+                        {plan ? (lang === 'da' ? plan.nameDa : plan.nameEn) : ''}
+                      </span>
                     </div>
                   ) : (
-                    <div className="space-y-2">
-                      <div className="flex items-baseline justify-between">
-                        <span className={`text-3xl font-bold ${textColor(usagePct)}`}>
+                    <>
+                      <div className="flex items-baseline gap-3">
+                        <span className={`text-xl font-bold ${textColor(usagePct)}`}>
                           {formatTokens(remaining)}
                         </span>
-                        <span className="text-slate-400 text-sm">
+                        <span className="text-slate-500 text-xs">
                           {t.of} {formatTokens(totalAvailable)} — {formatTokens(used)} {t.used}
                         </span>
                       </div>
-                      <div className="w-full h-3 rounded-full bg-slate-700/40 overflow-hidden">
+                      <div className="w-full h-2 rounded-full bg-slate-700/40 overflow-hidden">
                         <div
                           className={`h-full rounded-full transition-all duration-500 ${meterColor(usagePct)}`}
                           style={{ width: `${Math.min(100, usagePct)}%` }}
                         />
                       </div>
-                    </div>
+                      <div className="grid grid-cols-3 gap-2 text-center">
+                        <div>
+                          <p className="text-xs font-medium text-blue-400">
+                            {formatTokens(planMonthly + bonus)}
+                          </p>
+                          <p className="text-[9px] text-slate-600">{t.planAllocation}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium text-red-400">{formatTokens(used)}</p>
+                          <p className="text-[9px] text-slate-600">{t.usedThisPeriod}</p>
+                        </div>
+                        <div>
+                          <p className={`text-xs font-medium ${textColor(usagePct)}`}>
+                            {formatTokens(remaining)}
+                          </p>
+                          <p className="text-[9px] text-slate-600">{t.available}</p>
+                        </div>
+                      </div>
+                    </>
                   )}
-
-                  {/* BIZZ-979: Komprimeret fra 6 kort til 3 — plan+bonus samlet, topup+akkumuleret samlet */}
-                  <div className="grid grid-cols-3 gap-3">
-                    <BreakdownCard
-                      label={t.planAllocation}
-                      value={isUnlimited ? t.unlimited : formatTokens(planMonthly + bonus)}
-                      sub={plan ? (lang === 'da' ? plan.nameDa : plan.nameEn) + t.perMonth : ''}
-                      color="text-blue-400"
-                    />
-                    <BreakdownCard
-                      label={t.usedThisPeriod}
-                      value={formatTokens(used)}
-                      color="text-red-400"
-                    />
-                    <BreakdownCard
-                      label={t.available}
-                      value={isUnlimited ? t.unlimited : formatTokens(remaining)}
-                      color={isUnlimited ? 'text-emerald-400' : textColor(usagePct)}
-                      highlight
-                    />
-                  </div>
                 </div>
               )}
 
@@ -1046,14 +1032,12 @@ export default function TokensPageClient() {
               </div>
             </div>
 
-            {/* ════════════════════════════════════
-            TAB: API Keys (BIZZ-54)
-            ════════════════════════════════════ */}
+            {/* BIZZ-1022: API Keys tab skjult — fjernes i næste major */}
             <div
               role="tabpanel"
               id="panel-api"
               aria-labelledby="tab-api"
-              hidden={activeTab !== 'api'}
+              hidden={true}
               className="space-y-6"
             >
               {/* Section header */}

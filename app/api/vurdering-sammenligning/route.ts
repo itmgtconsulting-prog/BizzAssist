@@ -68,22 +68,27 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Ugyldige parametre' }, { status: 400 });
   }
 
-  const { postnr, ejendomsvaerdi, grundvaerdi, areal } = parsed.data;
+  const { postnr, ejendomsvaerdi, grundvaerdi } = parsed.data;
 
   try {
     // Søg Vurderingsportalen for ejendomme i samme postnummer
+    // BIZZ-994: User-Agent kræves af CloudFront WAF, feltnavne rettet til VP schema
     const res = await fetch(VP_ES, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      },
       body: JSON.stringify({
         size: 200,
         query: {
           bool: {
-            must: [{ term: { postNumber: parseInt(postnr, 10) } }],
-            filter: [{ exists: { field: 'propertyValue' } }],
+            must: [{ match: { zipcode: postnr } }],
+            filter: [{ exists: { field: 'propertyValue' } }, { term: { isParentProperty: true } }],
           },
         },
-        _source: ['propertyValue', 'landValue', 'landArea'],
+        _source: ['propertyValue', 'groundValue'],
       }),
       signal: AbortSignal.timeout(10000),
     });
@@ -111,13 +116,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     for (const hit of hits) {
       const s = hit._source ?? {};
-      const ev = s.propertyValue;
-      const gv = s.landValue;
-      const ar = s.landArea;
-      if (typeof ev === 'number' && ev > 0) evValues.push(ev);
-      if (typeof gv === 'number' && typeof ar === 'number' && ar > 0) {
-        gvPrM2Values.push(Math.round(gv / ar));
-      }
+      // BIZZ-994: VP returnerer værdier som strings — parse til number
+      const ev =
+        typeof s.propertyValue === 'string' ? parseInt(s.propertyValue, 10) : s.propertyValue;
+      const gv = typeof s.groundValue === 'string' ? parseInt(s.groundValue, 10) : s.groundValue;
+      if (typeof ev === 'number' && !isNaN(ev) && ev > 0) evValues.push(ev);
+      if (typeof gv === 'number' && !isNaN(gv) && gv > 0) gvPrM2Values.push(gv);
     }
 
     const avg = (arr: number[]) => Math.round(arr.reduce((s, v) => s + v, 0) / arr.length);
@@ -144,12 +148,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
             }
           : null,
       grundvaerdiPrM2:
-        gvPrM2Values.length > 0 && areal && grundvaerdi
+        gvPrM2Values.length > 0 && grundvaerdi
           ? {
               gennemsnit: avg(gvPrM2Values),
               median: median(gvPrM2Values),
-              dinVaerdi: Math.round(grundvaerdi / areal),
-              percentil: percentil(gvPrM2Values, Math.round(grundvaerdi / areal)),
+              dinVaerdi: grundvaerdi,
+              percentil: percentil(gvPrM2Values, grundvaerdi),
             }
           : null,
     };

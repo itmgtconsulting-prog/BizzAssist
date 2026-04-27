@@ -253,8 +253,7 @@ export function buildEjendomFilterSchemas(
   kommuneOptions: FilterOption[]
 ): FilterSchema[] {
   return [
-    buildEjendomstypeSchema(lang),
-    buildSkjulUdfasedeSchema(lang),
+    // BIZZ-988: Ejendomstype og Skjul udfasede fjernet fra filter-panel
     buildKommuneSchema(lang, kommuneOptions),
     // BIZZ-821 phase-2 filtre
     buildArealSchema(lang),

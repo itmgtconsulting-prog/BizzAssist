@@ -21,38 +21,27 @@ import {
 } from '@/app/lib/search/ejendomFilterSchema';
 
 describe('buildEjendomFilterSchemas', () => {
-  it('returnerer 12 filtre i korrekt rækkefølge (BIZZ-821 phase-2 komplet)', () => {
+  it('returnerer 10 filtre i korrekt rækkefølge (BIZZ-988: ejendomstype+skjulUdfasede fjernet)', () => {
     const schemas = buildEjendomFilterSchemas('da', []);
-    expect(schemas).toHaveLength(12);
-    expect(schemas[0].key).toBe('ejendomstype');
-    expect(schemas[1].key).toBe('skjulUdfasede');
-    expect(schemas[2].key).toBe('kommune');
+    expect(schemas).toHaveLength(10);
+    expect(schemas[0].key).toBe('kommune');
     // BIZZ-821 phase-2 — 9 BBR-filtre
-    expect(schemas[3].key).toBe('boligareal');
-    expect(schemas[4].key).toBe('erhvervsareal');
-    expect(schemas[5].key).toBe('grundareal');
-    expect(schemas[6].key).toBe('bebyggetAreal');
-    expect(schemas[7].key).toBe('opfoerelsesaar');
-    expect(schemas[8].key).toBe('ombygningsaar');
-    expect(schemas[9].key).toBe('aldersPreset');
-    expect(schemas[10].key).toBe('energimaerke');
-    expect(schemas[11].key).toBe('anvendelse');
-  });
-
-  it('skjulUdfasede har default=true', () => {
-    const schemas = buildEjendomFilterSchemas('da', []);
-    const skjul = schemas.find((s) => s.key === 'skjulUdfasede');
-    expect(skjul).toBeDefined();
-    if (skjul && skjul.type === 'toggle') {
-      expect(skjul.default).toBe(true);
-    }
+    expect(schemas[1].key).toBe('boligareal');
+    expect(schemas[2].key).toBe('erhvervsareal');
+    expect(schemas[3].key).toBe('grundareal');
+    expect(schemas[4].key).toBe('bebyggetAreal');
+    expect(schemas[5].key).toBe('opfoerelsesaar');
+    expect(schemas[6].key).toBe('ombygningsaar');
+    expect(schemas[7].key).toBe('aldersPreset');
+    expect(schemas[8].key).toBe('energimaerke');
+    expect(schemas[9].key).toBe('anvendelse');
   });
 
   it('bilingual labels — en vs da', () => {
     const daSchemas = buildEjendomFilterSchemas('da', []);
     const enSchemas = buildEjendomFilterSchemas('en', []);
-    expect(daSchemas[0].label).toBe('Ejendomstype');
-    expect(enSchemas[0].label).toBe('Property type');
+    expect(daSchemas[0].label).toBe('Kommune');
+    expect(enSchemas[0].label).toBe('Municipality');
   });
 });
 

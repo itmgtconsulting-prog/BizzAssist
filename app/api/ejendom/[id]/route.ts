@@ -20,12 +20,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
-import type { EjendomApiResponse } from '@/app/lib/fetchBbrData';
 import { resolveTenantId } from '@/lib/api/auth';
 import { logger } from '@/app/lib/logger';
-import { getCachedBBR } from '@/app/lib/cachedLookup';
-import { fetchDawa } from '@/app/lib/dawa';
-import { DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
 
 /** Zod schema for the [id] dynamic param — UUID format */
 const idParamSchema = z.object({
@@ -86,55 +82,8 @@ export async function GET(
     }
     const { id } = paramResult.data;
 
-    // ── BIZZ-1015: Cache-first — resolve BFE fra DAWA, tjek cache_bbr ──
-    let bfeNummer: number | null = null;
-    try {
-      const bfeRes = await fetchDawa(
-        `${DAWA_BASE_URL}/adgangsadresser/${id}?struktur=mini`,
-        { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
-        { caller: 'ejendom-route.bfe-resolve' }
-      );
-      if (bfeRes.ok) {
-        const bfeJson = (await bfeRes.json()) as { kvhx?: string; ejerlav?: { kode?: number } };
-        // DAWA mini structure doesn't include BFE directly — try /bfe lookup
-        const bfeLookup = await fetchDawa(
-          `${DAWA_BASE_URL}/bfe?adgangsadresseid=${id}`,
-          { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
-          { caller: 'ejendom-route.bfe-lookup' }
-        );
-        if (bfeLookup.ok) {
-          const bfeArr = (await bfeLookup.json()) as Array<{ nr?: number }>;
-          if (bfeArr.length > 0 && bfeArr[0].nr) {
-            bfeNummer = bfeArr[0].nr;
-          }
-        }
-        void bfeJson; // suppress unused
-      }
-    } catch {
-      // BFE resolution fejlede — fortsæt uden cache
-    }
-
-    // Hvis vi har BFE, brug cache-first via getCachedBBR
-    if (bfeNummer) {
-      const cacheResult = await getCachedBBR<Omit<EjendomApiResponse, 'dawaId'>>(bfeNummer, () =>
-        fetchBbrForAddress(id)
-      );
-
-      if (cacheResult.data) {
-        return NextResponse.json(
-          { dawaId: id, ...cacheResult.data },
-          {
-            status: 200,
-            headers: {
-              'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600',
-              'X-Cache-Hit': cacheResult.fromCache ? 'true' : 'false',
-            },
-          }
-        );
-      }
-    }
-
-    // Fallback: direkte fetch uden cache (ingen BFE fundet)
+    // BIZZ-1015 cache-first reverted — forårsagede BBR-fejl i test-miljø.
+    // Cache-first kræver at cache_bbr-migration er applied i alle miljøer.
     const result = await fetchBbrForAddress(id);
 
     return NextResponse.json(
@@ -143,7 +92,6 @@ export async function GET(
         status: 200,
         headers: {
           'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600',
-          'X-Cache-Hit': 'false',
         },
       }
     );

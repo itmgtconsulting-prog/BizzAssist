@@ -97,7 +97,7 @@ export default function SkatteberegningFlow({
         {da ? 'Skatteberegning trin for trin' : 'Tax calculation step by step'}
       </h3>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 items-start">
         {/* Grundskyld-flow */}
         <div className="space-y-0">
           <p className="text-slate-400 text-xs font-medium mb-2">
@@ -160,7 +160,7 @@ export default function SkatteberegningFlow({
                 label={da ? 'Årlig grundskyld' : 'Annual land tax'}
                 value={formatDKK(grundskyld)}
                 note={da ? 'Betales til kommunen' : 'Paid to municipality'}
-                color="red"
+                color="blue"
               />
             </>
           )}
@@ -190,7 +190,7 @@ export default function SkatteberegningFlow({
                     ? '0,51% op til progressionsgrænse, 1,4% over'
                     : '0.51% up to threshold, 1.4% above'
                 }
-                color="red"
+                color="blue"
               />
             ) : (
               <FlowStep

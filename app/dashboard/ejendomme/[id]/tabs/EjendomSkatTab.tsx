@@ -201,7 +201,7 @@ export default function EjendomSkatTab({
                       ? `Skat betalt i ${nyeste.vurderingsaar + 1}, beregnet ud fra vurderingen for ${nyeste.vurderingsaar}.`
                       : `Tax paid in ${nyeste.vurderingsaar + 1}, calculated from the ${nyeste.vurderingsaar} assessment.`}
                   </p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
                     {/* Grundskyld */}
                     <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
                       <p className="text-white text-lg font-bold flex items-center gap-1.5">

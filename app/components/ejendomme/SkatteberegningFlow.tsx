@@ -219,6 +219,13 @@ export default function SkatteberegningFlow({
           </p>
         </div>
       )}
+
+      {/* BIZZ-992: Forklarende note om nyt vs. gammelt system */}
+      <p className="text-slate-600 text-[9px] mt-3 leading-relaxed">
+        {da
+          ? 'Skattebeløbene er fra Vurderingsstyrelsens foreløbige beregning. Den faktiske opkrævede skat kan afvige pga. skatteloft, overgangsordninger og individuelle fradrag.'
+          : "Tax amounts are from the Assessment Authority's preliminary calculation. Actual tax charged may differ due to tax ceilings, transitional rules and individual deductions."}
+      </p>
     </div>
   );
 }

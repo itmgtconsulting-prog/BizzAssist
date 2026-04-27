@@ -29,6 +29,7 @@ import type { DawaAdresse, DawaJordstykke } from '@/app/lib/dawa';
 import type { CVRVirksomhed } from '@/app/api/cvr/route';
 import OmraadeProfilSektion from '@/app/components/ejendomme/OmraadeProfilSektion';
 import StoejBadge from '@/app/components/ejendomme/StoejBadge';
+import SkraafotoGalleri from '@/app/components/ejendomme/SkraafotoGalleri';
 import type { Ejerlejlighed } from '@/app/api/ejerlejligheder/route';
 
 interface TinglysningSnapshot {
@@ -744,6 +745,8 @@ export default function EjendomOverblikTab({
           </div>
         </div>
       )}
+      {/* BIZZ-964: Skråfoto-galleri */}
+      <SkraafotoGalleri lat={dawaAdresse?.y ?? null} lng={dawaAdresse?.x ?? null} lang={lang} />
       {/* BIZZ-961: Støjniveau-badge */}
       <StoejBadge lat={dawaAdresse?.y ?? null} lng={dawaAdresse?.x ?? null} lang={lang} />
       {/* BIZZ-947: Områdeprofil fra Danmarks Statistik */}

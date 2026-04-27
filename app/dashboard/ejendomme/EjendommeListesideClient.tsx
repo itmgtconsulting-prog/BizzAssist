@@ -27,8 +27,15 @@ import {
   Loader2,
   Clock,
   ArrowRight,
+  SlidersHorizontal,
   Filter,
 } from 'lucide-react';
+import FilterPanel, {
+  type EjendomFilterState,
+  type EjendomstypeFilter,
+  DEFAULT_FILTERS,
+  countActiveFilters,
+} from './FilterPanel';
 import { erDawaId, type DawaAutocompleteResult } from '@/app/lib/dawa';
 import { hentRecentEjendomme, type RecentEjendom } from '@/app/lib/recentEjendomme';
 import { useLanguage } from '@/app/context/LanguageContext';
@@ -37,27 +44,7 @@ import { translations } from '@/app/lib/translations';
 const RECENT_KEY = 'ba-ejendomme-recent';
 const MAX_RECENT = 5;
 
-// ─── Filter types ────────────────────────────────────────────────────────────
-
-/**
- * Kategorier for BBR-ejendomstype-filter.
- * Baseret på grov inddeling af anvendelsestekster fra BBR.
- */
-type EjendomstypeFilter = 'alle' | 'beboelse' | 'erhverv' | 'ubebygget';
-
-/** Aktive filtervalg for ejendomme-listesiden */
-interface EjendomFilterState {
-  /** Valgt kommunenavn (tom streng = ingen filter) */
-  kommune: string;
-  /** Ejendomstype baseret på BBR-anvendelse */
-  ejendomstype: EjendomstypeFilter;
-}
-
-/** Standard filterstatus — ingen aktive filtre */
-const DEFAULT_FILTERS: EjendomFilterState = {
-  kommune: '',
-  ejendomstype: 'alle',
-};
+// ─── Filter types (importeret fra FilterPanel.tsx) ──────────────────────────
 
 /**
  * Klassificerer en BBR-anvendelsestekst til en grov ejendomstype.
@@ -109,33 +96,27 @@ function klassificerAnvendelse(anvendelse: string | null): EjendomstypeFilter | 
   return null;
 }
 
-// ─── Translations ─────────────────────────────────────────────────────────────
+// ─── Filter translations (minimal — bulk moved to FilterPanel.tsx) ──────────
 
-/** Lokale oversættelses-strings til filter-UI (resten hentes fra translations.ts) */
+/** Lokale strings kun for chips og inline filter-tekst */
 const filterT = {
   da: {
     filtre: 'Filtre',
     nulstilFiltre: 'Nulstil filtre',
-    kommune: 'Kommune',
-    alleKommuner: 'Alle kommuner',
-    ejendomstype: 'Ejendomstype',
-    alle: 'Alle',
     beboelse: 'Beboelse',
     erhverv: 'Erhverv',
     ubebygget: 'Ubebygget',
+    alle: 'Alle',
     visResultater: (n: number) => `Viser ${n} ejendomme`,
     ingenMatch: 'Ingen ejendomme matcher filtrene',
   },
   en: {
     filtre: 'Filters',
     nulstilFiltre: 'Reset filters',
-    kommune: 'Municipality',
-    alleKommuner: 'All municipalities',
-    ejendomstype: 'Property type',
-    alle: 'All',
     beboelse: 'Residential',
     erhverv: 'Commercial',
     ubebygget: 'Undeveloped',
+    alle: 'All',
     visResultater: (n: number) => `Showing ${n} properties`,
     ingenMatch: 'No properties match the filters',
   },
@@ -392,84 +373,7 @@ function DropdownPortal({
   );
 }
 
-// ─── Filter panel ─────────────────────────────────────────────────────────────
-
-/**
- * Vandret filterpanel for ejendomme-listesiden.
- * Toggler ind/ud med Filter-knappen. Filtrerer på kommune og ejendomstype.
- *
- * @param filters - Aktive filtervalg
- * @param onFiltersChange - Callback når filtre ændres
- * @param uniqueKommuner - Unikke kommunenavne fra loadede resultater
- * @param lang - Aktuelt sprog
- */
-function EjendomFilterPanel({
-  filters,
-  onFiltersChange,
-  uniqueKommuner,
-  lang,
-}: {
-  filters: EjendomFilterState;
-  onFiltersChange: (f: EjendomFilterState) => void;
-  uniqueKommuner: string[];
-  lang: 'da' | 'en';
-}) {
-  const ft = filterT[lang];
-
-  return (
-    <div className="bg-[#0f172a] border border-slate-700/50 rounded-xl p-4 mt-3 flex flex-wrap gap-6">
-      {/* Kommune select */}
-      {uniqueKommuner.length > 0 && (
-        <div className="flex flex-col gap-1.5 min-w-[200px]">
-          <span className="text-slate-400 text-xs font-medium uppercase tracking-wide">
-            {ft.kommune}
-          </span>
-          <select
-            value={filters.kommune}
-            onChange={(e) => onFiltersChange({ ...filters, kommune: e.target.value })}
-            className="bg-slate-800 border border-slate-700/60 rounded-lg px-3 py-1.5 text-sm text-white outline-none focus:border-blue-500/60 transition-colors"
-          >
-            <option value="">{ft.alleKommuner}</option>
-            {uniqueKommuner.map((k) => (
-              <option key={k} value={k}>
-                {k}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
-
-      {/* Ejendomstype radio */}
-      <div className="flex flex-col gap-1.5">
-        <span className="text-slate-400 text-xs font-medium uppercase tracking-wide">
-          {ft.ejendomstype}
-        </span>
-        <div className="flex gap-3 flex-wrap">
-          {(
-            [
-              ['alle', ft.alle],
-              ['beboelse', ft.beboelse],
-              ['erhverv', ft.erhverv],
-              ['ubebygget', ft.ubebygget],
-            ] as [EjendomstypeFilter, string][]
-          ).map(([val, label]) => (
-            <label key={val} className="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="radio"
-                name="ejendom-type"
-                value={val}
-                checked={filters.ejendomstype === val}
-                onChange={() => onFiltersChange({ ...filters, ejendomstype: val })}
-                className="accent-emerald-500"
-              />
-              <span className="text-slate-300 text-sm">{label}</span>
-            </label>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
+// ─── Filter panel (sidepanel — importeret fra FilterPanel.tsx) ───────────────
 
 /**
  * Viser aktive filtre som removable chip-piller for ejendomme-listesiden.
@@ -494,6 +398,12 @@ function ActiveFilterChips({
     chips.push({
       label: filters.kommune,
       onRemove: () => onFiltersChange({ ...filters, kommune: '' }),
+    });
+  }
+  if (filters.postnummer) {
+    chips.push({
+      label: filters.postnummer,
+      onRemove: () => onFiltersChange({ ...filters, postnummer: '' }),
     });
   }
   if (filters.ejendomstype !== 'alle') {
@@ -595,6 +505,18 @@ export default function EjendommeListesideClient() {
   }, [senesteEjendomme]);
 
   /**
+   * BIZZ-1007: Unikke postnumre fra de loadede recent-ejendomme.
+   * Sorteret numerisk.
+   */
+  const uniquePostnumre = useMemo<string[]>(() => {
+    const set = new Set<string>();
+    for (const e of senesteEjendomme) {
+      if (e.postnr) set.add(e.postnr);
+    }
+    return Array.from(set).sort();
+  }, [senesteEjendomme]);
+
+  /**
    * Filtreret liste af recent-ejendomme baseret på aktive filtervalg.
    * Kører rent client-side på allerede-loadede data.
    */
@@ -602,6 +524,8 @@ export default function EjendommeListesideClient() {
     return senesteEjendomme.filter((e) => {
       // Kommune-filter
       if (filters.kommune && e.kommune !== filters.kommune) return false;
+      // BIZZ-1007: Postnummer-filter
+      if (filters.postnummer && e.postnr !== filters.postnummer) return false;
       // Ejendomstype-filter baseret på klassificering af anvendelse
       if (filters.ejendomstype !== 'alle') {
         const kategori = klassificerAnvendelse(e.anvendelse);
@@ -613,7 +537,7 @@ export default function EjendommeListesideClient() {
 
   /** Om nogen filtre er aktive */
   const hasActiveFilters = useMemo<boolean>(() => {
-    return filters.kommune !== '' || filters.ejendomstype !== 'alle';
+    return countActiveFilters(filters) > 0;
   }, [filters]);
 
   /** Lazy initialisering fra localStorage — filtrerer evt. korrupt/forældet data fra */
@@ -772,7 +696,7 @@ export default function EjendommeListesideClient() {
               </div>
             </div>
 
-            {/* Filter toggle — kun synlig når der er recent-ejendomme at filtrere */}
+            {/* BIZZ-1007: Filter toggle — åbner sidepanel */}
             {senesteEjendomme.length > 0 && (
               <button
                 type="button"
@@ -785,29 +709,16 @@ export default function EjendommeListesideClient() {
                     : 'bg-slate-800/60 border-slate-600/50 text-slate-400 hover:border-slate-500/60 hover:text-slate-300'
                 }`}
               >
-                <Filter size={16} />
+                <SlidersHorizontal size={16} />
                 {ft.filtre}
                 {hasActiveFilters && (
                   <span className="bg-emerald-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
-                    {[filters.kommune ? 1 : 0, filters.ejendomstype !== 'alle' ? 1 : 0].reduce(
-                      (a, b) => a + b,
-                      0
-                    )}
+                    {countActiveFilters(filters)}
                   </span>
                 )}
               </button>
             )}
           </div>
-
-          {/* Filter panel */}
-          {filterOpen && senesteEjendomme.length > 0 && (
-            <EjendomFilterPanel
-              filters={filters}
-              onFiltersChange={setFilters}
-              uniqueKommuner={uniqueKommuner}
-              lang={lang}
-            />
-          )}
 
           {/* Active filter chips */}
           <ActiveFilterChips filters={filters} onFiltersChange={setFilters} lang={lang} />
@@ -830,64 +741,80 @@ export default function EjendommeListesideClient() {
         </div>
       </div>
 
-      {/* ─── Indhold ─── */}
-      <div className="flex-1 overflow-y-auto px-8 py-6">
-        {/* Seneste sete ejendomme */}
-        {senesteEjendomme.length > 0 ? (
-          <div>
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <Clock size={15} className="text-slate-400" />
-                <h2 className="text-white font-semibold text-base">{p.recentlyViewed}</h2>
-                {hasActiveFilters && (
-                  <span className="text-slate-500 text-xs">
-                    — {ft.visResultater(filteredEjendomme.length)}
-                  </span>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  fetch('/api/recents?type=property', { method: 'DELETE' }).catch(() => {});
-                  setSenesteEjendomme([]);
-                }}
-                className="text-slate-600 hover:text-slate-400 text-xs transition-colors"
-              >
-                {p.clearHistory}
-              </button>
-            </div>
-
-            {filteredEjendomme.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {filteredEjendomme.map((e) => (
-                  <RecentEjendomCard key={e.id} ejendom={e} now={renderNow} p={p} />
-                ))}
-              </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center py-12 text-center gap-3">
-                <div className="p-4 bg-slate-800/40 rounded-2xl">
-                  <Filter size={24} className="text-slate-600" />
+      {/* ─── Indhold + Filter-sidepanel ─── */}
+      <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 overflow-y-auto px-8 py-6">
+          {/* Seneste sete ejendomme */}
+          {senesteEjendomme.length > 0 ? (
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <Clock size={15} className="text-slate-400" />
+                  <h2 className="text-white font-semibold text-base">{p.recentlyViewed}</h2>
+                  {hasActiveFilters && (
+                    <span className="text-slate-500 text-xs">
+                      — {ft.visResultater(filteredEjendomme.length)}
+                    </span>
+                  )}
                 </div>
-                <p className="text-slate-400 text-sm font-medium">{ft.ingenMatch}</p>
                 <button
                   type="button"
-                  onClick={() => setFilters(DEFAULT_FILTERS)}
-                  className="text-emerald-400 hover:text-emerald-300 text-xs transition-colors"
+                  onClick={() => {
+                    fetch('/api/recents?type=property', { method: 'DELETE' }).catch(() => {});
+                    setSenesteEjendomme([]);
+                  }}
+                  className="text-slate-600 hover:text-slate-400 text-xs transition-colors"
                 >
-                  {ft.nulstilFiltre}
+                  {p.clearHistory}
                 </button>
               </div>
-            )}
-          </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
-            <div className="p-4 bg-slate-800/40 rounded-2xl">
-              <Building2 size={28} className="text-slate-600" />
+
+              {filteredEjendomme.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {filteredEjendomme.map((e) => (
+                    <RecentEjendomCard key={e.id} ejendom={e} now={renderNow} p={p} />
+                  ))}
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-12 text-center gap-3">
+                  <div className="p-4 bg-slate-800/40 rounded-2xl">
+                    <Filter size={24} className="text-slate-600" />
+                  </div>
+                  <p className="text-slate-400 text-sm font-medium">{ft.ingenMatch}</p>
+                  <button
+                    type="button"
+                    onClick={() => setFilters(DEFAULT_FILTERS)}
+                    className="text-emerald-400 hover:text-emerald-300 text-xs transition-colors"
+                  >
+                    {ft.nulstilFiltre}
+                  </button>
+                </div>
+              )}
             </div>
-            <p className="text-slate-400 text-sm font-medium">{p.noPropertiesYet}</p>
-            <p className="text-slate-600 text-xs max-w-xs leading-relaxed">{p.noPropertiesHint}</p>
-          </div>
-        )}
+          ) : (
+            <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
+              <div className="p-4 bg-slate-800/40 rounded-2xl">
+                <Building2 size={28} className="text-slate-600" />
+              </div>
+              <p className="text-slate-400 text-sm font-medium">{p.noPropertiesYet}</p>
+              <p className="text-slate-600 text-xs max-w-xs leading-relaxed">
+                {p.noPropertiesHint}
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* BIZZ-1007: Filter-sidepanel */}
+        <FilterPanel
+          filters={filters}
+          onFiltersChange={setFilters}
+          uniqueKommuner={uniqueKommuner}
+          uniquePostnumre={uniquePostnumre}
+          resultCount={filteredEjendomme.length}
+          isOpen={filterOpen}
+          onClose={() => setFilterOpen(false)}
+          lang={lang}
+        />
       </div>
     </div>
   );

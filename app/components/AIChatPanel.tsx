@@ -494,23 +494,30 @@ function AIChatPanel() {
     return () => window.removeEventListener('bizz:ai-attach-files', handler);
   }, [uploadAttachments, chatCtx]);
 
-  // BIZZ-956: Lytt efter "Forklar min vurdering" knap-events
+  // BIZZ-956 + BIZZ-993: Lytt efter AI-knap events og auto-send
+  const pendingSendRef = useRef(false);
   useEffect(() => {
     const handler = (event: Event) => {
       const ce = event as CustomEvent<{ prompt: string }>;
       if (ce.detail?.prompt) {
         setInput(ce.detail.prompt);
         chatCtx.setDrawerOpen(true);
-        // Auto-send efter kort delay så drawer er åben
-        setTimeout(() => {
-          const form = document.querySelector<HTMLFormElement>('[data-ai-chat-form]');
-          form?.requestSubmit();
-        }, 300);
+        // BIZZ-993: Markér at næste input-opdatering skal auto-sende
+        pendingSendRef.current = true;
       }
     };
     window.addEventListener('bizz:ai-open-with-prompt', handler);
     return () => window.removeEventListener('bizz:ai-open-with-prompt', handler);
   }, [chatCtx]);
+
+  // BIZZ-993: Auto-send når input er sat via AI-knap event
+  useEffect(() => {
+    if (pendingSendRef.current && input.trim()) {
+      pendingSendRef.current = false;
+      sendMessage();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [input]);
 
   /** Send besked til AI og stream svar — blokerer hvis token-grænsen er nået */
   const sendMessage = useCallback(async () => {

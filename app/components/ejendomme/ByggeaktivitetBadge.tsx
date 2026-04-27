@@ -61,6 +61,12 @@ export default function ByggeaktivitetBadge({ kommunekode, lang }: Props) {
       <p className="text-[10px] text-slate-600 mt-1">
         {data.omraade} · {da ? 'Kilde: DST BYGV22' : 'Source: DST BYGV22'}
       </p>
+      {/* BIZZ-1045: Kontekst */}
+      <p className="text-[9px] text-slate-600 mt-0.5">
+        {da
+          ? 'Antal fuldførte parcelhuse (nybyggeri) i området. Indikerer byggeaktivitet og ejendomsudvikling.'
+          : 'Number of completed single-family houses (new builds) in the area. Indicates construction activity.'}
+      </p>
     </div>
   );
 }

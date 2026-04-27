@@ -110,7 +110,11 @@ export async function GET(request: NextRequest): Promise<NextResponse<SkraafotoR
         const yearMatch = feat.properties?.datetime?.match(/^(\d{4})/);
         const year = yearMatch ? parseInt(yearMatch[1], 10) : null;
 
-        fotos.push({ direction: dir, thumbnail: thumb, fullsize: full, year });
+        // BIZZ-1044: Tilføj token til thumbnail-URL (Dataforsyningen kræver auth)
+        const thumbWithToken = thumb.includes('?')
+          ? `${thumb}&token=${encodeURIComponent(token)}`
+          : `${thumb}?token=${encodeURIComponent(token)}`;
+        fotos.push({ direction: dir, thumbnail: thumbWithToken, fullsize: full, year });
       }
 
       // Hvis vi fandt mindst 2 retninger, brug denne samling

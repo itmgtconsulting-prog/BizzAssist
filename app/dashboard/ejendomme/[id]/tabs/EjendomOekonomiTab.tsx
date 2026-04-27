@@ -23,6 +23,8 @@ import VurderingSammenligning from '@/app/components/ejendomme/VurderingSammenli
 import KommuneStatistikWidget from '@/app/components/analyse/KommuneStatistikWidget';
 import BoligmarkedWidget from '@/app/components/ejendomme/BoligmarkedWidget';
 import ByggeaktivitetBadge from '@/app/components/ejendomme/ByggeaktivitetBadge';
+import EnergiWidget from '@/app/components/ejendomme/EnergiWidget';
+import ByggeomkostningBadge from '@/app/components/ejendomme/ByggeomkostningBadge';
 import { formatDKK } from '@/app/lib/mock/ejendomme';
 import { getHandelstypeInfo, handelstypeBadgeClasses } from '@/app/lib/ejfKoder';
 import type { VurderingData, VurderingResponse } from '@/app/api/vurdering/route';
@@ -670,6 +672,9 @@ export default function EjendomOekonomiTab(props: Props) {
       {kommunekode && <BoligmarkedWidget kommunekode={kommunekode} lang={lang} />}
       {/* BIZZ-1027: Byggeaktivitet */}
       {kommunekode && <ByggeaktivitetBadge kommunekode={kommunekode} lang={lang} />}
+      {/* BIZZ-1046: Elpris + byggeomkostninger flyttet fra Oversigt-tab */}
+      {kommunekode && <EnergiWidget kommunekode={kommunekode} lang={lang} />}
+      <ByggeomkostningBadge lang={lang} />
       {kommunekode && <KommuneStatistikWidget kommunekode={kommunekode} lang={lang} />}
 
       {/* Hæftelser fjernet — vises nu under Tinglysning-tab */}

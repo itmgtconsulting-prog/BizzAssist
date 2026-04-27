@@ -2132,8 +2132,8 @@ function DiagramForce({
     </div>
   );
 
-  // BIZZ-1006: Detect shared-entity links (two sources → same target)
-  const sharedLinks = useMemo(() => {
+  // BIZZ-1006/1035: Shared-entity links deaktiveret — skabte forvirrende linjer
+  const _sharedLinks = useMemo(() => {
     const targetToSources = new Map<string, string[]>();
     for (const edge of filteredGraph.edges) {
       const sources = targetToSources.get(edge.to) ?? [];
@@ -2165,27 +2165,7 @@ function DiagramForce({
         fill="transparent"
       />
 
-      {/* BIZZ-1006: Shared-entity links (stiplet linje mellem noder der deler et mål) */}
-      {sharedLinks.map((link, i) => {
-        const aPos = positions.get(link.a);
-        const bPos = positions.get(link.b);
-        if (!aPos || !bPos) return null;
-        return (
-          <line
-            key={`shared-${i}`}
-            x1={aPos.x}
-            y1={aPos.y}
-            x2={bPos.x}
-            y2={bPos.y}
-            stroke="#6366f1"
-            strokeWidth={1}
-            strokeDasharray="4,4"
-            strokeOpacity={0.3}
-          >
-            <title>{lang === 'da' ? 'Fælles ejerskab' : 'Shared ownership'}</title>
-          </line>
-        );
-      })}
+      {/* BIZZ-1006/1035: Shared-entity links deaktiveret — skabte forvirrende linjer */}
 
       {/* ── Edges ── */}
       {filteredGraph.edges.map((edge, i) => {

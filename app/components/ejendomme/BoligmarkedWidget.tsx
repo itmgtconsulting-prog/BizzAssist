@@ -77,8 +77,13 @@ export default function BoligmarkedWidget({ kommunekode, lang }: Props) {
         )}
       </div>
       <p className="text-[10px] text-slate-600 mt-1">
-        {data.type} ·{' '}
-        {da ? 'Kilde: Danmarks Statistik EJEN77' : 'Source: Statistics Denmark EJEN77'}
+        {data.type} · {da ? 'Kilde: DST EJEN77' : 'Source: DST EJEN77'}
+      </p>
+      {/* BIZZ-1045: Kontekst */}
+      <p className="text-[9px] text-slate-600 mt-0.5">
+        {da
+          ? `Gennemsnitlig salgspris for ${data.type.toLowerCase()} i ${data.omraade} ved almindelig fri handel.${data.aendringYoY != null ? ` Ændring er ift. samme kvartal året før.` : ''}`
+          : `Average sale price for ${data.type.toLowerCase()} in ${data.omraade} in arm's-length transactions.${data.aendringYoY != null ? ' Change is YoY same quarter.' : ''}`}
       </p>
     </div>
   );

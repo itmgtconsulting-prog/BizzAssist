@@ -98,8 +98,8 @@ export default function SkatteberegningFlow({
       </h3>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 items-start">
-        {/* Grundskyld-flow */}
-        <div className="space-y-0">
+        {/* BIZZ-1043: Grundskyld-flow — self-start for top-alignment */}
+        <div className="space-y-0 self-start">
           <p className="text-slate-400 text-xs font-medium mb-2">
             {da ? 'Grundskyld' : 'Land tax'}
           </p>

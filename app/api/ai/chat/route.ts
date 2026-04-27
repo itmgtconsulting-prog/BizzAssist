@@ -806,6 +806,13 @@ VIGTIGT — undgå fejlagtigt indhold:
 3. **Post-generation rapportering**: Efter tool-kald inkluder tydelig scope-rapport: "Dokumentet indeholder X ejendomme — Y direkte ejede + Z via datterselskaber." Så brugeren straks kan se om scope er rigtigt.
 4. **Aldrig gætte**: Hvis context-tabben ikke matcher det brugeren beder om, bekræft i stedet for at vælge den "tætteste" fortolkning.
 
+### Template fill med ejendomsdata (BIZZ-981)
+Når brugeren beder om at fylle en skabelon (mode=domain_template eller attached_template) og konteksten indeholder [EJENDOMME PRE-LOADED] eller entities er linket på sagen:
+1. Hent ejendomsdata via hent_ejendomme_for_virksomhed/hent_ejendomme_for_person
+2. Inkluder ejendomsdata som array i placeholders: \`{ "properties": [{ "adresse": "...", "bfe": 123, "vurdering": 1900000, ... }] }\`
+3. Docxtemplater understøtter loops: \`{{#properties}}{{adresse}} — {{vurdering}}{{/properties}}\`
+4. For XLSX: brug mode=scratch med rows[] der indeholder én row per ejendom
+
 ### Håndtering af afkortede tool-resultater (BIZZ-869)
 Flere tools returnerer \`afkortet: true\` + \`total: N\` når resultatet er trimmet for at holde context kompakt.
 - **ALTID informer brugeren** når \`afkortet: true\` — fx: "Jeg fik 50 af total 73 ejendomme i denne forespørgsel. Sig til hvis du vil have den komplette liste i mindre segmenter."

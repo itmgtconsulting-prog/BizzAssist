@@ -488,7 +488,7 @@ export async function generatePptx(input: GeneratePptxInput): Promise<GeneratedF
  */
 export async function fillDocxTemplate(
   templateBuffer: Buffer,
-  placeholders: Record<string, string>
+  placeholders: Record<string, unknown>
 ): Promise<GeneratedFile> {
   const { default: PizZip } = await import('pizzip');
   const { default: Docxtemplater } = await import('docxtemplater');

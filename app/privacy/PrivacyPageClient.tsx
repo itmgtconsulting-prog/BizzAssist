@@ -82,6 +82,14 @@ function DanishPrivacy() {
             <strong className="text-white">Kommunikation:</strong> Indhold af henvendelser til vores
             support.
           </li>
+          <li>
+            <strong className="text-white">Cached offentlige registerdata:</strong> Vi cacher data
+            fra danske offentlige registre (BBR, CVR, DAR, VUR, EJF) for at levere hurtigere opslag.
+            Disse data kan indeholde virksomhedsnavne, ejernavne og adresser. Behandlingsgrundlag:
+            berettiget interesse (GDPR art. 6(1)(f)) — legitim forretningsinteresse i at levere en
+            responsiv tjeneste. Cache-data slettes automatisk efter fastsatte perioder (CVR: 30
+            dage, BBR/VUR: 90 dage, DAR: 180 dage).
+          </li>
         </ul>
       </section>
 
@@ -322,6 +330,14 @@ function EnglishPrivacy() {
           <li>
             <strong className="text-white">Communication:</strong> Content of inquiries to our
             support.
+          </li>
+          <li>
+            <strong className="text-white">Cached public register data:</strong> We cache data from
+            Danish public registers (BBR, CVR, DAR, VUR, EJF) to deliver faster lookups. This data
+            may include company names, owner names and addresses. Legal basis: legitimate interest
+            (GDPR Art. 6(1)(f)) — legitimate business interest in providing a responsive service.
+            Cache data is automatically deleted after fixed periods (CVR: 30 days, BBR/VUR: 90 days,
+            DAR: 180 days).
           </li>
         </ul>
       </section>

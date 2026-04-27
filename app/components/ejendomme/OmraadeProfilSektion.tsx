@@ -62,38 +62,49 @@ export default function OmraadeProfilSektion({ kommunekode, lang }: Props) {
           <span className="text-slate-400 font-normal text-xs">— {data.kommunenavn}</span>
         )}
       </h3>
-      <div className="grid grid-cols-3 gap-3">
+      {/* BIZZ-997: Kompakte label/værdi-par — matcher matrikel-kasse-layoutet */}
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
         {data.befolkning != null && (
-          <div className="bg-slate-900/50 rounded-lg p-3 text-center">
-            <Users size={14} className="text-blue-400 mx-auto mb-1" />
-            <p className="text-white text-lg font-bold">{fmt(data.befolkning)}</p>
-            <p className="text-slate-500 text-[10px]">
+          <>
+            <span className="text-slate-500 text-xs flex items-center gap-1">
+              <Users size={10} className="text-blue-400" />
               {da ? 'Befolkning' : 'Population'}
               {data.befolkningKvartal && (
-                <span className="block text-slate-600">{data.befolkningKvartal}</span>
+                <span className="text-slate-600 text-[9px]">({data.befolkningKvartal})</span>
               )}
-            </p>
-          </div>
+            </span>
+            <span className="text-white text-xs font-medium text-right">
+              {fmt(data.befolkning)}
+            </span>
+          </>
         )}
         {data.gnsIndkomst != null && (
-          <div className="bg-slate-900/50 rounded-lg p-3 text-center">
-            <Wallet size={14} className="text-emerald-400 mx-auto mb-1" />
-            <p className="text-white text-lg font-bold">{fmt(data.gnsIndkomst)}</p>
-            <p className="text-slate-500 text-[10px]">
-              {da ? 'Gns. indkomst (kr)' : 'Avg. income (DKK)'}
-              {data.indkomstAar && <span className="block text-slate-600">{data.indkomstAar}</span>}
-            </p>
-          </div>
+          <>
+            <span className="text-slate-500 text-xs flex items-center gap-1">
+              <Wallet size={10} className="text-emerald-400" />
+              {da ? 'Gns. indkomst' : 'Avg. income'}
+              {data.indkomstAar && (
+                <span className="text-slate-600 text-[9px]">({data.indkomstAar})</span>
+              )}
+            </span>
+            <span className="text-white text-xs font-medium text-right">
+              {fmt(data.gnsIndkomst)} kr
+            </span>
+          </>
         )}
         {data.antalBoliger != null && (
-          <div className="bg-slate-900/50 rounded-lg p-3 text-center">
-            <Home size={14} className="text-amber-400 mx-auto mb-1" />
-            <p className="text-white text-lg font-bold">{fmt(data.antalBoliger)}</p>
-            <p className="text-slate-500 text-[10px]">
+          <>
+            <span className="text-slate-500 text-xs flex items-center gap-1">
+              <Home size={10} className="text-amber-400" />
               {da ? 'Boliger' : 'Dwellings'}
-              {data.boligAar && <span className="block text-slate-600">{data.boligAar}</span>}
-            </p>
-          </div>
+              {data.boligAar && (
+                <span className="text-slate-600 text-[9px]">({data.boligAar})</span>
+              )}
+            </span>
+            <span className="text-white text-xs font-medium text-right">
+              {fmt(data.antalBoliger)}
+            </span>
+          </>
         )}
       </div>
       <p className="text-slate-600 text-[9px] mt-2 text-right">

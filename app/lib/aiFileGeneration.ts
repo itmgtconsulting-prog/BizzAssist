@@ -73,7 +73,8 @@ export const GenerateCsvInputSchema = z.object({
 });
 
 export const GenerateDocxInputSchema = z.object({
-  title: z.string().min(1).max(200),
+  // BIZZ-991: Hævet fra 200 til 300 — matcher RequestBodySchema
+  title: z.string().min(1).max(300),
   subtitle: z.string().max(200).optional(),
   sections: z
     .array(

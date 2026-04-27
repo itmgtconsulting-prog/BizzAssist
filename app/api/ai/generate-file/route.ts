@@ -106,7 +106,8 @@ const DomainTemplateSchema = z
 const RequestBodySchema = z.object({
   format: FormatSchema,
   mode: ModeSchema,
-  title: z.string().min(1).max(100),
+  // BIZZ-991: Hævet fra 100 til 300 — lange rapporttitler (adresse + type) overskred limiten
+  title: z.string().min(1).max(300),
   conv_id: z.string().optional(),
   scratch: ScratchInputSchema,
   attached_template: AttachedTemplateSchema,

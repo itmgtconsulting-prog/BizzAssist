@@ -197,7 +197,8 @@ type OverlayNøgle =
   | 'indsatsplaner'
   | 'omr_klassificering'
   | 'havvand_1m'
-  | 'skybrud';
+  | 'skybrud'
+  | 'bygningsfodaftryk';
 
 /**
  * Bygger en WMS tile-URL via server-side proxy (/api/wms).
@@ -207,7 +208,10 @@ type OverlayNøgle =
  * @param service - 'plandata' eller 'miljo' (whitelistet i /api/wms)
  * @param layers  - Kommasepareret WMS LAYERS-parameter
  */
-function buildWmsUrl(service: 'plandata' | 'miljo' | 'miljoegis' | 'dhm', layers: string): string {
+function buildWmsUrl(
+  service: 'plandata' | 'miljo' | 'miljoegis' | 'dhm' | 'geodanmark',
+  layers: string
+): string {
   return (
     `/api/wms?service=${service}` +
     `&SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap` +
@@ -409,6 +413,14 @@ const OVERLAY_WMS: Array<{
     opacity: 0.55,
     farveClass: 'bg-sky-700 border-sky-700',
   },
+  // ── Topografi (GeoDanmark) ──
+  {
+    id: 'bygningsfodaftryk',
+    navn: 'Bygningsfodaftryk',
+    url: buildWmsUrl('geodanmark', 'BYGNING'),
+    opacity: 0.4,
+    farveClass: 'bg-orange-500 border-orange-500',
+  },
 ];
 
 /** Standard synlighedstilstand — matrikel til, alle WMS-lag fra */
@@ -439,6 +451,7 @@ const OVERLAY_START: Record<OverlayNøgle, boolean> = {
   omr_klassificering: false,
   havvand_1m: false,
   skybrud: false,
+  bygningsfodaftryk: false,
 };
 
 /**
@@ -1599,6 +1612,11 @@ function PropertyMap({
                     label: 'Klimarisiko',
                     klasse: 'text-sky-400',
                     ids: ['havvand_1m', 'skybrud'],
+                  },
+                  {
+                    label: 'Topografi',
+                    klasse: 'text-orange-400',
+                    ids: ['bygningsfodaftryk'],
                   },
                 ].map((gruppe) => (
                   <div key={gruppe.label}>

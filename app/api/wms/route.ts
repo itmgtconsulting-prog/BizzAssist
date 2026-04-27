@@ -26,8 +26,8 @@ export const runtime = 'nodejs';
 // ─── Query param validation ─────────────────────────────────────────────────
 
 const wmsQuerySchema = z.object({
-  service: z.enum(['plandata', 'miljo', 'miljoegis', 'dhm'], {
-    error: 'service skal være plandata, miljo, miljoegis eller dhm',
+  service: z.enum(['plandata', 'miljo', 'miljoegis', 'dhm', 'geodanmark'], {
+    error: 'service skal være plandata, miljo, miljoegis, dhm eller geodanmark',
   }),
 });
 
@@ -44,6 +44,8 @@ const WMS_BASES = {
   miljoegis: 'https://tilecache2-miljoegis.mim.dk/gwc/service/wms',
   // BIZZ-948: Danmarks Højdemodel — oversvømmelseskort (havvand + skybrud)
   dhm: 'https://api.dataforsyningen.dk/wms/dhm',
+  // BIZZ-953: GeoDanmark bygningsfodaftryk og topografisk data
+  geodanmark: 'https://api.dataforsyningen.dk/GeoDanmark_60_NOHIST_DAF',
 } as const;
 
 /** @internal Used by Zod schema enum — kept for type documentation */
@@ -69,8 +71,8 @@ export async function GET(request: NextRequest): Promise<Response> {
     if (key !== 'service') wmsParams.set(key, value);
   }
 
-  // BIZZ-948: Dataforsyningen kræver API-token i URL
-  if (service === 'dhm') {
+  // BIZZ-948 / BIZZ-953: Dataforsyningen-services kræver API-token i URL
+  if (service === 'dhm' || service === 'geodanmark') {
     const token = process.env.DATAFORSYNINGEN_TOKEN;
     if (!token) {
       logger.warn('[wms] DATAFORSYNINGEN_TOKEN ikke konfigureret');

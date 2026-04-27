@@ -299,7 +299,8 @@ type LagNøgle =
   | 'stoej_vej'
   | 'stoej_tog'
   | 'havvand_1m'
-  | 'skybrud';
+  | 'skybrud'
+  | 'bygningsfodaftryk';
 
 /** Synlighedstilstand for alle lag */
 type LagSynlighed = Record<LagNøgle, boolean>;
@@ -337,6 +338,7 @@ const LAG_START: LagSynlighed = {
   stoej_tog: false,
   havvand_1m: false,
   skybrud: false,
+  bygningsfodaftryk: false,
 };
 
 /** WMS-lag definition — kilde, URL og standard opacity */
@@ -354,7 +356,10 @@ interface WmsLagDef {
  * @param service - 'plandata' eller 'miljo' (whitelistet i /api/wms)
  * @param layers  - Kommasepareret WMS LAYERS-parameter
  */
-function wmsUrl(service: 'plandata' | 'miljo' | 'miljoegis' | 'dhm', layers: string): string {
+function wmsUrl(
+  service: 'plandata' | 'miljo' | 'miljoegis' | 'dhm' | 'geodanmark',
+  layers: string
+): string {
   return (
     `/api/wms?service=${service}` +
     `&SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap` +
@@ -467,6 +472,12 @@ const WMS_LAG: WmsLagDef[] = [
     wmsUrl: wmsUrl('dhm', 'dhm_bluespot_ekstremregn'),
     opacity: 0.55,
   },
+  // ── BIZZ-953: GeoDanmark bygningsfodaftryk ──
+  {
+    id: 'bygningsfodaftryk',
+    wmsUrl: wmsUrl('geodanmark', 'BYGNING'),
+    opacity: 0.4,
+  },
 ];
 
 /** Farveaccenter til gruppeoverskrifter */
@@ -555,6 +566,11 @@ const LAG_GRUPPER: Array<{
       { id: 'havvand_1m', navn: 'Havvand +1 m (stormflod)' },
       { id: 'skybrud', navn: 'Skybrud (bluespot)' },
     ],
+  },
+  {
+    navn: 'Topografi',
+    farve: 'orange',
+    lag: [{ id: 'bygningsfodaftryk', navn: 'Bygningsfodaftryk' }],
   },
 ];
 

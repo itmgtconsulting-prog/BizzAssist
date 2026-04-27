@@ -116,6 +116,12 @@ export interface AIPageData {
     branche?: string | null;
   }>;
   /**
+   * BIZZ-1000: Base64-encoded PNG af ejerskabsdiagrammet. Sættes automatisk
+   * af DiagramForce når diagrammet er renderet. Bruges af generate_document
+   * til at indlejre billede i Word/PPTX-eksport.
+   */
+  diagramBase64?: string;
+  /**
    * BIZZ-1002: Virksomheds kontaktinfo — telefon, email, adresse.
    * Inkluderes i AI-kontekst så eksport-dokumenter kan indeholde kontaktdata.
    */

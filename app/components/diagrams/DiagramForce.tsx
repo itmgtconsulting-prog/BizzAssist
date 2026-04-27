@@ -144,6 +144,7 @@ function DiagramForce({
   lang,
   onNodeClick,
   defaultShowProperties = true,
+  onDiagramReady,
 }: DiagramVariantProps) {
   const _router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1377,7 +1378,37 @@ function DiagramForce({
       // efterfølgende simulation-restarts skjuler IKKE diagrammet.
       // Kort delay (180ms) sikrer fitView-transformet er applied først.
       setTimeout(() => {
-        if (!cancelled) hasEverSimulated.current = true;
+        if (!cancelled) {
+          hasEverSimulated.current = true;
+          // BIZZ-1000: Capture diagram as base64 PNG for AI export
+          if (onDiagramReady && svgRef.current) {
+            const serializer = new XMLSerializer();
+            const svgString = serializer.serializeToString(svgRef.current);
+            const svgBlob = new Blob([`<?xml version="1.0" encoding="UTF-8"?>\n${svgString}`], {
+              type: 'image/svg+xml;charset=utf-8',
+            });
+            const svgUrl = URL.createObjectURL(svgBlob);
+            const img = new Image();
+            img.onload = () => {
+              const scale = 2;
+              const canvas = document.createElement('canvas');
+              canvas.width = img.width * scale;
+              canvas.height = img.height * scale;
+              const ctx = canvas.getContext('2d');
+              if (ctx) {
+                ctx.fillStyle = '#0f172a';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.scale(scale, scale);
+                ctx.drawImage(img, 0, 0);
+                const dataUrl = canvas.toDataURL('image/png');
+                const base64 = dataUrl.replace(/^data:image\/png;base64,/, '');
+                onDiagramReady(base64);
+              }
+              URL.revokeObjectURL(svgUrl);
+            };
+            img.src = svgUrl;
+          }
+        }
       }, 180);
     };
 

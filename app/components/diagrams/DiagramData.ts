@@ -162,6 +162,12 @@ export interface DiagramVariantProps {
    * Brugeren kan altid toggle manuelt via toolbar-knappen.
    */
   defaultShowProperties?: boolean;
+  /**
+   * BIZZ-1000: Callback fired once diagram is rendered, with base64-encoded PNG.
+   * Parent components use this to store the image in AIPageContext for
+   * Word/PPTX export embedding.
+   */
+  onDiagramReady?: (base64Png: string) => void;
 }
 
 /** Max children shown per parent node — overflow becomes an expandable list */

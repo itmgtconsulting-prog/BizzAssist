@@ -424,6 +424,13 @@ function AIChatPanel() {
         parts.push(lines.join('\n'));
       }
 
+      // BIZZ-1000: Diagram-billede tilgængeligt for Word/PPTX-eksport
+      if (pageData.diagramBase64) {
+        parts.push(
+          '\n[DIAGRAM-BILLEDE] Et PNG-billede af ejerskabsdiagrammet er tilgængeligt. Når du genererer et dokument med diagram-indhold, inkluder imageBase64-feltet i den relevante sektion for at indlejre billedet.'
+        );
+      }
+
       // BIZZ-1002: Virksomheds kontaktinfo, nøglepersoner og regnskab
       if (pageData.virksomhedKontakt) {
         const k = pageData.virksomhedKontakt;
@@ -709,6 +716,8 @@ function AIChatPanel() {
           messages: newMessages,
           context: buildContext(),
           attachments: attachmentRefs.length > 0 ? attachmentRefs : undefined,
+          // BIZZ-1000: Diagram base64 til Word/PPTX-eksport (kun sendt når tilgængeligt)
+          diagramBase64: pageData?.diagramBase64 ?? undefined,
           // BIZZ-820/839: Bind turn til aktiv session (persist-hook). Når
           // ensureConversation fejlede (convId null) springer vi
           // session_id over — server kører stateless-mode.

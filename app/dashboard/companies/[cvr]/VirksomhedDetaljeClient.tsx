@@ -1907,7 +1907,13 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           {/* ══ RELATIONSDIAGRAM (Force Graph — original) ══ */}
           {aktivTab === 'diagram' && (
             <div className="relative">
-              <DiagramForce graph={diagramGraphStable} lang={lang} />
+              <DiagramForce
+                graph={diagramGraphStable}
+                lang={lang}
+                onDiagramReady={(base64) => {
+                  setAICtx({ diagramBase64: base64 });
+                }}
+              />
               {/* BIZZ-729: Loading overlay — ejendomme loades progressivt men diagrammet
                   rebuilds kun ved ejendommeFetchComplete=true for at undgå re-simulation.
                   Uden denne indikator ser diagrammet "færdigt" ud indtil ejendomme pludselig

@@ -86,6 +86,8 @@ interface ChatRequestBody {
    * BIZZ-820 UI skifter gradvist til at sende session_id.
    */
   session_id?: string;
+  /** BIZZ-1000: Base64-encoded PNG af ejerskabsdiagram — injiceres i generate_document tool. */
+  diagramBase64?: string;
 }
 
 // ─── Tool definitions ───────────────────────────────────────────────────────
@@ -762,8 +764,8 @@ Konteksten kan indeholde \`activeTab\` + \`pageType\` der angiver hvad brugeren 
 - **pageType=virksomhed + activeTab=regnskab**: Brug hent_regnskab_noegletal(cvr) — fokus på omsætning/resultat/egenkapital.
 - **pageType=virksomhed + activeTab=oversigt**: Inkluder både stamdata OG ejendomme OG personer (overblik).
 - **pageType=person + activeTab=ejendomme**: Kald hent_ejendomme_for_person(enhedsNummer) — dette ene tool returnerer ALLE ejendomme (personlige + via virksomheder).
-- **pageType=person + activeTab=relations (diagram)**: Brugeren ser ejerskabsdiagrammet. Når de siger "eksporter diagram" eller "diagram til word/pptx", generer en struktureret fil med ejerskabshierarkiet. Kald hent_person_virksomheder for at få virksomhedslisten, derefter generate_document med format=docx (sektioner: Ejerskabsoversigt, Virksomheder med roller/ejerandel) eller format=pptx (slides pr. virksomhed). "Diagram" = ejerskabsdiagrammet — IKKE et billede.
-- **pageType=virksomhed + activeTab=diagram**: Brugeren ser virksomheds-ejerskabsdiagrammet. "Eksporter diagram" = generer struktureret ejerskabsoversigt via hent_datterselskaber + hent_ejeroplysninger. Brug docx/pptx format.
+- **pageType=person + activeTab=relations (diagram)**: Brugeren ser ejerskabsdiagrammet. Når de siger "eksporter diagram" eller "diagram til word/pptx", generer en struktureret fil med ejerskabshierarkiet. Kald hent_person_virksomheder for at få virksomhedslisten, derefter generate_document med format=docx (sektioner: Ejerskabsoversigt, Virksomheder med roller/ejerandel) eller format=pptx (slides pr. virksomhed). Hvis [DIAGRAM-BILLEDE] er i konteksten, tilføj en sektion med imageBase64="DIAGRAM" for at indlejre det visuelle diagram i dokumentet.
+- **pageType=virksomhed + activeTab=diagram**: Brugeren ser virksomheds-ejerskabsdiagrammet. "Eksporter diagram" = generer struktureret ejerskabsoversigt via hent_datterselskaber + hent_ejeroplysninger. Brug docx/pptx format. Hvis [DIAGRAM-BILLEDE] er i konteksten, tilføj en sektion med imageBase64="DIAGRAM" for at indlejre det visuelle diagram.
 
 ## Forklar min vurdering (BIZZ-956)
 Når brugeren beder om at "forklare vurderingen" eller "forklar min skat" på en ejendomsside:
@@ -925,7 +927,9 @@ async function executeTool(
   input: Record<string, string>,
   baseUrl: string,
   /** Forward user's Cookie header for authenticated internal API calls */
-  cookieHeader?: string | null
+  cookieHeader?: string | null,
+  /** BIZZ-1000: Diagram PNG base64 til injection i generate_document */
+  diagramBase64?: string
 ): Promise<unknown> {
   const cached = getCached(name, input);
   if (cached !== null) return cached;
@@ -2020,11 +2024,15 @@ async function executeTool(
 
       case 'generate_document': {
         // BIZZ-813: POST til /api/ai/generate-file med Claude's input.
-        // Returnerer HELE response-objektet inkl. download_url —
-        // wrapper-laget emitterer SSE-event med download_url før den
-        // sender et SANITIZED tool_result tilbage til Claude (uden URL,
-        // så Claude ikke inkluderer det i markdown-svar).
+        // BIZZ-1000: Injicér diagramBase64 i sektioner med imageBase64="DIAGRAM" placeholder.
         const fileInput = input as unknown as Record<string, unknown>;
+        if (diagramBase64 && Array.isArray(fileInput.sections)) {
+          for (const section of fileInput.sections as Record<string, unknown>[]) {
+            if (section.imageBase64 === 'DIAGRAM') {
+              section.imageBase64 = diagramBase64;
+            }
+          }
+        }
         const res = await fetch(`${baseUrl}/api/ai/generate-file`, {
           method: 'POST',
           headers: {
@@ -2559,7 +2567,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     return Response.json({ error: 'Ugyldig JSON' }, { status: 400 });
   }
 
-  const { messages, context, attachments, session_id: sessionId } = body;
+  const { messages, context, attachments, session_id: sessionId, diagramBase64 } = body;
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     return Response.json({ error: 'Ingen beskeder' }, { status: 400 });
   }
@@ -2934,7 +2942,8 @@ export async function POST(request: NextRequest): Promise<Response> {
                 toolBlock.name,
                 toolBlock.input as Record<string, string>,
                 baseUrl,
-                request.headers.get('cookie')
+                request.headers.get('cookie'),
+                diagramBase64
               );
 
               // BIZZ-813: generate_document returnerer download_url —

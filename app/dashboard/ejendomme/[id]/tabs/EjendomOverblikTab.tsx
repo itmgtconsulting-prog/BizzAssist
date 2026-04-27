@@ -31,6 +31,8 @@ import OmraadeProfilSektion from '@/app/components/ejendomme/OmraadeProfilSektio
 import StoejBadge from '@/app/components/ejendomme/StoejBadge';
 import SkraafotoGalleri from '@/app/components/ejendomme/SkraafotoGalleri';
 import EjerforeningSektion from '@/app/components/ejendomme/EjerforeningSektion';
+import EnergiWidget from '@/app/components/ejendomme/EnergiWidget';
+import ByggeomkostningBadge from '@/app/components/ejendomme/ByggeomkostningBadge';
 import type { Ejerlejlighed } from '@/app/api/ejerlejligheder/route';
 
 interface TinglysningSnapshot {
@@ -757,6 +759,10 @@ export default function EjendomOverblikTab({
       <SkraafotoGalleri lat={dawaAdresse?.y ?? null} lng={dawaAdresse?.x ?? null} lang={lang} />
       {/* BIZZ-961: Støjniveau-badge */}
       <StoejBadge lat={dawaAdresse?.y ?? null} lng={dawaAdresse?.x ?? null} lang={lang} />
+      {/* BIZZ-955: Energipris-widget */}
+      <EnergiWidget kommunekode={kommunekode ?? null} lang={lang} />
+      {/* BIZZ-968: Byggeomkostningsindeks */}
+      <ByggeomkostningBadge lang={lang} />
       {/* BIZZ-947: Områdeprofil fra Danmarks Statistik */}
       <OmraadeProfilSektion kommunekode={kommunekode ?? null} lang={lang} />
     </div>

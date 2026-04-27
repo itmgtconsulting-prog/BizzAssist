@@ -44,6 +44,8 @@ export interface EjendomFilterState {
   arealMax: string;
   /** BIZZ-1010: Ejer-type filter */
   ejerType: EjerTypeFilter;
+  /** BIZZ-1008: Ejendomsværdi preset */
+  vaerdiPreset: '' | '0-2' | '2-5' | '5-10' | '10+';
 }
 
 /** Standard filterstatus — ingen aktive filtre */
@@ -55,6 +57,7 @@ export const DEFAULT_FILTERS: EjendomFilterState = {
   arealMin: '',
   arealMax: '',
   ejerType: '',
+  vaerdiPreset: '',
 };
 
 /** Tæl antal aktive filtre */
@@ -66,6 +69,7 @@ export function countActiveFilters(f: EjendomFilterState): number {
   if (f.aldersPreset) n++;
   if (f.arealMin || f.arealMax) n++;
   if (f.ejerType) n++;
+  if (f.vaerdiPreset) n++;
   return n;
 }
 
@@ -96,6 +100,8 @@ const t = {
     alleEjere: 'Alle ejere',
     person: 'Privatperson',
     virksomhed: 'Virksomhed',
+    vaerdi: 'Ejendomsværdi',
+    alleVaerdier: 'Alle værdier',
     resultater: (n: number) => `${n} ejendomme`,
   },
   en: {
@@ -123,6 +129,8 @@ const t = {
     alleEjere: 'All owners',
     person: 'Private person',
     virksomhed: 'Company',
+    vaerdi: 'Property value',
+    alleVaerdier: 'All values',
     resultater: (n: number) => `${n} properties`,
   },
 };
@@ -355,6 +363,33 @@ export default function FilterPanel({
             <option value="">{l.alleEjere}</option>
             <option value="person">{l.person}</option>
             <option value="virksomhed">{l.virksomhed}</option>
+          </select>
+        </div>
+
+        {/* ── BIZZ-1008: Ejendomsværdi ── */}
+        <div>
+          <label
+            htmlFor="filter-vaerdi"
+            className="block text-slate-400 text-xs font-medium uppercase tracking-wide mb-1.5"
+          >
+            {l.vaerdi}
+          </label>
+          <select
+            id="filter-vaerdi"
+            value={filters.vaerdiPreset}
+            onChange={(e) =>
+              onFiltersChange({
+                ...filters,
+                vaerdiPreset: e.target.value as EjendomFilterState['vaerdiPreset'],
+              })
+            }
+            className="w-full bg-slate-800 border border-slate-700/60 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500/60 transition-colors"
+          >
+            <option value="">{l.alleVaerdier}</option>
+            <option value="0-2">0 – 2 mio. kr</option>
+            <option value="2-5">2 – 5 mio. kr</option>
+            <option value="5-10">5 – 10 mio. kr</option>
+            <option value="10+">10+ mio. kr</option>
           </select>
         </div>
       </div>

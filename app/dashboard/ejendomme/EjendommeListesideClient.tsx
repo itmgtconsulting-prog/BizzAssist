@@ -444,6 +444,12 @@ function ActiveFilterChips({
       onRemove: () => onFiltersChange({ ...filters, ejerType: '' }),
     });
   }
+  if (filters.vaerdiPreset) {
+    chips.push({
+      label: `${filters.vaerdiPreset} mio. kr`,
+      onRemove: () => onFiltersChange({ ...filters, vaerdiPreset: '' }),
+    });
+  }
 
   if (chips.length === 0) return null;
 

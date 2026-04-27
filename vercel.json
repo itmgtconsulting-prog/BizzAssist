@@ -29,6 +29,10 @@
       "schedule": "0 4 * * *"
     },
     {
+      "path": "/api/cron/warm-bbr-cache",
+      "schedule": "30 4 * * *"
+    },
+    {
       "path": "/api/cron/daily-report",
       "schedule": "0 7 * * *"
     },

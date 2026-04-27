@@ -1272,22 +1272,30 @@ function DiagramForce({
         node.y = (node.y ?? 0) * 0.15 + targetY * 0.85;
       }
 
-      // Same-level X repulsion: push apart any nodes at the same Y to
-      // prevent horizontal overlap. Property-property pairs use narrower minDist
-      // matching their smaller box width.
-      const MIN_DIST_COMPANY = NODE_W + 36;
-      const MIN_DIST_PROPERTY = NODE_W_PROPERTY + 20;
+      // BIZZ-1005: Forbedret same-level X repulsion med stærkere push
+      // og label-aware collision radius.
+      const MIN_DIST_COMPANY = NODE_W + 44;
+      const MIN_DIST_PROPERTY = NODE_W_PROPERTY + 24;
+      const MIN_DIST_PERSON = NODE_W + 44;
       for (const [, siblings] of nodesByY) {
+        // Sortér siblings for stabil ordering (undgår oscillation)
+        siblings.sort((a, b) => (a.x ?? 0) - (b.x ?? 0));
         for (let i = 0; i < siblings.length; i++) {
           for (let j = i + 1; j < siblings.length; j++) {
             const a = siblings[i];
             const b = siblings[j];
             const bothProperty = a.data.type === 'property' && b.data.type === 'property';
-            const minDist = bothProperty ? MIN_DIST_PROPERTY : MIN_DIST_COMPANY;
+            const eitherPerson = a.data.type === 'person' || b.data.type === 'person';
+            const minDist = bothProperty
+              ? MIN_DIST_PROPERTY
+              : eitherPerson
+                ? MIN_DIST_PERSON
+                : MIN_DIST_COMPANY;
             const dx = (b.x ?? 0) - (a.x ?? 0);
             const absDx = Math.abs(dx);
             if (absDx < minDist) {
-              const push = (minDist - absDx) * 0.6;
+              // Stærkere push (0.7 vs 0.6) for hurtigere separation
+              const push = (minDist - absDx) * 0.7;
               const sign = dx >= 0 ? 1 : -1;
               a.x = (a.x ?? 0) - push * sign;
               b.x = (b.x ?? 0) + push * sign;
@@ -1345,7 +1353,8 @@ function DiagramForce({
     // Now runs 30 ticks per frame via setTimeout, yielding to the event loop between batches.
     let cancelled = false;
     const TICKS_PER_BATCH = 30;
-    const TOTAL_TICKS = 120;
+    // BIZZ-1005: Flere ticks for komplekse grafer (10+ noder) for bedre convergence
+    const TOTAL_TICKS = forceNodes.length > 10 ? 180 : 120;
     let ticksDone = 0;
 
     const runBatch = () => {
@@ -2123,6 +2132,27 @@ function DiagramForce({
     </div>
   );
 
+  // BIZZ-1006: Detect shared-entity links (two sources → same target)
+  const sharedLinks = useMemo(() => {
+    const targetToSources = new Map<string, string[]>();
+    for (const edge of filteredGraph.edges) {
+      const sources = targetToSources.get(edge.to) ?? [];
+      sources.push(edge.from);
+      targetToSources.set(edge.to, sources);
+    }
+    const links: Array<{ a: string; b: string; shared: string }> = [];
+    for (const [target, sources] of targetToSources) {
+      if (sources.length < 2) continue;
+      // Create pairwise links between sources that share a target
+      for (let i = 0; i < sources.length && i < 5; i++) {
+        for (let j = i + 1; j < sources.length && j < 5; j++) {
+          links.push({ a: sources[i], b: sources[j], shared: target });
+        }
+      }
+    }
+    return links;
+  }, [filteredGraph.edges]);
+
   /** SVG edges + nodes content (shared between normal and fullscreen) */
   const svgContent = (
     <>
@@ -2134,6 +2164,28 @@ function DiagramForce({
         height={viewBox.h}
         fill="transparent"
       />
+
+      {/* BIZZ-1006: Shared-entity links (stiplet linje mellem noder der deler et mål) */}
+      {sharedLinks.map((link, i) => {
+        const aPos = positions.get(link.a);
+        const bPos = positions.get(link.b);
+        if (!aPos || !bPos) return null;
+        return (
+          <line
+            key={`shared-${i}`}
+            x1={aPos.x}
+            y1={aPos.y}
+            x2={bPos.x}
+            y2={bPos.y}
+            stroke="#6366f1"
+            strokeWidth={1}
+            strokeDasharray="4,4"
+            strokeOpacity={0.3}
+          >
+            <title>{lang === 'da' ? 'Fælles ejerskab' : 'Shared ownership'}</title>
+          </line>
+        );
+      })}
 
       {/* ── Edges ── */}
       {filteredGraph.edges.map((edge, i) => {

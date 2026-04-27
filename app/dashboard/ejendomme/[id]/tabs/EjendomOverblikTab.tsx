@@ -30,6 +30,7 @@ import type { CVRVirksomhed } from '@/app/api/cvr/route';
 import OmraadeProfilSektion from '@/app/components/ejendomme/OmraadeProfilSektion';
 import StoejBadge from '@/app/components/ejendomme/StoejBadge';
 import SkraafotoGalleri from '@/app/components/ejendomme/SkraafotoGalleri';
+import EjerforeningSektion from '@/app/components/ejendomme/EjerforeningSektion';
 import type { Ejerlejlighed } from '@/app/api/ejerlejligheder/route';
 
 interface TinglysningSnapshot {
@@ -745,6 +746,13 @@ export default function EjendomOverblikTab({
           </div>
         </div>
       )}
+      {/* BIZZ-966: Ejerforening */}
+      <EjerforeningSektion
+        vejnavn={dawaAdresse?.vejnavn ?? null}
+        husnr={dawaAdresse?.husnr ?? null}
+        postnr={dawaAdresse?.postnr ?? null}
+        lang={lang}
+      />
       {/* BIZZ-964: Skråfoto-galleri */}
       <SkraafotoGalleri lat={dawaAdresse?.y ?? null} lng={dawaAdresse?.x ?? null} lang={lang} />
       {/* BIZZ-961: Støjniveau-badge */}

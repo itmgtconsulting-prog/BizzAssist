@@ -191,9 +191,15 @@ function DiagramForce({
    */
   const effectiveGraph = useMemo(() => {
     if (extensionNodes.length === 0 && extensionEdges.length === 0) return graph;
+    // BIZZ-1036: Dedup noder — extension-noder med samme id som eksisterende skipppes
+    const existingIds = new Set(graph.nodes.map((n) => n.id));
+    const dedupedNodes = extensionNodes.filter((n) => !existingIds.has(n.id));
+    // Dedup edges — samme from+to kombination
+    const existingEdgeKeys = new Set(graph.edges.map((e) => `${e.from}→${e.to}`));
+    const dedupedEdges = extensionEdges.filter((e) => !existingEdgeKeys.has(`${e.from}→${e.to}`));
     return {
-      nodes: [...graph.nodes, ...extensionNodes],
-      edges: [...graph.edges, ...extensionEdges],
+      nodes: [...graph.nodes, ...dedupedNodes],
+      edges: [...graph.edges, ...dedupedEdges],
       mainId: graph.mainId,
       hiddenCount: graph.hiddenCount,
     };
@@ -2185,6 +2191,10 @@ function DiagramForce({
         const ey = toPos.y - toH / 2;
         const midY = (sy + ey) / 2;
         const midX = (sx + ex) / 2;
+        // BIZZ-1042: Kontrolpunkter for Bezier — blend mod midtpunkt for
+        // at undgå at kurven strækker sig horisontalt ud over node-grænser.
+        const cx1 = sx + (midX - sx) * 0.15;
+        const cx2 = ex + (midX - ex) * 0.15;
 
         // Property edges rendered with emerald color to match property nodes
         const isPropertyEdge = toNode?.type === 'property' || edge.to.startsWith('props-overflow-');
@@ -2223,7 +2233,7 @@ function DiagramForce({
         return (
           <g key={`e-${i}`}>
             <path
-              d={`M ${sx} ${sy} C ${sx} ${midY}, ${ex} ${midY}, ${ex} ${ey}`}
+              d={`M ${sx} ${sy} C ${cx1} ${midY}, ${cx2} ${midY}, ${ex} ${ey}`}
               fill="none"
               stroke={strokeColor}
               strokeWidth={isCoOwnerEdge ? 1.5 : 2.25}

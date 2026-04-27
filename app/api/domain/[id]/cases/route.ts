@@ -168,6 +168,31 @@ export async function POST(request: NextRequest, context: RouteContext): Promise
     return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
   }
 
+  // BIZZ-983: Multi-entity linking via junction-tabel
+  const entities = Array.isArray(body.entities) ? body.entities : [];
+  if (entities.length > 0) {
+    const validEntities = entities
+      .filter(
+        (e: Record<string, unknown>) =>
+          typeof e.entity_type === 'string' &&
+          ['company', 'person', 'property'].includes(e.entity_type) &&
+          typeof e.entity_id === 'string' &&
+          e.entity_id.trim()
+      )
+      .slice(0, 50)
+      .map((e: Record<string, unknown>) => ({
+        case_id: data.id,
+        entity_type: e.entity_type as string,
+        entity_id: (e.entity_id as string).trim(),
+        entity_name:
+          typeof e.entity_name === 'string' ? (e.entity_name as string).trim().slice(0, 200) : null,
+      }));
+    if (validEntities.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (admin as any).from('domain_case_entity').insert(validEntities);
+    }
+  }
+
   // Audit log
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await (admin as any).from('domain_audit_log').insert({
@@ -183,6 +208,7 @@ export async function POST(request: NextRequest, context: RouteContext): Promise
       client_kind: clientKind,
       client_cvr: clientCvr,
       client_person_id: clientPersonId,
+      entities_count: entities.length,
     },
   });
 

@@ -2,14 +2,12 @@
  * Unit tests for app/lib/search/ejendomFilterSchema.ts (BIZZ-804).
  *
  * Verifies:
- *   - buildEjendomFilterSchemas returnerer 3 filtre (ejendomstype,
- *     skjulUdfasede, kommune)
- *   - matchEjendomFilter honorerer skjulUdfasede uden at udelukke
- *     ukendt/null status
- *   - matchEjendomFilter honorerer multi-select ejendomstype korrekt
+ *   - buildEjendomFilterSchemas returnerer 10 filtre (kommune + phase-2)
  *   - matchEjendomFilter honorerer multi-select kommune
  *   - buildKommuneOptions dedupliker og sorterer kommuner
- *   - narrowEjendomFilters drops ikke-arrays/ikke-booleans til undefined
+ *   - narrowEjendomFilters drops ikke-arrays til undefined
+ *
+ * BIZZ-988: ejendomstype og skjulUdfasede fjernet fra filter-panel.
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -54,39 +52,6 @@ describe('matchEjendomFilter', () => {
 
   it('tomme filtre matcher alt', () => {
     expect(matchEjendomFilter(base, {})).toBe(true);
-  });
-
-  it('skjulUdfasede skjuler bbrStatusCode 4/10/11 men ikke 1/3/null (BIZZ-825)', () => {
-    expect(matchEjendomFilter({ bbrStatusCode: 4 }, { skjulUdfasede: true })).toBe(false);
-    expect(matchEjendomFilter({ bbrStatusCode: 10 }, { skjulUdfasede: true })).toBe(false);
-    expect(matchEjendomFilter({ bbrStatusCode: 11 }, { skjulUdfasede: true })).toBe(false);
-    // String-varianter (BBR returns numeric-string inconsistently)
-    expect(matchEjendomFilter({ bbrStatusCode: '10' }, { skjulUdfasede: true })).toBe(false);
-    // Aktive + ukendte passer igennem
-    expect(matchEjendomFilter({ bbrStatusCode: 3 }, { skjulUdfasede: true })).toBe(true);
-    expect(matchEjendomFilter({ bbrStatusCode: null }, { skjulUdfasede: true })).toBe(true);
-    expect(matchEjendomFilter({}, { skjulUdfasede: true })).toBe(true);
-  });
-
-  it('skjulUdfasede respekterer isUdfaset-flag fra berigelse (BIZZ-825)', () => {
-    expect(matchEjendomFilter({ isUdfaset: true }, { skjulUdfasede: true })).toBe(false);
-    expect(matchEjendomFilter({ isUdfaset: false }, { skjulUdfasede: true })).toBe(true);
-  });
-
-  it('skjulUdfasede=false viser udfasede', () => {
-    expect(matchEjendomFilter({ bbrStatusCode: 4 }, { skjulUdfasede: false })).toBe(true);
-    expect(matchEjendomFilter({ isUdfaset: true }, { skjulUdfasede: false })).toBe(true);
-  });
-
-  it('ejendomstype multi-select honoreres', () => {
-    expect(matchEjendomFilter(base, { ejendomstype: ['bygning'] })).toBe(true);
-    expect(matchEjendomFilter(base, { ejendomstype: ['sfe'] })).toBe(false);
-    expect(matchEjendomFilter(base, { ejendomstype: ['bygning', 'ejerlejlighed'] })).toBe(true);
-  });
-
-  it('ejendomstype null/undefined på item = matcher ikke ekspliciet valg', () => {
-    const item: FilterableEjendom = { ejendomstype: null, adresse: { kommunenavn: 'X' } };
-    expect(matchEjendomFilter(item, { ejendomstype: ['bygning'] })).toBe(false);
   });
 
   it('kommune multi-select honoreres', () => {
@@ -150,15 +115,12 @@ describe('matchEjendomFilter', () => {
   it('flere filtre ANDes', () => {
     expect(
       matchEjendomFilter(base, {
-        ejendomstype: ['bygning'],
         kommune: ['Hvidovre'],
-        skjulUdfasede: true,
       })
     ).toBe(true);
     expect(
       matchEjendomFilter(base, {
-        ejendomstype: ['sfe'], // mismatch
-        kommune: ['Hvidovre'],
+        kommune: ['København'], // mismatch
       })
     ).toBe(false);
   });
@@ -200,23 +162,15 @@ describe('buildKommuneOptions', () => {
 describe('narrowEjendomFilters', () => {
   it('mapper gyldige felter', () => {
     const raw = {
-      ejendomstype: ['bygning', 'sfe'],
-      skjulUdfasede: false,
       kommune: ['Hvidovre'],
     };
-    expect(narrowEjendomFilters(raw)).toEqual(raw);
+    expect(narrowEjendomFilters(raw)).toEqual(expect.objectContaining(raw));
   });
 
-  it('droppet felter (ikke-array / ikke-bool) til undefined', () => {
+  it('droppet felter (ikke-array) til undefined', () => {
     const raw = {
-      ejendomstype: 'bygning', // ikke array
-      skjulUdfasede: 'true', // ikke bool
       kommune: 42, // ikke array
     };
-    expect(narrowEjendomFilters(raw)).toEqual({
-      ejendomstype: undefined,
-      skjulUdfasede: undefined,
-      kommune: undefined,
-    });
+    expect(narrowEjendomFilters(raw).kommune).toBeUndefined();
   });
 });

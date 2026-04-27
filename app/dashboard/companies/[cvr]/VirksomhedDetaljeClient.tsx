@@ -799,6 +799,41 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           }))
         : undefined;
 
+    // BIZZ-1002: Kontaktinfo
+    const virksomhedKontakt = {
+      telefon: data.phone ?? null,
+      email: data.email ?? null,
+      adresse: data.address ?? null,
+      postnr: data.zipcode ?? null,
+      by: data.city ?? null,
+    };
+
+    // BIZZ-1002: Nøglepersoner — ejere, bestyrelse, direktion (max 20)
+    // Aktive roller har til=null (ingen slutdato)
+    const virksomhedNoeglePersoner = data.deltagere
+      ?.filter((d) => d.roller.some((r) => !r.til))
+      .slice(0, 20)
+      .map((d) => ({
+        navn: d.navn,
+        roller: d.roller.filter((r) => !r.til).map((r) => r.rolle),
+        ejerandel: d.roller.find((r) => r.ejerandel)?.ejerandel ?? null,
+        aktiv: true,
+      }));
+
+    // BIZZ-1002: Seneste regnskabstal (kun hvis loaded)
+    const seneste = xbrlData?.[0];
+    const virksomhedRegnskab = seneste
+      ? {
+          aar: seneste.aar,
+          omsaetning: seneste.resultat?.omsaetning ?? null,
+          bruttofortjeneste: seneste.resultat?.bruttofortjeneste ?? null,
+          resultat: seneste.resultat?.aaretsResultat ?? null,
+          egenkapital: seneste.balance?.egenkapital ?? null,
+          balancesum: seneste.balance?.aktiverIAlt ?? null,
+          ansatte: null as number | null,
+        }
+      : undefined;
+
     setAICtx({
       cvrNummer: String(data.vat),
       virksomhedNavn: data.name,
@@ -807,6 +842,9 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
       preloadedEjendomme,
       ejendommeTotal: ejendommeFetchComplete ? ejendommeTotalBfe : undefined,
       preloadedDatterselskaber: preloadedDatter,
+      virksomhedKontakt,
+      virksomhedNoeglePersoner,
+      virksomhedRegnskab,
     });
   }, [
     data,
@@ -815,6 +853,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
     ejendommeFetchComplete,
     ejendommeTotalBfe,
     relatedCompanies,
+    xbrlData,
     setAICtx,
   ]);
 

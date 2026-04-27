@@ -423,6 +423,41 @@ function AIChatPanel() {
         if (aktive.length > 20) lines.push(`  (+ ${aktive.length - 20} flere)`);
         parts.push(lines.join('\n'));
       }
+
+      // BIZZ-1002: Virksomheds kontaktinfo, nøglepersoner og regnskab
+      if (pageData.virksomhedKontakt) {
+        const k = pageData.virksomhedKontakt;
+        const lines = ['\n[KONTAKT]'];
+        if (k.telefon) lines.push(`Telefon: ${k.telefon}`);
+        if (k.email) lines.push(`Email: ${k.email}`);
+        if (k.adresse) lines.push(`Adresse: ${k.adresse}, ${k.postnr ?? ''} ${k.by ?? ''}`);
+        if (lines.length > 1) parts.push(lines.join('\n'));
+      }
+      if (pageData.virksomhedNoeglePersoner && pageData.virksomhedNoeglePersoner.length > 0) {
+        const lines = [
+          `\n[NØGLEPERSONER] ${pageData.virksomhedNoeglePersoner.length} aktive roller:`,
+        ];
+        for (const p of pageData.virksomhedNoeglePersoner) {
+          const roller = p.roller.join(', ');
+          const eje = p.ejerandel ? ` | Ejerandel: ${p.ejerandel}` : '';
+          lines.push(`- ${p.navn} (${roller})${eje}`);
+        }
+        parts.push(lines.join('\n'));
+      }
+      if (pageData.virksomhedRegnskab) {
+        const r = pageData.virksomhedRegnskab;
+        const fmt = (v: number | null | undefined) =>
+          v != null ? `${(v / 1000).toFixed(0)} t.kr` : 'N/A';
+        const lines = [
+          `\n[REGNSKAB ${r.aar}]`,
+          `Omsætning: ${fmt(r.omsaetning)}`,
+          `Bruttofortjeneste: ${fmt(r.bruttofortjeneste)}`,
+          `Årets resultat: ${fmt(r.resultat)}`,
+          `Egenkapital: ${fmt(r.egenkapital)}`,
+          `Balancesum: ${fmt(r.balancesum)}`,
+        ];
+        parts.push(lines.join('\n'));
+      }
     }
 
     return parts.length > 0 ? parts.join('\n\n') : undefined;

@@ -115,6 +115,40 @@ export interface AIPageData {
     aktiv: boolean;
     branche?: string | null;
   }>;
+  /**
+   * BIZZ-1002: Virksomheds kontaktinfo — telefon, email, adresse.
+   * Inkluderes i AI-kontekst så eksport-dokumenter kan indeholde kontaktdata.
+   */
+  virksomhedKontakt?: {
+    telefon?: string | null;
+    email?: string | null;
+    adresse?: string | null;
+    postnr?: string | null;
+    by?: string | null;
+  };
+  /**
+   * BIZZ-1002: Nøglepersoner — ejere, bestyrelse, direktion med roller.
+   * Kompakt summary til AI-kontekst (max 20 personer).
+   */
+  virksomhedNoeglePersoner?: Array<{
+    navn: string;
+    roller: string[];
+    ejerandel?: string | null;
+    aktiv: boolean;
+  }>;
+  /**
+   * BIZZ-1002: Seneste regnskabstal fra XBRL (nøgletal).
+   * Inkluderes når regnskabs-tab er loaded.
+   */
+  virksomhedRegnskab?: {
+    aar: number;
+    omsaetning?: number | null;
+    bruttofortjeneste?: number | null;
+    resultat?: number | null;
+    egenkapital?: number | null;
+    balancesum?: number | null;
+    ansatte?: number | null;
+  };
 }
 
 // ─── Context ─────────────────────────────────────────────────────────────────

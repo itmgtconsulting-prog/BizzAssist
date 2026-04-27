@@ -28,6 +28,7 @@ import {
   Clock,
   X,
   Download,
+  Home,
 } from 'lucide-react';
 import type { DiagramVariantProps, DiagramNode, DiagramEdge } from './DiagramData';
 import type { PersonPublicData } from '@/app/api/cvr-public/person/route';
@@ -482,6 +483,9 @@ function DiagramForce({
   );
   const [showProperties, setShowProperties] = useState(defaultShowProperties);
 
+  /** BIZZ-1004: Toggle for personligt ejede ejendomme — default skjult */
+  const [showPersonalProps, setShowPersonalProps] = useState(false);
+
   /** Fullscreen overlay mode */
   const [isFullscreen, setIsFullscreen] = useState(false);
 
@@ -538,12 +542,33 @@ function DiagramForce({
   }
 
   // ── Filter graph based on expand state ──
+  // BIZZ-1004: Byg set af node-IDs der er personligt ejede (under personal-props-group)
+  const personalPropNodeIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const e of effectiveGraph.edges) {
+      if (e.personallyOwned) {
+        ids.add(e.to);
+        // Tilføj også gruppen selv
+        if (e.to.startsWith('personal-props-group-')) ids.add(e.to);
+      }
+    }
+    // Tilføj property-noder under grupper
+    for (const e of effectiveGraph.edges) {
+      if (ids.has(e.from) && e.from.startsWith('personal-props-group-')) {
+        ids.add(e.to);
+      }
+    }
+    return ids;
+  }, [effectiveGraph.edges]);
+
   const filteredGraph = useMemo(() => {
     const visibleNodes = effectiveGraph.nodes.filter((n) => {
       // BIZZ-427: Hide ceased/historical owners unless toggle is on
       if (!showCeased && n.isCeased) return false;
       // BIZZ-451: Hide property nodes unless toggle is on
       if (!showProperties && n.type === 'property') return false;
+      // BIZZ-1004: Hide personally owned properties unless toggle is on
+      if (!showPersonalProps && personalPropNodeIds.has(n.id)) return false;
       // Always show non-co-owner nodes
       if (!n.isCoOwner) return true;
       // Show co-owner only if its parent is expanded
@@ -564,7 +589,14 @@ function DiagramForce({
       (n) => n.type !== 'person' || connectedIds.has(n.id)
     );
     return { nodes: connectedNodes, edges: visibleEdges };
-  }, [effectiveGraph, expandedNodes, showCeased, showProperties]);
+  }, [
+    effectiveGraph,
+    expandedNodes,
+    showCeased,
+    showProperties,
+    showPersonalProps,
+    personalPropNodeIds,
+  ]);
 
   // ── Compute topological depth (owners above, subsidiaries below) ──
   // Co-owners are placed between the subsidiary's parent and the subsidiary
@@ -1931,6 +1963,42 @@ function DiagramForce({
               : lang === 'da'
                 ? `Ejendomme (${propertyCount})`
                 : `Properties (${propertyCount})`}
+          </button>
+        )}
+        {/* BIZZ-1004: Toggle personligt ejede ejendomme */}
+        {personalPropNodeIds.size > 0 && (
+          <button
+            onClick={() => {
+              setShowPersonalProps((s) => !s);
+              initialFitDone.current = false;
+              setTimeout(() => setFitTrigger((t) => t + 1), 50);
+            }}
+            className={`h-7 px-2 flex items-center gap-1 text-[10px] font-medium border rounded-lg transition ml-1 ${
+              showPersonalProps
+                ? 'bg-violet-600/20 border-violet-500/40 text-violet-300'
+                : 'bg-slate-800 border-slate-700/50 text-slate-400 hover:text-slate-300'
+            }`}
+            title={
+              showPersonalProps
+                ? lang === 'da'
+                  ? 'Skjul personlige ejendomme'
+                  : 'Hide personal properties'
+                : lang === 'da'
+                  ? 'Vis personlige ejendomme'
+                  : 'Show personal properties'
+            }
+            aria-label={
+              showPersonalProps
+                ? lang === 'da'
+                  ? 'Skjul personlige ejendomme'
+                  : 'Hide personal properties'
+                : lang === 'da'
+                  ? 'Vis personlige ejendomme'
+                  : 'Show personal properties'
+            }
+          >
+            <Home size={11} />
+            {lang === 'da' ? 'Personlige' : 'Personal'}
           </button>
         )}
         {/* BIZZ-427: Toggle ceased/historical owners */}

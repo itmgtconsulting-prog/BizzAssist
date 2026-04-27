@@ -38,6 +38,7 @@ import { useLanguage } from '@/app/context/LanguageContext';
 import { useSetAIPageContext } from '@/app/context/AIPageContext';
 import type { DomainCaseSummary } from './DomainCaseList';
 import { CustomerSearchPicker, type CustomerLink } from './CustomerSearchPicker';
+import MultiEntityPicker, { type LinkedEntity, type NewEntity } from './MultiEntityPicker';
 import SkabelonPickerPanel from '@/app/components/sager/SkabelonPickerPanel';
 
 interface CaseDocSummary {
@@ -58,6 +59,14 @@ interface CaseDetail {
   client_name: string | null;
   /** BIZZ-809: Kort beskrivelse vist som preview på sagskort + editable i detail */
   short_description: string | null;
+  /** BIZZ-983: Multi-entity links */
+  entities?: Array<{
+    id: string;
+    entity_type: 'company' | 'person' | 'property';
+    entity_id: string;
+    entity_name: string | null;
+    linked_at: string;
+  }>;
 }
 
 interface Props {
@@ -829,6 +838,46 @@ export function DomainWorkspaceSplitView({
                   )}
                 </div>
               )}
+              {/* BIZZ-983: Multi-entity links */}
+              <MultiEntityPicker
+                entities={(caseDetail.entities ?? []) as LinkedEntity[]}
+                onAdd={async (entity: NewEntity) => {
+                  try {
+                    await fetch(`/api/domain/${domainId}/cases/${caseDetail.id}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ add_entity: entity }),
+                    });
+                    // Re-fetch case detail
+                    const res = await fetch(`/api/domain/${domainId}/cases/${caseDetail.id}`);
+                    if (res.ok) {
+                      const json = await res.json();
+                      setCaseDetail(json as CaseDetail);
+                    }
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+                onRemove={async (linkId: string) => {
+                  try {
+                    await fetch(`/api/domain/${domainId}/cases/${caseDetail.id}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ remove_entity_id: linkId }),
+                    });
+                    setCaseDetail((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            entities: (prev.entities ?? []).filter((e) => e.id !== linkId),
+                          }
+                        : prev
+                    );
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+              />
               <div className="text-xs space-y-1">
                 {caseDetail.client_ref && (
                   <p>

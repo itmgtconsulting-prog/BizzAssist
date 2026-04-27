@@ -22,6 +22,7 @@ import SektionLoader from '@/app/components/SektionLoader';
 import VurderingSammenligning from '@/app/components/ejendomme/VurderingSammenligning';
 import KommuneStatistikWidget from '@/app/components/analyse/KommuneStatistikWidget';
 import BoligmarkedWidget from '@/app/components/ejendomme/BoligmarkedWidget';
+import ByggeaktivitetBadge from '@/app/components/ejendomme/ByggeaktivitetBadge';
 import { formatDKK } from '@/app/lib/mock/ejendomme';
 import { getHandelstypeInfo, handelstypeBadgeClasses } from '@/app/lib/ejfKoder';
 import type { VurderingData, VurderingResponse } from '@/app/api/vurdering/route';
@@ -667,6 +668,8 @@ export default function EjendomOekonomiTab(props: Props) {
       {/* BIZZ-920: Kommune-statistik fra materialized view */}
       {/* BIZZ-962: Boligmarked — salgspriser fra DST EJEN77 */}
       {kommunekode && <BoligmarkedWidget kommunekode={kommunekode} lang={lang} />}
+      {/* BIZZ-1027: Byggeaktivitet */}
+      {kommunekode && <ByggeaktivitetBadge kommunekode={kommunekode} lang={lang} />}
       {kommunekode && <KommuneStatistikWidget kommunekode={kommunekode} lang={lang} />}
 
       {/* Hæftelser fjernet — vises nu under Tinglysning-tab */}

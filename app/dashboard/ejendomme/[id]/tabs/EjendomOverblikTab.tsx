@@ -30,6 +30,7 @@ import type { CVRVirksomhed } from '@/app/api/cvr/route';
 import OmraadeProfilSektion from '@/app/components/ejendomme/OmraadeProfilSektion';
 import StoejBadge from '@/app/components/ejendomme/StoejBadge';
 // BIZZ-1018: SkraafotoGalleri flyttet til EjendomBBRTab
+import PlandataSektion from '@/app/components/ejendomme/PlandataSektion';
 import EjerforeningSektion from '@/app/components/ejendomme/EjerforeningSektion';
 import EnergiWidget from '@/app/components/ejendomme/EnergiWidget';
 import ByggeomkostningBadge from '@/app/components/ejendomme/ByggeomkostningBadge';
@@ -755,6 +756,8 @@ export default function EjendomOverblikTab({
         postnr={dawaAdresse?.postnr ?? null}
         lang={lang}
       />
+      {/* BIZZ-1025: Lokalplan detaljer */}
+      <PlandataSektion adresseId={dawaAdresse?.id ?? null} lang={lang} />
       {/* BIZZ-1018: Skråfoto flyttet til BBR-tab */}
       {/* BIZZ-961: Støjniveau-badge */}
       <StoejBadge lat={dawaAdresse?.y ?? null} lng={dawaAdresse?.x ?? null} lang={lang} />

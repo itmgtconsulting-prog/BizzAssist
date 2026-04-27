@@ -418,6 +418,32 @@ function ActiveFilterChips({
       onRemove: () => onFiltersChange({ ...filters, ejendomstype: 'alle' }),
     });
   }
+  if (filters.aldersPreset) {
+    chips.push({
+      label: filters.aldersPreset,
+      onRemove: () => onFiltersChange({ ...filters, aldersPreset: '' }),
+    });
+  }
+  if (filters.arealMin || filters.arealMax) {
+    const label = `${filters.arealMin || '0'}–${filters.arealMax || '∞'} m²`;
+    chips.push({
+      label,
+      onRemove: () => onFiltersChange({ ...filters, arealMin: '', arealMax: '' }),
+    });
+  }
+  if (filters.ejerType) {
+    chips.push({
+      label:
+        lang === 'da'
+          ? filters.ejerType === 'person'
+            ? 'Privatperson'
+            : 'Virksomhed'
+          : filters.ejerType === 'person'
+            ? 'Private person'
+            : 'Company',
+      onRemove: () => onFiltersChange({ ...filters, ejerType: '' }),
+    });
+  }
 
   if (chips.length === 0) return null;
 

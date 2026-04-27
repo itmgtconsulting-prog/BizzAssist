@@ -22,6 +22,12 @@ import { X, RotateCcw } from 'lucide-react';
 /** Kategorier for BBR-ejendomstype-filter */
 export type EjendomstypeFilter = 'alle' | 'beboelse' | 'erhverv' | 'ubebygget';
 
+/** BIZZ-1009: Opførelsesår preset */
+export type AldersPreset = '' | 'foer1900' | '1900-1960' | '1960-2000' | 'efter2000';
+
+/** BIZZ-1010: Ejertype */
+export type EjerTypeFilter = '' | 'person' | 'virksomhed';
+
 /** Aktive filtervalg for ejendomme-listesiden */
 export interface EjendomFilterState {
   /** Valgt kommunenavn (tom streng = ingen filter) */
@@ -30,6 +36,14 @@ export interface EjendomFilterState {
   ejendomstype: EjendomstypeFilter;
   /** Postnummer-filter (tom streng = ingen filter) */
   postnummer: string;
+  /** BIZZ-1009: Opførelsesår preset */
+  aldersPreset: AldersPreset;
+  /** BIZZ-1009: Min boligareal m² */
+  arealMin: string;
+  /** BIZZ-1009: Max boligareal m² */
+  arealMax: string;
+  /** BIZZ-1010: Ejer-type filter */
+  ejerType: EjerTypeFilter;
 }
 
 /** Standard filterstatus — ingen aktive filtre */
@@ -37,6 +51,10 @@ export const DEFAULT_FILTERS: EjendomFilterState = {
   kommune: '',
   ejendomstype: 'alle',
   postnummer: '',
+  aldersPreset: '',
+  arealMin: '',
+  arealMax: '',
+  ejerType: '',
 };
 
 /** Tæl antal aktive filtre */
@@ -45,6 +63,9 @@ export function countActiveFilters(f: EjendomFilterState): number {
   if (f.kommune) n++;
   if (f.ejendomstype !== 'alle') n++;
   if (f.postnummer) n++;
+  if (f.aldersPreset) n++;
+  if (f.arealMin || f.arealMax) n++;
+  if (f.ejerType) n++;
   return n;
 }
 
@@ -62,6 +83,19 @@ const t = {
     beboelse: 'Beboelse',
     erhverv: 'Erhverv',
     ubebygget: 'Ubebygget',
+    alder: 'Opførelsesår',
+    alleAar: 'Alle år',
+    foer1900: 'Før 1900',
+    '1900-1960': '1900–1960',
+    '1960-2000': '1960–2000',
+    efter2000: 'Efter 2000',
+    areal: 'Boligareal (m²)',
+    min: 'Min',
+    max: 'Max',
+    ejerType: 'Ejer-type',
+    alleEjere: 'Alle ejere',
+    person: 'Privatperson',
+    virksomhed: 'Virksomhed',
     resultater: (n: number) => `${n} ejendomme`,
   },
   en: {
@@ -76,6 +110,19 @@ const t = {
     beboelse: 'Residential',
     erhverv: 'Commercial',
     ubebygget: 'Undeveloped',
+    alder: 'Year built',
+    alleAar: 'All years',
+    foer1900: 'Before 1900',
+    '1900-1960': '1900–1960',
+    '1960-2000': '1960–2000',
+    efter2000: 'After 2000',
+    areal: 'Living area (m²)',
+    min: 'Min',
+    max: 'Max',
+    ejerType: 'Owner type',
+    alleEjere: 'All owners',
+    person: 'Private person',
+    virksomhed: 'Company',
     resultater: (n: number) => `${n} properties`,
   },
 };
@@ -238,6 +285,77 @@ export default function FilterPanel({
               </label>
             ))}
           </div>
+        </div>
+
+        {/* ── BIZZ-1009: Opførelsesår ── */}
+        <div>
+          <label
+            htmlFor="filter-alder"
+            className="block text-slate-400 text-xs font-medium uppercase tracking-wide mb-1.5"
+          >
+            {l.alder}
+          </label>
+          <select
+            id="filter-alder"
+            value={filters.aldersPreset}
+            onChange={(e) =>
+              onFiltersChange({ ...filters, aldersPreset: e.target.value as AldersPreset })
+            }
+            className="w-full bg-slate-800 border border-slate-700/60 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500/60 transition-colors"
+          >
+            <option value="">{l.alleAar}</option>
+            <option value="foer1900">{l.foer1900}</option>
+            <option value="1900-1960">{l['1900-1960']}</option>
+            <option value="1960-2000">{l['1960-2000']}</option>
+            <option value="efter2000">{l.efter2000}</option>
+          </select>
+        </div>
+
+        {/* ── BIZZ-1009: Boligareal ── */}
+        <div>
+          <span className="block text-slate-400 text-xs font-medium uppercase tracking-wide mb-1.5">
+            {l.areal}
+          </span>
+          <div className="flex gap-2">
+            <input
+              type="number"
+              inputMode="numeric"
+              placeholder={l.min}
+              value={filters.arealMin}
+              onChange={(e) => onFiltersChange({ ...filters, arealMin: e.target.value })}
+              className="w-1/2 bg-slate-800 border border-slate-700/60 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-600 outline-none focus:border-blue-500/60 transition-colors"
+            />
+            <input
+              type="number"
+              inputMode="numeric"
+              placeholder={l.max}
+              value={filters.arealMax}
+              onChange={(e) => onFiltersChange({ ...filters, arealMax: e.target.value })}
+              className="w-1/2 bg-slate-800 border border-slate-700/60 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-600 outline-none focus:border-blue-500/60 transition-colors"
+            />
+          </div>
+        </div>
+
+        {/* ── BIZZ-1010: Ejer-type ── */}
+        <div>
+          <label
+            htmlFor="filter-ejertype"
+            className="block text-slate-400 text-xs font-medium uppercase tracking-wide mb-1.5"
+          >
+            {l.ejerType}
+          </label>
+          <select
+            id="filter-ejertype"
+            value={filters.ejerType}
+            onChange={(e) =>
+              onFiltersChange({ ...filters, ejerType: e.target.value as EjerTypeFilter })
+            }
+            className="w-full bg-slate-800 border border-slate-700/60 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500/60 transition-colors"
+          >
+            <option value="">{l.alleEjere}</option>
+            <option value="person">{l.person}</option>
+            <option value="virksomhed">{l.virksomhed}</option>
+          </select>
         </div>
       </div>
 

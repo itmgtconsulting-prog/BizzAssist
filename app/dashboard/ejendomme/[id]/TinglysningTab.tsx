@@ -1471,9 +1471,27 @@ export default function TinglysningTab({
                         if (visBilag.length === 0) return null;
                         return (
                           <div className="mt-2 pt-2 border-t border-slate-700/20">
-                            <p className="text-slate-500 text-[10px] uppercase mb-1.5">
-                              {da ? 'Tilknyttede bilag' : 'Attachments'} ({visBilag.length})
-                            </p>
+                            <div className="flex items-center justify-between mb-1.5">
+                              <p className="text-slate-500 text-[10px] uppercase">
+                                {da ? 'Tilknyttede bilag' : 'Attachments'} ({visBilag.length})
+                              </p>
+                              {/* BIZZ-1056: Bulk download alle bilag som samlet PDF */}
+                              {visBilag.length > 1 && (
+                                <a
+                                  href={`/api/tinglysning/dokument?${docId ? `uuid=${docId}&` : ''}bilag=${visBilag.map((b) => b.id).join(',')}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-[10px] text-emerald-400 hover:text-emerald-300 transition-colors"
+                                  title={
+                                    da
+                                      ? 'Download alle bilag som samlet PDF'
+                                      : 'Download all attachments as merged PDF'
+                                  }
+                                >
+                                  {da ? 'Download alle' : 'Download all'}
+                                </a>
+                              )}
+                            </div>
                             <div className="space-y-1">
                               {visBilag.map((b, bi) => (
                                 <a

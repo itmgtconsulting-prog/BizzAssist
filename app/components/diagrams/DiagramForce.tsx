@@ -2823,9 +2823,12 @@ function DiagramForce({
                         </g>
                       );
                     })()}
-                  {/* BIZZ-1081: Virksomheds-Udvid knap — hent datterselskaber */}
+                  {/* BIZZ-1081: Virksomheds-Udvid knap — hent datterselskaber.
+                      Vis KUN hvis noden ikke allerede har børn i grafen
+                      (undgår dobbelt-knap med collapse/expand). */}
                   {!isPerson &&
                     node.cvr != null &&
+                    !hasExpandable &&
                     (() => {
                       const companyLoading = loadingExpansion.has(node.id);
                       const companyExpanded = expandedDynamic.has(node.id);

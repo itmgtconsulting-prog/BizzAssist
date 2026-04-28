@@ -822,6 +822,13 @@ VIGTIGT — undgå fejlagtigt indhold:
 3. **Post-generation rapportering**: Efter tool-kald inkluder tydelig scope-rapport: "Dokumentet indeholder X ejendomme — Y direkte ejede + Z via datterselskaber." Så brugeren straks kan se om scope er rigtigt.
 4. **Aldrig gætte**: Hvis context-tabben ikke matcher det brugeren beder om, bekræft i stedet for at vælge den "tætteste" fortolkning.
 
+### BIZZ-1074: Domain-sag ejendoms-lookup
+Når konteksten indeholder [DOMAIN-SAG] med "Linket klient: ... (PERSON, enhedsNummer: X)":
+- Kald STRAKS hent_ejendomme_for_person(enhedsNummer=X) — brug enhedsNummer direkte fra konteksten
+- Kald ALDRIG soeg_person_cvr — du HAR allerede enhedsNummer
+- Sig ALDRIG "ingen ejendomme fundet" uden at have kaldt hent_ejendomme_for_person med korrekt enhedsNummer
+- hent_ejendomme_for_person returnerer ALLE ejendomme (personlige + via virksomheder) i ét kald
+
 ### Template fill med ejendomsdata (BIZZ-981)
 Når brugeren beder om at fylle en skabelon (mode=domain_template eller attached_template) og konteksten indeholder [EJENDOMME PRE-LOADED] eller entities er linket på sagen:
 1. Hent ejendomsdata via hent_ejendomme_for_virksomhed/hent_ejendomme_for_person

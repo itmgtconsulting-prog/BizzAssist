@@ -461,6 +461,10 @@ export default function EjendomOverblikTab({
           const boligAreal = bygninger.reduce((s, b) => s + (b.samletBoligareal ?? 0), 0);
           const erhvAreal = bygninger.reduce((s, b) => s + (b.samletErhvervsareal ?? 0), 0);
           const kaelder = bygninger.reduce((s, b) => s + (b.kaelder ?? 0), 0);
+          /* BIZZ-1083: Fallback til enhedsareal når bygninger returnerer 0 */
+          const enheder = bbrData?.enheder ?? [];
+          const enhedAreal = enheder.reduce((s, e) => s + (e.areal ?? 0), 0);
+          const effektivBoligAreal = boligAreal || enhedAreal || 0;
           return (
             <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-2.5 self-start">
               <div className="flex items-baseline gap-1 mb-1.5">
@@ -472,32 +476,29 @@ export default function EjendomOverblikTab({
               <div className="grid grid-cols-2 gap-x-2 gap-y-1">
                 <div>
                   <p className="text-slate-500 text-xs leading-none mb-0.5">{t.buildingArea}</p>
+                  {/* BIZZ-1083: Vis '–' i stedet for '0 m²' når BBR data mangler */}
                   <p className="text-white text-sm font-medium">
-                    {totAreal
-                      ? `${totAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                      : formatDKK(0)}
+                    {totAreal ? `${totAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²` : '–'}
                   </p>
                 </div>
                 <div>
                   <p className="text-slate-500 text-xs leading-none mb-0.5">{t.residentialArea}</p>
                   <p className="text-white text-sm font-medium">
-                    {boligAreal
-                      ? `${boligAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                      : '0 m²'}
+                    {effektivBoligAreal
+                      ? `${effektivBoligAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                      : '–'}
                   </p>
                 </div>
                 <div>
                   <p className="text-slate-500 text-xs leading-none mb-0.5">{t.commercialArea}</p>
                   <p className="text-white text-sm font-medium">
-                    {erhvAreal
-                      ? `${erhvAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                      : formatDKK(0)}
+                    {erhvAreal ? `${erhvAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²` : '–'}
                   </p>
                 </div>
                 <div>
                   <p className="text-slate-500 text-xs leading-none mb-0.5">{t.basement}</p>
                   <p className="text-white text-sm font-medium">
-                    {kaelder ? `${kaelder.toLocaleString(da ? 'da-DK' : 'en-GB')} m²` : '0 m²'}
+                    {kaelder ? `${kaelder.toLocaleString(da ? 'da-DK' : 'en-GB')} m²` : '–'}
                   </p>
                 </div>
               </div>

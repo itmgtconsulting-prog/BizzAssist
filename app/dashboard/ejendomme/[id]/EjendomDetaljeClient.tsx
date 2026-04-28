@@ -2278,6 +2278,9 @@ export default function EjendomDetaljeClient({
                 matrikelLoader={matrikelLoader}
                 matrikelData={matrikelData}
                 matrikelHistorik={matrikelHistorik}
+                kommunekode={
+                  dawaJordstykke?.kommune?.kode ? String(dawaJordstykke.kommune.kode) : null
+                }
               />
             )}
 
@@ -2338,6 +2341,15 @@ export default function EjendomDetaljeClient({
                 kommunekode={
                   dawaJordstykke?.kommune?.kode ? String(dawaJordstykke.kommune.kode) : null
                 }
+                adresse={
+                  dawaAdresse
+                    ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
+                    : ''
+                }
+                kommune={dawaJordstykke?.kommune?.navn ?? null}
+                boligareal={bbrData?.bbr?.[0]?.samletBoligareal ?? null}
+                grundareal={dawaJordstykke?.areal_m2 ?? null}
+                opfoerelsesaar={bbrData?.bbr?.[0]?.opfoerelsesaar ?? null}
               />
             )}
 
@@ -2352,15 +2364,6 @@ export default function EjendomDetaljeClient({
                 vurLoft={vurLoft}
                 vurFritagelser={vurFritagelser}
                 erKolonihave={erKolonihave}
-                adresse={
-                  dawaAdresse
-                    ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
-                    : ''
-                }
-                kommune={dawaJordstykke?.kommune?.navn ?? null}
-                boligareal={bbrData?.bbr?.[0]?.samletBoligareal ?? null}
-                grundareal={dawaJordstykke?.areal_m2 ?? null}
-                opfoerelsesaar={bbrData?.bbr?.[0]?.opfoerelsesaar ?? null}
               />
             )}
 

@@ -17,12 +17,13 @@
 'use client';
 
 import Link from 'next/link';
-import { ChevronRight, TrendingUp } from 'lucide-react';
+import { ChevronRight, Scale, Sparkles, Landmark, TrendingUp } from 'lucide-react';
+import ForklarVurderingWidget from '@/app/components/ejendomme/ForklarVurderingWidget';
 import SektionLoader from '@/app/components/SektionLoader';
 import VurderingSammenligning from '@/app/components/ejendomme/VurderingSammenligning';
 import KommuneStatistikWidget from '@/app/components/analyse/KommuneStatistikWidget';
 import BoligmarkedWidget from '@/app/components/ejendomme/BoligmarkedWidget';
-import ByggeaktivitetBadge from '@/app/components/ejendomme/ByggeaktivitetBadge';
+/* BIZZ-1079: ByggeaktivitetBadge flyttet til BBR-tab */
 import EnergiWidget from '@/app/components/ejendomme/EnergiWidget';
 import ByggeomkostningBadge from '@/app/components/ejendomme/ByggeomkostningBadge';
 import { formatDKK } from '@/app/lib/mock/ejendomme';
@@ -92,6 +93,16 @@ interface Props {
   postnr?: string | null;
   /** BIZZ-920: Kommunekode til krydsanalyse-widget */
   kommunekode?: string | null;
+  /** BIZZ-1078: Adresse for AI forklaring */
+  adresse?: string;
+  /** BIZZ-1078: Kommune */
+  kommune?: string | null;
+  /** BIZZ-1078: Boligareal i m² */
+  boligareal?: number | null;
+  /** BIZZ-1078: Grundareal i m² */
+  grundareal?: number | null;
+  /** BIZZ-1078: Opførelsesår */
+  opfoerelsesaar?: number | null;
 }
 
 /** Render Økonomi-fanen. Ren præsentations-komponent. */
@@ -117,6 +128,11 @@ export default function EjendomOekonomiTab(props: Props) {
     lejlighederCount,
     postnr,
     kommunekode,
+    adresse,
+    kommune,
+    boligareal,
+    grundareal: grundarealProp,
+    opfoerelsesaar,
   } = props;
   const da = lang === 'da';
 
@@ -165,6 +181,78 @@ export default function EjendomOekonomiTab(props: Props) {
 
   return (
     <div className="space-y-5">
+      {/* BIZZ-1078: AI-drevet vurderingsforklaring (flyttet fra SKAT-tab) */}
+      {adresse && !vurderingLoader && (
+        <ForklarVurderingWidget
+          vurdering={vurdering}
+          forelobig={forelobige.length > 0 ? forelobige[0] : null}
+          adresse={adresse}
+          kommune={kommune ?? null}
+          boligareal={boligareal ?? null}
+          grundareal={grundarealProp ?? null}
+          opfoerelsesaar={opfoerelsesaar ?? null}
+          lang={lang}
+        />
+      )}
+
+      {/* BIZZ-1078: Vurderings-AI-knapper (flyttet fra SKAT-tab) */}
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            const prompt = da
+              ? 'Forklar min ejendomsvurdering i klart sprog — grundværdi, ejendomsværdi og hvad de baseres på.'
+              : 'Explain my property valuation in plain language — land value, property value and what they are based on.';
+            window.dispatchEvent(
+              new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt } })
+            );
+          }}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 text-blue-300 text-sm transition-colors"
+        >
+          <Sparkles size={14} />
+          {da ? 'Forklar vurdering' : 'Explain valuation'}
+          <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-blue-500/20 text-blue-300 leading-none">
+            AI
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            const prompt = da
+              ? 'Generer en komplet vurderingsrapport som Word-fil. Inkluder: ejendomsidentifikation, aktuel vurdering, grundværdispecifikation, vurderingshistorik og fradrag.'
+              : 'Generate a complete valuation report as a Word file. Include: property identification, current valuation, land value specification, valuation history and deductions.';
+            window.dispatchEvent(
+              new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt } })
+            );
+          }}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-300 text-sm transition-colors"
+        >
+          <Landmark size={14} />
+          {da ? 'Download vurderingsrapport' : 'Download valuation report'}
+          <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-emerald-500/20 text-emerald-300 leading-none">
+            AI
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            const prompt = da
+              ? 'Tjek om der er grundlag for at klage over ejendomsvurderingen. Analysér grundværdi, areal, benyttelseskode og eventuelle manglende fradrag.'
+              : 'Check if there are grounds to appeal the property valuation. Analyze land value, area, usage code and any missing deductions.';
+            window.dispatchEvent(
+              new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt } })
+            );
+          }}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/30 text-amber-300 text-sm transition-colors"
+        >
+          <Scale size={14} />
+          {da ? 'Tjek klagegrundlag' : 'Check appeal grounds'}
+          <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-amber-500/20 text-amber-300 leading-none">
+            AI
+          </span>
+        </button>
+      </div>
+
       {/* ── Ejendomsvurdering ── */}
       <div>
         <SectionTitle title={t.propertyValuation} />
@@ -670,8 +758,7 @@ export default function EjendomOekonomiTab(props: Props) {
       {/* BIZZ-920: Kommune-statistik fra materialized view */}
       {/* BIZZ-962: Boligmarked — salgspriser fra DST EJEN77 */}
       {kommunekode && <BoligmarkedWidget kommunekode={kommunekode} lang={lang} />}
-      {/* BIZZ-1027: Byggeaktivitet */}
-      {kommunekode && <ByggeaktivitetBadge kommunekode={kommunekode} lang={lang} />}
+      {/* BIZZ-1079: Byggeaktivitet flyttet til BBR-tab */}
       {/* BIZZ-1046: Elpris + byggeomkostninger flyttet fra Oversigt-tab */}
       {kommunekode && <EnergiWidget kommunekode={kommunekode} lang={lang} />}
       <ByggeomkostningBadge lang={lang} />

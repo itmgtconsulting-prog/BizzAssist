@@ -28,6 +28,7 @@ import type { EjendomApiResponse } from '@/app/api/ejendom/[id]/route';
 import type { VurderingData } from '@/app/api/vurdering/route';
 import type { DawaAdresse, DawaJordstykke } from '@/app/lib/dawa';
 import type { MatrikelEjendom } from '@/app/api/matrikel/route';
+import ByggeaktivitetBadge from '@/app/components/ejendomme/ByggeaktivitetBadge';
 import SkraafotoGalleri from '@/app/components/ejendomme/SkraafotoGalleri';
 import type { MatrikelHistorikEvent } from '@/app/api/matrikel/historik/route';
 
@@ -83,6 +84,8 @@ interface Props {
   matrikelData: MatrikelEjendom | null;
   /** Matrikel-historik events */
   matrikelHistorik: MatrikelHistorikEvent[];
+  /** BIZZ-1079: Kommunekode for byggeaktivitet */
+  kommunekode?: string | null;
 }
 
 /**
@@ -106,6 +109,7 @@ export default function EjendomBBRTab({
   matrikelLoader,
   matrikelData,
   matrikelHistorik,
+  kommunekode,
 }: Props) {
   const da = lang === 'da';
 
@@ -987,6 +991,9 @@ export default function EjendomBBRTab({
           </div>
         )}
       </div>
+
+      {/* BIZZ-1079: Byggeaktivitet flyttet hertil fra Økonomi-tab */}
+      {kommunekode && <ByggeaktivitetBadge kommunekode={kommunekode} lang={lang} />}
 
       {/* BIZZ-1018: Skråfoto flyttet hertil fra Oversigt-tab */}
       <SkraafotoGalleri lat={dawaAdresse?.y ?? null} lng={dawaAdresse?.x ?? null} lang={lang} />

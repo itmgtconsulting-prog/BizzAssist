@@ -21,7 +21,6 @@
 
 import { Info, Landmark, Sparkles, Scale } from 'lucide-react';
 import SkatteberegningFlow from '@/app/components/ejendomme/SkatteberegningFlow';
-import ForklarVurderingWidget from '@/app/components/ejendomme/ForklarVurderingWidget';
 import SektionLoader from '@/app/components/SektionLoader';
 import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
 import { formatDKK } from '@/app/lib/mock/ejendomme';
@@ -54,16 +53,7 @@ interface Props {
   vurFritagelser: VurderingResponse['fritagelser'];
   /** true hvis ejendommen er en kolonihave (ejendomsværdiskat-fritaget) */
   erKolonihave: boolean;
-  /** BIZZ-946: Adresse for AI forklaring */
-  adresse?: string;
-  /** BIZZ-946: Kommune */
-  kommune?: string | null;
-  /** BIZZ-946: Boligareal i m² */
-  boligareal?: number | null;
-  /** BIZZ-946: Grundareal i m² */
-  grundareal?: number | null;
-  /** BIZZ-946: Opførelsesår */
-  opfoerelsesaar?: number | null;
+  /* BIZZ-1078: Vurderings-props fjernet — ForklarVurderingWidget flyttet til Økonomi */
 }
 
 /**
@@ -79,11 +69,6 @@ export default function EjendomSkatTab({
   vurLoft,
   vurFritagelser,
   erKolonihave,
-  adresse,
-  kommune,
-  boligareal,
-  grundareal,
-  opfoerelsesaar,
 }: Props) {
   const da = lang === 'da';
 
@@ -112,19 +97,7 @@ export default function EjendomSkatTab({
                   hentes så tabben ikke står blank ved første klik. */}
       {(forelobigLoader || vurderingLoader) && <TabLoadingSpinner label={t.loadingSkat} />}
 
-      {/* BIZZ-946: AI-drevet vurderingsforklaring */}
-      {adresse && !forelobigLoader && !vurderingLoader && (
-        <ForklarVurderingWidget
-          vurdering={vurdering}
-          forelobig={forelobige.length > 0 ? forelobige[0] : null}
-          adresse={adresse}
-          kommune={kommune ?? null}
-          boligareal={boligareal ?? null}
-          grundareal={grundareal ?? null}
-          opfoerelsesaar={opfoerelsesaar ?? null}
-          lang={lang}
-        />
-      )}
+      {/* BIZZ-1078: ForklarVurderingWidget flyttet til Økonomi-tab */}
 
       {/* ── Ejendomsskatter — baseret på foreløbige + estimerede data ── */}
       <div>
@@ -157,14 +130,14 @@ export default function EjendomSkatTab({
 
           return (
             <div className="space-y-4">
-              {/* BIZZ-956 + BIZZ-959: Vurderings-actions */}
+              {/* BIZZ-1078: Skat-specifikke AI-knapper (vurderings-knapper flyttet til Økonomi) */}
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
                   onClick={() => {
                     const prompt = da
-                      ? 'Forklar min ejendomsvurdering i klart sprog — grundværdi, ejendomsværdi, skatteberegning, skatteloft og eventuelle fradrag.'
-                      : 'Explain my property valuation in plain language — land value, property value, tax calculation, tax ceiling and any deductions.';
+                      ? 'Forklar min ejendomsskat i klart sprog — grundskyld, ejendomsværdiskat, grundskatteloft og fritagelser.'
+                      : 'Explain my property tax in plain language — land tax, property value tax, tax ceiling and exemptions.';
                     window.dispatchEvent(
                       new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt } })
                     );
@@ -172,7 +145,7 @@ export default function EjendomSkatTab({
                   className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 text-blue-300 text-sm transition-colors"
                 >
                   <Sparkles size={14} />
-                  {da ? 'Forklar min vurdering' : 'Explain my valuation'}
+                  {da ? 'Forklar ejendomsskat' : 'Explain property tax'}
                   <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-blue-500/20 text-blue-300 leading-none">
                     AI
                   </span>
@@ -181,26 +154,8 @@ export default function EjendomSkatTab({
                   type="button"
                   onClick={() => {
                     const prompt = da
-                      ? 'Generer en komplet vurderingsrapport som Word-fil for denne ejendom. Inkluder: ejendomsidentifikation, aktuel vurdering, grundværdispecifikation, skatteberegning, skatteloft, fritagelser, fradrag og vurderingshistorik.'
-                      : 'Generate a complete valuation report as a Word file for this property. Include: property identification, current valuation, land value specification, tax calculation, tax ceiling, exemptions, deductions and valuation history.';
-                    window.dispatchEvent(
-                      new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt } })
-                    );
-                  }}
-                  className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-300 text-sm transition-colors"
-                >
-                  <Landmark size={14} />
-                  {da ? 'Download vurderingsrapport' : 'Download valuation report'}
-                  <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-emerald-500/20 text-emerald-300 leading-none">
-                    AI
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const prompt = da
-                      ? 'Tjek om der er grundlag for at klage over ejendomsvurderingen. Analysér grundværdi, areal, benyttelseskode og eventuelle manglende fradrag.'
-                      : 'Check if there are grounds to appeal the property valuation. Analyze land value, area, usage code and any missing deductions.';
+                      ? 'Tjek om skatteberegningen er korrekt — er grundskatteloftet anvendt korrekt? Mangler der fritagelser? Er ejendomsværdiskatten beregnet rigtigt?'
+                      : 'Check if the tax calculation is correct — is the tax ceiling applied correctly? Are any exemptions missing? Is the property value tax calculated correctly?';
                     window.dispatchEvent(
                       new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt } })
                     );
@@ -208,7 +163,7 @@ export default function EjendomSkatTab({
                   className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/30 text-amber-300 text-sm transition-colors"
                 >
                   <Scale size={14} />
-                  {da ? 'Tjek klagegrundlag' : 'Check appeal grounds'}
+                  {da ? 'Tjek klagegrundlag (skat)' : 'Check appeal grounds (tax)'}
                   <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-amber-500/20 text-amber-300 leading-none">
                     AI
                   </span>

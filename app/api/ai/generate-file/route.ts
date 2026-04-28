@@ -398,21 +398,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // BIZZ-886: Storage-upload med retry (1 forsøg mere ved transient fejl)
   // og mere specifik fejl-besked. Upload-fejl skelnes nu fra size/permission/
   // mime-type fejl så brugeren kan forstå årsagen.
+  /* BIZZ-1067: Konvertér Buffer til Uint8Array — Supabase storage kan
+     have kompatibilitetsproblemer med Node Buffer i visse runtimes */
+  const uploadBody = new Uint8Array(generated.buffer);
   const uploadWithRetry = async (): Promise<{ error: { message: string } | null }> => {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const { error } = await admin.storage
-        .from('ai-generated')
-        .upload(storagePath, generated.buffer, {
-          contentType: generated.contentType,
-          upsert: false,
-        });
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const { error } = await admin.storage.from('ai-generated').upload(storagePath, uploadBody, {
+        contentType: generated.contentType,
+        upsert: false,
+      });
       if (!error) return { error: null };
-      // Retry kun ved transient fejl (5xx, timeout). 4xx (permission/size) er
-      // ikke retry-bart — fejl igen med samme resultat.
       const msg = (error.message || '').toLowerCase();
-      const transient = msg.includes('timeout') || msg.includes('network') || msg.includes('5');
-      if (!transient || attempt === 1) return { error };
-      await new Promise((r) => setTimeout(r, 500));
+      const transient =
+        msg.includes('timeout') ||
+        msg.includes('network') ||
+        msg.includes('5') ||
+        msg.includes('fetch');
+      if (!transient || attempt === 2) return { error };
+      await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
     }
     return { error: null };
   };

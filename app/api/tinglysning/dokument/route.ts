@@ -612,8 +612,14 @@ export async function GET(req: NextRequest) {
       const validBilag = bilagBuffers.filter((b): b is Buffer => b !== null);
 
       if (validBilag.length === 0 && !documentPdf) {
-        // Hverken bilag eller dokument kunne hentes
-        return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 502 });
+        /* BIZZ-1057: Mere specifik fejlbesked */
+        return NextResponse.json(
+          {
+            error:
+              'Dokumentet og bilag kunne ikke hentes fra Tinglysning — det kan være for gammelt til digital adgang',
+          },
+          { status: 502 }
+        );
       }
 
       // Saml dokument først (hvis vi har det) + alle bilag.
@@ -1059,7 +1065,38 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (err) {
-    logger.error('[tinglysning/dokument] Fejl:', err instanceof Error ? err.message : String(err));
-    return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error('[tinglysning/dokument] Fejl:', msg);
+    /* BIZZ-1057: Giv mere specifik fejlbesked baseret på fejltypen */
+    const isHttpError = msg.includes('HTTP ');
+    const statusMatch = msg.match(/HTTP (\d+)/);
+    if (statusMatch) {
+      const httpStatus = parseInt(statusMatch[1], 10);
+      if (httpStatus === 404) {
+        return NextResponse.json(
+          {
+            error:
+              'Dokumentet findes ikke i Tinglysning — det kan være for gammelt til digital adgang',
+          },
+          { status: 404 }
+        );
+      }
+      if (httpStatus === 403) {
+        return NextResponse.json(
+          { error: 'Adgang nægtet til dette dokument — certifikat mangler rettighed' },
+          { status: 403 }
+        );
+      }
+    }
+    if (msg.includes('certificate') || msg.includes('CERT') || msg.includes('pfx')) {
+      return NextResponse.json(
+        { error: 'Tinglysning certifikat-fejl — kontakt support' },
+        { status: 503 }
+      );
+    }
+    return NextResponse.json(
+      { error: isHttpError ? `Tinglysning API fejl (${msg})` : 'Ekstern API fejl' },
+      { status: 502 }
+    );
   }
 }

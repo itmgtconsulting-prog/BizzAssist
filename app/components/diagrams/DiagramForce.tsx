@@ -556,12 +556,13 @@ function DiagramForce({
       if (e.personallyOwned) {
         ids.add(e.to);
         // Tilføj også gruppen selv
-        if (e.to.startsWith('personal-props-group-')) ids.add(e.to);
+        /* BIZZ-1059: ID er 'personal-props-group' (uden trailing dash) */
+        if (e.to.startsWith('personal-props-group')) ids.add(e.to);
       }
     }
     // Tilføj property-noder under grupper
     for (const e of effectiveGraph.edges) {
-      if (ids.has(e.from) && e.from.startsWith('personal-props-group-')) {
+      if (ids.has(e.from) && e.from.startsWith('personal-props-group')) {
         ids.add(e.to);
       }
     }

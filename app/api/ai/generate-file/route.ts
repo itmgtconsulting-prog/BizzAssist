@@ -419,7 +419,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const { error: uploadErr } = await uploadWithRetry();
   if (uploadErr) {
-    logger.error('[generate-file] upload fejl:', uploadErr.message);
+    /* BIZZ-1064/1066: Udvidet diagnostik for storage upload fejl */
+    logger.error('[generate-file] upload fejl:', uploadErr.message, {
+      storagePath,
+      bufferSize: generated.buffer.length,
+      contentType: generated.contentType,
+      format: body.format,
+    });
     const rawMsg = (uploadErr.message || '').toLowerCase();
     let userMsg = 'Storage upload fejlede';
     if (rawMsg.includes('size') || rawMsg.includes('too large')) {

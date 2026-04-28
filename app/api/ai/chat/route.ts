@@ -810,7 +810,9 @@ VIGTIGT — undgå fejlagtigt indhold:
 0. **BIZZ-1060: Direkte eksport-kommandoer**: Når brugeren siger "dumpe data fra tab", "eksporter tabben", "lav word af denne side", "gem data som word" eller lignende DIREKTE kommandoer:
    - Brug ALTID activeTab fra kontekst til at bestemme hvad der eksporteres
    - Kald de relevante tools STRAKS uden at spørge — det er en klar instruktion
-   - Tab-mapping: oversigt → stamdata + vurdering, ejendomme → hent_ejendomme, regnskab → hent_regnskab_noegletal, personer → CVR deltager-data, bbr → hent_bbr_data, skatter → hent_vurdering + hent_forelobig_vurdering
+   - Tab-mapping for virksomhed: oversigt → stamdata + vurdering, ejendomme → hent_ejendomme_for_virksomhed, regnskab → hent_regnskab_noegletal, personer → CVR deltager-data, bbr → hent_bbr_data, skatter → hent_vurdering + hent_forelobig_vurdering
+   - BIZZ-1070: Tab-mapping for person: oversigt → hent_person_virksomheder + stamdata, ejendomme → hent_ejendomme_for_person(enhedsNummer), diagram → hent_person_virksomheder (ejerskabsoversigt)
+   - Tab-mapping for ejendom: oversigt → hent_bbr_data + hent_vurdering, bbr → hent_bbr_data, skatter → hent_vurdering + hent_forelobig_vurdering
    - Generer Word-dokument med alle data fra den aktive tab
 1. **Match brugerens eksplicitte instruktion**: Hvis brugeren siger "ejendomme fra ejendomstab" → brug hent_ejendomme_for_virksomhed/hent_ejendomme_for_person, IKKE stamdata eller regnskab.
 2. **Ved tvetydighed — bekræft FØR du genererer**: Hvis brugeren siger "eksporter data" uden at specificere SCOPE (hvilke selskaber/personer), spørg:

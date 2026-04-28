@@ -298,6 +298,64 @@ export default function EjendomSkatTab({
         })()}
       </div>
 
+      {/* BIZZ-1054 + BIZZ-490: Grundskatteloft OVER skattehistorik (flyttet fra under) */}
+      {vurLoft.length > 0 &&
+        (() => {
+          const aktivLoft =
+            vurLoft.find((l) => l.basisaar != null && l.grundvaerdi != null) ?? vurLoft[0];
+          if (!aktivLoft || (aktivLoft.basisaar == null && aktivLoft.grundvaerdi == null)) {
+            return null;
+          }
+          return (
+            <div className="bg-amber-500/5 border border-amber-500/30 rounded-xl p-4">
+              <div className="flex items-start gap-3">
+                <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center">
+                  <Landmark size={16} className="text-amber-300" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-amber-200 text-sm font-semibold">
+                      {da ? 'Grundskatteloft aktiv' : 'Land-tax ceiling active'}
+                    </p>
+                    <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                      {da ? 'ESL §45' : 'ESL §45'}
+                    </span>
+                  </div>
+                  <p className="text-slate-400 text-xs mt-1 leading-snug">
+                    {da
+                      ? 'Grundskylden kan maksimalt stige 4,75% om året (loftreguleret grundværdi). Når loftet er aktivt, beregnes skatten af den regulerede grundværdi, ikke den fulde offentlige vurdering.'
+                      : 'Land tax can rise by at most 4.75% per year (capped land value). When the ceiling is active, tax is calculated from the capped value — not the full public valuation.'}
+                  </p>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-1 mt-3 text-xs">
+                    {aktivLoft.basisaar != null && (
+                      <div className="flex justify-between gap-2">
+                        <span className="text-slate-500">{da ? 'Basisår' : 'Base year'}</span>
+                        <span className="text-slate-300 tabular-nums">{aktivLoft.basisaar}</span>
+                      </div>
+                    )}
+                    {aktivLoft.grundvaerdi != null && (
+                      <div className="flex justify-between gap-2">
+                        <span className="text-slate-500">{da ? 'Loftværdi' : 'Capped value'}</span>
+                        <span className="text-slate-300 tabular-nums">
+                          {formatDKK(aktivLoft.grundvaerdi)}
+                        </span>
+                      </div>
+                    )}
+                    {aktivLoft.pgf11 && (
+                      <div className="flex justify-between gap-2 col-span-2">
+                        <span className="text-slate-500">
+                          {da ? 'Beregningsgrundlag' : 'Calculation basis'}
+                        </span>
+                        <span className="text-slate-300">{aktivLoft.pgf11}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
       {/* BIZZ-445 + BIZZ-469: Skattehistorik — kun faktiske tal fra Vurderingsportalen (estimater fjernet) */}
       {forelobige.length > 0 &&
         (() => {
@@ -392,64 +450,6 @@ export default function EjendomSkatTab({
                     ))}
                   </tbody>
                 </table>
-              </div>
-            </div>
-          );
-        })()}
-
-      {/* BIZZ-490: Grundskatteloft (Loftansættelse, ESL §45 4,75%-regulering). */}
-      {vurLoft.length > 0 &&
-        (() => {
-          const aktivLoft =
-            vurLoft.find((l) => l.basisaar != null && l.grundvaerdi != null) ?? vurLoft[0];
-          if (!aktivLoft || (aktivLoft.basisaar == null && aktivLoft.grundvaerdi == null)) {
-            return null;
-          }
-          return (
-            <div className="bg-amber-500/5 border border-amber-500/30 rounded-xl p-4">
-              <div className="flex items-start gap-3">
-                <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center">
-                  <Landmark size={16} className="text-amber-300" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-amber-200 text-sm font-semibold">
-                      {da ? 'Grundskatteloft aktiv' : 'Land-tax ceiling active'}
-                    </p>
-                    <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                      {da ? 'ESL §45' : 'ESL §45'}
-                    </span>
-                  </div>
-                  <p className="text-slate-400 text-xs mt-1 leading-snug">
-                    {da
-                      ? 'Grundskylden kan maksimalt stige 4,75% om året (loftreguleret grundværdi). Når loftet er aktivt, beregnes skatten af den regulerede grundværdi, ikke den fulde offentlige vurdering.'
-                      : 'Land tax can rise by at most 4.75% per year (capped land value). When the ceiling is active, tax is calculated from the capped value — not the full public valuation.'}
-                  </p>
-                  <div className="grid grid-cols-2 gap-x-6 gap-y-1 mt-3 text-xs">
-                    {aktivLoft.basisaar != null && (
-                      <div className="flex justify-between gap-2">
-                        <span className="text-slate-500">{da ? 'Basisår' : 'Base year'}</span>
-                        <span className="text-slate-300 tabular-nums">{aktivLoft.basisaar}</span>
-                      </div>
-                    )}
-                    {aktivLoft.grundvaerdi != null && (
-                      <div className="flex justify-between gap-2">
-                        <span className="text-slate-500">{da ? 'Loftværdi' : 'Capped value'}</span>
-                        <span className="text-slate-300 tabular-nums">
-                          {formatDKK(aktivLoft.grundvaerdi)}
-                        </span>
-                      </div>
-                    )}
-                    {aktivLoft.pgf11 && (
-                      <div className="flex justify-between gap-2 col-span-2">
-                        <span className="text-slate-500">
-                          {da ? 'Beregningsgrundlag' : 'Calculation basis'}
-                        </span>
-                        <span className="text-slate-300">{aktivLoft.pgf11}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
               </div>
             </div>
           );

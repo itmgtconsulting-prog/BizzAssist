@@ -1348,20 +1348,16 @@ function DiagramForce({
       .force('centerX', forceCenter(0, 0).strength(0.05))
       .force('hierarchy', () => forceHierarchy())
       .alpha(1)
-      .alphaDecay(0.03)
+      // BIZZ-1058: Hurtigere alphaDecay for store grafer (20+ noder)
+      .alphaDecay(forceNodes.length > 20 ? 0.05 : 0.03)
       // BIZZ-690: Højere velocityDecay (0.6) gør simulering mere dæmpet.
-      // Default 0.4 tillod noder at drifte videre mellem ticks — i samspil
-      // med alphaDecay gav det langvarig jitter før convergence. 0.6 giver
-      // hurtig stabilisering uden at påvirke final position væsentligt.
       .velocityDecay(0.6);
 
     // BIZZ-401: Run simulation in async chunks to avoid blocking the main thread.
-    // Previously 120 synchronous ticks blocked navigation for large diagrams.
-    // Now runs 30 ticks per frame via setTimeout, yielding to the event loop between batches.
     let cancelled = false;
-    const TICKS_PER_BATCH = 30;
-    // BIZZ-1005: Flere ticks for komplekse grafer (10+ noder) for bedre convergence
-    const TOTAL_TICKS = forceNodes.length > 10 ? 180 : 120;
+    // BIZZ-1058: Større batches + færre total ticks for store grafer
+    const TICKS_PER_BATCH = forceNodes.length > 20 ? 50 : 30;
+    const TOTAL_TICKS = forceNodes.length > 20 ? 100 : forceNodes.length > 10 ? 150 : 120;
     let ticksDone = 0;
 
     const runBatch = () => {

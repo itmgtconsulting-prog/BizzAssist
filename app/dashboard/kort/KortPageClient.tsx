@@ -770,11 +770,14 @@ function KortInner() {
   const [markeret, setMarkeret] = useState(-1);
   const [søger, setSøger] = useState(false);
   const søgeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** BIZZ-1073: AbortController til at cancelle stale søge-requests */
+  const søgeAbort = useRef<AbortController | null>(null);
 
   /** Ryd søge-debounce timer ved unmount for at undgå setState på afmonteret komponent. */
   useEffect(() => {
     return () => {
       if (søgeTimer.current) clearTimeout(søgeTimer.current);
+      søgeAbort.current?.abort();
     };
   }, []);
 
@@ -1293,20 +1296,33 @@ function KortInner() {
     return () => document.removeEventListener('mousedown', h);
   }, [lagPanel]);
 
+  /** BIZZ-1073: Debounce 300ms + abort stale requests ved hurtig indtastning */
   const handleSøgning = useCallback((tekst: string) => {
     setSøgeTekst(tekst);
     setMarkeret(-1);
     if (søgeTimer.current) clearTimeout(søgeTimer.current);
+    søgeAbort.current?.abort();
     if (tekst.trim().length < 2) {
       setForslag([]);
       return;
     }
     søgeTimer.current = setTimeout(async () => {
+      const controller = new AbortController();
+      søgeAbort.current = controller;
       setSøger(true);
-      const acRes = await fetch(`/api/adresse/autocomplete?q=${encodeURIComponent(tekst)}`);
-      setForslag(acRes.ok ? await acRes.json() : []);
-      setSøger(false);
-    }, 200);
+      try {
+        const acRes = await fetch(`/api/adresse/autocomplete?q=${encodeURIComponent(tekst)}`, {
+          signal: controller.signal,
+        });
+        if (!controller.signal.aborted) {
+          setForslag(acRes.ok ? await acRes.json() : []);
+        }
+      } catch {
+        /* AbortError ignoreres — ny søgning er i gang */
+      } finally {
+        if (!controller.signal.aborted) setSøger(false);
+      }
+    }, 300);
   }, []);
 
   /**

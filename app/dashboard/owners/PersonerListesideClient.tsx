@@ -396,7 +396,8 @@ function DropdownPortal({
  * @param onFiltersChange - Callback når filtre ændres
  * @param lang - Aktuelt sprog
  */
-function PersonFilterPanel({
+/* BIZZ-1077: midlertidigt deaktiveret — genaktiveres i BIZZ-1075 */
+function _PersonFilterPanel({
   filters,
   onFiltersChange,
   lang,
@@ -461,7 +462,7 @@ function PersonFilterPanel({
  * @param onFiltersChange - Callback til opdatering
  * @param lang - Aktuelt sprog
  */
-function ActiveFilterChips({
+function _ActiveFilterChips({
   filters,
   onFiltersChange,
   lang,
@@ -553,8 +554,7 @@ export default function PersonerListesideClient() {
   /** Recent persons loaded from Supabase (in-memory cache) */
   const [recentPersons, setRecentPersons] = useState<RecentPerson[]>(() => getRecentPersons());
 
-  /** Om filter-panelet er synligt */
-  const [filterOpen, setFilterOpen] = useState(false);
+  /* BIZZ-1077: filterOpen fjernet — filterpanel midlertidigt deaktiveret */
 
   /** Aktive filtervalg — standard = ingen filter */
   const [filters, setFilters] = useState<PersonFilterState>(DEFAULT_FILTERS);
@@ -729,40 +729,8 @@ export default function PersonerListesideClient() {
               </div>
             </div>
 
-            {/* Filter toggle — kun synlig når der er recent-personer at filtrere */}
-            {recentPersons.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setFilterOpen((o) => !o)}
-                aria-label={txt.filtre}
-                aria-expanded={filterOpen}
-                className={`flex items-center gap-2 px-4 py-2 rounded-2xl border transition-all text-sm font-medium shadow-lg ${
-                  hasActiveFilters || filterOpen
-                    ? 'bg-purple-600/20 border-purple-500/50 text-purple-300'
-                    : 'bg-slate-800/60 border-slate-600/50 text-slate-400 hover:border-slate-500/60 hover:text-slate-300'
-                }`}
-              >
-                <Filter size={16} />
-                {txt.filtre}
-                {hasActiveFilters && (
-                  <span className="bg-purple-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
-                    {[filters.antal !== 'alle' ? 1 : 0, filters.kunPersoner ? 1 : 0].reduce(
-                      (a, b) => a + b,
-                      0
-                    )}
-                  </span>
-                )}
-              </button>
-            )}
+            {/* BIZZ-1077: Filterpanel midlertidigt fjernet — tilføjes igen i BIZZ-1075 */}
           </div>
-
-          {/* Filter panel */}
-          {filterOpen && recentPersons.length > 0 && (
-            <PersonFilterPanel filters={filters} onFiltersChange={setFilters} lang={lang} />
-          )}
-
-          {/* Active filter chips */}
-          <ActiveFilterChips filters={filters} onFiltersChange={setFilters} lang={lang} />
 
           {/* Dropdown via Portal */}
           {visDropdown && typeof document !== 'undefined' && (

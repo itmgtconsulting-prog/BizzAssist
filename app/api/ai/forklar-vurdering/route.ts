@@ -122,12 +122,15 @@ Foreløbig vurdering (${input.forelobigAar ?? '?'}):
 
       try {
         const client = new Anthropic({ apiKey });
-        const response = await client.messages.create({
-          model: 'claude-sonnet-4-6',
-          max_tokens: 1024,
-          system: buildSystemPrompt(),
-          messages: [{ role: 'user', content: userMessage }],
-        });
+        const response = await client.messages.create(
+          {
+            model: 'claude-sonnet-4-6',
+            max_tokens: 1024,
+            system: buildSystemPrompt(),
+            messages: [{ role: 'user', content: userMessage }],
+          },
+          { signal: AbortSignal.timeout(15000) }
+        );
 
         const textBlock = response.content.find((b) => b.type === 'text');
         if (textBlock && textBlock.type === 'text') {

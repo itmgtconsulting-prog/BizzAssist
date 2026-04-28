@@ -46,6 +46,10 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
+    "@finos/perspective": "^3.8.0",
+    "@finos/perspective-viewer": "^3.8.0",
+    "@finos/perspective-viewer-d3fc": "^3.8.0",
+    "@finos/perspective-viewer-datagrid": "^3.8.0",
     "@sentry/nextjs": "^10.48.0",
     "@stripe/stripe-js": "^9.0.0",
     "@supabase/ssr": "^0.9.0",

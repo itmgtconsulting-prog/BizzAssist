@@ -174,6 +174,31 @@ export async function GET(request: NextRequest): Promise<NextResponse<Energimaer
 
   const { bfeNummer } = parsed.data;
 
+  /* BIZZ-1096: Cache-first — tjek bbr_ejendom_status.energimaerke_data */
+  try {
+    const { createAdminClient } = await import('@/lib/supabase/admin');
+    const admin = createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: cached } = (await (admin as any)
+      .from('bbr_ejendom_status')
+      .select('energimaerke_data')
+      .eq('bfe_nummer', Number(bfeNummer))
+      .maybeSingle()) as { data: { energimaerke_data: EnergimaerkeItem[] | null } | null };
+
+    if (
+      cached?.energimaerke_data &&
+      Array.isArray(cached.energimaerke_data) &&
+      cached.energimaerke_data.length > 0
+    ) {
+      return NextResponse.json(
+        { maerker: cached.energimaerke_data, manglerAdgang: false, fejl: null },
+        { headers: { 'Cache-Control': 'public, s-maxage=86400', 'X-Cache': 'HIT' } }
+      );
+    }
+  } catch {
+    /* cache miss — fall through */
+  }
+
   if (!process.env.EMO_USERNAME || !process.env.EMO_PASSWORD) {
     return NextResponse.json({
       maerker: null,

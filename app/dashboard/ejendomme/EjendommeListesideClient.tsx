@@ -512,6 +512,20 @@ export default function EjendommeListesideClient() {
   /** Om filter-panelet er synligt */
   const [filterOpen, setFilterOpen] = useState(false);
 
+  /** BIZZ-1089: Søgeresultater fra /api/search/ejendomme (UI integration i BIZZ-1090) */
+  const [_searchResults, setSearchResults] = useState<Array<{
+    bfe_nummer: number;
+    kommune_kode: number | null;
+    samlet_boligareal: number | null;
+    opfoerelsesaar: number | null;
+    energimaerke: string | null;
+    byg021_anvendelse: string | null;
+  }> | null>(null);
+  const [_searchTotal, setSearchTotal] = useState(0);
+  const [searchPage, _setSearchPage] = useState(1);
+  const [_searchLoading, setSearchLoading] = useState(false);
+  const [_hasActiveSearch, setHasActiveSearch] = useState(false);
+
   /** Aktive filtervalg — standard = ingen filter */
   const [filters, setFilters] = useState<EjendomFilterState>(DEFAULT_FILTERS);
 
@@ -523,6 +537,62 @@ export default function EjendommeListesideClient() {
     window.addEventListener('ba-recents-updated', handler);
     return () => window.removeEventListener('ba-recents-updated', handler);
   }, []);
+
+  /**
+   * BIZZ-1089: Kald søge-API når filtre ændres.
+   * Debounce 300ms + abort stale requests.
+   */
+  const searchAbort = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const hasFilters =
+      filters.kommune !== '' ||
+      filters.postnummer !== '' ||
+      filters.ejendomstype !== 'alle' ||
+      filters.arealMin !== '' ||
+      filters.arealMax !== '' ||
+      filters.aldersPreset !== '' ||
+      filters.vaerdiPreset !== '';
+
+    if (!hasFilters) {
+      setHasActiveSearch(false);
+      setSearchResults(null);
+      return;
+    }
+
+    setHasActiveSearch(true);
+    setSearchLoading(true);
+    searchAbort.current?.abort();
+    const controller = new AbortController();
+    searchAbort.current = controller;
+
+    const timer = setTimeout(async () => {
+      const params = new URLSearchParams();
+      if (filters.ejendomstype !== 'alle')
+        params.set('type', filters.ejendomstype === 'beboelse' ? 'bolig' : filters.ejendomstype);
+      if (filters.arealMin) params.set('areal_min', filters.arealMin);
+      if (filters.arealMax) params.set('areal_max', filters.arealMax);
+      params.set('page', String(searchPage));
+      params.set('limit', '20');
+
+      try {
+        const res = await fetch(`/api/search/ejendomme?${params}`, { signal: controller.signal });
+        if (res.ok && !controller.signal.aborted) {
+          const data = await res.json();
+          setSearchResults(data.results ?? []);
+          setSearchTotal(data.total ?? 0);
+        }
+      } catch {
+        /* abort */
+      } finally {
+        if (!controller.signal.aborted) setSearchLoading(false);
+      }
+    }, 300);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [filters, searchPage]);
 
   /**
    * Unikke kommunenavne fra de loadede recent-ejendomme.

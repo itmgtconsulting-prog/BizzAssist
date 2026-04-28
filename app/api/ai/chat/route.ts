@@ -764,8 +764,8 @@ Konteksten kan indeholde \`activeTab\` + \`pageType\` der angiver hvad brugeren 
 - **pageType=virksomhed + activeTab=regnskab**: Brug hent_regnskab_noegletal(cvr) — fokus på omsætning/resultat/egenkapital.
 - **pageType=virksomhed + activeTab=oversigt**: Inkluder stamdata OG ejendomme OG personer. BIZZ-1069: Inkluder KUN ejendomme direkte ejet af context-CVR — ALDRIG ejendomme fra andre koncerner via person-relationer.
 - **pageType=person + activeTab=ejendomme**: Kald hent_ejendomme_for_person(enhedsNummer) — dette ene tool returnerer ALLE ejendomme (personlige + via virksomheder).
-- **pageType=person + activeTab=relations (diagram)**: Brugeren ser ejerskabsdiagrammet. Når de siger "eksporter diagram" eller "diagram til word/pptx", generer en struktureret fil med ejerskabshierarkiet. Kald hent_person_virksomheder for at få virksomhedslisten, derefter generate_document med format=docx (sektioner: Ejerskabsoversigt, Virksomheder med roller/ejerandel) eller format=pptx (slides pr. virksomhed). Hvis [DIAGRAM-BILLEDE] er i konteksten, tilføj en sektion med imageBase64="DIAGRAM" for at indlejre det visuelle diagram i dokumentet.
-- **pageType=virksomhed + activeTab=diagram**: Brugeren ser virksomheds-ejerskabsdiagrammet. "Eksporter diagram" = generer struktureret ejerskabsoversigt via hent_datterselskaber + hent_ejeroplysninger. Brug docx/pptx format. Hvis [DIAGRAM-BILLEDE] er i konteksten, tilføj en sektion med imageBase64="DIAGRAM" for at indlejre det visuelle diagram.
+- **pageType=person + activeTab=relations (diagram)**: Brugeren ser ejerskabsdiagrammet. Når de siger "eksporter diagram" eller "diagram til word/pptx": kald hent_person_virksomheder, derefter generate_document. BIZZ-1062: ALTID inkluder en sektion med imageBase64="DIAGRAM" — dette injicerer det visuelle diagram som billede i dokumentet. Tilføj også sektioner med ejerskabshierarkiet som tekst (virksomheder med roller/ejerandel). Sig ALDRIG at det ikke er muligt at inkludere visuelle diagrammer.
+- **pageType=virksomhed + activeTab=diagram**: Brugeren ser virksomheds-ejerskabsdiagrammet. "Eksporter diagram" = hent_datterselskaber + hent_ejeroplysninger → generate_document. ALTID inkluder sektion med imageBase64="DIAGRAM" for visuelt diagram + tekst-sektioner med ejerskabsdata.
 
 ## Forklar min vurdering (BIZZ-956)
 Når brugeren beder om at "forklare vurderingen" eller "forklar min skat" på en ejendomsside:
@@ -812,9 +812,10 @@ VIGTIGT — undgå fejlagtigt indhold:
    - Kald de relevante tools STRAKS uden at spørge — det er en klar instruktion
    - BIZZ-1065: Når brugeren siger "diagram" eller "ejerskabsdiagram": ALTID brug hent_datterselskaber (virksomhed) eller hent_person_virksomheder (person) — ALDRIG hent_regnskab_noegletal
    - Tab-mapping for virksomhed: oversigt → stamdata + vurdering, ejendomme → hent_ejendomme_for_virksomhed, regnskab → hent_regnskab_noegletal, personer → CVR deltager-data, bbr → hent_bbr_data, skatter → hent_vurdering + hent_forelobig_vurdering, diagram → hent_datterselskaber + hent_ejeroplysninger
-   - BIZZ-1070: Tab-mapping for person: oversigt → hent_person_virksomheder + stamdata, ejendomme → hent_ejendomme_for_person(enhedsNummer), diagram → hent_person_virksomheder (ejerskabsoversigt)
+   - BIZZ-1084: Tab-mapping for person: oversigt → hent_person_virksomheder (virksomheder med roller/ejerandel) — ALDRIG hent_regnskab_noegletal medmindre brugeren eksplicit beder om regnskab. Ejendomme → hent_ejendomme_for_person(enhedsNummer). Diagram → hent_person_virksomheder.
    - Tab-mapping for ejendom: oversigt → hent_bbr_data + hent_vurdering, bbr → hent_bbr_data, skatter → hent_vurdering + hent_forelobig_vurdering
-   - Generer Word-dokument med alle data fra den aktive tab
+   - BIZZ-1072/1071: Ved ejendoms-eksport: inkluder ALLE felter der vises i GUI — BFE, adresse, postnr, by, type, ejerandel, areal (m²), vurdering, grundværdi, seneste købspris, købsdato. Kald hent_ejendomme med fuld detalje.
+   - Generer Word/Excel/PPTX med alle data fra den aktive tab — format bestemmes af brugerens forespørgsel ("word"=docx, "excel"=xlsx, "powerpoint"/"pptx"=pptx)
 1. **Match brugerens eksplicitte instruktion**: Hvis brugeren siger "ejendomme fra ejendomstab" → brug hent_ejendomme_for_virksomhed/hent_ejendomme_for_person, IKKE stamdata eller regnskab.
 2. **Ved tvetydighed — bekræft FØR du genererer**: Hvis brugeren siger "eksporter data" uden at specificere SCOPE (hvilke selskaber/personer), spørg:
    "Vil du have (a) kun ejendomme ejet direkte af denne virksomhed, (b) også datterselskabers ejendomme, eller (c) stifternes personlige ejendomme også?"

@@ -137,6 +137,19 @@ export default function SkraafotoGalleri({ lat, lng, lang }: Props) {
                 alt={`${da ? 'Skråfoto' : 'Oblique photo'} ${DIR_LABELS[foto.direction]?.[lang] ?? foto.direction}`}
                 className="w-full h-32 object-cover transition-transform group-hover:scale-105"
                 loading="lazy"
+                onError={(e) => {
+                  /* BIZZ-1050: Vis placeholder ved broken image */
+                  const target = e.currentTarget;
+                  target.style.display = 'none';
+                  const parent = target.parentElement;
+                  if (parent && !parent.querySelector('.skraafoto-fallback')) {
+                    const div = document.createElement('div');
+                    div.className =
+                      'skraafoto-fallback w-full h-32 bg-slate-700/50 flex items-center justify-center text-slate-500 text-xs';
+                    div.textContent = da ? 'Foto utilgængeligt' : 'Photo unavailable';
+                    parent.insertBefore(div, target);
+                  }
+                }}
               />
               <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent px-2 py-1">
                 <span className="text-xs text-white font-medium">

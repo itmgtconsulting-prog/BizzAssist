@@ -110,11 +110,12 @@ export async function GET(request: NextRequest): Promise<NextResponse<SkraafotoR
         const yearMatch = feat.properties?.datetime?.match(/^(\d{4})/);
         const year = yearMatch ? parseInt(yearMatch[1], 10) : null;
 
-        // BIZZ-1044: Tilføj token til thumbnail-URL (Dataforsyningen kræver auth)
-        const thumbWithToken = thumb.includes('?')
-          ? `${thumb}&token=${encodeURIComponent(token)}`
-          : `${thumb}?token=${encodeURIComponent(token)}`;
-        fotos.push({ direction: dir, thumbnail: thumbWithToken, fullsize: full, year });
+        // BIZZ-1050: Cogtiler thumbnail-tjeneste er nedlagt — brug proxy-route
+        // Original URL: https://api.dataforsyningen.dk/rest/skraafoto_cogtiler/v1.0/thumbnail.jpg?url=...
+        // Proxy-URL: /api/skraafoto/thumb?url=<COG-URL>&token=<token>
+        const cogUrl = full; // COG URL fra CDN
+        const thumbProxy = `/api/skraafoto/thumb?url=${encodeURIComponent(cogUrl)}&token=${encodeURIComponent(token)}`;
+        fotos.push({ direction: dir, thumbnail: thumbProxy, fullsize: full, year });
       }
 
       // Hvis vi fandt mindst 2 retninger, brug denne samling

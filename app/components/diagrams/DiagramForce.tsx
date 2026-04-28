@@ -472,22 +472,15 @@ function DiagramForce({
       if (expandedDynamic.has(companyNodeId) || loadingExpansion.has(companyNodeId)) return;
       setLoadingExpansion((prev) => new Set(prev).add(companyNodeId));
       try {
-        const res = await fetch(`/api/cvr-public/related?cvr=${cvr}`, {
-          signal: AbortSignal.timeout(15000),
-        });
-        if (!res.ok) return;
-
-        const data = (await res.json()) as {
-          virksomheder?: Array<{
-            cvr: number;
-            navn: string;
-            aktiv?: boolean;
-            ejerandel?: string | null;
-            form?: string | null;
-            branche?: string | null;
-            ejetAfCvr?: number | null;
-          }>;
-        };
+        /* Hent BÅDE datterselskaber (nedad) OG ejere (opad) parallelt */
+        const [relatedRes, cvrRes] = await Promise.all([
+          fetch(`/api/cvr-public/related?cvr=${cvr}`, { signal: AbortSignal.timeout(15000) }).catch(
+            () => null
+          ),
+          fetch(`/api/cvr-public?vat=${cvr}`, { signal: AbortSignal.timeout(15000) }).catch(
+            () => null
+          ),
+        ]);
 
         const existingIds = new Set<string>([
           ...graph.nodes.map((n) => n.id),
@@ -496,34 +489,112 @@ function DiagramForce({
         const newNodes: DiagramNode[] = [];
         const newEdges: DiagramEdge[] = [];
 
-        for (const v of data.virksomheder ?? []) {
-          if (v.aktiv === false) continue;
-          /* Kun direkte datterselskaber (ejetAfCvr === null eller === cvr) */
-          if (v.ejetAfCvr != null && v.ejetAfCvr !== cvr) continue;
-          const childId = `cvr-${v.cvr}`;
-          if (existingIds.has(childId)) continue;
-          existingIds.add(childId);
-          newNodes.push({
-            id: childId,
-            label: v.navn,
-            sublabel: v.branche ?? v.form ?? `CVR ${v.cvr}`,
-            type: 'company',
-            cvr: v.cvr,
-            link: `/dashboard/companies/${v.cvr}`,
-            expandableChildren: 0,
-          });
-          newEdges.push({
-            from: companyNodeId,
-            to: childId,
-            ejerandel: v.ejerandel ?? undefined,
-          });
+        /* ── Datterselskaber (nedad) ── */
+        if (relatedRes?.ok) {
+          const data = (await relatedRes.json()) as {
+            virksomheder?: Array<{
+              cvr: number;
+              navn: string;
+              aktiv?: boolean;
+              ejerandel?: string | null;
+              form?: string | null;
+              branche?: string | null;
+              ejetAfCvr?: number | null;
+            }>;
+          };
+          for (const v of data.virksomheder ?? []) {
+            if (v.aktiv === false) continue;
+            if (v.ejetAfCvr != null && v.ejetAfCvr !== cvr) continue;
+            const childId = `cvr-${v.cvr}`;
+            if (existingIds.has(childId)) continue;
+            existingIds.add(childId);
+            newNodes.push({
+              id: childId,
+              label: v.navn,
+              sublabel: v.branche ?? v.form ?? `CVR ${v.cvr}`,
+              type: 'company',
+              cvr: v.cvr,
+              link: `/dashboard/companies/${v.cvr}`,
+              expandableChildren: 0,
+            });
+            newEdges.push({
+              from: companyNodeId,
+              to: childId,
+              ejerandel: v.ejerandel ?? undefined,
+            });
+          }
         }
 
-        if (newNodes.length > 0 || newEdges.length > 0) {
+        /* ── Ejere (opad) — person + virksomheds-ejere fra deltagere ── */
+        if (cvrRes?.ok) {
+          const cvrData = await cvrRes.json();
+          const deltagere = cvrData.deltagere as
+            | Array<{
+                navn: string;
+                enhedsNummer: number;
+                erVirksomhed: boolean;
+                roller: Array<{ ejerandel?: string | null; rolle: string }>;
+              }>
+            | undefined;
+          for (const d of deltagere ?? []) {
+            const ejerRolle = d.roller?.find(
+              (r) => r.ejerandel != null && !r.rolle?.toLowerCase().includes('stifter')
+            );
+            if (!ejerRolle) continue;
+            const ownerId = d.erVirksomhed ? `cvr-${d.enhedsNummer}` : `en-${d.enhedsNummer}`;
+            if (existingIds.has(ownerId)) {
+              /* Ejer findes allerede i grafen — tilføj orange crossOwnership-edge */
+              const edgeExists = [...extensionEdges, ...newEdges].some(
+                (e) => e.from === ownerId && e.to === companyNodeId
+              );
+              if (!edgeExists) {
+                newEdges.push({
+                  from: ownerId,
+                  to: companyNodeId,
+                  ejerandel: ejerRolle.ejerandel ?? undefined,
+                  crossOwnership: true,
+                });
+              }
+              continue;
+            }
+            existingIds.add(ownerId);
+            newNodes.push({
+              id: ownerId,
+              label: d.navn,
+              sublabel: d.erVirksomhed ? `CVR ${d.enhedsNummer}` : undefined,
+              type: d.erVirksomhed ? 'company' : 'person',
+              cvr: d.erVirksomhed ? d.enhedsNummer : undefined,
+              enhedsNummer: !d.erVirksomhed ? d.enhedsNummer : undefined,
+              link: d.erVirksomhed
+                ? `/dashboard/companies/${d.enhedsNummer}`
+                : `/dashboard/owners/${d.enhedsNummer}`,
+            });
+            newEdges.push({
+              from: ownerId,
+              to: companyNodeId,
+              ejerandel: ejerRolle.ejerandel ?? undefined,
+            });
+          }
+        }
+
+        if (newNodes.length > 0) {
           setExtensionNodes((prev) => [...prev, ...newNodes]);
           setExtensionEdges((prev) => [...prev, ...newEdges]);
+        } else {
+          /* Ingen datterselskaber — tilføj en "tom" status-node som feedback */
+          const emptyId = `empty-${companyNodeId}`;
+          setExtensionNodes((prev) => [
+            ...prev,
+            {
+              id: emptyId,
+              label: lang === 'da' ? 'Ingen datterselskaber' : 'No subsidiaries',
+              type: 'status',
+            },
+          ]);
+          setExtensionEdges((prev) => [...prev, { from: companyNodeId, to: emptyId }]);
         }
 
+        /* Marker som udvidet — uanset om der var resultater */
         setExpandedDynamic((prev) => {
           const next = new Set(prev);
           next.add(companyNodeId);
@@ -2823,9 +2894,8 @@ function DiagramForce({
                         </g>
                       );
                     })()}
-                  {/* BIZZ-1081: Virksomheds-Udvid knap — hent datterselskaber.
-                      Vis KUN hvis noden ikke allerede har børn i grafen
-                      (undgår dobbelt-knap med collapse/expand). */}
+                  {/* BIZZ-1081: Virksomheds-Udvid — samme lilla stil som person-Udvid.
+                      Vis KUN hvis noden ikke allerede har børn i grafen. */}
                   {!isPerson &&
                     node.cvr != null &&
                     !hasExpandable &&
@@ -2851,15 +2921,15 @@ function DiagramForce({
                             width={58}
                             height={16}
                             rx={8}
-                            fill="rgba(52,211,153,0.15)"
-                            stroke="rgba(52,211,153,0.4)"
+                            fill="rgba(139,92,246,0.15)"
+                            stroke="rgba(139,92,246,0.4)"
                             strokeWidth="0.6"
                           />
                           <text
                             x={x + NODE_W - 39}
                             y={pos.y + 3}
                             textAnchor="middle"
-                            fill="rgba(110,231,183,0.95)"
+                            fill="rgba(196,167,255,0.95)"
                             fontSize="8"
                             fontWeight="500"
                             className="pointer-events-none"

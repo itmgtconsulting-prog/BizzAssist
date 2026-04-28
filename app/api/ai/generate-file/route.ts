@@ -514,6 +514,26 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         previewKind = 'html';
         previewHtml = parsed.html;
       }
+    } else if (body.format === 'pptx') {
+      /* BIZZ-1085: Best-effort tekst-preview for PPTX — extrahér slide-tekst */
+      try {
+        const JSZip = (await import('jszip')).default;
+        const zip = await JSZip.loadAsync(generated.buffer);
+        const slideTexts: string[] = [];
+        for (let i = 1; i <= 10; i++) {
+          const slideFile = zip.file(`ppt/slides/slide${i}.xml`);
+          if (!slideFile) break;
+          const xml = await slideFile.async('text');
+          const texts = [...xml.matchAll(/<a:t>([^<]+)<\/a:t>/g)].map((m) => m[1]);
+          if (texts.length > 0) slideTexts.push(`Slide ${i}: ${texts.join(' · ')}`);
+        }
+        if (slideTexts.length > 0) {
+          previewHtml = `<div style="font-family:sans-serif;font-size:13px;line-height:1.6">${slideTexts.map((s) => `<p>${s}</p>`).join('')}</div>`;
+          previewKind = 'html';
+        }
+      } catch {
+        /* best-effort */
+      }
     }
   } catch (previewErr) {
     // Preview-parsing er best-effort — hvis det fejler falder vi tilbage til text

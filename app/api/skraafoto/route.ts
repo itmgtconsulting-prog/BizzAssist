@@ -17,12 +17,14 @@ import { logger } from '@/app/lib/logger';
 export interface SkraafotoRetning {
   /** Retning: north | south | east | west */
   direction: string;
-  /** Thumbnail URL (ca. 256px) */
+  /** Thumbnail URL (SVG placeholder via proxy) */
   thumbnail: string;
   /** Fuld opløsning URL (COG) */
   fullsize: string;
   /** Fotoårstal (f.eks. 2023) */
   year: number | null;
+  /** BIZZ-1050: Link til Dataforsyningens skråfoto viewer */
+  viewerUrl?: string;
 }
 
 /** API response */
@@ -114,8 +116,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<SkraafotoR
         // Original URL: https://api.dataforsyningen.dk/rest/skraafoto_cogtiler/v1.0/thumbnail.jpg?url=...
         // Proxy-URL: /api/skraafoto/thumb?url=<COG-URL>&token=<token>
         const cogUrl = full; // COG URL fra CDN
-        const thumbProxy = `/api/skraafoto/thumb?url=${encodeURIComponent(cogUrl)}&token=${encodeURIComponent(token)}`;
-        fotos.push({ direction: dir, thumbnail: thumbProxy, fullsize: full, year });
+        const thumbProxy = `/api/skraafoto/thumb?url=${encodeURIComponent(cogUrl)}`;
+        const viewerUrl = `https://skraafoto.dataforsyningen.dk/?search=${encodeURIComponent(cogUrl)}`;
+        fotos.push({ direction: dir, thumbnail: thumbProxy, fullsize: full, year, viewerUrl });
       }
 
       // Hvis vi fandt mindst 2 retninger, brug denne samling

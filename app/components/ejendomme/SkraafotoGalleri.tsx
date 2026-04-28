@@ -123,13 +123,14 @@ export default function SkraafotoGalleri({ lat, lng, lang }: Props) {
         </div>
 
         <div className="grid grid-cols-2 gap-2">
-          {fotos.map((foto, idx) => (
-            <button
+          {fotos.map((foto) => (
+            <a
               key={foto.direction}
-              type="button"
+              href={foto.viewerUrl ?? `https://skraafoto.dataforsyningen.dk/`}
+              target="_blank"
+              rel="noopener noreferrer"
               className="relative group rounded-lg overflow-hidden cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500"
-              onClick={() => setLightboxIdx(idx)}
-              aria-label={`${da ? 'Vis luftfoto' : 'View aerial photo'} ${DIR_LABELS[foto.direction]?.[lang] ?? foto.direction}`}
+              aria-label={`${da ? 'Åbn luftfoto i viewer' : 'Open aerial photo in viewer'} ${DIR_LABELS[foto.direction]?.[lang] ?? foto.direction}`}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
@@ -156,7 +157,7 @@ export default function SkraafotoGalleri({ lat, lng, lang }: Props) {
                   {DIR_LABELS[foto.direction]?.[lang] ?? foto.direction}
                 </span>
               </div>
-            </button>
+            </a>
           ))}
         </div>
       </div>

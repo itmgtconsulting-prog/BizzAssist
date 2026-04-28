@@ -627,10 +627,14 @@ export default function VirksomhederListesideClient() {
    * Panelet tilbyder checkboxes kun hvis der faktisk er data at filtrere på.
    * Her holder vi en tom liste — filteret er til gennemsigtighed vises kun når der er typer.
    */
+  /** BIZZ-1076: Udled virksomhedstyper fra recentCompanies.companyType */
   const uniqueTypes = useMemo<string[]>(() => {
-    // RecentCompany har ikke companyType-felt — returnér tom liste
-    return [];
-  }, []);
+    const types = new Set<string>();
+    for (const c of recentCompanies) {
+      if (c.companyType) types.add(c.companyType);
+    }
+    return [...types].sort();
+  }, [recentCompanies]);
 
   /**
    * Filtreret liste af recent-virksomheder baseret på aktive filtervalg.
@@ -643,7 +647,12 @@ export default function VirksomhederListesideClient() {
       if (filters.status === 'ophørt' && c.active) return false;
       // Branche-filter
       if (filters.branche && c.industry !== filters.branche) return false;
-      // Virksomhedsform-filter (intet felt i RecentCompany — spring over)
+      // BIZZ-1076: Virksomhedsform-filter
+      if (
+        filters.virksomhedsformer.length > 0 &&
+        !filters.virksomhedsformer.includes(c.companyType ?? '')
+      )
+        return false;
       return true;
     });
   }, [recentCompanies, filters]);

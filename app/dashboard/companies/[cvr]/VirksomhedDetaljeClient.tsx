@@ -734,6 +734,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           zipcode: company.zipcode,
           city: company.city,
           active: !company.enddate,
+          companyType: company.companydesc ?? null,
         });
         // Opdater recent tag-bar (virker også ved direkte URL-navigation)
         recordRecentVisit(

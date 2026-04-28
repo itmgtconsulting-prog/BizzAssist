@@ -2253,6 +2253,9 @@ export default function EjendomDetaljeClient({
                 kommunekode={
                   dawaJordstykke?.kommune?.kode ? String(dawaJordstykke.kommune.kode) : null
                 }
+                energimaerker={energimaerker}
+                energiLoader={energiLoader}
+                onNavigerDokumenter={() => setAktivTab('dokumenter')}
               />
             )}
 

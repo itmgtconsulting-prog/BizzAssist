@@ -28,6 +28,8 @@ import type { ForelobigVurdering } from '@/app/api/vurdering-forelobig/route';
 import type { DawaAdresse, DawaJordstykke } from '@/app/lib/dawa';
 import type { CVRVirksomhed } from '@/app/api/cvr/route';
 import OmraadeProfilSektion from '@/app/components/ejendomme/OmraadeProfilSektion';
+import EnergimaerkeBadge from '@/app/components/ejendomme/EnergimaerkeBadge';
+import type { EnergimaerkeItem } from '@/app/api/energimaerke/route';
 import StoejBadge from '@/app/components/ejendomme/StoejBadge';
 // BIZZ-1018: SkraafotoGalleri flyttet til EjendomBBRTab
 import PlandataSektion from '@/app/components/ejendomme/PlandataSektion';
@@ -78,6 +80,12 @@ interface Props {
   setVisOphoerte: React.Dispatch<React.SetStateAction<boolean>>;
   /** BIZZ-947: Kommunekode for områdeprofil */
   kommunekode?: string | null;
+  /** BIZZ-1030: Energimærkerapporter */
+  energimaerker?: EnergimaerkeItem[] | null;
+  /** BIZZ-1030: true mens energimærkedata hentes */
+  energiLoader?: boolean;
+  /** BIZZ-1030: Callback til at navigere til Dokumenter-fanen */
+  onNavigerDokumenter?: () => void;
 }
 
 /**
@@ -103,6 +111,9 @@ export default function EjendomOverblikTab({
   visOphoerte,
   setVisOphoerte,
   kommunekode,
+  energimaerker,
+  energiLoader,
+  onNavigerDokumenter,
 }: Props) {
   const da = lang === 'da';
 
@@ -428,6 +439,14 @@ export default function EjendomOverblikTab({
               </div>
             );
           })()}
+
+          {/* BIZZ-1030: Energimærke badge — viser nyeste gyldige klasse (A-G) */}
+          <EnergimaerkeBadge
+            energimaerker={energimaerker ?? null}
+            loading={energiLoader ?? false}
+            lang={lang}
+            onNavigate={onNavigerDokumenter}
+          />
         </div>
 
         {/* ─── Rad 2: Bygninger (v) + Enheder (h) ─── */}

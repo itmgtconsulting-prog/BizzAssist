@@ -1591,6 +1591,7 @@ async function executeTool(
                 ejerandel?: string | null;
                 ejerandelNum?: number | null;
                 aktiv?: boolean;
+                ejetAfCvr?: number | null;
               }>;
             }
           | Array<{
@@ -1598,12 +1599,22 @@ async function executeTool(
               navn: string;
               ejerandel?: string | null;
               aktiv?: boolean;
+              ejetAfCvr?: number | null;
             }>;
         const relData = Array.isArray(relJson) ? relJson : (relJson.virksomheder ?? []);
+        const forespurgtCvr = Number(input.cvr);
 
-        // Filtrer til aktive datterselskaber med ejerandel
+        // BIZZ-1069: Filtrer til KUN direkte datterselskaber — ekskludér
+        // virksomheder relateret via fælles person-ejere (som forårsagede
+        // at JaJR Holdings datterselskaber dukkede op under K. Holmgreen).
+        // ejetAfCvr === null = direkte under den forespurgte virksomhed
+        // ejetAfCvr === forespurgtCvr = direkte under den forespurgte
         const datterselskaber = relData
-          .filter((r) => r.aktiv !== false && r.ejerandel)
+          .filter((r) => {
+            if (r.aktiv === false || !r.ejerandel) return false;
+            /* BIZZ-1069: kun direkte datterselskaber, ikke via fælles ejere */
+            return r.ejetAfCvr == null || r.ejetAfCvr === forespurgtCvr;
+          })
           .map((r) => ({
             cvr: r.cvr,
             navn: r.navn,

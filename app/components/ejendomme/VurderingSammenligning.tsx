@@ -104,7 +104,8 @@ export default function VurderingSammenligning({
           ? `Foreløbig vurdering — postnummer ${postnr}`
           : `Preliminary valuation — postal area ${postnr}`}
       </h3>
-      <p className="text-[10px] text-slate-600 mb-3">
+      {/* BIZZ-1053: Øget kontrast fra text-slate-600 → text-slate-400 */}
+      <p className="text-[10px] text-slate-400 mb-3">
         {da
           ? `Baseret på ${data.antalEjendomme} foreløbige ejendomsvurderinger i postnummer ${postnr} (kilde: Vurderingsstyrelsen). Endelige vurderinger kan afvige.`
           : `Based on ${data.antalEjendomme} preliminary property valuations in postal area ${postnr} (source: Danish Valuation Agency). Final valuations may differ.`}

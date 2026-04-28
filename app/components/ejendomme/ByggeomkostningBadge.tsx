@@ -69,11 +69,11 @@ export default function ByggeomkostningBadge({ lang }: Props) {
           </span>
         )}
       </div>
-      <p className="text-[10px] text-slate-600 mt-1">
+      <p className="text-[10px] text-slate-400 mt-1">
         {data.type} · {da ? 'Kilde: DST BYG42' : 'Source: DST BYG42'}
       </p>
       {/* BIZZ-1046: Kontekst-forklaring */}
-      <p className="text-[9px] text-slate-600 mt-0.5">
+      <p className="text-[9px] text-slate-400 mt-0.5">
         {da
           ? 'Indeks for byggeomkostninger (2015 = 100). Bruges til at estimere genopførelsesværdi. Ændring er ift. samme kvartal året før.'
           : 'Construction cost index (2015 = 100). Used to estimate replacement value. Change is YoY same quarter.'}

@@ -489,7 +489,7 @@ export default function EjendomOekonomiTab(props: Props) {
                           {h.koebsaftaleDato &&
                             h.overtagelsesdato &&
                             h.koebsaftaleDato !== h.overtagelsesdato && (
-                              <p className="text-slate-600 text-[10px] mt-0.5">
+                              <p className="text-slate-400 text-[10px] mt-0.5">
                                 {t.overtagelsesdato}:{' '}
                                 {new Date(h.overtagelsesdato).toLocaleDateString(
                                   da ? 'da-DK' : 'en-GB',
@@ -647,7 +647,7 @@ export default function EjendomOekonomiTab(props: Props) {
               <TrendingUp size={22} className="text-slate-600 mx-auto" />
               <p className="text-slate-500 text-xs">{t.noTransactions}</p>
               {salgshistorikManglerAdgang && (
-                <p className="text-slate-600 text-[10px] max-w-sm mx-auto leading-relaxed">
+                <p className="text-slate-400 text-[10px] max-w-sm mx-auto leading-relaxed">
                   {t.salesHistoryEJF}
                 </p>
               )}

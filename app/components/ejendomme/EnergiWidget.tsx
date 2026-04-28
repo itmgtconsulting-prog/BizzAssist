@@ -72,9 +72,9 @@ export default function EnergiWidget({ kommunekode, lang }: Props) {
           <p className="text-[10px] text-slate-500 uppercase">Max</p>
         </div>
       </div>
-      <p className="text-[10px] text-slate-600 mt-2 text-center">{data.enhed}</p>
+      <p className="text-[10px] text-slate-400 mt-2 text-center">{data.enhed}</p>
       {/* BIZZ-1046: Kontekst-forklaring */}
-      <p className="text-[9px] text-slate-600 mt-1">
+      <p className="text-[9px] text-slate-400 mt-1">
         {da
           ? `Gennemsnit, min og max elspot-pris seneste 30 dage. ${data.prisomraade === 'DK2' ? 'DK2 = Østdanmark (Sjælland, Lolland-Falster, Bornholm)' : 'DK1 = Vestdanmark (Jylland, Fyn)'}. Kilde: Energinet DataHub.`
           : `Average, min, and max spot price over last 30 days. ${data.prisomraade === 'DK2' ? 'DK2 = East Denmark (Zealand)' : 'DK1 = West Denmark (Jutland, Funen)'}. Source: Energinet DataHub.`}

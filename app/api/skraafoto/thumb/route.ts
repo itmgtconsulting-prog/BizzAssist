@@ -1,19 +1,19 @@
 /**
  * GET /api/skraafoto/thumb?url=<COG_URL>
  *
- * BIZZ-1050: Skråfoto thumbnail proxy.
+ * BIZZ-1050: Server-side thumbnail proxy for skråfotos.
+ * Henter fuld COG-fil fra CDN og genererer JPEG thumbnail via Sharp.
  *
- * Dataforsyningens cogtiler thumbnail-tjeneste er permanent nedlagt.
- * COG-filer er 40-60MB — for store til server-side thumbnail-generering.
+ * COG-filer er 40-60MB men Sharp resizer dem til 256px på ~800ms.
+ * Resultatet caches aggressivt (30 dage) da skråfotos ikke ændrer sig.
  *
- * Denne route returnerer en SVG placeholder med retnings-ikon
- * og link til Dataforsyningens skråfoto viewer.
- *
- * @param url - COG URL (bruges til at generere viewer-link)
- * @returns SVG placeholder image
+ * @param url - CDN URL til COG-fil (skraafoto-cdn.dataforsyningen.dk)
+ * @returns JPEG thumbnail (256x256)
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import sharp from 'sharp';
+import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
 
 export async function GET(request: NextRequest) {
@@ -21,24 +21,37 @@ export async function GET(request: NextRequest) {
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const url = request.nextUrl.searchParams.get('url');
-  if (!url) return NextResponse.json({ error: 'Mangler url' }, { status: 400 });
 
-  /* Generer en SVG placeholder der fungerer som thumbnail */
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
-  <rect width="256" height="256" fill="#1e293b"/>
-  <rect x="8" y="8" width="240" height="240" rx="12" fill="#0f172a" stroke="#334155" stroke-width="1"/>
-  <g transform="translate(128,110)" text-anchor="middle">
-    <circle cx="0" cy="-20" r="24" fill="none" stroke="#3b82f6" stroke-width="1.5" opacity="0.5"/>
-    <path d="M-8,-28 L0,-36 L8,-28" fill="none" stroke="#3b82f6" stroke-width="1.5" opacity="0.5"/>
-    <text y="20" font-family="system-ui" font-size="11" fill="#64748b">Skråfoto</text>
-    <text y="36" font-family="system-ui" font-size="9" fill="#475569">Klik for at åbne</text>
-  </g>
-</svg>`;
+  if (!url || !url.includes('skraafoto-cdn.dataforsyningen.dk')) {
+    return NextResponse.json({ error: 'Ugyldig URL' }, { status: 400 });
+  }
 
-  return new NextResponse(svg, {
-    headers: {
-      'Content-Type': 'image/svg+xml',
-      'Cache-Control': 'public, max-age=86400, s-maxage=86400',
-    },
-  });
+  try {
+    /* Hent fuld COG-fil fra CDN (40-60MB, ingen token nødvendig) */
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(30000),
+    });
+
+    if (!res.ok) {
+      return NextResponse.json({ error: `CDN fejl: ${res.status}` }, { status: 502 });
+    }
+
+    const buffer = Buffer.from(await res.arrayBuffer());
+
+    /* Generer thumbnail via Sharp (~800ms for 60MB COG) */
+    const thumbnail = await sharp(buffer, { failOn: 'none', limitInputPixels: false })
+      .resize(256, 256, { fit: 'cover' })
+      .jpeg({ quality: 75 })
+      .toBuffer();
+
+    return new NextResponse(new Uint8Array(thumbnail), {
+      headers: {
+        'Content-Type': 'image/jpeg',
+        'Cache-Control': 'public, max-age=2592000, s-maxage=2592000',
+      },
+    });
+  } catch (err) {
+    logger.error('[skraafoto/thumb] Fejl:', err instanceof Error ? err.message : err);
+    return NextResponse.json({ error: 'Thumbnail generering fejlede' }, { status: 502 });
+  }
 }

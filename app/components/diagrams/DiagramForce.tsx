@@ -2204,8 +2204,9 @@ function DiagramForce({
         // i samme graf) bruger amber-farve + dashed for visuel distinktion
         // fra primary parent→child-edges.
         const isCrossOwnership = !!edge.crossOwnership;
+        /* BIZZ-1086: crossOwnership-linjer gjort mere subtile (0.35 opacity) */
         const strokeColor = isCrossOwnership
-          ? 'rgba(251,191,36,0.75)' // amber-400
+          ? 'rgba(251,191,36,0.35)' // amber-400 subtil
           : isCoOwnerEdge
             ? 'rgba(167,139,250,0.55)'
             : isPersonToProperty
@@ -2786,7 +2787,7 @@ function DiagramForce({
   const canvasEl = (
     <div
       ref={containerRef}
-      className={`bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden select-none ${isFullscreen ? 'flex-1' : ''}`}
+      className={`bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-auto select-none ${isFullscreen ? 'flex-1' : ''}`}
       style={{
         minHeight: isFullscreen ? undefined : '500px',
         maxHeight: isFullscreen ? undefined : '85vh',

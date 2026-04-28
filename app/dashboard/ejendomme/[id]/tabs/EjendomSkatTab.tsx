@@ -21,6 +21,7 @@
 
 import { Info, Landmark, Sparkles, Scale } from 'lucide-react';
 import SkatteberegningFlow from '@/app/components/ejendomme/SkatteberegningFlow';
+import ForklarVurderingWidget from '@/app/components/ejendomme/ForklarVurderingWidget';
 import SektionLoader from '@/app/components/SektionLoader';
 import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
 import { formatDKK } from '@/app/lib/mock/ejendomme';
@@ -53,6 +54,16 @@ interface Props {
   vurFritagelser: VurderingResponse['fritagelser'];
   /** true hvis ejendommen er en kolonihave (ejendomsværdiskat-fritaget) */
   erKolonihave: boolean;
+  /** BIZZ-946: Adresse for AI forklaring */
+  adresse?: string;
+  /** BIZZ-946: Kommune */
+  kommune?: string | null;
+  /** BIZZ-946: Boligareal i m² */
+  boligareal?: number | null;
+  /** BIZZ-946: Grundareal i m² */
+  grundareal?: number | null;
+  /** BIZZ-946: Opførelsesår */
+  opfoerelsesaar?: number | null;
 }
 
 /**
@@ -68,6 +79,11 @@ export default function EjendomSkatTab({
   vurLoft,
   vurFritagelser,
   erKolonihave,
+  adresse,
+  kommune,
+  boligareal,
+  grundareal,
+  opfoerelsesaar,
 }: Props) {
   const da = lang === 'da';
 
@@ -95,6 +111,20 @@ export default function EjendomSkatTab({
       {/* BIZZ-616: Top-level tab loading spinner — vises mens VUR-data
                   hentes så tabben ikke står blank ved første klik. */}
       {(forelobigLoader || vurderingLoader) && <TabLoadingSpinner label={t.loadingSkat} />}
+
+      {/* BIZZ-946: AI-drevet vurderingsforklaring */}
+      {adresse && !forelobigLoader && !vurderingLoader && (
+        <ForklarVurderingWidget
+          vurdering={vurdering}
+          forelobig={forelobige.length > 0 ? forelobige[0] : null}
+          adresse={adresse}
+          kommune={kommune ?? null}
+          boligareal={boligareal ?? null}
+          grundareal={grundareal ?? null}
+          opfoerelsesaar={opfoerelsesaar ?? null}
+          lang={lang}
+        />
+      )}
 
       {/* ── Ejendomsskatter — baseret på foreløbige + estimerede data ── */}
       <div>

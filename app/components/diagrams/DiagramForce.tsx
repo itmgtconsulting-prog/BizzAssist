@@ -655,11 +655,12 @@ function DiagramForce({
       if (!showCeased && n.isCeased) return false;
       // BIZZ-451: Hide property nodes unless toggle is on
       if (!showProperties && n.type === 'property') return false;
-      // BIZZ-1004/1020: Hide personally owned properties unless toggle is on.
-      // Undtagen når defaultShowProperties=false (person-diagram) — der
-      // styrer "Ejendomme"-toggle begge typer for at undgå dobbelt-toggle.
-      if (!defaultShowProperties ? !showProperties : !showPersonalProps) {
-        if (personalPropNodeIds.has(n.id)) return false;
+      // BIZZ-1004/1020: Hide personally owned properties.
+      // Person-diagram: "Ejendomme" toggle styrer ALLE ejendomme (inkl. personlige).
+      // Virksomheds-diagram: separat "Personlige" toggle.
+      if (personalPropNodeIds.has(n.id)) {
+        if (!defaultShowProperties && !showProperties) return false;
+        if (defaultShowProperties && !showPersonalProps) return false;
       }
       // Always show non-co-owner nodes
       if (!n.isCoOwner) return true;

@@ -232,13 +232,24 @@ export async function POST(request: NextRequest) {
           return;
         }
 
-        /* Eksekvér via PostgREST (service role med RLS) */
+        /* BIZZ-1087: Eksekvér via PostgREST — hent rå kolonner, aggregér server-side.
+           PostgREST understøtter IKKE count(*)/GROUP BY i .select().
+           Vi henter kolonnerne og aggregerer i JS. */
         sse(JSON.stringify({ status: 'Henter data…' }));
 
         const admin = createAdminClient();
         const tableName = plan.table.includes('.') ? plan.table.split('.')[1] : plan.table;
 
-        let query = admin.from(tableName).select(plan.select, { count: 'exact' });
+        /* Udled hvilke rå kolonner vi skal hente (fjern aggregeringer) */
+        const rawCols = plan.select
+          .split(',')
+          .map((s) => s.trim())
+          .filter((s) => !/^(count|sum|avg|min|max)\s*\(/i.test(s))
+          .map((s) => s.replace(/\s+as\s+\w+$/i, '').trim())
+          .filter(Boolean);
+        const selectStr = rawCols.length > 0 ? rawCols.join(',') : '*';
+
+        let query = admin.from(tableName).select(selectStr, { count: 'exact' });
 
         /* Anvend filters */
         if (plan.filters) {
@@ -277,14 +288,9 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        /* Order + limit */
-        if (plan.order) {
-          const [orderCol, orderDir] = plan.order.split('.');
-          query = query.order(orderCol, { ascending: orderDir !== 'desc' });
-        }
         query = query.limit(Math.min(plan.limit ?? MAX_ROWS, MAX_ROWS));
 
-        const { data: rows, error: dbError, count } = await query;
+        const { data: rawRows, error: dbError, count } = await query;
 
         if (dbError) {
           logger.error('[analyse/query] PostgREST fejl:', dbError.message);
@@ -294,7 +300,45 @@ export async function POST(request: NextRequest) {
           return;
         }
 
-        const resultRows = (rows ?? []) as Record<string, unknown>[];
+        const fetchedRows = (rawRows ?? []) as Record<string, unknown>[];
+
+        /* Server-side aggregering hvis Claude bad om count/sum/avg */
+        const hasAggregation = /\b(count|sum|avg|min|max)\s*\(/i.test(plan.select);
+        let resultRows: Record<string, unknown>[];
+
+        if (hasAggregation && rawCols.length > 0) {
+          /* Group by de rå kolonner og beregn aggregeringer */
+          const groups = new Map<string, { count: number; rows: Record<string, unknown>[] }>();
+          for (const row of fetchedRows) {
+            const key = rawCols.map((c) => String(row[c] ?? 'null')).join('|');
+            const existing = groups.get(key);
+            if (existing) {
+              existing.count++;
+              existing.rows.push(row);
+            } else {
+              groups.set(key, { count: 1, rows: [row] });
+            }
+          }
+          resultRows = [...groups.entries()].map(([, g]) => {
+            const out: Record<string, unknown> = {};
+            for (const c of rawCols) out[c] = g.rows[0][c];
+            out.antal = g.count;
+            return out;
+          });
+          /* Sortér efter antal DESC (default for aggregeringer) */
+          resultRows.sort((a, b) => (b.antal as number) - (a.antal as number));
+        } else {
+          resultRows = fetchedRows;
+          /* Anvend order */
+          if (plan.order) {
+            const [orderCol, orderDir] = plan.order.split('.');
+            resultRows.sort((a, b) => {
+              const av = (a[orderCol] as string | number) ?? '';
+              const bv = (b[orderCol] as string | number) ?? '';
+              return orderDir === 'desc' ? (bv > av ? 1 : -1) : av > bv ? 1 : -1;
+            });
+          }
+        }
         sse(JSON.stringify({ status: `${resultRows.length} rækker fundet` }));
 
         const columns: ColumnDef[] =

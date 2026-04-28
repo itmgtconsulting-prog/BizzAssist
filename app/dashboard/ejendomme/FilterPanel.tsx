@@ -20,7 +20,8 @@
 import { X, RotateCcw } from 'lucide-react';
 
 /** Kategorier for BBR-ejendomstype-filter */
-export type EjendomstypeFilter = 'alle' | 'beboelse' | 'erhverv' | 'ubebygget';
+/** BIZZ-1090: Tilføjet 'blandet' for ejendomme med både bolig- og erhvervsareal */
+export type EjendomstypeFilter = 'alle' | 'beboelse' | 'erhverv' | 'ubebygget' | 'blandet';
 
 /** BIZZ-1009: Opførelsesår preset */
 export type AldersPreset = '' | 'foer1900' | '1900-1960' | '1960-2000' | 'efter2000';
@@ -46,6 +47,8 @@ export interface EjendomFilterState {
   ejerType: EjerTypeFilter;
   /** BIZZ-1008: Ejendomsværdi preset */
   vaerdiPreset: '' | '0-2' | '2-5' | '5-10' | '10+';
+  /** BIZZ-1090: Energimærke filter */
+  energimaerke: string;
 }
 
 /** Standard filterstatus — ingen aktive filtre */
@@ -58,6 +61,7 @@ export const DEFAULT_FILTERS: EjendomFilterState = {
   arealMax: '',
   ejerType: '',
   vaerdiPreset: '',
+  energimaerke: '',
 };
 
 /** Tæl antal aktive filtre */
@@ -70,6 +74,7 @@ export function countActiveFilters(f: EjendomFilterState): number {
   if (f.arealMin || f.arealMax) n++;
   if (f.ejerType) n++;
   if (f.vaerdiPreset) n++;
+  if (f.energimaerke) n++;
   return n;
 }
 
@@ -270,11 +275,13 @@ export default function FilterPanel({
             {l.ejendomstype}
           </span>
           <div className="space-y-1.5">
+            {/* BIZZ-1090: Tilføjet 'blandet' */}
             {(
               [
                 ['alle', l.alle],
                 ['beboelse', l.beboelse],
                 ['erhverv', l.erhverv],
+                ['blandet', lang === 'da' ? 'Blandet' : 'Mixed'],
                 ['ubebygget', l.ubebygget],
               ] as [EjendomstypeFilter, string][]
             ).map(([val, label]) => (
@@ -342,6 +349,29 @@ export default function FilterPanel({
               className="w-1/2 bg-slate-800 border border-slate-700/60 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-600 outline-none focus:border-blue-500/60 transition-colors"
             />
           </div>
+        </div>
+
+        {/* ── BIZZ-1090: Energimærke ── */}
+        <div>
+          <label
+            htmlFor="filter-energi"
+            className="block text-slate-400 text-xs font-medium uppercase tracking-wide mb-1.5"
+          >
+            {lang === 'da' ? 'Energimærke' : 'Energy label'}
+          </label>
+          <select
+            id="filter-energi"
+            value={filters.energimaerke}
+            onChange={(e) => onFiltersChange({ ...filters, energimaerke: e.target.value })}
+            className="w-full bg-slate-800 border border-slate-700/60 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500/60 transition-colors"
+          >
+            <option value="">{lang === 'da' ? 'Alle klasser' : 'All classes'}</option>
+            {['A', 'B', 'C', 'D', 'E', 'F', 'G'].map((k) => (
+              <option key={k} value={k}>
+                {k}
+              </option>
+            ))}
+          </select>
         </div>
 
         {/* ── BIZZ-1010: Ejer-type ── */}

@@ -411,6 +411,7 @@ function ActiveFilterChips({
       alle: ft.alle,
       beboelse: ft.beboelse,
       erhverv: ft.erhverv,
+      blandet: lang === 'da' ? 'Blandet' : 'Mixed',
       ubebygget: ft.ubebygget,
     };
     chips.push({
@@ -846,6 +847,56 @@ export default function EjendommeListesideClient() {
       {/* ─── Indhold + Filter-sidepanel ─── */}
       <div className="flex-1 flex overflow-hidden">
         <div className="flex-1 overflow-y-auto px-8 py-6">
+          {/* BIZZ-1090: Søgeresultater fra database (når filtre er aktive) */}
+          {_hasActiveSearch && (
+            <div className="mb-6">
+              <div className="flex items-center gap-2 mb-3">
+                <Search size={15} className="text-emerald-400" />
+                <h2 className="text-white font-semibold text-base">
+                  {lang === 'da' ? 'Søgeresultater' : 'Search results'}
+                </h2>
+                <span className="text-slate-500 text-xs">
+                  {_searchTotal.toLocaleString(lang === 'da' ? 'da-DK' : 'en-GB')}{' '}
+                  {lang === 'da' ? 'ejendomme' : 'properties'}
+                </span>
+              </div>
+              {_searchLoading ? (
+                <div className="flex items-center gap-2 text-slate-500 text-sm py-8">
+                  <Loader2 size={14} className="animate-spin" />
+                  {lang === 'da' ? 'Søger...' : 'Searching...'}
+                </div>
+              ) : _searchResults && _searchResults.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                  {_searchResults.map((r) => (
+                    <Link
+                      key={r.bfe_nummer}
+                      href={`/dashboard/ejendomme/${r.bfe_nummer}`}
+                      className="bg-slate-800/40 border border-slate-700/40 hover:border-emerald-500/40 rounded-xl p-4 transition-all hover:bg-slate-800/60"
+                    >
+                      <p className="text-white text-sm font-medium">BFE {r.bfe_nummer}</p>
+                      <div className="flex gap-3 mt-1 text-xs text-slate-400">
+                        {r.samlet_boligareal && <span>{r.samlet_boligareal} m²</span>}
+                        {r.opfoerelsesaar && (
+                          <span>
+                            {lang === 'da' ? 'Opf.' : 'Built'} {r.opfoerelsesaar}
+                          </span>
+                        )}
+                        {r.energimaerke && (
+                          <span className="text-emerald-400">{r.energimaerke}</span>
+                        )}
+                        {r.kommune_kode && <span>Komm. {r.kommune_kode}</span>}
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-slate-500 text-sm py-4">
+                  {lang === 'da' ? 'Ingen resultater' : 'No results'}
+                </p>
+              )}
+            </div>
+          )}
+
           {/* Seneste sete ejendomme */}
           {senesteEjendomme.length > 0 ? (
             <div>

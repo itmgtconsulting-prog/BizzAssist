@@ -13,6 +13,13 @@ import Hero from '@/app/components/Hero';
 import { LanguageProvider } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
 
+// Mock Next.js navigation — avoids router dependency in tests
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
+  usePathname: () => '/',
+  useSearchParams: () => new URLSearchParams(),
+}));
+
 // Mock Next.js Link — avoids router dependency in tests
 vi.mock('next/link', () => ({
   default: ({

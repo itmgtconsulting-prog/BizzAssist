@@ -179,7 +179,21 @@ async function generateDocumentPdfFromUuid(uuid: string): Promise<Buffer> {
  *
  * @param bilagUuid - Bilagsreference-UUID
  */
+/**
+ * BIZZ-1057: Retry wrapper for bilag-fetch — tinglysning.dk returnerer
+ * sporadisk 502. Retry 1 gang ved transient fejl (502, 503, timeout).
+ */
 async function fetchBilagPdf(bilagUuid: string): Promise<Buffer | null> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = await _fetchBilagPdfOnce(bilagUuid);
+    if (result !== null) return result;
+    if (attempt === 0) await new Promise((r) => setTimeout(r, 1000));
+  }
+  return null;
+}
+
+/** Single attempt at fetching bilag PDF */
+async function _fetchBilagPdfOnce(bilagUuid: string): Promise<Buffer | null> {
   try {
     const pfx = loadCert();
     return await new Promise<Buffer>((resolve, reject) => {

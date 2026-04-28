@@ -55,9 +55,7 @@ export default function AnalyseLandingPage() {
             Udforsk datasæt med pivot-tabeller, grafer og filtre. Skriv forespørgsler på dansk og få
             strukturerede resultater.
           </p>
-          <span className="inline-block mt-3 text-xs text-emerald-400/60 border border-emerald-500/20 rounded px-2 py-0.5">
-            Kommer snart
-          </span>
+          {/* BIZZ-1037: "Kommer snart" fjernet — AI Query Builder er live */}
         </Link>
       </div>
     </div>

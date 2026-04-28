@@ -348,7 +348,7 @@ const TOOLS: Anthropic.Tool[] = [
     // Uden dette har AI kun BBR per-adresse og kan ikke liste en virksomheds
     // portefølje — AI svarer fejlagtigt "selskabet ejer ingen ejendomme".
     description:
-      'Lister alle ejendomme ejet af et CVR-nummer (eller flere kommasepareret). Returnerer BFE, adresse, postnr, by, ejendomstype og ejerandel per ejendom. Brug dette ved spørgsmål om en virksomheds ejendomsportefølje eller samlet matrikel-areal. For holdingselskaber: kald først hent_datterselskaber for at få datterselskabs-CVR, dernæst dette tool med alle CVR (kommasepareret) for at få hele koncernens portefølje.',
+      'Lister alle ejendomme ejet af et CVR-nummer (eller flere kommasepareret). Returnerer BFE, adresse, postnr, by, ejendomstype og ejerandel per ejendom. Brug dette ved spørgsmål om en virksomheds ejendomsportefølje eller samlet matrikel-areal. For holdingselskaber: kald først hent_datterselskaber for at få datterselskabs-CVR, dernæst dette tool med alle CVR (kommasepareret). VIGTIGT: Brug KUN CVR-numre der er direkte datterselskaber af context-CVR — inkluder ALDRIG CVR fra andre koncerner fundet via person-relationer.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -762,7 +762,7 @@ Når brugerens forespørgsel kan fortolkes på flere måder, STIL et kort afklar
 Konteksten kan indeholde \`activeTab\` + \`pageType\` der angiver hvad brugeren ser. Når brugeren refererer til "oversigt tab", "ejendomme tab", "det her tab" osv.:
 - **pageType=virksomhed + activeTab=ejendomme**: Brug hent_ejendomme_for_virksomhed(cvr) på context-cvr. Inkluder datterselskabers ejendomme kun hvis brugeren eksplicit beder om det.
 - **pageType=virksomhed + activeTab=regnskab**: Brug hent_regnskab_noegletal(cvr) — fokus på omsætning/resultat/egenkapital.
-- **pageType=virksomhed + activeTab=oversigt**: Inkluder både stamdata OG ejendomme OG personer (overblik).
+- **pageType=virksomhed + activeTab=oversigt**: Inkluder stamdata OG ejendomme OG personer. BIZZ-1069: Inkluder KUN ejendomme direkte ejet af context-CVR — ALDRIG ejendomme fra andre koncerner via person-relationer.
 - **pageType=person + activeTab=ejendomme**: Kald hent_ejendomme_for_person(enhedsNummer) — dette ene tool returnerer ALLE ejendomme (personlige + via virksomheder).
 - **pageType=person + activeTab=relations (diagram)**: Brugeren ser ejerskabsdiagrammet. Når de siger "eksporter diagram" eller "diagram til word/pptx", generer en struktureret fil med ejerskabshierarkiet. Kald hent_person_virksomheder for at få virksomhedslisten, derefter generate_document med format=docx (sektioner: Ejerskabsoversigt, Virksomheder med roller/ejerandel) eller format=pptx (slides pr. virksomhed). Hvis [DIAGRAM-BILLEDE] er i konteksten, tilføj en sektion med imageBase64="DIAGRAM" for at indlejre det visuelle diagram i dokumentet.
 - **pageType=virksomhed + activeTab=diagram**: Brugeren ser virksomheds-ejerskabsdiagrammet. "Eksporter diagram" = generer struktureret ejerskabsoversigt via hent_datterselskaber + hent_ejeroplysninger. Brug docx/pptx format. Hvis [DIAGRAM-BILLEDE] er i konteksten, tilføj en sektion med imageBase64="DIAGRAM" for at indlejre det visuelle diagram.
@@ -852,6 +852,7 @@ For ALLE virksomheder med ejerandel: kald hent_regnskab_noegletal parallelt (all
 Egenkapital = bogført nettoværdi. Markedsværdi-multipel: 1–3× egenkapital for holdingselskaber, 3–8× EBITDA for driftsselskaber.
 
 ### REGEL 3 — Holdingkæder (effektiv ejerandel, op til 3 niveauer)
+BIZZ-1069: Traversér KUN NEDAD i hierarkiet (datterselskaber af context-CVR) — ALDRIG opad via person-ejere til andre koncerner. Hvis en ejer også ejer andre virksomheder, skal de IKKE inkluderes.
 Hvis et ejet selskab er holdingselskab (navn indeholder "Holding", "Invest", "Group", "Management" eller ingen ansatte):
 - Kald hent_datterselskaber → niveau 2-selskaber med ejerandele
 - Hvis niveau 2-selskaber OGSÅ er holdingselskaber: kald hent_datterselskaber på dem → niveau 3

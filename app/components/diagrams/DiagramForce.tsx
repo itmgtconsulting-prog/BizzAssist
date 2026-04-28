@@ -463,6 +463,86 @@ function DiagramForce({
   );
 
   /**
+   * BIZZ-1081: Dynamisk udvidelse af virksomheds-noder.
+   * Henter datterselskaber + ejere via /api/cvr-public/related.
+   * Tilføjer nye noder/edges til extensionNodes/extensionEdges.
+   */
+  const expandCompanyDynamic = useCallback(
+    async (companyNodeId: string, cvr: number) => {
+      if (expandedDynamic.has(companyNodeId) || loadingExpansion.has(companyNodeId)) return;
+      setLoadingExpansion((prev) => new Set(prev).add(companyNodeId));
+      try {
+        const res = await fetch(`/api/cvr-public/related?cvr=${cvr}`, {
+          signal: AbortSignal.timeout(15000),
+        });
+        if (!res.ok) return;
+
+        const data = (await res.json()) as {
+          virksomheder?: Array<{
+            cvr: number;
+            navn: string;
+            aktiv?: boolean;
+            ejerandel?: string | null;
+            form?: string | null;
+            branche?: string | null;
+            ejetAfCvr?: number | null;
+          }>;
+        };
+
+        const existingIds = new Set<string>([
+          ...graph.nodes.map((n) => n.id),
+          ...extensionNodes.map((n) => n.id),
+        ]);
+        const newNodes: DiagramNode[] = [];
+        const newEdges: DiagramEdge[] = [];
+
+        for (const v of data.virksomheder ?? []) {
+          if (v.aktiv === false) continue;
+          /* Kun direkte datterselskaber (ejetAfCvr === null eller === cvr) */
+          if (v.ejetAfCvr != null && v.ejetAfCvr !== cvr) continue;
+          const childId = `cvr-${v.cvr}`;
+          if (existingIds.has(childId)) continue;
+          existingIds.add(childId);
+          newNodes.push({
+            id: childId,
+            label: v.navn,
+            sublabel: v.branche ?? v.form ?? `CVR ${v.cvr}`,
+            type: 'company',
+            cvr: v.cvr,
+            link: `/dashboard/companies/${v.cvr}`,
+            expandableChildren: 0,
+          });
+          newEdges.push({
+            from: companyNodeId,
+            to: childId,
+            ejerandel: v.ejerandel ?? undefined,
+          });
+        }
+
+        if (newNodes.length > 0 || newEdges.length > 0) {
+          setExtensionNodes((prev) => [...prev, ...newNodes]);
+          setExtensionEdges((prev) => [...prev, ...newEdges]);
+        }
+
+        setExpandedDynamic((prev) => {
+          const next = new Set(prev);
+          next.add(companyNodeId);
+          return next;
+        });
+      } catch {
+        /* Fejl ignoreres — noden forbliver uudvidet */
+      } finally {
+        setLoadingExpansion((prev) => {
+          const next = new Set(prev);
+          next.delete(companyNodeId);
+          return next;
+        });
+      }
+    },
+    [expandedDynamic, loadingExpansion, graph.nodes, extensionNodes]
+  );
+
+  /**
    * BIZZ-479: Overflow-nodes starter COLLAPSED (viser kun de første
    * OVERFLOW_INITIAL_SHOW = 5). Hvis listen har flere, åbner "Vis alle"
    * knappen en modal i stedet for at folde ud inline — det forhindrer
@@ -2738,6 +2818,49 @@ function DiagramForce({
                             className="pointer-events-none"
                           >
                             {personLoading ? '… henter' : '▸ Udvid'}
+                          </text>
+                        </g>
+                      );
+                    })()}
+                  {/* BIZZ-1081: Virksomheds-Udvid knap — hent datterselskaber */}
+                  {!isPerson &&
+                    node.cvr != null &&
+                    (() => {
+                      const companyLoading = loadingExpansion.has(node.id);
+                      const companyExpanded = expandedDynamic.has(node.id);
+                      if (companyExpanded) return null;
+                      return (
+                        <g
+                          className="cursor-pointer"
+                          style={{ pointerEvents: 'auto' }}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onTouchStart={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (companyLoading) return;
+                            expandCompanyDynamic(node.id, node.cvr!);
+                          }}
+                        >
+                          <rect
+                            x={x + NODE_W - 68}
+                            y={pos.y - 8}
+                            width={58}
+                            height={16}
+                            rx={8}
+                            fill="rgba(52,211,153,0.15)"
+                            stroke="rgba(52,211,153,0.4)"
+                            strokeWidth="0.6"
+                          />
+                          <text
+                            x={x + NODE_W - 39}
+                            y={pos.y + 3}
+                            textAnchor="middle"
+                            fill="rgba(110,231,183,0.95)"
+                            fontSize="8"
+                            fontWeight="500"
+                            className="pointer-events-none"
+                          >
+                            {companyLoading ? '… henter' : '▸ Udvid'}
                           </text>
                         </g>
                       );

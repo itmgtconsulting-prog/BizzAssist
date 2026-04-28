@@ -18,6 +18,7 @@
 'use client';
 
 import { useState, useCallback, useRef } from 'react';
+import dynamic from 'next/dynamic';
 import {
   BarChart3,
   LineChart as LineChartIcon,
@@ -29,7 +30,14 @@ import {
   ChevronRight,
   Code2,
   Sparkles,
+  LayoutGrid,
 } from 'lucide-react';
+
+/** BIZZ-1039: Perspective loaded dynamisk (WebAssembly kræver browser) */
+const PerspectiveViewer = dynamic(() => import('@/app/components/analyse/PerspectiveViewer'), {
+  ssr: false,
+  loading: () => <div className="h-[500px] bg-slate-800/50 rounded-lg animate-pulse" />,
+});
 import {
   BarChart,
   Bar,
@@ -244,6 +252,7 @@ export default function AnalyseDataClient() {
   const [error, setError] = useState<string | null>(null);
   const [chartType, setChartType] = useState<string>('bar');
   const [showSql, setShowSql] = useState(false);
+  const [showPivot, setShowPivot] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   /**
@@ -473,19 +482,38 @@ export default function AnalyseDataClient() {
             </div>
           </div>
 
-          {/* SQL (collapsible) */}
-          <button
-            onClick={() => setShowSql(!showSql)}
-            className="flex items-center gap-2 text-xs text-slate-500 hover:text-slate-300 transition-colors"
-          >
-            {showSql ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-            <Code2 size={12} />
-            Vis SQL
-          </button>
+          {/* BIZZ-1039: Åbn i Pivot + SQL (collapsible) */}
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => setShowPivot(!showPivot)}
+              className={`flex items-center gap-2 text-xs transition-colors ${showPivot ? 'text-emerald-400' : 'text-slate-500 hover:text-slate-300'}`}
+            >
+              <LayoutGrid size={12} />
+              {showPivot ? 'Skjul Pivot' : 'Åbn i Pivot'}
+            </button>
+            <button
+              onClick={() => setShowSql(!showSql)}
+              className="flex items-center gap-2 text-xs text-slate-500 hover:text-slate-300 transition-colors"
+            >
+              {showSql ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              <Code2 size={12} />
+              Vis SQL
+            </button>
+          </div>
           {showSql && (
             <pre className="bg-slate-900 border border-slate-700/30 rounded-lg p-4 text-xs text-slate-400 overflow-x-auto">
               {result.sql}
             </pre>
+          )}
+
+          {/* BIZZ-1039: Perspective pivot-tabel */}
+          {showPivot && result.rows.length > 0 && (
+            <PerspectiveViewer
+              data={result.rows}
+              columns={result.columns.map((c) => c.key)}
+              plugin="Datagrid"
+              height={500}
+            />
           )}
         </div>
       )}

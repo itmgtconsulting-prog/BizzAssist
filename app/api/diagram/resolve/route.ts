@@ -169,90 +169,94 @@ async function resolveCompanyGraph(
   });
   nodeIds.add(mainId);
 
-  // 2. Hent ejere + datterselskaber via CVR ES (parallel)
-  const [cvrRes, relatedRes] = await Promise.all([
-    fetch(`${host}/api/cvr-public?vat=${cvr}`, {
-      headers: { cookie },
-      signal: AbortSignal.timeout(10000),
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .catch(() => null),
-    fetch(`${host}/api/cvr-public/related?cvr=${cvr}`, {
-      headers: { cookie },
-      signal: AbortSignal.timeout(10000),
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .catch(() => null),
-  ]);
+  // 2. BIZZ-1108: Hent ejere (opad) fra lokal cvr_deltagerrelation
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: ownerRows } = await (admin as any)
+    .from('cvr_deltagerrelation')
+    .select('deltager_enhedsnummer, type')
+    .eq('virksomhed_cvr', cvr)
+    .is('gyldig_til', null)
+    .limit(30);
 
-  // 2a. Ejere (opad) fra CVR ES deltagerRelation
-  interface CvrOwner {
-    name: string;
-    cvr?: number;
-    enhedsNummer?: number;
-    ejerandel?: string;
-  }
-  const owners: CvrOwner[] = cvrRes?.owners ?? [];
-  for (const owner of owners) {
-    if (owner.cvr) {
-      const ownerId = `cvr-${owner.cvr}`;
-      if (!nodeIds.has(ownerId)) {
-        const ownerCompany = await fetchCachedCompany(admin, String(owner.cvr));
-        const ownerProps = await fetchPropertiesByCvr(admin, String(owner.cvr));
-        nodes.push({
-          id: ownerId,
-          label: ownerCompany?.navn ?? owner.name,
-          sublabel: ownerCompany?.virksomhedsform ?? undefined,
-          type: 'company',
-          cvr: owner.cvr,
-          link: `/dashboard/companies/${owner.cvr}`,
-          isCeased: ownerCompany?.ophoert != null,
-          expandableChildren: ownerProps.length > 0 ? ownerProps.length : undefined,
-        });
-        nodeIds.add(ownerId);
-      }
-      edges.push({ from: ownerId, to: mainId, ejerandel: owner.ejerandel });
-    } else if (owner.enhedsNummer) {
-      const ownerId = `en-${owner.enhedsNummer}`;
-      if (!nodeIds.has(ownerId)) {
-        nodes.push({
-          id: ownerId,
-          label: owner.name,
-          type: 'person',
-          enhedsNummer: owner.enhedsNummer,
-          link: `/dashboard/owners/${owner.enhedsNummer}`,
-        });
-        nodeIds.add(ownerId);
-      }
-      edges.push({ from: ownerId, to: mainId, ejerandel: owner.ejerandel });
+  if (ownerRows?.length) {
+    // Hent navne fra cvr_deltager
+    const enhedsNumre = [
+      ...new Set(
+        (ownerRows as Array<{ deltager_enhedsnummer: number }>).map((r) => r.deltager_enhedsnummer)
+      ),
+    ];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: deltagere } = await (admin as any)
+      .from('cvr_deltager')
+      .select('enhedsnummer, navn')
+      .in('enhedsnummer', enhedsNumre);
+    const navnMap = new Map<number, string>(
+      (deltagere ?? []).map((d: { enhedsnummer: number; navn: string }) => [d.enhedsnummer, d.navn])
+    );
+
+    // Gruppér roller per deltager
+    const personRollerMap = new Map<number, string[]>();
+    for (const r of ownerRows as Array<{ deltager_enhedsnummer: number; type: string }>) {
+      const arr = personRollerMap.get(r.deltager_enhedsnummer) ?? [];
+      arr.push(r.type);
+      personRollerMap.set(r.deltager_enhedsnummer, arr);
+    }
+
+    for (const [en, roller] of personRollerMap) {
+      const ownerId = `en-${en}`;
+      if (nodeIds.has(ownerId)) continue;
+      const ownerNavn = navnMap.get(en) ?? `Person ${en}`;
+      nodes.push({
+        id: ownerId,
+        label: ownerNavn,
+        type: 'person',
+        enhedsNummer: en,
+        link: `/dashboard/owners/${en}`,
+      });
+      nodeIds.add(ownerId);
+      edges.push({
+        from: ownerId,
+        to: mainId,
+        ejerandel: roller.slice(0, 2).join(', '),
+      });
     }
   }
 
-  // 2b. Datterselskaber (nedad) fra CVR ES related
-  interface RelatedCompany {
-    cvr: number;
-    navn: string;
-    virksomhedsform?: string;
-    ophoert?: boolean;
-  }
-  const subsidiaries: RelatedCompany[] = relatedRes?.related ?? relatedRes ?? [];
-  for (const sub of (Array.isArray(subsidiaries) ? subsidiaries : []).slice(0, 15)) {
-    const subId = `cvr-${sub.cvr}`;
-    if (nodeIds.has(subId)) continue;
-    const subCompany = await fetchCachedCompany(admin, String(sub.cvr));
-    const subProps = await fetchPropertiesByCvr(admin, String(sub.cvr));
-    nodes.push({
-      id: subId,
-      label: subCompany?.navn ?? sub.navn,
-      sublabel: subCompany?.virksomhedsform ?? sub.virksomhedsform ?? undefined,
-      type: 'company',
-      cvr: sub.cvr,
-      link: `/dashboard/companies/${sub.cvr}`,
-      isCeased: subCompany?.ophoert != null || sub.ophoert === true,
-      expandableChildren: subProps.length > 0 ? subProps.length : undefined,
-    });
-    nodeIds.add(subId);
-    edges.push({ from: mainId, to: subId });
+  // 2b. Datterselskaber (nedad) — fortsat via live API (virksomhed→virksomhed
+  // ejerskab kræver enhedsNummer→CVR mapping som ikke er i cvr_deltagerrelation)
+  try {
+    const relatedRes = await fetch(`${host}/api/cvr-public/related?cvr=${cvr}`, {
+      headers: { cookie },
+      signal: AbortSignal.timeout(10000),
+    }).then((r) => (r.ok ? r.json() : null));
+
+    interface RelatedCompany {
+      cvr: number;
+      navn: string;
+      virksomhedsform?: string;
+      ophoert?: boolean;
+    }
+    const subsidiaries: RelatedCompany[] = relatedRes?.related ?? relatedRes ?? [];
+    for (const sub of (Array.isArray(subsidiaries) ? subsidiaries : []).slice(0, 15)) {
+      const subId = `cvr-${sub.cvr}`;
+      if (nodeIds.has(subId)) continue;
+      const subCompany = await fetchCachedCompany(admin, String(sub.cvr));
+      const subProps = await fetchPropertiesByCvr(admin, String(sub.cvr));
+      nodes.push({
+        id: subId,
+        label: subCompany?.navn ?? sub.navn,
+        sublabel: subCompany?.virksomhedsform ?? sub.virksomhedsform ?? undefined,
+        type: 'company',
+        cvr: sub.cvr,
+        link: `/dashboard/companies/${sub.cvr}`,
+        isCeased: subCompany?.ophoert != null || sub.ophoert === true,
+        expandableChildren: subProps.length > 0 ? subProps.length : undefined,
+      });
+      nodeIds.add(subId);
+      edges.push({ from: mainId, to: subId });
+    }
+  } catch {
+    // Fallback: ingen datterselskaber ved fejl
   }
 
   // 3. Ejendomme virksomheden ejer

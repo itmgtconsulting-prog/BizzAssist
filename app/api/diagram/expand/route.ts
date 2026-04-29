@@ -188,40 +188,29 @@ async function expandPerson(
   const newEdges: DiagramEdge[] = [];
   const addedIds = new Set<string>();
 
-  // BIZZ-1120: Hent personens virksomheder fra lokal cache
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: personRels } = await (admin as any)
-    .from('cvr_deltagerrelation')
-    .select('virksomhed_cvr, type')
-    .eq('deltager_enhedsnummer', Number(enhedsNummer))
-    .is('gyldig_til', null)
-    .limit(100);
+  // BIZZ-1120: Hent virksomheder via live CVR ES (eneste pålidelige ejerskabs-kilde)
+  const personRes = await fetch(`${host}/api/cvr-public/person?enhedsNummer=${enhedsNummer}`, {
+    headers: { cookie },
+    signal: AbortSignal.timeout(10000),
+  }).catch(() => null);
+  const personData = personRes && personRes.ok ? await personRes.json() : null;
 
-  // Gruppér roller per virksomhed og filtrer
-  const virksomhedRollerMap = new Map<string, string[]>();
-  for (const r of (personRels ?? []) as Array<{ virksomhed_cvr: string; type: string }>) {
-    const arr = virksomhedRollerMap.get(r.virksomhed_cvr) ?? [];
-    arr.push(r.type);
-    virksomhedRollerMap.set(r.virksomhed_cvr, arr);
+  interface ExpandVirk {
+    cvr: number;
+    navn: string;
+    roller: Array<{ rolle?: string; ejerandel?: string | null }>;
   }
-  // BIZZ-1120: Filtrer til virksomheder med ejendomme (ejf_ejerskab)
-  if (virksomhedRollerMap.size > 0) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: propOwners } = await (admin as any)
-      .from('ejf_ejerskab')
-      .select('ejer_cvr')
-      .in('ejer_cvr', [...virksomhedRollerMap.keys()].slice(0, 50))
-      .eq('status', 'gældende')
-      .limit(200);
-    const cvrsWithProps = new Set((propOwners ?? []).map((r: { ejer_cvr: string }) => r.ejer_cvr));
-    for (const cvrKey of virksomhedRollerMap.keys()) {
-      if (!cvrsWithProps.has(cvrKey)) virksomhedRollerMap.delete(cvrKey);
-    }
-  }
+  const virksomheder: ExpandVirk[] = personData?.virksomheder ?? [];
 
-  for (const [cvrStr, roller] of virksomhedRollerMap) {
+  for (const v of virksomheder) {
+    const cvrStr = String(v.cvr);
     const companyId = `cvr-${cvrStr}`;
-    const rolleStr = roller.slice(0, 2).join(', ');
+    const rolleStr =
+      v.roller
+        ?.map((r) => [r.rolle, r.ejerandel].filter(Boolean).join(' '))
+        .filter(Boolean)
+        .slice(0, 2)
+        .join(', ') ?? '';
 
     if (existingIds.has(companyId)) {
       // Virksomhed allerede i grafen → 2nd-degree edge
@@ -253,7 +242,7 @@ async function expandPerson(
 
     newNodes.push({
       id: companyId,
-      label: company?.navn ?? `CVR ${cvrStr}`,
+      label: company?.navn ?? v.navn ?? `CVR ${cvrStr}`,
       sublabel: company?.virksomhedsform ?? undefined,
       type: 'company',
       cvr: Number(cvrStr),

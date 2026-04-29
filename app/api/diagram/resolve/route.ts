@@ -492,7 +492,9 @@ async function resolvePropertyGraph(
  */
 async function resolvePersonGraph(
   admin: ReturnType<typeof createAdminClient>,
-  enhedsNummer: string
+  enhedsNummer: string,
+  host: string,
+  cookie: string
 ): Promise<DiagramGraph> {
   const nodes: DiagramNode[] = [];
   const edges: DiagramEdge[] = [];
@@ -519,43 +521,32 @@ async function resolvePersonGraph(
   });
   nodeIds.add(mainId);
 
-  // BIZZ-1120: Hent KUN ejerskabs-relationer (ikke ledelsesposter)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: personRels } = await (admin as any)
-    .from('cvr_deltagerrelation')
-    .select('virksomhed_cvr, type')
-    .eq('deltager_enhedsnummer', Number(enhedsNummer))
-    .is('gyldig_til', null)
-    .limit(100);
+  // BIZZ-1120: Hent personens ejerskabs-virksomheder via live CVR ES.
+  // Lokal cvr_deltagerrelation kan IKKE skelne ejerskab fra ledelsesposter
+  // (ingen kontorsteder.type === 'EJERREGISTER' data). V1 bruger live API
+  // og det er den eneste pålidelige metode.
+  const personRes = await fetch(`${host}/api/cvr-public/person?enhedsNummer=${enhedsNummer}`, {
+    headers: { cookie },
+    signal: AbortSignal.timeout(10000),
+  }).catch(() => null);
+  const personData = personRes && personRes.ok ? await personRes.json() : null;
 
-  // Gruppér roller per virksomhed — KUN ejerskabs-roller
-  const virksomhedRollerMap = new Map<string, string[]>();
-  for (const r of (personRels ?? []) as Array<{ virksomhed_cvr: string; type: string }>) {
-    // Samler alle roller — filtrering sker efter gruppering
-    const arr = virksomhedRollerMap.get(r.virksomhed_cvr) ?? [];
-    arr.push(r.type);
-    virksomhedRollerMap.set(r.virksomhed_cvr, arr);
+  // Opdater personnavn fra API-response hvis tilgængeligt
+  if (personData?.navn) {
+    nodes[0].label = personData.navn;
   }
 
-  // BIZZ-1120: Filtrer til virksomheder der HAR ejendomme (ejf_ejerskab) —
-  // mest pålidelige ejerskabs-indikator da CVR rolletyper er upålidelige.
-  if (virksomhedRollerMap.size > 0) {
-    const allVirkCvrs = [...virksomhedRollerMap.keys()];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: propOwners } = await (admin as any)
-      .from('ejf_ejerskab')
-      .select('ejer_cvr')
-      .in('ejer_cvr', allVirkCvrs.slice(0, 50))
-      .eq('status', 'gældende')
-      .limit(200);
-    const cvrsWithProps = new Set((propOwners ?? []).map((r: { ejer_cvr: string }) => r.ejer_cvr));
-    for (const cvrKey of virksomhedRollerMap.keys()) {
-      if (!cvrsWithProps.has(cvrKey)) virksomhedRollerMap.delete(cvrKey);
-    }
+  // Filtrér virksomheder: v1 inkluderer dem med ejerskabs-roller
+  interface PersonVirksomhed {
+    cvr: number;
+    navn: string;
+    aktiv: boolean;
+    roller: Array<{ rolle?: string; ejerandel?: string | null }>;
   }
+  const virksomheder: PersonVirksomhed[] = personData?.virksomheder ?? [];
 
-  // Batch-hent alle virksomhedsnavne i ét opslag
-  const allCvrs = [...virksomhedRollerMap.keys()];
+  // Batch-hent virksomhedsnavne fra lokal cache
+  const allCvrs = virksomheder.map((v) => String(v.cvr));
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: companyBatch } = await (admin as any)
     .from('cvr_virksomhed')
@@ -596,27 +587,33 @@ async function resolvePersonGraph(
   // Samle alle CVR'er vi skal hente related for (hierarki)
   const topLevelCvrs: string[] = [];
 
-  for (const [cvrStr, roller] of virksomhedRollerMap) {
+  for (const v of virksomheder) {
+    const cvrStr = String(v.cvr);
     const companyId = `cvr-${cvrStr}`;
     if (nodeIds.has(companyId)) continue;
 
     const company = companyMap.get(cvrStr) ?? null;
     const propCount = propCountMap.get(cvrStr) ?? 0;
 
-    // Formater roller
-    const rolleStr = roller.slice(0, 2).join(', ');
+    // Formater roller fra API-response
+    const rolleStr =
+      v.roller
+        ?.map((r) => [r.rolle, r.ejerandel].filter(Boolean).join(' '))
+        .filter(Boolean)
+        .slice(0, 2)
+        .join(', ') ?? '';
 
     // BIZZ-1118: Vis branche i sublabel
     const subParts = [company?.virksomhedsform, company?.branche_tekst].filter(Boolean);
     nodes.push({
       id: companyId,
-      label: company?.navn ?? `CVR ${cvrStr}`,
+      label: company?.navn ?? v.navn,
       sublabel: subParts.length > 0 ? subParts.join(' · ') : undefined,
       branche: company?.branche_tekst ?? undefined,
       type: 'company',
-      cvr: Number(cvrStr),
+      cvr: v.cvr,
       link: `/dashboard/companies/${cvrStr}`,
-      isCeased: company?.ophoert != null,
+      isCeased: company?.ophoert != null || !v.aktiv,
       expandableChildren: propCount > 0 ? propCount : undefined,
       personRolle: rolleStr || undefined,
     });
@@ -765,7 +762,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
         graph = await resolvePropertyGraph(admin, Number(id), label);
         break;
       case 'person':
-        graph = await resolvePersonGraph(admin, id);
+        graph = await resolvePersonGraph(admin, id, reqHost, reqCookie);
         break;
       default:
         return NextResponse.json({ graph: null, error: `Unknown type: ${type}` }, { status: 400 });

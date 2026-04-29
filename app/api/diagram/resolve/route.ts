@@ -298,10 +298,13 @@ async function resolveCompanyGraph(
         const subId = `cvr-${subCvr}`;
         if (nodeIds.has(subId)) continue;
         const sub = sibMap.get(subCvr);
+        // BIZZ-1118: Vis branche i sublabel (samme pattern som person-resolve)
+        const sibSubParts = [sub?.virksomhedsform, sub?.branche_tekst].filter(Boolean);
         nodes.push({
           id: subId,
           label: sub?.navn ?? `CVR ${subCvr}`,
-          sublabel: sub?.virksomhedsform ?? undefined,
+          sublabel: sibSubParts.length > 0 ? sibSubParts.join(' · ') : undefined,
+          branche: sub?.branche_tekst ?? undefined,
           type: 'company',
           cvr: Number(subCvr),
           link: `/dashboard/companies/${subCvr}`,

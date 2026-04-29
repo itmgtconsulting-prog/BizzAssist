@@ -392,7 +392,6 @@ async function resolvePersonGraph(
   const nodes: DiagramNode[] = [];
   const edges: DiagramEdge[] = [];
   const nodeIds = new Set<string>();
-  const bfesInGraph = new Set<number>();
 
   // Root-node: personen
   const mainId = `en-${enhedsNummer}`;
@@ -414,13 +413,17 @@ async function resolvePersonGraph(
   });
   nodeIds.add(mainId);
 
-  // Tilføj virksomheder personen ejer
+  // Tilføj virksomheder personen ejer — kun top-level (direkte ejerskab)
   interface PersonRolleRaw {
     rolle?: string;
     ejerandel?: string | null;
   }
   const virksomheder: Array<{ cvr: number; navn: string; roller: PersonRolleRaw[] }> =
     personData?.virksomheder ?? [];
+
+  // Samle alle CVR'er vi skal hente related for (hierarki)
+  const topLevelCvrs: string[] = [];
+
   for (const v of virksomheder) {
     const cvrStr = String(v.cvr);
     const companyId = `cvr-${cvrStr}`;
@@ -449,32 +452,60 @@ async function resolvePersonGraph(
       expandableChildren: properties.length > 0 ? properties.length : undefined,
     });
     nodeIds.add(companyId);
+    topLevelCvrs.push(cvrStr);
 
     edges.push({
       from: mainId,
       to: companyId,
       ejerandel: rolleStr || undefined,
     });
+  }
 
-    // Vis op til MAX_PROPS_PER_OWNER ejendomme per virksomhed
-    const shownProps = properties.slice(0, MAX_PROPS_PER_OWNER);
-    for (const prop of shownProps) {
-      const propId = `bfe-${prop.bfe_nummer}`;
-      if (!nodeIds.has(propId)) {
-        nodes.push({
-          id: propId,
-          label: `BFE ${prop.bfe_nummer}`,
-          type: 'property',
-          bfeNummer: prop.bfe_nummer,
-        });
-        nodeIds.add(propId);
-      }
-      bfesInGraph.add(prop.bfe_nummer);
-      edges.push({
-        from: companyId,
-        to: propId,
-        ejerandel: formatEjerandel(prop.ejerandel_taeller, prop.ejerandel_naevner),
+  // BIZZ-1104: Hent datterselskaber for top-level virksomheder → byg hierarki
+  // Seriell for at undgå overbelastning (max 10 related-opslag)
+  for (const parentCvr of topLevelCvrs.slice(0, 10)) {
+    try {
+      const relRes = await fetch(`${host}/api/cvr-public/related?cvr=${parentCvr}`, {
+        headers: { cookie },
+        signal: AbortSignal.timeout(8000),
       });
+      if (!relRes.ok) continue;
+      const relData = await relRes.json();
+      const subs: Array<{
+        cvr: number;
+        navn: string;
+        virksomhedsform?: string;
+        ophoert?: boolean;
+      }> = relData?.related ?? relData ?? [];
+      if (!Array.isArray(subs)) continue;
+
+      for (const sub of subs.slice(0, 10)) {
+        const subId = `cvr-${sub.cvr}`;
+        const parentId = `cvr-${parentCvr}`;
+        if (nodeIds.has(subId)) {
+          // Allerede i grafen — tilføj crossOwnership edge
+          if (!edges.some((e) => e.from === parentId && e.to === subId)) {
+            edges.push({ from: parentId, to: subId, crossOwnership: true });
+          }
+          continue;
+        }
+        const subCompany = await fetchCachedCompany(admin, String(sub.cvr));
+        const subProps = await fetchPropertiesByCvr(admin, String(sub.cvr));
+        nodes.push({
+          id: subId,
+          label: subCompany?.navn ?? sub.navn,
+          sublabel: subCompany?.virksomhedsform ?? sub.virksomhedsform ?? undefined,
+          type: 'company',
+          cvr: sub.cvr,
+          link: `/dashboard/companies/${sub.cvr}`,
+          isCeased: subCompany?.ophoert != null || sub.ophoert === true,
+          expandableChildren: subProps.length > 0 ? subProps.length : undefined,
+        });
+        nodeIds.add(subId);
+        edges.push({ from: parentId, to: subId });
+      }
+    } catch {
+      // Related-opslag fejler stille — best-effort
     }
   }
 

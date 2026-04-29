@@ -328,9 +328,9 @@ async function resolveCompanyGraph(
     const { data: allProps } = await (admin as any)
       .from('ejf_ejerskab')
       .select('bfe_nummer, ejer_cvr, ejerandel_taeller, ejerandel_naevner')
-      .in('ejer_cvr', companyCvrs.slice(0, 50))
+      .in('ejer_cvr', companyCvrs.slice(0, 10))
       .eq('status', 'gældende')
-      .limit(500);
+      .limit(100);
 
     // Gruppér ejendomme per CVR
     const propsByCvr = new Map<

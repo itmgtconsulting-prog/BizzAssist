@@ -145,6 +145,7 @@ function DiagramForce({
   onNodeClick,
   defaultShowProperties = true,
   onDiagramReady,
+  onExpand,
 }: DiagramVariantProps) {
   const _router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1904,7 +1905,23 @@ function DiagramForce({
       if (!autoExpandDoneRef.current.has(mainNode.id)) {
         autoExpandDoneRef.current.add(mainNode.id);
         if (!expandedDynamic.has(mainNode.id) && !loadingExpansion.has(mainNode.id)) {
-          void expandPersonDynamic(mainNode.id, mainNode.enhedsNummer);
+          if (onExpand) {
+            setLoadingExpansion((prev) => new Set([...prev, mainNode.id]));
+            void onExpand(mainNode.id, 'person').then((result) => {
+              setLoadingExpansion((prev) => {
+                const s = new Set(prev);
+                s.delete(mainNode.id);
+                return s;
+              });
+              if (result) {
+                setExtensionNodes((prev) => [...prev, ...result.nodes]);
+                setExtensionEdges((prev) => [...prev, ...result.edges]);
+                setExpandedDynamic((prev) => new Set([...prev, mainNode.id]));
+              }
+            });
+          } else {
+            void expandPersonDynamic(mainNode.id, mainNode.enhedsNummer);
+          }
         }
       }
       return;
@@ -1932,10 +1949,26 @@ function DiagramForce({
         if (expandedDynamic.has(owner.id)) continue;
         if (loadingExpansion.has(owner.id)) continue;
         autoExpandDoneRef.current.add(owner.id);
-        void expandPersonDynamic(owner.id, owner.enhedsNummer!);
+        if (onExpand) {
+          setLoadingExpansion((prev) => new Set([...prev, owner.id]));
+          void onExpand(owner.id, 'person').then((result) => {
+            setLoadingExpansion((prev) => {
+              const s = new Set(prev);
+              s.delete(owner.id);
+              return s;
+            });
+            if (result) {
+              setExtensionNodes((prev) => [...prev, ...result.nodes]);
+              setExtensionEdges((prev) => [...prev, ...result.edges]);
+              setExpandedDynamic((prev) => new Set([...prev, owner.id]));
+            }
+          });
+        } else {
+          void expandPersonDynamic(owner.id, owner.enhedsNummer!);
+        }
       }
     }
-  }, [graph, expandPersonDynamic, expandedDynamic, loadingExpansion]);
+  }, [graph, expandPersonDynamic, expandedDynamic, loadingExpansion, onExpand]);
 
   // ── Expand/collapse all helpers ──
   // Nodes that have expandable children (expandableChildren > 0)
@@ -1986,7 +2019,23 @@ function DiagramForce({
     if (canExpandPersons.length > 0) {
       for (const p of canExpandPersons) {
         if (p.enhedsNummer != null) {
-          void expandPersonDynamic(p.id, p.enhedsNummer);
+          if (onExpand) {
+            setLoadingExpansion((prev) => new Set([...prev, p.id]));
+            void onExpand(p.id, 'person').then((result) => {
+              setLoadingExpansion((prev) => {
+                const s = new Set(prev);
+                s.delete(p.id);
+                return s;
+              });
+              if (result) {
+                setExtensionNodes((prev) => [...prev, ...result.nodes]);
+                setExtensionEdges((prev) => [...prev, ...result.edges]);
+                setExpandedDynamic((prev) => new Set([...prev, p.id]));
+              }
+            });
+          } else {
+            void expandPersonDynamic(p.id, p.enhedsNummer);
+          }
         }
       }
       didSomething = true;
@@ -2867,7 +2916,23 @@ function DiagramForce({
                           onClick={(e) => {
                             e.stopPropagation();
                             if (personLoading) return;
-                            expandPersonDynamic(node.id, node.enhedsNummer!);
+                            if (onExpand) {
+                              setLoadingExpansion((prev) => new Set([...prev, node.id]));
+                              void onExpand(node.id, 'person').then((result) => {
+                                setLoadingExpansion((prev) => {
+                                  const s = new Set(prev);
+                                  s.delete(node.id);
+                                  return s;
+                                });
+                                if (result) {
+                                  setExtensionNodes((prev) => [...prev, ...result.nodes]);
+                                  setExtensionEdges((prev) => [...prev, ...result.edges]);
+                                  setExpandedDynamic((prev) => new Set([...prev, node.id]));
+                                }
+                              });
+                            } else {
+                              expandPersonDynamic(node.id, node.enhedsNummer!);
+                            }
                           }}
                         >
                           <rect
@@ -2912,7 +2977,23 @@ function DiagramForce({
                           onClick={(e) => {
                             e.stopPropagation();
                             if (companyLoading) return;
-                            expandCompanyDynamic(node.id, node.cvr!);
+                            if (onExpand) {
+                              setLoadingExpansion((prev) => new Set([...prev, node.id]));
+                              void onExpand(node.id, 'company').then((result) => {
+                                setLoadingExpansion((prev) => {
+                                  const s = new Set(prev);
+                                  s.delete(node.id);
+                                  return s;
+                                });
+                                if (result) {
+                                  setExtensionNodes((prev) => [...prev, ...result.nodes]);
+                                  setExtensionEdges((prev) => [...prev, ...result.edges]);
+                                  setExpandedDynamic((prev) => new Set([...prev, node.id]));
+                                }
+                              });
+                            } else {
+                              expandCompanyDynamic(node.id, node.cvr!);
+                            }
                           }}
                         >
                           <rect

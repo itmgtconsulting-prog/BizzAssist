@@ -49,6 +49,7 @@ import { saveRecentPerson } from '@/app/lib/recentPersons';
 import { recordRecentVisit } from '@/app/lib/recordRecentVisit';
 import { buildPersonDiagramGraph } from '@/app/components/diagrams/DiagramData';
 import type { DiagramPropertySummary } from '@/app/components/diagrams/DiagramData';
+import { isDiagram2Enabled } from '@/app/lib/featureFlags';
 import CreateCaseModal from '@/app/components/sager/CreateCaseModal';
 import { useDomainMemberships } from '@/app/hooks/useDomainMemberships';
 import dynamic from 'next/dynamic';
@@ -62,10 +63,19 @@ import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
 /** BIZZ-600: DiagramForce uses d3-force — dynamic() keeps d3-force out of initial bundle */
 // prettier-ignore
 const DiagramForce = dynamic(/* d3-force */ () => import('@/app/components/diagrams/DiagramForce'), { ssr: false, loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" /> });
+/** Diagram v2 — feature-flagged, kun synlig i dev/preview */
+const DiagramV2 = dynamic(() => import('@/app/components/diagrams/DiagramV2'), { ssr: false });
 
 // ─── Tab Types ──────────────────────────────────────────────────────────────
 
-type TabId = 'overview' | 'relations' | 'properties' | 'group' | 'chronology' | 'liens';
+type TabId =
+  | 'overview'
+  | 'relations'
+  | 'diagram2'
+  | 'properties'
+  | 'group'
+  | 'chronology'
+  | 'liens';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -1828,6 +1838,9 @@ export default function PersonDetailPageClient({
   const tabDef: { id: TabId; label: string; icon: React.ReactNode }[] = [
     { id: 'overview', label: c.tabs.overview, icon: <LayoutDashboard size={12} /> },
     { id: 'relations', label: c.tabs.relations, icon: <Briefcase size={12} /> },
+    ...(isDiagram2Enabled()
+      ? [{ id: 'diagram2' as const, label: 'Diagram v2', icon: <Sparkles size={12} /> }]
+      : []),
     { id: 'properties', label: c.tabs.properties, icon: <Home size={12} /> },
     { id: 'group', label: c.tabs.group, icon: <Building2 size={12} /> },
     { id: 'chronology', label: c.tabs.chronology, icon: <Clock size={12} /> },
@@ -2473,6 +2486,16 @@ export default function PersonDetailPageClient({
                   window.location.href = node.link;
                 }
               }}
+            />
+          )}
+
+          {/* ══ DIAGRAM v2 (feature-flagged) ══ */}
+          {aktivTab === 'diagram2' && data && (
+            <DiagramV2
+              rootType="person"
+              rootId={String(data.enhedsNummer)}
+              rootLabel={data.navn}
+              lang={lang}
             />
           )}
 

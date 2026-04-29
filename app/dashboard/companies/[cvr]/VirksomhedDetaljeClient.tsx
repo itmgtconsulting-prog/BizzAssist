@@ -70,6 +70,7 @@ import { useSubscriptionAccess } from '@/app/components/SubscriptionGate';
 import { resolvePlan, formatTokens, isSubscriptionFunctional } from '@/app/lib/subscriptions';
 import { buildDiagramGraph } from '@/app/components/diagrams/DiagramData';
 import type { DiagramPropertySummary } from '@/app/components/diagrams/DiagramData';
+import { isDiagram2Enabled } from '@/app/lib/featureFlags';
 import dynamic from 'next/dynamic';
 import VerifiedLinks from '@/app/components/VerifiedLinks';
 import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
@@ -83,6 +84,8 @@ import VirksomhedHistorikTab from './tabs/VirksomhedHistorikTab';
 /** BIZZ-600: DiagramForce uses d3-force — dynamic() keeps d3-force out of initial bundle */
 // prettier-ignore
 const DiagramForce = dynamic(/* d3-force */ () => import('@/app/components/diagrams/DiagramForce'), { ssr: false, loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" /> });
+/** Diagram v2 — feature-flagged, kun synlig i dev/preview */
+const DiagramV2 = dynamic(() => import('@/app/components/diagrams/DiagramV2'), { ssr: false });
 
 // ─── Tracked Companies (localStorage) ────────────────────────────────────────
 
@@ -174,6 +177,7 @@ function formatDatoKort(iso: string): string {
 type TabId =
   | 'overview'
   | 'diagram'
+  | 'diagram2'
   | 'tradeHistory'
   | 'properties'
   | 'companies'
@@ -186,6 +190,7 @@ type TabId =
 const tabIcons: Record<TabId, React.ReactNode> = {
   overview: <LayoutDashboard size={12} />,
   diagram: <Briefcase size={12} />,
+  diagram2: <Sparkles size={12} />,
   tradeHistory: <ArrowRightLeft size={12} />,
   properties: <Home size={12} />,
   companies: <Building2 size={12} />,
@@ -195,10 +200,11 @@ const tabIcons: Record<TabId, React.ReactNode> = {
   liens: <Scale size={12} />,
 };
 
-/** Rækkefølge af tabs */
+/** Rækkefølge af tabs — diagram2 kun synlig bag feature flag */
 const tabOrder: TabId[] = [
   'overview',
   'diagram',
+  ...(isDiagram2Enabled() ? (['diagram2'] as const) : []),
   'properties',
   'companies',
   'financials',
@@ -306,6 +312,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   const tabLabelMap: Record<TabId, string> = {
     overview: c.tabs.overview,
     diagram: lang === 'da' ? 'Diagram' : 'Diagram',
+    diagram2: 'Diagram v2',
     tradeHistory: c.tabs.tradeHistory,
     properties: c.tabs.properties,
     companies: c.tabs.companies,
@@ -1937,6 +1944,16 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                 </div>
               )}
             </div>
+          )}
+
+          {/* ══ DIAGRAM v2 (feature-flagged) ══ */}
+          {aktivTab === 'diagram2' && data && (
+            <DiagramV2
+              rootType="company"
+              rootId={String(data.vat)}
+              rootLabel={data.name ?? ''}
+              lang={lang}
+            />
           )}
 
           {/* ══ EJENDOMME ══ */}

@@ -31,10 +31,13 @@ import {
   Map as MapIcon,
   Briefcase,
   RefreshCw,
+  Sparkles,
 } from 'lucide-react';
 /** BIZZ-600: PropertyMap wraps mapbox-gl (browser-only) — dynamic() keeps mapbox-gl out of initial bundle */
 // prettier-ignore
 const PropertyMap = dynamic(/* mapbox-gl */ () => import('@/app/components/ejendomme/PropertyMap'), { ssr: false, loading: () => (<div className="w-full h-64 bg-slate-800/50 rounded-xl animate-pulse flex items-center justify-center"><span className="text-slate-500 text-sm">Indlæser kort...</span></div>) });
+/** Diagram v2 — feature-flagged, kun synlig i dev/preview */
+const DiagramV2 = dynamic(() => import('@/app/components/diagrams/DiagramV2'), { ssr: false });
 import { type EjerstrukturNode } from '@/app/lib/mock/ejendomme';
 import { erDawaId, type DawaAdresse, type DawaJordstykke } from '@/app/lib/dawa';
 import { formatBenyttelseOgByggeaar } from '@/app/lib/benyttelseskoder';
@@ -67,6 +70,7 @@ import { useLanguage } from '@/app/context/LanguageContext';
 import { useSetAIPageContext } from '@/app/context/AIPageContext';
 import dynamic from 'next/dynamic';
 import { logger } from '@/app/lib/logger';
+import { isDiagram2Enabled } from '@/app/lib/featureFlags';
 import TinglysningTab from './TinglysningTab';
 // BIZZ-657: Tab-subkomponenter extraheret til selvstændige præsentations-komponenter
 import EjendomSkatTab from './tabs/EjendomSkatTab';
@@ -85,6 +89,7 @@ type Tab =
   | 'overblik'
   | 'bbr'
   | 'ejerforhold'
+  | 'diagram2'
   | 'tinglysning'
   | 'oekonomi'
   | 'skatter'
@@ -96,6 +101,9 @@ function buildTabs(da: boolean): { id: Tab; label: string; ikon: React.ReactNode
     { id: 'overblik', label: da ? 'Oversigt' : 'Overview', ikon: <Building2 size={12} /> },
     { id: 'bbr', label: 'BBR', ikon: <FileText size={12} /> },
     { id: 'ejerforhold', label: da ? 'Ejerskab' : 'Ownership', ikon: <Users size={12} /> },
+    ...(isDiagram2Enabled()
+      ? [{ id: 'diagram2' as const, label: 'Diagram v2', ikon: <Sparkles size={12} /> }]
+      : []),
     { id: 'oekonomi', label: da ? 'Økonomi' : 'Financials', ikon: <BarChart3 size={12} /> },
     { id: 'skatter', label: da ? 'SKAT' : 'Tax', ikon: <Landmark size={12} /> },
     {
@@ -2281,6 +2289,20 @@ export default function EjendomDetaljeClient({
                 kommunekode={
                   dawaJordstykke?.kommune?.kode ? String(dawaJordstykke.kommune.kode) : null
                 }
+              />
+            )}
+
+            {/* ══ DIAGRAM v2 (feature-flagged) ══ */}
+            {aktivTab === 'diagram2' && bbrData && (
+              <DiagramV2
+                rootType="property"
+                rootId={String(bbrData.ejendomsrelationer?.[0]?.bfeNummer ?? dawaAdresse?.id ?? '')}
+                rootLabel={
+                  dawaAdresse
+                    ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
+                    : `BFE ${bbrData.ejendomsrelationer?.[0]?.bfeNummer ?? ''}`
+                }
+                lang={da ? 'da' : 'en'}
               />
             )}
 

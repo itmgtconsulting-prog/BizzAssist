@@ -168,6 +168,19 @@ export interface DiagramVariantProps {
    * Word/PPTX export embedding.
    */
   onDiagramReady?: (base64Png: string) => void;
+  /**
+   * Diagram v2: External expand handler. When provided, replaces the built-in
+   * expandPersonDynamic/expandCompanyDynamic functions. The parent component
+   * controls data fetching (e.g. cache-first via /api/diagram/expand).
+   *
+   * @param nodeId - ID of the node being expanded (e.g. "cvr-12345678")
+   * @param nodeType - Whether the node is a person or company
+   * @returns New nodes and edges to add, or null if nothing to expand
+   */
+  onExpand?: (
+    nodeId: string,
+    nodeType: 'person' | 'company'
+  ) => Promise<{ nodes: DiagramNode[]; edges: DiagramEdge[] } | null>;
 }
 
 /** Max children shown per parent node — overflow becomes an expandable list */

@@ -332,7 +332,9 @@ async function resolveCompanyGraph(
 async function resolvePropertyGraph(
   admin: ReturnType<typeof createAdminClient>,
   bfe: number,
-  rootLabel?: string | null
+  rootLabel?: string | null,
+  host?: string,
+  cookie?: string
 ): Promise<DiagramGraph> {
   const nodes: DiagramNode[] = [];
   const edges: DiagramEdge[] = [];
@@ -359,14 +361,23 @@ async function resolvePropertyGraph(
         const otherProps = await fetchPropertiesByCvr(admin, owner.ejer_cvr);
         const expandable = otherProps.filter((p) => p.bfe_nummer !== bfe).length;
 
-        // BIZZ-1113: Fallback-rækkefølge for virksomhedsnavn:
-        // 1. cvr_virksomhed cache (mest korrekt)
-        // 2. ejer_navn fra ejf_ejerskab (altid udfyldt men kan være forældet)
-        // 3. "CVR {nummer}" som sidste udvej
-        const companyLabel =
-          company?.navn ??
-          (owner.ejer_navn && !/^\d+$/.test(owner.ejer_navn) ? owner.ejer_navn : null) ??
-          `CVR ${owner.ejer_cvr}`;
+        // BIZZ-1113: Fallback: cache → live API → ejer_navn → CVR-nummer
+        let companyLabel = company?.navn ?? null;
+        if (!companyLabel && host) {
+          try {
+            const liveRes = await fetch(`${host}/api/cvr-public?vat=${owner.ejer_cvr}`, {
+              headers: { cookie: cookie ?? '' },
+              signal: AbortSignal.timeout(5000),
+            }).then((r) => (r.ok ? r.json() : null));
+            companyLabel = liveRes?.name ?? null;
+          } catch {
+            /* fallback */
+          }
+        }
+        if (!companyLabel && owner.ejer_navn && !/^\d+$/.test(owner.ejer_navn)) {
+          companyLabel = owner.ejer_navn;
+        }
+        companyLabel = companyLabel ?? `CVR ${owner.ejer_cvr}`;
 
         nodes.push({
           id: ownerId,
@@ -612,6 +623,10 @@ async function enrichPropertyNodes(
     > = await res.json();
 
     for (const node of propNodes) {
+      // BIZZ-1114: Skip noder der allerede har et client-supplied label (rootLabel)
+      // — undgå at overskrive korrekt adresse med forkert BFE→DAWA mapping
+      if (node.label && !node.label.startsWith('BFE ')) continue;
+
       const info = data[String(node.bfeNummer)];
       if (!info?.adresse) continue;
       // BIZZ-1103: Inkluder postnr+by i label (sublabel renderes ikke for property-noder)
@@ -660,7 +675,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
         graph = await resolveCompanyGraph(admin, id, reqHost, reqCookie);
         break;
       case 'property':
-        graph = await resolvePropertyGraph(admin, Number(id), label);
+        graph = await resolvePropertyGraph(admin, Number(id), label, reqHost, reqCookie);
         break;
       case 'person':
         graph = await resolvePersonGraph(admin, id);

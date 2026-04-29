@@ -22,6 +22,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { checkAllCertificates, type CertExpiryInfo } from '@/app/lib/certExpiry';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
 
 /** Shape of the health check response body */
@@ -221,10 +222,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<HealthStat
 
       // BIZZ-1107: Data freshness — check cache-tabellernes seneste sync
       try {
-        const adminClient = createClient(
-          process.env.NEXT_PUBLIC_SUPABASE_URL!,
-          process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-        );
+        const adminClient = createAdminClient();
         const freshnessQueries = [
           { table: 'cvr_virksomhed', col: 'sidst_hentet_fra_cvr', maxAgeHours: 168 },
           { table: 'ejf_ejerskab', col: 'sidst_opdateret', maxAgeHours: 168 },

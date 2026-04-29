@@ -17,6 +17,18 @@ import type { DiagramNode, DiagramEdge, DiagramGraph } from '@/app/components/di
 /** Max ejendomme per ejer-node i initial graf */
 const MAX_PROPS_PER_OWNER = 5;
 
+/** BIZZ-1120: Roller der indikerer ejerskab (vs. ledelsesposter) */
+const EJERSKAB_ROLLER = new Set([
+  'stifter',
+  'stiftere',
+  'register',
+  'interessenter',
+  'ejerandel',
+  'reel_ejer',
+  'ejer',
+  'fuldt ansvarlig',
+]);
+
 interface ResolveResponse {
   graph: DiagramGraph | null;
   error?: string;
@@ -241,12 +253,13 @@ async function resolveCompanyGraph(
     : [];
 
   if (ownerEnhedsNumre.length > 0) {
-    // Find alle virksomheder som root's ejere også ejer → potentielle datterselskaber
+    // BIZZ-1101: Find virksomheder som root's ejere EJER (ikke bare har poster i)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: siblingRows } = await (admin as any)
       .from('cvr_deltagerrelation')
-      .select('virksomhed_cvr, deltager_enhedsnummer')
+      .select('virksomhed_cvr, deltager_enhedsnummer, type')
       .in('deltager_enhedsnummer', ownerEnhedsNumre.slice(0, 10))
+      .in('type', [...EJERSKAB_ROLLER])
       .is('gyldig_til', null)
       .limit(200);
 
@@ -263,12 +276,13 @@ async function resolveCompanyGraph(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: sibCompanies } = await (admin as any)
         .from('cvr_virksomhed')
-        .select('cvr, navn, virksomhedsform, ophoert')
+        .select('cvr, navn, virksomhedsform, branche_tekst, ophoert')
         .in('cvr', sibCvrs.slice(0, MAX_TOTAL_NODES));
       type SibCompany = {
         cvr: string;
         navn: string;
         virksomhedsform: string | null;
+        branche_tekst: string | null;
         ophoert: string | null;
       };
       const sibMap = new Map<string, SibCompany>(
@@ -459,18 +473,19 @@ async function resolvePersonGraph(
   });
   nodeIds.add(mainId);
 
-  // Hent personens virksomheder fra lokal cvr_deltagerrelation
+  // BIZZ-1120: Hent KUN ejerskabs-relationer (ikke ledelsesposter)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: personRels } = await (admin as any)
     .from('cvr_deltagerrelation')
     .select('virksomhed_cvr, type')
     .eq('deltager_enhedsnummer', Number(enhedsNummer))
     .is('gyldig_til', null)
-    .limit(50);
+    .limit(100);
 
-  // Gruppér roller per virksomhed
+  // Gruppér roller per virksomhed — KUN ejerskabs-roller
   const virksomhedRollerMap = new Map<string, string[]>();
   for (const r of (personRels ?? []) as Array<{ virksomhed_cvr: string; type: string }>) {
+    if (!EJERSKAB_ROLLER.has(r.type)) continue; // BIZZ-1120: Skip ledelsesroller
     const arr = virksomhedRollerMap.get(r.virksomhed_cvr) ?? [];
     arr.push(r.type);
     virksomhedRollerMap.set(r.virksomhed_cvr, arr);
@@ -481,17 +496,23 @@ async function resolvePersonGraph(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: companyBatch } = await (admin as any)
     .from('cvr_virksomhed')
-    .select('cvr, navn, virksomhedsform, ophoert')
+    .select('cvr, navn, virksomhedsform, branche_tekst, ophoert')
     .in('cvr', allCvrs.slice(0, 50));
   const companyMap = new Map<
     string,
-    { navn: string; virksomhedsform: string | null; ophoert: string | null }
+    {
+      navn: string;
+      virksomhedsform: string | null;
+      branche_tekst: string | null;
+      ophoert: string | null;
+    }
   >(
     (companyBatch ?? []).map(
       (c: {
         cvr: string;
         navn: string;
         virksomhedsform: string | null;
+        branche_tekst: string | null;
         ophoert: string | null;
       }) => [c.cvr, c]
     )
@@ -522,10 +543,13 @@ async function resolvePersonGraph(
     // Formater roller
     const rolleStr = roller.slice(0, 2).join(', ');
 
+    // BIZZ-1118: Vis branche i sublabel
+    const subParts = [company?.virksomhedsform, company?.branche_tekst].filter(Boolean);
     nodes.push({
       id: companyId,
       label: company?.navn ?? `CVR ${cvrStr}`,
-      sublabel: company?.virksomhedsform ?? undefined,
+      sublabel: subParts.length > 0 ? subParts.join(' · ') : undefined,
+      branche: company?.branche_tekst ?? undefined,
       type: 'company',
       cvr: Number(cvrStr),
       link: `/dashboard/companies/${cvrStr}`,

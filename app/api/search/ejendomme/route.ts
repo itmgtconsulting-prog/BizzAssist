@@ -15,6 +15,7 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
+import { KOMMUNE_NAVN } from '@/app/lib/kommuner';
 
 const MAX_LIMIT = 100;
 
@@ -41,6 +42,7 @@ export async function GET(request: NextRequest) {
     .getAll('kommune_kode')
     .map(Number)
     .filter((n) => !isNaN(n));
+  const kommuneNavn = sp.get('kommune'); // BIZZ-1090: kommune-navn filter
   const _postnumre = sp.getAll('postnr'); // TODO: kræver adgangsadresse join
   const type = sp.get('type');
   const arealMin = sp.get('areal_min') ? Number(sp.get('areal_min')) : null;
@@ -62,7 +64,18 @@ export async function GET(request: NextRequest) {
       .eq('is_udfaset', false);
 
     /* Filtre */
-    if (kommuneKoder.length > 0) query = query.in('kommune_kode', kommuneKoder);
+    // BIZZ-1090: Resolve kommune-navn til kode via KOMMUNE_NAVN map
+    const allKommuneKoder = [...kommuneKoder];
+    if (kommuneNavn) {
+      const navnLower = kommuneNavn.toLowerCase().replace(' kommune', '');
+      for (const [kode, navn] of Object.entries(KOMMUNE_NAVN)) {
+        if (navn.toLowerCase() === navnLower) {
+          allKommuneKoder.push(Number(kode));
+          break;
+        }
+      }
+    }
+    if (allKommuneKoder.length > 0) query = query.in('kommune_kode', allKommuneKoder);
     if (type === 'bolig') query = query.gt('samlet_boligareal', 0);
     if (type === 'erhverv') query = query.is('samlet_boligareal', null);
     if (arealMin != null) query = query.gte('samlet_boligareal', arealMin);

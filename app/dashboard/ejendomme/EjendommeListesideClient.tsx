@@ -572,6 +572,22 @@ export default function EjendommeListesideClient() {
         params.set('type', filters.ejendomstype === 'beboelse' ? 'bolig' : filters.ejendomstype);
       if (filters.arealMin) params.set('areal_min', filters.arealMin);
       if (filters.arealMax) params.set('areal_max', filters.arealMax);
+      // BIZZ-1090: Wire manglende filtre til API
+      if (filters.energimaerke) params.set('energi', filters.energimaerke);
+      if (filters.kommune) params.set('kommune', filters.kommune);
+      if (filters.aldersPreset) {
+        const presetMap: Record<string, [number, number]> = {
+          foer1900: [0, 1899],
+          '1900-1960': [1900, 1960],
+          '1960-2000': [1960, 2000],
+          efter2000: [2000, 9999],
+        };
+        const range = presetMap[filters.aldersPreset];
+        if (range) {
+          params.set('aar_min', String(range[0]));
+          params.set('aar_max', String(range[1]));
+        }
+      }
       params.set('page', String(searchPage));
       params.set('limit', '20');
 

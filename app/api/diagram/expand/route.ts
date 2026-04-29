@@ -194,19 +194,32 @@ async function expandPerson(
     signal: AbortSignal.timeout(10000),
   });
   const personData = personRes.ok ? await personRes.json() : null;
-  const virksomheder: Array<{ cvr: number; navn: string; roller: string }> =
+  interface PersonRolleRaw {
+    rolle?: string;
+    ejerandel?: string | null;
+  }
+  const virksomheder: Array<{ cvr: number; navn: string; roller: PersonRolleRaw[] }> =
     personData?.virksomheder ?? [];
 
   for (const v of virksomheder) {
     const cvrStr = String(v.cvr);
     const companyId = `cvr-${cvrStr}`;
 
+    // Formater roller til en kort streng (fx "Direktør, 50%")
+    const rolleStr = Array.isArray(v.roller)
+      ? v.roller
+          .map((r) => [r.rolle, r.ejerandel].filter(Boolean).join(' '))
+          .filter(Boolean)
+          .slice(0, 2)
+          .join(', ')
+      : String(v.roller ?? '');
+
     if (existingIds.has(companyId)) {
       // Virksomhed allerede i grafen → 2nd-degree edge
       newEdges.push({
         from: nodeId,
         to: companyId,
-        ejerandel: v.roller,
+        ejerandel: rolleStr || undefined,
         crossOwnership: true,
       });
       continue;
@@ -244,7 +257,7 @@ async function expandPerson(
     newEdges.push({
       from: nodeId,
       to: companyId,
-      ejerandel: v.roller,
+      ejerandel: rolleStr || undefined,
     });
   }
 

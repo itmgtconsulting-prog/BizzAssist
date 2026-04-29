@@ -382,7 +382,11 @@ async function resolvePersonGraph(
   nodeIds.add(mainId);
 
   // Tilføj virksomheder personen ejer
-  const virksomheder: Array<{ cvr: number; navn: string; roller: string }> =
+  interface PersonRolleRaw {
+    rolle?: string;
+    ejerandel?: string | null;
+  }
+  const virksomheder: Array<{ cvr: number; navn: string; roller: PersonRolleRaw[] }> =
     personData?.virksomheder ?? [];
   for (const v of virksomheder) {
     const cvrStr = String(v.cvr);
@@ -391,6 +395,15 @@ async function resolvePersonGraph(
 
     const company = await fetchCachedCompany(admin, cvrStr);
     const properties = await fetchPropertiesByCvr(admin, cvrStr);
+
+    // Formater roller til en kort streng (fx "Direktør, 50%")
+    const rolleStr = Array.isArray(v.roller)
+      ? v.roller
+          .map((r) => [r.rolle, r.ejerandel].filter(Boolean).join(' '))
+          .filter(Boolean)
+          .slice(0, 2)
+          .join(', ')
+      : String(v.roller ?? '');
 
     nodes.push({
       id: companyId,
@@ -407,7 +420,7 @@ async function resolvePersonGraph(
     edges.push({
       from: mainId,
       to: companyId,
-      ejerandel: v.roller,
+      ejerandel: rolleStr || undefined,
     });
 
     // Vis op til MAX_PROPS_PER_OWNER ejendomme per virksomhed

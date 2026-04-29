@@ -664,6 +664,70 @@ export default function VirksomhederListesideClient() {
     );
   }, [filters]);
 
+  // ── BIZZ-1092: Server-side søgning med pagination ──
+  interface SearchResult {
+    cvr: string;
+    navn: string;
+    status: string | null;
+    virksomhedsform: string | null;
+    branche_tekst: string | null;
+    ansatte_aar: number | null;
+    ophoert: string | null;
+  }
+  const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null);
+  const [searchTotal, setSearchTotal] = useState(0);
+  const [searchPage, setSearchPage] = useState(1);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const searchAbort = useRef<AbortController | null>(null);
+
+  /** Hent virksomheder fra API når filtre er aktive */
+  useEffect(() => {
+    if (!hasActiveFilters) {
+      setSearchResults(null);
+      setSearchTotal(0);
+      setSearchPage(1);
+      return;
+    }
+
+    setSearchLoading(true);
+    searchAbort.current?.abort();
+    const controller = new AbortController();
+    searchAbort.current = controller;
+
+    const timer = setTimeout(async () => {
+      const params = new URLSearchParams();
+      if (filters.status === 'aktiv') params.set('status', 'Aktiv');
+      if (filters.status === 'ophørt') params.set('status', 'Ophørt');
+      if (filters.branche) params.set('branche', filters.branche);
+      for (const f of filters.virksomhedsformer) params.append('form', f);
+      params.set('page', String(searchPage));
+      params.set('limit', '20');
+
+      try {
+        const res = await fetch(`/api/search/virksomheder?${params}`, {
+          signal: controller.signal,
+        });
+        if (res.ok && !controller.signal.aborted) {
+          const data = await res.json();
+          setSearchResults(data.results ?? []);
+          setSearchTotal(data.total ?? 0);
+        }
+      } catch {
+        /* abort */
+      } finally {
+        if (!controller.signal.aborted) setSearchLoading(false);
+      }
+    }, 300);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [filters, searchPage, hasActiveFilters]);
+
+  /** Pagination helpers */
+  const totalPages = Math.ceil(searchTotal / 20);
+
   /** Listen for cache updates from background fetch */
   useEffect(() => {
     const handler = () => setRecentCompanies(getRecentCompanies());
@@ -886,34 +950,97 @@ export default function VirksomhederListesideClient() {
 
       {/* ─── Content ─── */}
       <div className="flex-1 overflow-y-auto px-8 py-6">
-        {/* Recent companies */}
-        {recentCompanies.length > 0 ? (
+        {/* BIZZ-1092: API-søgeresultater med pagination (når filtre aktive) */}
+        {hasActiveFilters && searchResults != null ? (
           <div>
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
-                <Clock size={15} className="text-slate-400" />
-                <h2 className="text-white font-semibold text-base">{txt.recentSearches}</h2>
-                {hasActiveFilters && (
-                  <span className="text-slate-500 text-xs">
-                    — {txt.visResultater(filteredCompanies.length)}
-                  </span>
-                )}
+                <Building2 size={15} className="text-slate-400" />
+                <h2 className="text-white font-semibold text-base">
+                  {lang === 'da' ? 'Søgeresultater' : 'Search results'}
+                </h2>
+                <span className="text-slate-500 text-xs">
+                  — {searchTotal.toLocaleString('da-DK')}{' '}
+                  {lang === 'da' ? 'virksomheder' : 'companies'}
+                </span>
               </div>
-              <button
-                type="button"
-                onClick={clearRecent}
-                className="text-slate-600 hover:text-slate-400 text-xs transition-colors"
-              >
-                {txt.clearHistory}
-              </button>
+              {searchLoading && <Loader2 size={14} className="animate-spin text-blue-400" />}
             </div>
 
-            {filteredCompanies.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {filteredCompanies.map((c) => (
-                  <RecentCompanyCard key={c.cvr} company={c} lang={lang} now={now} />
-                ))}
-              </div>
+            {searchResults.length > 0 ? (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {searchResults.map((r) => (
+                    <Link
+                      key={r.cvr}
+                      href={`/dashboard/companies/${r.cvr}`}
+                      className="bg-slate-800/60 border border-slate-700/40 rounded-xl p-4 hover:border-blue-500/30 hover:bg-slate-800/80 transition-all group"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-white font-semibold text-sm truncate group-hover:text-blue-300 transition-colors">
+                            {r.navn}
+                          </p>
+                          <div className="flex items-center gap-2 mt-1 text-xs text-slate-400">
+                            <span>CVR {r.cvr}</span>
+                            {r.virksomhedsform && (
+                              <>
+                                <span className="text-slate-600">·</span>
+                                <span>{r.virksomhedsform}</span>
+                              </>
+                            )}
+                          </div>
+                          {r.branche_tekst && (
+                            <p className="text-slate-500 text-xs mt-1 truncate">
+                              {r.branche_tekst}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          {r.ophoert ? (
+                            <span className="text-[10px] font-medium text-red-400 bg-red-500/15 border border-red-500/30 rounded px-1.5 py-0.5">
+                              {lang === 'da' ? 'Ophørt' : 'Ceased'}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-medium text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 rounded px-1.5 py-0.5">
+                              {lang === 'da' ? 'Aktiv' : 'Active'}
+                            </span>
+                          )}
+                          <ChevronRight
+                            size={14}
+                            className="text-slate-600 group-hover:text-blue-400 transition-colors"
+                          />
+                        </div>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+
+                {/* Pagination */}
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-center gap-2 mt-6">
+                    <button
+                      type="button"
+                      disabled={searchPage <= 1}
+                      onClick={() => setSearchPage((p) => Math.max(1, p - 1))}
+                      className="px-3 py-1.5 text-xs font-medium rounded-lg bg-slate-800 border border-slate-700/40 text-slate-300 hover:border-blue-500/30 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                    >
+                      ‹ {lang === 'da' ? 'Forrige' : 'Previous'}
+                    </button>
+                    <span className="text-slate-400 text-xs">
+                      {searchPage} / {totalPages}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={searchPage >= totalPages}
+                      onClick={() => setSearchPage((p) => Math.min(totalPages, p + 1))}
+                      className="px-3 py-1.5 text-xs font-medium rounded-lg bg-slate-800 border border-slate-700/40 text-slate-300 hover:border-blue-500/30 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                    >
+                      {lang === 'da' ? 'Næste' : 'Next'} ›
+                    </button>
+                  </div>
+                )}
+              </>
             ) : (
               <div className="flex flex-col items-center justify-center py-12 text-center gap-3">
                 <div className="p-4 bg-slate-800/40 rounded-2xl">
@@ -929,6 +1056,29 @@ export default function VirksomhederListesideClient() {
                 </button>
               </div>
             )}
+          </div>
+        ) : recentCompanies.length > 0 ? (
+          /* Recent companies (no active filters) */
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Clock size={15} className="text-slate-400" />
+                <h2 className="text-white font-semibold text-base">{txt.recentSearches}</h2>
+              </div>
+              <button
+                type="button"
+                onClick={clearRecent}
+                className="text-slate-600 hover:text-slate-400 text-xs transition-colors"
+              >
+                {txt.clearHistory}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {filteredCompanies.map((c) => (
+                <RecentCompanyCard key={c.cvr} company={c} lang={lang} now={now} />
+              ))}
+            </div>
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center py-16 text-center gap-3">

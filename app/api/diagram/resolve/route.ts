@@ -458,10 +458,6 @@ async function resolvePersonGraph(
     .limit(50);
 
   // Gruppér roller per virksomhed
-  interface PersonRolleRaw {
-    rolle?: string;
-    ejerandel?: string | null;
-  }
   const virksomhedRollerMap = new Map<string, string[]>();
   for (const r of (personRels ?? []) as Array<{ virksomhed_cvr: string; type: string }>) {
     const arr = virksomhedRollerMap.get(r.virksomhed_cvr) ?? [];
@@ -469,106 +465,62 @@ async function resolvePersonGraph(
     virksomhedRollerMap.set(r.virksomhed_cvr, arr);
   }
 
-  // Konverter til array-format kompatibelt med resten af koden
-  const virksomheder: Array<{ cvr: number; navn: string; roller: PersonRolleRaw[] }> = [];
-  for (const [cvrStr, roller] of virksomhedRollerMap) {
-    const comp = await fetchCachedCompany(admin, cvrStr);
-    virksomheder.push({
-      cvr: Number(cvrStr),
-      navn: comp?.navn ?? `CVR ${cvrStr}`,
-      roller: roller.map((r) => ({ rolle: r })),
-    });
+  // Batch-hent alle virksomhedsnavne i ét opslag
+  const allCvrs = [...virksomhedRollerMap.keys()];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: companyBatch } = await (admin as any)
+    .from('cvr_virksomhed')
+    .select('cvr, navn, virksomhedsform, ophoert')
+    .in('cvr', allCvrs.slice(0, 50));
+  const companyMap = new Map<
+    string,
+    { navn: string; virksomhedsform: string | null; ophoert: string | null }
+  >(
+    (companyBatch ?? []).map(
+      (c: {
+        cvr: string;
+        navn: string;
+        virksomhedsform: string | null;
+        ophoert: string | null;
+      }) => [c.cvr, c]
+    )
+  );
+
+  // Batch-hent ejendomsantal per CVR
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: propCounts } = await (admin as any)
+    .from('ejf_ejerskab')
+    .select('ejer_cvr')
+    .in('ejer_cvr', allCvrs.slice(0, 50))
+    .eq('status', 'gældende');
+  const propCountMap = new Map<string, number>();
+  for (const r of (propCounts ?? []) as Array<{ ejer_cvr: string }>) {
+    propCountMap.set(r.ejer_cvr, (propCountMap.get(r.ejer_cvr) ?? 0) + 1);
   }
 
   // Samle alle CVR'er vi skal hente related for (hierarki)
   const topLevelCvrs: string[] = [];
 
-  for (const v of virksomheder) {
-    const cvrStr = String(v.cvr);
+  for (const [cvrStr, roller] of virksomhedRollerMap) {
     const companyId = `cvr-${cvrStr}`;
     if (nodeIds.has(companyId)) continue;
 
-    // BIZZ-1106: Cache-first — hent virksomhedsinfo, ejendomme og nøglepersoner fra lokale tabeller
+    const company = companyMap.get(cvrStr) ?? null;
+    const propCount = propCountMap.get(cvrStr) ?? 0;
 
-    const [company, properties, noeglePersonerRows] = await Promise.all([
-      fetchCachedCompany(admin, cvrStr),
-      fetchPropertiesByCvr(admin, cvrStr),
-      // Nøglepersoner fra cvr_deltagerrelation + cvr_deltager (lokal cache)
-      (async () => {
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { data: relRows } = await (admin as any)
-            .from('cvr_deltagerrelation')
-            .select('deltager_enhedsnummer, type')
-            .eq('virksomhed_cvr', cvrStr)
-            .is('gyldig_til', null)
-            .limit(20);
-          if (!relRows?.length) return [];
-          const enhedsNumre = [
-            ...new Set(
-              relRows.map((r: { deltager_enhedsnummer: number }) => r.deltager_enhedsnummer)
-            ),
-          ];
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { data: deltagere } = await (admin as any)
-            .from('cvr_deltager')
-            .select('enhedsnummer, navn')
-            .in('enhedsnummer', enhedsNumre);
-          const navnMap = new Map(
-            (deltagere ?? []).map((d: { enhedsnummer: number; navn: string }) => [
-              d.enhedsnummer,
-              d.navn,
-            ])
-          );
-          const personMap = new Map<number, string[]>();
-          for (const r of relRows) {
-            const arr = personMap.get(r.deltager_enhedsnummer) ?? [];
-            arr.push(r.type);
-            personMap.set(r.deltager_enhedsnummer, arr);
-          }
-          return [...personMap.entries()].map(([en, roller]) => ({
-            navn: navnMap.get(en) ?? `Person ${en}`,
-            enhedsNummer: en,
-            roller,
-          }));
-        } catch {
-          return [];
-        }
-      })(),
-    ]);
-
-    // Formater roller til en kort streng (fx "Direktør, 50%")
-    const rolleStr = Array.isArray(v.roller)
-      ? v.roller
-          .map((r) => [r.rolle, r.ejerandel].filter(Boolean).join(' '))
-          .filter(Boolean)
-          .slice(0, 2)
-          .join(', ')
-      : String(v.roller ?? '');
-
-    // BIZZ-1105/1106: Nøglepersoner fra lokal cache — ekskluder den aktuelle person
-    const noeglePersoner = (
-      noeglePersonerRows as Array<{ navn: string; enhedsNummer: number; roller: string[] }>
-    )
-      .filter((p) => p.enhedsNummer !== Number(enhedsNummer))
-      .slice(0, 5)
-      .map((p) => ({
-        navn: p.navn,
-        enhedsNummer: p.enhedsNummer,
-        rolle: p.roller.slice(0, 2).join(', '),
-      }));
+    // Formater roller
+    const rolleStr = roller.slice(0, 2).join(', ');
 
     nodes.push({
       id: companyId,
-      label: company?.navn ?? v.navn,
+      label: company?.navn ?? `CVR ${cvrStr}`,
       sublabel: company?.virksomhedsform ?? undefined,
       type: 'company',
-      cvr: v.cvr,
+      cvr: Number(cvrStr),
       link: `/dashboard/companies/${cvrStr}`,
       isCeased: company?.ophoert != null,
-      expandableChildren: properties.length > 0 ? properties.length : undefined,
+      expandableChildren: propCount > 0 ? propCount : undefined,
       personRolle: rolleStr || undefined,
-      noeglePersoner: noeglePersoner.length > 0 ? noeglePersoner : undefined,
     });
     nodeIds.add(companyId);
     topLevelCvrs.push(cvrStr);

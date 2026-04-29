@@ -397,7 +397,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<ExpandRes
             if (!info?.adresse) continue;
             const etageStr = info.etage ? `, ${info.etage}.` : '';
             const doerStr = info.doer ? ` ${info.doer}` : '';
-            node.label = `${info.adresse}${etageStr}${doerStr}`;
+            // BIZZ-1103: Inkluder postnr+by i label (sublabel renderes ikke for property-noder)
+            const postStr = info.postnr && info.by ? `, ${info.postnr} ${info.by}` : '';
+            node.label = `${info.adresse}${etageStr}${doerStr}${postStr}`;
             if (info.postnr && info.by) node.sublabel = `${info.postnr} ${info.by}`;
             if (info.dawaId) node.link = `/dashboard/ejendomme/${info.dawaId}`;
           }

@@ -107,7 +107,7 @@ async function fetchOwnersByBfe(
  * @param existingBfes - Set af BFE-numre allerede i grafen
  * @returns Antal ekstra ejendomme
  */
-async function countExpandableProperties(
+async function _countExpandableProperties(
   admin: ReturnType<typeof createAdminClient>,
   cvr: string,
   existingBfes: Set<number>
@@ -146,7 +146,9 @@ function formatEjerandel(taeller: number | null, naevner: number | null): string
  */
 async function resolveCompanyGraph(
   admin: ReturnType<typeof createAdminClient>,
-  cvr: string
+  cvr: string,
+  host: string,
+  cookie: string
 ): Promise<DiagramGraph> {
   const nodes: DiagramNode[] = [];
   const edges: DiagramEdge[] = [];
@@ -167,7 +169,93 @@ async function resolveCompanyGraph(
   });
   nodeIds.add(mainId);
 
-  // 2. Ejendomme virksomheden ejer
+  // 2. Hent ejere + datterselskaber via CVR ES (parallel)
+  const [cvrRes, relatedRes] = await Promise.all([
+    fetch(`${host}/api/cvr-public?vat=${cvr}`, {
+      headers: { cookie },
+      signal: AbortSignal.timeout(10000),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null),
+    fetch(`${host}/api/cvr-public/related?cvr=${cvr}`, {
+      headers: { cookie },
+      signal: AbortSignal.timeout(10000),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null),
+  ]);
+
+  // 2a. Ejere (opad) fra CVR ES deltagerRelation
+  interface CvrOwner {
+    name: string;
+    cvr?: number;
+    enhedsNummer?: number;
+    ejerandel?: string;
+  }
+  const owners: CvrOwner[] = cvrRes?.owners ?? [];
+  for (const owner of owners) {
+    if (owner.cvr) {
+      const ownerId = `cvr-${owner.cvr}`;
+      if (!nodeIds.has(ownerId)) {
+        const ownerCompany = await fetchCachedCompany(admin, String(owner.cvr));
+        const ownerProps = await fetchPropertiesByCvr(admin, String(owner.cvr));
+        nodes.push({
+          id: ownerId,
+          label: ownerCompany?.navn ?? owner.name,
+          sublabel: ownerCompany?.virksomhedsform ?? undefined,
+          type: 'company',
+          cvr: owner.cvr,
+          link: `/dashboard/companies/${owner.cvr}`,
+          isCeased: ownerCompany?.ophoert != null,
+          expandableChildren: ownerProps.length > 0 ? ownerProps.length : undefined,
+        });
+        nodeIds.add(ownerId);
+      }
+      edges.push({ from: ownerId, to: mainId, ejerandel: owner.ejerandel });
+    } else if (owner.enhedsNummer) {
+      const ownerId = `en-${owner.enhedsNummer}`;
+      if (!nodeIds.has(ownerId)) {
+        nodes.push({
+          id: ownerId,
+          label: owner.name,
+          type: 'person',
+          enhedsNummer: owner.enhedsNummer,
+          link: `/dashboard/owners/${owner.enhedsNummer}`,
+        });
+        nodeIds.add(ownerId);
+      }
+      edges.push({ from: ownerId, to: mainId, ejerandel: owner.ejerandel });
+    }
+  }
+
+  // 2b. Datterselskaber (nedad) fra CVR ES related
+  interface RelatedCompany {
+    cvr: number;
+    navn: string;
+    virksomhedsform?: string;
+    ophoert?: boolean;
+  }
+  const subsidiaries: RelatedCompany[] = relatedRes?.related ?? relatedRes ?? [];
+  for (const sub of (Array.isArray(subsidiaries) ? subsidiaries : []).slice(0, 15)) {
+    const subId = `cvr-${sub.cvr}`;
+    if (nodeIds.has(subId)) continue;
+    const subCompany = await fetchCachedCompany(admin, String(sub.cvr));
+    const subProps = await fetchPropertiesByCvr(admin, String(sub.cvr));
+    nodes.push({
+      id: subId,
+      label: subCompany?.navn ?? sub.navn,
+      sublabel: subCompany?.virksomhedsform ?? sub.virksomhedsform ?? undefined,
+      type: 'company',
+      cvr: sub.cvr,
+      link: `/dashboard/companies/${sub.cvr}`,
+      isCeased: subCompany?.ophoert != null || sub.ophoert === true,
+      expandableChildren: subProps.length > 0 ? subProps.length : undefined,
+    });
+    nodeIds.add(subId);
+    edges.push({ from: mainId, to: subId });
+  }
+
+  // 3. Ejendomme virksomheden ejer
   const properties = await fetchPropertiesByCvr(admin, cvr);
   const shownProps = properties.slice(0, MAX_PROPS_PER_OWNER);
   const overflowCount = properties.length - shownProps.length;
@@ -204,61 +292,6 @@ async function resolveCompanyGraph(
     });
     nodeIds.add(overflowId);
     edges.push({ from: mainId, to: overflowId });
-  }
-
-  // 3. Medejere: for alle viste ejendomme, find andre ejere
-  const coOwnerCvrs = new Set<string>();
-  for (const prop of shownProps) {
-    const owners = await fetchOwnersByBfe(admin, prop.bfe_nummer);
-    for (const owner of owners) {
-      if (owner.ejer_cvr === cvr) continue; // Skip root
-      if (owner.ejer_type === 'virksomhed' && owner.ejer_cvr) {
-        const ownerId = `cvr-${owner.ejer_cvr}`;
-        if (!nodeIds.has(ownerId)) {
-          const ownerCompany = await fetchCachedCompany(admin, owner.ejer_cvr);
-          nodes.push({
-            id: ownerId,
-            label: ownerCompany?.navn ?? owner.ejer_navn,
-            sublabel: ownerCompany?.virksomhedsform ?? undefined,
-            type: 'company',
-            cvr: Number(owner.ejer_cvr),
-            link: `/dashboard/companies/${owner.ejer_cvr}`,
-            isCeased: ownerCompany?.ophoert != null,
-          });
-          nodeIds.add(ownerId);
-          coOwnerCvrs.add(owner.ejer_cvr);
-        }
-        edges.push({
-          from: ownerId,
-          to: `bfe-${prop.bfe_nummer}`,
-          ejerandel: formatEjerandel(owner.ejerandel_taeller, owner.ejerandel_naevner),
-          crossOwnership: true,
-        });
-      } else if (owner.ejer_type === 'person') {
-        const ownerId = `person-${owner.ejer_navn.replace(/\s+/g, '-').toLowerCase()}`;
-        if (!nodeIds.has(ownerId)) {
-          nodes.push({
-            id: ownerId,
-            label: owner.ejer_navn,
-            type: 'person',
-          });
-          nodeIds.add(ownerId);
-        }
-        edges.push({
-          from: ownerId,
-          to: `bfe-${prop.bfe_nummer}`,
-          ejerandel: formatEjerandel(owner.ejerandel_taeller, owner.ejerandel_naevner),
-        });
-      }
-    }
-  }
-
-  // 4. Beregn expandableChildren for medejer-virksomheder
-  for (const node of nodes) {
-    if (node.type === 'company' && node.cvr && node.id !== mainId) {
-      const extra = await countExpandableProperties(admin, String(node.cvr), bfesInGraph);
-      if (extra > 0) node.expandableChildren = extra;
-    }
   }
 
   return { nodes, edges, mainId };
@@ -486,10 +519,11 @@ async function enrichPropertyNodes(
     for (const node of propNodes) {
       const info = data[String(node.bfeNummer)];
       if (!info?.adresse) continue;
-      // Opdater label med adresse i stedet for "BFE 12345"
+      // BIZZ-1103: Inkluder postnr+by i label (sublabel renderes ikke for property-noder)
       const etageStr = info.etage ? `, ${info.etage}.` : '';
       const doerStr = info.doer ? ` ${info.doer}` : '';
-      node.label = `${info.adresse}${etageStr}${doerStr}`;
+      const postStr = info.postnr && info.by ? `, ${info.postnr} ${info.by}` : '';
+      node.label = `${info.adresse}${etageStr}${doerStr}${postStr}`;
       if (info.postnr && info.by) {
         node.sublabel = `${info.postnr} ${info.by}`;
       }
@@ -521,29 +555,26 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
   try {
     let graph: DiagramGraph;
 
+    const proto = request.headers.get('x-forwarded-proto') ?? 'http';
+    const reqHost = `${proto}://${request.headers.get('host') ?? 'localhost:3000'}`;
+    const reqCookie = request.headers.get('cookie') ?? '';
+
     switch (type) {
       case 'company':
-        graph = await resolveCompanyGraph(admin, id);
+        graph = await resolveCompanyGraph(admin, id, reqHost, reqCookie);
         break;
       case 'property':
         graph = await resolvePropertyGraph(admin, Number(id));
         break;
-      case 'person': {
-        const proto = request.headers.get('x-forwarded-proto') ?? 'http';
-        const host = `${proto}://${request.headers.get('host') ?? 'localhost:3000'}`;
-        const cookie = request.headers.get('cookie') ?? '';
-        graph = await resolvePersonGraph(admin, id, host, cookie);
+      case 'person':
+        graph = await resolvePersonGraph(admin, id, reqHost, reqCookie);
         break;
-      }
       default:
         return NextResponse.json({ graph: null, error: `Unknown type: ${type}` }, { status: 400 });
     }
 
     // Berig property-noder med adresser (best-effort)
-    const proto = request.headers.get('x-forwarded-proto') ?? 'http';
-    const enrichHost = `${proto}://${request.headers.get('host') ?? 'localhost:3000'}`;
-    const enrichCookie = request.headers.get('cookie') ?? '';
-    await enrichPropertyNodes(graph, enrichHost, enrichCookie);
+    await enrichPropertyNodes(graph, reqHost, reqCookie);
 
     return NextResponse.json({ graph });
   } catch (err) {

@@ -2496,6 +2496,13 @@ export default function PersonDetailPageClient({
               rootId={String(data.enhedsNummer)}
               rootLabel={data.navn}
               lang={lang}
+              onNodeClick={(node) => {
+                if (node.type === 'company' || node.type === 'main') {
+                  setAktivTab('overview');
+                } else if (node.link) {
+                  window.location.href = node.link;
+                }
+              }}
             />
           )}
 

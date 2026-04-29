@@ -38,6 +38,10 @@ export interface DiagramV2Props {
   rootLabel: string;
   /** Sprog */
   lang: 'da' | 'en';
+  /** BIZZ-1115: Optional node-click override (fx tab-skift på personsiden) */
+  onNodeClick?: (node: DiagramNode) => void;
+  /** BIZZ-1115: Callback med base64 PNG når diagram er renderet (til AI-export) */
+  onDiagramReady?: (base64Png: string) => void;
 }
 
 /**
@@ -49,7 +53,14 @@ export interface DiagramV2Props {
  * @param props - Se DiagramV2Props
  * @returns Diagram UI med loading/error states
  */
-export default function DiagramV2({ rootType, rootId, rootLabel, lang }: DiagramV2Props) {
+export default function DiagramV2({
+  rootType,
+  rootId,
+  rootLabel,
+  lang,
+  onNodeClick,
+  onDiagramReady,
+}: DiagramV2Props) {
   const da = lang === 'da';
   const [graph, setGraph] = useState<DiagramGraph | null>(null);
   const [loading, setLoading] = useState(true);
@@ -197,6 +208,8 @@ export default function DiagramV2({ rootType, rootId, rootLabel, lang }: Diagram
       lang={lang}
       defaultShowProperties={rootType !== 'person'}
       onExpand={handleExpand}
+      onNodeClick={onNodeClick}
+      onDiagramReady={onDiagramReady}
     />
   );
 }

@@ -1960,6 +1960,9 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
               rootId={String(data.vat)}
               rootLabel={data.name ?? ''}
               lang={lang}
+              onDiagramReady={(base64) => {
+                setAICtx({ diagramBase64: base64 });
+              }}
             />
           )}
 

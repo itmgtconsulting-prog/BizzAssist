@@ -25,6 +25,15 @@ import { checkAllCertificates, type CertExpiryInfo } from '@/app/lib/certExpiry'
 import { logger } from '@/app/lib/logger';
 
 /** Shape of the health check response body */
+/** BIZZ-1107: Data freshness info for en cache-tabel */
+interface DataFreshnessEntry {
+  table: string;
+  row_count: number;
+  newest_record: string | null;
+  age_hours: number | null;
+  status: 'fresh' | 'stale' | 'empty';
+}
+
 interface HealthStatus {
   status: 'ok' | 'degraded' | 'down';
   version: string;
@@ -50,6 +59,8 @@ interface HealthStatus {
       }
     >;
     certificates?: CertExpiryInfo[];
+    /** BIZZ-1107: Data freshness for cache-tabeller */
+    data_freshness?: DataFreshnessEntry[];
   };
 }
 
@@ -206,6 +217,64 @@ export async function GET(request: NextRequest): Promise<NextResponse<HealthStat
           latency_ms: probe.latency_ms,
           ...(probe.deprecated ? { deprecated: true } : {}),
         };
+      }
+
+      // BIZZ-1107: Data freshness — check cache-tabellernes seneste sync
+      try {
+        const adminClient = createClient(
+          process.env.NEXT_PUBLIC_SUPABASE_URL!,
+          process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+        );
+        const freshnessQueries = [
+          { table: 'cvr_virksomhed', col: 'sidst_hentet_fra_cvr', maxAgeHours: 168 },
+          { table: 'ejf_ejerskab', col: 'sidst_opdateret', maxAgeHours: 168 },
+          { table: 'cvr_deltagerrelation', col: 'sidst_hentet_fra_cvr', maxAgeHours: 168 },
+          { table: 'cvr_deltager', col: 'sidst_hentet_fra_cvr', maxAgeHours: 168 },
+          { table: 'bbr_ejendom_status', col: 'sidst_opdateret', maxAgeHours: 336 },
+        ];
+        const freshnessResults: DataFreshnessEntry[] = [];
+        for (const q of freshnessQueries) {
+          try {
+            const { data, count } = await adminClient
+              .from(q.table)
+              .select(q.col, { count: 'exact' })
+              .order(q.col, { ascending: false })
+              .limit(1);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const newest = data?.[0] ? ((data[0] as any)[q.col] as string | null) : null;
+            const ageMs = newest ? Date.now() - new Date(newest).getTime() : null;
+            const ageHours = ageMs != null ? Math.round(ageMs / 3600000) : null;
+            freshnessResults.push({
+              table: q.table,
+              row_count: count ?? 0,
+              newest_record: newest,
+              age_hours: ageHours,
+              status:
+                count === 0
+                  ? 'empty'
+                  : ageHours != null && ageHours > q.maxAgeHours
+                    ? 'stale'
+                    : 'fresh',
+            });
+          } catch {
+            freshnessResults.push({
+              table: q.table,
+              row_count: 0,
+              newest_record: null,
+              age_hours: null,
+              status: 'empty',
+            });
+          }
+        }
+        healthStatus.checks.data_freshness = freshnessResults;
+
+        // Stale data degrades health
+        const staleTables = freshnessResults.filter((f) => f.status === 'stale');
+        if (staleTables.length > 0) {
+          healthStatus.status = 'degraded';
+        }
+      } catch (err) {
+        logger.error('[health] Data freshness check error:', err);
       }
 
       // mTLS Certificates

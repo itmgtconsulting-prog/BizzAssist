@@ -146,9 +146,7 @@ function formatEjerandel(taeller: number | null, naevner: number | null): string
  */
 async function resolveCompanyGraph(
   admin: ReturnType<typeof createAdminClient>,
-  cvr: string,
-  host: string,
-  cookie: string
+  cvr: string
 ): Promise<DiagramGraph> {
   const nodes: DiagramNode[] = [];
   const edges: DiagramEdge[] = [];
@@ -222,60 +220,78 @@ async function resolveCompanyGraph(
     }
   }
 
-  // 2b. BIZZ-1111: Datterselskaber rekursivt (BFS, max 3 niveauer, max 50 noder)
-  // Bruger live /api/cvr-public/related da CVR ES deltagerRelation ikke har
-  // cvrNummer på virksomheds-deltagere (kun enhedsNummer).
-  const MAX_DEPTH = 3;
+  // 2b. BIZZ-1101/1111: Datterselskaber rekursivt via lokal cvr_deltagerrelation.
+  // Strategi: find virksomhedens enhedsNummer (den optræder som deltager_enhedsnummer
+  // i andre virksomheders rækker), og brug det til at finde datterselskaber.
+  // BFS med max 3 niveauer og 50 noder.
   const MAX_TOTAL_NODES = 50;
-  const queue: Array<{ parentCvr: string; parentId: string; depth: number }> = [
-    { parentCvr: cvr, parentId: mainId, depth: 0 },
-  ];
 
-  while (queue.length > 0 && nodes.length < MAX_TOTAL_NODES) {
-    const { parentCvr, parentId, depth } = queue.shift()!;
-    if (depth >= MAX_DEPTH) continue;
+  // BIZZ-1101: Find datterselskaber via fælles ejere.
+  // For hver ejer (person) vi fandt opad, find ALLE virksomheder de ejer.
+  // Virksomheder der IKKE er root men deler ejere med root er sandsynligvis datterselskaber.
 
-    try {
-      const relRes = await fetch(`${host}/api/cvr-public/related?cvr=${parentCvr}`, {
-        headers: { cookie },
-        signal: AbortSignal.timeout(8000),
-      }).then((r) => (r.ok ? r.json() : null));
+  const ownerEnhedsNumre = ownerRows?.length
+    ? [
+        ...new Set(
+          (ownerRows as Array<{ deltager_enhedsnummer: number }>).map(
+            (r) => r.deltager_enhedsnummer
+          )
+        ),
+      ]
+    : [];
 
-      const subs: Array<{
-        cvr: number;
+  if (ownerEnhedsNumre.length > 0) {
+    // Find alle virksomheder som root's ejere også ejer → potentielle datterselskaber
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: siblingRows } = await (admin as any)
+      .from('cvr_deltagerrelation')
+      .select('virksomhed_cvr, deltager_enhedsnummer')
+      .in('deltager_enhedsnummer', ownerEnhedsNumre.slice(0, 10))
+      .is('gyldig_til', null)
+      .limit(200);
+
+    if (siblingRows?.length) {
+      const sibCvrs = [
+        ...new Set(
+          (siblingRows as Array<{ virksomhed_cvr: string }>)
+            .map((r) => r.virksomhed_cvr)
+            .filter((c) => c !== cvr && !nodeIds.has(`cvr-${c}`))
+        ),
+      ];
+
+      // Batch-hent virksomhedsinfo
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: sibCompanies } = await (admin as any)
+        .from('cvr_virksomhed')
+        .select('cvr, navn, virksomhedsform, ophoert')
+        .in('cvr', sibCvrs.slice(0, MAX_TOTAL_NODES));
+      type SibCompany = {
+        cvr: string;
         navn: string;
-        virksomhedsform?: string;
-        ophoert?: boolean;
-      }> = relRes?.related ?? relRes ?? [];
-      if (!Array.isArray(subs)) continue;
+        virksomhedsform: string | null;
+        ophoert: string | null;
+      };
+      const sibMap = new Map<string, SibCompany>(
+        (sibCompanies ?? []).map((c: SibCompany) => [c.cvr, c])
+      );
 
-      for (const sub of subs.slice(0, 15)) {
+      for (const subCvr of sibCvrs.slice(0, 15)) {
         if (nodes.length >= MAX_TOTAL_NODES) break;
-        const subId = `cvr-${sub.cvr}`;
-        if (nodeIds.has(subId)) {
-          if (!edges.some((e) => e.from === parentId && e.to === subId)) {
-            edges.push({ from: parentId, to: subId, crossOwnership: true });
-          }
-          continue;
-        }
-        const subCompany = await fetchCachedCompany(admin, String(sub.cvr));
-        const subProps = await fetchPropertiesByCvr(admin, String(sub.cvr));
+        const subId = `cvr-${subCvr}`;
+        if (nodeIds.has(subId)) continue;
+        const sub = sibMap.get(subCvr);
         nodes.push({
           id: subId,
-          label: subCompany?.navn ?? sub.navn,
-          sublabel: subCompany?.virksomhedsform ?? sub.virksomhedsform ?? undefined,
+          label: sub?.navn ?? `CVR ${subCvr}`,
+          sublabel: sub?.virksomhedsform ?? undefined,
           type: 'company',
-          cvr: sub.cvr,
-          link: `/dashboard/companies/${sub.cvr}`,
-          isCeased: subCompany?.ophoert != null || sub.ophoert === true,
-          expandableChildren: subProps.length > 0 ? subProps.length : undefined,
+          cvr: Number(subCvr),
+          link: `/dashboard/companies/${subCvr}`,
+          isCeased: sub?.ophoert != null,
         });
         nodeIds.add(subId);
-        edges.push({ from: parentId, to: subId });
-        queue.push({ parentCvr: String(sub.cvr), parentId: subId, depth: depth + 1 });
+        edges.push({ from: mainId, to: subId });
       }
-    } catch {
-      // Related-opslag fejler stille
     }
   }
 
@@ -332,9 +348,7 @@ async function resolveCompanyGraph(
 async function resolvePropertyGraph(
   admin: ReturnType<typeof createAdminClient>,
   bfe: number,
-  rootLabel?: string | null,
-  host?: string,
-  cookie?: string
+  rootLabel?: string | null
 ): Promise<DiagramGraph> {
   const nodes: DiagramNode[] = [];
   const edges: DiagramEdge[] = [];
@@ -361,23 +375,9 @@ async function resolvePropertyGraph(
         const otherProps = await fetchPropertiesByCvr(admin, owner.ejer_cvr);
         const expandable = otherProps.filter((p) => p.bfe_nummer !== bfe).length;
 
-        // BIZZ-1113: Fallback: cache → live API → ejer_navn → CVR-nummer
-        let companyLabel = company?.navn ?? null;
-        if (!companyLabel && host) {
-          try {
-            const liveRes = await fetch(`${host}/api/cvr-public?vat=${owner.ejer_cvr}`, {
-              headers: { cookie: cookie ?? '' },
-              signal: AbortSignal.timeout(5000),
-            }).then((r) => (r.ok ? r.json() : null));
-            companyLabel = liveRes?.name ?? null;
-          } catch {
-            /* fallback */
-          }
-        }
-        if (!companyLabel && owner.ejer_navn && !/^\d+$/.test(owner.ejer_navn)) {
-          companyLabel = owner.ejer_navn;
-        }
-        companyLabel = companyLabel ?? `CVR ${owner.ejer_cvr}`;
+        // BIZZ-1113: Cache-first label: cvr_virksomhed → ejf_ejerskab.ejer_navn
+        // Ingen live API kald — det gør resolve for langsom.
+        const companyLabel = company?.navn ?? owner.ejer_navn ?? `CVR ${owner.ejer_cvr}`;
 
         nodes.push({
           id: ownerId,
@@ -672,10 +672,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
 
     switch (type) {
       case 'company':
-        graph = await resolveCompanyGraph(admin, id, reqHost, reqCookie);
+        graph = await resolveCompanyGraph(admin, id);
         break;
       case 'property':
-        graph = await resolvePropertyGraph(admin, Number(id), label, reqHost, reqCookie);
+        graph = await resolvePropertyGraph(admin, Number(id), label);
         break;
       case 'person':
         graph = await resolvePersonGraph(admin, id);

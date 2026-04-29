@@ -222,7 +222,16 @@ export async function GET(request: NextRequest): Promise<NextResponse<HealthStat
 
       // BIZZ-1107: Data freshness — check cache-tabellernes seneste sync
       try {
-        const adminClient = createAdminClient();
+        // Brug admin client med fallback til anon key
+        let adminClient;
+        try {
+          adminClient = createAdminClient();
+        } catch {
+          adminClient = createClient(
+            process.env.NEXT_PUBLIC_SUPABASE_URL!,
+            process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+          );
+        }
         const freshnessQueries = [
           { table: 'cvr_virksomhed', col: 'sidst_hentet_fra_cvr', maxAgeHours: 168 },
           { table: 'ejf_ejerskab', col: 'sidst_opdateret', maxAgeHours: 168 },
@@ -233,11 +242,18 @@ export async function GET(request: NextRequest): Promise<NextResponse<HealthStat
         const freshnessResults: DataFreshnessEntry[] = [];
         for (const q of freshnessQueries) {
           try {
-            const { data, count } = await adminClient
+            const {
+              data,
+              count,
+              error: qErr,
+            } = await adminClient
               .from(q.table)
               .select(q.col, { count: 'exact' })
               .order(q.col, { ascending: false })
               .limit(1);
+            if (qErr) {
+              logger.error(`[health] freshness query ${q.table}:`, qErr.message);
+            }
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const newest = data?.[0] ? ((data[0] as any)[q.col] as string | null) : null;
             const ageMs = newest ? Date.now() - new Date(newest).getTime() : null;

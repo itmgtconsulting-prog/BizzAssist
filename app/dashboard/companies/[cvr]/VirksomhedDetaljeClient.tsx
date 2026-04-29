@@ -200,11 +200,10 @@ const tabIcons: Record<TabId, React.ReactNode> = {
   liens: <Scale size={12} />,
 };
 
-/** Rækkefølge af tabs — diagram2 kun synlig bag feature flag */
-const tabOrder: TabId[] = [
+/** Basis-rækkefølge af tabs (diagram2 tilføjes runtime via isDiagram2Enabled) */
+const baseTabOrder: TabId[] = [
   'overview',
   'diagram',
-  ...(isDiagram2Enabled() ? (['diagram2'] as const) : []),
   'properties',
   'companies',
   'financials',
@@ -332,6 +331,14 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   /** BIZZ-919: Incrementing key triggers data re-fetch */
   const [refreshKey, setRefreshKey] = useState(0);
   const [aktivTab, setAktivTab] = useState<TabId>('overview');
+  /** Tab-rækkefølge — diagram2 injiceres runtime bag feature flag */
+  const tabOrder = useMemo<TabId[]>(() => {
+    if (!isDiagram2Enabled()) return baseTabOrder;
+    const idx = baseTabOrder.indexOf('diagram');
+    const order = [...baseTabOrder];
+    order.splice(idx + 1, 0, 'diagram2');
+    return order;
+  }, []);
   const [erFulgt, setErFulgt] = useState(false);
   // BIZZ-808: Opret sag-modal state
   const [opretSagOpen, setOpretSagOpen] = useState(false);

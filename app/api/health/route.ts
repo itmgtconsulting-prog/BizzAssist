@@ -222,16 +222,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<HealthStat
 
       // BIZZ-1107: Data freshness — check cache-tabellernes seneste sync
       try {
-        // Brug admin client med fallback til anon key
-        let adminClient;
-        try {
-          adminClient = createAdminClient();
-        } catch {
-          adminClient = createClient(
-            process.env.NEXT_PUBLIC_SUPABASE_URL!,
-            process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-          );
-        }
+        // Service-role client bypasser RLS for cache-tabeller
+        const freshClient = createAdminClient();
         const freshnessQueries = [
           { table: 'cvr_virksomhed', col: 'sidst_hentet_fra_cvr', maxAgeHours: 168 },
           { table: 'ejf_ejerskab', col: 'sidst_opdateret', maxAgeHours: 168 },
@@ -246,7 +238,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<HealthStat
               data,
               count,
               error: qErr,
-            } = await adminClient
+            } = await freshClient
               .from(q.table)
               .select(q.col, { count: 'exact' })
               .order(q.col, { ascending: false })

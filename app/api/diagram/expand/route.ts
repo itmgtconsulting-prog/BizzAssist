@@ -189,23 +189,33 @@ async function expandPerson(
   const addedIds = new Set<string>();
 
   // BIZZ-1120: Hent personens virksomheder fra lokal cache — KUN ejerskabs-roller
-  // BIZZ-1120: Kun reelt ejerskab — ekskluderer stifter/register/ledelse
-  const EJERSKAB_ROLLER = ['interessenter', 'ejerandel', 'reel_ejer', 'ejer', 'fuldt ansvarlig'];
+  // BIZZ-1120: Hent alle roller, ekskludér virksomheder med KUN ledelsesroller
+  const LEDELSE_ROLLER = new Set([
+    'direktør',
+    'adm. dir.',
+    'bestyrelsesmedlem',
+    'formand',
+    'suppleant',
+    'foreningsrepræsentant',
+  ]);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: personRels } = await (admin as any)
     .from('cvr_deltagerrelation')
     .select('virksomhed_cvr, type')
     .eq('deltager_enhedsnummer', Number(enhedsNummer))
-    .in('type', EJERSKAB_ROLLER)
     .is('gyldig_til', null)
-    .limit(50);
+    .limit(100);
 
-  // Gruppér roller per virksomhed
+  // Gruppér roller per virksomhed og filtrer
   const virksomhedRollerMap = new Map<string, string[]>();
   for (const r of (personRels ?? []) as Array<{ virksomhed_cvr: string; type: string }>) {
     const arr = virksomhedRollerMap.get(r.virksomhed_cvr) ?? [];
     arr.push(r.type);
     virksomhedRollerMap.set(r.virksomhed_cvr, arr);
+  }
+  // Fjern virksomheder med KUN ledelsesroller
+  for (const [cvrKey, roller] of virksomhedRollerMap) {
+    if (!roller.some((r) => !LEDELSE_ROLLER.has(r))) virksomhedRollerMap.delete(cvrKey);
   }
 
   for (const [cvrStr, roller] of virksomhedRollerMap) {

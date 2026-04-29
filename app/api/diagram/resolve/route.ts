@@ -18,17 +18,19 @@ import type { DiagramNode, DiagramEdge, DiagramGraph } from '@/app/components/di
 const MAX_PROPS_PER_OWNER = 5;
 
 /**
- * BIZZ-1120: Roller der indikerer REELT ejerskab.
- * Ekskluderet: 'stifter'/'stiftere' (man kan stifte og sælge),
- * 'register' (Erhvervsstyrelsens registrering, ikke ejerskab),
- * 'direktør'/'bestyrelsesmedlem' (ledelsesposter).
+ * BIZZ-1120: Roller der KUN er ledelse (IKKE ejerskab).
+ * Strategi: inkludér alle virksomheder UNDTAGEN dem hvor personen
+ * KUN har ledelsesroller. En person der har 'stifter' + 'direktør'
+ * inkluderes (stifter er ejerskabs-indikator), men en person der
+ * KUN har 'direktør' ekskluderes.
  */
-const EJERSKAB_ROLLER = new Set([
-  'interessenter',
-  'ejerandel',
-  'reel_ejer',
-  'ejer',
-  'fuldt ansvarlig',
+const LEDELSE_ROLLER = new Set([
+  'direktør',
+  'adm. dir.',
+  'bestyrelsesmedlem',
+  'formand',
+  'suppleant',
+  'foreningsrepræsentant',
 ]);
 
 interface ResolveResponse {
@@ -261,18 +263,23 @@ async function resolveCompanyGraph(
       .from('cvr_deltagerrelation')
       .select('virksomhed_cvr, deltager_enhedsnummer, type')
       .in('deltager_enhedsnummer', ownerEnhedsNumre.slice(0, 10))
-      .in('type', [...EJERSKAB_ROLLER])
       .is('gyldig_til', null)
       .limit(200);
 
     if (siblingRows?.length) {
-      const sibCvrs = [
-        ...new Set(
-          (siblingRows as Array<{ virksomhed_cvr: string }>)
-            .map((r) => r.virksomhed_cvr)
-            .filter((c) => c !== cvr && !nodeIds.has(`cvr-${c}`))
-        ),
-      ];
+      // Gruppér roller per virksomhed og filtrer KUN-ledelse
+      const sibRollerMap = new Map<string, string[]>();
+      for (const r of siblingRows as Array<{ virksomhed_cvr: string; type: string }>) {
+        const arr = sibRollerMap.get(r.virksomhed_cvr) ?? [];
+        arr.push(r.type);
+        sibRollerMap.set(r.virksomhed_cvr, arr);
+      }
+      const sibCvrs = [...sibRollerMap.entries()]
+        .filter(
+          ([c, roller]) =>
+            c !== cvr && !nodeIds.has(`cvr-${c}`) && roller.some((r) => !LEDELSE_ROLLER.has(r))
+        )
+        .map(([c]) => c);
 
       // Batch-hent virksomhedsinfo
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -524,10 +531,16 @@ async function resolvePersonGraph(
   // Gruppér roller per virksomhed — KUN ejerskabs-roller
   const virksomhedRollerMap = new Map<string, string[]>();
   for (const r of (personRels ?? []) as Array<{ virksomhed_cvr: string; type: string }>) {
-    if (!EJERSKAB_ROLLER.has(r.type)) continue; // BIZZ-1120: Skip ledelsesroller
+    // Samler alle roller — filtrering sker efter gruppering
     const arr = virksomhedRollerMap.get(r.virksomhed_cvr) ?? [];
     arr.push(r.type);
     virksomhedRollerMap.set(r.virksomhed_cvr, arr);
+  }
+
+  // BIZZ-1120: Fjern virksomheder hvor personen KUN har ledelsesroller
+  for (const [cvrKey, roller] of virksomhedRollerMap) {
+    const hasNonLedelse = roller.some((r) => !LEDELSE_ROLLER.has(r));
+    if (!hasNonLedelse) virksomhedRollerMap.delete(cvrKey);
   }
 
   // Batch-hent alle virksomhedsnavne i ét opslag

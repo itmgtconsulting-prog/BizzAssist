@@ -429,16 +429,53 @@ async function resolvePersonGraph(
     const companyId = `cvr-${cvrStr}`;
     if (nodeIds.has(companyId)) continue;
 
-    const [company, properties, cvrDetail] = await Promise.all([
+    // BIZZ-1106: Cache-first — hent virksomhedsinfo, ejendomme og nøglepersoner fra lokale tabeller
+
+    const [company, properties, noeglePersonerRows] = await Promise.all([
       fetchCachedCompany(admin, cvrStr),
       fetchPropertiesByCvr(admin, cvrStr),
-      // BIZZ-1105: Hent virksomhedsdetaljer for nøglepersoner
-      fetch(`${host}/api/cvr-public?vat=${cvrStr}`, {
-        headers: { cookie },
-        signal: AbortSignal.timeout(8000),
-      })
-        .then((r) => (r.ok ? r.json() : null))
-        .catch(() => null),
+      // Nøglepersoner fra cvr_deltagerrelation + cvr_deltager (lokal cache)
+      (async () => {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: relRows } = await (admin as any)
+            .from('cvr_deltagerrelation')
+            .select('deltager_enhedsnummer, type')
+            .eq('virksomhed_cvr', cvrStr)
+            .is('gyldig_til', null)
+            .limit(20);
+          if (!relRows?.length) return [];
+          const enhedsNumre = [
+            ...new Set(
+              relRows.map((r: { deltager_enhedsnummer: number }) => r.deltager_enhedsnummer)
+            ),
+          ];
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: deltagere } = await (admin as any)
+            .from('cvr_deltager')
+            .select('enhedsnummer, navn')
+            .in('enhedsnummer', enhedsNumre);
+          const navnMap = new Map(
+            (deltagere ?? []).map((d: { enhedsnummer: number; navn: string }) => [
+              d.enhedsnummer,
+              d.navn,
+            ])
+          );
+          const personMap = new Map<number, string[]>();
+          for (const r of relRows) {
+            const arr = personMap.get(r.deltager_enhedsnummer) ?? [];
+            arr.push(r.type);
+            personMap.set(r.deltager_enhedsnummer, arr);
+          }
+          return [...personMap.entries()].map(([en, roller]) => ({
+            navn: navnMap.get(en) ?? `Person ${en}`,
+            enhedsNummer: en,
+            roller,
+          }));
+        } catch {
+          return [];
+        }
+      })(),
     ]);
 
     // Formater roller til en kort streng (fx "Direktør, 50%")
@@ -450,20 +487,16 @@ async function resolvePersonGraph(
           .join(', ')
       : String(v.roller ?? '');
 
-    // BIZZ-1105: Nøglepersoner (bestyrelse/direktion) — ekskluder den aktuelle person
-    interface CvrParticipant {
-      name: string;
-      enhedsNummer?: number;
-      roller?: string[];
-    }
-    const participants: CvrParticipant[] = cvrDetail?.participants ?? [];
-    const noeglePersoner = participants
-      .filter((p) => p.enhedsNummer != null && p.enhedsNummer !== Number(enhedsNummer))
+    // BIZZ-1105/1106: Nøglepersoner fra lokal cache — ekskluder den aktuelle person
+    const noeglePersoner = (
+      noeglePersonerRows as Array<{ navn: string; enhedsNummer: number; roller: string[] }>
+    )
+      .filter((p) => p.enhedsNummer !== Number(enhedsNummer))
       .slice(0, 5)
       .map((p) => ({
-        navn: p.name,
-        enhedsNummer: p.enhedsNummer!,
-        rolle: (p.roller ?? []).slice(0, 2).join(', '),
+        navn: p.navn,
+        enhedsNummer: p.enhedsNummer,
+        rolle: p.roller.slice(0, 2).join(', '),
       }));
 
     nodes.push({

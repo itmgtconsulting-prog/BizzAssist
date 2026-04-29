@@ -17,11 +17,13 @@ import type { DiagramNode, DiagramEdge, DiagramGraph } from '@/app/components/di
 /** Max ejendomme per ejer-node i initial graf */
 const MAX_PROPS_PER_OWNER = 5;
 
-/** BIZZ-1120: Roller der indikerer ejerskab (vs. ledelsesposter) */
+/**
+ * BIZZ-1120: Roller der indikerer REELT ejerskab.
+ * Ekskluderet: 'stifter'/'stiftere' (man kan stifte og sælge),
+ * 'register' (Erhvervsstyrelsens registrering, ikke ejerskab),
+ * 'direktør'/'bestyrelsesmedlem' (ledelsesposter).
+ */
 const EJERSKAB_ROLLER = new Set([
-  'stifter',
-  'stiftere',
-  'register',
   'interessenter',
   'ejerandel',
   'reel_ejer',

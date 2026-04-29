@@ -189,16 +189,8 @@ async function expandPerson(
   const addedIds = new Set<string>();
 
   // BIZZ-1120: Hent personens virksomheder fra lokal cache — KUN ejerskabs-roller
-  const EJERSKAB_ROLLER = [
-    'stifter',
-    'stiftere',
-    'register',
-    'interessenter',
-    'ejerandel',
-    'reel_ejer',
-    'ejer',
-    'fuldt ansvarlig',
-  ];
+  // BIZZ-1120: Kun reelt ejerskab — ekskluderer stifter/register/ledelse
+  const EJERSKAB_ROLLER = ['interessenter', 'ejerandel', 'reel_ejer', 'ejer', 'fuldt ansvarlig'];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: personRels } = await (admin as any)
     .from('cvr_deltagerrelation')

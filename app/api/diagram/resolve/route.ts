@@ -17,22 +17,6 @@ import type { DiagramNode, DiagramEdge, DiagramGraph } from '@/app/components/di
 /** Max ejendomme per ejer-node i initial graf */
 const MAX_PROPS_PER_OWNER = 5;
 
-/**
- * BIZZ-1120: Roller der KUN er ledelse (IKKE ejerskab).
- * Strategi: inkludér alle virksomheder UNDTAGEN dem hvor personen
- * KUN har ledelsesroller. En person der har 'stifter' + 'direktør'
- * inkluderes (stifter er ejerskabs-indikator), men en person der
- * KUN har 'direktør' ekskluderes.
- */
-const LEDELSE_ROLLER = new Set([
-  'direktør',
-  'adm. dir.',
-  'bestyrelsesmedlem',
-  'formand',
-  'suppleant',
-  'foreningsrepræsentant',
-]);
-
 interface ResolveResponse {
   graph: DiagramGraph | null;
   error?: string;
@@ -267,19 +251,30 @@ async function resolveCompanyGraph(
       .limit(200);
 
     if (siblingRows?.length) {
-      // Gruppér roller per virksomhed og filtrer KUN-ledelse
-      const sibRollerMap = new Map<string, string[]>();
-      for (const r of siblingRows as Array<{ virksomhed_cvr: string; type: string }>) {
-        const arr = sibRollerMap.get(r.virksomhed_cvr) ?? [];
-        arr.push(r.type);
-        sibRollerMap.set(r.virksomhed_cvr, arr);
+      // Unikke CVR'er (ekskl. root)
+      const candidateCvrs = [
+        ...new Set(
+          (siblingRows as Array<{ virksomhed_cvr: string }>)
+            .map((r) => r.virksomhed_cvr)
+            .filter((c) => c !== cvr && !nodeIds.has(`cvr-${c}`))
+        ),
+      ];
+
+      // BIZZ-1120: Filtrer til virksomheder der HAR ejendomme (pålidelig ejerskabs-indikator)
+      let sibCvrs = candidateCvrs;
+      if (candidateCvrs.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: propOwnerRows } = await (admin as any)
+          .from('ejf_ejerskab')
+          .select('ejer_cvr')
+          .in('ejer_cvr', candidateCvrs.slice(0, 50))
+          .eq('status', 'gældende')
+          .limit(200);
+        const cvrsWithProps = new Set(
+          (propOwnerRows ?? []).map((r: { ejer_cvr: string }) => r.ejer_cvr)
+        );
+        sibCvrs = candidateCvrs.filter((c) => cvrsWithProps.has(c));
       }
-      const sibCvrs = [...sibRollerMap.entries()]
-        .filter(
-          ([c, roller]) =>
-            c !== cvr && !nodeIds.has(`cvr-${c}`) && roller.some((r) => !LEDELSE_ROLLER.has(r))
-        )
-        .map(([c]) => c);
 
       // Batch-hent virksomhedsinfo
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

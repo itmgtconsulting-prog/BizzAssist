@@ -429,8 +429,17 @@ async function resolvePersonGraph(
     const companyId = `cvr-${cvrStr}`;
     if (nodeIds.has(companyId)) continue;
 
-    const company = await fetchCachedCompany(admin, cvrStr);
-    const properties = await fetchPropertiesByCvr(admin, cvrStr);
+    const [company, properties, cvrDetail] = await Promise.all([
+      fetchCachedCompany(admin, cvrStr),
+      fetchPropertiesByCvr(admin, cvrStr),
+      // BIZZ-1105: Hent virksomhedsdetaljer for nøglepersoner
+      fetch(`${host}/api/cvr-public?vat=${cvrStr}`, {
+        headers: { cookie },
+        signal: AbortSignal.timeout(8000),
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null),
+    ]);
 
     // Formater roller til en kort streng (fx "Direktør, 50%")
     const rolleStr = Array.isArray(v.roller)
@@ -441,6 +450,22 @@ async function resolvePersonGraph(
           .join(', ')
       : String(v.roller ?? '');
 
+    // BIZZ-1105: Nøglepersoner (bestyrelse/direktion) — ekskluder den aktuelle person
+    interface CvrParticipant {
+      name: string;
+      enhedsNummer?: number;
+      roller?: string[];
+    }
+    const participants: CvrParticipant[] = cvrDetail?.participants ?? [];
+    const noeglePersoner = participants
+      .filter((p) => p.enhedsNummer != null && p.enhedsNummer !== Number(enhedsNummer))
+      .slice(0, 5)
+      .map((p) => ({
+        navn: p.name,
+        enhedsNummer: p.enhedsNummer!,
+        rolle: (p.roller ?? []).slice(0, 2).join(', '),
+      }));
+
     nodes.push({
       id: companyId,
       label: company?.navn ?? v.navn,
@@ -450,6 +475,8 @@ async function resolvePersonGraph(
       link: `/dashboard/companies/${cvrStr}`,
       isCeased: company?.ophoert != null,
       expandableChildren: properties.length > 0 ? properties.length : undefined,
+      personRolle: rolleStr || undefined,
+      noeglePersoner: noeglePersoner.length > 0 ? noeglePersoner : undefined,
     });
     nodeIds.add(companyId);
     topLevelCvrs.push(cvrStr);

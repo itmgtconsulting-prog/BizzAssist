@@ -70,8 +70,9 @@ function mapEjendomstype(
   if (t.includes('landbrugsejendom') || t.includes('landbrug'))
     return { label: 'Landbrug', color: 'text-emerald-300 bg-emerald-900/40' };
   if (t.includes('erhverv')) return { label: 'Erhverv', color: 'text-amber-300 bg-amber-900/40' };
-  if (t.includes('normal'))
-    return { label: 'Parcelhus/grund', color: 'text-blue-300 bg-blue-900/40' };
+  // BIZZ-1099: "Normal ejendom" dækker parcelhuse, rækkehuse, andelsboliger m.fl.
+  // — "Parcelhus/grund" var misvisende for fx andelsboliger.
+  if (t.includes('normal')) return { label: 'Ejendom', color: 'text-blue-300 bg-blue-900/40' };
   return { label: type, color: 'text-slate-300 bg-slate-800' };
 }
 

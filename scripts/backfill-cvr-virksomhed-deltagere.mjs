@@ -238,7 +238,7 @@ async function main() {
 
     // Upsert til Supabase
     if (batch.length > 0 && !DRY_RUN) {
-      // Strip ekstra felter + dedup på PK
+      // Strip ekstra felter + dedup på PK + inkluder ejer_cvr
       const seen = new Set();
       const cleanBatch = [];
       for (const r of batch) {
@@ -253,6 +253,7 @@ async function main() {
           gyldig_til: r.gyldig_til,
           sidst_opdateret: r.sidst_opdateret,
           sidst_hentet_fra_cvr: r.sidst_hentet_fra_cvr,
+          ejer_cvr: r._ejer_cvr ?? null,
         });
       }
 

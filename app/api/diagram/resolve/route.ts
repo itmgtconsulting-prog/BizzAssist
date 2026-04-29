@@ -146,9 +146,7 @@ function formatEjerandel(taeller: number | null, naevner: number | null): string
  */
 async function resolveCompanyGraph(
   admin: ReturnType<typeof createAdminClient>,
-  cvr: string,
-  host: string,
-  cookie: string
+  cvr: string
 ): Promise<DiagramGraph> {
   const nodes: DiagramNode[] = [];
   const edges: DiagramEdge[] = [];
@@ -222,41 +220,38 @@ async function resolveCompanyGraph(
     }
   }
 
-  // 2b. Datterselskaber (nedad) — fortsat via live API (virksomhed→virksomhed
-  // ejerskab kræver enhedsNummer→CVR mapping som ikke er i cvr_deltagerrelation)
-  try {
-    const relatedRes = await fetch(`${host}/api/cvr-public/related?cvr=${cvr}`, {
-      headers: { cookie },
-      signal: AbortSignal.timeout(10000),
-    }).then((r) => (r.ok ? r.json() : null));
+  // 2b. Datterselskaber (nedad) fra lokal cvr_deltagerrelation via ejer_cvr
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: subRows } = await (admin as any)
+    .from('cvr_deltagerrelation')
+    .select('virksomhed_cvr')
+    .eq('ejer_cvr', cvr)
+    .is('gyldig_til', null)
+    .limit(30);
 
-    interface RelatedCompany {
-      cvr: number;
-      navn: string;
-      virksomhedsform?: string;
-      ophoert?: boolean;
-    }
-    const subsidiaries: RelatedCompany[] = relatedRes?.related ?? relatedRes ?? [];
-    for (const sub of (Array.isArray(subsidiaries) ? subsidiaries : []).slice(0, 15)) {
-      const subId = `cvr-${sub.cvr}`;
+  if (subRows?.length) {
+    // Unikke datterselskab-CVR'er
+    const subCvrs = [
+      ...new Set((subRows as Array<{ virksomhed_cvr: string }>).map((r) => r.virksomhed_cvr)),
+    ];
+    for (const subCvr of subCvrs.slice(0, 15)) {
+      const subId = `cvr-${subCvr}`;
       if (nodeIds.has(subId)) continue;
-      const subCompany = await fetchCachedCompany(admin, String(sub.cvr));
-      const subProps = await fetchPropertiesByCvr(admin, String(sub.cvr));
+      const subCompany = await fetchCachedCompany(admin, subCvr);
+      const subProps = await fetchPropertiesByCvr(admin, subCvr);
       nodes.push({
         id: subId,
-        label: subCompany?.navn ?? sub.navn,
-        sublabel: subCompany?.virksomhedsform ?? sub.virksomhedsform ?? undefined,
+        label: subCompany?.navn ?? `CVR ${subCvr}`,
+        sublabel: subCompany?.virksomhedsform ?? undefined,
         type: 'company',
-        cvr: sub.cvr,
-        link: `/dashboard/companies/${sub.cvr}`,
-        isCeased: subCompany?.ophoert != null || sub.ophoert === true,
+        cvr: Number(subCvr),
+        link: `/dashboard/companies/${subCvr}`,
+        isCeased: subCompany?.ophoert != null,
         expandableChildren: subProps.length > 0 ? subProps.length : undefined,
       });
       nodeIds.add(subId);
       edges.push({ from: mainId, to: subId });
     }
-  } catch {
-    // Fallback: ingen datterselskaber ved fejl
   }
 
   // 3. Ejendomme virksomheden ejer
@@ -389,9 +384,7 @@ async function resolvePropertyGraph(
  */
 async function resolvePersonGraph(
   admin: ReturnType<typeof createAdminClient>,
-  enhedsNummer: string,
-  host: string,
-  cookie: string
+  enhedsNummer: string
 ): Promise<DiagramGraph> {
   const nodes: DiagramNode[] = [];
   const edges: DiagramEdge[] = [];
@@ -400,13 +393,14 @@ async function resolvePersonGraph(
   // Root-node: personen
   const mainId = `en-${enhedsNummer}`;
 
-  // Hent personens virksomheder via intern API (kræver live CVR ES)
-  const personRes = await fetch(`${host}/api/cvr-public/person?enhedsNummer=${enhedsNummer}`, {
-    headers: { cookie },
-    signal: AbortSignal.timeout(10000),
-  });
-  const personData = personRes.ok ? await personRes.json() : null;
-  const personName = personData?.navn ?? `Person ${enhedsNummer}`;
+  // Hent personnavn fra cvr_deltager (lokal cache)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: deltagerRow } = await (admin as any)
+    .from('cvr_deltager')
+    .select('navn')
+    .eq('enhedsnummer', Number(enhedsNummer))
+    .maybeSingle();
+  const personName = deltagerRow?.navn ?? `Person ${enhedsNummer}`;
 
   nodes.push({
     id: mainId,
@@ -417,13 +411,37 @@ async function resolvePersonGraph(
   });
   nodeIds.add(mainId);
 
-  // Tilføj virksomheder personen ejer — kun top-level (direkte ejerskab)
+  // Hent personens virksomheder fra lokal cvr_deltagerrelation
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: personRels } = await (admin as any)
+    .from('cvr_deltagerrelation')
+    .select('virksomhed_cvr, type')
+    .eq('deltager_enhedsnummer', Number(enhedsNummer))
+    .is('gyldig_til', null)
+    .limit(50);
+
+  // Gruppér roller per virksomhed
   interface PersonRolleRaw {
     rolle?: string;
     ejerandel?: string | null;
   }
-  const virksomheder: Array<{ cvr: number; navn: string; roller: PersonRolleRaw[] }> =
-    personData?.virksomheder ?? [];
+  const virksomhedRollerMap = new Map<string, string[]>();
+  for (const r of (personRels ?? []) as Array<{ virksomhed_cvr: string; type: string }>) {
+    const arr = virksomhedRollerMap.get(r.virksomhed_cvr) ?? [];
+    arr.push(r.type);
+    virksomhedRollerMap.set(r.virksomhed_cvr, arr);
+  }
+
+  // Konverter til array-format kompatibelt med resten af koden
+  const virksomheder: Array<{ cvr: number; navn: string; roller: PersonRolleRaw[] }> = [];
+  for (const [cvrStr, roller] of virksomhedRollerMap) {
+    const comp = await fetchCachedCompany(admin, cvrStr);
+    virksomheder.push({
+      cvr: Number(cvrStr),
+      navn: comp?.navn ?? `CVR ${cvrStr}`,
+      roller: roller.map((r) => ({ rolle: r })),
+    });
+  }
 
   // Samle alle CVR'er vi skal hente related for (hierarki)
   const topLevelCvrs: string[] = [];
@@ -525,51 +543,44 @@ async function resolvePersonGraph(
     });
   }
 
-  // BIZZ-1104: Hent datterselskaber for top-level virksomheder → byg hierarki
-  // Seriell for at undgå overbelastning (max 10 related-opslag)
+  // BIZZ-1104/1108: Hent datterselskaber fra lokal cvr_deltagerrelation via ejer_cvr
   for (const parentCvr of topLevelCvrs.slice(0, 10)) {
-    try {
-      const relRes = await fetch(`${host}/api/cvr-public/related?cvr=${parentCvr}`, {
-        headers: { cookie },
-        signal: AbortSignal.timeout(8000),
-      });
-      if (!relRes.ok) continue;
-      const relData = await relRes.json();
-      const subs: Array<{
-        cvr: number;
-        navn: string;
-        virksomhedsform?: string;
-        ophoert?: boolean;
-      }> = relData?.related ?? relData ?? [];
-      if (!Array.isArray(subs)) continue;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: subRelRows } = await (admin as any)
+      .from('cvr_deltagerrelation')
+      .select('virksomhed_cvr')
+      .eq('ejer_cvr', parentCvr)
+      .is('gyldig_til', null)
+      .limit(15);
 
-      for (const sub of subs.slice(0, 10)) {
-        const subId = `cvr-${sub.cvr}`;
-        const parentId = `cvr-${parentCvr}`;
-        if (nodeIds.has(subId)) {
-          // Allerede i grafen — tilføj crossOwnership edge
-          if (!edges.some((e) => e.from === parentId && e.to === subId)) {
-            edges.push({ from: parentId, to: subId, crossOwnership: true });
-          }
-          continue;
+    if (!subRelRows?.length) continue;
+    const subCvrs = [
+      ...new Set((subRelRows as Array<{ virksomhed_cvr: string }>).map((r) => r.virksomhed_cvr)),
+    ];
+
+    for (const subCvr of subCvrs.slice(0, 10)) {
+      const subId = `cvr-${subCvr}`;
+      const parentId = `cvr-${parentCvr}`;
+      if (nodeIds.has(subId)) {
+        if (!edges.some((e) => e.from === parentId && e.to === subId)) {
+          edges.push({ from: parentId, to: subId, crossOwnership: true });
         }
-        const subCompany = await fetchCachedCompany(admin, String(sub.cvr));
-        const subProps = await fetchPropertiesByCvr(admin, String(sub.cvr));
-        nodes.push({
-          id: subId,
-          label: subCompany?.navn ?? sub.navn,
-          sublabel: subCompany?.virksomhedsform ?? sub.virksomhedsform ?? undefined,
-          type: 'company',
-          cvr: sub.cvr,
-          link: `/dashboard/companies/${sub.cvr}`,
-          isCeased: subCompany?.ophoert != null || sub.ophoert === true,
-          expandableChildren: subProps.length > 0 ? subProps.length : undefined,
-        });
-        nodeIds.add(subId);
-        edges.push({ from: parentId, to: subId });
+        continue;
       }
-    } catch {
-      // Related-opslag fejler stille — best-effort
+      const subCompany = await fetchCachedCompany(admin, subCvr);
+      const subProps = await fetchPropertiesByCvr(admin, subCvr);
+      nodes.push({
+        id: subId,
+        label: subCompany?.navn ?? `CVR ${subCvr}`,
+        sublabel: subCompany?.virksomhedsform ?? undefined,
+        type: 'company',
+        cvr: Number(subCvr),
+        link: `/dashboard/companies/${subCvr}`,
+        isCeased: subCompany?.ophoert != null,
+        expandableChildren: subProps.length > 0 ? subProps.length : undefined,
+      });
+      nodeIds.add(subId);
+      edges.push({ from: parentId, to: subId });
     }
   }
 
@@ -656,13 +667,13 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
 
     switch (type) {
       case 'company':
-        graph = await resolveCompanyGraph(admin, id, reqHost, reqCookie);
+        graph = await resolveCompanyGraph(admin, id);
         break;
       case 'property':
         graph = await resolvePropertyGraph(admin, Number(id));
         break;
       case 'person':
-        graph = await resolvePersonGraph(admin, id, reqHost, reqCookie);
+        graph = await resolvePersonGraph(admin, id);
         break;
       default:
         return NextResponse.json({ graph: null, error: `Unknown type: ${type}` }, { status: 400 });

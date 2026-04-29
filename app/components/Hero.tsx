@@ -48,7 +48,7 @@ function HeroSearch({ lang }: { lang: 'da' | 'en' }) {
             signal: controller.signal,
           }).catch(() => null),
           /^\d{8}$/.test(text.trim()) || text.trim().length >= 3
-            ? fetch(`/api/cvr-search?q=${encodeURIComponent(text)}&limit=5`, {
+            ? fetch(`/api/public/search?q=${encodeURIComponent(text)}&limit=5`, {
                 signal: controller.signal,
               }).catch(() => null)
             : null,

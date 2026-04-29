@@ -1908,17 +1908,8 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           {/* ══ RELATIONSDIAGRAM (Force Graph — original) ══ */}
           {aktivTab === 'diagram' && (
             <div className="relative">
-              {/* BIZZ-1019: Loading-indikator mens diagram-data hentes */}
-              {(!data || !ejendommeFetchComplete) && (
-                <div className="flex items-center justify-center py-20">
-                  <div className="flex items-center gap-3 text-slate-400">
-                    <Loader2 size={20} className="animate-spin text-blue-400" />
-                    <span className="text-sm">
-                      {lang === 'da' ? 'Henter ejerskabsdata…' : 'Loading ownership data…'}
-                    </span>
-                  </div>
-                </div>
-              )}
+              {/* BIZZ-1098: Konsolideret til én loading-indikator (corner badge nedenfor).
+                  DiagramForce håndterer sin egen initial-state med pulse-dot. */}
               <DiagramForce
                 graph={diagramGraphStable}
                 lang={lang}

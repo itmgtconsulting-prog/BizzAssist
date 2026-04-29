@@ -35,9 +35,8 @@ CREATE POLICY "vurdering_cache: authenticated read"
   ON public.vurdering_cache FOR SELECT
   TO authenticated USING (true);
 
--- Index for stale-detection (cron refresh)
+-- Index for stale-detection (cron refresh — plain B-tree, now() comparison at query time)
 CREATE INDEX IF NOT EXISTS idx_vurdering_cache_stale
-  ON public.vurdering_cache (stale_after)
-  WHERE stale_after < now();
+  ON public.vurdering_cache (stale_after);
 
 COMMENT ON TABLE public.vurdering_cache IS 'BIZZ-1094: Cached ejendomsvurderinger — 30d TTL, nattelig refresh';

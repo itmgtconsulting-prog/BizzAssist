@@ -220,23 +220,40 @@ async function resolveCompanyGraph(
     }
   }
 
-  // 2b. Datterselskaber (nedad) fra lokal cvr_deltagerrelation via ejer_cvr
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: subRows } = await (admin as any)
-    .from('cvr_deltagerrelation')
-    .select('virksomhed_cvr')
-    .eq('ejer_cvr', cvr)
-    .is('gyldig_til', null)
-    .limit(30);
+  // 2b. BIZZ-1111: Datterselskaber rekursivt (BFS, max 3 niveauer, max 50 noder)
+  const MAX_DEPTH = 3;
+  const MAX_TOTAL_NODES = 50;
+  const queue: Array<{ parentCvr: string; parentId: string; depth: number }> = [
+    { parentCvr: cvr, parentId: mainId, depth: 0 },
+  ];
 
-  if (subRows?.length) {
-    // Unikke datterselskab-CVR'er
+  while (queue.length > 0 && nodes.length < MAX_TOTAL_NODES) {
+    const { parentCvr, parentId, depth } = queue.shift()!;
+    if (depth >= MAX_DEPTH) continue;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: subRows } = await (admin as any)
+      .from('cvr_deltagerrelation')
+      .select('virksomhed_cvr')
+      .eq('ejer_cvr', parentCvr)
+      .is('gyldig_til', null)
+      .limit(20);
+
+    if (!subRows?.length) continue;
     const subCvrs = [
       ...new Set((subRows as Array<{ virksomhed_cvr: string }>).map((r) => r.virksomhed_cvr)),
     ];
+
     for (const subCvr of subCvrs.slice(0, 15)) {
+      if (nodes.length >= MAX_TOTAL_NODES) break;
       const subId = `cvr-${subCvr}`;
-      if (nodeIds.has(subId)) continue;
+      if (nodeIds.has(subId)) {
+        // Allerede i grafen — crossOwnership edge
+        if (!edges.some((e) => e.from === parentId && e.to === subId)) {
+          edges.push({ from: parentId, to: subId, crossOwnership: true });
+        }
+        continue;
+      }
       const subCompany = await fetchCachedCompany(admin, subCvr);
       const subProps = await fetchPropertiesByCvr(admin, subCvr);
       nodes.push({
@@ -250,7 +267,10 @@ async function resolveCompanyGraph(
         expandableChildren: subProps.length > 0 ? subProps.length : undefined,
       });
       nodeIds.add(subId);
-      edges.push({ from: mainId, to: subId });
+      edges.push({ from: parentId, to: subId });
+
+      // Tilføj til BFS-kø for næste niveau
+      queue.push({ parentCvr: subCvr, parentId: subId, depth: depth + 1 });
     }
   }
 

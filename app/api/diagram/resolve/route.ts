@@ -146,7 +146,9 @@ function formatEjerandel(taeller: number | null, naevner: number | null): string
  */
 async function resolveCompanyGraph(
   admin: ReturnType<typeof createAdminClient>,
-  cvr: string
+  cvr: string,
+  host: string,
+  cookie: string
 ): Promise<DiagramGraph> {
   const nodes: DiagramNode[] = [];
   const edges: DiagramEdge[] = [];
@@ -221,6 +223,8 @@ async function resolveCompanyGraph(
   }
 
   // 2b. BIZZ-1111: Datterselskaber rekursivt (BFS, max 3 niveauer, max 50 noder)
+  // Bruger live /api/cvr-public/related da CVR ES deltagerRelation ikke har
+  // cvrNummer på virksomheds-deltagere (kun enhedsNummer).
   const MAX_DEPTH = 3;
   const MAX_TOTAL_NODES = 50;
   const queue: Array<{ parentCvr: string; parentId: string; depth: number }> = [
@@ -231,46 +235,47 @@ async function resolveCompanyGraph(
     const { parentCvr, parentId, depth } = queue.shift()!;
     if (depth >= MAX_DEPTH) continue;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: subRows } = await (admin as any)
-      .from('cvr_deltagerrelation')
-      .select('virksomhed_cvr')
-      .eq('ejer_cvr', parentCvr)
-      .is('gyldig_til', null)
-      .limit(20);
+    try {
+      const relRes = await fetch(`${host}/api/cvr-public/related?cvr=${parentCvr}`, {
+        headers: { cookie },
+        signal: AbortSignal.timeout(8000),
+      }).then((r) => (r.ok ? r.json() : null));
 
-    if (!subRows?.length) continue;
-    const subCvrs = [
-      ...new Set((subRows as Array<{ virksomhed_cvr: string }>).map((r) => r.virksomhed_cvr)),
-    ];
+      const subs: Array<{
+        cvr: number;
+        navn: string;
+        virksomhedsform?: string;
+        ophoert?: boolean;
+      }> = relRes?.related ?? relRes ?? [];
+      if (!Array.isArray(subs)) continue;
 
-    for (const subCvr of subCvrs.slice(0, 15)) {
-      if (nodes.length >= MAX_TOTAL_NODES) break;
-      const subId = `cvr-${subCvr}`;
-      if (nodeIds.has(subId)) {
-        // Allerede i grafen — crossOwnership edge
-        if (!edges.some((e) => e.from === parentId && e.to === subId)) {
-          edges.push({ from: parentId, to: subId, crossOwnership: true });
+      for (const sub of subs.slice(0, 15)) {
+        if (nodes.length >= MAX_TOTAL_NODES) break;
+        const subId = `cvr-${sub.cvr}`;
+        if (nodeIds.has(subId)) {
+          if (!edges.some((e) => e.from === parentId && e.to === subId)) {
+            edges.push({ from: parentId, to: subId, crossOwnership: true });
+          }
+          continue;
         }
-        continue;
+        const subCompany = await fetchCachedCompany(admin, String(sub.cvr));
+        const subProps = await fetchPropertiesByCvr(admin, String(sub.cvr));
+        nodes.push({
+          id: subId,
+          label: subCompany?.navn ?? sub.navn,
+          sublabel: subCompany?.virksomhedsform ?? sub.virksomhedsform ?? undefined,
+          type: 'company',
+          cvr: sub.cvr,
+          link: `/dashboard/companies/${sub.cvr}`,
+          isCeased: subCompany?.ophoert != null || sub.ophoert === true,
+          expandableChildren: subProps.length > 0 ? subProps.length : undefined,
+        });
+        nodeIds.add(subId);
+        edges.push({ from: parentId, to: subId });
+        queue.push({ parentCvr: String(sub.cvr), parentId: subId, depth: depth + 1 });
       }
-      const subCompany = await fetchCachedCompany(admin, subCvr);
-      const subProps = await fetchPropertiesByCvr(admin, subCvr);
-      nodes.push({
-        id: subId,
-        label: subCompany?.navn ?? `CVR ${subCvr}`,
-        sublabel: subCompany?.virksomhedsform ?? undefined,
-        type: 'company',
-        cvr: Number(subCvr),
-        link: `/dashboard/companies/${subCvr}`,
-        isCeased: subCompany?.ophoert != null,
-        expandableChildren: subProps.length > 0 ? subProps.length : undefined,
-      });
-      nodeIds.add(subId);
-      edges.push({ from: parentId, to: subId });
-
-      // Tilføj til BFS-kø for næste niveau
-      queue.push({ parentCvr: subCvr, parentId: subId, depth: depth + 1 });
+    } catch {
+      // Related-opslag fejler stille
     }
   }
 
@@ -700,7 +705,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
 
     switch (type) {
       case 'company':
-        graph = await resolveCompanyGraph(admin, id);
+        graph = await resolveCompanyGraph(admin, id, reqHost, reqCookie);
         break;
       case 'property':
         graph = await resolvePropertyGraph(admin, Number(id), label);

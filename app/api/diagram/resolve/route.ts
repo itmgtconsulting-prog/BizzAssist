@@ -333,10 +333,21 @@ async function resolvePropertyGraph(
         const otherProps = await fetchPropertiesByCvr(admin, owner.ejer_cvr);
         const expandable = otherProps.filter((p) => p.bfe_nummer !== bfe).length;
 
+        // BIZZ-1113: Fallback-rækkefølge for virksomhedsnavn:
+        // 1. cvr_virksomhed cache (mest korrekt)
+        // 2. ejer_navn fra ejf_ejerskab (altid udfyldt men kan være forældet)
+        // 3. "CVR {nummer}" som sidste udvej
+        const companyLabel =
+          company?.navn ??
+          (owner.ejer_navn && !/^\d+$/.test(owner.ejer_navn) ? owner.ejer_navn : null) ??
+          `CVR ${owner.ejer_cvr}`;
+
         nodes.push({
           id: ownerId,
-          label: company?.navn ?? owner.ejer_navn,
-          sublabel: company?.virksomhedsform ?? undefined,
+          label: companyLabel,
+          sublabel: company?.virksomhedsform
+            ? `${company.virksomhedsform} · CVR ${owner.ejer_cvr}`
+            : `CVR ${owner.ejer_cvr}`,
           type: 'company',
           cvr: Number(owner.ejer_cvr),
           link: `/dashboard/companies/${owner.ejer_cvr}`,

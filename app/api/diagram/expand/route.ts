@@ -188,31 +188,37 @@ async function expandPerson(
   const newEdges: DiagramEdge[] = [];
   const addedIds = new Set<string>();
 
-  // Hent personens virksomheder via intern API
-  const personRes = await fetch(`${host}/api/cvr-public/person?enhedsNummer=${enhedsNummer}`, {
-    headers: { cookie },
-    signal: AbortSignal.timeout(10000),
-  });
-  const personData = personRes.ok ? await personRes.json() : null;
-  interface PersonRolleRaw {
-    rolle?: string;
-    ejerandel?: string | null;
+  // BIZZ-1120: Hent personens virksomheder fra lokal cache — KUN ejerskabs-roller
+  const EJERSKAB_ROLLER = [
+    'stifter',
+    'stiftere',
+    'register',
+    'interessenter',
+    'ejerandel',
+    'reel_ejer',
+    'ejer',
+    'fuldt ansvarlig',
+  ];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: personRels } = await (admin as any)
+    .from('cvr_deltagerrelation')
+    .select('virksomhed_cvr, type')
+    .eq('deltager_enhedsnummer', Number(enhedsNummer))
+    .in('type', EJERSKAB_ROLLER)
+    .is('gyldig_til', null)
+    .limit(50);
+
+  // Gruppér roller per virksomhed
+  const virksomhedRollerMap = new Map<string, string[]>();
+  for (const r of (personRels ?? []) as Array<{ virksomhed_cvr: string; type: string }>) {
+    const arr = virksomhedRollerMap.get(r.virksomhed_cvr) ?? [];
+    arr.push(r.type);
+    virksomhedRollerMap.set(r.virksomhed_cvr, arr);
   }
-  const virksomheder: Array<{ cvr: number; navn: string; roller: PersonRolleRaw[] }> =
-    personData?.virksomheder ?? [];
 
-  for (const v of virksomheder) {
-    const cvrStr = String(v.cvr);
+  for (const [cvrStr, roller] of virksomhedRollerMap) {
     const companyId = `cvr-${cvrStr}`;
-
-    // Formater roller til en kort streng (fx "Direktør, 50%")
-    const rolleStr = Array.isArray(v.roller)
-      ? v.roller
-          .map((r) => [r.rolle, r.ejerandel].filter(Boolean).join(' '))
-          .filter(Boolean)
-          .slice(0, 2)
-          .join(', ')
-      : String(v.roller ?? '');
+    const rolleStr = roller.slice(0, 2).join(', ');
 
     if (existingIds.has(companyId)) {
       // Virksomhed allerede i grafen → 2nd-degree edge
@@ -244,10 +250,10 @@ async function expandPerson(
 
     newNodes.push({
       id: companyId,
-      label: company?.navn ?? v.navn,
+      label: company?.navn ?? `CVR ${cvrStr}`,
       sublabel: company?.virksomhedsform ?? undefined,
       type: 'company',
-      cvr: v.cvr,
+      cvr: Number(cvrStr),
       link: `/dashboard/companies/${cvrStr}`,
       isCeased: company?.ophoert != null,
       expandableChildren: (propCount ?? 0) > 0 ? (propCount ?? 0) : undefined,

@@ -309,43 +309,46 @@ async function resolveCompanyGraph(
     }
   }
 
-  // 3. Ejendomme virksomheden ejer
-  const properties = await fetchPropertiesByCvr(admin, cvr);
-  const shownProps = properties.slice(0, MAX_PROPS_PER_OWNER);
-  const overflowCount = properties.length - shownProps.length;
+  // 3. BIZZ-1117: Ejendomme for ALLE virksomheder i grafen (ikke kun root)
+  const companyNodes = nodes.filter((n) => (n.type === 'company' || n.type === 'main') && n.cvr);
+  for (const compNode of companyNodes) {
+    const companyCvr = String(compNode.cvr);
+    const properties = await fetchPropertiesByCvr(admin, companyCvr);
+    const shownProps = properties.slice(0, MAX_PROPS_PER_OWNER);
+    const overflowCount = properties.length - shownProps.length;
 
-  for (const prop of shownProps) {
-    const propId = `bfe-${prop.bfe_nummer}`;
-    if (!nodeIds.has(propId)) {
-      nodes.push({
-        id: propId,
-        label: `BFE ${prop.bfe_nummer}`,
-        type: 'property',
-        bfeNummer: prop.bfe_nummer,
+    for (const prop of shownProps) {
+      const propId = `bfe-${prop.bfe_nummer}`;
+      if (!nodeIds.has(propId)) {
+        nodes.push({
+          id: propId,
+          label: `BFE ${prop.bfe_nummer}`,
+          type: 'property',
+          bfeNummer: prop.bfe_nummer,
+        });
+        nodeIds.add(propId);
+      }
+      bfesInGraph.add(prop.bfe_nummer);
+      edges.push({
+        from: compNode.id,
+        to: propId,
+        ejerandel: formatEjerandel(prop.ejerandel_taeller, prop.ejerandel_naevner),
       });
-      nodeIds.add(propId);
     }
-    bfesInGraph.add(prop.bfe_nummer);
-    edges.push({
-      from: mainId,
-      to: propId,
-      ejerandel: formatEjerandel(prop.ejerandel_taeller, prop.ejerandel_naevner),
-    });
-  }
 
-  // Overflow-node for ejendomme
-  if (overflowCount > 0) {
-    const overflowId = `props-overflow-${mainId}`;
-    nodes.push({
-      id: overflowId,
-      label: `+${overflowCount} ejendomme`,
-      type: 'status',
-      overflowItems: properties.slice(MAX_PROPS_PER_OWNER).map((p) => ({
-        label: `BFE ${p.bfe_nummer}`,
-      })),
-    });
-    nodeIds.add(overflowId);
-    edges.push({ from: mainId, to: overflowId });
+    if (overflowCount > 0) {
+      const overflowId = `props-overflow-${compNode.id}`;
+      nodes.push({
+        id: overflowId,
+        label: `+${overflowCount} ejendomme`,
+        type: 'status',
+        overflowItems: properties.slice(MAX_PROPS_PER_OWNER).map((p) => ({
+          label: `BFE ${p.bfe_nummer}`,
+        })),
+      });
+      nodeIds.add(overflowId);
+      edges.push({ from: compNode.id, to: overflowId });
+    }
   }
 
   return { nodes, edges, mainId };

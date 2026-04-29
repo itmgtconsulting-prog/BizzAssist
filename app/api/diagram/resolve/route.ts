@@ -306,17 +306,18 @@ async function resolveCompanyGraph(
  */
 async function resolvePropertyGraph(
   admin: ReturnType<typeof createAdminClient>,
-  bfe: number
+  bfe: number,
+  rootLabel?: string | null
 ): Promise<DiagramGraph> {
   const nodes: DiagramNode[] = [];
   const edges: DiagramEdge[] = [];
   const nodeIds = new Set<string>();
 
-  // Root-node: ejendommen
+  // Root-node: ejendommen — BIZZ-1114: brug client-supplied label hvis tilgængelig
   const mainId = `bfe-${bfe}`;
   nodes.push({
     id: mainId,
-    label: `BFE ${bfe}`,
+    label: rootLabel || `BFE ${bfe}`,
     type: 'property',
     bfeNummer: bfe,
   });
@@ -662,6 +663,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
   const { searchParams } = request.nextUrl;
   const type = searchParams.get('type');
   const id = searchParams.get('id');
+  const label = searchParams.get('label'); // BIZZ-1114: client-supplied label for root node
 
   if (!type || !id) {
     return NextResponse.json({ graph: null, error: 'Missing type or id' }, { status: 400 });
@@ -681,7 +683,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
         graph = await resolveCompanyGraph(admin, id);
         break;
       case 'property':
-        graph = await resolvePropertyGraph(admin, Number(id));
+        graph = await resolvePropertyGraph(admin, Number(id), label);
         break;
       case 'person':
         graph = await resolvePersonGraph(admin, id);

@@ -49,12 +49,7 @@ export interface DiagramV2Props {
  * @param props - Se DiagramV2Props
  * @returns Diagram UI med loading/error states
  */
-export default function DiagramV2({
-  rootType,
-  rootId,
-  rootLabel: _rootLabel,
-  lang,
-}: DiagramV2Props) {
+export default function DiagramV2({ rootType, rootId, rootLabel, lang }: DiagramV2Props) {
   const da = lang === 'da';
   const [graph, setGraph] = useState<DiagramGraph | null>(null);
   const [loading, setLoading] = useState(true);
@@ -85,7 +80,10 @@ export default function DiagramV2({
     setGraph(null);
 
     const controller = new AbortController();
-    fetch(`/api/diagram/resolve?type=${rootType}&id=${encodeURIComponent(rootId)}`, {
+    // BIZZ-1114: Send rootLabel som query param — bruges for property root-node adresse
+    const resolveParams = new URLSearchParams({ type: rootType, id: rootId });
+    if (rootLabel) resolveParams.set('label', rootLabel);
+    fetch(`/api/diagram/resolve?${resolveParams}`, {
       signal: controller.signal,
     })
       .then((r) =>

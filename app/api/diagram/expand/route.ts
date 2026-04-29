@@ -188,16 +188,7 @@ async function expandPerson(
   const newEdges: DiagramEdge[] = [];
   const addedIds = new Set<string>();
 
-  // BIZZ-1120: Hent personens virksomheder fra lokal cache — KUN ejerskabs-roller
-  // BIZZ-1120: Hent alle roller, ekskludér virksomheder med KUN ledelsesroller
-  const LEDELSE_ROLLER = new Set([
-    'direktør',
-    'adm. dir.',
-    'bestyrelsesmedlem',
-    'formand',
-    'suppleant',
-    'foreningsrepræsentant',
-  ]);
+  // BIZZ-1120: Hent personens virksomheder fra lokal cache
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: personRels } = await (admin as any)
     .from('cvr_deltagerrelation')
@@ -213,9 +204,19 @@ async function expandPerson(
     arr.push(r.type);
     virksomhedRollerMap.set(r.virksomhed_cvr, arr);
   }
-  // Fjern virksomheder med KUN ledelsesroller
-  for (const [cvrKey, roller] of virksomhedRollerMap) {
-    if (!roller.some((r) => !LEDELSE_ROLLER.has(r))) virksomhedRollerMap.delete(cvrKey);
+  // BIZZ-1120: Filtrer til virksomheder med ejendomme (ejf_ejerskab)
+  if (virksomhedRollerMap.size > 0) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: propOwners } = await (admin as any)
+      .from('ejf_ejerskab')
+      .select('ejer_cvr')
+      .in('ejer_cvr', [...virksomhedRollerMap.keys()].slice(0, 50))
+      .eq('status', 'gældende')
+      .limit(200);
+    const cvrsWithProps = new Set((propOwners ?? []).map((r: { ejer_cvr: string }) => r.ejer_cvr));
+    for (const cvrKey of virksomhedRollerMap.keys()) {
+      if (!cvrsWithProps.has(cvrKey)) virksomhedRollerMap.delete(cvrKey);
+    }
   }
 
   for (const [cvrStr, roller] of virksomhedRollerMap) {

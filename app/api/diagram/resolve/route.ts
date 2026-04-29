@@ -537,10 +537,21 @@ async function resolvePersonGraph(
     virksomhedRollerMap.set(r.virksomhed_cvr, arr);
   }
 
-  // BIZZ-1120: Fjern virksomheder hvor personen KUN har ledelsesroller
-  for (const [cvrKey, roller] of virksomhedRollerMap) {
-    const hasNonLedelse = roller.some((r) => !LEDELSE_ROLLER.has(r));
-    if (!hasNonLedelse) virksomhedRollerMap.delete(cvrKey);
+  // BIZZ-1120: Filtrer til virksomheder der HAR ejendomme (ejf_ejerskab) —
+  // mest pålidelige ejerskabs-indikator da CVR rolletyper er upålidelige.
+  if (virksomhedRollerMap.size > 0) {
+    const allVirkCvrs = [...virksomhedRollerMap.keys()];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: propOwners } = await (admin as any)
+      .from('ejf_ejerskab')
+      .select('ejer_cvr')
+      .in('ejer_cvr', allVirkCvrs.slice(0, 50))
+      .eq('status', 'gældende')
+      .limit(200);
+    const cvrsWithProps = new Set((propOwners ?? []).map((r: { ejer_cvr: string }) => r.ejer_cvr));
+    for (const cvrKey of virksomhedRollerMap.keys()) {
+      if (!cvrsWithProps.has(cvrKey)) virksomhedRollerMap.delete(cvrKey);
+    }
   }
 
   // Batch-hent alle virksomhedsnavne i ét opslag

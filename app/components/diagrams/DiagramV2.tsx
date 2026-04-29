@@ -61,19 +61,21 @@ export default function DiagramV2({
   const [error, setError] = useState<string | null>(null);
 
   /**
-   * Ref der holder styr på alle node-IDs og BFE-numre i grafen
-   * (inkl. extension-noder). Bruges til dedup i expand-kald.
+   * Ref der holder styr på alle noder i grafen (inkl. extension-noder).
+   * Bruges til at finde cvr/enhedsNummer ved expand og til dedup.
    */
-  const allNodeIdsRef = useRef<Set<string>>(new Set());
+  const allNodesRef = useRef<Map<string, DiagramNode>>(new Map());
   const allBfesRef = useRef<Set<number>>(new Set());
 
-  /** Opdater refs når graf ændrer sig */
+  /** Opdater refs når initial graf ændrer sig */
   useEffect(() => {
     if (!graph) return;
-    const ids = new Set(graph.nodes.map((n) => n.id));
-    const bfes = new Set(graph.nodes.filter((n) => n.bfeNummer != null).map((n) => n.bfeNummer!));
-    allNodeIdsRef.current = ids;
-    allBfesRef.current = bfes;
+    const map = new Map<string, DiagramNode>();
+    for (const n of graph.nodes) map.set(n.id, n);
+    allNodesRef.current = map;
+    allBfesRef.current = new Set(
+      graph.nodes.filter((n) => n.bfeNummer != null).map((n) => n.bfeNummer!)
+    );
   }, [graph]);
 
   /** Hent initial graf fra /api/diagram/resolve */
@@ -120,8 +122,8 @@ export default function DiagramV2({
       nodeId: string,
       nodeType: 'person' | 'company'
     ): Promise<{ nodes: DiagramNode[]; edges: DiagramEdge[] } | null> => {
-      // Find node i grafen for at hente cvr/enhedsNummer
-      const node = graph?.nodes.find((n) => n.id === nodeId);
+      // BIZZ-1102: Find node i ALLE kendte noder (inkl. extensions) — ikke kun initial graph
+      const node = allNodesRef.current.get(nodeId);
       if (!node) return null;
 
       const body = {
@@ -129,7 +131,7 @@ export default function DiagramV2({
         nodeId,
         cvr: node.cvr ? String(node.cvr) : undefined,
         enhedsNummer: node.enhedsNummer ? String(node.enhedsNummer) : undefined,
-        existingNodeIds: [...allNodeIdsRef.current],
+        existingNodeIds: [...allNodesRef.current.keys()],
         existingBfes: [...allBfesRef.current],
       };
 
@@ -146,7 +148,7 @@ export default function DiagramV2({
 
         // Opdater tracking-refs med nye noder
         for (const n of data.nodes) {
-          allNodeIdsRef.current.add(n.id);
+          allNodesRef.current.set(n.id, n);
           if (n.bfeNummer != null) allBfesRef.current.add(n.bfeNummer);
         }
 
@@ -155,7 +157,7 @@ export default function DiagramV2({
         return null;
       }
     },
-    [graph]
+    []
   );
 
   // Loading state

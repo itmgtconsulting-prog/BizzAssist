@@ -309,45 +309,79 @@ async function resolveCompanyGraph(
     }
   }
 
-  // 3. BIZZ-1117: Ejendomme for ALLE virksomheder i grafen (ikke kun root)
-  const companyNodes = nodes.filter((n) => (n.type === 'company' || n.type === 'main') && n.cvr);
-  for (const compNode of companyNodes) {
-    const companyCvr = String(compNode.cvr);
-    const properties = await fetchPropertiesByCvr(admin, companyCvr);
-    const shownProps = properties.slice(0, MAX_PROPS_PER_OWNER);
-    const overflowCount = properties.length - shownProps.length;
+  // 3. BIZZ-1117: Ejendomme for ALLE virksomheder — batch-query (undgå N+1)
+  const companyCvrs = nodes
+    .filter((n) => (n.type === 'company' || n.type === 'main') && n.cvr)
+    .map((n) => String(n.cvr));
 
-    for (const prop of shownProps) {
-      const propId = `bfe-${prop.bfe_nummer}`;
-      if (!nodeIds.has(propId)) {
-        nodes.push({
-          id: propId,
-          label: `BFE ${prop.bfe_nummer}`,
-          type: 'property',
-          bfeNummer: prop.bfe_nummer,
-        });
-        nodeIds.add(propId);
-      }
-      bfesInGraph.add(prop.bfe_nummer);
-      edges.push({
-        from: compNode.id,
-        to: propId,
-        ejerandel: formatEjerandel(prop.ejerandel_taeller, prop.ejerandel_naevner),
-      });
+  if (companyCvrs.length > 0) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: allProps } = await (admin as any)
+      .from('ejf_ejerskab')
+      .select('bfe_nummer, ejer_cvr, ejerandel_taeller, ejerandel_naevner')
+      .in('ejer_cvr', companyCvrs.slice(0, 50))
+      .eq('status', 'gældende')
+      .limit(500);
+
+    // Gruppér ejendomme per CVR
+    const propsByCvr = new Map<
+      string,
+      Array<{
+        bfe_nummer: number;
+        ejerandel_taeller: number | null;
+        ejerandel_naevner: number | null;
+      }>
+    >();
+    for (const p of (allProps ?? []) as Array<{
+      bfe_nummer: number;
+      ejer_cvr: string;
+      ejerandel_taeller: number | null;
+      ejerandel_naevner: number | null;
+    }>) {
+      const arr = propsByCvr.get(p.ejer_cvr) ?? [];
+      arr.push(p);
+      propsByCvr.set(p.ejer_cvr, arr);
     }
 
-    if (overflowCount > 0) {
-      const overflowId = `props-overflow-${compNode.id}`;
-      nodes.push({
-        id: overflowId,
-        label: `+${overflowCount} ejendomme`,
-        type: 'status',
-        overflowItems: properties.slice(MAX_PROPS_PER_OWNER).map((p) => ({
-          label: `BFE ${p.bfe_nummer}`,
-        })),
-      });
-      nodeIds.add(overflowId);
-      edges.push({ from: compNode.id, to: overflowId });
+    for (const compNode of nodes.filter(
+      (n) => (n.type === 'company' || n.type === 'main') && n.cvr
+    )) {
+      const props = propsByCvr.get(String(compNode.cvr)) ?? [];
+      const shownProps = props.slice(0, MAX_PROPS_PER_OWNER);
+      const overflowCount = props.length - shownProps.length;
+
+      for (const prop of shownProps) {
+        const propId = `bfe-${prop.bfe_nummer}`;
+        if (!nodeIds.has(propId)) {
+          nodes.push({
+            id: propId,
+            label: `BFE ${prop.bfe_nummer}`,
+            type: 'property',
+            bfeNummer: prop.bfe_nummer,
+          });
+          nodeIds.add(propId);
+        }
+        bfesInGraph.add(prop.bfe_nummer);
+        edges.push({
+          from: compNode.id,
+          to: propId,
+          ejerandel: formatEjerandel(prop.ejerandel_taeller, prop.ejerandel_naevner),
+        });
+      }
+
+      if (overflowCount > 0) {
+        const overflowId = `props-overflow-${compNode.id}`;
+        nodes.push({
+          id: overflowId,
+          label: `+${overflowCount} ejendomme`,
+          type: 'status',
+          overflowItems: props
+            .slice(MAX_PROPS_PER_OWNER)
+            .map((p) => ({ label: `BFE ${p.bfe_nummer}` })),
+        });
+        nodeIds.add(overflowId);
+        edges.push({ from: compNode.id, to: overflowId });
+      }
     }
   }
 

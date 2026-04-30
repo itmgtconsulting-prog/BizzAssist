@@ -213,10 +213,13 @@ async function expandPerson(
   const EJERSKABS_ROLLER = new Set([
     'ejer',
     'stifter',
+    'stiftere',
     'interessent',
+    'interessenter',
     'fuldt ansvarlig deltager',
     'komplementar',
     'indehaver',
+    'ejerregister',
   ]);
   const virksomheder =
     context === 'company'

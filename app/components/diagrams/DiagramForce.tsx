@@ -643,7 +643,8 @@ function DiagramForce({
   const [showProperties, setShowProperties] = useState(defaultShowProperties);
 
   /** BIZZ-1004: Toggle for personligt ejede ejendomme — default skjult */
-  const [showPersonalProps, setShowPersonalProps] = useState(false);
+  // BIZZ-1122: Personlige ejendomme default synlige på virksomhedsdiagram
+  const [showPersonalProps, setShowPersonalProps] = useState(defaultShowProperties);
 
   /** Fullscreen overlay mode */
   const [isFullscreen, setIsFullscreen] = useState(false);

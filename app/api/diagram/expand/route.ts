@@ -206,11 +206,26 @@ async function expandPerson(
   }
   const alleVirksomheder: ExpandVirk[] = personData?.virksomheder ?? [];
 
-  // BIZZ-1122: På virksomhedsdiagram (context=company), vis KUN personlige
-  // ejendomme — ingen virksomheder. Alle relevante virksomheder er allerede
-  // i grafen via resolve (personlige via interessenter/indehaver, datter-
-  // selskaber via /api/cvr-public/related). Skip virksomheds-loop helt.
-  const virksomheder = context === 'company' ? [] : alleVirksomheder;
+  // BIZZ-1122: På virksomhedsdiagram (context=company), vis KUN:
+  // - Virksomheder med direkte ejerandel (procent) — reelt ejerskab
+  // - Personlige virksomheder (interessenter/indehaver — enkeltmand/I/S)
+  // - Personlige ejendomme (håndteres nedenfor via person-bridge)
+  // IKKE holdingselskaber der kun har EJERREGISTER uden ejerandel.
+  const PERSONLIGE_ROLLER = new Set(['interessent', 'interessenter', 'indehaver', 'komplementar']);
+  const virksomheder =
+    context === 'company'
+      ? alleVirksomheder.filter((v) => {
+          if (!v.aktiv) return false;
+          return v.roller.some((r) => {
+            const rolle = (r.rolle ?? '').toLowerCase();
+            // Personlige virksomheder (enkeltmand/I/S)
+            if (PERSONLIGE_ROLLER.has(rolle)) return true;
+            // Direkte ejerandel (fx "90-100%") — reelt ejerskab
+            if (r.ejerandel != null) return true;
+            return false;
+          });
+        })
+      : alleVirksomheder;
 
   for (const v of virksomheder) {
     const cvrStr = String(v.cvr);

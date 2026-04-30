@@ -237,7 +237,73 @@ async function resolveCompanyGraph(
     }
   }
 
-  // 2b. BIZZ-1122: Datterselskaber via CVR ES /api/cvr-public/related.
+  // 2b. BIZZ-1122: Ejerens personlige virksomheder (enkeltmand, I/S etc.)
+  // Disse vises direkte under ejer-noden — ikke bag "Udvid".
+  if (ownershipRows.length > 0) {
+    const ownerEnheder = Array.from(new Set(ownershipRows.map((r) => r.deltager_enhedsnummer)));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: personalCompRows } = await (admin as any)
+      .from('cvr_deltagerrelation')
+      .select('virksomhed_cvr, deltager_enhedsnummer, type')
+      .in('deltager_enhedsnummer', ownerEnheder.slice(0, 5))
+      .in('type', ['interessenter', 'indehaver'])
+      .is('gyldig_til', null)
+      .limit(20);
+
+    if (personalCompRows?.length) {
+      const personalCvrs = Array.from(
+        new Set(
+          (personalCompRows as Array<{ virksomhed_cvr: string; deltager_enhedsnummer: number }>)
+            .map((r) => r.virksomhed_cvr)
+            .filter((c) => c !== cvr && !nodeIds.has(`cvr-${c}`))
+        )
+      );
+
+      if (personalCvrs.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: personalComps } = await (admin as any)
+          .from('cvr_virksomhed')
+          .select('cvr, navn, virksomhedsform, branche_tekst, ophoert')
+          .in('cvr', personalCvrs.slice(0, 10));
+
+        for (const pc of (personalComps ?? []) as Array<{
+          cvr: string;
+          navn: string;
+          virksomhedsform: string | null;
+          branche_tekst: string | null;
+          ophoert: string | null;
+        }>) {
+          if (pc.ophoert != null) continue;
+          const pcId = `cvr-${pc.cvr}`;
+          if (nodeIds.has(pcId)) continue;
+          const pcSubParts = [pc.virksomhedsform, pc.branche_tekst].filter(Boolean);
+          // Find ejer-noden denne virksomhed tilhører
+          const ownerRow = (
+            personalCompRows as Array<{
+              virksomhed_cvr: string;
+              deltager_enhedsnummer: number;
+            }>
+          ).find((r) => r.virksomhed_cvr === pc.cvr);
+          const parentOwnerId = ownerRow ? `en-${ownerRow.deltager_enhedsnummer}` : mainId;
+
+          nodes.push({
+            id: pcId,
+            label: pc.navn,
+            sublabel: pcSubParts.length > 0 ? pcSubParts.join(' · ') : undefined,
+            branche: pc.branche_tekst ?? undefined,
+            type: 'company',
+            cvr: Number(pc.cvr),
+            link: `/dashboard/companies/${pc.cvr}`,
+            isCeased: false,
+          });
+          nodeIds.add(pcId);
+          edges.push({ from: parentOwnerId, to: pcId });
+        }
+      }
+    }
+  }
+
+  // 2c. BIZZ-1122: Datterselskaber via CVR ES /api/cvr-public/related.
   // Bruger ejetAfCvr til at bygge korrekt hierarki (ikke fladt).
   // Filtrerer ophørte virksomheder fra.
   const MAX_TOTAL_NODES = 50;

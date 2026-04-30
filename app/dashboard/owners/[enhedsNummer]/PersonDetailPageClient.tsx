@@ -792,6 +792,8 @@ export default function PersonDetailPageClient({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [aktivTab, setAktivTab] = useState<TabId>('overview');
+  /** BIZZ-1121: Lazy-mount — mount ved første klik, behold med display:none */
+  const [diagram2Mounted, setDiagram2Mounted] = useState(false);
 
   const [relatedCompanies, setRelatedCompanies] = useState<Map<number, RelateretVirksomhed[]>>(
     new Map()
@@ -2490,9 +2492,14 @@ export default function PersonDetailPageClient({
           )}
 
           {/* ══ DIAGRAM v2 (feature-flagged) ══ */}
-          {/* BIZZ-1121: CSS display:none i stedet for unmount — undgår re-fetch ved tab-skift */}
-          {data && (
-            <div style={{ display: aktivTab === 'diagram2' ? 'block' : 'none' }}>
+          {/* BIZZ-1121: Lazy-mount ved første klik, derefter display:none */}
+          {data && (aktivTab === 'diagram2' || diagram2Mounted) && (
+            <div
+              ref={() => {
+                if (!diagram2Mounted) setDiagram2Mounted(true);
+              }}
+              style={{ display: aktivTab === 'diagram2' ? 'block' : 'none' }}
+            >
               <DiagramV2
                 rootType="person"
                 rootId={String(data.enhedsNummer)}

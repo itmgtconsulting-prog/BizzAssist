@@ -331,6 +331,8 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   /** BIZZ-919: Incrementing key triggers data re-fetch */
   const [refreshKey, setRefreshKey] = useState(0);
   const [aktivTab, setAktivTab] = useState<TabId>('overview');
+  /** BIZZ-1121: Lazy-mount — mount ved første klik, behold med display:none */
+  const [diagram2Mounted, setDiagram2Mounted] = useState(false);
   /** Tab-rækkefølge — diagram2 injiceres runtime bag feature flag */
   const tabOrder = useMemo<TabId[]>(() => {
     if (!isDiagram2Enabled()) return baseTabOrder;
@@ -1954,9 +1956,14 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           )}
 
           {/* ══ DIAGRAM v2 (feature-flagged) ══ */}
-          {/* BIZZ-1121: CSS display:none i stedet for unmount — undgår re-fetch ved tab-skift */}
-          {data && (
-            <div style={{ display: aktivTab === 'diagram2' ? 'block' : 'none' }}>
+          {/* BIZZ-1121: Lazy-mount ved første klik, derefter display:none */}
+          {data && (aktivTab === 'diagram2' || diagram2Mounted) && (
+            <div
+              ref={() => {
+                if (!diagram2Mounted) setDiagram2Mounted(true);
+              }}
+              style={{ display: aktivTab === 'diagram2' ? 'block' : 'none' }}
+            >
               <DiagramV2
                 rootType="company"
                 rootId={String(data.vat)}

@@ -302,6 +302,8 @@ export default function EjendomDetaljeClient({
   };
 
   const [aktivTab, setAktivTab] = useState<Tab>('overblik');
+  /** BIZZ-1121: Lazy-mount — mount ved første klik, behold med display:none */
+  const [diagram2Mounted, setDiagram2Mounted] = useState(false);
   const [valgteDoc, setValgteDoc] = useState<Set<string>>(new Set());
 
   /**
@@ -2293,9 +2295,14 @@ export default function EjendomDetaljeClient({
             )}
 
             {/* ══ DIAGRAM v2 (feature-flagged) ══ */}
-            {/* BIZZ-1121: CSS display:none i stedet for unmount — undgår re-fetch ved tab-skift */}
-            {bbrData && (
-              <div style={{ display: aktivTab === 'diagram2' ? 'block' : 'none' }}>
+            {/* BIZZ-1121: Lazy-mount ved første klik, derefter display:none */}
+            {bbrData && (aktivTab === 'diagram2' || diagram2Mounted) && (
+              <div
+                ref={() => {
+                  if (!diagram2Mounted) setDiagram2Mounted(true);
+                }}
+                style={{ display: aktivTab === 'diagram2' ? 'block' : 'none' }}
+              >
                 <DiagramV2
                   rootType="property"
                   rootId={String(

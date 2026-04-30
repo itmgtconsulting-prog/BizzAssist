@@ -218,12 +218,15 @@ async function resolveCompanyGraph(
       const ownerId = `en-${en}`;
       if (nodeIds.has(ownerId)) continue;
       const ownerNavn = navnMap.get(en) ?? `Person ${en}`;
+      // BIZZ-1122: expandableChildren = 1 signalerer at person-noden kan udvides
+      // (expand-route henter personens virksomheder + ejendomme via CVR ES)
       nodes.push({
         id: ownerId,
         label: ownerNavn,
         type: 'person',
         enhedsNummer: en,
         link: `/dashboard/owners/${en}`,
+        expandableChildren: 1,
       });
       nodeIds.add(ownerId);
       edges.push({
@@ -235,8 +238,8 @@ async function resolveCompanyGraph(
   }
 
   // 2b. BIZZ-1122: Datterselskaber via CVR ES /api/cvr-public/related.
-  // Erstatter den gamle cvr_deltagerrelation-baserede sibling-logik der
-  // fejlagtigt inkluderede alle virksomheder med fælles bestyrelse/direktion.
+  // Bruger ejetAfCvr til at bygge korrekt hierarki (ikke fladt).
+  // Filtrerer ophørte virksomheder fra.
   const MAX_TOTAL_NODES = 50;
 
   interface RelatedCompany {
@@ -246,6 +249,7 @@ async function resolveCompanyGraph(
     branche: string | null;
     aktiv: boolean;
     ejerandel: string | null;
+    ejetAfCvr: number | null;
   }
 
   try {
@@ -255,7 +259,10 @@ async function resolveCompanyGraph(
     });
     if (relRes.ok) {
       const relData = await relRes.json();
-      const relatedCompanies: RelatedCompany[] = relData?.virksomheder ?? [];
+      const allRelated: RelatedCompany[] = relData?.virksomheder ?? [];
+
+      // BIZZ-1122: Filtrer ophørte virksomheder fra
+      const relatedCompanies = allRelated.filter((r) => r.aktiv);
 
       // Batch-hent virksomhedsinfo fra cache (for branche_tekst mv.)
       const relCvrs = relatedCompanies.map((r) => String(r.cvr));
@@ -275,7 +282,15 @@ async function resolveCompanyGraph(
         (relCachedCompanies ?? []).map((c: CachedCompany) => [c.cvr, c])
       );
 
-      for (const rel of relatedCompanies.slice(0, 20)) {
+      // BIZZ-1122: Byg hierarkisk graf — brug ejetAfCvr til parent→child relationer.
+      // Sortér: DIREKTE virksomheder (ejetAfCvr = null) først, dernæst children.
+      // Sikrer at parent-noder eksisterer før children refererer til dem.
+      const sorted = [
+        ...relatedCompanies.filter((r) => r.ejetAfCvr == null),
+        ...relatedCompanies.filter((r) => r.ejetAfCvr != null),
+      ];
+
+      for (const rel of sorted) {
         if (nodes.length >= MAX_TOTAL_NODES) break;
         const subCvr = String(rel.cvr);
         const subId = `cvr-${subCvr}`;
@@ -295,11 +310,16 @@ async function resolveCompanyGraph(
           type: 'company',
           cvr: rel.cvr,
           link: `/dashboard/companies/${subCvr}`,
-          isCeased: cached?.ophoert != null || !rel.aktiv,
+          isCeased: false,
         });
         nodeIds.add(subId);
+
+        // BIZZ-1122: Hierarkisk edge — ejetAfCvr bestemmer parent
+        const parentId = rel.ejetAfCvr != null ? `cvr-${rel.ejetAfCvr}` : mainId;
+        // Hvis parent-node ikke eksisterer (fx filtreret som ophørt), brug root
+        const effectiveParent = nodeIds.has(parentId) ? parentId : mainId;
         edges.push({
-          from: mainId,
+          from: effectiveParent,
           to: subId,
           ejerandel: rel.ejerandel ?? undefined,
         });

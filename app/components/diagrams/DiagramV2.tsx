@@ -180,9 +180,7 @@ export default function DiagramV2({
     return (
       <div className="flex items-center justify-center gap-2 py-12">
         <Loader2 size={16} className="animate-spin text-blue-400" />
-        <span className="text-slate-400 text-sm">
-          {da ? 'Bygger diagram…' : 'Building diagram…'}
-        </span>
+        <span className="text-slate-400 text-sm">{da ? 'Henter data…' : 'Loading data…'}</span>
       </div>
     );
   }

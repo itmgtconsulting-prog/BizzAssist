@@ -218,14 +218,14 @@ async function resolveCompanyGraph(
       const ownerId = `en-${en}`;
       if (nodeIds.has(ownerId)) continue;
       const ownerNavn = navnMap.get(en) ?? `Person ${en}`;
-      // BIZZ-1122: Person-noder på virksomhedsdiagrammet skal IKKE have
-      // expandableChildren — expand tilføjer alle personens roller, ikke kun
-      // ejerskab. Expand af person-noder er kun relevant på person-diagrammet.
+      // BIZZ-1122: Person-noder på virksomhedsdiagrammet skal IKKE kunne
+      // udvides — expand tilføjer alle personens roller (inkl. bestyrelse/
+      // direktion i urelaterede virksomheder). enhedsNummer udelades bevidst
+      // så DiagramForce ikke viser Udvid-knappen. Link bevares for navigation.
       nodes.push({
         id: ownerId,
         label: ownerNavn,
         type: 'person',
-        enhedsNummer: en,
         link: `/dashboard/owners/${en}`,
       });
       nodeIds.add(ownerId);

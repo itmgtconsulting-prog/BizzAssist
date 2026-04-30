@@ -808,10 +808,12 @@ function DiagramForce({
         }
       }
     }
-    // BFS downward (skip co-owners). Properties are NOT assigned integer depth —
-    // they'll be placed in Pass 3 of nodeYMap directly below their specific owner.
+    // BFS downward from ALL assigned nodes (skip co-owners).
+    // Starter fra alle noder med depth (inkl. person-noder fra upward BFS)
+    // så children af person-noder (fx IT Management under Jakob) får korrekt
+    // integer depth i stedet for fractional depth.
     const nodeById = new Map(filteredGraph.nodes.map((n) => [n.id, n]));
-    const downQueue = [effectiveGraph.mainId];
+    const downQueue = Array.from(depths.keys());
     while (downQueue.length > 0) {
       const current = downQueue.shift()!;
       const d = depths.get(current) ?? 0;

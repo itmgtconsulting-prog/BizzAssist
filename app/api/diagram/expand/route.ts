@@ -384,7 +384,7 @@ async function expandCompany(
 
   // OPAD: person-ejere af DENNE virksomhed (register/reel_ejer).
   // Tilføjes som person-noder med edge til denne virksomhed.
-  const PERSON_OWNER_TYPES = ['register', 'reel_ejer'];
+  const PERSON_OWNER_TYPES = ['register', 'reel_ejer', 'stifter', 'interessenter'];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: compPersonRows } = await (admin as any)
     .from('cvr_deltagerrelation')

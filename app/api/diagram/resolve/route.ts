@@ -214,13 +214,37 @@ async function resolveCompanyGraph(
       personRollerMap.set(r.deltager_enhedsnummer, arr);
     }
 
-    for (const [en, roller] of Array.from(personRollerMap)) {
+    // Hent ejerandel fra CVR ES for person→virksomhed relationer
+    const personEjerandele = new Map<number, string>();
+    for (const en of enhedsNumre.slice(0, 3)) {
+      try {
+        const pRes = await fetch(`${host}/api/cvr-public/person?enhedsNummer=${en}`, {
+          headers: { cookie },
+          signal: AbortSignal.timeout(8000),
+        });
+        if (pRes.ok) {
+          const pData = await pRes.json();
+          interface PVirk {
+            cvr: number;
+            roller: Array<{ ejerandel?: string | null }>;
+          }
+          const match = (pData?.virksomheder ?? []).find((v: PVirk) => v.cvr === Number(cvr));
+          if (match) {
+            const ej = match.roller?.find(
+              (r: { ejerandel?: string | null }) => r.ejerandel
+            )?.ejerandel;
+            if (ej) personEjerandele.set(en, ej);
+          }
+        }
+      } catch {
+        /* best-effort */
+      }
+    }
+
+    for (const [en] of Array.from(personRollerMap)) {
       const ownerId = `en-${en}`;
       if (nodeIds.has(ownerId)) continue;
       const ownerNavn = navnMap.get(en) ?? `Person ${en}`;
-      // BIZZ-1122: Person-noder bevarer enhedsNummer for Udvid-knap, men
-      // expand-route filtrerer til ejerskabs-virksomheder + personlige
-      // ejendomme når context=company (ikke bestyrelse/direktion).
       nodes.push({
         id: ownerId,
         label: ownerNavn,
@@ -232,7 +256,7 @@ async function resolveCompanyGraph(
       edges.push({
         from: ownerId,
         to: mainId,
-        ejerandel: roller.slice(0, 2).join(', '),
+        ejerandel: personEjerandele.get(en) ?? undefined,
       });
     }
   }

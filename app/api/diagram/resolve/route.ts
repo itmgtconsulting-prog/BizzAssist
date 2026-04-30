@@ -290,13 +290,7 @@ async function resolveCompanyGraph(
           if (nodeIds.has(pcId)) continue;
           const pcSubParts = [pc.virksomhedsform, pc.branche_tekst].filter(Boolean);
           // Find ejer-noden denne virksomhed tilhører
-          const ownerRow = (
-            personalCompRows as Array<{
-              virksomhed_cvr: string;
-              deltager_enhedsnummer: number;
-            }>
-          ).find((r) => r.virksomhed_cvr === pc.cvr);
-          const parentOwnerId = ownerRow ? `en-${ownerRow.deltager_enhedsnummer}` : mainId;
+          // Personlige virksomheder vises som siblings af main (ikke under person)
 
           const pcPropCount = pcPropMap.get(pc.cvr) ?? 0;
           nodes.push({
@@ -312,7 +306,9 @@ async function resolveCompanyGraph(
             expandableChildren: pcPropCount > 0 ? pcPropCount : 0,
           });
           nodeIds.add(pcId);
-          edges.push({ from: parentOwnerId, to: pcId });
+          // Edge fra main (ikke person) — placerer personlige virksomheder
+          // på samme depth-niveau som main-noden (siblings)
+          edges.push({ from: mainId, to: pcId });
         }
       }
     }

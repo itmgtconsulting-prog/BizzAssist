@@ -161,7 +161,10 @@ export default function DiagramV2({
           if (n.bfeNummer != null) allBfesRef.current.add(n.bfeNummer);
         }
 
-        return data.nodes.length > 0 || data.edges.length > 0 ? data : null;
+        // Returner altid data (selv tom) så DiagramForce markerer noden som
+        // expanded og skjuler Udvid-knappen — ellers forbliver knappen synlig
+        // for virksomheder uden ejendomme (fx Radyx Pharma Tech).
+        return data;
       } catch {
         return null;
       }

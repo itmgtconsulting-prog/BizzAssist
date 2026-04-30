@@ -382,57 +382,17 @@ async function expandCompany(
     // Best-effort
   }
 
-  // OPAD: person-ejere af denne virksomhed.
-  // Tilføj person-noder for ejere (register/reel_ejer) der ikke allerede er i grafen.
-  const PERSON_OWNER_TYPES = ['register', 'reel_ejer', 'interessenter', 'stifter'];
+  // OPAD: virksomheds-ejere via CVR ES (holding-selskaber).
+  // Person-noder tilføjes IKKE her — de tilføjes ved expand af det
+  // holding-selskab personen direkte ejer (fx Søren → SqWi expand).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: compPersonRows } = await (admin as any)
     .from('cvr_deltagerrelation')
-    .select('deltager_enhedsnummer, type')
+    .select('deltager_enhedsnummer')
     .eq('virksomhed_cvr', cvr)
     .is('gyldig_til', null)
     .limit(30);
-
   if (compPersonRows?.length) {
-    // Tilføj person-noder for ejere (ownership-typer)
-    const ownerPersons = (
-      compPersonRows as Array<{ deltager_enhedsnummer: number; type: string }>
-    ).filter((r) => PERSON_OWNER_TYPES.includes(r.type));
-    const ownerEnheder = Array.from(
-      new Set(ownerPersons.map((r) => r.deltager_enhedsnummer))
-    ).filter((en) => !existingIds.has(`en-${en}`) && !addedIds.has(`en-${en}`));
-
-    if (ownerEnheder.length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: personNames } = await (admin as any)
-        .from('cvr_deltager')
-        .select('enhedsnummer, navn')
-        .in('enhedsnummer', ownerEnheder.slice(0, 10));
-      const nameMap = new Map<number, string>(
-        ((personNames ?? []) as Array<{ enhedsnummer: number; navn: string }>).map((d) => [
-          d.enhedsnummer,
-          d.navn,
-        ])
-      );
-      for (const en of ownerEnheder.slice(0, 5)) {
-        const pId = `en-${en}`;
-        const personNavn = nameMap.get(en);
-        // Skip personer uden navn i cache — de tilføjes korrekt ved
-        // expand af det rette holding-selskab i stedet
-        if (!personNavn) continue;
-        newNodes.push({
-          id: pId,
-          label: personNavn,
-          type: 'person',
-          enhedsNummer: en,
-          link: `/dashboard/owners/${en}`,
-        });
-        addedIds.add(pId);
-        newEdges.push({ from: pId, to: nodeId });
-      }
-    }
-
-    // OPAD: virksomheds-ejere via CVR ES (holding-selskaber)
     const newPersons = Array.from(
       new Set(
         (compPersonRows as Array<{ deltager_enhedsnummer: number }>)

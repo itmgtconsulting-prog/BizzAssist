@@ -238,8 +238,8 @@ async function expandCompany(
   }>) {
     const coId = `cvr-${co.ejer_cvr}`;
     if (existingIds.has(coId) || addedIds.has(coId)) {
-      // Allerede i grafen → edge
-      newEdges.push({ from: coId, to: nodeId, crossOwnership: true });
+      // Reel ejerskabs-edge (ikke crossOwnership)
+      newEdges.push({ from: coId, to: nodeId });
       continue;
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -282,12 +282,12 @@ async function expandCompany(
   }>) {
     const csId = `cvr-${cs.ejet_cvr}`;
     if (existingIds.has(csId) || addedIds.has(csId)) {
+      // Reel ejerskabs-edge (ikke crossOwnership) — viser ejerrelation
       newEdges.push({
         from: nodeId,
         to: csId,
         ejerandel:
           cs.ejerandel_min != null ? `${cs.ejerandel_min}-${cs.ejerandel_max}%` : undefined,
-        crossOwnership: true,
       });
       continue;
     }
@@ -337,17 +337,20 @@ async function expandCompany(
         branche: string | null;
         aktiv: boolean;
         ejerandel: string | null;
+        ejetAfCvr: number | null;
       }
       for (const rel of (relData?.virksomheder ?? []) as RelComp[]) {
         if (!rel.aktiv) continue;
+        // Kun DIREKTE datterselskaber (ejetAfCvr = null = direkte under root)
+        // Indirekte (ejetAfCvr != null) vises ved expand af mellemnoden
+        if (rel.ejetAfCvr != null) continue;
         const relId = `cvr-${rel.cvr}`;
-        // Allerede i grafen → tilføj edge (ejerskabs-link) uden ny node
+        // Allerede i grafen → tilføj ejerskabs-edge
         if (existingIds.has(relId) || addedIds.has(relId)) {
           newEdges.push({
             from: nodeId,
             to: relId,
             ejerandel: rel.ejerandel ?? undefined,
-            crossOwnership: true,
           });
           continue;
         }
@@ -379,18 +382,53 @@ async function expandCompany(
     // Best-effort
   }
 
-  // OPAD: hvem ejer denne virksomhed?
-  // Find personer tilknyttet virksomheden → kald /api/cvr-public/person for
-  // NYE personer → check om de har ejerandel i en virksomhed der har denne
-  // virksomhed i sin related-liste (= de ejer den via et holdingselskab).
+  // OPAD: person-ejere af denne virksomhed.
+  // Tilføj person-noder for ejere (register/reel_ejer) der ikke allerede er i grafen.
+  const PERSON_OWNER_TYPES = ['register', 'reel_ejer', 'interessenter', 'stifter'];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: compPersonRows } = await (admin as any)
     .from('cvr_deltagerrelation')
-    .select('deltager_enhedsnummer')
+    .select('deltager_enhedsnummer, type')
     .eq('virksomhed_cvr', cvr)
     .is('gyldig_til', null)
-    .limit(20);
+    .limit(30);
+
   if (compPersonRows?.length) {
+    // Tilføj person-noder for ejere (ownership-typer)
+    const ownerPersons = (
+      compPersonRows as Array<{ deltager_enhedsnummer: number; type: string }>
+    ).filter((r) => PERSON_OWNER_TYPES.includes(r.type));
+    const ownerEnheder = Array.from(
+      new Set(ownerPersons.map((r) => r.deltager_enhedsnummer))
+    ).filter((en) => !existingIds.has(`en-${en}`) && !addedIds.has(`en-${en}`));
+
+    if (ownerEnheder.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: personNames } = await (admin as any)
+        .from('cvr_deltager')
+        .select('enhedsnummer, navn')
+        .in('enhedsnummer', ownerEnheder.slice(0, 10));
+      const nameMap = new Map<number, string>(
+        ((personNames ?? []) as Array<{ enhedsnummer: number; navn: string }>).map((d) => [
+          d.enhedsnummer,
+          d.navn,
+        ])
+      );
+      for (const en of ownerEnheder.slice(0, 5)) {
+        const pId = `en-${en}`;
+        newNodes.push({
+          id: pId,
+          label: nameMap.get(en) ?? `Person ${en}`,
+          type: 'person',
+          enhedsNummer: en,
+          link: `/dashboard/owners/${en}`,
+        });
+        addedIds.add(pId);
+        newEdges.push({ from: pId, to: nodeId });
+      }
+    }
+
+    // OPAD: virksomheds-ejere via CVR ES (holding-selskaber)
     const newPersons = Array.from(
       new Set(
         (compPersonRows as Array<{ deltager_enhedsnummer: number }>)

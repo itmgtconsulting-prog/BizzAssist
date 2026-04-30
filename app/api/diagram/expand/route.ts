@@ -248,7 +248,16 @@ async function expandCompany(
       for (const rel of (relData?.virksomheder ?? []) as RelComp[]) {
         if (!rel.aktiv) continue;
         const relId = `cvr-${rel.cvr}`;
-        if (existingIds.has(relId) || addedIds.has(relId)) continue;
+        // Allerede i grafen → tilføj edge (ejerskabs-link) uden ny node
+        if (existingIds.has(relId) || addedIds.has(relId)) {
+          newEdges.push({
+            from: nodeId,
+            to: relId,
+            ejerandel: rel.ejerandel ?? undefined,
+            crossOwnership: true,
+          });
+          continue;
+        }
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: relComp } = await (admin as any)
           .from('cvr_virksomhed')

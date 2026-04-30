@@ -2925,10 +2925,12 @@ function DiagramForce({
                       );
                     })()}
                   {/* BIZZ-1081: Virksomheds-Udvid — vis for virksomheder der kan have
-                      datterselskaber eller ejendomme at opdage. Skjules efter expand. */}
+                      datterselskaber eller ejendomme at opdage. Skjules efter expand.
+                      BIZZ-1122: Skjul hvis expandableChildren eksplicit er 0. */}
                   {!isPerson &&
                     node.cvr != null &&
                     !hasExpandable &&
+                    node.expandableChildren !== 0 &&
                     (() => {
                       const companyLoading = loadingExpansion.has(node.id);
                       const companyExpanded = expandedDynamic.has(node.id);

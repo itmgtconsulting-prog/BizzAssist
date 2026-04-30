@@ -308,8 +308,8 @@ async function resolveCompanyGraph(
             cvr: Number(pc.cvr),
             link: `/dashboard/companies/${pc.cvr}`,
             isCeased: false,
-            // expandableChildren styrer om Udvid-knap vises — 0 ejendomme = ingen knap
-            expandableChildren: pcPropCount > 0 ? pcPropCount : undefined,
+            // expandableChildren: 0 = ingen Udvid-knap, >0 = vis knap
+            expandableChildren: pcPropCount > 0 ? pcPropCount : 0,
           });
           nodeIds.add(pcId);
           edges.push({ from: parentOwnerId, to: pcId });

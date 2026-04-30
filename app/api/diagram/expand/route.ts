@@ -382,17 +382,54 @@ async function expandCompany(
     // Best-effort
   }
 
-  // OPAD: virksomheds-ejere via CVR ES (holding-selskaber).
-  // Person-noder tilføjes IKKE her — de tilføjes ved expand af det
-  // holding-selskab personen direkte ejer (fx Søren → SqWi expand).
+  // OPAD: person-ejere af DENNE virksomhed (register/reel_ejer).
+  // Tilføjes som person-noder med edge til denne virksomhed.
+  const PERSON_OWNER_TYPES = ['register', 'reel_ejer'];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: compPersonRows } = await (admin as any)
     .from('cvr_deltagerrelation')
-    .select('deltager_enhedsnummer')
+    .select('deltager_enhedsnummer, type')
     .eq('virksomhed_cvr', cvr)
     .is('gyldig_til', null)
     .limit(30);
   if (compPersonRows?.length) {
+    // Tilføj person-noder for registrerede ejere
+    const ownerPersons = (
+      compPersonRows as Array<{ deltager_enhedsnummer: number; type: string }>
+    ).filter((r) => PERSON_OWNER_TYPES.includes(r.type));
+    const ownerEnheder = Array.from(
+      new Set(ownerPersons.map((r) => r.deltager_enhedsnummer))
+    ).filter((en) => !existingIds.has(`en-${en}`) && !addedIds.has(`en-${en}`));
+
+    if (ownerEnheder.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: personNames } = await (admin as any)
+        .from('cvr_deltager')
+        .select('enhedsnummer, navn')
+        .in('enhedsnummer', ownerEnheder.slice(0, 10));
+      const nameMap = new Map<number, string>(
+        ((personNames ?? []) as Array<{ enhedsnummer: number; navn: string }>).map((d) => [
+          d.enhedsnummer,
+          d.navn,
+        ])
+      );
+      for (const en of ownerEnheder.slice(0, 5)) {
+        const personNavn = nameMap.get(en);
+        if (!personNavn) continue;
+        const pId = `en-${en}`;
+        newNodes.push({
+          id: pId,
+          label: personNavn,
+          type: 'person',
+          enhedsNummer: en,
+          link: `/dashboard/owners/${en}`,
+        });
+        addedIds.add(pId);
+        newEdges.push({ from: pId, to: nodeId });
+      }
+    }
+
+    // Virksomheds-ejere via CVR ES (holding-selskaber)
     const newPersons = Array.from(
       new Set(
         (compPersonRows as Array<{ deltager_enhedsnummer: number }>)

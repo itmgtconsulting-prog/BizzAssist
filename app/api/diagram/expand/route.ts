@@ -416,9 +416,13 @@ async function expandCompany(
       );
       for (const en of ownerEnheder.slice(0, 5)) {
         const pId = `en-${en}`;
+        const personNavn = nameMap.get(en);
+        // Skip personer uden navn i cache — de tilføjes korrekt ved
+        // expand af det rette holding-selskab i stedet
+        if (!personNavn) continue;
         newNodes.push({
           id: pId,
-          label: nameMap.get(en) ?? `Person ${en}`,
+          label: personNavn,
           type: 'person',
           enhedsNummer: en,
           link: `/dashboard/owners/${en}`,

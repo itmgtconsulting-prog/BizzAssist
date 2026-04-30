@@ -240,7 +240,10 @@ async function expandPerson(
         .join(', ') ?? '';
 
     if (existingIds.has(companyId)) {
-      // Virksomhed allerede i grafen → 2nd-degree edge
+      // BIZZ-1122: På virksomhedsdiagram — skip kryds-edges til eksisterende
+      // noder (gule linier). Ejerstrukturen vises allerede via resolve.
+      if (context === 'company') continue;
+      // Person/property-diagram: vis 2nd-degree edge
       newEdges.push({
         from: nodeId,
         to: companyId,

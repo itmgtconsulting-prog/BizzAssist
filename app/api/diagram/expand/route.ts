@@ -328,8 +328,8 @@ async function expandPerson(
         newEdges.push({ from: nodeId, to: containerId, personallyOwned: true });
       }
 
-      const shownProps = newProps.slice(0, MAX_PROPS_PER_EXPAND);
-      for (const prop of shownProps) {
+      // Personlige ejendomme vises ALLE (ingen max-limit — typisk <20)
+      for (const prop of newProps) {
         const propId = `bfe-${prop.bfe_nummer}`;
         if (!existingIds.has(propId) && !addedIds.has(propId)) {
           newNodes.push({

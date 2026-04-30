@@ -872,6 +872,29 @@ function DiagramForce({
       }
     }
 
+    // BIZZ-1125: Renumber — normaliser alle depths til sekventielle heltal.
+    // Fractional depths (0.5, 1.5 etc.) fra expand-noder konverteres til
+    // rene heltal. Sikrer konsistent layout uanset antal expand-niveauer.
+    const uniqueDepths = Array.from(new Set(depths.values()))
+      .filter((d) => !isNaN(d))
+      .sort((a, b) => a - b);
+    if (uniqueDepths.length > 0) {
+      const minD = uniqueDepths[0];
+      const depthRemap = new Map<number, number>();
+      for (let i = 0; i < uniqueDepths.length; i++) {
+        depthRemap.set(uniqueDepths[i], i + minD);
+      }
+      // Kun renumber hvis der faktisk er fractional depths
+      if (uniqueDepths.some((d) => d % 1 !== 0)) {
+        for (const [id, d] of depths) {
+          const remapped = depthRemap.get(d);
+          if (remapped !== undefined && remapped !== d) {
+            depths.set(id, remapped);
+          }
+        }
+      }
+    }
+
     // Compute the minimum depth among non-PERSON, non-co-owner nodes.
     // Used as anchor for a dedicated "person row" placed one level above.
     let minDepthNonPerson = 0;

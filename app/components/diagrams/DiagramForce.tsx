@@ -831,39 +831,43 @@ function DiagramForce({
       }
     }
 
-    // BIZZ-1125: Second-pass BFS opad — fanger ejere tilføjet via expand
-    // (fx SqWi Holding som parent af Pharma IT ManCo). Første upward BFS
-    // startede kun fra mainId og nåede dem aldrig.
-    const secondUpQueue = Array.from(depths.keys()).filter(
-      (id) => id !== effectiveGraph.mainId && !coOwnerIds.has(id)
-    );
-    while (secondUpQueue.length > 0) {
-      const current = secondUpQueue.shift()!;
-      const d = depths.get(current) ?? 0;
-      for (const p of parentEdges.get(current) ?? []) {
-        if (coOwnerIds.has(p)) continue;
-        const newDepth = d - 1;
-        const existing = depths.get(p);
-        if (existing === undefined || newDepth > existing) {
-          depths.set(p, newDepth);
-          secondUpQueue.push(p);
+    // BIZZ-1125: Fractional depth for expand-noder.
+    // Noder tilføjet via expand kan mangle depth fordi BFS kun startede fra
+    // mainId. I stedet for en second-pass BFS der kan flytte eksisterende noder,
+    // bruger vi fractional depth: expand-parents placeres 0.5 over deres child,
+    // expand-children 0.5 under deres parent. Giver stabile positioner uden
+    // at flytte eksisterende layout.
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const node of filteredGraph.nodes) {
+        if (depths.has(node.id) || coOwnerIds.has(node.id)) continue;
+        // Check parents (edges where this node is "from")
+        const childIds = childEdges.get(node.id) ?? [];
+        const assignedChildren = childIds
+          .filter((c) => depths.has(c) && !coOwnerIds.has(c))
+          .map((c) => depths.get(c)!);
+        if (assignedChildren.length > 0) {
+          // Parent af eksisterende noder → placér 0.5 over shallowest child
+          depths.set(node.id, Math.min(...assignedChildren) - 0.5);
+          changed = true;
+          continue;
         }
-      }
-    }
-    // Second-pass BFS nedad — fanger children af noder fundet i second upward
-    const secondDownQueue = Array.from(depths.keys()).filter((id) => !coOwnerIds.has(id));
-    const secondDownSeen = new Set(secondDownQueue);
-    while (secondDownQueue.length > 0) {
-      const current = secondDownQueue.shift()!;
-      const d = depths.get(current) ?? 0;
-      for (const c of childEdges.get(current) ?? []) {
-        if (secondDownSeen.has(c) || coOwnerIds.has(c)) continue;
-        secondDownSeen.add(c);
-        if (!depths.has(c)) {
-          const childNode = nodeById.get(c);
-          const isPropertyLike = childNode?.type === 'property' || c.startsWith('props-overflow-');
-          depths.set(c, isPropertyLike ? d : d + 1);
-          if (!isPropertyLike) secondDownQueue.push(c);
+        // Check children (edges where this node is "to")
+        const parentIds = parentEdges.get(node.id) ?? [];
+        const assignedParents = parentIds
+          .filter((p) => depths.has(p) && !coOwnerIds.has(p))
+          .map((p) => depths.get(p)!);
+        if (assignedParents.length > 0) {
+          // Child af eksisterende noder → placér 0.5 under deepest parent
+          const nodeType = nodeById.get(node.id);
+          const isPropertyLike =
+            nodeType?.type === 'property' || node.id.startsWith('props-overflow-');
+          depths.set(
+            node.id,
+            isPropertyLike ? Math.max(...assignedParents) : Math.max(...assignedParents) + 0.5
+          );
+          changed = true;
         }
       }
     }

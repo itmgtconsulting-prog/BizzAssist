@@ -231,11 +231,13 @@ async function expandCompany(
     .limit(20);
 
   if (compPersonRows?.length) {
+    // BIZZ-1122: Skip personer der allerede er i grafen — deres virksomheder
+    // er allerede håndteret. Kun NYE personers holding-selskaber er relevante.
     const personEnheder = Array.from(
       new Set(
-        (compPersonRows as Array<{ deltager_enhedsnummer: number }>).map(
-          (r) => r.deltager_enhedsnummer
-        )
+        (compPersonRows as Array<{ deltager_enhedsnummer: number }>)
+          .map((r) => r.deltager_enhedsnummer)
+          .filter((en) => !existingIds.has(`en-${en}`))
       )
     );
 

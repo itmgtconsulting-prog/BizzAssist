@@ -220,6 +220,80 @@ async function expandCompany(
     }
   }
 
+  // Ejere opad: find personer tilknyttet denne virksomhed → deres holding-selskaber
+  // Cache-first via cvr_deltagerrelation (ingen live API-kald)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: compPersonRows } = await (admin as any)
+    .from('cvr_deltagerrelation')
+    .select('deltager_enhedsnummer, type')
+    .eq('virksomhed_cvr', cvr)
+    .is('gyldig_til', null)
+    .limit(20);
+
+  if (compPersonRows?.length) {
+    const personEnheder = Array.from(
+      new Set(
+        (compPersonRows as Array<{ deltager_enhedsnummer: number }>).map(
+          (r) => r.deltager_enhedsnummer
+        )
+      )
+    );
+
+    // Find disse personers andre virksomheder med ownership-typer
+    const OWNER_TYPES = ['register', 'reel_ejer', 'interessenter', 'stifter', 'hovedselskab'];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: siblingRows } = await (admin as any)
+      .from('cvr_deltagerrelation')
+      .select('virksomhed_cvr, deltager_enhedsnummer')
+      .in('deltager_enhedsnummer', personEnheder.slice(0, 10))
+      .in('type', OWNER_TYPES)
+      .is('gyldig_til', null)
+      .limit(100);
+
+    if (siblingRows?.length) {
+      const sibCvrs = Array.from(
+        new Set(
+          (siblingRows as Array<{ virksomhed_cvr: string }>)
+            .map((r) => r.virksomhed_cvr)
+            .filter((c) => c !== cvr && !existingIds.has(`cvr-${c}`) && !addedIds.has(`cvr-${c}`))
+        )
+      );
+
+      if (sibCvrs.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: sibComps } = await (admin as any)
+          .from('cvr_virksomhed')
+          .select('cvr, navn, virksomhedsform, branche_tekst, ophoert')
+          .in('cvr', sibCvrs.slice(0, 20));
+
+        for (const sc of (sibComps ?? []) as Array<{
+          cvr: string;
+          navn: string;
+          virksomhedsform: string | null;
+          branche_tekst: string | null;
+          ophoert: string | null;
+        }>) {
+          if (sc.ophoert != null) continue;
+          const scId = `cvr-${sc.cvr}`;
+          if (addedIds.has(scId)) continue;
+          const scSub = [sc.virksomhedsform, sc.branche_tekst].filter(Boolean);
+          newNodes.push({
+            id: scId,
+            label: sc.navn,
+            sublabel: scSub.length > 0 ? scSub.join(' · ') : undefined,
+            type: 'company',
+            cvr: Number(sc.cvr),
+            link: `/dashboard/companies/${sc.cvr}`,
+            isCeased: false,
+          });
+          addedIds.add(scId);
+          // Edge: sibling → denne virksomhed (de ejer den)
+          newEdges.push({ from: scId, to: nodeId });
+        }
+      }
+    }
+  }
+
   // Datterselskaber via CVR ES /api/cvr-public/related
   try {
     const relRes = await fetch(`${host}/api/cvr-public/related?cvr=${cvr}`, {

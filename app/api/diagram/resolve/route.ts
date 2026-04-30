@@ -266,6 +266,18 @@ async function resolveCompanyGraph(
           .select('cvr, navn, virksomhedsform, branche_tekst, ophoert')
           .in('cvr', personalCvrs.slice(0, 10));
 
+        // Hent ejendomsantal for at sætte expandableChildren korrekt
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: pcPropCounts } = await (admin as any)
+          .from('ejf_ejerskab')
+          .select('ejer_cvr')
+          .in('ejer_cvr', personalCvrs.slice(0, 10))
+          .eq('status', 'gældende');
+        const pcPropMap = new Map<string, number>();
+        for (const r of (pcPropCounts ?? []) as Array<{ ejer_cvr: string }>) {
+          pcPropMap.set(r.ejer_cvr, (pcPropMap.get(r.ejer_cvr) ?? 0) + 1);
+        }
+
         for (const pc of (personalComps ?? []) as Array<{
           cvr: string;
           navn: string;
@@ -286,6 +298,7 @@ async function resolveCompanyGraph(
           ).find((r) => r.virksomhed_cvr === pc.cvr);
           const parentOwnerId = ownerRow ? `en-${ownerRow.deltager_enhedsnummer}` : mainId;
 
+          const pcPropCount = pcPropMap.get(pc.cvr) ?? 0;
           nodes.push({
             id: pcId,
             label: pc.navn,
@@ -295,6 +308,8 @@ async function resolveCompanyGraph(
             cvr: Number(pc.cvr),
             link: `/dashboard/companies/${pc.cvr}`,
             isCeased: false,
+            // expandableChildren styrer om Udvid-knap vises — 0 ejendomme = ingen knap
+            expandableChildren: pcPropCount > 0 ? pcPropCount : undefined,
           });
           nodeIds.add(pcId);
           edges.push({ from: parentOwnerId, to: pcId });

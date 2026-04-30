@@ -135,28 +135,84 @@ async function expandCompany(
     });
   }
 
-  // 2nd-degree edges: for nye ejendomme, find medejere der allerede er i grafen
-  for (const prop of shownProps) {
+  // Medejere: find andre virksomheder der ejer de SAMME ejendomme som denne virksomhed.
+  // Tilføj dem som nye noder (hvis ikke allerede i grafen) eller som 2nd-degree edges.
+  const allBfes = props.map((p) => p.bfe_nummer);
+  if (allBfes.length > 0) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: coOwners } = await (admin as any)
+    const { data: coOwnerRows } = await (admin as any)
       .from('ejf_ejerskab')
-      .select('ejer_cvr, ejer_navn, ejer_type, ejerandel_taeller, ejerandel_naevner')
-      .eq('bfe_nummer', prop.bfe_nummer)
+      .select('bfe_nummer, ejer_cvr, ejer_navn, ejer_type, ejerandel_taeller, ejerandel_naevner')
+      .in('bfe_nummer', allBfes.slice(0, 50))
       .eq('status', 'gældende')
-      .limit(20);
+      .limit(200);
 
-    for (const co of coOwners ?? []) {
-      if (co.ejer_cvr === cvr) continue; // Skip den udvidede node selv
+    // Gruppér medejere — dedup på CVR/navn
+    const seenCoOwners = new Set<string>();
+    for (const co of (coOwnerRows ?? []) as Array<{
+      bfe_nummer: number;
+      ejer_cvr: string | null;
+      ejer_navn: string;
+      ejer_type: string;
+      ejerandel_taeller: number | null;
+      ejerandel_naevner: number | null;
+    }>) {
+      if (co.ejer_cvr === cvr) continue;
       const coId = co.ejer_cvr
         ? `cvr-${co.ejer_cvr}`
         : `person-${co.ejer_navn.replace(/\s+/g, '-').toLowerCase()}`;
-      if (existingIds.has(coId)) {
-        // Medejer allerede i grafen → 2nd-degree edge
+      const propId = `bfe-${co.bfe_nummer}`;
+
+      if (existingIds.has(coId) || addedIds.has(coId)) {
+        // Allerede i grafen → 2nd-degree edge til ejendommen
+        if (existingIds.has(propId) || addedIds.has(propId)) {
+          newEdges.push({
+            from: coId,
+            to: propId,
+            ejerandel: formatEjerandel(co.ejerandel_taeller, co.ejerandel_naevner),
+            crossOwnership: true,
+          });
+        }
+        continue;
+      }
+
+      // Ny medejer — tilføj som node + edge til ejendommen
+      if (!seenCoOwners.has(coId)) {
+        seenCoOwners.add(coId);
+        if (co.ejer_type === 'virksomhed' && co.ejer_cvr) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: coCompany } = await (admin as any)
+            .from('cvr_virksomhed')
+            .select('navn, virksomhedsform, branche_tekst, ophoert')
+            .eq('cvr', co.ejer_cvr)
+            .maybeSingle();
+          if (coCompany?.ophoert != null) continue;
+          const subParts = [coCompany?.virksomhedsform, coCompany?.branche_tekst].filter(Boolean);
+          newNodes.push({
+            id: coId,
+            label: coCompany?.navn ?? co.ejer_navn,
+            sublabel: subParts.length > 0 ? subParts.join(' · ') : undefined,
+            type: 'company',
+            cvr: Number(co.ejer_cvr),
+            link: `/dashboard/companies/${co.ejer_cvr}`,
+            isCeased: false,
+          });
+        } else {
+          newNodes.push({
+            id: coId,
+            label: co.ejer_navn,
+            type: 'person',
+          });
+        }
+        addedIds.add(coId);
+      }
+
+      // Edge fra medejer til ejendommen
+      if (existingIds.has(propId) || addedIds.has(propId)) {
         newEdges.push({
           from: coId,
-          to: `bfe-${prop.bfe_nummer}`,
+          to: propId,
           ejerandel: formatEjerandel(co.ejerandel_taeller, co.ejerandel_naevner),
-          crossOwnership: true,
         });
       }
     }

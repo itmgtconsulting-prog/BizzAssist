@@ -218,15 +218,15 @@ async function resolveCompanyGraph(
       const ownerId = `en-${en}`;
       if (nodeIds.has(ownerId)) continue;
       const ownerNavn = navnMap.get(en) ?? `Person ${en}`;
-      // BIZZ-1122: expandableChildren = 1 signalerer at person-noden kan udvides
-      // (expand-route henter personens virksomheder + ejendomme via CVR ES)
+      // BIZZ-1122: Person-noder på virksomhedsdiagrammet skal IKKE have
+      // expandableChildren — expand tilføjer alle personens roller, ikke kun
+      // ejerskab. Expand af person-noder er kun relevant på person-diagrammet.
       nodes.push({
         id: ownerId,
         label: ownerNavn,
         type: 'person',
         enhedsNummer: en,
         link: `/dashboard/owners/${en}`,
-        expandableChildren: 1,
       });
       nodeIds.add(ownerId);
       edges.push({

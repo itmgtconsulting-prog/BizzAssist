@@ -29,6 +29,8 @@ interface ExpandRequest {
   enhedsNummer?: string;
   existingNodeIds: string[];
   existingBfes: number[];
+  /** BIZZ-1122: diagram context — 'company' filtrerer person-expand til ejerskab */
+  context?: 'company' | 'person' | 'property';
 }
 
 interface ExpandResponse {
@@ -182,7 +184,8 @@ async function expandPerson(
   existingIds: Set<string>,
   existingBfes: Set<number>,
   host: string,
-  cookie: string
+  cookie: string,
+  context?: string
 ): Promise<{ nodes: DiagramNode[]; edges: DiagramEdge[] }> {
   const newNodes: DiagramNode[] = [];
   const newEdges: DiagramEdge[] = [];
@@ -198,9 +201,33 @@ async function expandPerson(
   interface ExpandVirk {
     cvr: number;
     navn: string;
+    aktiv: boolean;
     roller: Array<{ rolle?: string; ejerandel?: string | null }>;
   }
-  const virksomheder: ExpandVirk[] = personData?.virksomheder ?? [];
+  const alleVirksomheder: ExpandVirk[] = personData?.virksomheder ?? [];
+
+  // BIZZ-1122: På virksomhedsdiagram (context=company), vis KUN:
+  // - Virksomheder personen EJER (har ejerandel eller er interessent/enkeltmand)
+  // - Filtrer ophørte fra
+  // - Personlige ejendomme (håndteres nedenfor via person-bridge)
+  const EJERSKABS_ROLLER = new Set([
+    'ejer',
+    'stifter',
+    'interessent',
+    'fuldt ansvarlig deltager',
+    'komplementar',
+    'indehaver',
+  ]);
+  const virksomheder =
+    context === 'company'
+      ? alleVirksomheder.filter((v) => {
+          if (!v.aktiv) return false;
+          return v.roller.some((r) => {
+            const rolle = (r.rolle ?? '').toLowerCase();
+            return EJERSKABS_ROLLER.has(rolle) || r.ejerandel != null;
+          });
+        })
+      : alleVirksomheder;
 
   for (const v of virksomheder) {
     const cvrStr = String(v.cvr);
@@ -338,7 +365,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ExpandRes
     return NextResponse.json({ nodes: [], edges: [], error: 'Invalid JSON' }, { status: 400 });
   }
 
-  const { nodeType, nodeId, cvr, enhedsNummer, existingNodeIds, existingBfes } = body;
+  const { nodeType, nodeId, cvr, enhedsNummer, existingNodeIds, existingBfes, context } = body;
   const existingIds = new Set(existingNodeIds ?? []);
   const existingBfeSet = new Set(existingBfes ?? []);
 
@@ -360,7 +387,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<ExpandRes
         existingIds,
         existingBfeSet,
         host,
-        cookie
+        cookie,
+        context
       );
     } else {
       return NextResponse.json(

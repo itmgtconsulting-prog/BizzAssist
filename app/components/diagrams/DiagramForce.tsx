@@ -2928,6 +2928,8 @@ function DiagramForce({
                   {!isPerson &&
                     node.cvr != null &&
                     !hasExpandable &&
+                    // BIZZ-1122: Skjul hvis noden allerede har børn i grafen
+                    !effectiveGraph.edges.some((e) => e.from === node.id) &&
                     (() => {
                       const companyLoading = loadingExpansion.has(node.id);
                       const companyExpanded = expandedDynamic.has(node.id);

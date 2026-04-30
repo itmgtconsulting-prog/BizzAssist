@@ -142,6 +142,9 @@ export default function DiagramV2({
         enhedsNummer: node.enhedsNummer ? String(node.enhedsNummer) : undefined,
         existingNodeIds: [...allNodesRef.current.keys()],
         existingBfes: [...allBfesRef.current],
+        // BIZZ-1122: context fortæller expand-route om den skal filtrere
+        // person-expand til ejerskabs-virksomheder (company-diagram context)
+        context: rootType,
       };
 
       try {
@@ -169,7 +172,7 @@ export default function DiagramV2({
         return null;
       }
     },
-    []
+    [rootType]
   );
 
   // Loading state

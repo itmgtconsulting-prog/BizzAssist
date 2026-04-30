@@ -206,31 +206,11 @@ async function expandPerson(
   }
   const alleVirksomheder: ExpandVirk[] = personData?.virksomheder ?? [];
 
-  // BIZZ-1122: På virksomhedsdiagram (context=company), vis KUN:
-  // - Virksomheder personen EJER (har ejerandel eller er interessent/enkeltmand)
-  // - Filtrer ophørte fra
-  // - Personlige ejendomme (håndteres nedenfor via person-bridge)
-  const EJERSKABS_ROLLER = new Set([
-    'ejer',
-    'stifter',
-    'stiftere',
-    'interessent',
-    'interessenter',
-    'fuldt ansvarlig deltager',
-    'komplementar',
-    'indehaver',
-    'ejerregister',
-  ]);
-  const virksomheder =
-    context === 'company'
-      ? alleVirksomheder.filter((v) => {
-          if (!v.aktiv) return false;
-          return v.roller.some((r) => {
-            const rolle = (r.rolle ?? '').toLowerCase();
-            return EJERSKABS_ROLLER.has(rolle) || r.ejerandel != null;
-          });
-        })
-      : alleVirksomheder;
+  // BIZZ-1122: På virksomhedsdiagram (context=company), vis KUN personlige
+  // ejendomme — ingen virksomheder. Alle relevante virksomheder er allerede
+  // i grafen via resolve (personlige via interessenter/indehaver, datter-
+  // selskaber via /api/cvr-public/related). Skip virksomheds-loop helt.
+  const virksomheder = context === 'company' ? [] : alleVirksomheder;
 
   for (const v of virksomheder) {
     const cvrStr = String(v.cvr);

@@ -68,8 +68,8 @@ async function expandCompany(
   cvr: string,
   existingIds: Set<string>,
   existingBfes: Set<number>,
-  host: string,
-  cookie: string
+  _host: string,
+  _cookie: string
 ): Promise<{ nodes: DiagramNode[]; edges: DiagramEdge[] }> {
   const newNodes: DiagramNode[] = [];
   const newEdges: DiagramEdge[] = [];
@@ -294,58 +294,10 @@ async function expandCompany(
     }
   }
 
-  // Datterselskaber via CVR ES /api/cvr-public/related
-  try {
-    const relRes = await fetch(`${host}/api/cvr-public/related?cvr=${cvr}`, {
-      headers: { cookie },
-      signal: AbortSignal.timeout(10000),
-    });
-    if (relRes.ok) {
-      const relData = await relRes.json();
-      interface RelComp {
-        cvr: number;
-        navn: string;
-        form: string | null;
-        branche: string | null;
-        aktiv: boolean;
-        ejerandel: string | null;
-        ejetAfCvr: number | null;
-      }
-      const related: RelComp[] = (relData?.virksomheder ?? []).filter((r: RelComp) => r.aktiv);
-      for (const rel of related) {
-        const relId = `cvr-${rel.cvr}`;
-        if (existingIds.has(relId) || addedIds.has(relId)) continue;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: relComp } = await (admin as any)
-          .from('cvr_virksomhed')
-          .select('navn, virksomhedsform, branche_tekst, ophoert')
-          .eq('cvr', String(rel.cvr))
-          .maybeSingle();
-        if (relComp?.ophoert != null) continue;
-        const subParts = [
-          relComp?.virksomhedsform ?? rel.form,
-          relComp?.branche_tekst ?? rel.branche,
-        ].filter(Boolean);
-        newNodes.push({
-          id: relId,
-          label: relComp?.navn ?? rel.navn,
-          sublabel: subParts.length > 0 ? subParts.join(' · ') : undefined,
-          type: 'company',
-          cvr: rel.cvr,
-          link: `/dashboard/companies/${rel.cvr}`,
-          isCeased: false,
-        });
-        addedIds.add(relId);
-        const parentId =
-          rel.ejetAfCvr != null && addedIds.has(`cvr-${rel.ejetAfCvr}`)
-            ? `cvr-${rel.ejetAfCvr}`
-            : nodeId;
-        newEdges.push({ from: parentId, to: relId, ejerandel: rel.ejerandel ?? undefined });
-      }
-    }
-  } catch {
-    // Best-effort
-  }
+  // BIZZ-1122: Datterselskaber via /api/cvr-public/related FJERNET fra expand.
+  // Resolve henter allerede datterselskaber for initial graf. Expand af
+  // datterselskaber gav irrelevante virksomheder (fx Pharma IT ApS).
+  // Expand fokuserer nu på: ejendomme + medejere + ejere opad.
 
   return { nodes: newNodes, edges: newEdges };
 }

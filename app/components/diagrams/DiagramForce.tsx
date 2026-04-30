@@ -2925,10 +2925,11 @@ function DiagramForce({
                       );
                     })()}
                   {/* BIZZ-1081: Virksomheds-Udvid — vis for virksomheder der kan have
-                      datterselskaber eller ejendomme at opdage. Skjules efter expand.
-                      BIZZ-1122: Skjul hvis expandableChildren eksplicit er 0. */}
+                      ejere eller ejendomme at opdage. Skjules efter expand.
+                      BIZZ-1122: Skjul for main-node og noder med expandableChildren=0. */}
                   {!isPerson &&
                     node.cvr != null &&
+                    node.type !== 'main' &&
                     !hasExpandable &&
                     node.expandableChildren !== 0 &&
                     (() => {

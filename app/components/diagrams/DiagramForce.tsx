@@ -831,6 +831,43 @@ function DiagramForce({
       }
     }
 
+    // BIZZ-1125: Second-pass BFS opad — fanger ejere tilføjet via expand
+    // (fx SqWi Holding som parent af Pharma IT ManCo). Første upward BFS
+    // startede kun fra mainId og nåede dem aldrig.
+    const secondUpQueue = Array.from(depths.keys()).filter(
+      (id) => id !== effectiveGraph.mainId && !coOwnerIds.has(id)
+    );
+    while (secondUpQueue.length > 0) {
+      const current = secondUpQueue.shift()!;
+      const d = depths.get(current) ?? 0;
+      for (const p of parentEdges.get(current) ?? []) {
+        if (coOwnerIds.has(p)) continue;
+        const newDepth = d - 1;
+        const existing = depths.get(p);
+        if (existing === undefined || newDepth > existing) {
+          depths.set(p, newDepth);
+          secondUpQueue.push(p);
+        }
+      }
+    }
+    // Second-pass BFS nedad — fanger children af noder fundet i second upward
+    const secondDownQueue = Array.from(depths.keys()).filter((id) => !coOwnerIds.has(id));
+    const secondDownSeen = new Set(secondDownQueue);
+    while (secondDownQueue.length > 0) {
+      const current = secondDownQueue.shift()!;
+      const d = depths.get(current) ?? 0;
+      for (const c of childEdges.get(current) ?? []) {
+        if (secondDownSeen.has(c) || coOwnerIds.has(c)) continue;
+        secondDownSeen.add(c);
+        if (!depths.has(c)) {
+          const childNode = nodeById.get(c);
+          const isPropertyLike = childNode?.type === 'property' || c.startsWith('props-overflow-');
+          depths.set(c, isPropertyLike ? d : d + 1);
+          if (!isPropertyLike) secondDownQueue.push(c);
+        }
+      }
+    }
+
     // Compute the minimum depth among non-PERSON, non-co-owner nodes.
     // Used as anchor for a dedicated "person row" placed one level above.
     let minDepthNonPerson = 0;

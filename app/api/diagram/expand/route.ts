@@ -289,7 +289,7 @@ async function expandCompany(
             isCeased: false,
           });
           addedIds.add(scId);
-          // Edge: sibling → denne virksomhed (de ejer den)
+          // Edge: ejer → denne virksomhed (from=ovenover, to=nedenunder)
           newEdges.push({ from: scId, to: nodeId });
         }
       }

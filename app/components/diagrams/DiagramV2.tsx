@@ -19,7 +19,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Loader2, AlertTriangle } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import type { DiagramGraph, DiagramNode, DiagramEdge } from './DiagramData';
 
@@ -175,14 +175,9 @@ export default function DiagramV2({
     [rootType]
   );
 
-  // Loading state
+  // Loading state — tom div, parent-sidens loading.tsx viser allerede spinner
   if (loading) {
-    return (
-      <div className="flex items-center justify-center gap-2 py-12">
-        <Loader2 size={16} className="animate-spin text-blue-400" />
-        <span className="text-slate-400 text-sm">{da ? 'Henter data…' : 'Loading data…'}</span>
-      </div>
-    );
+    return <div className="w-full h-96" />;
   }
 
   // Error state

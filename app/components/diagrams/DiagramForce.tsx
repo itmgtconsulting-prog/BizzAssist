@@ -2924,13 +2924,11 @@ function DiagramForce({
                         </g>
                       );
                     })()}
-                  {/* BIZZ-1081: Virksomheds-Udvid — samme lilla stil som person-Udvid.
-                      Vis KUN hvis noden ikke allerede har børn i grafen. */}
+                  {/* BIZZ-1081: Virksomheds-Udvid — vis for virksomheder der kan have
+                      datterselskaber eller ejendomme at opdage. Skjules efter expand. */}
                   {!isPerson &&
                     node.cvr != null &&
                     !hasExpandable &&
-                    // BIZZ-1122: Skjul hvis noden allerede har børn i grafen
-                    !effectiveGraph.edges.some((e) => e.from === node.id) &&
                     (() => {
                       const companyLoading = loadingExpansion.has(node.id);
                       const companyExpanded = expandedDynamic.has(node.id);

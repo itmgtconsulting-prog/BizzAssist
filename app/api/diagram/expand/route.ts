@@ -67,7 +67,9 @@ async function expandCompany(
   nodeId: string,
   cvr: string,
   existingIds: Set<string>,
-  existingBfes: Set<number>
+  existingBfes: Set<number>,
+  host: string,
+  cookie: string
 ): Promise<{ nodes: DiagramNode[]; edges: DiagramEdge[] }> {
   const newNodes: DiagramNode[] = [];
   const newEdges: DiagramEdge[] = [];
@@ -216,6 +218,59 @@ async function expandCompany(
         });
       }
     }
+  }
+
+  // Datterselskaber via CVR ES /api/cvr-public/related
+  try {
+    const relRes = await fetch(`${host}/api/cvr-public/related?cvr=${cvr}`, {
+      headers: { cookie },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (relRes.ok) {
+      const relData = await relRes.json();
+      interface RelComp {
+        cvr: number;
+        navn: string;
+        form: string | null;
+        branche: string | null;
+        aktiv: boolean;
+        ejerandel: string | null;
+        ejetAfCvr: number | null;
+      }
+      const related: RelComp[] = (relData?.virksomheder ?? []).filter((r: RelComp) => r.aktiv);
+      for (const rel of related) {
+        const relId = `cvr-${rel.cvr}`;
+        if (existingIds.has(relId) || addedIds.has(relId)) continue;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: relComp } = await (admin as any)
+          .from('cvr_virksomhed')
+          .select('navn, virksomhedsform, branche_tekst, ophoert')
+          .eq('cvr', String(rel.cvr))
+          .maybeSingle();
+        if (relComp?.ophoert != null) continue;
+        const subParts = [
+          relComp?.virksomhedsform ?? rel.form,
+          relComp?.branche_tekst ?? rel.branche,
+        ].filter(Boolean);
+        newNodes.push({
+          id: relId,
+          label: relComp?.navn ?? rel.navn,
+          sublabel: subParts.length > 0 ? subParts.join(' · ') : undefined,
+          type: 'company',
+          cvr: rel.cvr,
+          link: `/dashboard/companies/${rel.cvr}`,
+          isCeased: false,
+        });
+        addedIds.add(relId);
+        const parentId =
+          rel.ejetAfCvr != null && addedIds.has(`cvr-${rel.ejetAfCvr}`)
+            ? `cvr-${rel.ejetAfCvr}`
+            : nodeId;
+        newEdges.push({ from: parentId, to: relId, ejerandel: rel.ejerandel ?? undefined });
+      }
+    }
+  } catch {
+    // Best-effort
   }
 
   return { nodes: newNodes, edges: newEdges };
@@ -431,20 +486,29 @@ export async function POST(request: NextRequest): Promise<NextResponse<ExpandRes
   try {
     let result: { nodes: DiagramNode[]; edges: DiagramEdge[] };
 
+    const proto = request.headers.get('x-forwarded-proto') ?? 'http';
+    const reqHost = `${proto}://${request.headers.get('host') ?? 'localhost:3000'}`;
+    const reqCookie = request.headers.get('cookie') ?? '';
+
     if (nodeType === 'company' && cvr) {
-      result = await expandCompany(admin, nodeId, cvr, existingIds, existingBfeSet);
+      result = await expandCompany(
+        admin,
+        nodeId,
+        cvr,
+        existingIds,
+        existingBfeSet,
+        reqHost,
+        reqCookie
+      );
     } else if (nodeType === 'person' && enhedsNummer) {
-      const proto = request.headers.get('x-forwarded-proto') ?? 'http';
-      const host = `${proto}://${request.headers.get('host') ?? 'localhost:3000'}`;
-      const cookie = request.headers.get('cookie') ?? '';
       result = await expandPerson(
         admin,
         nodeId,
         enhedsNummer,
         existingIds,
         existingBfeSet,
-        host,
-        cookie,
+        reqHost,
+        reqCookie,
         context
       );
     } else {
@@ -458,12 +522,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<ExpandRes
     const propNodes = result.nodes.filter((n) => n.type === 'property' && n.bfeNummer != null);
     if (propNodes.length > 0) {
       try {
-        const enrichProto = request.headers.get('x-forwarded-proto') ?? 'http';
-        const enrichHost = `${enrichProto}://${request.headers.get('host') ?? 'localhost:3000'}`;
-        const enrichCookie = request.headers.get('cookie') ?? '';
         const bfes = propNodes.map((n) => n.bfeNummer!).join(',');
-        const addrRes = await fetch(`${enrichHost}/api/bfe-addresses?bfes=${bfes}`, {
-          headers: { cookie: enrichCookie },
+        const addrRes = await fetch(`${reqHost}/api/bfe-addresses?bfes=${bfes}`, {
+          headers: { cookie: reqCookie },
           signal: AbortSignal.timeout(10000),
         });
         if (addrRes.ok) {

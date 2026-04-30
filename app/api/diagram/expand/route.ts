@@ -516,26 +516,48 @@ async function expandPerson(
   }
   const alleVirksomheder: ExpandVirk[] = personData?.virksomheder ?? [];
 
-  // BIZZ-1122: På virksomhedsdiagram (context=company), vis KUN:
-  // - Virksomheder med direkte ejerandel (procent) — reelt ejerskab
+  // BIZZ-1122/1125: På virksomhedsdiagram (context=company), vis KUN:
   // - Personlige virksomheder (interessenter/indehaver — enkeltmand/I/S)
-  // - Personlige ejendomme (håndteres nedenfor via person-bridge)
-  // IKKE holdingselskaber der kun har EJERREGISTER uden ejerandel.
+  // - Virksomheder med reel ejerandel (>0%) — ikke 0%
+  // - Filtrer datterselskaber fra (vises ved expand af parent via cvr_virksomhed_ejerskab)
   const PERSONLIGE_ROLLER = new Set(['interessent', 'interessenter', 'indehaver', 'komplementar']);
-  const virksomheder =
-    context === 'company'
-      ? alleVirksomheder.filter((v) => {
-          if (!v.aktiv) return false;
-          return v.roller.some((r) => {
-            const rolle = (r.rolle ?? '').toLowerCase();
-            // Personlige virksomheder (enkeltmand/I/S)
-            if (PERSONLIGE_ROLLER.has(rolle)) return true;
-            // Direkte ejerandel (fx "90-100%") — reelt ejerskab
-            if (r.ejerandel != null) return true;
-            return false;
-          });
-        })
-      : alleVirksomheder;
+  let virksomheder = alleVirksomheder;
+  if (context === 'company') {
+    virksomheder = alleVirksomheder.filter((v) => {
+      if (!v.aktiv) return false;
+      return v.roller.some((r) => {
+        const rolle = (r.rolle ?? '').toLowerCase();
+        if (PERSONLIGE_ROLLER.has(rolle)) return true;
+        // Reel ejerandel — filtrer "0%" og "0.0%" fra
+        if (r.ejerandel != null) {
+          const pctStr = r.ejerandel.replace(/[^0-9.]/g, '');
+          const pct = parseFloat(pctStr);
+          return !isNaN(pct) && pct > 0;
+        }
+        return false;
+      });
+    });
+
+    // BIZZ-1125: Fjern virksomheder der er datterselskaber af andre i listen.
+    // Brug cvr_virksomhed_ejerskab: hvis virksomhed A ejes af virksomhed B,
+    // og B er i listen, så fjern A (den vises ved expand af B).
+    if (virksomheder.length > 1) {
+      const listCvrs = virksomheder.map((v) => String(v.cvr));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: subRows } = await (admin as any)
+        .from('cvr_virksomhed_ejerskab')
+        .select('ejet_cvr')
+        .in('ejer_cvr', listCvrs)
+        .in('ejet_cvr', listCvrs)
+        .is('gyldig_til', null);
+      const subsidiaries = new Set(
+        ((subRows ?? []) as Array<{ ejet_cvr: string }>).map((r) => r.ejet_cvr)
+      );
+      if (subsidiaries.size > 0) {
+        virksomheder = virksomheder.filter((v) => !subsidiaries.has(String(v.cvr)));
+      }
+    }
+  }
 
   for (const v of virksomheder) {
     const cvrStr = String(v.cvr);

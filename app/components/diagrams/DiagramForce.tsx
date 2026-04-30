@@ -1927,47 +1927,11 @@ function DiagramForce({
       return;
     }
 
-    // BIZZ-585: På virksomhedsdiagram er main-node en company. Find
-    // co-owner-persons der ejer company'en direkte (fx Jakob ejer JaJR
-    // Holding) og auto-expand dem så deres personligt ejede ejendomme
-    // også vises på diagrammet — ellers får brugeren kun edge til
-    // holding uden indsigt i den ejendoms-portefølje personen har
-    // udenom selskabet.
-    //
-    // Begrænsning: kun person-nodes med udgående edge til mainNode +
-    // tilhørende co-owner-flag auto-expandes. Øvrige person-nodes længere
-    // ude i hierarkiet må bruge manuel Udvid-klik (undgår over-fetching).
-    if (mainNode.type === 'company' || mainNode.type === 'main') {
-      const topOwners = graph.nodes.filter(
-        (n) =>
-          n.type === 'person' &&
-          n.enhedsNummer != null &&
-          graph.edges.some((e) => e.from === n.id && e.to === mainNode.id)
-      );
-      for (const owner of topOwners) {
-        if (autoExpandDoneRef.current.has(owner.id)) continue;
-        if (expandedDynamic.has(owner.id)) continue;
-        if (loadingExpansion.has(owner.id)) continue;
-        autoExpandDoneRef.current.add(owner.id);
-        if (onExpand) {
-          setLoadingExpansion((prev) => new Set([...prev, owner.id]));
-          void onExpand(owner.id, 'person').then((result) => {
-            setLoadingExpansion((prev) => {
-              const s = new Set(prev);
-              s.delete(owner.id);
-              return s;
-            });
-            if (result) {
-              setExtensionNodes((prev) => [...prev, ...result.nodes]);
-              setExtensionEdges((prev) => [...prev, ...result.edges]);
-              setExpandedDynamic((prev) => new Set([...prev, owner.id]));
-            }
-          });
-        } else {
-          void expandPersonDynamic(owner.id, owner.enhedsNummer!);
-        }
-      }
-    }
+    // BIZZ-1122: Auto-expand af person-noder på virksomhedsdiagrammer er
+    // DEAKTIVERET. Expand-routen tilføjer ALLE virksomheder personen har
+    // roller i (inkl. bestyrelse/direktion), hvilket forurener ejerstruktur-
+    // diagrammet med urelaterede virksomheder. Ejerstrukturen vises allerede
+    // korrekt via /api/cvr-public/related med hierarkisk ejetAfCvr.
   }, [graph, expandPersonDynamic, expandedDynamic, loadingExpansion, onExpand]);
 
   // ── Expand/collapse all helpers ──

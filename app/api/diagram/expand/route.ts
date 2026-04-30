@@ -382,129 +382,136 @@ async function expandCompany(
     // Best-effort
   }
 
-  // OPAD: person-ejere af DENNE virksomhed (register/reel_ejer).
-  // Tilføjes som person-noder med edge til denne virksomhed.
+  // OPAD: person-ejere af DENNE virksomhed.
+  // Vises KUN hvis virksomheden ikke har virksomheds-ejere i cache/CVR ES.
+  // Hvis holdingselskaber ejer virksomheden, er person-ejere (register/reel_ejer)
+  // redundante — de vises via holding-kæden i stedet.
+  const hasCompanyOwners = newNodes.some((n) => n.type === 'company');
   const PERSON_OWNER_TYPES = ['register', 'reel_ejer', 'stifter', 'interessenter'];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: compPersonRows } = await (admin as any)
-    .from('cvr_deltagerrelation')
-    .select('deltager_enhedsnummer, type')
-    .eq('virksomhed_cvr', cvr)
-    .is('gyldig_til', null)
-    .limit(30);
-  if (compPersonRows?.length) {
-    // Tilføj person-noder for registrerede ejere
-    const ownerPersons = (
-      compPersonRows as Array<{ deltager_enhedsnummer: number; type: string }>
-    ).filter((r) => PERSON_OWNER_TYPES.includes(r.type));
-    const ownerEnheder = Array.from(
-      new Set(ownerPersons.map((r) => r.deltager_enhedsnummer))
-    ).filter((en) => !existingIds.has(`en-${en}`) && !addedIds.has(`en-${en}`));
+  if (hasCompanyOwners) {
+    // Spring person-ejere over — virksomheds-ejere dækker
+  } else {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: compPersonRows } = await (admin as any)
+      .from('cvr_deltagerrelation')
+      .select('deltager_enhedsnummer, type')
+      .eq('virksomhed_cvr', cvr)
+      .is('gyldig_til', null)
+      .limit(30);
+    if (compPersonRows?.length) {
+      // Tilføj person-noder for registrerede ejere
+      const ownerPersons = (
+        compPersonRows as Array<{ deltager_enhedsnummer: number; type: string }>
+      ).filter((r) => PERSON_OWNER_TYPES.includes(r.type));
+      const ownerEnheder = Array.from(
+        new Set(ownerPersons.map((r) => r.deltager_enhedsnummer))
+      ).filter((en) => !existingIds.has(`en-${en}`) && !addedIds.has(`en-${en}`));
 
-    if (ownerEnheder.length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: personNames } = await (admin as any)
-        .from('cvr_deltager')
-        .select('enhedsnummer, navn')
-        .in('enhedsnummer', ownerEnheder.slice(0, 10));
-      const nameMap = new Map<number, string>(
-        ((personNames ?? []) as Array<{ enhedsnummer: number; navn: string }>).map((d) => [
-          d.enhedsnummer,
-          d.navn,
-        ])
-      );
-      for (const en of ownerEnheder.slice(0, 5)) {
-        const personNavn = nameMap.get(en);
-        if (!personNavn) continue;
-        const pId = `en-${en}`;
-        newNodes.push({
-          id: pId,
-          label: personNavn,
-          type: 'person',
-          enhedsNummer: en,
-          link: `/dashboard/owners/${en}`,
-        });
-        addedIds.add(pId);
-        newEdges.push({ from: pId, to: nodeId });
-      }
-    }
-
-    // Virksomheds-ejere via CVR ES (holding-selskaber)
-    const newPersons = Array.from(
-      new Set(
-        (compPersonRows as Array<{ deltager_enhedsnummer: number }>)
-          .map((r) => r.deltager_enhedsnummer)
-          .filter((en) => !existingIds.has(`en-${en}`))
-      )
-    );
-
-    // For hver ny person: hent virksomheder med ejerandel, og check om nogen
-    // af dem har den udvidede virksomhed (cvr) i sin related-liste
-    for (const en of newPersons.slice(0, 5)) {
-      try {
-        const personRes = await fetch(`${host}/api/cvr-public/person?enhedsNummer=${en}`, {
-          headers: { cookie },
-          signal: AbortSignal.timeout(8000),
-        });
-        if (!personRes.ok) continue;
-        const personData = await personRes.json();
-        interface PVirk {
-          cvr: number;
-          navn: string;
-          aktiv: boolean;
-          roller: Array<{ rolle?: string; ejerandel?: string | null }>;
-        }
-        // Find virksomheder personen har ejerandel i
-        const owned: PVirk[] = (personData?.virksomheder ?? []).filter(
-          (v: PVirk) => v.aktiv && v.roller.some((r) => r.ejerandel != null)
+      if (ownerEnheder.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: personNames } = await (admin as any)
+          .from('cvr_deltager')
+          .select('enhedsnummer, navn')
+          .in('enhedsnummer', ownerEnheder.slice(0, 10));
+        const nameMap = new Map<number, string>(
+          ((personNames ?? []) as Array<{ enhedsnummer: number; navn: string }>).map((d) => [
+            d.enhedsnummer,
+            d.navn,
+          ])
         );
-        for (const v of owned) {
-          const vId = `cvr-${v.cvr}`;
-          if (existingIds.has(vId) || addedIds.has(vId)) continue;
-          if (v.cvr === Number(cvr)) continue;
-          // Check: ejer denne virksomhed den udvidede virksomhed?
-          try {
-            const relCheck = await fetch(`${host}/api/cvr-public/related?cvr=${v.cvr}`, {
-              headers: { cookie },
-              signal: AbortSignal.timeout(8000),
-            });
-            if (!relCheck.ok) continue;
-            const relCheckData = await relCheck.json();
-            const ownsTarget = (relCheckData?.virksomheder ?? []).some(
-              (r: { cvr: number }) => r.cvr === Number(cvr)
-            );
-            if (!ownsTarget) continue;
-            // Denne virksomhed EJER den udvidede virksomhed — tilføj!
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const { data: ownerComp } = await (admin as any)
-              .from('cvr_virksomhed')
-              .select('navn, virksomhedsform, branche_tekst, ophoert')
-              .eq('cvr', String(v.cvr))
-              .maybeSingle();
-            if (ownerComp?.ophoert != null) continue;
-            const sub = [ownerComp?.virksomhedsform, ownerComp?.branche_tekst].filter(Boolean);
-            const ejerandelStr = v.roller.find((r) => r.ejerandel)?.ejerandel ?? undefined;
-            newNodes.push({
-              id: vId,
-              label: ownerComp?.navn ?? v.navn,
-              sublabel: sub.length > 0 ? sub.join(' · ') : undefined,
-              type: 'company',
-              cvr: v.cvr,
-              link: `/dashboard/companies/${v.cvr}`,
-              isCeased: false,
-            });
-            addedIds.add(vId);
-            newEdges.push({ from: vId, to: nodeId, ejerandel: ejerandelStr });
-            break; // Max 1 holding per person
-          } catch {
-            continue;
-          }
+        for (const en of ownerEnheder.slice(0, 5)) {
+          const personNavn = nameMap.get(en);
+          if (!personNavn) continue;
+          const pId = `en-${en}`;
+          newNodes.push({
+            id: pId,
+            label: personNavn,
+            type: 'person',
+            enhedsNummer: en,
+            link: `/dashboard/owners/${en}`,
+          });
+          addedIds.add(pId);
+          newEdges.push({ from: pId, to: nodeId });
         }
-      } catch {
-        continue;
+      }
+
+      // Virksomheds-ejere via CVR ES (holding-selskaber)
+      const newPersons = Array.from(
+        new Set(
+          (compPersonRows as Array<{ deltager_enhedsnummer: number }>)
+            .map((r) => r.deltager_enhedsnummer)
+            .filter((en) => !existingIds.has(`en-${en}`))
+        )
+      );
+
+      // For hver ny person: hent virksomheder med ejerandel, og check om nogen
+      // af dem har den udvidede virksomhed (cvr) i sin related-liste
+      for (const en of newPersons.slice(0, 5)) {
+        try {
+          const personRes = await fetch(`${host}/api/cvr-public/person?enhedsNummer=${en}`, {
+            headers: { cookie },
+            signal: AbortSignal.timeout(8000),
+          });
+          if (!personRes.ok) continue;
+          const personData = await personRes.json();
+          interface PVirk {
+            cvr: number;
+            navn: string;
+            aktiv: boolean;
+            roller: Array<{ rolle?: string; ejerandel?: string | null }>;
+          }
+          // Find virksomheder personen har ejerandel i
+          const owned: PVirk[] = (personData?.virksomheder ?? []).filter(
+            (v: PVirk) => v.aktiv && v.roller.some((r) => r.ejerandel != null)
+          );
+          for (const v of owned) {
+            const vId = `cvr-${v.cvr}`;
+            if (existingIds.has(vId) || addedIds.has(vId)) continue;
+            if (v.cvr === Number(cvr)) continue;
+            // Check: ejer denne virksomhed den udvidede virksomhed?
+            try {
+              const relCheck = await fetch(`${host}/api/cvr-public/related?cvr=${v.cvr}`, {
+                headers: { cookie },
+                signal: AbortSignal.timeout(8000),
+              });
+              if (!relCheck.ok) continue;
+              const relCheckData = await relCheck.json();
+              const ownsTarget = (relCheckData?.virksomheder ?? []).some(
+                (r: { cvr: number }) => r.cvr === Number(cvr)
+              );
+              if (!ownsTarget) continue;
+              // Denne virksomhed EJER den udvidede virksomhed — tilføj!
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const { data: ownerComp } = await (admin as any)
+                .from('cvr_virksomhed')
+                .select('navn, virksomhedsform, branche_tekst, ophoert')
+                .eq('cvr', String(v.cvr))
+                .maybeSingle();
+              if (ownerComp?.ophoert != null) continue;
+              const sub = [ownerComp?.virksomhedsform, ownerComp?.branche_tekst].filter(Boolean);
+              const ejerandelStr = v.roller.find((r) => r.ejerandel)?.ejerandel ?? undefined;
+              newNodes.push({
+                id: vId,
+                label: ownerComp?.navn ?? v.navn,
+                sublabel: sub.length > 0 ? sub.join(' · ') : undefined,
+                type: 'company',
+                cvr: v.cvr,
+                link: `/dashboard/companies/${v.cvr}`,
+                isCeased: false,
+              });
+              addedIds.add(vId);
+              newEdges.push({ from: vId, to: nodeId, ejerandel: ejerandelStr });
+              break; // Max 1 holding per person
+            } catch {
+              continue;
+            }
+          }
+        } catch {
+          continue;
+        }
       }
     }
-  }
+  } // end else (no company owners)
 
   // BIZZ-1122: Datterselskaber via /api/cvr-public/related FJERNET fra expand.
   // Resolve henter allerede datterselskaber for initial graf. Expand af

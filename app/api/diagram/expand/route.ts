@@ -220,15 +220,108 @@ async function expandCompany(
     }
   }
 
-  // Ejerskab opad + nedad: find virksomheder med aktiv ejerandel I denne
-  // virksomhed, og virksomheder denne virksomhed har ejerandel I.
-  // Bruger /api/cvr-public/related for begge retninger:
-  // - "related for X" giver hvad X EJER (nedad)
-  // - For at finde ejere OPAD: hent personerne, find deres andre virksomheder
-  //   via related, og check om den udvidede virksomhed optræder i listen.
-  //
-  // Simplificeret tilgang: kald related for den udvidede virksomhed (nedad),
-  // og find ejere via personernes related-lister (opad via intern API).
+  // BIZZ-1125: Ejerskab opad + nedad — CACHE-FIRST via cvr_virksomhed_ejerskab.
+  // Fallback til CVR ES /api/cvr-public/related + person-lookup.
+
+  // Cache-first: opad (hvem ejer denne virksomhed?)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: cachedOwners } = await (admin as any)
+    .from('cvr_virksomhed_ejerskab')
+    .select('ejer_cvr, ejerandel_min, ejerandel_max')
+    .eq('ejet_cvr', cvr)
+    .is('gyldig_til', null)
+    .limit(20);
+  for (const co of (cachedOwners ?? []) as Array<{
+    ejer_cvr: string;
+    ejerandel_min: number | null;
+    ejerandel_max: number | null;
+  }>) {
+    const coId = `cvr-${co.ejer_cvr}`;
+    if (existingIds.has(coId) || addedIds.has(coId)) {
+      // Allerede i grafen → edge
+      newEdges.push({ from: coId, to: nodeId, crossOwnership: true });
+      continue;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: ownerComp } = await (admin as any)
+      .from('cvr_virksomhed')
+      .select('navn, virksomhedsform, branche_tekst, ophoert')
+      .eq('cvr', co.ejer_cvr)
+      .maybeSingle();
+    if (ownerComp?.ophoert != null) continue;
+    const sub = [ownerComp?.virksomhedsform, ownerComp?.branche_tekst].filter(Boolean);
+    const ejerStr =
+      co.ejerandel_min != null && co.ejerandel_max != null
+        ? `${co.ejerandel_min}-${co.ejerandel_max}%`
+        : undefined;
+    newNodes.push({
+      id: coId,
+      label: ownerComp?.navn ?? `CVR ${co.ejer_cvr}`,
+      sublabel: sub.length > 0 ? sub.join(' · ') : undefined,
+      type: 'company',
+      cvr: Number(co.ejer_cvr),
+      link: `/dashboard/companies/${co.ejer_cvr}`,
+      isCeased: false,
+    });
+    addedIds.add(coId);
+    newEdges.push({ from: coId, to: nodeId, ejerandel: ejerStr });
+  }
+
+  // Cache-first: nedad (hvad ejer denne virksomhed?)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: cachedSubs } = await (admin as any)
+    .from('cvr_virksomhed_ejerskab')
+    .select('ejet_cvr, ejerandel_min, ejerandel_max')
+    .eq('ejer_cvr', cvr)
+    .is('gyldig_til', null)
+    .limit(20);
+  for (const cs of (cachedSubs ?? []) as Array<{
+    ejet_cvr: string;
+    ejerandel_min: number | null;
+    ejerandel_max: number | null;
+  }>) {
+    const csId = `cvr-${cs.ejet_cvr}`;
+    if (existingIds.has(csId) || addedIds.has(csId)) {
+      newEdges.push({
+        from: nodeId,
+        to: csId,
+        ejerandel:
+          cs.ejerandel_min != null ? `${cs.ejerandel_min}-${cs.ejerandel_max}%` : undefined,
+        crossOwnership: true,
+      });
+      continue;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: subComp } = await (admin as any)
+      .from('cvr_virksomhed')
+      .select('navn, virksomhedsform, branche_tekst, ophoert')
+      .eq('cvr', cs.ejet_cvr)
+      .maybeSingle();
+    if (subComp?.ophoert != null) continue;
+    const sub = [subComp?.virksomhedsform, subComp?.branche_tekst].filter(Boolean);
+    newNodes.push({
+      id: csId,
+      label: subComp?.navn ?? `CVR ${cs.ejet_cvr}`,
+      sublabel: sub.length > 0 ? sub.join(' · ') : undefined,
+      type: 'company',
+      cvr: Number(cs.ejet_cvr),
+      link: `/dashboard/companies/${cs.ejet_cvr}`,
+      isCeased: false,
+    });
+    addedIds.add(csId);
+    newEdges.push({
+      from: nodeId,
+      to: csId,
+      ejerandel: cs.ejerandel_min != null ? `${cs.ejerandel_min}-${cs.ejerandel_max}%` : undefined,
+    });
+  }
+
+  // Fallback til CVR ES hvis cache er tom (backfill ikke nået denne virksomhed endnu)
+  const hasCacheData = (cachedOwners?.length ?? 0) > 0 || (cachedSubs?.length ?? 0) > 0;
+  if (hasCacheData) {
+    // Cache havde data — spring CVR ES over
+    return { nodes: newNodes, edges: newEdges };
+  }
   try {
     // NEDAD: hvad ejer denne virksomhed?
     const relRes = await fetch(`${host}/api/cvr-public/related?cvr=${cvr}`, {

@@ -306,9 +306,17 @@ async function resolveCompanyGraph(
             expandableChildren: pcPropCount > 0 ? pcPropCount : 0,
           });
           nodeIds.add(pcId);
-          // Edge fra main (ikke person) — placerer personlige virksomheder
-          // på samme depth-niveau som main-noden (siblings)
-          edges.push({ from: mainId, to: pcId });
+          // Edge fra person-ejer — IT Management consulting kobles til Jakob,
+          // ikke til JaJR Holding. DiagramForce placerer den på samme depth
+          // som main via downward BFS fra person-noden (depth -1 + 1 = 0).
+          const ownerRow = (
+            personalCompRows as Array<{
+              virksomhed_cvr: string;
+              deltager_enhedsnummer: number;
+            }>
+          ).find((r) => r.virksomhed_cvr === pc.cvr);
+          const personId = ownerRow ? `en-${ownerRow.deltager_enhedsnummer}` : mainId;
+          edges.push({ from: personId, to: pcId });
         }
       }
     }

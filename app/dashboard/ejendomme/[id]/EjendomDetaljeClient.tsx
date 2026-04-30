@@ -2293,17 +2293,22 @@ export default function EjendomDetaljeClient({
             )}
 
             {/* ══ DIAGRAM v2 (feature-flagged) ══ */}
-            {aktivTab === 'diagram2' && bbrData && (
-              <DiagramV2
-                rootType="property"
-                rootId={String(bbrData.ejendomsrelationer?.[0]?.bfeNummer ?? dawaAdresse?.id ?? '')}
-                rootLabel={
-                  dawaAdresse
-                    ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
-                    : `BFE ${bbrData.ejendomsrelationer?.[0]?.bfeNummer ?? ''}`
-                }
-                lang={da ? 'da' : 'en'}
-              />
+            {/* BIZZ-1121: CSS display:none i stedet for unmount — undgår re-fetch ved tab-skift */}
+            {bbrData && (
+              <div style={{ display: aktivTab === 'diagram2' ? 'block' : 'none' }}>
+                <DiagramV2
+                  rootType="property"
+                  rootId={String(
+                    bbrData.ejendomsrelationer?.[0]?.bfeNummer ?? dawaAdresse?.id ?? ''
+                  )}
+                  rootLabel={
+                    dawaAdresse
+                      ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
+                      : `BFE ${bbrData.ejendomsrelationer?.[0]?.bfeNummer ?? ''}`
+                  }
+                  lang={da ? 'da' : 'en'}
+                />
+              </div>
             )}
 
             {/* ══ EJERFORHOLD — always mounted for prefetch (BIZZ-410), hidden when not active ══ */}

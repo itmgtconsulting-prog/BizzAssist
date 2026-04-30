@@ -228,7 +228,7 @@ async function expandPerson(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: company } = await (admin as any)
       .from('cvr_virksomhed')
-      .select('navn, status, virksomhedsform, ophoert')
+      .select('navn, status, virksomhedsform, branche_tekst, ophoert')
       .eq('cvr', cvrStr)
       .maybeSingle();
 
@@ -240,10 +240,13 @@ async function expandPerson(
       .eq('ejer_cvr', cvrStr)
       .eq('status', 'gældende');
 
+    // BIZZ-1123: Inkluder branche_tekst i sublabel
+    const expandSubParts = [company?.virksomhedsform, company?.branche_tekst].filter(Boolean);
     newNodes.push({
       id: companyId,
       label: company?.navn ?? v.navn ?? `CVR ${cvrStr}`,
-      sublabel: company?.virksomhedsform ?? undefined,
+      sublabel: expandSubParts.length > 0 ? expandSubParts.join(' · ') : undefined,
+      branche: company?.branche_tekst ?? undefined,
       type: 'company',
       cvr: Number(cvrStr),
       link: `/dashboard/companies/${cvrStr}`,

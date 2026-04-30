@@ -1954,16 +1954,19 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           )}
 
           {/* ══ DIAGRAM v2 (feature-flagged) ══ */}
-          {aktivTab === 'diagram2' && data && (
-            <DiagramV2
-              rootType="company"
-              rootId={String(data.vat)}
-              rootLabel={data.name ?? ''}
-              lang={lang}
-              onDiagramReady={(base64) => {
-                setAICtx({ diagramBase64: base64 });
-              }}
-            />
+          {/* BIZZ-1121: CSS display:none i stedet for unmount — undgår re-fetch ved tab-skift */}
+          {data && (
+            <div style={{ display: aktivTab === 'diagram2' ? 'block' : 'none' }}>
+              <DiagramV2
+                rootType="company"
+                rootId={String(data.vat)}
+                rootLabel={data.name ?? ''}
+                lang={lang}
+                onDiagramReady={(base64) => {
+                  setAICtx({ diagramBase64: base64 });
+                }}
+              />
+            </div>
           )}
 
           {/* ══ EJENDOMME ══ */}

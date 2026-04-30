@@ -2490,20 +2490,23 @@ export default function PersonDetailPageClient({
           )}
 
           {/* ══ DIAGRAM v2 (feature-flagged) ══ */}
-          {aktivTab === 'diagram2' && data && (
-            <DiagramV2
-              rootType="person"
-              rootId={String(data.enhedsNummer)}
-              rootLabel={data.navn}
-              lang={lang}
-              onNodeClick={(node) => {
-                if (node.type === 'company' || node.type === 'main') {
-                  setAktivTab('overview');
-                } else if (node.link) {
-                  window.location.href = node.link;
-                }
-              }}
-            />
+          {/* BIZZ-1121: CSS display:none i stedet for unmount — undgår re-fetch ved tab-skift */}
+          {data && (
+            <div style={{ display: aktivTab === 'diagram2' ? 'block' : 'none' }}>
+              <DiagramV2
+                rootType="person"
+                rootId={String(data.enhedsNummer)}
+                rootLabel={data.navn}
+                lang={lang}
+                onNodeClick={(node) => {
+                  if (node.type === 'company' || node.type === 'main') {
+                    setAktivTab('overview');
+                  } else if (node.link) {
+                    window.location.href = node.link;
+                  }
+                }}
+              />
+            </div>
           )}
 
           {/* ══ EJENDOMME ══ */}

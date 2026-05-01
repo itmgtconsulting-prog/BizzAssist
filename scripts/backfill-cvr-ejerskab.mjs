@@ -108,7 +108,7 @@ function extractOwnership(ejetCvr, vrData, enhedsNummerToCvr) {
     const deltager = rel?.deltager;
     if (!deltager) continue;
 
-    // Kun virksomheds-deltagere
+    // Kun virksomheds-deltagere (person-ejere håndteres separat via CVR ES person API)
     if (deltager.enhedstype !== 'VIRKSOMHED') continue;
     const enhedsNr = deltager.enhedsNummer;
     if (!enhedsNr) continue;
@@ -117,24 +117,24 @@ function extractOwnership(ejetCvr, vrData, enhedsNummerToCvr) {
     const deltagerCvr = enhedsNummerToCvr.get(enhedsNr);
     if (!deltagerCvr || deltagerCvr === ejetCvr) continue;
 
-    // Check om deltageren er i EJERREGISTER (registreret ejer)
+    // Check om deltageren er i EJERREGISTER med aktiv ejerandel
     const organisationer = rel.organisationer ?? [];
     let isOwner = false;
+    let ejerandelMin = null;
+    let ejerandelMax = null;
     let gyldigFra = null;
-    let gyldigTil = null;
 
     for (const org of organisationer) {
       if (org?.hovedtype !== 'REGISTER') continue;
 
-      // Check medlemsperiode FØRST — udløbet = historisk ejerskab
+      // Check medlemsperiode — udløbet = historisk ejerskab
       const medlemsperioder = org?.medlemsperiode ?? [];
       const aktivMedlem = medlemsperioder.find(
         (m) => m?.periode?.gyldigTil == null
       );
-      // Hvis der er medlemsperioder men INGEN aktiv → ejerskabet er udløbet
       if (medlemsperioder.length > 0 && !aktivMedlem) continue;
 
-      // Check FUNKTION = EJERREGISTER
+      // Check FUNKTION = EJERREGISTER med aktiv periode
       const attrs = org?.attributter ?? [];
       const hasEjerReg = attrs.some(
         (a) =>
@@ -144,50 +144,69 @@ function extractOwnership(ejetCvr, vrData, enhedsNummerToCvr) {
           )
       );
       if (!hasEjerReg) continue;
-      isOwner = true;
 
-      // Ejerandel (EJERANDEL_PROCENT) — kan mangle for virksomheds-deltagere
-      for (const attr of attrs) {
+      // Ejerandel: check BÅDE org.attributter OG org.medlemsData[].attributter
+      const allAttrSources = [
+        ...(org?.attributter ?? []),
+        ...((org?.medlemsData ?? []).flatMap((md) => md?.attributter ?? [])),
+      ];
+
+      let foundEjerandel = false;
+      for (const attr of allAttrSources) {
         if (attr?.type !== 'EJERANDEL_PROCENT') continue;
-        const currentVal = (attr?.vaerdier ?? []).find(
-          (v) => v?.periode?.gyldigTil == null
-        );
-        if (currentVal) {
-          const interval = INTERVAL_MAP[currentVal.vaerdi];
+        const vaerdier = attr?.vaerdier ?? [];
+        // Find aktiv ejerandel (gyldigTil == null)
+        const aktiv = vaerdier.find((v) => v?.periode?.gyldigTil == null);
+        if (aktiv) {
+          // Aktiv ejerandel — brug interval-mapping eller rå decimal
+          const interval = INTERVAL_MAP[aktiv.vaerdi];
           if (interval) {
-            rows.push({
-              ejer_cvr: deltagerCvr,
-              ejet_cvr: ejetCvr,
-              ejerandel_pct: interval.max,
-              ejerandel_min: interval.min,
-              ejerandel_max: interval.max,
-              gyldig_fra: gyldigFra,
-              gyldig_til: gyldigTil,
-              sidst_opdateret: new Date().toISOString(),
-            });
-            isOwner = false; // Allerede tilføjet med ejerandel
+            ejerandelMin = interval.min;
+            ejerandelMax = interval.max;
+          } else {
+            // Rå decimal (fx "0.5" = 50%)
+            const pct = parseFloat(aktiv.vaerdi);
+            if (!isNaN(pct)) {
+              ejerandelMin = pct * 100;
+              ejerandelMax = pct * 100;
+            }
           }
+          foundEjerandel = true;
+          isOwner = true;
+          break;
+        }
+        // Alle ejerandels-værdier er udløbet → ejerskabet er udløbet
+        const hasAny = vaerdier.length > 0;
+        const allExpired = vaerdier.every((v) => v?.periode?.gyldigTil != null);
+        if (hasAny && allExpired) {
+          // Ejerandel udløbet — skip dette ejerskab
+          isOwner = false;
+          break;
         }
       }
 
-      // Medlemsperiode
+      // Hvis ingen EJERANDEL_PROCENT data overhovedet → ejer uden angivet andel
+      if (!foundEjerandel && isOwner === false) {
+        isOwner = true;
+      }
+
+      // Gyldig fra
       if (aktivMedlem?.periode) {
         gyldigFra = aktivMedlem.periode.gyldigFra ?? null;
-        gyldigTil = mp.periode.gyldigTil ?? null;
       }
       break;
     }
 
-    // Tilføj uden ejerandel hvis EJERREGISTER men ingen EJERANDEL_PROCENT
+    // Tilføj ejerskab (med eller uden ejerandel)
     if (isOwner) {
       rows.push({
         ejer_cvr: deltagerCvr,
         ejet_cvr: ejetCvr,
-        ejerandel_pct: null,
-        ejerandel_min: null,
-        ejerandel_max: null,
+        ejerandel_pct: ejerandelMax,
+        ejerandel_min: ejerandelMin,
+        ejerandel_max: ejerandelMax,
         gyldig_fra: gyldigFra,
-        gyldig_til: gyldigTil,
+        gyldig_til: null,
         sidst_opdateret: new Date().toISOString(),
       });
     }

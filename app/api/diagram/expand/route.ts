@@ -316,71 +316,71 @@ async function expandCompany(
     });
   }
 
-  // Fallback til CVR ES hvis cache er tom (backfill ikke nået denne virksomhed endnu)
+  // Fallback til CVR ES kun hvis cache er HELT tom
   const hasCacheData = (cachedOwners?.length ?? 0) > 0 || (cachedSubs?.length ?? 0) > 0;
   if (hasCacheData) {
-    // Cache havde data — spring CVR ES over
-    return { nodes: newNodes, edges: newEdges };
-  }
-  try {
-    // NEDAD: hvad ejer denne virksomhed?
-    const relRes = await fetch(`${host}/api/cvr-public/related?cvr=${cvr}`, {
-      headers: { cookie },
-      signal: AbortSignal.timeout(10000),
-    });
-    if (relRes.ok) {
-      const relData = await relRes.json();
-      interface RelComp {
-        cvr: number;
-        navn: string;
-        form: string | null;
-        branche: string | null;
-        aktiv: boolean;
-        ejerandel: string | null;
-        ejetAfCvr: number | null;
-      }
-      for (const rel of (relData?.virksomheder ?? []) as RelComp[]) {
-        if (!rel.aktiv) continue;
-        // Kun DIREKTE datterselskaber (ejetAfCvr = null = direkte under root)
-        // Indirekte (ejetAfCvr != null) vises ved expand af mellemnoden
-        if (rel.ejetAfCvr != null) continue;
-        const relId = `cvr-${rel.cvr}`;
-        // Allerede i grafen → tilføj ejerskabs-edge
-        if (existingIds.has(relId) || addedIds.has(relId)) {
-          newEdges.push({
-            from: nodeId,
-            to: relId,
-            ejerandel: rel.ejerandel ?? undefined,
-          });
-          continue;
+    // Cache havde data — spring CVR ES over, men kør ALTID person-owner nedenfor
+  } else {
+    try {
+      // NEDAD: hvad ejer denne virksomhed?
+      const relRes = await fetch(`${host}/api/cvr-public/related?cvr=${cvr}`, {
+        headers: { cookie },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (relRes.ok) {
+        const relData = await relRes.json();
+        interface RelComp {
+          cvr: number;
+          navn: string;
+          form: string | null;
+          branche: string | null;
+          aktiv: boolean;
+          ejerandel: string | null;
+          ejetAfCvr: number | null;
         }
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: relComp } = await (admin as any)
-          .from('cvr_virksomhed')
-          .select('navn, virksomhedsform, branche_tekst, ophoert')
-          .eq('cvr', String(rel.cvr))
-          .maybeSingle();
-        if (relComp?.ophoert != null) continue;
-        const sub = [
-          relComp?.virksomhedsform ?? rel.form,
-          relComp?.branche_tekst ?? rel.branche,
-        ].filter(Boolean);
-        newNodes.push({
-          id: relId,
-          label: relComp?.navn ?? rel.navn,
-          sublabel: sub.length > 0 ? sub.join(' · ') : undefined,
-          type: 'company',
-          cvr: rel.cvr,
-          link: `/dashboard/companies/${rel.cvr}`,
-          isCeased: false,
-        });
-        addedIds.add(relId);
-        newEdges.push({ from: nodeId, to: relId, ejerandel: rel.ejerandel ?? undefined });
+        for (const rel of (relData?.virksomheder ?? []) as RelComp[]) {
+          if (!rel.aktiv) continue;
+          // Kun DIREKTE datterselskaber (ejetAfCvr = null = direkte under root)
+          // Indirekte (ejetAfCvr != null) vises ved expand af mellemnoden
+          if (rel.ejetAfCvr != null) continue;
+          const relId = `cvr-${rel.cvr}`;
+          // Allerede i grafen → tilføj ejerskabs-edge
+          if (existingIds.has(relId) || addedIds.has(relId)) {
+            newEdges.push({
+              from: nodeId,
+              to: relId,
+              ejerandel: rel.ejerandel ?? undefined,
+            });
+            continue;
+          }
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: relComp } = await (admin as any)
+            .from('cvr_virksomhed')
+            .select('navn, virksomhedsform, branche_tekst, ophoert')
+            .eq('cvr', String(rel.cvr))
+            .maybeSingle();
+          if (relComp?.ophoert != null) continue;
+          const sub = [
+            relComp?.virksomhedsform ?? rel.form,
+            relComp?.branche_tekst ?? rel.branche,
+          ].filter(Boolean);
+          newNodes.push({
+            id: relId,
+            label: relComp?.navn ?? rel.navn,
+            sublabel: sub.length > 0 ? sub.join(' · ') : undefined,
+            type: 'company',
+            cvr: rel.cvr,
+            link: `/dashboard/companies/${rel.cvr}`,
+            isCeased: false,
+          });
+          addedIds.add(relId);
+          newEdges.push({ from: nodeId, to: relId, ejerandel: rel.ejerandel ?? undefined });
+        }
       }
+    } catch {
+      // Best-effort
     }
-  } catch {
-    // Best-effort
-  }
+  } // end else (no cache data → CVR ES fallback)
 
   // OPAD: person-ejere af DENNE virksomhed.
   // Vises KUN hvis virksomheden ikke har virksomheds-ejere i cache/CVR ES.

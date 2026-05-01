@@ -585,10 +585,63 @@ async function expandCompany(
     }
   } // end else (no company owners)
 
-  // BIZZ-1122: Datterselskaber via /api/cvr-public/related FJERNET fra expand.
-  // Resolve henter allerede datterselskaber for initial graf. Expand af
-  // datterselskaber gav irrelevante virksomheder (fx Pharma IT ApS).
-  // Expand fokuserer nu på: ejendomme + medejere + ejere opad.
+  // Final pass: for ALLE nye virksomheds-noder, check om de har ejerskabs-
+  // relationer til eksisterende noder i grafen (begge retninger).
+  // Tegner edges med det samme — ikke først ved expand af den nye node.
+  const newCompanyCvrs = newNodes
+    .filter((n) => n.type === 'company' && n.cvr)
+    .map((n) => String(n.cvr));
+  if (newCompanyCvrs.length > 0) {
+    // Nedad: hvad ejer de nye noder der allerede er i grafen?
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: newOwnedRows } = await (admin as any)
+      .from('cvr_virksomhed_ejerskab')
+      .select('ejer_cvr, ejet_cvr, ejerandel_min, ejerandel_max')
+      .in('ejer_cvr', newCompanyCvrs)
+      .is('gyldig_til', null)
+      .limit(100);
+    for (const r of (newOwnedRows ?? []) as Array<{
+      ejer_cvr: string;
+      ejet_cvr: string;
+      ejerandel_min: number | null;
+      ejerandel_max: number | null;
+    }>) {
+      const fromId = `cvr-${r.ejer_cvr}`;
+      const toId = `cvr-${r.ejet_cvr}`;
+      if (!existingIds.has(toId) && !addedIds.has(toId)) continue;
+      // Skip edges der allerede findes
+      if (newEdges.some((e) => e.from === fromId && e.to === toId)) continue;
+      newEdges.push({
+        from: fromId,
+        to: toId,
+        ejerandel: r.ejerandel_min != null ? `${r.ejerandel_min}-${r.ejerandel_max}%` : undefined,
+      });
+    }
+    // Opad: hvem ejer de nye noder der allerede er i grafen?
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: newOwnerRows } = await (admin as any)
+      .from('cvr_virksomhed_ejerskab')
+      .select('ejer_cvr, ejet_cvr, ejerandel_min, ejerandel_max')
+      .in('ejet_cvr', newCompanyCvrs)
+      .is('gyldig_til', null)
+      .limit(100);
+    for (const r of (newOwnerRows ?? []) as Array<{
+      ejer_cvr: string;
+      ejet_cvr: string;
+      ejerandel_min: number | null;
+      ejerandel_max: number | null;
+    }>) {
+      const fromId = `cvr-${r.ejer_cvr}`;
+      const toId = `cvr-${r.ejet_cvr}`;
+      if (!existingIds.has(fromId) && !addedIds.has(fromId)) continue;
+      if (newEdges.some((e) => e.from === fromId && e.to === toId)) continue;
+      newEdges.push({
+        from: fromId,
+        to: toId,
+        ejerandel: r.ejerandel_min != null ? `${r.ejerandel_min}-${r.ejerandel_max}%` : undefined,
+      });
+    }
+  }
 
   return { nodes: newNodes, edges: newEdges };
 }

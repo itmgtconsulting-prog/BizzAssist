@@ -423,11 +423,12 @@ async function expandCompany(
           const personNavn = nameMap.get(en);
           if (!personNavn) continue;
           const pId = `en-${en}`;
+          // Ingen enhedsNummer → ingen Udvid-knap. Personen er allerede
+          // i kontekst af sit holding-selskab. Link bevares for navigation.
           newNodes.push({
             id: pId,
             label: personNavn,
             type: 'person',
-            enhedsNummer: en,
             link: `/dashboard/owners/${en}`,
           });
           addedIds.add(pId);

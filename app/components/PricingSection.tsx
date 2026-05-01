@@ -242,8 +242,8 @@ export default function PricingSection() {
         {/* Fine print */}
         <p className="text-center text-slate-600 text-sm mt-10">
           {da
-            ? 'Alle priser er ekskl. moms. Ingen bindingsperiode — opsig når som helst.'
-            : 'All prices exclude VAT. No lock-in — cancel anytime.'}
+            ? 'Alle priser er inkl. moms. Ingen bindingsperiode — opsig når som helst.'
+            : 'All prices include VAT. No lock-in — cancel anytime.'}
         </p>
       </div>
     </section>

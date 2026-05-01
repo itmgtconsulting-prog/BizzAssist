@@ -211,7 +211,7 @@ export default function PublicPricingSection() {
       </div>
 
       <p className="text-center text-slate-600 text-xs mt-6">
-        Alle priser er ekskl. moms. Ingen bindingsperiode — opsig når som helst.
+        Alle priser er inkl. moms. Ingen bindingsperiode — opsig når som helst.
       </p>
     </section>
   );

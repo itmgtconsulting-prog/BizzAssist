@@ -2998,7 +2998,6 @@ function DiagramForce({
                   {!isPerson &&
                     node.cvr != null &&
                     node.type !== 'main' &&
-                    !hasExpandable &&
                     node.expandableChildren !== 0 &&
                     (() => {
                       const companyLoading = loadingExpansion.has(node.id);
@@ -3059,7 +3058,9 @@ function DiagramForce({
                 </>
               );
             })()}
-            {hasExpandable && (
+            {/* Fold/unfold for co-owner children — KUN vis hvis noden har
+                skjulte children med collapseParent (ikke ejerskabs-expand) */}
+            {hasExpandable && effectiveGraph.nodes.some((n) => n.collapseParent === node.id) && (
               <g
                 className="cursor-pointer"
                 onMouseDown={(e) => e.stopPropagation()}

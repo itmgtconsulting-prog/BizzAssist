@@ -431,7 +431,28 @@ async function expandCompany(
             link: `/dashboard/owners/${en}`,
           });
           addedIds.add(pId);
-          newEdges.push({ from: pId, to: nodeId });
+          // Hent ejerandel fra CVR ES
+          let personEjerandel: string | undefined;
+          try {
+            const pRes = await fetch(`${host}/api/cvr-public/person?enhedsNummer=${en}`, {
+              headers: { cookie },
+              signal: AbortSignal.timeout(8000),
+            });
+            if (pRes.ok) {
+              const pData = await pRes.json();
+              const match = (pData?.virksomheder ?? []).find(
+                (v: { cvr: number }) => v.cvr === Number(cvr)
+              );
+              if (match) {
+                personEjerandel = match.roller?.find(
+                  (r: { ejerandel?: string | null }) => r.ejerandel
+                )?.ejerandel;
+              }
+            }
+          } catch {
+            /* best-effort */
+          }
+          newEdges.push({ from: pId, to: nodeId, ejerandel: personEjerandel });
         }
       }
 

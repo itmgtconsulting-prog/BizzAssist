@@ -248,15 +248,14 @@ async function expandCompany(
       virksomhedsform: string | null;
       branche_tekst: string | null;
       ophoert: string | null;
-    } | null =
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (
-        await (admin as any)
-          .from('cvr_virksomhed')
-          .select('navn, virksomhedsform, branche_tekst, ophoert')
-          .eq('cvr', co.ejer_cvr)
-          .maybeSingle()
-      ).data;
+    } | null = // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (
+      await (admin as any)
+        .from('cvr_virksomhed')
+        .select('navn, virksomhedsform, branche_tekst, ophoert')
+        .eq('cvr', co.ejer_cvr)
+        .maybeSingle()
+    ).data;
     // Fallback: hent navn fra ejf_ejerskab (ejer_navn) eller CVR ES
     if (!ownerComp) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -498,6 +497,7 @@ async function expandCompany(
             id: pId,
             label: personNavn,
             type: 'person',
+            enhedsNummer: en,
             link: `/dashboard/owners/${en}`,
           });
           addedIds.add(pId);

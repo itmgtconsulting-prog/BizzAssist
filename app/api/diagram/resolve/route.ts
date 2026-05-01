@@ -514,6 +514,49 @@ async function resolveCompanyGraph(
     }
   }
 
+  // Beregn expandableChildren for ALLE virksomheder i grafen.
+  // Checker cvr_virksomhed_ejerskab for ejere/datterselskaber der IKKE allerede
+  // er i grafen. Noder med 0 ekspanderbare = ingen Udvid-knap.
+  const allCompanyNodes = nodes.filter((n) => (n.type === 'company' || n.type === 'main') && n.cvr);
+  if (allCompanyNodes.length > 0) {
+    const allCvrList = allCompanyNodes.map((n) => String(n.cvr));
+    // Ejere opad: hvem ejer disse virksomheder men er IKKE i grafen?
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: ownerCounts } = await (admin as any)
+      .from('cvr_virksomhed_ejerskab')
+      .select('ejet_cvr, ejer_cvr')
+      .in('ejet_cvr', allCvrList)
+      .is('gyldig_til', null);
+    // Datterselskaber nedad: hvad ejer disse men er IKKE i grafen?
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: subCounts } = await (admin as any)
+      .from('cvr_virksomhed_ejerskab')
+      .select('ejer_cvr, ejet_cvr')
+      .in('ejer_cvr', allCvrList)
+      .is('gyldig_til', null);
+
+    // Tæl noder IKKE allerede i grafen per CVR
+    const expandMap = new Map<string, number>();
+    for (const r of (ownerCounts ?? []) as Array<{ ejet_cvr: string; ejer_cvr: string }>) {
+      if (nodeIds.has(`cvr-${r.ejer_cvr}`)) continue;
+      expandMap.set(r.ejet_cvr, (expandMap.get(r.ejet_cvr) ?? 0) + 1);
+    }
+    for (const r of (subCounts ?? []) as Array<{ ejer_cvr: string; ejet_cvr: string }>) {
+      if (nodeIds.has(`cvr-${r.ejet_cvr}`)) continue;
+      expandMap.set(r.ejer_cvr, (expandMap.get(r.ejer_cvr) ?? 0) + 1);
+    }
+
+    // Sæt expandableChildren på alle virksomheds-noder
+    for (const node of allCompanyNodes) {
+      if (node.type === 'main') continue; // main har aldrig Udvid
+      const cvrStr = String(node.cvr);
+      const count = expandMap.get(cvrStr) ?? 0;
+      // Behold eksisterende expandableChildren (fx ejendomme) men tilføj ejerskab
+      const existing = node.expandableChildren ?? 0;
+      node.expandableChildren = existing + count > 0 ? existing + count : 0;
+    }
+  }
+
   return { nodes, edges, mainId };
 }
 

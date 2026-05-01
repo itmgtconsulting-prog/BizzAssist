@@ -125,6 +125,15 @@ function extractOwnership(ejetCvr, vrData, enhedsNummerToCvr) {
 
     for (const org of organisationer) {
       if (org?.hovedtype !== 'REGISTER') continue;
+
+      // Check medlemsperiode FØRST — udløbet = historisk ejerskab
+      const medlemsperioder = org?.medlemsperiode ?? [];
+      const aktivMedlem = medlemsperioder.find(
+        (m) => m?.periode?.gyldigTil == null
+      );
+      // Hvis der er medlemsperioder men INGEN aktiv → ejerskabet er udløbet
+      if (medlemsperioder.length > 0 && !aktivMedlem) continue;
+
       // Check FUNKTION = EJERREGISTER
       const attrs = org?.attributter ?? [];
       const hasEjerReg = attrs.some(
@@ -162,11 +171,8 @@ function extractOwnership(ejetCvr, vrData, enhedsNummerToCvr) {
       }
 
       // Medlemsperiode
-      const mp = (org?.medlemsperiode ?? []).find(
-        (m) => m?.periode?.gyldigTil == null
-      );
-      if (mp?.periode) {
-        gyldigFra = mp.periode.gyldigFra ?? null;
+      if (aktivMedlem?.periode) {
+        gyldigFra = aktivMedlem.periode.gyldigFra ?? null;
         gyldigTil = mp.periode.gyldigTil ?? null;
       }
       break;

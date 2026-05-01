@@ -850,8 +850,10 @@ function DiagramForce({
           .filter((c) => depths.has(c) && !coOwnerIds.has(c))
           .map((c) => depths.get(c)!);
         if (assignedChildren.length > 0) {
-          // Parent af eksisterende noder → placér 0.5 over shallowest child
-          depths.set(node.id, Math.min(...assignedChildren) - 0.5);
+          // Parent af eksisterende noder → placér 0.5 over DEEPEST child
+          // (ikke shallowest — undgår at ejere fra dybe expand-noder
+          // placeres for højt oppe i diagrammet)
+          depths.set(node.id, Math.max(...assignedChildren) - 0.5);
           changed = true;
           continue;
         }

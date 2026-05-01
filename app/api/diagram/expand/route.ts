@@ -242,12 +242,39 @@ async function expandCompany(
       newEdges.push({ from: coId, to: nodeId });
       continue;
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: ownerComp } = await (admin as any)
-      .from('cvr_virksomhed')
-      .select('navn, virksomhedsform, branche_tekst, ophoert')
-      .eq('cvr', co.ejer_cvr)
-      .maybeSingle();
+
+    let ownerComp: {
+      navn: string;
+      virksomhedsform: string | null;
+      branche_tekst: string | null;
+      ophoert: string | null;
+    } | null =
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (
+        await (admin as any)
+          .from('cvr_virksomhed')
+          .select('navn, virksomhedsform, branche_tekst, ophoert')
+          .eq('cvr', co.ejer_cvr)
+          .maybeSingle()
+      ).data;
+    // Fallback: hent navn fra ejf_ejerskab (ejer_navn) eller CVR ES
+    if (!ownerComp) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: ejfRow } = await (admin as any)
+        .from('ejf_ejerskab')
+        .select('ejer_navn')
+        .eq('ejer_cvr', co.ejer_cvr)
+        .limit(1)
+        .maybeSingle();
+      if (ejfRow?.ejer_navn) {
+        ownerComp = {
+          navn: ejfRow.ejer_navn,
+          virksomhedsform: null,
+          branche_tekst: null,
+          ophoert: null,
+        };
+      }
+    }
     if (ownerComp?.ophoert != null) continue;
     const sub = [ownerComp?.virksomhedsform, ownerComp?.branche_tekst].filter(Boolean);
     const ejerStr =
@@ -265,6 +292,31 @@ async function expandCompany(
     });
     addedIds.add(coId);
     newEdges.push({ from: coId, to: nodeId, ejerandel: ejerStr });
+
+    // Check om denne ejer også ejer andre virksomheder allerede i grafen
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: otherOwned } = await (admin as any)
+      .from('cvr_virksomhed_ejerskab')
+      .select('ejet_cvr, ejerandel_min, ejerandel_max')
+      .eq('ejer_cvr', co.ejer_cvr)
+      .is('gyldig_til', null)
+      .limit(20);
+    for (const oo of (otherOwned ?? []) as Array<{
+      ejet_cvr: string;
+      ejerandel_min: number | null;
+      ejerandel_max: number | null;
+    }>) {
+      const ooId = `cvr-${oo.ejet_cvr}`;
+      if (oo.ejet_cvr === cvr) continue; // allerede håndteret
+      if (existingIds.has(ooId)) {
+        newEdges.push({
+          from: coId,
+          to: ooId,
+          ejerandel:
+            oo.ejerandel_min != null ? `${oo.ejerandel_min}-${oo.ejerandel_max}%` : undefined,
+        });
+      }
+    }
   }
 
   // Cache-first: nedad (hvad ejer denne virksomhed?)

@@ -678,7 +678,8 @@ async function expandPerson(
       cvr: Number(cvrStr),
       link: `/dashboard/companies/${cvrStr}`,
       isCeased: company?.ophoert != null,
-      expandableChildren: (propCount ?? 0) > 0 ? (propCount ?? 0) : undefined,
+      // 0 = ingen Udvid-knap, >0 = vis knap, undefined = ukendt (vis knap)
+      expandableChildren: (propCount ?? 0) > 0 ? (propCount ?? 0) : 0,
     });
     addedIds.add(companyId);
 

@@ -383,48 +383,65 @@ async function expandCompany(
   } // end else (no cache data → CVR ES fallback)
 
   // OPAD: person-ejere af DENNE virksomhed.
-  // Vises KUN hvis virksomheden ikke har virksomheds-ejere i cache/CVR ES.
-  // Hvis holdingselskaber ejer virksomheden, er person-ejere (register/reel_ejer)
-  // redundante — de vises via holding-kæden i stedet.
-  const hasCompanyOwners = newNodes.some((n) => n.type === 'company');
-  const PERSON_OWNER_TYPES = ['register', 'reel_ejer', 'stifter', 'interessenter'];
-  if (hasCompanyOwners) {
-    // Spring person-ejere over — virksomheds-ejere dækker
-  } else {
+  // Viser KUN personer med registreret ejerandel (>0%) via CVR ES.
+  // Personer uden ejerandel (bare EJERREGISTER-registrering) skippes.
+  {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: compPersonRows } = await (admin as any)
       .from('cvr_deltagerrelation')
       .select('deltager_enhedsnummer, type')
       .eq('virksomhed_cvr', cvr)
+      .in('type', ['register', 'reel_ejer', 'stifter', 'interessenter'])
       .is('gyldig_til', null)
       .limit(30);
     if (compPersonRows?.length) {
-      // Tilføj person-noder for registrerede ejere
-      const ownerPersons = (
-        compPersonRows as Array<{ deltager_enhedsnummer: number; type: string }>
-      ).filter((r) => PERSON_OWNER_TYPES.includes(r.type));
       const ownerEnheder = Array.from(
-        new Set(ownerPersons.map((r) => r.deltager_enhedsnummer))
+        new Set(
+          (compPersonRows as Array<{ deltager_enhedsnummer: number }>).map(
+            (r) => r.deltager_enhedsnummer
+          )
+        )
       ).filter((en) => !existingIds.has(`en-${en}`) && !addedIds.has(`en-${en}`));
 
+      // Hent navne
+      let nameMap = new Map<number, string>();
       if (ownerEnheder.length > 0) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: personNames } = await (admin as any)
           .from('cvr_deltager')
           .select('enhedsnummer, navn')
           .in('enhedsnummer', ownerEnheder.slice(0, 10));
-        const nameMap = new Map<number, string>(
+        nameMap = new Map(
           ((personNames ?? []) as Array<{ enhedsnummer: number; navn: string }>).map((d) => [
             d.enhedsnummer,
             d.navn,
           ])
         );
-        for (const en of ownerEnheder.slice(0, 5)) {
-          const personNavn = nameMap.get(en);
-          if (!personNavn) continue;
+      }
+
+      // For hver person: check CVR ES for aktiv ejerandel i denne virksomhed
+      for (const en of ownerEnheder.slice(0, 5)) {
+        const personNavn = nameMap.get(en);
+        if (!personNavn) continue;
+        try {
+          const pRes = await fetch(`${host}/api/cvr-public/person?enhedsNummer=${en}`, {
+            headers: { cookie },
+            signal: AbortSignal.timeout(8000),
+          });
+          if (!pRes.ok) continue;
+          const pData = await pRes.json();
+          const match = (pData?.virksomheder ?? []).find(
+            (v: { cvr: number }) => v.cvr === Number(cvr)
+          );
+          if (!match) continue;
+          // Find aktiv ejerandel (>0%)
+          const ejerandel = match.roller?.find((r: { ejerandel?: string | null }) => {
+            if (!r.ejerandel) return false;
+            const pct = parseFloat(r.ejerandel.replace(/[^0-9.]/g, ''));
+            return !isNaN(pct) && pct > 0;
+          })?.ejerandel;
+          if (!ejerandel) continue; // Ingen aktiv ejerandel → skip
           const pId = `en-${en}`;
-          // Ingen enhedsNummer → ingen Udvid-knap. Personen er allerede
-          // i kontekst af sit holding-selskab. Link bevares for navigation.
           newNodes.push({
             id: pId,
             label: personNavn,
@@ -432,28 +449,9 @@ async function expandCompany(
             link: `/dashboard/owners/${en}`,
           });
           addedIds.add(pId);
-          // Hent ejerandel fra CVR ES
-          let personEjerandel: string | undefined;
-          try {
-            const pRes = await fetch(`${host}/api/cvr-public/person?enhedsNummer=${en}`, {
-              headers: { cookie },
-              signal: AbortSignal.timeout(8000),
-            });
-            if (pRes.ok) {
-              const pData = await pRes.json();
-              const match = (pData?.virksomheder ?? []).find(
-                (v: { cvr: number }) => v.cvr === Number(cvr)
-              );
-              if (match) {
-                personEjerandel = match.roller?.find(
-                  (r: { ejerandel?: string | null }) => r.ejerandel
-                )?.ejerandel;
-              }
-            }
-          } catch {
-            /* best-effort */
-          }
-          newEdges.push({ from: pId, to: nodeId, ejerandel: personEjerandel });
+          newEdges.push({ from: pId, to: nodeId, ejerandel });
+        } catch {
+          continue;
         }
       }
 

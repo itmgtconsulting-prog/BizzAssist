@@ -622,14 +622,11 @@ async function expandPerson(
     virkRollerMap.set(r.virksomhed_cvr, arr);
   }
 
-  // BIZZ-1122/1125: På virksomhedsdiagram (context=company), vis KUN personlige roller
-  const PERSONLIGE_TYPER = new Set([
-    'interessenter',
-    'indehaver',
-    'register',
-    'reel_ejer',
-    'stifter',
-  ]);
+  // BIZZ-1122/1125: På virksomhedsdiagram (context=company), vis KUN personlige
+  // virksomheder (enkeltmand/I/S). 'register', 'reel_ejer' og 'stifter' filtreres
+  // fra fordi de inkluderer indirekte ejerskab (via holding-selskaber) — cache har
+  // ikke ejerandel-data til at skelne direkte/indirekte.
+  const PERSONLIGE_TYPER = new Set(['interessenter', 'indehaver']);
   let filteredCvrs = Array.from(virkRollerMap.keys());
   if (context === 'company') {
     filteredCvrs = filteredCvrs.filter((cvrStr) => {

@@ -826,9 +826,9 @@ function DiagramForce({
           const childNode = nodeById.get(c);
           const isPropertyLike = childNode?.type === 'property' || c.startsWith('props-overflow-');
           if (isPropertyLike) {
-            // Properties get their owner's depth — they'll be positioned below
-            // the specific owner's sub-row in nodeYMap Pass 3
-            depths.set(c, d);
+            // Properties: depth + 0.5 — placeres mellem ejer og næste lag.
+            // Renumbering-passet konverterer til heltal.
+            depths.set(c, d + 0.5);
           } else {
             depths.set(c, d + 1);
             downQueue.push(c);
@@ -1015,25 +1015,12 @@ function DiagramForce({
       const n = nodeById.get(id);
       return n?.type === 'property' || id.startsWith('props-overflow-');
     };
-    // Map from owner node id → list of property node ids.
-    // crossOwnership-edges ekskluderes — de er sekundære visuelle links og
-    // må ikke påvirke property-placering (ellers trækkes ejendomme op til
-    // person-rækken i stedet for under det ejende selskab).
-    const propertiesByOwner = new Map<string, string[]>();
-    for (const edge of filteredGraph.edges) {
-      if (edge.crossOwnership) continue;
-      if (isPropertyId(edge.to)) {
-        if (!propertiesByOwner.has(edge.from)) propertiesByOwner.set(edge.from, []);
-        propertiesByOwner.get(edge.from)!.push(edge.to);
-      }
-    }
     const byDepth = new Map<number, string[]>();
     for (const node of filteredGraph.nodes) {
       // Include PERSON co-owners in byDepth — they share the top person row
       // with ownerchain persons (uniform placement). Company co-owners still
       // get their own dedicated Pass 2 placement above their target.
       if (coOwnerIds.has(node.id) && node.type !== 'person') continue;
-      if (isPropertyId(node.id)) continue; // placed in Pass 3
       const d = depthMap.get(node.id) ?? 0;
       if (!byDepth.has(d)) byDepth.set(d, []);
       byDepth.get(d)!.push(node.id);
@@ -1132,7 +1119,6 @@ function DiagramForce({
         const startIdx = sr * MAX_PER_ROW;
         const endIdx = Math.min(startIdx + MAX_PER_ROW, nodeIds.length);
         let subRowHasCoOwners = false;
-        let subRowHasProperties = false;
         let companyCoOwnerTargetCount = 0;
         for (let i = startIdx; i < endIdx; i++) {
           if (nodeIds[i] !== '__pad__' && targetsWithCoOwners.has(nodeIds[i])) {
@@ -1141,46 +1127,13 @@ function DiagramForce({
           if (nodeIds[i] !== '__pad__' && targetsWithCompanyCoOwners.has(nodeIds[i])) {
             companyCoOwnerTargetCount++;
           }
-          if (nodeIds[i] !== '__pad__' && propertiesByOwner.has(nodeIds[i])) {
-            subRowHasProperties = true;
-          }
         }
         if (sr > 0 || depth !== sortedDepths[0]) {
           levelHeight += subRowGap;
         }
         if (subRowHasCoOwners) {
-          // Reserver ekstra plads per target-med-company-coowners så hver får
-          // sin egen stack-række (se Pass 2). Mindst 1 CO_ROW_GAP selv hvis
-          // kun person-co-owners er til stede (de pinnes til toppen men vi
-          // vil stadig have en lille afstand).
           const stacks = Math.max(1, companyCoOwnerTargetCount);
           levelHeight += CO_ROW_GAP * stacks;
-        }
-        // Reserve space for properties below this sub-row using the same
-        // "keep owner together" rule as Pass 3 placement — otherwise next
-        // depth's companies can overlap with wrapped property lines.
-        if (subRowHasProperties) {
-          let linesUsed = 0;
-          let countOnLine = 0;
-          for (let i = startIdx; i < endIdx; i++) {
-            if (nodeIds[i] === '__pad__') continue;
-            const props = propertiesByOwner.get(nodeIds[i]);
-            if (!props || props.length === 0) continue;
-            if (countOnLine > 0 && countOnLine + props.length > MAX_PER_ROW) {
-              linesUsed++;
-              countOnLine = 0;
-            }
-            const ownerLines = Math.ceil(props.length / MAX_PER_ROW);
-            if (ownerLines > 1) {
-              linesUsed += ownerLines - 1;
-              countOnLine = props.length % MAX_PER_ROW || MAX_PER_ROW;
-            } else {
-              countOnLine += props.length;
-            }
-          }
-          // linesUsed counts line-starts; +1 for first line. Clamp to min 1.
-          const propSubrows = Math.max(1, linesUsed + 1);
-          levelHeight += 95 + (propSubrows - 1) * 70;
         }
       }
       cumulativeY += Math.max(levelHeight, levelGap);
@@ -1199,34 +1152,6 @@ function DiagramForce({
         if (subRow !== prevSubRow) {
           if (subRow > 0) {
             runningY += subRowGap;
-            // Extra gap if PREVIOUS sub-row had owners with properties.
-            // Use "keep owner together" rule to count lines accurately.
-            const prevStart = prevSubRow * MAX_PER_ROW;
-            const prevEnd = Math.min(prevStart + MAX_PER_ROW, nodeIds.length);
-            let linesUsed = 0;
-            let countOnLine = 0;
-            let hasAny = false;
-            for (let j = prevStart; j < prevEnd; j++) {
-              if (nodeIds[j] === '__pad__') continue;
-              const props = propertiesByOwner.get(nodeIds[j]);
-              if (!props || props.length === 0) continue;
-              hasAny = true;
-              if (countOnLine > 0 && countOnLine + props.length > MAX_PER_ROW) {
-                linesUsed++;
-                countOnLine = 0;
-              }
-              const ownerLines = Math.ceil(props.length / MAX_PER_ROW);
-              if (ownerLines > 1) {
-                linesUsed += ownerLines - 1;
-                countOnLine = props.length % MAX_PER_ROW || MAX_PER_ROW;
-              } else {
-                countOnLine += props.length;
-              }
-            }
-            if (hasAny) {
-              const propSubrows = Math.max(1, linesUsed + 1);
-              runningY += 95 + (propSubrows - 1) * 70;
-            }
           }
           // Check if this sub-row needs extra space for co-owners above it
           const startIdx = subRow * MAX_PER_ROW;
@@ -1302,108 +1227,14 @@ function DiagramForce({
       }
     }
 
-    // Pass 3: Place properties directly below their specific owner.
-    // Rule: if an owner's properties can't ALL fit on the current line (would exceed
-    // MAX_PER_ROW), all of that owner's properties go on the NEXT line instead of
-    // being split. Owners are grouped first by their Y (depth sub-row), then per Y
-    // group we assign properties to lines in owner-order.
-    //
-    // BIZZ-563 v2: Overflow-noder (id starter med "props-overflow-") placeres
-    // ALLE på en absolut bottom-row efter ALLE properties i hele diagrammet —
-    // ikke længere per-owner-Y. Det eliminerer enhver overlap-risiko da bottom-
-    // row er garanteret tom. User-feedback efter BIZZ-563 v1 viste at per-owner-
-    // Y stadig kunne overlappe når overflow + properties fra forskellige owners
-    // havde tæt-pakkede Y-værdier.
-    const PROPERTY_ROW_GAP = 95;
-    const PROPERTY_SUBROW_GAP = 70;
-    /** BIZZ-563: Gap mellem sidste property-row og overflow-bottom-row */
+    // Properties er nu i byDepth med depth + 0.5 (egen linje under ejer).
+    // Overflow-noder placeres på absolut bottom-row efter ALLE andre noder.
     const OVERFLOW_BOTTOM_GAP = 80;
-    // Group owners by their own Y (sub-row of depth)
-    const ownersByY = new Map<number, string[]>();
-    for (const ownerId of propertiesByOwner.keys()) {
-      const y = yMap.get(ownerId);
-      if (y == null) continue;
-      if (!ownersByY.has(y)) ownersByY.set(y, []);
-      ownersByY.get(y)!.push(ownerId);
-    }
-    // Saml ALLE overflow-noder på tværs af hele diagrammet for placering på
-    // absolut bottom-row efter ALLE andre noder.
+    const OVERFLOW_SUBROW_GAP = 70;
     const allOverflowNodes: string[] = [];
-    // Person-ejede ejendomme samles og placeres EFTER alle selskabs-ejendomme
-    // (bunden) — ellers ender de midt i selskabsrækken fordi personen er øverst.
-    const deferredPersonProps: Array<{ ownerId: string; props: string[] }> = [];
-    // Sort owners within each Y by their X position (initialX not set yet — use
-    // byDepth order as a proxy, which matches visual left-to-right)
-    for (const [ownerY, ownerIds] of ownersByY) {
-      const propBaseY = ownerY + PROPERTY_ROW_GAP;
-      let currentLine = 0;
-      let countOnLine = 0;
-      for (const ownerId of ownerIds) {
-        const propsAll = propertiesByOwner.get(ownerId) ?? [];
-        if (propsAll.length === 0) continue;
-        // Split: regular properties placeres på almindelige linjer; overflow-
-        // noder samles globalt og placeres på bottom-row efter ALLE properties.
-        const props = propsAll.filter((id) => !id.startsWith('props-overflow-'));
-        const ownerOverflow = propsAll.filter((id) => id.startsWith('props-overflow-'));
-        allOverflowNodes.push(...ownerOverflow);
-
-        if (props.length === 0) continue;
-
-        // Person-owners (type=person): defer til efter alle selskabs-ejendomme
-        // er placeret. Ellers ender personlige ejendomme midt i selskabsrækken
-        // fordi personen er øverst i diagrammet (negativ depth).
-        const ownerNode = nodeById.get(ownerId);
-        const isPersonOwner = ownerNode?.type === 'person';
-
-        if (isPersonOwner) {
-          deferredPersonProps.push({ ownerId, props });
-          continue;
-        }
-
-        if (countOnLine > 0 && countOnLine + props.length > MAX_PER_ROW) {
-          currentLine++;
-          countOnLine = 0;
-        }
-        // If this single owner has > MAX_PER_ROW properties, wrap within owner
-        for (let i = 0; i < props.length; i++) {
-          const withinOwnerLine = Math.floor(i / MAX_PER_ROW);
-          const line = currentLine + withinOwnerLine;
-          const propY = propBaseY + line * PROPERTY_SUBROW_GAP;
-          yMap.set(props[i], propY);
-        }
-        // Update counters: if owner fills multiple lines, advance past all but last
-        const ownerLines = Math.ceil(props.length / MAX_PER_ROW);
-        if (ownerLines > 1) {
-          currentLine += ownerLines - 1;
-          countOnLine = props.length % MAX_PER_ROW || MAX_PER_ROW;
-        } else {
-          countOnLine += props.length;
-        }
-      }
-      // BIZZ-563 v3: overflow-noder placeres NU globalt EFTER ALLE noder
-      // (se nedenfor) i stedet for per-owner-Y eller maxPropertyY.
+    for (const node of filteredGraph.nodes) {
+      if (node.id.startsWith('props-overflow-')) allOverflowNodes.push(node.id);
     }
-
-    // Deferred person-ejendomme: placér EFTER alle selskabs-ejendomme.
-    // Find max Y af alle allerede placerede noder og brug som base.
-    if (deferredPersonProps.length > 0) {
-      let maxYSoFar = 0;
-      for (const [, yVal] of yMap) {
-        if (yVal > maxYSoFar) maxYSoFar = yVal;
-      }
-      let personPropBaseY = maxYSoFar + PROPERTY_ROW_GAP;
-      for (const { props } of deferredPersonProps) {
-        for (let i = 0; i < props.length; i++) {
-          const line = Math.floor(i / MAX_PER_ROW);
-          yMap.set(props[i], personPropBaseY + line * PROPERTY_SUBROW_GAP);
-        }
-        const lines = Math.ceil(props.length / MAX_PER_ROW);
-        personPropBaseY += lines * PROPERTY_SUBROW_GAP + PROPERTY_ROW_GAP;
-      }
-    }
-
-    // BIZZ-563 v3: Placer ALLE overflow-noder på en absolut bottom-row efter
-    // ALLE andre noder i diagrammet.
     if (allOverflowNodes.length > 0) {
       const overflowSet = new Set(allOverflowNodes);
       let maxY = 0;
@@ -1413,7 +1244,7 @@ function DiagramForce({
       }
       const overflowBaseY = maxY + OVERFLOW_BOTTOM_GAP;
       for (let i = 0; i < allOverflowNodes.length; i++) {
-        yMap.set(allOverflowNodes[i], overflowBaseY + i * PROPERTY_SUBROW_GAP);
+        yMap.set(allOverflowNodes[i], overflowBaseY + i * OVERFLOW_SUBROW_GAP);
       }
     }
 

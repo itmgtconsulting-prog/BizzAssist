@@ -622,16 +622,41 @@ async function expandPerson(
     virkRollerMap.set(r.virksomhed_cvr, arr);
   }
 
-  // BIZZ-1122/1125: På virksomhedsdiagram (context=company), vis KUN personlige
-  // virksomheder (enkeltmand/I/S). 'register', 'reel_ejer' og 'stifter' filtreres
-  // fra fordi de inkluderer indirekte ejerskab (via holding-selskaber) — cache har
-  // ikke ejerandel-data til at skelne direkte/indirekte.
+  // BIZZ-1122/1125: På virksomhedsdiagram (context=company), vis KUN:
+  // 1. Personlige virksomheder (interessenter/indehaver — enkeltmand/I/S)
+  // 2. Virksomheder med ejerandel_pct > 0 (direkte ejerskab)
+  // Register/reel_ejer med ejerandel_pct = 0 eller NULL filtreres fra.
   const PERSONLIGE_TYPER = new Set(['interessenter', 'indehaver']);
+
+  // Hent ejerandel_pct for register/reel_ejer relationer
+  const ejerandelByCvr = new Map<string, number>();
+  if (context === 'company') {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: ejerandelRows } = await (admin as any)
+      .from('cvr_deltagerrelation')
+      .select('virksomhed_cvr, ejerandel_pct')
+      .eq('deltager_enhedsnummer', Number(enhedsNummer))
+      .in('type', ['register', 'reel_ejer'])
+      .is('gyldig_til', null)
+      .not('ejerandel_pct', 'is', null)
+      .limit(50);
+    for (const r of (ejerandelRows ?? []) as Array<{
+      virksomhed_cvr: string;
+      ejerandel_pct: number;
+    }>) {
+      ejerandelByCvr.set(r.virksomhed_cvr, r.ejerandel_pct);
+    }
+  }
+
   let filteredCvrs = Array.from(virkRollerMap.keys());
   if (context === 'company') {
     filteredCvrs = filteredCvrs.filter((cvrStr) => {
       const roller = virkRollerMap.get(cvrStr) ?? [];
-      return roller.some((t) => PERSONLIGE_TYPER.has(t));
+      // Altid vis interessenter/indehaver (personlige virksomheder)
+      if (roller.some((t) => PERSONLIGE_TYPER.has(t))) return true;
+      // Vis register/reel_ejer kun med ejerandel > 0
+      const pct = ejerandelByCvr.get(cvrStr);
+      return pct != null && pct > 0;
     });
 
     // Fjern datterselskaber af andre i listen

@@ -869,13 +869,8 @@ function DiagramForce({
           .map((p) => depths.get(p)!);
         if (assignedParents.length > 0) {
           // Child af eksisterende noder → placér 0.5 under deepest parent
-          const nodeType = nodeById.get(node.id);
-          const isPropertyLike =
-            nodeType?.type === 'property' || node.id.startsWith('props-overflow-');
-          depths.set(
-            node.id,
-            isPropertyLike ? Math.max(...assignedParents) : Math.max(...assignedParents) + 0.5
-          );
+          // Alle orphaned children (inkl. properties) placeres 0.5 under parent
+          depths.set(node.id, Math.max(...assignedParents) + 0.5);
           changed = true;
         }
       }

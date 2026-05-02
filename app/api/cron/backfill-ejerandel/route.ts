@@ -19,7 +19,7 @@ export const maxDuration = 300;
 import { logger } from '@/app/lib/logger';
 
 /** Max antal unikke personer per cron-run (holdes under Vercel 300s timeout) */
-const PER_RUN_CAP = 150;
+const PER_RUN_CAP = 80;
 
 /**
  * Verificerer CRON_SECRET bearer + x-vercel-cron (i produktion).

@@ -173,7 +173,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
   }
 
-  logger.info(
+  logger.log(
     `[backfill-ejerandel] Processed ${uniquePersons.length} persons, updated ${updated} rows, ${errors} errors`
   );
 

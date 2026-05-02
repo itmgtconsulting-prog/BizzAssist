@@ -626,12 +626,25 @@ async function resolvePropertyGraph(
         ejerandel: formatEjerandel(owner.ejerandel_taeller, owner.ejerandel_naevner),
       });
     } else if (owner.ejer_type === 'person') {
-      const ownerId = `person-${owner.ejer_navn.replace(/\s+/g, '-').toLowerCase()}`;
+      // Forsøg at resolve enhedsNummer fra cvr_deltager for at muliggøre expand
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: deltagerMatch } = await (admin as any)
+        .from('cvr_deltager')
+        .select('enhedsnummer')
+        .eq('navn', owner.ejer_navn)
+        .limit(1)
+        .maybeSingle();
+      const personEn: number | undefined = deltagerMatch?.enhedsnummer ?? undefined;
+      const ownerId = personEn
+        ? `en-${personEn}`
+        : `person-${owner.ejer_navn.replace(/\s+/g, '-').toLowerCase()}`;
       if (!nodeIds.has(ownerId)) {
         nodes.push({
           id: ownerId,
           label: owner.ejer_navn,
           type: 'person',
+          enhedsNummer: personEn,
+          link: personEn ? `/dashboard/owners/${personEn}` : undefined,
         });
         nodeIds.add(ownerId);
       }

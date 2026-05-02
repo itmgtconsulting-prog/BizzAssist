@@ -149,6 +149,30 @@ async function expandCompany(
       .eq('status', 'gældende')
       .limit(200);
 
+    // Batch-hent enhedsNummer for person-medejere via cvr_deltager navne-match.
+    // Gør det muligt at expandere person-noder der kommer fra ejf_ejerskab.
+    const personCoOwnerNames = new Set<string>();
+    for (const co of (coOwnerRows ?? []) as Array<{
+      ejer_cvr: string | null;
+      ejer_navn: string;
+      ejer_type: string;
+    }>) {
+      if (co.ejer_cvr === cvr || co.ejer_cvr) continue;
+      if (co.ejer_type === 'person') personCoOwnerNames.add(co.ejer_navn);
+    }
+    const personEnMap = new Map<string, number>();
+    if (personCoOwnerNames.size > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: deltagerMatches } = await (admin as any)
+        .from('cvr_deltager')
+        .select('enhedsnummer, navn')
+        .in('navn', Array.from(personCoOwnerNames).slice(0, 20));
+      for (const d of (deltagerMatches ?? []) as Array<{ enhedsnummer: number; navn: string }>) {
+        // Kun sæt hvis ikke allerede sat (undgå overwrite ved duplikat-navne)
+        if (!personEnMap.has(d.navn)) personEnMap.set(d.navn, d.enhedsnummer);
+      }
+    }
+
     // Gruppér medejere — dedup på CVR/navn
     const seenCoOwners = new Set<string>();
     for (const co of (coOwnerRows ?? []) as Array<{
@@ -160,9 +184,14 @@ async function expandCompany(
       ejerandel_naevner: number | null;
     }>) {
       if (co.ejer_cvr === cvr) continue;
+      // Person-noder: brug enhedsNummer-baseret ID hvis tilgængeligt
+      const personEn =
+        !co.ejer_cvr && co.ejer_type === 'person' ? personEnMap.get(co.ejer_navn) : undefined;
       const coId = co.ejer_cvr
         ? `cvr-${co.ejer_cvr}`
-        : `person-${co.ejer_navn.replace(/\s+/g, '-').toLowerCase()}`;
+        : personEn
+          ? `en-${personEn}`
+          : `person-${co.ejer_navn.replace(/\s+/g, '-').toLowerCase()}`;
       const propId = `bfe-${co.bfe_nummer}`;
 
       if (existingIds.has(coId) || addedIds.has(coId)) {
@@ -204,6 +233,8 @@ async function expandCompany(
             id: coId,
             label: co.ejer_navn,
             type: 'person',
+            enhedsNummer: personEn,
+            link: personEn ? `/dashboard/owners/${personEn}` : undefined,
           });
         }
         addedIds.add(coId);
@@ -248,14 +279,14 @@ async function expandCompany(
       virksomhedsform: string | null;
       branche_tekst: string | null;
       ophoert: string | null;
-    } | null = // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (
-      await (admin as any)
-        .from('cvr_virksomhed')
-        .select('navn, virksomhedsform, branche_tekst, ophoert')
-        .eq('cvr', co.ejer_cvr)
-        .maybeSingle()
-    ).data;
+    } | null = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ownerCompRes = await (admin as any)
+      .from('cvr_virksomhed')
+      .select('navn, virksomhedsform, branche_tekst, ophoert')
+      .eq('cvr', co.ejer_cvr)
+      .maybeSingle();
+    ownerComp = ownerCompRes.data;
     // Fallback: hent navn fra ejf_ejerskab (ejer_navn) eller CVR ES
     if (!ownerComp) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -643,6 +674,75 @@ async function expandCompany(
     }
   }
 
+  // Final pass: person-noder → ejf_ejerskab.
+  // Checker om ALLE person-noder (nye + eksisterende i grafen) ejer ejendomme
+  // der er i grafen. Tegner personallyOwned crossOwnership-edges.
+  // Samler BFE'er fra ALLE ejendomme i grafen (eksisterende + nye).
+  const allBfeIds = new Set<number>([...existingBfes]);
+  for (const n of newNodes) {
+    if (n.bfeNummer != null) allBfeIds.add(n.bfeNummer);
+  }
+
+  if (allBfeIds.size > 0) {
+    // Hent ALLE person-ejere af ejendomme i grafen
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: personPropRows } = await (admin as any)
+      .from('ejf_ejerskab')
+      .select('bfe_nummer, ejer_navn, ejerandel_taeller, ejerandel_naevner')
+      .in('bfe_nummer', Array.from(allBfeIds).slice(0, 100))
+      .eq('ejer_type', 'person')
+      .eq('status', 'gældende')
+      .limit(500);
+
+    // Map person label → node ID for alle person-noder (nye + eksisterende)
+    const personLabelToId = new Map<string, string>();
+    for (const pn of newNodes.filter((n) => n.type === 'person')) {
+      personLabelToId.set(pn.label, pn.id);
+    }
+    // Eksisterende person-noder: hent navne fra cvr_deltager for en-* ID'er
+    const existingPersonEns: number[] = [];
+    for (const existId of existingIds) {
+      if (existId.startsWith('en-')) {
+        const en = parseInt(existId.slice(3), 10);
+        if (Number.isFinite(en)) existingPersonEns.push(en);
+      }
+    }
+    if (existingPersonEns.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: existingPersonNames } = await (admin as any)
+        .from('cvr_deltager')
+        .select('enhedsnummer, navn')
+        .in('enhedsnummer', existingPersonEns.slice(0, 20));
+      for (const d of (existingPersonNames ?? []) as Array<{
+        enhedsnummer: number;
+        navn: string;
+      }>) {
+        personLabelToId.set(d.navn, `en-${d.enhedsnummer}`);
+      }
+    }
+
+    for (const r of (personPropRows ?? []) as Array<{
+      bfe_nummer: number;
+      ejer_navn: string;
+      ejerandel_taeller: number | null;
+      ejerandel_naevner: number | null;
+    }>) {
+      const propId = `bfe-${r.bfe_nummer}`;
+      if (!existingIds.has(propId) && !addedIds.has(propId)) continue;
+      const fromId = personLabelToId.get(r.ejer_navn);
+      if (!fromId) continue;
+      // Skip duplikat-edges
+      if (newEdges.some((e) => e.from === fromId && e.to === propId)) continue;
+      newEdges.push({
+        from: fromId,
+        to: propId,
+        ejerandel: formatEjerandel(r.ejerandel_taeller, r.ejerandel_naevner),
+        personallyOwned: true,
+        crossOwnership: true,
+      });
+    }
+  }
+
   return { nodes: newNodes, edges: newEdges };
 }
 
@@ -819,38 +919,37 @@ async function expandPerson(
     }> = personalProps ?? [];
     const newProps = props.filter((p) => !existingBfes.has(p.bfe_nummer));
 
-    if (newProps.length > 0) {
-      // Container-node
-      const containerId = 'personal-props-group';
-      if (!existingIds.has(containerId) && !addedIds.has(containerId)) {
-        newNodes.push({
-          id: containerId,
-          label: 'Personligt ejede ejendomme',
-          type: 'status',
-        });
-        addedIds.add(containerId);
-        newEdges.push({ from: nodeId, to: containerId, personallyOwned: true });
-      }
+    // Edges til ejendomme der ALLEREDE er i grafen (fx via selskabs-expand)
+    const existingPersonalProps = props.filter((p) => existingBfes.has(p.bfe_nummer));
+    for (const prop of existingPersonalProps) {
+      const propId = `bfe-${prop.bfe_nummer}`;
+      newEdges.push({
+        from: nodeId,
+        to: propId,
+        ejerandel: formatEjerandel(prop.ejerandel_taeller, prop.ejerandel_naevner),
+        personallyOwned: true,
+        crossOwnership: true,
+      });
+    }
 
-      // Personlige ejendomme vises ALLE (ingen max-limit — typisk <20)
-      for (const prop of newProps) {
-        const propId = `bfe-${prop.bfe_nummer}`;
-        if (!existingIds.has(propId) && !addedIds.has(propId)) {
-          newNodes.push({
-            id: propId,
-            label: `BFE ${prop.bfe_nummer}`,
-            type: 'property',
-            bfeNummer: prop.bfe_nummer,
-          });
-          addedIds.add(propId);
-        }
-        newEdges.push({
-          from: containerId,
-          to: propId,
-          ejerandel: formatEjerandel(prop.ejerandel_taeller, prop.ejerandel_naevner),
-          personallyOwned: true,
+    // Personlige ejendomme direkte under person-noden (ingen container-boks)
+    for (const prop of newProps) {
+      const propId = `bfe-${prop.bfe_nummer}`;
+      if (!existingIds.has(propId) && !addedIds.has(propId)) {
+        newNodes.push({
+          id: propId,
+          label: `BFE ${prop.bfe_nummer}`,
+          type: 'property',
+          bfeNummer: prop.bfe_nummer,
         });
+        addedIds.add(propId);
       }
+      newEdges.push({
+        from: nodeId,
+        to: propId,
+        ejerandel: formatEjerandel(prop.ejerandel_taeller, prop.ejerandel_naevner),
+        personallyOwned: true,
+      });
     }
   }
 

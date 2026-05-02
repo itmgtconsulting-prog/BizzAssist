@@ -785,6 +785,10 @@ function DiagramForce({
     const parentEdges = new Map<string, string[]>();
     const childEdges = new Map<string, string[]>();
     for (const edge of filteredGraph.edges) {
+      // crossOwnership-edges er sekundære visuelle links — de må IKKE påvirke
+      // depth-beregningen, ellers trækkes noder til forkert lag (fx ejendomme
+      // op til person-rækken når person→ejendom crossOwnership-edge tilføjes).
+      if (edge.crossOwnership) continue;
       if (!parentEdges.has(edge.to)) parentEdges.set(edge.to, []);
       parentEdges.get(edge.to)!.push(edge.from);
       if (!childEdges.has(edge.from)) childEdges.set(edge.from, []);

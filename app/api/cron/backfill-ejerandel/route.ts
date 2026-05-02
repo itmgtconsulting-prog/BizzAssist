@@ -14,10 +14,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
+
+export const maxDuration = 300;
 import { logger } from '@/app/lib/logger';
 
-/** Max antal unikke personer per cron-run */
-const PER_RUN_CAP = 200;
+/** Max antal unikke personer per cron-run (holdes under Vercel 300s timeout) */
+const PER_RUN_CAP = 50;
 
 /**
  * Verificerer CRON_SECRET bearer + x-vercel-cron (i produktion).
@@ -208,8 +210,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         else errors++;
       }
 
-      // Rate limit: 100ms pause mellem CVR ES kald
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // Minimal pause for at undgå CVR ES rate limiting
+      await new Promise((resolve) => setTimeout(resolve, 50));
     } catch {
       errors++;
     }

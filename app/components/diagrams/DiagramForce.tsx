@@ -822,15 +822,16 @@ function DiagramForce({
       const current = downQueue.shift()!;
       const d = depths.get(current) ?? 0;
       for (const c of childEdges.get(current) ?? []) {
-        if (!depths.has(c) && !coOwnerIds.has(c)) {
-          const childNode = nodeById.get(c);
-          const isPropertyLike = childNode?.type === 'property' || c.startsWith('props-overflow-');
-          if (isPropertyLike) {
-            // Properties: depth + 0.5 — placeres mellem ejer og næste lag.
-            // Renumbering-passet konverterer til heltal.
-            depths.set(c, d + 0.5);
-          } else {
-            depths.set(c, d + 1);
+        if (coOwnerIds.has(c)) continue;
+        const childNode = nodeById.get(c);
+        const isPropertyLike = childNode?.type === 'property' || c.startsWith('props-overflow-');
+        const newDepth = isPropertyLike ? d + 0.5 : d + 1;
+        const existing = depths.get(c);
+        if (existing === undefined || (isPropertyLike && newDepth < existing)) {
+          // Properties: brug shallowest depth (tættest på toppen) — personligt
+          // ejede ejendomme prioriteres over selskabs-ejede ved dual ownership.
+          depths.set(c, newDepth);
+          if (!isPropertyLike) {
             downQueue.push(c);
           }
         }

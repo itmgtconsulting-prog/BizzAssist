@@ -1329,6 +1329,9 @@ function DiagramForce({
     // Saml ALLE overflow-noder på tværs af hele diagrammet for placering på
     // absolut bottom-row efter ALLE andre noder.
     const allOverflowNodes: string[] = [];
+    // Person-ejede ejendomme samles og placeres EFTER alle selskabs-ejendomme
+    // (bunden) — ellers ender de midt i selskabsrækken fordi personen er øverst.
+    const deferredPersonProps: Array<{ ownerId: string; props: string[] }> = [];
     // Sort owners within each Y by their X position (initialX not set yet — use
     // byDepth order as a proxy, which matches visual left-to-right)
     for (const [ownerY, ownerIds] of ownersByY) {
@@ -1346,21 +1349,18 @@ function DiagramForce({
 
         if (props.length === 0) continue;
 
-        // BIZZ-585: Person-owners får dedikerede rækker — deres ejendomme
-        // blandes ALDRIG med søskende-virksomheders ejendomme på samme linje.
-        // Tidligere kunne fx en persons 6. ejendom ende på en linje der også
-        // indeholdt holdingselskabers ejendomme, hvilket gjorde layoutet
-        // forvirrende. Nu starter og afslutter vi altid en ny linje ved
-        // person-owners.
+        // Person-owners (type=person): defer til efter alle selskabs-ejendomme
+        // er placeret. Ellers ender personlige ejendomme midt i selskabsrækken
+        // fordi personen er øverst i diagrammet (negativ depth).
         const ownerNode = nodeById.get(ownerId);
-        const isPersonOwner = ownerNode?.type === 'person' || ownerNode?.type === 'main';
+        const isPersonOwner = ownerNode?.type === 'person';
 
-        if (isPersonOwner && countOnLine > 0) {
-          // Forrige linje havde andet indhold — start person's ejendomme på ny linje
-          currentLine++;
-          countOnLine = 0;
-        } else if (countOnLine > 0 && countOnLine + props.length > MAX_PER_ROW) {
-          // Ikke-person owner: standard wrap-regel
+        if (isPersonOwner) {
+          deferredPersonProps.push({ ownerId, props });
+          continue;
+        }
+
+        if (countOnLine > 0 && countOnLine + props.length > MAX_PER_ROW) {
           currentLine++;
           countOnLine = 0;
         }
@@ -1379,23 +1379,31 @@ function DiagramForce({
         } else {
           countOnLine += props.length;
         }
-        // BIZZ-585: Efter person-owner: tving næste owner til ny linje så
-        // person-ejendomme forbliver isoleret på deres egen række-blok.
-        if (isPersonOwner && countOnLine > 0) {
-          currentLine++;
-          countOnLine = 0;
-        }
       }
       // BIZZ-563 v3: overflow-noder placeres NU globalt EFTER ALLE noder
       // (se nedenfor) i stedet for per-owner-Y eller maxPropertyY.
     }
 
+    // Deferred person-ejendomme: placér EFTER alle selskabs-ejendomme.
+    // Find max Y af alle allerede placerede noder og brug som base.
+    if (deferredPersonProps.length > 0) {
+      let maxYSoFar = 0;
+      for (const [, yVal] of yMap) {
+        if (yVal > maxYSoFar) maxYSoFar = yVal;
+      }
+      let personPropBaseY = maxYSoFar + PROPERTY_ROW_GAP;
+      for (const { props } of deferredPersonProps) {
+        for (let i = 0; i < props.length; i++) {
+          const line = Math.floor(i / MAX_PER_ROW);
+          yMap.set(props[i], personPropBaseY + line * PROPERTY_SUBROW_GAP);
+        }
+        const lines = Math.ceil(props.length / MAX_PER_ROW);
+        personPropBaseY += lines * PROPERTY_SUBROW_GAP + PROPERTY_ROW_GAP;
+      }
+    }
+
     // BIZZ-563 v3: Placer ALLE overflow-noder på en absolut bottom-row efter
-    // ALLE andre noder i diagrammet. Tidligere version (v2) brugte
-    // maxPropertyY men oversaa at companies/datterselskaber ofte sidder på
-    // dybere depth-rows END properties (fx Novo Nordisk Denmark sidder under
-    // property-rækken). Nu finder vi maks Y på tværs af HELE yMap (ekskl.
-    // overflow-noder selv) før placering.
+    // ALLE andre noder i diagrammet.
     if (allOverflowNodes.length > 0) {
       const overflowSet = new Set(allOverflowNodes);
       let maxY = 0;

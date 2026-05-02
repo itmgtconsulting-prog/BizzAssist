@@ -1015,9 +1015,13 @@ function DiagramForce({
       const n = nodeById.get(id);
       return n?.type === 'property' || id.startsWith('props-overflow-');
     };
-    // Map from owner node id → list of property node ids
+    // Map from owner node id → list of property node ids.
+    // crossOwnership-edges ekskluderes — de er sekundære visuelle links og
+    // må ikke påvirke property-placering (ellers trækkes ejendomme op til
+    // person-rækken i stedet for under det ejende selskab).
     const propertiesByOwner = new Map<string, string[]>();
     for (const edge of filteredGraph.edges) {
+      if (edge.crossOwnership) continue;
       if (isPropertyId(edge.to)) {
         if (!propertiesByOwner.has(edge.from)) propertiesByOwner.set(edge.from, []);
         propertiesByOwner.get(edge.from)!.push(edge.to);

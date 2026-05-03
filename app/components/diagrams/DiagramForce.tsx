@@ -2715,48 +2715,128 @@ function DiagramForce({
                           strokeWidth="0.5"
                         />
                       )}
-                      {/* Key persons inside company box */}
+                      {/* Key persons inside company box — klikbar expand til person-node */}
                       {node.noeglePersoner &&
-                        node.noeglePersoner.slice(0, 5).map((p, pi) => (
-                          <g key={pi}>
-                            <circle
-                              cx={x + 16}
-                              cy={topY + 50 + pi * PERSON_ROW_H}
-                              r={3.5}
-                              fill="none"
-                              stroke={
-                                p.rolle === 'Bestyrelse'
-                                  ? 'rgba(139,92,246,0.5)'
-                                  : 'rgba(245,158,11,0.5)'
-                              }
-                              strokeWidth="0.8"
-                            />
-                            <text
-                              x={x + 23}
-                              y={topY + 53 + pi * PERSON_ROW_H}
-                              fill="rgba(196,167,255,0.7)"
-                              fontSize="8"
-                              className="pointer-events-none cursor-pointer"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                window.location.href = `/dashboard/owners/${p.enhedsNummer}`;
-                              }}
-                              style={{ cursor: 'pointer', pointerEvents: 'auto' }}
-                            >
-                              {p.navn.length > 36 ? p.navn.slice(0, 36) + '…' : p.navn}
-                            </text>
-                            <text
-                              x={x + NODE_W - 14}
-                              y={topY + 53 + pi * PERSON_ROW_H}
-                              fill="rgba(148,163,184,0.5)"
-                              fontSize="7"
-                              textAnchor="end"
-                              className="pointer-events-none"
-                            >
-                              {p.rolle === 'Bestyrelse' ? 'Best.' : 'Dir.'}
-                            </text>
-                          </g>
-                        ))}
+                        node.noeglePersoner.slice(0, 5).map((p, pi) => {
+                          const personNodeId = `en-${p.enhedsNummer}`;
+                          const alreadyInGraph = effectiveGraph.nodes.some(
+                            (n) => n.id === personNodeId
+                          );
+                          const isLoading = loadingExpansion.has(personNodeId);
+                          return (
+                            <g key={pi}>
+                              <circle
+                                cx={x + 16}
+                                cy={topY + 50 + pi * PERSON_ROW_H}
+                                r={3.5}
+                                fill="none"
+                                stroke={
+                                  p.rolle === 'Bestyrelse'
+                                    ? 'rgba(139,92,246,0.5)'
+                                    : 'rgba(245,158,11,0.5)'
+                                }
+                                strokeWidth="0.8"
+                              />
+                              <text
+                                x={x + 23}
+                                y={topY + 53 + pi * PERSON_ROW_H}
+                                fill="rgba(196,167,255,0.7)"
+                                fontSize="8"
+                                className="pointer-events-none cursor-pointer"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  window.location.href = `/dashboard/owners/${p.enhedsNummer}`;
+                                }}
+                                style={{ cursor: 'pointer', pointerEvents: 'auto' }}
+                              >
+                                {p.navn.length > 30 ? p.navn.slice(0, 30) + '…' : p.navn}
+                              </text>
+                              {/* BIZZ-1125: Expand nøgleperson til person-node med ejendomme */}
+                              {!alreadyInGraph && (
+                                <g
+                                  className="cursor-pointer"
+                                  style={{ pointerEvents: 'auto' }}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onTouchStart={(e) => e.stopPropagation()}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (isLoading) return;
+                                    // Opret person-node i grafen
+                                    const newPersonNode: DiagramNode = {
+                                      id: personNodeId,
+                                      label: p.navn,
+                                      type: 'person',
+                                      enhedsNummer: p.enhedsNummer,
+                                      link: `/dashboard/owners/${p.enhedsNummer}`,
+                                    };
+                                    const newEdge: DiagramEdge = {
+                                      from: personNodeId,
+                                      to: node.id,
+                                      ejerandel: p.rolle === 'Bestyrelse' ? 'Best.' : 'Dir.',
+                                    };
+                                    setExtensionNodes((prev) => [...prev, newPersonNode]);
+                                    setExtensionEdges((prev) => [...prev, newEdge]);
+                                    // Kald expand for at hente personens ejendomme
+                                    if (onExpand) {
+                                      setLoadingExpansion(
+                                        (prev) => new Set([...prev, personNodeId])
+                                      );
+                                      void onExpand(personNodeId, 'person').then((result) => {
+                                        setLoadingExpansion((prev) => {
+                                          const s = new Set(prev);
+                                          s.delete(personNodeId);
+                                          return s;
+                                        });
+                                        if (result) {
+                                          setExtensionNodes((prev) => [...prev, ...result.nodes]);
+                                          setExtensionEdges((prev) => [...prev, ...result.edges]);
+                                          setExpandedDynamic(
+                                            (prev) => new Set([...prev, personNodeId])
+                                          );
+                                        }
+                                      });
+                                    }
+                                  }}
+                                  aria-label={`Udvid ${p.navn} i diagrammet`}
+                                >
+                                  <rect
+                                    x={x + NODE_W - 46}
+                                    y={topY + 43 + pi * PERSON_ROW_H}
+                                    width={32}
+                                    height={14}
+                                    rx={7}
+                                    fill="rgba(16,185,129,0.12)"
+                                    stroke="rgba(52,211,153,0.35)"
+                                    strokeWidth="0.5"
+                                  />
+                                  <text
+                                    x={x + NODE_W - 30}
+                                    y={topY + 53 + pi * PERSON_ROW_H}
+                                    textAnchor="middle"
+                                    fill="rgba(52,211,153,0.9)"
+                                    fontSize="7"
+                                    fontWeight="500"
+                                    className="pointer-events-none"
+                                  >
+                                    {isLoading ? '…' : '+ Vis'}
+                                  </text>
+                                </g>
+                              )}
+                              {alreadyInGraph && (
+                                <text
+                                  x={x + NODE_W - 14}
+                                  y={topY + 53 + pi * PERSON_ROW_H}
+                                  fill="rgba(148,163,184,0.5)"
+                                  fontSize="7"
+                                  textAnchor="end"
+                                  className="pointer-events-none"
+                                >
+                                  {p.rolle === 'Bestyrelse' ? 'Best.' : 'Dir.'}
+                                </text>
+                              )}
+                            </g>
+                          );
+                        })}
                     </>
                   )}
                   {/* Person node label (centered) */}

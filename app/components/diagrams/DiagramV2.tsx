@@ -131,15 +131,30 @@ export default function DiagramV2({
       nodeId: string,
       nodeType: 'person' | 'company'
     ): Promise<{ nodes: DiagramNode[]; edges: DiagramEdge[] } | null> => {
-      // BIZZ-1102: Find node i ALLE kendte noder (inkl. extensions) — ikke kun initial graph
+      // BIZZ-1102: Find node i ALLE kendte noder (inkl. extensions) — ikke kun initial graph.
+      // BIZZ-1125: Nøgleperson-expand opretter node i DiagramForce extensionNodes
+      // SAMTIDIG med expand-kaldet — node er muligvis ikke i allNodesRef endnu.
+      // Fallback: parse nodeId (en-XXXXX → enhedsNummer, cvr-XXXXX → cvr).
       const node = allNodesRef.current.get(nodeId);
-      if (!node) return null;
+      let cvr: string | undefined = node?.cvr ? String(node.cvr) : undefined;
+      let enhedsNummer: string | undefined = node?.enhedsNummer
+        ? String(node.enhedsNummer)
+        : undefined;
+      if (!node) {
+        if (nodeType === 'person' && nodeId.startsWith('en-')) {
+          enhedsNummer = nodeId.replace('en-', '');
+        } else if (nodeType === 'company' && nodeId.startsWith('cvr-')) {
+          cvr = nodeId.replace('cvr-', '');
+        } else {
+          return null;
+        }
+      }
 
       const body = {
         nodeType,
         nodeId,
-        cvr: node.cvr ? String(node.cvr) : undefined,
-        enhedsNummer: node.enhedsNummer ? String(node.enhedsNummer) : undefined,
+        cvr,
+        enhedsNummer,
         existingNodeIds: [...allNodesRef.current.keys()],
         existingBfes: [...allBfesRef.current],
         // BIZZ-1122: context fortæller expand-route om den skal filtrere

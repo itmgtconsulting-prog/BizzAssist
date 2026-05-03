@@ -218,15 +218,16 @@ async function resolveCompanyGraph(
     // plus personlige ejendomme — alt der IKKE allerede er i grafen.
     const personExpandCounts = new Map<number, number>();
     {
-      // Virksomheder med ejerskabs-roller (interessenter/indehaver/register/reel_ejer)
+      // Virksomheder med ejerskabs-roller ELLER ejerandel > 0.
+      // Matcher expand-routens filter: interessenter/indehaver altid,
+      // + alle typer med ejerandel_pct > 0 (inkl. stifter med ejerandel).
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: expandRels } = await (admin as any)
         .from('cvr_deltagerrelation')
         .select('deltager_enhedsnummer, virksomhed_cvr, type, ejerandel_pct')
         .in('deltager_enhedsnummer', enhedsNumre.slice(0, 20))
         .is('gyldig_til', null)
-        .in('type', ['interessenter', 'indehaver', 'register', 'reel_ejer'])
-        .limit(200);
+        .limit(500);
       for (const r of (expandRels ?? []) as Array<{
         deltager_enhedsnummer: number;
         virksomhed_cvr: string;
@@ -235,8 +236,9 @@ async function resolveCompanyGraph(
       }>) {
         // Skip virksomheder allerede i grafen (inkl. main)
         if (r.virksomhed_cvr === cvr) continue;
-        // Interessenter/indehaver tæller altid; register/reel_ejer kun med ejerandel > 0
+        // Interessenter/indehaver tæller altid
         const isPersonlig = r.type === 'interessenter' || r.type === 'indehaver';
+        // Alle typer med ejerandel > 0 tæller (inkl. stifter med ejerandel)
         const hasEjerandel = r.ejerandel_pct != null && r.ejerandel_pct > 0;
         if (!isPersonlig && !hasEjerandel) continue;
         personExpandCounts.set(

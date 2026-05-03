@@ -703,13 +703,32 @@ async function expandPerson(
       .eq('cvr', cvrStr)
       .maybeSingle();
 
-    // Tæl ejendomme for expandableChildren
+    // Tæl ejendomme for expandableChildren (ekskludér allerede viste)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { count: propCount } = await (admin as any)
+    const { data: propRows } = await (admin as any)
       .from('ejf_ejerskab')
-      .select('bfe_nummer', { count: 'exact', head: true })
+      .select('bfe_nummer')
       .eq('ejer_cvr', cvrStr)
-      .eq('status', 'gældende');
+      .eq('status', 'gældende')
+      .limit(20);
+    const newPropCount = (propRows ?? []).filter(
+      (p: { bfe_nummer: number }) => !existingBfes.has(p.bfe_nummer)
+    ).length;
+
+    // Tæl ejerskabs-relationer IKKE allerede i grafen
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: ownershipRows } = await (admin as any)
+      .from('cvr_virksomhed_ejerskab')
+      .select('ejet_cvr, ejer_cvr, ejerandel_min, ejerandel_max')
+      .or(`ejer_cvr.eq.${cvrStr},ejet_cvr.eq.${cvrStr}`)
+      .is('gyldig_til', null)
+      .limit(20);
+    const newOwnershipCount = (ownershipRows ?? []).filter(
+      (r: { ejet_cvr: string; ejer_cvr: string }) => {
+        const relCvr = r.ejer_cvr === cvrStr ? r.ejet_cvr : r.ejer_cvr;
+        return !existingIds.has(`cvr-${relCvr}`) && !addedIds.has(`cvr-${relCvr}`);
+      }
+    ).length;
 
     // Inkluder branche_tekst i sublabel
     const expandSubParts = [company?.virksomhedsform, company?.branche_tekst].filter(Boolean);
@@ -722,15 +741,46 @@ async function expandPerson(
       cvr: Number(cvrStr),
       link: `/dashboard/companies/${cvrStr}`,
       isCeased: company?.ophoert != null,
-      expandableChildren: (propCount ?? 0) > 0 ? (propCount ?? 0) : 0,
+      expandableChildren:
+        newPropCount + newOwnershipCount > 0 ? newPropCount + newOwnershipCount : 0,
     });
     addedIds.add(companyId);
 
+    // Edge fra person til virksomhed
     newEdges.push({
       from: nodeId,
       to: companyId,
       ejerandel: rolleStr || undefined,
     });
+
+    // BIZZ-1125: Tegn ejerskabs-edges til noder ALLEREDE i grafen.
+    // Fx DJKL Holding → JaJR Holding 2: begge er i grafen, men edge'en
+    // mangler fordi resolve kun henter 2 niveauer ned.
+    for (const r of (ownershipRows ?? []) as Array<{
+      ejet_cvr: string;
+      ejer_cvr: string;
+    }>) {
+      const relCvr = r.ejer_cvr === cvrStr ? r.ejet_cvr : r.ejer_cvr;
+      const relId = `cvr-${relCvr}`;
+      if (!existingIds.has(relId) && !addedIds.has(relId)) continue;
+      // Tegn edge i korrekt retning
+      const from = r.ejer_cvr === cvrStr ? companyId : relId;
+      const to = r.ejer_cvr === cvrStr ? relId : companyId;
+      // Find ejerandel
+      const ejerandelRow = (
+        ownershipRows as Array<{
+          ejet_cvr: string;
+          ejer_cvr: string;
+          ejerandel_min?: number | null;
+          ejerandel_max?: number | null;
+        }>
+      ).find((o) => o.ejer_cvr === r.ejer_cvr && o.ejet_cvr === r.ejet_cvr);
+      const ejerandelLabel =
+        ejerandelRow?.ejerandel_min != null
+          ? `${ejerandelRow.ejerandel_min}-${ejerandelRow.ejerandel_max}%`
+          : undefined;
+      newEdges.push({ from, to, ejerandel: ejerandelLabel });
+    }
   }
 
   // Personligt ejede ejendomme via cvr_deltager navne-match + ejf_ejerskab

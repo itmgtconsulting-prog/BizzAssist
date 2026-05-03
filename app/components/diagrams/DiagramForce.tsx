@@ -2874,7 +2874,7 @@ function DiagramForce({
                       person-side-diagrammet. Tidligere udelukket via !isMain. */}
                   {isPerson &&
                     node.enhedsNummer != null &&
-                    node.expandableChildren !== 0 &&
+                    (node.expandableChildren ?? 0) > 0 &&
                     (() => {
                       const personLoading = loadingExpansion.has(node.id);
                       const personExpanded = expandedDynamic.has(node.id);

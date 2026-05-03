@@ -919,20 +919,18 @@ function DiagramForce({
       depths.set(node.id, personDepth);
     }
 
-    // BIZZ-1125: Re-pin property-noder der har en person-parent.
-    // Ejendomme tilføjet via person-expand fik depth INDEN person-pinning,
-    // så de kan lande på virksomheds-niveauet. Genberegn depth som
-    // parentDepth + 0.5 nu hvor person-noder er korrekt pinnet.
+    // BIZZ-1125: Re-pin ALLE property-noder til parentDepth + 0.5.
+    // Ejendomme tilføjet via expand (person ELLER virksomhed) kan have fået
+    // forkert depth i fallback-passet fordi parent-noden endnu ikke var
+    // korrekt placeret. Nu re-beregnes depth baseret på actual parent depth.
     for (const node of filteredGraph.nodes) {
       if (node.type !== 'property' && !node.id.startsWith('props-overflow-')) continue;
       const parents = parentEdges.get(node.id) ?? [];
-      const personParent = parents.find((pid) => {
-        const pNode = nodeById.get(pid);
-        return pNode?.type === 'person';
-      });
-      if (personParent) {
-        const pDepth = depths.get(personParent) ?? personDepth;
-        depths.set(node.id, pDepth + 0.5);
+      if (parents.length === 0) continue;
+      // Brug den shallowest parent (tættest på toppen) for korrekt placering
+      const parentDepths = parents.filter((pid) => depths.has(pid)).map((pid) => depths.get(pid)!);
+      if (parentDepths.length > 0) {
+        depths.set(node.id, Math.min(...parentDepths) + 0.5);
       }
     }
 
@@ -2876,6 +2874,7 @@ function DiagramForce({
                       person-side-diagrammet. Tidligere udelukket via !isMain. */}
                   {isPerson &&
                     node.enhedsNummer != null &&
+                    node.expandableChildren !== 0 &&
                     (() => {
                       const personLoading = loadingExpansion.has(node.id);
                       const personExpanded = expandedDynamic.has(node.id);

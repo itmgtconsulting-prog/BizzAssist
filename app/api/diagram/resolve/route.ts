@@ -213,16 +213,66 @@ async function resolveCompanyGraph(
     // Person-ejerandel er nice-to-have — skippes i cache-first (kræver live CVR ES)
     const personEjerandele = new Map<number, string>();
 
+    // BIZZ-1125: Batch-beregn expandableChildren for person-noder.
+    // Tæl virksomheder med interessenter/indehaver-rolle eller ejerandel_pct > 0,
+    // plus personlige ejendomme — alt der IKKE allerede er i grafen.
+    const personExpandCounts = new Map<number, number>();
+    {
+      // Virksomheder med ejerskabs-roller (interessenter/indehaver/register/reel_ejer)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: expandRels } = await (admin as any)
+        .from('cvr_deltagerrelation')
+        .select('deltager_enhedsnummer, virksomhed_cvr, type, ejerandel_pct')
+        .in('deltager_enhedsnummer', enhedsNumre.slice(0, 20))
+        .is('gyldig_til', null)
+        .in('type', ['interessenter', 'indehaver', 'register', 'reel_ejer'])
+        .limit(200);
+      for (const r of (expandRels ?? []) as Array<{
+        deltager_enhedsnummer: number;
+        virksomhed_cvr: string;
+        type: string;
+        ejerandel_pct: number | null;
+      }>) {
+        // Skip virksomheder allerede i grafen (inkl. main)
+        if (r.virksomhed_cvr === cvr) continue;
+        // Interessenter/indehaver tæller altid; register/reel_ejer kun med ejerandel > 0
+        const isPersonlig = r.type === 'interessenter' || r.type === 'indehaver';
+        const hasEjerandel = r.ejerandel_pct != null && r.ejerandel_pct > 0;
+        if (!isPersonlig && !hasEjerandel) continue;
+        personExpandCounts.set(
+          r.deltager_enhedsnummer,
+          (personExpandCounts.get(r.deltager_enhedsnummer) ?? 0) + 1
+        );
+      }
+      // Personlige ejendomme via navne-match i ejf_ejerskab
+      for (const [en] of Array.from(personRollerMap)) {
+        const navn = navnMap.get(en);
+        if (!navn) continue;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { count: propCount } = await (admin as any)
+          .from('ejf_ejerskab')
+          .select('bfe_nummer', { count: 'exact', head: true })
+          .ilike('ejer_navn', navn)
+          .eq('ejer_type', 'person')
+          .eq('status', 'gældende');
+        if (propCount && propCount > 0) {
+          personExpandCounts.set(en, (personExpandCounts.get(en) ?? 0) + propCount);
+        }
+      }
+    }
+
     for (const [en] of Array.from(personRollerMap)) {
       const ownerId = `en-${en}`;
       if (nodeIds.has(ownerId)) continue;
       const ownerNavn = navnMap.get(en) ?? `Person ${en}`;
+      const expandable = personExpandCounts.get(en) ?? 0;
       nodes.push({
         id: ownerId,
         label: ownerNavn,
         type: 'person',
         enhedsNummer: en,
         link: `/dashboard/owners/${en}`,
+        expandableChildren: expandable > 0 ? expandable : 0,
       });
       nodeIds.add(ownerId);
       edges.push({

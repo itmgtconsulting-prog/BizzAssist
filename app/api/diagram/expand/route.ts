@@ -399,23 +399,30 @@ async function expandCompany(
   // Cache-only — ingen CVR ES fallback
 
   // OPAD: person-ejere af DENNE virksomhed via cache (cvr_deltagerrelation).
-  // Tilføjer alle personer med ejerskabs-type som noder.
+  // Kun personer med interessenter/indehaver-rolle ELLER ejerandel_pct > 0.
   {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: compPersonRows } = await (admin as any)
       .from('cvr_deltagerrelation')
-      .select('deltager_enhedsnummer, type')
+      .select('deltager_enhedsnummer, type, ejerandel_pct')
       .eq('virksomhed_cvr', cvr)
-      .in('type', ['register', 'reel_ejer', 'stifter', 'interessenter'])
       .is('gyldig_til', null)
-      .limit(30);
-    if (compPersonRows?.length) {
+      .limit(100);
+    // Filtrer til ejerskabs-relevante personer
+    const PERSON_OWNER_TYPES = new Set(['interessenter', 'indehaver']);
+    const filteredPersonRows = (
+      (compPersonRows ?? []) as Array<{
+        deltager_enhedsnummer: number;
+        type: string;
+        ejerandel_pct: number | null;
+      }>
+    ).filter((r) => {
+      if (PERSON_OWNER_TYPES.has(r.type)) return true;
+      return r.ejerandel_pct != null && r.ejerandel_pct > 0;
+    });
+    if (filteredPersonRows.length > 0) {
       const ownerEnheder = Array.from(
-        new Set(
-          (compPersonRows as Array<{ deltager_enhedsnummer: number }>).map(
-            (r) => r.deltager_enhedsnummer
-          )
-        )
+        new Set(filteredPersonRows.map((r) => r.deltager_enhedsnummer))
       ).filter((en) => !existingIds.has(`en-${en}`) && !addedIds.has(`en-${en}`));
 
       // Hent navne

@@ -624,10 +624,29 @@ async function expandPerson(
 
   // BIZZ-1122/1125: På virksomhedsdiagram (context=company), vis KUN:
   // 1. Personlige virksomheder (interessenter/indehaver — enkeltmand/I/S)
-  // 2. Virksomheder hvor personen er registreret ejer (register/reel_ejer)
-  // Bestyrelsesmedlemmer, rene direktør-roller og stiftere filtreres fra.
+  // 2. Virksomheder med ejerandel_pct > 0 OG gyldig (gyldig_til IS NULL)
+  // Stiftere, direktører og bestyrelsesmedlemmer uden ejerandel filtreres fra.
   const PERSONLIGE_TYPER = new Set(['interessenter', 'indehaver']);
-  const EJER_TYPER = new Set(['register', 'reel_ejer']);
+
+  // Hent ejerandel_pct for alle relationer med ejerandel > 0
+  const ejerandelByCvr = new Map<string, number>();
+  if (context === 'company') {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: ejerandelRows } = await (admin as any)
+      .from('cvr_deltagerrelation')
+      .select('virksomhed_cvr, ejerandel_pct')
+      .eq('deltager_enhedsnummer', Number(enhedsNummer))
+      .is('gyldig_til', null)
+      .not('ejerandel_pct', 'is', null)
+      .gt('ejerandel_pct', 0)
+      .limit(50);
+    for (const r of (ejerandelRows ?? []) as Array<{
+      virksomhed_cvr: string;
+      ejerandel_pct: number;
+    }>) {
+      ejerandelByCvr.set(r.virksomhed_cvr, r.ejerandel_pct);
+    }
+  }
 
   let filteredCvrs = Array.from(virkRollerMap.keys());
   if (context === 'company') {
@@ -635,9 +654,8 @@ async function expandPerson(
       const roller = virkRollerMap.get(cvrStr) ?? [];
       // Altid vis interessenter/indehaver (personlige virksomheder)
       if (roller.some((t) => PERSONLIGE_TYPER.has(t))) return true;
-      // Vis register/reel_ejer (registreret ejer) — uanset om ejerandel_pct er udfyldt
-      if (roller.some((t) => EJER_TYPER.has(t))) return true;
-      return false;
+      // Vis kun virksomheder med ejerandel > 0
+      return ejerandelByCvr.has(cvrStr);
     });
 
     // Fjern datterselskaber af andre i listen

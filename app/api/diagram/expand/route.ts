@@ -623,10 +623,10 @@ async function expandPerson(
   }
 
   // BIZZ-1122/1125: På virksomhedsdiagram (context=company), vis KUN:
-  // 1. Personlige virksomheder (interessenter/indehaver — enkeltmand/I/S)
-  // 2. Virksomheder med ejerandel_pct > 0 (direkte ejerskab)
-  // Register/reel_ejer med ejerandel_pct = 0 eller NULL filtreres fra.
-  const PERSONLIGE_TYPER = new Set(['interessenter', 'indehaver']);
+  // 1. Personlige virksomheder (interessenter/indehaver/stifter — enkeltmand/I/S/ApS)
+  // 2. Virksomheder med ejerandel_pct > 0 (direkte ejerskab via register/reel_ejer)
+  // Bestyrelsesmedlemmer og rene direktør-roller filtreres fra.
+  const PERSONLIGE_TYPER = new Set(['interessenter', 'indehaver', 'stifter', 'stiftere']);
 
   // Hent ejerandel_pct for register/reel_ejer relationer
   const ejerandelByCvr = new Map<string, number>();

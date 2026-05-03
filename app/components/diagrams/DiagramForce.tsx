@@ -912,10 +912,28 @@ function DiagramForce({
     // diagram. Tidligere kunne ownerchain-persons lande midt i diagrammet hvis
     // deres BFS-depth ramte et indrykket holding-niveau; brugeren vil have alle
     // personer samlet øverst uanset hvor de logisk hører til i kæden.
+    const personDepth = minDepthNonPerson - 1;
     for (const node of filteredGraph.nodes) {
       if (node.type !== 'person') continue;
       if (node.id === effectiveGraph.mainId) continue; // main stays where it is
-      depths.set(node.id, minDepthNonPerson - 1);
+      depths.set(node.id, personDepth);
+    }
+
+    // BIZZ-1125: Re-pin property-noder der har en person-parent.
+    // Ejendomme tilføjet via person-expand fik depth INDEN person-pinning,
+    // så de kan lande på virksomheds-niveauet. Genberegn depth som
+    // parentDepth + 0.5 nu hvor person-noder er korrekt pinnet.
+    for (const node of filteredGraph.nodes) {
+      if (node.type !== 'property' && !node.id.startsWith('props-overflow-')) continue;
+      const parents = parentEdges.get(node.id) ?? [];
+      const personParent = parents.find((pid) => {
+        const pNode = nodeById.get(pid);
+        return pNode?.type === 'person';
+      });
+      if (personParent) {
+        const pDepth = depths.get(personParent) ?? personDepth;
+        depths.set(node.id, pDepth + 0.5);
+      }
     }
 
     // Company co-owners stay close to their subsidiary (targetDepth - 0.5) so

@@ -630,6 +630,11 @@ async function expandCompany(
         .eq('enhedsnummer', pNode.enhedsNummer)
         .maybeSingle();
       const pNavn = dRow?.navn;
+
+      // Sæt expandableChildren ALTID — uanset om navne-lookup fejler
+      const compCount = personExpandCounts.get(pNode.enhedsNummer!) ?? 0;
+      pNode.expandableChildren = compCount > 0 ? compCount : 0;
+
       if (!pNavn) continue;
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -675,11 +680,6 @@ async function expandCompany(
           });
         }
       }
-
-      // Sæt expandableChildren = virksomheder + ejendomme der IKKE allerede vises
-      const compCount = personExpandCounts.get(pNode.enhedsNummer!) ?? 0;
-      pNode.expandableChildren = compCount > 0 ? compCount : 0;
-      // Personlige ejendomme er nu tilføjet direkte → tæller ikke som expandable
     }
   }
 

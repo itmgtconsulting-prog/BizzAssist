@@ -121,10 +121,11 @@ function mapDoc(v) {
   const latest = forloeb[forloeb.length - 1];
   const ophoert = latest?.periode?.gyldigTil?.split('T')[0] ?? null;
 
-  const kvartaler = meta.nyesteKvartalsbeskaeftigelse ?? [];
+  const kvRaw = meta.nyesteKvartalsbeskaeftigelse;
+  const kvartaler = Array.isArray(kvRaw) ? kvRaw : [];
   const kvMap = {};
   for (const kv of kvartaler) {
-    if (kv.kvartal != null) kvMap[kv.kvartal] = kv.antalAnsatte ?? null;
+    if (kv?.kvartal != null) kvMap[kv.kvartal] = kv.antalAnsatte ?? null;
   }
 
   return {

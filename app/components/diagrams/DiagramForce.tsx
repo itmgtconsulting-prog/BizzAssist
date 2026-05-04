@@ -1922,7 +1922,9 @@ function DiagramForce({
               if (result) {
                 setExtensionNodes((prev) => [...prev, ...result.nodes]);
                 setExtensionEdges((prev) => [...prev, ...result.edges]);
-                setExpandedDynamic((prev) => new Set([...prev, p.id]));
+                if (result.nodes.length > 0 || result.edges.length > 0) {
+                  setExpandedDynamic((prev) => new Set([...prev, p.id]));
+                }
               }
             });
           } else {
@@ -2806,9 +2808,13 @@ function DiagramForce({
                                         if (result) {
                                           setExtensionNodes((prev) => [...prev, ...result.nodes]);
                                           setExtensionEdges((prev) => [...prev, ...result.edges]);
-                                          setExpandedDynamic(
-                                            (prev) => new Set([...prev, personNodeId])
-                                          );
+                                          // Marker kun som expanded hvis der faktisk kom data —
+                                          // ellers beholdes Udvid-knappen så brugeren kan prøve igen
+                                          if (result.nodes.length > 0 || result.edges.length > 0) {
+                                            setExpandedDynamic(
+                                              (prev) => new Set([...prev, personNodeId])
+                                            );
+                                          }
                                         }
                                       });
                                     }
@@ -2900,7 +2906,9 @@ function DiagramForce({
                                 if (result) {
                                   setExtensionNodes((prev) => [...prev, ...result.nodes]);
                                   setExtensionEdges((prev) => [...prev, ...result.edges]);
-                                  setExpandedDynamic((prev) => new Set([...prev, node.id]));
+                                  if (result.nodes.length > 0 || result.edges.length > 0) {
+                                    setExpandedDynamic((prev) => new Set([...prev, node.id]));
+                                  }
                                 }
                               });
                             } else {

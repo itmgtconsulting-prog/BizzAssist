@@ -2336,8 +2336,8 @@ function DiagramForce({
                 : `Properties (${propertyCount})`}
           </button>
         )}
-        {/* BIZZ-1004: Toggle personligt ejede ejendomme */}
-        {personalPropNodeIds.size > 0 && (
+        {/* BIZZ-1004: Toggle personligt ejede ejendomme — kun på virksomhedsdiagram */}
+        {defaultShowProperties && personalPropNodeIds.size > 0 && (
           <button
             onClick={() => {
               setShowPersonalProps((s) => !s);

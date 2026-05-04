@@ -1033,6 +1033,31 @@ function DiagramForce({
       }
     }
 
+    // Push rolle-sektion (layoutSection='role') below the entire ownership tree.
+    // Finder max depth af ikke-rolle noder og placerer rolle-noder nedenunder
+    // med en gap, så ejerskab og roller er visuelt adskilte.
+    const roleNodes = filteredGraph.nodes.filter((n) => n.layoutSection === 'role');
+    if (roleNodes.length > 0) {
+      let maxNonRoleDepth = 0;
+      for (const [id, d] of depths) {
+        const node = nodeById.get(id);
+        if (node?.layoutSection === 'role') continue;
+        if (coOwnerIds.has(id)) continue;
+        if (d > maxNonRoleDepth) maxNonRoleDepth = d;
+      }
+      // Placér container-node (roller-group) én linje under ejerskabs-træet
+      const roleBaseDepth = Math.ceil(maxNonRoleDepth) + 1;
+      for (const node of roleNodes) {
+        // Container-noden (status type) på roleBaseDepth,
+        // rolle-virksomheder på roleBaseDepth + 1
+        if (node.type === 'status') {
+          depths.set(node.id, roleBaseDepth);
+        } else {
+          depths.set(node.id, roleBaseDepth + 1);
+        }
+      }
+    }
+
     // Company co-owners stay close to their subsidiary (targetDepth - 0.5) so
     // the parentage is still readable.
     for (const [coId, targetId] of coOwnerTarget) {
@@ -1935,7 +1960,19 @@ function DiagramForce({
     // BIZZ-597 Fase 3: Main-node er selv en person → auto-expand hans
     // personlige ejendomme + virksomheder så vi får fuld view uden manuel
     // klik på Udvid.
+    // SKIP auto-expand når resolve allerede leverer alle virksomheder (v2):
+    // resolve sætter ikke expandableChildren på person-noden, og grafen
+    // indeholder allerede alle company-noder som children.
     if (mainNode.type === 'person' && mainNode.enhedsNummer != null) {
+      // Når onExpand er sat (v2 mode) og person-noden ikke har
+      // expandableChildren, har resolve allerede leveret alle noder
+      const resolveDeliveredAll =
+        onExpand && (mainNode.expandableChildren == null || mainNode.expandableChildren === 0);
+      if (resolveDeliveredAll) {
+        // Markér som expanded så Udvid-knappen skjules
+        if (!expandedDynamic.has(mainNode.id)) markExpanded(mainNode.id);
+        return;
+      }
       if (!autoExpandDoneRef.current.has(mainNode.id)) {
         autoExpandDoneRef.current.add(mainNode.id);
         if (!expandedDynamic.has(mainNode.id) && !loadingExpansion.has(mainNode.id)) {
@@ -1997,7 +2034,8 @@ function DiagramForce({
       (n) =>
         n.type !== 'main' &&
         n.cvr != null &&
-        n.expandableChildren !== 0 &&
+        n.expandableChildren != null &&
+        n.expandableChildren > 0 &&
         !expandedDynamic.has(n.id) &&
         !loadingExpansion.has(n.id)
     );
@@ -3104,7 +3142,8 @@ function DiagramForce({
                       person-side-diagrammet. Tidligere udelukket via !isMain. */}
                   {isPerson &&
                     node.enhedsNummer != null &&
-                    (node.expandableChildren === undefined || node.expandableChildren > 0) &&
+                    node.expandableChildren != null &&
+                    node.expandableChildren > 0 &&
                     (() => {
                       const personLoading = loadingExpansion.has(node.id);
                       const personExpanded = expandedDynamic.has(node.id);
@@ -3170,7 +3209,8 @@ function DiagramForce({
                   {!isPerson &&
                     node.cvr != null &&
                     node.type !== 'main' &&
-                    node.expandableChildren !== 0 &&
+                    node.expandableChildren != null &&
+                    node.expandableChildren > 0 &&
                     (() => {
                       const companyLoading = loadingExpansion.has(node.id);
                       const companyExpanded = expandedDynamic.has(node.id);

@@ -102,6 +102,13 @@ export interface DiagramNode {
   personRolle?: string;
   /** Other persons with roles in this company (for rendering inside the box) */
   noeglePersoner?: DiagramNodePerson[];
+  /**
+   * Layout section hint for grouping nodes visually. Nodes with the same
+   * layoutSection are placed together in the diagram, separated from other
+   * sections. Used on person pages to push role-only companies below the
+   * ownership hierarchy.
+   */
+  layoutSection?: 'role';
   /** Overflow items when a parent has >MAX children — shown as expandable list */
   overflowItems?: { label: string; cvr?: number; link?: string }[];
 }

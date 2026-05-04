@@ -1940,6 +1940,17 @@ function DiagramForce({
     const visibleIds = new Set(filteredGraph.nodes.map((n) => n.id));
     return allExpandableIds.filter((id) => visibleIds.has(id) && !expandedNodes.has(id));
   }, [allExpandableIds, filteredGraph.nodes, expandedNodes]);
+  // BIZZ-1129: Virksomheder med Udvid-knap der kan udvides via toolbar
+  const canExpandCompanies = useMemo(() => {
+    return effectiveGraph.nodes.filter(
+      (n) =>
+        n.type !== 'main' &&
+        n.cvr != null &&
+        n.expandableChildren !== 0 &&
+        !expandedDynamic.has(n.id) &&
+        !loadingExpansion.has(n.id)
+    );
+  }, [effectiveGraph.nodes, expandedDynamic, loadingExpansion]);
   // Whether anything is expanded at all (co-owner OR person dynamic)
   const canCollapseAny = expandedNodes.size > 0 || expandedDynamic.size > 0;
 
@@ -1984,6 +1995,29 @@ function DiagramForce({
             });
           } else {
             void expandPersonDynamic(p.id, p.enhedsNummer);
+          }
+        }
+      }
+      didSomething = true;
+    }
+    // BIZZ-1129: Udvid ALLE virksomheder med Udvid-knap
+    if (canExpandCompanies.length > 0) {
+      for (const c of canExpandCompanies) {
+        if (c.cvr != null) {
+          if (onExpand) {
+            setLoadingExpansion((prev) => new Set([...prev, c.id]));
+            void onExpand(c.id, 'company').then((result) => {
+              setLoadingExpansion((prev) => {
+                const s = new Set(prev);
+                s.delete(c.id);
+                return s;
+              });
+              if (result) {
+                addExtensionNodesWithLevel(result.nodes);
+                setExtensionEdges((prev) => [...prev, ...result.edges]);
+                setExpandedDynamic((prev) => new Set([...prev, c.id]));
+              }
+            });
           }
         }
       }

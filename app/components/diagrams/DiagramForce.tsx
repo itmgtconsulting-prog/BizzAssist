@@ -186,6 +186,39 @@ function DiagramForce({
   const [loadingExpansion, setLoadingExpansion] = useState<Set<string>>(new Set());
 
   /**
+   * BIZZ-1127: Leveled expand/collapse — hvert expand-klik tildeler et niveau.
+   * Skjul fjerner det højeste niveau først.
+   *
+   * nodeLevelMap: node-ID → expand-niveau (0 = initial graf, 1 = første expand, osv.)
+   * currentMaxLevel: det højeste niveau i grafen (brugt til at tildele næste + collapse)
+   */
+  const [nodeLevelMap, setNodeLevelMap] = useState<Map<string, number>>(new Map());
+  const _currentMaxLevel = useMemo(() => {
+    if (nodeLevelMap.size === 0) return 0;
+    let max = 0;
+    for (const level of nodeLevelMap.values()) {
+      if (level > max) max = level;
+    }
+    return max;
+  }, [nodeLevelMap]);
+
+  // BIZZ-1127: Initialiser niveau 0 for alle noder i initial-grafen
+  useEffect(() => {
+    if (!graph || graph.nodes.length === 0) return;
+    setNodeLevelMap((prev) => {
+      const next = new Map(prev);
+      let changed = false;
+      for (const n of graph.nodes) {
+        if (!next.has(n.id)) {
+          next.set(n.id, 0);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [graph]);
+
+  /**
    * Effective graph = source graph + dynamic extensions (person expansion).
    * All downstream useMemos reference this instead of the raw `graph` prop so
    * newly-added nodes flow through layout + rendering automatically.

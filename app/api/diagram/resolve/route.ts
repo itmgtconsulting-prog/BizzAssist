@@ -877,7 +877,36 @@ async function resolvePersonGraph(
     noeglePersonerMap.set(r.virksomhed_cvr, arr);
   }
 
-  // Samle alle CVR'er vi skal hente related for (hierarki)
+  // BIZZ-1135: Find ejerskab MELLEM personens virksomheder for hierarkisk layout
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: interOwnershipRows } = await (admin as any)
+    .from('cvr_virksomhed_ejerskab')
+    .select('ejer_cvr, ejet_cvr, ejerandel_min, ejerandel_max')
+    .in('ejer_cvr', allCvrs.slice(0, 50))
+    .in('ejet_cvr', allCvrs.slice(0, 50))
+    .is('gyldig_til', null);
+
+  // Byg parent-map: child CVR → parent CVR (kun inden for personens virksomheder)
+  const parentOfCvr = new Map<string, string>();
+  const childrenOfCvr = new Map<string, Array<{ cvr: string; ejerandel?: string }>>();
+  for (const row of (interOwnershipRows ?? []) as Array<{
+    ejer_cvr: string;
+    ejet_cvr: string;
+    ejerandel_min: number | null;
+    ejerandel_max: number | null;
+  }>) {
+    if (parentOfCvr.has(row.ejet_cvr)) continue; // første parent vinder
+    parentOfCvr.set(row.ejet_cvr, row.ejer_cvr);
+    const children = childrenOfCvr.get(row.ejer_cvr) ?? [];
+    children.push({
+      cvr: row.ejet_cvr,
+      ejerandel:
+        row.ejerandel_min != null ? `${row.ejerandel_min}-${row.ejerandel_max}%` : undefined,
+    });
+    childrenOfCvr.set(row.ejer_cvr, children);
+  }
+
+  // Opret noder for ALLE virksomheder, men kun top-level edges til personen
   const topLevelCvrs: string[] = [];
 
   for (const cvrStr of allCvrs) {
@@ -887,15 +916,12 @@ async function resolvePersonGraph(
     const company = companyMap.get(cvrStr) ?? null;
     const propCount = propCountMap.get(cvrStr) ?? 0;
 
-    // Formater roller fra cache-data
     const roller = personVirkRollerMap.get(cvrStr) ?? [];
     const rolleStr = roller.slice(0, 2).join(', ');
 
-    // BIZZ-1124: Nøglepersoner for denne virksomhed
     const keyPersons = noeglePersonerMap.get(cvrStr)?.slice(0, 5);
-
-    // BIZZ-1118: Vis branche i sublabel
     const subParts = [company?.virksomhedsform, company?.branche_tekst].filter(Boolean);
+
     nodes.push({
       id: companyId,
       label: company?.navn ?? `CVR ${cvrStr}`,
@@ -910,13 +936,32 @@ async function resolvePersonGraph(
       noeglePersoner: keyPersons && keyPersons.length > 0 ? keyPersons : undefined,
     });
     nodeIds.add(companyId);
-    topLevelCvrs.push(cvrStr);
 
-    edges.push({
-      from: mainId,
-      to: companyId,
-      ejerandel: rolleStr || undefined,
-    });
+    // BIZZ-1135: Kun top-level virksomheder (uden parent i grafen) forbindes
+    // direkte til personen. Child-virksomheder forbindes via parent nedenfor.
+    if (!parentOfCvr.has(cvrStr)) {
+      topLevelCvrs.push(cvrStr);
+      edges.push({
+        from: mainId,
+        to: companyId,
+        ejerandel: rolleStr || undefined,
+      });
+    }
+  }
+
+  // Tilføj parent→child ejerskabs-edges
+  for (const [parentCvr, children] of childrenOfCvr) {
+    const parentId = `cvr-${parentCvr}`;
+    if (!nodeIds.has(parentId)) continue;
+    for (const child of children) {
+      const childId = `cvr-${child.cvr}`;
+      if (!nodeIds.has(childId)) continue;
+      edges.push({
+        from: parentId,
+        to: childId,
+        ejerandel: child.ejerandel,
+      });
+    }
   }
 
   // BIZZ-1104/1108: Hent datterselskaber fra lokal cvr_deltagerrelation via ejer_cvr

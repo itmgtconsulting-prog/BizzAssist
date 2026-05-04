@@ -211,6 +211,13 @@ function DiagramForce({
   const [expansionSourceMap, setExpansionSourceMap] = useState<Map<string, string>>(new Map());
 
   /**
+   * BIZZ-1133: Tracker hvilke co-owner expandedNodes-entries der blev
+   * tilføjet ved hvert level, så collapseOneLevel kan re-hide dem.
+   * Key = parent-node-ID (i expandedNodes), value = level det blev tilføjet ved.
+   */
+  const [coOwnerLevelMap, setCoOwnerLevelMap] = useState<Map<string, number>>(new Map());
+
+  /**
    * BIZZ-1128: Tilføj extension-noder OG registrer dem på næste expand-niveau.
    * BIZZ-1131: Tracker source→result mapping for clean collapse.
    *
@@ -1987,6 +1994,13 @@ function DiagramForce({
         for (const id of canExpandMore) next.add(id);
         return next;
       });
+      // BIZZ-1133: Track co-owner reveals ved dette niveau
+      const nextLevel = currentMaxLevel + 1;
+      setCoOwnerLevelMap((prev) => {
+        const next = new Map(prev);
+        for (const id of canExpandMore) next.set(id, nextLevel);
+        return next;
+      });
       didSomething = true;
     }
     if (canExpandPersons.length > 0) {
@@ -2064,13 +2078,18 @@ function DiagramForce({
     }
     if (idsAtLevel.size === 0) return;
 
-    // 1. Fjern co-owner expansions: find collapseParent-IDs hvis children er på dette niveau
+    // 1. Re-hide co-owners der blev afsløret ved dette niveau
     setExpandedNodes((prev) => {
       const next = new Set(prev);
-      for (const n of effectiveGraph.nodes) {
-        if (n.isCoOwner && n.collapseParent && idsAtLevel.has(n.id)) {
-          next.delete(n.collapseParent);
-        }
+      for (const [parentId, level] of coOwnerLevelMap) {
+        if (level === levelToRemove) next.delete(parentId);
+      }
+      return next;
+    });
+    setCoOwnerLevelMap((prev) => {
+      const next = new Map(prev);
+      for (const [parentId, level] of prev) {
+        if (level === levelToRemove) next.delete(parentId);
       }
       return next;
     });
@@ -2201,13 +2220,24 @@ function DiagramForce({
           <RotateCcw size={11} />
           {lang === 'da' ? 'Reset' : 'Reset'}
         </button>
-        {/* Expand / Collapse all co-owners */}
+        {/* BIZZ-1132: Expand / Collapse med niveau-indikator */}
         <span className="w-px h-5 bg-slate-700/50 mx-1" />
+        {currentMaxLevel > 0 && (
+          <span className="text-slate-500 text-[9px] tabular-nums mr-1">
+            {lang === 'da' ? `Niv. ${currentMaxLevel}` : `Lv. ${currentMaxLevel}`}
+          </span>
+        )}
         <button
           onClick={expandOneLevel}
-          disabled={canExpandMore.length === 0}
+          disabled={
+            canExpandMore.length === 0 &&
+            canExpandPersons.length === 0 &&
+            canExpandCompanies.length === 0
+          }
           className={`h-7 px-2 flex items-center gap-1 bg-slate-800 border border-slate-700/50 rounded-lg text-[10px] transition ${
-            canExpandMore.length === 0
+            canExpandMore.length === 0 &&
+            canExpandPersons.length === 0 &&
+            canExpandCompanies.length === 0
               ? 'text-slate-600 cursor-not-allowed opacity-50'
               : 'text-slate-400 hover:text-white'
           }`}

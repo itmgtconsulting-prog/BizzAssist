@@ -190,6 +190,18 @@ export default function DiagramV2({
     [rootType]
   );
 
+  /**
+   * Collapse callback — ryd allNodesRef/allBfesRef for fjernede noder
+   * så næste expand-kald ikke sender dem som "eksisterende".
+   */
+  const handleCollapse = useCallback((removedNodeIds: string[]) => {
+    for (const id of removedNodeIds) {
+      const node = allNodesRef.current.get(id);
+      if (node?.bfeNummer != null) allBfesRef.current.delete(node.bfeNummer);
+      allNodesRef.current.delete(id);
+    }
+  }, []);
+
   // Loading state — tom div, parent-sidens loading.tsx viser allerede spinner
   if (loading) {
     return <div className="w-full h-96" />;
@@ -222,6 +234,7 @@ export default function DiagramV2({
       lang={lang}
       defaultShowProperties={rootType !== 'person'}
       onExpand={handleExpand}
+      onCollapse={handleCollapse}
       onNodeClick={onNodeClick}
       onDiagramReady={onDiagramReady}
     />

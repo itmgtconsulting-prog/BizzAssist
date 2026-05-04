@@ -146,6 +146,7 @@ function DiagramForce({
   defaultShowProperties = true,
   onDiagramReady,
   onExpand,
+  onCollapse,
 }: DiagramVariantProps) {
   const _router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -2153,6 +2154,9 @@ function DiagramForce({
       for (const id of idsAtLevel) next.delete(id);
       return next;
     });
+
+    // 5. Notify parent (DiagramV2) så allNodesRef/allBfesRef ryddes
+    if (onCollapse) onCollapse(Array.from(idsAtLevel));
   }
 
   /** Toolbar with zoom controls + fullscreen toggle */

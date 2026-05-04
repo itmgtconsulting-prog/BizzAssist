@@ -181,6 +181,13 @@ export interface DiagramVariantProps {
     nodeId: string,
     nodeType: 'person' | 'company'
   ) => Promise<{ nodes: DiagramNode[]; edges: DiagramEdge[] } | null>;
+  /**
+   * Callback fired when nodes are collapsed (removed from diagram).
+   * Parent component should clean up any tracking refs (e.g. allNodesRef, allBfesRef).
+   *
+   * @param removedNodeIds - IDs af noder der blev fjernet
+   */
+  onCollapse?: (removedNodeIds: string[]) => void;
 }
 
 /** Max children shown per parent node — overflow becomes an expandable list */

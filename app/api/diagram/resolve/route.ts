@@ -254,7 +254,7 @@ async function resolveCompanyGraph(
         const { count: propCount } = await (admin as any)
           .from('ejf_ejerskab')
           .select('bfe_nummer', { count: 'exact', head: true })
-          .ilike('ejer_navn', navn)
+          .eq('ejer_navn', navn)
           .eq('ejer_type', 'person')
           .eq('status', 'gældende');
         if (propCount && propCount > 0) {

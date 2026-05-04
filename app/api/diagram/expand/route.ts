@@ -645,7 +645,7 @@ async function expandCompany(
       const { data: pProps } = await (admin as any)
         .from('ejf_ejerskab')
         .select('bfe_nummer, ejerandel_taeller, ejerandel_naevner')
-        .ilike('ejer_navn', pNavn)
+        .eq('ejer_navn', pNavn)
         .eq('ejer_type', 'person')
         .eq('status', 'gældende')
         .limit(20);
@@ -911,7 +911,7 @@ async function expandPerson(
     const { data: personalProps } = await (admin as any)
       .from('ejf_ejerskab')
       .select('bfe_nummer, ejerandel_taeller, ejerandel_naevner')
-      .ilike('ejer_navn', personNavn)
+      .eq('ejer_navn', personNavn)
       .eq('ejer_type', 'person')
       .eq('status', 'gældende')
       .limit(50);

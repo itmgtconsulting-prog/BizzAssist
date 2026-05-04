@@ -633,12 +633,14 @@ async function expandCompany(
         .maybeSingle();
       const pNavn = dRow?.navn;
 
-      // Sæt expandableChildren ALTID — uanset om navne-lookup fejler
       const compCount = personExpandCounts.get(pNode.enhedsNummer!) ?? 0;
-      pNode.expandableChildren = compCount > 0 ? compCount : 0;
 
-      if (!pNavn) continue;
+      if (!pNavn) {
+        pNode.expandableChildren = compCount > 0 ? compCount : 0;
+        continue;
+      }
 
+      // Tæl personlige ejendomme NOT allerede i grafen (for expandableChildren)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: pProps } = await (admin as any)
         .from('ejf_ejerskab')
@@ -647,6 +649,11 @@ async function expandCompany(
         .eq('ejer_type', 'person')
         .eq('status', 'gældende')
         .limit(20);
+
+      const newPropCount = ((pProps ?? []) as Array<{ bfe_nummer: number }>).filter(
+        (p) => !existingBfes.has(p.bfe_nummer) && !addedIds.has(`bfe-${p.bfe_nummer}`)
+      ).length;
+      pNode.expandableChildren = compCount + newPropCount > 0 ? compCount + newPropCount : 0;
 
       for (const pp of (pProps ?? []) as Array<{
         bfe_nummer: number;

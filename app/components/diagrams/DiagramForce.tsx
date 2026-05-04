@@ -208,7 +208,7 @@ function DiagramForce({
    * gendanne Udvid-knapper (fjerne source fra expandedDynamic).
    * Key = result-node-ID, value = source-node-ID.
    */
-  const [expansionSourceMap, setExpansionSourceMap] = useState<Map<string, string>>(new Map());
+  const [_expansionSourceMap, setExpansionSourceMap] = useState<Map<string, string>>(new Map());
 
   /**
    * BIZZ-1133: Tracker hvilke co-owner expandedNodes-entries der blev
@@ -216,6 +216,31 @@ function DiagramForce({
    * Key = parent-node-ID (i expandedNodes), value = level det blev tilføjet ved.
    */
   const [coOwnerLevelMap, setCoOwnerLevelMap] = useState<Map<string, number>>(new Map());
+
+  /**
+   * Tracker hvilke expandedDynamic-entries der blev sat ved hvert level.
+   * Bruges af collapseOneLevel til at fjerne dem — uanset om de producerede
+   * nye noder (expansionSourceMap) eller ej.
+   */
+  const [dynamicExpandLevelMap, setDynamicExpandLevelMap] = useState<Map<string, number>>(
+    new Map()
+  );
+
+  /**
+   * Marker en node som dynamisk expanded OG registrer ved hvilket level.
+   * Bruges i stedet for direkte setExpandedDynamic-kald.
+   */
+  const markExpanded = useCallback(
+    (nodeId: string) => {
+      setExpandedDynamic((prev) => new Set([...prev, nodeId]));
+      setDynamicExpandLevelMap((prev) => {
+        const next = new Map(prev);
+        if (!next.has(nodeId)) next.set(nodeId, currentMaxLevel + 1);
+        return next;
+      });
+    },
+    [currentMaxLevel]
+  );
 
   /**
    * BIZZ-1128: Tilføj extension-noder OG registrer dem på næste expand-niveau.
@@ -527,7 +552,7 @@ function DiagramForce({
           addExtensionNodesWithLevel(newNodes);
           setExtensionEdges((prev) => [...prev, ...newEdges]);
         }
-        setExpandedDynamic((prev) => new Set(prev).add(personId));
+        markExpanded(personId);
       } catch {
         /* Fetch fejl er ikke-fatal — knap bliver bare ikke marked as expanded */
       } finally {
@@ -673,11 +698,7 @@ function DiagramForce({
         }
 
         /* Marker som udvidet — uanset om der var resultater */
-        setExpandedDynamic((prev) => {
-          const next = new Set(prev);
-          next.add(companyNodeId);
-          return next;
-        });
+        markExpanded(companyNodeId);
       } catch {
         /* Fejl ignoreres — noden forbliver uudvidet */
       } finally {
@@ -1921,7 +1942,7 @@ function DiagramForce({
               if (result) {
                 addExtensionNodesWithLevel(result.nodes, mainNode.id);
                 setExtensionEdges((prev) => [...prev, ...result.edges]);
-                setExpandedDynamic((prev) => new Set([...prev, mainNode.id]));
+                markExpanded(mainNode.id);
               }
             });
           } else {
@@ -2018,7 +2039,7 @@ function DiagramForce({
                 addExtensionNodesWithLevel(result.nodes, p.id);
                 setExtensionEdges((prev) => [...prev, ...result.edges]);
                 if (result.nodes.length > 0 || result.edges.length > 0) {
-                  setExpandedDynamic((prev) => new Set([...prev, p.id]));
+                  markExpanded(p.id);
                 }
               }
             });
@@ -2044,7 +2065,7 @@ function DiagramForce({
               if (result) {
                 addExtensionNodesWithLevel(result.nodes, c.id);
                 setExtensionEdges((prev) => [...prev, ...result.edges]);
-                setExpandedDynamic((prev) => new Set([...prev, c.id]));
+                markExpanded(c.id);
               }
             });
           }
@@ -2100,22 +2121,26 @@ function DiagramForce({
       prev.filter((e) => !idsAtLevel.has(e.from) && !idsAtLevel.has(e.to))
     );
 
-    // 3. BIZZ-1131: Gendanner Udvid-knapper via expansionSourceMap
-    //    Find source-noder der producerede noder på dette niveau og fjern
-    //    dem fra expandedDynamic så de kan udvides igen.
-    const sourcesToReopen = new Set<string>();
-    for (const id of idsAtLevel) {
-      const source = expansionSourceMap.get(id);
-      if (source) sourcesToReopen.add(source);
-    }
+    // 3. Gendanner Udvid-knapper — fjern alle expandedDynamic-entries
+    //    der blev sat ved dette level (via dynamicExpandLevelMap).
+    //    + fjern source-entries fra expansionSourceMap.
     setExpandedDynamic((prev) => {
       const next = new Set(prev);
+      // Fjern noder der selv er ved dette level
       for (const id of idsAtLevel) next.delete(id);
-      for (const id of sourcesToReopen) next.delete(id);
+      // Fjern noder der blev markeret som expanded ved dette level
+      for (const [nodeId, level] of dynamicExpandLevelMap) {
+        if (level === levelToRemove) next.delete(nodeId);
+      }
       return next;
     });
-
-    // Ryd source-mapping for fjernede noder
+    setDynamicExpandLevelMap((prev) => {
+      const next = new Map(prev);
+      for (const [nodeId, level] of prev) {
+        if (level === levelToRemove) next.delete(nodeId);
+      }
+      return next;
+    });
     setExpansionSourceMap((prev) => {
       const next = new Map(prev);
       for (const id of idsAtLevel) next.delete(id);
@@ -3001,9 +3026,7 @@ function DiagramForce({
                                           addExtensionNodesWithLevel(result.nodes, personNodeId);
                                           setExtensionEdges((prev) => [...prev, ...result.edges]);
                                           if (result.nodes.length > 0 || result.edges.length > 0) {
-                                            setExpandedDynamic(
-                                              (prev) => new Set([...prev, personNodeId])
-                                            );
+                                            markExpanded(personNodeId);
                                           }
                                         }
                                       });
@@ -3097,7 +3120,7 @@ function DiagramForce({
                                   addExtensionNodesWithLevel(result.nodes, node.id);
                                   setExtensionEdges((prev) => [...prev, ...result.edges]);
                                   if (result.nodes.length > 0 || result.edges.length > 0) {
-                                    setExpandedDynamic((prev) => new Set([...prev, node.id]));
+                                    markExpanded(node.id);
                                   }
                                 }
                               });
@@ -3161,7 +3184,7 @@ function DiagramForce({
                                 if (result) {
                                   addExtensionNodesWithLevel(result.nodes, node.id);
                                   setExtensionEdges((prev) => [...prev, ...result.edges]);
-                                  setExpandedDynamic((prev) => new Set([...prev, node.id]));
+                                  markExpanded(node.id);
                                 }
                               });
                             } else {

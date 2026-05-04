@@ -622,9 +622,9 @@ async function expandCompany(
       );
     }
 
-    // 2. Hent personlige ejendomme via navne-match i ejf_ejerskab og tilføj til grafen
+    // 2. Tæl personlige ejendomme for expandableChildren (tilføjes IKKE til grafen
+    //    — ejendomme vises først når brugeren klikker Udvid på person-noden)
     for (const pNode of newPersonNodes) {
-      // Hent personnavn
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: dRow } = await (admin as any)
         .from('cvr_deltager')
@@ -632,7 +632,6 @@ async function expandCompany(
         .eq('enhedsnummer', pNode.enhedsNummer)
         .maybeSingle();
       const pNavn = dRow?.navn;
-
       const compCount = personExpandCounts.get(pNode.enhedsNummer!) ?? 0;
 
       if (!pNavn) {
@@ -640,55 +639,16 @@ async function expandCompany(
         continue;
       }
 
-      // Tæl personlige ejendomme NOT allerede i grafen (for expandableChildren)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: pProps } = await (admin as any)
+      const { count: propCount } = await (admin as any)
         .from('ejf_ejerskab')
-        .select('bfe_nummer, ejerandel_taeller, ejerandel_naevner')
+        .select('bfe_nummer', { count: 'exact', head: true })
         .eq('ejer_navn', pNavn)
         .eq('ejer_type', 'person')
-        .eq('status', 'gældende')
-        .limit(20);
+        .eq('status', 'gældende');
 
-      const newPropCount = ((pProps ?? []) as Array<{ bfe_nummer: number }>).filter(
-        (p) => !existingBfes.has(p.bfe_nummer) && !addedIds.has(`bfe-${p.bfe_nummer}`)
-      ).length;
+      const newPropCount = propCount ?? 0;
       pNode.expandableChildren = compCount + newPropCount > 0 ? compCount + newPropCount : 0;
-
-      for (const pp of (pProps ?? []) as Array<{
-        bfe_nummer: number;
-        ejerandel_taeller: number | null;
-        ejerandel_naevner: number | null;
-      }>) {
-        const ppId = `bfe-${pp.bfe_nummer}`;
-        // Ejendom allerede i grafen → kryds-edge
-        if (existingBfes.has(pp.bfe_nummer) || addedIds.has(ppId)) {
-          newEdges.push({
-            from: pNode.id,
-            to: ppId,
-            ejerandel: formatEjerandel(pp.ejerandel_taeller, pp.ejerandel_naevner),
-            personallyOwned: true,
-            crossOwnership: true,
-          });
-        } else {
-          // Ny ejendom → tilføj som node + edge
-          if (!existingIds.has(ppId) && !addedIds.has(ppId)) {
-            newNodes.push({
-              id: ppId,
-              label: `BFE ${pp.bfe_nummer}`,
-              type: 'property',
-              bfeNummer: pp.bfe_nummer,
-            });
-            addedIds.add(ppId);
-          }
-          newEdges.push({
-            from: pNode.id,
-            to: ppId,
-            ejerandel: formatEjerandel(pp.ejerandel_taeller, pp.ejerandel_naevner),
-            personallyOwned: true,
-          });
-        }
-      }
     }
   }
 

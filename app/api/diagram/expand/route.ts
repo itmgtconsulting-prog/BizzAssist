@@ -609,8 +609,10 @@ async function expandCompany(
       type: string;
       ejerandel_pct: number | null;
     }>) {
-      // Tæl ALLE ejerskabs-virksomheder (inkl. dem i grafen) — expandPerson
-      // henter ejendomme + crossOwnership-edges for dem alle, ikke kun nye.
+      // Tæl kun virksomheder IKKE allerede i grafen — virksomheder der allerede
+      // vises har intet at tilføje ved person-expand.
+      if (existingIds.has(`cvr-${r.virksomhed_cvr}`) || addedIds.has(`cvr-${r.virksomhed_cvr}`))
+        continue;
       const isPersonlig = PERSON_OWNER_TYPES.has(r.type);
       const hasEjerandel = r.ejerandel_pct != null && r.ejerandel_pct > 0;
       if (!isPersonlig && !hasEjerandel) continue;

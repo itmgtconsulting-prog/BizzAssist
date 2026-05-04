@@ -602,24 +602,26 @@ async function expandCompany(
       .in('deltager_enhedsnummer', newPersonEns.slice(0, 20))
       .is('gyldig_til', null)
       .limit(500);
-    const personExpandCounts = new Map<number, number>();
+    // Dedup: tæl unikke CVR'er per person (flere rolle-rækker for samme CVR tæller kun 1)
+    const personExpandCvrs = new Map<number, Set<string>>();
     for (const r of (personExpandRels ?? []) as Array<{
       deltager_enhedsnummer: number;
       virksomhed_cvr: string;
       type: string;
       ejerandel_pct: number | null;
     }>) {
-      // Tæl kun virksomheder IKKE allerede i grafen — virksomheder der allerede
-      // vises har intet at tilføje ved person-expand.
       if (existingIds.has(`cvr-${r.virksomhed_cvr}`) || addedIds.has(`cvr-${r.virksomhed_cvr}`))
         continue;
       const isPersonlig = PERSON_OWNER_TYPES.has(r.type);
       const hasEjerandel = r.ejerandel_pct != null && r.ejerandel_pct > 0;
       if (!isPersonlig && !hasEjerandel) continue;
-      personExpandCounts.set(
-        r.deltager_enhedsnummer,
-        (personExpandCounts.get(r.deltager_enhedsnummer) ?? 0) + 1
-      );
+      const set = personExpandCvrs.get(r.deltager_enhedsnummer) ?? new Set();
+      set.add(r.virksomhed_cvr);
+      personExpandCvrs.set(r.deltager_enhedsnummer, set);
+    }
+    const personExpandCounts = new Map<number, number>();
+    for (const [en, cvrs] of personExpandCvrs) {
+      personExpandCounts.set(en, cvrs.size);
     }
 
     // 2. Tæl personlige ejendomme for expandableChildren (tilføjes IKKE til grafen
@@ -639,15 +641,19 @@ async function expandCompany(
         continue;
       }
 
+      // Hent BFE-numre og filtrer mod ejendomme allerede i grafen
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { count: propCount } = await (admin as any)
+      const { data: propBfes } = await (admin as any)
         .from('ejf_ejerskab')
-        .select('bfe_nummer', { count: 'exact', head: true })
+        .select('bfe_nummer')
         .eq('ejer_navn', pNavn)
         .eq('ejer_type', 'person')
-        .eq('status', 'gældende');
+        .eq('status', 'gældende')
+        .limit(50);
 
-      const newPropCount = propCount ?? 0;
+      const newPropCount = ((propBfes ?? []) as Array<{ bfe_nummer: number }>).filter(
+        (p) => !existingBfes.has(p.bfe_nummer) && !addedIds.has(`bfe-${p.bfe_nummer}`)
+      ).length;
       pNode.expandableChildren = compCount + newPropCount > 0 ? compCount + newPropCount : 0;
     }
   }

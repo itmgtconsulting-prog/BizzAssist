@@ -1951,8 +1951,8 @@ function DiagramForce({
         !loadingExpansion.has(n.id)
     );
   }, [effectiveGraph.nodes, expandedDynamic, loadingExpansion]);
-  // Whether anything is expanded at all (co-owner OR person dynamic)
-  const canCollapseAny = expandedNodes.size > 0 || expandedDynamic.size > 0;
+  // BIZZ-1130: Can collapse = vi er over niveau 0
+  const canCollapseAny = currentMaxLevel > 0;
 
   /**
    * BIZZ-582: Expand one level: expand co-owners on currently visible nodes,
@@ -2034,10 +2034,64 @@ function DiagramForce({
   }
 
   /**
-   * Collapse all expanded nodes back to the initial state.
+   * BIZZ-1130: Collapse det højeste expand-niveau.
+   * Fjerner noder + edges ved currentMaxLevel, gendanner Udvid-knapper.
+   * Klik flere gange for at folde diagrammet helt sammen.
    */
-  function collapseAll() {
-    setExpandedNodes(new Set());
+  function collapseOneLevel() {
+    if (currentMaxLevel <= 0) return;
+    const levelToRemove = currentMaxLevel;
+
+    // Find alle node-IDs ved dette niveau
+    const idsAtLevel = new Set<string>();
+    for (const [id, level] of nodeLevelMap) {
+      if (level === levelToRemove) idsAtLevel.add(id);
+    }
+    if (idsAtLevel.size === 0) return;
+
+    // 1. Fjern co-owner expansions: find collapseParent-IDs hvis children er på dette niveau
+    setExpandedNodes((prev) => {
+      const next = new Set(prev);
+      for (const n of effectiveGraph.nodes) {
+        if (n.isCoOwner && n.collapseParent && idsAtLevel.has(n.id)) {
+          next.delete(n.collapseParent);
+        }
+      }
+      return next;
+    });
+
+    // 2. Fjern extension-noder + edges ved dette niveau
+    setExtensionNodes((prev) => prev.filter((n) => !idsAtLevel.has(n.id)));
+    setExtensionEdges((prev) =>
+      prev.filter((e) => !idsAtLevel.has(e.from) && !idsAtLevel.has(e.to))
+    );
+
+    // 3. Gendanner Udvid-knapper — fjern source-noder fra expandedDynamic
+    //    så de kan udvides igen
+    setExpandedDynamic((prev) => {
+      const next = new Set(prev);
+      for (const id of idsAtLevel) next.delete(id);
+      // Fjern også noder der producerede expansion-noder på dette niveau
+      // (source-noder er på niveau levelToRemove - 1 og er i expandedDynamic)
+      for (const n of effectiveGraph.nodes) {
+        if (expandedDynamic.has(n.id) && !idsAtLevel.has(n.id)) {
+          // Check om nogen af denne nodes resultater er på det fjernede niveau
+          // Simpel heuristik: check edges fra denne node til noder på fjernet niveau
+          const hasChildrenAtLevel = effectiveGraph.edges.some(
+            (e) => e.from === n.id && idsAtLevel.has(e.to)
+          );
+          if (hasChildrenAtLevel) next.delete(n.id);
+        }
+      }
+      return next;
+    });
+
+    // 4. Fjern level-entries fra map
+    setNodeLevelMap((prev) => {
+      const next = new Map(prev);
+      for (const id of idsAtLevel) next.delete(id);
+      return next;
+    });
   }
 
   /** Toolbar with zoom controls + fullscreen toggle */
@@ -2146,14 +2200,16 @@ function DiagramForce({
           {lang === 'da' ? 'Udvid' : 'Expand'}
         </button>
         <button
-          onClick={collapseAll}
+          onClick={collapseOneLevel}
           disabled={!canCollapseAny}
           className={`h-7 px-2 flex items-center gap-1 bg-slate-800 border border-slate-700/50 rounded-lg text-[10px] transition ${
             !canCollapseAny
               ? 'text-slate-600 cursor-not-allowed opacity-50'
               : 'text-slate-400 hover:text-white'
           }`}
-          title={lang === 'da' ? 'Skjul alle' : 'Collapse all'}
+          title={
+            lang === 'da' ? `Skjul niveau ${currentMaxLevel}` : `Collapse level ${currentMaxLevel}`
+          }
         >
           <ChevronsDownUp size={12} />
           {lang === 'da' ? 'Skjul' : 'Collapse'}

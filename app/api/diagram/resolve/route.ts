@@ -729,16 +729,6 @@ async function resolvePropertyGraph(
   return { nodes, edges, mainId };
 }
 
-/** Relationstyper der indikerer EJERSKAB (ikke bestyrelse/direktion/revisor) */
-const PERSON_OWNERSHIP_TYPES = new Set([
-  'register', // Registreret ejer
-  'reel_ejer', // Reel ejer (beneficial owner)
-  'interessenter', // Interessent (partner i I/S)
-  'stifter', // Stifter
-  'indehaver', // Indehaver (enkeltmandsvirksomhed)
-  'hovedselskab', // Moderselskab
-]);
-
 /**
  * Byg graf for person (enhedsNummer).
  * Root = personen. Ejerskabs-virksomheder vises hierarkisk med inter-ownership.
@@ -779,27 +769,39 @@ async function resolvePersonGraph(
   nodeIds.add(mainId);
 
   // Cache-first: personens virksomheder via cvr_deltagerrelation
+  // Hent ALLE aktive relationer inkl. ejerandel_pct (fra register-backfill)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: personRelRows } = await (admin as any)
     .from('cvr_deltagerrelation')
-    .select('virksomhed_cvr, type')
+    .select('virksomhed_cvr, type, ejerandel_pct')
     .eq('deltager_enhedsnummer', Number(enhedsNummer))
     .is('gyldig_til', null)
-    .limit(50);
+    .limit(200);
 
   // Dedup CVR'er og gruppér roller per virksomhed
   const personVirkRollerMap = new Map<string, string[]>();
-  for (const r of (personRelRows ?? []) as Array<{ virksomhed_cvr: string; type: string }>) {
+  // Ejerandel fra register-type (Det Offentlige Ejerregister)
+  const registerEjerandelMap = new Map<string, number | null>();
+  for (const r of (personRelRows ?? []) as Array<{
+    virksomhed_cvr: string;
+    type: string;
+    ejerandel_pct: number | null;
+  }>) {
     const arr = personVirkRollerMap.get(r.virksomhed_cvr) ?? [];
     arr.push(r.type);
     personVirkRollerMap.set(r.virksomhed_cvr, arr);
+    // Gem ejerandel fra register-type
+    if (r.type === 'register') {
+      registerEjerandelMap.set(r.virksomhed_cvr, r.ejerandel_pct);
+    }
   }
 
-  // Klassificér virksomheder: ejerskab vs. kun-roller
+  // Klassificér virksomheder: ejerskab = aktiv 'register'-relation
+  // Virksomheder UDEN register-relation → Øvrige roller (uanset stifter/interessenter)
   const ownershipCvrs: string[] = [];
   const roleCvrs: string[] = [];
   for (const [cvr, roller] of personVirkRollerMap) {
-    if (roller.some((r) => PERSON_OWNERSHIP_TYPES.has(r))) {
+    if (roller.includes('register')) {
       ownershipCvrs.push(cvr);
     } else {
       roleCvrs.push(cvr);
@@ -891,7 +893,10 @@ async function resolvePersonGraph(
     // Kun top-level virksomheder (uden parent i grafen) forbindes til personen
     if (!parentOfCvr.has(cvrStr)) {
       topLevelCvrs.push(cvrStr);
-      edges.push({ from: mainId, to: companyId });
+      // Ejerandel fra register-type (Det Offentlige Ejerregister)
+      const regPct = registerEjerandelMap.get(cvrStr);
+      const ejerandel = regPct != null ? `${Math.round(regPct)}%` : undefined;
+      edges.push({ from: mainId, to: companyId, ejerandel });
     }
   }
 

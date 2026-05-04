@@ -941,11 +941,9 @@ async function resolvePersonGraph(
     // direkte til personen. Child-virksomheder forbindes via parent nedenfor.
     if (!parentOfCvr.has(cvrStr)) {
       topLevelCvrs.push(cvrStr);
-      edges.push({
-        from: mainId,
-        to: companyId,
-        ejerandel: rolleStr || undefined,
-      });
+      // BIZZ-1135: Person→virksomhed edge viser IKKE rolletekst (den vises
+      // på noden via personRolle). Kun ejerskabs-edges viser ejerandel%.
+      edges.push({ from: mainId, to: companyId });
     }
   }
 

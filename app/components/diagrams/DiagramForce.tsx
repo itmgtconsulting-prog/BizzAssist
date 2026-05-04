@@ -1363,14 +1363,21 @@ function DiagramForce({
   }, [filteredGraph, depthMap, getSubRowGap, getLevelGap]);
 
   // ── Run force simulation (hybrid: strict Y from nodeYMap, organic X from physics) ──
+  // Stable node-set key — skip simulation re-run if nodes haven't changed
+  const prevNodeSetKeyRef = useRef<string>('');
+
   useEffect(() => {
     if (filteredGraph.nodes.length === 0) return;
 
-    // BIZZ-865/932: Skjul SVG KUN under allererste simulation-run (mount).
-    // Efterfølgende restarts (pga. async data som personalBfes eller
-    // noeglePersonerMap) holder SVG synlig — brugeren ser evt. et kort
-    // layout-hop, men det er langt bedre end usynligt diagram (BIZZ-932).
-    // initialFitDone bruges som proxy: hvis vi aldrig har fitted = første run.
+    // Skip simulation if node-set is identical (prevents "hopping")
+    const nodeSetKey = filteredGraph.nodes
+      .map((n) => n.id)
+      .sort()
+      .join('|');
+    if (nodeSetKey === prevNodeSetKeyRef.current && positions.size > 0) {
+      return;
+    }
+    prevNodeSetKeyRef.current = nodeSetKey;
 
     // Group by Y position (from nodeYMap) for initial X spread — ensures
     // persons and companies on separate sub-rows get independent X layouts

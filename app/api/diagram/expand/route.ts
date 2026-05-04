@@ -586,6 +586,103 @@ async function expandCompany(
     }
   }
 
+  // BIZZ-fix: For nye person-noder — hent personlige ejendomme og tilføj dem
+  // direkte til grafen, så relationen tegnes med det samme (ikke først ved expand).
+  // Beregner også expandableChildren for virksomheder der IKKE allerede er i grafen.
+  const newPersonNodes = newNodes.filter((n) => n.type === 'person' && n.enhedsNummer != null);
+  if (newPersonNodes.length > 0) {
+    const newPersonEns = newPersonNodes.map((n) => n.enhedsNummer!);
+
+    // 1. Tæl virksomheder der kan udvides (interessenter/indehaver eller ejerandel > 0)
+    const PERSON_OWNER_TYPES = new Set(['interessenter', 'indehaver']);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: personExpandRels } = await (admin as any)
+      .from('cvr_deltagerrelation')
+      .select('deltager_enhedsnummer, virksomhed_cvr, type, ejerandel_pct')
+      .in('deltager_enhedsnummer', newPersonEns.slice(0, 20))
+      .is('gyldig_til', null)
+      .limit(500);
+    const personExpandCounts = new Map<number, number>();
+    for (const r of (personExpandRels ?? []) as Array<{
+      deltager_enhedsnummer: number;
+      virksomhed_cvr: string;
+      type: string;
+      ejerandel_pct: number | null;
+    }>) {
+      if (existingIds.has(`cvr-${r.virksomhed_cvr}`) || addedIds.has(`cvr-${r.virksomhed_cvr}`))
+        continue;
+      const isPersonlig = PERSON_OWNER_TYPES.has(r.type);
+      const hasEjerandel = r.ejerandel_pct != null && r.ejerandel_pct > 0;
+      if (!isPersonlig && !hasEjerandel) continue;
+      personExpandCounts.set(
+        r.deltager_enhedsnummer,
+        (personExpandCounts.get(r.deltager_enhedsnummer) ?? 0) + 1
+      );
+    }
+
+    // 2. Hent personlige ejendomme via navne-match i ejf_ejerskab og tilføj til grafen
+    for (const pNode of newPersonNodes) {
+      // Hent personnavn
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: dRow } = await (admin as any)
+        .from('cvr_deltager')
+        .select('navn')
+        .eq('enhedsnummer', pNode.enhedsNummer)
+        .maybeSingle();
+      const pNavn = dRow?.navn;
+      if (!pNavn) continue;
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: pProps } = await (admin as any)
+        .from('ejf_ejerskab')
+        .select('bfe_nummer, ejerandel_taeller, ejerandel_naevner')
+        .ilike('ejer_navn', pNavn)
+        .eq('ejer_type', 'person')
+        .eq('status', 'gældende')
+        .limit(20);
+
+      for (const pp of (pProps ?? []) as Array<{
+        bfe_nummer: number;
+        ejerandel_taeller: number | null;
+        ejerandel_naevner: number | null;
+      }>) {
+        const ppId = `bfe-${pp.bfe_nummer}`;
+        // Ejendom allerede i grafen → kryds-edge
+        if (existingBfes.has(pp.bfe_nummer) || addedIds.has(ppId)) {
+          newEdges.push({
+            from: pNode.id,
+            to: ppId,
+            ejerandel: formatEjerandel(pp.ejerandel_taeller, pp.ejerandel_naevner),
+            personallyOwned: true,
+            crossOwnership: true,
+          });
+        } else {
+          // Ny ejendom → tilføj som node + edge
+          if (!existingIds.has(ppId) && !addedIds.has(ppId)) {
+            newNodes.push({
+              id: ppId,
+              label: `BFE ${pp.bfe_nummer}`,
+              type: 'property',
+              bfeNummer: pp.bfe_nummer,
+            });
+            addedIds.add(ppId);
+          }
+          newEdges.push({
+            from: pNode.id,
+            to: ppId,
+            ejerandel: formatEjerandel(pp.ejerandel_taeller, pp.ejerandel_naevner),
+            personallyOwned: true,
+          });
+        }
+      }
+
+      // Sæt expandableChildren = virksomheder + ejendomme der IKKE allerede vises
+      const compCount = personExpandCounts.get(pNode.enhedsNummer!) ?? 0;
+      pNode.expandableChildren = compCount > 0 ? compCount : 0;
+      // Personlige ejendomme er nu tilføjet direkte → tæller ikke som expandable
+    }
+  }
+
   return { nodes: newNodes, edges: newEdges };
 }
 
@@ -895,6 +992,35 @@ export async function POST(request: NextRequest): Promise<NextResponse<ExpandRes
       return NextResponse.json(
         { nodes: [], edges: [], error: 'Missing cvr or enhedsNummer' },
         { status: 400 }
+      );
+    }
+
+    // Berig virksomheds-noder uden navn med live CVR API (best-effort fallback)
+    const namelessCompanies = result.nodes.filter(
+      (n) => n.type === 'company' && n.cvr && n.label.startsWith('CVR ')
+    );
+    if (namelessCompanies.length > 0) {
+      await Promise.all(
+        namelessCompanies.map(async (node) => {
+          try {
+            const cvrRes = await fetch(`${reqHost}/api/cvr/${node.cvr}`, {
+              headers: { cookie: reqCookie },
+              signal: AbortSignal.timeout(5000),
+            });
+            if (cvrRes.ok) {
+              const cvrData = await cvrRes.json();
+              if (cvrData?.navn) {
+                node.label = cvrData.navn;
+                const subParts = [cvrData.selskabsform, cvrData.branche].filter(Boolean);
+                if (subParts.length > 0) node.sublabel = subParts.join(' · ');
+                if (cvrData.branche) node.branche = cvrData.branche;
+                if (cvrData.slutdato) node.isCeased = true;
+              }
+            }
+          } catch {
+            // Best-effort — beholder "CVR XXXXXXXX" label ved fejl
+          }
+        })
       );
     }
 

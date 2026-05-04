@@ -1067,6 +1067,35 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
         return NextResponse.json({ graph: null, error: `Unknown type: ${type}` }, { status: 400 });
     }
 
+    // Berig virksomheds-noder uden navn med live CVR API (best-effort fallback)
+    const namelessCompanies = graph.nodes.filter(
+      (n) => (n.type === 'company' || n.type === 'main') && n.cvr && n.label.startsWith('CVR ')
+    );
+    if (namelessCompanies.length > 0) {
+      await Promise.all(
+        namelessCompanies.map(async (node) => {
+          try {
+            const cvrRes = await fetch(`${reqHost}/api/cvr/${node.cvr}`, {
+              headers: { cookie: reqCookie },
+              signal: AbortSignal.timeout(5000),
+            });
+            if (cvrRes.ok) {
+              const cvrData = await cvrRes.json();
+              if (cvrData?.navn) {
+                node.label = cvrData.navn;
+                const subParts = [cvrData.selskabsform, cvrData.branche].filter(Boolean);
+                if (subParts.length > 0) node.sublabel = subParts.join(' · ');
+                if (cvrData.branche) node.branche = cvrData.branche;
+                if (cvrData.slutdato) node.isCeased = true;
+              }
+            }
+          } catch {
+            // Best-effort — beholder "CVR XXXXXXXX" label ved fejl
+          }
+        })
+      );
+    }
+
     // Berig property-noder med adresser (best-effort)
     await enrichPropertyNodes(graph, reqHost, reqCookie);
 

@@ -1087,6 +1087,23 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
                 if (subParts.length > 0) node.sublabel = subParts.join(' · ');
                 if (cvrData.branche) node.branche = cvrData.branche;
                 if (cvrData.slutdato) node.isCeased = true;
+
+                // Option B: On-demand writeback — gem i cvr_virksomhed cache
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                void (admin as any)
+                  .from('cvr_virksomhed')
+                  .upsert(
+                    {
+                      cvr: String(node.cvr),
+                      navn: cvrData.navn,
+                      virksomhedsform: cvrData.selskabsform ?? null,
+                      branche_tekst: cvrData.branche ?? null,
+                      ophoert: cvrData.slutdato ?? null,
+                      sidst_hentet_fra_cvr: new Date().toISOString(),
+                    },
+                    { onConflict: 'cvr' }
+                  )
+                  .then(() => {});
               }
             }
           } catch {

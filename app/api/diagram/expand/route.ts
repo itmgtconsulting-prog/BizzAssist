@@ -995,7 +995,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ExpandRes
       );
     }
 
-    // Berig virksomheds-noder uden navn med live CVR API (best-effort fallback)
+    // Berig virksomheds-noder uden navn med live CVR API + writeback til cache
     const namelessCompanies = result.nodes.filter(
       (n) => n.type === 'company' && n.cvr && n.label.startsWith('CVR ')
     );
@@ -1015,6 +1015,24 @@ export async function POST(request: NextRequest): Promise<NextResponse<ExpandRes
                 if (subParts.length > 0) node.sublabel = subParts.join(' · ');
                 if (cvrData.branche) node.branche = cvrData.branche;
                 if (cvrData.slutdato) node.isCeased = true;
+
+                // Option B: On-demand writeback — gem i cvr_virksomhed cache
+                // så næste opslag er cached (best-effort, fejl ignoreres)
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                void (admin as any)
+                  .from('cvr_virksomhed')
+                  .upsert(
+                    {
+                      cvr: String(node.cvr),
+                      navn: cvrData.navn,
+                      virksomhedsform: cvrData.selskabsform ?? null,
+                      branche_tekst: cvrData.branche ?? null,
+                      ophoert: cvrData.slutdato ?? null,
+                      sidst_hentet_fra_cvr: new Date().toISOString(),
+                    },
+                    { onConflict: 'cvr' }
+                  )
+                  .then(() => {});
               }
             }
           } catch {

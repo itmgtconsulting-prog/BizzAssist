@@ -193,7 +193,7 @@ function DiagramForce({
    * currentMaxLevel: det højeste niveau i grafen (brugt til at tildele næste + collapse)
    */
   const [nodeLevelMap, setNodeLevelMap] = useState<Map<string, number>>(new Map());
-  const _currentMaxLevel = useMemo(() => {
+  const currentMaxLevel = useMemo(() => {
     if (nodeLevelMap.size === 0) return 0;
     let max = 0;
     for (const level of nodeLevelMap.values()) {
@@ -201,6 +201,29 @@ function DiagramForce({
     }
     return max;
   }, [nodeLevelMap]);
+
+  /**
+   * BIZZ-1128: Tilføj extension-noder OG registrer dem på næste expand-niveau.
+   * Wrapper der erstatter direkte setExtensionNodes-kald for at sikre at
+   * nodeLevelMap altid opdateres samtidig.
+   *
+   * @param nodes - Nye noder at tilføje
+   */
+  const addExtensionNodesWithLevel = useCallback(
+    (nodes: DiagramNode[]) => {
+      if (nodes.length === 0) return;
+      setExtensionNodes((prev) => [...prev, ...nodes]);
+      setNodeLevelMap((prev) => {
+        const nextLevel = currentMaxLevel + 1;
+        const next = new Map(prev);
+        for (const n of nodes) {
+          if (!next.has(n.id)) next.set(n.id, nextLevel);
+        }
+        return next;
+      });
+    },
+    [currentMaxLevel]
+  );
 
   // BIZZ-1127: Initialiser niveau 0 for alle noder i initial-grafen
   useEffect(() => {
@@ -479,7 +502,7 @@ function DiagramForce({
         }
 
         if (newNodes.length > 0) {
-          setExtensionNodes((prev) => [...prev, ...newNodes]);
+          addExtensionNodesWithLevel(newNodes);
           setExtensionEdges((prev) => [...prev, ...newEdges]);
         }
         setExpandedDynamic((prev) => new Set(prev).add(personId));
@@ -612,13 +635,12 @@ function DiagramForce({
         }
 
         if (newNodes.length > 0) {
-          setExtensionNodes((prev) => [...prev, ...newNodes]);
+          addExtensionNodesWithLevel(newNodes);
           setExtensionEdges((prev) => [...prev, ...newEdges]);
         } else {
           /* Ingen datterselskaber — tilføj en "tom" status-node som feedback */
           const emptyId = `empty-${companyNodeId}`;
-          setExtensionNodes((prev) => [
-            ...prev,
+          addExtensionNodesWithLevel([
             {
               id: emptyId,
               label: lang === 'da' ? 'Ingen datterselskaber' : 'No subsidiaries',
@@ -1875,7 +1897,7 @@ function DiagramForce({
                 return s;
               });
               if (result) {
-                setExtensionNodes((prev) => [...prev, ...result.nodes]);
+                addExtensionNodesWithLevel(result.nodes);
                 setExtensionEdges((prev) => [...prev, ...result.edges]);
                 setExpandedDynamic((prev) => new Set([...prev, mainNode.id]));
               }
@@ -1953,7 +1975,7 @@ function DiagramForce({
                 return s;
               });
               if (result) {
-                setExtensionNodes((prev) => [...prev, ...result.nodes]);
+                addExtensionNodesWithLevel(result.nodes);
                 setExtensionEdges((prev) => [...prev, ...result.edges]);
                 if (result.nodes.length > 0 || result.edges.length > 0) {
                   setExpandedDynamic((prev) => new Set([...prev, p.id]));
@@ -2825,7 +2847,7 @@ function DiagramForce({
                                       to: node.id,
                                       ejerandel: p.rolle === 'Bestyrelse' ? 'Best.' : 'Dir.',
                                     };
-                                    setExtensionNodes((prev) => [...prev, newPersonNode]);
+                                    addExtensionNodesWithLevel([newPersonNode]);
                                     setExtensionEdges((prev) => [...prev, newEdge]);
                                     // Kald expand for at hente personens ejendomme
                                     if (onExpand) {
@@ -2839,7 +2861,7 @@ function DiagramForce({
                                           return s;
                                         });
                                         if (result) {
-                                          setExtensionNodes((prev) => [...prev, ...result.nodes]);
+                                          addExtensionNodesWithLevel(result.nodes);
                                           setExtensionEdges((prev) => [...prev, ...result.edges]);
                                           // Marker kun som expanded hvis der faktisk kom data —
                                           // ellers beholdes Udvid-knappen så brugeren kan prøve igen
@@ -2937,7 +2959,7 @@ function DiagramForce({
                                   return s;
                                 });
                                 if (result) {
-                                  setExtensionNodes((prev) => [...prev, ...result.nodes]);
+                                  addExtensionNodesWithLevel(result.nodes);
                                   setExtensionEdges((prev) => [...prev, ...result.edges]);
                                   if (result.nodes.length > 0 || result.edges.length > 0) {
                                     setExpandedDynamic((prev) => new Set([...prev, node.id]));
@@ -3002,7 +3024,7 @@ function DiagramForce({
                                   return s;
                                 });
                                 if (result) {
-                                  setExtensionNodes((prev) => [...prev, ...result.nodes]);
+                                  addExtensionNodesWithLevel(result.nodes);
                                   setExtensionEdges((prev) => [...prev, ...result.edges]);
                                   setExpandedDynamic((prev) => new Set([...prev, node.id]));
                                 }

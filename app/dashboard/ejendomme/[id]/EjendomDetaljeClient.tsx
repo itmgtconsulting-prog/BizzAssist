@@ -1002,8 +1002,11 @@ export default function EjendomDetaljeClient({
    */
   useEffect(() => {
     const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+    const erChild = !!dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
     const matOpdelt = matrikelData?.opdeltIEjerlejligheder === true;
-    if (!erModer && !matOpdelt) return;
+    // Vis struktur for hele hierarkiet: moderejendommen, children (ejerlejligheder),
+    // og ejendomme der er opdelt ifølge matrikeldata.
+    if (!erModer && !erChild && !matOpdelt) return;
 
     const bbrRel = bbrData?.ejendomsrelationer?.[0];
     const matJs = matrikelData?.jordstykker?.[0];

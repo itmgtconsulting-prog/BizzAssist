@@ -2594,11 +2594,17 @@ function DiagramForce({
               d={`M ${sx} ${sy} C ${cx1} ${midY}, ${cx2} ${midY}, ${ex} ${ey}`}
               fill="none"
               stroke={strokeColor}
-              strokeWidth={isCrossOwnership ? 1.25 : isCoOwnerEdge ? 1.5 : 2.25}
+              strokeWidth={
+                isCrossOwnership ? 1.25 : isCoOwnerEdge ? 1.5 : isPropertyEdge ? 1.25 : 2.25
+              }
               strokeDasharray={dashArray}
             />
             <polygon
-              points={`${ex},${ey} ${ex - 5},${ey - 9} ${ex + 5},${ey - 9}`}
+              points={
+                isPropertyEdge || isCrossOwnership
+                  ? `${ex},${ey} ${ex - 3.5},${ey - 7} ${ex + 3.5},${ey - 7}`
+                  : `${ex},${ey} ${ex - 5},${ey - 9} ${ex + 5},${ey - 9}`
+              }
               fill={strokeColor}
             />
             {edge.ejerandel && (

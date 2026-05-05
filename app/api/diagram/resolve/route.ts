@@ -762,23 +762,15 @@ async function resolvePropertyGraph(
               const personNavn = n.ejendePersonBegraenset?.navn?.navn ?? null;
               const cvr = n.ejendeVirksomhedCVRNr;
               // Ejerforholdskode-tekst til fallback-label for pvoplys
-              const kodeLabels: Record<string, string> = {
-                '10': 'Privatpersoner',
-                '20': 'Alment boligselskab',
-                '30': 'A/S, ApS, øvrige',
-                '40': 'Forening/selskab/legat',
-                '41': 'Almennyttig fond',
-                '50': 'Den danske stat',
-                '60': 'Amtskommune/region',
-                '70': 'Primærkommune',
-                '80': 'Folkekirkelige institutioner',
-                '90': 'Andet/ukendt',
-              };
-              const kodeFallback = kodeLabels[n.ejerforholdskode ?? ''] ?? null;
+              // Detect status-tekst entries (opdelt i anpart/ejerlejligheder)
+              // Disse har hverken CVR eller personNavn
+              const isStatus = !cvr && !personNavn;
               return {
-                ejer_navn: personNavn ?? (cvr ? `CVR ${cvr}` : (kodeFallback ?? 'Ukendt ejer')),
+                ejer_navn:
+                  personNavn ??
+                  (cvr ? `CVR ${cvr}` : isStatus ? 'Opdelt i ejerlejligheder' : 'Ukendt ejer'),
                 ejer_cvr: cvr ? String(cvr) : null,
-                ejer_type: cvr ? 'virksomhed' : 'person',
+                ejer_type: cvr ? 'virksomhed' : isStatus ? 'status' : 'person',
                 ejerandel_taeller: n.faktiskEjerandel_taeller,
                 ejerandel_naevner: n.faktiskEjerandel_naevner,
               };
@@ -851,6 +843,23 @@ async function resolvePropertyGraph(
           type: 'person',
           enhedsNummer: personEn,
           link: personEn ? `/dashboard/owners/${personEn}` : undefined,
+        });
+        nodeIds.add(ownerId);
+      }
+      edges.push({
+        from: ownerId,
+        to: mainId,
+        ejerandel: formatEjerandel(owner.ejerandel_taeller, owner.ejerandel_naevner),
+      });
+    } else if (owner.ejer_type === 'status') {
+      // Status-tekst: "Opdelt i anpart", "Opdelt i ejerlejligheder" etc.
+      // Vises som status-node (grå) i stedet for person-node
+      const ownerId = `status-${nodes.length}`;
+      if (!nodeIds.has(ownerId)) {
+        nodes.push({
+          id: ownerId,
+          label: owner.ejer_navn,
+          type: 'status',
         });
         nodeIds.add(ownerId);
       }

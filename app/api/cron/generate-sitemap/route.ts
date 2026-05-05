@@ -659,8 +659,14 @@ async function phaseRenderXml(
   const nextPage = startPage + pagesRendered;
   const done = nextPage >= totalPages;
   if (done) {
-    // Clean up stale cache pages (from previous runs with more entries)
-    await admin.from('sitemap_xml_cache').delete().gte('page_id', totalPages);
+    // Only clean up stale cache pages when totalPages is plausible (> 1).
+    // A totalPages of 1 usually means the sitemap_entries count query
+    // returned 0 (transient DB error) — deleting in that case would
+    // wipe the entire cache. Guard: only prune when we know there are
+    // real entries backing the pages we just rendered.
+    if (totalPages > 1) {
+      await admin.from('sitemap_xml_cache').delete().gte('page_id', totalPages);
+    }
     await saveProgress(admin, RENDER_XML_PROGRESS_KEY, '0');
   }
 

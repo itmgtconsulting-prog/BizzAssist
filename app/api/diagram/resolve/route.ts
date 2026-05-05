@@ -1346,6 +1346,91 @@ async function resolvePersonGraph(
 }
 
 /**
+ * Berig virksomheds-noder med nøglepersoner (bestyrelse/direktion) fra cvr_deltagerrelation.
+ * Henter aktive relationer for alle virksomheder i grafen og sætter noeglePersoner.
+ *
+ * @param graph - DiagramGraph med company-noder
+ * @param admin - Supabase admin client
+ * @param excludeEnhedsNummer - Person der allerede er root (vises ikke som nøgleperson)
+ */
+async function enrichNoeglePersoner(
+  graph: DiagramGraph,
+  admin: ReturnType<typeof createAdminClient>,
+  excludeEnhedsNummer?: number
+): Promise<void> {
+  const companyNodes = graph.nodes.filter(
+    (n) => (n.type === 'company' || n.type === 'main') && n.cvr
+  );
+  if (companyNodes.length === 0) return;
+
+  const cvrs = companyNodes.map((n) => String(n.cvr));
+
+  // Batch-hent alle aktive deltager-relationer for alle virksomheder
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: relRows } = await (admin as any)
+    .from('cvr_deltagerrelation')
+    .select('virksomhed_cvr, deltager_enhedsnummer, type')
+    .in('virksomhed_cvr', cvrs.slice(0, 50))
+    .is('gyldig_til', null)
+    .limit(500);
+
+  if (!relRows?.length) return;
+
+  // Samle unikke enhedsnumre for navne-lookup
+  const allEns = new Set<number>();
+  for (const r of relRows as Array<{ deltager_enhedsnummer: number }>) {
+    if (r.deltager_enhedsnummer !== excludeEnhedsNummer) {
+      allEns.add(r.deltager_enhedsnummer);
+    }
+  }
+
+  if (allEns.size === 0) return;
+
+  // Batch-hent navne
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: nameRows } = await (admin as any)
+    .from('cvr_deltager')
+    .select('enhedsnummer, navn')
+    .in('enhedsnummer', Array.from(allEns).slice(0, 200));
+  const nameMap = new Map<number, string>(
+    ((nameRows ?? []) as Array<{ enhedsnummer: number; navn: string }>).map((d) => [
+      d.enhedsnummer,
+      d.navn,
+    ])
+  );
+
+  // Gruppér per CVR → person → roller
+  const cvrPersonMap = new Map<string, Map<number, string[]>>();
+  for (const r of relRows as Array<{
+    virksomhed_cvr: string;
+    deltager_enhedsnummer: number;
+    type: string;
+  }>) {
+    if (r.deltager_enhedsnummer === excludeEnhedsNummer) continue;
+    const personMap = cvrPersonMap.get(r.virksomhed_cvr) ?? new Map();
+    const roles = personMap.get(r.deltager_enhedsnummer) ?? [];
+    roles.push(r.type);
+    personMap.set(r.deltager_enhedsnummer, roles);
+    cvrPersonMap.set(r.virksomhed_cvr, personMap);
+  }
+
+  // Sæt noeglePersoner på noder
+  for (const node of companyNodes) {
+    const personMap = cvrPersonMap.get(String(node.cvr));
+    if (!personMap) continue;
+    const persons: Array<{ navn: string; enhedsNummer: number; rolle: string }> = [];
+    for (const [en, roles] of personMap) {
+      const navn = nameMap.get(en);
+      if (!navn) continue;
+      persons.push({ navn, enhedsNummer: en, rolle: roles.slice(0, 2).join(', ') });
+    }
+    if (persons.length > 0) {
+      node.noeglePersoner = persons.slice(0, 5);
+    }
+  }
+}
+
+/**
  * Berig property-noder med adresser fra /api/bfe-addresses.
  * Opdaterer label, sublabel og link på alle property-noder i grafen.
  *
@@ -1487,6 +1572,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
         })
       );
     }
+
+    // Berig virksomheds-noder med nøglepersoner (bestyrelse/direktion)
+    const excludeEn = type === 'person' ? Number(id) : undefined;
+    await enrichNoeglePersoner(graph, admin, excludeEn);
 
     // Berig property-noder med adresser (best-effort)
     await enrichPropertyNodes(graph, reqHost, reqCookie);

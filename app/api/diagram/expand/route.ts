@@ -668,6 +668,93 @@ async function expandCompany(
     }
   }
 
+  // Beregn expandableChildren for nye VIRKSOMHEDS-noder.
+  // Tæl ejerskabs-relationer + ejendomme der IKKE allerede er i grafen.
+  const newCompanyExpNodes = newNodes.filter(
+    (n) => n.type === 'company' && n.cvr && n.expandableChildren == null
+  );
+  if (newCompanyExpNodes.length > 0) {
+    const expCvrList = newCompanyExpNodes.map((n) => String(n.cvr));
+    // Ejerskab opad + nedad
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: expOwnerRows } = await (admin as any)
+      .from('cvr_virksomhed_ejerskab')
+      .select('ejer_cvr, ejet_cvr')
+      .in('ejet_cvr', expCvrList)
+      .is('gyldig_til', null)
+      .limit(200);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: expSubRows } = await (admin as any)
+      .from('cvr_virksomhed_ejerskab')
+      .select('ejer_cvr, ejet_cvr')
+      .in('ejer_cvr', expCvrList)
+      .is('gyldig_til', null)
+      .limit(200);
+
+    // Ejendomme
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: expPropRows } = await (admin as any)
+      .from('ejf_ejerskab')
+      .select('ejer_cvr, bfe_nummer')
+      .in('ejer_cvr', expCvrList)
+      .eq('status', 'gældende')
+      .limit(200);
+
+    // Person-ejere via cvr_deltagerrelation
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: expPersonRows } = await (admin as any)
+      .from('cvr_deltagerrelation')
+      .select('virksomhed_cvr, deltager_enhedsnummer, type, ejerandel_pct')
+      .in('virksomhed_cvr', expCvrList)
+      .is('gyldig_til', null)
+      .limit(200);
+
+    const compExpandMap = new Map<string, number>();
+    // Ejere opad der IKKE er i grafen
+    for (const r of (expOwnerRows ?? []) as Array<{ ejer_cvr: string; ejet_cvr: string }>) {
+      if (existingIds.has(`cvr-${r.ejer_cvr}`) || addedIds.has(`cvr-${r.ejer_cvr}`)) continue;
+      compExpandMap.set(r.ejet_cvr, (compExpandMap.get(r.ejet_cvr) ?? 0) + 1);
+    }
+    // Datterselskaber nedad der IKKE er i grafen
+    for (const r of (expSubRows ?? []) as Array<{ ejer_cvr: string; ejet_cvr: string }>) {
+      if (existingIds.has(`cvr-${r.ejet_cvr}`) || addedIds.has(`cvr-${r.ejet_cvr}`)) continue;
+      compExpandMap.set(r.ejer_cvr, (compExpandMap.get(r.ejer_cvr) ?? 0) + 1);
+    }
+    // Ejendomme der IKKE er i grafen
+    for (const r of (expPropRows ?? []) as Array<{ ejer_cvr: string; bfe_nummer: number }>) {
+      if (existingBfes.has(r.bfe_nummer) || addedIds.has(`bfe-${r.bfe_nummer}`)) continue;
+      compExpandMap.set(r.ejer_cvr, (compExpandMap.get(r.ejer_cvr) ?? 0) + 1);
+    }
+    // Person-ejere der IKKE er i grafen (kun med ejerandel > 0 eller interessenter/indehaver)
+    const PERSON_EXPAND_TYPES = new Set(['interessenter', 'indehaver']);
+    const seenPersonPerCvr = new Map<string, Set<number>>();
+    for (const r of (expPersonRows ?? []) as Array<{
+      virksomhed_cvr: string;
+      deltager_enhedsnummer: number;
+      type: string;
+      ejerandel_pct: number | null;
+    }>) {
+      if (
+        existingIds.has(`en-${r.deltager_enhedsnummer}`) ||
+        addedIds.has(`en-${r.deltager_enhedsnummer}`)
+      )
+        continue;
+      const hasEjerandel = r.ejerandel_pct != null && Number(r.ejerandel_pct) > 0;
+      if (!hasEjerandel && !PERSON_EXPAND_TYPES.has(r.type)) continue;
+      // Dedup: tæl kun 1 per deltager per virksomhed
+      const seen = seenPersonPerCvr.get(r.virksomhed_cvr) ?? new Set();
+      if (seen.has(r.deltager_enhedsnummer)) continue;
+      seen.add(r.deltager_enhedsnummer);
+      seenPersonPerCvr.set(r.virksomhed_cvr, seen);
+      compExpandMap.set(r.virksomhed_cvr, (compExpandMap.get(r.virksomhed_cvr) ?? 0) + 1);
+    }
+
+    for (const node of newCompanyExpNodes) {
+      const count = compExpandMap.get(String(node.cvr)) ?? 0;
+      node.expandableChildren = count > 0 ? count : 0;
+    }
+  }
+
   return { nodes: newNodes, edges: newEdges };
 }
 

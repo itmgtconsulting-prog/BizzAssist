@@ -269,6 +269,7 @@ async function resolveDawaId(
     }
 
     // For SFE/hovedejendom: søg adgangsadresse (uden etage)
+    // Prøv først eksakt match, derefter fritekst-fallback
     const params = new URLSearchParams({
       vejnavn,
       husnr: husnummer,
@@ -283,6 +284,19 @@ async function resolveDawaId(
     if (res.ok) {
       const arr = (await res.json()) as Array<{ id: string }>;
       if (arr.length > 0) return arr[0].id;
+    }
+
+    // Fritekst-fallback: DAWA autocomplete med q-parameter
+    // Fanger tilfælde hvor vejnavn har specielle tegn (ø/æ/å) der
+    // ikke matcher eksaktsøgningen
+    const qRes = await fetchDawa(
+      `https://dawa.aws.dk/adgangsadresser/autocomplete?q=${encodeURIComponent(`${vejnavn} ${husnummer}, ${postnr}`)}&per_side=1`,
+      { signal: AbortSignal.timeout(5000) },
+      { caller: 'ejendom-struktur.dawa-autocomplete' }
+    );
+    if (qRes.ok) {
+      const arr = (await qRes.json()) as Array<{ adgangsadresse: { id: string } }>;
+      if (arr.length > 0) return arr[0].adgangsadresse.id;
     }
     return null;
   } catch {

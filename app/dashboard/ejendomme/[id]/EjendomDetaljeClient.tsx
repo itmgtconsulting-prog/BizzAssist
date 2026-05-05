@@ -2048,18 +2048,36 @@ export default function EjendomDetaljeClient({
                 {(() => {
                   const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
                   const erEjerlej = !!dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+                  // Skelne SFE vs. underliggende hovedejendom via strukturTree:
+                  // Hvis denne BFE matcher root-noden i træet, er det SFE.
+                  const currentBfeNum =
+                    bbrData?.ejerlejlighedBfe ??
+                    bbrData?.moderBfe ??
+                    bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
+                  const erSfe =
+                    erModer && strukturTree?.niveau === 'sfe' && currentBfeNum === strukturTree.bfe;
                   if (erModer)
                     return (
                       <span
                         className="flex items-center gap-1 px-2.5 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded-full text-amber-300 text-xs font-medium flex-shrink-0"
                         title={
                           da
-                            ? 'Matrikel-niveau ejendom der samler bygninger og ejerlejligheder'
-                            : 'Cadastral-level property combining buildings and condominiums'
+                            ? erSfe
+                              ? 'Samlet Fast Ejendom — matrikel-niveau ejendom'
+                              : 'Hovedejendom under en SFE'
+                            : erSfe
+                              ? 'Collective Real Property — cadastral-level property'
+                              : 'Main property under an SFE'
                         }
                       >
                         <Building2 size={11} />
-                        {da ? 'Hovedejendom (SFE)' : 'Main property (SFE)'}
+                        {erSfe
+                          ? da
+                            ? 'Hovedejendom (SFE)'
+                            : 'Main property (SFE)'
+                          : da
+                            ? 'Hovedejendom'
+                            : 'Main property'}
                       </span>
                     );
                   if (erEjerlej)
@@ -2233,9 +2251,11 @@ export default function EjendomDetaljeClient({
               </div>
             )}
 
-            {/* BIZZ-832: Søster-enheder — vises når en ejerlejlighed
-                har sibling-enheder på samme matrikel */}
-            {!!dawaAdresse?.etage &&
+            {/* BIZZ-832: Søster-enheder — skjules når ejendomsstruktur
+                er tilgængelig (redundant info). Fallback for ejendomme
+                uden strukturtræ. */}
+            {!strukturTree &&
+              !!dawaAdresse?.etage &&
               lejligheder &&
               lejligheder.length > 1 &&
               (() => {

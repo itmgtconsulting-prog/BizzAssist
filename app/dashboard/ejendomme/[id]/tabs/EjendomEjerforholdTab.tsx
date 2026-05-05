@@ -160,19 +160,19 @@ export default function EjendomEjerforholdTab({
                     };
                   }
                 }
-                // Hovedejendom: hvis TL-strukturen har færre children end
-                // lejligheder-listen, tilføj manglende som nye noder
+                // Hovedejendom: erstat children med lejligheder-listen når den
+                // er mere komplet. Lejligheder har individuelle adresser med
+                // etage/dør mens TL ofte kun har 1 entry per BFE.
                 if (node.niveau === 'hovedejendom') {
                   const nodeHusnr = extractHusnr(node.adresse);
                   const matchingLej = lejligheder!.filter(
                     (l) => extractHusnr(l.adresse) === nodeHusnr
                   );
-                  // Brug lejligheder-listen hvis den er mere komplet
-                  if (matchingLej.length > node.children.length) {
-                    const existingBfes = new Set(node.children.map((c) => c.bfe));
-                    const extraChildren: StrukturNode[] = matchingLej
-                      .filter((l) => !existingBfes.has(l.bfe))
-                      .map((l) => {
+                  if (matchingLej.length > 0 && matchingLej.length >= node.children.length) {
+                    // Erstat children helt med lejligheder-data (mere komplet)
+                    return {
+                      ...node,
+                      children: matchingLej.map((l) => {
                         const etageDoer = l.adresse.split(',')[1]?.trim().toLowerCase() ?? '';
                         const bbrMatch = (bbrEnheder ?? []).find((e) => {
                           const eLow = (e.etage ?? '').toLowerCase();
@@ -199,9 +199,8 @@ export default function EjendomEjerforholdTab({
                           koebsdato: l.koebsdato,
                           children: [],
                         };
-                      });
-                    const enrichedExisting = node.children.map(enrichWithOwnership);
-                    return { ...node, children: [...enrichedExisting, ...extraChildren] };
+                      }),
+                    };
                   }
                 }
                 return { ...node, children: node.children.map(enrichWithOwnership) };
@@ -324,11 +323,10 @@ export default function EjendomEjerforholdTab({
                       const matchingLej = lejligheder!.filter(
                         (l) => extractHusnr(l.adresse) === nodeHusnr
                       );
-                      if (matchingLej.length > node.children.length) {
-                        const existingBfes = new Set(node.children.map((c) => c.bfe));
-                        const extra: StrukturNode[] = matchingLej
-                          .filter((l) => !existingBfes.has(l.bfe))
-                          .map((l) => ({
+                      if (matchingLej.length > 0 && matchingLej.length >= node.children.length) {
+                        return {
+                          ...node,
+                          children: matchingLej.map((l) => ({
                             bfe: l.bfe,
                             adresse: l.adresse,
                             niveau: 'ejerlejlighed' as const,
@@ -344,8 +342,8 @@ export default function EjendomEjerforholdTab({
                             koebspris: l.koebspris,
                             koebsdato: l.koebsdato,
                             children: [],
-                          }));
-                        return { ...node, children: [...node.children.map(enrichNode), ...extra] };
+                          })),
+                        };
                       }
                     }
                     return { ...node, children: node.children.map(enrichNode) };

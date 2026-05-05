@@ -1292,6 +1292,25 @@ async function resolvePersonGraph(
     }
   }
 
+  // ── POST-PROCESS: flyt register-virksomheder der har parent i hierarkiet ─
+  // Fx JaJR Ejendomme har register direkte fra Jakob, men ejes af JaJR Holding 2.
+  // Fjern person→virksomhed edge og behold kun hierarki-edgen.
+  {
+    const companiesWithHierarchyParent = new Set<string>();
+    for (const edge of edges) {
+      // Find edges fra virksomhed→virksomhed (hierarki-edges)
+      if (edge.from.startsWith('cvr-') && edge.to.startsWith('cvr-')) {
+        companiesWithHierarchyParent.add(edge.to);
+      }
+    }
+    // Fjern person→virksomhed edges for virksomheder der har en hierarki-parent
+    for (let i = edges.length - 1; i >= 0; i--) {
+      if (edges[i].from === mainId && companiesWithHierarchyParent.has(edges[i].to)) {
+        edges.splice(i, 1);
+      }
+    }
+  }
+
   // ── ROLLE-VIRKSOMHEDER (bestyrelse/direktion — separat sektion) ─────────
 
   if (roleCvrs.length > 0) {

@@ -441,7 +441,15 @@ async function expandCompany(
         );
       }
 
-      // Tilføj person-noder for ejerskabs-typer (uden ejerandel — cache har ikke den)
+      // Byg ejerandel-map fra register-relationer (backfilled fra Det Offentlige Ejerregister)
+      const personEjerandelMap = new Map<number, number>();
+      for (const r of filteredPersonRows) {
+        if (r.ejerandel_pct != null && r.ejerandel_pct > 0) {
+          personEjerandelMap.set(r.deltager_enhedsnummer, Number(r.ejerandel_pct));
+        }
+      }
+
+      // Tilføj person-noder med ejerandel fra register-backfill
       for (const en of ownerEnheder.slice(0, 10)) {
         const personNavn = nameMap.get(en);
         if (!personNavn) continue;
@@ -454,7 +462,9 @@ async function expandCompany(
           link: `/dashboard/owners/${en}`,
         });
         addedIds.add(pId);
-        newEdges.push({ from: pId, to: nodeId });
+        const pctVal = personEjerandelMap.get(en);
+        const ejerandel = pctVal != null ? `${Math.round(pctVal)}%` : undefined;
+        newEdges.push({ from: pId, to: nodeId, ejerandel });
       }
     }
   }

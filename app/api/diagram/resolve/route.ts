@@ -584,12 +584,48 @@ async function resolveCompanyGraph(
     }
   }
 
-  // Beregn expandableChildren for ALLE virksomheder i grafen.
-  // Checker cvr_virksomhed_ejerskab for ejere/datterselskaber der IKKE allerede
-  // er i grafen. Noder med 0 ekspanderbare = ingen Udvid-knap.
+  // Kryds-ejerskab: tegn edges mellem virksomheder der BEGGE allerede er i grafen
+  // men som mangler en edge (fx PEI Holding → Pharma IT ManCo).
+  // Sker når personlige virksomheder (step 2b) ejer datterselskaber (step 2c).
   const allCompanyNodes = nodes.filter((n) => (n.type === 'company' || n.type === 'main') && n.cvr);
   if (allCompanyNodes.length > 0) {
     const allCvrList = allCompanyNodes.map((n) => String(n.cvr));
+
+    // Hent ALLE ejerskabs-relationer hvor begge parter er i grafen
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: allOwnershipRows } = await (admin as any)
+      .from('cvr_virksomhed_ejerskab')
+      .select('ejer_cvr, ejet_cvr, ejerandel_min, ejerandel_max')
+      .in('ejer_cvr', allCvrList)
+      .in('ejet_cvr', allCvrList)
+      .is('gyldig_til', null);
+
+    // Byg Set af eksisterende edges for hurtig lookup
+    const existingEdgeKeys = new Set(edges.map((e) => `${e.from}→${e.to}`));
+
+    for (const r of (allOwnershipRows ?? []) as Array<{
+      ejer_cvr: string;
+      ejet_cvr: string;
+      ejerandel_min: number | null;
+      ejerandel_max: number | null;
+    }>) {
+      const fromId = `cvr-${r.ejer_cvr}`;
+      const toId = `cvr-${r.ejet_cvr}`;
+      const edgeKey = `${fromId}→${toId}`;
+      if (existingEdgeKeys.has(edgeKey)) continue;
+      edges.push({
+        from: fromId,
+        to: toId,
+        ejerandel: r.ejerandel_min != null ? `${r.ejerandel_min}-${r.ejerandel_max}%` : undefined,
+        crossOwnership: true,
+      });
+      existingEdgeKeys.add(edgeKey);
+    }
+
+    // Beregn expandableChildren for ALLE virksomheder i grafen.
+    // Checker cvr_virksomhed_ejerskab for ejere/datterselskaber der IKKE allerede
+    // er i grafen. Noder med 0 ekspanderbare = ingen Udvid-knap.
+
     // Ejere opad: hvem ejer disse virksomheder men er IKKE i grafen?
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: ownerCounts } = await (admin as any)

@@ -2579,7 +2579,7 @@ function DiagramForce({
               d={`M ${sx} ${sy} C ${cx1} ${midY}, ${cx2} ${midY}, ${ex} ${ey}`}
               fill="none"
               stroke={strokeColor}
-              strokeWidth={isCoOwnerEdge ? 1.5 : 2.25}
+              strokeWidth={isCrossOwnership ? 1.25 : isCoOwnerEdge ? 1.5 : 2.25}
               strokeDasharray={dashArray}
             />
             <polygon

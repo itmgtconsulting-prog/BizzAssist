@@ -425,11 +425,64 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         logger.error('[purge-old-data] Failed to purge regnskab_cache:', err);
       }
 
+      // ── BIZZ-977: Cache-data retention purge ──────────────────────────────────
+      // CVR: 30 dage (indeholder personnavne), BBR/VUR: 90 dage, DAR: 180 dage
+
+      let cacheCvrDeleted = 0;
+      let cacheBbrDeleted = 0;
+      let cacheVurDeleted = 0;
+      let cacheDarDeleted = 0;
+
+      try {
+        const cutoff30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+        const { count } = await admin
+          .from('cache_cvr')
+          .delete({ count: 'exact' })
+          .lt('synced_at', cutoff30d);
+        cacheCvrDeleted = count ?? 0;
+      } catch (err) {
+        logger.error('[purge-old-data] Failed to purge cache_cvr:', err);
+      }
+
+      try {
+        const cutoff90d = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+        const { count: bbrCount } = await admin
+          .from('cache_bbr')
+          .delete({ count: 'exact' })
+          .lt('synced_at', cutoff90d);
+        cacheBbrDeleted = bbrCount ?? 0;
+
+        const { count: vurCount } = await admin
+          .from('cache_vur')
+          .delete({ count: 'exact' })
+          .lt('synced_at', cutoff90d);
+        cacheVurDeleted = vurCount ?? 0;
+      } catch (err) {
+        logger.error('[purge-old-data] Failed to purge cache_bbr/vur:', err);
+      }
+
+      try {
+        const cutoff180d = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString();
+        const { count } = await admin
+          .from('cache_dar')
+          .delete({ count: 'exact' })
+          .lt('synced_at', cutoff180d);
+        cacheDarDeleted = count ?? 0;
+      } catch (err) {
+        logger.error('[purge-old-data] Failed to purge cache_dar:', err);
+      }
+
       return NextResponse.json({
         ok: true,
         tenants: results,
         totalErrors,
         regnskabCacheDeleted,
+        cachePurged: {
+          cvr: cacheCvrDeleted,
+          bbr: cacheBbrDeleted,
+          vur: cacheVurDeleted,
+          dar: cacheDarDeleted,
+        },
       });
     }
   );

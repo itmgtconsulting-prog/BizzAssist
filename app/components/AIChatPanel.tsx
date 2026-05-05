@@ -410,6 +410,84 @@ function AIChatPanel() {
         }
         parts.push(lines.join('\n'));
       }
+
+      // BIZZ-941: Pre-loaded datterselskaber
+      if (pageData.preloadedDatterselskaber && pageData.preloadedDatterselskaber.length > 0) {
+        const aktive = pageData.preloadedDatterselskaber.filter((d) => d.aktiv);
+        const lines = [
+          `\n[DATTERSELSKABER PRE-LOADED] ${aktive.length} aktive datterselskaber. Brug disse data direkte — kald IKKE hent_datterselskaber medmindre du har brug for yderligere detaljer.`,
+        ];
+        for (const d of aktive.slice(0, 20)) {
+          lines.push(`- ${d.navn} (CVR: ${d.cvr})${d.branche ? ` — ${d.branche}` : ''}`);
+        }
+        if (aktive.length > 20) lines.push(`  (+ ${aktive.length - 20} flere)`);
+        parts.push(lines.join('\n'));
+      }
+
+      // BIZZ-1023: Preloaded ejendomsdata
+      if (pageData.ejendomVurdering) {
+        const v = pageData.ejendomVurdering;
+        const fmt = (n: number | null | undefined) =>
+          n != null ? `${(n / 1000000).toFixed(2)} mio. kr` : 'N/A';
+        parts.push(
+          `\n[VURDERING] Ejendomsværdi: ${fmt(v.ejendomsvaerdi)} | Grundværdi: ${fmt(v.grundvaerdi)} | År: ${v.vurderingsaar ?? 'N/A'}`
+        );
+      }
+      if (pageData.ejendomBBR) {
+        const b = pageData.ejendomBBR;
+        parts.push(
+          `\n[BBR] ${b.antalBygninger ?? 0} bygning(er) | Areal: ${b.samletAreal ?? 'N/A'} m² | Opført: ${b.opfoerelsesaar ?? 'N/A'} | Anvendelse: ${b.anvendelse ?? 'N/A'}`
+        );
+      }
+      if (pageData.ejendomEjerskab && pageData.ejendomEjerskab.length > 0) {
+        const lines = [`\n[EJERSKAB] ${pageData.ejendomEjerskab.length} ejer(e):`];
+        for (const e of pageData.ejendomEjerskab) {
+          lines.push(`- ${e.navn} (${e.type})${e.ejerandel ? ` — ${e.ejerandel}` : ''}`);
+        }
+        parts.push(lines.join('\n'));
+      }
+
+      // BIZZ-1000: Diagram-billede tilgængeligt for Word/PPTX-eksport
+      if (pageData.diagramBase64) {
+        parts.push(
+          '\n[DIAGRAM-BILLEDE] Et PNG-billede af ejerskabsdiagrammet er tilgængeligt. Når du genererer et dokument med diagram-indhold, inkluder imageBase64-feltet i den relevante sektion for at indlejre billedet.'
+        );
+      }
+
+      // BIZZ-1002: Virksomheds kontaktinfo, nøglepersoner og regnskab
+      if (pageData.virksomhedKontakt) {
+        const k = pageData.virksomhedKontakt;
+        const lines = ['\n[KONTAKT]'];
+        if (k.telefon) lines.push(`Telefon: ${k.telefon}`);
+        if (k.email) lines.push(`Email: ${k.email}`);
+        if (k.adresse) lines.push(`Adresse: ${k.adresse}, ${k.postnr ?? ''} ${k.by ?? ''}`);
+        if (lines.length > 1) parts.push(lines.join('\n'));
+      }
+      if (pageData.virksomhedNoeglePersoner && pageData.virksomhedNoeglePersoner.length > 0) {
+        const lines = [
+          `\n[NØGLEPERSONER] ${pageData.virksomhedNoeglePersoner.length} aktive roller:`,
+        ];
+        for (const p of pageData.virksomhedNoeglePersoner) {
+          const roller = p.roller.join(', ');
+          const eje = p.ejerandel ? ` | Ejerandel: ${p.ejerandel}` : '';
+          lines.push(`- ${p.navn} (${roller})${eje}`);
+        }
+        parts.push(lines.join('\n'));
+      }
+      if (pageData.virksomhedRegnskab) {
+        const r = pageData.virksomhedRegnskab;
+        const fmt = (v: number | null | undefined) =>
+          v != null ? `${(v / 1000).toFixed(0)} t.kr` : 'N/A';
+        const lines = [
+          `\n[REGNSKAB ${r.aar}]`,
+          `Omsætning: ${fmt(r.omsaetning)}`,
+          `Bruttofortjeneste: ${fmt(r.bruttofortjeneste)}`,
+          `Årets resultat: ${fmt(r.resultat)}`,
+          `Egenkapital: ${fmt(r.egenkapital)}`,
+          `Balancesum: ${fmt(r.balancesum)}`,
+        ];
+        parts.push(lines.join('\n'));
+      }
     }
 
     return parts.length > 0 ? parts.join('\n\n') : undefined;
@@ -480,6 +558,31 @@ function AIChatPanel() {
     window.addEventListener('bizz:ai-attach-files', handler);
     return () => window.removeEventListener('bizz:ai-attach-files', handler);
   }, [uploadAttachments, chatCtx]);
+
+  // BIZZ-956 + BIZZ-993: Lytt efter AI-knap events og auto-send
+  const pendingSendRef = useRef(false);
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const ce = event as CustomEvent<{ prompt: string }>;
+      if (ce.detail?.prompt) {
+        setInput(ce.detail.prompt);
+        chatCtx.setDrawerOpen(true);
+        // BIZZ-993: Markér at næste input-opdatering skal auto-sende
+        pendingSendRef.current = true;
+      }
+    };
+    window.addEventListener('bizz:ai-open-with-prompt', handler);
+    return () => window.removeEventListener('bizz:ai-open-with-prompt', handler);
+  }, [chatCtx]);
+
+  // BIZZ-993: Auto-send når input er sat via AI-knap event
+  useEffect(() => {
+    if (pendingSendRef.current && input.trim()) {
+      pendingSendRef.current = false;
+      sendMessage();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [input]);
 
   /** Send besked til AI og stream svar — blokerer hvis token-grænsen er nået */
   const sendMessage = useCallback(async () => {
@@ -636,6 +739,8 @@ function AIChatPanel() {
           messages: newMessages,
           context: buildContext(),
           attachments: attachmentRefs.length > 0 ? attachmentRefs : undefined,
+          // BIZZ-1000: Diagram base64 til Word/PPTX-eksport (kun sendt når tilgængeligt)
+          diagramBase64: pageData?.diagramBase64 ?? undefined,
           // BIZZ-820/839: Bind turn til aktiv session (persist-hook). Når
           // ensureConversation fejlede (convId null) springer vi
           // session_id over — server kører stateless-mode.

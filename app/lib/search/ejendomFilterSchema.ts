@@ -14,7 +14,6 @@
  * lister. Samme Filter State pattern som BIZZ-789a/790a for konsistens.
  */
 
-import { isUdfasetStatusCode } from '@/app/lib/bbrKoder';
 import type { FilterSchema, FilterOption } from './filterSchema';
 
 /**
@@ -253,8 +252,7 @@ export function buildEjendomFilterSchemas(
   kommuneOptions: FilterOption[]
 ): FilterSchema[] {
   return [
-    buildEjendomstypeSchema(lang),
-    buildSkjulUdfasedeSchema(lang),
+    // BIZZ-988: Ejendomstype og Skjul udfasede fjernet fra filter-panel
     buildKommuneSchema(lang, kommuneOptions),
     // BIZZ-821 phase-2 filtre
     buildArealSchema(lang),
@@ -272,8 +270,6 @@ export function buildEjendomFilterSchemas(
 // ─── Filter-application helpers ────────────────────────────────────────────
 
 export interface EjendomFilterState {
-  ejendomstype?: string[];
-  skjulUdfasede?: boolean;
   kommune?: string[];
   // BIZZ-821 phase-2 filter-state
   boligareal?: { min?: number; max?: number };
@@ -297,8 +293,6 @@ export function narrowEjendomFilters(raw: Record<string, unknown>): EjendomFilte
   const isRange = (v: unknown): v is { min?: number; max?: number } =>
     typeof v === 'object' && v !== null && !Array.isArray(v);
   return {
-    ejendomstype: Array.isArray(raw.ejendomstype) ? (raw.ejendomstype as string[]) : undefined,
-    skjulUdfasede: typeof raw.skjulUdfasede === 'boolean' ? raw.skjulUdfasede : undefined,
     kommune: Array.isArray(raw.kommune) ? (raw.kommune as string[]) : undefined,
     boligareal: isRange(raw.boligareal)
       ? (raw.boligareal as { min?: number; max?: number })
@@ -369,17 +363,6 @@ export interface FilterableEjendom {
  * isUdfasetStatusCode, sekundær er isUdfaset-flag fra berigelse-tabel.
  */
 export function matchEjendomFilter(item: FilterableEjendom, filters: EjendomFilterState): boolean {
-  // Skjul udfasede
-  if (filters.skjulUdfasede) {
-    if (item.isUdfaset === true) return false;
-    if (isUdfasetStatusCode(item.bbrStatusCode)) return false;
-  }
-  // Ejendomstype multi-select
-  if (filters.ejendomstype && filters.ejendomstype.length > 0) {
-    const t = item.ejendomstype;
-    if (!t) return false; // ukendt type matches ikke ekspliciet valgte typer
-    if (!filters.ejendomstype.includes(t)) return false;
-  }
   // Kommune multi-select
   if (filters.kommune && filters.kommune.length > 0) {
     const k = item.adresse?.kommunenavn ?? '';

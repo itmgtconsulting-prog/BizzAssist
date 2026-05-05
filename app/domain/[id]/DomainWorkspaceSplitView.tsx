@@ -32,13 +32,13 @@ import {
   Building2,
   User,
   Upload,
-  Maximize2,
   FileText,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { useSetAIPageContext } from '@/app/context/AIPageContext';
 import type { DomainCaseSummary } from './DomainCaseList';
 import { CustomerSearchPicker, type CustomerLink } from './CustomerSearchPicker';
+import MultiEntityPicker, { type LinkedEntity, type NewEntity } from './MultiEntityPicker';
 import SkabelonPickerPanel from '@/app/components/sager/SkabelonPickerPanel';
 
 interface CaseDocSummary {
@@ -59,6 +59,14 @@ interface CaseDetail {
   client_name: string | null;
   /** BIZZ-809: Kort beskrivelse vist som preview på sagskort + editable i detail */
   short_description: string | null;
+  /** BIZZ-983: Multi-entity links */
+  entities?: Array<{
+    id: string;
+    entity_type: 'company' | 'person' | 'property';
+    entity_id: string;
+    entity_name: string | null;
+    linked_at: string;
+  }>;
 }
 
 interface Props {
@@ -773,17 +781,7 @@ export function DomainWorkspaceSplitView({
                   </span>
                 )}
               </button>
-              {/* BIZZ-883: Expand-knap giver fokuseret arbejde med én sag —
-                  samme destination som eksisterende "Åbn i fuld visning"-link
-                  i bunden, men synlig i header. */}
-              <Link
-                href={`/domain/${domainId}/case/${selectedCaseId}`}
-                aria-label={da ? 'Åbn i fuld visning' : 'Open in full view'}
-                title={da ? 'Åbn i fuld visning' : 'Open in full view'}
-                className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shrink-0"
-              >
-                <Maximize2 size={12} />
-              </Link>
+              {/* BIZZ-984: Expand-knap fjernet — sager vises kun i split-view */}
               <button
                 type="button"
                 onClick={() => setEditing(true)}
@@ -840,6 +838,46 @@ export function DomainWorkspaceSplitView({
                   )}
                 </div>
               )}
+              {/* BIZZ-983: Multi-entity links */}
+              <MultiEntityPicker
+                entities={(caseDetail.entities ?? []) as LinkedEntity[]}
+                onAdd={async (entity: NewEntity) => {
+                  try {
+                    await fetch(`/api/domain/${domainId}/cases/${caseDetail.id}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ add_entity: entity }),
+                    });
+                    // Re-fetch case detail
+                    const res = await fetch(`/api/domain/${domainId}/cases/${caseDetail.id}`);
+                    if (res.ok) {
+                      const json = await res.json();
+                      setCaseDetail(json as CaseDetail);
+                    }
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+                onRemove={async (linkId: string) => {
+                  try {
+                    await fetch(`/api/domain/${domainId}/cases/${caseDetail.id}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ remove_entity_id: linkId }),
+                    });
+                    setCaseDetail((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            entities: (prev.entities ?? []).filter((e) => e.id !== linkId),
+                          }
+                        : prev
+                    );
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+              />
               <div className="text-xs space-y-1">
                 {caseDetail.client_ref && (
                   <p>
@@ -1012,12 +1050,7 @@ export function DomainWorkspaceSplitView({
                   </ul>
                 )}
               </div>
-              <Link
-                href={`/domain/${domainId}/case/${selectedCaseId}`}
-                className="inline-flex items-center gap-1 text-xs text-blue-300 hover:text-blue-200"
-              >
-                {da ? 'Åbn i fuld visning →' : 'Open in full view →'}
-              </Link>
+              {/* BIZZ-984: "Åbn i fuld visning"-link fjernet — sager vises kun i split-view */}
             </>
           )}
 

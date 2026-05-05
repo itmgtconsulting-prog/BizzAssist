@@ -28,7 +28,10 @@ import type { EjendomApiResponse } from '@/app/api/ejendom/[id]/route';
 import type { VurderingData } from '@/app/api/vurdering/route';
 import type { DawaAdresse, DawaJordstykke } from '@/app/lib/dawa';
 import type { MatrikelEjendom } from '@/app/api/matrikel/route';
+import ByggeaktivitetBadge from '@/app/components/ejendomme/ByggeaktivitetBadge';
+import SkraafotoGalleri from '@/app/components/ejendomme/SkraafotoGalleri';
 import type { MatrikelHistorikEvent } from '@/app/api/matrikel/historik/route';
+// Ejendomsstruktur flyttet til Ejerskab-fanen
 
 /** Small re-implementation of the parent's SectionTitle for this tab. */
 function SectionTitle({ title }: { title: string }) {
@@ -82,6 +85,8 @@ interface Props {
   matrikelData: MatrikelEjendom | null;
   /** Matrikel-historik events */
   matrikelHistorik: MatrikelHistorikEvent[];
+  /** BIZZ-1079: Kommunekode for byggeaktivitet */
+  kommunekode?: string | null;
 }
 
 /**
@@ -105,6 +110,7 @@ export default function EjendomBBRTab({
   matrikelLoader,
   matrikelData,
   matrikelHistorik,
+  kommunekode,
 }: Props) {
   const da = lang === 'da';
 
@@ -546,16 +552,9 @@ export default function EjendomBBRTab({
         );
       })()}
 
-      {/* Enheder */}
+      {/* Enheder — kun summary-boksen, detaljelisten erstattes af Ejendomsstruktur */}
       {(() => {
-        const bygningsnrMap = new Map(
-          (bbrData?.bygningPunkter ?? []).map((p) => [p.id, p.bygningsnr ?? 9999])
-        );
-        const enheder = (bbrData?.enheder ?? []).slice().sort((a, b) => {
-          const nrA = a.bygningId ? (bygningsnrMap.get(a.bygningId) ?? 9999) : 9999;
-          const nrB = b.bygningId ? (bygningsnrMap.get(b.bygningId) ?? 9999) : 9999;
-          return nrA - nrB;
-        });
+        const enheder = bbrData?.enheder ?? [];
         const boligEnh = enheder.filter((e) => (e.arealBolig ?? 0) > 0).length;
         const erhvEnh = enheder.filter((e) => (e.arealErhverv ?? 0) > 0).length;
         const totAreal = enheder.reduce((s, e) => s + (e.areal ?? 0), 0);
@@ -571,6 +570,22 @@ export default function EjendomBBRTab({
                 value={totAreal ? `${totAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²` : '–'}
               />
             </div>
+          </div>
+        );
+      })()}
+
+      {/* Enheder-detaljeliste */}
+      {(() => {
+        const bygningsnrMap = new Map(
+          (bbrData?.bygningPunkter ?? []).map((p) => [p.id, p.bygningsnr ?? 9999])
+        );
+        const enheder = (bbrData?.enheder ?? []).slice().sort((a, b) => {
+          const nrA = a.bygningId ? (bygningsnrMap.get(a.bygningId) ?? 9999) : 9999;
+          const nrB = b.bygningId ? (bygningsnrMap.get(b.bygningId) ?? 9999) : 9999;
+          return nrA - nrB;
+        });
+        return (
+          <div>
             {bbrLoader ? (
               <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden animate-pulse">
                 {[1, 2].map((n) => (
@@ -986,6 +1001,12 @@ export default function EjendomBBRTab({
           </div>
         )}
       </div>
+
+      {/* BIZZ-1079: Byggeaktivitet flyttet hertil fra Økonomi-tab */}
+      {kommunekode && <ByggeaktivitetBadge kommunekode={kommunekode} lang={lang} />}
+
+      {/* BIZZ-1018: Skråfoto flyttet hertil fra Oversigt-tab */}
+      <SkraafotoGalleri lat={dawaAdresse?.y ?? null} lng={dawaAdresse?.x ?? null} lang={lang} />
     </div>
   );
 }

@@ -30,10 +30,12 @@ import {
   BarChart3,
   Map as MapIcon,
   Briefcase,
+  RefreshCw,
 } from 'lucide-react';
 /** BIZZ-600: PropertyMap wraps mapbox-gl (browser-only) — dynamic() keeps mapbox-gl out of initial bundle */
 // prettier-ignore
 const PropertyMap = dynamic(/* mapbox-gl */ () => import('@/app/components/ejendomme/PropertyMap'), { ssr: false, loading: () => (<div className="w-full h-64 bg-slate-800/50 rounded-xl animate-pulse flex items-center justify-center"><span className="text-slate-500 text-sm">Indlæser kort...</span></div>) });
+/** Diagram v2 — feature-flagged, kun synlig i dev/preview */
 import { type EjerstrukturNode } from '@/app/lib/mock/ejendomme';
 import { erDawaId, type DawaAdresse, type DawaJordstykke } from '@/app/lib/dawa';
 import { formatBenyttelseOgByggeaar } from '@/app/lib/benyttelseskoder';
@@ -66,6 +68,7 @@ import { useLanguage } from '@/app/context/LanguageContext';
 import { useSetAIPageContext } from '@/app/context/AIPageContext';
 import dynamic from 'next/dynamic';
 import { logger } from '@/app/lib/logger';
+// isDiagram2Enabled fjernet
 import TinglysningTab from './TinglysningTab';
 // BIZZ-657: Tab-subkomponenter extraheret til selvstændige præsentations-komponenter
 import EjendomSkatTab from './tabs/EjendomSkatTab';
@@ -73,6 +76,8 @@ import EjendomDokumenterTab from './tabs/EjendomDokumenterTab';
 import EjendomEjerforholdTab from './tabs/EjendomEjerforholdTab';
 import EjendomOekonomiTab from './tabs/EjendomOekonomiTab';
 import EjendomBBRTab from './tabs/EjendomBBRTab';
+import DataFreshnessBadge from '@/app/components/DataFreshnessBadge';
+import FloodRiskBadge from '@/app/components/ejendomme/FloodRiskBadge';
 import EjendomOverblikTab from './tabs/EjendomOverblikTab';
 // BIZZ-583: Administrator-kort bruges nu kun via EjendomEjerforholdTab — import fjernet fra master.
 // BIZZ-601: DiagramForce + DiagramGraph-type var kun brugt i
@@ -82,6 +87,7 @@ type Tab =
   | 'overblik'
   | 'bbr'
   | 'ejerforhold'
+  // diagram2 fjernet — DiagramV2 vises nu på ejerskab-fanen
   | 'tinglysning'
   | 'oekonomi'
   | 'skatter'
@@ -93,6 +99,7 @@ function buildTabs(da: boolean): { id: Tab; label: string; ikon: React.ReactNode
     { id: 'overblik', label: da ? 'Oversigt' : 'Overview', ikon: <Building2 size={12} /> },
     { id: 'bbr', label: 'BBR', ikon: <FileText size={12} /> },
     { id: 'ejerforhold', label: da ? 'Ejerskab' : 'Ownership', ikon: <Users size={12} /> },
+    // Diagram v2 fane fjernet — diagrammet vises nu på Ejerskab-fanen
     { id: 'oekonomi', label: da ? 'Økonomi' : 'Financials', ikon: <BarChart3 size={12} /> },
     { id: 'skatter', label: da ? 'SKAT' : 'Tax', ikon: <Landmark size={12} /> },
     {
@@ -291,6 +298,8 @@ export default function EjendomDetaljeClient({
   };
 
   const [aktivTab, setAktivTab] = useState<Tab>('overblik');
+  /** BIZZ-1121: Lazy-mount — mount ved første klik, behold med display:none */
+  // diagram2Mounted fjernet
   const [valgteDoc, setValgteDoc] = useState<Set<string>>(new Set());
 
   /**
@@ -378,6 +387,12 @@ export default function EjendomDetaljeClient({
   const [bbrData, setBbrData] = useState<EjendomApiResponse | null>(prefetched?.bbrData ?? null);
   /** True mens BBR-data hentes */
   const [bbrLoader, setBbrLoader] = useState(false);
+  /** BIZZ-919: Cache-metadata fra BBR API-response */
+  const [bbrFromCache, setBbrFromCache] = useState(false);
+  const [bbrSyncedAt, setBbrSyncedAt] = useState<string | null>(null);
+  const [bbrRefreshing, setBbrRefreshing] = useState(false);
+  /** BIZZ-919: Incrementing key triggers BBR data re-fetch */
+  const [bbrRefreshKey, setBbrRefreshKey] = useState(0);
 
   /** Tinglysningsdata — tinglyst areal, fordelingstal, ejerlejlighedsnr */
   const [tinglysningData, setTinglysningData] = useState<{
@@ -416,6 +431,13 @@ export default function EjendomDetaljeClient({
   >(null);
   /** True mens lejlighedsdata hentes */
   const [lejlighederLoader, setLejlighederLoader] = useState(false);
+
+  /** Ejendomsstruktur-træ (SFE → Hovedejendom → Ejerlejlighed) */
+  const [strukturTree, setStrukturTree] = useState<
+    import('@/app/api/ejendom-struktur/route').StrukturNode | null
+  >(null);
+  /** True mens strukturdata hentes */
+  const [strukturLoader, setStrukturLoader] = useState(false);
 
   /** Ejendomsvurderingsdata fra Datafordeler — null = ikke hentet endnu */
   const [vurdering, setVurdering] = useState<VurderingData | null>(null);
@@ -564,6 +586,26 @@ export default function EjendomDetaljeClient({
           .filter(Boolean)
           .join(' ')
       : undefined;
+    // BIZZ-1023: Preload vurdering, BBR-summary og ejerskab i AI-kontekst
+    const ejendomVurdering = vurdering
+      ? {
+          ejendomsvaerdi: vurdering.ejendomsvaerdi ?? null,
+          grundvaerdi: vurdering.grundvaerdi ?? null,
+          vurderingsaar: vurdering.aar ?? null,
+        }
+      : undefined;
+
+    const aktiveBygninger = bbrData?.bbr?.filter((b) => !isUdfasetStatusLabel(b.status));
+    const ejendomBBR = aktiveBygninger
+      ? {
+          antalBygninger: aktiveBygninger.length,
+          samletAreal:
+            aktiveBygninger.reduce((sum, b) => sum + (b.samletBygningsareal ?? 0), 0) || null,
+          opfoerelsesaar: aktiveBygninger[0]?.opfoerelsesaar ?? null,
+          anvendelse: aktiveBygninger[0]?.anvendelse ?? null,
+        }
+      : undefined;
+
     setAICtx({
       adresse: adresseStr,
       adresseId,
@@ -571,11 +613,12 @@ export default function EjendomDetaljeClient({
       kommunekode,
       matrikelnr,
       ejerlavKode,
-      // BIZZ-874: Tab-kontekst for dokument-generering matching.
       pageType: 'ejendom',
       activeTab: aktivTab,
+      ejendomVurdering,
+      ejendomBBR,
     });
-  }, [bbrData, dawaAdresse, dawaJordstykke, aktivTab, setAICtx]);
+  }, [bbrData, dawaAdresse, dawaJordstykke, aktivTab, vurdering, setAICtx]);
 
   /**
    * Detekterer om ejendommen er en kolonihave/fritidshytte på lejet grund.
@@ -722,13 +765,20 @@ export default function EjendomDetaljeClient({
    */
   useEffect(() => {
     if (!erDAWA || dawaStatus !== 'ok') return;
-    // Skip BBR fetch hvis server-side prefetch allerede leverede data
-    if (prefetched?.bbrData) return;
+    // Skip BBR fetch hvis server-side prefetch allerede leverede data (undtagen ved refresh)
+    if (prefetched?.bbrData && bbrRefreshKey === 0) return;
     const controller = new AbortController();
     setBbrLoader(true);
     fetch(`/api/ejendom/${id}`, { signal: controller.signal })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data: EjendomApiResponse | null) => {
+      .then((r) => {
+        // BIZZ-919: Læs cache-metadata fra API-response headers
+        const cacheHit = r.headers.get('X-Cache-Hit');
+        const synced = r.headers.get('X-Synced-At');
+        setBbrFromCache(cacheHit === 'true');
+        setBbrSyncedAt(synced);
+        return r.ok ? (r.json() as Promise<EjendomApiResponse>) : null;
+      })
+      .then((data) => {
         if (controller.signal.aborted) return;
         setBbrData(data);
       })
@@ -738,11 +788,20 @@ export default function EjendomDetaljeClient({
         setBbrData(null);
       })
       .finally(() => {
-        if (!controller.signal.aborted) setBbrLoader(false);
+        if (!controller.signal.aborted) {
+          setBbrLoader(false);
+          setBbrRefreshing(false);
+        }
       });
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, erDAWA, dawaStatus]);
+  }, [id, erDAWA, dawaStatus, bbrRefreshKey]);
+
+  /** BIZZ-919: Force-refresh — inkrementer bbrRefreshKey for at gen-trigge BBR useEffect */
+  const handleBbrRefresh = useCallback(() => {
+    setBbrRefreshing(true);
+    setBbrRefreshKey((k) => k + 1);
+  }, []);
 
   /**
    * Henter tinglysningsdata (tinglyst areal, ejerlejlighedsnr, fordelingstal) når BFE er klar.
@@ -933,6 +992,50 @@ export default function EjendomDetaljeClient({
   }, [id, erDAWA, dawaStatus, dawaAdresse, bbrData, matrikelData]);
 
   /**
+   * Henter ejendomsstruktur (SFE → Hovedejendom → Ejerlejlighed) for opdelte
+   * ejendomme. Aktiveres kun når ejendommen er opdelt i ejerlejligheder.
+   * Bruger samme ejerlav+matrikelnr som ejerlejligheder-fetch.
+   */
+  useEffect(() => {
+    const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+    const erChild = !!dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+    const matOpdelt = matrikelData?.opdeltIEjerlejligheder === true;
+    // Vis struktur for hele hierarkiet: moderejendommen, children (ejerlejligheder),
+    // og ejendomme der er opdelt ifølge matrikeldata.
+    if (!erModer && !erChild && !matOpdelt) return;
+
+    const bbrRel = bbrData?.ejendomsrelationer?.[0];
+    const matJs = matrikelData?.jordstykker?.[0];
+    const ejerlavKode = bbrRel?.ejerlavKode ?? matJs?.ejerlavskode;
+    const matrikelnr = bbrRel?.matrikelnr ?? matJs?.matrikelnummer;
+    if (!ejerlavKode || !matrikelnr) return;
+
+    const controller = new AbortController();
+    setStrukturLoader(true);
+    const params = new URLSearchParams({
+      ejerlavKode: String(ejerlavKode),
+      matrikelnr: String(matrikelnr),
+    });
+    const sfeBfe = bbrData?.moderBfe ?? bbrRel?.bfeNummer;
+    if (sfeBfe) params.set('sfeBfe', String(sfeBfe));
+
+    fetch(`/api/ejendom-struktur?${params}`, { signal: controller.signal })
+      .then((r) => (r.ok ? r.json() : { tree: null }))
+      .then((data: { tree: import('@/app/api/ejendom-struktur/route').StrukturNode | null }) => {
+        if (controller.signal.aborted) return;
+        setStrukturTree(data.tree);
+      })
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        logger.warn('[ejendom] Struktur fetch error:', err);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setStrukturLoader(false);
+      });
+    return () => controller.abort();
+  }, [id, erDAWA, dawaStatus, dawaAdresse, bbrData, matrikelData]);
+
+  /**
    * Henter ejendomsvurdering og ejerskabsdata fra Datafordeler når BFEnummer
    * er tilgængeligt via BBR Ejendomsrelation.
    * Kører i parallel og fejler stille ved manglende API-nøgle.
@@ -1001,6 +1104,27 @@ export default function EjendomDetaljeClient({
       .finally(() => {
         if (!signal.aborted) setEjereLoader(false);
       });
+
+    // BIZZ-1145: Prefetch ejerskab/chain og diagram/resolve for Ejerskab-fanen.
+    // Varmer HTTP-cachen op så data er klar når brugeren klikker på fanen.
+    // chain-endpointet cacher server-side i 30 min (s-maxage=1800).
+    const erEjerlej = !!bbrData.ejerlejlighedBfe;
+    const chainAdresse = dawaAdresse
+      ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
+      : '';
+    const chainParams = new URLSearchParams({
+      bfe: String(bfeNummer),
+      adresse: chainAdresse,
+    });
+    if (erEjerlej) chainParams.set('type', 'ejerlejlighed');
+    fetch(`/api/ejerskab/chain?${chainParams}`, {
+      signal,
+      priority: 'low' as RequestPriority,
+    }).catch(() => {});
+    fetch(
+      `/api/diagram/resolve?type=property&id=${bfeNummer}&label=${encodeURIComponent(chainAdresse)}`,
+      { signal, priority: 'low' as RequestPriority }
+    ).catch(() => {});
 
     setSalgshistorikLoader(true);
     fetch(`/api/salgshistorik?bfeNummer=${bfeNummer}`, { signal })
@@ -1786,20 +1910,39 @@ export default function EjendomDetaljeClient({
                     {da ? 'Gå til hovedejendom' : 'Go to main property'}
                   </button>
                 )}
-                {/* Moderejandom (ingen etage, men har ejerlejlighedBfe): statisk badge */}
-                {bbrData?.ejerlejlighedBfe && !dawaAdresse?.etage && (
-                  <span
-                    className="flex items-center gap-1.5 px-3 py-1 bg-amber-500/15 border border-amber-500/30 rounded-lg text-amber-400 text-xs font-medium flex-shrink-0"
-                    title={
-                      lang === 'da'
-                        ? `Denne ejendom er en hovedejendom (BFE ${bbrData.moderBfe ?? bbrData.ejerlejlighedBfe})`
-                        : `This property is a main property (BFE ${bbrData.moderBfe ?? bbrData.ejerlejlighedBfe})`
-                    }
-                  >
-                    <Building2 size={12} />
-                    {lang === 'da' ? 'Hovedejendom' : 'Main property'}
-                  </span>
-                )}
+                {/* Moderejandom (ingen etage, men har ejerlejlighedBfe): klikbar
+                    "Gå til SFE" knap når strukturTree har en SFE med dawaId,
+                    ellers statisk badge. */}
+                {bbrData?.ejerlejlighedBfe &&
+                  !dawaAdresse?.etage &&
+                  (strukturTree?.niveau === 'sfe' && strukturTree.dawaId ? (
+                    <button
+                      onClick={() => {
+                        router.push(`/dashboard/ejendomme/${strukturTree.dawaId}`);
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1 bg-amber-500/15 border border-amber-500/30 rounded-lg text-amber-400 text-xs font-medium hover:bg-amber-500/25 transition-colors flex-shrink-0"
+                      title={
+                        da
+                          ? `Gå til SFE-ejendommen (BFE ${strukturTree.bfe})`
+                          : `Go to SFE property (BFE ${strukturTree.bfe})`
+                      }
+                    >
+                      <Building2 size={12} />
+                      {da ? 'Gå til SFE ejendom' : 'Go to SFE property'}
+                    </button>
+                  ) : (
+                    <span
+                      className="flex items-center gap-1.5 px-3 py-1 bg-amber-500/15 border border-amber-500/30 rounded-lg text-amber-400 text-xs font-medium flex-shrink-0"
+                      title={
+                        da
+                          ? `Denne ejendom er en hovedejendom (BFE ${bbrData.moderBfe ?? bbrData.ejerlejlighedBfe})`
+                          : `This property is a main property (BFE ${bbrData.moderBfe ?? bbrData.ejerlejlighedBfe})`
+                      }
+                    >
+                      <Building2 size={12} />
+                      {da ? 'Hovedejendom' : 'Main property'}
+                    </span>
+                  ))}
                 {bbrData?.ejerlejlighedBfe && (
                   <span className="flex items-center gap-1 px-2 py-0.5 bg-purple-500/15 border border-purple-500/30 rounded-full text-purple-400 text-[10px] font-medium flex-shrink-0">
                     {lang === 'da' ? 'Ejerlejlighed' : 'Condominium'}
@@ -1922,18 +2065,36 @@ export default function EjendomDetaljeClient({
                 {(() => {
                   const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
                   const erEjerlej = !!dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+                  // Skelne SFE vs. underliggende hovedejendom via strukturTree:
+                  // Hvis denne BFE matcher root-noden i træet, er det SFE.
+                  const currentBfeNum =
+                    bbrData?.ejerlejlighedBfe ??
+                    bbrData?.moderBfe ??
+                    bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
+                  const erSfe =
+                    erModer && strukturTree?.niveau === 'sfe' && currentBfeNum === strukturTree.bfe;
                   if (erModer)
                     return (
                       <span
                         className="flex items-center gap-1 px-2.5 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded-full text-amber-300 text-xs font-medium flex-shrink-0"
                         title={
                           da
-                            ? 'Matrikel-niveau ejendom der samler bygninger og ejerlejligheder'
-                            : 'Cadastral-level property combining buildings and condominiums'
+                            ? erSfe
+                              ? 'Samlet Fast Ejendom — matrikel-niveau ejendom'
+                              : 'Hovedejendom under en SFE'
+                            : erSfe
+                              ? 'Collective Real Property — cadastral-level property'
+                              : 'Main property under an SFE'
                         }
                       >
                         <Building2 size={11} />
-                        {da ? 'Hovedejendom (SFE)' : 'Main property (SFE)'}
+                        {erSfe
+                          ? da
+                            ? 'Hovedejendom (SFE)'
+                            : 'Main property (SFE)'
+                          : da
+                            ? 'Hovedejendom'
+                            : 'Main property'}
                       </span>
                     );
                   if (erEjerlej)
@@ -2022,6 +2183,23 @@ export default function EjendomDetaljeClient({
                     {t.groundRent}
                   </span>
                 )}
+                {/* BIZZ-919: Data freshness badge + refresh */}
+                <DataFreshnessBadge fromCache={bbrFromCache} syncedAt={bbrSyncedAt} lang={lang} />
+                <button
+                  onClick={handleBbrRefresh}
+                  disabled={bbrRefreshing}
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] text-slate-400 hover:text-blue-400 bg-slate-700/30 border border-slate-700/40 hover:border-blue-500/30 transition-colors disabled:opacity-50"
+                  aria-label={lang === 'da' ? 'Genindlæs data' : 'Refresh data'}
+                  title={lang === 'da' ? 'Genindlæs data' : 'Refresh data'}
+                >
+                  <RefreshCw size={9} className={bbrRefreshing ? 'animate-spin' : ''} />
+                </button>
+                {/* BIZZ-948: Oversvømmelsesrisiko-badge */}
+                <FloodRiskBadge
+                  lat={dawaAdresse?.y ?? null}
+                  lng={dawaAdresse?.x ?? null}
+                  lang={lang}
+                />
               </div>
             </div>
 
@@ -2090,9 +2268,11 @@ export default function EjendomDetaljeClient({
               </div>
             )}
 
-            {/* BIZZ-832: Søster-enheder — vises når en ejerlejlighed
-                har sibling-enheder på samme matrikel */}
-            {!!dawaAdresse?.etage &&
+            {/* BIZZ-832: Søster-enheder — skjules når ejendomsstruktur
+                er tilgængelig (redundant info). Fallback for ejendomme
+                uden strukturtræ. */}
+            {!strukturTree &&
+              !!dawaAdresse?.etage &&
               lejligheder &&
               lejligheder.length > 1 &&
               (() => {
@@ -2113,19 +2293,29 @@ export default function EjendomDetaljeClient({
                         const sibHref = sib.dawaId
                           ? `/dashboard/ejendomme/${sib.dawaId}`
                           : `/dashboard/ejendomme/${sib.bfe}`;
+                        // BIZZ-996: Vis husnr + etage + dør i stedet for etage + m²
+                        const husnr = dawaAdresse?.husnr ?? '';
+                        const label = [husnr, sib.etage, sib.doer].filter(Boolean).join(', ');
                         return (
                           <Link
                             key={sib.bfe}
                             href={sibHref}
                             className="inline-flex items-center gap-1 px-2 py-1 rounded bg-slate-800/80 border border-slate-700/40 text-slate-300 text-xs hover:border-blue-500/40 hover:text-white transition-colors"
                           >
-                            {sib.etage ?? ''}
-                            {sib.doer ? `. ${sib.doer}` : ''}
-                            {sib.areal ? ` · ${sib.areal}m²` : ''}
+                            {label || `BFE ${sib.bfe}`}
                           </Link>
                         );
                       })}
-                      {siblings.length > 20 && (
+                      {siblings.length > 20 && bbrData?.parentAdgangsadresseId && (
+                        <Link
+                          href={`/dashboard/ejendomme/${bbrData.parentAdgangsadresseId}`}
+                          className="text-blue-400 hover:text-blue-300 text-xs self-center"
+                        >
+                          +{siblings.length - 20}{' '}
+                          {da ? 'mere — gå til hovedejendom' : 'more — go to main property'}
+                        </Link>
+                      )}
+                      {siblings.length > 20 && !bbrData?.parentAdgangsadresseId && (
                         <span className="text-slate-500 text-xs self-center">
                           +{siblings.length - 20} {da ? 'mere' : 'more'}
                         </span>
@@ -2177,6 +2367,12 @@ export default function EjendomDetaljeClient({
                 cvrApiDown={cvrApiDown}
                 visOphoerte={visOphoerte}
                 setVisOphoerte={setVisOphoerte}
+                kommunekode={
+                  dawaJordstykke?.kommune?.kode ? String(dawaJordstykke.kommune.kode) : null
+                }
+                energimaerker={energimaerker}
+                energiLoader={energiLoader}
+                onNavigerDokumenter={() => setAktivTab('dokumenter')}
               />
             )}
 
@@ -2199,8 +2395,13 @@ export default function EjendomDetaljeClient({
                 matrikelLoader={matrikelLoader}
                 matrikelData={matrikelData}
                 matrikelHistorik={matrikelHistorik}
+                kommunekode={
+                  dawaJordstykke?.kommune?.kode ? String(dawaJordstykke.kommune.kode) : null
+                }
               />
             )}
+
+            {/* Diagram v2 fane fjernet — DiagramV2 vises nu på Ejerskab-fanen */}
 
             {/* ══ EJERFORHOLD — always mounted for prefetch (BIZZ-410), hidden when not active ══ */}
             <div className={aktivTab === 'ejerforhold' ? '' : 'hidden'}>
@@ -2212,6 +2413,21 @@ export default function EjendomDetaljeClient({
                 ejereLoader={ejereLoader}
                 lejlighederLoader={lejlighederLoader}
                 lejligheder={lejligheder}
+                strukturTree={strukturTree}
+                strukturLoader={strukturLoader}
+                currentBfe={
+                  bbrData?.ejerlejlighedBfe ??
+                  bbrData?.moderBfe ??
+                  bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
+                  undefined
+                }
+                bbrEnheder={
+                  bbrData?.enheder?.map((e) => ({
+                    etage: e.etage ?? null,
+                    doer: e.doer ?? null,
+                    vaerelser: e.vaerelser ?? null,
+                  })) ?? []
+                }
               />
             </div>
 
@@ -2252,9 +2468,33 @@ export default function EjendomDetaljeClient({
                 // BIZZ-860: Signal om ejendommen er opdelt — kilde er MAT-data
                 // (matrikelData.opdeltIEjerlejligheder) eller fallback via bbrData.
                 opdeltIEjerlejligheder={
-                  matrikelData?.opdeltIEjerlejligheder ?? bbrData?.opdeltIEjerlejligheder ?? false
+                  // BIZZ-1147: Ejerlejligheder har egen vurdering — vis IKKE
+                  // "fordelt på ejerlejligheder" for dem, kun for moderejendomme.
+                  // erModer = ingen etage + har ejerlejlighedBfe (= hovedejendom)
+                  (() => {
+                    const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+                    return (
+                      erModer &&
+                      (matrikelData?.opdeltIEjerlejligheder ??
+                        bbrData?.opdeltIEjerlejligheder ??
+                        false)
+                    );
+                  })()
                 }
                 lejlighederCount={lejligheder?.length ?? 0}
+                postnr={dawaAdresse?.postnr ?? null}
+                kommunekode={
+                  dawaJordstykke?.kommune?.kode ? String(dawaJordstykke.kommune.kode) : null
+                }
+                adresse={
+                  dawaAdresse
+                    ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
+                    : ''
+                }
+                kommune={dawaJordstykke?.kommune?.navn ?? null}
+                boligareal={bbrData?.bbr?.[0]?.samletBoligareal ?? null}
+                grundareal={dawaJordstykke?.areal_m2 ?? null}
+                opfoerelsesaar={bbrData?.bbr?.[0]?.opfoerelsesaar ?? null}
               />
             )}
 

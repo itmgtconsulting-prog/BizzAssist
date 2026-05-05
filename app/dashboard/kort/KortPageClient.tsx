@@ -295,7 +295,12 @@ type LagNøgle =
   | 'raastof'
   | 'indsatsplaner'
   | 'omr_klassificering'
-  | 'jordforurening';
+  | 'jordforurening'
+  | 'stoej_vej'
+  | 'stoej_tog'
+  | 'havvand_1m'
+  | 'skybrud'
+  | 'bygningsfodaftryk';
 
 /** Synlighedstilstand for alle lag */
 type LagSynlighed = Record<LagNøgle, boolean>;
@@ -329,6 +334,11 @@ const LAG_START: LagSynlighed = {
   indsatsplaner: false,
   omr_klassificering: false,
   jordforurening: false,
+  stoej_vej: false,
+  stoej_tog: false,
+  havvand_1m: false,
+  skybrud: false,
+  bygningsfodaftryk: false,
 };
 
 /** WMS-lag definition — kilde, URL og standard opacity */
@@ -346,7 +356,10 @@ interface WmsLagDef {
  * @param service - 'plandata' eller 'miljo' (whitelistet i /api/wms)
  * @param layers  - Kommasepareret WMS LAYERS-parameter
  */
-function wmsUrl(service: 'plandata' | 'miljo', layers: string): string {
+function wmsUrl(
+  service: 'plandata' | 'miljo' | 'miljoegis' | 'dhm' | 'geodanmark',
+  layers: string
+): string {
   return (
     `/api/wms?service=${service}` +
     `&SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap` +
@@ -437,6 +450,34 @@ const WMS_LAG: WmsLagDef[] = [
   { id: 'omr_klassificering', wmsUrl: wmsUrl('miljo', 'dai:omr_klassificering'), opacity: 0.6 },
   // ── Jordforurening (Miljøportal) ──
   { id: 'jordforurening', wmsUrl: wmsUrl('miljo', 'dai:Jordforurening'), opacity: 0.7 },
+  // ── BIZZ-961: Støjkort (Miljøstyrelsen GIS) ──
+  {
+    id: 'stoej_vej',
+    wmsUrl: wmsUrl('miljoegis', 'theme-dk_noise2022_vej_1_5m'),
+    opacity: 0.65,
+  },
+  {
+    id: 'stoej_tog',
+    wmsUrl: wmsUrl('miljoegis', 'theme-dk_noise2022_jernbane_1_5m'),
+    opacity: 0.65,
+  },
+  // ── BIZZ-948: Oversvømmelseskort (Dataforsyningen DHM) ──
+  {
+    id: 'havvand_1m',
+    wmsUrl: wmsUrl('dhm', 'havvandpaaland_1'),
+    opacity: 0.55,
+  },
+  {
+    id: 'skybrud',
+    wmsUrl: wmsUrl('dhm', 'dhm_bluespot_ekstremregn'),
+    opacity: 0.55,
+  },
+  // ── BIZZ-953: GeoDanmark bygningsfodaftryk ──
+  {
+    id: 'bygningsfodaftryk',
+    wmsUrl: wmsUrl('geodanmark', 'BYGNING'),
+    opacity: 0.4,
+  },
 ];
 
 /** Farveaccenter til gruppeoverskrifter */
@@ -515,6 +556,21 @@ const LAG_GRUPPER: Array<{
       { id: 'indsatsplaner', navn: 'Indsatsplaner' },
       { id: 'omr_klassificering', navn: 'Områdeklassificering' },
     ],
+  },
+  {
+    navn: 'Støj & Klimarisiko',
+    farve: 'orange',
+    lag: [
+      { id: 'stoej_vej', navn: 'Vejstøj (Lden dB)' },
+      { id: 'stoej_tog', navn: 'Jernbanestøj (Lden dB)' },
+      { id: 'havvand_1m', navn: 'Havvand +1 m (stormflod)' },
+      { id: 'skybrud', navn: 'Skybrud (bluespot)' },
+    ],
+  },
+  {
+    navn: 'Topografi',
+    farve: 'orange',
+    lag: [{ id: 'bygningsfodaftryk', navn: 'Bygningsfodaftryk' }],
   },
 ];
 
@@ -714,11 +770,14 @@ function KortInner() {
   const [markeret, setMarkeret] = useState(-1);
   const [søger, setSøger] = useState(false);
   const søgeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** BIZZ-1073: AbortController til at cancelle stale søge-requests */
+  const søgeAbort = useRef<AbortController | null>(null);
 
   /** Ryd søge-debounce timer ved unmount for at undgå setState på afmonteret komponent. */
   useEffect(() => {
     return () => {
       if (søgeTimer.current) clearTimeout(søgeTimer.current);
+      søgeAbort.current?.abort();
     };
   }, []);
 
@@ -1237,20 +1296,33 @@ function KortInner() {
     return () => document.removeEventListener('mousedown', h);
   }, [lagPanel]);
 
+  /** BIZZ-1073: Debounce 300ms + abort stale requests ved hurtig indtastning */
   const handleSøgning = useCallback((tekst: string) => {
     setSøgeTekst(tekst);
     setMarkeret(-1);
     if (søgeTimer.current) clearTimeout(søgeTimer.current);
+    søgeAbort.current?.abort();
     if (tekst.trim().length < 2) {
       setForslag([]);
       return;
     }
     søgeTimer.current = setTimeout(async () => {
+      const controller = new AbortController();
+      søgeAbort.current = controller;
       setSøger(true);
-      const acRes = await fetch(`/api/adresse/autocomplete?q=${encodeURIComponent(tekst)}`);
-      setForslag(acRes.ok ? await acRes.json() : []);
-      setSøger(false);
-    }, 200);
+      try {
+        const acRes = await fetch(`/api/adresse/autocomplete?q=${encodeURIComponent(tekst)}`, {
+          signal: controller.signal,
+        });
+        if (!controller.signal.aborted) {
+          setForslag(acRes.ok ? await acRes.json() : []);
+        }
+      } catch {
+        /* AbortError ignoreres — ny søgning er i gang */
+      } finally {
+        if (!controller.signal.aborted) setSøger(false);
+      }
+    }, 300);
   }, []);
 
   /**

@@ -100,6 +100,10 @@ export interface CVRPublicData {
 
   /** Om virksomheden er reklamebeskyttet (fra Vrvirksomhed.reklamebeskyttet) */
   reklamebeskyttet: boolean;
+  /** BIZZ-967: Om revision er fravalgt (attribut REVISION_FRAVALGT=true) — risiko-indikator */
+  revisionFravalgt: boolean;
+  /** BIZZ-967: Om virksomheden er omfattet af lov om hvidvask og terrorfinansiering */
+  hvidvaskOmfattet: boolean;
 
   /** Kommune fra beliggenhedsadresse (fra Vrvirksomhed.beliggenhedsadresse[].kommune) */
   kommune: string | null;
@@ -467,6 +471,11 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
   const registreretKapitalAttr =
     kapitalStr != null ? { vaerdi: parseFloat(kapitalStr), valuta: kapitalValuta ?? 'DKK' } : null;
 
+  // BIZZ-967: Parse særlige registreringer fra attributter
+  const revisionFravalgt = getAttrValue('REVISION_FRAVALGT') === 'true';
+  const hvidvaskOmfattet =
+    getAttrValue('OMFATTET_AF_LOV_OM_HVIDVASK_OG_TERRORFINANSIERING') === 'true';
+
   // ── Første regnskabsperiode (fra attributter) ──
   const foersteStart = getAttrValue('FØRSTE_REGNSKABSPERIODE_START');
   const foersteSlut = getAttrValue('FØRSTE_REGNSKABSPERIODE_SLUT');
@@ -629,6 +638,78 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
       modpartEnhedsNummer: modpart,
       retning,
     });
+  }
+
+  // BIZZ-945: Kapitalhistorik fra attributter
+  const kapitalAttr = attributter.find((a) => (a as Record<string, unknown>).type === 'KAPITAL') as
+    | Record<string, unknown>
+    | undefined;
+  if (kapitalAttr) {
+    const kapValuter = attributter.find(
+      (a) => (a as Record<string, unknown>).type === 'KAPITALVALUTA'
+    ) as Record<string, unknown> | undefined;
+    const valuta = (kapValuter?.vaerdier as Array<{ vaerdi?: string }>)?.[0]?.vaerdi ?? 'DKK';
+    for (const v of (kapitalAttr.vaerdier ?? []) as Array<{
+      vaerdi?: string;
+      periode?: { gyldigFra?: string; gyldigTil?: string | null };
+    }>) {
+      if (v.vaerdi) {
+        const beloeb = parseInt(v.vaerdi, 10);
+        historik.push({
+          type: 'kapital',
+          fra: v.periode?.gyldigFra ?? '',
+          til: v.periode?.gyldigTil ?? null,
+          vaerdi: `${isNaN(beloeb) ? v.vaerdi : beloeb.toLocaleString('da-DK')} ${valuta}`,
+        });
+      }
+    }
+  }
+
+  // BIZZ-945: Revisor-historik fra deltagerRelation (organisationsNavn=Revision)
+  // Parses revisorer separat for historik-timeline
+  const revisionRelationer = Array.isArray(src.deltagerRelation)
+    ? (src.deltagerRelation as Record<string, unknown>[]).filter((r) => {
+        const orgs = Array.isArray(r.organisationer)
+          ? (r.organisationer as Record<string, unknown>[])
+          : [];
+        return orgs.some((o) => {
+          const navne = Array.isArray(o.organisationsNavn)
+            ? (o.organisationsNavn as Array<{ navn?: string }>)
+            : [];
+          return navne.some((n) => n.navn?.toUpperCase().includes('REVISION'));
+        });
+      })
+    : [];
+  for (const rel of revisionRelationer) {
+    const deltager = rel.deltager as Record<string, unknown> | undefined;
+    if (!deltager) continue;
+    const navne = Array.isArray(deltager.navne)
+      ? (deltager.navne as Array<{
+          navn?: string;
+          periode?: { gyldigFra?: string; gyldigTil?: string | null };
+        }>)
+      : [];
+    const aktivtNavn = navne.find((n) => !n.periode?.gyldigTil) ?? navne[navne.length - 1];
+    const orgs = Array.isArray(rel.organisationer)
+      ? (rel.organisationer as Record<string, unknown>[])
+      : [];
+    for (const o of orgs) {
+      const orgNavne = Array.isArray(o.organisationsNavn)
+        ? (o.organisationsNavn as Array<{
+            navn?: string;
+            periode?: { gyldigFra?: string; gyldigTil?: string | null };
+          }>)
+        : [];
+      const revNavne = orgNavne.filter((n) => n.navn?.toUpperCase().includes('REVISION'));
+      for (const rn of revNavne) {
+        historik.push({
+          type: 'revisor',
+          fra: rn.periode?.gyldigFra ?? '',
+          til: rn.periode?.gyldigTil ?? null,
+          vaerdi: aktivtNavn?.navn ?? 'Revisor',
+        });
+      }
+    }
   }
 
   // ── Ejere / Deltagere (deltagerRelation) ──
@@ -851,6 +932,8 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
     stiftet,
     sidstOpdateret,
     reklamebeskyttet,
+    revisionFravalgt,
+    hvidvaskOmfattet,
     kommune,
     statusTekst,
     foersteRegnskabsperiode,
@@ -1016,6 +1099,8 @@ async function buildCvrDataFromColumns(
     stiftet: row.stiftet,
     sidstOpdateret: null,
     reklamebeskyttet: false,
+    revisionFravalgt: false,
+    hvidvaskOmfattet: false,
     kommune: addr.kommune?.kommuneNavn ?? null,
     statusTekst: row.status,
     foersteRegnskabsperiode: null,
@@ -1329,7 +1414,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<CVRPublicData 
       const { fetchCvrFromCache } = await import('@/app/lib/cvrIngest');
       const cached = await fetchCvrFromCache(admin, vat);
       if (cached) {
-        const fakeHit = { _source: { Vrvirksomhed: cached } };
+        const fakeHit = { _source: { Vrvirksomhed: cached.raw } };
         let mapped = mapESHit(fakeHit);
 
         // BIZZ-680: Hvis mapESHit returnerede fallback-navn (CVR NNNNNNNN)
@@ -1348,6 +1433,8 @@ export async function GET(req: NextRequest): Promise<NextResponse<CVRPublicData 
             headers: {
               'Cache-Control': `public, s-maxage=${cacheTime}, stale-while-revalidate=600`,
               'x-cvr-source': 'cache',
+              'X-Cache-Hit': 'true',
+              'X-Synced-At': cached.syncedAt,
             },
           });
         }
@@ -1426,6 +1513,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<CVRPublicData 
         headers: {
           'Cache-Control': `public, s-maxage=${cacheTime}, stale-while-revalidate=600`,
           'x-cvr-source': 'live',
+          'X-Cache-Hit': 'false',
         },
       });
     }
@@ -1441,7 +1529,10 @@ export async function GET(req: NextRequest): Promise<NextResponse<CVRPublicData 
     mapped.productionunits = await fetchProduktionsenheder(mapped.vat, auth);
 
     return NextResponse.json(mapped, {
-      headers: { 'Cache-Control': `public, s-maxage=${cacheTime}, stale-while-revalidate=600` },
+      headers: {
+        'Cache-Control': `public, s-maxage=${cacheTime}, stale-while-revalidate=600`,
+        'X-Cache-Hit': 'false',
+      },
     });
   } catch (err) {
     logger.error('[cvr-public] Error:', err instanceof Error ? err.message : err);

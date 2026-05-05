@@ -12,10 +12,31 @@
 
 'use client';
 
-import { Fragment } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Building2, Factory, LayoutDashboard, MapPin, Phone, Mail } from 'lucide-react';
+import {
+  Building2,
+  ExternalLink,
+  Factory,
+  LayoutDashboard,
+  MapPin,
+  Phone,
+  Mail,
+} from 'lucide-react';
+import dynamic from 'next/dynamic';
+import type { PenhedLocation } from '@/app/api/penhed-resolve/route';
+import type { PenhedMarker } from '@/app/components/PenhedMiniMap';
 import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
+
+/** BIZZ-1029: Mapbox kræver browser — lazy load med ssr: false */
+const PenhedMiniMap = dynamic(/* mapbox-gl */ () => import('@/app/components/PenhedMiniMap'), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-[280px] bg-slate-800/50 rounded-lg animate-pulse flex items-center justify-center">
+      <span className="text-slate-500 text-sm">Indlæser kort...</span>
+    </div>
+  ),
+});
 import { translations } from '@/app/lib/translations';
 import type { CVRPublicData } from '@/app/api/cvr-public/route';
 import type { RelateretVirksomhed } from '@/app/api/cvr-public/related/route';
@@ -88,6 +109,53 @@ export default function VirksomhedOverblikTab({
   setOversigtFilter,
 }: Props) {
   const c = translations[lang].company;
+
+  /* ── BIZZ-1029: Resolve P-enhed adresser → koordinater + BFE ── */
+  const [penhedLocations, setPenhedLocations] = useState<Record<number, PenhedLocation | null>>({});
+  const [penhedLocLoading, setPenhedLocLoading] = useState(false);
+
+  const activePenheder = data.productionunits?.filter((p) => p.active !== false) ?? [];
+  const activePenhederCount = activePenheder.length;
+
+  /**
+   * Henter koordinater og BFE for alle aktive P-enheder.
+   * Kaldes når P-enheder-sektionen vises (lazy load).
+   */
+  const fetchPenhedLocations = useCallback(async () => {
+    const penheder = data.productionunits?.filter((p) => p.active !== false) ?? [];
+    if (penheder.length === 0 || penhedLocLoading || Object.keys(penhedLocations).length > 0)
+      return;
+    setPenhedLocLoading(true);
+    try {
+      const res = await fetch('/api/penhed-resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          addresses: penheder.map((p) => ({
+            pno: p.pno,
+            address: p.address,
+            zipcode: p.zipcode,
+            city: p.city,
+          })),
+        }),
+      });
+      if (res.ok) {
+        const json = (await res.json()) as { results: Record<number, PenhedLocation | null> };
+        setPenhedLocations(json.results);
+      }
+    } catch {
+      /* Fejl ignoreres — kort og links er nice-to-have */
+    } finally {
+      setPenhedLocLoading(false);
+    }
+  }, [data.productionunits, penhedLocLoading, penhedLocations]);
+
+  /** Fetch lokationer når P-enheder filter er aktiv */
+  useEffect(() => {
+    if ((oversigtFilter === null || oversigtFilter === 'pe') && activePenhederCount > 0) {
+      fetchPenhedLocations();
+    }
+  }, [oversigtFilter, fetchPenhedLocations, activePenhederCount]);
 
   return (
     <div className="space-y-4">
@@ -281,6 +349,23 @@ export default function VirksomhedOverblikTab({
                         {lang === 'da' ? 'Virksomhedsstatus' : 'Company status'}
                       </p>
                       <p className="text-white text-sm font-medium">{data.statusTekst}</p>
+                    </div>
+                  )}
+                  {/* BIZZ-967: Risiko-badges for særlige registreringer */}
+                  {data.revisionFravalgt && (
+                    <div className="col-span-2 flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                      <span className="text-amber-400 text-xs font-medium">
+                        {lang === 'da' ? '⚠ Revision fravalgt' : '⚠ Audit opted out'}
+                      </span>
+                    </div>
+                  )}
+                  {data.hvidvaskOmfattet && (
+                    <div className="col-span-2 flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                      <span className="text-blue-400 text-xs font-medium">
+                        {lang === 'da'
+                          ? 'Omfattet af hvidvasklov'
+                          : 'Subject to anti-money laundering law'}
+                      </span>
                     </div>
                   )}
                   {/* BIZZ-520: P-enheder count */}
@@ -648,61 +733,125 @@ export default function VirksomhedOverblikTab({
                     <th className="pb-2 pr-4">{c.industry}</th>
                     {/* BIZZ-514: Ansatte-kolonne per P-enhed */}
                     <th className="pb-2 pr-4">{c.employeesShort}</th>
+                    {/* BIZZ-1029: Kontakt-kolonne */}
+                    <th className="pb-2 pr-4">{c.contactShort}</th>
                     <th className="pb-2">Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {data.productionunits.map((pu) => (
-                    <tr key={pu.pno} className="border-b border-slate-700/20 text-white">
-                      <td className="py-2 pr-4 text-slate-400 font-mono text-xs">
-                        {pu.pno}
-                        {/* BIZZ-514: Hoved-P-enhed markering */}
-                        {pu.main && (
-                          <span
-                            className="ml-1.5 text-[9px] px-1 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30"
-                            title={lang === 'da' ? 'Hovedproduktionsenhed' : 'Main production unit'}
-                          >
-                            {lang === 'da' ? 'Hoved' : 'Main'}
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-2 pr-4">{pu.name}</td>
-                      <td className="py-2 pr-4 text-slate-300 text-xs">
-                        {pu.address}, {pu.zipcode} {pu.city}
-                      </td>
-                      <td className="py-2 pr-4 text-slate-400 text-xs">
-                        <div className="flex flex-col gap-0.5">
-                          <span>{pu.industrydesc ?? '—'}</span>
-                          {/* BIZZ-514: Bibrancher per P-enhed som små tags under hovedbranchen */}
-                          {pu.secondaryIndustries && pu.secondaryIndustries.length > 0 && (
-                            <div className="flex flex-wrap gap-0.5">
-                              {pu.secondaryIndustries.map((b, i) => (
-                                <span
-                                  key={i}
-                                  className="text-[9px] px-1 py-0.5 rounded bg-slate-700/40 border border-slate-600/40 text-slate-400"
-                                  title={
-                                    b.code != null ? `${b.code} — ${b.desc ?? '—'}` : (b.desc ?? '')
-                                  }
-                                >
-                                  {b.desc ?? '—'}
-                                </span>
-                              ))}
-                            </div>
+                  {data.productionunits.map((pu) => {
+                    const loc = penhedLocations[pu.pno];
+                    return (
+                      <tr key={pu.pno} className="border-b border-slate-700/20 text-white">
+                        <td className="py-2 pr-4 text-slate-400 font-mono text-xs">
+                          {pu.pno}
+                          {/* BIZZ-514: Hoved-P-enhed markering */}
+                          {pu.main && (
+                            <span
+                              className="ml-1.5 text-[9px] px-1 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30"
+                              title={
+                                lang === 'da' ? 'Hovedproduktionsenhed' : 'Main production unit'
+                              }
+                            >
+                              {lang === 'da' ? 'Hoved' : 'Main'}
+                            </span>
                           )}
-                        </div>
-                      </td>
-                      <td className="py-2 pr-4 text-slate-300 text-xs tabular-nums">
-                        {pu.employees ?? '—'}
-                      </td>
-                      <td className="py-2">
-                        <span
-                          className={`px-2 py-0.5 rounded text-xs font-medium ${pu.active !== false ? 'bg-emerald-600/20 text-emerald-400' : 'bg-red-600/20 text-red-400'}`}
-                        >
-                          {pu.active !== false ? c.active : c.ceased}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="py-2 pr-4">{pu.name}</td>
+                        {/* BIZZ-1029: Adresse med ejendomslink + vis-på-kort */}
+                        <td className="py-2 pr-4 text-slate-300 text-xs">
+                          <div className="flex items-center gap-1.5">
+                            <span>
+                              {pu.address}, {pu.zipcode} {pu.city}
+                            </span>
+                            {loc?.bfe && (
+                              <Link
+                                href={`/dashboard/ejendomme/${loc.bfe}`}
+                                className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-300 border border-blue-500/30 hover:bg-blue-500/25 transition-colors"
+                                title={
+                                  lang === 'da'
+                                    ? `Se ejendom (BFE ${loc.bfe})`
+                                    : `View property (BFE ${loc.bfe})`
+                                }
+                              >
+                                <ExternalLink size={9} />
+                                BFE
+                              </Link>
+                            )}
+                            {loc && (
+                              <Link
+                                href={`/dashboard/kort?lat=${loc.lat}&lng=${loc.lng}&zoom=16`}
+                                className="inline-flex items-center text-slate-500 hover:text-cyan-400 transition-colors"
+                                title={lang === 'da' ? 'Vis på kort' : 'Show on map'}
+                                aria-label={lang === 'da' ? 'Vis på kort' : 'Show on map'}
+                              >
+                                <MapPin size={12} />
+                              </Link>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-2 pr-4 text-slate-400 text-xs">
+                          <div className="flex flex-col gap-0.5">
+                            <span>{pu.industrydesc ?? '—'}</span>
+                            {/* BIZZ-514: Bibrancher per P-enhed som små tags under hovedbranchen */}
+                            {pu.secondaryIndustries && pu.secondaryIndustries.length > 0 && (
+                              <div className="flex flex-wrap gap-0.5">
+                                {pu.secondaryIndustries.map((b, i) => (
+                                  <span
+                                    key={i}
+                                    className="text-[9px] px-1 py-0.5 rounded bg-slate-700/40 border border-slate-600/40 text-slate-400"
+                                    title={
+                                      b.code != null
+                                        ? `${b.code} — ${b.desc ?? '—'}`
+                                        : (b.desc ?? '')
+                                    }
+                                  >
+                                    {b.desc ?? '—'}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-2 pr-4 text-slate-300 text-xs tabular-nums">
+                          {pu.employees ?? '—'}
+                        </td>
+                        {/* BIZZ-1029: Kontaktinfo — telefon + email */}
+                        <td className="py-2 pr-4 text-xs">
+                          <div className="flex flex-col gap-0.5">
+                            {pu.phone && (
+                              <a
+                                href={`tel:${pu.phone}`}
+                                className="inline-flex items-center gap-1 text-slate-400 hover:text-white transition-colors"
+                                title={pu.phone}
+                              >
+                                <Phone size={10} />
+                                <span>{pu.phone}</span>
+                              </a>
+                            )}
+                            {pu.email && (
+                              <a
+                                href={`mailto:${pu.email}`}
+                                className="inline-flex items-center gap-1 text-slate-400 hover:text-white transition-colors"
+                                title={pu.email}
+                              >
+                                <Mail size={10} />
+                                <span className="truncate max-w-[140px]">{pu.email}</span>
+                              </a>
+                            )}
+                            {!pu.phone && !pu.email && <span className="text-slate-600">—</span>}
+                          </div>
+                        </td>
+                        <td className="py-2">
+                          <span
+                            className={`px-2 py-0.5 rounded text-xs font-medium ${pu.active !== false ? 'bg-emerald-600/20 text-emerald-400' : 'bg-red-600/20 text-red-400'}`}
+                          >
+                            {pu.active !== false ? c.active : c.ceased}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -712,6 +861,25 @@ export default function VirksomhedOverblikTab({
               tekst={c.noProductionUnits}
             />
           )}
+
+          {/* BIZZ-1029: Mini-kort med P-enhed lokationer */}
+          {(() => {
+            const mapMarkers: PenhedMarker[] = (data.productionunits ?? [])
+              .filter((pu) => {
+                const loc = penhedLocations[pu.pno];
+                return loc && loc.lat && loc.lng;
+              })
+              .map((pu) => {
+                const loc = penhedLocations[pu.pno]!;
+                return { pno: pu.pno, lat: loc.lat, lng: loc.lng, name: pu.name, isMain: pu.main };
+              });
+            if (mapMarkers.length === 0) return null;
+            return (
+              <div className="mt-4">
+                <PenhedMiniMap markers={mapMarkers} />
+              </div>
+            );
+          })()}
         </section>
       )}
     </div>

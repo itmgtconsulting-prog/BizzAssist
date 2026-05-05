@@ -14,8 +14,7 @@
  *   const { pageData } = useAIPageContext();
  */
 
-import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
-import { usePathname } from 'next/navigation';
+import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -109,6 +108,73 @@ export interface AIPageData {
   }>;
   /** BIZZ-941: Antal ejendomme total (kan være flere end preloaded pga. cap). */
   ejendommeTotal?: number;
+  /** BIZZ-941: Pre-loaded datterselskaber fra virksomheds-record. */
+  preloadedDatterselskaber?: Array<{
+    cvr: number;
+    navn: string;
+    aktiv: boolean;
+    branche?: string | null;
+  }>;
+  /**
+   * BIZZ-1000: Base64-encoded PNG af ejerskabsdiagrammet. Sættes automatisk
+   * af DiagramForce når diagrammet er renderet. Bruges af generate_document
+   * til at indlejre billede i Word/PPTX-eksport.
+   */
+  diagramBase64?: string;
+  /**
+   * BIZZ-1002: Virksomheds kontaktinfo — telefon, email, adresse.
+   * Inkluderes i AI-kontekst så eksport-dokumenter kan indeholde kontaktdata.
+   */
+  virksomhedKontakt?: {
+    telefon?: string | null;
+    email?: string | null;
+    adresse?: string | null;
+    postnr?: string | null;
+    by?: string | null;
+  };
+  /**
+   * BIZZ-1002: Nøglepersoner — ejere, bestyrelse, direktion med roller.
+   * Kompakt summary til AI-kontekst (max 20 personer).
+   */
+  virksomhedNoeglePersoner?: Array<{
+    navn: string;
+    roller: string[];
+    ejerandel?: string | null;
+    aktiv: boolean;
+  }>;
+  /**
+   * BIZZ-1002: Seneste regnskabstal fra XBRL (nøgletal).
+   * Inkluderes når regnskabs-tab er loaded.
+   */
+  virksomhedRegnskab?: {
+    aar: number;
+    omsaetning?: number | null;
+    bruttofortjeneste?: number | null;
+    resultat?: number | null;
+    egenkapital?: number | null;
+    balancesum?: number | null;
+    ansatte?: number | null;
+  };
+  /**
+   * BIZZ-1023: Preloaded ejendomsdata (vurdering, BBR-summary, ejerskab).
+   * Reducerer tool-calls for standard ejendomsspørgsmål.
+   */
+  ejendomVurdering?: {
+    ejendomsvaerdi?: number | null;
+    grundvaerdi?: number | null;
+    vurderingsaar?: number | null;
+  };
+  ejendomBBR?: {
+    antalBygninger?: number;
+    samletAreal?: number | null;
+    opfoerelsesaar?: number | null;
+    anvendelse?: string | null;
+  };
+  ejendomEjerskab?: Array<{
+    navn: string;
+    type: string;
+    ejerandel?: string | null;
+  }>;
 }
 
 // ─── Context ─────────────────────────────────────────────────────────────────
@@ -116,11 +182,14 @@ export interface AIPageData {
 interface AIPageContextValue {
   pageData: AIPageData | null;
   setPageData: (data: AIPageData | null) => void;
+  /** BIZZ-985: Eksplicit rydning af al kontekst */
+  clearPageData: () => void;
 }
 
 const AIPageContext = createContext<AIPageContextValue>({
   pageData: null,
   setPageData: () => {},
+  clearPageData: () => {},
 });
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
@@ -128,23 +197,43 @@ const AIPageContext = createContext<AIPageContextValue>({
 /**
  * Wrap dashboard layout med denne provider så alle child-sider og
  * AIChatPanel har adgang til den delte side-kontekst.
- * Rydder automatisk data når pathname ændres (navigation til ny side).
+ *
+ * BIZZ-985: Sticky kontekst — data ryddes IKKE automatisk ved navigation.
+ * I stedet merger nye siders data ind i den eksisterende kontekst, så
+ * AI Chat bevarer relevante detaljer fra den senest besøgte side.
+ * Brug `clearPageData()` for eksplicit rydning.
  */
 export function AIPageProvider({ children }: { children: ReactNode }) {
   const [pageData, setPageDataRaw] = useState<AIPageData | null>(null);
-  const pathname = usePathname();
 
-  // Ryd side-data ved navigation — ny side loader sit eget
-  useEffect(() => {
-    setPageDataRaw(null);
-  }, [pathname]);
-
+  // BIZZ-985: Merge-baseret setter — nye felter overskriver, men tomme
+  // felter rydder ikke eksisterende værdier. null rydder alt.
   const setPageData = useCallback((data: AIPageData | null) => {
-    setPageDataRaw(data);
+    if (data === null) {
+      setPageDataRaw(null);
+      return;
+    }
+    setPageDataRaw((prev) => {
+      if (!prev) return data;
+      // Merge: nye non-undefined felter overskriver, resten bevares
+      const merged = { ...prev };
+      for (const [key, value] of Object.entries(data)) {
+        if (value !== undefined) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (merged as any)[key] = value;
+        }
+      }
+      return merged;
+    });
   }, []);
 
+  /** BIZZ-985: Eksplicit rydning af al kontekst */
+  const clearPageData = useCallback(() => setPageDataRaw(null), []);
+
   return (
-    <AIPageContext.Provider value={{ pageData, setPageData }}>{children}</AIPageContext.Provider>
+    <AIPageContext.Provider value={{ pageData, setPageData, clearPageData }}>
+      {children}
+    </AIPageContext.Provider>
   );
 }
 
@@ -161,7 +250,9 @@ export function useAIPageContext() {
 
 /**
  * Sæt side-kontekst fra en page-komponent. Kald i en useEffect når data loader.
- * Data ryddes automatisk ved navigation.
+ *
+ * BIZZ-985: Data er nu sticky — nye felter merger ind i eksisterende kontekst.
+ * Kald med `null` for at rydde alt.
  *
  * @example
  * const setAICtx = useSetAIPageContext();
@@ -172,4 +263,13 @@ export function useAIPageContext() {
 export function useSetAIPageContext() {
   const { setPageData } = useContext(AIPageContext);
   return setPageData;
+}
+
+/**
+ * BIZZ-985: Eksplicit rydning af al AI-kontekst.
+ * Bruges f.eks. af en "ryd kontekst"-knap i AIChatPanel.
+ */
+export function useClearAIPageContext() {
+  const { clearPageData } = useContext(AIPageContext);
+  return clearPageData;
 }

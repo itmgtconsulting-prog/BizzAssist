@@ -309,6 +309,16 @@ export function AIChatContextProvider({ children }: { children: ReactNode }) {
     }
   }, [pathname]);
 
+  // BIZZ-1063: Refresh sessions-listen ved window focus (tab-switch/resume)
+  // så samtaler oprettet i sidebar vises på fullpage og omvendt
+  useEffect(() => {
+    const onFocus = () => {
+      void refreshConversations();
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [refreshConversations]);
+
   // ── Polling fallback for aktiv session ───────────────────────────────────
   // Sub-sekund Realtime kommer i iter 2 via Supabase publication (migration
   // 075). Indtil da: poll hver 5s efter messages oprettet EFTER sidste kendte

@@ -27,6 +27,8 @@ export interface RecentCompany {
   city: string | null;
   /** Om virksomheden er aktiv */
   active: boolean;
+  /** BIZZ-1076: Virksomhedsform (fx "Anpartsselskab", "Aktieselskab") */
+  companyType?: string | null;
   /** Unix timestamp (ms) for besøgstidspunktet */
   visitedAt: number;
 }

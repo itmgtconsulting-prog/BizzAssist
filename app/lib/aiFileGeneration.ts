@@ -73,7 +73,8 @@ export const GenerateCsvInputSchema = z.object({
 });
 
 export const GenerateDocxInputSchema = z.object({
-  title: z.string().min(1).max(200),
+  // BIZZ-991: Hævet fra 200 til 300 — matcher RequestBodySchema
+  title: z.string().min(1).max(300),
   subtitle: z.string().max(200).optional(),
   sections: z
     .array(
@@ -487,7 +488,7 @@ export async function generatePptx(input: GeneratePptxInput): Promise<GeneratedF
  */
 export async function fillDocxTemplate(
   templateBuffer: Buffer,
-  placeholders: Record<string, string>
+  placeholders: Record<string, unknown>
 ): Promise<GeneratedFile> {
   const { default: PizZip } = await import('pizzip');
   const { default: Docxtemplater } = await import('docxtemplater');

@@ -173,15 +173,14 @@ export async function extractTextFromBuffer(
         break;
       }
       case 'pdf': {
-        // pdf-parse's ESM entry re-exports as a namespace; pdfParse is the
-        // default export in CJS, PDF in ESM. Call whichever is callable.
-        const mod = await import('pdf-parse');
+        // pdf-parse v3+ exports PDFParse class — instantiate with
+        // Uint8Array (pdfjs-dist rejects Buffer), load, then getText.
+        const { PDFParse } = await import('pdf-parse');
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const fn = ((mod as any).default ?? (mod as any).PDF ?? mod) as (
-          buf: Buffer
-        ) => Promise<{ text: string }>;
-        const result = await fn(buffer);
-        text = String(result.text ?? '');
+        const parser = new PDFParse(new Uint8Array(buffer)) as any;
+        await parser.load();
+        const pdfResult = await parser.getText();
+        text = String(pdfResult.text ?? '');
         break;
       }
       case 'eml': {

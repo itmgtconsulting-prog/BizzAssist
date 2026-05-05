@@ -182,7 +182,7 @@ async function fetchCompanyOwners(cvr: number): Promise<{
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Basic ${auth}` },
       body: JSON.stringify(query),
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(4000),
     });
     if (!res.ok) return { companyName: `CVR ${cvr}`, isCeased: false, owners: [] };
 

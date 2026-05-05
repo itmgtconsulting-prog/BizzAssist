@@ -102,6 +102,13 @@ export interface DiagramNode {
   personRolle?: string;
   /** Other persons with roles in this company (for rendering inside the box) */
   noeglePersoner?: DiagramNodePerson[];
+  /**
+   * Layout section hint for grouping nodes visually. Nodes with the same
+   * layoutSection are placed together in the diagram, separated from other
+   * sections. Used on person pages to push role-only companies below the
+   * ownership hierarchy.
+   */
+  layoutSection?: 'role';
   /** Overflow items when a parent has >MAX children — shown as expandable list */
   overflowItems?: { label: string; cvr?: number; link?: string }[];
 }
@@ -162,6 +169,32 @@ export interface DiagramVariantProps {
    * Brugeren kan altid toggle manuelt via toolbar-knappen.
    */
   defaultShowProperties?: boolean;
+  /**
+   * BIZZ-1000: Callback fired once diagram is rendered, with base64-encoded PNG.
+   * Parent components use this to store the image in AIPageContext for
+   * Word/PPTX export embedding.
+   */
+  onDiagramReady?: (base64Png: string) => void;
+  /**
+   * Diagram v2: External expand handler. When provided, replaces the built-in
+   * expandPersonDynamic/expandCompanyDynamic functions. The parent component
+   * controls data fetching (e.g. cache-first via /api/diagram/expand).
+   *
+   * @param nodeId - ID of the node being expanded (e.g. "cvr-12345678")
+   * @param nodeType - Whether the node is a person or company
+   * @returns New nodes and edges to add, or null if nothing to expand
+   */
+  onExpand?: (
+    nodeId: string,
+    nodeType: 'person' | 'company'
+  ) => Promise<{ nodes: DiagramNode[]; edges: DiagramEdge[] } | null>;
+  /**
+   * Callback fired when nodes are collapsed (removed from diagram).
+   * Parent component should clean up any tracking refs (e.g. allNodesRef, allBfesRef).
+   *
+   * @param removedNodeIds - IDs af noder der blev fjernet
+   */
+  onCollapse?: (removedNodeIds: string[]) => void;
 }
 
 /** Max children shown per parent node — overflow becomes an expandable list */
@@ -574,6 +607,7 @@ export function buildPersonDiagramGraph(
   // først blandt person-nodens children ved samme depth. Property-noderne
   // selv tilføjes stadig senere (efter companies) for at matche eksisterende
   // data-ordering. Kun container-placeringen flyttes op.
+  // BIZZ-974: Personligt ejede ejendomme skjules bag Udvid (collapseParent)
   const personalPropGroupId = 'personal-props-group';
   const hasActivePersonalProps =
     !!personalProperties && personalProperties.some((p) => p.aktiv !== false);
@@ -584,6 +618,8 @@ export function buildPersonDiagramGraph(
       label: 'Personligt ejede ejendomme',
       sublabel: `${activeCount} ejendom${activeCount === 1 ? '' : 'me'}`,
       type: 'status',
+      isCoOwner: true,
+      collapseParent: mainId,
     });
     edges.push({
       from: mainId,

@@ -27,6 +27,7 @@ import { getCertOAuthToken, isCertAuthConfigured } from '@/app/lib/dfCertAuth';
 import { logger } from '@/app/lib/logger';
 import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 import { resolveTenantId } from '@/lib/api/auth';
+import { createAdminClient } from '@/lib/supabase/admin';
 import {
   EJF_GQL_ENDPOINT,
   DATAFORDELER_TOKEN_URL,
@@ -125,12 +126,13 @@ export interface EjendommeByOwnerResponse {
 
 /** Maks antal CVR-numre der accepteres per kald */
 const MAX_CVR = 30;
-/** Maks antal BFE-numre per batch (sikkerhedsloft) */
-const MAX_BATCH = 50;
+/** Maks antal BFE-numre per batch (sikkerhedsloft) — BIZZ-982: hævet fra 50 til 200 */
+const MAX_BATCH = 200;
 /** Standard antal BFE-numre i første batch */
-const DEFAULT_LIMIT = 5;
-/** Maks antal samtidige DAWA BFE-opslag */
-const DAWA_CONCURRENCY = 10;
+/** BIZZ-1167: Øget fra 5 til 10 for hurtigere initial load */
+const DEFAULT_LIMIT = 10;
+/** BIZZ-1167: Øget fra 10 til 20 samtidige DAWA BFE-opslag */
+const DAWA_CONCURRENCY = 20;
 
 // ─── OAuth token cache ───────────────────────────────────────────────────────
 
@@ -802,18 +804,6 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     Math.max(1, parseInt(searchParams.get('limit') ?? `${DEFAULT_LIMIT}`, 10) || DEFAULT_LIMIT)
   );
 
-  if (!hasSharedSecret && !hasCert) {
-    return NextResponse.json({
-      ejendomme: [],
-      totalBfe: 0,
-      offset,
-      limit,
-      manglerNoegle: true,
-      manglerAdgang: false,
-      fejl: null,
-    });
-  }
-
   const cvrParam = searchParams.get('cvr') ?? '';
   const enhedsNummerParam = searchParams.get('enhedsNummer') ?? '';
 
@@ -867,31 +857,226 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     );
   }
 
-  /* Hent OAuth token */
-  let token: string | null = null;
+  // ── BIZZ-1014: Cache-first — tjek ejf_ejerskab tabel for CVR lookups ──
+  // Samme mønster som BIZZ-1013: query lokal cache først, fallback til live EJF.
+  // Person-lookups (enhedsNummer) går altid live da ejf_ejerskab ikke har enhedsNummer-kolonne.
+  const EJF_STALE_MS = 7 * 24 * 60 * 60 * 1000; // 7 dage
+  let cacheFullHit = false;
+  const bfeTilCvr = new Map<number, string>();
+  const bfeTilEjerandel = new Map<number, string>();
+  const aktivByBfe = new Map<number, boolean>();
+  const solgtDatoByBfe = new Map<number, string | null>();
+  const ownerBuyDateByBfe = new Map<number, string | null>();
 
-  if (hasSharedSecret) {
-    token = await getSharedOAuthToken();
+  if (cvrNumre.length > 0 && enhedsNumre.length === 0) {
+    try {
+      const admin = createAdminClient();
+      const cvrStrings = cvrNumre.map((c) => String(c));
+
+      // Hent alle gældende ejerskaber for de forespurgte CVR-numre
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: cached, error: cacheErr } = await (admin as any)
+        .from('ejf_ejerskab')
+        .select(
+          'bfe_nummer, ejer_cvr, ejerandel_taeller, ejerandel_naevner, virkning_fra, sidst_opdateret'
+        )
+        .in('ejer_cvr', cvrStrings)
+        .eq('status', 'gældende')
+        .limit(500);
+
+      if (!cacheErr && cached && cached.length > 0) {
+        const freshest = Math.max(
+          ...cached.map((r: { sidst_opdateret: string | null }) =>
+            r.sidst_opdateret ? new Date(r.sidst_opdateret).getTime() : 0
+          )
+        );
+        const isFresh = Date.now() - freshest < EJF_STALE_MS;
+
+        if (isFresh) {
+          // Byg BFE-maps fra cache
+          for (const row of cached as Array<{
+            bfe_nummer: number;
+            ejer_cvr: string | null;
+            ejerandel_taeller: number | null;
+            ejerandel_naevner: number | null;
+            virkning_fra: string | null;
+          }>) {
+            const bfe = row.bfe_nummer;
+            const cvr = row.ejer_cvr ?? '';
+            if (!bfeTilCvr.has(bfe)) {
+              bfeTilCvr.set(bfe, cvr.padStart(8, '0'));
+            }
+            // Ejerandel
+            const t = row.ejerandel_taeller;
+            const nav = row.ejerandel_naevner;
+            if (t != null && nav != null && nav > 0 && !bfeTilEjerandel.has(bfe)) {
+              bfeTilEjerandel.set(bfe, `${Math.round((t / nav) * 100)}%`);
+            }
+            // BIZZ-634: ownerBuyDate fra virkning_fra
+            if (row.virkning_fra) {
+              const existing = ownerBuyDateByBfe.get(bfe);
+              if (!existing || row.virkning_fra > existing) {
+                ownerBuyDateByBfe.set(bfe, row.virkning_fra);
+              }
+            }
+          }
+
+          // Verificér aktivt ejerskab fra cache: for hvert BFE, tjek om den
+          // queried CVR stadig er den seneste ejer (baseret på alle gældende
+          // ejerskaber for det BFE i ejf_ejerskab).
+          const queriedCvrSet = new Set(cvrStrings);
+          const bfeList = [...bfeTilCvr.keys()];
+          for (const bfe of bfeList) {
+            // Hent alle gældende ejere for dette BFE
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: allOwners } = await (admin as any)
+              .from('ejf_ejerskab')
+              .select('ejer_cvr, virkning_fra')
+              .eq('bfe_nummer', bfe)
+              .eq('status', 'gældende')
+              .order('virkning_fra', { ascending: false })
+              .limit(10);
+
+            if (allOwners && allOwners.length > 0) {
+              const newest = allOwners[0] as {
+                ejer_cvr: string | null;
+                virkning_fra: string | null;
+              };
+              if (newest.ejer_cvr && queriedCvrSet.has(newest.ejer_cvr)) {
+                aktivByBfe.set(bfe, true);
+              } else {
+                // Ejendommen er solgt — den queried CVR er ikke længere nyeste ejer
+                aktivByBfe.set(bfe, false);
+                solgtDatoByBfe.set(bfe, newest.virkning_fra ?? null);
+              }
+            } else {
+              aktivByBfe.set(bfe, true);
+            }
+          }
+
+          cacheFullHit = true;
+          logger.log(
+            `[ejendomme-by-owner] Cache hit: ${bfeTilCvr.size} BFE for ${cvrNumre.length} CVR`
+          );
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        '[ejendomme-by-owner] Cache lookup fejl (falder til live):',
+        err instanceof Error ? err.message : err
+      );
+    }
   }
 
-  /* Fallback: mTLS certifikat */
-  if (!token && hasCert) {
-    token = await getCertOAuthToken();
+  // ── BIZZ-1158: Cache-first for person-lookups via ejf_ejerskab ──
+  // Person-lookups bruger ejer_navn match (ejf_ejerskab har ikke enhedsNummer).
+  // Resolver personnavn fra cvr_deltager og søger i ejf_ejerskab.
+  if (!cacheFullHit && enhedsNumre.length > 0 && cvrNumre.length === 0) {
+    try {
+      const admin = createAdminClient();
+      // Hent personnavne for enhedsNumre
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: deltagerRows } = await (admin as any)
+        .from('cvr_deltager')
+        .select('enhedsnummer, navn')
+        .in('enhedsnummer', enhedsNumre.map(Number));
+      const personNavne = (deltagerRows ?? []).map((d: { navn: string }) => d.navn).filter(Boolean);
+
+      if (personNavne.length > 0) {
+        // Søg ejf_ejerskab for person-ejere med matchende navne
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: cached } = await (admin as any)
+          .from('ejf_ejerskab')
+          .select(
+            'bfe_nummer, ejer_navn, ejerandel_taeller, ejerandel_naevner, virkning_fra, sidst_opdateret'
+          )
+          .eq('ejer_type', 'person')
+          .eq('status', 'gældende')
+          .in('ejer_navn', personNavne)
+          .limit(200);
+
+        if (cached && cached.length > 0) {
+          const freshest = Math.max(
+            ...cached.map((r: { sidst_opdateret: string | null }) =>
+              r.sidst_opdateret ? new Date(r.sidst_opdateret).getTime() : 0
+            )
+          );
+          if (Date.now() - freshest < EJF_STALE_MS) {
+            for (const row of cached as Array<{
+              bfe_nummer: number;
+              ejer_navn: string;
+              ejerandel_taeller: number | null;
+              ejerandel_naevner: number | null;
+              virkning_fra: string | null;
+            }>) {
+              const bfe = row.bfe_nummer;
+              bfeTilCvr.set(bfe, `person-${enhedsNumre[0]}`);
+              if (
+                row.ejerandel_taeller != null &&
+                row.ejerandel_naevner != null &&
+                row.ejerandel_naevner > 0
+              ) {
+                bfeTilEjerandel.set(
+                  bfe,
+                  `${Math.round((row.ejerandel_taeller / row.ejerandel_naevner) * 100)}%`
+                );
+              }
+              ownerBuyDateByBfe.set(bfe, row.virkning_fra ?? null);
+              aktivByBfe.set(bfe, true);
+            }
+            cacheFullHit = true;
+            logger.log(
+              `[ejendomme-by-owner] Person cache hit: ${bfeTilCvr.size} BFE for ${personNavne.length} navne`
+            );
+          }
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        '[ejendomme-by-owner] Person cache lookup fejl:',
+        err instanceof Error ? err.message : err
+      );
+    }
   }
 
-  if (!token) {
-    return NextResponse.json({
-      ejendomme: [],
-      totalBfe: 0,
-      offset,
-      limit,
-      manglerNoegle: false,
-      manglerAdgang: false,
-      fejl: 'Kunne ikke hente OAuth token',
-    });
-  }
+  // ── Fallback til live EJF hvis cache miss ──
+  if (!cacheFullHit) {
+    if (!hasSharedSecret && !hasCert) {
+      return NextResponse.json({
+        ejendomme: [],
+        totalBfe: 0,
+        offset,
+        limit,
+        manglerNoegle: true,
+        manglerAdgang: false,
+        fejl: null,
+      });
+    }
 
-  try {
+    /* Hent OAuth token */
+    let token: string | null = null;
+
+    if (hasSharedSecret) {
+      token = await getSharedOAuthToken();
+    }
+
+    /* Fallback: mTLS certifikat */
+    if (!token && hasCert) {
+      token = await getCertOAuthToken();
+    }
+
+    if (!token) {
+      return NextResponse.json({
+        ejendomme: [],
+        totalBfe: 0,
+        offset,
+        limit,
+        manglerNoegle: false,
+        manglerAdgang: false,
+        fejl: 'Kunne ikke hente OAuth token',
+      });
+    }
+
     /* ── Trin 1: Find alle BFE-numre (CVR + person lookups parallelt) ── */
     const cvrSettled =
       cvrNumre.length > 0
@@ -943,8 +1128,6 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     }
 
     /* Saml unikke BFE-numre med tilhørende ejer-ID + ejer-andel */
-    const bfeTilCvr = new Map<number, string>();
-    const bfeTilEjerandel = new Map<number, string>();
     for (let i = 0; i < cvrNumre.length; i++) {
       const result = cvrResults[i];
       if (!result) continue;
@@ -980,10 +1163,6 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
      * tjekker vi om den seneste ejerpost stadig matcher CVR. Hvis en nyere post med
      * en anden ejer findes, markerer vi ejendommen som solgt (aktiv=false) men
      * beholder den i listen så UI'et kan vise fold-ud med tidligere ejendomme. */
-    const aktivByBfe = new Map<number, boolean>();
-    const solgtDatoByBfe = new Map<number, string | null>();
-    // BIZZ-634: EJF virkningFra for den queried CVR — ejerens købs-dato.
-    const ownerBuyDateByBfe = new Map<number, string | null>();
     if (cvrNumre.length > 0) {
       const queriedCvrSet = new Set(cvrNumre);
       const bfeList = [...bfeTilCvr.keys()];
@@ -1075,7 +1254,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         );
       }
     }
+  } // end !cacheFullHit
 
+  try {
     const alleBfe = [...bfeTilCvr.keys()];
     const totalBfe = alleBfe.length;
 
@@ -1128,9 +1309,13 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     // midlertidigt tomme VP-resultater ikke holder i 30 min på CDN'en.
     // Fuld cache kun når alle ejendomme har adresse — da er data stabile.
     const anyMissingAddress = ejendomme.some((e) => !e.adresse);
+    // BIZZ-1014: Tilføj X-Cache-Hit header når data kom fra ejf_ejerskab cache
     const cacheHeader = anyMissingAddress
       ? 'public, s-maxage=60, stale-while-revalidate=30'
       : 'public, s-maxage=1800, stale-while-revalidate=300';
+
+    const headers: Record<string, string> = { 'Cache-Control': cacheHeader };
+    if (cacheFullHit) headers['X-Cache-Hit'] = 'true';
 
     return NextResponse.json(
       {
@@ -1142,9 +1327,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         manglerAdgang: false,
         fejl: null,
       },
-      {
-        headers: { 'Cache-Control': cacheHeader },
-      }
+      { headers }
     );
   } catch (err) {
     logger.error('[ejendomme-by-owner] Fejl:', err instanceof Error ? err.message : err);

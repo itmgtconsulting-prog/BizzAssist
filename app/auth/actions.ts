@@ -428,12 +428,45 @@ export async function signIn(
  * @param fullName - User's display name (stored in user_metadata)
  * @returns AuthResult with error message, or redirects on success
  */
+/**
+ * Validerer at email-domænet har MX-records (kan modtage mail).
+ * Fanger fake signups med ugyldige domæner.
+ *
+ * @param email - Email-adresse
+ * @returns true hvis domænet har MX-records, false ellers
+ */
+async function validateEmailMx(email: string): Promise<boolean> {
+  const domain = email.split('@')[1];
+  if (!domain) return false;
+  try {
+    const dns = await import('dns');
+    return new Promise((resolve) => {
+      dns.resolveMx(domain, (err, addresses) => {
+        if (err || !addresses || addresses.length === 0) {
+          resolve(false);
+        } else {
+          resolve(true);
+        }
+      });
+    });
+  } catch {
+    // DNS lookup fejl — lad signup fortsætte (fail-open)
+    return true;
+  }
+}
+
 export async function signUp(
   email: string,
   password: string,
   fullName: string,
   planId: string = 'demo'
 ): Promise<AuthResult> {
+  // BIZZ-1172: MX-validering — bloker fake domæner
+  const hasMx = await validateEmailMx(email);
+  if (!hasMx) {
+    return { error: 'invalid_email_domain' };
+  }
+
   const supabase = await createClient();
 
   const { data: signupData, error } = await supabase.auth.signUp({

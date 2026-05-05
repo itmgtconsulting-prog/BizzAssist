@@ -462,13 +462,6 @@ export default function UniversalSearchPageClient() {
     [ejendomSchemas, virksomhedSchemas]
   );
   const { filters, setFilter, setFilters } = useFiltersFromURL(allSchemas);
-  // Legacy reader — bevares så matrikel-mode (BIZZ-784) fortsat kan
-  // sende includeUdfasede-query-param uden større refactor.
-  // onlyActiveCompanies er droppet fra state — bruges kun via
-  // matchVirksomhedFilter direkte i companies-tab.
-  const hideRetiredProperties =
-    typeof filters.skjulUdfasede === 'boolean' ? filters.skjulUdfasede : true;
-
   // Results state
   const [properties, setProperties] = useState<DawaAutocompleteResult[]>([]);
   const [companies, setCompanies] = useState<CVRSearchResult[]>([]);
@@ -498,10 +491,6 @@ export default function UniversalSearchPageClient() {
           ejerlavKode: matEjerlavKode,
           matrikelnr: matMatrikelnr,
         });
-        // BIZZ-784: når filter-panelet har "Skjul udfasede" slået fra
-        // (hideRetiredProperties=false) beder vi backenden om at inkludere
-        // dem. Default=true betyder filter aktivt → param udelades.
-        if (!hideRetiredProperties) params.set('includeUdfasede', 'true');
         const res = await fetch(`/api/ejerlejligheder?${params.toString()}`);
         if (!res.ok) {
           if (!cancelled) {
@@ -522,7 +511,7 @@ export default function UniversalSearchPageClient() {
     return () => {
       cancelled = true;
     };
-  }, [matrikelMode, matEjerlavKode, matMatrikelnr, da, hideRetiredProperties]);
+  }, [matrikelMode, matEjerlavKode, matMatrikelnr, da]);
 
   /** Focus the input on mount */
   useEffect(() => {
@@ -936,11 +925,9 @@ export default function UniversalSearchPageClient() {
               // filter-panelet honoreres valget (override af default-skjul).
               const visAlleDebug = sp.get('visAlle') === '1';
               const ejendomFilters = narrowEjendomFilters(filters);
-              const userValgteTyper = ejendomFilters.ejendomstype ?? [];
-              const visEksplicitSFE = userValgteTyper.includes('sfe');
               const filteredProps = properties
                 .filter((r) => matchEjendomFilter(r, ejendomFilters))
-                .filter((r) => visAlleDebug || visEksplicitSFE || r.ejendomstype !== 'sfe');
+                .filter((r) => visAlleDebug || r.ejendomstype !== 'sfe');
               return (
                 <div role="tabpanel" aria-label={t.tabProperties}>
                   {loadingProps ? (

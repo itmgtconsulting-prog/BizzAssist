@@ -644,6 +644,46 @@ export async function GET(request: NextRequest): Promise<NextResponse<VurderingR
   const parsed = parseQuery(request, vurderingQuerySchema);
   if (!parsed.success) return parsed.response as NextResponse<VurderingResponse>;
 
+  /* BIZZ-1094: Cache-first — tjek vurdering_cache før live API-kald */
+  const bfeParam = parsed.data.bfeNummer;
+  if (bfeParam) {
+    try {
+      const { createAdminClient } = await import('@/lib/supabase/admin');
+      const admin = createAdminClient();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: cached } = (await (admin as any)
+        .from('vurdering_cache')
+        .select('vurderinger, grundvaerdispec, fordeling, loft, fritagelser, fradrag, stale_after')
+        .eq('bfe_nummer', Number(bfeParam))
+        .maybeSingle()) as { data: Record<string, unknown> | null };
+
+      if (
+        cached?.vurderinger &&
+        cached.stale_after &&
+        new Date(String(cached.stale_after)) > new Date()
+      ) {
+        const vurderinger = cached.vurderinger as VurderingData[];
+        const nyeste = vurderinger.length > 0 ? vurderinger[0] : null;
+        return NextResponse.json(
+          {
+            vurdering: nyeste,
+            alle: vurderinger,
+            fordeling: (cached.fordeling ?? []) as FordelingData[],
+            grundvaerdispec: (cached.grundvaerdispec ?? []) as GrundvaerdispecifikationData[],
+            loft: (cached.loft ?? []) as LoftansaettelseData[],
+            fritagelser: (cached.fritagelser ?? []) as FritagelseData[],
+            fradrag: (cached.fradrag as FradragData) ?? null,
+            fejl: null,
+            manglerNoegle: false,
+          },
+          { headers: { 'Cache-Control': 'public, s-maxage=3600', 'X-Cache': 'HIT' } }
+        );
+      }
+    } catch {
+      /* Cache miss — fall through til live API */
+    }
+  }
+
   const bfeNummer = parseInt(parsed.data.bfeNummer, 10);
   const kommunekode = parsed.data.kommunekode ? parseInt(parsed.data.kommunekode, 10) : null;
   const promille = (kommunekode && GRUNDSKYLDSPROMILLE[kommunekode]) ?? null;

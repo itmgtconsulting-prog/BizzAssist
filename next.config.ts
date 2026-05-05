@@ -70,7 +70,9 @@ const nextConfig: NextConfig = {
   },
   // pdfkit bruger __dirname til at finde font-filer — bundling bryder dette,
   // så vi loader pakken som native Node.js-modul uden transpilering.
-  serverExternalPackages: ['pdfkit'],
+  // pdf-parse + pdfjs-dist: pdfjs-dist bruger dynamic import af worker og
+  // standardFontData som bundling bryder — kræver native Node.js-modul.
+  serverExternalPackages: ['pdfkit', 'pdf-parse', 'pdfjs-dist'],
   async headers() {
     const isProduction =
       process.env.VERCEL_ENV === 'production' ||

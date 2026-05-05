@@ -46,6 +46,7 @@ export default function PropertyOwnerDiagram({
   adresse,
   lang,
   erEjerlejlighed = false,
+  cardsOnly = false,
 }: {
   bfe: number;
   adresse: string;
@@ -57,6 +58,8 @@ export default function PropertyOwnerDiagram({
    * status, og EJF leverer de faktiske ejere meget hurtigere.
    */
   erEjerlejlighed?: boolean;
+  /** Vis kun ejerkort (ingen DiagramForce) — bruges når DiagramV2 erstatter grafen */
+  cardsOnly?: boolean;
 }) {
   const _router = useRouter();
   const da = lang === 'da';
@@ -73,25 +76,21 @@ export default function PropertyOwnerDiagram({
 
     const controller = new AbortController();
 
+    // BIZZ-1174: Gendan skipTinglysning for ejerlejligheder (performance).
+    // Adkomsttype+købesum beriges fra salgshistorik i parent i stedet.
     const typeParam = erEjerlejlighed ? '&type=ejerlejlighed' : '';
-    // BIZZ-855: Parallel fetch af ejerskabs-chain OG administrator-info.
-    // Admin returneres i Promise.allSettled så chain-fejl ikke blokerer
-    // admin-render og vice versa.
-    Promise.allSettled([
-      fetch(`/api/ejerskab/chain?bfe=${bfe}&adresse=${encodeURIComponent(adresse)}${typeParam}`, {
-        signal: controller.signal,
-      }).then((r) => (r.ok ? r.json() : null)),
-      fetch(`/api/ejendomsadmin?bfeNummer=${bfe}`, { signal: controller.signal }).then((r) =>
-        r.ok ? r.json() : null
-      ),
-    ])
-      .then(([chainRes, adminRes]) => {
-        const data = chainRes.status === 'fulfilled' ? chainRes.value : null;
-        const adminData = adminRes.status === 'fulfilled' ? adminRes.value : null;
+    // BIZZ-973: Hent KUN ejerskabs-chain (ikke administratorer).
+    // Administratorer hører til ejerskabs-tabben, ikke diagrammet.
+    fetch(`/api/ejerskab/chain?bfe=${bfe}&adresse=${encodeURIComponent(adresse)}${typeParam}`, {
+      signal: controller.signal,
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
         if (!data) return;
         setChainFejl((data.fejl as string | null) ?? null);
+
         if (data.nodes?.length > 0) {
-          const baseNodes = data.nodes.map((n: Record<string, unknown>) => ({
+          const nodes = data.nodes.map((n: Record<string, unknown>) => ({
             id: n.id as string,
             label: n.label as string,
             type: n.type as 'person' | 'company' | 'property' | 'status',
@@ -99,50 +98,16 @@ export default function PropertyOwnerDiagram({
             link: n.link as string | undefined,
             bfeNummer: n.bfeNummer as number | undefined,
           }));
-          const baseEdges = data.edges.map((e: Record<string, unknown>) => ({
+          const edges = data.edges.map((e: Record<string, unknown>) => ({
             from: e.from as string,
             to: e.to as string,
             ejerandel: e.ejerandel as string | undefined,
           }));
 
-          // BIZZ-855: Tilføj admin-noder + edges til graph. Filtrer til
-          // aktuelle administratorer (virkningTil null). Edges fra property
-          // til admin — personallyOwned-flaget genbruges som indikator for
-          // ikke-ejer-relation (stiplet edge).
-          const admins = adminData?.administratorer ?? [];
-          const aktuelleAdmins = admins.filter(
-            (a: {
-              virkningTil: string | null;
-              type: string;
-              navn: string | null;
-              cvr: string | null;
-            }) => a.virkningTil === null && a.type !== 'ukendt' && (a.navn || a.cvr)
-          );
-          const mainNodeId = data.mainId as string;
-          const adminNodes: typeof baseNodes = [];
-          const adminEdges: typeof baseEdges = [];
-          for (const a of aktuelleAdmins) {
-            const adminId = a.cvr ? `admin-cvr-${a.cvr}` : `admin-${a.id}`;
-            if (baseNodes.some((n: { id: string }) => n.id === adminId)) continue;
-            adminNodes.push({
-              id: adminId,
-              label: a.navn ?? (a.cvr ? `CVR ${a.cvr}` : 'Administrator'),
-              type: 'company',
-              cvr: a.cvr ? Number(a.cvr) : undefined,
-              link: a.cvr ? `/dashboard/companies/${a.cvr}` : undefined,
-              bfeNummer: undefined,
-            });
-            adminEdges.push({
-              from: mainNodeId,
-              to: adminId,
-              ejerandel: 'Administrator',
-            });
-          }
-
           setGraph({
-            nodes: [...baseNodes, ...adminNodes],
-            edges: [...baseEdges, ...adminEdges],
-            mainId: mainNodeId,
+            nodes,
+            edges,
+            mainId: data.mainId as string,
           });
           setEjerDetaljer(data.ejerDetaljer ?? []);
         }
@@ -155,14 +120,18 @@ export default function PropertyOwnerDiagram({
     return () => controller.abort();
   }, [bfe, adresse, erEjerlejlighed]);
 
-  if (loading)
-    // BIZZ-478: Brug den blå TabLoadingSpinner-bar i stedet for box-spinner
-    // så ejendomssidens diagram-tab visuelt matcher resten af appen.
-    return (
+  if (loading) {
+    // cardsOnly: kun blå bar uden tekst; fuld: med tekst
+    return cardsOnly ? (
+      <TabLoadingSpinner ariaLabel={da ? 'Henter ejerskabsdata' : 'Loading ownership data'} />
+    ) : (
       <TabLoadingSpinner label={da ? 'Henter ejerstruktur…' : 'Loading ownership structure…'} />
     );
+  }
 
   if (!graph || graph.nodes.length <= 1) {
+    // cardsOnly: vis intet (DiagramV2 håndterer tom-state)
+    if (cardsOnly) return null;
     const besked = da ? 'Ingen ejerstruktur tilgængelig' : 'No ownership structure available';
     return (
       <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-6 text-center">
@@ -299,8 +268,8 @@ export default function PropertyOwnerDiagram({
         </div>
       ))}
 
-      {/* Relationsdiagram — samme DiagramForce som virksomheds- og personsiderne */}
-      <DiagramForce graph={graph} lang={lang} />
+      {/* Relationsdiagram — skjules når cardsOnly er true (DiagramV2 bruges i stedet) */}
+      {!cardsOnly && <DiagramForce graph={graph} lang={lang} />}
     </div>
   );
 }

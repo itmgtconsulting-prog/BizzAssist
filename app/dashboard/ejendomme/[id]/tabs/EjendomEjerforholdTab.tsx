@@ -14,14 +14,17 @@
 
 'use client';
 
-import Link from 'next/link';
 import { Building2 } from 'lucide-react';
 import EjendomAdministratorCard from '@/app/components/ejendomme/EjendomAdministratorCard';
 import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
+import dynamic from 'next/dynamic';
 import PropertyOwnerDiagram from '../PropertyOwnerDiagram';
+const DiagramV2 = dynamic(() => import('@/app/components/diagrams/DiagramV2'), { ssr: false });
 import type { EjendomApiResponse } from '@/app/api/ejendom/[id]/route';
 import type { DawaAdresse } from '@/app/lib/dawa';
 import type { Ejerlejlighed } from '@/app/api/ejerlejligheder/route';
+import type { StrukturNode } from '@/app/api/ejendom-struktur/route';
+import EjendomStrukturTree from '@/app/components/ejendomme/EjendomStrukturTree';
 
 /** Simpel sektionsoverskrift — matcher parentens SectionTitle-pattern. */
 function SectionTitle({ title }: { title: string }) {
@@ -45,6 +48,14 @@ interface Props {
   lejlighederLoader: boolean;
   /** Liste af ejerlejligheder under moderejendom (null = ikke hentet) */
   lejligheder: Ejerlejlighed[] | null;
+  /** Ejendomsstruktur-træ (SFE → Hovedejendom → Ejerlejlighed) */
+  strukturTree?: StrukturNode | null;
+  /** True mens strukturdata hentes */
+  strukturLoader?: boolean;
+  /** Aktuel BFE for denne ejendom */
+  currentBfe?: number;
+  /** BBR enheder — bruges til at berige med værelser */
+  bbrEnheder?: Array<{ etage: string | null; doer: string | null; vaerelser: number | null }>;
 }
 
 /** Render Ejerforhold-fanen. Ren præsentations-komponent. */
@@ -53,9 +64,13 @@ export default function EjendomEjerforholdTab({
   bbrData,
   dawaAdresse,
   bbrLoader,
-  ejereLoader,
+  ejereLoader: _ejereLoader,
   lejlighederLoader,
   lejligheder,
+  strukturTree,
+  strukturLoader,
+  currentBfe,
+  bbrEnheder,
 }: Props) {
   const da = lang === 'da';
 
@@ -77,21 +92,148 @@ export default function EjendomEjerforholdTab({
       {bbrData?.ejendomsrelationer?.[0]?.bfeNummer && (
         <EjendomAdministratorCard bfeNummer={bbrData.ejendomsrelationer[0].bfeNummer} lang={lang} />
       )}
-      {/* Loading state — vis spinner mens BBR eller ejerskab data hentes */}
-      {(ejereLoader || bbrLoader || !bbrData) && (
-        <TabLoadingSpinner label={da ? 'Henter ejerskabsdata…' : 'Loading ownership data…'} />
+      {/* Loading state — blå progress bar kun mens BBR-data hentes */}
+      {(bbrLoader || !bbrData) && (
+        <TabLoadingSpinner ariaLabel={da ? 'Henter ejerskabsdata' : 'Loading ownership data'} />
       )}
-      {/* ── Ejerskabsdiagram / Relationsdiagram (fra Tinglysning + EJF kæde) ── */}
-      {!ejereLoader &&
-        !bbrLoader &&
+      {/* ── Ejerskabsdiagram / Relationsdiagram ──
+          BIZZ-1174: Mount med det samme når bbrData er klar — vent IKKE
+          på ejereLoader (EJF-data). PropertyOwnerDiagram og DiagramV2
+          fetcher deres egne data internt og viser egen loading-state. */}
+      {!bbrLoader &&
         bbrData &&
         (() => {
           const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
           const bfeForDiagram =
             bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
 
-          // Hovedejendom opdelt i EL — vis info + lejlighedsliste
+          // Hovedejendom opdelt i EL — vis strukturtræ med ejer-data
           if (erModer) {
+            // BIZZ-1149: Loading-bar mens strukturtræ/lejligheder hentes
+            if (strukturLoader || lejlighederLoader) {
+              return (
+                <TabLoadingSpinner
+                  ariaLabel={da ? 'Henter ejendomsstruktur' : 'Loading property structure'}
+                />
+              );
+            }
+            if (strukturTree && lejligheder && lejligheder.length > 0) {
+              /**
+               * Ekstraher husnummer fra en adressestreng.
+               *
+               * @param addr - Adressestreng
+               * @returns Husnummer (f.eks. "62A")
+               */
+              function extractHusnr(addr: string): string {
+                const street = addr.split(',')[0].trim();
+                const m = street.match(/(\d+\w*)$/);
+                return m ? m[1].toUpperCase() : '';
+              }
+
+              /**
+               * Beriger StrukturNode rekursivt: erstatter hovedejendom-children
+               * med lejligheder-data grupperet per husnr. Giver flere og mere
+               * detaljerede ejerlejlighed-noder end TL alene.
+               *
+               * @param node - Struktur-node
+               * @returns Beriget kopi med komplet lejlighedsliste
+               */
+              function enrichWithOwnership(node: StrukturNode): StrukturNode {
+                // Ejerlejlighed: berig med ejer/pris/dato fra lejligheder-match
+                if (node.niveau === 'ejerlejlighed') {
+                  // Match via BFE (primær) eller eksakt vejnavn+husnr (fallback)
+                  const nodeStreet = node.adresse.split(',')[0].trim().toLowerCase();
+                  const match = lejligheder!.find(
+                    (l) =>
+                      (node.bfe > 0 && l.bfe === node.bfe) ||
+                      l.adresse.split(',')[0].trim().toLowerCase() === nodeStreet
+                  );
+                  if (match) {
+                    const etageDoer = match.adresse.split(',')[1]?.trim().toLowerCase() ?? '';
+                    const bbrMatch = (bbrEnheder ?? []).find((e) => {
+                      const eLow = (e.etage ?? '').toLowerCase();
+                      const dLow = (e.doer ?? '').toLowerCase();
+                      const combined = `${eLow}. ${dLow}`.trim();
+                      return etageDoer.includes(combined) || (eLow && etageDoer.startsWith(eLow));
+                    });
+                    return {
+                      ...node,
+                      ejer: match.ejer ?? node.ejer,
+                      ejertype: match.ejertype ?? node.ejertype,
+                      koebspris: match.koebspris ?? node.koebspris,
+                      koebsdato: match.koebsdato ?? node.koebsdato,
+                      areal: match.areal ?? node.areal,
+                      vaerelser: bbrMatch?.vaerelser ?? node.vaerelser,
+                      children: node.children.map(enrichWithOwnership),
+                    };
+                  }
+                }
+                // Hovedejendom: erstat children med lejligheder-listen når den
+                // er mere komplet. Lejligheder har individuelle adresser med
+                // etage/dør mens TL ofte kun har 1 entry per BFE.
+                if (node.niveau === 'hovedejendom') {
+                  const nodeHusnr = extractHusnr(node.adresse);
+                  const matchingLej = lejligheder!.filter(
+                    (l) => extractHusnr(l.adresse) === nodeHusnr
+                  );
+                  if (matchingLej.length > 0 && matchingLej.length >= node.children.length) {
+                    // Erstat children helt med lejligheder-data (mere komplet)
+                    return {
+                      ...node,
+                      children: matchingLej.map((l) => {
+                        const etageDoer = l.adresse.split(',')[1]?.trim().toLowerCase() ?? '';
+                        const bbrMatch = (bbrEnheder ?? []).find((e) => {
+                          const eLow = (e.etage ?? '').toLowerCase();
+                          const dLow = (e.doer ?? '').toLowerCase();
+                          const combined = `${eLow}. ${dLow}`.trim();
+                          return (
+                            etageDoer.includes(combined) || (eLow && etageDoer.startsWith(eLow))
+                          );
+                        });
+                        return {
+                          bfe: l.bfe,
+                          adresse: l.adresse,
+                          niveau: 'ejerlejlighed' as const,
+                          dawaId: l.dawaId ?? null,
+                          ejendomsvaerdi: null,
+                          grundvaerdi: null,
+                          vurderingsaar: null,
+                          tlVurdering: null,
+                          areal: l.areal,
+                          vaerelser: bbrMatch?.vaerelser ?? null,
+                          ejer: l.ejer,
+                          ejertype: l.ejertype,
+                          koebspris: l.koebspris,
+                          koebsdato: l.koebsdato,
+                          children: [],
+                        };
+                      }),
+                    };
+                  }
+                }
+                return { ...node, children: node.children.map(enrichWithOwnership) };
+              }
+              const enriched = enrichWithOwnership(strukturTree);
+              return (
+                <div className="space-y-4">
+                  <SectionTitle title={t.ownershipStructure} />
+                  <EjendomStrukturTree
+                    tree={enriched}
+                    lang={lang}
+                    currentBfe={currentBfe}
+                    showOwnership
+                  />
+                </div>
+              );
+            }
+            // Fallback: loading / empty state
+            if (strukturLoader || lejlighederLoader) {
+              return (
+                <TabLoadingSpinner
+                  ariaLabel={da ? 'Henter ejerskabsdata' : 'Loading ownership data'}
+                />
+              );
+            }
             return (
               <div className="space-y-4">
                 <SectionTitle title={t.ownershipStructure} />
@@ -110,89 +252,14 @@ export default function EjendomEjerforholdTab({
                       : 'Ownership is registered on individual condominium units.'}
                   </p>
                 </div>
-
-                {/* Lejlighedsliste under info-boksen. BIZZ-478: Ensartet blå TabLoadingSpinner. */}
-                {lejlighederLoader && (
-                  <TabLoadingSpinner
-                    label={da ? 'Henter lejlighedsdata…' : 'Loading apartment data…'}
-                  />
-                )}
-                {/* BIZZ-857: Empty-state når opdelt-flag er true men listen er tom —
-                    tydelig fejl i stedet for kun det generiske "ejerskab er registreret"-
-                    budskab der ikke hjælper brugeren videre. */}
-                {!lejlighederLoader && lejligheder !== null && lejligheder.length === 0 && (
-                  <div className="bg-red-500/5 border border-red-500/20 rounded-xl p-6 text-center space-y-2">
-                    <p className="text-red-300 text-sm font-medium">
-                      {da ? 'Data mangler' : 'Data missing'}
-                    </p>
-                    <p className="text-slate-400 text-xs max-w-md mx-auto">
-                      {da
-                        ? 'Ejendommen er registreret som opdelt, men listen af ejerlejligheder kunne ikke hentes. Kontakt support hvis problemet fortsætter.'
-                        : 'The property is registered as divided, but the list of condominiums could not be retrieved. Contact support if the issue persists.'}
-                    </p>
-                  </div>
-                )}
-                {lejligheder !== null && lejligheder.length > 0 && (
-                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
-                    <div className="px-3 py-2.5 border-b border-slate-700/40 flex items-center justify-between">
-                      <p className="text-slate-200 text-xs font-semibold">{t.apartments}</p>
-                      <span className="text-slate-500 text-[10px]">
-                        {lejligheder.length} {da ? 'lejligheder' : 'apartments'}
-                      </span>
-                    </div>
-                    <div className="min-w-[720px] grid grid-cols-[1fr_120px_60px_100px_80px] px-3 py-1.5 text-slate-500 text-[10px] font-medium border-b border-slate-700/30">
-                      <span>{t.apartmentAddress}</span>
-                      <span>{t.apartmentOwner}</span>
-                      <span className="text-right">{t.apartmentArea}</span>
-                      <span className="text-right">{t.apartmentPrice}</span>
-                      <span className="text-right">{t.apartmentDate}</span>
-                    </div>
-                    <div className="divide-y divide-slate-700/20">
-                      {lejligheder.map((lej) => (
-                        <Link
-                          key={lej.bfe}
-                          href={lej.dawaId ? `/dashboard/ejendomme/${lej.dawaId}` : '#'}
-                          onClick={
-                            lej.dawaId ? undefined : (e: React.MouseEvent) => e.preventDefault()
-                          }
-                          className={`min-w-[720px] grid grid-cols-[1fr_120px_60px_100px_80px] px-3 py-1.5 items-center gap-1 hover:bg-slate-700/15 transition-colors block ${lej.dawaId ? 'cursor-pointer' : 'cursor-default'}`}
-                        >
-                          <span
-                            className="text-slate-200 text-[11px] font-medium truncate"
-                            title={lej.adresse}
-                          >
-                            {lej.adresse.split(',').slice(0, 2).join(',')}
-                          </span>
-                          <span className="text-slate-400 text-[10px] truncate" title={lej.ejer}>
-                            {lej.ejer}
-                          </span>
-                          <span className="text-slate-300 text-[10px] text-right">
-                            {lej.areal ? `${lej.areal} m²` : '–'}
-                          </span>
-                          <span className="text-slate-300 text-[10px] text-right font-medium">
-                            {lej.koebspris ? `${lej.koebspris.toLocaleString('da-DK')} DKK` : '–'}
-                          </span>
-                          <span className="text-slate-400 text-[10px] text-right">
-                            {lej.koebsdato
-                              ? new Date(lej.koebsdato).toLocaleDateString('da-DK', {
-                                  day: 'numeric',
-                                  month: 'short',
-                                  year: 'numeric',
-                                })
-                              : '–'}
-                          </span>
-                        </Link>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             );
           }
 
           if (!bfeForDiagram) return null;
           return (
-            <div>
+            <div className="space-y-4">
+              {/* Ejerkort — overtagelsesdato, ejertype, adkomsttype, købesum */}
               <PropertyOwnerDiagram
                 bfe={bfeForDiagram}
                 adresse={
@@ -202,7 +269,115 @@ export default function EjendomEjerforholdTab({
                 }
                 lang={lang}
                 erEjerlejlighed={!!bbrData?.ejerlejlighedBfe}
+                cardsOnly
               />
+              {/* DiagramV2 — interaktivt ejerskabsdiagram */}
+              <DiagramV2
+                rootType="property"
+                rootId={String(bfeForDiagram)}
+                rootLabel={
+                  dawaAdresse
+                    ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
+                    : `BFE ${bfeForDiagram}`
+                }
+                lang={lang}
+              />
+              {/* Loading-bar mens strukturtræ hentes */}
+              {(strukturLoader || lejlighederLoader) && !strukturTree && (
+                <TabLoadingSpinner
+                  ariaLabel={da ? 'Henter ejendomsstruktur' : 'Loading property structure'}
+                />
+              )}
+              {/* Strukturtræ under diagrammet for ejerlejligheder —
+                  giver kontekst om hvor lejligheden hører til i hierarkiet */}
+              {strukturTree &&
+                lejligheder &&
+                lejligheder.length > 0 &&
+                (() => {
+                  /** @param addr - Adressestreng */
+                  function extractHusnr(addr: string): string {
+                    const street = addr.split(',')[0].trim();
+                    const m = street.match(/(\d+\w*)$/);
+                    return m ? m[1].toUpperCase() : '';
+                  }
+                  /** @param node - Struktur-node — beriger med ejer-data, bevarer dawaId'er */
+                  function enrichNode(node: StrukturNode): StrukturNode {
+                    if (node.niveau === 'ejerlejlighed') {
+                      const nodeStreet = node.adresse.split(',')[0].trim().toLowerCase();
+                      const match = lejligheder!.find(
+                        (l) =>
+                          (node.bfe > 0 && l.bfe === node.bfe) ||
+                          l.adresse.split(',')[0].trim().toLowerCase() === nodeStreet
+                      );
+                      // BBR-match for værelser
+                      const addrParts = node.adresse.split(',').map((s) => s.trim());
+                      const etageDoer = (addrParts[1] ?? '').toLowerCase();
+                      const bbrMatch = (bbrEnheder ?? []).find((e) => {
+                        const eLow = (e.etage ?? '').toLowerCase();
+                        const dLow = (e.doer ?? '').toLowerCase();
+                        const combined = `${eLow}. ${dLow}`.trim();
+                        return etageDoer.includes(combined) || (eLow && etageDoer.startsWith(eLow));
+                      });
+                      if (match) {
+                        return {
+                          ...node,
+                          ejer: match.ejer ?? node.ejer,
+                          ejertype: match.ejertype ?? node.ejertype,
+                          koebspris: match.koebspris ?? node.koebspris,
+                          koebsdato: match.koebsdato ?? node.koebsdato,
+                          areal: match.areal ?? node.areal,
+                          vaerelser: bbrMatch?.vaerelser ?? node.vaerelser,
+                          children: node.children.map(enrichNode),
+                        };
+                      }
+                      // Kun BBR-berigelse (ingen lejligheder-match)
+                      if (bbrMatch?.vaerelser) {
+                        return {
+                          ...node,
+                          vaerelser: bbrMatch.vaerelser,
+                          children: node.children.map(enrichNode),
+                        };
+                      }
+                    }
+                    if (node.niveau === 'hovedejendom') {
+                      const nodeHusnr = extractHusnr(node.adresse);
+                      const matchingLej = lejligheder!.filter(
+                        (l) => extractHusnr(l.adresse) === nodeHusnr
+                      );
+                      if (matchingLej.length > 0 && matchingLej.length >= node.children.length) {
+                        return {
+                          ...node,
+                          children: matchingLej.map((l) => ({
+                            bfe: l.bfe,
+                            adresse: l.adresse,
+                            niveau: 'ejerlejlighed' as const,
+                            dawaId: l.dawaId ?? null,
+                            ejendomsvaerdi: null,
+                            grundvaerdi: null,
+                            vurderingsaar: null,
+                            tlVurdering: null,
+                            areal: l.areal,
+                            vaerelser: null,
+                            ejer: l.ejer,
+                            ejertype: l.ejertype,
+                            koebspris: l.koebspris,
+                            koebsdato: l.koebsdato,
+                            children: [],
+                          })),
+                        };
+                      }
+                    }
+                    return { ...node, children: node.children.map(enrichNode) };
+                  }
+                  return (
+                    <EjendomStrukturTree
+                      tree={enrichNode(strukturTree)}
+                      lang={lang}
+                      currentBfe={currentBfe}
+                      showOwnership
+                    />
+                  );
+                })()}
             </div>
           );
         })()}

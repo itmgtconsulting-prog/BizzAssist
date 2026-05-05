@@ -82,13 +82,17 @@ export async function GET(
     }
     const { id } = paramResult.data;
 
+    // BIZZ-1015 cache-first reverted — forårsagede BBR-fejl i test-miljø.
+    // Cache-first kræver at cache_bbr-migration er applied i alle miljøer.
     const result = await fetchBbrForAddress(id);
 
     return NextResponse.json(
       { dawaId: id, ...result },
       {
         status: 200,
-        headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
+        headers: {
+          'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600',
+        },
       }
     );
   } catch (err) {

@@ -26,6 +26,7 @@ import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { getCertOAuthToken, isCertAuthConfigured } from '@/app/lib/dfCertAuth';
 import { resolveTenantId } from '@/lib/api/auth';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
 import { hentCvrStatusBatch } from '@/app/lib/cvrStatus';
@@ -335,6 +336,70 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjerskabRe
   if (!parsed.success) return parsed.response as NextResponse<EjerskabResponse>;
 
   const { bfeNummer } = parsed.data;
+
+  // ── BIZZ-1013: Cache-first — tjek ejf_ejerskab tabel (7.6M rows) ──
+  try {
+    const admin = createAdminClient();
+    const EJF_STALE_MS = 7 * 24 * 60 * 60 * 1000; // 7 dage
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: cached, error: cacheErr } = await (admin as any)
+      .from('ejf_ejerskab')
+      .select(
+        'ejer_navn, ejer_cvr, ejer_type, ejerandel_taeller, ejerandel_naevner, virkning_fra, status, sidst_opdateret'
+      )
+      .eq('bfe_nummer', parseInt(String(bfeNummer), 10))
+      .eq('status', 'gældende');
+
+    if (!cacheErr && cached && cached.length > 0) {
+      const freshest = cached[0]?.sidst_opdateret
+        ? new Date(cached[0].sidst_opdateret).getTime()
+        : 0;
+      const isFresh = Date.now() - freshest < EJF_STALE_MS;
+
+      if (isFresh) {
+        const ejere: EjerData[] = (
+          cached as Array<{
+            ejer_navn: string | null;
+            ejer_cvr: string | null;
+            ejer_type: string | null;
+            ejerandel_taeller: number | null;
+            ejerandel_naevner: number | null;
+            virkning_fra: string | null;
+          }>
+        ).map((row) => ({
+          cvr: row.ejer_cvr,
+          personNavn: row.ejer_type === 'person' ? row.ejer_navn : null,
+          ejerandel_taeller: row.ejerandel_taeller,
+          ejerandel_naevner: row.ejerandel_naevner,
+          ejerforholdskode: null,
+          ejertype: (row.ejer_type === 'selskab'
+            ? 'selskab'
+            : row.ejer_type === 'person'
+              ? 'person'
+              : 'ukendt') as EjerData['ejertype'],
+          virkningFra: row.virkning_fra,
+          virksomhedsnavn: row.ejer_type === 'selskab' ? row.ejer_navn : null,
+        }));
+
+        logger.log(`[ejerskab] Cache hit: ${ejere.length} gældende ejere for BFE ${bfeNummer}`);
+        return NextResponse.json(
+          { bfeNummer, ejere, fejl: null, manglerNoegle: false, manglerAdgang: false },
+          {
+            status: 200,
+            headers: {
+              'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600',
+              'X-Cache-Hit': 'true',
+            },
+          }
+        );
+      }
+    }
+  } catch (err) {
+    logger.warn(
+      '[ejerskab] Cache lookup fejl (falder til live):',
+      err instanceof Error ? err.message : err
+    );
+  }
 
   // ── Forsøg 1: OAuth Shared Secret ──
   let result: EJFQueryResult | null = null;

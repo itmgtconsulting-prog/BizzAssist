@@ -82,7 +82,15 @@ export async function GET(_req: NextRequest, context: RouteContext): Promise<Nex
     .is('deleted_at', null)
     .order('created_at', { ascending: false });
 
-  return NextResponse.json({ ...caseRow, docs: docs ?? [] });
+  // BIZZ-983: Hent multi-entity links
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: entities } = await (admin as any)
+    .from('domain_case_entity')
+    .select('id, entity_type, entity_id, entity_name, linked_at')
+    .eq('case_id', caseId)
+    .order('linked_at', { ascending: true });
+
+  return NextResponse.json({ ...caseRow, docs: docs ?? [], entities: entities ?? [] });
 }
 
 /**
@@ -170,12 +178,70 @@ export async function PATCH(request: NextRequest, context: RouteContext): Promis
     }
   }
 
+  const admin = createAdminClient();
+
+  // BIZZ-983: Multi-entity add/remove
+  const addEntity = body.add_entity as
+    | { entity_type?: string; entity_id?: string; entity_name?: string }
+    | undefined;
+  const removeEntityId = body.remove_entity_id as string | undefined;
+
+  if (addEntity?.entity_type && addEntity?.entity_id) {
+    if (!['company', 'person', 'property'].includes(addEntity.entity_type)) {
+      return NextResponse.json(
+        { error: 'entity_type must be company|person|property' },
+        { status: 400 }
+      );
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (admin as any).from('domain_case_entity').upsert(
+      {
+        case_id: caseId,
+        entity_type: addEntity.entity_type,
+        entity_id: String(addEntity.entity_id).trim(),
+        entity_name:
+          typeof addEntity.entity_name === 'string'
+            ? addEntity.entity_name.trim().slice(0, 200)
+            : null,
+      },
+      { onConflict: 'case_id,entity_type,entity_id' }
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (admin as any).from('domain_audit_log').insert({
+      domain_id: domainId,
+      actor_user_id: ctx.userId,
+      action: 'add_case_entity',
+      target_type: 'case',
+      target_id: caseId,
+      metadata: { entity_type: addEntity.entity_type, entity_id: addEntity.entity_id },
+    });
+    return NextResponse.json({ ok: true });
+  }
+
+  if (removeEntityId) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (admin as any)
+      .from('domain_case_entity')
+      .delete()
+      .eq('id', removeEntityId)
+      .eq('case_id', caseId);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (admin as any).from('domain_audit_log').insert({
+      domain_id: domainId,
+      actor_user_id: ctx.userId,
+      action: 'remove_case_entity',
+      target_type: 'case',
+      target_id: caseId,
+      metadata: { entity_link_id: removeEntityId },
+    });
+    return NextResponse.json({ ok: true });
+  }
+
   if (Object.keys(update).length === 0) {
     return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 });
   }
   update.updated_at = new Date().toISOString();
 
-  const admin = createAdminClient();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { error } = await (admin as any)
     .from('domain_case')

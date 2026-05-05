@@ -45,6 +45,7 @@ import {
   Sparkles,
   Lock,
   Zap,
+  RefreshCw,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { useSetAIPageContext } from '@/app/context/AIPageContext';
@@ -67,11 +68,11 @@ import { recordRecentVisit } from '@/app/lib/recordRecentVisit';
 import { useSubscription } from '@/app/context/SubscriptionContext';
 import { useSubscriptionAccess } from '@/app/components/SubscriptionGate';
 import { resolvePlan, formatTokens, isSubscriptionFunctional } from '@/app/lib/subscriptions';
-import { buildDiagramGraph } from '@/app/components/diagrams/DiagramData';
-import type { DiagramPropertySummary } from '@/app/components/diagrams/DiagramData';
+// isDiagram2Enabled fjernet
 import dynamic from 'next/dynamic';
 import VerifiedLinks from '@/app/components/VerifiedLinks';
 import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
+import DataFreshnessBadge from '@/app/components/DataFreshnessBadge';
 import VirksomhedOverblikTab from './tabs/VirksomhedOverblikTab';
 import VirksomhedEjendommeTab from './tabs/VirksomhedEjendommeTab';
 import VirksomhedGruppeTab from './tabs/VirksomhedGruppeTab';
@@ -80,7 +81,8 @@ import VirksomhedNoeglepersonerTab from './tabs/VirksomhedNoeglepersonerTab';
 import VirksomhedHistorikTab from './tabs/VirksomhedHistorikTab';
 /** BIZZ-600: DiagramForce uses d3-force — dynamic() keeps d3-force out of initial bundle */
 // prettier-ignore
-const DiagramForce = dynamic(/* d3-force */ () => import('@/app/components/diagrams/DiagramForce'), { ssr: false, loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" /> });
+/** Diagram v2 — feature-flagged, kun synlig i dev/preview */
+const DiagramV2 = dynamic(() => import('@/app/components/diagrams/DiagramV2'), { ssr: false });
 
 // ─── Tracked Companies (localStorage) ────────────────────────────────────────
 
@@ -172,6 +174,7 @@ function formatDatoKort(iso: string): string {
 type TabId =
   | 'overview'
   | 'diagram'
+  // diagram2 fjernet — DiagramV2 vises nu på diagram-fanen
   | 'tradeHistory'
   | 'properties'
   | 'companies'
@@ -193,8 +196,8 @@ const tabIcons: Record<TabId, React.ReactNode> = {
   liens: <Scale size={12} />,
 };
 
-/** Rækkefølge af tabs */
-const tabOrder: TabId[] = [
+/** Basis-rækkefølge af tabs (diagram2 tilføjes runtime via isDiagram2Enabled) */
+const baseTabOrder: TabId[] = [
   'overview',
   'diagram',
   'properties',
@@ -210,6 +213,14 @@ const tabOrder: TabId[] = [
 
 interface PageProps {
   params: Promise<{ cvr: string }>;
+  /** BIZZ-1160: Server-side prefetched data fra cvr_virksomhed cache */
+  prefetched?: {
+    navn: string | null;
+    virksomhedsform: string | null;
+    branche_tekst: string | null;
+    status: string | null;
+    ophoert: string | null;
+  };
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -316,7 +327,17 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   const [data, setData] = useState<CVRPublicData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /** BIZZ-919: Cache-metadata fra primær API-response */
+  const [cacheFromCache, setCacheFromCache] = useState(false);
+  const [cacheSyncedAt, setCacheSyncedAt] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  /** BIZZ-919: Incrementing key triggers data re-fetch */
+  const [refreshKey, setRefreshKey] = useState(0);
   const [aktivTab, setAktivTab] = useState<TabId>('overview');
+  /** BIZZ-1121: Lazy-mount — mount ved første klik, behold med display:none */
+  const [diagram2Mounted, setDiagram2Mounted] = useState(false);
+  /** Tab-rækkefølge — diagram2 fjernet, DiagramV2 erstatter det gamle diagram */
+  const tabOrder = useMemo<TabId[]>(() => baseTabOrder, []);
   const [erFulgt, setErFulgt] = useState(false);
   // BIZZ-808: Opret sag-modal state
   const [opretSagOpen, setOpretSagOpen] = useState(false);
@@ -522,47 +543,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   const [ejendommeTotalBfe, setEjendommeTotalBfe] = useState(0);
   /** BIZZ-455: Toggle for visning af tidligere ejede (solgte) ejendomme */
   const [visSolgte, setVisSolgte] = useState(false);
-  /** BIZZ-diagram: Memoized diagram graph — only rebuilds when ejendomme fully loaded,
-   * preventing "jumping" as properties stream in progressively. Shows active only. */
-  const diagramGraphStable = useMemo(() => {
-    if (!data) return { nodes: [], edges: [], mainId: '' };
-    // BIZZ-926: Vent med diagram-build til ejendomme-fetch er komplet.
-    // Uden denne guard bygges grafen med ufuldstændige data ved første
-    // render → DiagramForce cancelerer igangværende D3-simulation →
-    // positions forbliver tom → blank canvas (identisk med BIZZ-925).
-    if (!ejendommeFetchComplete) return { nodes: [], edges: [], mainId: '' };
-    const aktiveEjendomme = ejendommeData.filter((p) => p.aktiv !== false);
-    const propertiesByCvr =
-      aktiveEjendomme.length > 0
-        ? aktiveEjendomme.reduce((map, p) => {
-            const cvrNum = parseInt(p.ownerCvr, 10);
-            if (!map.has(cvrNum)) map.set(cvrNum, []);
-            map.get(cvrNum)!.push(p as DiagramPropertySummary);
-            return map;
-          }, new Map<number, DiagramPropertySummary[]>())
-        : undefined;
-    return buildDiagramGraph(
-      data.name,
-      data.vat,
-      data.companydesc ?? null,
-      ownerChainShared,
-      relatedCompanies,
-      data.industrydesc ?? null,
-      propertiesByCvr
-    );
-    // Only rebuild when ejendomme loading finishes (ejendommeFetchComplete flips true)
-    // OR when ownership/company data changes. Deliberately EXCLUDE ejendommeData so
-    // progressive batches don't trigger re-simulation mid-load.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    data?.name,
-    data?.vat,
-    data?.companydesc,
-    data?.industrydesc,
-    ownerChainShared,
-    relatedCompanies,
-    ejendommeFetchComplete,
-  ]);
+  // diagramGraphStable fjernet — DiagramV2 erstatter det gamle DiagramForce
   /** Kommasepereret CVR-nøgle der sidst blev hentet — forhindrer duplicate-fetches */
   const ejendomFetchKeyRef = useRef('');
   /** AbortController for igangværende progressiv ejendomshentning */
@@ -711,6 +692,19 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
         const company = json as CVRPublicData;
         setData(company);
 
+        // BIZZ-1170: Prefetch diagram/resolve for diagram-fanen
+        // Varmer HTTP-cachen op så diagrammet er klar ved tab-klik
+        fetch(
+          `/api/diagram/resolve?type=company&id=${company.vat}&label=${encodeURIComponent(company.name ?? '')}`,
+          { priority: 'low' as RequestPriority }
+        ).catch(() => {});
+
+        // BIZZ-919: Læs cache-metadata fra API-response headers
+        const cacheHit = res.headers?.get?.('X-Cache-Hit');
+        const synced = res.headers?.get?.('X-Synced-At');
+        setCacheFromCache(cacheHit === 'true');
+        setCacheSyncedAt(synced ?? null);
+
         // Gem i seneste besøgte — kun ved faktisk åbning af detaljesiden
         saveRecentCompany({
           cvr: company.vat,
@@ -720,6 +714,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           zipcode: company.zipcode,
           city: company.city,
           active: !company.enddate,
+          companyType: company.companydesc ?? null,
         });
         // Opdater recent tag-bar (virker også ved direkte URL-navigation)
         recordRecentVisit(
@@ -742,7 +737,18 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cvr, lang]);
+  }, [cvr, lang, refreshKey]);
+
+  /** BIZZ-919: Force-refresh — inkrementer refreshKey for at gen-trigge useEffect */
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    setRefreshKey((k) => k + 1);
+  }, []);
+
+  /** BIZZ-919: Nulstil refreshing-spinner når loading afsluttes */
+  useEffect(() => {
+    if (!loading && refreshing) setRefreshing(false);
+  }, [loading, refreshing]);
 
   /**
    * Sæt AI-kontekst når virksomhedsdata er loadet.
@@ -763,6 +769,52 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           }))
       : undefined;
 
+    // BIZZ-941: Inkluder datterselskaber i AI-kontekst
+    const preloadedDatter =
+      relatedCompanies.length > 0
+        ? relatedCompanies.slice(0, 30).map((v) => ({
+            cvr: v.cvr,
+            navn: v.navn,
+            aktiv: v.aktiv,
+            branche: v.branche ?? null,
+          }))
+        : undefined;
+
+    // BIZZ-1002: Kontaktinfo
+    const virksomhedKontakt = {
+      telefon: data.phone ?? null,
+      email: data.email ?? null,
+      adresse: data.address ?? null,
+      postnr: data.zipcode ?? null,
+      by: data.city ?? null,
+    };
+
+    // BIZZ-1002: Nøglepersoner — ejere, bestyrelse, direktion (max 20)
+    // Aktive roller har til=null (ingen slutdato)
+    const virksomhedNoeglePersoner = data.deltagere
+      ?.filter((d) => d.roller.some((r) => !r.til))
+      .slice(0, 20)
+      .map((d) => ({
+        navn: d.navn,
+        roller: d.roller.filter((r) => !r.til).map((r) => r.rolle),
+        ejerandel: d.roller.find((r) => r.ejerandel)?.ejerandel ?? null,
+        aktiv: true,
+      }));
+
+    // BIZZ-1002: Seneste regnskabstal (kun hvis loaded)
+    const seneste = xbrlData?.[0];
+    const virksomhedRegnskab = seneste
+      ? {
+          aar: seneste.aar,
+          omsaetning: seneste.resultat?.omsaetning ?? null,
+          bruttofortjeneste: seneste.resultat?.bruttofortjeneste ?? null,
+          resultat: seneste.resultat?.aaretsResultat ?? null,
+          egenkapital: seneste.balance?.egenkapital ?? null,
+          balancesum: seneste.balance?.aktiverIAlt ?? null,
+          ansatte: null as number | null,
+        }
+      : undefined;
+
     setAICtx({
       cvrNummer: String(data.vat),
       virksomhedNavn: data.name,
@@ -770,8 +822,21 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
       activeTab: aktivTab,
       preloadedEjendomme,
       ejendommeTotal: ejendommeFetchComplete ? ejendommeTotalBfe : undefined,
+      preloadedDatterselskaber: preloadedDatter,
+      virksomhedKontakt,
+      virksomhedNoeglePersoner,
+      virksomhedRegnskab,
     });
-  }, [data, aktivTab, ejendommeData, ejendommeFetchComplete, ejendommeTotalBfe, setAICtx]);
+  }, [
+    data,
+    aktivTab,
+    ejendommeData,
+    ejendommeFetchComplete,
+    ejendommeTotalBfe,
+    relatedCompanies,
+    xbrlData,
+    setAICtx,
+  ]);
 
   /**
    * Lazy-loader regnskabsdata når bruger klikker på Regnskab-tab.
@@ -1753,6 +1818,17 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                   {data.employees} {c.employeesShort}
                 </span>
               )}
+              {/* BIZZ-919: Data freshness badge + refresh */}
+              <DataFreshnessBadge fromCache={cacheFromCache} syncedAt={cacheSyncedAt} lang={lang} />
+              <button
+                onClick={handleRefresh}
+                disabled={refreshing}
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] text-slate-400 hover:text-blue-400 bg-slate-700/30 border border-slate-700/40 hover:border-blue-500/30 transition-colors disabled:opacity-50"
+                aria-label={lang === 'da' ? 'Genindlæs data' : 'Refresh data'}
+                title={lang === 'da' ? 'Genindlæs data' : 'Refresh data'}
+              >
+                <RefreshCw size={9} className={refreshing ? 'animate-spin' : ''} />
+              </button>
             </div>
           </div>
 
@@ -1810,28 +1886,23 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           )}
 
           {/* ══ RELATIONSDIAGRAM (Force Graph — original) ══ */}
-          {aktivTab === 'diagram' && (
-            <div className="relative">
-              <DiagramForce graph={diagramGraphStable} lang={lang} />
-              {/* BIZZ-729: Loading overlay — ejendomme loades progressivt men diagrammet
-                  rebuilds kun ved ejendommeFetchComplete=true for at undgå re-simulation.
-                  Uden denne indikator ser diagrammet "færdigt" ud indtil ejendomme pludselig
-                  popper ind. Viser spinner + progress-counter mens hentning står på. */}
-              {(ejendommeLoading || ejendommeLoadingMore) && (
-                <div
-                  role="status"
-                  aria-live="polite"
-                  className="absolute top-3 right-3 flex items-center gap-2 px-3 py-2 bg-blue-900/90 backdrop-blur-sm border border-blue-500/40 rounded-lg shadow-lg text-blue-100 text-xs font-medium pointer-events-none animate-pulse"
-                >
-                  <Loader2 size={14} className="animate-spin text-blue-300" />
-                  <span>
-                    {lang === 'da' ? 'Henter ejendomme' : 'Loading properties'}
-                    {ejendommeTotalBfe > 0
-                      ? ` — ${ejendommeData.length}/${ejendommeTotalBfe}`
-                      : '…'}
-                  </span>
-                </div>
-              )}
+          {/* ══ DIAGRAM — DiagramV2 erstatter det gamle DiagramForce ══ */}
+          {data && (aktivTab === 'diagram' || diagram2Mounted) && (
+            <div
+              ref={() => {
+                if (!diagram2Mounted) setDiagram2Mounted(true);
+              }}
+              style={{ display: aktivTab === 'diagram' ? 'block' : 'none' }}
+            >
+              <DiagramV2
+                rootType="company"
+                rootId={String(data.vat)}
+                rootLabel={data.name ?? ''}
+                lang={lang}
+                onDiagramReady={(base64) => {
+                  setAICtx({ diagramBase64: base64 });
+                }}
+              />
             </div>
           )}
 

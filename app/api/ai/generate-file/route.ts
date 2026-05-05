@@ -106,7 +106,8 @@ const DomainTemplateSchema = z
 const RequestBodySchema = z.object({
   format: FormatSchema,
   mode: ModeSchema,
-  title: z.string().min(1).max(100),
+  // BIZZ-991: Hævet fra 100 til 300 — lange rapporttitler (adresse + type) overskred limiten
+  title: z.string().min(1).max(300),
   conv_id: z.string().optional(),
   scratch: ScratchInputSchema,
   attached_template: AttachedTemplateSchema,
@@ -397,28 +398,37 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // BIZZ-886: Storage-upload med retry (1 forsøg mere ved transient fejl)
   // og mere specifik fejl-besked. Upload-fejl skelnes nu fra size/permission/
   // mime-type fejl så brugeren kan forstå årsagen.
+  /* BIZZ-1067: Konvertér Buffer til Uint8Array — Supabase storage kan
+     have kompatibilitetsproblemer med Node Buffer i visse runtimes */
+  const uploadBody = new Uint8Array(generated.buffer);
   const uploadWithRetry = async (): Promise<{ error: { message: string } | null }> => {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const { error } = await admin.storage
-        .from('ai-generated')
-        .upload(storagePath, generated.buffer, {
-          contentType: generated.contentType,
-          upsert: false,
-        });
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const { error } = await admin.storage.from('ai-generated').upload(storagePath, uploadBody, {
+        contentType: generated.contentType,
+        upsert: false,
+      });
       if (!error) return { error: null };
-      // Retry kun ved transient fejl (5xx, timeout). 4xx (permission/size) er
-      // ikke retry-bart — fejl igen med samme resultat.
       const msg = (error.message || '').toLowerCase();
-      const transient = msg.includes('timeout') || msg.includes('network') || msg.includes('5');
-      if (!transient || attempt === 1) return { error };
-      await new Promise((r) => setTimeout(r, 500));
+      const transient =
+        msg.includes('timeout') ||
+        msg.includes('network') ||
+        msg.includes('5') ||
+        msg.includes('fetch');
+      if (!transient || attempt === 2) return { error };
+      await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
     }
     return { error: null };
   };
 
   const { error: uploadErr } = await uploadWithRetry();
   if (uploadErr) {
-    logger.error('[generate-file] upload fejl:', uploadErr.message);
+    /* BIZZ-1064/1066: Udvidet diagnostik for storage upload fejl */
+    logger.error('[generate-file] upload fejl:', uploadErr.message, {
+      storagePath,
+      bufferSize: generated.buffer.length,
+      contentType: generated.contentType,
+      format: body.format,
+    });
     const rawMsg = (uploadErr.message || '').toLowerCase();
     let userMsg = 'Storage upload fejlede';
     if (rawMsg.includes('size') || rawMsg.includes('too large')) {
@@ -503,6 +513,26 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       if (parsed.html.length > 0) {
         previewKind = 'html';
         previewHtml = parsed.html;
+      }
+    } else if (body.format === 'pptx') {
+      /* BIZZ-1085: Best-effort tekst-preview for PPTX — extrahér slide-tekst */
+      try {
+        const JSZip = (await import('jszip')).default;
+        const zip = await JSZip.loadAsync(generated.buffer);
+        const slideTexts: string[] = [];
+        for (let i = 1; i <= 10; i++) {
+          const slideFile = zip.file(`ppt/slides/slide${i}.xml`);
+          if (!slideFile) break;
+          const xml = await slideFile.async('text');
+          const texts = [...xml.matchAll(/<a:t>([^<]+)<\/a:t>/g)].map((m) => m[1]);
+          if (texts.length > 0) slideTexts.push(`Slide ${i}: ${texts.join(' · ')}`);
+        }
+        if (slideTexts.length > 0) {
+          previewHtml = `<div style="font-family:sans-serif;font-size:13px;line-height:1.6">${slideTexts.map((s) => `<p>${s}</p>`).join('')}</div>`;
+          previewKind = 'html';
+        }
+      } catch {
+        /* best-effort */
       }
     }
   } catch (previewErr) {

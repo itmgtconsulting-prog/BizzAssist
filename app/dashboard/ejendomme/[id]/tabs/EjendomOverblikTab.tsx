@@ -27,7 +27,16 @@ import type { VurderingData } from '@/app/api/vurdering/route';
 import type { ForelobigVurdering } from '@/app/api/vurdering-forelobig/route';
 import type { DawaAdresse, DawaJordstykke } from '@/app/lib/dawa';
 import type { CVRVirksomhed } from '@/app/api/cvr/route';
+import OmraadeProfilSektion from '@/app/components/ejendomme/OmraadeProfilSektion';
+import EnergimaerkeBadge from '@/app/components/ejendomme/EnergimaerkeBadge';
+import type { EnergimaerkeItem } from '@/app/api/energimaerke/route';
+import StoejBadge from '@/app/components/ejendomme/StoejBadge';
+// BIZZ-1018: SkraafotoGalleri flyttet til EjendomBBRTab
+import PlandataSektion from '@/app/components/ejendomme/PlandataSektion';
+import EjerforeningSektion from '@/app/components/ejendomme/EjerforeningSektion';
+// BIZZ-1046: EnergiWidget + ByggeomkostningBadge flyttet til EjendomOekonomiTab
 import type { Ejerlejlighed } from '@/app/api/ejerlejligheder/route';
+// EjendomStrukturTree moved to BBR tab
 
 interface TinglysningSnapshot {
   tinglystAreal: number | null;
@@ -70,6 +79,14 @@ interface Props {
   visOphoerte: boolean;
   /** Setter for visOphoerte */
   setVisOphoerte: React.Dispatch<React.SetStateAction<boolean>>;
+  /** BIZZ-947: Kommunekode for områdeprofil */
+  kommunekode?: string | null;
+  /** BIZZ-1030: Energimærkerapporter */
+  energimaerker?: EnergimaerkeItem[] | null;
+  /** BIZZ-1030: true mens energimærkedata hentes */
+  energiLoader?: boolean;
+  /** BIZZ-1030: Callback til at navigere til Dokumenter-fanen */
+  onNavigerDokumenter?: () => void;
 }
 
 /**
@@ -94,6 +111,10 @@ export default function EjendomOverblikTab({
   cvrApiDown,
   visOphoerte,
   setVisOphoerte,
+  kommunekode,
+  energimaerker,
+  energiLoader,
+  onNavigerDokumenter,
 }: Props) {
   const da = lang === 'da';
 
@@ -293,7 +314,15 @@ export default function EjendomOverblikTab({
                     )}
                   </p>
                   <p className="text-white text-base font-bold">
-                    {vurdering.ejendomsvaerdi ? formatDKK(vurdering.ejendomsvaerdi) : formatDKK(0)}
+                    {vurdering.ejendomsvaerdi
+                      ? formatDKK(vurdering.ejendomsvaerdi)
+                      : bbrData?.ejerlejlighedBfe
+                        ? da
+                          ? 'Fordelt på enheder'
+                          : 'Distributed to units'
+                        : da
+                          ? 'Ikke vurderet'
+                          : 'Not assessed'}
                   </p>
                   {vurdering.afgiftspligtigEjendomsvaerdi !== null &&
                     vurdering.afgiftspligtigEjendomsvaerdi !== vurdering.ejendomsvaerdi && (
@@ -310,7 +339,15 @@ export default function EjendomOverblikTab({
                     )}
                   </p>
                   <p className="text-white text-sm font-medium">
-                    {vurdering.grundvaerdi ? formatDKK(vurdering.grundvaerdi) : formatDKK(0)}
+                    {vurdering.grundvaerdi
+                      ? formatDKK(vurdering.grundvaerdi)
+                      : bbrData?.ejerlejlighedBfe
+                        ? da
+                          ? 'Fordelt på enheder'
+                          : 'Distributed to units'
+                        : da
+                          ? 'Ikke vurderet'
+                          : 'Not assessed'}
                   </p>
                   {vurdering.afgiftspligtigGrundvaerdi !== null &&
                     vurdering.afgiftspligtigGrundvaerdi !== vurdering.grundvaerdi && (
@@ -403,6 +440,14 @@ export default function EjendomOverblikTab({
               </div>
             );
           })()}
+
+          {/* BIZZ-1030: Energimærke badge — viser nyeste gyldige klasse (A-G) */}
+          <EnergimaerkeBadge
+            energimaerker={energimaerker ?? null}
+            loading={energiLoader ?? false}
+            lang={lang}
+            onNavigate={onNavigerDokumenter}
+          />
         </div>
 
         {/* ─── Rad 2: Bygninger (v) + Enheder (h) ─── */}
@@ -417,6 +462,10 @@ export default function EjendomOverblikTab({
           const boligAreal = bygninger.reduce((s, b) => s + (b.samletBoligareal ?? 0), 0);
           const erhvAreal = bygninger.reduce((s, b) => s + (b.samletErhvervsareal ?? 0), 0);
           const kaelder = bygninger.reduce((s, b) => s + (b.kaelder ?? 0), 0);
+          /* BIZZ-1083: Fallback til enhedsareal når bygninger returnerer 0 */
+          const enheder = bbrData?.enheder ?? [];
+          const enhedAreal = enheder.reduce((s, e) => s + (e.areal ?? 0), 0);
+          const effektivBoligAreal = boligAreal || enhedAreal || 0;
           return (
             <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-2.5 self-start">
               <div className="flex items-baseline gap-1 mb-1.5">
@@ -428,32 +477,29 @@ export default function EjendomOverblikTab({
               <div className="grid grid-cols-2 gap-x-2 gap-y-1">
                 <div>
                   <p className="text-slate-500 text-xs leading-none mb-0.5">{t.buildingArea}</p>
+                  {/* BIZZ-1083: Vis '–' i stedet for '0 m²' når BBR data mangler */}
                   <p className="text-white text-sm font-medium">
-                    {totAreal
-                      ? `${totAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                      : formatDKK(0)}
+                    {totAreal ? `${totAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²` : '–'}
                   </p>
                 </div>
                 <div>
                   <p className="text-slate-500 text-xs leading-none mb-0.5">{t.residentialArea}</p>
                   <p className="text-white text-sm font-medium">
-                    {boligAreal
-                      ? `${boligAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                      : '0 m²'}
+                    {effektivBoligAreal
+                      ? `${effektivBoligAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                      : '–'}
                   </p>
                 </div>
                 <div>
                   <p className="text-slate-500 text-xs leading-none mb-0.5">{t.commercialArea}</p>
                   <p className="text-white text-sm font-medium">
-                    {erhvAreal
-                      ? `${erhvAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                      : formatDKK(0)}
+                    {erhvAreal ? `${erhvAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²` : '–'}
                   </p>
                 </div>
                 <div>
                   <p className="text-slate-500 text-xs leading-none mb-0.5">{t.basement}</p>
                   <p className="text-white text-sm font-medium">
-                    {kaelder ? `${kaelder.toLocaleString(da ? 'da-DK' : 'en-GB')} m²` : '0 m²'}
+                    {kaelder ? `${kaelder.toLocaleString(da ? 'da-DK' : 'en-GB')} m²` : '–'}
                   </p>
                 </div>
               </div>
@@ -723,6 +769,21 @@ export default function EjendomOverblikTab({
           </div>
         </div>
       )}
+      {/* BIZZ-966: Ejerforening */}
+      <EjerforeningSektion
+        vejnavn={dawaAdresse?.vejnavn ?? null}
+        husnr={dawaAdresse?.husnr ?? null}
+        postnr={dawaAdresse?.postnr ?? null}
+        lang={lang}
+      />
+      {/* BIZZ-1025: Lokalplan detaljer */}
+      <PlandataSektion adresseId={dawaAdresse?.id ?? null} lang={lang} />
+      {/* BIZZ-1018: Skråfoto flyttet til BBR-tab */}
+      {/* BIZZ-961: Støjniveau-badge */}
+      <StoejBadge lat={dawaAdresse?.y ?? null} lng={dawaAdresse?.x ?? null} lang={lang} />
+      {/* BIZZ-1046: EnergiWidget + ByggeomkostningBadge flyttet til Økonomi-tab */}
+      {/* BIZZ-947: Områdeprofil fra Danmarks Statistik */}
+      <OmraadeProfilSektion kommunekode={kommunekode ?? null} lang={lang} />
     </div>
   );
 }

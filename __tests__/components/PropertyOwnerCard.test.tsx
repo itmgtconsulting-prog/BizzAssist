@@ -100,9 +100,9 @@ describe('PropertyOwnerCard', () => {
     expect(screen.getAllByText(/BFE/).length).toBeGreaterThanOrEqual(1);
   });
 
-  it('renders "Parcelhus/grund" badge for "Normal ejendom" type', () => {
+  it('renders "Ejendom" badge for "Normal ejendom" type', () => {
     render(<PropertyOwnerCard ejendom={baseEjendom} lang="da" />);
-    expect(screen.getByText('Parcelhus/grund')).toBeInTheDocument();
+    expect(screen.getByText('Ejendom')).toBeInTheDocument();
   });
 
   it('renders "Ejerlejlighed" badge for Ejerlejlighed type', () => {

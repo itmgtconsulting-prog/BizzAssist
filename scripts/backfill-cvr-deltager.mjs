@@ -26,8 +26,34 @@ loadDotenv({
   path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local'),
 });
 
-const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
+// ─── Environment resolution ──────────────────────────────────────────────────
+const ENV_REFS = {
+  test: 'rlkjmqjxmkxuclehbrnl',
+  prod: 'xsyldjqcntiygrtfcszm',
+};
+
+const args = process.argv.slice(2);
+const TARGET_ENV = (() => { const a = args.find(x => x.startsWith('--env=')); return a ? a.split('=')[1] : 'local'; })();
+
+let SUPABASE_URL, SERVICE_ROLE;
+if (TARGET_ENV === 'local') {
+  SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
+} else {
+  const ref = ENV_REFS[TARGET_ENV];
+  if (!ref) { console.error(`Unknown env: ${TARGET_ENV}`); process.exit(1); }
+  const token = process.env.SUPABASE_ACCESS_TOKEN;
+  if (!token) { console.error('SUPABASE_ACCESS_TOKEN required for remote env'); process.exit(1); }
+  const keysRes = await fetch(`https://api.supabase.com/v1/projects/${ref}/api-keys`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const keys = await keysRes.json();
+  const srKey = keys.find(k => k.name === 'service_role')?.api_key;
+  if (!srKey) { console.error('Could not fetch service_role key'); process.exit(1); }
+  SUPABASE_URL = `https://${ref}.supabase.co`;
+  SERVICE_ROLE = srKey;
+}
+
 const CVR_ES_USER = process.env.CVR_ES_USER;
 const CVR_ES_PASS = process.env.CVR_ES_PASS;
 
@@ -40,7 +66,8 @@ if (!CVR_ES_USER || !CVR_ES_PASS) {
   process.exit(1);
 }
 
-const args = process.argv.slice(2);
+console.log(`Target: ${TARGET_ENV} (${SUPABASE_URL})`);
+
 const LIMIT = (() => {
   const a = args.find((x) => x.startsWith('--limit='));
   return a ? parseInt(a.split('=')[1], 10) : Infinity;
@@ -119,6 +146,16 @@ function mapHit(hit) {
 
       for (const md of medlemsData) {
         const attrs = Array.isArray(md.attributter) ? md.attributter : [];
+
+        // Hent ejerandel fra EJERANDEL-attribut (gældende værdi)
+        let ejerandelPct = null;
+        const ejerAttr = attrs.find(a => a.type === 'EJERANDEL' || a.type === 'EJERANDEL_PROCENT');
+        if (ejerAttr) {
+          const ejerVals = Array.isArray(ejerAttr.vaerdier) ? ejerAttr.vaerdier : [];
+          const gyldigEjer = ejerVals.find(v => !v.periode?.gyldigTil) ?? ejerVals[ejerVals.length - 1];
+          if (gyldigEjer?.vaerdi) { const raw = parseFloat(gyldigEjer.vaerdi); ejerandelPct = raw <= 1 ? raw * 100 : raw; }
+        }
+
         for (const attr of attrs) {
           if (attr.type !== 'FUNKTION') continue;
           const vaerdier = Array.isArray(attr.vaerdier) ? attr.vaerdier : [];
@@ -135,6 +172,7 @@ function mapHit(hit) {
               virksomhed_cvr: String(cvr),
               deltager_enhedsnummer: enhedsNummer,
               type: rolle,
+              ejerandel_pct: rolle === 'register' ? ejerandelPct : null,
               gyldig_fra: gyldigFra,
               gyldig_til: v.periode?.gyldigTil?.slice(0, 10) ?? null,
               sidst_opdateret: del.sidstOpdateret ?? null,
@@ -149,10 +187,22 @@ function mapHit(hit) {
         relationer.filter((r) => r.virksomhed_cvr === String(cvr)).length === 0 &&
         hovedtype
       ) {
+        // Hent ejerandel fra evt. EJERANDEL-attribut i medlemsData
+        let fallbackPct = null;
+        for (const md of medlemsData) {
+          const ejerAttr = (Array.isArray(md.attributter) ? md.attributter : []).find(a => a.type === 'EJERANDEL' || a.type === 'EJERANDEL_PROCENT');
+          if (ejerAttr) {
+            const vals = Array.isArray(ejerAttr.vaerdier) ? ejerAttr.vaerdier : [];
+            const gv = vals.find(v => !v.periode?.gyldigTil) ?? vals[vals.length - 1];
+            if (gv?.vaerdi) { const raw = parseFloat(gv.vaerdi); fallbackPct = raw <= 1 ? raw * 100 : raw; }
+          }
+        }
+        const fallbackType = normalizeRolle(hovedtype) ?? hovedtype.toLowerCase().slice(0, 50);
         relationer.push({
           virksomhed_cvr: String(cvr),
           deltager_enhedsnummer: enhedsNummer,
-          type: normalizeRolle(hovedtype) ?? hovedtype.toLowerCase().slice(0, 50),
+          type: fallbackType,
+          ejerandel_pct: fallbackType === 'register' ? fallbackPct : null,
           gyldig_fra: '1900-01-01',
           gyldig_til: null,
           sidst_opdateret: del.sidstOpdateret ?? null,

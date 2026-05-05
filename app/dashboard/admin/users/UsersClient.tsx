@@ -701,8 +701,9 @@ export default function UsersClient() {
                         <XCircle size={12} /> {da ? 'Intet abonnement' : 'No subscription'}
                       </span>
                       {!u.emailConfirmed && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border bg-slate-500/20 text-slate-400 border-slate-500/30">
-                          {da ? 'Email ikke bekræftet' : 'Email not confirmed'}
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border bg-orange-500/20 text-orange-400 border-orange-500/30">
+                          <XCircle size={12} />
+                          {da ? 'Ikke verificeret' : 'Not verified'}
                         </span>
                       )}
                     </div>

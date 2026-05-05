@@ -86,6 +86,8 @@ interface ChatRequestBody {
    * BIZZ-820 UI skifter gradvist til at sende session_id.
    */
   session_id?: string;
+  /** BIZZ-1000: Base64-encoded PNG af ejerskabsdiagram — injiceres i generate_document tool. */
+  diagramBase64?: string;
 }
 
 // ─── Tool definitions ───────────────────────────────────────────────────────
@@ -346,7 +348,7 @@ const TOOLS: Anthropic.Tool[] = [
     // Uden dette har AI kun BBR per-adresse og kan ikke liste en virksomheds
     // portefølje — AI svarer fejlagtigt "selskabet ejer ingen ejendomme".
     description:
-      'Lister alle ejendomme ejet af et CVR-nummer (eller flere kommasepareret). Returnerer BFE, adresse, postnr, by, ejendomstype og ejerandel per ejendom. Brug dette ved spørgsmål om en virksomheds ejendomsportefølje eller samlet matrikel-areal. For holdingselskaber: kald først hent_datterselskaber for at få datterselskabs-CVR, dernæst dette tool med alle CVR (kommasepareret) for at få hele koncernens portefølje.',
+      'Lister alle ejendomme ejet af et CVR-nummer (eller flere kommasepareret). Returnerer BFE, adresse, postnr, by, ejendomstype og ejerandel per ejendom. Brug dette ved spørgsmål om en virksomheds ejendomsportefølje eller samlet matrikel-areal. For holdingselskaber: kald først hent_datterselskaber for at få datterselskabs-CVR, dernæst dette tool med alle CVR (kommasepareret). VIGTIGT: Brug KUN CVR-numre der er direkte datterselskaber af context-CVR — inkluder ALDRIG CVR fra andre koncerner fundet via person-relationer.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -378,6 +380,23 @@ const TOOLS: Anthropic.Tool[] = [
         },
       },
       required: ['enhedsNummer'],
+    },
+  },
+  // BIZZ-947: Områdeprofil fra Danmarks Statistik
+  {
+    name: 'hent_omraadeprofil',
+    description:
+      'Hent nøgletal for en kommune fra Danmarks Statistik: befolkning, gennemsnitsindkomst og antal boliger. Kræver kommunekode (3-4 cifre, fx "167" for Hvidovre). Brug dette til spørgsmål om demografi, indkomst og boligmarked i et område.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        kommunekode: {
+          type: 'string',
+          description:
+            'Kommunekode (3-4 cifre). Findes i kontekst på ejendomssider, eller via dawa_adresse_detaljer.',
+        },
+      },
+      required: ['kommunekode'],
     },
   },
   // BIZZ-890 (audit G2): Virksomheds-historik (navn/adresse/form/status/
@@ -614,6 +633,7 @@ const TOOL_STATUS: Record<string, string> = {
   // BIZZ-889
   hent_ejendomsadmin: 'Henter ejendomsadministrator…',
   // BIZZ-890
+  hent_omraadeprofil: 'Henter områdeprofil…',
   hent_virksomhed_historik: 'Henter virksomhedshistorik…',
   // BIZZ-891
   hent_virksomhed_ejere: 'Henter virksomhedens ejere…',
@@ -742,18 +762,79 @@ Når brugerens forespørgsel kan fortolkes på flere måder, STIL et kort afklar
 Konteksten kan indeholde \`activeTab\` + \`pageType\` der angiver hvad brugeren ser. Når brugeren refererer til "oversigt tab", "ejendomme tab", "det her tab" osv.:
 - **pageType=virksomhed + activeTab=ejendomme**: Brug hent_ejendomme_for_virksomhed(cvr) på context-cvr. Inkluder datterselskabers ejendomme kun hvis brugeren eksplicit beder om det.
 - **pageType=virksomhed + activeTab=regnskab**: Brug hent_regnskab_noegletal(cvr) — fokus på omsætning/resultat/egenkapital.
-- **pageType=virksomhed + activeTab=oversigt**: Inkluder både stamdata OG ejendomme OG personer (overblik).
+- **pageType=virksomhed + activeTab=oversigt**: Inkluder stamdata OG ejendomme OG personer. BIZZ-1069: Inkluder KUN ejendomme direkte ejet af context-CVR — ALDRIG ejendomme fra andre koncerner via person-relationer.
 - **pageType=person + activeTab=ejendomme**: Kald hent_ejendomme_for_person(enhedsNummer) — dette ene tool returnerer ALLE ejendomme (personlige + via virksomheder).
-- **pageType=person + activeTab=relations (diagram)**: Brugeren ser ejerskabsdiagrammet. Når de siger "eksporter diagram" eller "diagram til word/pptx", generer en struktureret fil med ejerskabshierarkiet. Kald hent_person_virksomheder for at få virksomhedslisten, derefter generate_document med format=docx (sektioner: Ejerskabsoversigt, Virksomheder med roller/ejerandel) eller format=pptx (slides pr. virksomhed). "Diagram" = ejerskabsdiagrammet — IKKE et billede.
-- **pageType=virksomhed + activeTab=diagram**: Brugeren ser virksomheds-ejerskabsdiagrammet. "Eksporter diagram" = generer struktureret ejerskabsoversigt via hent_datterselskaber + hent_ejeroplysninger. Brug docx/pptx format.
+- **pageType=person + activeTab=relations (diagram)**: Brugeren ser ejerskabsdiagrammet. Når de siger "eksporter diagram" eller "diagram til word/pptx": kald hent_person_virksomheder, derefter generate_document. BIZZ-1062: ALTID inkluder en sektion med imageBase64="DIAGRAM" — dette injicerer det visuelle diagram som billede i dokumentet. Tilføj også sektioner med ejerskabshierarkiet som tekst (virksomheder med roller/ejerandel). Sig ALDRIG at det ikke er muligt at inkludere visuelle diagrammer.
+- **pageType=virksomhed + activeTab=diagram**: Brugeren ser virksomheds-ejerskabsdiagrammet. "Eksporter diagram" = hent_datterselskaber + hent_ejeroplysninger → generate_document. ALTID inkluder sektion med imageBase64="DIAGRAM" for visuelt diagram + tekst-sektioner med ejerskabsdata.
+
+## Forklar min vurdering (BIZZ-956)
+Når brugeren beder om at "forklare vurderingen" eller "forklar min skat" på en ejendomsside:
+1. Kald hent_vurdering(bfeNummer, kommunekode) + hent_forelobig_vurdering(bfeNummer/adresseId)
+2. Forklar i klart dansk ALLE komponenter:
+   - **Grundværdi**: "Din grundværdi er beregnet som [areal] m² × [enhedspris] kr/m² = [beløb] kr" (fra grundværdispecifikation)
+   - **Ejendomsværdi**: Samlet vurdering af grund + bygning
+   - **Afgiftspligtig vs. offentlig værdi**: Forklar forskellen (afgiftspligtig kan være lavere pga. overgangsregler)
+   - **Grundskyld**: "[afgiftspligtig grundværdi] × [promille]/1000 = [beløb] kr/år"
+   - **Ejendomsværdiskat**: Hvis bolig: 0,92% op til 3.040.000 kr + 3% over
+   - **Skatteloft (ESL §45)**: Hvis loftansættelse: "Din grundskyld er begrenset af skatteloftet — maks 4,75% stigning pr. år"
+   - **Fritagelser**: Forklar eventuelle skattefritagelser (artKode, omfang)
+   - **Fradrag for forbedringer**: "Du har fradrag for [forbedring] på [beløb] kr i perioden [år]"
+   - **Nyt vs. gammelt system**: Forklar at vurderinger efter 2020 bruger markedsdata-metodik
+3. Brug bullets og korte sætninger — ikke fagsprog
+4. Afslut med: "Har du spørgsmål til et specifikt punkt, eller vil du have en sammenligning med naboejendommen?"
+
+## Klagehjælper (BIZZ-960)
+Når brugeren beder om "tjek klagegrundlag", "kan jeg klage over vurderingen", eller "klagehjælp":
+1. Hent vurderingsdata (hent_vurdering + hent_forelobig_vurdering) og BBR-data (hent_bbr_data)
+2. Analysér for potentielle klagepunkter:
+   - Forkert areal (vurderet areal ≠ BBR-registreret areal)
+   - Forkert benyttelseskode (BBR vs. vurdering)
+   - Manglende fradrag for forbedringer (kloakering, vej)
+   - Stor stigning uden forklaring (>20% mellem to vurderingsår)
+   - Grundværdi pr. m² virker urimelig høj/lav for området
+   - **Grundværdispecifikation** (grundvaerdispec[] fra hent_vurdering): Tjek areal × enhedpris = beløb. Sammenlign areal med BBR-registreret grundareal — afvigelser kan være klagegrundlag
+3. Præsenter som liste med styrke (Svag/Middel/Stærk) og kort begrundelse
+4. Henvis til relevante lovparagraffer (BIZZ-1028):
+   - **Ejendomsvurderingsloven (EVL)**: § 5 (vurderingsgrundlag), § 6 (ejendomsværdi = handelsværdi), § 15 (grundværdi), § 89 (klageadgang til Skatteankestyrelsen)
+   - **Skatteforvaltningsloven (SFL)**: § 35a (frist for genoptagelse: 4 år), § 35b (ekstraordinær genoptagelse), § 35c (klage til Skatteankestyrelsen)
+   - **Vurderingsloven (VUL, historisk)**: § 6 (ejendomsværdi), § 13 (grundværdi), § 16 (ansættelse)
+   - **Ejendomsskatteloven (ESL)**: § 1 (grundskyld), § 2 (grundskyldspromille), § 45 (grundskatteloft 4,75%)
+   - **Ejendomsværdiskatteloven**: § 1 (pligt), § 4a (beregningsgrundlag ny ordning)
+   Angiv altid "jf. [lov] § [paragraf]" når du refererer til lovgivning. Brug retsinformation.dk/eli/lta/ links.
+5. Tilbyd at generere klageskabelon som Word-fil med argumenter og lovhenvisninger
+6. DISCLAIMER: "Dette er ikke juridisk rådgivning. Kontakt en advokat eller revisor for professionel vejledning."
+7. Nævn klagefrist: "Klagefristen er typisk 3 måneder fra modtagelse af vurderingen. Klag til Skatteankestyrelsen jf. SFL § 35c."
 
 ### Ved dokument-generering (generate_document tool)
 VIGTIGT — undgå fejlagtigt indhold:
+0. **BIZZ-1060: Direkte eksport-kommandoer**: Når brugeren siger "dumpe data fra tab", "eksporter tabben", "lav word af denne side", "gem data som word" eller lignende DIREKTE kommandoer:
+   - Brug ALTID activeTab fra kontekst til at bestemme hvad der eksporteres
+   - Kald de relevante tools STRAKS uden at spørge — det er en klar instruktion
+   - BIZZ-1065: Når brugeren siger "diagram" eller "ejerskabsdiagram": ALTID brug hent_datterselskaber (virksomhed) eller hent_person_virksomheder (person) — ALDRIG hent_regnskab_noegletal
+   - Tab-mapping for virksomhed: oversigt → stamdata + vurdering, ejendomme → hent_ejendomme_for_virksomhed, regnskab → hent_regnskab_noegletal, personer → CVR deltager-data, bbr → hent_bbr_data, skatter → hent_vurdering + hent_forelobig_vurdering, diagram → hent_datterselskaber + hent_ejeroplysninger
+   - BIZZ-1070: Tab-mapping for person: oversigt → hent_person_virksomheder(enhedsNummer). For PPTX: slide 1 = personens navn + stamdata, slide 2 = virksomhedsliste med tabel (kolonne: Virksomhed, CVR, Rolle, Ejerandel, Status), slide 3+ = detaljer per virksomhed. Brug format=pptx med scratch.slides[]. ALDRIG generer tom PPTX — kald ALTID tools FØR generate_document. ALDRIG hent_regnskab_noegletal medmindre eksplicit bedt om. Ejendomme → hent_ejendomme_for_person(enhedsNummer). Diagram → hent_person_virksomheder.
+   - Tab-mapping for ejendom: oversigt → hent_bbr_data + hent_vurdering, bbr → hent_bbr_data, skatter → hent_vurdering + hent_forelobig_vurdering
+   - BIZZ-1072/1071: Ved ejendoms-eksport: inkluder ALLE felter der vises i GUI — BFE, adresse, postnr, by, type, ejerandel, areal (m²), vurdering, grundværdi, seneste købspris, købsdato. Kald hent_ejendomme med fuld detalje.
+   - Generer Word/Excel/PPTX med alle data fra den aktive tab — format bestemmes af brugerens forespørgsel ("word"=docx, "excel"=xlsx, "powerpoint"/"pptx"=pptx)
 1. **Match brugerens eksplicitte instruktion**: Hvis brugeren siger "ejendomme fra ejendomstab" → brug hent_ejendomme_for_virksomhed/hent_ejendomme_for_person, IKKE stamdata eller regnskab.
-2. **Ved tvetydighed — bekræft FØR du genererer**: Hvis brugeren siger "eksporter data" uden at specificere scope, spørg:
+2. **Ved tvetydighed — bekræft FØR du genererer**: Hvis brugeren siger "eksporter data" uden at specificere SCOPE (hvilke selskaber/personer), spørg:
    "Vil du have (a) kun ejendomme ejet direkte af denne virksomhed, (b) også datterselskabers ejendomme, eller (c) stifternes personlige ejendomme også?"
 3. **Post-generation rapportering**: Efter tool-kald inkluder tydelig scope-rapport: "Dokumentet indeholder X ejendomme — Y direkte ejede + Z via datterselskaber." Så brugeren straks kan se om scope er rigtigt.
 4. **Aldrig gætte**: Hvis context-tabben ikke matcher det brugeren beder om, bekræft i stedet for at vælge den "tætteste" fortolkning.
+
+### BIZZ-1074: Domain-sag ejendoms-lookup
+Når konteksten indeholder [DOMAIN-SAG] med "Linket klient: ... (PERSON, enhedsNummer: X)":
+- Kald STRAKS hent_ejendomme_for_person(enhedsNummer=X) — brug enhedsNummer direkte fra konteksten
+- Kald ALDRIG soeg_person_cvr — du HAR allerede enhedsNummer
+- Sig ALDRIG "ingen ejendomme fundet" uden at have kaldt hent_ejendomme_for_person med korrekt enhedsNummer
+- hent_ejendomme_for_person returnerer ALLE ejendomme (personlige + via virksomheder) i ét kald
+
+### Template fill med ejendomsdata (BIZZ-981)
+Når brugeren beder om at fylle en skabelon (mode=domain_template eller attached_template) og konteksten indeholder [EJENDOMME PRE-LOADED] eller entities er linket på sagen:
+1. Hent ejendomsdata via hent_ejendomme_for_virksomhed/hent_ejendomme_for_person
+2. Inkluder ejendomsdata som array i placeholders: \`{ "properties": [{ "adresse": "...", "bfe": 123, "vurdering": 1900000, ... }] }\`
+3. Docxtemplater understøtter loops: \`{{#properties}}{{adresse}} — {{vurdering}}{{/properties}}\`
+4. For XLSX: brug mode=scratch med rows[] der indeholder én row per ejendom
 
 ### Håndtering af afkortede tool-resultater (BIZZ-869)
 Flere tools returnerer \`afkortet: true\` + \`total: N\` når resultatet er trimmet for at holde context kompakt.
@@ -779,6 +860,7 @@ For ALLE virksomheder med ejerandel: kald hent_regnskab_noegletal parallelt (all
 Egenkapital = bogført nettoværdi. Markedsværdi-multipel: 1–3× egenkapital for holdingselskaber, 3–8× EBITDA for driftsselskaber.
 
 ### REGEL 3 — Holdingkæder (effektiv ejerandel, op til 3 niveauer)
+BIZZ-1069: Traversér KUN NEDAD i hierarkiet (datterselskaber af context-CVR) — ALDRIG opad via person-ejere til andre koncerner. Hvis en ejer også ejer andre virksomheder, skal de IKKE inkluderes.
 Hvis et ejet selskab er holdingselskab (navn indeholder "Holding", "Invest", "Group", "Management" eller ingen ansatte):
 - Kald hent_datterselskaber → niveau 2-selskaber med ejerandele
 - Hvis niveau 2-selskaber OGSÅ er holdingselskaber: kald hent_datterselskaber på dem → niveau 3
@@ -876,7 +958,9 @@ async function executeTool(
   input: Record<string, string>,
   baseUrl: string,
   /** Forward user's Cookie header for authenticated internal API calls */
-  cookieHeader?: string | null
+  cookieHeader?: string | null,
+  /** BIZZ-1000: Diagram PNG base64 til injection i generate_document */
+  diagramBase64?: string
 ): Promise<unknown> {
   const cached = getCached(name, input);
   if (cached !== null) return cached;
@@ -1057,6 +1141,20 @@ async function executeTool(
       // BIZZ-890 (audit G2): virksomhedshistorik via /api/cvr-public.
       // Returnerer tidslinje fra periodiserede arrays (navne, adresse,
       // form, status, branche) + fusioner/spaltninger.
+      case 'hent_omraadeprofil': {
+        // BIZZ-947: Hent nøgletal fra Danmarks Statistik via intern API
+        const res = await fetch(
+          `${baseUrl}/api/statistik/omraade?kommunekode=${encodeURIComponent(input.kommunekode)}`,
+          internalFetchOpts
+        );
+        if (!res.ok) {
+          result = { fejl: toolErrorMessage('Områdeprofil', res.status) };
+          break;
+        }
+        result = await res.json();
+        break;
+      }
+
       case 'hent_virksomhed_historik': {
         const cvr = input.cvr?.trim();
         if (!cvr || !/^\d{8}$/.test(cvr)) {
@@ -1510,6 +1608,7 @@ async function executeTool(
                 ejerandel?: string | null;
                 ejerandelNum?: number | null;
                 aktiv?: boolean;
+                ejetAfCvr?: number | null;
               }>;
             }
           | Array<{
@@ -1517,12 +1616,22 @@ async function executeTool(
               navn: string;
               ejerandel?: string | null;
               aktiv?: boolean;
+              ejetAfCvr?: number | null;
             }>;
         const relData = Array.isArray(relJson) ? relJson : (relJson.virksomheder ?? []);
+        const forespurgtCvr = Number(input.cvr);
 
-        // Filtrer til aktive datterselskaber med ejerandel
+        // BIZZ-1069: Filtrer til KUN direkte datterselskaber — ekskludér
+        // virksomheder relateret via fælles person-ejere (som forårsagede
+        // at JaJR Holdings datterselskaber dukkede op under K. Holmgreen).
+        // ejetAfCvr === null = direkte under den forespurgte virksomhed
+        // ejetAfCvr === forespurgtCvr = direkte under den forespurgte
         const datterselskaber = relData
-          .filter((r) => r.aktiv !== false && r.ejerandel)
+          .filter((r) => {
+            if (r.aktiv === false || !r.ejerandel) return false;
+            /* BIZZ-1069: kun direkte datterselskaber, ikke via fælles ejere */
+            return r.ejetAfCvr == null || r.ejetAfCvr === forespurgtCvr;
+          })
           .map((r) => ({
             cvr: r.cvr,
             navn: r.navn,
@@ -1889,7 +1998,8 @@ async function executeTool(
         const params = new URLSearchParams();
         params.set('enhedsNummer', enr);
         if (companyCvrs.length > 0) params.set('cvr', companyCvrs.join(','));
-        params.set('limit', '50');
+        // BIZZ-982: Hævet fra 50 til 200 for at fange alle ejendomme per person
+        params.set('limit', '200');
 
         const res = await fetch(`${baseUrl}/api/ejendomme-by-owner?${params}`, internalFetchOpts);
         if (!res.ok) {
@@ -1917,7 +2027,8 @@ async function executeTool(
           result = { fejl: data.fejl };
           break;
         }
-        const MAX_EJENDOMME_PERSON = 50;
+        // BIZZ-982: Hævet fra 50 til 100 per kategori (personligt + via virksomhed)
+        const MAX_EJENDOMME_PERSON = 100;
         const aktive = (data.ejendomme ?? []).filter((e) => e.aktiv !== false);
 
         // Kategoriser: personligt ejet vs via virksomhed
@@ -1955,11 +2066,15 @@ async function executeTool(
 
       case 'generate_document': {
         // BIZZ-813: POST til /api/ai/generate-file med Claude's input.
-        // Returnerer HELE response-objektet inkl. download_url —
-        // wrapper-laget emitterer SSE-event med download_url før den
-        // sender et SANITIZED tool_result tilbage til Claude (uden URL,
-        // så Claude ikke inkluderer det i markdown-svar).
+        // BIZZ-1000: Injicér diagramBase64 i sektioner med imageBase64="DIAGRAM" placeholder.
         const fileInput = input as unknown as Record<string, unknown>;
+        if (diagramBase64 && Array.isArray(fileInput.sections)) {
+          for (const section of fileInput.sections as Record<string, unknown>[]) {
+            if (section.imageBase64 === 'DIAGRAM') {
+              section.imageBase64 = diagramBase64;
+            }
+          }
+        }
         const res = await fetch(`${baseUrl}/api/ai/generate-file`, {
           method: 'POST',
           headers: {
@@ -2494,7 +2609,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     return Response.json({ error: 'Ugyldig JSON' }, { status: 400 });
   }
 
-  const { messages, context, attachments, session_id: sessionId } = body;
+  const { messages, context, attachments, session_id: sessionId, diagramBase64 } = body;
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     return Response.json({ error: 'Ingen beskeder' }, { status: 400 });
   }
@@ -2869,7 +2984,8 @@ export async function POST(request: NextRequest): Promise<Response> {
                 toolBlock.name,
                 toolBlock.input as Record<string, string>,
                 baseUrl,
-                request.headers.get('cookie')
+                request.headers.get('cookie'),
+                diagramBase64
               );
 
               // BIZZ-813: generate_document returnerer download_url —

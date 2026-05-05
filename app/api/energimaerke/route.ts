@@ -174,6 +174,31 @@ export async function GET(request: NextRequest): Promise<NextResponse<Energimaer
 
   const { bfeNummer } = parsed.data;
 
+  /* BIZZ-1096: Cache-first — tjek bbr_ejendom_status.energimaerke_data */
+  try {
+    const { createAdminClient } = await import('@/lib/supabase/admin');
+    const admin = createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: cached } = (await (admin as any)
+      .from('bbr_ejendom_status')
+      .select('energimaerke_data')
+      .eq('bfe_nummer', Number(bfeNummer))
+      .maybeSingle()) as { data: { energimaerke_data: EnergimaerkeItem[] | null } | null };
+
+    if (
+      cached?.energimaerke_data &&
+      Array.isArray(cached.energimaerke_data) &&
+      cached.energimaerke_data.length > 0
+    ) {
+      return NextResponse.json(
+        { maerker: cached.energimaerke_data, manglerAdgang: false, fejl: null },
+        { headers: { 'Cache-Control': 'public, s-maxage=86400', 'X-Cache': 'HIT' } }
+      );
+    }
+  } catch {
+    /* cache miss — fall through */
+  }
+
   if (!process.env.EMO_USERNAME || !process.env.EMO_PASSWORD) {
     return NextResponse.json({
       maerker: null,
@@ -262,11 +287,26 @@ export async function GET(request: NextRequest): Promise<NextResponse<Energimaer
       } satisfies EnergimaerkeItem;
     });
 
+    // BIZZ-1159: Writeback til cache — energimærker er statiske (gyldige 10 år)
+    try {
+      const { createAdminClient } = await import('@/lib/supabase/admin');
+      const admin = createAdminClient();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (admin as any)
+        .from('bbr_ejendom_status')
+        .upsert(
+          { bfe_nummer: Number(bfeNummer), energimaerke_data: maerker },
+          { onConflict: 'bfe_nummer' }
+        );
+    } catch {
+      /* writeback non-fatal */
+    }
+
     return NextResponse.json(
       { maerker, manglerAdgang: false, fejl: null },
       {
         status: 200,
-        headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
+        headers: { 'Cache-Control': 'public, s-maxage=86400, stale-while-revalidate=7200' },
       }
     );
   } catch (err) {

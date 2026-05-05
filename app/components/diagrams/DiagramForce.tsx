@@ -2554,34 +2554,24 @@ function DiagramForce({
         // personligt-ejede-relationer er visuelt adskilt fra virksomheds-
         // ejendom-relationer. Brugeren kan dermed hurtigt identificere
         // hvilke ejendomme der ejes direkte af personen vs via selskab.
-        const isPersonToProperty = isPropertyEdge && fromNode?.type === 'person';
         // BIZZ-689: crossOwnership-edges (krydsejerskab mellem virksomheder
         // i samme graf) bruger amber-farve + dashed for visuel distinktion
         // fra primary parent→child-edges.
         const isCrossOwnership = !!edge.crossOwnership;
         /* BIZZ-1086: crossOwnership-linjer gjort mere subtile (0.35 opacity) */
+        // Person→property bruger SAMME stil som company→property (ensartet look)
         const strokeColor = isCrossOwnership
           ? 'rgba(251,191,36,0.35)' // amber-400 subtil
           : isCoOwnerEdge
             ? 'rgba(167,139,250,0.55)'
-            : isPersonToProperty
-              ? 'rgba(110,231,183,0.75)' // Lysere emerald-400
-              : isPropertyEdge
-                ? 'rgba(52,211,153,0.65)'
-                : edge.from === effectiveGraph.mainId || edge.to === effectiveGraph.mainId
-                  ? 'rgba(96,165,250,0.85)'
-                  : 'rgba(148,163,184,0.75)';
-        // BIZZ-585: Dashed stroke for person→property — samme signaleringsstil
-        // som co-owner-edges men med emerald i stedet for lilla.
-        // BIZZ-689: cross-ownership bruger længere dash-pattern (6 4) for at
-        // være tydeligt distinkt fra person→property (5 3) og co-owner (4 3).
-        const dashArray = isCrossOwnership
-          ? '6 4'
-          : isCoOwnerEdge
-            ? '4 3'
-            : isPersonToProperty
-              ? '5 3'
-              : undefined;
+            : isPropertyEdge
+              ? 'rgba(52,211,153,0.65)'
+              : edge.from === effectiveGraph.mainId || edge.to === effectiveGraph.mainId
+                ? 'rgba(96,165,250,0.85)'
+                : 'rgba(148,163,184,0.75)';
+        // BIZZ-689: cross-ownership bruger længere dash-pattern (6 4),
+        // co-owner bruger (4 3). Ejendomme er solid (ingen dash).
+        const dashArray = isCrossOwnership ? '6 4' : isCoOwnerEdge ? '4 3' : undefined;
 
         return (
           <g key={`e-${i}`}>

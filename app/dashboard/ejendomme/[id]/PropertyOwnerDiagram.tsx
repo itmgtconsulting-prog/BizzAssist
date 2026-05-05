@@ -118,14 +118,18 @@ export default function PropertyOwnerDiagram({
     return () => controller.abort();
   }, [bfe, adresse, erEjerlejlighed]);
 
-  if (loading)
-    // BIZZ-478: Brug den blå TabLoadingSpinner-bar i stedet for box-spinner
-    // så ejendomssidens diagram-tab visuelt matcher resten af appen.
-    return (
+  if (loading) {
+    // cardsOnly: kun blå bar uden tekst; fuld: med tekst
+    return cardsOnly ? (
+      <TabLoadingSpinner ariaLabel={da ? 'Henter ejerskabsdata' : 'Loading ownership data'} />
+    ) : (
       <TabLoadingSpinner label={da ? 'Henter ejerstruktur…' : 'Loading ownership structure…'} />
     );
+  }
 
   if (!graph || graph.nodes.length <= 1) {
+    // cardsOnly: vis intet (DiagramV2 håndterer tom-state)
+    if (cardsOnly) return null;
     const besked = da ? 'Ingen ejerstruktur tilgængelig' : 'No ownership structure available';
     return (
       <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-6 text-center">

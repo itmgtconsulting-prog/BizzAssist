@@ -1002,15 +1002,31 @@ async function resolvePersonGraph(
     }
   }
 
-  // Klassificér virksomheder: ejerskab = aktiv 'register'-relation
-  // Virksomheder UDEN register-relation → Øvrige roller (uanset stifter/interessenter)
+  // Klassificér virksomheder: ejerskab = register, interessenter, eller indehaver
+  // Virksomheder UDEN ejerskabsrolle → Øvrige roller (direktør, bestyrelse)
+  const OWNERSHIP_ROLES = ['register', 'interessenter', 'indehaver', 'stifter'];
   const ownershipCvrs: string[] = [];
   const roleCvrs: string[] = [];
   for (const [cvr, roller] of personVirkRollerMap) {
-    if (roller.includes('register')) {
+    if (roller.some((r) => OWNERSHIP_ROLES.includes(r))) {
       ownershipCvrs.push(cvr);
     } else {
       roleCvrs.push(cvr);
+    }
+  }
+  // Gem ejerandel fra interessenter/indehaver som fallback for virksomheder
+  // der ikke har register-type men har ejerandel via anden ejerskabsrolle
+  for (const r of (personRelRows ?? []) as Array<{
+    virksomhed_cvr: string;
+    type: string;
+    ejerandel_pct: number | null;
+  }>) {
+    if (
+      OWNERSHIP_ROLES.includes(r.type) &&
+      r.ejerandel_pct != null &&
+      !registerEjerandelMap.has(r.virksomhed_cvr)
+    ) {
+      registerEjerandelMap.set(r.virksomhed_cvr, r.ejerandel_pct);
     }
   }
   const allCvrs = [...ownershipCvrs, ...roleCvrs];
@@ -1099,9 +1115,10 @@ async function resolvePersonGraph(
     // Kun top-level virksomheder (uden parent i grafen) forbindes til personen
     if (!parentOfCvr.has(cvrStr)) {
       topLevelCvrs.push(cvrStr);
-      // Ejerandel fra register-type (Det Offentlige Ejerregister)
+      // Ejerandel fra register/interessenter/indehaver
       const regPct = registerEjerandelMap.get(cvrStr);
-      const ejerandel = regPct != null ? `${Math.round(regPct)}%` : undefined;
+      // Vis procent hvis tilgængelig, ellers "Ejer" som fallback
+      const ejerandel = regPct != null ? `${Math.round(regPct)}%` : 'Ejer';
       edges.push({ from: mainId, to: companyId, ejerandel });
     }
   }

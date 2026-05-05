@@ -76,9 +76,9 @@ export default function PropertyOwnerDiagram({
 
     const controller = new AbortController();
 
-    // BIZZ-1154: cardsOnly-mode bruger IKKE skipTinglysning — vi behøver
-    // Tinglysning for adkomsttype + købesum i ejerkortene.
-    const typeParam = erEjerlejlighed && !cardsOnly ? '&type=ejerlejlighed' : '';
+    // BIZZ-1174: Gendan skipTinglysning for ejerlejligheder (performance).
+    // Adkomsttype+købesum beriges fra salgshistorik i parent i stedet.
+    const typeParam = erEjerlejlighed ? '&type=ejerlejlighed' : '';
     // BIZZ-973: Hent KUN ejerskabs-chain (ikke administratorer).
     // Administratorer hører til ejerskabs-tabben, ikke diagrammet.
     fetch(`/api/ejerskab/chain?bfe=${bfe}&adresse=${encodeURIComponent(adresse)}${typeParam}`, {

@@ -184,16 +184,6 @@ export default function EjendomOverblikTab({
       {(bbrLoader || vurderingLoader) && !bbrData && (
         <TabLoadingSpinner label={t.loadingOverblik} />
       )}
-      {/* Ejendomsstruktur-træ for opdelte ejendomme */}
-      {strukturLoader && (
-        <TabLoadingSpinner
-          label={da ? 'Henter ejendomsstruktur…' : 'Loading property structure…'}
-        />
-      )}
-      {strukturTree && !strukturLoader && (
-        <EjendomStrukturTree tree={strukturTree} lang={lang} currentBfe={currentBfe} />
-      )}
-
       {/* 2-spalte layout: ejendomsdata (venstre) + økonomi (højre) */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
         {/* ─── Rad 1: Matrikel (v) + Ejendomsvurdering (h) ─── */}
@@ -796,6 +786,16 @@ export default function EjendomOverblikTab({
         postnr={dawaAdresse?.postnr ?? null}
         lang={lang}
       />
+      {/* Ejendomsstruktur-træ for opdelte ejendomme — placeret over Lokalplan */}
+      {strukturLoader && (
+        <TabLoadingSpinner
+          label={da ? 'Henter ejendomsstruktur…' : 'Loading property structure…'}
+        />
+      )}
+      {strukturTree && !strukturLoader && (
+        <EjendomStrukturTree tree={strukturTree} lang={lang} currentBfe={currentBfe} />
+      )}
+
       {/* BIZZ-1025: Lokalplan detaljer */}
       <PlandataSektion adresseId={dawaAdresse?.id ?? null} lang={lang} />
       {/* BIZZ-1018: Skråfoto flyttet til BBR-tab */}

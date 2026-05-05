@@ -1893,20 +1893,39 @@ export default function EjendomDetaljeClient({
                     {da ? 'Gå til hovedejendom' : 'Go to main property'}
                   </button>
                 )}
-                {/* Moderejandom (ingen etage, men har ejerlejlighedBfe): statisk badge */}
-                {bbrData?.ejerlejlighedBfe && !dawaAdresse?.etage && (
-                  <span
-                    className="flex items-center gap-1.5 px-3 py-1 bg-amber-500/15 border border-amber-500/30 rounded-lg text-amber-400 text-xs font-medium flex-shrink-0"
-                    title={
-                      lang === 'da'
-                        ? `Denne ejendom er en hovedejendom (BFE ${bbrData.moderBfe ?? bbrData.ejerlejlighedBfe})`
-                        : `This property is a main property (BFE ${bbrData.moderBfe ?? bbrData.ejerlejlighedBfe})`
-                    }
-                  >
-                    <Building2 size={12} />
-                    {lang === 'da' ? 'Hovedejendom' : 'Main property'}
-                  </span>
-                )}
+                {/* Moderejandom (ingen etage, men har ejerlejlighedBfe): klikbar
+                    "Gå til SFE" knap når strukturTree har en SFE med dawaId,
+                    ellers statisk badge. */}
+                {bbrData?.ejerlejlighedBfe &&
+                  !dawaAdresse?.etage &&
+                  (strukturTree?.niveau === 'sfe' && strukturTree.dawaId ? (
+                    <button
+                      onClick={() => {
+                        router.push(`/dashboard/ejendomme/${strukturTree.dawaId}`);
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1 bg-amber-500/15 border border-amber-500/30 rounded-lg text-amber-400 text-xs font-medium hover:bg-amber-500/25 transition-colors flex-shrink-0"
+                      title={
+                        da
+                          ? `Gå til SFE-ejendommen (BFE ${strukturTree.bfe})`
+                          : `Go to SFE property (BFE ${strukturTree.bfe})`
+                      }
+                    >
+                      <Building2 size={12} />
+                      {da ? 'Gå til SFE ejendom' : 'Go to SFE property'}
+                    </button>
+                  ) : (
+                    <span
+                      className="flex items-center gap-1.5 px-3 py-1 bg-amber-500/15 border border-amber-500/30 rounded-lg text-amber-400 text-xs font-medium flex-shrink-0"
+                      title={
+                        da
+                          ? `Denne ejendom er en hovedejendom (BFE ${bbrData.moderBfe ?? bbrData.ejerlejlighedBfe})`
+                          : `This property is a main property (BFE ${bbrData.moderBfe ?? bbrData.ejerlejlighedBfe})`
+                      }
+                    >
+                      <Building2 size={12} />
+                      {da ? 'Hovedejendom' : 'Main property'}
+                    </span>
+                  ))}
                 {bbrData?.ejerlejlighedBfe && (
                   <span className="flex items-center gap-1 px-2 py-0.5 bg-purple-500/15 border border-purple-500/30 rounded-full text-purple-400 text-[10px] font-medium flex-shrink-0">
                     {lang === 'da' ? 'Ejerlejlighed' : 'Condominium'}

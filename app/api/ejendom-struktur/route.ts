@@ -506,10 +506,42 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
       };
     });
 
-    // Ejerlejligheder der ikke matchede en hovedejendom (orphans)
-    const orphanLejligheder: StrukturNode[] = ejerlejlighedItems
-      .filter((ejl) => !assignedEjl.has(ejl.bfe))
-      .map((ejl) => ({
+    // Orphan-ejerlejligheder: gruppér per husnr og opret virtuelle
+    // hovedejendom-noder for dem. Tinglysning returnerer ikke altid
+    // en eksplicit "Hovedejendom"-item for alle opgange, men ejerlejlighederne
+    // hører logisk under en hovedejendom med samme husnr.
+    const orphanItems = ejerlejlighedItems.filter((ejl) => !assignedEjl.has(ejl.bfe));
+    const orphanByHusnr = new Map<string, typeof orphanItems>();
+    for (const ejl of orphanItems) {
+      const group = orphanByHusnr.get(ejl.husnr) ?? [];
+      group.push(ejl);
+      orphanByHusnr.set(ejl.husnr, group);
+    }
+
+    // Opret virtuelle hovedejendom-noder for orphan-grupper og hent
+    // deres vurderinger + DAWA-ID'er
+    const virtualHovedNodes: StrukturNode[] = [];
+    for (const [husnr, ejls] of orphanByHusnr) {
+      // Byg adresse for den virtuelle hovedejendom: vejnavn + husnr + postnr
+      const firstAddr = ejls[0].adresse;
+      const streetMatch = firstAddr
+        .split(',')[0]
+        .trim()
+        .match(/^(.+?)\s+\d+\w*$/);
+      const postMatch = firstAddr.match(/(\d{4}\s+\S+.*)$/);
+      const vejnavn = streetMatch?.[1] ?? '';
+      const postBy = postMatch?.[1] ?? '';
+      const hovedAdresse = `${vejnavn} ${husnr}, ${postBy}`;
+
+      // Resolve DAWA ID for den virtuelle hovedejendom
+      let hovedDawaId: string | null = null;
+      try {
+        hovedDawaId = await resolveDawaId(hovedAdresse, null, null);
+      } catch {
+        /* non-fatal */
+      }
+
+      const children: StrukturNode[] = ejls.map((ejl) => ({
         bfe: ejl.bfe,
         adresse: ejl.adresse,
         niveau: 'ejerlejlighed' as const,
@@ -521,19 +553,44 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
         children: [],
       }));
 
+      virtualHovedNodes.push({
+        bfe: 0,
+        adresse: hovedAdresse,
+        niveau: 'hovedejendom',
+        dawaId: hovedDawaId,
+        ejendomsvaerdi: null,
+        grundvaerdi: null,
+        vurderingsaar: null,
+        tlVurdering: null,
+        children,
+      });
+    }
+
     // Root node = SFE
     const sfeItem = sfeItems[0];
     const sfeAdresse = sfeItem?.adresse ?? items[0].adresse.split(',').slice(0, 1).join(',').trim();
+
+    // SFE DAWA ID: prøv først den vi allerede har; hvis den fejlede, prøv
+    // adgangsadresse-lookup med bare vejnavn+laveste husnr
+    let sfeDawaId = dawaMap.get(sfeAdresse) ?? null;
+    if (!sfeDawaId && sfeItem) {
+      try {
+        sfeDawaId = await resolveDawaId(sfeItem.adresse, null, null);
+      } catch {
+        /* non-fatal */
+      }
+    }
+
     const root: StrukturNode = {
       bfe: sfeBfe ?? sfeItem?.bfe ?? 0,
       adresse: sfeAdresse,
       niveau: 'sfe',
-      dawaId: dawaMap.get(sfeAdresse) ?? null,
+      dawaId: sfeDawaId,
       ejendomsvaerdi: null,
       grundvaerdi: null,
       vurderingsaar: null,
       tlVurdering: sfeItem?.ejendomsVurdering ?? null,
-      children: [...hovedejendomNodes, ...orphanLejligheder],
+      children: [...hovedejendomNodes, ...virtualHovedNodes],
     };
 
     return NextResponse.json(

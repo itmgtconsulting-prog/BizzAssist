@@ -561,52 +561,59 @@ function wrapSitemap(urlElements: string[]): string {
 async function phaseRenderXml(
   admin: ReturnType<typeof createAdminClient>
 ): Promise<{ pagesRendered: number; totalEntries: number; done: boolean }> {
-  // Count total entries to determine number of pages
-  const { count: totalCount } = await admin
-    .from('sitemap_entries')
-    .select('*', { count: 'exact', head: true });
-
-  const STATIC_COUNT = 4; // static pages on page 0
-  const total = (totalCount ?? 0) + STATIC_COUNT;
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-
-  // Resume from last rendered page
-  const cursor = await getProgress(admin, RENDER_XML_PROGRESS_KEY);
-  let startPage = cursor && cursor !== '0' ? parseInt(cursor, 10) : 0;
-  if (startPage >= totalPages) startPage = 0; // wrap around
-
+  const STATIC_COUNT = 4;
+  const CHUNK = 1000;
   const runStart = Date.now();
+
+  // Resume from last cursor (UUID of last processed entry, or '0' for start)
+  const cursor = await getProgress(admin, RENDER_XML_PROGRESS_KEY);
+  const afterId = cursor && cursor !== '0' ? cursor : null;
+
+  // Track pages: if resuming, figure out which page_id we're on
+  // by counting how many entries come before our cursor.
+  let pageId = 0;
+  if (afterId) {
+    const { count } = await admin
+      .from('sitemap_entries')
+      .select('*', { count: 'exact', head: true })
+      .lt('id', afterId);
+    const entriesBefore = (count ?? 0) + STATIC_COUNT;
+    pageId = Math.floor(entriesBefore / PAGE_SIZE);
+  }
+
   let pagesRendered = 0;
+  let lastId = afterId;
+  let totalRead = 0;
+  let globalDone = false;
 
-  for (let pageId = startPage; pageId < totalPages; pageId++) {
-    if (Date.now() - runStart > SAFETY_BUDGET_MS) break;
-
+  // Outer loop: one iteration per sitemap page
+  while (Date.now() - runStart < SAFETY_BUDGET_MS) {
     const urlElements: string[] = [];
 
     // Page 0 includes static pages
-    if (pageId === 0) {
+    if (pageId === 0 && !lastId) {
       urlElements.push(...staticPageUrls());
     }
 
-    // Calculate DB offset and limit for this page
-    const staticOnThisPage = pageId === 0 ? STATIC_COUNT : 0;
-    const dbLimit = PAGE_SIZE - staticOnThisPage;
-    const dbOffset = pageId === 0 ? 0 : pageId * PAGE_SIZE - STATIC_COUNT;
+    const targetCount = pageId === 0 && !lastId ? PAGE_SIZE - STATIC_COUNT : PAGE_SIZE;
 
-    // Read entries in 1000-row chunks (PostgREST cap)
-    const CHUNK = 1000;
-    let chunkCursor = dbOffset;
-    const endExclusive = dbOffset + dbLimit;
-
-    while (chunkCursor < endExclusive) {
+    // Read entries via cursor-based pagination on id (PK, btree-indexed)
+    let pageEntries = 0;
+    while (pageEntries < targetCount) {
       if (Date.now() - runStart > SAFETY_BUDGET_MS) break;
 
-      const chunkEnd = Math.min(chunkCursor + CHUNK - 1, endExclusive - 1);
-      const { data, error } = await admin
+      const limit = Math.min(CHUNK, targetCount - pageEntries);
+      let query = admin
         .from('sitemap_entries')
-        .select('type, slug, entity_id, updated_at')
-        .order('updated_at', { ascending: false })
-        .range(chunkCursor, chunkEnd);
+        .select('id, type, slug, entity_id, updated_at')
+        .order('id', { ascending: true })
+        .limit(limit);
+
+      if (lastId) {
+        query = query.gt('id', lastId);
+      }
+
+      const { data, error } = await query;
 
       if (error) {
         logger.error('[generate-sitemap] render-xml DB read error:', error.message);
@@ -614,7 +621,10 @@ async function phaseRenderXml(
       }
 
       const rows = data ?? [];
-      if (rows.length === 0) break;
+      if (rows.length === 0) {
+        globalDone = true;
+        break;
+      }
 
       for (const row of rows) {
         const loc =
@@ -626,51 +636,58 @@ async function phaseRenderXml(
         urlElements.push(serializeUrl(loc, lastmod, 'monthly', priority));
       }
 
-      if (rows.length < CHUNK) break;
-      chunkCursor += CHUNK;
+      lastId = rows[rows.length - 1].id;
+      pageEntries += rows.length;
+      totalRead += rows.length;
+
+      if (rows.length < limit) {
+        globalDone = true;
+        break;
+      }
     }
 
-    // Build and store XML
-    const xml = wrapSitemap(urlElements);
+    // Only store the page if it has content
+    if (urlElements.length > 0) {
+      const xml = wrapSitemap(urlElements);
 
-    const { error: upsertErr } = await admin.from('sitemap_xml_cache').upsert(
-      {
-        page_id: pageId,
-        xml,
-        entry_count: urlElements.length,
-        generated_at: new Date().toISOString(),
-      },
-      { onConflict: 'page_id' }
-    );
+      const { error: upsertErr } = await admin.from('sitemap_xml_cache').upsert(
+        {
+          page_id: pageId,
+          xml,
+          entry_count: urlElements.length,
+          generated_at: new Date().toISOString(),
+        },
+        { onConflict: 'page_id' }
+      );
 
-    if (upsertErr) {
-      logger.error(`[generate-sitemap] render-xml upsert page ${pageId} error:`, upsertErr.message);
-      break;
+      if (upsertErr) {
+        logger.error(
+          `[generate-sitemap] render-xml upsert page ${pageId} error:`,
+          upsertErr.message
+        );
+        break;
+      }
+
+      pagesRendered++;
+      logger.log(`[generate-sitemap] render-xml page ${pageId}: ${urlElements.length} URLs`);
     }
 
-    pagesRendered++;
-    await saveProgress(admin, RENDER_XML_PROGRESS_KEY, String(pageId + 1));
-    logger.log(
-      `[generate-sitemap] render-xml page ${pageId}/${totalPages - 1}: ${urlElements.length} URLs`
-    );
+    // Save cursor after each page
+    await saveProgress(admin, RENDER_XML_PROGRESS_KEY, lastId ?? '0');
+    pageId++;
+
+    if (globalDone) break;
   }
 
-  // Check if we rendered all pages
-  const nextPage = startPage + pagesRendered;
-  const done = nextPage >= totalPages;
-  if (done) {
-    // Only clean up stale cache pages when totalPages is plausible (> 1).
-    // A totalPages of 1 usually means the sitemap_entries count query
-    // returned 0 (transient DB error) — deleting in that case would
-    // wipe the entire cache. Guard: only prune when we know there are
-    // real entries backing the pages we just rendered.
-    if (totalPages > 1) {
-      await admin.from('sitemap_xml_cache').delete().gte('page_id', totalPages);
+  if (globalDone) {
+    // Clean up stale pages above the last rendered page
+    if (pageId > 1) {
+      await admin.from('sitemap_xml_cache').delete().gte('page_id', pageId);
     }
     await saveProgress(admin, RENDER_XML_PROGRESS_KEY, '0');
   }
 
-  return { pagesRendered, totalEntries: total, done };
+  return { pagesRendered, totalEntries: totalRead, done: globalDone };
 }
 
 // ─── Route handler ─────────────────────────────────────────────────────────────

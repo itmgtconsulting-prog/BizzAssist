@@ -149,11 +149,11 @@ function mapHit(hit) {
 
         // Hent ejerandel fra EJERANDEL-attribut (gældende værdi)
         let ejerandelPct = null;
-        const ejerAttr = attrs.find(a => a.type === 'EJERANDEL');
+        const ejerAttr = attrs.find(a => a.type === 'EJERANDEL' || a.type === 'EJERANDEL_PROCENT');
         if (ejerAttr) {
           const ejerVals = Array.isArray(ejerAttr.vaerdier) ? ejerAttr.vaerdier : [];
           const gyldigEjer = ejerVals.find(v => !v.periode?.gyldigTil) ?? ejerVals[ejerVals.length - 1];
-          if (gyldigEjer?.vaerdi) ejerandelPct = parseFloat(gyldigEjer.vaerdi);
+          if (gyldigEjer?.vaerdi) { const raw = parseFloat(gyldigEjer.vaerdi); ejerandelPct = raw <= 1 ? raw * 100 : raw; }
         }
 
         for (const attr of attrs) {
@@ -190,11 +190,11 @@ function mapHit(hit) {
         // Hent ejerandel fra evt. EJERANDEL-attribut i medlemsData
         let fallbackPct = null;
         for (const md of medlemsData) {
-          const ejerAttr = (Array.isArray(md.attributter) ? md.attributter : []).find(a => a.type === 'EJERANDEL');
+          const ejerAttr = (Array.isArray(md.attributter) ? md.attributter : []).find(a => a.type === 'EJERANDEL' || a.type === 'EJERANDEL_PROCENT');
           if (ejerAttr) {
             const vals = Array.isArray(ejerAttr.vaerdier) ? ejerAttr.vaerdier : [];
             const gv = vals.find(v => !v.periode?.gyldigTil) ?? vals[vals.length - 1];
-            if (gv?.vaerdi) fallbackPct = parseFloat(gv.vaerdi);
+            if (gv?.vaerdi) { const raw = parseFloat(gv.vaerdi); fallbackPct = raw <= 1 ? raw * 100 : raw; }
           }
         }
         const fallbackType = normalizeRolle(hovedtype) ?? hovedtype.toLowerCase().slice(0, 50);

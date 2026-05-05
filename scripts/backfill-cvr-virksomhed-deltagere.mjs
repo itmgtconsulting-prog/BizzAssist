@@ -134,11 +134,15 @@ function extractRelations(targetCvr, deltagerRels) {
       let orgEjerandelPct = null;
       for (const md of medlemsData) {
         const attrs = Array.isArray(md.attributter) ? md.attributter : [];
-        const ejerAttr = attrs.find(a => a.type === 'EJERANDEL');
+        const ejerAttr = attrs.find(a => a.type === 'EJERANDEL' || a.type === 'EJERANDEL_PROCENT');
         if (ejerAttr) {
           const vals = Array.isArray(ejerAttr.vaerdier) ? ejerAttr.vaerdier : [];
           const gyldig = vals.find(v => !v.periode?.gyldigTil) ?? vals[vals.length - 1];
-          if (gyldig?.vaerdi) orgEjerandelPct = parseFloat(gyldig.vaerdi);
+          if (gyldig?.vaerdi) {
+            const raw = parseFloat(gyldig.vaerdi);
+            // CVR ES returnerer 0-1 skala (1.0 = 100%) — konvertér til procent
+            orgEjerandelPct = raw <= 1 ? raw * 100 : raw;
+          }
         }
       }
 

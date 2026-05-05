@@ -31,13 +31,11 @@ import {
   Map as MapIcon,
   Briefcase,
   RefreshCw,
-  Sparkles,
 } from 'lucide-react';
 /** BIZZ-600: PropertyMap wraps mapbox-gl (browser-only) — dynamic() keeps mapbox-gl out of initial bundle */
 // prettier-ignore
 const PropertyMap = dynamic(/* mapbox-gl */ () => import('@/app/components/ejendomme/PropertyMap'), { ssr: false, loading: () => (<div className="w-full h-64 bg-slate-800/50 rounded-xl animate-pulse flex items-center justify-center"><span className="text-slate-500 text-sm">Indlæser kort...</span></div>) });
 /** Diagram v2 — feature-flagged, kun synlig i dev/preview */
-const DiagramV2 = dynamic(() => import('@/app/components/diagrams/DiagramV2'), { ssr: false });
 import { type EjerstrukturNode } from '@/app/lib/mock/ejendomme';
 import { erDawaId, type DawaAdresse, type DawaJordstykke } from '@/app/lib/dawa';
 import { formatBenyttelseOgByggeaar } from '@/app/lib/benyttelseskoder';
@@ -70,7 +68,7 @@ import { useLanguage } from '@/app/context/LanguageContext';
 import { useSetAIPageContext } from '@/app/context/AIPageContext';
 import dynamic from 'next/dynamic';
 import { logger } from '@/app/lib/logger';
-import { isDiagram2Enabled } from '@/app/lib/featureFlags';
+// isDiagram2Enabled fjernet
 import TinglysningTab from './TinglysningTab';
 // BIZZ-657: Tab-subkomponenter extraheret til selvstændige præsentations-komponenter
 import EjendomSkatTab from './tabs/EjendomSkatTab';
@@ -89,7 +87,7 @@ type Tab =
   | 'overblik'
   | 'bbr'
   | 'ejerforhold'
-  | 'diagram2'
+  // diagram2 fjernet — DiagramV2 vises nu på ejerskab-fanen
   | 'tinglysning'
   | 'oekonomi'
   | 'skatter'
@@ -101,9 +99,7 @@ function buildTabs(da: boolean): { id: Tab; label: string; ikon: React.ReactNode
     { id: 'overblik', label: da ? 'Oversigt' : 'Overview', ikon: <Building2 size={12} /> },
     { id: 'bbr', label: 'BBR', ikon: <FileText size={12} /> },
     { id: 'ejerforhold', label: da ? 'Ejerskab' : 'Ownership', ikon: <Users size={12} /> },
-    ...(isDiagram2Enabled()
-      ? [{ id: 'diagram2' as const, label: 'Diagram v2', ikon: <Sparkles size={12} /> }]
-      : []),
+    // Diagram v2 fane fjernet — diagrammet vises nu på Ejerskab-fanen
     { id: 'oekonomi', label: da ? 'Økonomi' : 'Financials', ikon: <BarChart3 size={12} /> },
     { id: 'skatter', label: da ? 'SKAT' : 'Tax', ikon: <Landmark size={12} /> },
     {
@@ -303,7 +299,7 @@ export default function EjendomDetaljeClient({
 
   const [aktivTab, setAktivTab] = useState<Tab>('overblik');
   /** BIZZ-1121: Lazy-mount — mount ved første klik, behold med display:none */
-  const [diagram2Mounted, setDiagram2Mounted] = useState(false);
+  // diagram2Mounted fjernet
   const [valgteDoc, setValgteDoc] = useState<Set<string>>(new Set());
 
   /**
@@ -2384,55 +2380,7 @@ export default function EjendomDetaljeClient({
               />
             )}
 
-            {/* ══ DIAGRAM v2 (feature-flagged) ══ */}
-            {/* BIZZ-1121: Lazy-mount ved første klik, derefter display:none */}
-            {bbrData && (aktivTab === 'diagram2' || diagram2Mounted) && (
-              <div
-                ref={() => {
-                  if (!diagram2Mounted) setDiagram2Mounted(true);
-                }}
-                style={{ display: aktivTab === 'diagram2' ? 'block' : 'none' }}
-              >
-                {/* Hovedejendomme (opdelt) har ikke eget ejerskab — vis forklaring
-                    i stedet for misvisende diagram med moderejandom-ejere. */}
-                {!dawaAdresse?.etage && !!bbrData.ejerlejlighedBfe ? (
-                  <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-6 text-center space-y-3">
-                    <div className="w-10 h-10 mx-auto bg-amber-500/10 rounded-full flex items-center justify-center">
-                      <Building2 size={22} className="text-amber-400" />
-                    </div>
-                    <p className="text-blue-300 text-sm font-medium">
-                      {da
-                        ? 'Ejerskab er fordelt på ejerlejligheder'
-                        : 'Ownership is distributed to condominiums'}
-                    </p>
-                    <p className="text-slate-400 text-xs max-w-md mx-auto">
-                      {da
-                        ? 'Denne ejendom er opdelt i ejerlejligheder. Ejerskabs-diagrammet vises på de enkelte lejligheder. Se Ejerskab-fanen for en oversigt over alle lejligheder og deres ejere.'
-                        : 'This property is divided into condominiums. The ownership diagram is shown on individual units. See the Ownership tab for a list of all units and their owners.'}
-                    </p>
-                    <button
-                      onClick={() => setAktivTab('ejerforhold')}
-                      className="text-blue-400 text-xs font-medium hover:text-blue-300 transition-colors"
-                    >
-                      {da ? 'Gå til Ejerskab-fanen →' : 'Go to Ownership tab →'}
-                    </button>
-                  </div>
-                ) : (
-                  <DiagramV2
-                    rootType="property"
-                    rootId={String(
-                      bbrData.ejendomsrelationer?.[0]?.bfeNummer ?? dawaAdresse?.id ?? ''
-                    )}
-                    rootLabel={
-                      dawaAdresse
-                        ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
-                        : `BFE ${bbrData.ejendomsrelationer?.[0]?.bfeNummer ?? ''}`
-                    }
-                    lang={da ? 'da' : 'en'}
-                  />
-                )}
-              </div>
-            )}
+            {/* Diagram v2 fane fjernet — DiagramV2 vises nu på Ejerskab-fanen */}
 
             {/* ══ EJERFORHOLD — always mounted for prefetch (BIZZ-410), hidden when not active ══ */}
             <div className={aktivTab === 'ejerforhold' ? '' : 'hidden'}>

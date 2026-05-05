@@ -17,7 +17,9 @@
 import { Building2 } from 'lucide-react';
 import EjendomAdministratorCard from '@/app/components/ejendomme/EjendomAdministratorCard';
 import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
-import PropertyOwnerDiagram from '../PropertyOwnerDiagram';
+import dynamic from 'next/dynamic';
+// PropertyOwnerDiagram fjernet — DiagramV2 erstatter det
+const DiagramV2 = dynamic(() => import('@/app/components/diagrams/DiagramV2'), { ssr: false });
 import type { EjendomApiResponse } from '@/app/api/ejendom/[id]/route';
 import type { DawaAdresse } from '@/app/lib/dawa';
 import type { Ejerlejlighed } from '@/app/api/ejerlejligheder/route';
@@ -251,15 +253,15 @@ export default function EjendomEjerforholdTab({
           if (!bfeForDiagram) return null;
           return (
             <div className="space-y-4">
-              <PropertyOwnerDiagram
-                bfe={bfeForDiagram}
-                adresse={
+              <DiagramV2
+                rootType="property"
+                rootId={String(bfeForDiagram)}
+                rootLabel={
                   dawaAdresse
                     ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
                     : `BFE ${bfeForDiagram}`
                 }
                 lang={lang}
-                erEjerlejlighed={!!bbrData?.ejerlejlighedBfe}
               />
               {/* Loading-bar mens strukturtræ hentes */}
               {(strukturLoader || lejlighederLoader) && !strukturTree && (

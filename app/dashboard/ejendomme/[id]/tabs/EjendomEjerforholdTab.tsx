@@ -131,17 +131,48 @@ export default function EjendomEjerforholdTab({
                * @returns Beriget kopi med komplet lejlighedsliste
                */
               function enrichWithOwnership(node: StrukturNode): StrukturNode {
-                // Hovedejendom: erstat children med lejligheder der matcher husnr
+                // Ejerlejlighed: berig med ejer/pris/dato fra lejligheder-match
+                if (node.niveau === 'ejerlejlighed') {
+                  const match = lejligheder!.find(
+                    (l) =>
+                      (node.bfe > 0 && l.bfe === node.bfe) ||
+                      node.adresse
+                        .toLowerCase()
+                        .includes(l.adresse.split(',')[0].toLowerCase().trim())
+                  );
+                  if (match) {
+                    const etageDoer = match.adresse.split(',')[1]?.trim().toLowerCase() ?? '';
+                    const bbrMatch = (bbrEnheder ?? []).find((e) => {
+                      const eLow = (e.etage ?? '').toLowerCase();
+                      const dLow = (e.doer ?? '').toLowerCase();
+                      const combined = `${eLow}. ${dLow}`.trim();
+                      return etageDoer.includes(combined) || (eLow && etageDoer.startsWith(eLow));
+                    });
+                    return {
+                      ...node,
+                      ejer: match.ejer ?? node.ejer,
+                      ejertype: match.ejertype ?? node.ejertype,
+                      koebspris: match.koebspris ?? node.koebspris,
+                      koebsdato: match.koebsdato ?? node.koebsdato,
+                      areal: match.areal ?? node.areal,
+                      vaerelser: bbrMatch?.vaerelser ?? node.vaerelser,
+                      children: node.children.map(enrichWithOwnership),
+                    };
+                  }
+                }
+                // Hovedejendom: hvis TL-strukturen har færre children end
+                // lejligheder-listen, tilføj manglende som nye noder
                 if (node.niveau === 'hovedejendom') {
                   const nodeHusnr = extractHusnr(node.adresse);
                   const matchingLej = lejligheder!.filter(
                     (l) => extractHusnr(l.adresse) === nodeHusnr
                   );
-                  if (matchingLej.length > 0) {
-                    return {
-                      ...node,
-                      children: matchingLej.map((l) => {
-                        // Match BBR-enhed for værelser via etage+dør
+                  // Brug lejligheder-listen hvis den er mere komplet
+                  if (matchingLej.length > node.children.length) {
+                    const existingBfes = new Set(node.children.map((c) => c.bfe));
+                    const extraChildren: StrukturNode[] = matchingLej
+                      .filter((l) => !existingBfes.has(l.bfe))
+                      .map((l) => {
                         const etageDoer = l.adresse.split(',')[1]?.trim().toLowerCase() ?? '';
                         const bbrMatch = (bbrEnheder ?? []).find((e) => {
                           const eLow = (e.etage ?? '').toLowerCase();
@@ -155,7 +186,7 @@ export default function EjendomEjerforholdTab({
                           bfe: l.bfe,
                           adresse: l.adresse,
                           niveau: 'ejerlejlighed' as const,
-                          dawaId: l.dawaId,
+                          dawaId: null,
                           ejendomsvaerdi: null,
                           grundvaerdi: null,
                           vurderingsaar: null,
@@ -168,8 +199,9 @@ export default function EjendomEjerforholdTab({
                           koebsdato: l.koebsdato,
                           children: [],
                         };
-                      }),
-                    };
+                      });
+                    const enrichedExisting = node.children.map(enrichWithOwnership);
+                    return { ...node, children: [...enrichedExisting, ...extraChildren] };
                   }
                 }
                 return { ...node, children: node.children.map(enrichWithOwnership) };
@@ -242,45 +274,55 @@ export default function EjendomEjerforholdTab({
                     const m = street.match(/(\d+\w*)$/);
                     return m ? m[1].toUpperCase() : '';
                   }
-                  /** @param node - Struktur-node */
+                  /** @param node - Struktur-node — beriger med ejer-data, bevarer dawaId'er */
                   function enrichNode(node: StrukturNode): StrukturNode {
+                    if (node.niveau === 'ejerlejlighed') {
+                      const match = lejligheder!.find(
+                        (l) =>
+                          (node.bfe > 0 && l.bfe === node.bfe) ||
+                          node.adresse
+                            .toLowerCase()
+                            .includes(l.adresse.split(',')[0].toLowerCase().trim())
+                      );
+                      if (match) {
+                        return {
+                          ...node,
+                          ejer: match.ejer ?? node.ejer,
+                          ejertype: match.ejertype ?? node.ejertype,
+                          koebspris: match.koebspris ?? node.koebspris,
+                          koebsdato: match.koebsdato ?? node.koebsdato,
+                          areal: match.areal ?? node.areal,
+                          children: node.children.map(enrichNode),
+                        };
+                      }
+                    }
                     if (node.niveau === 'hovedejendom') {
                       const nodeHusnr = extractHusnr(node.adresse);
                       const matchingLej = lejligheder!.filter(
                         (l) => extractHusnr(l.adresse) === nodeHusnr
                       );
-                      if (matchingLej.length > 0) {
-                        return {
-                          ...node,
-                          children: matchingLej.map((l) => {
-                            const etageDoer = l.adresse.split(',')[1]?.trim().toLowerCase() ?? '';
-                            const bbrMatch = (bbrEnheder ?? []).find((e) => {
-                              const eLow = (e.etage ?? '').toLowerCase();
-                              const dLow = (e.doer ?? '').toLowerCase();
-                              const combined = `${eLow}. ${dLow}`.trim();
-                              return (
-                                etageDoer.includes(combined) || (eLow && etageDoer.startsWith(eLow))
-                              );
-                            });
-                            return {
-                              bfe: l.bfe,
-                              adresse: l.adresse,
-                              niveau: 'ejerlejlighed' as const,
-                              dawaId: l.dawaId,
-                              ejendomsvaerdi: null,
-                              grundvaerdi: null,
-                              vurderingsaar: null,
-                              tlVurdering: null,
-                              areal: l.areal,
-                              vaerelser: bbrMatch?.vaerelser ?? null,
-                              ejer: l.ejer,
-                              ejertype: l.ejertype,
-                              koebspris: l.koebspris,
-                              koebsdato: l.koebsdato,
-                              children: [],
-                            };
-                          }),
-                        };
+                      if (matchingLej.length > node.children.length) {
+                        const existingBfes = new Set(node.children.map((c) => c.bfe));
+                        const extra: StrukturNode[] = matchingLej
+                          .filter((l) => !existingBfes.has(l.bfe))
+                          .map((l) => ({
+                            bfe: l.bfe,
+                            adresse: l.adresse,
+                            niveau: 'ejerlejlighed' as const,
+                            dawaId: null,
+                            ejendomsvaerdi: null,
+                            grundvaerdi: null,
+                            vurderingsaar: null,
+                            tlVurdering: null,
+                            areal: l.areal,
+                            vaerelser: null,
+                            ejer: l.ejer,
+                            ejertype: l.ejertype,
+                            koebspris: l.koebspris,
+                            koebsdato: l.koebsdato,
+                            children: [],
+                          }));
+                        return { ...node, children: [...node.children.map(enrichNode), ...extra] };
                       }
                     }
                     return { ...node, children: node.children.map(enrichNode) };

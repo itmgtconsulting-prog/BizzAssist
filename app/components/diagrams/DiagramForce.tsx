@@ -1022,14 +1022,27 @@ function DiagramForce({
     // Ejendomme tilføjet via expand (person ELLER virksomhed) kan have fået
     // forkert depth i fallback-passet fordi parent-noden endnu ikke var
     // korrekt placeret. Nu re-beregnes depth baseret på actual parent depth.
+    // BIZZ-1142: Brug kun IKKE-person parents for depth-beregning —
+    // ellers ender ejendomme på person-niveau eller over virksomheder.
     for (const node of filteredGraph.nodes) {
       if (node.type !== 'property' && !node.id.startsWith('props-overflow-')) continue;
       const parents = parentEdges.get(node.id) ?? [];
       if (parents.length === 0) continue;
-      // Brug den shallowest parent (tættest på toppen) for korrekt placering
-      const parentDepths = parents.filter((pid) => depths.has(pid)).map((pid) => depths.get(pid)!);
-      if (parentDepths.length > 0) {
-        depths.set(node.id, Math.min(...parentDepths) + 0.5);
+      // Foretrøk virksomheds-parents over person-parents for placering
+      const companyParentDepths = parents
+        .filter((pid) => {
+          const pn = nodeById.get(pid);
+          return pn && pn.type !== 'person';
+        })
+        .map((pid) => depths.get(pid)!)
+        .filter((d) => d != null);
+      const allParentDepths = parents
+        .filter((pid) => depths.has(pid))
+        .map((pid) => depths.get(pid)!);
+      const bestParentDepths =
+        companyParentDepths.length > 0 ? companyParentDepths : allParentDepths;
+      if (bestParentDepths.length > 0) {
+        depths.set(node.id, Math.min(...bestParentDepths) + 0.5);
       }
     }
 

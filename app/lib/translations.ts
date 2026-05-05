@@ -98,6 +98,13 @@ export const translations = {
         },
       ],
     },
+    popularEntities: {
+      title: 'Udforsk danske virksomheder og ejendomme',
+      subtitle: 'Se offentlige data om nogle af Danmarks mest kendte virksomheder og ejendomme.',
+      companiesTitle: 'Populære virksomheder',
+      propertiesTitle: 'Populære ejendomme',
+      viewAll: 'Se flere',
+    },
     cta: {
       title: 'Klar til at prøve BizzAssist?',
       subtitle: 'Prøv BizzAssist gratis i 7 dage.',
@@ -326,6 +333,13 @@ export const translations = {
       clearEntity: 'Fjern valgt entitet',
       emptyHint: 'AI-drevet analyse med rigtige data fra offentlige registre',
       emptyHintSub: 'Henter automatisk CVR, regnskaber, BBR, vurdering, ejerskab og meget mere.',
+      tabAI: 'AI Analyse',
+      tabPivot: 'Data Pivot',
+      pivotNoData: 'Vælg et datasæt for at starte',
+      pivotSubtitle: 'Træk kolonner for at pivotere og analysere data interaktivt',
+      pivotExport: 'Eksportér',
+      pivotDataset: 'Vælg datasæt…',
+      pivotLatestAnalysis: 'Seneste analysedata',
       areas: {
         virksomhed: {
           title: 'Virksomhedsanalyse',
@@ -715,6 +729,14 @@ export const translations = {
         },
       ],
     },
+    popularEntities: {
+      title: 'Explore Danish companies and properties',
+      subtitle:
+        'Browse public data on some of the most well-known companies and properties in Denmark.',
+      companiesTitle: 'Popular companies',
+      propertiesTitle: 'Popular properties',
+      viewAll: 'View more',
+    },
     cta: {
       title: 'Ready to try BizzAssist?',
       subtitle: 'Try BizzAssist free for 7 days.',
@@ -943,6 +965,13 @@ export const translations = {
       clearEntity: 'Remove selected entity',
       emptyHint: 'AI-powered analysis with real data from public registers',
       emptyHintSub: 'Automatically fetches CVR, financials, BBR, valuations, ownership and more.',
+      tabAI: 'AI Analysis',
+      tabPivot: 'Data Pivot',
+      pivotNoData: 'Select a dataset to start',
+      pivotSubtitle: 'Drag columns to pivot and analyse data interactively',
+      pivotExport: 'Export',
+      pivotDataset: 'Select dataset…',
+      pivotLatestAnalysis: 'Latest analysis data',
       areas: {
         virksomhed: {
           title: 'Company Analysis',

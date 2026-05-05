@@ -139,31 +139,32 @@ function TreeNode({ node, depth, lang, currentBfe, showOwnership }: TreeNodeProp
         )}
       </div>
 
-      {/* Ejer + pris + dato for ejerlejligheder (ejerskab-mode) */}
+      {/* Ejer + areal + vær + pris + dato for ejerlejligheder (ejerskab-mode) */}
       {showOwnership && node.niveau === 'ejerlejlighed' && (
-        <div className="flex items-center gap-3 shrink-0">
-          {node.ejer && (
-            <span className="text-slate-400 text-[10px] truncate max-w-[120px]" title={node.ejer}>
-              {node.ejer}
-            </span>
-          )}
-          {node.areal != null && node.areal > 0 && (
-            <span className="text-slate-500 text-[10px] tabular-nums">{node.areal} m²</span>
-          )}
-          {node.koebspris != null && node.koebspris > 0 && (
-            <span className="text-slate-300 text-[10px] tabular-nums font-medium">
-              {node.koebspris.toLocaleString('da-DK')} DKK
-            </span>
-          )}
-          {node.koebsdato && (
-            <span className="text-slate-500 text-[10px]">
-              {new Date(node.koebsdato).toLocaleDateString('da-DK', {
-                day: 'numeric',
-                month: 'short',
-                year: 'numeric',
-              })}
-            </span>
-          )}
+        <div className="flex items-center shrink-0 text-[10px] tabular-nums">
+          <span className="w-[130px] text-slate-400 truncate text-left" title={node.ejer ?? ''}>
+            {node.ejer ?? '–'}
+          </span>
+          <span className="w-[45px] text-slate-500 text-right">
+            {node.areal != null && node.areal > 0 ? `${node.areal} m²` : '–'}
+          </span>
+          <span className="w-[35px] text-slate-500 text-right">
+            {node.vaerelser != null && node.vaerelser > 0 ? `${node.vaerelser} v` : ''}
+          </span>
+          <span className="w-[100px] text-slate-300 text-right font-medium">
+            {node.koebspris != null && node.koebspris > 0
+              ? `${node.koebspris.toLocaleString('da-DK')} DKK`
+              : '–'}
+          </span>
+          <span className="w-[75px] text-slate-500 text-right">
+            {node.koebsdato
+              ? new Date(node.koebsdato).toLocaleDateString('da-DK', {
+                  day: 'numeric',
+                  month: 'short',
+                  year: 'numeric',
+                })
+              : '–'}
+          </span>
         </div>
       )}
 
@@ -279,9 +280,22 @@ export default function EjendomStrukturTree({ tree, lang, currentBfe, showOwners
 
   return (
     <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-      <h3 className="text-white font-semibold text-sm mb-3">
+      <h3 className="text-white font-semibold text-sm mb-2">
         {da ? 'Ejendomsstruktur' : 'Property structure'}
       </h3>
+      {/* Kolonneoverskrifter for ejerskab-mode */}
+      {showOwnership && (
+        <div className="flex items-center mb-1 text-[9px] text-slate-600 font-medium uppercase tracking-wide">
+          <span className="flex-1" />
+          <div className="flex items-center shrink-0">
+            <span className="w-[130px] text-left">{da ? 'Ejer' : 'Owner'}</span>
+            <span className="w-[45px] text-right">{da ? 'Areal' : 'Area'}</span>
+            <span className="w-[35px] text-right">{da ? 'Vær.' : 'Rooms'}</span>
+            <span className="w-[100px] text-right">{da ? 'Købspris' : 'Price'}</span>
+            <span className="w-[75px] text-right">{da ? 'Købsdato' : 'Date'}</span>
+          </div>
+        </div>
+      )}
       <TreeNode
         node={tree}
         depth={0}

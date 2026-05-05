@@ -2460,6 +2460,13 @@ export default function EjendomDetaljeClient({
                   bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
                   undefined
                 }
+                bbrEnheder={
+                  bbrData?.enheder?.map((e) => ({
+                    etage: e.etage ?? null,
+                    doer: e.doer ?? null,
+                    vaerelser: e.vaerelser ?? null,
+                  })) ?? []
+                }
               />
             </div>
 

@@ -52,6 +52,8 @@ interface Props {
   strukturLoader?: boolean;
   /** Aktuel BFE for denne ejendom */
   currentBfe?: number;
+  /** BBR enheder — bruges til at berige med værelser */
+  bbrEnheder?: Array<{ etage: string | null; doer: string | null; vaerelser: number | null }>;
 }
 
 /** Render Ejerforhold-fanen. Ren præsentations-komponent. */
@@ -66,6 +68,7 @@ export default function EjendomEjerforholdTab({
   strukturTree,
   strukturLoader,
   currentBfe,
+  bbrEnheder,
 }: Props) {
   const da = lang === 'da';
 
@@ -137,23 +140,35 @@ export default function EjendomEjerforholdTab({
                   if (matchingLej.length > 0) {
                     return {
                       ...node,
-                      children: matchingLej.map((l) => ({
-                        bfe: l.bfe,
-                        adresse: l.adresse,
-                        niveau: 'ejerlejlighed' as const,
-                        dawaId: l.dawaId,
-                        ejendomsvaerdi: null,
-                        grundvaerdi: null,
-                        vurderingsaar: null,
-                        tlVurdering: null,
-                        areal: l.areal,
-                        vaerelser: null,
-                        ejer: l.ejer,
-                        ejertype: l.ejertype,
-                        koebspris: l.koebspris,
-                        koebsdato: l.koebsdato,
-                        children: [],
-                      })),
+                      children: matchingLej.map((l) => {
+                        // Match BBR-enhed for værelser via etage+dør
+                        const etageDoer = l.adresse.split(',')[1]?.trim().toLowerCase() ?? '';
+                        const bbrMatch = (bbrEnheder ?? []).find((e) => {
+                          const eLow = (e.etage ?? '').toLowerCase();
+                          const dLow = (e.doer ?? '').toLowerCase();
+                          const combined = `${eLow}. ${dLow}`.trim();
+                          return (
+                            etageDoer.includes(combined) || (eLow && etageDoer.startsWith(eLow))
+                          );
+                        });
+                        return {
+                          bfe: l.bfe,
+                          adresse: l.adresse,
+                          niveau: 'ejerlejlighed' as const,
+                          dawaId: l.dawaId,
+                          ejendomsvaerdi: null,
+                          grundvaerdi: null,
+                          vurderingsaar: null,
+                          tlVurdering: null,
+                          areal: l.areal,
+                          vaerelser: bbrMatch?.vaerelser ?? null,
+                          ejer: l.ejer,
+                          ejertype: l.ejertype,
+                          koebspris: l.koebspris,
+                          koebsdato: l.koebsdato,
+                          children: [],
+                        };
+                      }),
                     };
                   }
                 }

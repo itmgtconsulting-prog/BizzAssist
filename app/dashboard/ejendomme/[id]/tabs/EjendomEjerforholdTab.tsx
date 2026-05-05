@@ -219,7 +219,7 @@ export default function EjendomEjerforholdTab({
 
           if (!bfeForDiagram) return null;
           return (
-            <div>
+            <div className="space-y-4">
               <PropertyOwnerDiagram
                 bfe={bfeForDiagram}
                 adresse={
@@ -230,6 +230,70 @@ export default function EjendomEjerforholdTab({
                 lang={lang}
                 erEjerlejlighed={!!bbrData?.ejerlejlighedBfe}
               />
+              {/* Strukturtræ under diagrammet for ejerlejligheder —
+                  giver kontekst om hvor lejligheden hører til i hierarkiet */}
+              {strukturTree &&
+                lejligheder &&
+                lejligheder.length > 0 &&
+                (() => {
+                  /** @param addr - Adressestreng */
+                  function extractHusnr(addr: string): string {
+                    const street = addr.split(',')[0].trim();
+                    const m = street.match(/(\d+\w*)$/);
+                    return m ? m[1].toUpperCase() : '';
+                  }
+                  /** @param node - Struktur-node */
+                  function enrichNode(node: StrukturNode): StrukturNode {
+                    if (node.niveau === 'hovedejendom') {
+                      const nodeHusnr = extractHusnr(node.adresse);
+                      const matchingLej = lejligheder!.filter(
+                        (l) => extractHusnr(l.adresse) === nodeHusnr
+                      );
+                      if (matchingLej.length > 0) {
+                        return {
+                          ...node,
+                          children: matchingLej.map((l) => {
+                            const etageDoer = l.adresse.split(',')[1]?.trim().toLowerCase() ?? '';
+                            const bbrMatch = (bbrEnheder ?? []).find((e) => {
+                              const eLow = (e.etage ?? '').toLowerCase();
+                              const dLow = (e.doer ?? '').toLowerCase();
+                              const combined = `${eLow}. ${dLow}`.trim();
+                              return (
+                                etageDoer.includes(combined) || (eLow && etageDoer.startsWith(eLow))
+                              );
+                            });
+                            return {
+                              bfe: l.bfe,
+                              adresse: l.adresse,
+                              niveau: 'ejerlejlighed' as const,
+                              dawaId: l.dawaId,
+                              ejendomsvaerdi: null,
+                              grundvaerdi: null,
+                              vurderingsaar: null,
+                              tlVurdering: null,
+                              areal: l.areal,
+                              vaerelser: bbrMatch?.vaerelser ?? null,
+                              ejer: l.ejer,
+                              ejertype: l.ejertype,
+                              koebspris: l.koebspris,
+                              koebsdato: l.koebsdato,
+                              children: [],
+                            };
+                          }),
+                        };
+                      }
+                    }
+                    return { ...node, children: node.children.map(enrichNode) };
+                  }
+                  return (
+                    <EjendomStrukturTree
+                      tree={enrichNode(strukturTree)}
+                      lang={lang}
+                      currentBfe={currentBfe}
+                      showOwnership
+                    />
+                  );
+                })()}
             </div>
           );
         })()}

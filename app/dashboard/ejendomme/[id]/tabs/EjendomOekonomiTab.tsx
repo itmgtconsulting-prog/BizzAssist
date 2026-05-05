@@ -507,6 +507,27 @@ export default function EjendomOekonomiTab(props: Props) {
       </div>
 
       {/* ── Salgshistorik (EJF + Tinglysning) ── */}
+      {/* BIZZ-1152: For opdelte ejendomme uden salgsdata: vis forklaring */}
+      {!salgshistorikLoader &&
+        !tlSumLoader &&
+        mergedSalgshistorik.length === 0 &&
+        opdeltIEjerlejligheder && (
+          <div>
+            <SectionTitle title={da ? 'Salgshistorik' : 'Sales history'} />
+            <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-4 space-y-1">
+              <p className="text-blue-300 text-xs font-medium">
+                {da
+                  ? 'Salgsdata registreret på ejerlejligheder'
+                  : 'Sales data registered on condominiums'}
+              </p>
+              <p className="text-slate-400 text-[11px]">
+                {da
+                  ? 'Denne ejendom er opdelt — salgshistorik og købspriser findes på de enkelte ejerlejligheder. Se Ejerskab-fanen for oversigt med priser.'
+                  : 'This property is divided — sales history and purchase prices are on individual units. See the Ownership tab for details.'}
+              </p>
+            </div>
+          </div>
+        )}
       {/* BIZZ-402: only render when loading or when there is data to show */}
       {(salgshistorikLoader || tlSumLoader || mergedSalgshistorik.length > 0) && (
         <div>

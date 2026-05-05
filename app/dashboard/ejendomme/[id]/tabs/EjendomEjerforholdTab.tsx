@@ -64,7 +64,7 @@ export default function EjendomEjerforholdTab({
   bbrData,
   dawaAdresse,
   bbrLoader,
-  ejereLoader,
+  ejereLoader: _ejereLoader,
   lejlighederLoader,
   lejligheder,
   strukturTree,
@@ -92,13 +92,15 @@ export default function EjendomEjerforholdTab({
       {bbrData?.ejendomsrelationer?.[0]?.bfeNummer && (
         <EjendomAdministratorCard bfeNummer={bbrData.ejendomsrelationer[0].bfeNummer} lang={lang} />
       )}
-      {/* Loading state — blå progress bar mens data hentes */}
-      {(ejereLoader || bbrLoader || !bbrData) && (
+      {/* Loading state — blå progress bar kun mens BBR-data hentes */}
+      {(bbrLoader || !bbrData) && (
         <TabLoadingSpinner ariaLabel={da ? 'Henter ejerskabsdata' : 'Loading ownership data'} />
       )}
-      {/* ── Ejerskabsdiagram / Relationsdiagram (fra Tinglysning + EJF kæde) ── */}
-      {!ejereLoader &&
-        !bbrLoader &&
+      {/* ── Ejerskabsdiagram / Relationsdiagram ──
+          BIZZ-1174: Mount med det samme når bbrData er klar — vent IKKE
+          på ejereLoader (EJF-data). PropertyOwnerDiagram og DiagramV2
+          fetcher deres egne data internt og viser egen loading-state. */}
+      {!bbrLoader &&
         bbrData &&
         (() => {
           const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;

@@ -3027,7 +3027,10 @@ function DiagramForce({
                                 }}
                                 style={{ cursor: 'pointer', pointerEvents: 'auto' }}
                               >
-                                {p.navn.length > 30 ? p.navn.slice(0, 30) + '…' : p.navn}
+                                {(() => {
+                                  const label = p.rolle ? `${p.navn}, ${p.rolle}` : p.navn;
+                                  return label.length > 40 ? label.slice(0, 40) + '…' : label;
+                                })()}
                               </text>
                               {/* BIZZ-1125: Expand nøgleperson til person-node med ejendomme */}
                               {!alreadyInGraph && (

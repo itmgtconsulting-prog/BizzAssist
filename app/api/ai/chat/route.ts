@@ -960,7 +960,9 @@ async function executeTool(
   /** Forward user's Cookie header for authenticated internal API calls */
   cookieHeader?: string | null,
   /** BIZZ-1000: Diagram PNG base64 til injection i generate_document */
-  diagramBase64?: string
+  diagramBase64?: string,
+  /** BIZZ-1186: Supabase admin client for cache-first lookups */
+  admin?: ReturnType<typeof createAdminClient>
 ): Promise<unknown> {
   const cached = getCached(name, input);
   if (cached !== null) return cached;
@@ -1089,6 +1091,47 @@ async function executeTool(
       }
 
       case 'hent_ejerskab': {
+        // BIZZ-1186: Cache-first via ejf_ejerskab — sparer 200ms-3s
+        if (admin)
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: cached } = await (admin as any)
+              .from('ejf_ejerskab')
+              .select(
+                'ejer_navn, ejer_cvr, ejer_type, ejerandel_taeller, ejerandel_naevner, virkning_fra'
+              )
+              .eq('bfe_nummer', Number(input.bfeNummer))
+              .eq('status', 'gældende')
+              .limit(20);
+            if (cached && cached.length > 0) {
+              result = {
+                ejere: cached.map(
+                  (r: {
+                    ejer_navn: string;
+                    ejer_cvr: string | null;
+                    ejer_type: string;
+                    ejerandel_taeller: number | null;
+                    ejerandel_naevner: number | null;
+                    virkning_fra: string | null;
+                  }) => ({
+                    personNavn: r.ejer_type === 'person' ? r.ejer_navn : null,
+                    virksomhedsnavn: r.ejer_type === 'virksomhed' ? r.ejer_navn : null,
+                    cvr: r.ejer_cvr,
+                    ejertype: r.ejer_type,
+                    ejerandel_taeller: r.ejerandel_taeller,
+                    ejerandel_naevner: r.ejerandel_naevner,
+                    virkningFra: r.virkning_fra,
+                  })
+                ),
+                manglerAdgang: false,
+                fejl: null,
+              };
+              break;
+            }
+          } catch {
+            /* cache miss — fall through */
+          }
+        // Fallback til live API
         const res = await fetch(
           `${baseUrl}/api/ejerskab?bfeNummer=${encodeURIComponent(input.bfeNummer)}`,
           internalFetchOpts
@@ -1904,8 +1947,7 @@ async function executeTool(
       }
 
       case 'hent_ejendomme_for_virksomhed': {
-        // BIZZ-591: Wraps /api/ejendomme-by-owner så AI kan liste en virksomheds
-        // ejendomsportefølje (samme som Virksomhed → Ejendomme-fanen).
+        // BIZZ-591: Wraps /api/ejendomme-by-owner (allerede cache-first via BIZZ-1014)
         const res = await fetch(
           `${baseUrl}/api/ejendomme-by-owner?cvr=${encodeURIComponent(input.cvr)}`,
           internalFetchOpts
@@ -2985,7 +3027,8 @@ export async function POST(request: NextRequest): Promise<Response> {
                 toolBlock.input as Record<string, string>,
                 baseUrl,
                 request.headers.get('cookie'),
-                diagramBase64
+                diagramBase64,
+                adminClient
               );
 
               // BIZZ-813: generate_document returnerer download_url —

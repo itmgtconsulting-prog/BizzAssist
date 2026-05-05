@@ -58,9 +58,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'CVR ES ikke konfigureret' }, { status: 503 });
   }
 
-  const { vejnavn, postnr } = parsed.data;
+  const { vejnavn, husnr, postnr } = parsed.data;
 
-  // Søg CVR ES for ejerforeninger (branchekode 683220) på matchende adresse
+  // Søg CVR ES for ejerforeninger (branchekode 683220) på matchende adresse.
+  // BIZZ-1148: Inkluder husnummer i søgningen for at undgå forkerte matches
+  // fra andre husnumre på samme vej.
   const must: Record<string, unknown>[] = [
     {
       term: {
@@ -73,6 +75,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       },
     },
   ];
+
+  // BIZZ-1148: husnr filtreres post-query (CVR ES har husnummerFra/Til interval)
 
   if (postnr) {
     must.push({
@@ -186,8 +190,25 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       })
       .filter(Boolean);
 
+    // BIZZ-1148: Filtrer på husnummer post-query for at fjerne foreninger
+    // der er på samme vej men anden adresse. CVR ES har husnummerFra/Til
+    // interval, så vi tjekker om ejendommens husnr falder indenfor.
+    const filtered = husnr
+      ? foreninger.filter((f: EjerforeningData) => {
+          if (!f.adresse) return false;
+          // Ekstraher husnr fra ejerforeningens adresse
+          const fHusnrMatch = f.adresse.match(/(\d+)/);
+          if (!fHusnrMatch) return false;
+          const fHusnr = parseInt(fHusnrMatch[1], 10);
+          const ejdHusnr = parseInt(husnr, 10);
+          if (isNaN(fHusnr) || isNaN(ejdHusnr)) return false;
+          // Accepter match indenfor ±10 husnumre (ejerforeninger dækker typisk et interval)
+          return Math.abs(fHusnr - ejdHusnr) <= 10;
+        })
+      : foreninger;
+
     return NextResponse.json(
-      { foreninger },
+      { foreninger: filtered },
       { headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=7200' } }
     );
   } catch (err) {

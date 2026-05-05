@@ -2468,7 +2468,18 @@ export default function EjendomDetaljeClient({
                 // BIZZ-860: Signal om ejendommen er opdelt — kilde er MAT-data
                 // (matrikelData.opdeltIEjerlejligheder) eller fallback via bbrData.
                 opdeltIEjerlejligheder={
-                  matrikelData?.opdeltIEjerlejligheder ?? bbrData?.opdeltIEjerlejligheder ?? false
+                  // BIZZ-1147: Ejerlejligheder har egen vurdering — vis IKKE
+                  // "fordelt på ejerlejligheder" for dem, kun for moderejendomme.
+                  // erModer = ingen etage + har ejerlejlighedBfe (= hovedejendom)
+                  (() => {
+                    const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+                    return (
+                      erModer &&
+                      (matrikelData?.opdeltIEjerlejligheder ??
+                        bbrData?.opdeltIEjerlejligheder ??
+                        false)
+                    );
+                  })()
                 }
                 lejlighederCount={lejligheder?.length ?? 0}
                 postnr={dawaAdresse?.postnr ?? null}

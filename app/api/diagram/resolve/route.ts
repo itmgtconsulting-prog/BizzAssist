@@ -909,8 +909,8 @@ async function resolvePropertyGraph(
           if (!nodeIds.has(compId)) continue;
 
           if (!nodeIds.has(personId)) {
-            const pNavn =
-              nameMap.get(r.deltager_enhedsnummer) ?? `Person ${r.deltager_enhedsnummer}`;
+            const pNavn = nameMap.get(r.deltager_enhedsnummer);
+            if (!pNavn) continue; // Skip personer uden navn i cache
             nodes.push({
               id: personId,
               label: pNavn,

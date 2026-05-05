@@ -1338,7 +1338,8 @@ async function resolvePersonGraph(
         layoutSection: 'role',
       });
       nodeIds.add(companyId);
-      edges.push({ from: mainId, to: companyId, ejerandel: rolleStr || undefined });
+      // Ingen ejerandel-tekst på rolle-edges — rollen vises allerede i boksen (personRolle)
+      edges.push({ from: mainId, to: companyId });
     }
   }
 

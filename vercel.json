@@ -91,6 +91,10 @@
     {
       "path": "/api/cron/gap-fill-cvr",
       "schedule": "30 5 * * *"
+    },
+    {
+      "path": "/api/cron/purge-unverified-users",
+      "schedule": "0 5 * * *"
     }
   ]
 }

@@ -90,9 +90,9 @@ export default function EjendomEjerforholdTab({
       {bbrData?.ejendomsrelationer?.[0]?.bfeNummer && (
         <EjendomAdministratorCard bfeNummer={bbrData.ejendomsrelationer[0].bfeNummer} lang={lang} />
       )}
-      {/* Loading state — vis spinner mens BBR eller ejerskab data hentes */}
+      {/* Loading state — blå progress bar mens data hentes */}
       {(ejereLoader || bbrLoader || !bbrData) && (
-        <TabLoadingSpinner label={da ? 'Henter ejerskabsdata…' : 'Loading ownership data…'} />
+        <TabLoadingSpinner ariaLabel={da ? 'Henter ejerskabsdata' : 'Loading ownership data'} />
       )}
       {/* ── Ejerskabsdiagram / Relationsdiagram (fra Tinglysning + EJF kæde) ── */}
       {!ejereLoader &&
@@ -191,7 +191,7 @@ export default function EjendomEjerforholdTab({
             if (strukturLoader || lejlighederLoader) {
               return (
                 <TabLoadingSpinner
-                  label={da ? 'Henter ejerskabsdata…' : 'Loading ownership data…'}
+                  ariaLabel={da ? 'Henter ejerskabsdata' : 'Loading ownership data'}
                 />
               );
             }

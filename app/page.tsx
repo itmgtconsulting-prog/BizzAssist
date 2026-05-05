@@ -4,6 +4,7 @@ import Navbar from '@/app/components/Navbar';
 import Hero from '@/app/components/Hero';
 import Features from '@/app/components/Features';
 import UseCases from '@/app/components/UseCases';
+import PopularEntities from '@/app/components/PopularEntities';
 import PricingSection from '@/app/components/PricingSection';
 import CTABanner from '@/app/components/CTABanner';
 import Footer from '@/app/components/Footer';
@@ -58,6 +59,7 @@ export default async function HomePage({
       <Hero />
       <Features />
       <UseCases />
+      <PopularEntities />
       <PricingSection />
       <CTABanner />
       <Footer />

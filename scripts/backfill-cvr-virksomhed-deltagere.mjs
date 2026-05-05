@@ -26,18 +26,47 @@ import url from 'node:url';
 
 config({ path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local') });
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+// ─── Environment resolution ──────────────────────────────────────────────────
+const ENV_REFS = {
+  local: process.env.NEXT_PUBLIC_SUPABASE_URL?.match(/([a-z]+)\.supabase/)?.[1] ?? 'local',
+  test: 'rlkjmqjxmkxuclehbrnl',
+  prod: 'xsyldjqcntiygrtfcszm',
+};
+
+const args = process.argv.slice(2);
+const TARGET_ENV = (() => { const a = args.find(x => x.startsWith('--env=')); return a ? a.split('=')[1] : 'local'; })();
+
+let SUPABASE_URL, SUPABASE_KEY;
+if (TARGET_ENV === 'local') {
+  SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+} else {
+  const ref = ENV_REFS[TARGET_ENV];
+  if (!ref) { console.error(`Unknown env: ${TARGET_ENV}`); process.exit(1); }
+  const token = process.env.SUPABASE_ACCESS_TOKEN;
+  if (!token) { console.error('SUPABASE_ACCESS_TOKEN required for remote env'); process.exit(1); }
+  // Hent service_role key via Management API
+  const keysRes = await fetch(`https://api.supabase.com/v1/projects/${ref}/api-keys`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const keys = await keysRes.json();
+  const srKey = keys.find(k => k.name === 'service_role')?.api_key;
+  if (!srKey) { console.error('Could not fetch service_role key'); process.exit(1); }
+  SUPABASE_URL = `https://${ref}.supabase.co`;
+  SUPABASE_KEY = srKey;
+}
+
 const CVR_USER = process.env.CVR_ES_USER;
 const CVR_PASS = process.env.CVR_ES_PASS;
 
 if (!SUPABASE_URL || !SUPABASE_KEY) { console.error('Missing Supabase credentials'); process.exit(1); }
 if (!CVR_USER || !CVR_PASS) { console.error('Missing CVR_ES_USER/CVR_ES_PASS'); process.exit(1); }
 
+console.log(`Target: ${TARGET_ENV} (${SUPABASE_URL})`);
+
 const client = createClient(SUPABASE_URL, SUPABASE_KEY);
 const esAuth = Buffer.from(`${CVR_USER}:${CVR_PASS}`).toString('base64');
 
-const args = process.argv.slice(2);
 const LIMIT = (() => { const a = args.find(x => x.startsWith('--limit=')); return a ? parseInt(a.split('=')[1], 10) : Infinity; })();
 const DRY_RUN = args.includes('--dry-run');
 
@@ -130,27 +159,22 @@ function extractRelations(targetCvr, deltagerRels) {
           }
         }
 
-        // Find ejerandel
-        const ejerandele = attrs.filter(a => a.type === 'EJERANDEL' || a.type === 'STEMMEANDEL');
-        for (const attr of ejerandele) {
+        // Find ejerandel — sæt ejerandel_pct på eksisterende register-række
+        // i stedet for separate rækker. Finder gældende (åben) EJERANDEL-attribut.
+        const ejerandelAttrs = attrs.filter(a => a.type === 'EJERANDEL');
+        for (const attr of ejerandelAttrs) {
           const vaerdier = Array.isArray(attr.vaerdier) ? attr.vaerdier : [];
-          for (const v of vaerdier) {
-            if (!v.vaerdi) continue;
-            const fra = v.periode?.gyldigFra?.slice(0, 10) ?? '1900-01-01';
-            const til = v.periode?.gyldigTil?.slice(0, 10) ?? null;
-
-            rows.push({
-              virksomhed_cvr: String(targetCvr),
-              deltager_enhedsnummer: enhedsNummer,
-              type: attr.type === 'EJERANDEL' ? 'ejerandel' : 'stemmeandel',
-              gyldig_fra: fra,
-              gyldig_til: til,
-              sidst_opdateret: new Date().toISOString(),
-              sidst_hentet_fra_cvr: new Date().toISOString(),
-              _ejer_cvr: deltagerCvr,
-              _ejer_navn: navn,
-            });
-            foundRolle = true;
+          const gyldig = vaerdier.find(v => !v.periode?.gyldigTil) ?? vaerdier[vaerdier.length - 1];
+          if (gyldig?.vaerdi) {
+            // Find register-rækken for denne deltager og sæt ejerandel_pct
+            const registerRow = rows.find(
+              r => r.virksomhed_cvr === String(targetCvr) &&
+                   r.deltager_enhedsnummer === enhedsNummer &&
+                   r.type === 'register' && !r.gyldig_til
+            );
+            if (registerRow) {
+              registerRow.ejerandel_pct = parseFloat(gyldig.vaerdi);
+            }
           }
         }
       }
@@ -254,6 +278,7 @@ async function main() {
           sidst_opdateret: r.sidst_opdateret,
           sidst_hentet_fra_cvr: r.sidst_hentet_fra_cvr,
           ejer_cvr: r._ejer_cvr ?? null,
+          ejerandel_pct: r.ejerandel_pct ?? null,
         });
       }
 

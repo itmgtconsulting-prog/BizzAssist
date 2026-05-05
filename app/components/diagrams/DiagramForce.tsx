@@ -1045,16 +1045,10 @@ function DiagramForce({
         if (coOwnerIds.has(id)) continue;
         if (d > maxNonRoleDepth) maxNonRoleDepth = d;
       }
-      // Placér container-node (roller-group) én linje under ejerskabs-træet
-      const roleBaseDepth = Math.ceil(maxNonRoleDepth) + 1;
+      // Placér rolle-virksomheder under ejerskabs-træet med gap
+      const roleBaseDepth = Math.ceil(maxNonRoleDepth) + 2;
       for (const node of roleNodes) {
-        // Container-noden (status type) på roleBaseDepth,
-        // rolle-virksomheder på roleBaseDepth + 1
-        if (node.type === 'status') {
-          depths.set(node.id, roleBaseDepth);
-        } else {
-          depths.set(node.id, roleBaseDepth + 1);
-        }
+        depths.set(node.id, roleBaseDepth);
       }
     }
 

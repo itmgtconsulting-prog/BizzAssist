@@ -1311,21 +1311,11 @@ async function resolvePersonGraph(
     }
   }
 
-  // ── ROLLE-VIRKSOMHEDER (bestyrelse/direktion — separat sektion) ─────────
+  // ── ROLLE-VIRKSOMHEDER (bestyrelse/direktion — direkte under person) ─────
+  // Vises direkte under personen med rolle-tekst på edge (ingen container-node).
+  // layoutSection: 'role' sikrer at DiagramForce placerer dem lavere end ejerskab.
 
   if (roleCvrs.length > 0) {
-    // Container-node der adskiller roller visuelt fra ejerskabsstrukturen
-    const rollerGroupId = 'roller-group';
-    nodes.push({
-      id: rollerGroupId,
-      label: 'Øvrige roller',
-      sublabel: `${roleCvrs.length} virksomhed${roleCvrs.length === 1 ? '' : 'er'}`,
-      type: 'status',
-      layoutSection: 'role',
-    });
-    nodeIds.add(rollerGroupId);
-    edges.push({ from: mainId, to: rollerGroupId });
-
     for (const cvrStr of roleCvrs) {
       const companyId = `cvr-${cvrStr}`;
       if (nodeIds.has(companyId)) continue;
@@ -1348,7 +1338,7 @@ async function resolvePersonGraph(
         layoutSection: 'role',
       });
       nodeIds.add(companyId);
-      edges.push({ from: rollerGroupId, to: companyId });
+      edges.push({ from: mainId, to: companyId, ejerandel: rolleStr || undefined });
     }
   }
 

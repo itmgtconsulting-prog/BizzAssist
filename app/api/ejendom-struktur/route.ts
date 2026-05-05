@@ -649,6 +649,48 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
       children: [...hovedejendomNodes, ...virtualHovedNodes],
     };
 
+    // ── BIZZ-1137: Berig ejerlejligheder med korrekt dawaId via DAWA /bfe/{bfe} ──
+    // TL-adressen for anparts-ejendomme mangler etage/dør, så DAWA-resolveren
+    // finder adgangsadressen (hovedejendom) i stedet for den specifikke lejlighed.
+    // DAWA /bfe/{bfe} returnerer beliggenhedsadresse.id som er den korrekte UUID.
+    {
+      /** Samler alle ejerlejlighed-noder der mangler dawaId eller har forkert */
+      function collectEjlNodes(node: StrukturNode): StrukturNode[] {
+        const result: StrukturNode[] = [];
+        if (node.niveau === 'ejerlejlighed' && node.bfe > 0) {
+          result.push(node);
+        }
+        for (const child of node.children) {
+          result.push(...collectEjlNodes(child));
+        }
+        return result;
+      }
+      const ejlNodes = collectEjlNodes(root);
+      if (ejlNodes.length > 0) {
+        await Promise.allSettled(
+          ejlNodes.map(async (node) => {
+            try {
+              const res = await fetchDawa(
+                `https://dawa.aws.dk/bfe/${node.bfe}`,
+                { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+                { caller: 'ejendom-struktur.bfe-resolve' }
+              );
+              if (res.ok) {
+                const json = (await res.json()) as {
+                  beliggenhedsadresse?: { id?: string };
+                };
+                if (json.beliggenhedsadresse?.id) {
+                  node.dawaId = json.beliggenhedsadresse.id;
+                }
+              }
+            } catch {
+              /* non-fatal */
+            }
+          })
+        );
+      }
+    }
+
     return NextResponse.json(
       { tree: root, fejl: null },
       {

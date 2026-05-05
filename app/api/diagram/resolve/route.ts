@@ -762,6 +762,175 @@ async function resolvePropertyGraph(
     }
   }
 
+  // ── HIERARKI OPAD: hvem ejer ejer-virksomhederne? ──────────────────────
+  // Trace ejerskab opad via cvr_virksomhed_ejerskab i 2 niveauer,
+  // og find person-ejere på toppen via cvr_deltagerrelation.
+  const companyOwnerCvrs = nodes
+    .filter((n) => n.type === 'company' && n.cvr)
+    .map((n) => String(n.cvr));
+
+  if (companyOwnerCvrs.length > 0) {
+    // Level 1: hvem ejer ejer-virksomhederne?
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: l1Owners } = await (admin as any)
+      .from('cvr_virksomhed_ejerskab')
+      .select('ejer_cvr, ejet_cvr, ejerandel_min, ejerandel_max')
+      .in('ejet_cvr', companyOwnerCvrs)
+      .is('gyldig_til', null)
+      .limit(30);
+
+    const l1CvrList: string[] = [];
+    for (const row of (l1Owners ?? []) as Array<{
+      ejer_cvr: string;
+      ejet_cvr: string;
+      ejerandel_min: number | null;
+      ejerandel_max: number | null;
+    }>) {
+      const ownerId = `cvr-${row.ejer_cvr}`;
+      const childId = `cvr-${row.ejet_cvr}`;
+      if (!nodeIds.has(childId)) continue;
+
+      if (!nodeIds.has(ownerId)) {
+        const comp = await fetchCachedCompany(admin, row.ejer_cvr);
+        if (comp?.ophoert != null) continue;
+        const sub = [comp?.virksomhedsform, comp?.branche_tekst].filter(Boolean);
+        nodes.push({
+          id: ownerId,
+          label: comp?.navn ?? `CVR ${row.ejer_cvr}`,
+          sublabel: sub.length > 0 ? sub.join(' · ') : undefined,
+          branche: comp?.branche_tekst ?? undefined,
+          type: 'company',
+          cvr: Number(row.ejer_cvr),
+          link: `/dashboard/companies/${row.ejer_cvr}`,
+          isCeased: false,
+        });
+        nodeIds.add(ownerId);
+        l1CvrList.push(row.ejer_cvr);
+      }
+      if (!edges.some((e) => e.from === ownerId && e.to === childId)) {
+        edges.push({
+          from: ownerId,
+          to: childId,
+          ejerandel:
+            row.ejerandel_min != null ? `${row.ejerandel_min}-${row.ejerandel_max}%` : undefined,
+        });
+      }
+    }
+
+    // Level 2: hvem ejer level-1 ejerne?
+    if (l1CvrList.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: l2Owners } = await (admin as any)
+        .from('cvr_virksomhed_ejerskab')
+        .select('ejer_cvr, ejet_cvr, ejerandel_min, ejerandel_max')
+        .in('ejet_cvr', l1CvrList)
+        .is('gyldig_til', null)
+        .limit(30);
+
+      for (const row of (l2Owners ?? []) as Array<{
+        ejer_cvr: string;
+        ejet_cvr: string;
+        ejerandel_min: number | null;
+        ejerandel_max: number | null;
+      }>) {
+        const ownerId = `cvr-${row.ejer_cvr}`;
+        const childId = `cvr-${row.ejet_cvr}`;
+        if (!nodeIds.has(childId)) continue;
+
+        if (!nodeIds.has(ownerId)) {
+          const comp = await fetchCachedCompany(admin, row.ejer_cvr);
+          if (comp?.ophoert != null) continue;
+          const sub = [comp?.virksomhedsform, comp?.branche_tekst].filter(Boolean);
+          nodes.push({
+            id: ownerId,
+            label: comp?.navn ?? `CVR ${row.ejer_cvr}`,
+            sublabel: sub.length > 0 ? sub.join(' · ') : undefined,
+            branche: comp?.branche_tekst ?? undefined,
+            type: 'company',
+            cvr: Number(row.ejer_cvr),
+            link: `/dashboard/companies/${row.ejer_cvr}`,
+            isCeased: false,
+          });
+          nodeIds.add(ownerId);
+        }
+        if (!edges.some((e) => e.from === ownerId && e.to === childId)) {
+          edges.push({
+            from: ownerId,
+            to: childId,
+            ejerandel:
+              row.ejerandel_min != null ? `${row.ejerandel_min}-${row.ejerandel_max}%` : undefined,
+          });
+        }
+      }
+    }
+
+    // Person-ejere: find registrerede ejere af ALLE virksomheder i grafen
+    const allCompCvrs = nodes
+      .filter((n) => n.type === 'company' && n.cvr)
+      .map((n) => String(n.cvr));
+    if (allCompCvrs.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: personOwnerRows } = await (admin as any)
+        .from('cvr_deltagerrelation')
+        .select('virksomhed_cvr, deltager_enhedsnummer, type, ejerandel_pct')
+        .in('virksomhed_cvr', allCompCvrs)
+        .eq('type', 'register')
+        .is('gyldig_til', null)
+        .limit(100);
+
+      // Dedup person per virksomhed
+      const personEnheder = new Set<number>();
+      for (const r of (personOwnerRows ?? []) as Array<{
+        deltager_enhedsnummer: number;
+      }>) {
+        personEnheder.add(r.deltager_enhedsnummer);
+      }
+
+      if (personEnheder.size > 0) {
+        // Batch-hent navne
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: personNames } = await (admin as any)
+          .from('cvr_deltager')
+          .select('enhedsnummer, navn')
+          .in('enhedsnummer', Array.from(personEnheder).slice(0, 20));
+        const nameMap = new Map<number, string>(
+          ((personNames ?? []) as Array<{ enhedsnummer: number; navn: string }>).map((d) => [
+            d.enhedsnummer,
+            d.navn,
+          ])
+        );
+
+        for (const r of (personOwnerRows ?? []) as Array<{
+          virksomhed_cvr: string;
+          deltager_enhedsnummer: number;
+          ejerandel_pct: number | null;
+        }>) {
+          const personId = `en-${r.deltager_enhedsnummer}`;
+          const compId = `cvr-${r.virksomhed_cvr}`;
+          if (!nodeIds.has(compId)) continue;
+
+          if (!nodeIds.has(personId)) {
+            const pNavn =
+              nameMap.get(r.deltager_enhedsnummer) ?? `Person ${r.deltager_enhedsnummer}`;
+            nodes.push({
+              id: personId,
+              label: pNavn,
+              type: 'person',
+              enhedsNummer: r.deltager_enhedsnummer,
+              link: `/dashboard/owners/${r.deltager_enhedsnummer}`,
+            });
+            nodeIds.add(personId);
+          }
+          const ejerandel =
+            r.ejerandel_pct != null ? `${Math.round(Number(r.ejerandel_pct))}%` : undefined;
+          if (!edges.some((e) => e.from === personId && e.to === compId)) {
+            edges.push({ from: personId, to: compId, ejerandel });
+          }
+        }
+      }
+    }
+  }
+
   return { nodes, edges, mainId };
 }
 

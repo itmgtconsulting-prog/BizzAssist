@@ -12,6 +12,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { logger } from '@/app/lib/logger';
+import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
+import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import type { DiagramNode, DiagramEdge, DiagramGraph } from '@/app/components/diagrams/DiagramData';
 
 /** Max ejendomme per ejer-node i initial graf */
@@ -693,8 +696,90 @@ async function resolvePropertyGraph(
   });
   nodeIds.add(mainId);
 
-  // Ejere
-  const owners = await fetchOwnersByBfe(admin, bfe);
+  // Ejere — cache-first via ejf_ejerskab, live EJF fallback ved tom liste
+  let owners = await fetchOwnersByBfe(admin, bfe);
+
+  // BIZZ-1136: Fallback til live EJF GraphQL når ejf_ejerskab er tom
+  // (typisk for "opdelt i anpart/ejerlejligheder" ejendomme hvor
+  // ingest-ejf-bulk filtrerer status-tekst entries fra).
+  if (owners.length === 0) {
+    try {
+      const ejfToken = await getSharedOAuthToken();
+      if (ejfToken) {
+        const virkningstid = new Date().toISOString();
+        const ejfQuery = `{
+          EJFCustom_EjerskabBegraenset(
+            first: 500
+            virkningstid: "${virkningstid}"
+            where: { bestemtFastEjendomBFENr: { eq: ${bfe} } }
+          ) {
+            nodes {
+              bestemtFastEjendomBFENr
+              ejendeVirksomhedCVRNr
+              ejendePersonBegraenset { navn { navn } }
+              ejerforholdskode
+              faktiskEjerandel_taeller
+              faktiskEjerandel_naevner
+              status
+              virkningFra
+            }
+          }
+        }`;
+        const EJF_GQL_URL = 'https://graphql.datafordeler.dk/flexibleCurrent/v1/';
+        const ejfRes = await fetch(proxyUrl(EJF_GQL_URL), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${ejfToken}`,
+            ...proxyHeaders(),
+          },
+          body: JSON.stringify({ query: ejfQuery }),
+          signal: AbortSignal.timeout(proxyTimeout()),
+        });
+        if (ejfRes.ok) {
+          const ejfJson = (await ejfRes.json()) as {
+            data?: {
+              EJFCustom_EjerskabBegraenset?: {
+                nodes?: Array<{
+                  ejendeVirksomhedCVRNr: number | null;
+                  ejendePersonBegraenset: { navn: { navn: string } } | null;
+                  ejerforholdskode: string | null;
+                  faktiskEjerandel_taeller: number | null;
+                  faktiskEjerandel_naevner: number | null;
+                  status: string | null;
+                }>;
+              };
+            };
+          };
+          const ejfNodes = ejfJson.data?.EJFCustom_EjerskabBegraenset?.nodes ?? [];
+          // Mapper til samme format som fetchOwnersByBfe
+          owners = ejfNodes
+            .filter((n) => n.status === 'Gældende' || n.status === 'gældende')
+            .map((n) => ({
+              ejer_navn:
+                n.ejendePersonBegraenset?.navn?.navn ??
+                (n.ejendeVirksomhedCVRNr ? `CVR ${n.ejendeVirksomhedCVRNr}` : 'Ukendt'),
+              ejer_cvr: n.ejendeVirksomhedCVRNr ? String(n.ejendeVirksomhedCVRNr) : null,
+              ejer_type: n.ejendeVirksomhedCVRNr
+                ? 'virksomhed'
+                : n.ejendePersonBegraenset
+                  ? 'person'
+                  : 'ukendt',
+              ejerandel_taeller: n.faktiskEjerandel_taeller,
+              ejerandel_naevner: n.faktiskEjerandel_naevner,
+            }));
+          if (owners.length > 0) {
+            logger.log(
+              `[diagram/resolve] EJF live fallback fandt ${owners.length} ejere for BFE ${bfe}`
+            );
+          }
+        }
+      }
+    } catch (err) {
+      logger.warn('[diagram/resolve] EJF live fallback fejl:', err);
+    }
+  }
+
   for (const owner of owners) {
     if (owner.ejer_type === 'virksomhed' && owner.ejer_cvr) {
       const ownerId = `cvr-${owner.ejer_cvr}`;

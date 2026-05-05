@@ -251,6 +251,14 @@ export type SitemapEntry = {
   updated_at: string;
 };
 
+/** Pre-rendered sitemap XML cache (migration 092 — BIZZ-890) */
+export type SitemapXmlCache = {
+  page_id: number;
+  xml: string;
+  entry_count: number;
+  generated_at: string;
+};
+
 /** Cached XBRL financial report (migration 022) */
 export type RegnskabCache = {
   id: string;
@@ -829,6 +837,17 @@ export type Database = {
           updated_at?: string;
         };
         Update: Partial<SitemapEntry>;
+        Relationships: [];
+      };
+      sitemap_xml_cache: {
+        Row: SitemapXmlCache;
+        Insert: {
+          page_id: number;
+          xml: string;
+          entry_count?: number;
+          generated_at?: string;
+        };
+        Update: Partial<SitemapXmlCache>;
         Relationships: [];
       };
       regnskab_cache: {

@@ -13,6 +13,10 @@
       "schedule": "51 * * * *"
     },
     {
+      "path": "/api/cron/generate-sitemap?phase=render-xml",
+      "schedule": "10 * * * *"
+    },
+    {
       "path": "/api/cron/poll-properties",
       "schedule": "0 3 * * *"
     },

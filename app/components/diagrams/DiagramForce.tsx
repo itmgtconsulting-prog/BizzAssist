@@ -2557,7 +2557,9 @@ function DiagramForce({
         // BIZZ-689: crossOwnership-edges (krydsejerskab mellem virksomheder
         // i samme graf) bruger amber-farve + dashed for visuel distinktion
         // fra primary parent→child-edges.
-        const isCrossOwnership = !!edge.crossOwnership;
+        // personallyOwned edges er person→ejendom og bør vises som
+        // ejendomslinjer (grøn), ikke som crossOwnership (amber)
+        const isCrossOwnership = !!edge.crossOwnership && !edge.personallyOwned;
         /* BIZZ-1086: crossOwnership-linjer gjort mere subtile (0.35 opacity) */
         // Person→property bruger SAMME stil som company→property (ensartet look)
         const strokeColor = isCrossOwnership

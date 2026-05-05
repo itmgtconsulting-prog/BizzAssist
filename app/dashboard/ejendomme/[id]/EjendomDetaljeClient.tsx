@@ -2452,6 +2452,14 @@ export default function EjendomDetaljeClient({
                 ejereLoader={ejereLoader}
                 lejlighederLoader={lejlighederLoader}
                 lejligheder={lejligheder}
+                strukturTree={strukturTree}
+                strukturLoader={strukturLoader}
+                currentBfe={
+                  bbrData?.ejerlejlighedBfe ??
+                  bbrData?.moderBfe ??
+                  bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
+                  undefined
+                }
               />
             </div>
 

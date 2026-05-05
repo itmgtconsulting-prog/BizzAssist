@@ -58,6 +58,14 @@ export interface StrukturNode {
   areal: number | null;
   /** Antal værelser (fra BBR — beriges klient-side) */
   vaerelser: number | null;
+  /** Ejer-navn (beriges klient-side fra lejligheder-data) */
+  ejer: string | null;
+  /** Ejer-type: person/selskab/ukendt */
+  ejertype: 'person' | 'selskab' | 'ukendt' | null;
+  /** Købspris i DKK */
+  koebspris: number | null;
+  /** Købsdato (ISO) */
+  koebsdato: string | null;
   /** Underliggende ejendomme */
   children: StrukturNode[];
 }
@@ -509,6 +517,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
             tlVurdering: ejl.ejendomsVurdering,
             areal: null,
             vaerelser: null,
+            ejer: null,
+            ejertype: null,
+            koebspris: null,
+            koebsdato: null,
             children: [],
           };
         });
@@ -524,6 +536,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
         tlVurdering: hej.ejendomsVurdering,
         areal: null,
         vaerelser: null,
+        ejer: null,
+        ejertype: null,
+        koebspris: null,
+        koebsdato: null,
         children,
       };
     });
@@ -574,6 +590,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
         tlVurdering: ejl.ejendomsVurdering,
         areal: null,
         vaerelser: null,
+        ejer: null,
+        ejertype: null,
+        koebspris: null,
+        koebsdato: null,
         children: [],
       }));
 
@@ -588,6 +608,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
         tlVurdering: null,
         areal: null,
         vaerelser: null,
+        ejer: null,
+        ejertype: null,
+        koebspris: null,
+        koebsdato: null,
         children,
       });
     }
@@ -618,6 +642,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
       tlVurdering: sfeItem?.ejendomsVurdering ?? null,
       areal: null,
       vaerelser: null,
+      ejer: null,
+      ejertype: null,
+      koebspris: null,
+      koebsdato: null,
       children: [...hovedejendomNodes, ...virtualHovedNodes],
     };
 

@@ -68,6 +68,7 @@ interface TreeNodeProps {
   depth: number;
   lang: 'da' | 'en';
   currentBfe?: number;
+  showOwnership?: boolean;
 }
 
 /**
@@ -75,7 +76,7 @@ interface TreeNodeProps {
  *
  * @param props - Node, dybde, sprog
  */
-function TreeNode({ node, depth, lang, currentBfe }: TreeNodeProps) {
+function TreeNode({ node, depth, lang, currentBfe, showOwnership }: TreeNodeProps) {
   const [expanded, setExpanded] = useState(depth < 2);
   const style = NIVEAU_STYLE[node.niveau];
   const Icon = style.Icon;
@@ -138,8 +139,36 @@ function TreeNode({ node, depth, lang, currentBfe }: TreeNodeProps) {
         )}
       </div>
 
-      {/* Areal + værelser for ejerlejligheder */}
-      {node.niveau === 'ejerlejlighed' && (node.areal || node.vaerelser) && (
+      {/* Ejer + pris + dato for ejerlejligheder (ejerskab-mode) */}
+      {showOwnership && node.niveau === 'ejerlejlighed' && (
+        <div className="flex items-center gap-3 shrink-0">
+          {node.ejer && (
+            <span className="text-slate-400 text-[10px] truncate max-w-[120px]" title={node.ejer}>
+              {node.ejer}
+            </span>
+          )}
+          {node.areal != null && node.areal > 0 && (
+            <span className="text-slate-500 text-[10px] tabular-nums">{node.areal} m²</span>
+          )}
+          {node.koebspris != null && node.koebspris > 0 && (
+            <span className="text-slate-300 text-[10px] tabular-nums font-medium">
+              {node.koebspris.toLocaleString('da-DK')} DKK
+            </span>
+          )}
+          {node.koebsdato && (
+            <span className="text-slate-500 text-[10px]">
+              {new Date(node.koebsdato).toLocaleDateString('da-DK', {
+                day: 'numeric',
+                month: 'short',
+                year: 'numeric',
+              })}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Areal + værelser for ejerlejligheder (BBR-mode, ikke ejerskab) */}
+      {!showOwnership && node.niveau === 'ejerlejlighed' && (node.areal || node.vaerelser) && (
         <div className="flex items-center gap-2 shrink-0">
           {node.areal != null && node.areal > 0 && (
             <span className="text-slate-400 text-[10px] tabular-nums">{node.areal} m²</span>
@@ -220,6 +249,7 @@ function TreeNode({ node, depth, lang, currentBfe }: TreeNodeProps) {
               depth={depth + 1}
               lang={lang}
               currentBfe={currentBfe}
+              showOwnership={showOwnership}
             />
           ))}
         </div>
@@ -235,6 +265,8 @@ interface Props {
   lang: 'da' | 'en';
   /** BFE for den aktuelle ejendom (highlightes i træet) */
   currentBfe?: number;
+  /** Vis ejer, købspris og købsdato på ejerlejligheder */
+  showOwnership?: boolean;
 }
 
 /**
@@ -242,7 +274,7 @@ interface Props {
  *
  * @param props - tree, lang, currentBfe
  */
-export default function EjendomStrukturTree({ tree, lang, currentBfe }: Props) {
+export default function EjendomStrukturTree({ tree, lang, currentBfe, showOwnership }: Props) {
   const da = lang === 'da';
 
   return (
@@ -250,7 +282,13 @@ export default function EjendomStrukturTree({ tree, lang, currentBfe }: Props) {
       <h3 className="text-white font-semibold text-sm mb-3">
         {da ? 'Ejendomsstruktur' : 'Property structure'}
       </h3>
-      <TreeNode node={tree} depth={0} lang={lang} currentBfe={currentBfe} />
+      <TreeNode
+        node={tree}
+        depth={0}
+        lang={lang}
+        currentBfe={currentBfe}
+        showOwnership={showOwnership}
+      />
     </div>
   );
 }

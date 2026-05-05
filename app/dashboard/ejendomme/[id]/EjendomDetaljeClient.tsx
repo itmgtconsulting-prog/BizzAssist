@@ -1105,6 +1105,27 @@ export default function EjendomDetaljeClient({
         if (!signal.aborted) setEjereLoader(false);
       });
 
+    // BIZZ-1145: Prefetch ejerskab/chain og diagram/resolve for Ejerskab-fanen.
+    // Varmer HTTP-cachen op så data er klar når brugeren klikker på fanen.
+    // chain-endpointet cacher server-side i 30 min (s-maxage=1800).
+    const erEjerlej = !!bbrData.ejerlejlighedBfe;
+    const chainAdresse = dawaAdresse
+      ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
+      : '';
+    const chainParams = new URLSearchParams({
+      bfe: String(bfeNummer),
+      adresse: chainAdresse,
+    });
+    if (erEjerlej) chainParams.set('type', 'ejerlejlighed');
+    fetch(`/api/ejerskab/chain?${chainParams}`, {
+      signal,
+      priority: 'low' as RequestPriority,
+    }).catch(() => {});
+    fetch(
+      `/api/diagram/resolve?type=property&id=${bfeNummer}&label=${encodeURIComponent(chainAdresse)}`,
+      { signal, priority: 'low' as RequestPriority }
+    ).catch(() => {});
+
     setSalgshistorikLoader(true);
     fetch(`/api/salgshistorik?bfeNummer=${bfeNummer}`, { signal })
       .then((r) => (r.ok ? r.json() : null))

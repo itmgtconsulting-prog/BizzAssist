@@ -133,12 +133,12 @@ export default function EjendomEjerforholdTab({
               function enrichWithOwnership(node: StrukturNode): StrukturNode {
                 // Ejerlejlighed: berig med ejer/pris/dato fra lejligheder-match
                 if (node.niveau === 'ejerlejlighed') {
+                  // Match via BFE (primær) eller eksakt vejnavn+husnr (fallback)
+                  const nodeStreet = node.adresse.split(',')[0].trim().toLowerCase();
                   const match = lejligheder!.find(
                     (l) =>
                       (node.bfe > 0 && l.bfe === node.bfe) ||
-                      node.adresse
-                        .toLowerCase()
-                        .includes(l.adresse.split(',')[0].toLowerCase().trim())
+                      l.adresse.split(',')[0].trim().toLowerCase() === nodeStreet
                   );
                   if (match) {
                     const etageDoer = match.adresse.split(',')[1]?.trim().toLowerCase() ?? '';
@@ -283,12 +283,11 @@ export default function EjendomEjerforholdTab({
                   /** @param node - Struktur-node — beriger med ejer-data, bevarer dawaId'er */
                   function enrichNode(node: StrukturNode): StrukturNode {
                     if (node.niveau === 'ejerlejlighed') {
+                      const nodeStreet = node.adresse.split(',')[0].trim().toLowerCase();
                       const match = lejligheder!.find(
                         (l) =>
                           (node.bfe > 0 && l.bfe === node.bfe) ||
-                          node.adresse
-                            .toLowerCase()
-                            .includes(l.adresse.split(',')[0].toLowerCase().trim())
+                          l.adresse.split(',')[0].trim().toLowerCase() === nodeStreet
                       );
                       // BBR-match for værelser
                       const addrParts = node.adresse.split(',').map((s) => s.trim());

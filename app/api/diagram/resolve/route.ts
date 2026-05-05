@@ -864,10 +864,9 @@ async function resolvePropertyGraph(
       }
     }
 
-    // Person-ejere: find registrerede ejere af ALLE virksomheder i grafen
-    const allCompCvrs = nodes
-      .filter((n) => n.type === 'company' && n.cvr)
-      .map((n) => String(n.cvr));
+    // Person-ejere: find registrerede ejere af de DIREKTE ejendoms-ejere
+    // (ikke hele hierarkiet — det ville give for mange person-noder)
+    const allCompCvrs = companyOwnerCvrs;
     if (allCompCvrs.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: personOwnerRows } = await (admin as any)

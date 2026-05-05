@@ -753,21 +753,36 @@ async function resolvePropertyGraph(
           };
           const ejfNodes = ejfJson.data?.EJFCustom_EjerskabBegraenset?.nodes ?? [];
           // Mapper til samme format som fetchOwnersByBfe
+          // Inkl. pvoplys-ejere (dødsboer, udenlandske, fonde) som har
+          // hverken CVR eller personNavn — de får ejer_type='person'
+          // og bruger ejerforholdskode som fallback-label.
           owners = ejfNodes
             .filter((n) => n.status === 'Gældende' || n.status === 'gældende')
-            .map((n) => ({
-              ejer_navn:
-                n.ejendePersonBegraenset?.navn?.navn ??
-                (n.ejendeVirksomhedCVRNr ? `CVR ${n.ejendeVirksomhedCVRNr}` : 'Ukendt'),
-              ejer_cvr: n.ejendeVirksomhedCVRNr ? String(n.ejendeVirksomhedCVRNr) : null,
-              ejer_type: n.ejendeVirksomhedCVRNr
-                ? 'virksomhed'
-                : n.ejendePersonBegraenset
-                  ? 'person'
-                  : 'ukendt',
-              ejerandel_taeller: n.faktiskEjerandel_taeller,
-              ejerandel_naevner: n.faktiskEjerandel_naevner,
-            }));
+            .map((n) => {
+              const personNavn = n.ejendePersonBegraenset?.navn?.navn ?? null;
+              const cvr = n.ejendeVirksomhedCVRNr;
+              // Ejerforholdskode-tekst til fallback-label for pvoplys
+              const kodeLabels: Record<string, string> = {
+                '10': 'Privatpersoner',
+                '20': 'Alment boligselskab',
+                '30': 'A/S, ApS, øvrige',
+                '40': 'Forening/selskab/legat',
+                '41': 'Almennyttig fond',
+                '50': 'Den danske stat',
+                '60': 'Amtskommune/region',
+                '70': 'Primærkommune',
+                '80': 'Folkekirkelige institutioner',
+                '90': 'Andet/ukendt',
+              };
+              const kodeFallback = kodeLabels[n.ejerforholdskode ?? ''] ?? null;
+              return {
+                ejer_navn: personNavn ?? (cvr ? `CVR ${cvr}` : (kodeFallback ?? 'Ukendt ejer')),
+                ejer_cvr: cvr ? String(cvr) : null,
+                ejer_type: cvr ? 'virksomhed' : 'person',
+                ejerandel_taeller: n.faktiskEjerandel_taeller,
+                ejerandel_naevner: n.faktiskEjerandel_naevner,
+              };
+            });
           if (owners.length > 0) {
             logger.log(
               `[diagram/resolve] EJF live fallback fandt ${owners.length} ejere for BFE ${bfe}`

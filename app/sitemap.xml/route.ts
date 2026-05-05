@@ -1,10 +1,9 @@
 /**
- * GET /sitemap.xml — sitemap index file that lists all paginated sitemap/N.xml files.
+ * GET /sitemap.xml — sitemap index file that lists all cached sitemap pages.
  *
- * BIZZ-645: Google Search Console's submit flow expects a canonical
- * /sitemap.xml entry point. Our per-page sitemaps live at /sitemap/0.xml,
- * /sitemap/1.xml, … — this index file aggregates them so operators can
- * submit a single URL and GSC auto-discovers the rest.
+ * BIZZ-645: Google Search Console expects a canonical /sitemap.xml entry point.
+ * BIZZ-890: Now reads page count from sitemap_xml_cache instead of counting
+ * sitemap_entries rows (which could be inconsistent with what's actually served).
  *
  * @module app/sitemap.xml
  */
@@ -15,27 +14,37 @@ import { logger } from '@/app/lib/logger';
 
 export const dynamic = 'force-dynamic';
 
-const PAGE_SIZE = 50_000;
-
 const BASE_URL = (process.env.NEXT_PUBLIC_APP_URL ?? 'https://bizzassist.dk')
   .trim()
   .replace(/\/$/, '');
 
 /**
- * Count rows in sitemap_entries to decide how many paginated files to list.
- * Always includes at least sitemap/0.xml (which holds static pages).
+ * Returns a sitemap index listing all pre-generated sitemap pages.
+ * Reads from sitemap_xml_cache to only list pages that actually exist
+ * and can be served instantly.
+ *
+ * @returns XML sitemap index response
  */
 export async function GET(): Promise<NextResponse> {
   let pageCount = 1;
   try {
     const admin = createAdminClient();
+
+    // Count cached pages — only list pages that are actually pre-rendered
     const { count } = await admin
-      .from('sitemap_entries')
+      .from('sitemap_xml_cache')
       .select('*', { count: 'exact', head: true });
-    // Page 0 has 6 static pages + up to (PAGE_SIZE - 6) DB rows; subsequent
-    // pages each fit PAGE_SIZE. Simpler ceiling: total / PAGE_SIZE rounded up.
-    const total = (count ?? 0) + 6;
-    pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+    if (count && count > 0) {
+      pageCount = count;
+    } else {
+      // Fallback: if cache is empty, estimate from sitemap_entries
+      const { count: entryCount } = await admin
+        .from('sitemap_entries')
+        .select('*', { count: 'exact', head: true });
+      const total = (entryCount ?? 0) + 4; // +4 static pages
+      pageCount = Math.max(1, Math.ceil(total / 50_000));
+    }
   } catch (err) {
     logger.error('[sitemap.xml] count failed:', err instanceof Error ? err.message : err);
   }

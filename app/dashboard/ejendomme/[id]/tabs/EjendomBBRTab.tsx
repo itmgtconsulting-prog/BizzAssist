@@ -562,6 +562,28 @@ export default function EjendomBBRTab({
         );
       })()}
 
+      {/* Enheder — kun summary-boksen, detaljelisten erstattes af Ejendomsstruktur */}
+      {(() => {
+        const enheder = bbrData?.enheder ?? [];
+        const boligEnh = enheder.filter((e) => (e.arealBolig ?? 0) > 0).length;
+        const erhvEnh = enheder.filter((e) => (e.arealErhverv ?? 0) > 0).length;
+        const totAreal = enheder.reduce((s, e) => s + (e.areal ?? 0), 0);
+        return (
+          <div>
+            <SectionTitle title={t.units} />
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
+              <DataKort label={t.totalUnits} value={bbrLoader ? '…' : `${enheder.length}`} />
+              <DataKort label={t.residentialUnits} value={`${boligEnh}`} />
+              <DataKort label={t.commercialUnits} value={`${erhvEnh}`} />
+              <DataKort
+                label={t.totalAreaLabel}
+                value={totAreal ? `${totAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²` : '–'}
+              />
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Ejendomsstruktur — beriger noder med BBR areal+værelser */}
       {strukturLoader && (
         <TabLoadingSpinner
@@ -571,18 +593,16 @@ export default function EjendomBBRTab({
       {strukturTree &&
         !strukturLoader &&
         (() => {
-          // Berig struktur-noder med areal+værelser fra BBR enheder
           const enhederList = bbrData?.enheder ?? [];
           /**
            * Rekursiv berigelse af en StrukturNode med BBR-data.
-           * Matcher via adresse (etage+dør) fordi vi ikke har BFE→enhed mapping.
+           * Matcher via adresse (etage+dør).
            *
            * @param node - Struktur-node
            * @returns Beriget kopi af noden
            */
           function enrichNode(node: StrukturNode): StrukturNode {
             if (node.niveau === 'ejerlejlighed' && enhederList.length > 0) {
-              // Match via etage+dør fra adresse
               const addrParts = node.adresse.split(',').map((s) => s.trim());
               if (addrParts.length >= 2) {
                 const etageDoer = addrParts[1].toLowerCase();
@@ -604,7 +624,6 @@ export default function EjendomBBRTab({
                 }
               }
             }
-            // Hovedejendom: summér areal fra children
             if (node.niveau === 'hovedejendom' && node.children.length > 0) {
               const enrichedChildren = node.children.map(enrichNode);
               const totalAreal = enrichedChildren.reduce((s, c) => s + (c.areal ?? 0), 0);
@@ -620,150 +639,138 @@ export default function EjendomBBRTab({
           return <EjendomStrukturTree tree={enriched} lang={lang} currentBfe={currentBfe} />;
         })()}
 
-      {/* Enheder */}
-      {(() => {
-        const bygningsnrMap = new Map(
-          (bbrData?.bygningPunkter ?? []).map((p) => [p.id, p.bygningsnr ?? 9999])
-        );
-        const enheder = (bbrData?.enheder ?? []).slice().sort((a, b) => {
-          const nrA = a.bygningId ? (bygningsnrMap.get(a.bygningId) ?? 9999) : 9999;
-          const nrB = b.bygningId ? (bygningsnrMap.get(b.bygningId) ?? 9999) : 9999;
-          return nrA - nrB;
-        });
-        const boligEnh = enheder.filter((e) => (e.arealBolig ?? 0) > 0).length;
-        const erhvEnh = enheder.filter((e) => (e.arealErhverv ?? 0) > 0).length;
-        const totAreal = enheder.reduce((s, e) => s + (e.areal ?? 0), 0);
-        return (
-          <div>
-            <SectionTitle title={t.units} />
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
-              <DataKort label={t.totalUnits} value={bbrLoader ? '…' : `${enheder.length}`} />
-              <DataKort label={t.residentialUnits} value={`${boligEnh}`} />
-              <DataKort label={t.commercialUnits} value={`${erhvEnh}`} />
-              <DataKort
-                label={t.totalAreaLabel}
-                value={totAreal ? `${totAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²` : '–'}
-              />
-            </div>
-            {bbrLoader ? (
-              <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden animate-pulse">
-                {[1, 2].map((n) => (
-                  <div
-                    key={n}
-                    className="px-3 py-2.5 border-b border-slate-700/20 flex items-center gap-3"
-                  >
-                    <div className="w-4 h-4 bg-slate-700/50 rounded" />
-                    <div className="h-3 w-8 bg-slate-700/50 rounded" />
-                    <div className="h-3 flex-1 bg-slate-700/30 rounded" />
-                    <div className="h-3 w-14 bg-slate-700/40 rounded" />
-                  </div>
-                ))}
-              </div>
-            ) : enheder.length === 0 ? (
-              <div className="text-slate-500 text-sm text-center py-3">{t.noUnitsAvailable}</div>
-            ) : (
-              <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
-                {/* Kolonneheader: ▶ | Byg.nr | Anvendelse | Areal | Værelser */}
-                <div className="min-w-[500px] grid grid-cols-[28px_44px_1fr_96px_72px] px-3 py-2 text-slate-500 text-xs font-medium border-b border-slate-700/30">
-                  <span />
-                  <span className="text-center">{t.bldg}</span>
-                  <span>{t.usage}</span>
-                  <span className="text-right">{t.area}</span>
-                  <span className="text-right">{t.rooms}</span>
-                </div>
-                {enheder.map((e, i) => {
-                  const rowId = e.id || String(i);
-                  const aaben = expandedEnheder.has(rowId);
-                  const bygningsnr = e.bygningId
-                    ? ((bbrData?.bygningPunkter ?? []).find((p) => p.id === e.bygningId)
-                        ?.bygningsnr ?? null)
-                    : null;
-                  const detaljer: [string, string][] = (
-                    [
-                      [t.address, e.adressebetegnelse || null],
-                      [t.floor, e.etage || null],
-                      [t.door, e.doer || null],
-                      [t.housingType, e.boligtype || null],
-                      [t.status, e.status || null],
-                      [
-                        'Boligareal',
-                        e.arealBolig
-                          ? `${e.arealBolig.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                          : null,
-                      ],
-                      [
-                        'Erhvervsareal',
-                        e.arealErhverv
-                          ? `${e.arealErhverv.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                          : null,
-                      ],
-                      [
-                        'Varmeinstallation',
-                        e.varmeinstallation !== '–' ? e.varmeinstallation : null,
-                      ],
-                      [t.energySupply, e.energiforsyning || null],
-                    ] as [string, string | null][]
-                  ).filter((row): row is [string, string] => row[1] !== null);
-                  return (
-                    <div key={rowId} className="border-t border-slate-700/30 first:border-0">
-                      <button
-                        onClick={() =>
-                          setExpandedEnheder((prev) => {
-                            const next = new Set(prev);
-                            if (aaben) {
-                              next.delete(rowId);
-                            } else {
-                              next.add(rowId);
-                            }
-                            return next;
-                          })
-                        }
-                        className="w-full min-w-[500px] grid grid-cols-[28px_44px_1fr_96px_72px] px-3 py-1.5 text-sm hover:bg-slate-700/20 transition-colors text-left items-center"
-                      >
-                        <ChevronRight
-                          size={14}
-                          className={`text-slate-500 transition-transform flex-shrink-0 ${aaben ? 'rotate-90' : ''}`}
-                        />
-                        <span className="text-slate-500 text-xs text-center font-mono">
-                          {bygningsnr ?? '–'}
-                        </span>
-                        <span className="min-w-0 pr-2">
-                          <span className="block text-slate-200 truncate">
-                            {e.anvendelse || '–'}
-                          </span>
-                          {(e.etage || e.doer) && (
-                            <span className="block text-slate-500 text-xs truncate">
-                              {[e.etage && `${e.etage}.`, e.doer].filter(Boolean).join(' ')}
-                            </span>
-                          )}
-                        </span>
-                        <span className="text-slate-300 text-right">
-                          {e.areal
-                            ? `${e.areal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                            : formatDKK(0)}
-                        </span>
-                        <span className="text-slate-400 text-right">{e.vaerelser ?? '–'}</span>
-                      </button>
-                      {aaben && detaljer.length > 0 && (
-                        <div className="px-3 pb-2 bg-slate-900/40 border-t border-slate-700/20">
-                          <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs pt-2">
-                            {detaljer.map(([lbl, val]) => (
-                              <div key={lbl} className="flex justify-between gap-2">
-                                <span className="text-slate-500">{lbl}</span>
-                                <span className="text-slate-300 text-right">{val}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
+      {/* Enheder-detaljeliste — kun for ejendomme UDEN strukturtræ (fallback) */}
+      {!strukturTree &&
+        (() => {
+          const bygningsnrMap = new Map(
+            (bbrData?.bygningPunkter ?? []).map((p) => [p.id, p.bygningsnr ?? 9999])
+          );
+          const enheder = (bbrData?.enheder ?? []).slice().sort((a, b) => {
+            const nrA = a.bygningId ? (bygningsnrMap.get(a.bygningId) ?? 9999) : 9999;
+            const nrB = b.bygningId ? (bygningsnrMap.get(b.bygningId) ?? 9999) : 9999;
+            return nrA - nrB;
+          });
+          return (
+            <div>
+              {bbrLoader ? (
+                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden animate-pulse">
+                  {[1, 2].map((n) => (
+                    <div
+                      key={n}
+                      className="px-3 py-2.5 border-b border-slate-700/20 flex items-center gap-3"
+                    >
+                      <div className="w-4 h-4 bg-slate-700/50 rounded" />
+                      <div className="h-3 w-8 bg-slate-700/50 rounded" />
+                      <div className="h-3 flex-1 bg-slate-700/30 rounded" />
+                      <div className="h-3 w-14 bg-slate-700/40 rounded" />
                     </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        );
-      })()}
+                  ))}
+                </div>
+              ) : enheder.length === 0 ? (
+                <div className="text-slate-500 text-sm text-center py-3">{t.noUnitsAvailable}</div>
+              ) : (
+                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
+                  {/* Kolonneheader: ▶ | Byg.nr | Anvendelse | Areal | Værelser */}
+                  <div className="min-w-[500px] grid grid-cols-[28px_44px_1fr_96px_72px] px-3 py-2 text-slate-500 text-xs font-medium border-b border-slate-700/30">
+                    <span />
+                    <span className="text-center">{t.bldg}</span>
+                    <span>{t.usage}</span>
+                    <span className="text-right">{t.area}</span>
+                    <span className="text-right">{t.rooms}</span>
+                  </div>
+                  {enheder.map((e, i) => {
+                    const rowId = e.id || String(i);
+                    const aaben = expandedEnheder.has(rowId);
+                    const bygningsnr = e.bygningId
+                      ? ((bbrData?.bygningPunkter ?? []).find((p) => p.id === e.bygningId)
+                          ?.bygningsnr ?? null)
+                      : null;
+                    const detaljer: [string, string][] = (
+                      [
+                        [t.address, e.adressebetegnelse || null],
+                        [t.floor, e.etage || null],
+                        [t.door, e.doer || null],
+                        [t.housingType, e.boligtype || null],
+                        [t.status, e.status || null],
+                        [
+                          'Boligareal',
+                          e.arealBolig
+                            ? `${e.arealBolig.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                            : null,
+                        ],
+                        [
+                          'Erhvervsareal',
+                          e.arealErhverv
+                            ? `${e.arealErhverv.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                            : null,
+                        ],
+                        [
+                          'Varmeinstallation',
+                          e.varmeinstallation !== '–' ? e.varmeinstallation : null,
+                        ],
+                        [t.energySupply, e.energiforsyning || null],
+                      ] as [string, string | null][]
+                    ).filter((row): row is [string, string] => row[1] !== null);
+                    return (
+                      <div key={rowId} className="border-t border-slate-700/30 first:border-0">
+                        <button
+                          onClick={() =>
+                            setExpandedEnheder((prev) => {
+                              const next = new Set(prev);
+                              if (aaben) {
+                                next.delete(rowId);
+                              } else {
+                                next.add(rowId);
+                              }
+                              return next;
+                            })
+                          }
+                          className="w-full min-w-[500px] grid grid-cols-[28px_44px_1fr_96px_72px] px-3 py-1.5 text-sm hover:bg-slate-700/20 transition-colors text-left items-center"
+                        >
+                          <ChevronRight
+                            size={14}
+                            className={`text-slate-500 transition-transform flex-shrink-0 ${aaben ? 'rotate-90' : ''}`}
+                          />
+                          <span className="text-slate-500 text-xs text-center font-mono">
+                            {bygningsnr ?? '–'}
+                          </span>
+                          <span className="min-w-0 pr-2">
+                            <span className="block text-slate-200 truncate">
+                              {e.anvendelse || '–'}
+                            </span>
+                            {(e.etage || e.doer) && (
+                              <span className="block text-slate-500 text-xs truncate">
+                                {[e.etage && `${e.etage}.`, e.doer].filter(Boolean).join(' ')}
+                              </span>
+                            )}
+                          </span>
+                          <span className="text-slate-300 text-right">
+                            {e.areal
+                              ? `${e.areal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                              : formatDKK(0)}
+                          </span>
+                          <span className="text-slate-400 text-right">{e.vaerelser ?? '–'}</span>
+                        </button>
+                        {aaben && detaljer.length > 0 && (
+                          <div className="px-3 pb-2 bg-slate-900/40 border-t border-slate-700/20">
+                            <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs pt-2">
+                              {detaljer.map(([lbl, val]) => (
+                                <div key={lbl} className="flex justify-between gap-2">
+                                  <span className="text-slate-500">{lbl}</span>
+                                  <span className="text-slate-300 text-right">{val}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
       {/* Ingen BBR-data */}
       {!bbrLoader && !bbrData?.bbr && (

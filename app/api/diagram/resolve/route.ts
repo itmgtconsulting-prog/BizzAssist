@@ -862,6 +862,76 @@ async function resolvePropertyGraph(
     }
   }
 
+  // ── BIZZ-1139: CVR ES fallback for person-ejere uden enhedsNummer ───────
+  // cvr_deltager dækker kun cached deltagere. CVR ES deltager/_search har
+  // alle registrerede deltagere og giver højere hit-rate.
+  {
+    const CVR_ES_BASE = 'http://distribution.virk.dk/cvr-permanent';
+    const CVR_ES_USER = process.env.CVR_ES_USER ?? '';
+    const CVR_ES_PASS = process.env.CVR_ES_PASS ?? '';
+    const personsWithoutEn = nodes.filter(
+      (n) => n.type === 'person' && !n.enhedsNummer && n.id.startsWith('person-')
+    );
+    if (personsWithoutEn.length > 0 && CVR_ES_USER && CVR_ES_PASS) {
+      try {
+        const auth = Buffer.from(`${CVR_ES_USER}:${CVR_ES_PASS}`).toString('base64');
+        const results = await Promise.allSettled(
+          personsWithoutEn.map((node) =>
+            fetch(`${CVR_ES_BASE}/deltager/_search`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Basic ${auth}` },
+              body: JSON.stringify({
+                query: { match: { 'Vrdeltagerperson.navne.navn': node.label } },
+                _source: ['Vrdeltagerperson.enhedsNummer'],
+                size: 1,
+              }),
+              signal: AbortSignal.timeout(5000),
+            })
+              .then((r) => (r.ok ? r.json() : null))
+              .catch(() => null)
+          )
+        );
+        for (let i = 0; i < personsWithoutEn.length; i++) {
+          const result = results[i];
+          if (result.status !== 'fulfilled' || !result.value) continue;
+          const enr = result.value?.hits?.hits?.[0]?._source?.Vrdeltagerperson?.enhedsNummer;
+          if (typeof enr !== 'number') continue;
+          const node = personsWithoutEn[i];
+          node.enhedsNummer = enr;
+          node.link = `/dashboard/owners/${enr}`;
+          // Opdater node ID fra person-... til en-... for korrekt expand
+          const oldId = node.id;
+          const newId = `en-${enr}`;
+          node.id = newId;
+          nodeIds.delete(oldId);
+          nodeIds.add(newId);
+          // Opdater edges der peger på den gamle ID
+          for (const edge of edges) {
+            if (edge.from === oldId) edge.from = newId;
+            if (edge.to === oldId) edge.to = newId;
+          }
+          // Writeback til cvr_deltager for fremtidige opslag
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            await (admin as any)
+              .from('cvr_deltager')
+              .upsert({ enhedsnummer: enr, navn: node.label }, { onConflict: 'enhedsnummer' });
+          } catch {
+            /* writeback non-fatal */
+          }
+        }
+        const resolved = personsWithoutEn.filter((n) => n.enhedsNummer != null).length;
+        if (resolved > 0) {
+          logger.log(
+            `[diagram/resolve] CVR ES fallback resolved ${resolved}/${personsWithoutEn.length} person-ejere`
+          );
+        }
+      } catch (err) {
+        logger.warn('[diagram/resolve] CVR ES person-fallback fejl:', err);
+      }
+    }
+  }
+
   // ── HIERARKI OPAD: hvem ejer ejer-virksomhederne? ──────────────────────
   // Trace ejerskab opad via cvr_virksomhed_ejerskab i 2 niveauer,
   // og find person-ejere på toppen via cvr_deltagerrelation.

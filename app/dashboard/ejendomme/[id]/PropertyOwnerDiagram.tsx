@@ -46,6 +46,7 @@ export default function PropertyOwnerDiagram({
   adresse,
   lang,
   erEjerlejlighed = false,
+  cardsOnly = false,
 }: {
   bfe: number;
   adresse: string;
@@ -57,6 +58,8 @@ export default function PropertyOwnerDiagram({
    * status, og EJF leverer de faktiske ejere meget hurtigere.
    */
   erEjerlejlighed?: boolean;
+  /** Vis kun ejerkort (ingen DiagramForce) — bruges når DiagramV2 erstatter grafen */
+  cardsOnly?: boolean;
 }) {
   const _router = useRouter();
   const da = lang === 'da';
@@ -259,8 +262,8 @@ export default function PropertyOwnerDiagram({
         </div>
       ))}
 
-      {/* Relationsdiagram — samme DiagramForce som virksomheds- og personsiderne */}
-      <DiagramForce graph={graph} lang={lang} />
+      {/* Relationsdiagram — skjules når cardsOnly er true (DiagramV2 bruges i stedet) */}
+      {!cardsOnly && <DiagramForce graph={graph} lang={lang} />}
     </div>
   );
 }

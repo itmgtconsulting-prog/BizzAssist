@@ -864,9 +864,11 @@ async function resolvePropertyGraph(
       }
     }
 
-    // Person-ejere: find registrerede ejere af de DIREKTE ejendoms-ejere
-    // (ikke hele hierarkiet — det ville give for mange person-noder)
-    const allCompCvrs = companyOwnerCvrs;
+    // Person-ejere: find registrerede ejere af ALLE virksomheder i hierarkiet
+    // — viser hvem der reelt ejer ejendommen gennem holdingselskaber
+    const allCompCvrs = nodes
+      .filter((n) => n.type === 'company' && n.cvr)
+      .map((n) => String(n.cvr));
     if (allCompCvrs.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: personOwnerRows } = await (admin as any)
@@ -877,7 +879,7 @@ async function resolvePropertyGraph(
         .is('gyldig_til', null)
         .not('ejerandel_pct', 'is', null)
         .gt('ejerandel_pct', 0)
-        .limit(100);
+        .limit(200);
 
       // Dedup person per virksomhed
       const personEnheder = new Set<number>();

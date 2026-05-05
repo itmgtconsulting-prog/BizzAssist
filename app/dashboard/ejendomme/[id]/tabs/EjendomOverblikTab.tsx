@@ -36,6 +36,8 @@ import PlandataSektion from '@/app/components/ejendomme/PlandataSektion';
 import EjerforeningSektion from '@/app/components/ejendomme/EjerforeningSektion';
 // BIZZ-1046: EnergiWidget + ByggeomkostningBadge flyttet til EjendomOekonomiTab
 import type { Ejerlejlighed } from '@/app/api/ejerlejligheder/route';
+import type { StrukturNode } from '@/app/api/ejendom-struktur/route';
+import EjendomStrukturTree from '@/app/components/ejendomme/EjendomStrukturTree';
 
 interface TinglysningSnapshot {
   tinglystAreal: number | null;
@@ -86,6 +88,12 @@ interface Props {
   energiLoader?: boolean;
   /** BIZZ-1030: Callback til at navigere til Dokumenter-fanen */
   onNavigerDokumenter?: () => void;
+  /** Ejendomsstruktur-træ (SFE → Hovedejendom → Ejerlejlighed) */
+  strukturTree?: StrukturNode | null;
+  /** True mens strukturdata hentes */
+  strukturLoader?: boolean;
+  /** Aktuel BFE for denne ejendom (highlightes i træet) */
+  currentBfe?: number;
 }
 
 /**
@@ -114,6 +122,9 @@ export default function EjendomOverblikTab({
   energimaerker,
   energiLoader,
   onNavigerDokumenter,
+  strukturTree,
+  strukturLoader,
+  currentBfe,
 }: Props) {
   const da = lang === 'da';
 
@@ -173,6 +184,16 @@ export default function EjendomOverblikTab({
       {(bbrLoader || vurderingLoader) && !bbrData && (
         <TabLoadingSpinner label={t.loadingOverblik} />
       )}
+      {/* Ejendomsstruktur-træ for opdelte ejendomme */}
+      {strukturLoader && (
+        <TabLoadingSpinner
+          label={da ? 'Henter ejendomsstruktur…' : 'Loading property structure…'}
+        />
+      )}
+      {strukturTree && !strukturLoader && (
+        <EjendomStrukturTree tree={strukturTree} lang={lang} currentBfe={currentBfe} />
+      )}
+
       {/* 2-spalte layout: ejendomsdata (venstre) + økonomi (højre) */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
         {/* ─── Rad 1: Matrikel (v) + Ejendomsvurdering (h) ─── */}

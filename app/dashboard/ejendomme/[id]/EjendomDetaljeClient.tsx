@@ -436,6 +436,13 @@ export default function EjendomDetaljeClient({
   /** True mens lejlighedsdata hentes */
   const [lejlighederLoader, setLejlighederLoader] = useState(false);
 
+  /** Ejendomsstruktur-træ (SFE → Hovedejendom → Ejerlejlighed) */
+  const [strukturTree, setStrukturTree] = useState<
+    import('@/app/api/ejendom-struktur/route').StrukturNode | null
+  >(null);
+  /** True mens strukturdata hentes */
+  const [strukturLoader, setStrukturLoader] = useState(false);
+
   /** Ejendomsvurderingsdata fra Datafordeler — null = ikke hentet endnu */
   const [vurdering, setVurdering] = useState<VurderingData | null>(null);
   /** Alle vurderinger fra Datafordeler — bruges til historiktabel */
@@ -984,6 +991,47 @@ export default function EjendomDetaljeClient({
       })
       .finally(() => {
         if (!controller.signal.aborted) setLejlighederLoader(false);
+      });
+    return () => controller.abort();
+  }, [id, erDAWA, dawaStatus, dawaAdresse, bbrData, matrikelData]);
+
+  /**
+   * Henter ejendomsstruktur (SFE → Hovedejendom → Ejerlejlighed) for opdelte
+   * ejendomme. Aktiveres kun når ejendommen er opdelt i ejerlejligheder.
+   * Bruger samme ejerlav+matrikelnr som ejerlejligheder-fetch.
+   */
+  useEffect(() => {
+    const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+    const matOpdelt = matrikelData?.opdeltIEjerlejligheder === true;
+    if (!erModer && !matOpdelt) return;
+
+    const bbrRel = bbrData?.ejendomsrelationer?.[0];
+    const matJs = matrikelData?.jordstykker?.[0];
+    const ejerlavKode = bbrRel?.ejerlavKode ?? matJs?.ejerlavskode;
+    const matrikelnr = bbrRel?.matrikelnr ?? matJs?.matrikelnummer;
+    if (!ejerlavKode || !matrikelnr) return;
+
+    const controller = new AbortController();
+    setStrukturLoader(true);
+    const params = new URLSearchParams({
+      ejerlavKode: String(ejerlavKode),
+      matrikelnr: String(matrikelnr),
+    });
+    const sfeBfe = bbrData?.moderBfe ?? bbrRel?.bfeNummer;
+    if (sfeBfe) params.set('sfeBfe', String(sfeBfe));
+
+    fetch(`/api/ejendom-struktur?${params}`, { signal: controller.signal })
+      .then((r) => (r.ok ? r.json() : { tree: null }))
+      .then((data: { tree: import('@/app/api/ejendom-struktur/route').StrukturNode | null }) => {
+        if (controller.signal.aborted) return;
+        setStrukturTree(data.tree);
+      })
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        logger.warn('[ejendom] Struktur fetch error:', err);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setStrukturLoader(false);
       });
     return () => controller.abort();
   }, [id, erDAWA, dawaStatus, dawaAdresse, bbrData, matrikelData]);
@@ -2266,6 +2314,14 @@ export default function EjendomDetaljeClient({
                 energimaerker={energimaerker}
                 energiLoader={energiLoader}
                 onNavigerDokumenter={() => setAktivTab('dokumenter')}
+                strukturTree={strukturTree}
+                strukturLoader={strukturLoader}
+                currentBfe={
+                  bbrData?.ejerlejlighedBfe ??
+                  bbrData?.moderBfe ??
+                  bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
+                  undefined
+                }
               />
             )}
 

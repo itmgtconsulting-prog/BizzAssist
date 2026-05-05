@@ -875,6 +875,8 @@ async function resolvePropertyGraph(
         .in('virksomhed_cvr', allCompCvrs)
         .eq('type', 'register')
         .is('gyldig_til', null)
+        .not('ejerandel_pct', 'is', null)
+        .gt('ejerandel_pct', 0)
         .limit(100);
 
       // Dedup person per virksomhed

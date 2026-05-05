@@ -31,6 +31,8 @@ import type { MatrikelEjendom } from '@/app/api/matrikel/route';
 import ByggeaktivitetBadge from '@/app/components/ejendomme/ByggeaktivitetBadge';
 import SkraafotoGalleri from '@/app/components/ejendomme/SkraafotoGalleri';
 import type { MatrikelHistorikEvent } from '@/app/api/matrikel/historik/route';
+import type { StrukturNode } from '@/app/api/ejendom-struktur/route';
+import EjendomStrukturTree from '@/app/components/ejendomme/EjendomStrukturTree';
 
 /** Small re-implementation of the parent's SectionTitle for this tab. */
 function SectionTitle({ title }: { title: string }) {
@@ -86,6 +88,12 @@ interface Props {
   matrikelHistorik: MatrikelHistorikEvent[];
   /** BIZZ-1079: Kommunekode for byggeaktivitet */
   kommunekode?: string | null;
+  /** Ejendomsstruktur-træ (SFE → Hovedejendom → Ejerlejlighed) */
+  strukturTree?: StrukturNode | null;
+  /** True mens strukturdata hentes */
+  strukturLoader?: boolean;
+  /** Aktuel BFE for denne ejendom (highlightes i træet) */
+  currentBfe?: number;
 }
 
 /**
@@ -110,6 +118,9 @@ export default function EjendomBBRTab({
   matrikelData,
   matrikelHistorik,
   kommunekode,
+  strukturTree,
+  strukturLoader,
+  currentBfe,
 }: Props) {
   const da = lang === 'da';
 
@@ -550,6 +561,64 @@ export default function EjendomBBRTab({
           </div>
         );
       })()}
+
+      {/* Ejendomsstruktur — beriger noder med BBR areal+værelser */}
+      {strukturLoader && (
+        <TabLoadingSpinner
+          label={da ? 'Henter ejendomsstruktur…' : 'Loading property structure…'}
+        />
+      )}
+      {strukturTree &&
+        !strukturLoader &&
+        (() => {
+          // Berig struktur-noder med areal+værelser fra BBR enheder
+          const enhederList = bbrData?.enheder ?? [];
+          /**
+           * Rekursiv berigelse af en StrukturNode med BBR-data.
+           * Matcher via adresse (etage+dør) fordi vi ikke har BFE→enhed mapping.
+           *
+           * @param node - Struktur-node
+           * @returns Beriget kopi af noden
+           */
+          function enrichNode(node: StrukturNode): StrukturNode {
+            if (node.niveau === 'ejerlejlighed' && enhederList.length > 0) {
+              // Match via etage+dør fra adresse
+              const addrParts = node.adresse.split(',').map((s) => s.trim());
+              if (addrParts.length >= 2) {
+                const etageDoer = addrParts[1].toLowerCase();
+                const matched = enhederList.find((e) => {
+                  const etageLower = (e.etage ?? '').toLowerCase();
+                  const doerLower = (e.doer ?? '').toLowerCase();
+                  const combined = `${etageLower}. ${doerLower}`.trim();
+                  return (
+                    etageDoer.includes(combined) || (etageLower && etageDoer.startsWith(etageLower))
+                  );
+                });
+                if (matched) {
+                  return {
+                    ...node,
+                    areal: matched.areal ?? node.areal,
+                    vaerelser: matched.vaerelser ?? node.vaerelser,
+                    children: node.children.map(enrichNode),
+                  };
+                }
+              }
+            }
+            // Hovedejendom: summér areal fra children
+            if (node.niveau === 'hovedejendom' && node.children.length > 0) {
+              const enrichedChildren = node.children.map(enrichNode);
+              const totalAreal = enrichedChildren.reduce((s, c) => s + (c.areal ?? 0), 0);
+              return {
+                ...node,
+                areal: totalAreal > 0 ? totalAreal : node.areal,
+                children: enrichedChildren,
+              };
+            }
+            return { ...node, children: node.children.map(enrichNode) };
+          }
+          const enriched = enrichNode(strukturTree);
+          return <EjendomStrukturTree tree={enriched} lang={lang} currentBfe={currentBfe} />;
+        })()}
 
       {/* Enheder */}
       {(() => {

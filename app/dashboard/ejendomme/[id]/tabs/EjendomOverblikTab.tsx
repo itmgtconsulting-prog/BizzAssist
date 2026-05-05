@@ -36,8 +36,7 @@ import PlandataSektion from '@/app/components/ejendomme/PlandataSektion';
 import EjerforeningSektion from '@/app/components/ejendomme/EjerforeningSektion';
 // BIZZ-1046: EnergiWidget + ByggeomkostningBadge flyttet til EjendomOekonomiTab
 import type { Ejerlejlighed } from '@/app/api/ejerlejligheder/route';
-import type { StrukturNode } from '@/app/api/ejendom-struktur/route';
-import EjendomStrukturTree from '@/app/components/ejendomme/EjendomStrukturTree';
+// EjendomStrukturTree moved to BBR tab
 
 interface TinglysningSnapshot {
   tinglystAreal: number | null;
@@ -88,12 +87,6 @@ interface Props {
   energiLoader?: boolean;
   /** BIZZ-1030: Callback til at navigere til Dokumenter-fanen */
   onNavigerDokumenter?: () => void;
-  /** Ejendomsstruktur-træ (SFE → Hovedejendom → Ejerlejlighed) */
-  strukturTree?: StrukturNode | null;
-  /** True mens strukturdata hentes */
-  strukturLoader?: boolean;
-  /** Aktuel BFE for denne ejendom (highlightes i træet) */
-  currentBfe?: number;
 }
 
 /**
@@ -122,9 +115,6 @@ export default function EjendomOverblikTab({
   energimaerker,
   energiLoader,
   onNavigerDokumenter,
-  strukturTree,
-  strukturLoader,
-  currentBfe,
 }: Props) {
   const da = lang === 'da';
 
@@ -786,16 +776,6 @@ export default function EjendomOverblikTab({
         postnr={dawaAdresse?.postnr ?? null}
         lang={lang}
       />
-      {/* Ejendomsstruktur-træ for opdelte ejendomme — placeret over Lokalplan */}
-      {strukturLoader && (
-        <TabLoadingSpinner
-          label={da ? 'Henter ejendomsstruktur…' : 'Loading property structure…'}
-        />
-      )}
-      {strukturTree && !strukturLoader && (
-        <EjendomStrukturTree tree={strukturTree} lang={lang} currentBfe={currentBfe} />
-      )}
-
       {/* BIZZ-1025: Lokalplan detaljer */}
       <PlandataSektion adresseId={dawaAdresse?.id ?? null} lang={lang} />
       {/* BIZZ-1018: Skråfoto flyttet til BBR-tab */}

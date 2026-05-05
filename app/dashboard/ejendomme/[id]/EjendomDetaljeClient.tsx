@@ -2336,14 +2336,6 @@ export default function EjendomDetaljeClient({
                 energimaerker={energimaerker}
                 energiLoader={energiLoader}
                 onNavigerDokumenter={() => setAktivTab('dokumenter')}
-                strukturTree={strukturTree}
-                strukturLoader={strukturLoader}
-                currentBfe={
-                  bbrData?.ejerlejlighedBfe ??
-                  bbrData?.moderBfe ??
-                  bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
-                  undefined
-                }
               />
             )}
 
@@ -2368,6 +2360,14 @@ export default function EjendomDetaljeClient({
                 matrikelHistorik={matrikelHistorik}
                 kommunekode={
                   dawaJordstykke?.kommune?.kode ? String(dawaJordstykke.kommune.kode) : null
+                }
+                strukturTree={strukturTree}
+                strukturLoader={strukturLoader}
+                currentBfe={
+                  bbrData?.ejerlejlighedBfe ??
+                  bbrData?.moderBfe ??
+                  bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
+                  undefined
                 }
               />
             )}

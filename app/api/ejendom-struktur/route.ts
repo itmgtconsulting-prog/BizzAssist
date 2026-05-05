@@ -54,6 +54,10 @@ export interface StrukturNode {
   vurderingsaar: number | null;
   /** Tinglysningens ejendomsvurdering (fallback) */
   tlVurdering: number | null;
+  /** Areal i m² (fra BBR/TL — beriges klient-side) */
+  areal: number | null;
+  /** Antal værelser (fra BBR — beriges klient-side) */
+  vaerelser: number | null;
   /** Underliggende ejendomme */
   children: StrukturNode[];
 }
@@ -489,6 +493,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
             grundvaerdi: null,
             vurderingsaar: null,
             tlVurdering: ejl.ejendomsVurdering,
+            areal: null,
+            vaerelser: null,
             children: [],
           };
         });
@@ -502,6 +508,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
         grundvaerdi: vur?.grundvaerdi ?? null,
         vurderingsaar: vur?.aar ?? null,
         tlVurdering: hej.ejendomsVurdering,
+        areal: null,
+        vaerelser: null,
         children,
       };
     });
@@ -550,6 +558,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
         grundvaerdi: null,
         vurderingsaar: null,
         tlVurdering: ejl.ejendomsVurdering,
+        areal: null,
+        vaerelser: null,
         children: [],
       }));
 
@@ -562,6 +572,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
         grundvaerdi: null,
         vurderingsaar: null,
         tlVurdering: null,
+        areal: null,
+        vaerelser: null,
         children,
       });
     }
@@ -590,6 +602,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
       grundvaerdi: null,
       vurderingsaar: null,
       tlVurdering: sfeItem?.ejendomsVurdering ?? null,
+      areal: null,
+      vaerelser: null,
       children: [...hovedejendomNodes, ...virtualHovedNodes],
     };
 

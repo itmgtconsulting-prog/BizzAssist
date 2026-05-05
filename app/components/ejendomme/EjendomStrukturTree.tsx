@@ -138,18 +138,39 @@ function TreeNode({ node, depth, lang, currentBfe }: TreeNodeProps) {
         )}
       </div>
 
-      {/* Child count badge */}
+      {/* Areal + værelser for ejerlejligheder */}
+      {node.niveau === 'ejerlejlighed' && (node.areal || node.vaerelser) && (
+        <div className="flex items-center gap-2 shrink-0">
+          {node.areal != null && node.areal > 0 && (
+            <span className="text-slate-400 text-[10px] tabular-nums">{node.areal} m²</span>
+          )}
+          {node.vaerelser != null && node.vaerelser > 0 && (
+            <span className="text-slate-500 text-[10px] tabular-nums">
+              {node.vaerelser} {da ? 'vær.' : 'rooms'}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Summeret areal + child count for hovedejendomme/SFE */}
       {hasChildren && (
-        <span className="text-slate-500 text-[10px] tabular-nums shrink-0">
-          {node.children.length}{' '}
-          {node.children[0]?.niveau === 'ejerlejlighed'
-            ? da
-              ? 'lejl.'
-              : 'units'
-            : da
-              ? 'ejendomme'
-              : 'properties'}
-        </span>
+        <div className="flex items-center gap-2 shrink-0">
+          {node.areal != null && node.areal > 0 && (
+            <span className="text-slate-400 text-[10px] tabular-nums">
+              {node.areal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²
+            </span>
+          )}
+          <span className="text-slate-500 text-[10px] tabular-nums">
+            {node.children.length}{' '}
+            {node.children[0]?.niveau === 'ejerlejlighed'
+              ? da
+                ? 'lejl.'
+                : 'units'
+              : da
+                ? 'ejendomme'
+                : 'properties'}
+          </span>
+        </div>
       )}
     </>
   );

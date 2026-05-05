@@ -1361,6 +1361,47 @@ async function resolvePersonGraph(
     }
   }
 
+  // ── POST-PROCESS: berig datterselskabs-noder med personens rolle ──────────
+  // Datterselskaber (level 1/2 subsidiaries) oprettes uden personRolle fordi
+  // de tilføjes via cvr_virksomhed_ejerskab (virksomhed→virksomhed), ikke
+  // cvr_deltagerrelation (person→virksomhed). Men personen kan godt have en
+  // direkte rolle i datterselskabet (fx direktør, stifter).
+  {
+    const nodesWithoutRolle = nodes.filter(
+      (n) => n.type === 'company' && !n.personRolle && n.id !== mainId
+    );
+    if (nodesWithoutRolle.length > 0) {
+      const cvrsMissingRolle = nodesWithoutRolle.map((n) => String(n.cvr)).filter(Boolean);
+      if (cvrsMissingRolle.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: extraRels } = await (admin as any)
+          .from('cvr_deltagerrelation')
+          .select('virksomhed_cvr, type')
+          .eq('deltager_enhedsnummer', Number(enhedsNummer))
+          .in('virksomhed_cvr', cvrsMissingRolle)
+          .is('gyldig_til', null);
+
+        const extraRollerMap = new Map<string, string[]>();
+        for (const r of (extraRels ?? []) as Array<{
+          virksomhed_cvr: string;
+          type: string;
+        }>) {
+          const arr = extraRollerMap.get(r.virksomhed_cvr) ?? [];
+          arr.push(r.type);
+          extraRollerMap.set(r.virksomhed_cvr, arr);
+        }
+
+        for (const node of nodesWithoutRolle) {
+          const cvr = String(node.cvr);
+          const roller = extraRollerMap.get(cvr);
+          if (roller && roller.length > 0) {
+            node.personRolle = roller.slice(0, 2).join(', ');
+          }
+        }
+      }
+    }
+  }
+
   return { nodes, edges, mainId };
 }
 

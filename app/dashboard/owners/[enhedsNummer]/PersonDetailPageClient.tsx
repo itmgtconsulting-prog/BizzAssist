@@ -47,9 +47,9 @@ import type { EjendomSummary } from '@/app/api/ejendomme-by-owner/route';
 import PropertyOwnerCard from '@/app/components/ejendomme/PropertyOwnerCard';
 import { saveRecentPerson } from '@/app/lib/recentPersons';
 import { recordRecentVisit } from '@/app/lib/recordRecentVisit';
-import { buildPersonDiagramGraph } from '@/app/components/diagrams/DiagramData';
+// buildPersonDiagramGraph fjernet — DiagramV2 erstatter det gamle diagram
 import type { DiagramPropertySummary } from '@/app/components/diagrams/DiagramData';
-import { isDiagram2Enabled } from '@/app/lib/featureFlags';
+// isDiagram2Enabled removed — v2 is now the default diagram
 import CreateCaseModal from '@/app/components/sager/CreateCaseModal';
 import { useDomainMemberships } from '@/app/hooks/useDomainMemberships';
 import dynamic from 'next/dynamic';
@@ -60,22 +60,12 @@ import { resolvePlan, formatTokens, isSubscriptionFunctional } from '@/app/lib/s
 import SektionLoader from '@/app/components/SektionLoader';
 import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
 
-/** BIZZ-600: DiagramForce uses d3-force — dynamic() keeps d3-force out of initial bundle */
-// prettier-ignore
-const DiagramForce = dynamic(/* d3-force */ () => import('@/app/components/diagrams/DiagramForce'), { ssr: false, loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" /> });
-/** Diagram v2 — feature-flagged, kun synlig i dev/preview */
+/** DiagramV2 — erstatter det gamle DiagramForce på personsiden */
 const DiagramV2 = dynamic(() => import('@/app/components/diagrams/DiagramV2'), { ssr: false });
 
 // ─── Tab Types ──────────────────────────────────────────────────────────────
 
-type TabId =
-  | 'overview'
-  | 'relations'
-  | 'diagram2'
-  | 'properties'
-  | 'group'
-  | 'chronology'
-  | 'liens';
+type TabId = 'overview' | 'relations' | 'properties' | 'group' | 'chronology' | 'liens';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -1315,63 +1305,7 @@ export default function PersonDetailPageClient({
    * Virksomhedsfanen memoiserer samme måde (VirksomhedDetaljeClient linje
    * 540-573); nu er person-siden symmetrisk.
    */
-  const personDiagramGraph = useMemo(() => {
-    if (!data) return { nodes: [], edges: [], mainId: '' };
-    // BIZZ-925: Vent med diagram-build til ejendomme-fetch er komplet.
-    // Progressiv loading kalder setEjendommeData flere gange (batch 5 → 10),
-    // og hvert kald skabte ny graf-reference → DiagramForce cancelerede sin
-    // igangværende D3-simulation → positions forblev tom → blank canvas.
-    // Ved at gate på ejendommeFetchComplete bygger vi kun grafen én gang
-    // med komplet data, så simulationen kan køre uforstyrret.
-    if (!ejendommeFetchComplete) return { nodes: [], edges: [], mainId: '' };
-    // BIZZ-571: Person-diagram ekskluderer solgte ejendomme — samme regel
-    // som virksomheds-diagrammet.
-    // BIZZ-849: ejendommeData indeholder BÅDE virksomheds-ejede (numeric
-    // ownerCvr) OG personligt ejede (ownerCvr='person-<enhedsNummer>').
-    // parseInt på "person-..." gav NaN og entries blev grupperet under
-    // NaN-key der aldrig matchede nogen node. Separer de to kilder:
-    const aktiveEjendomme = ejendommeData.filter((p) => p.aktiv !== false);
-    const propertiesByCvr = new Map<number, DiagramPropertySummary[]>();
-    const personlyOwnedFromEnhedLookup: DiagramPropertySummary[] = [];
-    for (const p of aktiveEjendomme) {
-      if (typeof p.ownerCvr === 'string' && p.ownerCvr.startsWith('person-')) {
-        personlyOwnedFromEnhedLookup.push(p as DiagramPropertySummary);
-        continue;
-      }
-      const cvrNum = parseInt(p.ownerCvr, 10);
-      if (!Number.isFinite(cvrNum)) continue; // skip invalid ownerCvr-strenge
-      if (!propertiesByCvr.has(cvrNum)) propertiesByCvr.set(cvrNum, []);
-      propertiesByCvr.get(cvrNum)!.push(p as DiagramPropertySummary);
-    }
-    // Merge enhedsNummer-lookup-resultater med personalBfes (bulk-data-lookup).
-    // Dedup på bfeNummer så samme ejendom ikke rendres to gange.
-    const seenBfe = new Set<number>();
-    const mergedPersonal: DiagramPropertySummary[] = [];
-    for (const p of [...personalBfes, ...personlyOwnedFromEnhedLookup]) {
-      if (seenBfe.has(p.bfeNummer)) continue;
-      seenBfe.add(p.bfeNummer);
-      mergedPersonal.push(p);
-    }
-    return buildPersonDiagramGraph(
-      data.navn,
-      data.enhedsNummer,
-      topLevelEjer,
-      relatedCompanies,
-      noeglePersonerMap,
-      derived?.andreVirksomheder ?? [],
-      propertiesByCvr.size > 0 ? propertiesByCvr : undefined,
-      mergedPersonal
-    );
-  }, [
-    data,
-    ejendommeFetchComplete,
-    topLevelEjer,
-    relatedCompanies,
-    noeglePersonerMap,
-    derived?.andreVirksomheder,
-    ejendommeData,
-    personalBfes,
-  ]);
+  // personDiagramGraph fjernet — DiagramV2 erstatter det gamle DiagramForce
 
   /** Hent nøglepersoner (bestyrelse+direktion) for alle virksomheder (ejede + andre roller) */
   useEffect(() => {
@@ -1840,9 +1774,6 @@ export default function PersonDetailPageClient({
   const tabDef: { id: TabId; label: string; icon: React.ReactNode }[] = [
     { id: 'overview', label: c.tabs.overview, icon: <LayoutDashboard size={12} /> },
     { id: 'relations', label: c.tabs.relations, icon: <Briefcase size={12} /> },
-    ...(isDiagram2Enabled()
-      ? [{ id: 'diagram2' as const, label: 'Diagram v2', icon: <Sparkles size={12} /> }]
-      : []),
     { id: 'properties', label: c.tabs.properties, icon: <Home size={12} /> },
     { id: 'group', label: c.tabs.group, icon: <Building2 size={12} /> },
     { id: 'chronology', label: c.tabs.chronology, icon: <Clock size={12} /> },
@@ -2461,44 +2392,13 @@ export default function PersonDetailPageClient({
             </div>
           )}
 
-          {/* ══ RELATIONSDIAGRAM — BIZZ-337: variant toggle matcher virksomhedssiden ══ */}
-          {aktivTab === 'relations' && (
-            <DiagramForce
-              // BIZZ-597 Fase 3: Bruger memoized personDiagramGraph i stedet for
-              // at genskabe grafen inline — matcher virksomhedssidens pattern.
-              // D3-simulering genstarter nu kun når diagram-data reelt ændrer sig.
-              graph={personDiagramGraph}
-              lang={lang}
-              // BIZZ-571: Person-diagram aabnede tidligere uden ejendomme
-              // synlige for at undgaa overfyldt view.
-              // BIZZ-619: Revideret — ejendomme skulle vises fra start for
-              // konsistens med virksomhedsdiagrammet.
-              // BIZZ-847: Ændret tilbage — for personer med mange personligt
-              // ejede ejendomme (fx Jakob med 9) blev diagrammet for tungt.
-              // Default OFF; brugeren kan toggle via toolbar eller Udvid.
-              defaultShowProperties={false}
-              onNodeClick={(node) => {
-                // BIZZ-368: clicking a company node in the person diagram should switch to
-                // the overview tab (staying on this page) rather than navigating to the
-                // company page. Property and person nodes without a meaningful tab target
-                // fall back to normal navigation.
-                if (node.type === 'company' || node.type === 'main') {
-                  setAktivTab('overview');
-                } else if (node.link) {
-                  window.location.href = node.link;
-                }
-              }}
-            />
-          )}
-
-          {/* ══ DIAGRAM v2 (feature-flagged) ══ */}
-          {/* BIZZ-1121: Lazy-mount ved første klik, derefter display:none */}
-          {data && (aktivTab === 'diagram2' || diagram2Mounted) && (
+          {/* ══ RELATIONSDIAGRAM — DiagramV2 erstatter det gamle DiagramForce ══ */}
+          {data && (aktivTab === 'relations' || diagram2Mounted) && (
             <div
               ref={() => {
                 if (!diagram2Mounted) setDiagram2Mounted(true);
               }}
-              style={{ display: aktivTab === 'diagram2' ? 'block' : 'none' }}
+              style={{ display: aktivTab === 'relations' ? 'block' : 'none' }}
             >
               <DiagramV2
                 rootType="person"

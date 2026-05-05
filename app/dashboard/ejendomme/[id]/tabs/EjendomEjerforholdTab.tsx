@@ -107,10 +107,14 @@ export default function EjendomEjerforholdTab({
 
           // Hovedejendom opdelt i EL — vis strukturtræ med ejer-data
           if (erModer) {
-            // Berig strukturtræ med ejer/pris/dato fra lejligheder-data.
-            // Lejligheder-listen er ofte mere komplet end TL-strukturen
-            // (TL returnerer 1 item pr. ejendomsnummer, lejligheder har
-            // individuelle adresser med etage/dør).
+            // BIZZ-1149: Loading-bar mens strukturtræ/lejligheder hentes
+            if (strukturLoader || lejlighederLoader) {
+              return (
+                <TabLoadingSpinner
+                  ariaLabel={da ? 'Henter ejendomsstruktur' : 'Loading property structure'}
+                />
+              );
+            }
             if (strukturTree && lejligheder && lejligheder.length > 0) {
               /**
                * Ekstraher husnummer fra en adressestreng.

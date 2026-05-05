@@ -68,9 +68,7 @@ import { recordRecentVisit } from '@/app/lib/recordRecentVisit';
 import { useSubscription } from '@/app/context/SubscriptionContext';
 import { useSubscriptionAccess } from '@/app/components/SubscriptionGate';
 import { resolvePlan, formatTokens, isSubscriptionFunctional } from '@/app/lib/subscriptions';
-import { buildDiagramGraph } from '@/app/components/diagrams/DiagramData';
-import type { DiagramPropertySummary } from '@/app/components/diagrams/DiagramData';
-import { isDiagram2Enabled } from '@/app/lib/featureFlags';
+// isDiagram2Enabled fjernet
 import dynamic from 'next/dynamic';
 import VerifiedLinks from '@/app/components/VerifiedLinks';
 import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
@@ -83,7 +81,6 @@ import VirksomhedNoeglepersonerTab from './tabs/VirksomhedNoeglepersonerTab';
 import VirksomhedHistorikTab from './tabs/VirksomhedHistorikTab';
 /** BIZZ-600: DiagramForce uses d3-force — dynamic() keeps d3-force out of initial bundle */
 // prettier-ignore
-const DiagramForce = dynamic(/* d3-force */ () => import('@/app/components/diagrams/DiagramForce'), { ssr: false, loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" /> });
 /** Diagram v2 — feature-flagged, kun synlig i dev/preview */
 const DiagramV2 = dynamic(() => import('@/app/components/diagrams/DiagramV2'), { ssr: false });
 
@@ -177,7 +174,7 @@ function formatDatoKort(iso: string): string {
 type TabId =
   | 'overview'
   | 'diagram'
-  | 'diagram2'
+  // diagram2 fjernet — DiagramV2 vises nu på diagram-fanen
   | 'tradeHistory'
   | 'properties'
   | 'companies'
@@ -190,7 +187,6 @@ type TabId =
 const tabIcons: Record<TabId, React.ReactNode> = {
   overview: <LayoutDashboard size={12} />,
   diagram: <Briefcase size={12} />,
-  diagram2: <Sparkles size={12} />,
   tradeHistory: <ArrowRightLeft size={12} />,
   properties: <Home size={12} />,
   companies: <Building2 size={12} />,
@@ -311,7 +307,6 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   const tabLabelMap: Record<TabId, string> = {
     overview: c.tabs.overview,
     diagram: lang === 'da' ? 'Diagram' : 'Diagram',
-    diagram2: 'Diagram v2',
     tradeHistory: c.tabs.tradeHistory,
     properties: c.tabs.properties,
     companies: c.tabs.companies,
@@ -333,14 +328,8 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   const [aktivTab, setAktivTab] = useState<TabId>('overview');
   /** BIZZ-1121: Lazy-mount — mount ved første klik, behold med display:none */
   const [diagram2Mounted, setDiagram2Mounted] = useState(false);
-  /** Tab-rækkefølge — diagram2 injiceres runtime bag feature flag */
-  const tabOrder = useMemo<TabId[]>(() => {
-    if (!isDiagram2Enabled()) return baseTabOrder;
-    const idx = baseTabOrder.indexOf('diagram');
-    const order = [...baseTabOrder];
-    order.splice(idx + 1, 0, 'diagram2');
-    return order;
-  }, []);
+  /** Tab-rækkefølge — diagram2 fjernet, DiagramV2 erstatter det gamle diagram */
+  const tabOrder = useMemo<TabId[]>(() => baseTabOrder, []);
   const [erFulgt, setErFulgt] = useState(false);
   // BIZZ-808: Opret sag-modal state
   const [opretSagOpen, setOpretSagOpen] = useState(false);
@@ -546,47 +535,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   const [ejendommeTotalBfe, setEjendommeTotalBfe] = useState(0);
   /** BIZZ-455: Toggle for visning af tidligere ejede (solgte) ejendomme */
   const [visSolgte, setVisSolgte] = useState(false);
-  /** BIZZ-diagram: Memoized diagram graph — only rebuilds when ejendomme fully loaded,
-   * preventing "jumping" as properties stream in progressively. Shows active only. */
-  const diagramGraphStable = useMemo(() => {
-    if (!data) return { nodes: [], edges: [], mainId: '' };
-    // BIZZ-926: Vent med diagram-build til ejendomme-fetch er komplet.
-    // Uden denne guard bygges grafen med ufuldstændige data ved første
-    // render → DiagramForce cancelerer igangværende D3-simulation →
-    // positions forbliver tom → blank canvas (identisk med BIZZ-925).
-    if (!ejendommeFetchComplete) return { nodes: [], edges: [], mainId: '' };
-    const aktiveEjendomme = ejendommeData.filter((p) => p.aktiv !== false);
-    const propertiesByCvr =
-      aktiveEjendomme.length > 0
-        ? aktiveEjendomme.reduce((map, p) => {
-            const cvrNum = parseInt(p.ownerCvr, 10);
-            if (!map.has(cvrNum)) map.set(cvrNum, []);
-            map.get(cvrNum)!.push(p as DiagramPropertySummary);
-            return map;
-          }, new Map<number, DiagramPropertySummary[]>())
-        : undefined;
-    return buildDiagramGraph(
-      data.name,
-      data.vat,
-      data.companydesc ?? null,
-      ownerChainShared,
-      relatedCompanies,
-      data.industrydesc ?? null,
-      propertiesByCvr
-    );
-    // Only rebuild when ejendomme loading finishes (ejendommeFetchComplete flips true)
-    // OR when ownership/company data changes. Deliberately EXCLUDE ejendommeData so
-    // progressive batches don't trigger re-simulation mid-load.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    data?.name,
-    data?.vat,
-    data?.companydesc,
-    data?.industrydesc,
-    ownerChainShared,
-    relatedCompanies,
-    ejendommeFetchComplete,
-  ]);
+  // diagramGraphStable fjernet — DiagramV2 erstatter det gamle DiagramForce
   /** Kommasepereret CVR-nøgle der sidst blev hentet — forhindrer duplicate-fetches */
   const ejendomFetchKeyRef = useRef('');
   /** AbortController for igangværende progressiv ejendomshentning */
@@ -1922,47 +1871,13 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           )}
 
           {/* ══ RELATIONSDIAGRAM (Force Graph — original) ══ */}
-          {aktivTab === 'diagram' && (
-            <div className="relative">
-              {/* BIZZ-1098: Konsolideret til én loading-indikator (corner badge nedenfor).
-                  DiagramForce håndterer sin egen initial-state med pulse-dot. */}
-              <DiagramForce
-                graph={diagramGraphStable}
-                lang={lang}
-                onDiagramReady={(base64) => {
-                  setAICtx({ diagramBase64: base64 });
-                }}
-              />
-              {/* BIZZ-729: Loading overlay — ejendomme loades progressivt men diagrammet
-                  rebuilds kun ved ejendommeFetchComplete=true for at undgå re-simulation.
-                  Uden denne indikator ser diagrammet "færdigt" ud indtil ejendomme pludselig
-                  popper ind. Viser spinner + progress-counter mens hentning står på. */}
-              {(ejendommeLoading || ejendommeLoadingMore) && (
-                <div
-                  role="status"
-                  aria-live="polite"
-                  className="absolute top-3 right-3 flex items-center gap-2 px-3 py-2 bg-blue-900/90 backdrop-blur-sm border border-blue-500/40 rounded-lg shadow-lg text-blue-100 text-xs font-medium pointer-events-none animate-pulse"
-                >
-                  <Loader2 size={14} className="animate-spin text-blue-300" />
-                  <span>
-                    {lang === 'da' ? 'Henter ejendomme' : 'Loading properties'}
-                    {ejendommeTotalBfe > 0
-                      ? ` — ${ejendommeData.length}/${ejendommeTotalBfe}`
-                      : '…'}
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* ══ DIAGRAM v2 (feature-flagged) ══ */}
-          {/* BIZZ-1121: Lazy-mount ved første klik, derefter display:none */}
-          {data && (aktivTab === 'diagram2' || diagram2Mounted) && (
+          {/* ══ DIAGRAM — DiagramV2 erstatter det gamle DiagramForce ══ */}
+          {data && (aktivTab === 'diagram' || diagram2Mounted) && (
             <div
               ref={() => {
                 if (!diagram2Mounted) setDiagram2Mounted(true);
               }}
-              style={{ display: aktivTab === 'diagram2' ? 'block' : 'none' }}
+              style={{ display: aktivTab === 'diagram' ? 'block' : 'none' }}
             >
               <DiagramV2
                 rootType="company"

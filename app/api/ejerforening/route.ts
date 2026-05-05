@@ -202,8 +202,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           const fHusnr = parseInt(fHusnrMatch[1], 10);
           const ejdHusnr = parseInt(husnr, 10);
           if (isNaN(fHusnr) || isNaN(ejdHusnr)) return false;
-          // Accepter match indenfor ±10 husnumre (ejerforeninger dækker typisk et interval)
-          return Math.abs(fHusnr - ejdHusnr) <= 10;
+          // Accepter match indenfor ±4 husnumre (strammere match for at undgå
+          // forkerte foreninger fra nærliggende adresser)
+          return Math.abs(fHusnr - ejdHusnr) <= 4;
         })
       : foreninger;
 

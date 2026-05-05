@@ -767,8 +767,7 @@ async function resolvePropertyGraph(
               const isStatus = !cvr && !personNavn;
               return {
                 ejer_navn:
-                  personNavn ??
-                  (cvr ? `CVR ${cvr}` : isStatus ? 'Opdelt i ejerlejligheder' : 'Ukendt ejer'),
+                  personNavn ?? (cvr ? `CVR ${cvr}` : isStatus ? 'Opdelt ejerskab' : 'Ukendt ejer'),
                 ejer_cvr: cvr ? String(cvr) : null,
                 ejer_type: cvr ? 'virksomhed' : isStatus ? 'status' : 'person',
                 ejerandel_taeller: n.faktiskEjerandel_taeller,

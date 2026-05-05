@@ -3,7 +3,8 @@
  *
  * Rendererer SFE → Hovedejendom → Ejerlejlighed med korrekt
  * farvekodning (amber for SFE/hovedejendom, emerald for ejerlejlighed)
- * og inline vurderinger på hovedejendomme.
+ * og inline vurderinger på hovedejendomme. Noder er klikbare og
+ * navigerer til den pågældende ejendoms detaljevisning.
  *
  * @module app/components/ejendomme/EjendomStrukturTree
  */
@@ -11,6 +12,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { Building2, Home, ChevronDown, ChevronRight } from 'lucide-react';
 import type { StrukturNode, StrukturNiveau } from '@/app/api/ejendom-struktur/route';
 
@@ -57,7 +59,6 @@ function fmtDkk(amount: number): string {
  */
 function shortAddr(adresse: string): string {
   const parts = adresse.split(',').map((s) => s.trim());
-  // Fjern sidste del (postnr + by)
   if (parts.length > 1) return parts.slice(0, -1).join(', ');
   return adresse;
 }
@@ -70,7 +71,7 @@ interface TreeNodeProps {
 }
 
 /**
- * Rekursiv tree-node komponent.
+ * Rekursiv tree-node komponent. Klikbar via DAWA-ID link.
  *
  * @param props - Node, dybde, sprog
  */
@@ -81,86 +82,110 @@ function TreeNode({ node, depth, lang, currentBfe }: TreeNodeProps) {
   const hasChildren = node.children.length > 0;
   const da = lang === 'da';
   const isCurrent = currentBfe != null && node.bfe === currentBfe;
+  const canNavigate = node.dawaId != null && !isCurrent;
 
   const vurdering = node.ejendomsvaerdi ?? node.tlVurdering;
 
+  /** Indhold af en node-linje */
+  const nodeContent = (
+    <>
+      {/* Icon */}
+      <div className={`w-6 h-6 rounded flex items-center justify-center shrink-0 ${style.bg}`}>
+        <Icon size={14} className={style.color} />
+      </div>
+
+      {/* Adresse + badge */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span
+            className={`text-xs font-medium truncate ${canNavigate ? 'text-blue-300' : 'text-slate-200'}`}
+          >
+            {shortAddr(node.adresse)}
+          </span>
+          <span
+            className={`text-[9px] font-semibold px-1.5 py-0.5 rounded border shrink-0 ${
+              node.niveau === 'ejerlejlighed'
+                ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'
+                : 'bg-amber-500/10 text-amber-300 border-amber-500/20'
+            }`}
+          >
+            {style.badge}
+          </span>
+          {node.bfe > 0 && (
+            <span className="text-slate-600 text-[9px] shrink-0">BFE {node.bfe}</span>
+          )}
+          {isCurrent && (
+            <span className="text-blue-400 text-[9px] font-medium shrink-0">
+              {da ? '(denne)' : '(current)'}
+            </span>
+          )}
+        </div>
+
+        {/* Vurdering inline for hovedejendomme */}
+        {node.niveau === 'hovedejendom' && vurdering != null && vurdering > 0 && (
+          <div className="flex items-center gap-3 mt-0.5">
+            <span className="text-slate-400 text-[10px]">
+              {da ? 'Vurdering' : 'Valuation'}
+              {node.vurderingsaar ? ` ${node.vurderingsaar}` : ''}:{' '}
+              <span className="text-slate-200 font-medium">{fmtDkk(vurdering)}</span>
+            </span>
+            {node.grundvaerdi != null && node.grundvaerdi > 0 && (
+              <span className="text-slate-500 text-[10px]">
+                {da ? 'Grund' : 'Land'}: {fmtDkk(node.grundvaerdi)}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Child count badge */}
+      {hasChildren && (
+        <span className="text-slate-500 text-[10px] tabular-nums shrink-0">
+          {node.children.length}{' '}
+          {node.children[0]?.niveau === 'ejerlejlighed'
+            ? da
+              ? 'lejl.'
+              : 'units'
+            : da
+              ? 'ejendomme'
+              : 'properties'}
+        </span>
+      )}
+    </>
+  );
+
   return (
     <div className={depth > 0 ? 'ml-4 border-l border-slate-700/40 pl-3' : ''}>
-      <div
-        className={`flex items-center gap-2 py-1.5 px-2 rounded-lg transition-colors ${
-          isCurrent ? 'bg-blue-500/10 border border-blue-500/20' : 'hover:bg-slate-700/20'
-        }`}
-      >
+      <div className="flex items-center gap-1">
         {/* Expand/collapse */}
         {hasChildren ? (
           <button
             onClick={() => setExpanded(!expanded)}
-            className="p-0.5 text-slate-500 hover:text-slate-300 transition-colors"
+            className="p-0.5 text-slate-500 hover:text-slate-300 transition-colors shrink-0"
             aria-label={expanded ? 'Fold sammen' : 'Udvid'}
           >
             {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </button>
         ) : (
-          <span className="w-5" />
+          <span className="w-5 shrink-0" />
         )}
 
-        {/* Icon */}
-        <div className={`w-6 h-6 rounded flex items-center justify-center ${style.bg}`}>
-          <Icon size={14} className={style.color} />
-        </div>
-
-        {/* Adresse + badge */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-slate-200 text-xs font-medium truncate">
-              {shortAddr(node.adresse)}
-            </span>
-            <span
-              className={`text-[9px] font-semibold px-1.5 py-0.5 rounded border ${
-                node.niveau === 'ejerlejlighed'
-                  ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'
-                  : 'bg-amber-500/10 text-amber-300 border-amber-500/20'
-              }`}
-            >
-              {style.badge}
-            </span>
-            {node.bfe > 0 && <span className="text-slate-600 text-[9px]">BFE {node.bfe}</span>}
-            {isCurrent && (
-              <span className="text-blue-400 text-[9px] font-medium">
-                {da ? '(denne)' : '(current)'}
-              </span>
-            )}
+        {/* Klikbar node med link */}
+        {canNavigate ? (
+          <Link
+            href={`/dashboard/ejendomme/${node.dawaId}`}
+            className={`flex items-center gap-2 py-1.5 px-2 rounded-lg transition-colors flex-1 min-w-0 hover:bg-slate-700/30`}
+          >
+            {nodeContent}
+          </Link>
+        ) : (
+          <div
+            className={`flex items-center gap-2 py-1.5 px-2 rounded-lg transition-colors flex-1 min-w-0 ${
+              isCurrent ? 'bg-blue-500/10 border border-blue-500/20' : ''
+            }`}
+          >
+            {nodeContent}
           </div>
-
-          {/* Vurdering inline for hovedejendomme */}
-          {node.niveau === 'hovedejendom' && vurdering != null && vurdering > 0 && (
-            <div className="flex items-center gap-3 mt-0.5">
-              <span className="text-slate-400 text-[10px]">
-                {da ? 'Vurdering' : 'Valuation'}
-                {node.vurderingsaar ? ` ${node.vurderingsaar}` : ''}:{' '}
-                <span className="text-slate-200 font-medium">{fmtDkk(vurdering)}</span>
-              </span>
-              {node.grundvaerdi != null && node.grundvaerdi > 0 && (
-                <span className="text-slate-500 text-[10px]">
-                  {da ? 'Grund' : 'Land'}: {fmtDkk(node.grundvaerdi)}
-                </span>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Child count badge */}
-        {hasChildren && (
-          <span className="text-slate-500 text-[10px] tabular-nums">
-            {node.children.length}{' '}
-            {node.children[0]?.niveau === 'ejerlejlighed'
-              ? da
-                ? 'lejl.'
-                : 'units'
-              : da
-                ? 'ejendomme'
-                : 'properties'}
-          </span>
         )}
       </div>
 

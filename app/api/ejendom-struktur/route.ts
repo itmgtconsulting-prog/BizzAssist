@@ -4,7 +4,7 @@
  * Bygger det fulde ejendomshierarki (SFE → Hovedejendom → Ejerlejlighed)
  * for en given matrikel. Bruger Tinglysningsrettens matrikelsøgning til at
  * finde alle ejendomme og klassificerer dem i 3 niveauer. Henter vurdering
- * for hver hovedejendom via VUR GraphQL.
+ * for hver hovedejendom via VUR GraphQL. Resolver DAWA-ID'er for navigation.
  *
  * Query params:
  *   - ejerlavKode: string (ejerlav kode)
@@ -24,8 +24,9 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
 import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
+import { fetchDawa } from '@/app/lib/dawa';
 
-// ─── Query param validation ─────��───────────────────────────────────────────
+// ─── Query param validation ─────────────────────────────────────────────────
 
 const strukturQuerySchema = z.object({
   ejerlavKode: z.string().regex(/^\d+$/, 'ejerlavKode skal være et heltal'),
@@ -33,7 +34,7 @@ const strukturQuerySchema = z.object({
   sfeBfe: z.coerce.number().int().positive().optional(),
 });
 
-// ─── Types ─────────────────────────────────────────────���─────────────────────
+// ─── Types ──────────────────────────────────────────────────────────────────
 
 /** Klassificering af en node i ejendomshierarkiet */
 export type StrukturNiveau = 'sfe' | 'hovedejendom' | 'ejerlejlighed';
@@ -43,6 +44,8 @@ export interface StrukturNode {
   bfe: number;
   adresse: string;
   niveau: StrukturNiveau;
+  /** DAWA adresse-UUID for navigation til ejendomsdetalje */
+  dawaId: string | null;
   /** Ejendomsværdi fra vurdering (kun for hovedejendomme) */
   ejendomsvaerdi: number | null;
   /** Grundværdi fra vurdering (kun for hovedejendomme) */
@@ -61,7 +64,7 @@ export interface EjendomStrukturResponse {
   fejl: string | null;
 }
 
-// ─── Tinglysning mTLS ────────────────────────��──────────────────────────────
+// ─── Tinglysning mTLS ───────────────────────────────────────────────────────
 
 const CERT_PATH =
   process.env.TINGLYSNING_CERT_PATH ?? process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
@@ -211,6 +214,78 @@ async function fetchVurderingForBfe(
   }
 }
 
+// ─── DAWA adresse-resolver ──────────────────────────────────────────────────
+
+/**
+ * Resolver DAWA adresse-ID (UUID) fra en TL-adressestreng.
+ * Parser vejnavn, husnummer, postnummer og slår op i DAWA /adresser eller
+ * /adgangsadresser for at finde UUID til navigation.
+ *
+ * @param tlAdresse - Tinglysnings-adresse (f.eks. "Arnold Nielsens Boulevard 62A, 2650 Hvidovre")
+ * @param etage - Etage (for ejerlejligheder)
+ * @param doer - Dør (for ejerlejligheder)
+ * @returns DAWA UUID eller null
+ */
+async function resolveDawaId(
+  tlAdresse: string,
+  etage: string | null,
+  doer: string | null
+): Promise<string | null> {
+  try {
+    const parts = tlAdresse.split(',').map((s) => s.trim());
+    const streetPart = parts[0];
+    const m = streetPart.match(/^(.+?)\s+(\d+\w*)$/);
+    if (!m) return null;
+    const vejnavn = m[1];
+    const husnummer = m[2];
+    // Postnummer: find 4-cifret tal i adressestreng
+    const postMatch = tlAdresse.match(/(\d{4})/);
+    if (!postMatch) return null;
+    const postnr = postMatch[1];
+
+    // For ejerlejligheder: søg med etage/dør for specifik adresse-UUID
+    if (etage) {
+      const params = new URLSearchParams({
+        vejnavn,
+        husnr: husnummer,
+        postnr,
+        etage,
+        struktur: 'mini',
+      });
+      if (doer) params.set('dør', doer);
+      const res = await fetchDawa(
+        `https://dawa.aws.dk/adresser?${params}`,
+        { signal: AbortSignal.timeout(5000) },
+        { caller: 'ejendom-struktur.dawa-adresse' }
+      );
+      if (res.ok) {
+        const arr = (await res.json()) as Array<{ id: string }>;
+        if (arr.length > 0) return arr[0].id;
+      }
+    }
+
+    // For SFE/hovedejendom: søg adgangsadresse (uden etage)
+    const params = new URLSearchParams({
+      vejnavn,
+      husnr: husnummer,
+      postnr,
+      struktur: 'mini',
+    });
+    const res = await fetchDawa(
+      `https://dawa.aws.dk/adgangsadresser?${params}`,
+      { signal: AbortSignal.timeout(5000) },
+      { caller: 'ejendom-struktur.dawa-adgangsadresse' }
+    );
+    if (res.ok) {
+      const arr = (await res.json()) as Array<{ id: string }>;
+      if (arr.length > 0) return arr[0].id;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 // ─── Klassificering ─────────────────────────────────────────────────────────
 
 /**
@@ -236,9 +311,8 @@ function klassificerItem(item: TLSearchItem): StrukturNiveau {
 }
 
 /**
- * Ekstraher husnummer-suffix (bogstav) fra en adresse for at matche
- * ejerlejligheder til deres hovedejendom.
- * F.eks. "Arnold Nielsens Blvd 62B, st. th, 2650" → "62B"
+ * Ekstraher husnummer (tal + evt. bogstav) fra en adressestreng.
+ * F.eks. "Arnold Nielsens Boulevard 62B, st. th, 2650" → "62B"
  *
  * @param adresse - Fuld adressestreng
  * @returns Husnummer inkl. evt. bogstav (f.eks. "62A", "62B", "62")
@@ -249,7 +323,26 @@ function extractHusnr(adresse: string): string {
   return match ? match[1].toUpperCase() : '';
 }
 
-// ─── Route handler ──────────────────────────────────────────────���───────────
+/**
+ * Parser etage+dør fra en tinglysningsadresse.
+ * F.eks. "Vejnavn 18, 1. tv, 1799 København" → { etage: "1", doer: "tv" }
+ *
+ * @param adresse - Fuld adressestreng fra tinglysning
+ * @returns Etage og dør
+ */
+function parseEtageDoer(adresse: string): { etage: string | null; doer: string | null } {
+  const parts = adresse.split(',').map((s) => s.trim());
+  if (parts.length < 3) return { etage: null, doer: null };
+  const etageDoer = parts[1].trim();
+  const match = etageDoer.match(/^(\d+|st|kl)\.?\s*(.*)$/i);
+  if (!match) return { etage: null, doer: null };
+  return {
+    etage: match[1].toLowerCase(),
+    doer: match[2]?.toLowerCase().trim() || null,
+  };
+}
+
+// ─── Route handler ──────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest): Promise<NextResponse<EjendomStrukturResponse>> {
   const auth = await resolveTenantId();
@@ -296,17 +389,66 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
       return NextResponse.json({ tree: null, fejl: null }, { status: 200 });
     }
 
-    // ─�� Trin 2: Klassificér alle items ──
-    const classified = items.map((item) => ({
-      ...item,
-      niveau: klassificerItem(item),
-      bfe: item.ejendomsnummer ? parseInt(item.ejendomsnummer, 10) : 0,
-      husnr: extractHusnr(item.adresse),
-    }));
+    // Debug: log alle TL items for at forstå klassificering
+    logger.log(
+      `[ejendom-struktur] ${items.length} items fra TL for ejerlav=${ejerlavKode} matr=${matrikelnr}:`,
+      items.map((i) => ({
+        adresse: i.adresse,
+        vedroerende: i.vedroerende,
+        bfe: i.ejendomsnummer,
+        vurdering: i.ejendomsVurdering,
+      }))
+    );
 
-    const sfeItems = classified.filter((i) => i.niveau === 'sfe');
+    // ── Trin 2: Klassificér alle items ──
+    const classified = items.map((item) => {
+      const niveau = klassificerItem(item);
+      const bfe = item.ejendomsnummer ? parseInt(item.ejendomsnummer, 10) : 0;
+      const husnr = extractHusnr(item.adresse);
+      const { etage, doer } = parseEtageDoer(item.adresse);
+      return { ...item, niveau, bfe, husnr, etage, doer };
+    });
+
+    logger.log(
+      `[ejendom-struktur] klassificering:`,
+      classified.map((c) => `${c.adresse} → ${c.niveau} (husnr=${c.husnr}, bfe=${c.bfe})`)
+    );
+
+    let sfeItems = classified.filter((i) => i.niveau === 'sfe');
     const hovedejendomItems = classified.filter((i) => i.niveau === 'hovedejendom');
     const ejerlejlighedItems = classified.filter((i) => i.niveau === 'ejerlejlighed');
+
+    // Heuristik: hvis der er FLERE "sfe"-items, er de reelt hovedejendomme.
+    // Den ægte SFE er den med lavest BFE eller den uden husnr-bogstav.
+    // Resten er hovedejendomme der ikke blev fanget af vedroerende-tekst.
+    if (sfeItems.length > 1) {
+      // Find den der bedst matcher "ren" SFE: laveste BFE, eller den med
+      // husnr uden bogstav-suffix
+      const sorted = [...sfeItems].sort((a, b) => {
+        // Foretrøk item med sfeBfe match
+        if (sfeBfe) {
+          if (a.bfe === sfeBfe) return -1;
+          if (b.bfe === sfeBfe) return 1;
+        }
+        // Foretrøk husnr uden bogstav (f.eks. "62" over "62A")
+        const aHasLetter = /[A-Z]$/i.test(a.husnr);
+        const bHasLetter = /[A-Z]$/i.test(b.husnr);
+        if (aHasLetter !== bHasLetter) return aHasLetter ? 1 : -1;
+        return a.bfe - b.bfe;
+      });
+      // Første er den ægte SFE, resten er hovedejendomme
+      const realSfe = sorted[0];
+      const extraHoved = sorted.slice(1);
+      sfeItems = [realSfe];
+      for (const item of extraHoved) {
+        item.niveau = 'hovedejendom';
+        hovedejendomItems.push(item);
+      }
+      logger.log(
+        `[ejendom-struktur] multi-sfe heuristik: SFE=${realSfe.bfe}, ekstra hovedejendomme:`,
+        extraHoved.map((h) => h.bfe)
+      );
+    }
 
     // ── Trin 3: Hent vurderinger for hovedejendomme parallelt ──
     const vurderinger = await Promise.all(
@@ -318,28 +460,44 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
     );
     const vurMap = new Map(vurderinger.map((v) => [v.bfe, v]));
 
-    // ── Trin 4: Byg træet ──
+    // ── Trin 4: Resolve DAWA ID'er for navigation ──
+    const allItems = [...sfeItems, ...hovedejendomItems, ...ejerlejlighedItems];
+    const dawaIds = await Promise.all(
+      allItems.map(async (item) => {
+        const id = await resolveDawaId(item.adresse, item.etage, item.doer);
+        return { bfe: item.bfe, adresse: item.adresse, dawaId: id };
+      })
+    );
+    const dawaMap = new Map(dawaIds.map((d) => [d.adresse, d.dawaId]));
+
+    // ── Trin 5: Byg træet ──
 
     // Gruppér ejerlejligheder under hovedejendomme baseret på husnummer-match
+    const assignedEjl = new Set<number>();
     const hovedejendomNodes: StrukturNode[] = hovedejendomItems.map((hej) => {
       const vur = vurMap.get(hej.bfe);
       const children: StrukturNode[] = ejerlejlighedItems
         .filter((ejl) => ejl.husnr === hej.husnr)
-        .map((ejl) => ({
-          bfe: ejl.bfe,
-          adresse: ejl.adresse,
-          niveau: 'ejerlejlighed' as const,
-          ejendomsvaerdi: null,
-          grundvaerdi: null,
-          vurderingsaar: null,
-          tlVurdering: ejl.ejendomsVurdering,
-          children: [],
-        }));
+        .map((ejl) => {
+          assignedEjl.add(ejl.bfe);
+          return {
+            bfe: ejl.bfe,
+            adresse: ejl.adresse,
+            niveau: 'ejerlejlighed' as const,
+            dawaId: dawaMap.get(ejl.adresse) ?? null,
+            ejendomsvaerdi: null,
+            grundvaerdi: null,
+            vurderingsaar: null,
+            tlVurdering: ejl.ejendomsVurdering,
+            children: [],
+          };
+        });
 
       return {
         bfe: hej.bfe,
         adresse: hej.adresse,
         niveau: 'hovedejendom' as const,
+        dawaId: dawaMap.get(hej.adresse) ?? null,
         ejendomsvaerdi: vur?.ejendomsvaerdi ?? null,
         grundvaerdi: vur?.grundvaerdi ?? null,
         vurderingsaar: vur?.aar ?? null,
@@ -349,13 +507,13 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
     });
 
     // Ejerlejligheder der ikke matchede en hovedejendom (orphans)
-    const matchedHusnrs = new Set(hovedejendomItems.map((h) => h.husnr));
     const orphanLejligheder: StrukturNode[] = ejerlejlighedItems
-      .filter((ejl) => !matchedHusnrs.has(ejl.husnr))
+      .filter((ejl) => !assignedEjl.has(ejl.bfe))
       .map((ejl) => ({
         bfe: ejl.bfe,
         adresse: ejl.adresse,
         niveau: 'ejerlejlighed' as const,
+        dawaId: dawaMap.get(ejl.adresse) ?? null,
         ejendomsvaerdi: null,
         grundvaerdi: null,
         vurderingsaar: null,
@@ -365,10 +523,12 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
 
     // Root node = SFE
     const sfeItem = sfeItems[0];
+    const sfeAdresse = sfeItem?.adresse ?? items[0].adresse.split(',').slice(0, 1).join(',').trim();
     const root: StrukturNode = {
       bfe: sfeBfe ?? sfeItem?.bfe ?? 0,
-      adresse: sfeItem?.adresse ?? items[0].adresse.split(',').slice(0, 1).join(',').trim(),
+      adresse: sfeAdresse,
       niveau: 'sfe',
+      dawaId: dawaMap.get(sfeAdresse) ?? null,
       ejendomsvaerdi: null,
       grundvaerdi: null,
       vurderingsaar: null,

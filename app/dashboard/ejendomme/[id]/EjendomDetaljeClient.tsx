@@ -2381,14 +2381,6 @@ export default function EjendomDetaljeClient({
                 kommunekode={
                   dawaJordstykke?.kommune?.kode ? String(dawaJordstykke.kommune.kode) : null
                 }
-                strukturTree={strukturTree}
-                strukturLoader={strukturLoader}
-                currentBfe={
-                  bbrData?.ejerlejlighedBfe ??
-                  bbrData?.moderBfe ??
-                  bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
-                  undefined
-                }
               />
             )}
 

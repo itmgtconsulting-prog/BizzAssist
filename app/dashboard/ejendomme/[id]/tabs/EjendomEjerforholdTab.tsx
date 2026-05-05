@@ -262,6 +262,12 @@ export default function EjendomEjerforholdTab({
                 lang={lang}
                 erEjerlejlighed={!!bbrData?.ejerlejlighedBfe}
               />
+              {/* Loading-bar mens strukturtræ hentes */}
+              {(strukturLoader || lejlighederLoader) && !strukturTree && (
+                <TabLoadingSpinner
+                  ariaLabel={da ? 'Henter ejendomsstruktur' : 'Loading property structure'}
+                />
+              )}
               {/* Strukturtræ under diagrammet for ejerlejligheder —
                   giver kontekst om hvor lejligheden hører til i hierarkiet */}
               {strukturTree &&
@@ -284,6 +290,15 @@ export default function EjendomEjerforholdTab({
                             .toLowerCase()
                             .includes(l.adresse.split(',')[0].toLowerCase().trim())
                       );
+                      // BBR-match for værelser
+                      const addrParts = node.adresse.split(',').map((s) => s.trim());
+                      const etageDoer = (addrParts[1] ?? '').toLowerCase();
+                      const bbrMatch = (bbrEnheder ?? []).find((e) => {
+                        const eLow = (e.etage ?? '').toLowerCase();
+                        const dLow = (e.doer ?? '').toLowerCase();
+                        const combined = `${eLow}. ${dLow}`.trim();
+                        return etageDoer.includes(combined) || (eLow && etageDoer.startsWith(eLow));
+                      });
                       if (match) {
                         return {
                           ...node,
@@ -292,6 +307,15 @@ export default function EjendomEjerforholdTab({
                           koebspris: match.koebspris ?? node.koebspris,
                           koebsdato: match.koebsdato ?? node.koebsdato,
                           areal: match.areal ?? node.areal,
+                          vaerelser: bbrMatch?.vaerelser ?? node.vaerelser,
+                          children: node.children.map(enrichNode),
+                        };
+                      }
+                      // Kun BBR-berigelse (ingen lejligheder-match)
+                      if (bbrMatch?.vaerelser) {
+                        return {
+                          ...node,
+                          vaerelser: bbrMatch.vaerelser,
                           children: node.children.map(enrichNode),
                         };
                       }

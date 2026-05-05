@@ -1033,22 +1033,22 @@ function DiagramForce({
       }
     }
 
-    // Push rolle-sektion (layoutSection='role') below the entire ownership tree.
-    // Finder max depth af ikke-rolle noder og placerer rolle-noder nedenunder
-    // med en gap, så ejerskab og roller er visuelt adskilte.
+    // Rolle-virksomheder (layoutSection='role') placeres ØVERST i diagrammet,
+    // lige under personen (depth 1), mens ejerskabs-hierarkiet skubbes ned.
     const roleNodes = filteredGraph.nodes.filter((n) => n.layoutSection === 'role');
     if (roleNodes.length > 0) {
-      let maxNonRoleDepth = 0;
+      // Sæt rolle-noder til depth 1 (direkte under person)
+      for (const node of roleNodes) {
+        depths.set(node.id, 1);
+      }
+      // Skub ALLE ikke-rolle noder (undtagen main/person) 2 niveauer ned
+      // så der er gap mellem roller og ejerskab
       for (const [id, d] of depths) {
         const node = nodeById.get(id);
         if (node?.layoutSection === 'role') continue;
-        if (coOwnerIds.has(id)) continue;
-        if (d > maxNonRoleDepth) maxNonRoleDepth = d;
-      }
-      // Placér rolle-virksomheder under ejerskabs-træet med gap
-      const roleBaseDepth = Math.ceil(maxNonRoleDepth) + 2;
-      for (const node of roleNodes) {
-        depths.set(node.id, roleBaseDepth);
+        if (node?.type === 'main' || node?.type === 'person') continue;
+        if (d <= 0) continue;
+        depths.set(id, d + 2);
       }
     }
 

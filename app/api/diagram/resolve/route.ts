@@ -1588,9 +1588,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
       );
     }
 
-    // Berig virksomheds-noder med nøglepersoner (bestyrelse/direktion)
-    const excludeEn = type === 'person' ? Number(id) : undefined;
-    await enrichNoeglePersoner(graph, admin, excludeEn);
+    // Berig virksomheds-noder med nøglepersoner — KUN på person-diagrammer
+    if (type === 'person') {
+      await enrichNoeglePersoner(graph, admin, Number(id));
+    }
 
     // Berig property-noder med adresser (best-effort)
     await enrichPropertyNodes(graph, reqHost, reqCookie);

@@ -1366,6 +1366,16 @@ async function enrichNoeglePersoner(
   const cvrs = companyNodes.map((n) => String(n.cvr));
 
   // Batch-hent alle aktive deltager-relationer for alle virksomheder
+  // Kun ledelsesroller — IKKE ejerskab (register/reel_ejer/interessenter/hovedselskab)
+  const OWNERSHIP_ONLY_TYPES = new Set([
+    'register',
+    'reel_ejer',
+    'interessenter',
+    'hovedselskab',
+    'indehaver',
+    'stiftere',
+  ]);
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: relRows } = await (admin as any)
     .from('cvr_deltagerrelation')
@@ -1376,9 +1386,17 @@ async function enrichNoeglePersoner(
 
   if (!relRows?.length) return;
 
-  // Samle unikke enhedsnumre for navne-lookup
+  // Filtrer til ledelsesroller og samle unikke enhedsnumre
+  const filteredRels = (
+    relRows as Array<{
+      virksomhed_cvr: string;
+      deltager_enhedsnummer: number;
+      type: string;
+    }>
+  ).filter((r) => !OWNERSHIP_ONLY_TYPES.has(r.type));
+
   const allEns = new Set<number>();
-  for (const r of relRows as Array<{ deltager_enhedsnummer: number }>) {
+  for (const r of filteredRels) {
     if (r.deltager_enhedsnummer !== excludeEnhedsNummer) {
       allEns.add(r.deltager_enhedsnummer);
     }
@@ -1401,11 +1419,7 @@ async function enrichNoeglePersoner(
 
   // Gruppér per CVR → person → roller
   const cvrPersonMap = new Map<string, Map<number, string[]>>();
-  for (const r of relRows as Array<{
-    virksomhed_cvr: string;
-    deltager_enhedsnummer: number;
-    type: string;
-  }>) {
+  for (const r of filteredRels) {
     if (r.deltager_enhedsnummer === excludeEnhedsNummer) continue;
     const personMap = cvrPersonMap.get(r.virksomhed_cvr) ?? new Map();
     const roles = personMap.get(r.deltager_enhedsnummer) ?? [];

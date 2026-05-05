@@ -269,8 +269,28 @@ export default function EjendomOekonomiTab(props: Props) {
                   </p>
                 )}
               </div>
+            ) : vurdering.ejendomsvaerdi === 0 && vurdering.grundvaerdi === 0 ? (
+              /* BIZZ-1156: "Endnu ikke vurderet" for 0 DKK */
+              <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-5 mb-3 text-center">
+                <p className="text-slate-400 text-sm">
+                  {da ? 'Endnu ikke vurderet' : 'Not yet assessed'}
+                </p>
+                <p className="text-slate-500 text-xs mt-1">
+                  {da
+                    ? 'Vurderingsstyrelsen har ikke udstedt en vurdering for denne ejendom endnu.'
+                    : 'The Danish Property Assessment Agency has not yet issued an assessment for this property.'}
+                </p>
+                {vurdering.vurderetAreal != null && (
+                  <p className="text-slate-500 text-xs mt-2">
+                    {da ? 'Grundareal:' : 'Plot area:'}{' '}
+                    <span className="text-slate-300 font-medium">
+                      {vurdering.vurderetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²
+                    </span>
+                  </p>
+                )}
+              </div>
             ) : (
-              /* Aktuelle tal — vises når ejendommen har egne vurderinger */
+              /* Aktuelle tal — ejendommen har egne vurderinger */
               <div className="grid grid-cols-3 gap-3 mb-3">
                 <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
                   <p className="text-slate-400 text-xs mb-1">

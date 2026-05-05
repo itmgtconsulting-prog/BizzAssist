@@ -129,9 +129,10 @@ const MAX_CVR = 30;
 /** Maks antal BFE-numre per batch (sikkerhedsloft) — BIZZ-982: hævet fra 50 til 200 */
 const MAX_BATCH = 200;
 /** Standard antal BFE-numre i første batch */
-const DEFAULT_LIMIT = 5;
-/** Maks antal samtidige DAWA BFE-opslag */
-const DAWA_CONCURRENCY = 10;
+/** BIZZ-1167: Øget fra 5 til 10 for hurtigere initial load */
+const DEFAULT_LIMIT = 10;
+/** BIZZ-1167: Øget fra 10 til 20 samtidige DAWA BFE-opslag */
+const DAWA_CONCURRENCY = 20;
 
 // ─── OAuth token cache ───────────────────────────────────────────────────────
 

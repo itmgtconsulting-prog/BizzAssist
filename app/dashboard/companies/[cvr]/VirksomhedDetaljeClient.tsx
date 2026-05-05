@@ -213,6 +213,14 @@ const baseTabOrder: TabId[] = [
 
 interface PageProps {
   params: Promise<{ cvr: string }>;
+  /** BIZZ-1160: Server-side prefetched data fra cvr_virksomhed cache */
+  prefetched?: {
+    navn: string | null;
+    virksomhedsform: string | null;
+    branche_tekst: string | null;
+    status: string | null;
+    ophoert: string | null;
+  };
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -683,6 +691,13 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
 
         const company = json as CVRPublicData;
         setData(company);
+
+        // BIZZ-1170: Prefetch diagram/resolve for diagram-fanen
+        // Varmer HTTP-cachen op så diagrammet er klar ved tab-klik
+        fetch(
+          `/api/diagram/resolve?type=company&id=${company.vat}&label=${encodeURIComponent(company.name ?? '')}`,
+          { priority: 'low' as RequestPriority }
+        ).catch(() => {});
 
         // BIZZ-919: Læs cache-metadata fra API-response headers
         const cacheHit = res.headers?.get?.('X-Cache-Hit');

@@ -981,6 +981,13 @@ export default function PersonDetailPageClient({
         }
         const person = json as PersonPublicData;
         setData(person);
+
+        // BIZZ-1171: Prefetch diagram/resolve for diagram-fanen
+        fetch(
+          `/api/diagram/resolve?type=person&id=${person.enhedsNummer}&label=${encodeURIComponent(person.navn ?? '')}`,
+          { priority: 'low' as RequestPriority }
+        ).catch(() => {});
+
         saveRecentPerson({
           enhedsNummer: person.enhedsNummer,
           name: person.navn,

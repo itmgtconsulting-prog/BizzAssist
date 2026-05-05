@@ -18,7 +18,7 @@
 
 import Link from 'next/link';
 import { ChevronRight, Scale, Sparkles, Landmark, TrendingUp } from 'lucide-react';
-import ForklarVurderingWidget from '@/app/components/ejendomme/ForklarVurderingWidget';
+// ForklarVurderingWidget fjernet — redundant med "Forklar vurdering" AI-knap
 import SektionLoader from '@/app/components/SektionLoader';
 import VurderingSammenligning from '@/app/components/ejendomme/VurderingSammenligning';
 import KommuneStatistikWidget from '@/app/components/analyse/KommuneStatistikWidget';
@@ -128,11 +128,8 @@ export default function EjendomOekonomiTab(props: Props) {
     lejlighederCount,
     postnr,
     kommunekode,
-    adresse,
-    kommune,
-    boligareal,
-    grundareal: grundarealProp,
-    opfoerelsesaar,
+    // adresse, kommune, boligareal, grundareal, opfoerelsesaar fjernet
+    // — var kun brugt af ForklarVurderingWidget (nu fjernet)
   } = props;
   const da = lang === 'da';
 
@@ -181,21 +178,7 @@ export default function EjendomOekonomiTab(props: Props) {
 
   return (
     <div className="space-y-5">
-      {/* BIZZ-1078: AI-drevet vurderingsforklaring (flyttet fra SKAT-tab) */}
-      {adresse && !vurderingLoader && (
-        <ForklarVurderingWidget
-          vurdering={vurdering}
-          forelobig={forelobige.length > 0 ? forelobige[0] : null}
-          adresse={adresse}
-          kommune={kommune ?? null}
-          boligareal={boligareal ?? null}
-          grundareal={grundarealProp ?? null}
-          opfoerelsesaar={opfoerelsesaar ?? null}
-          lang={lang}
-        />
-      )}
-
-      {/* BIZZ-1078: Vurderings-AI-knapper (flyttet fra SKAT-tab) */}
+      {/* BIZZ-1078: Vurderings-AI-knapper */}
       <div className="flex flex-wrap gap-2">
         <button
           type="button"

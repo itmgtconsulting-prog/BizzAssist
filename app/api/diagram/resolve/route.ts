@@ -951,48 +951,175 @@ async function resolvePersonGraph(
     }
   }
 
-  // Hent datterselskaber fra lokal cvr_deltagerrelation via ejer_cvr
-  for (const parentCvr of topLevelCvrs.slice(0, 10)) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: subRelRows } = await (admin as any)
-      .from('cvr_deltagerrelation')
-      .select('virksomhed_cvr')
-      .eq('ejer_cvr', parentCvr)
-      .is('gyldig_til', null)
-      .limit(15);
+  // Udfold hierarki nedad fra ALLE ejerskabs-virksomheder via cvr_virksomhed_ejerskab.
+  // Viser datterselskaber i 2 niveauer (ligesom virksomhedsdiagrammet).
+  const MAX_PERSON_NODES = 50;
+  {
+    const allOwnerCvrs = ownershipCvrs.filter((c) => nodeIds.has(`cvr-${c}`));
+    if (allOwnerCvrs.length > 0) {
+      // Level 1: hvad ejer personens ejerskabs-virksomheder?
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: l1Subs } = await (admin as any)
+        .from('cvr_virksomhed_ejerskab')
+        .select('ejer_cvr, ejet_cvr, ejerandel_min, ejerandel_max')
+        .in('ejer_cvr', allOwnerCvrs)
+        .is('gyldig_til', null)
+        .limit(50);
 
-    if (!subRelRows?.length) continue;
-    const subCvrs = [
-      ...Array.from(
-        new Set((subRelRows as Array<{ virksomhed_cvr: string }>).map((r) => r.virksomhed_cvr))
-      ),
-    ];
-
-    for (const subCvr of subCvrs.slice(0, 10)) {
-      const subId = `cvr-${subCvr}`;
-      const parentId = `cvr-${parentCvr}`;
-      if (nodeIds.has(subId)) {
-        if (!edges.some((e) => e.from === parentId && e.to === subId)) {
-          edges.push({ from: parentId, to: subId, crossOwnership: true });
+      const l1SubCvrs: string[] = [];
+      // Batch-hent virksomhedsinfo
+      const l1CvrList = ((l1Subs ?? []) as Array<{ ejet_cvr: string }>).map((r) => r.ejet_cvr);
+      let l1CompMap = new Map<
+        string,
+        {
+          navn: string;
+          virksomhedsform: string | null;
+          branche_tekst: string | null;
+          ophoert: string | null;
         }
-        continue;
+      >();
+      if (l1CvrList.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: l1Comps } = await (admin as any)
+          .from('cvr_virksomhed')
+          .select('cvr, navn, virksomhedsform, branche_tekst, ophoert')
+          .in('cvr', l1CvrList.slice(0, MAX_PERSON_NODES));
+        l1CompMap = new Map(
+          (
+            (l1Comps ?? []) as Array<{
+              cvr: string;
+              navn: string;
+              virksomhedsform: string | null;
+              branche_tekst: string | null;
+              ophoert: string | null;
+            }>
+          ).map((c) => [c.cvr, c])
+        );
       }
-      const subCompany = await fetchCachedCompany(admin, subCvr);
-      const subSublabelParts = [subCompany?.virksomhedsform, subCompany?.branche_tekst].filter(
-        Boolean
-      );
-      nodes.push({
-        id: subId,
-        label: subCompany?.navn ?? `CVR ${subCvr}`,
-        sublabel: subSublabelParts.length > 0 ? subSublabelParts.join(' · ') : undefined,
-        branche: subCompany?.branche_tekst ?? undefined,
-        type: 'company',
-        cvr: Number(subCvr),
-        link: `/dashboard/companies/${subCvr}`,
-        isCeased: subCompany?.ophoert != null,
-      });
-      nodeIds.add(subId);
-      edges.push({ from: parentId, to: subId });
+
+      for (const row of (l1Subs ?? []) as Array<{
+        ejer_cvr: string;
+        ejet_cvr: string;
+        ejerandel_min: number | null;
+        ejerandel_max: number | null;
+      }>) {
+        if (nodes.length >= MAX_PERSON_NODES) break;
+        const subId = `cvr-${row.ejet_cvr}`;
+        const parentId = `cvr-${row.ejer_cvr}`;
+        if (!nodeIds.has(parentId)) continue;
+
+        if (nodeIds.has(subId)) {
+          // Allerede i grafen → tilføj edge hvis mangler
+          if (!edges.some((e) => e.from === parentId && e.to === subId)) {
+            edges.push({
+              from: parentId,
+              to: subId,
+              ejerandel:
+                row.ejerandel_min != null
+                  ? `${row.ejerandel_min}-${row.ejerandel_max}%`
+                  : undefined,
+            });
+          }
+          continue;
+        }
+
+        const cached = l1CompMap.get(row.ejet_cvr);
+        if (cached?.ophoert != null) continue;
+        const sublParts = [cached?.virksomhedsform, cached?.branche_tekst].filter(Boolean);
+        nodes.push({
+          id: subId,
+          label: cached?.navn ?? `CVR ${row.ejet_cvr}`,
+          sublabel: sublParts.length > 0 ? sublParts.join(' · ') : undefined,
+          branche: cached?.branche_tekst ?? undefined,
+          type: 'company',
+          cvr: Number(row.ejet_cvr),
+          link: `/dashboard/companies/${row.ejet_cvr}`,
+          isCeased: false,
+        });
+        nodeIds.add(subId);
+        l1SubCvrs.push(row.ejet_cvr);
+        edges.push({
+          from: parentId,
+          to: subId,
+          ejerandel:
+            row.ejerandel_min != null ? `${row.ejerandel_min}-${row.ejerandel_max}%` : undefined,
+        });
+      }
+
+      // Level 2: hvad ejer level-1 datterselskaberne?
+      if (l1SubCvrs.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: l2Subs } = await (admin as any)
+          .from('cvr_virksomhed_ejerskab')
+          .select('ejer_cvr, ejet_cvr, ejerandel_min, ejerandel_max')
+          .in('ejer_cvr', l1SubCvrs.slice(0, 30))
+          .is('gyldig_til', null)
+          .limit(50);
+
+        for (const row of (l2Subs ?? []) as Array<{
+          ejer_cvr: string;
+          ejet_cvr: string;
+          ejerandel_min: number | null;
+          ejerandel_max: number | null;
+        }>) {
+          if (nodes.length >= MAX_PERSON_NODES) break;
+          const subId = `cvr-${row.ejet_cvr}`;
+          const parentId = `cvr-${row.ejer_cvr}`;
+          if (!nodeIds.has(parentId)) continue;
+
+          if (nodeIds.has(subId)) {
+            if (!edges.some((e) => e.from === parentId && e.to === subId)) {
+              edges.push({
+                from: parentId,
+                to: subId,
+                ejerandel:
+                  row.ejerandel_min != null
+                    ? `${row.ejerandel_min}-${row.ejerandel_max}%`
+                    : undefined,
+              });
+            }
+            continue;
+          }
+
+          let l2Info = l1CompMap.get(row.ejet_cvr) as
+            | {
+                navn: string;
+                virksomhedsform: string | null;
+                branche_tekst: string | null;
+                ophoert: string | null;
+              }
+            | undefined;
+          if (!l2Info) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data } = await (admin as any)
+              .from('cvr_virksomhed')
+              .select('navn, virksomhedsform, branche_tekst, ophoert')
+              .eq('cvr', row.ejet_cvr)
+              .maybeSingle();
+            l2Info = data ?? undefined;
+          }
+          if (l2Info?.ophoert != null) continue;
+
+          const l2SubParts = [l2Info?.virksomhedsform, l2Info?.branche_tekst].filter(Boolean);
+          nodes.push({
+            id: subId,
+            label: l2Info?.navn ?? `CVR ${row.ejet_cvr}`,
+            sublabel: l2SubParts.length > 0 ? l2SubParts.join(' · ') : undefined,
+            branche: l2Info?.branche_tekst ?? undefined,
+            type: 'company',
+            cvr: Number(row.ejet_cvr),
+            link: `/dashboard/companies/${row.ejet_cvr}`,
+            isCeased: false,
+          });
+          nodeIds.add(subId);
+          edges.push({
+            from: parentId,
+            to: subId,
+            ejerandel:
+              row.ejerandel_min != null ? `${row.ejerandel_min}-${row.ejerandel_max}%` : undefined,
+          });
+        }
+      }
     }
   }
 

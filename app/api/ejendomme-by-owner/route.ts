@@ -967,6 +967,77 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     }
   }
 
+  // ── BIZZ-1158: Cache-first for person-lookups via ejf_ejerskab ──
+  // Person-lookups bruger ejer_navn match (ejf_ejerskab har ikke enhedsNummer).
+  // Resolver personnavn fra cvr_deltager og søger i ejf_ejerskab.
+  if (!cacheFullHit && enhedsNumre.length > 0 && cvrNumre.length === 0) {
+    try {
+      const admin = createAdminClient();
+      // Hent personnavne for enhedsNumre
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: deltagerRows } = await (admin as any)
+        .from('cvr_deltager')
+        .select('enhedsnummer, navn')
+        .in('enhedsnummer', enhedsNumre.map(Number));
+      const personNavne = (deltagerRows ?? []).map((d: { navn: string }) => d.navn).filter(Boolean);
+
+      if (personNavne.length > 0) {
+        // Søg ejf_ejerskab for person-ejere med matchende navne
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: cached } = await (admin as any)
+          .from('ejf_ejerskab')
+          .select(
+            'bfe_nummer, ejer_navn, ejerandel_taeller, ejerandel_naevner, virkning_fra, sidst_opdateret'
+          )
+          .eq('ejer_type', 'person')
+          .eq('status', 'gældende')
+          .in('ejer_navn', personNavne)
+          .limit(200);
+
+        if (cached && cached.length > 0) {
+          const freshest = Math.max(
+            ...cached.map((r: { sidst_opdateret: string | null }) =>
+              r.sidst_opdateret ? new Date(r.sidst_opdateret).getTime() : 0
+            )
+          );
+          if (Date.now() - freshest < EJF_STALE_MS) {
+            for (const row of cached as Array<{
+              bfe_nummer: number;
+              ejer_navn: string;
+              ejerandel_taeller: number | null;
+              ejerandel_naevner: number | null;
+              virkning_fra: string | null;
+            }>) {
+              const bfe = row.bfe_nummer;
+              bfeTilCvr.set(bfe, `person-${enhedsNumre[0]}`);
+              if (
+                row.ejerandel_taeller != null &&
+                row.ejerandel_naevner != null &&
+                row.ejerandel_naevner > 0
+              ) {
+                bfeTilEjerandel.set(
+                  bfe,
+                  `${Math.round((row.ejerandel_taeller / row.ejerandel_naevner) * 100)}%`
+                );
+              }
+              ownerBuyDateByBfe.set(bfe, row.virkning_fra ?? null);
+              aktivByBfe.set(bfe, true);
+            }
+            cacheFullHit = true;
+            logger.log(
+              `[ejendomme-by-owner] Person cache hit: ${bfeTilCvr.size} BFE for ${personNavne.length} navne`
+            );
+          }
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        '[ejendomme-by-owner] Person cache lookup fejl:',
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+
   // ── Fallback til live EJF hvis cache miss ──
   if (!cacheFullHit) {
     if (!hasSharedSecret && !hasCert) {

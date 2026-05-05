@@ -2381,18 +2381,44 @@ export default function EjendomDetaljeClient({
                 }}
                 style={{ display: aktivTab === 'diagram2' ? 'block' : 'none' }}
               >
-                <DiagramV2
-                  rootType="property"
-                  rootId={String(
-                    bbrData.ejendomsrelationer?.[0]?.bfeNummer ?? dawaAdresse?.id ?? ''
-                  )}
-                  rootLabel={
-                    dawaAdresse
-                      ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
-                      : `BFE ${bbrData.ejendomsrelationer?.[0]?.bfeNummer ?? ''}`
-                  }
-                  lang={da ? 'da' : 'en'}
-                />
+                {/* Hovedejendomme (opdelt) har ikke eget ejerskab — vis forklaring
+                    i stedet for misvisende diagram med moderejandom-ejere. */}
+                {!dawaAdresse?.etage && !!bbrData.ejerlejlighedBfe ? (
+                  <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-6 text-center space-y-3">
+                    <div className="w-10 h-10 mx-auto bg-amber-500/10 rounded-full flex items-center justify-center">
+                      <Building2 size={22} className="text-amber-400" />
+                    </div>
+                    <p className="text-blue-300 text-sm font-medium">
+                      {da
+                        ? 'Ejerskab er fordelt på ejerlejligheder'
+                        : 'Ownership is distributed to condominiums'}
+                    </p>
+                    <p className="text-slate-400 text-xs max-w-md mx-auto">
+                      {da
+                        ? 'Denne ejendom er opdelt i ejerlejligheder. Ejerskabs-diagrammet vises på de enkelte lejligheder. Se Ejerskab-fanen for en oversigt over alle lejligheder og deres ejere.'
+                        : 'This property is divided into condominiums. The ownership diagram is shown on individual units. See the Ownership tab for a list of all units and their owners.'}
+                    </p>
+                    <button
+                      onClick={() => setAktivTab('ejerforhold')}
+                      className="text-blue-400 text-xs font-medium hover:text-blue-300 transition-colors"
+                    >
+                      {da ? 'Gå til Ejerskab-fanen →' : 'Go to Ownership tab →'}
+                    </button>
+                  </div>
+                ) : (
+                  <DiagramV2
+                    rootType="property"
+                    rootId={String(
+                      bbrData.ejendomsrelationer?.[0]?.bfeNummer ?? dawaAdresse?.id ?? ''
+                    )}
+                    rootLabel={
+                      dawaAdresse
+                        ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
+                        : `BFE ${bbrData.ejendomsrelationer?.[0]?.bfeNummer ?? ''}`
+                    }
+                    lang={da ? 'da' : 'en'}
+                  />
+                )}
               </div>
             )}
 

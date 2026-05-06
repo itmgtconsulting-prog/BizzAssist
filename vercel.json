@@ -61,6 +61,10 @@
       "schedule": "30 3 * * *"
     },
     {
+      "path": "/api/cron/pull-cvr-deltager-aendringer",
+      "schedule": "45 3 * * *"
+    },
+    {
       "path": "/api/cron/domain-anomalies",
       "schedule": "45 4 * * *"
     },

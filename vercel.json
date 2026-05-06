@@ -65,6 +65,10 @@
       "schedule": "45 3 * * *"
     },
     {
+      "path": "/api/cron/refresh-cvr-ejerskab",
+      "schedule": "0 4 * * *"
+    },
+    {
       "path": "/api/cron/domain-anomalies",
       "schedule": "45 4 * * *"
     },

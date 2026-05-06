@@ -69,6 +69,14 @@
       "schedule": "0 4 * * *"
     },
     {
+      "path": "/api/cron/refresh-cvr-cache",
+      "schedule": "15 4 * * *"
+    },
+    {
+      "path": "/api/cron/pull-dar-aendringer",
+      "schedule": "0 5 * * *"
+    },
+    {
       "path": "/api/cron/domain-anomalies",
       "schedule": "45 4 * * *"
     },

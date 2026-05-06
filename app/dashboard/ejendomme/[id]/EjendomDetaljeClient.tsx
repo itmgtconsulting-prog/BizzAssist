@@ -74,6 +74,7 @@ import TinglysningTab from './TinglysningTab';
 import EjendomSkatTab from './tabs/EjendomSkatTab';
 import EjendomDokumenterTab from './tabs/EjendomDokumenterTab';
 import EjendomEjerforholdTab from './tabs/EjendomEjerforholdTab';
+import type { EjerDetalje } from './EjerKort';
 import EjendomOekonomiTab from './tabs/EjendomOekonomiTab';
 import EjendomBBRTab from './tabs/EjendomBBRTab';
 import DataFreshnessBadge from '@/app/components/DataFreshnessBadge';
@@ -81,7 +82,7 @@ import FloodRiskBadge from '@/app/components/ejendomme/FloodRiskBadge';
 import EjendomOverblikTab from './tabs/EjendomOverblikTab';
 // BIZZ-583: Administrator-kort bruges nu kun via EjendomEjerforholdTab — import fjernet fra master.
 // BIZZ-601: DiagramForce + DiagramGraph-type var kun brugt i
-// PropertyOwnerDiagram — nu extraheret. Fjernet fra master-filen.
+// BIZZ-1143: PropertyOwnerDiagram slettet — erstattet af EjerKort (ren præsentation).
 
 type Tab =
   | 'overblik'
@@ -466,6 +467,17 @@ export default function EjendomDetaljeClient({
   const [ejereLoader, setEjereLoader] = useState(!!prefetched?.bbrData);
   /** True hvis Datafordeler returnerer 403 — Dataadgang-ansøgning mangler for EJF */
   const [_manglerEjereAdgang, setManglerEjereAdgang] = useState(false);
+
+  /** BIZZ-1143: Ejer-detaljer fra /api/ejerskab/chain (prefetched parallelt) */
+  const [chainEjerDetaljer, setChainEjerDetaljer] = useState<EjerDetalje[]>([]);
+  /** BIZZ-1143: True mens chain-data hentes */
+  const [chainLoader, setChainLoader] = useState(false);
+  /** BIZZ-1143: Prefetched diagram-graf fra /api/diagram/resolve */
+  const [prefetchedDiagramGraph, setPrefetchedDiagramGraph] = useState<{ graph: unknown } | null>(
+    null
+  );
+  /** BIZZ-1143: True mens diagram-resolve hentes */
+  const [diagramResolveLoader, setDiagramResolveLoader] = useState(false);
 
   /** BBR-tab: ID'er på bygningsrækker der er foldet ud */
   const [expandedBygninger, setExpandedBygninger] = useState<Set<string>>(new Set());
@@ -1105,9 +1117,8 @@ export default function EjendomDetaljeClient({
         if (!signal.aborted) setEjereLoader(false);
       });
 
-    // BIZZ-1145: Prefetch ejerskab/chain og diagram/resolve for Ejerskab-fanen.
-    // Varmer HTTP-cachen op så data er klar når brugeren klikker på fanen.
-    // chain-endpointet cacher server-side i 30 min (s-maxage=1800).
+    // BIZZ-1143: Fetch ejerskab/chain + diagram/resolve PARALLELT og gem resultatet.
+    // EjerKort og DiagramV2 modtager data via props — ingen intern fetch i child.
     const erEjerlej = !!bbrData.ejerlejlighedBfe;
     const chainAdresse = dawaAdresse
       ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
@@ -1117,14 +1128,30 @@ export default function EjendomDetaljeClient({
       adresse: chainAdresse,
     });
     if (erEjerlej) chainParams.set('type', 'ejerlejlighed');
-    fetch(`/api/ejerskab/chain?${chainParams}`, {
-      signal,
-      priority: 'low' as RequestPriority,
-    }).catch(() => {});
-    fetch(
-      `/api/diagram/resolve?type=property&id=${bfeNummer}&label=${encodeURIComponent(chainAdresse)}`,
-      { signal, priority: 'low' as RequestPriority }
-    ).catch(() => {});
+    setChainLoader(true);
+    fetch(`/api/ejerskab/chain?${chainParams}`, { signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (signal.aborted) return;
+        setChainEjerDetaljer((data?.ejerDetaljer as EjerDetalje[]) ?? []);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!signal.aborted) setChainLoader(false);
+      });
+    const resolveParams = new URLSearchParams({ type: 'property', id: String(bfeNummer) });
+    if (chainAdresse) resolveParams.set('label', chainAdresse);
+    setDiagramResolveLoader(true);
+    fetch(`/api/diagram/resolve?${resolveParams}`, { signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (signal.aborted) return;
+        if (data) setPrefetchedDiagramGraph(data);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!signal.aborted) setDiagramResolveLoader(false);
+      });
 
     setSalgshistorikLoader(true);
     fetch(`/api/salgshistorik?bfeNummer=${bfeNummer}`, { signal })
@@ -2428,6 +2455,10 @@ export default function EjendomDetaljeClient({
                     vaerelser: e.vaerelser ?? null,
                   })) ?? []
                 }
+                chainEjerDetaljer={chainEjerDetaljer}
+                chainLoader={chainLoader}
+                prefetchedDiagramGraph={prefetchedDiagramGraph}
+                diagramResolveLoader={diagramResolveLoader}
               />
             </div>
 

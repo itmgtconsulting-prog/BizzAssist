@@ -31,6 +31,7 @@ import {
   Map as MapIcon,
   Briefcase,
   RefreshCw,
+  Sparkles,
 } from 'lucide-react';
 /** BIZZ-600: PropertyMap wraps mapbox-gl (browser-only) — dynamic() keeps mapbox-gl out of initial bundle */
 // prettier-ignore
@@ -75,6 +76,7 @@ import EjendomSkatTab from './tabs/EjendomSkatTab';
 import EjendomDokumenterTab from './tabs/EjendomDokumenterTab';
 import EjendomEjerforholdTab from './tabs/EjendomEjerforholdTab';
 import type { EjerDetalje } from './EjerKort';
+import GenerateListingModal from '@/app/components/ejendomme/GenerateListingModal';
 import EjendomOekonomiTab from './tabs/EjendomOekonomiTab';
 import EjendomBBRTab from './tabs/EjendomBBRTab';
 import DataFreshnessBadge from '@/app/components/DataFreshnessBadge';
@@ -545,6 +547,8 @@ export default function EjendomDetaljeClient({
   const [visFoelgTooltip, setVisFoelgTooltip] = useState(false);
   /** BIZZ-808: Opret sag-modal state */
   const [opretSagOpen, setOpretSagOpen] = useState(false);
+  /** BIZZ-1179: Modal for AI annoncegenerering */
+  const [annonceModalOpen, setAnnonceModalOpen] = useState(false);
   const { memberships: domainMemberships } = useDomainMemberships();
 
   /** Indlaes tracking-tilstand ved mount og lyt efter aendringer.
@@ -1873,6 +1877,16 @@ export default function EjendomDetaljeClient({
                   </button>
                   <FoelgTooltip lang={da ? 'da' : 'en'} visible={visFoelgTooltip} />
                 </div>
+                {/* BIZZ-1179: Generer annonce-knap */}
+                <button
+                  type="button"
+                  onClick={() => setAnnonceModalOpen(true)}
+                  className="flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm transition-all bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300"
+                  aria-label={da ? 'Generer boligannonce' : 'Generate property listing'}
+                >
+                  <Sparkles size={14} />
+                  {da ? 'Annonce' : 'Listing'}
+                </button>
                 {/* BIZZ-808: Opret sag-knap — kun synlig for domain-brugere */}
                 {domainMemberships.length > 0 && (
                   <button
@@ -2685,6 +2699,14 @@ export default function EjendomDetaljeClient({
             onClose={() => setOpretSagOpen(false)}
           />
         )}
+        {/* BIZZ-1179: AI annonce-modal */}
+        <GenerateListingModal
+          bfe={bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? 0}
+          adresse={adresseStreng}
+          lang={da ? 'da' : 'en'}
+          open={annonceModalOpen}
+          onClose={() => setAnnonceModalOpen(false)}
+        />
       </div>
     );
   }

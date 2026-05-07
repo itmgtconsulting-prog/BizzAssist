@@ -19,7 +19,7 @@ import { tenantDb } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const MIN_OCCURRENCES = 3;
 const LOOKBACK_DAYS = 7;

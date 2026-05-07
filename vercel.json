@@ -115,6 +115,10 @@
     {
       "path": "/api/cron/purge-unverified-users",
       "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/cron/watchdog",
+      "schedule": "*/30 * * * *"
     }
   ]
 }

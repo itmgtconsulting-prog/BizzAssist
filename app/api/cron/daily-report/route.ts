@@ -28,7 +28,7 @@ import { companyInfo } from '@/app/lib/companyInfo';
 import { RESEND_ENDPOINT } from '@/app/lib/serviceEndpoints';
 
 /** Max Vercel Pro plan funktionsvarighed i sekunder */
-export const maxDuration = 60;
+export const maxDuration = 300;
 const FROM_ADDRESS = `BizzAssist <${companyInfo.noreplyEmail}>`;
 const TO_ADDRESS = companyInfo.supportEmail;
 

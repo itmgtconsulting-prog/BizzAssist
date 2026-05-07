@@ -13,7 +13,7 @@ import { logger } from '@/app/lib/logger';
 import { createAdminClient } from '@/lib/supabase/admin';
 
 export const runtime = 'nodejs';
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 /** Antal timer en bruger har til at verificere email */
 const VERIFICATION_WINDOW_HOURS = 48;

@@ -38,7 +38,7 @@ import * as Sentry from '@sentry/nextjs';
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 /** Vercel function max duration (seconds) — Pro plan allows up to 300s. */
-export const maxDuration = 60;
+export const maxDuration = 300;
 const FROM_ADDRESS = `BizzAssist Status <${companyInfo.noreplyEmail}>`;
 const TO_ADDRESS = companyInfo.supportEmail;
 

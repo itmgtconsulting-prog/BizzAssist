@@ -22,7 +22,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 interface ExpiredFile {
   id: string;

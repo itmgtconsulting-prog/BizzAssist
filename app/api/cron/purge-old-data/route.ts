@@ -30,7 +30,7 @@ import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

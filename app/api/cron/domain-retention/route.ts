@@ -26,7 +26,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 /** Default retention if domain.limits.retention_months is missing (24 months). */
 const DEFAULT_RETENTION_MONTHS = 24;

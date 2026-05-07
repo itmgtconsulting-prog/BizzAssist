@@ -1,144 +1,61 @@
 /**
- * PropertyOwnerDiagram — Ejerskabs-relationsdiagram på ejendoms-detaljesiden.
+ * EjerKort — Simpel ejerkort-visning for ejendomssiden.
  *
- * Henter ejerskabskæden for en ejendom via /api/ejerskab/chain og viser den
- * som et relationsdiagram:
- *  - Ejendom (grøn)
- *  - Virksomheder (blå)
- *  - Personer (lilla)
+ * Viser per-ejer info-bokse med overtagelsesdato, ejertype, adkomsttype, købesum.
+ * Ren præsentationskomponent — al data leveres via props.
  *
- * Viser også per-ejer info-bokse med overtagelsesdato, adkomsttype, købesum.
+ * BIZZ-1143: Erstatter PropertyOwnerDiagram (cardsOnly=true) med en rendyrket
+ * præsentationskomponent uden intern fetch eller DiagramForce overhead.
  *
- * BIZZ-601: Extraheret fra EjendomDetaljeClient.tsx for at reducere master-
- * file-størrelsen. Ren filopdeling — ingen logikskifte.
+ * @module app/dashboard/ejendomme/[id]/EjerKort
  */
 
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import dynamic from 'next/dynamic';
 import { Building2, ChevronRight, Users } from 'lucide-react';
-import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
-import type { DiagramGraph } from '@/app/components/diagrams/DiagramData';
-import { logger } from '@/app/lib/logger';
 
-/** BIZZ-600: DiagramForce uses d3-force — dynamic() keeps d3-force out of initial bundle */
-// prettier-ignore
-const DiagramForce = dynamic(/* d3-force */ () => import('@/app/components/diagrams/DiagramForce'), { ssr: false });
-
-interface EjerDetalje {
+/** Ejer-detalje fra /api/ejerskab/chain → ejerDetaljer[] */
+export interface EjerDetalje {
+  /** Ejerens fulde navn */
   navn: string;
+  /** CVR-nummer (virksomheder) */
   cvr: string | null;
+  /** EnhedsNummer (personer fra CVR ES) */
   enhedsNummer: number | null;
+  /** Ejertype */
   type: 'person' | 'selskab' | 'status';
+  /** Ejerandel (f.eks. "50%") */
   andel: string | null;
+  /** Ejerens adresse */
   adresse: string | null;
+  /** Overtagelsesdato (ISO-format) */
   overtagelsesdato: string | null;
+  /** Adkomsttype (skoede, arv, gave m.m.) */
   adkomstType: string | null;
+  /** Købesum i DKK */
   koebesum: number | null;
+  /** True hvis virksomheden er ophørt */
   isCeased?: boolean;
 }
 
-export default function PropertyOwnerDiagram({
-  bfe,
-  adresse,
+/**
+ * EjerKort — ren præsentation af ejerkort.
+ *
+ * @param ejerDetaljer - Liste af ejer-detaljer fra chain-endpointet
+ * @param lang - Sprog (da/en)
+ * @returns Ejerkort JSX, eller null hvis ingen ejere
+ */
+export default function EjerKort({
+  ejerDetaljer,
   lang,
-  erEjerlejlighed = false,
-  cardsOnly = false,
 }: {
-  bfe: number;
-  adresse: string;
+  ejerDetaljer: EjerDetalje[];
   lang: 'da' | 'en';
-  /**
-   * BIZZ-470: True når ejendommen er en ejerlejlighed. Signalerer til
-   * /api/ejerskab/chain at Tinglysning-opslagene kan springes over —
-   * Tinglysning returnerer alligevel kun "Opdelt i ejerlejlighed" som
-   * status, og EJF leverer de faktiske ejere meget hurtigere.
-   */
-  erEjerlejlighed?: boolean;
-  /** Vis kun ejerkort (ingen DiagramForce) — bruges når DiagramV2 erstatter grafen */
-  cardsOnly?: boolean;
 }) {
-  const _router = useRouter();
   const da = lang === 'da';
-  const [graph, setGraph] = useState<DiagramGraph | null>(null);
-  const [ejerDetaljer, setEjerDetaljer] = useState<EjerDetalje[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [_chainFejl, setChainFejl] = useState<string | null>(null);
 
-  useEffect(() => {
-    setLoading(true);
-    setGraph(null);
-    setEjerDetaljer([]);
-    setChainFejl(null);
-
-    const controller = new AbortController();
-
-    // BIZZ-1174: Gendan skipTinglysning for ejerlejligheder (performance).
-    // Adkomsttype+købesum beriges fra salgshistorik i parent i stedet.
-    const typeParam = erEjerlejlighed ? '&type=ejerlejlighed' : '';
-    // BIZZ-973: Hent KUN ejerskabs-chain (ikke administratorer).
-    // Administratorer hører til ejerskabs-tabben, ikke diagrammet.
-    fetch(`/api/ejerskab/chain?bfe=${bfe}&adresse=${encodeURIComponent(adresse)}${typeParam}`, {
-      signal: controller.signal,
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (!data) return;
-        setChainFejl((data.fejl as string | null) ?? null);
-
-        if (data.nodes?.length > 0) {
-          const nodes = data.nodes.map((n: Record<string, unknown>) => ({
-            id: n.id as string,
-            label: n.label as string,
-            type: n.type as 'person' | 'company' | 'property' | 'status',
-            cvr: n.cvr as number | undefined,
-            link: n.link as string | undefined,
-            bfeNummer: n.bfeNummer as number | undefined,
-          }));
-          const edges = data.edges.map((e: Record<string, unknown>) => ({
-            from: e.from as string,
-            to: e.to as string,
-            ejerandel: e.ejerandel as string | undefined,
-          }));
-
-          setGraph({
-            nodes,
-            edges,
-            mainId: data.mainId as string,
-          });
-          setEjerDetaljer(data.ejerDetaljer ?? []);
-        }
-      })
-      .catch((err) => {
-        if (err.name !== 'AbortError') logger.error('[ejerskab/chain] fetch error:', err);
-      })
-      .finally(() => setLoading(false));
-
-    return () => controller.abort();
-  }, [bfe, adresse, erEjerlejlighed]);
-
-  if (loading) {
-    // cardsOnly: kun blå bar uden tekst; fuld: med tekst
-    return cardsOnly ? (
-      <TabLoadingSpinner ariaLabel={da ? 'Henter ejerskabsdata' : 'Loading ownership data'} />
-    ) : (
-      <TabLoadingSpinner label={da ? 'Henter ejerstruktur…' : 'Loading ownership structure…'} />
-    );
-  }
-
-  if (!graph || graph.nodes.length <= 1) {
-    // cardsOnly: vis intet (DiagramV2 håndterer tom-state)
-    if (cardsOnly) return null;
-    const besked = da ? 'Ingen ejerstruktur tilgængelig' : 'No ownership structure available';
-    return (
-      <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-6 text-center">
-        <p className="text-slate-500 text-sm">{besked}</p>
-      </div>
-    );
-  }
+  if (ejerDetaljer.length === 0) return null;
 
   const adkomstTypeMap: Record<string, string> = {
     skoede: da ? 'Skøde' : 'Deed',
@@ -149,7 +66,6 @@ export default function PropertyOwnerDiagram({
 
   return (
     <div className="space-y-2">
-      {/* Ejer info-bokse */}
       {ejerDetaljer.map((ejer, i) => (
         <div key={i} className="bg-slate-800/40 border border-slate-700/40 rounded-xl px-3 py-2.5">
           <div className="flex items-start justify-between gap-2">
@@ -267,9 +183,6 @@ export default function PropertyOwnerDiagram({
           )}
         </div>
       ))}
-
-      {/* Relationsdiagram — skjules når cardsOnly er true (DiagramV2 bruges i stedet) */}
-      {!cardsOnly && <DiagramForce graph={graph} lang={lang} />}
     </div>
   );
 }

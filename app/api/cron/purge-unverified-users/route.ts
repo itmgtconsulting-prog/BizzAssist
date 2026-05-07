@@ -1,5 +1,5 @@
 /**
- * POST /api/cron/purge-unverified-users
+ * GET /api/cron/purge-unverified-users
  *
  * BIZZ-1173: Sletter brugere der ikke har verificeret email indenfor 48 timer.
  * Kører dagligt via Vercel cron. Cascader til tenant_memberships via
@@ -13,7 +13,7 @@ import { logger } from '@/app/lib/logger';
 import { createAdminClient } from '@/lib/supabase/admin';
 
 export const runtime = 'nodejs';
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 /** Antal timer en bruger har til at verificere email */
 const VERIFICATION_WINDOW_HOURS = 48;
@@ -24,7 +24,7 @@ const VERIFICATION_WINDOW_HOURS = 48;
  * @param request - Next.js request
  * @returns JSON med antal slettede brugere
  */
-export async function POST(request: NextRequest) {
+export async function GET(request: NextRequest) {
   // Verificer cron-secret
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = request.headers.get('authorization');

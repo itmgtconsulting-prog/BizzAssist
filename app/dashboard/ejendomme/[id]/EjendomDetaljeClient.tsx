@@ -31,6 +31,7 @@ import {
   Map as MapIcon,
   Briefcase,
   RefreshCw,
+  Sparkles,
 } from 'lucide-react';
 /** BIZZ-600: PropertyMap wraps mapbox-gl (browser-only) — dynamic() keeps mapbox-gl out of initial bundle */
 // prettier-ignore
@@ -74,6 +75,8 @@ import TinglysningTab from './TinglysningTab';
 import EjendomSkatTab from './tabs/EjendomSkatTab';
 import EjendomDokumenterTab from './tabs/EjendomDokumenterTab';
 import EjendomEjerforholdTab from './tabs/EjendomEjerforholdTab';
+import type { EjerDetalje } from './EjerKort';
+import GenerateListingModal from '@/app/components/ejendomme/GenerateListingModal';
 import EjendomOekonomiTab from './tabs/EjendomOekonomiTab';
 import EjendomBBRTab from './tabs/EjendomBBRTab';
 import DataFreshnessBadge from '@/app/components/DataFreshnessBadge';
@@ -81,7 +84,7 @@ import FloodRiskBadge from '@/app/components/ejendomme/FloodRiskBadge';
 import EjendomOverblikTab from './tabs/EjendomOverblikTab';
 // BIZZ-583: Administrator-kort bruges nu kun via EjendomEjerforholdTab — import fjernet fra master.
 // BIZZ-601: DiagramForce + DiagramGraph-type var kun brugt i
-// PropertyOwnerDiagram — nu extraheret. Fjernet fra master-filen.
+// BIZZ-1143: PropertyOwnerDiagram slettet — erstattet af EjerKort (ren præsentation).
 
 type Tab =
   | 'overblik'
@@ -467,6 +470,17 @@ export default function EjendomDetaljeClient({
   /** True hvis Datafordeler returnerer 403 — Dataadgang-ansøgning mangler for EJF */
   const [_manglerEjereAdgang, setManglerEjereAdgang] = useState(false);
 
+  /** BIZZ-1143: Ejer-detaljer fra /api/ejerskab/chain (prefetched parallelt) */
+  const [chainEjerDetaljer, setChainEjerDetaljer] = useState<EjerDetalje[]>([]);
+  /** BIZZ-1143: True mens chain-data hentes */
+  const [chainLoader, setChainLoader] = useState(false);
+  /** BIZZ-1143: Prefetched diagram-graf fra /api/diagram/resolve */
+  const [prefetchedDiagramGraph, setPrefetchedDiagramGraph] = useState<{ graph: unknown } | null>(
+    null
+  );
+  /** BIZZ-1143: True mens diagram-resolve hentes */
+  const [diagramResolveLoader, setDiagramResolveLoader] = useState(false);
+
   /** BBR-tab: ID'er på bygningsrækker der er foldet ud */
   const [expandedBygninger, setExpandedBygninger] = useState<Set<string>>(new Set());
   /** BBR-tab: ID'er på enhedsrækker der er foldet ud */
@@ -533,6 +547,8 @@ export default function EjendomDetaljeClient({
   const [visFoelgTooltip, setVisFoelgTooltip] = useState(false);
   /** BIZZ-808: Opret sag-modal state */
   const [opretSagOpen, setOpretSagOpen] = useState(false);
+  /** BIZZ-1179: Modal for AI annoncegenerering */
+  const [annonceModalOpen, setAnnonceModalOpen] = useState(false);
   const { memberships: domainMemberships } = useDomainMemberships();
 
   /** Indlaes tracking-tilstand ved mount og lyt efter aendringer.
@@ -1105,9 +1121,8 @@ export default function EjendomDetaljeClient({
         if (!signal.aborted) setEjereLoader(false);
       });
 
-    // BIZZ-1145: Prefetch ejerskab/chain og diagram/resolve for Ejerskab-fanen.
-    // Varmer HTTP-cachen op så data er klar når brugeren klikker på fanen.
-    // chain-endpointet cacher server-side i 30 min (s-maxage=1800).
+    // BIZZ-1143: Fetch ejerskab/chain + diagram/resolve PARALLELT og gem resultatet.
+    // EjerKort og DiagramV2 modtager data via props — ingen intern fetch i child.
     const erEjerlej = !!bbrData.ejerlejlighedBfe;
     const chainAdresse = dawaAdresse
       ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
@@ -1117,14 +1132,30 @@ export default function EjendomDetaljeClient({
       adresse: chainAdresse,
     });
     if (erEjerlej) chainParams.set('type', 'ejerlejlighed');
-    fetch(`/api/ejerskab/chain?${chainParams}`, {
-      signal,
-      priority: 'low' as RequestPriority,
-    }).catch(() => {});
-    fetch(
-      `/api/diagram/resolve?type=property&id=${bfeNummer}&label=${encodeURIComponent(chainAdresse)}`,
-      { signal, priority: 'low' as RequestPriority }
-    ).catch(() => {});
+    setChainLoader(true);
+    fetch(`/api/ejerskab/chain?${chainParams}`, { signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (signal.aborted) return;
+        setChainEjerDetaljer((data?.ejerDetaljer as EjerDetalje[]) ?? []);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!signal.aborted) setChainLoader(false);
+      });
+    const resolveParams = new URLSearchParams({ type: 'property', id: String(bfeNummer) });
+    if (chainAdresse) resolveParams.set('label', chainAdresse);
+    setDiagramResolveLoader(true);
+    fetch(`/api/diagram/resolve?${resolveParams}`, { signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (signal.aborted) return;
+        if (data) setPrefetchedDiagramGraph(data);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!signal.aborted) setDiagramResolveLoader(false);
+      });
 
     setSalgshistorikLoader(true);
     fetch(`/api/salgshistorik?bfeNummer=${bfeNummer}`, { signal })
@@ -1846,6 +1877,16 @@ export default function EjendomDetaljeClient({
                   </button>
                   <FoelgTooltip lang={da ? 'da' : 'en'} visible={visFoelgTooltip} />
                 </div>
+                {/* BIZZ-1179: Generer annonce-knap */}
+                <button
+                  type="button"
+                  onClick={() => setAnnonceModalOpen(true)}
+                  className="flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm transition-all bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300"
+                  aria-label={da ? 'Generer boligannonce' : 'Generate property listing'}
+                >
+                  <Sparkles size={14} />
+                  {da ? 'Annonce' : 'Listing'}
+                </button>
                 {/* BIZZ-808: Opret sag-knap — kun synlig for domain-brugere */}
                 {domainMemberships.length > 0 && (
                   <button
@@ -2428,6 +2469,10 @@ export default function EjendomDetaljeClient({
                     vaerelser: e.vaerelser ?? null,
                   })) ?? []
                 }
+                chainEjerDetaljer={chainEjerDetaljer}
+                chainLoader={chainLoader}
+                prefetchedDiagramGraph={prefetchedDiagramGraph}
+                diagramResolveLoader={diagramResolveLoader}
               />
             </div>
 
@@ -2654,6 +2699,14 @@ export default function EjendomDetaljeClient({
             onClose={() => setOpretSagOpen(false)}
           />
         )}
+        {/* BIZZ-1179: AI annonce-modal */}
+        <GenerateListingModal
+          bfe={bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? 0}
+          adresse={adresseStreng}
+          lang={da ? 'da' : 'en'}
+          open={annonceModalOpen}
+          onClose={() => setAnnonceModalOpen(false)}
+        />
       </div>
     );
   }

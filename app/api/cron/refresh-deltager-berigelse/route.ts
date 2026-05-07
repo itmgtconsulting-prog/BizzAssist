@@ -19,6 +19,8 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 
+export const maxDuration = 300;
+
 const PER_RUN_CAP = 5000;
 const BATCH_SIZE = 500;
 const STALE_DAYS = 7;

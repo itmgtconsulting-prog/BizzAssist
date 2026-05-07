@@ -3,7 +3,7 @@
  *
  * Viser:
  *   - Administrator-kort (via EjendomAdministratorCard)
- *   - Ejerstrukturdiagram (PropertyOwnerDiagram) for normale ejendomme
+ *   - Ejerkort (EjerKort) + DiagramV2 for normale ejendomme
  *   - Lejlighedsliste når ejendommen er en moderejendom opdelt i ejerlejligheder
  *
  * BIZZ-657: Extraheret fra EjendomDetaljeClient.tsx. Ren filopdeling — ingen
@@ -18,7 +18,8 @@ import { Building2 } from 'lucide-react';
 import EjendomAdministratorCard from '@/app/components/ejendomme/EjendomAdministratorCard';
 import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
 import dynamic from 'next/dynamic';
-import PropertyOwnerDiagram from '../PropertyOwnerDiagram';
+import EjerKort from '../EjerKort';
+import type { EjerDetalje } from '../EjerKort';
 const DiagramV2 = dynamic(() => import('@/app/components/diagrams/DiagramV2'), { ssr: false });
 import type { EjendomApiResponse } from '@/app/api/ejendom/[id]/route';
 import type { DawaAdresse } from '@/app/lib/dawa';
@@ -56,6 +57,14 @@ interface Props {
   currentBfe?: number;
   /** BBR enheder — bruges til at berige med værelser */
   bbrEnheder?: Array<{ etage: string | null; doer: string | null; vaerelser: number | null }>;
+  /** BIZZ-1143: Ejer-detaljer fra /api/ejerskab/chain (prefetched af parent) */
+  chainEjerDetaljer?: EjerDetalje[];
+  /** BIZZ-1143: True mens chain-data hentes */
+  chainLoader?: boolean;
+  /** BIZZ-1143: Prefetched diagram-graf fra /api/diagram/resolve */
+  prefetchedDiagramGraph?: { graph: unknown } | null;
+  /** BIZZ-1143: True mens diagram-resolve hentes */
+  diagramResolveLoader?: boolean;
 }
 
 /** Render Ejerforhold-fanen. Ren præsentations-komponent. */
@@ -71,6 +80,10 @@ export default function EjendomEjerforholdTab({
   strukturLoader,
   currentBfe,
   bbrEnheder,
+  chainEjerDetaljer = [],
+  chainLoader = false,
+  prefetchedDiagramGraph = null,
+  diagramResolveLoader = false,
 }: Props) {
   const da = lang === 'da';
 
@@ -98,8 +111,8 @@ export default function EjendomEjerforholdTab({
       )}
       {/* ── Ejerskabsdiagram / Relationsdiagram ──
           BIZZ-1174: Mount med det samme når bbrData er klar — vent IKKE
-          på ejereLoader (EJF-data). PropertyOwnerDiagram og DiagramV2
-          fetcher deres egne data internt og viser egen loading-state. */}
+          på ejereLoader (EJF-data). EjerKort og DiagramV2 modtager
+          prefetched data fra parent — ingen intern fetch. */}
       {!bbrLoader &&
         bbrData &&
         (() => {
@@ -259,29 +272,30 @@ export default function EjendomEjerforholdTab({
           if (!bfeForDiagram) return null;
           return (
             <div className="space-y-4">
-              {/* Ejerkort — overtagelsesdato, ejertype, adkomsttype, købesum */}
-              <PropertyOwnerDiagram
-                bfe={bfeForDiagram}
-                adresse={
-                  dawaAdresse
-                    ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
-                    : `BFE ${bfeForDiagram}`
-                }
-                lang={lang}
-                erEjerlejlighed={!!bbrData?.ejerlejlighedBfe}
-                cardsOnly
-              />
-              {/* DiagramV2 — interaktivt ejerskabsdiagram */}
-              <DiagramV2
-                rootType="property"
-                rootId={String(bfeForDiagram)}
-                rootLabel={
-                  dawaAdresse
-                    ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
-                    : `BFE ${bfeForDiagram}`
-                }
-                lang={lang}
-              />
+              {/* BIZZ-1143: Ejerkort — ren præsentation, data leveret fra parent */}
+              {chainLoader ? (
+                <TabLoadingSpinner
+                  ariaLabel={da ? 'Henter ejerskabsdata' : 'Loading ownership data'}
+                />
+              ) : (
+                <EjerKort ejerDetaljer={chainEjerDetaljer} lang={lang} />
+              )}
+              {/* BIZZ-1143: DiagramV2 med prefetched graf fra parent */}
+              {diagramResolveLoader ? (
+                <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />
+              ) : (
+                <DiagramV2
+                  rootType="property"
+                  rootId={String(bfeForDiagram)}
+                  rootLabel={
+                    dawaAdresse
+                      ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
+                      : `BFE ${bfeForDiagram}`
+                  }
+                  lang={lang}
+                  prefetchedGraph={prefetchedDiagramGraph}
+                />
+              )}
               {/* Loading-bar mens strukturtræ hentes */}
               {(strukturLoader || lejlighederLoader) && !strukturTree && (
                 <TabLoadingSpinner

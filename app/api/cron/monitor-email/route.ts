@@ -60,8 +60,8 @@ import {
 import { logger } from '@/app/lib/logger';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
 
-/** Vercel Cron max duration (seconds) — stays within 30 s Hobby plan limit */
-export const maxDuration = 30;
+/** Vercel Cron max duration (seconds) — Pro plan allows up to 300s */
+export const maxDuration = 60;
 
 /**
  * Maximum number of auto-fix triggers allowed per single cron run.

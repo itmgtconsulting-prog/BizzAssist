@@ -27,6 +27,8 @@ import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { RESEND_ENDPOINT } from '@/app/lib/serviceEndpoints';
 
+export const maxDuration = 60;
+
 /** Shape of one row from public.domain_suspicious_access. */
 interface SuspiciousAccessRow {
   log_id: string;

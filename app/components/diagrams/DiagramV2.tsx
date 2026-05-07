@@ -42,6 +42,8 @@ export interface DiagramV2Props {
   onNodeClick?: (node: DiagramNode) => void;
   /** BIZZ-1115: Callback med base64 PNG når diagram er renderet (til AI-export) */
   onDiagramReady?: (base64Png: string) => void;
+  /** BIZZ-1143: Pre-fetched resolve data fra parent — bruger data direkte og skipper intern fetch */
+  prefetchedGraph?: { graph: unknown } | null;
 }
 
 /**
@@ -60,6 +62,7 @@ export default function DiagramV2({
   lang,
   onNodeClick,
   onDiagramReady,
+  prefetchedGraph = null,
 }: DiagramV2Props) {
   const da = lang === 'da';
   const [graph, setGraph] = useState<DiagramGraph | null>(null);
@@ -84,12 +87,25 @@ export default function DiagramV2({
     );
   }, [graph]);
 
-  /** Hent initial graf fra /api/diagram/resolve */
+  /** Hent initial graf fra /api/diagram/resolve (eller brug prefetched data fra parent) */
   useEffect(() => {
-    setLoading(true);
     setError(null);
     setGraph(null);
 
+    // BIZZ-1143: Brug prefetched graf fra parent — skip intern fetch
+    if (prefetchedGraph) {
+      const g = prefetchedGraph.graph as DiagramGraph | null;
+      if (g) {
+        setGraph(g);
+      } else {
+        setError(da ? 'Ingen data fundet' : 'No data found');
+      }
+      setLoading(false);
+      return;
+    }
+
+    // Fallback: ingen prefetched data → fetch selv (virksomheds-/personsider)
+    setLoading(true);
     const controller = new AbortController();
     // BIZZ-1114: Send rootLabel som query param — bruges for property root-node adresse
     const resolveParams = new URLSearchParams({ type: rootType, id: rootId });
@@ -115,7 +131,7 @@ export default function DiagramV2({
       .finally(() => setLoading(false));
 
     return () => controller.abort();
-  }, [rootType, rootId, da]);
+  }, [rootType, rootId, da, prefetchedGraph]);
 
   /**
    * Expand-handler — kaldet af DiagramForce via onExpand prop.

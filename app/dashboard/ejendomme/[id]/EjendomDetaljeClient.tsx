@@ -2708,6 +2708,8 @@ export default function EjendomDetaljeClient({
           onClose={() => setAnnonceModalOpen(false)}
           postnummer={dawaAdresse?.postnr ? Number(dawaAdresse.postnr) : undefined}
           areal={bbrData?.bbr?.[0]?.samletBoligareal ?? undefined}
+          lat={dawaAdresse?.y || undefined}
+          lon={dawaAdresse?.x || undefined}
         />
       </div>
     );

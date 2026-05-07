@@ -34,6 +34,10 @@ interface Props {
   postnummer?: number;
   /** Boligareal i m² (BIZZ-1180) */
   areal?: number;
+  /** Latitude for nærområde-lookup (BIZZ-1181) */
+  lat?: number;
+  /** Longitude for nærområde-lookup (BIZZ-1181) */
+  lon?: number;
 }
 
 /** Tone-labels (da/en) */
@@ -58,6 +62,8 @@ export default function GenerateListingModal({
   onClose,
   postnummer,
   areal,
+  lat,
+  lon,
 }: Props) {
   const da = lang === 'da';
   const [tone, setTone] = useState<ListingTone>('familievenlig');
@@ -94,7 +100,7 @@ export default function GenerateListingModal({
       const res = await fetch('/api/ai/generate-listing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bfe, adresse, tone, postnummer, areal }),
+        body: JSON.stringify({ bfe, adresse, tone, postnummer, areal, lat, lon }),
         signal: controller.signal,
       });
 

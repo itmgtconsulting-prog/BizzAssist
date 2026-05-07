@@ -24,6 +24,7 @@ import {
   formatComparablesForPrompt,
   type BoligaPropertyType,
 } from '@/app/lib/boliga';
+import { fetchNearbyPois, formatPoisForPrompt } from '@/app/lib/nearbyPoi';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -42,6 +43,10 @@ interface GenerateListingBody {
   areal?: number;
   /** Boligtype for Boliga søgning (BIZZ-1180) */
   boligtype?: BoligaPropertyType;
+  /** Latitude for nærområde-lookup (BIZZ-1181) */
+  lat?: number;
+  /** Longitude for nærområde-lookup (BIZZ-1181) */
+  lon?: number;
 }
 
 /** Chunk-størrelse for SSE-streaming (tegn) */
@@ -198,6 +203,17 @@ export async function POST(request: NextRequest) {
     propertyContext = 'Ingen yderligere ejendomsdata tilgængelig.';
   }
 
+  // BIZZ-1181: Hent nærområde-data fra OpenStreetMap (non-blocking)
+  let poiContext = '';
+  if (body.lat && body.lon) {
+    try {
+      const pois = await fetchNearbyPois(body.lat, body.lon);
+      poiContext = formatPoisForPrompt(pois);
+    } catch (err) {
+      logger.warn('[ai/generate-listing] POI fetch fejl:', err);
+    }
+  }
+
   // BIZZ-1180: Hent sammenlignelige salg fra Boliga (non-blocking)
   let comparablesContext = '';
   if (body.postnummer) {
@@ -222,6 +238,7 @@ ADRESSE: ${body.adresse}
 BFE: ${body.bfe}
 
 ${propertyContext}
+${poiContext ? `\n${poiContext}\n` : ''}
 ${comparablesContext ? `\n${comparablesContext}\n` : ''}
 Skriv annoncen i "${body.tone}" tone.${comparablesContext ? ' Brug de sammenlignelige salg som kontekst for prisniveau og positionering — kopiér IKKE deres tekst.' : ''}`;
 

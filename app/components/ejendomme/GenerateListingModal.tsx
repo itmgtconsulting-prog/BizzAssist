@@ -14,7 +14,7 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { X, Copy, Check, Sparkles, RefreshCw, Layers, Share2 } from 'lucide-react';
+import { X, Copy, Check, Sparkles, RefreshCw, Layers, Share2, Download } from 'lucide-react';
 
 /** Tone-valg for annoncen */
 type ListingTone =
@@ -264,6 +264,40 @@ export default function GenerateListingModal({
     }
   }, [output, mode, variants, activeVariant]);
 
+  /**
+   * BIZZ-1183: Download annoncetekst som professionel PDF.
+   */
+  const downloadPdf = useCallback(async () => {
+    const text =
+      mode === 'variants' && variants[activeVariant] ? variants[activeVariant].text : output;
+    if (!text) return;
+
+    try {
+      const res = await fetch('/api/ai/export-listing-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          adresse,
+          annonceTekst: text,
+          bfe,
+          tone: mode === 'variants' ? variants[activeVariant]?.tone : tone,
+        }),
+      });
+
+      if (!res.ok) return;
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `annonce-${bfe}-${Date.now()}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      /* PDF download failed silently */
+    }
+  }, [output, mode, variants, activeVariant, adresse, bfe, tone]);
+
   if (!open) return null;
 
   return (
@@ -477,6 +511,13 @@ export default function GenerateListingModal({
               >
                 {copied ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
                 {copied ? (da ? 'Kopieret!' : 'Copied!') : da ? 'Kopiér tekst' : 'Copy text'}
+              </button>
+              <button
+                onClick={downloadPdf}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800/60 text-slate-300 border border-slate-700/40 hover:border-slate-600/60 hover:text-white transition-all"
+              >
+                <Download size={13} />
+                PDF
               </button>
               <button
                 onClick={mode === 'variants' ? generateVariants : generate}

@@ -19,6 +19,11 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { assertAiAllowed } from '@/app/lib/aiGate';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
+import {
+  fetchComparableSales,
+  formatComparablesForPrompt,
+  type BoligaPropertyType,
+} from '@/app/lib/boliga';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -31,6 +36,12 @@ interface GenerateListingBody {
   bfe: number;
   adresse: string;
   tone: ListingTone;
+  /** Postnummer — bruges til Boliga sammenlignelige salg (BIZZ-1180) */
+  postnummer?: number;
+  /** Boligareal i m² — bruges til at finde sammenlignelige (BIZZ-1180) */
+  areal?: number;
+  /** Boligtype for Boliga søgning (BIZZ-1180) */
+  boligtype?: BoligaPropertyType;
 }
 
 /** Chunk-størrelse for SSE-streaming (tegn) */
@@ -187,14 +198,32 @@ export async function POST(request: NextRequest) {
     propertyContext = 'Ingen yderligere ejendomsdata tilgængelig.';
   }
 
+  // BIZZ-1180: Hent sammenlignelige salg fra Boliga (non-blocking)
+  let comparablesContext = '';
+  if (body.postnummer) {
+    try {
+      const arealMargin = body.areal ? Math.round(body.areal * 0.3) : undefined;
+      const sales = await fetchComparableSales({
+        zipCode: body.postnummer,
+        propertyType: body.boligtype,
+        minSqm: body.areal && arealMargin ? body.areal - arealMargin : undefined,
+        maxSqm: body.areal && arealMargin ? body.areal + arealMargin : undefined,
+        limit: 5,
+      });
+      comparablesContext = formatComparablesForPrompt(sales);
+    } catch (err) {
+      logger.warn('[ai/generate-listing] Boliga fetch fejl:', err);
+    }
+  }
+
   const userMessage = `Skriv en boligannonce for denne ejendom:
 
 ADRESSE: ${body.adresse}
 BFE: ${body.bfe}
 
 ${propertyContext}
-
-Skriv annoncen i "${body.tone}" tone.`;
+${comparablesContext ? `\n${comparablesContext}\n` : ''}
+Skriv annoncen i "${body.tone}" tone.${comparablesContext ? ' Brug de sammenlignelige salg som kontekst for prisniveau og positionering — kopiér IKKE deres tekst.' : ''}`;
 
   /* ── SSE stream ── */
   const stream = new ReadableStream({

@@ -30,6 +30,10 @@ interface Props {
   open: boolean;
   /** Callback ved lukning */
   onClose: () => void;
+  /** Postnummer — bruges til Boliga sammenlignelige salg (BIZZ-1180) */
+  postnummer?: number;
+  /** Boligareal i m² (BIZZ-1180) */
+  areal?: number;
 }
 
 /** Tone-labels (da/en) */
@@ -46,7 +50,15 @@ const TONE_LABELS: Record<ListingTone, { da: string; en: string; emoji: string }
  * @param props - Se Props interface
  * @returns Modal dialog JSX
  */
-export default function GenerateListingModal({ bfe, adresse, lang, open, onClose }: Props) {
+export default function GenerateListingModal({
+  bfe,
+  adresse,
+  lang,
+  open,
+  onClose,
+  postnummer,
+  areal,
+}: Props) {
   const da = lang === 'da';
   const [tone, setTone] = useState<ListingTone>('familievenlig');
   const [output, setOutput] = useState('');
@@ -82,7 +94,7 @@ export default function GenerateListingModal({ bfe, adresse, lang, open, onClose
       const res = await fetch('/api/ai/generate-listing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bfe, adresse, tone }),
+        body: JSON.stringify({ bfe, adresse, tone, postnummer, areal }),
         signal: controller.signal,
       });
 

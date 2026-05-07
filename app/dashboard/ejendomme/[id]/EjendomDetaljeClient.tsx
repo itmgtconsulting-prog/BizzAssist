@@ -2706,6 +2706,8 @@ export default function EjendomDetaljeClient({
           lang={da ? 'da' : 'en'}
           open={annonceModalOpen}
           onClose={() => setAnnonceModalOpen(false)}
+          postnummer={dawaAdresse?.postnr ? Number(dawaAdresse.postnr) : undefined}
+          areal={bbrData?.bbr?.[0]?.samletBoligareal ?? undefined}
         />
       </div>
     );

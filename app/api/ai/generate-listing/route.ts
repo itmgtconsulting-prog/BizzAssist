@@ -30,7 +30,14 @@ export const runtime = 'nodejs';
 export const maxDuration = 30;
 
 /** Tone-valg for annoncen */
-type ListingTone = 'luksus' | 'familievenlig' | 'investor' | 'erhverv';
+type ListingTone =
+  | 'luksus'
+  | 'familievenlig'
+  | 'investor'
+  | 'erhverv'
+  | 'facebook'
+  | 'instagram'
+  | 'linkedin';
 
 /** Request body */
 interface GenerateListingBody {
@@ -62,6 +69,12 @@ const TONE_DESCRIPTIONS: Record<ListingTone, string> = {
     'Faktabaseret og analytisk tone. Fokusér på afkastpotentiale, kvadratmeterpris, area-development, lejepotentiale og værdiudvikling.',
   erhverv:
     'Professionel og saglig tone. Fremhæv beliggenhed ift. transport, synlighed, indretningsfleksibilitet og praktisk infrastruktur.',
+  facebook:
+    'Kort og engagerende Facebook-opslag. Max 150 ord. Start med en fængende hook. Brug emojis sparsomt (max 3). Afslut med CTA ("Kontakt os" / "Book fremvisning"). Ingen markdown-formatering.',
+  instagram:
+    'Instagram caption. Max 100 ord. Stemningsfuld og visuel tone. Afslut med 5-8 relevante danske hashtags (#bolig #ejendom #tilsalg etc.). Ingen markdown.',
+  linkedin:
+    'LinkedIn erhvervsopslag. Professionel og netværksorienteret. Max 200 ord. Fremhæv investeringspotentiale og beliggenhed. Afslut med CTA til DM/kontakt. Ingen markdown.',
 };
 
 /**
@@ -186,7 +199,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Mangler bfe, adresse eller tone' }, { status: 400 });
   }
 
-  const validTones: ListingTone[] = ['luksus', 'familievenlig', 'investor', 'erhverv'];
+  const validTones: ListingTone[] = [
+    'luksus',
+    'familievenlig',
+    'investor',
+    'erhverv',
+    'facebook',
+    'instagram',
+    'linkedin',
+  ];
   if (!validTones.includes(body.tone)) {
     return NextResponse.json({ error: 'Ugyldig tone' }, { status: 400 });
   }

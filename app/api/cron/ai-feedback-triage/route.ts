@@ -1,5 +1,5 @@
 /**
- * POST /api/cron/ai-feedback-triage — weekly auto-create JIRA from recurring AI gaps
+ * GET /api/cron/ai-feedback-triage — weekly auto-create JIRA from recurring AI gaps
  *
  * BIZZ-234: Scans ai_feedback_log for question patterns appearing 3+ times
  * in the past 7 days. Auto-creates a JIRA ticket for each new pattern and
@@ -18,6 +18,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { tenantDb } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
+
+export const maxDuration = 60;
 
 const MIN_OCCURRENCES = 3;
 const LOOKBACK_DAYS = 7;
@@ -83,7 +85,7 @@ async function createJiraTicket(summary: string, description: string): Promise<s
   }
 }
 
-export async function POST(request: NextRequest): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   if (!verifyCronAuth(request)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

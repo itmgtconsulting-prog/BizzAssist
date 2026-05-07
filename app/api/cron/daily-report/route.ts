@@ -27,8 +27,8 @@ import { withCronMonitor } from '@/app/lib/cronMonitor';
 import { companyInfo } from '@/app/lib/companyInfo';
 import { RESEND_ENDPOINT } from '@/app/lib/serviceEndpoints';
 
-/** Max Vercel Hobby plan funktionsvarighed i sekunder */
-export const maxDuration = 30;
+/** Max Vercel Pro plan funktionsvarighed i sekunder */
+export const maxDuration = 60;
 const FROM_ADDRESS = `BizzAssist <${companyInfo.noreplyEmail}>`;
 const TO_ADDRESS = companyInfo.supportEmail;
 

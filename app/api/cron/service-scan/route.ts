@@ -44,8 +44,8 @@ import { withCronMonitor } from '@/app/lib/cronMonitor';
 import { companyInfo } from '@/app/lib/companyInfo';
 import { RESEND_ENDPOINT } from '@/app/lib/serviceEndpoints';
 
-/** Vercel Cron max duration (seconds) — Hobby plan limit */
-export const maxDuration = 30;
+/** Vercel Cron max duration (seconds) — Pro plan allows up to 300s */
+export const maxDuration = 60;
 const FROM_ADDRESS = `BizzAssist <${companyInfo.noreplyEmail}>`;
 const TO_ADDRESS = companyInfo.supportEmail;
 

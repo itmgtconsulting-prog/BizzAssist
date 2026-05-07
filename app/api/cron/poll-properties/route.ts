@@ -30,6 +30,8 @@ import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
 
+export const maxDuration = 300;
+
 /** Max antal ejendomme pr. cron-kørsel */
 const MAX_PER_RUN = 150;
 

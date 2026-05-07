@@ -35,6 +35,8 @@ import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
 
+export const maxDuration = 300;
+
 /** Maximum number of popular BFE numbers to revalidate per run */
 const MAX_BFE = 50;
 

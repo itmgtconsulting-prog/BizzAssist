@@ -30,6 +30,8 @@ import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
 
+export const maxDuration = 60;
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 /** Per-tenant purge result logged to audit_log and returned in the response. */

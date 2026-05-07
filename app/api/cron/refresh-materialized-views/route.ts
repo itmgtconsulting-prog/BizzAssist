@@ -13,7 +13,7 @@ import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 
 export const runtime = 'nodejs';
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 /**
  * Verificerer CRON_SECRET bearer + x-vercel-cron (i produktion).

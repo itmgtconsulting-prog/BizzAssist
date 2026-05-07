@@ -22,7 +22,7 @@ import { RESEND_ENDPOINT } from '@/app/lib/serviceEndpoints';
 import { companyInfo } from '@/app/lib/companyInfo';
 import * as Sentry from '@sentry/nextjs';
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const FROM_ADDRESS = `BizzAssist Watchdog <${companyInfo.noreplyEmail}>`;
 const TO_ADDRESS = companyInfo.supportEmail;

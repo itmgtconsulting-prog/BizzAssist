@@ -38,7 +38,7 @@ import { RESEND_ENDPOINT } from '@/app/lib/serviceEndpoints';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
 
 /** Vercel Pro function timeout (seconds) */
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 export const runtime = 'nodejs';
 const FROM_ADDRESS = `BizzAssist <${companyInfo.noreplyEmail}>`;

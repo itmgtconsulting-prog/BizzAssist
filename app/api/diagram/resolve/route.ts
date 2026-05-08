@@ -1438,8 +1438,11 @@ async function resolvePersonGraph(
       topLevelCvrs.push(cvrStr);
       // Ejerandel fra register/interessenter/indehaver
       const regPct = registerEjerandelMap.get(cvrStr);
-      // Vis procent hvis tilgængelig, ellers "Ejer" som fallback
-      const ejerandel = regPct != null ? `${Math.round(regPct)}%` : 'Ejer';
+      // BIZZ-1207: ENK-virksomheder er per definition 100% ejet af deltageren.
+      // I/S med interessenter-type uden ejerandel_pct vises som "Ejer".
+      const company = companyMap.get(cvrStr);
+      const isEnk = (company?.virksomhedsform ?? '').toLowerCase().includes('enkeltmand');
+      const ejerandel = regPct != null ? `${Math.round(regPct)}%` : isEnk ? '100%' : 'Ejer';
       edges.push({ from: mainId, to: companyId, ejerandel });
     }
   }

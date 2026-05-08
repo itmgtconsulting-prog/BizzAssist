@@ -850,6 +850,10 @@ export function buildPersonDiagramGraph(
         link: `/dashboard/companies/${v.cvr}`,
         personRolle,
         noeglePersoner: companyPersoner.length > 0 ? companyPersoner : undefined,
+        // BIZZ-1205: Rolle-virksomheder markeres med layoutSection='role'
+        // så DiagramForce kan placere dem visuelt adskilt fra ejer-hierarkiet
+        layoutSection: 'role',
+        isCoOwner: true,
       });
 
       // Edge from person to this company (dashed — non-owner role)

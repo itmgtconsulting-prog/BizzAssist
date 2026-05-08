@@ -56,9 +56,6 @@ interface GenerateListingBody {
   lon?: number;
 }
 
-/** Chunk-størrelse for SSE-streaming (tegn) */
-const CHUNK_SIZE = 30;
-
 /** Tone-beskrivelser til system prompt */
 const TONE_DESCRIPTIONS: Record<ListingTone, string> = {
   luksus:
@@ -278,20 +275,20 @@ Skriv annoncen i "${body.tone}" tone.${comparablesContext ? ' Brug de sammenlign
 
       try {
         const client = new Anthropic({ apiKey });
-        const response = await client.messages.create(
+        // BIZZ-1199: Ægte streaming — forward content_block_delta events direkte
+        const stream = client.messages.stream(
           {
             model: 'claude-sonnet-4-6',
             max_tokens: 2048,
             system: buildSystemPrompt(body.tone),
             messages: [{ role: 'user', content: userMessage }],
           },
-          { signal: AbortSignal.timeout(20000) }
+          { signal: AbortSignal.timeout(30000) }
         );
 
-        const textBlock = response.content.find((b) => b.type === 'text');
-        if (textBlock && textBlock.type === 'text') {
-          for (let i = 0; i < textBlock.text.length; i += CHUNK_SIZE) {
-            sse(JSON.stringify({ t: textBlock.text.slice(i, i + CHUNK_SIZE) }));
+        for await (const event of stream) {
+          if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+            sse(JSON.stringify({ t: event.delta.text }));
           }
         }
 

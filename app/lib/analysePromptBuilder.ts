@@ -36,6 +36,19 @@ export interface AnalyseTarget {
 /** Registrerede analyse-moduler */
 export const ANALYSE_MODULER: AnalyseModul[] = [
   {
+    id: 'annonce',
+    label: 'Boligannonce',
+    beskrivelse: 'AI-genereret boligannonce med BBR-data, nærområde og sammenlignelige salg',
+    ikon: 'Sparkles',
+    instruktioner: `Skriv en professionel dansk boligannonce for den valgte ejendom. Hent BBR-data, vurdering, energimærke og nærområde-info.
+Tone: Brugeren vælger tone (luksus, familievenlig, investor, erhverv, social media).
+Struktur: Overskrift (max 10 ord), Intro (2-3 sæt.), Rumbeskrivelse, Beliggenhed, Praktisk info, Afslutning.
+Maks 500 ord. Skriv på dansk. Brug markdown.`,
+    anbefaletTools: ['hent_bbr_data', 'hent_vurdering', 'hent_energimaerke', 'hent_salgshistorik'],
+    outputFormat:
+      'Professionel boligannonce i markdown med overskrift, intro, rumbeskrivelse, beliggenhed og praktisk info.',
+  },
+  {
     id: 'forsikring-gap',
     label: 'Forsikrings-gap-analyse',
     beskrivelse: 'Identificér dækningsgab i kundens forsikringsportefølje',

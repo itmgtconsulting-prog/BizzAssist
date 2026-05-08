@@ -33,6 +33,16 @@ export interface AnalyseModuleConfig {
 /** Registrerede analyse-moduler */
 export const ANALYSE_MODULES: AnalyseModuleConfig[] = [
   {
+    id: 'annonce',
+    label: 'Boligannonce',
+    labelEn: 'Property listing',
+    icon: 'Sparkles',
+    path: '/dashboard/analyse/annonce',
+    enabled: { dev: true, preview: true, prod: false },
+    requiredPlan: null,
+    description: 'AI-genereret boligannonce med tone-vælger og BBR-data',
+  },
+  {
     id: 'forsikring',
     label: 'Forsikrings-gap',
     labelEn: 'Insurance gap',

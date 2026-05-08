@@ -797,34 +797,29 @@ function periodeDage(y: RegnskabsAar): number {
 }
 
 /**
- * BIZZ-459/466: Normaliser numeriske felter til T DKK (tusinder).
+ * Beregn max absolutværdi af alle monetære felter i et regnskabsår.
  *
- * XBRL-parseren returnerer inkonsistente enheder på tværs af virksomheder:
- *  - Nogle SMB'er: decimals-attribut mangler → returneres som T DKK (fx JaJR 15310)
- *  - Store virksomheder med decimals="-3"/"-6": returneres som fuld DKK (fx NOVO 130540000)
- *
- * Heuristik: Find max abs(monetært felt) i et regnskabsår. Hvis > 10M er det
- * "umuligt" T DKK for et normalt årsregnskab (=10 mia T DKK) → dvs. tallene
- * er i fuld DKK. Vi dividerer alle monetære felter med 1.000 så udlevering
- * altid er konsistent T DKK. Nøgletal-rationerne (soliditetsgrad, ROI osv.)
- * røres ikke da de er procenter/forhold.
+ * @param year - Regnskabsår at inspicere
+ * @returns Højeste absolutværdi, eller 0 hvis ingen monetære felter
  */
-function normaliserTilTDKK(year: RegnskabsAar): RegnskabsAar {
+function maksMonetaerVaerdi(year: RegnskabsAar): number {
   const monetaereFelter = [
     ...Object.values(year.resultat),
     ...Object.values(year.balance),
     year.noegletal.nettoGaeld,
-    // BIZZ-517a: Pengestrøm-felter er også monetære og skal med i T DKK-detektion
     ...(year.pengestroemme ? Object.values(year.pengestroemme) : []),
   ].filter((v): v is number => typeof v === 'number');
-  if (monetaereFelter.length === 0) return year;
+  if (monetaereFelter.length === 0) return 0;
+  return Math.max(...monetaereFelter.map((v) => Math.abs(v)));
+}
 
-  const maksVaerdi = Math.max(...monetaereFelter.map((v) => Math.abs(v)));
-  // Tærskel 10M = 10.000.000 T DKK = 10 mia DKK. Hvis max > 10M er det
-  // urealistisk som T DKK for et dansk selskab → tallene er i fuld DKK.
-  const erFuldDkk = maksVaerdi > 10_000_000;
-  if (!erFuldDkk) return year;
-
+/**
+ * Divider alle monetære felter i et regnskabsår med 1.000 (fuld DKK → T DKK).
+ *
+ * @param year - Regnskabsår i fuld DKK
+ * @returns Regnskabsår normaliseret til T DKK
+ */
+function dividerAarMed1000(year: RegnskabsAar): RegnskabsAar {
   const divider = (v: number | null): number | null => (v == null ? v : Math.round(v / 1000));
   const divideAll = (obj: Record<string, number | null>): Record<string, number | null> => {
     const out: Record<string, number | null> = {};
@@ -842,16 +837,87 @@ function normaliserTilTDKK(year: RegnskabsAar): RegnskabsAar {
     ) as unknown as Balance,
     noegletal: {
       ...year.noegletal,
-      // Kun nettoGaeld er et monetært tal — resten er procenter/forhold
       nettoGaeld: divider(year.noegletal.nettoGaeld),
     },
-    // BIZZ-517a: Pengestrøm-felter er alle monetære — divider med 1.000 hvis fuld DKK
     pengestroemme: year.pengestroemme
       ? (divideAll(
           year.pengestroemme as unknown as Record<string, number | null>
         ) as unknown as Pengestroemme)
       : null,
   };
+}
+
+/**
+ * BIZZ-459/466 + BIZZ-1134: Normaliser numeriske felter til T DKK (tusinder).
+ *
+ * Enkelt-år: Hvis max abs(monetært felt) > 10M → fuld DKK → divider med 1.000.
+ * Bruges som fallback for enkeltstående år.
+ *
+ * @param year - Regnskabsår at normalisere
+ * @returns Normaliseret regnskabsår i T DKK
+ */
+function normaliserTilTDKK(year: RegnskabsAar): RegnskabsAar {
+  const maks = maksMonetaerVaerdi(year);
+  if (maks === 0 || maks <= 10_000_000) return year;
+  return dividerAarMed1000(year);
+}
+
+/**
+ * BIZZ-1134: Normaliser alle regnskabsår konsistent til T DKK.
+ *
+ * Når en virksomhed skifter revisor/XBRL-format mellem år, kan ældre år
+ * være i fuld DKK mens nyere er i T DKK (eller omvendt). Per-år heuristik
+ * fejler for disse tilfælde fordi en lille virksomhed i fuld DKK kan have
+ * max < 10M (tærsklen for enkelt-år detektion).
+ *
+ * Strategi:
+ * 1. Beregn max monetær værdi per år.
+ * 2. Find anker-året (året med højest max — mest sandsynligt fuld DKK).
+ * 3. For hvert andet år: beregn ratio = ankerMax / årMax.
+ *    Ratio 200–5000 → året er allerede T DKK mens ankeret er fuld DKK
+ *    → divider ankeret (og lignende "store" år) med 1.000.
+ * 4. Enkelt-år: brug standard normaliserTilTDKK().
+ *
+ * @param years - Alle regnskabsår (deduplikerede, sorteret)
+ * @returns Konsistent normaliserede regnskabsår i T DKK
+ */
+export function normaliserAlleAar(years: RegnskabsAar[]): RegnskabsAar[] {
+  if (years.length <= 1) return years.map(normaliserTilTDKK);
+
+  // Beregn max monetær værdi per år
+  const maxPerYear = years.map((y) => ({ year: y, maks: maksMonetaerVaerdi(y) }));
+
+  // Find anker = året med højest max
+  const anker = maxPerYear.reduce((best, cur) => (cur.maks > best.maks ? cur : best));
+  if (anker.maks === 0) return years;
+
+  // Tjek om der er en magnitude-forskel mellem år (ratio ~1000 = format-skift)
+  const yearsWithData = maxPerYear.filter((m) => m.maks > 0);
+  if (yearsWithData.length < 2) return years.map(normaliserTilTDKK);
+
+  // Find mindste max blandt år med data
+  const minMaks = Math.min(...yearsWithData.map((m) => m.maks));
+  const globalRatio = anker.maks / minMaks;
+
+  // Ratio 200–5000 indikerer formatskift (typisk ~1000x forskel)
+  const harFormatSkift = globalRatio >= 200 && globalRatio <= 5000;
+
+  if (!harFormatSkift) {
+    // Ingen formatskift — brug standard per-år heuristik
+    return years.map(normaliserTilTDKK);
+  }
+
+  // Formatskift detekteret: år med max > midtpunkt er i fuld DKK
+  // Midtpunkt = geometrisk gennemsnit af anker og min (≈ sqrt(anker * min))
+  const midtpunkt = Math.sqrt(anker.maks * minMaks);
+
+  return maxPerYear.map(({ year, maks }) => {
+    if (maks === 0) return year;
+    // År over midtpunktet er i fuld DKK → divider med 1.000
+    if (maks > midtpunkt) return dividerAarMed1000(year);
+    // År under midtpunktet er allerede i T DKK
+    return year;
+  });
 }
 
 /** Dedupliker RegnskabsAar-array: ét regnskab per år, bedste vinder */
@@ -937,7 +1003,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // BIZZ-449: Append parser version to timestamp so cache is invalidated when
     // the XBRL parser logic changes (e.g. decimals attribute handling fix).
     // v6: BIZZ-562 — extractText vælger LÆNGSTE match for ESEF continuation cases
-    const PARSER_VERSION = 'v6';
+    const PARSER_VERSION = 'v7';
     const latestTimestamp =
       (regnskabData.regnskaber[0]?.offentliggjort ?? '') + `_${PARSER_VERSION}`;
 
@@ -1042,7 +1108,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // BIZZ-459/466: Normaliser hver år til T DKK før vi dedupliker/returnerer,
     // så UI'en kan vise konsistent "T DKK"-label uanset om den underliggende
     // XBRL var deklareret i T DKK eller fuld DKK.
-    const uniqueYears = deduplicateYears(allYears).map(normaliserTilTDKK);
+    const uniqueYears = normaliserAlleAar(deduplicateYears(allYears));
 
     // ── 4. Gem opdateret cache i Supabase (kun ved komplet fetch) ──
     if (supabase && latestTimestamp && offset === 0 && limit >= total && uniqueYears.length > 0) {

@@ -14,7 +14,17 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { X, Copy, Check, Sparkles, RefreshCw, Layers, Share2, Download } from 'lucide-react';
+import {
+  X,
+  Copy,
+  Check,
+  Sparkles,
+  RefreshCw,
+  Layers,
+  Share2,
+  Download,
+  MessageSquare,
+} from 'lucide-react';
 
 /** Tone-valg for annoncen */
 type ListingTone =
@@ -106,6 +116,32 @@ export default function GenerateListingModal({
       setLoading(false);
     }
   }, [open]);
+
+  /**
+   * BIZZ-1209: Bygger en struktureret prompt og sender til AI chatten
+   * via bizz:ai-open-with-prompt custom event. Lukker modalen.
+   */
+  const sendToChat = useCallback(() => {
+    const toneLabel = TONE_LABELS[tone][da ? 'da' : 'en'];
+    const parts = [
+      da
+        ? `Skriv en professionel boligannonce for ${adresse} i "${toneLabel}" tone.`
+        : `Write a professional property listing for ${adresse} in "${toneLabel}" tone.`,
+    ];
+    if (areal) parts.push(da ? `Boligareal: ${areal} m²` : `Living area: ${areal} m²`);
+    if (boligtype) parts.push(da ? `Boligtype: ${boligtype}` : `Property type: ${boligtype}`);
+    if (postnummer) parts.push(da ? `Postnummer: ${postnummer}` : `Zip code: ${postnummer}`);
+    parts.push(`BFE: ${bfe}`);
+    parts.push(
+      da
+        ? 'Brug BBR-data fra ejendomssiden som kontekst. Inkludér nærområdets kvaliteter.'
+        : 'Use BBR data from the property page as context. Include neighborhood qualities.'
+    );
+
+    const prompt = parts.join('\n');
+    window.dispatchEvent(new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt } }));
+    onClose();
+  }, [tone, da, adresse, areal, boligtype, postnummer, bfe, onClose]);
 
   /**
    * Starter SSE-stream til /api/ai/generate-listing.
@@ -421,19 +457,29 @@ export default function GenerateListingModal({
                   ? `Generér en professionel boligannonce for ${adresse}`
                   : `Generate a professional listing for ${adresse}`}
               </p>
-              <button
-                onClick={mode === 'variants' ? generateVariants : generate}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2 rounded-xl text-sm font-medium transition-colors flex items-center gap-2"
-              >
-                {mode === 'variants' ? <Layers size={14} /> : <Sparkles size={14} />}
-                {mode === 'variants'
-                  ? da
-                    ? 'Generér 3 varianter'
-                    : 'Generate 3 variants'
-                  : da
-                    ? 'Generér annonce'
-                    : 'Generate listing'}
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={mode === 'variants' ? generateVariants : generate}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2 rounded-xl text-sm font-medium transition-colors flex items-center gap-2"
+                >
+                  {mode === 'variants' ? <Layers size={14} /> : <Sparkles size={14} />}
+                  {mode === 'variants'
+                    ? da
+                      ? 'Generér 3 varianter'
+                      : 'Generate 3 variants'
+                    : da
+                      ? 'Generér annonce'
+                      : 'Generate listing'}
+                </button>
+                {/* BIZZ-1209: Send til AI chat for opfølgning */}
+                <button
+                  onClick={sendToChat}
+                  className="bg-blue-600/80 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors flex items-center gap-2"
+                >
+                  <MessageSquare size={14} />
+                  {da ? 'Send til chat' : 'Send to chat'}
+                </button>
+              </div>
             </div>
           )}
 
@@ -528,6 +574,23 @@ export default function GenerateListingModal({
               >
                 <RefreshCw size={13} />
                 {da ? 'Generér ny' : 'Regenerate'}
+              </button>
+              {/* BIZZ-1209: Send annonce til AI chat for opfølgning */}
+              <button
+                onClick={() => {
+                  const text = output || variants[activeVariant]?.text || '';
+                  const prompt = da
+                    ? `Her er en boligannonce jeg har genereret for ${adresse}:\n\n${text}\n\nKan du hjælpe med at forbedre den?`
+                    : `Here is a property listing I generated for ${adresse}:\n\n${text}\n\nCan you help improve it?`;
+                  window.dispatchEvent(
+                    new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt } })
+                  );
+                  onClose();
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600/20 text-blue-300 border border-blue-500/30 hover:border-blue-400/50 hover:text-blue-200 transition-all"
+              >
+                <MessageSquare size={13} />
+                {da ? 'Videre i chat' : 'Continue in chat'}
               </button>
             </div>
           )}

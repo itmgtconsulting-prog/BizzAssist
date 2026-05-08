@@ -1,11 +1,16 @@
 /**
- * Server entry for boligannonce analyse-modul.
- * BIZZ-1239: Boligannonce via AI Chat i stedet for separat API route.
+ * Server entry for annonce analyse-modul.
+ * BIZZ-1240: Wrapped i AnalyseModuleGuard for feature flag check.
  */
 import AnnonceClient from './AnnonceClient';
+import AnalyseModuleGuard from '@/app/components/analyse/AnalyseModuleGuard';
 
 export const dynamic = 'force-dynamic';
 
-export default function AnnoncePage() {
-  return <AnnonceClient />;
+export default function Page() {
+  return (
+    <AnalyseModuleGuard moduleId="annonce">
+      <AnnonceClient />
+    </AnalyseModuleGuard>
+  );
 }

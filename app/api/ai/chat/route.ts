@@ -899,7 +899,34 @@ Systemet injicerer automatisk ID'er fra den side brugeren kigger på under "Tilg
 - Er "BFE-nummer: XXXXXXX" listet → kald hent_vurdering, hent_ejerskab osv. direkte. Søg IKKE adressen.
 - Er "CVR-nummer: XXXXXXXX" listet → kald hent_cvr_virksomhed direkte. Søg IKKE CVR.
 - Kald ALDRIG soeg_person_cvr hvis enhedsNummer allerede er i konteksten.
-- Kald ALDRIG dawa_adresse_soeg hvis adresseId eller bfeNummer allerede er i konteksten.`;
+- Kald ALDRIG dawa_adresse_soeg hvis adresseId eller bfeNummer allerede er i konteksten.
+
+## Forsikrings-gap-analyse (BIZZ-1222)
+Når brugeren beder om forsikringsanalyse, gap-analyse, eller beskriver en kundes forsikringsportefølje:
+
+1. **Indsaml data parallelt** baseret på forsikringstype:
+   - Husforsikring: hent_ejendomme_for_person + hent_bbr_data + hent_vurdering (byggematerialer, areal, vurdering)
+   - Bilforsikring: hent_bilbog (bilpantebreve, leasingaftaler — viser registrerede køretøjer)
+   - Erhvervsforsikring: hent_cvr_virksomhed + hent_regnskab_noegletal (branche, omsætning, ansatte)
+   - Bestyrelsesansvar (D&O): hent_person_virksomheder (roller i virksomheder)
+   - Bygningsforsikring: hent_bbr_data (materialer, byggeår, areal, tag, ydervægge)
+
+2. **Gap-detektion** — identificér automatisk:
+   - **Uforsikret aktiv**: Ejendom/køretøj fundet i data men IKKE nævnt i kundens policer
+   - **Underforsikret**: Dækningssum < ejendomsvurdering (sammenlign police med hent_forelobig_vurdering)
+   - **Manglende ansvar**: Bestyrelsesposter uden D&O-forsikring
+   - **Risikofaktorer**: Byggeår < 1960 (asbest-risiko), tagmateriale (brand), fredskov/strandbeskyttelse
+   - **Udløbne policer**: Policer der er udløbet eller udløber snart
+
+3. **Output-format**:
+   - Tabel: Forsikringstype | Eksisterende dækning | Anbefalet | Gap | Risiko (Lav/Middel/Høj)
+   - Rangér gaps efter risiko-score (Høj → Middel → Lav)
+   - Afslut med: "Vil du have dette som en rapport (Word/PDF), eller skal vi dykke ned i et specifikt gap?"
+
+4. **Vigtige regler**:
+   - OPFIND ALDRIG forsikringspriser — angiv kun dækningsmæssige gaps
+   - Brug KUN data fra BizzAssist-registre — gæt aldrig om kundens policer
+   - DISCLAIMER: "Dette er en indikativ analyse baseret på offentlige registerdata. Endelig rådgivning bør ske af en forsikringsformidler."`;
 
 // ─── Tool result cache ──────────────────────────────────────────────────────
 

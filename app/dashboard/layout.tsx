@@ -1244,7 +1244,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
             åbent — CSS-variablen sættes af panelet selv og er 0 ellers. */}
         <main
           id="main-content"
-          className="relative z-0 flex-1 flex overflow-y-auto transition-[padding-right] duration-150"
+          className="relative z-0 flex-1 flex overflow-hidden transition-[padding-right] duration-150"
           style={{ paddingRight: 'var(--bizz-docpreview-w, 0px)' }}
         >
           {pathname === '/dashboard' ||

@@ -587,6 +587,69 @@ async function resolveCompanyGraph(
     }
   }
 
+  // 4. BIZZ-1082: Personlige ejendomme for ALLE top-level ejere.
+  // Henter properties fra ejf_ejerskab per person-navn. Dedup: hvis BFE
+  // allerede er i grafen (fx ejet via virksomhed), tilføj kun edge — ikke node.
+  // Farve-koder edges per person for visuel distinktion af fælles ejerskab.
+  const OWNER_COLORS = [
+    'rgba(52,211,153,0.75)', // emerald — person 1
+    'rgba(167,139,250,0.75)', // violet  — person 2
+    'rgba(251,191,36,0.75)', // amber   — person 3
+    'rgba(248,113,113,0.75)', // red     — person 4
+    'rgba(34,211,238,0.75)', // cyan    — person 5
+  ];
+  const personNodes = nodes.filter((n) => n.type === 'person' && n.enhedsNummer);
+  if (personNodes.length > 0) {
+    // Batch-fetch personlige ejendomme for alle person-ejere
+    const personNavne = new Map<string, string>();
+    for (const pn of personNodes) {
+      personNavne.set(pn.id, pn.label);
+    }
+
+    for (let pi = 0; pi < personNodes.length; pi++) {
+      const pNode = personNodes[pi];
+      const ownerColor = OWNER_COLORS[pi % OWNER_COLORS.length];
+      const navn = personNavne.get(pNode.id);
+      if (!navn) continue;
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: personProps } = await (admin as any)
+        .from('ejf_ejerskab')
+        .select('bfe_nummer, ejerandel_taeller, ejerandel_naevner')
+        .eq('ejer_navn', navn)
+        .eq('ejer_type', 'person')
+        .eq('status', 'gældende')
+        .limit(MAX_PROPS_PER_OWNER);
+
+      for (const pp of (personProps ?? []) as Array<{
+        bfe_nummer: number;
+        ejerandel_taeller: number | null;
+        ejerandel_naevner: number | null;
+      }>) {
+        const propId = `bfe-${pp.bfe_nummer}`;
+        // Dedup: tilføj kun node hvis den ikke allerede er i grafen
+        if (!nodeIds.has(propId)) {
+          nodes.push({
+            id: propId,
+            label: `BFE ${pp.bfe_nummer}`,
+            type: 'property',
+            bfeNummer: pp.bfe_nummer,
+          });
+          nodeIds.add(propId);
+        }
+        bfesInGraph.add(pp.bfe_nummer);
+        edges.push({
+          from: pNode.id,
+          to: propId,
+          ejerandel: formatEjerandel(pp.ejerandel_taeller, pp.ejerandel_naevner),
+          personallyOwned: true,
+          ownerPersonId: pNode.id,
+          ownerColor,
+        });
+      }
+    }
+  }
+
   // Kryds-ejerskab: tegn edges mellem virksomheder der BEGGE allerede er i grafen
   // men som mangler en edge (fx PEI Holding → Pharma IT ManCo).
   // Sker når personlige virksomheder (step 2b) ejer datterselskaber (step 2c).

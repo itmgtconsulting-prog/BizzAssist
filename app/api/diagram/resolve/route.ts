@@ -58,7 +58,7 @@ async function fetchCachedCompany(
  * @param cvr - CVR-nummer
  * @returns Array af ejerskabsrækker
  */
-async function fetchPropertiesByCvr(
+async function _fetchPropertiesByCvr(
   admin: ReturnType<typeof createAdminClient>,
   cvr: string
 ): Promise<
@@ -929,20 +929,70 @@ async function resolvePropertyGraph(
     }
   }
 
+  // BIZZ-1210: Batch-hent virksomheder og person-navne i stedet for N+1 queries
+  const companyCvrs = owners
+    .filter((o) => o.ejer_type === 'virksomhed' && o.ejer_cvr)
+    .map((o) => o.ejer_cvr!);
+  const personNavne = owners.filter((o) => o.ejer_type === 'person').map((o) => o.ejer_navn);
+
+  // Batch: virksomhedsinfo + ejendomsantal
+  const [companyBatchResult, propCountResult, deltagerBatchResult] = await Promise.all([
+    companyCvrs.length > 0
+      ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (admin as any)
+          .from('cvr_virksomhed')
+          .select('cvr, navn, virksomhedsform, branche_tekst, ophoert')
+          .in('cvr', companyCvrs.slice(0, 20))
+      : Promise.resolve({ data: [] }),
+    companyCvrs.length > 0
+      ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (admin as any)
+          .from('ejf_ejerskab')
+          .select('ejer_cvr')
+          .in('ejer_cvr', companyCvrs.slice(0, 20))
+          .eq('status', 'gældende')
+      : Promise.resolve({ data: [] }),
+    personNavne.length > 0
+      ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (admin as any)
+          .from('cvr_deltager')
+          .select('enhedsnummer, navn')
+          .in('navn', personNavne.slice(0, 20))
+      : Promise.resolve({ data: [] }),
+  ]);
+
+  // Byg lookup-maps
+  const companyMap = new Map(
+    (
+      (companyBatchResult.data ?? []) as Array<{
+        cvr: string;
+        navn: string;
+        virksomhedsform: string | null;
+        branche_tekst: string | null;
+        ophoert: string | null;
+      }>
+    ).map((c) => [c.cvr, c])
+  );
+  const propCountMap = new Map<string, number>();
+  for (const r of (propCountResult.data ?? []) as Array<{ ejer_cvr: string }>) {
+    propCountMap.set(r.ejer_cvr, (propCountMap.get(r.ejer_cvr) ?? 0) + 1);
+  }
+  const deltagerMap = new Map(
+    ((deltagerBatchResult.data ?? []) as Array<{ enhedsnummer: number; navn: string }>).map((d) => [
+      d.navn,
+      d.enhedsnummer,
+    ])
+  );
+
   for (const owner of owners) {
     if (owner.ejer_type === 'virksomhed' && owner.ejer_cvr) {
       const ownerId = `cvr-${owner.ejer_cvr}`;
       if (!nodeIds.has(ownerId)) {
-        const company = await fetchCachedCompany(admin, owner.ejer_cvr);
-        // Tæl andre ejendomme denne virksomhed ejer (udover nuværende)
-        const otherProps = await fetchPropertiesByCvr(admin, owner.ejer_cvr);
-        const expandable = otherProps.filter((p) => p.bfe_nummer !== bfe).length;
+        const company = companyMap.get(owner.ejer_cvr) ?? null;
+        const totalProps = propCountMap.get(owner.ejer_cvr) ?? 0;
+        const expandable = Math.max(0, totalProps - 1); // minus nuværende BFE
 
-        // BIZZ-1113: Cache-first label: cvr_virksomhed → ejf_ejerskab.ejer_navn
-        // Ingen live API kald — det gør resolve for langsom.
         const companyLabel = company?.navn ?? owner.ejer_navn ?? `CVR ${owner.ejer_cvr}`;
-
-        // BIZZ-1123: Inkluder branche_tekst i sublabel
         const propOwnerSubParts = [company?.virksomhedsform, company?.branche_tekst].filter(
           Boolean
         );
@@ -966,15 +1016,7 @@ async function resolvePropertyGraph(
         ejerandel: formatEjerandel(owner.ejerandel_taeller, owner.ejerandel_naevner),
       });
     } else if (owner.ejer_type === 'person') {
-      // Forsøg at resolve enhedsNummer fra cvr_deltager for at muliggøre expand
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: deltagerMatch } = await (admin as any)
-        .from('cvr_deltager')
-        .select('enhedsnummer')
-        .eq('navn', owner.ejer_navn)
-        .limit(1)
-        .maybeSingle();
-      const personEn: number | undefined = deltagerMatch?.enhedsnummer ?? undefined;
+      const personEn: number | undefined = deltagerMap.get(owner.ejer_navn) ?? undefined;
       const ownerId = personEn
         ? `en-${personEn}`
         : `person-${owner.ejer_navn.replace(/\s+/g, '-').toLowerCase()}`;

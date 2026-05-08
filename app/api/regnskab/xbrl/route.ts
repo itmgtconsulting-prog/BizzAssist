@@ -1072,10 +1072,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     const total = nyeRegnskaber.length;
 
-    // Hent offset/limit for progressiv loading
-    const offset = Math.max(0, parseInt(searchParams.get('offset') ?? '0', 10) || 0);
-    const limit = Math.min(50, Math.max(1, parseInt(searchParams.get('limit') ?? '50', 10) || 50));
-    const regnskaberMedXbrl = nyeRegnskaber.slice(offset, offset + limit);
+    // BIZZ-1166: Hent ALLE nye regnskaber i ét kald så fuld historik caches.
+    // Tidligere paginerede vi med offset/limit, men det gav ufuldstændig cache
+    // og krævede multiple requests fra frontend. Cap ved 30 for at undgå timeout.
+    const regnskaberMedXbrl = nyeRegnskaber.slice(0, 30);
+    const offset = 0;
+    const limit = regnskaberMedXbrl.length;
 
     const years: RegnskabsAar[] = [];
 

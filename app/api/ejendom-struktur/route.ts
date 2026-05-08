@@ -642,6 +642,26 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
         /* non-fatal */
       }
     }
+    // BIZZ-1217: Fallback til DAWA BFE-lookup for SFE-noder uden dawaId.
+    // SFE-adressen mangler ofte etage/dør og resolver til en forkert adresse.
+    // DAWA /bfe/{bfe} returnerer beliggenhedsadresse.id som er stabil.
+    if (!sfeDawaId && sfeBfe) {
+      try {
+        const bfeRes = await fetchDawa(
+          `https://dawa.aws.dk/bfe/${sfeBfe}`,
+          { signal: AbortSignal.timeout(5000) },
+          { caller: 'ejendom-struktur.sfe-resolve' }
+        );
+        if (bfeRes.ok) {
+          const bfeData = (await bfeRes.json()) as {
+            beliggenhedsadresse?: { id?: string };
+          };
+          sfeDawaId = bfeData?.beliggenhedsadresse?.id ?? null;
+        }
+      } catch {
+        /* non-fatal */
+      }
+    }
 
     const root: StrukturNode = {
       bfe: sfeBfe ?? sfeItem?.bfe ?? 0,
@@ -666,18 +686,18 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
     // finder adgangsadressen (hovedejendom) i stedet for den specifikke lejlighed.
     // DAWA /bfe/{bfe} returnerer beliggenhedsadresse.id som er den korrekte UUID.
     {
-      /** Samler alle ejerlejlighed-noder der mangler dawaId eller har forkert */
-      function collectEjlNodes(node: StrukturNode): StrukturNode[] {
+      // BIZZ-1217: Samler ALLE noder uden dawaId (inkl. hovedejendomme og SFE)
+      function collectNodesWithoutDawaId(node: StrukturNode): StrukturNode[] {
         const result: StrukturNode[] = [];
-        if (node.niveau === 'ejerlejlighed' && node.bfe > 0) {
+        if (!node.dawaId && node.bfe > 0) {
           result.push(node);
         }
         for (const child of node.children) {
-          result.push(...collectEjlNodes(child));
+          result.push(...collectNodesWithoutDawaId(child));
         }
         return result;
       }
-      const ejlNodes = collectEjlNodes(root);
+      const ejlNodes = collectNodesWithoutDawaId(root);
       if (ejlNodes.length > 0) {
         await Promise.allSettled(
           ejlNodes.map(async (node) => {

@@ -18,6 +18,7 @@ import * as Sentry from '@sentry/nextjs';
 import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -154,6 +155,29 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  // BIZZ-1162: Cache-first lookup for BFE-baserede forespørgsler
+  if (bfe) {
+    try {
+      const admin = createAdminClient();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: cached } = await (admin as any)
+        .from('tinglysning_cache')
+        .select('data, stale_after')
+        .eq('bfe_nummer', parseInt(bfe, 10))
+        .maybeSingle();
+      if (cached?.data && cached.stale_after && new Date(cached.stale_after) > new Date()) {
+        return NextResponse.json(cached.data, {
+          headers: {
+            'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600',
+            'X-Cache': 'HIT',
+          },
+        });
+      }
+    } catch {
+      // Cache-fejl må ALDRIG blokere live response — fortsæt til live fetch
+    }
+  }
+
   try {
     // Trin 1: Søg ejendom — enten via BFE eller adresse
     let items: Record<string, unknown>[] = [];
@@ -244,8 +268,30 @@ export async function GET(req: NextRequest) {
       ...(erTestFallback && { testFallback: true }),
     };
 
+    // BIZZ-1162: Skriv til cache (fire-and-forget — fejl blokerer ikke response)
+    if (bfe && result.bfe > 0) {
+      try {
+        const admin = createAdminClient();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (admin as any).from('tinglysning_cache').upsert(
+          {
+            bfe_nummer: result.bfe,
+            data: result,
+            fetched_at: new Date().toISOString(),
+            stale_after: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+          },
+          { onConflict: 'bfe_nummer' }
+        );
+      } catch {
+        // Cache-write fejl logges men blokerer ikke
+      }
+    }
+
     return NextResponse.json(result, {
-      headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
+      headers: {
+        'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600',
+        'X-Cache': 'MISS',
+      },
     });
   } catch (err) {
     Sentry.captureException(err);

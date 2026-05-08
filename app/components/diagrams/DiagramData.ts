@@ -133,6 +133,16 @@ export interface DiagramEdge {
    * edge fra A→B. Distinkt fra primary parent→child-edges (amber dashed).
    */
   crossOwnership?: boolean;
+  /**
+   * BIZZ-1082: Ejer-person-ID for fælles ejerskabs-edges. Bruges til at
+   * farve-kode edges per person når flere ejere peger på samme ejendom.
+   */
+  ownerPersonId?: string;
+  /**
+   * BIZZ-1082: Hex-farve for denne edge (tildelt per ejer-person).
+   * Rendereren bruger denne i stedet for default-farven.
+   */
+  ownerColor?: string;
 }
 
 /** Complete graph structure for diagram rendering */

@@ -19,18 +19,41 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { assertAiAllowed } from '@/app/lib/aiGate';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
+import {
+  fetchComparableSales,
+  formatComparablesForPrompt,
+  type BoligaPropertyType,
+} from '@/app/lib/boliga';
+import { fetchNearbyPois, formatPoisForPrompt } from '@/app/lib/nearbyPoi';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
 
 /** Tone-valg for annoncen */
-type ListingTone = 'luksus' | 'familievenlig' | 'investor' | 'erhverv';
+type ListingTone =
+  | 'luksus'
+  | 'familievenlig'
+  | 'investor'
+  | 'erhverv'
+  | 'facebook'
+  | 'instagram'
+  | 'linkedin';
 
 /** Request body */
 interface GenerateListingBody {
   bfe: number;
   adresse: string;
   tone: ListingTone;
+  /** Postnummer — bruges til Boliga sammenlignelige salg (BIZZ-1180) */
+  postnummer?: number;
+  /** Boligareal i m² — bruges til at finde sammenlignelige (BIZZ-1180) */
+  areal?: number;
+  /** Boligtype for Boliga søgning (BIZZ-1180) */
+  boligtype?: BoligaPropertyType;
+  /** Latitude for nærområde-lookup (BIZZ-1181) */
+  lat?: number;
+  /** Longitude for nærområde-lookup (BIZZ-1181) */
+  lon?: number;
 }
 
 /** Chunk-størrelse for SSE-streaming (tegn) */
@@ -46,6 +69,12 @@ const TONE_DESCRIPTIONS: Record<ListingTone, string> = {
     'Faktabaseret og analytisk tone. Fokusér på afkastpotentiale, kvadratmeterpris, area-development, lejepotentiale og værdiudvikling.',
   erhverv:
     'Professionel og saglig tone. Fremhæv beliggenhed ift. transport, synlighed, indretningsfleksibilitet og praktisk infrastruktur.',
+  facebook:
+    'Kort og engagerende Facebook-opslag. Max 150 ord. Start med en fængende hook. Brug emojis sparsomt (max 3). Afslut med CTA ("Kontakt os" / "Book fremvisning"). Ingen markdown-formatering.',
+  instagram:
+    'Instagram caption. Max 100 ord. Stemningsfuld og visuel tone. Afslut med 5-8 relevante danske hashtags (#bolig #ejendom #tilsalg etc.). Ingen markdown.',
+  linkedin:
+    'LinkedIn erhvervsopslag. Professionel og netværksorienteret. Max 200 ord. Fremhæv investeringspotentiale og beliggenhed. Afslut med CTA til DM/kontakt. Ingen markdown.',
 };
 
 /**
@@ -170,7 +199,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Mangler bfe, adresse eller tone' }, { status: 400 });
   }
 
-  const validTones: ListingTone[] = ['luksus', 'familievenlig', 'investor', 'erhverv'];
+  const validTones: ListingTone[] = [
+    'luksus',
+    'familievenlig',
+    'investor',
+    'erhverv',
+    'facebook',
+    'instagram',
+    'linkedin',
+  ];
   if (!validTones.includes(body.tone)) {
     return NextResponse.json({ error: 'Ugyldig tone' }, { status: 400 });
   }
@@ -187,14 +224,44 @@ export async function POST(request: NextRequest) {
     propertyContext = 'Ingen yderligere ejendomsdata tilgængelig.';
   }
 
+  // BIZZ-1181: Hent nærområde-data fra OpenStreetMap (non-blocking)
+  let poiContext = '';
+  if (body.lat && body.lon) {
+    try {
+      const pois = await fetchNearbyPois(body.lat, body.lon);
+      poiContext = formatPoisForPrompt(pois);
+    } catch (err) {
+      logger.warn('[ai/generate-listing] POI fetch fejl:', err);
+    }
+  }
+
+  // BIZZ-1180: Hent sammenlignelige salg fra Boliga (non-blocking)
+  let comparablesContext = '';
+  if (body.postnummer) {
+    try {
+      const arealMargin = body.areal ? Math.round(body.areal * 0.3) : undefined;
+      const sales = await fetchComparableSales({
+        zipCode: body.postnummer,
+        propertyType: body.boligtype,
+        minSqm: body.areal && arealMargin ? body.areal - arealMargin : undefined,
+        maxSqm: body.areal && arealMargin ? body.areal + arealMargin : undefined,
+        limit: 5,
+      });
+      comparablesContext = formatComparablesForPrompt(sales);
+    } catch (err) {
+      logger.warn('[ai/generate-listing] Boliga fetch fejl:', err);
+    }
+  }
+
   const userMessage = `Skriv en boligannonce for denne ejendom:
 
 ADRESSE: ${body.adresse}
 BFE: ${body.bfe}
 
 ${propertyContext}
-
-Skriv annoncen i "${body.tone}" tone.`;
+${poiContext ? `\n${poiContext}\n` : ''}
+${comparablesContext ? `\n${comparablesContext}\n` : ''}
+Skriv annoncen i "${body.tone}" tone.${comparablesContext ? ' Brug de sammenlignelige salg som kontekst for prisniveau og positionering — kopiér IKKE deres tekst.' : ''}`;
 
   /* ── SSE stream ── */
   const stream = new ReadableStream({

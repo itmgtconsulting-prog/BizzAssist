@@ -2413,9 +2413,9 @@ export default function PersonDetailPageClient({
                 rootLabel={data.navn}
                 lang={lang}
                 onNodeClick={(node) => {
-                  if (node.type === 'company' || node.type === 'main') {
-                    setAktivTab('overview');
-                  } else if (node.link) {
+                  // BIZZ-1201: Company-noder navigerer til virksomhedssiden,
+                  // ikke tilbage til overview-tabben
+                  if (node.link) {
                     window.location.href = node.link;
                   }
                 }}

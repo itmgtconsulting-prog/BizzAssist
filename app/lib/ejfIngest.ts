@@ -66,10 +66,24 @@ export interface EjfRow {
  * Returnerer null hvis begge metoder fejler.
  */
 export async function getEjfToken(): Promise<string | null> {
-  const token = await getSharedOAuthToken().catch(() => null);
-  if (token) return token;
+  try {
+    const token = await getSharedOAuthToken();
+    if (token) return token;
+  } catch (err) {
+    logger.warn(
+      '[ejfIngest] getSharedOAuthToken failed:',
+      err instanceof Error ? err.message : err
+    );
+  }
   if (isCertAuthConfigured()) {
-    return getCertOAuthToken().catch(() => null);
+    try {
+      return await getCertOAuthToken();
+    } catch (err) {
+      logger.warn(
+        '[ejfIngest] getCertOAuthToken failed:',
+        err instanceof Error ? err.message : err
+      );
+    }
   }
   return null;
 }

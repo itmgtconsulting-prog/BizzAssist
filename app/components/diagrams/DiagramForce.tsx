@@ -2550,9 +2550,23 @@ function DiagramForce({
         const toH = toNode ? getNodeH(toNode, expandedOverflow) : NODE_H;
         const isCoOwnerEdge = fromNode?.isCoOwner || toNode?.isCoOwner;
 
+        // BIZZ-1082: Offset multi-parent edges ±3px for bedre visuel adskillelse
+        // når flere ejere peger på samme ejendom
+        let ownerOffset = 0;
+        if (edge.ownerPersonId) {
+          const siblingEdges = filteredGraph.edges.filter(
+            (e) => e.to === edge.to && e.ownerPersonId
+          );
+          if (siblingEdges.length > 1) {
+            const idx = siblingEdges.indexOf(edge);
+            const center = (siblingEdges.length - 1) / 2;
+            ownerOffset = (idx - center) * 6;
+          }
+        }
+
         const sx = fromPos.x;
         const sy = fromPos.y + fromH / 2;
-        const ex = toPos.x;
+        const ex = toPos.x + ownerOffset;
         const ey = toPos.y - toH / 2;
         const midY = (sy + ey) / 2;
         const midX = (sx + ex) / 2;
@@ -2574,16 +2588,19 @@ function DiagramForce({
         // ejendomslinjer (grøn), ikke som crossOwnership (amber)
         const isCrossOwnership = !!edge.crossOwnership && !edge.personallyOwned;
         /* BIZZ-1086: crossOwnership-linjer gjort mere subtile (0.35 opacity) */
-        // Person→property bruger SAMME stil som company→property (ensartet look)
-        const strokeColor = isCrossOwnership
-          ? 'rgba(251,191,36,0.35)' // amber-400 subtil
-          : isCoOwnerEdge
-            ? 'rgba(167,139,250,0.55)'
-            : isPropertyEdge
-              ? 'rgba(52,211,153,0.65)'
-              : edge.from === effectiveGraph.mainId || edge.to === effectiveGraph.mainId
-                ? 'rgba(96,165,250,0.85)'
-                : 'rgba(148,163,184,0.75)';
+        // BIZZ-1082: ownerColor fra API bruges til fælles ejerskabs-edges
+        // så forskellige ejere får distinkte farver på deres property-edges.
+        const strokeColor = edge.ownerColor
+          ? edge.ownerColor
+          : isCrossOwnership
+            ? 'rgba(251,191,36,0.35)' // amber-400 subtil
+            : isCoOwnerEdge
+              ? 'rgba(167,139,250,0.55)'
+              : isPropertyEdge
+                ? 'rgba(52,211,153,0.65)'
+                : edge.from === effectiveGraph.mainId || edge.to === effectiveGraph.mainId
+                  ? 'rgba(96,165,250,0.85)'
+                  : 'rgba(148,163,184,0.75)';
         // BIZZ-689: cross-ownership bruger længere dash-pattern (6 4),
         // co-owner bruger (4 3). Ejendomme er solid (ingen dash).
         const dashArray = isCrossOwnership ? '6 4' : isCoOwnerEdge ? '4 3' : undefined;
@@ -3384,6 +3401,45 @@ function DiagramForce({
     </div>
   ) : null;
 
+  // BIZZ-1082: Legend for multi-person ownership colors.
+  // Vises kun når >1 person har ownerColor-edges (fælles ejerskab).
+  const ownerLegend = useMemo(() => {
+    const ownerMap = new Map<string, string>();
+    for (const edge of filteredGraph.edges) {
+      if (edge.ownerPersonId && edge.ownerColor) {
+        if (!ownerMap.has(edge.ownerPersonId)) {
+          const pNode = filteredGraph.nodes.find((n) => n.id === edge.ownerPersonId);
+          if (pNode) ownerMap.set(edge.ownerPersonId, pNode.label);
+        }
+      }
+    }
+    if (ownerMap.size < 2) return null;
+    const entries = Array.from(ownerMap.entries());
+    // Find farve per person fra edges
+    const colorMap = new Map<string, string>();
+    for (const edge of filteredGraph.edges) {
+      if (edge.ownerPersonId && edge.ownerColor && !colorMap.has(edge.ownerPersonId)) {
+        colorMap.set(edge.ownerPersonId, edge.ownerColor);
+      }
+    }
+    return (
+      <div className="absolute bottom-3 left-3 z-10 px-2.5 py-2 rounded-lg bg-slate-900/80 border border-slate-700/40 backdrop-blur-sm">
+        <div className="text-[9px] text-slate-500 font-medium mb-1">
+          {lang === 'da' ? 'Personligt ejerskab' : 'Personal ownership'}
+        </div>
+        {entries.map(([id, name]) => (
+          <div key={id} className="flex items-center gap-1.5 text-[10px] text-slate-300">
+            <span
+              className="inline-block w-3 h-0.5 rounded-full"
+              style={{ backgroundColor: colorMap.get(id) ?? 'rgba(148,163,184,0.75)' }}
+            />
+            {name.split(' ').slice(0, 2).join(' ')}
+          </div>
+        ))}
+      </div>
+    );
+  }, [filteredGraph.edges, filteredGraph.nodes, lang]);
+
   // BIZZ-479: Modal til overflow-lister (fx NOVO NORDISK's 74 ejendomme).
   // Tidligere foldede listen ud inline i SVG og kolliderede med andre noder
   // + skar pile. Nu åbner "Vis alle" en scrollbar modal så det ikke påvirker
@@ -3464,6 +3520,7 @@ function DiagramForce({
           <div className="relative flex-1 flex flex-col">
             {canvasEl}
             {hiddenWarning}
+            {ownerLegend}
           </div>
         </div>
         {overflowModal}
@@ -3481,6 +3538,7 @@ function DiagramForce({
       <div className="relative">
         {canvasEl}
         {hiddenWarning}
+        {ownerLegend}
       </div>
       {overflowModal}
     </div>

@@ -107,6 +107,69 @@ VIGTIGT: Dette er IKKE en endelig AML-vurdering — kun data-sammenstilling til 
     outputFormat:
       'Beneficial ownership diagram (tekst), person-profiler, risiko-indikatorer (tabel), samlet risiko-score (lav/middel/høj).',
   },
+  {
+    id: 'ejendomsinvestor',
+    label: 'Ejendomsinvestor-analyse',
+    beskrivelse: 'Portefølje-analyse og deal-screening for ejendomsinvestorer',
+    ikon: 'TrendingUp',
+    instruktioner: `Udfør en ejendomsinvestor-analyse. For virksomheder: hent alle ejede ejendomme med vurderinger, BBR-data og energimærker. Beregn porteføljeværdi, gennemsnitsafkast, diversificering (bolig/erhverv/grund).
+For enkelt-ejendomme: sammenlign med naboer, beregn yield (lejeindtægt/vurdering), vurdér værdistigning-potentiale baseret på plandata og nærområde.`,
+    anbefaletTools: [
+      'hent_ejendomme_for_virksomhed',
+      'hent_vurdering',
+      'hent_bbr_data',
+      'hent_energimaerke',
+      'hent_salgshistorik',
+      'hent_plandata',
+    ],
+    outputFormat:
+      'Porteføljeoversigt (tabel med ejendomme, vurdering, type, areal), samlet porteføljeværdi, diversificeringsanalyse, top anbefalinger.',
+  },
+  {
+    id: 'revisor-benchmark',
+    label: 'Revisor-benchmark',
+    beskrivelse: 'Nøgletalsbenchmark og koncern-analyse for revisorer',
+    ikon: 'BarChart3',
+    instruktioner: `Udfør en revisor-benchmark-analyse. Hent regnskabsdata for 3-5 år og beregn nøgletal: soliditetsgrad, likviditetsgrad, overskudsgrad, ROE, ROIC. Sammenlign med branchegennemsnit.
+For koncerner: hent datterselskaber og aggregér koncernregnskab. Identificér interne transaktioner (krydsejerskab).`,
+    anbefaletTools: [
+      'hent_cvr_virksomhed',
+      'hent_regnskab_noegletal',
+      'hent_datterselskaber',
+      'hent_ejeroplysninger',
+    ],
+    outputFormat:
+      'Nøgletalstabel (5 år), trend-analyse, branchebenchmark, koncernoversigt med eliminering af intern omsætning.',
+  },
+  {
+    id: 'inkasso-aktivsoegning',
+    label: 'Inkasso aktivsøgning',
+    beskrivelse: 'Find debitors aktiver for inkassosager',
+    ikon: 'Search',
+    instruktioner: `Udfør en aktivsøgning for inkassosager. Find ALLE aktiver tilhørende personen/virksomheden: ejendomme (personligt + via selskaber), biler (bilbog), virksomheder (med status).
+Vurdér: likviditetsevne baseret på ejendomsværdier, om der er aktiver at udlægge i, om virksomheder har positiv egenkapital.`,
+    anbefaletTools: [
+      'hent_ejendomme_for_person',
+      'hent_person_virksomheder',
+      'hent_bilbog',
+      'hent_vurdering',
+      'hent_regnskab_noegletal',
+      'hent_ejerskab',
+    ],
+    outputFormat:
+      'Aktivoversigt (tabel: type, identifikation, estimeret værdi, hæftelser), samlet formue, likviditetsvurdering, anbefaling.',
+  },
+  {
+    id: 'kommune-energi',
+    label: 'Kommune energi- og planlægning',
+    beskrivelse: 'Bygningsmasse-analyse og energirenoverings-potentiale per kommune/område',
+    ikon: 'Building2',
+    instruktioner: `Udfør en kommune-/områdeanalyse af bygningsmassen. For det angivne BFE/adresse: hent BBR-data, energimærke og plandata. Analysér: byggeår-fordeling, energimærke-fordeling, varmeinstallationstype, tagmateriale.
+Identificér renoverings-potentiale: antal bygninger med energimærke E-G, andel med fjernvarme vs. olie/gas, potentiel CO₂-reduktion.`,
+    anbefaletTools: ['hent_bbr_data', 'hent_energimaerke', 'hent_plandata', 'hent_matrikeldata'],
+    outputFormat:
+      'Bygningsoversigt, energimærke-fordeling (tabel), varmekilder-fordeling, renoverings-prioritetsliste, estimeret CO₂-besparelse.',
+  },
 ];
 
 /**

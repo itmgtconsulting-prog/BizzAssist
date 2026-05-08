@@ -3338,7 +3338,7 @@ function DiagramForce({
   const canvasEl = (
     <div
       ref={containerRef}
-      className={`bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-auto select-none ${isFullscreen ? 'flex-1' : ''}`}
+      className={`bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden select-none ${isFullscreen ? 'flex-1' : ''}`}
       style={{
         minHeight: isFullscreen ? undefined : '500px',
         maxHeight: isFullscreen ? undefined : '85vh',

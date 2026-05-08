@@ -1067,10 +1067,11 @@ export default function EjendomDetaljeClient({
    * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
-    if (!erDAWA || !bbrData?.ejendomsrelationer?.length || !dawaAdresse) return;
-    // Moderejandom: ingen etage OG VP fandt en child-ejerlejlighed → brug moderBfe (jordBfe).
-    // Ejerlejlighed / normal: brug ejendomsrelationer-BFE (= ejerlejlighedBfe eller jordBfe).
-    const erModer = !dawaAdresse.etage && !!bbrData.ejerlejlighedBfe;
+    if (!erDAWA || !bbrData?.ejendomsrelationer?.length) return;
+    // BIZZ-1213: Fjernet dawaAdresse-dependency for at køre parallelt med adresse-fetch.
+    // Moderejandom-check bruger nu bbrData alene (ejerlejlighedBfe + moderBfe).
+    // Ejerlejlighed: brug ejendomsrelationer-BFE. Moderejandom: brug moderBfe.
+    const erModer = !bbrData.ejerlejlighedBfe ? false : !!bbrData.moderBfe;
     const bfeNummer = erModer
       ? (bbrData.moderBfe ?? bbrData.ejendomsrelationer[0]?.bfeNummer)
       : bbrData.ejendomsrelationer[0]?.bfeNummer;
@@ -1178,8 +1179,10 @@ export default function EjendomDetaljeClient({
       });
 
     return () => controller.abort();
+    // BIZZ-1213: Fjernet dawaAdresse fra deps — vurdering/ejerskab starter nu
+    // med det samme bbrData er tilgængelig (parallelt med adresse-fetch)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, erDAWA, bbrData, dawaAdresse]);
+  }, [id, erDAWA, bbrData]);
 
   /**
    * Henter matrikeldata (jordstykker, landbrugsnotering m.m.) fra Datafordeler MAT-registret.

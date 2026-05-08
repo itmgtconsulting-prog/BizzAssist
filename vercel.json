@@ -131,6 +131,10 @@
     {
       "path": "/api/cron/refresh-matrikel-cache",
       "schedule": "0 5 * * 0"
+    },
+    {
+      "path": "/api/cron/refresh-regnskab-cache",
+      "schedule": "0 5 * * *"
     }
   ]
 }

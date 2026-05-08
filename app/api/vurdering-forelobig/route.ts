@@ -173,15 +173,16 @@ async function searchVurderingsportalen(
 
 /**
  * Mapper raa ES-dokumenter til ForelobigVurdering[].
- * Filtrerer kun isParentProperty=true dokumenter (de med fuld data),
- * og sorterer nyeste vurderingsaar forst.
+ * BIZZ-1216: Inkluderer baade parent- og child-properties (ejerlejligheder)
+ * der har gyldige vurderingsdata. Tidligere ekskluderede isParentProperty=true
+ * filteret ejerlejligheder som har isParentProperty=false.
  *
  * @param hits - Array af ES _source dokumenter
  * @returns Sorteret array af ForelobigVurdering
  */
 function mapHitsToForelobige(hits: RawPreliminaryProperty[]): ForelobigVurdering[] {
   return hits
-    .filter((h) => h.isParentProperty === true && h.vurderingsaar != null)
+    .filter((h) => h.vurderingsaar != null)
     .map((h) => ({
       vurderingsaar: parseInt(h.vurderingsaar!, 10),
       ejendomsvaerdi: h.propertyValue ? parseInt(h.propertyValue, 10) || null : null,

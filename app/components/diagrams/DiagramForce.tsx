@@ -3400,41 +3400,77 @@ function DiagramForce({
     </div>
   ) : null;
 
-  // BIZZ-1082: Legend for multi-person ownership colors.
-  // Vises kun når >1 person har ownerColor-edges (fælles ejerskab).
-  const ownerLegend = useMemo(() => {
+  // BIZZ-1204: Diagram-legend der forklarer linjetyper.
+  // Vises når diagrammet har cross-ownership eller multi-person edges.
+  const diagramLegend = useMemo(() => {
+    const hasCrossOwnership = filteredGraph.edges.some(
+      (e) => e.crossOwnership && !e.personallyOwned
+    );
+    const hasPropertyEdges = filteredGraph.edges.some(
+      (e) => filteredGraph.nodes.find((n) => n.id === e.to)?.type === 'property'
+    );
+
+    // BIZZ-1082: Multi-person ownership colors
     const ownerMap = new Map<string, string>();
+    const colorMap = new Map<string, string>();
     for (const edge of filteredGraph.edges) {
       if (edge.ownerPersonId && edge.ownerColor) {
         if (!ownerMap.has(edge.ownerPersonId)) {
           const pNode = filteredGraph.nodes.find((n) => n.id === edge.ownerPersonId);
           if (pNode) ownerMap.set(edge.ownerPersonId, pNode.label);
         }
+        if (!colorMap.has(edge.ownerPersonId)) {
+          colorMap.set(edge.ownerPersonId, edge.ownerColor);
+        }
       }
     }
-    if (ownerMap.size < 2) return null;
-    const entries = Array.from(ownerMap.entries());
-    // Find farve per person fra edges
-    const colorMap = new Map<string, string>();
-    for (const edge of filteredGraph.edges) {
-      if (edge.ownerPersonId && edge.ownerColor && !colorMap.has(edge.ownerPersonId)) {
-        colorMap.set(edge.ownerPersonId, edge.ownerColor);
-      }
-    }
+    const hasMultiOwner = ownerMap.size > 1;
+
+    // Vis legend kun når der er noget at forklare
+    if (!hasCrossOwnership && !hasMultiOwner) return null;
+
+    const da = lang === 'da';
     return (
-      <div className="absolute bottom-3 left-3 z-10 px-2.5 py-2 rounded-lg bg-slate-900/80 border border-slate-700/40 backdrop-blur-sm">
+      <div className="absolute bottom-3 left-3 z-10 px-2.5 py-2 rounded-lg bg-slate-900/80 border border-slate-700/40 backdrop-blur-sm space-y-0.5">
         <div className="text-[9px] text-slate-500 font-medium mb-1">
-          {lang === 'da' ? 'Personligt ejerskab' : 'Personal ownership'}
+          {da ? 'Linjetyper' : 'Line types'}
         </div>
-        {entries.map(([id, name]) => (
-          <div key={id} className="flex items-center gap-1.5 text-[10px] text-slate-300">
-            <span
-              className="inline-block w-3 h-0.5 rounded-full"
-              style={{ backgroundColor: colorMap.get(id) ?? 'rgba(148,163,184,0.75)' }}
-            />
-            {name.split(' ').slice(0, 2).join(' ')}
+        {/* Ejerskab (solid blue) */}
+        <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+          <span className="inline-block w-3 h-0.5 rounded-full bg-blue-400/85" />
+          {da ? 'Ejerskab' : 'Ownership'}
+        </div>
+        {/* Ejendom (solid green) */}
+        {hasPropertyEdges && (
+          <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+            <span className="inline-block w-3 h-0.5 rounded-full bg-emerald-400/65" />
+            {da ? 'Ejendom' : 'Property'}
           </div>
-        ))}
+        )}
+        {/* Cross-ownership (dashed amber) */}
+        {hasCrossOwnership && (
+          <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+            <span
+              className="inline-block w-3 h-0.5"
+              style={{
+                background:
+                  'repeating-linear-gradient(90deg, rgba(251,191,36,0.5) 0 2px, transparent 2px 4px)',
+              }}
+            />
+            {da ? 'Krydsejerskab' : 'Cross-ownership'}
+          </div>
+        )}
+        {/* Multi-person ownership */}
+        {hasMultiOwner &&
+          Array.from(ownerMap.entries()).map(([id, name]) => (
+            <div key={id} className="flex items-center gap-1.5 text-[10px] text-slate-300">
+              <span
+                className="inline-block w-3 h-0.5 rounded-full"
+                style={{ backgroundColor: colorMap.get(id) ?? 'rgba(148,163,184,0.75)' }}
+              />
+              {name.split(' ').slice(0, 2).join(' ')}
+            </div>
+          ))}
       </div>
     );
   }, [filteredGraph.edges, filteredGraph.nodes, lang]);
@@ -3519,7 +3555,7 @@ function DiagramForce({
           <div className="relative flex-1 flex flex-col">
             {canvasEl}
             {hiddenWarning}
-            {ownerLegend}
+            {diagramLegend}
           </div>
         </div>
         {overflowModal}
@@ -3537,7 +3573,7 @@ function DiagramForce({
       <div className="relative">
         {canvasEl}
         {hiddenWarning}
-        {ownerLegend}
+        {diagramLegend}
       </div>
       {overflowModal}
     </div>

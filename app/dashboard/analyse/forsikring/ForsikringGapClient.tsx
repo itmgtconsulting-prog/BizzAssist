@@ -369,15 +369,45 @@ export default function ForsikringGapClient() {
             </div>
           </div>
 
-          <button
-            onClick={() => {
-              setStep(1);
-              setResult(null);
-            }}
-            className="bg-slate-700 hover:bg-slate-600 text-slate-300 px-4 py-2 rounded-lg text-sm flex items-center gap-1"
-          >
-            <ChevronLeft size={14} /> Ny analyse
-          </button>
+          {/* BIZZ-1227: Eksport-knapper */}
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                // Byg prompt med gap-data og send til AI chat for rapport-generering
+                const gapLines = result.gaps
+                  .map(
+                    (g) =>
+                      `- ${g.aktiv.label}: ${g.gapType} (risiko: ${g.risikoScore}). ${g.besked}`
+                  )
+                  .join('\n');
+                const prompt = `Generér en professionel forsikrings-gap-rapport som Word-dokument for ${kundeLabel || kundeId}.
+
+Resumé: ${result.summary.totalAktiver} aktiver fundet, ${result.summary.forsikrede} forsikrede, ${result.summary.uforsikrede} uforsikrede, ${result.summary.underforsikrede} underforsikrede.
+
+Identificerede gaps:
+${gapLines}
+
+Inkludér: forside med kundenavn og dato, resumé-sektion, aktiv-oversigt som tabel (type, adresse, værdi, status), detaljer per gap med anbefaling, og risiko-profil. Format: Word (docx).`;
+
+                window.dispatchEvent(
+                  new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt } })
+                );
+              }}
+              className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"
+            >
+              <FileSpreadsheet size={14} />
+              Generér rapport (Word)
+            </button>
+            <button
+              onClick={() => {
+                setStep(1);
+                setResult(null);
+              }}
+              className="bg-slate-700 hover:bg-slate-600 text-slate-300 px-4 py-2 rounded-lg text-sm flex items-center gap-1"
+            >
+              <ChevronLeft size={14} /> Ny analyse
+            </button>
+          </div>
         </div>
       )}
     </div>

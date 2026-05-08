@@ -186,7 +186,13 @@ async function syncBfesToEjfEjerskab(
 ): Promise<{ bfesProcessed: number; rowsUpserted: number; rowsFailed: number }> {
   const token = await getEjfToken();
   if (!token) {
-    logger.error('[tl-delta] OAuth token kunne ikke hentes');
+    // BIZZ-1198: Detaljeret diagnostik for token-fejl
+    const hasClientId = !!process.env.DATAFORDELER_OAUTH_CLIENT_ID;
+    const hasClientSecret = !!process.env.DATAFORDELER_OAUTH_CLIENT_SECRET;
+    const hasCertPath = !!(process.env.DATAFORDELER_CERT_PATH || process.env.DATAFORDELER_CERT_B64);
+    logger.error(
+      `[tl-delta] OAuth token null — clientId=${hasClientId}, clientSecret=${hasClientSecret}, certPath=${hasCertPath}`
+    );
     return { bfesProcessed: 0, rowsUpserted: 0, rowsFailed: 0 };
   }
 

@@ -1,0 +1,365 @@
+/**
+ * POST /api/analyse/forsikring-gap
+ *
+ * BIZZ-1223: Forsikrings-gap-analyse backend.
+ * Modtager kundeId + policeliste, henter aktiver fra interne API'er,
+ * matcher policer mod aktiver, og returnerer struktureret gap-rapport.
+ *
+ * Input: { kundeType, kundeId, policer[] }
+ * Output: { aktiver[], gaps[], score, summary }
+ *
+ * @retention Ingen PII persisteres — ren beregning.
+ */
+
+import { NextRequest, NextResponse } from 'next/server';
+import { resolveTenantId } from '@/lib/api/auth';
+import { assertAiAllowed } from '@/app/lib/aiGate';
+import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
+import { logger } from '@/app/lib/logger';
+import type { ForsikringsType, ParsedPolice } from '@/app/lib/parsePoliceFile';
+
+export const maxDuration = 60;
+
+// ─── Types ──────────────────────────────────────────────────────────────────
+
+/** Input body */
+interface GapAnalyseBody {
+  kundeType: 'person' | 'virksomhed';
+  kundeId: string;
+  policer: ParsedPolice[];
+}
+
+/** Et fundet aktiv fra BizzAssist data */
+export interface FundetAktiv {
+  id: string;
+  type: 'ejendom' | 'køretøj' | 'virksomhed' | 'bestyrelsespost';
+  label: string;
+  /** Vurdering/værdi i DKK */
+  vaerdi: number | null;
+  /** Adresse eller identifikation */
+  adresse: string | null;
+  /** BFE-nummer (ejendomme) */
+  bfe: number | null;
+  /** CVR-nummer (virksomheder) */
+  cvr: string | null;
+  /** Risikofaktorer */
+  risikofaktorer: string[];
+  /** Matchende police (null = uforsikret) */
+  matchetPolice: ParsedPolice | null;
+}
+
+/** Et gap i forsikringsdækningen */
+export interface ForsikringsGap {
+  aktiv: FundetAktiv;
+  gapType: 'uforsikret' | 'underforsikret' | 'manglende_ansvar' | 'risiko';
+  risikoScore: 'lav' | 'middel' | 'hoej';
+  besked: string;
+  anbefaletDaekning: number | null;
+}
+
+/** Samlet resultat */
+export interface GapAnalyseResult {
+  aktiver: FundetAktiv[];
+  gaps: ForsikringsGap[];
+  summary: {
+    totalAktiver: number;
+    forsikrede: number;
+    uforsikrede: number;
+    underforsikrede: number;
+    risikoAktiver: number;
+    samletVaerdi: number;
+    samletDaekning: number;
+  };
+}
+
+// ─── Aktiv-hentning ─────────────────────────────────────────────────────────
+
+/**
+ * Henter alle aktiver for en kunde via interne API-routes.
+ *
+ * @param kundeType - person eller virksomhed
+ * @param kundeId - enhedsNummer eller CVR
+ * @param host - Request host for intern fetch
+ * @param cookie - Cookie header for auth
+ * @returns Array af fundne aktiver
+ */
+async function hentAktiver(
+  kundeType: string,
+  kundeId: string,
+  host: string,
+  cookie: string
+): Promise<FundetAktiv[]> {
+  const base = host.startsWith('localhost') ? `http://${host}` : `https://${host}`;
+  const headers = { cookie };
+  const timeout = AbortSignal.timeout(15000);
+  const aktiver: FundetAktiv[] = [];
+
+  if (kundeType === 'person') {
+    // Hent ejendomme + virksomheder parallelt
+    const [ejdRes, virkRes] = await Promise.allSettled([
+      fetch(`${base}/api/ejerskab/person-properties?enhedsNummer=${kundeId}`, {
+        headers,
+        signal: timeout,
+      }),
+      fetch(`${base}/api/cvr/person-virksomheder?enhedsNummer=${kundeId}`, {
+        headers,
+        signal: timeout,
+      }),
+    ]);
+
+    // Ejendomme
+    if (ejdRes.status === 'fulfilled' && ejdRes.value.ok) {
+      try {
+        const data = await ejdRes.value.json();
+        for (const p of data?.properties ?? []) {
+          aktiver.push({
+            id: `ejendom-${p.bfeNummer}`,
+            type: 'ejendom',
+            label: p.adresse ?? `BFE ${p.bfeNummer}`,
+            vaerdi: p.vurdering ?? null,
+            adresse: p.adresse ?? null,
+            bfe: p.bfeNummer,
+            cvr: null,
+            risikofaktorer: [],
+            matchetPolice: null,
+          });
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    // Virksomheder → bestyrelsesposter
+    if (virkRes.status === 'fulfilled' && virkRes.value.ok) {
+      try {
+        const data = await virkRes.value.json();
+        for (const v of data?.virksomheder ?? []) {
+          if (v.roller?.some((r: { rolle: string }) => /bestyrelse|direktion/i.test(r.rolle))) {
+            aktiver.push({
+              id: `bestyrelsespost-${v.cvr}`,
+              type: 'bestyrelsespost',
+              label: `${v.navn} (${v.roller.map((r: { rolle: string }) => r.rolle).join(', ')})`,
+              vaerdi: null,
+              adresse: null,
+              bfe: null,
+              cvr: String(v.cvr),
+              risikofaktorer: [],
+              matchetPolice: null,
+            });
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  } else {
+    // Virksomhed: hent ejendomme ejet af CVR
+    try {
+      const res = await fetch(`${base}/api/ejendomme-by-owner?cvr=${kundeId}`, {
+        headers,
+        signal: timeout,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        for (const p of data?.ejendomme ?? []) {
+          aktiver.push({
+            id: `ejendom-${p.bfe}`,
+            type: 'ejendom',
+            label: p.adresse ?? `BFE ${p.bfe}`,
+            vaerdi: p.vurdering ?? null,
+            adresse: p.adresse ?? null,
+            bfe: p.bfe,
+            cvr: null,
+            risikofaktorer: [],
+            matchetPolice: null,
+          });
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // Bilbog (person-søgning kræver navn+fødselsdato — skip for nu, CVR virker)
+  if (kundeType === 'virksomhed') {
+    try {
+      const res = await fetch(`${base}/api/tinglysning/bilbog?cvr=${kundeId}`, {
+        headers,
+        signal: timeout,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        for (const bil of data?.biler ?? []) {
+          aktiver.push({
+            id: `koeretoej-${bil.uuid}`,
+            type: 'køretøj',
+            label: [bil.fabrikat, bil.aargang, bil.registreringsnummer].filter(Boolean).join(' '),
+            vaerdi: null,
+            adresse: bil.registreringsnummer ?? bil.stelnummer ?? null,
+            bfe: null,
+            cvr: null,
+            risikofaktorer: [],
+            matchetPolice: null,
+          });
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return aktiver;
+}
+
+// ─── Gap-detektion ──────────────────────────────────────────────────────────
+
+/** Mapper aktiv-type til relevant forsikringstype */
+const AKTIV_TIL_FORSIKRING: Record<string, ForsikringsType[]> = {
+  ejendom: ['husforsikring', 'bygningsforsikring'],
+  køretøj: ['bilforsikring'],
+  virksomhed: ['erhvervsforsikring'],
+  bestyrelsespost: ['bestyrelsesansvar'],
+};
+
+/**
+ * Matcher policer mod aktiver og identificerer gaps.
+ *
+ * @param aktiver - Fundne aktiver fra BizzAssist
+ * @param policer - Kundens eksisterende policer
+ * @returns Gaps med risiko-scoring
+ */
+function detectGaps(aktiver: FundetAktiv[], policer: ParsedPolice[]): ForsikringsGap[] {
+  const gaps: ForsikringsGap[] = [];
+
+  for (const aktiv of aktiver) {
+    const relevantTypes = AKTIV_TIL_FORSIKRING[aktiv.type] ?? [];
+
+    // Find matchende police
+    const match = policer.find((p) => {
+      if (!relevantTypes.includes(p.type)) return false;
+      // Fuzzy match på objekt (adresse/registreringsnummer)
+      if (p.objekt && aktiv.adresse) {
+        const pObj = p.objekt.toLowerCase();
+        const aAddr = aktiv.adresse.toLowerCase();
+        return pObj.includes(aAddr) || aAddr.includes(pObj);
+      }
+      // Fallback: match på type alene (første match)
+      return true;
+    });
+
+    if (match) {
+      aktiv.matchetPolice = match;
+      // Tjek for underforsikring
+      if (aktiv.vaerdi && match.daekningssum && match.daekningssum < aktiv.vaerdi * 0.8) {
+        gaps.push({
+          aktiv,
+          gapType: 'underforsikret',
+          risikoScore: match.daekningssum < aktiv.vaerdi * 0.5 ? 'hoej' : 'middel',
+          besked: `Dækningssum ${match.daekningssum?.toLocaleString('da-DK')} DKK er under 80% af vurdering ${aktiv.vaerdi.toLocaleString('da-DK')} DKK`,
+          anbefaletDaekning: aktiv.vaerdi,
+        });
+      }
+    } else {
+      // Uforsikret
+      gaps.push({
+        aktiv,
+        gapType: aktiv.type === 'bestyrelsespost' ? 'manglende_ansvar' : 'uforsikret',
+        risikoScore: aktiv.vaerdi && aktiv.vaerdi > 1_000_000 ? 'hoej' : 'middel',
+        besked:
+          aktiv.type === 'bestyrelsespost'
+            ? `Bestyrelsespost i ${aktiv.label} uden D&O-forsikring`
+            : `${aktiv.label} er ikke dækket af nogen forsikringspolice`,
+        anbefaletDaekning: aktiv.vaerdi,
+      });
+    }
+
+    // Risikofaktorer tilføjes til aktiv
+    if (aktiv.risikofaktorer.length > 0) {
+      gaps.push({
+        aktiv,
+        gapType: 'risiko',
+        risikoScore: 'middel',
+        besked: `Risikofaktorer: ${aktiv.risikofaktorer.join(', ')}`,
+        anbefaletDaekning: null,
+      });
+    }
+  }
+
+  return gaps.sort((a, b) => {
+    const score = { hoej: 3, middel: 2, lav: 1 };
+    return score[b.risikoScore] - score[a.risikoScore];
+  });
+}
+
+// ─── Route handler ──────────────────────────────────────────────────────────
+
+/**
+ * POST handler — forsikrings-gap-analyse.
+ *
+ * @param request - POST med kundeId + policer
+ * @returns GapAnalyseResult
+ */
+export async function POST(request: NextRequest): Promise<NextResponse> {
+  const limited = await checkRateLimit(request, rateLimit);
+  if (limited) return limited;
+
+  const auth = await resolveTenantId();
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const blocked = await assertAiAllowed(auth.userId);
+  if (blocked) return blocked as NextResponse;
+
+  let body: GapAnalyseBody;
+  try {
+    body = (await request.json()) as GapAnalyseBody;
+  } catch {
+    return NextResponse.json({ error: 'Ugyldig JSON' }, { status: 400 });
+  }
+
+  if (!body.kundeId || !body.kundeType || !body.policer) {
+    return NextResponse.json(
+      { error: 'Mangler kundeType, kundeId eller policer' },
+      { status: 400 }
+    );
+  }
+
+  try {
+    const host = request.headers.get('host') ?? 'localhost:3000';
+    const cookie = request.headers.get('cookie') ?? '';
+
+    // Hent aktiver
+    const aktiver = await hentAktiver(body.kundeType, body.kundeId, host, cookie);
+
+    // Detect gaps
+    const gaps = detectGaps(aktiver, body.policer);
+
+    // Summary
+    const forsikrede = aktiver.filter((a) => a.matchetPolice).length;
+    const uforsikrede = gaps.filter(
+      (g) => g.gapType === 'uforsikret' || g.gapType === 'manglende_ansvar'
+    ).length;
+    const underforsikrede = gaps.filter((g) => g.gapType === 'underforsikret').length;
+    const risikoAktiver = gaps.filter((g) => g.gapType === 'risiko').length;
+    const samletVaerdi = aktiver.reduce((s, a) => s + (a.vaerdi ?? 0), 0);
+    const samletDaekning = body.policer.reduce((s, p) => s + (p.daekningssum ?? 0), 0);
+
+    const result: GapAnalyseResult = {
+      aktiver,
+      gaps,
+      summary: {
+        totalAktiver: aktiver.length,
+        forsikrede,
+        uforsikrede,
+        underforsikrede,
+        risikoAktiver,
+        samletVaerdi,
+        samletDaekning,
+      },
+    };
+
+    return NextResponse.json(result);
+  } catch (err) {
+    logger.error('[forsikring-gap] Fejl:', err);
+    return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
+  }
+}

@@ -91,6 +91,48 @@ export function benyttelsekodeTekst(kode: string | null | undefined): string | n
 }
 
 /**
+ * BIZZ-1180: Map VUR benyttelseskode til Boliga property type.
+ *
+ * Bruges til at filtrere sammenlignelige salg i Boliga API. Returnerer
+ * null for erhverv/offentlige/ubebyggede koder der ikke har en Boliga-pendant.
+ *
+ * @param kode - VUR benyttelseskode (2-3 cifre)
+ * @returns Boliga property type eller null
+ */
+export function benyttelseskodeTilBoligtype(
+  kode: string | null | undefined
+): 'villa' | 'ejerlejlighed' | 'raekkehus' | 'fritidshus' | null {
+  if (!kode) return null;
+  const n = kode.trim().padStart(2, '0');
+  switch (n) {
+    case '01': // Parcelhus
+    case '02': // Tofamiliehus
+    case '05': // Landbrug (bolig)
+    case '06': // Bebygget landbrug
+    case '07': // Beboelsesejendom
+    case '09': // Alment byggeri
+    case '10': // Beboelsesejendom
+      return 'villa';
+    case '03': // Række-/kæde-/dobbelthus
+    case '16': // Rækkehus
+      return 'raekkehus';
+    case '04': // Etageejendom
+    case '11': // Ejerlejlighed
+    case '12': // Kollegium
+    case '13': // Ungdomsbolig
+    case '15': // Beboelse i erhvervsejendom
+      return 'ejerlejlighed';
+    case '21': // Sommerhus
+    case '22': // Kolonihave
+    case '23': // Fritidsbolig
+    case '24': // Feriehus
+      return 'fritidshus';
+    default:
+      return null;
+  }
+}
+
+/**
  * Returnerer true hvis benyttelseskode-teksten signalerer "fritids-/sommerhus"-
  * kategorien — dvs. en kategori der ikke giver mening i byzone.
  */

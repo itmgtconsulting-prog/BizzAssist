@@ -44,6 +44,8 @@ interface Props {
   postnummer?: number;
   /** Boligareal i m² (BIZZ-1180) */
   areal?: number;
+  /** Boligtype til Boliga-filtrering (BIZZ-1180) */
+  boligtype?: 'villa' | 'ejerlejlighed' | 'raekkehus' | 'fritidshus';
   /** Latitude for nærområde-lookup (BIZZ-1181) */
   lat?: number;
   /** Longitude for nærområde-lookup (BIZZ-1181) */
@@ -81,6 +83,7 @@ export default function GenerateListingModal({
   onClose,
   postnummer,
   areal,
+  boligtype,
   lat,
   lon,
 }: Props) {
@@ -122,7 +125,7 @@ export default function GenerateListingModal({
       const res = await fetch('/api/ai/generate-listing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bfe, adresse, tone, postnummer, areal, lat, lon }),
+        body: JSON.stringify({ bfe, adresse, tone, postnummer, areal, boligtype, lat, lon }),
         signal: controller.signal,
       });
 

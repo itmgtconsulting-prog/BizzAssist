@@ -39,7 +39,10 @@ const PropertyMap = dynamic(/* mapbox-gl */ () => import('@/app/components/ejend
 /** Diagram v2 — feature-flagged, kun synlig i dev/preview */
 import { type EjerstrukturNode } from '@/app/lib/mock/ejendomme';
 import { erDawaId, type DawaAdresse, type DawaJordstykke } from '@/app/lib/dawa';
-import { formatBenyttelseOgByggeaar } from '@/app/lib/benyttelseskoder';
+import {
+  formatBenyttelseOgByggeaar,
+  benyttelseskodeTilBoligtype,
+} from '@/app/lib/benyttelseskoder';
 import { isUdfasetStatusLabel } from '@/app/lib/bbrKoder';
 import type { EjendomApiResponse, LiveBBRBygning } from '@/app/api/ejendom/[id]/route';
 import type { CVRVirksomhed, CVRResponse } from '@/app/api/cvr/route';
@@ -2708,6 +2711,7 @@ export default function EjendomDetaljeClient({
           onClose={() => setAnnonceModalOpen(false)}
           postnummer={dawaAdresse?.postnr ? Number(dawaAdresse.postnr) : undefined}
           areal={bbrData?.bbr?.[0]?.samletBoligareal ?? undefined}
+          boligtype={benyttelseskodeTilBoligtype(vurdering?.benyttelseskode) ?? undefined}
           lat={dawaAdresse?.y || undefined}
           lon={dawaAdresse?.x || undefined}
         />

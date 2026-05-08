@@ -46,6 +46,11 @@ import { withCronMonitor } from '@/app/lib/cronMonitor';
 /** Eksplicit maxDuration = 300s (5 min) — max på Vercel Pro */
 export const maxDuration = 300;
 
+/** Root URL for sitemap URLs (trimmed defensively). */
+const BASE_URL = (process.env.NEXT_PUBLIC_APP_URL ?? 'https://bizzassist.dk')
+  .trim()
+  .replace(/\/$/, '');
+
 /** Antal virksomheder pr. DB-batch.
  * Supabase PostgREST capper ved 1000 rækker per request uanset .limit().
  * Sæt til 1000 så done-check (rows.length < BATCH_SIZE) virker korrekt.
@@ -54,6 +59,9 @@ const CVR_BATCH_SIZE = 1_000;
 
 /** Antal BFE-rækker pr. DB-batch (PostgREST 1000-row cap) */
 const PROPERTY_BATCH_SIZE = 1_000;
+
+/** Pagination size — max 50k URLs per sitemap file (Google limit). */
+const PAGE_SIZE = 50_000;
 
 /** Stop ved ~4 min for at undgå at Vercel 300s timeout dræber os mid-batch. */
 const SAFETY_BUDGET_MS = 240_000;
@@ -76,6 +84,9 @@ const VP_PAGE_SIZE = 1_000;
 
 /** Supabase ai_settings nøgle til VP search_after-cursor */
 const VP_PROGRESS_KEY = 'sitemap_vp_after';
+
+/** Supabase ai_settings nøgle til render-xml cursor (sidst renderede page_id) */
+const RENDER_XML_PROGRESS_KEY = 'sitemap_render_page';
 
 // ─── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -470,6 +481,215 @@ async function phaseVpProperties(
   return { count: totalCount, lastBfe: afterBfe, done: false };
 }
 
+// ─── Phase: render-xml (pre-generate static XML) ────────────────────────────
+
+/**
+ * Escape XML special characters in URL values.
+ *
+ * @param s - Raw string to escape
+ * @returns XML-safe string
+ */
+function xmlEscape(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+/**
+ * Serialize a single URL entry to XML.
+ *
+ * @param loc - Full URL
+ * @param lastmod - ISO date string (YYYY-MM-DD)
+ * @param changefreq - Sitemap changefreq value
+ * @param priority - Sitemap priority (0.0–1.0)
+ * @returns XML <url> element string
+ */
+function serializeUrl(loc: string, lastmod: string, changefreq: string, priority: number): string {
+  return `<url><loc>${xmlEscape(loc)}</loc><lastmod>${lastmod}</lastmod><changefreq>${changefreq}</changefreq><priority>${priority.toFixed(1)}</priority></url>`;
+}
+
+/**
+ * Static pages included in sitemap page 0.
+ *
+ * @returns Array of XML <url> strings
+ */
+function staticPageUrls(): string[] {
+  const today = new Date().toISOString().split('T')[0];
+  return [
+    serializeUrl(`${BASE_URL}/`, today, 'weekly', 1.0),
+    serializeUrl(`${BASE_URL}/privacy`, today, 'yearly', 0.2),
+    serializeUrl(`${BASE_URL}/terms`, today, 'yearly', 0.2),
+    serializeUrl(`${BASE_URL}/cookies`, today, 'yearly', 0.1),
+  ];
+}
+
+/**
+ * Wrap URL entries in a complete XML sitemap document.
+ *
+ * @param urlElements - Array of <url>...</url> strings
+ * @returns Complete XML sitemap string
+ */
+function wrapSitemap(urlElements: string[]): string {
+  return (
+    `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
+    urlElements.join('\n') +
+    `\n</urlset>\n`
+  );
+}
+
+/**
+ * Pre-renders sitemap XML files from sitemap_entries and stores them
+ * in sitemap_xml_cache for instant serving to Google's crawler.
+ *
+ * Processes one page (up to 50K URLs) per iteration within the safety
+ * budget. Each page reads from sitemap_entries in 1000-row chunks
+ * (PostgREST cap), builds the XML string, and upserts it into
+ * sitemap_xml_cache.
+ *
+ * BIZZ-890: Fixes Google indexing — the on-demand /sitemap/[id] route
+ * timed out (>60s) because it ran 50 sequential DB queries per request.
+ * Pre-rendering moves that work to a cron job; the route then serves
+ * a single cached row.
+ *
+ * @param admin - Supabase admin client
+ * @returns Pages rendered, total entries, and whether all pages are done
+ */
+async function phaseRenderXml(
+  admin: ReturnType<typeof createAdminClient>
+): Promise<{ pagesRendered: number; totalEntries: number; done: boolean }> {
+  const STATIC_COUNT = 4;
+  const CHUNK = 1000;
+  const runStart = Date.now();
+
+  // Resume from last cursor (UUID of last processed entry, or '0' for start)
+  const cursor = await getProgress(admin, RENDER_XML_PROGRESS_KEY);
+  const afterId = cursor && cursor !== '0' ? cursor : null;
+
+  // Track pages: if resuming, figure out which page_id we're on
+  // by counting how many entries come before our cursor.
+  let pageId = 0;
+  if (afterId) {
+    const { count } = await admin
+      .from('sitemap_entries')
+      .select('*', { count: 'exact', head: true })
+      .lt('id', afterId);
+    const entriesBefore = (count ?? 0) + STATIC_COUNT;
+    pageId = Math.floor(entriesBefore / PAGE_SIZE);
+  }
+
+  let pagesRendered = 0;
+  let lastId = afterId;
+  let totalRead = 0;
+  let globalDone = false;
+
+  // Outer loop: one iteration per sitemap page
+  while (Date.now() - runStart < SAFETY_BUDGET_MS) {
+    const urlElements: string[] = [];
+
+    // Page 0 includes static pages
+    if (pageId === 0 && !lastId) {
+      urlElements.push(...staticPageUrls());
+    }
+
+    const targetCount = pageId === 0 && !lastId ? PAGE_SIZE - STATIC_COUNT : PAGE_SIZE;
+
+    // Read entries via cursor-based pagination on id (PK, btree-indexed)
+    let pageEntries = 0;
+    while (pageEntries < targetCount) {
+      if (Date.now() - runStart > SAFETY_BUDGET_MS) break;
+
+      const limit = Math.min(CHUNK, targetCount - pageEntries);
+      let query = admin
+        .from('sitemap_entries')
+        .select('id, type, slug, entity_id, updated_at')
+        .order('id', { ascending: true })
+        .limit(limit);
+
+      if (lastId) {
+        query = query.gt('id', lastId);
+      }
+
+      const { data, error } = await query;
+
+      if (error) {
+        logger.error('[generate-sitemap] render-xml DB read error:', error.message);
+        break;
+      }
+
+      const rows = data ?? [];
+      if (rows.length === 0) {
+        globalDone = true;
+        break;
+      }
+
+      for (const row of rows) {
+        const loc =
+          row.type === 'ejendom'
+            ? `${BASE_URL}/ejendom/${row.slug}/${row.entity_id}`
+            : `${BASE_URL}/virksomhed/${row.slug}/${row.entity_id}`;
+        const lastmod = new Date(row.updated_at).toISOString().split('T')[0];
+        const priority = row.type === 'virksomhed' ? 0.8 : 0.7;
+        urlElements.push(serializeUrl(loc, lastmod, 'monthly', priority));
+      }
+
+      lastId = rows[rows.length - 1].id;
+      pageEntries += rows.length;
+      totalRead += rows.length;
+
+      if (rows.length < limit) {
+        globalDone = true;
+        break;
+      }
+    }
+
+    // Only store the page if it has content
+    if (urlElements.length > 0) {
+      const xml = wrapSitemap(urlElements);
+
+      const { error: upsertErr } = await admin.from('sitemap_xml_cache').upsert(
+        {
+          page_id: pageId,
+          xml,
+          entry_count: urlElements.length,
+          generated_at: new Date().toISOString(),
+        },
+        { onConflict: 'page_id' }
+      );
+
+      if (upsertErr) {
+        logger.error(
+          `[generate-sitemap] render-xml upsert page ${pageId} error:`,
+          upsertErr.message
+        );
+        break;
+      }
+
+      pagesRendered++;
+      logger.log(`[generate-sitemap] render-xml page ${pageId}: ${urlElements.length} URLs`);
+    }
+
+    // Save cursor after each page
+    await saveProgress(admin, RENDER_XML_PROGRESS_KEY, lastId ?? '0');
+    pageId++;
+
+    if (globalDone) break;
+  }
+
+  if (globalDone) {
+    // Clean up stale pages above the last rendered page
+    if (pageId > 1) {
+      await admin.from('sitemap_xml_cache').delete().gte('page_id', pageId);
+    }
+    await saveProgress(admin, RENDER_XML_PROGRESS_KEY, '0');
+  }
+
+  return { pagesRendered, totalEntries: totalRead, done: globalDone };
+}
+
 // ─── Route handler ─────────────────────────────────────────────────────────────
 
 /**
@@ -493,23 +713,29 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const phase = searchParams.get('phase');
 
-  if (phase !== 'companies' && phase !== 'properties' && phase !== 'vp-properties') {
+  if (
+    phase !== 'companies' &&
+    phase !== 'properties' &&
+    phase !== 'vp-properties' &&
+    phase !== 'render-xml'
+  ) {
     return NextResponse.json(
       {
         error:
-          'Ugyldig phase — brug ?phase=companies, ?phase=properties eller ?phase=vp-properties',
+          'Ugyldig phase — brug ?phase=companies, ?phase=properties, ?phase=vp-properties eller ?phase=render-xml',
       },
       { status: 400 }
     );
   }
 
   const phaseConfig = {
-    companies: { schedule: '23 2 * * *' },
+    companies: { schedule: '23 * * * *' },
     properties: { schedule: '30 * * * *' },
-    'vp-properties': { schedule: '51 4 * * *' },
+    'vp-properties': { schedule: '51 * * * *' },
+    'render-xml': { schedule: '10 * * * *' },
   }[phase];
 
-  // companies + properties kører hourly for hurtig backfill; vp-properties dagligt
+  // companies + properties kører hourly for hurtig backfill; vp-properties dagligt; render-xml hourly
   const intervalMinutes = phase === 'vp-properties' ? 1440 : 60;
 
   return withCronMonitor(
@@ -533,6 +759,22 @@ export async function GET(request: NextRequest) {
           });
         } catch (err) {
           logger.error('[generate-sitemap] companies phase uventet fejl:', err);
+          return NextResponse.json({ error: 'Intern fejl' }, { status: 500 });
+        }
+      }
+
+      if (phase === 'render-xml') {
+        try {
+          const result = await phaseRenderXml(admin);
+          return NextResponse.json({
+            ok: true,
+            phase: 'render-xml',
+            pagesRendered: result.pagesRendered,
+            totalEntries: result.totalEntries,
+            done: result.done,
+          });
+        } catch (err) {
+          logger.error('[generate-sitemap] render-xml phase uventet fejl:', err);
           return NextResponse.json({ error: 'Intern fejl' }, { status: 500 });
         }
       }

@@ -1,0 +1,150 @@
+/**
+ * Bygger strukturerede prompts for analyse-moduler.
+ *
+ * BIZZ-1231: Hvert analyse-modul definerer et AnalyseModul-objekt med
+ * instruktioner, relevante tools, og output-format. promptBuilder
+ * sammensætter dette med target-data til en færdig prompt.
+ *
+ * @module app/lib/analysePromptBuilder
+ */
+
+/** Analyse-modul definition */
+export interface AnalyseModul {
+  /** Unikt modul-ID */
+  id: string;
+  /** Dansk label */
+  label: string;
+  /** Kort beskrivelse */
+  beskrivelse: string;
+  /** Ikon-navn (lucide) */
+  ikon: string;
+  /** System-instruktioner til Claude */
+  instruktioner: string;
+  /** Hvilke tools Claude skal bruge */
+  anbefaletTools: string[];
+  /** Output-format beskrivelse */
+  outputFormat: string;
+}
+
+/** Target for analyse */
+export interface AnalyseTarget {
+  type: 'person' | 'virksomhed' | 'ejendom';
+  id: string;
+  label: string;
+}
+
+/** Registrerede analyse-moduler */
+export const ANALYSE_MODULER: AnalyseModul[] = [
+  {
+    id: 'forsikring-gap',
+    label: 'Forsikrings-gap-analyse',
+    beskrivelse: 'Identificér dækningsgab i kundens forsikringsportefølje',
+    ikon: 'Shield',
+    instruktioner: `Udfør en forsikrings-gap-analyse. Hent alle aktiver (ejendomme, biler, virksomheder, bestyrelsesposter) og krydsreference med kundens eksisterende policer.
+Identificér: uforsikrede aktiver, underforsikrede (dækning < 90% af vurdering), manglende D&O for bestyrelsesmedlemmer, risikofaktorer (byggeår < 1960, fredskov, forurening).`,
+    anbefaletTools: [
+      'hent_ejendomme_for_person',
+      'hent_bbr_data',
+      'hent_vurdering',
+      'hent_bilbog',
+      'hent_person_virksomheder',
+    ],
+    outputFormat:
+      'Tabel: Aktiv | Dækning | Gap | Risiko (Høj/Middel/Lav). Afslut med samlet mersalgspotentiale.',
+  },
+  {
+    id: 'kreditvurdering',
+    label: 'Kreditvurdering',
+    beskrivelse: 'Virksomheds-kreditpakke med nøgletal, ejerskab og risiko-scoring',
+    ikon: 'CreditCard',
+    instruktioner: `Udfør en kreditvurdering af virksomheden. Hent regnskabsdata (3-5 år), ejerskabsstruktur, ejendomsportefølje og tinglysninger.
+Beregn: soliditetsgrad, likviditetsgrad, gældsfaktor, cash flow trend.
+Vurdér: kreditrisiko (lav/middel/høj), max kreditramme (baseret på egenkapital × 3), anbefaling.`,
+    anbefaletTools: [
+      'hent_cvr_virksomhed',
+      'hent_regnskab_noegletal',
+      'hent_datterselskaber',
+      'hent_ejendomme_for_virksomhed',
+      'hent_ejerskab',
+    ],
+    outputFormat:
+      'Nøgletalsoversigt (tabel), ejer-/koncernoverblik, kreditrisiko-vurdering (traffic light), anbefaling.',
+  },
+  {
+    id: 'due-diligence',
+    label: 'Due Diligence',
+    beskrivelse: 'Automatisk DD-rapport med virksomheds-, ejendoms- og persondata',
+    ikon: 'FileSearch',
+    instruktioner: `Udfør en due diligence undersøgelse. Hent ALT tilgængelig data: virksomhedsinfo, regnskaber (5 år), ejerskabsstruktur, alle ejendomme, tinglysninger, personer med roller.
+Strukturér som DD-rapport: 1) Virksomhedsoverblik, 2) Finansiel analyse, 3) Ejerskab og ledelse, 4) Aktiver (ejendomme + biler), 5) Hæftelser og pantebreve, 6) Risikofaktorer, 7) Konklusion.`,
+    anbefaletTools: [
+      'hent_cvr_virksomhed',
+      'hent_regnskab_noegletal',
+      'hent_datterselskaber',
+      'hent_ejendomme_for_virksomhed',
+      'hent_ejerskab',
+      'hent_vurdering',
+      'hent_bbr_data',
+    ],
+    outputFormat:
+      'Struktureret DD-rapport med 7 sektioner. Hver sektion med fakta-tabel og vurdering. Afslut med samlet risk assessment.',
+  },
+  {
+    id: 'aml-kyc',
+    label: 'AML/KYC Compliance',
+    beskrivelse: 'Beneficial ownership, PEP-tjek og risiko-scoring',
+    ikon: 'ShieldCheck',
+    instruktioner: `Udfør en AML/KYC compliance-analyse. Hent ejerskabsstruktur og identificér alle beneficial owners (>25% ejerskab). For hver person: hent virksomheder, roller, ejendomme.
+Vurdér: kompleks ejerskabsstruktur (>3 niveauer), PEP-indikationer (mange bestyrelsesposter, offentlige virksomheder), uforklarlig formue (ejendomsværdi vs. virksomhedsomsætning).
+VIGTIGT: Dette er IKKE en endelig AML-vurdering — kun data-sammenstilling til brug for compliance-afdelingen.`,
+    anbefaletTools: [
+      'hent_cvr_virksomhed',
+      'hent_datterselskaber',
+      'hent_ejeroplysninger',
+      'hent_person_virksomheder',
+      'hent_ejendomme_for_person',
+    ],
+    outputFormat:
+      'Beneficial ownership diagram (tekst), person-profiler, risiko-indikatorer (tabel), samlet risiko-score (lav/middel/høj).',
+  },
+];
+
+/**
+ * Bygger en fuld analyse-prompt for AI Chat.
+ *
+ * @param modul - Analyse-modul definition
+ * @param target - Target (person/virksomhed/ejendom)
+ * @param ekstraKontekst - Valgfri ekstra kontekst (fx uploaded fil-data)
+ * @returns Færdig prompt-streng
+ */
+export function buildAnalysePrompt(
+  modul: AnalyseModul,
+  target: AnalyseTarget,
+  ekstraKontekst?: string
+): string {
+  const parts = [
+    `[ANALYSE-KONTEKST]`,
+    `Modul: ${modul.label}`,
+    `Target: ${target.type} — ${target.label} (ID: ${target.id})`,
+    '',
+    `INSTRUKTIONER:`,
+    modul.instruktioner,
+    '',
+    `ANBEFALEDE TOOLS (kald parallelt):`,
+    modul.anbefaletTools.map((t) => `- ${t}`).join('\n'),
+    '',
+    `OUTPUT-FORMAT:`,
+    modul.outputFormat,
+  ];
+
+  if (ekstraKontekst) {
+    parts.push('', 'EKSTRA KONTEKST:', ekstraKontekst);
+  }
+
+  parts.push(
+    '',
+    'DISCLAIMER: Inkludér altid: "Denne analyse er baseret på offentlige registerdata og er indikativ. Endelig vurdering bør foretages af relevant fagperson."'
+  );
+
+  return parts.join('\n');
+}

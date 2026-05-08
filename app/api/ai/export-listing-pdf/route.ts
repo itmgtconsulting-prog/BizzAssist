@@ -65,6 +65,11 @@ function parseMarkdown(text: string): { headings: string[]; body: string } {
  * @returns PDF response
  */
 export async function POST(request: NextRequest): Promise<NextResponse | Response> {
+  // BIZZ-1208: Feature flag — returnér 404 når listing generator er deaktiveret
+  if (process.env.NEXT_PUBLIC_ENABLE_LISTING_GENERATOR !== 'true') {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
+
   const limited = await checkRateLimit(request, rateLimit);
   if (limited) return limited;
 

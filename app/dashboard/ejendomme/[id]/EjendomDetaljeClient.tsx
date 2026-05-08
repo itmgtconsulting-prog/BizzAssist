@@ -1880,16 +1880,18 @@ export default function EjendomDetaljeClient({
                   </button>
                   <FoelgTooltip lang={da ? 'da' : 'en'} visible={visFoelgTooltip} />
                 </div>
-                {/* BIZZ-1179: Generer annonce-knap */}
-                <button
-                  type="button"
-                  onClick={() => setAnnonceModalOpen(true)}
-                  className="flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm transition-all bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300"
-                  aria-label={da ? 'Generer boligannonce' : 'Generate property listing'}
-                >
-                  <Sparkles size={14} />
-                  {da ? 'Annonce' : 'Listing'}
-                </button>
+                {/* BIZZ-1179/1208: Generer annonce-knap — bag feature flag */}
+                {process.env.NEXT_PUBLIC_ENABLE_LISTING_GENERATOR === 'true' && (
+                  <button
+                    type="button"
+                    onClick={() => setAnnonceModalOpen(true)}
+                    className="flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm transition-all bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300"
+                    aria-label={da ? 'Generer boligannonce' : 'Generate property listing'}
+                  >
+                    <Sparkles size={14} />
+                    {da ? 'Annonce' : 'Listing'}
+                  </button>
+                )}
                 {/* BIZZ-808: Opret sag-knap — kun synlig for domain-brugere */}
                 {domainMemberships.length > 0 && (
                   <button

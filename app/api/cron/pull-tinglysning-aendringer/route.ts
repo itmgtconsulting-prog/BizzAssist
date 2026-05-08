@@ -34,8 +34,9 @@ import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
 import { tlPost } from '@/app/lib/tlFetch';
+import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
+import { getCertOAuthToken, isCertAuthConfigured } from '@/app/lib/dfCertAuth';
 import {
-  getEjfToken,
   fetchEjerskabForBFE,
   mapNodeToRow,
   upsertEjfBatch,
@@ -184,14 +185,23 @@ async function syncBfesToEjfEjerskab(
   bfes: number[],
   startTime: number
 ): Promise<{ bfesProcessed: number; rowsUpserted: number; rowsFailed: number }> {
-  const token = await getEjfToken();
+  // BIZZ-1198: Inline token-hentning (matcher ingest-ejf-bulk pattern)
+  // i stedet for getEjfToken() fra ejfIngest.ts — undgår potentiel import-issue
+  let token = await getSharedOAuthToken().catch((err: unknown) => {
+    logger.warn('[tl-delta] getSharedOAuthToken fejl:', err instanceof Error ? err.message : err);
+    return null;
+  });
+  if (!token && isCertAuthConfigured()) {
+    token = await getCertOAuthToken().catch((err: unknown) => {
+      logger.warn('[tl-delta] getCertOAuthToken fejl:', err instanceof Error ? err.message : err);
+      return null;
+    });
+  }
   if (!token) {
-    // BIZZ-1198: Detaljeret diagnostik for token-fejl
     const hasClientId = !!process.env.DATAFORDELER_OAUTH_CLIENT_ID;
     const hasClientSecret = !!process.env.DATAFORDELER_OAUTH_CLIENT_SECRET;
-    const hasCertPath = !!(process.env.DATAFORDELER_CERT_PATH || process.env.DATAFORDELER_CERT_B64);
     logger.error(
-      `[tl-delta] OAuth token null — clientId=${hasClientId}, clientSecret=${hasClientSecret}, certPath=${hasCertPath}`
+      `[tl-delta] OAuth token null — clientId=${hasClientId}, clientSecret=${hasClientSecret}`
     );
     return { bfesProcessed: 0, rowsUpserted: 0, rowsFailed: 0 };
   }

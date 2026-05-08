@@ -180,6 +180,76 @@ async function resolveCompanyGraph(
   });
   nodeIds.add(mainId);
 
+  // 1b. BIZZ-1202: Virksomheds-ejere opad (fra cvr_virksomhed_ejerskab).
+  // Viser moderselskaber der ejer main-virksomheden — supplerer person-ejere.
+  {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: parentOwners } = await (admin as any)
+      .from('cvr_virksomhed_ejerskab')
+      .select('ejer_cvr, ejerandel_min, ejerandel_max')
+      .eq('ejet_cvr', cvr)
+      .is('gyldig_til', null)
+      .limit(10);
+
+    if (parentOwners?.length) {
+      const parentCvrs = (parentOwners as Array<{ ejer_cvr: string }>)
+        .map((r) => r.ejer_cvr)
+        .filter((c) => !nodeIds.has(`cvr-${c}`));
+
+      if (parentCvrs.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: parentComps } = await (admin as any)
+          .from('cvr_virksomhed')
+          .select('cvr, navn, virksomhedsform, branche_tekst, ophoert')
+          .in('cvr', parentCvrs.slice(0, 10));
+
+        const parentMap = new Map(
+          (
+            (parentComps ?? []) as Array<{
+              cvr: string;
+              navn: string;
+              virksomhedsform: string | null;
+              branche_tekst: string | null;
+              ophoert: string | null;
+            }>
+          ).map((c) => [c.cvr, c])
+        );
+        const ejerandelMap = new Map(
+          (
+            (parentOwners ?? []) as Array<{
+              ejer_cvr: string;
+              ejerandel_min: number | null;
+              ejerandel_max: number | null;
+            }>
+          ).map((r) => [r.ejer_cvr, r.ejerandel_min != null ? `${r.ejerandel_min}%` : undefined])
+        );
+
+        for (const pCvr of parentCvrs) {
+          const pId = `cvr-${pCvr}`;
+          if (nodeIds.has(pId)) continue;
+          const pc = parentMap.get(pCvr);
+          const sublabelParts = [pc?.virksomhedsform, `CVR ${pCvr}`].filter(Boolean);
+          nodes.push({
+            id: pId,
+            label: pc?.navn ?? `CVR ${pCvr}`,
+            sublabel: sublabelParts.join(' · '),
+            branche: pc?.branche_tekst ?? undefined,
+            type: 'company',
+            cvr: Number(pCvr),
+            link: `/dashboard/companies/${pCvr}`,
+            isCeased: pc?.ophoert != null,
+          });
+          nodeIds.add(pId);
+          edges.push({
+            from: pId,
+            to: mainId,
+            ejerandel: ejerandelMap.get(pCvr),
+          });
+        }
+      }
+    }
+  }
+
   // 2. BIZZ-1108/1122: Hent EJERE (opad) — kun ownership-typer, ikke bestyrelse/direktion
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: ownerRows } = await (admin as any)
@@ -269,11 +339,21 @@ async function resolveCompanyGraph(
     for (const [en] of Array.from(personRollerMap)) {
       const ownerId = `en-${en}`;
       if (nodeIds.has(ownerId)) continue;
-      const ownerNavn = navnMap.get(en) ?? `Person ${en}`;
+      const ownerNavn = navnMap.get(en);
+      // BIZZ-1202: Skip person-noder uden navn der kun har register-type.
+      // Disse er typisk holdingselskaber registreret via enhedsnummer i
+      // Ejerregisteret — de vises allerede som virksomheds-ejere via
+      // cvr_virksomhed_ejerskab (step 1b). Viser "Person 4010065318" er
+      // forvirrende og forkert.
+      if (!ownerNavn) {
+        const roller = personRollerMap.get(en) ?? [];
+        const onlyRegister = roller.every((r) => r === 'register' || r === 'reel_ejer');
+        if (onlyRegister) continue;
+      }
       const expandable = personExpandCounts.get(en) ?? 0;
       nodes.push({
         id: ownerId,
-        label: ownerNavn,
+        label: ownerNavn ?? `Person ${en}`,
         type: 'person',
         enhedsNummer: en,
         link: `/dashboard/owners/${en}`,
@@ -1358,8 +1438,11 @@ async function resolvePersonGraph(
       topLevelCvrs.push(cvrStr);
       // Ejerandel fra register/interessenter/indehaver
       const regPct = registerEjerandelMap.get(cvrStr);
-      // Vis procent hvis tilgængelig, ellers "Ejer" som fallback
-      const ejerandel = regPct != null ? `${Math.round(regPct)}%` : 'Ejer';
+      // BIZZ-1207: ENK-virksomheder er per definition 100% ejet af deltageren.
+      // I/S med interessenter-type uden ejerandel_pct vises som "Ejer".
+      const company = companyMap.get(cvrStr);
+      const isEnk = (company?.virksomhedsform ?? '').toLowerCase().includes('enkeltmand');
+      const ejerandel = regPct != null ? `${Math.round(regPct)}%` : isEnk ? '100%' : 'Ejer';
       edges.push({ from: mainId, to: companyId, ejerandel });
     }
   }

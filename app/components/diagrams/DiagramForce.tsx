@@ -1046,22 +1046,21 @@ function DiagramForce({
       }
     }
 
-    // Rolle-virksomheder (layoutSection='role') placeres ØVERST i diagrammet,
-    // lige under personen (depth 1), mens ejerskabs-hierarkiet skubbes ned.
+    // BIZZ-1205: Rolle-virksomheder (layoutSection='role') placeres NEDERST
+    // i diagrammet, under ejerskabs-hierarkiet. Ejerskabs-virksomheder beholder
+    // deres naturlige depth fra BFS (direkte under personen og nedad).
     const roleNodes = filteredGraph.nodes.filter((n) => n.layoutSection === 'role');
     if (roleNodes.length > 0) {
-      // Sæt rolle-noder til depth 1 (direkte under person)
-      for (const node of roleNodes) {
-        depths.set(node.id, 1);
-      }
-      // Skub ALLE ikke-rolle noder (undtagen main/person) 2 niveauer ned
-      // så der er gap mellem roller og ejerskab
+      // Find dybeste ejerskabs-node
+      let maxOwnerDepth = 1;
       for (const [id, d] of depths) {
         const node = nodeById.get(id);
         if (node?.layoutSection === 'role') continue;
-        if (node?.type === 'main' || node?.type === 'person') continue;
-        if (d <= 0) continue;
-        depths.set(id, d + 2);
+        if (d > maxOwnerDepth) maxOwnerDepth = d;
+      }
+      // Placér rolle-noder 2 niveauer under dybeste ejerskabs-node
+      for (const node of roleNodes) {
+        depths.set(node.id, maxOwnerDepth + 2);
       }
     }
 

@@ -388,25 +388,37 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
   }
 
   try {
-    // ── Trin 1: Hent alle ejendomme på matriklen via Tinglysning ──
-    const searchPath = `/ejendom/landsejerlavmatrikel?landsejerlavid=${encodeURIComponent(ejerlavKode)}&matrikelnr=${encodeURIComponent(matrikelnr)}`;
-    const tlResult = await tlFetch(searchPath);
+    // ── Trin 1: Hent alle ejendomme via Tinglysning ──
+    // BIZZ-1218: Søg BÅDE på matrikel OG SFE BFE for at fange ejendomme
+    // på flere matrikler under samme SFE (fx 62A, 62B, 62C).
+    const matrikelPath = `/ejendom/landsejerlavmatrikel?landsejerlavid=${encodeURIComponent(ejerlavKode)}&matrikelnr=${encodeURIComponent(matrikelnr)}`;
+    const searches: Promise<{ status: number; body: string }>[] = [tlFetch(matrikelPath)];
+    // Hvis vi kender SFE BFE, søg også direkte på den for at fange alle underenheder
+    if (sfeBfe) {
+      searches.push(tlFetch(`/ejendom/hovednoteringsnummer?hovednoteringsnummer=${sfeBfe}`));
+    }
+    const searchResults = await Promise.all(searches);
 
-    if (tlResult.status !== 200) {
-      logger.error(`[ejendom-struktur] Tinglysning svarede ${tlResult.status}`);
-      return NextResponse.json(
-        { tree: null, fejl: `Tinglysning svarede ${tlResult.status}` },
-        { status: 200 }
-      );
+    const items: TLSearchItem[] = [];
+    const seenUuids = new Set<string>();
+    for (const tlResult of searchResults) {
+      if (tlResult.status !== 200) continue;
+      try {
+        const parsed = JSON.parse(tlResult.body) as { items: TLSearchItem[] };
+        for (const item of parsed.items ?? []) {
+          if (seenUuids.has(item.uuid)) continue;
+          seenUuids.add(item.uuid);
+          items.push(item);
+        }
+      } catch {
+        /* ignore malformed response */
+      }
     }
 
-    let items: TLSearchItem[];
-    try {
-      const parsed = JSON.parse(tlResult.body) as { items: TLSearchItem[] };
-      items = parsed.items ?? [];
-    } catch {
+    if (items.length === 0 && searchResults[0].status !== 200) {
+      logger.error(`[ejendom-struktur] Tinglysning svarede ${searchResults[0].status}`);
       return NextResponse.json(
-        { tree: null, fejl: 'Ugyldig tinglysning-respons' },
+        { tree: null, fejl: `Tinglysning svarede ${searchResults[0].status}` },
         { status: 200 }
       );
     }

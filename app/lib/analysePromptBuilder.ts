@@ -80,20 +80,37 @@ Identificér: uforsikrede aktiver, underforsikrede (dækning < 90% af vurdering)
   {
     id: 'kreditvurdering',
     label: 'Kreditvurdering',
-    beskrivelse: 'Virksomheds-kreditpakke med nøgletal, ejerskab og risiko-scoring',
+    beskrivelse: 'Virksomheds-kreditpakke med nøgletal, ejerskab, sikkerhed og risiko-scoring',
     ikon: 'CreditCard',
-    instruktioner: `Udfør en kreditvurdering af virksomheden. Hent regnskabsdata (3-5 år), ejerskabsstruktur, ejendomsportefølje og tinglysninger.
-Beregn: soliditetsgrad, likviditetsgrad, gældsfaktor, cash flow trend.
-Vurdér: kreditrisiko (lav/middel/høj), max kreditramme (baseret på egenkapital × 3), anbefaling.`,
+    instruktioner: `Du er kreditanalytiker. Lav en komplet kreditvurdering af virksomheden.
+Kald følgende tools i rækkefølge:
+1. hent_cvr_virksomhed — grunddata, branche, ansatte, selskabsform.
+2. hent_regnskab_noegletal — 3 års regnskabstrend (omsætning, resultat, egenkapital, soliditet, afkastningsgrad).
+3. hent_virksomhed_ejere — ejerskabsstruktur opad.
+4. hent_datterselskaber — koncernstruktur nedad.
+5. hent_ejendomme_for_virksomhed — alle ejendomme.
+6. For hver ejendom: hent_vurdering + hent_tinglysning (hæftelser).
+
+Beregn: soliditetsgrad, likviditetsgrad, gældsfaktor, cash flow trend, friværdi per ejendom (vurdering minus hæftelser).
+
+Generér rapport med sektionerne:
+RESUMÉ — 1 afsnit kreditvurdering med anbefaling.
+NØGLETAL — tabel med 3 års trend + branche-benchmark.
+SIKKERHEDSOVERSIGT — ejendomme med vurdering vs. hæftelser = friværdi.
+EJERSKAB — koncern-/ejerskabsstruktur + beneficial owner identifikation.
+RISIKOFAKTORER — røde flag (faldende omsætning, negativ egenkapital, høj belåningsgrad, kompleks ejerskab).
+KONKLUSION — kreditværdig ja/nej med begrundelse og anbefalet max kreditramme.`,
     anbefaletTools: [
       'hent_cvr_virksomhed',
       'hent_regnskab_noegletal',
+      'hent_virksomhed_ejere',
       'hent_datterselskaber',
       'hent_ejendomme_for_virksomhed',
-      'hent_ejerskab',
+      'hent_vurdering',
+      'hent_tinglysning',
     ],
     outputFormat:
-      'Nøgletalsoversigt (tabel), ejer-/koncernoverblik, kreditrisiko-vurdering (traffic light), anbefaling.',
+      'Struktureret kreditrapport: RESUMÉ, NØGLETAL (tabel), SIKKERHEDSOVERSIGT (ejendomme + friværdi), EJERSKAB (koncernoverblik), RISIKOFAKTORER (traffic light), KONKLUSION (anbefaling + max kreditramme).',
   },
   {
     id: 'due-diligence',

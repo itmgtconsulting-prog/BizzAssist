@@ -115,21 +115,53 @@ KONKLUSION — kreditværdig ja/nej med begrundelse og anbefalet max kreditramme
   {
     id: 'due-diligence',
     label: 'Due Diligence',
-    beskrivelse: 'Automatisk DD-rapport med virksomheds-, ejendoms- og persondata',
+    beskrivelse:
+      'Automatisk DD-rapport for virksomhed (transaktionsadvokat) eller ejendom (ejendomsadvokat)',
     ikon: 'FileSearch',
-    instruktioner: `Udfør en due diligence undersøgelse. Hent ALT tilgængelig data: virksomhedsinfo, regnskaber (5 år), ejerskabsstruktur, alle ejendomme, tinglysninger, personer med roller.
-Strukturér som DD-rapport: 1) Virksomhedsoverblik, 2) Finansiel analyse, 3) Ejerskab og ledelse, 4) Aktiver (ejendomme + biler), 5) Hæftelser og pantebreve, 6) Risikofaktorer, 7) Konklusion.`,
+    instruktioner: `Afgør hvilken type DD der skal laves ud fra target-typen:
+
+HVIS TARGET ER VIRKSOMHED (CVR):
+Du er transaktionsadvokat. Generér en virksomheds-due-diligence rapport.
+Kald: hent_cvr_virksomhed (grunddata + historik), hent_virksomhed_historik (navne/adresse/form/status/fusioner), hent_virksomhed_ejere + hent_virksomhed_personer (ejerskab + ledelse), hent_regnskab_noegletal (økonomi), hent_ejendomme_for_virksomhed + hent_tinglysning per ejendom (aktiver + hæftelser), hent_datterselskaber (koncern).
+Rapport-sektioner:
+SELSKABSRETLIGT — form, stiftelse, vedtægter, tegningsregel.
+EJERSKAB OG LEDELSE — ejere, bestyrelse, direktion, historik.
+ØKONOMISK STATUS — 3 års nøgletal, gæld, soliditet.
+AKTIVER — ejendomme med vurdering og hæftelser.
+RETTIGHEDER OG FORPLIGTELSER — tinglysning servitutter, pantebreve.
+RISICI OG ANBEFALINGER — røde flag og juridiske opmærksomhedspunkter.
+
+HVIS TARGET ER EJENDOM (BFE/adresse):
+Du er ejendomsadvokat. Generér en ejendoms-due-diligence rapport.
+Kald: dawa_adresse_detaljer, hent_bbr_data, hent_matrikeldata, hent_vurdering + hent_forelobig_vurdering, hent_tinglysning (ejere + hæftelser + servitutter), hent_energimaerke, hent_jordforurening, hent_plandata.
+Rapport-sektioner:
+IDENTIFIKATION — adresse, BFE, matrikel, ejerlavkode.
+FYSISK BESKRIVELSE — BBR data, areal, byggeår, materialer.
+RETLIGE FORHOLD — tinglysning ejere, hæftelser med prioritet og hovedstol, servitutter med juridisk vurdering.
+VÆRDI — vurdering + foreløbig + belåningsgrad.
+MILJØ — jordforurening, energimærke.
+PLANMÆSSIGE FORHOLD — lokalplan, bebyggelsesprocent, zoning.
+RISICI — juridiske og fysiske risikofaktorer.`,
     anbefaletTools: [
       'hent_cvr_virksomhed',
+      'hent_virksomhed_historik',
+      'hent_virksomhed_ejere',
+      'hent_virksomhed_personer',
       'hent_regnskab_noegletal',
       'hent_datterselskaber',
       'hent_ejendomme_for_virksomhed',
-      'hent_ejerskab',
+      'hent_tinglysning',
       'hent_vurdering',
+      'hent_forelobig_vurdering',
       'hent_bbr_data',
+      'hent_matrikeldata',
+      'dawa_adresse_detaljer',
+      'hent_energimaerke',
+      'hent_jordforurening',
+      'hent_plandata',
     ],
     outputFormat:
-      'Struktureret DD-rapport med 7 sektioner. Hver sektion med fakta-tabel og vurdering. Afslut med samlet risk assessment.',
+      'Virksomheds-DD: 6 sektioner (selskabsretligt → risici). Ejendoms-DD: 7 sektioner (identifikation → risici). Hver sektion med fakta-tabel og juridisk vurdering. Afslut med samlet risk assessment.',
   },
   {
     id: 'aml-kyc',

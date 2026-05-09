@@ -80,7 +80,7 @@ export const ANALYSE_MODULES: AnalyseModuleConfig[] = [
     path: '/dashboard/analyse/aml-kyc',
     enabled: { dev: true, preview: true, prod: false },
     requiredPlan: 'enterprise',
-    description: 'Beneficial ownership, PEP-tjek og risiko-scoring',
+    description: 'KYC-rapport med beneficial ownership, struktur-kompleksitet og risikoscoring',
   },
   {
     id: 'ejendomsinvestor',

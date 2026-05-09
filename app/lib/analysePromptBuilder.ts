@@ -166,20 +166,41 @@ RISICI — juridiske og fysiske risikofaktorer.`,
   {
     id: 'aml-kyc',
     label: 'AML/KYC Compliance',
-    beskrivelse: 'Beneficial ownership, PEP-tjek og risiko-scoring',
+    beskrivelse:
+      'Know Your Customer rapport med beneficial ownership, struktur-kompleksitet og risikoscoring',
     ikon: 'ShieldCheck',
-    instruktioner: `Udfør en AML/KYC compliance-analyse. Hent ejerskabsstruktur og identificér alle beneficial owners (>25% ejerskab). For hver person: hent virksomheder, roller, ejendomme.
-Vurdér: kompleks ejerskabsstruktur (>3 niveauer), PEP-indikationer (mange bestyrelsesposter, offentlige virksomheder), uforklarlig formue (ejendomsværdi vs. virksomhedsomsætning).
+    instruktioner: `Du er compliance-analytiker specialiseret i AML/KYC. Generér en Know Your Customer rapport.
+Kald følgende tools:
+1. hent_cvr_virksomhed — grunddata, status, branche (flag højrisiko-brancher: pengeoverførsel, krypto, gambling, kunst).
+2. hent_virksomhed_ejere — fuld ejerskabskæde opad til ultimative personer.
+3. hent_virksomhed_personer — alle roller inkl. historiske.
+4. hent_virksomhed_historik — navne/adresse/form ændringer (hyppige ændringer = risiko).
+5. hent_datterselskaber — kompleksitet nedad.
+6. hent_regnskab_noegletal — finansiel sundhed.
+7. hent_person_netvaerk per ultimativ ejer — connected parties.
+
+Rapport-sektioner:
+KUNDEIDENTIFIKATION — navn, CVR, form, branche, stiftelsesdato.
+BENEFICIAL OWNERS — alle personer med 25%+ ejerskab eller bestemmende indflydelse, med fuld kæde.
+LEDELSES-PROFIL — direktion + bestyrelse med andre roller.
+STRUKTUR-KOMPLEKSITET — antal lag, udenlandske selskaber, krydsejerskab (score 1-5).
+RISIKOINDIKATORER — højrisiko-branche, hyppige ændringer, revisionsfravalgt, ung virksomhed med høj omsætning.
+FINANSIEL PROFIL — nøgletal + afvigelser fra branche.
+SAMLET RISIKOSCORE — lav/medium/høj/kritisk med begrundelse.
+ANBEFALINGER — enhanced due diligence ja/nej, opfølgningsfrekvens.
+
 VIGTIGT: Dette er IKKE en endelig AML-vurdering — kun data-sammenstilling til brug for compliance-afdelingen.`,
     anbefaletTools: [
       'hent_cvr_virksomhed',
+      'hent_virksomhed_ejere',
+      'hent_virksomhed_personer',
+      'hent_virksomhed_historik',
       'hent_datterselskaber',
-      'hent_ejeroplysninger',
-      'hent_person_virksomheder',
-      'hent_ejendomme_for_person',
+      'hent_regnskab_noegletal',
+      'hent_person_netvaerk',
     ],
     outputFormat:
-      'Beneficial ownership diagram (tekst), person-profiler, risiko-indikatorer (tabel), samlet risiko-score (lav/middel/høj).',
+      'KYC-rapport: KUNDEIDENTIFIKATION, BENEFICIAL OWNERS (ejerskabskæde), LEDELSES-PROFIL, STRUKTUR-KOMPLEKSITET (score 1-5), RISIKOINDIKATORER (tabel), FINANSIEL PROFIL, SAMLET RISIKOSCORE (lav/medium/høj/kritisk), ANBEFALINGER.',
   },
   {
     id: 'ejendomsinvestor',

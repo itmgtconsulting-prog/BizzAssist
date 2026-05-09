@@ -1,17 +1,20 @@
 /**
- * AnalyseModuleGuard — server-side feature flag guard for analyse-moduler.
+ * AnalyseModuleGuard — feature flag + subscription guard for analyse-moduler.
  *
  * BIZZ-1240: Returnerer 404-lignende UI for disabled moduler i prod.
- * Alle moduler er enabled i dev/preview. Checker via isModuleEnabled().
+ * BIZZ-1241: Checker subscription modul-adgang via SubscriptionGate.
+ *
+ * Gate-rækkefølge: 1) feature flag (isModuleEnabled), 2) subscription (module:xxx).
  *
  * @param moduleId - Modul-ID fra analyseModules registry
- * @param children - Modul-indhold der vises hvis enabled
- * @returns Modul-indhold eller "ikke tilgængeligt" besked
+ * @param children - Modul-indhold der vises hvis enabled + adgang
+ * @returns Modul-indhold, feature-flag besked, eller subscription gate
  */
 
 'use client';
 
 import { isModuleEnabled } from '@/app/lib/analyseModules';
+import SubscriptionGate from '@/app/components/SubscriptionGate';
 
 interface Props {
   /** Modul-ID at checke */
@@ -21,10 +24,10 @@ interface Props {
 }
 
 /**
- * Feature flag guard for analyse-moduler.
+ * Feature flag + subscription guard for analyse-moduler.
  *
  * @param props - moduleId + children
- * @returns Children hvis enabled, ellers 404-besked
+ * @returns Children hvis enabled + adgang, ellers blokerings-UI
  */
 export default function AnalyseModuleGuard({ moduleId, children }: Props) {
   if (!isModuleEnabled(moduleId)) {
@@ -39,5 +42,6 @@ export default function AnalyseModuleGuard({ moduleId, children }: Props) {
       </div>
     );
   }
-  return <>{children}</>;
+
+  return <SubscriptionGate requiredFeature={`module:${moduleId}`}>{children}</SubscriptionGate>;
 }

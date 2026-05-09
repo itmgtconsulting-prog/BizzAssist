@@ -7,7 +7,7 @@
  */
 
 import { createClient } from '@/lib/supabase/server';
-import { createAdminClient, tenantDb, type TenantDb } from '@/lib/supabase/admin';
+import { tenantDb, type TenantDb } from '@/lib/supabase/admin';
 
 export interface AiChatDbContext {
   /** Schema-scoped Supabase client (tenant-schema). */
@@ -38,42 +38,38 @@ export async function getAiChatDb(): Promise<AiChatDbContext | null> {
       return null;
     }
 
-    // Step 1: Resolve tenant_id via user-scoped client (same as resolveTenantId)
-    const { data: membership, error: membershipError } = (await supabase
+    // Resolve tenant_id + schema_name i ét kald via user-scoped client.
+    // Bruger embedded PostgREST select (same som resolveTenantId pattern).
+    // RLS på tenant_memberships: user_id = auth.uid()
+    // RLS på tenants: is_tenant_admin OR member EXISTS
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: membership, error: membershipError } = (await (supabase as any)
       .from('tenant_memberships')
-      .select('tenant_id')
+      .select('tenant_id, tenants(schema_name)')
       .eq('user_id', user.id)
       .limit(1)
       .single()) as {
-      data: { tenant_id: string } | null;
-      error: { message: string } | null;
+      data: { tenant_id: string; tenants: { schema_name: string } | null } | null;
+      error: { message: string; code: string } | null;
     };
     if (membershipError) {
-      console.warn('[aiChatDb] membership query error:', membershipError.message);
+      console.warn(
+        '[aiChatDb] membership query error:',
+        membershipError.message,
+        membershipError.code
+      );
     }
-    if (!membership?.tenant_id) {
-      console.warn('[aiChatDb] no tenant for user', user.id);
-      return null;
-    }
-
-    // Step 2: Resolve schema_name via admin client (service_role bypasses RLS)
-    const admin = createAdminClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: tenant } = (await (admin as any)
-      .from('tenants')
-      .select('schema_name')
-      .eq('id', membership.tenant_id)
-      .single()) as { data: { schema_name: string } | null };
-    if (!tenant?.schema_name) {
-      console.warn('[aiChatDb] no schema_name for tenant', membership.tenant_id);
+    const schemaName = membership?.tenants?.schema_name;
+    if (!membership?.tenant_id || !schemaName) {
+      console.warn('[aiChatDb] no tenant for user', user.id, '— data:', JSON.stringify(membership));
       return null;
     }
 
     return {
-      db: tenantDb(tenant.schema_name),
+      db: tenantDb(schemaName),
       userId: user.id,
       tenantId: membership.tenant_id,
-      schemaName: tenant.schema_name,
+      schemaName,
     };
   } catch (err) {
     console.error('[aiChatDb] getAiChatDb exception:', err);

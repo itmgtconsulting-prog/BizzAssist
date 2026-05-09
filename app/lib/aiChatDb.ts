@@ -29,21 +29,31 @@ export async function getAiChatDb(): Promise<AiChatDbContext | null> {
     const {
       data: { user },
     } = await supabase.auth.getUser();
-    if (!user) return null;
+    if (!user) {
+      console.warn('[aiChatDb] no authenticated user');
+      return null;
+    }
 
     // Service-role client til join med public.tenants (RLS-sikret)
     const admin = createAdminClient();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: membership } = (await (admin as any)
+    const { data: membership, error: membershipError } = (await (admin as any)
       .from('tenant_memberships')
       .select('tenant_id, tenants(schema_name)')
       .eq('user_id', user.id)
       .limit(1)
       .single()) as {
       data: { tenant_id: string; tenants: { schema_name: string } | null } | null;
+      error: { message: string } | null;
     };
+    if (membershipError) {
+      console.warn('[aiChatDb] membership query error:', membershipError.message);
+    }
     const schemaName = membership?.tenants?.schema_name;
-    if (!membership?.tenant_id || !schemaName) return null;
+    if (!membership?.tenant_id || !schemaName) {
+      console.warn('[aiChatDb] no tenant for user', user.id, '— membership:', membership);
+      return null;
+    }
 
     return {
       db: tenantDb(schemaName),
@@ -51,7 +61,9 @@ export async function getAiChatDb(): Promise<AiChatDbContext | null> {
       tenantId: membership.tenant_id,
       schemaName,
     };
-  } catch {
+  } catch (err) {
+    // BIZZ-1214: Log fejl så vi kan debugge persistenceError-banneret
+    console.error('[aiChatDb] getAiChatDb exception:', err);
     return null;
   }
 }

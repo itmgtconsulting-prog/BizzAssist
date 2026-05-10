@@ -684,7 +684,10 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
               .map((item) => {
                 const Icon = item.icon;
                 const label = s[item.key];
-                const active = pathname === item.href;
+                const active =
+                  item.href === '/dashboard'
+                    ? pathname === '/dashboard'
+                    : pathname === item.href || pathname.startsWith(item.href + '/');
                 /** Only overview and admin are accessible without a functional subscription */
                 const requiresFunctional =
                   item.href !== '/dashboard' && !item.href.startsWith('/dashboard/admin');

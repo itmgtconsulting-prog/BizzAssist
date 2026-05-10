@@ -35,7 +35,10 @@ import {
   type AnalyseModul,
   type AnalyseTarget,
 } from '@/app/lib/analysePromptBuilder';
+import { ANALYSE_MODULES } from '@/app/lib/analyseModules';
 import type { UnifiedSearchResult } from '@/app/api/search/route';
+import Link from 'next/link';
+import { ArrowLeft } from 'lucide-react';
 
 /** Map fra ikon-navn (string i AnalyseModul) til Lucide-komponent. */
 const IKON_MAP: Record<string, LucideIcon> = {
@@ -49,6 +52,26 @@ const IKON_MAP: Record<string, LucideIcon> = {
   Search,
   Building2,
 };
+
+/**
+ * Returnerer Tailwind-farveklasse baseret på modulets requiredPlan.
+ * Gratis = emerald, Professionel = blue, Enterprise = purple.
+ *
+ * @param moduleId - Modul-ID fra AnalyseModul
+ * @returns Tailwind text-color klasse
+ */
+function getModuleColor(moduleId: string): string {
+  const mod = ANALYSE_MODULES.find((m) => m.id === moduleId);
+  if (!mod) return 'text-blue-400';
+  switch (mod.requiredPlan) {
+    case null:
+      return 'text-emerald-400';
+    case 'enterprise':
+      return 'text-purple-400';
+    default:
+      return 'text-blue-400';
+  }
+}
 
 interface Props {
   /** Analyse-modul definition */
@@ -177,16 +200,31 @@ export default function AnalyseModulLayout({ modul, children, ekstraKontekst }: 
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-6">
+      {/* BIZZ-1246: Tilbage-link til analyse-oversigt */}
+      <Link
+        href="/dashboard/analyse"
+        className="inline-flex items-center gap-1.5 text-slate-400 hover:text-white text-sm transition-colors"
+      >
+        <ArrowLeft size={14} />
+        Analyse
+      </Link>
+
       {/* Header */}
       <div>
-        <h1 className="text-white text-xl font-bold flex items-center gap-2">
+        {/* BIZZ-1247: text-2xl for konsistens med Ejendomme/Virksomheder/Personer */}
+        {/* BIZZ-1244: Plan-baseret ikon-farve (gratis=emerald, pro=blue, enterprise=purple) */}
+        <h1 className="text-white text-2xl font-bold flex items-center gap-2">
           {(() => {
             const Icon = IKON_MAP[modul.ikon] ?? Sparkles;
-            return <Icon size={22} className="text-blue-400" />;
+            const colorCls = getModuleColor(modul.id);
+            return <Icon size={24} className={colorCls} />;
           })()}
           {modul.label}
         </h1>
-        <p className="text-slate-400 text-sm mt-1">{modul.beskrivelse}</p>
+        {/* BIZZ-1248: Brug description fra analyseModules.ts for konsistens med landing page */}
+        <p className="text-slate-400 text-sm mt-1">
+          {ANALYSE_MODULES.find((m) => m.id === modul.id)?.description ?? modul.beskrivelse}
+        </p>
       </div>
 
       {/* Target-vælger */}

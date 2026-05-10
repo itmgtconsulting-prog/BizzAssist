@@ -160,20 +160,23 @@ export default function AnnonceClient() {
     };
 
     const toneLabel = TONER.find((t) => t.id === tone)?.label ?? tone;
-    let ekstra = `Tone: ${toneLabel}. Skriv annoncen i "${toneLabel}" tone.`;
+    const ekstra = `Tone: ${toneLabel}. Skriv annoncen i "${toneLabel}" tone.`;
 
-    if (outputFormat === 'docx') {
-      ekstra +=
-        '\n\nOutput: Generér ALTID et Word-dokument (.docx) via generate_document tool EFTER annoncen er vist i chatten.';
-    } else if (outputFormat === 'pdf') {
-      ekstra +=
-        '\n\nOutput: Generér ALTID en PDF-fil via generate_document tool med format="docx" EFTER annoncen er vist i chatten. (PDF genereres fra Word-skabelon.)';
-    } else {
-      ekstra +=
-        '\n\nOutput: Vis annoncen direkte i chatten som markdown. Generér IKKE et dokument medmindre brugeren beder om det.';
+    // Byg prompt med output-format som PRIMÆR instruktion (ikke ekstra kontekst)
+    let outputInstruktion = '';
+    if (outputFormat === 'docx' || outputFormat === 'pdf') {
+      outputInstruktion = `
+
+VIGTIGT — WORD-DOKUMENT ER PÅKRÆVET:
+Når annoncen er skrevet og vist i chatten, SKAL du derefter kalde generate_document tool med:
+- format: "docx"
+- mode: "scratch"
+- title: "${adresse} — Boligannonce"
+- scratch: { sections: [{ heading: adressen, body: annonceteksten }, { heading: "Ejendomsdata", body: BBR-data som tekst }, { heading: "Disclaimer", body: "Oplysningerne er hentet fra BBR og offentlige registre." }] }
+Du SKAL kalde generate_document — brugeren har eksplicit bedt om Word-output.`;
     }
 
-    const prompt = buildAnalysePrompt(modul, target, ekstra);
+    const prompt = buildAnalysePrompt(modul, target, ekstra + outputInstruktion);
     // BIZZ-1260: Kort brugervenlig tekst i chat-boblen
     const displayText = `Boligannonce — ${adresse} (${tone})`;
     window.dispatchEvent(

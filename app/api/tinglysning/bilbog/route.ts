@@ -91,8 +91,6 @@ export interface BilbogBil {
 export interface BilbogData {
   /** Echoed CVR (null ved person-søgning) */
   cvr: string | null;
-  /** Personnavn (ved person-søgning) */
-  personnavn?: string;
   /** Alle biler fundet under virksomheden/personen */
   biler: BilbogBil[];
   /** Fejlbesked ved ekstern API-fejl */
@@ -109,9 +107,12 @@ const CERT_PASSWORD =
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-/** Bilbogen bruger /tinglysning/unsecuressl/ prefix — se doc §4.2 */
+/**
+ * Bilbogen bruger /tinglysning/unsecuressl/ prefix — se doc §4.2.
+ * Timeout sat til 15s (lavere end default 55s) for hurtigere fejlhåndtering.
+ */
 function tlFetchUnsecure(urlPath: string): Promise<{ status: number; body: string }> {
-  return tlFetchShared(urlPath, { apiPath: '/tinglysning/unsecuressl' });
+  return tlFetchShared(urlPath, { apiPath: '/tinglysning/unsecuressl', timeout: 15000 });
 }
 
 /**
@@ -288,6 +289,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json(empty);
   }
 
+  // Person-søgning indeholder PII-kontekst (selv om personnavn/fødselsdato
+  // IKKE returneres i response) — brug private cache for at undgå at CDN
+  // knytter søgeparametre til resultater.
+  const isPersonSearch = !cvr;
+  const cacheHeader = isPersonSearch
+    ? 'private, max-age=300'
+    : 'public, s-maxage=3600, stale-while-revalidate=600';
+
   try {
     // BIZZ-1220: Søg i Bilbogen med CVR ELLER personnavn+fødselsdato
     const searchQuery = cvr
@@ -315,13 +324,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
 
     if (items.length === 0) {
-      const result: BilbogData = { cvr: cvr ?? null, personnavn, biler: [] };
-      return NextResponse.json(result, {
-        headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
-      });
+      const result: BilbogData = { cvr: cvr ?? null, biler: [] };
+      return NextResponse.json(result, { headers: { 'Cache-Control': cacheHeader } });
     }
 
-    // Trin 2: Hent summariske oplysninger for hver bil
+    // Trin 2: Hent summariske oplysninger for hver bil (med timeout)
     const biler: BilbogBil[] = [];
     for (const item of items) {
       const detailRes = await tlFetchUnsecure(`/bil/uuid/${item.uuid}`);
@@ -337,10 +344,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       });
     }
 
-    const result: BilbogData = { cvr: cvr ?? null, personnavn, biler };
-    return NextResponse.json(result, {
-      headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
-    });
+    const result: BilbogData = { cvr: cvr ?? null, biler };
+    return NextResponse.json(result, { headers: { 'Cache-Control': cacheHeader } });
   } catch (err) {
     logger.error('[tinglysning/bilbog] Fejl:', err);
     return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });

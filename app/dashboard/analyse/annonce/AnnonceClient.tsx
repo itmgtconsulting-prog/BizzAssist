@@ -267,20 +267,6 @@ export default function AnnonceClient() {
           </div>
         )}
 
-        {/* Fallback: manuelt BFE-input */}
-        {!bfe && (
-          <div className="flex items-center gap-2">
-            <span className="text-slate-500 text-xs">eller angiv BFE manuelt:</span>
-            <input
-              type="text"
-              value={bfe}
-              onChange={(e) => setBfe(e.target.value)}
-              placeholder="BFE-nummer"
-              className="w-40 px-3 py-1.5 bg-slate-800 border border-slate-700/60 rounded-lg text-xs text-white outline-none focus:border-blue-500/60"
-            />
-          </div>
-        )}
-
         {/* Tone-vælger */}
         <div>
           <p className="text-slate-400 text-xs mb-2">Annonce-tone:</p>

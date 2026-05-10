@@ -2168,6 +2168,7 @@ async function executeTool(
             }
           }
         }
+        logger.info('[generate_document] input:', JSON.stringify(fileInput).slice(0, 500));
         const res = await fetch(`${baseUrl}/api/ai/generate-file`, {
           method: 'POST',
           headers: {
@@ -2178,7 +2179,15 @@ async function executeTool(
           signal: AbortSignal.timeout(30_000),
         });
         if (!res.ok) {
-          const errJson = (await res.json().catch(() => ({}))) as { error?: string };
+          const errText = await res.text().catch(() => '');
+          logger.error('[generate_document] fejl:', res.status, errText.slice(0, 300));
+          const errJson = (() => {
+            try {
+              return JSON.parse(errText) as { error?: string; details?: unknown };
+            } catch {
+              return {};
+            }
+          })();
           result = { fejl: errJson.error ?? `generate-file fejlede (${res.status})` };
           break;
         }

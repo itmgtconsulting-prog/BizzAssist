@@ -1,8 +1,9 @@
 /**
  * Analyse landing page — /dashboard/analyse
  *
- * Viser AI Analyse + Data Analyse kort sammen med alle enabled
- * branchespecifikke analyse-moduler i ét samlet grid.
+ * BIZZ-1261: Ét fladt niveau med alle enabled branchespecifikke
+ * analyse-moduler. AI Analyse og Data Analyse kort fjernet —
+ * AI Chat er tilgængelig via sidebar, Query Builder via /analyse/data.
  *
  * @module app/dashboard/analyse
  */
@@ -10,7 +11,6 @@
 import Link from 'next/link';
 import {
   Sparkles,
-  Table2,
   Shield,
   CreditCard,
   FileSearch,
@@ -36,7 +36,9 @@ const iconMap: Record<string, React.ComponentType<{ size?: number; className?: s
 };
 
 /**
- * Analyse landing page med AI Analyse, Data Analyse og branchemoduler.
+ * Analyse landing page med branchemoduler i ét fladt niveau.
+ *
+ * @returns Landing page JSX
  */
 export default function AnalyseLandingPage() {
   const enabledModules = getEnabledModules();
@@ -45,43 +47,10 @@ export default function AnalyseLandingPage() {
     <div className="flex-1 bg-[#0a1628] p-8 overflow-y-auto">
       <h1 className="text-2xl font-bold text-white mb-2">Analyse</h1>
       <p className="text-slate-400 text-sm mb-8">
-        Analysér ejendomme, virksomheder og markedsdata med AI eller pivot-tabeller.
+        Vælg et analyse-modul nedenfor. Analysen kører via AI Chat med relevante datakilder.
       </p>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-w-5xl">
-        {/* AI Analyse */}
-        <Link
-          href="/dashboard/analyse/ai"
-          className="group bg-slate-800/40 border border-slate-700/40 hover:border-blue-500/40 rounded-2xl p-5 transition-all hover:bg-slate-800/60"
-        >
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 rounded-xl bg-blue-500/10 text-blue-400 group-hover:scale-105 transition-transform">
-              <Sparkles size={18} />
-            </div>
-            <h2 className="text-sm font-semibold text-white">AI Analyse</h2>
-          </div>
-          <p className="text-slate-400 text-xs leading-relaxed line-clamp-2">
-            Stil spørgsmål om ejendomme, virksomheder og markedsdata.
-          </p>
-        </Link>
-
-        {/* Data Analyse */}
-        <Link
-          href="/dashboard/analyse/data"
-          className="group bg-slate-800/40 border border-slate-700/40 hover:border-emerald-500/40 rounded-2xl p-5 transition-all hover:bg-slate-800/60"
-        >
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400 group-hover:scale-105 transition-transform">
-              <Table2 size={18} />
-            </div>
-            <h2 className="text-sm font-semibold text-white">Data Analyse</h2>
-          </div>
-          <p className="text-slate-400 text-xs leading-relaxed line-clamp-2">
-            Udforsk datasæt med pivot-tabeller, grafer og filtre.
-          </p>
-        </Link>
-
-        {/* Branchespecifikke analyse-moduler */}
         {enabledModules.map((modul) => {
           const Icon = iconMap[modul.icon] ?? Sparkles;
           const isPro = modul.requiredPlan === 'professionel';

@@ -28,7 +28,12 @@ function verifyCronSecret(request: NextRequest): boolean {
   return safeCompare(auth, `Bearer ${secret}`);
 }
 
-const VIEWS = ['mv_virksomhed_portefolje', 'mv_kommune_statistik'];
+const VIEWS = [
+  'mv_virksomhed_portefolje',
+  'mv_kommune_statistik',
+  'mv_analyse_ejendom',
+  'mv_analyse_virksomhed',
+];
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   if (!verifyCronSecret(request)) {

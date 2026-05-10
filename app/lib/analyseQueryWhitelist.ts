@@ -120,6 +120,70 @@ export const WHITELISTED_TABLES: WhitelistedTable[] = [
       fetched_at: { type: 'timestamptz', description: 'Hvornår data sidst blev hentet' },
     },
   },
+  {
+    table: 'public.mv_analyse_ejendom',
+    description:
+      'Unified ejendomsanalyse-view — ~46K aktive ejendomme. Joiner BBR + ejer + virksomhed + kommune + anvendelse i én flad tabel. Refreshes nightly. Brug til geografi, areal, ejertype og anvendelsesanalyser.',
+    columns: {
+      bfe_nummer: { type: 'bigint', description: 'BFE-nummer (primærnøgle)' },
+      boligareal_m2: { type: 'integer', description: 'Samlet boligareal i m²' },
+      opfoerelsesaar: { type: 'smallint', description: 'Bygningens opførelsesår' },
+      energimaerke: { type: 'text', description: 'Energimærkeklasse (A2015, B, C, D...)' },
+      anvendelse_kode: { type: 'smallint', description: 'BBR byg021 anvendelseskode' },
+      anvendelse_tekst: {
+        type: 'text',
+        description: 'Anvendelsestype på dansk (fx "Parcelhus", "Lejlighed")',
+      },
+      anvendelse_kategori: {
+        type: 'text',
+        description: 'Kategori: bolig, erhverv, institution, andet',
+      },
+      kommune_kode: { type: 'smallint', description: 'Kommunekode (4-cifret)' },
+      kommunenavn: { type: 'text', description: 'Kommunenavn (fx "Hvidovre", "Aarhus")' },
+      region: {
+        type: 'text',
+        description: 'Region (Hovedstaden, Sjælland, Syddanmark, Midtjylland, Nordjylland)',
+      },
+      ejer_navn: { type: 'text', description: 'Ejers navn' },
+      ejer_type: { type: 'text', description: 'Ejertype: Personligt ejet, Selskab, Kommune, Stat' },
+      ejer_cvr: { type: 'text', description: 'Ejers CVR-nummer (NULL for privatpersoner)' },
+      ejerandel_pct: { type: 'numeric', description: 'Ejerandel i procent' },
+      virksomhed_navn: { type: 'text', description: 'Virksomhedsejerens navn' },
+      virksomhed_branche: { type: 'text', description: 'Virksomhedsejerens branche' },
+      virksomhed_form: { type: 'text', description: 'Virksomhedsform (APS, AS, etc.)' },
+      virksomhed_ansatte: { type: 'integer', description: 'Antal ansatte i ejervirksomheden' },
+    },
+  },
+  {
+    table: 'public.mv_analyse_virksomhed',
+    description:
+      'Unified virksomhedsanalyse-view — 2,1M+ virksomheder med antal ejede ejendomme. Refreshes nightly. Brug til branche, selskabsform og ejendomsportefølje-analyser.',
+    columns: {
+      cvr: { type: 'text', description: 'CVR-nummer (primærnøgle)' },
+      navn: { type: 'text', description: 'Virksomhedens navn' },
+      branche_kode: { type: 'text', description: 'DB07 branchekode (6 cifre)' },
+      branche_tekst: { type: 'text', description: 'Branchebeskrivelse på dansk' },
+      virksomhedsform: { type: 'text', description: 'Selskabsform: APS, AS, IVS, ENK, etc.' },
+      status: { type: 'text', description: 'Status: NORMAL, OPHØRT, UNDER_KONKURS, etc.' },
+      stiftet: { type: 'date', description: 'Stiftelsesdato' },
+      ophoert: { type: 'date', description: 'Ophørsdato (NULL hvis aktiv)' },
+      ansatte: { type: 'integer', description: 'Antal årsansatte' },
+      antal_ejendomme: { type: 'integer', description: 'Antal ejede ejendomme (fra EJF)' },
+    },
+  },
+  {
+    table: 'public.kommune_ref',
+    description:
+      'Kommune-lookup — 98 kommuner med kode, navn og region. Brug til at oversætte kommunekoder til navne.',
+    columns: {
+      kommune_kode: { type: 'smallint', description: 'Kommunekode (primærnøgle, 4 cifre)' },
+      kommunenavn: { type: 'text', description: 'Kommunenavn' },
+      region: {
+        type: 'text',
+        description: 'Region (Hovedstaden, Sjælland, Syddanmark, Midtjylland, Nordjylland)',
+      },
+    },
+  },
 ];
 
 /**

@@ -49,13 +49,20 @@ VIGTIGT: Kald ALTID disse tools FØRST (parallelt) for at hente konkret ejendoms
 Brug derefter de konkrete data i annoncen — OPFIND ALDRIG fakta.
 Tone: Brugeren vælger tone (luksus, familievenlig, investor, erhverv, social media).
 Struktur: Overskrift (max 10 ord), Intro (2-3 sæt.), Rumbeskrivelse (brug BBR-data: areal, værelser, materialer), Beliggenhed, Praktisk info (energimærke, byggeår, vurdering), Afslutning.
-Maks 500 ord. Skriv på dansk. Brug markdown.`,
+Maks 500 ord. Skriv på dansk. Brug markdown.
+
+EFTER annoncen er skrevet: Kald ALTID generate_document tool med format="docx" for at oprette et Word-dokument med annoncen. Brug sektioner:
+1. Sektion med heading=ejendommens adresse, body=annonceteksten
+2. Sektion med heading="Ejendomsdata", body=BBR-data tabel (areal, værelser, byggeår, energimærke, vurdering)
+3. Sektion med heading="Disclaimer", body="Oplysningerne er hentet fra BBR og offentlige registre. Verificér altid hos sælger."
+Sæt documentTitle til ejendommens adresse + "— Boligannonce".`,
     anbefaletTools: [
       'dawa_adresse_soeg',
       'hent_bbr_data',
       'hent_vurdering',
       'hent_energimaerke',
       'hent_salgshistorik',
+      'generate_document',
     ],
     outputFormat:
       'Professionel boligannonce i markdown med overskrift, intro, rumbeskrivelse, beliggenhed og praktisk info.',

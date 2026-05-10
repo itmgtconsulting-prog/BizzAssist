@@ -18,6 +18,8 @@ import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { logActivity } from '@/app/lib/activityLog';
 
 /** BIZZ-210: Zod schema for search query params */
 const searchParamsSchema = z.object({
@@ -553,6 +555,13 @@ export async function GET(request: NextRequest) {
 
   // Grouped output: addresses → companies → people (not mixed)
   const results: UnifiedSearchResult[] = [...addrResults, ...compResults, ...pplResults];
+
+  // Fire-and-forget: log address_search for usage analytics.
+  // Query text is search terms (addresses, CVR numbers) — not PII.
+  logActivity(createAdminClient(), auth.tenantId, auth.userId, 'address_search', {
+    queryLength: q.length,
+    resultCount: results.length,
+  });
 
   return NextResponse.json(results, {
     headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120' },

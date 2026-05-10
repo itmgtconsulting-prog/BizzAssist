@@ -5,7 +5,7 @@
  */
 'use client';
 
-import { memo, useState, useRef, useEffect } from 'react';
+import { memo, useState, useRef, useEffect, useCallback } from 'react';
 import {
   X,
   ChevronDown,
@@ -22,6 +22,12 @@ import {
   RotateCcw,
   Coins,
   Trash2,
+  Activity,
+  Search,
+  MessageSquare,
+  Building2,
+  Home,
+  User,
 } from 'lucide-react';
 import {
   PLAN_LIST,
@@ -142,6 +148,17 @@ export async function adminAction(
   }
 }
 
+/** Activity data returned by /api/admin/users/[id]/activity */
+interface UserActivityData {
+  eventCounts: Record<string, number>;
+  timeline: Array<{ event_type: string; payload: Record<string, unknown>; created_at: string }>;
+  chatSessionCount: number;
+  aiTokensUsed: number;
+  recentChats: Array<{ id: string; title: string | null; created_at: string }>;
+  activeDays7: number;
+  activeDays30: number;
+}
+
 // ─── User detail panel ──────────────────────────────────────────────────────
 
 /**
@@ -181,6 +198,26 @@ export const UserDetailPanel = memo(function UserDetailPanel({
   const [tokenAmount, setTokenAmount] = useState('');
   const [showTokenInput, setShowTokenInput] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<'settings' | 'activity'>('settings');
+  const [activityData, setActivityData] = useState<UserActivityData | null>(null);
+  const [activityLoading, setActivityLoading] = useState(false);
+
+  /** Fetch activity data when tab switches to activity */
+  const fetchActivity = useCallback(async () => {
+    if (activityData) return;
+    setActivityLoading(true);
+    try {
+      const res = await fetch(`/api/admin/users/${user.id}/activity`);
+      if (res.ok) {
+        const data = await res.json();
+        setActivityData(data);
+      }
+    } catch {
+      // Non-fatal — activity tab simply stays empty
+    } finally {
+      setActivityLoading(false);
+    }
+  }, [user.id, activityData]);
 
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -370,20 +407,185 @@ export const UserDetailPanel = memo(function UserDetailPanel({
         className="relative w-full max-w-md bg-slate-900 border-l border-slate-700/50 overflow-y-auto"
       >
         {/* Header */}
-        <div className="sticky top-0 bg-slate-900/95 backdrop-blur-sm border-b border-slate-700/50 px-6 py-4 flex items-center justify-between z-10">
-          <h2 id="user-panel-title" className="text-white font-bold text-base">
-            {da ? 'Rediger bruger' : 'Edit user'}
-          </h2>
-          <button
-            onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-lg transition-colors"
-          >
-            <X size={18} />
-          </button>
+        <div className="sticky top-0 bg-slate-900/95 backdrop-blur-sm border-b border-slate-700/50 px-6 py-4 z-10">
+          <div className="flex items-center justify-between mb-3">
+            <h2 id="user-panel-title" className="text-white font-bold text-base">
+              {da ? 'Rediger bruger' : 'Edit user'}
+            </h2>
+            <button
+              onClick={onClose}
+              className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-lg transition-colors"
+              aria-label={da ? 'Luk panel' : 'Close panel'}
+            >
+              <X size={18} />
+            </button>
+          </div>
+          {/* Tab switcher */}
+          <div role="tablist" className="flex gap-1 bg-slate-800/50 rounded-lg p-0.5">
+            <button
+              role="tab"
+              aria-selected={activeTab === 'settings'}
+              onClick={() => setActiveTab('settings')}
+              className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                activeTab === 'settings'
+                  ? 'bg-slate-700 text-white'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <CreditCard size={12} />
+              {da ? 'Indstillinger' : 'Settings'}
+            </button>
+            <button
+              role="tab"
+              aria-selected={activeTab === 'activity'}
+              onClick={() => {
+                setActiveTab('activity');
+                void fetchActivity();
+              }}
+              className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                activeTab === 'activity'
+                  ? 'bg-slate-700 text-white'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Activity size={12} />
+              {da ? 'Aktivitet' : 'Activity'}
+            </button>
+          </div>
         </div>
 
+        {/* ─── Activity tab ─── */}
+        {activeTab === 'activity' && (
+          <div role="tabpanel" className="px-6 py-5 space-y-4">
+            {activityLoading && (
+              <div className="flex items-center justify-center py-8">
+                <div className="w-5 h-5 border-2 border-blue-400/30 border-t-blue-400 rounded-full animate-spin" />
+              </div>
+            )}
+            {!activityLoading && activityData && (
+              <>
+                {/* Overview stats */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
+                    <p className="text-slate-400 text-[10px] uppercase tracking-wider mb-1">
+                      {da ? 'Aktive dage (7d)' : 'Active days (7d)'}
+                    </p>
+                    <p className="text-white text-lg font-bold">{activityData.activeDays7}</p>
+                  </div>
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
+                    <p className="text-slate-400 text-[10px] uppercase tracking-wider mb-1">
+                      {da ? 'Aktive dage (30d)' : 'Active days (30d)'}
+                    </p>
+                    <p className="text-white text-lg font-bold">{activityData.activeDays30}</p>
+                  </div>
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
+                    <p className="text-slate-400 text-[10px] uppercase tracking-wider mb-1">
+                      {da ? 'AI tokens (30d)' : 'AI tokens (30d)'}
+                    </p>
+                    <p className="text-white text-lg font-bold">
+                      {activityData.aiTokensUsed > 1000
+                        ? `${Math.round(activityData.aiTokensUsed / 1000)}k`
+                        : activityData.aiTokensUsed}
+                    </p>
+                  </div>
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
+                    <p className="text-slate-400 text-[10px] uppercase tracking-wider mb-1">
+                      {da ? 'AI samtaler (30d)' : 'AI chats (30d)'}
+                    </p>
+                    <p className="text-white text-lg font-bold">{activityData.chatSessionCount}</p>
+                  </div>
+                </div>
+
+                {/* Event breakdown */}
+                {Object.keys(activityData.eventCounts).length > 0 && (
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 space-y-2">
+                    <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-2">
+                      {da ? 'Handlinger (30d)' : 'Actions (30d)'}
+                    </p>
+                    {Object.entries(activityData.eventCounts)
+                      .sort(([, a], [, b]) => b - a)
+                      .map(([type, count]) => (
+                        <div key={type} className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            {type === 'address_search' && (
+                              <Search size={12} className="text-blue-400" />
+                            )}
+                            {type === 'property_open' && (
+                              <Home size={12} className="text-emerald-400" />
+                            )}
+                            {type === 'company_open' && (
+                              <Building2 size={12} className="text-amber-400" />
+                            )}
+                            {type === 'owner_open' && (
+                              <User size={12} className="text-violet-400" />
+                            )}
+                            {type === 'ai_chat' && (
+                              <MessageSquare size={12} className="text-cyan-400" />
+                            )}
+                            {![
+                              'address_search',
+                              'property_open',
+                              'company_open',
+                              'owner_open',
+                              'ai_chat',
+                            ].includes(type) && <Activity size={12} className="text-slate-400" />}
+                            <span className="text-slate-300 text-xs">
+                              {type.replace(/_/g, ' ')}
+                            </span>
+                          </div>
+                          <span className="text-white text-xs font-medium">{count}</span>
+                        </div>
+                      ))}
+                  </div>
+                )}
+
+                {/* Recent timeline */}
+                {activityData.timeline.length > 0 && (
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 space-y-2">
+                    <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-2">
+                      {da ? 'Seneste aktivitet' : 'Recent activity'}
+                    </p>
+                    <div className="max-h-64 overflow-y-auto space-y-1.5">
+                      {activityData.timeline.slice(0, 20).map((event, i) => (
+                        <div
+                          key={i}
+                          className="flex items-center justify-between py-1 border-b border-slate-700/20 last:border-0"
+                        >
+                          <span className="text-slate-300 text-[11px]">
+                            {event.event_type.replace(/_/g, ' ')}
+                          </span>
+                          <span className="text-slate-500 text-[10px]">
+                            {new Date(event.created_at).toLocaleDateString(da ? 'da-DK' : 'en-GB', {
+                              day: 'numeric',
+                              month: 'short',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Empty state */}
+                {activityData.timeline.length === 0 &&
+                  Object.keys(activityData.eventCounts).length === 0 && (
+                    <p className="text-slate-500 text-sm text-center py-8">
+                      {da
+                        ? 'Ingen aktivitet registreret de seneste 30 dage.'
+                        : 'No activity recorded in the last 30 days.'}
+                    </p>
+                  )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ─── Settings tab ─── */}
         <div
           className={`px-6 py-5 space-y-6 ${actionLoading ? 'opacity-60 pointer-events-none' : ''}`}
+          style={{ display: activeTab === 'settings' ? undefined : 'none' }}
         >
           {/* ─── User info ─── */}
           <div>

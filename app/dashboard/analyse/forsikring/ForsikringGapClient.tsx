@@ -10,9 +10,11 @@
 'use client';
 
 import { useState, useCallback, useRef } from 'react';
+import Link from 'next/link';
 import {
   Shield,
   Upload,
+  ArrowLeft,
   Search,
   ChevronRight,
   ChevronLeft,
@@ -105,14 +107,23 @@ export default function ForsikringGapClient() {
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-6">
+      {/* BIZZ-1246: Tilbage-link */}
+      <Link
+        href="/dashboard/analyse"
+        className="inline-flex items-center gap-1.5 text-slate-400 hover:text-white text-sm transition-colors"
+      >
+        <ArrowLeft size={14} />
+        Analyse
+      </Link>
+
       {/* Header */}
       <div>
-        <h1 className="text-white text-xl font-bold flex items-center gap-2">
-          <Shield size={22} className="text-blue-400" />
+        <h1 className="text-white text-2xl font-bold flex items-center gap-2">
+          <Shield size={24} className="text-blue-400" />
           Forsikrings-gap-analyse
         </h1>
         <p className="text-slate-400 text-sm mt-1">
-          Upload en kundes policeliste og identificér dækningsgab automatisk
+          Identificér dækningsgab i kundens forsikringsportefølje
         </p>
       </div>
 

@@ -36,6 +36,7 @@ import PlandataSektion from '@/app/components/ejendomme/PlandataSektion';
 import EjerforeningSektion from '@/app/components/ejendomme/EjerforeningSektion';
 // BIZZ-1046: EnergiWidget + ByggeomkostningBadge flyttet til EjendomOekonomiTab
 import type { Ejerlejlighed } from '@/app/api/ejerlejligheder/route';
+// EjendomStrukturTree moved to BBR tab
 
 interface TinglysningSnapshot {
   tinglystAreal: number | null;

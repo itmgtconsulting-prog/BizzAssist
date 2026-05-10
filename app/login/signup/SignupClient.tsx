@@ -51,6 +51,10 @@ const errorMessages: Record<string, { da: string; en: string }> = {
     da: 'Denne e-mail er allerede registreret.',
     en: 'This email is already registered.',
   },
+  invalid_email_domain: {
+    da: 'E-mail-domænet er ugyldigt. Brug venligst en gyldig e-mailadresse.',
+    en: 'The email domain is invalid. Please use a valid email address.',
+  },
   password_too_weak: {
     da: 'Adgangskoden skal være mindst 8 tegn.',
     en: 'Password must be at least 8 characters.',

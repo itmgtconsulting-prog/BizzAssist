@@ -42,6 +42,8 @@ export interface DiagramV2Props {
   onNodeClick?: (node: DiagramNode) => void;
   /** BIZZ-1115: Callback med base64 PNG når diagram er renderet (til AI-export) */
   onDiagramReady?: (base64Png: string) => void;
+  /** BIZZ-1143: Pre-fetched resolve data fra parent — bruger data direkte og skipper intern fetch */
+  prefetchedGraph?: { graph: unknown } | null;
 }
 
 /**
@@ -60,6 +62,7 @@ export default function DiagramV2({
   lang,
   onNodeClick,
   onDiagramReady,
+  prefetchedGraph = null,
 }: DiagramV2Props) {
   const da = lang === 'da';
   const [graph, setGraph] = useState<DiagramGraph | null>(null);
@@ -84,12 +87,25 @@ export default function DiagramV2({
     );
   }, [graph]);
 
-  /** Hent initial graf fra /api/diagram/resolve */
+  /** Hent initial graf fra /api/diagram/resolve (eller brug prefetched data fra parent) */
   useEffect(() => {
-    setLoading(true);
     setError(null);
     setGraph(null);
 
+    // BIZZ-1143: Brug prefetched graf fra parent — skip intern fetch
+    if (prefetchedGraph) {
+      const g = prefetchedGraph.graph as DiagramGraph | null;
+      if (g) {
+        setGraph(g);
+      } else {
+        setError(da ? 'Ingen data fundet' : 'No data found');
+      }
+      setLoading(false);
+      return;
+    }
+
+    // Fallback: ingen prefetched data → fetch selv (virksomheds-/personsider)
+    setLoading(true);
     const controller = new AbortController();
     // BIZZ-1114: Send rootLabel som query param — bruges for property root-node adresse
     const resolveParams = new URLSearchParams({ type: rootType, id: rootId });
@@ -115,7 +131,7 @@ export default function DiagramV2({
       .finally(() => setLoading(false));
 
     return () => controller.abort();
-  }, [rootType, rootId, da]);
+  }, [rootType, rootId, da, prefetchedGraph]);
 
   /**
    * Expand-handler — kaldet af DiagramForce via onExpand prop.
@@ -131,15 +147,30 @@ export default function DiagramV2({
       nodeId: string,
       nodeType: 'person' | 'company'
     ): Promise<{ nodes: DiagramNode[]; edges: DiagramEdge[] } | null> => {
-      // BIZZ-1102: Find node i ALLE kendte noder (inkl. extensions) — ikke kun initial graph
+      // BIZZ-1102: Find node i ALLE kendte noder (inkl. extensions) — ikke kun initial graph.
+      // BIZZ-1125: Nøgleperson-expand opretter node i DiagramForce extensionNodes
+      // SAMTIDIG med expand-kaldet — node er muligvis ikke i allNodesRef endnu.
+      // Fallback: parse nodeId (en-XXXXX → enhedsNummer, cvr-XXXXX → cvr).
       const node = allNodesRef.current.get(nodeId);
-      if (!node) return null;
+      let cvr: string | undefined = node?.cvr ? String(node.cvr) : undefined;
+      let enhedsNummer: string | undefined = node?.enhedsNummer
+        ? String(node.enhedsNummer)
+        : undefined;
+      if (!node) {
+        if (nodeType === 'person' && nodeId.startsWith('en-')) {
+          enhedsNummer = nodeId.replace('en-', '');
+        } else if (nodeType === 'company' && nodeId.startsWith('cvr-')) {
+          cvr = nodeId.replace('cvr-', '');
+        } else {
+          return null;
+        }
+      }
 
       const body = {
         nodeType,
         nodeId,
-        cvr: node.cvr ? String(node.cvr) : undefined,
-        enhedsNummer: node.enhedsNummer ? String(node.enhedsNummer) : undefined,
+        cvr,
+        enhedsNummer,
         existingNodeIds: [...allNodesRef.current.keys()],
         existingBfes: [...allBfesRef.current],
         // BIZZ-1122: context fortæller expand-route om den skal filtrere
@@ -175,6 +206,18 @@ export default function DiagramV2({
     [rootType]
   );
 
+  /**
+   * Collapse callback — ryd allNodesRef/allBfesRef for fjernede noder
+   * så næste expand-kald ikke sender dem som "eksisterende".
+   */
+  const handleCollapse = useCallback((removedNodeIds: string[]) => {
+    for (const id of removedNodeIds) {
+      const node = allNodesRef.current.get(id);
+      if (node?.bfeNummer != null) allBfesRef.current.delete(node.bfeNummer);
+      allNodesRef.current.delete(id);
+    }
+  }, []);
+
   // Loading state — tom div, parent-sidens loading.tsx viser allerede spinner
   if (loading) {
     return <div className="w-full h-96" />;
@@ -205,8 +248,9 @@ export default function DiagramV2({
     <DiagramForce
       graph={graph}
       lang={lang}
-      defaultShowProperties={rootType !== 'person'}
+      defaultShowProperties={true}
       onExpand={handleExpand}
+      onCollapse={handleCollapse}
       onNodeClick={onNodeClick}
       onDiagramReady={onDiagramReady}
     />

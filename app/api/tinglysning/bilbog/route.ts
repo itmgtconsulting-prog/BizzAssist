@@ -89,9 +89,11 @@ export interface BilbogBil {
 }
 
 export interface BilbogData {
-  /** Echoed CVR */
-  cvr: string;
-  /** Alle biler fundet under virksomheden */
+  /** Echoed CVR (null ved person-søgning) */
+  cvr: string | null;
+  /** Personnavn (ved person-søgning) */
+  personnavn?: string;
+  /** Alle biler fundet under virksomheden/personen */
   biler: BilbogBil[];
   /** Fejlbesked ved ekstern API-fejl */
   fejl?: string;
@@ -247,9 +249,22 @@ export function parseBilXml(xml: string): BilHaeftelse[] {
 
 // ─── Route Handler ──────────────────────────────────────────────────────────
 
-const querySchema = z.object({
-  cvr: z.string().regex(/^\d{8}$/, 'cvr parameter er påkrævet (8 cifre)'),
-});
+// BIZZ-1220: Udvid til at understøtte person-søgning (navn + fødselsdato)
+const querySchema = z
+  .object({
+    cvr: z
+      .string()
+      .regex(/^\d{8}$/)
+      .optional(),
+    personnavn: z.string().min(2).optional(),
+    foedselsdato: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+  })
+  .refine((d) => !!d.cvr || (!!d.personnavn && !!d.foedselsdato), {
+    message: 'Angiv enten cvr ELLER personnavn+foedselsdato',
+  });
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const auth = await resolveTenantId();
@@ -257,18 +272,28 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   const parsed = parseQuery(req, querySchema);
   if (!parsed.success) {
-    return NextResponse.json({ error: 'cvr parameter er påkrævet (8 cifre)' }, { status: 400 });
+    return NextResponse.json(
+      { error: 'Angiv enten cvr (8 cifre) eller personnavn+foedselsdato (YYYY-MM-DD)' },
+      { status: 400 }
+    );
   }
-  const { cvr } = parsed.data;
+  const { cvr, personnavn, foedselsdato } = parsed.data;
 
   if ((!CERT_PATH && !CERT_B64) || !CERT_PASSWORD) {
-    const empty: BilbogData = { cvr, biler: [], fejl: 'Tinglysning certifikat ikke konfigureret' };
+    const empty: BilbogData = {
+      cvr: cvr ?? null,
+      biler: [],
+      fejl: 'Tinglysning certifikat ikke konfigureret',
+    };
     return NextResponse.json(empty);
   }
 
   try {
-    // Trin 1: Søg i Bilbogen med CVR-nummer
-    const searchRes = await tlFetchUnsecure(`/soegbil?cvr=${cvr}`);
+    // BIZZ-1220: Søg i Bilbogen med CVR ELLER personnavn+fødselsdato
+    const searchQuery = cvr
+      ? `cvr=${cvr}`
+      : `personnavn=${encodeURIComponent(personnavn!)}&foedselsdato=${foedselsdato}`;
+    const searchRes = await tlFetchUnsecure(`/soegbil?${searchQuery}`);
 
     type SearchItem = {
       uuid: string;
@@ -290,7 +315,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
 
     if (items.length === 0) {
-      const result: BilbogData = { cvr, biler: [] };
+      const result: BilbogData = { cvr: cvr ?? null, personnavn, biler: [] };
       return NextResponse.json(result, {
         headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
       });
@@ -312,7 +337,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       });
     }
 
-    const result: BilbogData = { cvr, biler };
+    const result: BilbogData = { cvr: cvr ?? null, personnavn, biler };
     return NextResponse.json(result, {
       headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
     });

@@ -860,12 +860,52 @@ export async function GET(req: NextRequest) {
       xml.includes('kan ikke vises her') ||
       xml.includes('forespørgsel i tingbøgerne');
 
-    // NOTE (testet 2026-04-09): /hentakt, /dokument, /akt, /bilag returnerer alle 404
-    // for pre-digitale dokumenter via mTLS HTTP API. Scannede PDFs er kun tilgængelige
-    // via webportalen (/rest/ + MitID-session). Afventer REST API fra 1. maj 2026.
-
+    // BIZZ-1055: S2S-fallback — forsøg at hente indskannet akt via XML API
     if (isPreDigital) {
-      // Generér en informativ PDF i stedet for at vise rå XML-indhold
+      try {
+        const host = req.headers.get('host') ?? 'localhost:3000';
+        const base = host.startsWith('localhost') ? `http://${host}` : `https://${host}`;
+        const cookie = req.headers.get('cookie') ?? '';
+
+        // Hent liste af indskannede akter for dette BFE/UUID
+        const bfeParam = req.nextUrl.searchParams.get('bfe') ?? '';
+        if (bfeParam) {
+          const akterRes = await fetch(
+            `${base}/api/tinglysning/indskannede-akter?bfe=${bfeParam}`,
+            { headers: { cookie }, signal: AbortSignal.timeout(10000) }
+          );
+          if (akterRes.ok) {
+            const akterData = (await akterRes.json()) as {
+              akter?: Array<{ aktNavn: string; dokumentId?: string }>;
+            };
+            // Find akt der matcher uuid eller brug den første
+            const matchAkt =
+              akterData.akter?.find((a) => a.dokumentId === uuid) ?? akterData.akter?.[0];
+            if (matchAkt?.aktNavn) {
+              const dlRes = await fetch(
+                `${base}/api/tinglysning/indskannede-akter/download?aktNavn=${encodeURIComponent(matchAkt.aktNavn)}`,
+                { headers: { cookie }, signal: AbortSignal.timeout(15000) }
+              );
+              if (dlRes.ok && dlRes.headers.get('content-type')?.includes('pdf')) {
+                const pdfBuf = await dlRes.arrayBuffer();
+                return new NextResponse(new Uint8Array(pdfBuf), {
+                  status: 200,
+                  headers: {
+                    'Content-Type': 'application/pdf',
+                    'Content-Disposition': `inline; filename="indskannet-${uuid}.pdf"`,
+                    'X-Source': 'S2S-indskannet',
+                  },
+                });
+              }
+            }
+          }
+        }
+      } catch (s2sErr) {
+        logger.warn('[tinglysning/dokument] S2S fallback fejlede:', s2sErr);
+        // Fortsæt til info-PDF nedenfor
+      }
+
+      // S2S fallback fejlede — generér informativ PDF
       const doc = new PDFDocument({
         size: 'A4',
         margin: 50,

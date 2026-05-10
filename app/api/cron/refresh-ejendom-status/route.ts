@@ -29,6 +29,8 @@ import { logger } from '@/app/lib/logger';
 import { BBR_STATUS_UDFASET } from '@/app/lib/bbrKoder';
 import { fetchBBRGraphQL } from '@/app/lib/fetchBbrData';
 
+export const maxDuration = 300;
+
 const BATCH_SIZE = 50; // BFE'er pr BBR-kald
 const PER_RUN_CAP = 5000; // max rows pr cron-tur
 const STALE_DAYS = 7;

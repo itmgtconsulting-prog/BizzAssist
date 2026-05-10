@@ -146,6 +146,7 @@ function DiagramForce({
   defaultShowProperties = true,
   onDiagramReady,
   onExpand,
+  onCollapse,
 }: DiagramVariantProps) {
   const _router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -184,6 +185,109 @@ function DiagramForce({
   const [expandedDynamic, setExpandedDynamic] = useState<Set<string>>(new Set());
   /** Person node IDs currently loading dynamic data (shows spinner/disabled state) */
   const [loadingExpansion, setLoadingExpansion] = useState<Set<string>>(new Set());
+
+  /**
+   * BIZZ-1127: Leveled expand/collapse — hvert expand-klik tildeler et niveau.
+   * Skjul fjerner det højeste niveau først.
+   *
+   * nodeLevelMap: node-ID → expand-niveau (0 = initial graf, 1 = første expand, osv.)
+   * currentMaxLevel: det højeste niveau i grafen (brugt til at tildele næste + collapse)
+   */
+  const [nodeLevelMap, setNodeLevelMap] = useState<Map<string, number>>(new Map());
+  const currentMaxLevel = useMemo(() => {
+    if (nodeLevelMap.size === 0) return 0;
+    let max = 0;
+    for (const level of nodeLevelMap.values()) {
+      if (level > max) max = level;
+    }
+    return max;
+  }, [nodeLevelMap]);
+
+  /**
+   * BIZZ-1131: Source→result mapping — tracker hvilken source-node der
+   * producerede hvilke result-noder. Bruges af collapseOneLevel til at
+   * gendanne Udvid-knapper (fjerne source fra expandedDynamic).
+   * Key = result-node-ID, value = source-node-ID.
+   */
+  const [_expansionSourceMap, setExpansionSourceMap] = useState<Map<string, string>>(new Map());
+
+  /**
+   * BIZZ-1133: Tracker hvilke co-owner expandedNodes-entries der blev
+   * tilføjet ved hvert level, så collapseOneLevel kan re-hide dem.
+   * Key = parent-node-ID (i expandedNodes), value = level det blev tilføjet ved.
+   */
+  const [coOwnerLevelMap, setCoOwnerLevelMap] = useState<Map<string, number>>(new Map());
+
+  /**
+   * Tracker hvilke expandedDynamic-entries der blev sat ved hvert level.
+   * Bruges af collapseOneLevel til at fjerne dem — uanset om de producerede
+   * nye noder (expansionSourceMap) eller ej.
+   */
+  const [dynamicExpandLevelMap, setDynamicExpandLevelMap] = useState<Map<string, number>>(
+    new Map()
+  );
+
+  /**
+   * Marker en node som dynamisk expanded OG registrer ved hvilket level.
+   * Bruges i stedet for direkte setExpandedDynamic-kald.
+   */
+  const markExpanded = useCallback(
+    (nodeId: string) => {
+      setExpandedDynamic((prev) => new Set([...prev, nodeId]));
+      setDynamicExpandLevelMap((prev) => {
+        const next = new Map(prev);
+        if (!next.has(nodeId)) next.set(nodeId, currentMaxLevel + 1);
+        return next;
+      });
+    },
+    [currentMaxLevel]
+  );
+
+  /**
+   * BIZZ-1128: Tilføj extension-noder OG registrer dem på næste expand-niveau.
+   * BIZZ-1131: Tracker source→result mapping for clean collapse.
+   *
+   * @param nodes - Nye noder at tilføje
+   * @param sourceNodeId - ID på noden der triggerede expansionen (optional)
+   */
+  const addExtensionNodesWithLevel = useCallback(
+    (nodes: DiagramNode[], sourceNodeId?: string) => {
+      if (nodes.length === 0) return;
+      setExtensionNodes((prev) => [...prev, ...nodes]);
+      setNodeLevelMap((prev) => {
+        const nextLevel = currentMaxLevel + 1;
+        const next = new Map(prev);
+        for (const n of nodes) {
+          if (!next.has(n.id)) next.set(n.id, nextLevel);
+        }
+        return next;
+      });
+      if (sourceNodeId) {
+        setExpansionSourceMap((prev) => {
+          const next = new Map(prev);
+          for (const n of nodes) next.set(n.id, sourceNodeId);
+          return next;
+        });
+      }
+    },
+    [currentMaxLevel]
+  );
+
+  // BIZZ-1127: Initialiser niveau 0 for alle noder i initial-grafen
+  useEffect(() => {
+    if (!graph || graph.nodes.length === 0) return;
+    setNodeLevelMap((prev) => {
+      const next = new Map(prev);
+      let changed = false;
+      for (const n of graph.nodes) {
+        if (!next.has(n.id)) {
+          next.set(n.id, 0);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [graph]);
 
   /**
    * Effective graph = source graph + dynamic extensions (person expansion).
@@ -446,10 +550,10 @@ function DiagramForce({
         }
 
         if (newNodes.length > 0) {
-          setExtensionNodes((prev) => [...prev, ...newNodes]);
+          addExtensionNodesWithLevel(newNodes);
           setExtensionEdges((prev) => [...prev, ...newEdges]);
         }
-        setExpandedDynamic((prev) => new Set(prev).add(personId));
+        markExpanded(personId);
       } catch {
         /* Fetch fejl er ikke-fatal — knap bliver bare ikke marked as expanded */
       } finally {
@@ -579,13 +683,12 @@ function DiagramForce({
         }
 
         if (newNodes.length > 0) {
-          setExtensionNodes((prev) => [...prev, ...newNodes]);
+          addExtensionNodesWithLevel(newNodes);
           setExtensionEdges((prev) => [...prev, ...newEdges]);
         } else {
           /* Ingen datterselskaber — tilføj en "tom" status-node som feedback */
           const emptyId = `empty-${companyNodeId}`;
-          setExtensionNodes((prev) => [
-            ...prev,
+          addExtensionNodesWithLevel([
             {
               id: emptyId,
               label: lang === 'da' ? 'Ingen datterselskaber' : 'No subsidiaries',
@@ -596,11 +699,7 @@ function DiagramForce({
         }
 
         /* Marker som udvidet — uanset om der var resultater */
-        setExpandedDynamic((prev) => {
-          const next = new Set(prev);
-          next.add(companyNodeId);
-          return next;
-        });
+        markExpanded(companyNodeId);
       } catch {
         /* Fejl ignoreres — noden forbliver uudvidet */
       } finally {
@@ -785,6 +884,10 @@ function DiagramForce({
     const parentEdges = new Map<string, string[]>();
     const childEdges = new Map<string, string[]>();
     for (const edge of filteredGraph.edges) {
+      // crossOwnership-edges er sekundære visuelle links — de må IKKE påvirke
+      // depth-beregningen, ellers trækkes noder til forkert lag (fx ejendomme
+      // op til person-rækken når person→ejendom crossOwnership-edge tilføjes).
+      if (edge.crossOwnership) continue;
       if (!parentEdges.has(edge.to)) parentEdges.set(edge.to, []);
       parentEdges.get(edge.to)!.push(edge.from);
       if (!childEdges.has(edge.from)) childEdges.set(edge.from, []);
@@ -818,15 +921,16 @@ function DiagramForce({
       const current = downQueue.shift()!;
       const d = depths.get(current) ?? 0;
       for (const c of childEdges.get(current) ?? []) {
-        if (!depths.has(c) && !coOwnerIds.has(c)) {
-          const childNode = nodeById.get(c);
-          const isPropertyLike = childNode?.type === 'property' || c.startsWith('props-overflow-');
-          if (isPropertyLike) {
-            // Properties get their owner's depth — they'll be positioned below
-            // the specific owner's sub-row in nodeYMap Pass 3
-            depths.set(c, d);
-          } else {
-            depths.set(c, d + 1);
+        if (coOwnerIds.has(c)) continue;
+        const childNode = nodeById.get(c);
+        const isPropertyLike = childNode?.type === 'property' || c.startsWith('props-overflow-');
+        const newDepth = isPropertyLike ? d + 0.5 : d + 1;
+        const existing = depths.get(c);
+        if (existing === undefined || (isPropertyLike && newDepth < existing)) {
+          // Properties: brug shallowest depth (tættest på toppen) — personligt
+          // ejede ejendomme prioriteres over selskabs-ejede ved dual ownership.
+          depths.set(c, newDepth);
+          if (!isPropertyLike) {
             downQueue.push(c);
           }
         }
@@ -850,8 +954,10 @@ function DiagramForce({
           .filter((c) => depths.has(c) && !coOwnerIds.has(c))
           .map((c) => depths.get(c)!);
         if (assignedChildren.length > 0) {
-          // Parent af eksisterende noder → placér 0.5 over shallowest child
-          depths.set(node.id, Math.min(...assignedChildren) - 0.5);
+          // Parent af eksisterende noder → placér 0.5 over DEEPEST child
+          // (ikke shallowest — undgår at ejere fra dybe expand-noder
+          // placeres for højt oppe i diagrammet)
+          depths.set(node.id, Math.max(...assignedChildren) - 0.5);
           changed = true;
           continue;
         }
@@ -862,13 +968,8 @@ function DiagramForce({
           .map((p) => depths.get(p)!);
         if (assignedParents.length > 0) {
           // Child af eksisterende noder → placér 0.5 under deepest parent
-          const nodeType = nodeById.get(node.id);
-          const isPropertyLike =
-            nodeType?.type === 'property' || node.id.startsWith('props-overflow-');
-          depths.set(
-            node.id,
-            isPropertyLike ? Math.max(...assignedParents) : Math.max(...assignedParents) + 0.5
-          );
+          // Alle orphaned children (inkl. properties) placeres 0.5 under parent
+          depths.set(node.id, Math.max(...assignedParents) + 0.5);
           changed = true;
         }
       }
@@ -910,10 +1011,57 @@ function DiagramForce({
     // diagram. Tidligere kunne ownerchain-persons lande midt i diagrammet hvis
     // deres BFS-depth ramte et indrykket holding-niveau; brugeren vil have alle
     // personer samlet øverst uanset hvor de logisk hører til i kæden.
+    const personDepth = minDepthNonPerson - 1;
     for (const node of filteredGraph.nodes) {
       if (node.type !== 'person') continue;
       if (node.id === effectiveGraph.mainId) continue; // main stays where it is
-      depths.set(node.id, minDepthNonPerson - 1);
+      depths.set(node.id, personDepth);
+    }
+
+    // BIZZ-1125: Re-pin ALLE property-noder til parentDepth + 0.5.
+    // Ejendomme tilføjet via expand (person ELLER virksomhed) kan have fået
+    // forkert depth i fallback-passet fordi parent-noden endnu ikke var
+    // korrekt placeret. Nu re-beregnes depth baseret på actual parent depth.
+    // BIZZ-1142: Brug kun IKKE-person parents for depth-beregning —
+    // ellers ender ejendomme på person-niveau eller over virksomheder.
+    for (const node of filteredGraph.nodes) {
+      if (node.type !== 'property' && !node.id.startsWith('props-overflow-')) continue;
+      const parents = parentEdges.get(node.id) ?? [];
+      if (parents.length === 0) continue;
+      // Foretrøk virksomheds-parents over person-parents for placering
+      const companyParentDepths = parents
+        .filter((pid) => {
+          const pn = nodeById.get(pid);
+          return pn && pn.type !== 'person';
+        })
+        .map((pid) => depths.get(pid)!)
+        .filter((d) => d != null);
+      const allParentDepths = parents
+        .filter((pid) => depths.has(pid))
+        .map((pid) => depths.get(pid)!);
+      const bestParentDepths =
+        companyParentDepths.length > 0 ? companyParentDepths : allParentDepths;
+      if (bestParentDepths.length > 0) {
+        depths.set(node.id, Math.min(...bestParentDepths) + 0.5);
+      }
+    }
+
+    // BIZZ-1205: Rolle-virksomheder (layoutSection='role') placeres NEDERST
+    // i diagrammet, under ejerskabs-hierarkiet. Ejerskabs-virksomheder beholder
+    // deres naturlige depth fra BFS (direkte under personen og nedad).
+    const roleNodes = filteredGraph.nodes.filter((n) => n.layoutSection === 'role');
+    if (roleNodes.length > 0) {
+      // Find dybeste ejerskabs-node
+      let maxOwnerDepth = 1;
+      for (const [id, d] of depths) {
+        const node = nodeById.get(id);
+        if (node?.layoutSection === 'role') continue;
+        if (d > maxOwnerDepth) maxOwnerDepth = d;
+      }
+      // Placér rolle-noder 2 niveauer under dybeste ejerskabs-node
+      for (const node of roleNodes) {
+        depths.set(node.id, maxOwnerDepth + 2);
+      }
     }
 
     // Company co-owners stay close to their subsidiary (targetDepth - 0.5) so
@@ -1009,21 +1157,12 @@ function DiagramForce({
       const n = nodeById.get(id);
       return n?.type === 'property' || id.startsWith('props-overflow-');
     };
-    // Map from owner node id → list of property node ids
-    const propertiesByOwner = new Map<string, string[]>();
-    for (const edge of filteredGraph.edges) {
-      if (isPropertyId(edge.to)) {
-        if (!propertiesByOwner.has(edge.from)) propertiesByOwner.set(edge.from, []);
-        propertiesByOwner.get(edge.from)!.push(edge.to);
-      }
-    }
     const byDepth = new Map<number, string[]>();
     for (const node of filteredGraph.nodes) {
       // Include PERSON co-owners in byDepth — they share the top person row
       // with ownerchain persons (uniform placement). Company co-owners still
       // get their own dedicated Pass 2 placement above their target.
       if (coOwnerIds.has(node.id) && node.type !== 'person') continue;
-      if (isPropertyId(node.id)) continue; // placed in Pass 3
       const d = depthMap.get(node.id) ?? 0;
       if (!byDepth.has(d)) byDepth.set(d, []);
       byDepth.get(d)!.push(node.id);
@@ -1122,7 +1261,6 @@ function DiagramForce({
         const startIdx = sr * MAX_PER_ROW;
         const endIdx = Math.min(startIdx + MAX_PER_ROW, nodeIds.length);
         let subRowHasCoOwners = false;
-        let subRowHasProperties = false;
         let companyCoOwnerTargetCount = 0;
         for (let i = startIdx; i < endIdx; i++) {
           if (nodeIds[i] !== '__pad__' && targetsWithCoOwners.has(nodeIds[i])) {
@@ -1131,46 +1269,13 @@ function DiagramForce({
           if (nodeIds[i] !== '__pad__' && targetsWithCompanyCoOwners.has(nodeIds[i])) {
             companyCoOwnerTargetCount++;
           }
-          if (nodeIds[i] !== '__pad__' && propertiesByOwner.has(nodeIds[i])) {
-            subRowHasProperties = true;
-          }
         }
         if (sr > 0 || depth !== sortedDepths[0]) {
           levelHeight += subRowGap;
         }
         if (subRowHasCoOwners) {
-          // Reserver ekstra plads per target-med-company-coowners så hver får
-          // sin egen stack-række (se Pass 2). Mindst 1 CO_ROW_GAP selv hvis
-          // kun person-co-owners er til stede (de pinnes til toppen men vi
-          // vil stadig have en lille afstand).
           const stacks = Math.max(1, companyCoOwnerTargetCount);
           levelHeight += CO_ROW_GAP * stacks;
-        }
-        // Reserve space for properties below this sub-row using the same
-        // "keep owner together" rule as Pass 3 placement — otherwise next
-        // depth's companies can overlap with wrapped property lines.
-        if (subRowHasProperties) {
-          let linesUsed = 0;
-          let countOnLine = 0;
-          for (let i = startIdx; i < endIdx; i++) {
-            if (nodeIds[i] === '__pad__') continue;
-            const props = propertiesByOwner.get(nodeIds[i]);
-            if (!props || props.length === 0) continue;
-            if (countOnLine > 0 && countOnLine + props.length > MAX_PER_ROW) {
-              linesUsed++;
-              countOnLine = 0;
-            }
-            const ownerLines = Math.ceil(props.length / MAX_PER_ROW);
-            if (ownerLines > 1) {
-              linesUsed += ownerLines - 1;
-              countOnLine = props.length % MAX_PER_ROW || MAX_PER_ROW;
-            } else {
-              countOnLine += props.length;
-            }
-          }
-          // linesUsed counts line-starts; +1 for first line. Clamp to min 1.
-          const propSubrows = Math.max(1, linesUsed + 1);
-          levelHeight += 95 + (propSubrows - 1) * 70;
         }
       }
       cumulativeY += Math.max(levelHeight, levelGap);
@@ -1189,34 +1294,6 @@ function DiagramForce({
         if (subRow !== prevSubRow) {
           if (subRow > 0) {
             runningY += subRowGap;
-            // Extra gap if PREVIOUS sub-row had owners with properties.
-            // Use "keep owner together" rule to count lines accurately.
-            const prevStart = prevSubRow * MAX_PER_ROW;
-            const prevEnd = Math.min(prevStart + MAX_PER_ROW, nodeIds.length);
-            let linesUsed = 0;
-            let countOnLine = 0;
-            let hasAny = false;
-            for (let j = prevStart; j < prevEnd; j++) {
-              if (nodeIds[j] === '__pad__') continue;
-              const props = propertiesByOwner.get(nodeIds[j]);
-              if (!props || props.length === 0) continue;
-              hasAny = true;
-              if (countOnLine > 0 && countOnLine + props.length > MAX_PER_ROW) {
-                linesUsed++;
-                countOnLine = 0;
-              }
-              const ownerLines = Math.ceil(props.length / MAX_PER_ROW);
-              if (ownerLines > 1) {
-                linesUsed += ownerLines - 1;
-                countOnLine = props.length % MAX_PER_ROW || MAX_PER_ROW;
-              } else {
-                countOnLine += props.length;
-              }
-            }
-            if (hasAny) {
-              const propSubrows = Math.max(1, linesUsed + 1);
-              runningY += 95 + (propSubrows - 1) * 70;
-            }
           }
           // Check if this sub-row needs extra space for co-owners above it
           const startIdx = subRow * MAX_PER_ROW;
@@ -1292,100 +1369,14 @@ function DiagramForce({
       }
     }
 
-    // Pass 3: Place properties directly below their specific owner.
-    // Rule: if an owner's properties can't ALL fit on the current line (would exceed
-    // MAX_PER_ROW), all of that owner's properties go on the NEXT line instead of
-    // being split. Owners are grouped first by their Y (depth sub-row), then per Y
-    // group we assign properties to lines in owner-order.
-    //
-    // BIZZ-563 v2: Overflow-noder (id starter med "props-overflow-") placeres
-    // ALLE på en absolut bottom-row efter ALLE properties i hele diagrammet —
-    // ikke længere per-owner-Y. Det eliminerer enhver overlap-risiko da bottom-
-    // row er garanteret tom. User-feedback efter BIZZ-563 v1 viste at per-owner-
-    // Y stadig kunne overlappe når overflow + properties fra forskellige owners
-    // havde tæt-pakkede Y-værdier.
-    const PROPERTY_ROW_GAP = 95;
-    const PROPERTY_SUBROW_GAP = 70;
-    /** BIZZ-563: Gap mellem sidste property-row og overflow-bottom-row */
+    // Properties er nu i byDepth med depth + 0.5 (egen linje under ejer).
+    // Overflow-noder placeres på absolut bottom-row efter ALLE andre noder.
     const OVERFLOW_BOTTOM_GAP = 80;
-    // Group owners by their own Y (sub-row of depth)
-    const ownersByY = new Map<number, string[]>();
-    for (const ownerId of propertiesByOwner.keys()) {
-      const y = yMap.get(ownerId);
-      if (y == null) continue;
-      if (!ownersByY.has(y)) ownersByY.set(y, []);
-      ownersByY.get(y)!.push(ownerId);
-    }
-    // Saml ALLE overflow-noder på tværs af hele diagrammet for placering på
-    // absolut bottom-row efter ALLE andre noder.
+    const OVERFLOW_SUBROW_GAP = 70;
     const allOverflowNodes: string[] = [];
-    // Sort owners within each Y by their X position (initialX not set yet — use
-    // byDepth order as a proxy, which matches visual left-to-right)
-    for (const [ownerY, ownerIds] of ownersByY) {
-      const propBaseY = ownerY + PROPERTY_ROW_GAP;
-      let currentLine = 0;
-      let countOnLine = 0;
-      for (const ownerId of ownerIds) {
-        const propsAll = propertiesByOwner.get(ownerId) ?? [];
-        if (propsAll.length === 0) continue;
-        // Split: regular properties placeres på almindelige linjer; overflow-
-        // noder samles globalt og placeres på bottom-row efter ALLE properties.
-        const props = propsAll.filter((id) => !id.startsWith('props-overflow-'));
-        const ownerOverflow = propsAll.filter((id) => id.startsWith('props-overflow-'));
-        allOverflowNodes.push(...ownerOverflow);
-
-        if (props.length === 0) continue;
-
-        // BIZZ-585: Person-owners får dedikerede rækker — deres ejendomme
-        // blandes ALDRIG med søskende-virksomheders ejendomme på samme linje.
-        // Tidligere kunne fx en persons 6. ejendom ende på en linje der også
-        // indeholdt holdingselskabers ejendomme, hvilket gjorde layoutet
-        // forvirrende. Nu starter og afslutter vi altid en ny linje ved
-        // person-owners.
-        const ownerNode = nodeById.get(ownerId);
-        const isPersonOwner = ownerNode?.type === 'person' || ownerNode?.type === 'main';
-
-        if (isPersonOwner && countOnLine > 0) {
-          // Forrige linje havde andet indhold — start person's ejendomme på ny linje
-          currentLine++;
-          countOnLine = 0;
-        } else if (countOnLine > 0 && countOnLine + props.length > MAX_PER_ROW) {
-          // Ikke-person owner: standard wrap-regel
-          currentLine++;
-          countOnLine = 0;
-        }
-        // If this single owner has > MAX_PER_ROW properties, wrap within owner
-        for (let i = 0; i < props.length; i++) {
-          const withinOwnerLine = Math.floor(i / MAX_PER_ROW);
-          const line = currentLine + withinOwnerLine;
-          const propY = propBaseY + line * PROPERTY_SUBROW_GAP;
-          yMap.set(props[i], propY);
-        }
-        // Update counters: if owner fills multiple lines, advance past all but last
-        const ownerLines = Math.ceil(props.length / MAX_PER_ROW);
-        if (ownerLines > 1) {
-          currentLine += ownerLines - 1;
-          countOnLine = props.length % MAX_PER_ROW || MAX_PER_ROW;
-        } else {
-          countOnLine += props.length;
-        }
-        // BIZZ-585: Efter person-owner: tving næste owner til ny linje så
-        // person-ejendomme forbliver isoleret på deres egen række-blok.
-        if (isPersonOwner && countOnLine > 0) {
-          currentLine++;
-          countOnLine = 0;
-        }
-      }
-      // BIZZ-563 v3: overflow-noder placeres NU globalt EFTER ALLE noder
-      // (se nedenfor) i stedet for per-owner-Y eller maxPropertyY.
+    for (const node of filteredGraph.nodes) {
+      if (node.id.startsWith('props-overflow-')) allOverflowNodes.push(node.id);
     }
-
-    // BIZZ-563 v3: Placer ALLE overflow-noder på en absolut bottom-row efter
-    // ALLE andre noder i diagrammet. Tidligere version (v2) brugte
-    // maxPropertyY men oversaa at companies/datterselskaber ofte sidder på
-    // dybere depth-rows END properties (fx Novo Nordisk Denmark sidder under
-    // property-rækken). Nu finder vi maks Y på tværs af HELE yMap (ekskl.
-    // overflow-noder selv) før placering.
     if (allOverflowNodes.length > 0) {
       const overflowSet = new Set(allOverflowNodes);
       let maxY = 0;
@@ -1395,7 +1386,7 @@ function DiagramForce({
       }
       const overflowBaseY = maxY + OVERFLOW_BOTTOM_GAP;
       for (let i = 0; i < allOverflowNodes.length; i++) {
-        yMap.set(allOverflowNodes[i], overflowBaseY + i * PROPERTY_SUBROW_GAP);
+        yMap.set(allOverflowNodes[i], overflowBaseY + i * OVERFLOW_SUBROW_GAP);
       }
     }
 
@@ -1403,14 +1394,21 @@ function DiagramForce({
   }, [filteredGraph, depthMap, getSubRowGap, getLevelGap]);
 
   // ── Run force simulation (hybrid: strict Y from nodeYMap, organic X from physics) ──
+  // Stable node-set key — skip simulation re-run if nodes haven't changed
+  const prevNodeSetKeyRef = useRef<string>('');
+
   useEffect(() => {
     if (filteredGraph.nodes.length === 0) return;
 
-    // BIZZ-865/932: Skjul SVG KUN under allererste simulation-run (mount).
-    // Efterfølgende restarts (pga. async data som personalBfes eller
-    // noeglePersonerMap) holder SVG synlig — brugeren ser evt. et kort
-    // layout-hop, men det er langt bedre end usynligt diagram (BIZZ-932).
-    // initialFitDone bruges som proxy: hvis vi aldrig har fitted = første run.
+    // Skip simulation if node-set is identical (prevents "hopping")
+    const nodeSetKey = filteredGraph.nodes
+      .map((n) => n.id)
+      .sort()
+      .join('|');
+    if (nodeSetKey === prevNodeSetKeyRef.current && positions.size > 0) {
+      return;
+    }
+    prevNodeSetKeyRef.current = nodeSetKey;
 
     // Group by Y position (from nodeYMap) for initial X spread — ensures
     // persons and companies on separate sub-rows get independent X layouts
@@ -1968,7 +1966,19 @@ function DiagramForce({
     // BIZZ-597 Fase 3: Main-node er selv en person → auto-expand hans
     // personlige ejendomme + virksomheder så vi får fuld view uden manuel
     // klik på Udvid.
+    // SKIP auto-expand når resolve allerede leverer alle virksomheder (v2):
+    // resolve sætter ikke expandableChildren på person-noden, og grafen
+    // indeholder allerede alle company-noder som children.
     if (mainNode.type === 'person' && mainNode.enhedsNummer != null) {
+      // Når onExpand er sat (v2 mode) og person-noden ikke har
+      // expandableChildren, har resolve allerede leveret alle noder
+      const resolveDeliveredAll =
+        onExpand && (mainNode.expandableChildren == null || mainNode.expandableChildren === 0);
+      if (resolveDeliveredAll) {
+        // Markér som expanded så Udvid-knappen skjules
+        if (!expandedDynamic.has(mainNode.id)) markExpanded(mainNode.id);
+        return;
+      }
       if (!autoExpandDoneRef.current.has(mainNode.id)) {
         autoExpandDoneRef.current.add(mainNode.id);
         if (!expandedDynamic.has(mainNode.id) && !loadingExpansion.has(mainNode.id)) {
@@ -1981,9 +1991,9 @@ function DiagramForce({
                 return s;
               });
               if (result) {
-                setExtensionNodes((prev) => [...prev, ...result.nodes]);
+                addExtensionNodesWithLevel(result.nodes, mainNode.id);
                 setExtensionEdges((prev) => [...prev, ...result.edges]);
-                setExpandedDynamic((prev) => new Set([...prev, mainNode.id]));
+                markExpanded(mainNode.id);
               }
             });
           } else {
@@ -2024,8 +2034,20 @@ function DiagramForce({
     const visibleIds = new Set(filteredGraph.nodes.map((n) => n.id));
     return allExpandableIds.filter((id) => visibleIds.has(id) && !expandedNodes.has(id));
   }, [allExpandableIds, filteredGraph.nodes, expandedNodes]);
-  // Whether anything is expanded at all (co-owner OR person dynamic)
-  const canCollapseAny = expandedNodes.size > 0 || expandedDynamic.size > 0;
+  // BIZZ-1129: Virksomheder med Udvid-knap der kan udvides via toolbar
+  const canExpandCompanies = useMemo(() => {
+    return effectiveGraph.nodes.filter(
+      (n) =>
+        n.type !== 'main' &&
+        n.cvr != null &&
+        n.expandableChildren != null &&
+        n.expandableChildren > 0 &&
+        !expandedDynamic.has(n.id) &&
+        !loadingExpansion.has(n.id)
+    );
+  }, [effectiveGraph.nodes, expandedDynamic, loadingExpansion]);
+  // BIZZ-1130: Can collapse = vi er over niveau 0
+  const canCollapseAny = currentMaxLevel > 0;
 
   /**
    * BIZZ-582: Expand one level: expand co-owners on currently visible nodes,
@@ -2045,6 +2067,13 @@ function DiagramForce({
         for (const id of canExpandMore) next.add(id);
         return next;
       });
+      // BIZZ-1133: Track co-owner reveals ved dette niveau
+      const nextLevel = currentMaxLevel + 1;
+      setCoOwnerLevelMap((prev) => {
+        const next = new Map(prev);
+        for (const id of canExpandMore) next.set(id, nextLevel);
+        return next;
+      });
       didSomething = true;
     }
     if (canExpandPersons.length > 0) {
@@ -2059,13 +2088,38 @@ function DiagramForce({
                 return s;
               });
               if (result) {
-                setExtensionNodes((prev) => [...prev, ...result.nodes]);
+                addExtensionNodesWithLevel(result.nodes, p.id);
                 setExtensionEdges((prev) => [...prev, ...result.edges]);
-                setExpandedDynamic((prev) => new Set([...prev, p.id]));
+                if (result.nodes.length > 0 || result.edges.length > 0) {
+                  markExpanded(p.id);
+                }
               }
             });
           } else {
             void expandPersonDynamic(p.id, p.enhedsNummer);
+          }
+        }
+      }
+      didSomething = true;
+    }
+    // BIZZ-1129: Udvid ALLE virksomheder med Udvid-knap
+    if (canExpandCompanies.length > 0) {
+      for (const c of canExpandCompanies) {
+        if (c.cvr != null) {
+          if (onExpand) {
+            setLoadingExpansion((prev) => new Set([...prev, c.id]));
+            void onExpand(c.id, 'company').then((result) => {
+              setLoadingExpansion((prev) => {
+                const s = new Set(prev);
+                s.delete(c.id);
+                return s;
+              });
+              if (result) {
+                addExtensionNodesWithLevel(result.nodes, c.id);
+                setExtensionEdges((prev) => [...prev, ...result.edges]);
+                markExpanded(c.id);
+              }
+            });
           }
         }
       }
@@ -2082,10 +2136,78 @@ function DiagramForce({
   }
 
   /**
-   * Collapse all expanded nodes back to the initial state.
+   * BIZZ-1130: Collapse det højeste expand-niveau.
+   * Fjerner noder + edges ved currentMaxLevel, gendanner Udvid-knapper.
+   * Klik flere gange for at folde diagrammet helt sammen.
    */
-  function collapseAll() {
-    setExpandedNodes(new Set());
+  function collapseOneLevel() {
+    if (currentMaxLevel <= 0) return;
+    const levelToRemove = currentMaxLevel;
+
+    // Find alle node-IDs ved dette niveau
+    const idsAtLevel = new Set<string>();
+    for (const [id, level] of nodeLevelMap) {
+      if (level === levelToRemove) idsAtLevel.add(id);
+    }
+    if (idsAtLevel.size === 0) return;
+
+    // 1. Re-hide co-owners der blev afsløret ved dette niveau
+    setExpandedNodes((prev) => {
+      const next = new Set(prev);
+      for (const [parentId, level] of coOwnerLevelMap) {
+        if (level === levelToRemove) next.delete(parentId);
+      }
+      return next;
+    });
+    setCoOwnerLevelMap((prev) => {
+      const next = new Map(prev);
+      for (const [parentId, level] of prev) {
+        if (level === levelToRemove) next.delete(parentId);
+      }
+      return next;
+    });
+
+    // 2. Fjern extension-noder + edges ved dette niveau
+    setExtensionNodes((prev) => prev.filter((n) => !idsAtLevel.has(n.id)));
+    setExtensionEdges((prev) =>
+      prev.filter((e) => !idsAtLevel.has(e.from) && !idsAtLevel.has(e.to))
+    );
+
+    // 3. Gendanner Udvid-knapper — fjern alle expandedDynamic-entries
+    //    der blev sat ved dette level (via dynamicExpandLevelMap).
+    //    + fjern source-entries fra expansionSourceMap.
+    setExpandedDynamic((prev) => {
+      const next = new Set(prev);
+      // Fjern noder der selv er ved dette level
+      for (const id of idsAtLevel) next.delete(id);
+      // Fjern noder der blev markeret som expanded ved dette level
+      for (const [nodeId, level] of dynamicExpandLevelMap) {
+        if (level === levelToRemove) next.delete(nodeId);
+      }
+      return next;
+    });
+    setDynamicExpandLevelMap((prev) => {
+      const next = new Map(prev);
+      for (const [nodeId, level] of prev) {
+        if (level === levelToRemove) next.delete(nodeId);
+      }
+      return next;
+    });
+    setExpansionSourceMap((prev) => {
+      const next = new Map(prev);
+      for (const id of idsAtLevel) next.delete(id);
+      return next;
+    });
+
+    // 4. Fjern level-entries fra map
+    setNodeLevelMap((prev) => {
+      const next = new Map(prev);
+      for (const id of idsAtLevel) next.delete(id);
+      return next;
+    });
+
+    // 5. Notify parent (DiagramV2) så allNodesRef/allBfesRef ryddes
+    if (onCollapse) onCollapse(Array.from(idsAtLevel));
   }
 
   /** Toolbar with zoom controls + fullscreen toggle */
@@ -2178,13 +2300,24 @@ function DiagramForce({
           <RotateCcw size={11} />
           {lang === 'da' ? 'Reset' : 'Reset'}
         </button>
-        {/* Expand / Collapse all co-owners */}
+        {/* BIZZ-1132: Expand / Collapse med niveau-indikator */}
         <span className="w-px h-5 bg-slate-700/50 mx-1" />
+        {currentMaxLevel > 0 && (
+          <span className="text-slate-500 text-[9px] tabular-nums mr-1">
+            {lang === 'da' ? `Niv. ${currentMaxLevel}` : `Lv. ${currentMaxLevel}`}
+          </span>
+        )}
         <button
           onClick={expandOneLevel}
-          disabled={canExpandMore.length === 0}
+          disabled={
+            canExpandMore.length === 0 &&
+            canExpandPersons.length === 0 &&
+            canExpandCompanies.length === 0
+          }
           className={`h-7 px-2 flex items-center gap-1 bg-slate-800 border border-slate-700/50 rounded-lg text-[10px] transition ${
-            canExpandMore.length === 0
+            canExpandMore.length === 0 &&
+            canExpandPersons.length === 0 &&
+            canExpandCompanies.length === 0
               ? 'text-slate-600 cursor-not-allowed opacity-50'
               : 'text-slate-400 hover:text-white'
           }`}
@@ -2194,14 +2327,16 @@ function DiagramForce({
           {lang === 'da' ? 'Udvid' : 'Expand'}
         </button>
         <button
-          onClick={collapseAll}
+          onClick={collapseOneLevel}
           disabled={!canCollapseAny}
           className={`h-7 px-2 flex items-center gap-1 bg-slate-800 border border-slate-700/50 rounded-lg text-[10px] transition ${
             !canCollapseAny
               ? 'text-slate-600 cursor-not-allowed opacity-50'
               : 'text-slate-400 hover:text-white'
           }`}
-          title={lang === 'da' ? 'Skjul alle' : 'Collapse all'}
+          title={
+            lang === 'da' ? `Skjul niveau ${currentMaxLevel}` : `Collapse level ${currentMaxLevel}`
+          }
         >
           <ChevronsDownUp size={12} />
           {lang === 'da' ? 'Skjul' : 'Collapse'}
@@ -2245,8 +2380,8 @@ function DiagramForce({
                 : `Properties (${propertyCount})`}
           </button>
         )}
-        {/* BIZZ-1004: Toggle personligt ejede ejendomme */}
-        {personalPropNodeIds.size > 0 && (
+        {/* BIZZ-1004: Toggle personligt ejede ejendomme — kun på virksomhedsdiagram */}
+        {defaultShowProperties && personalPropNodeIds.size > 0 && (
           <button
             onClick={() => {
               setShowPersonalProps((s) => !s);
@@ -2414,9 +2549,23 @@ function DiagramForce({
         const toH = toNode ? getNodeH(toNode, expandedOverflow) : NODE_H;
         const isCoOwnerEdge = fromNode?.isCoOwner || toNode?.isCoOwner;
 
+        // BIZZ-1082: Offset multi-parent edges ±3px for bedre visuel adskillelse
+        // når flere ejere peger på samme ejendom
+        let ownerOffset = 0;
+        if (edge.ownerPersonId) {
+          const siblingEdges = filteredGraph.edges.filter(
+            (e) => e.to === edge.to && e.ownerPersonId
+          );
+          if (siblingEdges.length > 1) {
+            const idx = siblingEdges.indexOf(edge);
+            const center = (siblingEdges.length - 1) / 2;
+            ownerOffset = (idx - center) * 6;
+          }
+        }
+
         const sx = fromPos.x;
         const sy = fromPos.y + fromH / 2;
-        const ex = toPos.x;
+        const ex = toPos.x + ownerOffset;
         const ey = toPos.y - toH / 2;
         const midY = (sy + ey) / 2;
         const midX = (sx + ex) / 2;
@@ -2431,34 +2580,29 @@ function DiagramForce({
         // personligt-ejede-relationer er visuelt adskilt fra virksomheds-
         // ejendom-relationer. Brugeren kan dermed hurtigt identificere
         // hvilke ejendomme der ejes direkte af personen vs via selskab.
-        const isPersonToProperty = isPropertyEdge && fromNode?.type === 'person';
         // BIZZ-689: crossOwnership-edges (krydsejerskab mellem virksomheder
         // i samme graf) bruger amber-farve + dashed for visuel distinktion
         // fra primary parent→child-edges.
-        const isCrossOwnership = !!edge.crossOwnership;
+        // personallyOwned edges er person→ejendom og bør vises som
+        // ejendomslinjer (grøn), ikke som crossOwnership (amber)
+        const isCrossOwnership = !!edge.crossOwnership && !edge.personallyOwned;
         /* BIZZ-1086: crossOwnership-linjer gjort mere subtile (0.35 opacity) */
-        const strokeColor = isCrossOwnership
-          ? 'rgba(251,191,36,0.35)' // amber-400 subtil
-          : isCoOwnerEdge
-            ? 'rgba(167,139,250,0.55)'
-            : isPersonToProperty
-              ? 'rgba(110,231,183,0.75)' // Lysere emerald-400
+        // BIZZ-1082: ownerColor fra API bruges til fælles ejerskabs-edges
+        // så forskellige ejere får distinkte farver på deres property-edges.
+        const strokeColor = edge.ownerColor
+          ? edge.ownerColor
+          : isCrossOwnership
+            ? 'rgba(251,191,36,0.35)' // amber-400 subtil
+            : isCoOwnerEdge
+              ? 'rgba(167,139,250,0.55)'
               : isPropertyEdge
                 ? 'rgba(52,211,153,0.65)'
                 : edge.from === effectiveGraph.mainId || edge.to === effectiveGraph.mainId
                   ? 'rgba(96,165,250,0.85)'
                   : 'rgba(148,163,184,0.75)';
-        // BIZZ-585: Dashed stroke for person→property — samme signaleringsstil
-        // som co-owner-edges men med emerald i stedet for lilla.
-        // BIZZ-689: cross-ownership bruger længere dash-pattern (6 4) for at
-        // være tydeligt distinkt fra person→property (5 3) og co-owner (4 3).
-        const dashArray = isCrossOwnership
-          ? '6 4'
-          : isCoOwnerEdge
-            ? '4 3'
-            : isPersonToProperty
-              ? '5 3'
-              : undefined;
+        // BIZZ-689: cross-ownership bruger længere dash-pattern (6 4),
+        // co-owner bruger (4 3). Ejendomme er solid (ingen dash).
+        const dashArray = isCrossOwnership ? '6 4' : isCoOwnerEdge ? '4 3' : undefined;
 
         return (
           <g key={`e-${i}`}>
@@ -2466,11 +2610,17 @@ function DiagramForce({
               d={`M ${sx} ${sy} C ${cx1} ${midY}, ${cx2} ${midY}, ${ex} ${ey}`}
               fill="none"
               stroke={strokeColor}
-              strokeWidth={isCoOwnerEdge ? 1.5 : 2.25}
+              strokeWidth={
+                isCrossOwnership ? 1.25 : isCoOwnerEdge ? 1.5 : isPropertyEdge ? 1.25 : 2.25
+              }
               strokeDasharray={dashArray}
             />
             <polygon
-              points={`${ex},${ey} ${ex - 5},${ey - 9} ${ex + 5},${ey - 9}`}
+              points={
+                isPropertyEdge || isCrossOwnership
+                  ? `${ex},${ey} ${ex - 3.5},${ey - 7} ${ex + 3.5},${ey - 7}`
+                  : `${ex},${ey} ${ex - 5},${ey - 9} ${ex + 5},${ey - 9}`
+              }
               fill={strokeColor}
             />
             {edge.ejerandel && (
@@ -2870,48 +3020,131 @@ function DiagramForce({
                           strokeWidth="0.5"
                         />
                       )}
-                      {/* Key persons inside company box */}
+                      {/* Key persons inside company box — klikbar expand til person-node */}
                       {node.noeglePersoner &&
-                        node.noeglePersoner.slice(0, 5).map((p, pi) => (
-                          <g key={pi}>
-                            <circle
-                              cx={x + 16}
-                              cy={topY + 50 + pi * PERSON_ROW_H}
-                              r={3.5}
-                              fill="none"
-                              stroke={
-                                p.rolle === 'Bestyrelse'
-                                  ? 'rgba(139,92,246,0.5)'
-                                  : 'rgba(245,158,11,0.5)'
-                              }
-                              strokeWidth="0.8"
-                            />
-                            <text
-                              x={x + 23}
-                              y={topY + 53 + pi * PERSON_ROW_H}
-                              fill="rgba(196,167,255,0.7)"
-                              fontSize="8"
-                              className="pointer-events-none cursor-pointer"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                window.location.href = `/dashboard/owners/${p.enhedsNummer}`;
-                              }}
-                              style={{ cursor: 'pointer', pointerEvents: 'auto' }}
-                            >
-                              {p.navn.length > 36 ? p.navn.slice(0, 36) + '…' : p.navn}
-                            </text>
-                            <text
-                              x={x + NODE_W - 14}
-                              y={topY + 53 + pi * PERSON_ROW_H}
-                              fill="rgba(148,163,184,0.5)"
-                              fontSize="7"
-                              textAnchor="end"
-                              className="pointer-events-none"
-                            >
-                              {p.rolle === 'Bestyrelse' ? 'Best.' : 'Dir.'}
-                            </text>
-                          </g>
-                        ))}
+                        node.noeglePersoner.slice(0, 5).map((p, pi) => {
+                          const personNodeId = `en-${p.enhedsNummer}`;
+                          const alreadyInGraph = effectiveGraph.nodes.some(
+                            (n) => n.id === personNodeId
+                          );
+                          const isLoading = loadingExpansion.has(personNodeId);
+                          return (
+                            <g key={pi}>
+                              <circle
+                                cx={x + 16}
+                                cy={topY + 50 + pi * PERSON_ROW_H}
+                                r={3.5}
+                                fill="none"
+                                stroke={
+                                  p.rolle === 'Bestyrelse'
+                                    ? 'rgba(139,92,246,0.5)'
+                                    : 'rgba(245,158,11,0.5)'
+                                }
+                                strokeWidth="0.8"
+                              />
+                              <text
+                                x={x + 23}
+                                y={topY + 53 + pi * PERSON_ROW_H}
+                                fill="rgba(196,167,255,0.7)"
+                                fontSize="8"
+                                className="pointer-events-none cursor-pointer"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  window.location.href = `/dashboard/owners/${p.enhedsNummer}`;
+                                }}
+                                style={{ cursor: 'pointer', pointerEvents: 'auto' }}
+                              >
+                                {(() => {
+                                  const label = p.rolle ? `${p.navn}, ${p.rolle}` : p.navn;
+                                  return label.length > 40 ? label.slice(0, 40) + '…' : label;
+                                })()}
+                              </text>
+                              {/* BIZZ-1125: Expand nøgleperson til person-node med ejendomme */}
+                              {!alreadyInGraph && (
+                                <g
+                                  className="cursor-pointer"
+                                  style={{ pointerEvents: 'auto' }}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onTouchStart={(e) => e.stopPropagation()}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (isLoading) return;
+                                    // Opret person-node i grafen
+                                    const newPersonNode: DiagramNode = {
+                                      id: personNodeId,
+                                      label: p.navn,
+                                      type: 'person',
+                                      enhedsNummer: p.enhedsNummer,
+                                      link: `/dashboard/owners/${p.enhedsNummer}`,
+                                    };
+                                    const newEdge: DiagramEdge = {
+                                      from: personNodeId,
+                                      to: node.id,
+                                      ejerandel: p.rolle === 'Bestyrelse' ? 'Best.' : 'Dir.',
+                                    };
+                                    addExtensionNodesWithLevel([newPersonNode], node.id);
+                                    setExtensionEdges((prev) => [...prev, newEdge]);
+                                    // Kald expand for at hente personens ejendomme
+                                    if (onExpand) {
+                                      setLoadingExpansion(
+                                        (prev) => new Set([...prev, personNodeId])
+                                      );
+                                      void onExpand(personNodeId, 'person').then((result) => {
+                                        setLoadingExpansion((prev) => {
+                                          const s = new Set(prev);
+                                          s.delete(personNodeId);
+                                          return s;
+                                        });
+                                        if (result) {
+                                          addExtensionNodesWithLevel(result.nodes, personNodeId);
+                                          setExtensionEdges((prev) => [...prev, ...result.edges]);
+                                          if (result.nodes.length > 0 || result.edges.length > 0) {
+                                            markExpanded(personNodeId);
+                                          }
+                                        }
+                                      });
+                                    }
+                                  }}
+                                  aria-label={`Udvid ${p.navn} i diagrammet`}
+                                >
+                                  <rect
+                                    x={x + NODE_W - 46}
+                                    y={topY + 43 + pi * PERSON_ROW_H}
+                                    width={32}
+                                    height={14}
+                                    rx={7}
+                                    fill="rgba(16,185,129,0.12)"
+                                    stroke="rgba(52,211,153,0.35)"
+                                    strokeWidth="0.5"
+                                  />
+                                  <text
+                                    x={x + NODE_W - 30}
+                                    y={topY + 53 + pi * PERSON_ROW_H}
+                                    textAnchor="middle"
+                                    fill="rgba(52,211,153,0.9)"
+                                    fontSize="7"
+                                    fontWeight="500"
+                                    className="pointer-events-none"
+                                  >
+                                    {isLoading ? '…' : '+ Vis'}
+                                  </text>
+                                </g>
+                              )}
+                              {alreadyInGraph && (
+                                <text
+                                  x={x + NODE_W - 14}
+                                  y={topY + 53 + pi * PERSON_ROW_H}
+                                  fill="rgba(148,163,184,0.5)"
+                                  fontSize="7"
+                                  textAnchor="end"
+                                  className="pointer-events-none"
+                                >
+                                  {p.rolle === 'Bestyrelse' ? 'Best.' : 'Dir.'}
+                                </text>
+                              )}
+                            </g>
+                          );
+                        })}
                     </>
                   )}
                   {/* Person node label (centered) */}
@@ -2933,6 +3166,8 @@ function DiagramForce({
                       person-side-diagrammet. Tidligere udelukket via !isMain. */}
                   {isPerson &&
                     node.enhedsNummer != null &&
+                    node.expandableChildren != null &&
+                    node.expandableChildren > 0 &&
                     (() => {
                       const personLoading = loadingExpansion.has(node.id);
                       const personExpanded = expandedDynamic.has(node.id);
@@ -2956,9 +3191,11 @@ function DiagramForce({
                                   return s;
                                 });
                                 if (result) {
-                                  setExtensionNodes((prev) => [...prev, ...result.nodes]);
+                                  addExtensionNodesWithLevel(result.nodes, node.id);
                                   setExtensionEdges((prev) => [...prev, ...result.edges]);
-                                  setExpandedDynamic((prev) => new Set([...prev, node.id]));
+                                  if (result.nodes.length > 0 || result.edges.length > 0) {
+                                    markExpanded(node.id);
+                                  }
                                 }
                               });
                             } else {
@@ -2996,8 +3233,8 @@ function DiagramForce({
                   {!isPerson &&
                     node.cvr != null &&
                     node.type !== 'main' &&
-                    !hasExpandable &&
-                    node.expandableChildren !== 0 &&
+                    node.expandableChildren != null &&
+                    node.expandableChildren > 0 &&
                     (() => {
                       const companyLoading = loadingExpansion.has(node.id);
                       const companyExpanded = expandedDynamic.has(node.id);
@@ -3020,9 +3257,9 @@ function DiagramForce({
                                   return s;
                                 });
                                 if (result) {
-                                  setExtensionNodes((prev) => [...prev, ...result.nodes]);
+                                  addExtensionNodesWithLevel(result.nodes, node.id);
                                   setExtensionEdges((prev) => [...prev, ...result.edges]);
-                                  setExpandedDynamic((prev) => new Set([...prev, node.id]));
+                                  markExpanded(node.id);
                                 }
                               });
                             } else {
@@ -3057,7 +3294,9 @@ function DiagramForce({
                 </>
               );
             })()}
-            {hasExpandable && (
+            {/* Fold/unfold for co-owner children — KUN vis hvis noden har
+                skjulte children med collapseParent (ikke ejerskabs-expand) */}
+            {hasExpandable && effectiveGraph.nodes.some((n) => n.collapseParent === node.id) && (
               <g
                 className="cursor-pointer"
                 onMouseDown={(e) => e.stopPropagation()}
@@ -3099,7 +3338,7 @@ function DiagramForce({
   const canvasEl = (
     <div
       ref={containerRef}
-      className={`bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-auto select-none ${isFullscreen ? 'flex-1' : ''}`}
+      className={`bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden select-none ${isFullscreen ? 'flex-1' : ''}`}
       style={{
         minHeight: isFullscreen ? undefined : '500px',
         maxHeight: isFullscreen ? undefined : '85vh',
@@ -3160,6 +3399,81 @@ function DiagramForce({
         : `companies related to "more companies" are not shown`}
     </div>
   ) : null;
+
+  // BIZZ-1204: Diagram-legend der forklarer linjetyper.
+  // Vises når diagrammet har cross-ownership eller multi-person edges.
+  const diagramLegend = useMemo(() => {
+    const hasCrossOwnership = filteredGraph.edges.some(
+      (e) => e.crossOwnership && !e.personallyOwned
+    );
+    const hasPropertyEdges = filteredGraph.edges.some(
+      (e) => filteredGraph.nodes.find((n) => n.id === e.to)?.type === 'property'
+    );
+
+    // BIZZ-1082: Multi-person ownership colors
+    const ownerMap = new Map<string, string>();
+    const colorMap = new Map<string, string>();
+    for (const edge of filteredGraph.edges) {
+      if (edge.ownerPersonId && edge.ownerColor) {
+        if (!ownerMap.has(edge.ownerPersonId)) {
+          const pNode = filteredGraph.nodes.find((n) => n.id === edge.ownerPersonId);
+          if (pNode) ownerMap.set(edge.ownerPersonId, pNode.label);
+        }
+        if (!colorMap.has(edge.ownerPersonId)) {
+          colorMap.set(edge.ownerPersonId, edge.ownerColor);
+        }
+      }
+    }
+    const hasMultiOwner = ownerMap.size > 1;
+
+    // Vis legend kun når der er noget at forklare
+    if (!hasCrossOwnership && !hasMultiOwner) return null;
+
+    const da = lang === 'da';
+    return (
+      <div className="absolute bottom-3 left-3 z-10 px-2.5 py-2 rounded-lg bg-slate-900/80 border border-slate-700/40 backdrop-blur-sm space-y-0.5">
+        <div className="text-[9px] text-slate-500 font-medium mb-1">
+          {da ? 'Linjetyper' : 'Line types'}
+        </div>
+        {/* Ejerskab (solid blue) */}
+        <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+          <span className="inline-block w-3 h-0.5 rounded-full bg-blue-400/85" />
+          {da ? 'Ejerskab' : 'Ownership'}
+        </div>
+        {/* Ejendom (solid green) */}
+        {hasPropertyEdges && (
+          <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+            <span className="inline-block w-3 h-0.5 rounded-full bg-emerald-400/65" />
+            {da ? 'Ejendom' : 'Property'}
+          </div>
+        )}
+        {/* Cross-ownership (dashed amber) */}
+        {hasCrossOwnership && (
+          <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+            <span
+              className="inline-block w-3 h-0.5"
+              style={{
+                background:
+                  'repeating-linear-gradient(90deg, rgba(251,191,36,0.5) 0 2px, transparent 2px 4px)',
+              }}
+            />
+            {da ? 'Krydsejerskab' : 'Cross-ownership'}
+          </div>
+        )}
+        {/* Multi-person ownership */}
+        {hasMultiOwner &&
+          Array.from(ownerMap.entries()).map(([id, name]) => (
+            <div key={id} className="flex items-center gap-1.5 text-[10px] text-slate-300">
+              <span
+                className="inline-block w-3 h-0.5 rounded-full"
+                style={{ backgroundColor: colorMap.get(id) ?? 'rgba(148,163,184,0.75)' }}
+              />
+              {name.split(' ').slice(0, 2).join(' ')}
+            </div>
+          ))}
+      </div>
+    );
+  }, [filteredGraph.edges, filteredGraph.nodes, lang]);
 
   // BIZZ-479: Modal til overflow-lister (fx NOVO NORDISK's 74 ejendomme).
   // Tidligere foldede listen ud inline i SVG og kolliderede med andre noder
@@ -3241,6 +3555,7 @@ function DiagramForce({
           <div className="relative flex-1 flex flex-col">
             {canvasEl}
             {hiddenWarning}
+            {diagramLegend}
           </div>
         </div>
         {overflowModal}
@@ -3258,6 +3573,7 @@ function DiagramForce({
       <div className="relative">
         {canvasEl}
         {hiddenWarning}
+        {diagramLegend}
       </div>
       {overflowModal}
     </div>

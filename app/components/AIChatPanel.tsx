@@ -916,11 +916,9 @@ function AIChatPanel() {
         };
         const finalMsgs = [...newMessages, finalAssistant];
         chatCtx.persistConversation(convId, finalMsgs);
-        // BIZZ-839: Update local state if we're still on the same conversation,
-        // OR if convId is null (stateless fallback — always update).
-        if (!convId || chatCtx.activeId === convId) {
-          setMessages(finalMsgs);
-        }
+        // BIZZ-1175: ALTID opdater local messages — race condition med
+        // chatCtx.activeId kunne forhindre at svaret blev vist.
+        setMessages(finalMsgs);
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {

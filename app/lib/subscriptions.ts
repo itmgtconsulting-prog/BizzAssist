@@ -78,6 +78,11 @@ export interface PlanDef {
   maxSales?: number | null;
   /** Current number of sales completed */
   salesCount?: number;
+  /**
+   * BIZZ-1241: Analyse-modul IDs inkluderet i planen.
+   * Tomme array = ingen moduler. Modul-adgang = plan.modules + subscription.addons.
+   */
+  modules: string[];
 }
 
 // ─── Plan definitions ────────────────────────────────────────────────────────
@@ -101,6 +106,17 @@ export const PLANS: Record<PlanId, PlanDef> = {
     paymentGraceHours: 0,
     maxSales: null,
     salesCount: 0,
+    modules: [
+      'annonce',
+      'forsikring',
+      'kreditvurdering',
+      'due-diligence',
+      'aml-kyc',
+      'ejendomsinvestor',
+      'revisor-benchmark',
+      'inkasso-aktivsoegning',
+      'kommune-energi',
+    ],
   },
   basis: {
     id: 'basis',
@@ -120,6 +136,7 @@ export const PLANS: Record<PlanId, PlanDef> = {
     paymentGraceHours: 0,
     maxSales: null,
     salesCount: 0,
+    modules: [],
   },
   professionel: {
     id: 'professionel',
@@ -139,6 +156,7 @@ export const PLANS: Record<PlanId, PlanDef> = {
     paymentGraceHours: 0,
     maxSales: null,
     salesCount: 0,
+    modules: ['annonce', 'revisor-benchmark', 'kommune-energi'],
   },
   enterprise: {
     id: 'enterprise',
@@ -158,6 +176,17 @@ export const PLANS: Record<PlanId, PlanDef> = {
     paymentGraceHours: 0,
     maxSales: null,
     salesCount: 0,
+    modules: [
+      'annonce',
+      'forsikring',
+      'kreditvurdering',
+      'due-diligence',
+      'aml-kyc',
+      'ejendomsinvestor',
+      'revisor-benchmark',
+      'inkasso-aktivsoegning',
+      'kommune-energi',
+    ],
   },
 };
 
@@ -223,6 +252,7 @@ export function resolvePlan(planId: string): PlanDef {
     paymentGraceHours: 0,
     maxSales: null,
     salesCount: 0,
+    modules: [],
   };
 }
 
@@ -268,6 +298,11 @@ export interface UserSubscription {
    * ISO date string.
    */
   graceExpiresAt?: string;
+  /**
+   * BIZZ-1241: Individually purchased module add-ons (modul-IDs).
+   * Effective module access = plan.modules + addons.
+   */
+  addons?: string[];
 }
 
 // NOTE: localStorage-based getSubscription/saveSubscription/switchActiveUser/

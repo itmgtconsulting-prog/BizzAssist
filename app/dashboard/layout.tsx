@@ -684,7 +684,10 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
               .map((item) => {
                 const Icon = item.icon;
                 const label = s[item.key];
-                const active = pathname === item.href;
+                const active =
+                  item.href === '/dashboard'
+                    ? pathname === '/dashboard'
+                    : pathname === item.href || pathname.startsWith(item.href + '/');
                 /** Only overview and admin are accessible without a functional subscription */
                 const requiresFunctional =
                   item.href !== '/dashboard' && !item.href.startsWith('/dashboard/admin');
@@ -1244,7 +1247,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
             åbent — CSS-variablen sættes af panelet selv og er 0 ellers. */}
         <main
           id="main-content"
-          className="relative z-0 flex-1 flex overflow-y-auto transition-[padding-right] duration-150"
+          className="relative z-0 flex-1 flex overflow-hidden transition-[padding-right] duration-150"
           style={{ paddingRight: 'var(--bizz-docpreview-w, 0px)' }}
         >
           {pathname === '/dashboard' ||

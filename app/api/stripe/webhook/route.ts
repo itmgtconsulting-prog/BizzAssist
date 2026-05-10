@@ -93,10 +93,11 @@ function captureUnmatchedEvent(
     customerId?: string | null;
     email?: string | null;
     subscriptionId?: string | null;
-  }
+  },
+  level: 'error' | 'warning' = 'error'
 ): void {
   Sentry.captureMessage(`[stripe/webhook] Unmatched ${eventType}`, {
-    level: 'error',
+    level,
     tags: { webhook_event: eventType },
     extra: {
       attempted_user_id: context.userId ?? null,
@@ -1115,16 +1116,25 @@ async function handleChargeFailed(charge: Stripe.Charge): Promise<void> {
   });
 
   if (!userId) {
-    logger.error('[stripe/webhook] charge.failed: could not resolve user', {
-      chargeId: charge.id,
-      customerId,
-      billingEmail,
-    });
-    captureUnmatchedEvent('charge.failed', {
-      userId: userIdFromSub,
-      customerId,
-      email: billingEmail,
-    });
+    // No user found — most likely a failed checkout from a prospect whose
+    // card was declined before sign-up completed. Warning, not error.
+    logger.warn(
+      '[stripe/webhook] charge.failed: could not resolve user (likely pre-signup decline)',
+      {
+        chargeId: charge.id,
+        customerId,
+        billingEmail,
+      }
+    );
+    captureUnmatchedEvent(
+      'charge.failed',
+      {
+        userId: userIdFromSub,
+        customerId,
+        email: billingEmail,
+      },
+      'warning'
+    );
     return;
   }
 

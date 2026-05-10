@@ -27,6 +27,8 @@ import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
 
+export const maxDuration = 300;
+
 /** Datafordeler Hændelsesbesked base URL */
 const HHAENDELSE_BASE = 'https://hændelsesbesked.datafordeler.dk/api/v1/hændelse';
 

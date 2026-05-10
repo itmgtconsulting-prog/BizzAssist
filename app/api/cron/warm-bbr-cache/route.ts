@@ -25,6 +25,8 @@ import { fetchDawa } from '@/app/lib/dawa';
 import { DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
 import crypto from 'crypto';
 
+export const maxDuration = 300;
+
 /** Max ejendomme at cache per kørsel */
 const MAX_PER_RUN = 200;
 

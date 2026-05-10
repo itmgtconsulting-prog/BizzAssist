@@ -18,7 +18,7 @@
 
 import Link from 'next/link';
 import { ChevronRight, Scale, Sparkles, Landmark, TrendingUp } from 'lucide-react';
-import ForklarVurderingWidget from '@/app/components/ejendomme/ForklarVurderingWidget';
+// ForklarVurderingWidget fjernet — redundant med "Forklar vurdering" AI-knap
 import SektionLoader from '@/app/components/SektionLoader';
 import VurderingSammenligning from '@/app/components/ejendomme/VurderingSammenligning';
 import KommuneStatistikWidget from '@/app/components/analyse/KommuneStatistikWidget';
@@ -128,11 +128,8 @@ export default function EjendomOekonomiTab(props: Props) {
     lejlighederCount,
     postnr,
     kommunekode,
-    adresse,
-    kommune,
-    boligareal,
-    grundareal: grundarealProp,
-    opfoerelsesaar,
+    // adresse, kommune, boligareal, grundareal, opfoerelsesaar fjernet
+    // — var kun brugt af ForklarVurderingWidget (nu fjernet)
   } = props;
   const da = lang === 'da';
 
@@ -181,21 +178,7 @@ export default function EjendomOekonomiTab(props: Props) {
 
   return (
     <div className="space-y-5">
-      {/* BIZZ-1078: AI-drevet vurderingsforklaring (flyttet fra SKAT-tab) */}
-      {adresse && !vurderingLoader && (
-        <ForklarVurderingWidget
-          vurdering={vurdering}
-          forelobig={forelobige.length > 0 ? forelobige[0] : null}
-          adresse={adresse}
-          kommune={kommune ?? null}
-          boligareal={boligareal ?? null}
-          grundareal={grundarealProp ?? null}
-          opfoerelsesaar={opfoerelsesaar ?? null}
-          lang={lang}
-        />
-      )}
-
-      {/* BIZZ-1078: Vurderings-AI-knapper (flyttet fra SKAT-tab) */}
+      {/* BIZZ-1078: Vurderings-AI-knapper */}
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
@@ -286,8 +269,28 @@ export default function EjendomOekonomiTab(props: Props) {
                   </p>
                 )}
               </div>
+            ) : vurdering.ejendomsvaerdi === 0 && vurdering.grundvaerdi === 0 ? (
+              /* BIZZ-1156: "Endnu ikke vurderet" for 0 DKK */
+              <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-5 mb-3 text-center">
+                <p className="text-slate-400 text-sm">
+                  {da ? 'Endnu ikke vurderet' : 'Not yet assessed'}
+                </p>
+                <p className="text-slate-500 text-xs mt-1">
+                  {da
+                    ? 'Vurderingsstyrelsen har ikke udstedt en vurdering for denne ejendom endnu.'
+                    : 'The Danish Property Assessment Agency has not yet issued an assessment for this property.'}
+                </p>
+                {vurdering.vurderetAreal != null && (
+                  <p className="text-slate-500 text-xs mt-2">
+                    {da ? 'Grundareal:' : 'Plot area:'}{' '}
+                    <span className="text-slate-300 font-medium">
+                      {vurdering.vurderetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²
+                    </span>
+                  </p>
+                )}
+              </div>
             ) : (
-              /* Aktuelle tal — vises når ejendommen har egne vurderinger */
+              /* Aktuelle tal — ejendommen har egne vurderinger */
               <div className="grid grid-cols-3 gap-3 mb-3">
                 <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
                   <p className="text-slate-400 text-xs mb-1">
@@ -524,6 +527,27 @@ export default function EjendomOekonomiTab(props: Props) {
       </div>
 
       {/* ── Salgshistorik (EJF + Tinglysning) ── */}
+      {/* BIZZ-1152: For opdelte ejendomme uden salgsdata: vis forklaring */}
+      {!salgshistorikLoader &&
+        !tlSumLoader &&
+        mergedSalgshistorik.length === 0 &&
+        opdeltIEjerlejligheder && (
+          <div>
+            <SectionTitle title={da ? 'Salgshistorik' : 'Sales history'} />
+            <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-4 space-y-1">
+              <p className="text-blue-300 text-xs font-medium">
+                {da
+                  ? 'Salgsdata registreret på ejerlejligheder'
+                  : 'Sales data registered on condominiums'}
+              </p>
+              <p className="text-slate-400 text-[11px]">
+                {da
+                  ? 'Denne ejendom er opdelt — salgshistorik og købspriser findes på de enkelte ejerlejligheder. Se Ejerskab-fanen for oversigt med priser.'
+                  : 'This property is divided — sales history and purchase prices are on individual units. See the Ownership tab for details.'}
+              </p>
+            </div>
+          </div>
+        )}
       {/* BIZZ-402: only render when loading or when there is data to show */}
       {(salgshistorikLoader || tlSumLoader || mergedSalgshistorik.length > 0) && (
         <div>

@@ -53,6 +53,7 @@ const DEMO_PLAN: PlanDef = {
   paymentGraceHours: 0,
   maxSales: null,
   salesCount: 0,
+  modules: [],
 };
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

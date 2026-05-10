@@ -102,6 +102,13 @@ export interface DiagramNode {
   personRolle?: string;
   /** Other persons with roles in this company (for rendering inside the box) */
   noeglePersoner?: DiagramNodePerson[];
+  /**
+   * Layout section hint for grouping nodes visually. Nodes with the same
+   * layoutSection are placed together in the diagram, separated from other
+   * sections. Used on person pages to push role-only companies below the
+   * ownership hierarchy.
+   */
+  layoutSection?: 'role';
   /** Overflow items when a parent has >MAX children — shown as expandable list */
   overflowItems?: { label: string; cvr?: number; link?: string }[];
 }
@@ -126,6 +133,16 @@ export interface DiagramEdge {
    * edge fra A→B. Distinkt fra primary parent→child-edges (amber dashed).
    */
   crossOwnership?: boolean;
+  /**
+   * BIZZ-1082: Ejer-person-ID for fælles ejerskabs-edges. Bruges til at
+   * farve-kode edges per person når flere ejere peger på samme ejendom.
+   */
+  ownerPersonId?: string;
+  /**
+   * BIZZ-1082: Hex-farve for denne edge (tildelt per ejer-person).
+   * Rendereren bruger denne i stedet for default-farven.
+   */
+  ownerColor?: string;
 }
 
 /** Complete graph structure for diagram rendering */
@@ -181,6 +198,13 @@ export interface DiagramVariantProps {
     nodeId: string,
     nodeType: 'person' | 'company'
   ) => Promise<{ nodes: DiagramNode[]; edges: DiagramEdge[] } | null>;
+  /**
+   * Callback fired when nodes are collapsed (removed from diagram).
+   * Parent component should clean up any tracking refs (e.g. allNodesRef, allBfesRef).
+   *
+   * @param removedNodeIds - IDs af noder der blev fjernet
+   */
+  onCollapse?: (removedNodeIds: string[]) => void;
 }
 
 /** Max children shown per parent node — overflow becomes an expandable list */
@@ -826,6 +850,10 @@ export function buildPersonDiagramGraph(
         link: `/dashboard/companies/${v.cvr}`,
         personRolle,
         noeglePersoner: companyPersoner.length > 0 ? companyPersoner : undefined,
+        // BIZZ-1205: Rolle-virksomheder markeres med layoutSection='role'
+        // så DiagramForce kan placere dem visuelt adskilt fra ejer-hierarkiet
+        layoutSection: 'role',
+        isCoOwner: true,
       });
 
       // Edge from person to this company (dashed — non-owner role)

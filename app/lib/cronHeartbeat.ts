@@ -43,14 +43,15 @@ export async function recordHeartbeat(
 ): Promise<void> {
   try {
     const admin = createAdminClient();
-    // cron_heartbeats is not in generated Supabase types — cast to bypass type check
-    await (
+    // cron_heartbeats is not in generated Supabase types — cast to bypass type check.
+    // Supabase client returns { error } instead of throwing — must check explicitly.
+    const result = await (
       admin as unknown as {
         from: (t: string) => {
           upsert: (
             v: Record<string, unknown>,
             o: { onConflict: string }
-          ) => Promise<{ error: unknown }>;
+          ) => Promise<{ error: { message: string; code?: string } | null }>;
         };
       }
     )
@@ -66,6 +67,10 @@ export async function recordHeartbeat(
         },
         { onConflict: 'job_name' }
       );
+
+    if (result.error) {
+      logger.error(`[heartbeat] Supabase upsert failed for ${jobName}:`, result.error.message);
+    }
   } catch (e) {
     logger.error(`[heartbeat] Failed to record heartbeat for ${jobName}:`, e);
   }

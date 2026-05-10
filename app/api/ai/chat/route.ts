@@ -899,7 +899,34 @@ Systemet injicerer automatisk ID'er fra den side brugeren kigger på under "Tilg
 - Er "BFE-nummer: XXXXXXX" listet → kald hent_vurdering, hent_ejerskab osv. direkte. Søg IKKE adressen.
 - Er "CVR-nummer: XXXXXXXX" listet → kald hent_cvr_virksomhed direkte. Søg IKKE CVR.
 - Kald ALDRIG soeg_person_cvr hvis enhedsNummer allerede er i konteksten.
-- Kald ALDRIG dawa_adresse_soeg hvis adresseId eller bfeNummer allerede er i konteksten.`;
+- Kald ALDRIG dawa_adresse_soeg hvis adresseId eller bfeNummer allerede er i konteksten.
+
+## Forsikrings-gap-analyse (BIZZ-1222)
+Når brugeren beder om forsikringsanalyse, gap-analyse, eller beskriver en kundes forsikringsportefølje:
+
+1. **Indsaml data parallelt** baseret på forsikringstype:
+   - Husforsikring: hent_ejendomme_for_person + hent_bbr_data + hent_vurdering (byggematerialer, areal, vurdering)
+   - Bilforsikring: hent_bilbog (bilpantebreve, leasingaftaler — viser registrerede køretøjer)
+   - Erhvervsforsikring: hent_cvr_virksomhed + hent_regnskab_noegletal (branche, omsætning, ansatte)
+   - Bestyrelsesansvar (D&O): hent_person_virksomheder (roller i virksomheder)
+   - Bygningsforsikring: hent_bbr_data (materialer, byggeår, areal, tag, ydervægge)
+
+2. **Gap-detektion** — identificér automatisk:
+   - **Uforsikret aktiv**: Ejendom/køretøj fundet i data men IKKE nævnt i kundens policer
+   - **Underforsikret**: Dækningssum < ejendomsvurdering (sammenlign police med hent_forelobig_vurdering)
+   - **Manglende ansvar**: Bestyrelsesposter uden D&O-forsikring
+   - **Risikofaktorer**: Byggeår < 1960 (asbest-risiko), tagmateriale (brand), fredskov/strandbeskyttelse
+   - **Udløbne policer**: Policer der er udløbet eller udløber snart
+
+3. **Output-format**:
+   - Tabel: Forsikringstype | Eksisterende dækning | Anbefalet | Gap | Risiko (Lav/Middel/Høj)
+   - Rangér gaps efter risiko-score (Høj → Middel → Lav)
+   - Afslut med: "Vil du have dette som en rapport (Word/PDF), eller skal vi dykke ned i et specifikt gap?"
+
+4. **Vigtige regler**:
+   - OPFIND ALDRIG forsikringspriser — angiv kun dækningsmæssige gaps
+   - Brug KUN data fra BizzAssist-registre — gæt aldrig om kundens policer
+   - DISCLAIMER: "Dette er en indikativ analyse baseret på offentlige registerdata. Endelig rådgivning bør ske af en forsikringsformidler."`;
 
 // ─── Tool result cache ──────────────────────────────────────────────────────
 
@@ -960,7 +987,9 @@ async function executeTool(
   /** Forward user's Cookie header for authenticated internal API calls */
   cookieHeader?: string | null,
   /** BIZZ-1000: Diagram PNG base64 til injection i generate_document */
-  diagramBase64?: string
+  diagramBase64?: string,
+  /** BIZZ-1186: Supabase admin client for cache-first lookups */
+  admin?: ReturnType<typeof createAdminClient>
 ): Promise<unknown> {
   const cached = getCached(name, input);
   if (cached !== null) return cached;
@@ -1089,6 +1118,47 @@ async function executeTool(
       }
 
       case 'hent_ejerskab': {
+        // BIZZ-1186: Cache-first via ejf_ejerskab — sparer 200ms-3s
+        if (admin)
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: cached } = await (admin as any)
+              .from('ejf_ejerskab')
+              .select(
+                'ejer_navn, ejer_cvr, ejer_type, ejerandel_taeller, ejerandel_naevner, virkning_fra'
+              )
+              .eq('bfe_nummer', Number(input.bfeNummer))
+              .eq('status', 'gældende')
+              .limit(20);
+            if (cached && cached.length > 0) {
+              result = {
+                ejere: cached.map(
+                  (r: {
+                    ejer_navn: string;
+                    ejer_cvr: string | null;
+                    ejer_type: string;
+                    ejerandel_taeller: number | null;
+                    ejerandel_naevner: number | null;
+                    virkning_fra: string | null;
+                  }) => ({
+                    personNavn: r.ejer_type === 'person' ? r.ejer_navn : null,
+                    virksomhedsnavn: r.ejer_type === 'virksomhed' ? r.ejer_navn : null,
+                    cvr: r.ejer_cvr,
+                    ejertype: r.ejer_type,
+                    ejerandel_taeller: r.ejerandel_taeller,
+                    ejerandel_naevner: r.ejerandel_naevner,
+                    virkningFra: r.virkning_fra,
+                  })
+                ),
+                manglerAdgang: false,
+                fejl: null,
+              };
+              break;
+            }
+          } catch {
+            /* cache miss — fall through */
+          }
+        // Fallback til live API
         const res = await fetch(
           `${baseUrl}/api/ejerskab?bfeNummer=${encodeURIComponent(input.bfeNummer)}`,
           internalFetchOpts
@@ -1904,8 +1974,7 @@ async function executeTool(
       }
 
       case 'hent_ejendomme_for_virksomhed': {
-        // BIZZ-591: Wraps /api/ejendomme-by-owner så AI kan liste en virksomheds
-        // ejendomsportefølje (samme som Virksomhed → Ejendomme-fanen).
+        // BIZZ-591: Wraps /api/ejendomme-by-owner (allerede cache-first via BIZZ-1014)
         const res = await fetch(
           `${baseUrl}/api/ejendomme-by-owner?cvr=${encodeURIComponent(input.cvr)}`,
           internalFetchOpts
@@ -2985,7 +3054,8 @@ export async function POST(request: NextRequest): Promise<Response> {
                 toolBlock.input as Record<string, string>,
                 baseUrl,
                 request.headers.get('cookie'),
-                diagramBase64
+                diagramBase64,
+                adminClient
               );
 
               // BIZZ-813: generate_document returnerer download_url —

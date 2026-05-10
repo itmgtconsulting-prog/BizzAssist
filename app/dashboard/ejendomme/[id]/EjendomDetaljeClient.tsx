@@ -31,16 +31,16 @@ import {
   Map as MapIcon,
   Briefcase,
   RefreshCw,
-  Sparkles,
 } from 'lucide-react';
 /** BIZZ-600: PropertyMap wraps mapbox-gl (browser-only) — dynamic() keeps mapbox-gl out of initial bundle */
 // prettier-ignore
 const PropertyMap = dynamic(/* mapbox-gl */ () => import('@/app/components/ejendomme/PropertyMap'), { ssr: false, loading: () => (<div className="w-full h-64 bg-slate-800/50 rounded-xl animate-pulse flex items-center justify-center"><span className="text-slate-500 text-sm">Indlæser kort...</span></div>) });
 /** Diagram v2 — feature-flagged, kun synlig i dev/preview */
-const DiagramV2 = dynamic(() => import('@/app/components/diagrams/DiagramV2'), { ssr: false });
-import { type EjerstrukturNode } from '@/app/lib/mock/ejendomme';
 import { erDawaId, type DawaAdresse, type DawaJordstykke } from '@/app/lib/dawa';
-import { formatBenyttelseOgByggeaar } from '@/app/lib/benyttelseskoder';
+import {
+  formatBenyttelseOgByggeaar,
+  benyttelseskodeTilBoligtype,
+} from '@/app/lib/benyttelseskoder';
 import { isUdfasetStatusLabel } from '@/app/lib/bbrKoder';
 import type { EjendomApiResponse, LiveBBRBygning } from '@/app/api/ejendom/[id]/route';
 import type { CVRVirksomhed, CVRResponse } from '@/app/api/cvr/route';
@@ -70,12 +70,14 @@ import { useLanguage } from '@/app/context/LanguageContext';
 import { useSetAIPageContext } from '@/app/context/AIPageContext';
 import dynamic from 'next/dynamic';
 import { logger } from '@/app/lib/logger';
-import { isDiagram2Enabled } from '@/app/lib/featureFlags';
+// isDiagram2Enabled fjernet
 import TinglysningTab from './TinglysningTab';
 // BIZZ-657: Tab-subkomponenter extraheret til selvstændige præsentations-komponenter
 import EjendomSkatTab from './tabs/EjendomSkatTab';
 import EjendomDokumenterTab from './tabs/EjendomDokumenterTab';
 import EjendomEjerforholdTab from './tabs/EjendomEjerforholdTab';
+import type { EjerDetalje } from './EjerKort';
+import GenerateListingModal from '@/app/components/ejendomme/GenerateListingModal';
 import EjendomOekonomiTab from './tabs/EjendomOekonomiTab';
 import EjendomBBRTab from './tabs/EjendomBBRTab';
 import DataFreshnessBadge from '@/app/components/DataFreshnessBadge';
@@ -83,13 +85,13 @@ import FloodRiskBadge from '@/app/components/ejendomme/FloodRiskBadge';
 import EjendomOverblikTab from './tabs/EjendomOverblikTab';
 // BIZZ-583: Administrator-kort bruges nu kun via EjendomEjerforholdTab — import fjernet fra master.
 // BIZZ-601: DiagramForce + DiagramGraph-type var kun brugt i
-// PropertyOwnerDiagram — nu extraheret. Fjernet fra master-filen.
+// BIZZ-1143: PropertyOwnerDiagram slettet — erstattet af EjerKort (ren præsentation).
 
 type Tab =
   | 'overblik'
   | 'bbr'
   | 'ejerforhold'
-  | 'diagram2'
+  // diagram2 fjernet — DiagramV2 vises nu på ejerskab-fanen
   | 'tinglysning'
   | 'oekonomi'
   | 'skatter'
@@ -101,9 +103,7 @@ function buildTabs(da: boolean): { id: Tab; label: string; ikon: React.ReactNode
     { id: 'overblik', label: da ? 'Oversigt' : 'Overview', ikon: <Building2 size={12} /> },
     { id: 'bbr', label: 'BBR', ikon: <FileText size={12} /> },
     { id: 'ejerforhold', label: da ? 'Ejerskab' : 'Ownership', ikon: <Users size={12} /> },
-    ...(isDiagram2Enabled()
-      ? [{ id: 'diagram2' as const, label: 'Diagram v2', ikon: <Sparkles size={12} /> }]
-      : []),
+    // Diagram v2 fane fjernet — diagrammet vises nu på Ejerskab-fanen
     { id: 'oekonomi', label: da ? 'Økonomi' : 'Financials', ikon: <BarChart3 size={12} /> },
     { id: 'skatter', label: da ? 'SKAT' : 'Tax', ikon: <Landmark size={12} /> },
     {
@@ -113,140 +113,6 @@ function buildTabs(da: boolean): { id: Tab; label: string; ikon: React.ReactNode
     },
     { id: 'dokumenter', label: da ? 'Dokumenter' : 'Documents', ikon: <FileText size={12} /> },
   ];
-}
-
-/**
- * SVG-baseret ejerstruktur-træ i horisontalt layout.
- * Noder vises fra venstre (personer) mod højre (ejendom).
- *
- * @param noder - Array af EjerstrukturNode der bygger træet
- */
-function _EjerstrukturTrae({ noder }: { noder: EjerstrukturNode[] }) {
-  // Opbyg kolonner: ingen forælder = kolonne 0, dybde stiger mod højre
-  const getDepth = (node: EjerstrukturNode, depth = 0): number => {
-    if (!node.foraeldreId) return depth;
-    const parent = noder.find((n) => n.id === node.foraeldreId);
-    return parent ? getDepth(parent, depth + 1) : depth;
-  };
-
-  const maxDepth = Math.max(...noder.map((n) => getDepth(n)));
-
-  // Grupper noder per dybde (kolonner) — bruger Record i stedet for Map for ES2017-kompatibilitet
-  const byDepth: Record<number, EjerstrukturNode[]> = {};
-  noder.forEach((n) => {
-    const d = maxDepth - getDepth(n);
-    if (!byDepth[d]) byDepth[d] = [];
-    byDepth[d].push(n);
-  });
-
-  const COL_W = 160;
-  const ROW_H = 80;
-  const NODE_W = 140;
-  const NODE_H = 54;
-  const COLS = maxDepth + 1;
-
-  const totalW = COLS * COL_W + 20;
-  const depthValues: EjerstrukturNode[][] = Object.values(byDepth);
-  const maxRows = Math.max(...depthValues.map((a: EjerstrukturNode[]) => a.length));
-  const totalH = Math.max(maxRows * ROW_H + 20, 160);
-
-  // Beregn x/y per node
-  const nodePos: Record<string, { x: number; y: number }> = {};
-  Object.entries(byDepth).forEach(([colStr, nodesInCol]: [string, EjerstrukturNode[]]) => {
-    const col = Number(colStr);
-    const colX = col * COL_W + 10;
-    nodesInCol.forEach((node: EjerstrukturNode, rowIdx: number) => {
-      const colH = nodesInCol.length * ROW_H;
-      const startY = (totalH - colH) / 2;
-      nodePos[node.id] = {
-        x: colX,
-        y: startY + rowIdx * ROW_H,
-      };
-    });
-  });
-
-  /** Farver pr. nodetype */
-  const nodeColor: Record<EjerstrukturNode['type'], string> = {
-    person: '#ef4444',
-    selskab: '#2563eb',
-    ejendom: '#475569',
-  };
-
-  return (
-    <div className="overflow-x-auto">
-      <svg width={totalW} height={totalH} className="block">
-        {/* Linjer */}
-        {noder
-          .filter((n) => n.foraeldreId)
-          .map((n) => {
-            const from = nodePos[n.foraeldreId!];
-            const to = nodePos[n.id];
-            if (!from || !to) return null;
-            const x1 = from.x + NODE_W;
-            const y1 = from.y + NODE_H / 2;
-            const x2 = to.x;
-            const y2 = to.y + NODE_H / 2;
-            const mx = (x1 + x2) / 2;
-            return (
-              <g key={`line-${n.id}`}>
-                <path
-                  d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
-                  fill="none"
-                  stroke="#334155"
-                  strokeWidth={1.5}
-                />
-                {n.andel !== undefined && (
-                  <text
-                    x={mx}
-                    y={(y1 + y2) / 2 - 5}
-                    fill="#64748b"
-                    fontSize={10}
-                    textAnchor="middle"
-                  >
-                    {n.andel}%
-                  </text>
-                )}
-              </g>
-            );
-          })}
-
-        {/* Noder */}
-        {noder.map((node) => {
-          const pos = nodePos[node.id];
-          if (!pos) return null;
-          const color = nodeColor[node.type];
-          const isEjendom = node.type === 'ejendom';
-
-          return (
-            <g key={node.id} transform={`translate(${pos.x}, ${pos.y})`}>
-              <rect
-                width={NODE_W}
-                height={NODE_H}
-                rx={isEjendom ? 6 : 8}
-                fill={`${color}18`}
-                stroke={color}
-                strokeWidth={1}
-              />
-              {/* Ikoncirkel */}
-              <circle cx={20} cy={NODE_H / 2} r={12} fill={`${color}30`} />
-              <text x={20} y={NODE_H / 2 + 5} textAnchor="middle" fontSize={12} fill={color}>
-                {node.type === 'person' ? '👤' : node.type === 'selskab' ? '🏢' : '🏠'}
-              </text>
-
-              {/* Navn */}
-              <text x={38} y={NODE_H / 2 - 6} fontSize={10} fontWeight="600" fill="#f1f5f9">
-                {node.navn.length > 18 ? node.navn.slice(0, 16) + '…' : node.navn}
-              </text>
-              {/* Titel */}
-              <text x={38} y={NODE_H / 2 + 8} fontSize={9} fill="#64748b">
-                {node.titel ?? ''}
-              </text>
-            </g>
-          );
-        })}
-      </svg>
-    </div>
-  );
 }
 
 /**
@@ -303,7 +169,7 @@ export default function EjendomDetaljeClient({
 
   const [aktivTab, setAktivTab] = useState<Tab>('overblik');
   /** BIZZ-1121: Lazy-mount — mount ved første klik, behold med display:none */
-  const [diagram2Mounted, setDiagram2Mounted] = useState(false);
+  // diagram2Mounted fjernet
   const [valgteDoc, setValgteDoc] = useState<Set<string>>(new Set());
 
   /**
@@ -436,6 +302,13 @@ export default function EjendomDetaljeClient({
   /** True mens lejlighedsdata hentes */
   const [lejlighederLoader, setLejlighederLoader] = useState(false);
 
+  /** Ejendomsstruktur-træ (SFE → Hovedejendom → Ejerlejlighed) */
+  const [strukturTree, setStrukturTree] = useState<
+    import('@/app/api/ejendom-struktur/route').StrukturNode | null
+  >(null);
+  /** True mens strukturdata hentes */
+  const [strukturLoader, setStrukturLoader] = useState(false);
+
   /** Ejendomsvurderingsdata fra Datafordeler — null = ikke hentet endnu */
   const [vurdering, setVurdering] = useState<VurderingData | null>(null);
   /** Alle vurderinger fra Datafordeler — bruges til historiktabel */
@@ -463,6 +336,17 @@ export default function EjendomDetaljeClient({
   const [ejereLoader, setEjereLoader] = useState(!!prefetched?.bbrData);
   /** True hvis Datafordeler returnerer 403 — Dataadgang-ansøgning mangler for EJF */
   const [_manglerEjereAdgang, setManglerEjereAdgang] = useState(false);
+
+  /** BIZZ-1143: Ejer-detaljer fra /api/ejerskab/chain (prefetched parallelt) */
+  const [chainEjerDetaljer, setChainEjerDetaljer] = useState<EjerDetalje[]>([]);
+  /** BIZZ-1143: True mens chain-data hentes */
+  const [chainLoader, setChainLoader] = useState(false);
+  /** BIZZ-1143: Prefetched diagram-graf fra /api/diagram/resolve */
+  const [prefetchedDiagramGraph, setPrefetchedDiagramGraph] = useState<{ graph: unknown } | null>(
+    null
+  );
+  /** BIZZ-1143: True mens diagram-resolve hentes */
+  const [diagramResolveLoader, setDiagramResolveLoader] = useState(false);
 
   /** BBR-tab: ID'er på bygningsrækker der er foldet ud */
   const [expandedBygninger, setExpandedBygninger] = useState<Set<string>>(new Set());
@@ -530,6 +414,8 @@ export default function EjendomDetaljeClient({
   const [visFoelgTooltip, setVisFoelgTooltip] = useState(false);
   /** BIZZ-808: Opret sag-modal state */
   const [opretSagOpen, setOpretSagOpen] = useState(false);
+  /** BIZZ-1179: Modal for AI annoncegenerering */
+  const [annonceModalOpen, setAnnonceModalOpen] = useState(false);
   const { memberships: domainMemberships } = useDomainMemberships();
 
   /** Indlaes tracking-tilstand ved mount og lyt efter aendringer.
@@ -989,6 +875,50 @@ export default function EjendomDetaljeClient({
   }, [id, erDAWA, dawaStatus, dawaAdresse, bbrData, matrikelData]);
 
   /**
+   * Henter ejendomsstruktur (SFE → Hovedejendom → Ejerlejlighed) for opdelte
+   * ejendomme. Aktiveres kun når ejendommen er opdelt i ejerlejligheder.
+   * Bruger samme ejerlav+matrikelnr som ejerlejligheder-fetch.
+   */
+  useEffect(() => {
+    const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+    const erChild = !!dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+    const matOpdelt = matrikelData?.opdeltIEjerlejligheder === true;
+    // Vis struktur for hele hierarkiet: moderejendommen, children (ejerlejligheder),
+    // og ejendomme der er opdelt ifølge matrikeldata.
+    if (!erModer && !erChild && !matOpdelt) return;
+
+    const bbrRel = bbrData?.ejendomsrelationer?.[0];
+    const matJs = matrikelData?.jordstykker?.[0];
+    const ejerlavKode = bbrRel?.ejerlavKode ?? matJs?.ejerlavskode;
+    const matrikelnr = bbrRel?.matrikelnr ?? matJs?.matrikelnummer;
+    if (!ejerlavKode || !matrikelnr) return;
+
+    const controller = new AbortController();
+    setStrukturLoader(true);
+    const params = new URLSearchParams({
+      ejerlavKode: String(ejerlavKode),
+      matrikelnr: String(matrikelnr),
+    });
+    const sfeBfe = bbrData?.moderBfe ?? bbrRel?.bfeNummer;
+    if (sfeBfe) params.set('sfeBfe', String(sfeBfe));
+
+    fetch(`/api/ejendom-struktur?${params}`, { signal: controller.signal })
+      .then((r) => (r.ok ? r.json() : { tree: null }))
+      .then((data: { tree: import('@/app/api/ejendom-struktur/route').StrukturNode | null }) => {
+        if (controller.signal.aborted) return;
+        setStrukturTree(data.tree);
+      })
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        logger.warn('[ejendom] Struktur fetch error:', err);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setStrukturLoader(false);
+      });
+    return () => controller.abort();
+  }, [id, erDAWA, dawaStatus, dawaAdresse, bbrData, matrikelData]);
+
+  /**
    * Henter ejendomsvurdering og ejerskabsdata fra Datafordeler når BFEnummer
    * er tilgængeligt via BBR Ejendomsrelation.
    * Kører i parallel og fejler stille ved manglende API-nøgle.
@@ -1001,10 +931,11 @@ export default function EjendomDetaljeClient({
    * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
-    if (!erDAWA || !bbrData?.ejendomsrelationer?.length || !dawaAdresse) return;
-    // Moderejandom: ingen etage OG VP fandt en child-ejerlejlighed → brug moderBfe (jordBfe).
-    // Ejerlejlighed / normal: brug ejendomsrelationer-BFE (= ejerlejlighedBfe eller jordBfe).
-    const erModer = !dawaAdresse.etage && !!bbrData.ejerlejlighedBfe;
+    if (!erDAWA || !bbrData?.ejendomsrelationer?.length) return;
+    // BIZZ-1213: Fjernet dawaAdresse-dependency for at køre parallelt med adresse-fetch.
+    // Moderejandom-check bruger nu bbrData alene (ejerlejlighedBfe + moderBfe).
+    // Ejerlejlighed: brug ejendomsrelationer-BFE. Moderejandom: brug moderBfe.
+    const erModer = !bbrData.ejerlejlighedBfe ? false : !!bbrData.moderBfe;
     const bfeNummer = erModer
       ? (bbrData.moderBfe ?? bbrData.ejendomsrelationer[0]?.bfeNummer)
       : bbrData.ejendomsrelationer[0]?.bfeNummer;
@@ -1058,6 +989,42 @@ export default function EjendomDetaljeClient({
         if (!signal.aborted) setEjereLoader(false);
       });
 
+    // BIZZ-1143: Fetch ejerskab/chain + diagram/resolve PARALLELT og gem resultatet.
+    // EjerKort og DiagramV2 modtager data via props — ingen intern fetch i child.
+    const erEjerlej = !!bbrData.ejerlejlighedBfe;
+    const chainAdresse = dawaAdresse
+      ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
+      : '';
+    const chainParams = new URLSearchParams({
+      bfe: String(bfeNummer),
+      adresse: chainAdresse,
+    });
+    if (erEjerlej) chainParams.set('type', 'ejerlejlighed');
+    setChainLoader(true);
+    fetch(`/api/ejerskab/chain?${chainParams}`, { signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (signal.aborted) return;
+        setChainEjerDetaljer((data?.ejerDetaljer as EjerDetalje[]) ?? []);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!signal.aborted) setChainLoader(false);
+      });
+    const resolveParams = new URLSearchParams({ type: 'property', id: String(bfeNummer) });
+    if (chainAdresse) resolveParams.set('label', chainAdresse);
+    setDiagramResolveLoader(true);
+    fetch(`/api/diagram/resolve?${resolveParams}`, { signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (signal.aborted) return;
+        if (data) setPrefetchedDiagramGraph(data);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!signal.aborted) setDiagramResolveLoader(false);
+      });
+
     setSalgshistorikLoader(true);
     fetch(`/api/salgshistorik?bfeNummer=${bfeNummer}`, { signal })
       .then((r) => (r.ok ? r.json() : null))
@@ -1076,8 +1043,10 @@ export default function EjendomDetaljeClient({
       });
 
     return () => controller.abort();
+    // BIZZ-1213: Fjernet dawaAdresse fra deps — vurdering/ejerskab starter nu
+    // med det samme bbrData er tilgængelig (parallelt med adresse-fetch)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, erDAWA, bbrData, dawaAdresse]);
+  }, [id, erDAWA, bbrData]);
 
   /**
    * Henter matrikeldata (jordstykker, landbrugsnotering m.m.) fra Datafordeler MAT-registret.
@@ -1778,6 +1747,7 @@ export default function EjendomDetaljeClient({
                   </button>
                   <FoelgTooltip lang={da ? 'da' : 'en'} visible={visFoelgTooltip} />
                 </div>
+                {/* BIZZ-1239: Annonce-knap fjernet — funktionalitet er nu i /dashboard/analyse/annonce */}
                 {/* BIZZ-808: Opret sag-knap — kun synlig for domain-brugere */}
                 {domainMemberships.length > 0 && (
                   <button
@@ -1842,20 +1812,39 @@ export default function EjendomDetaljeClient({
                     {da ? 'Gå til hovedejendom' : 'Go to main property'}
                   </button>
                 )}
-                {/* Moderejandom (ingen etage, men har ejerlejlighedBfe): statisk badge */}
-                {bbrData?.ejerlejlighedBfe && !dawaAdresse?.etage && (
-                  <span
-                    className="flex items-center gap-1.5 px-3 py-1 bg-amber-500/15 border border-amber-500/30 rounded-lg text-amber-400 text-xs font-medium flex-shrink-0"
-                    title={
-                      lang === 'da'
-                        ? `Denne ejendom er en hovedejendom (BFE ${bbrData.moderBfe ?? bbrData.ejerlejlighedBfe})`
-                        : `This property is a main property (BFE ${bbrData.moderBfe ?? bbrData.ejerlejlighedBfe})`
-                    }
-                  >
-                    <Building2 size={12} />
-                    {lang === 'da' ? 'Hovedejendom' : 'Main property'}
-                  </span>
-                )}
+                {/* Moderejandom (ingen etage, men har ejerlejlighedBfe): klikbar
+                    "Gå til SFE" knap når strukturTree har en SFE med dawaId,
+                    ellers statisk badge. */}
+                {bbrData?.ejerlejlighedBfe &&
+                  !dawaAdresse?.etage &&
+                  (strukturTree?.niveau === 'sfe' && strukturTree.dawaId ? (
+                    <button
+                      onClick={() => {
+                        router.push(`/dashboard/ejendomme/${strukturTree.dawaId}`);
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1 bg-amber-500/15 border border-amber-500/30 rounded-lg text-amber-400 text-xs font-medium hover:bg-amber-500/25 transition-colors flex-shrink-0"
+                      title={
+                        da
+                          ? `Gå til SFE-ejendommen (BFE ${strukturTree.bfe})`
+                          : `Go to SFE property (BFE ${strukturTree.bfe})`
+                      }
+                    >
+                      <Building2 size={12} />
+                      {da ? 'Gå til SFE ejendom' : 'Go to SFE property'}
+                    </button>
+                  ) : (
+                    <span
+                      className="flex items-center gap-1.5 px-3 py-1 bg-amber-500/15 border border-amber-500/30 rounded-lg text-amber-400 text-xs font-medium flex-shrink-0"
+                      title={
+                        da
+                          ? `Denne ejendom er en hovedejendom (BFE ${bbrData.moderBfe ?? bbrData.ejerlejlighedBfe})`
+                          : `This property is a main property (BFE ${bbrData.moderBfe ?? bbrData.ejerlejlighedBfe})`
+                      }
+                    >
+                      <Building2 size={12} />
+                      {da ? 'Hovedejendom' : 'Main property'}
+                    </span>
+                  ))}
                 {bbrData?.ejerlejlighedBfe && (
                   <span className="flex items-center gap-1 px-2 py-0.5 bg-purple-500/15 border border-purple-500/30 rounded-full text-purple-400 text-[10px] font-medium flex-shrink-0">
                     {lang === 'da' ? 'Ejerlejlighed' : 'Condominium'}
@@ -1978,18 +1967,36 @@ export default function EjendomDetaljeClient({
                 {(() => {
                   const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
                   const erEjerlej = !!dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+                  // Skelne SFE vs. underliggende hovedejendom via strukturTree:
+                  // Hvis denne BFE matcher root-noden i træet, er det SFE.
+                  const currentBfeNum =
+                    bbrData?.ejerlejlighedBfe ??
+                    bbrData?.moderBfe ??
+                    bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
+                  const erSfe =
+                    erModer && strukturTree?.niveau === 'sfe' && currentBfeNum === strukturTree.bfe;
                   if (erModer)
                     return (
                       <span
                         className="flex items-center gap-1 px-2.5 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded-full text-amber-300 text-xs font-medium flex-shrink-0"
                         title={
                           da
-                            ? 'Matrikel-niveau ejendom der samler bygninger og ejerlejligheder'
-                            : 'Cadastral-level property combining buildings and condominiums'
+                            ? erSfe
+                              ? 'Samlet Fast Ejendom — matrikel-niveau ejendom'
+                              : 'Hovedejendom under en SFE'
+                            : erSfe
+                              ? 'Collective Real Property — cadastral-level property'
+                              : 'Main property under an SFE'
                         }
                       >
                         <Building2 size={11} />
-                        {da ? 'Hovedejendom (SFE)' : 'Main property (SFE)'}
+                        {erSfe
+                          ? da
+                            ? 'Hovedejendom (SFE)'
+                            : 'Main property (SFE)'
+                          : da
+                            ? 'Hovedejendom'
+                            : 'Main property'}
                       </span>
                     );
                   if (erEjerlej)
@@ -2163,9 +2170,11 @@ export default function EjendomDetaljeClient({
               </div>
             )}
 
-            {/* BIZZ-832: Søster-enheder — vises når en ejerlejlighed
-                har sibling-enheder på samme matrikel */}
-            {!!dawaAdresse?.etage &&
+            {/* BIZZ-832: Søster-enheder — skjules når ejendomsstruktur
+                er tilgængelig (redundant info). Fallback for ejendomme
+                uden strukturtræ. */}
+            {!strukturTree &&
+              !!dawaAdresse?.etage &&
               lejligheder &&
               lejligheder.length > 1 &&
               (() => {
@@ -2294,29 +2303,7 @@ export default function EjendomDetaljeClient({
               />
             )}
 
-            {/* ══ DIAGRAM v2 (feature-flagged) ══ */}
-            {/* BIZZ-1121: Lazy-mount ved første klik, derefter display:none */}
-            {bbrData && (aktivTab === 'diagram2' || diagram2Mounted) && (
-              <div
-                ref={() => {
-                  if (!diagram2Mounted) setDiagram2Mounted(true);
-                }}
-                style={{ display: aktivTab === 'diagram2' ? 'block' : 'none' }}
-              >
-                <DiagramV2
-                  rootType="property"
-                  rootId={String(
-                    bbrData.ejendomsrelationer?.[0]?.bfeNummer ?? dawaAdresse?.id ?? ''
-                  )}
-                  rootLabel={
-                    dawaAdresse
-                      ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
-                      : `BFE ${bbrData.ejendomsrelationer?.[0]?.bfeNummer ?? ''}`
-                  }
-                  lang={da ? 'da' : 'en'}
-                />
-              </div>
-            )}
+            {/* Diagram v2 fane fjernet — DiagramV2 vises nu på Ejerskab-fanen */}
 
             {/* ══ EJERFORHOLD — always mounted for prefetch (BIZZ-410), hidden when not active ══ */}
             <div className={aktivTab === 'ejerforhold' ? '' : 'hidden'}>
@@ -2328,6 +2315,25 @@ export default function EjendomDetaljeClient({
                 ejereLoader={ejereLoader}
                 lejlighederLoader={lejlighederLoader}
                 lejligheder={lejligheder}
+                strukturTree={strukturTree}
+                strukturLoader={strukturLoader}
+                currentBfe={
+                  bbrData?.ejerlejlighedBfe ??
+                  bbrData?.moderBfe ??
+                  bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
+                  undefined
+                }
+                bbrEnheder={
+                  bbrData?.enheder?.map((e) => ({
+                    etage: e.etage ?? null,
+                    doer: e.doer ?? null,
+                    vaerelser: e.vaerelser ?? null,
+                  })) ?? []
+                }
+                chainEjerDetaljer={chainEjerDetaljer}
+                chainLoader={chainLoader}
+                prefetchedDiagramGraph={prefetchedDiagramGraph}
+                diagramResolveLoader={diagramResolveLoader}
               />
             </div>
 
@@ -2368,7 +2374,18 @@ export default function EjendomDetaljeClient({
                 // BIZZ-860: Signal om ejendommen er opdelt — kilde er MAT-data
                 // (matrikelData.opdeltIEjerlejligheder) eller fallback via bbrData.
                 opdeltIEjerlejligheder={
-                  matrikelData?.opdeltIEjerlejligheder ?? bbrData?.opdeltIEjerlejligheder ?? false
+                  // BIZZ-1147: Ejerlejligheder har egen vurdering — vis IKKE
+                  // "fordelt på ejerlejligheder" for dem, kun for moderejendomme.
+                  // erModer = ingen etage + har ejerlejlighedBfe (= hovedejendom)
+                  (() => {
+                    const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+                    return (
+                      erModer &&
+                      (matrikelData?.opdeltIEjerlejligheder ??
+                        bbrData?.opdeltIEjerlejligheder ??
+                        false)
+                    );
+                  })()
                 }
                 lejlighederCount={lejligheder?.length ?? 0}
                 postnr={dawaAdresse?.postnr ?? null}
@@ -2543,6 +2560,19 @@ export default function EjendomDetaljeClient({
             onClose={() => setOpretSagOpen(false)}
           />
         )}
+        {/* BIZZ-1179: AI annonce-modal */}
+        <GenerateListingModal
+          bfe={bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? 0}
+          adresse={adresseStreng}
+          lang={da ? 'da' : 'en'}
+          open={annonceModalOpen}
+          onClose={() => setAnnonceModalOpen(false)}
+          postnummer={dawaAdresse?.postnr ? Number(dawaAdresse.postnr) : undefined}
+          areal={bbrData?.bbr?.[0]?.samletBoligareal ?? undefined}
+          boligtype={benyttelseskodeTilBoligtype(vurdering?.benyttelseskode) ?? undefined}
+          lat={dawaAdresse?.y || undefined}
+          lon={dawaAdresse?.x || undefined}
+        />
       </div>
     );
   }

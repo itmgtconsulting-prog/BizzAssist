@@ -24,6 +24,7 @@ import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 /** Zod schema for /api/matrikel query parameters */
 const matrikelQuerySchema = z.object({
@@ -333,6 +334,36 @@ export async function GET(request: NextRequest): Promise<NextResponse<MatrikelRe
   if (!parsed.success) return parsed.response as NextResponse<MatrikelResponse>;
 
   const bfeNummer = parseInt(parsed.data.bfeNummer, 10);
+
+  // BIZZ-1162: Cache-first lookup
+  try {
+    const admin = createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: cached } = await (admin as any)
+      .from('matrikel_cache')
+      .select('ejendom, jordstykker, stale_after')
+      .eq('bfe_nummer', bfeNummer)
+      .maybeSingle();
+    if (cached?.ejendom && cached.stale_after && new Date(cached.stale_after) > new Date()) {
+      const matrikel: MatrikelEjendom = {
+        ...cached.ejendom,
+        jordstykker: cached.jordstykker ?? [],
+      };
+      return NextResponse.json(
+        { matrikel, fejl: null },
+        {
+          status: 200,
+          headers: {
+            'Cache-Control': 'public, s-maxage=86400, stale-while-revalidate=3600',
+            'X-Cache': 'HIT',
+          },
+        }
+      );
+    }
+  } catch {
+    // Cache-fejl må ALDRIG blokere live response
+  }
+
   const now = nowISOTimestamp();
 
   try {
@@ -384,11 +415,33 @@ export async function GET(request: NextRequest): Promise<NextResponse<MatrikelRe
 
     const matrikel = mapEjendom(ejendomNodes[0], rawJordstykker, ejerlavMap);
 
+    // BIZZ-1162: Skriv til cache (fire-and-forget)
+    try {
+      const admin = createAdminClient();
+      const { jordstykker, ...ejendomData } = matrikel;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (admin as any).from('matrikel_cache').upsert(
+        {
+          bfe_nummer: bfeNummer,
+          ejendom: ejendomData,
+          jordstykker,
+          fetched_at: new Date().toISOString(),
+          stale_after: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        },
+        { onConflict: 'bfe_nummer' }
+      );
+    } catch {
+      // Cache-write fejl logges men blokerer ikke
+    }
+
     return NextResponse.json(
       { matrikel, fejl: null },
       {
         status: 200,
-        headers: { 'Cache-Control': 'public, s-maxage=86400, stale-while-revalidate=3600' },
+        headers: {
+          'Cache-Control': 'public, s-maxage=86400, stale-while-revalidate=3600',
+          'X-Cache': 'MISS',
+        },
       }
     );
   } catch (err) {

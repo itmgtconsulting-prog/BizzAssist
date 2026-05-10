@@ -31,6 +31,7 @@ import type { MatrikelEjendom } from '@/app/api/matrikel/route';
 import ByggeaktivitetBadge from '@/app/components/ejendomme/ByggeaktivitetBadge';
 import SkraafotoGalleri from '@/app/components/ejendomme/SkraafotoGalleri';
 import type { MatrikelHistorikEvent } from '@/app/api/matrikel/historik/route';
+// Ejendomsstruktur flyttet til Ejerskab-fanen
 
 /** Small re-implementation of the parent's SectionTitle for this tab. */
 function SectionTitle({ title }: { title: string }) {
@@ -551,16 +552,9 @@ export default function EjendomBBRTab({
         );
       })()}
 
-      {/* Enheder */}
+      {/* Enheder — kun summary-boksen, detaljelisten erstattes af Ejendomsstruktur */}
       {(() => {
-        const bygningsnrMap = new Map(
-          (bbrData?.bygningPunkter ?? []).map((p) => [p.id, p.bygningsnr ?? 9999])
-        );
-        const enheder = (bbrData?.enheder ?? []).slice().sort((a, b) => {
-          const nrA = a.bygningId ? (bygningsnrMap.get(a.bygningId) ?? 9999) : 9999;
-          const nrB = b.bygningId ? (bygningsnrMap.get(b.bygningId) ?? 9999) : 9999;
-          return nrA - nrB;
-        });
+        const enheder = bbrData?.enheder ?? [];
         const boligEnh = enheder.filter((e) => (e.arealBolig ?? 0) > 0).length;
         const erhvEnh = enheder.filter((e) => (e.arealErhverv ?? 0) > 0).length;
         const totAreal = enheder.reduce((s, e) => s + (e.areal ?? 0), 0);
@@ -576,6 +570,22 @@ export default function EjendomBBRTab({
                 value={totAreal ? `${totAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²` : '–'}
               />
             </div>
+          </div>
+        );
+      })()}
+
+      {/* Enheder-detaljeliste */}
+      {(() => {
+        const bygningsnrMap = new Map(
+          (bbrData?.bygningPunkter ?? []).map((p) => [p.id, p.bygningsnr ?? 9999])
+        );
+        const enheder = (bbrData?.enheder ?? []).slice().sort((a, b) => {
+          const nrA = a.bygningId ? (bygningsnrMap.get(a.bygningId) ?? 9999) : 9999;
+          const nrB = b.bygningId ? (bygningsnrMap.get(b.bygningId) ?? 9999) : 9999;
+          return nrA - nrB;
+        });
+        return (
+          <div>
             {bbrLoader ? (
               <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden animate-pulse">
                 {[1, 2].map((n) => (

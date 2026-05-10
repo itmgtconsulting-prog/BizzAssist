@@ -534,7 +534,9 @@ ${gapLines}
 Inkludér: forside med kundenavn og dato, resumé-sektion, aktiv-oversigt som tabel (type, adresse, værdi, status), detaljer per gap med anbefaling, og risiko-profil. Format: Word (docx).`;
 
                 window.dispatchEvent(
-                  new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt } })
+                  new CustomEvent('bizz:ai-open-with-prompt', {
+                    detail: { prompt, displayText: 'Generér forsikrings-gap rapport (Word)' },
+                  })
                 );
               }}
               className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"

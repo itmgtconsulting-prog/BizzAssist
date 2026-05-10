@@ -196,7 +196,12 @@ export default function AnalyseModulLayout({ modul, children, ekstraKontekst }: 
 
     const prompt = buildAnalysePrompt(modul, target, ekstraKontekst);
 
-    window.dispatchEvent(new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt } }));
+    // BIZZ-1260: Kort brugervenlig tekst vist i chat-boblen
+    const displayText = `${modul.label} — ${target.label}`;
+
+    window.dispatchEvent(
+      new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt, displayText } })
+    );
 
     // Reset loading efter kort delay (chat åbner)
     setTimeout(() => setLoading(false), 500);

@@ -174,7 +174,11 @@ export default function AnnonceClient() {
     }
 
     const prompt = buildAnalysePrompt(modul, target, ekstra);
-    window.dispatchEvent(new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt } }));
+    // BIZZ-1260: Kort brugervenlig tekst i chat-boblen
+    const displayText = `Boligannonce — ${adresse} (${tone})`;
+    window.dispatchEvent(
+      new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt, displayText } })
+    );
 
     setTimeout(() => setLoading(false), 500);
   }, [bfe, adresse, tone, outputFormat]);

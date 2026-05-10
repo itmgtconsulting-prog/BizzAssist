@@ -45,6 +45,12 @@ import { Lock } from 'lucide-react';
 interface Message {
   role: 'user' | 'assistant';
   content: string;
+  /**
+   * BIZZ-1260: Kort brugervenlig tekst vist i chat-boblen i stedet for
+   * den fulde prompt. Bruges af analyse-moduler der sender lange
+   * system-instruktioner som content — brugeren ser kun displayText.
+   */
+  displayText?: string;
   /** BIZZ-812: Attached files (metadata only — extracted text lives in content). */
   attachments?: Array<{
     name: string;
@@ -561,11 +567,15 @@ function AIChatPanel() {
 
   // BIZZ-956 + BIZZ-993: Lytt efter AI-knap events og auto-send
   const pendingSendRef = useRef(false);
+  /** BIZZ-1260: Kort tekst vist i chat-boblen i stedet for den fulde prompt */
+  const pendingDisplayTextRef = useRef<string | null>(null);
   useEffect(() => {
     const handler = (event: Event) => {
-      const ce = event as CustomEvent<{ prompt: string }>;
+      const ce = event as CustomEvent<{ prompt: string; displayText?: string }>;
       if (ce.detail?.prompt) {
         setInput(ce.detail.prompt);
+        // BIZZ-1260: Gem displayText så chat-boblen viser kort tekst
+        pendingDisplayTextRef.current = ce.detail.displayText ?? null;
         chatCtx.setDrawerOpen(true);
         // BIZZ-993: Markér at næste input-opdatering skal auto-sende
         pendingSendRef.current = true;
@@ -683,9 +693,13 @@ function AIChatPanel() {
       size: att.size,
       truncated: att.truncated,
     }));
+    // BIZZ-1260: Brug pendingDisplayTextRef som kort visuel tekst i boblen
+    const displayText = pendingDisplayTextRef.current ?? undefined;
+    pendingDisplayTextRef.current = null;
     const userMsg: Message = {
       role: 'user',
       content: composedContent,
+      ...(displayText ? { displayText } : {}),
       ...(attachmentsMeta.length > 0 ? { attachments: attachmentsMeta } : {}),
     };
     // Clear the chat attachments now — they're baked into this turn's
@@ -1206,11 +1220,15 @@ function AIChatPanel() {
             ) : (
               <>
                 {messages.map((msg, i) => {
+                  // BIZZ-1260: Vis displayText (kort brugervenlig tekst) hvis
+                  // det findes — bruges af analyse-moduler der sender lange
+                  // system-instruktioner som content.
                   // BIZZ-812: Strip the attachment text-block from display —
                   // it's kept in content for the AI's context window but
                   // renders as chips instead of a wall of text.
-                  const displayContent =
-                    msg.role === 'user' && msg.attachments && msg.attachments.length > 0
+                  const displayContent = msg.displayText
+                    ? msg.displayText
+                    : msg.role === 'user' && msg.attachments && msg.attachments.length > 0
                       ? msg.content
                           .split(/\n\n---\n\n/)
                           .slice(-1)[0]

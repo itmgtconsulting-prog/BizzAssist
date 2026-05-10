@@ -58,6 +58,8 @@ export default function ForsikringGapClient() {
   const [policer, setPolicer] = useState<ParsedPolice[]>([]);
   const [parseFejl, setParseFejl] = useState<Array<{ linje: number; besked: string }>>([]);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [fritekst, setFritekst] = useState('');
+  const [parseLoading, setParseLoading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Step 3: Resultat
@@ -66,22 +68,82 @@ export default function ForsikringGapClient() {
   const [error, setError] = useState<string | null>(null);
 
   /**
-   * Håndterer fil-upload og parser CSV.
+   * Håndterer fil-upload — CSV parses lokalt, andre formater sendes til AI.
    */
-  const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setFileName(file.name);
+    setParseFejl([]);
 
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const text = ev.target?.result as string;
-      const parsed = parseCsv(text);
-      setPolicer(parsed.policer);
-      setParseFejl(parsed.fejl);
-    };
-    reader.readAsText(file, 'utf-8');
+    const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+
+    // CSV/TXT: parse lokalt
+    if (ext === 'csv' || ext === 'txt') {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const text = ev.target?.result as string;
+        const parsed = parseCsv(text);
+        setPolicer(parsed.policer);
+        setParseFejl(parsed.fejl);
+      };
+      reader.readAsText(file, 'utf-8');
+      return;
+    }
+
+    // PDF/DOCX/XLSX/billeder: send til AI-parsing
+    setParseLoading(true);
+    try {
+      const buffer = await file.arrayBuffer();
+      const base64 = btoa(new Uint8Array(buffer).reduce((s, b) => s + String.fromCharCode(b), ''));
+      const res = await fetch('/api/analyse/parse-police-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pdfBase64: base64, fileName: file.name }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPolicer(data.policer ?? []);
+      } else {
+        setParseFejl([{ linje: 0, besked: 'Kunne ikke parse fil — prøv CSV-format' }]);
+      }
+    } catch {
+      setParseFejl([{ linje: 0, besked: 'Netværksfejl ved fil-parsing' }]);
+    } finally {
+      setParseLoading(false);
+    }
   }, []);
+
+  /**
+   * Parser fritekst via AI og tilføjer til policer-listen.
+   */
+  const parseFreitekst = useCallback(async () => {
+    if (!fritekst.trim()) return;
+    setParseLoading(true);
+    setParseFejl([]);
+    try {
+      const res = await fetch('/api/analyse/parse-police-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pdfBase64: btoa(unescape(encodeURIComponent(fritekst))),
+          fileName: 'fritekst.txt',
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const parsed = data.policer ?? [];
+        setPolicer((prev) => [...prev, ...parsed]);
+        if (parsed.length > 0) setFritekst('');
+      } else {
+        setParseFejl([{ linje: 0, besked: 'Kunne ikke parse tekst' }]);
+      }
+    } catch {
+      setParseFejl([{ linje: 0, besked: 'Netværksfejl' }]);
+    } finally {
+      setParseLoading(false);
+    }
+  }, [fritekst]);
 
   /**
    * BIZZ-1251: Debounced autocomplete-søgning filtreret til person+company.
@@ -344,31 +406,66 @@ export default function ForsikringGapClient() {
       {/* Step 2: Upload policer */}
       {step === 2 && (
         <div className="bg-slate-800/30 border border-slate-700/40 rounded-2xl p-6 space-y-4">
-          <h2 className="text-white font-semibold text-sm">Trin 2: Upload policeliste</h2>
+          <h2 className="text-white font-semibold text-sm">Trin 2: Angiv forsikringer</h2>
           <p className="text-slate-400 text-xs">
-            Upload en CSV-fil med kolonner: Type, Dækning, Selskab, Objekt (semikolon eller
-            komma-separeret)
+            Beskriv kundens forsikringer som fritekst, eller upload en fil (PDF, Word, Excel, CSV,
+            billede)
           </p>
 
-          {/* Drop zone */}
+          {/* Fritekst-input */}
+          <div className="space-y-2">
+            <textarea
+              value={fritekst}
+              onChange={(e) => setFritekst(e.target.value)}
+              placeholder="Beskriv kundens forsikringer her, fx:&#10;Husforsikring hos Tryg, dækning 2.500.000 kr&#10;Bilforsikring kasko hos TopDanmark, reg.nr AB12345&#10;Indboforsikring hos Alm Brand, 500.000 kr"
+              rows={4}
+              className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700/60 rounded-lg text-sm text-white placeholder:text-slate-500 outline-none focus:border-blue-500/60 resize-y min-h-[100px]"
+            />
+            {fritekst.trim().length > 10 && (
+              <button
+                type="button"
+                onClick={parseFreitekst}
+                disabled={parseLoading}
+                className="text-xs bg-blue-600/80 hover:bg-blue-500 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg transition-colors"
+              >
+                {parseLoading ? 'Parser...' : 'Tilføj fra tekst'}
+              </button>
+            )}
+          </div>
+
+          {/* Divider */}
+          <div className="flex items-center gap-3">
+            <div className="flex-1 h-px bg-slate-700/50" />
+            <span className="text-slate-500 text-xs">eller</span>
+            <div className="flex-1 h-px bg-slate-700/50" />
+          </div>
+
+          {/* Drop zone — alle formater */}
           <div
             onClick={() => fileRef.current?.click()}
-            className="border-2 border-dashed border-slate-600/60 rounded-xl p-8 text-center cursor-pointer hover:border-blue-500/40 transition-colors"
+            className="border-2 border-dashed border-slate-600/60 rounded-xl p-6 text-center cursor-pointer hover:border-blue-500/40 transition-colors"
           >
             <Upload size={24} className="mx-auto text-slate-500 mb-2" />
             <p className="text-slate-400 text-sm">
-              {fileName ? (
+              {parseLoading ? (
+                <span className="text-blue-300 flex items-center justify-center gap-2">
+                  <Loader2 size={14} className="animate-spin" /> Parser fil...
+                </span>
+              ) : fileName ? (
                 <span className="text-blue-300 flex items-center justify-center gap-2">
                   <FileSpreadsheet size={14} /> {fileName}
                 </span>
               ) : (
-                'Klik for at vælge CSV-fil'
+                'Klik for at vælge fil'
               )}
+            </p>
+            <p className="text-slate-600 text-[10px] mt-1">
+              PDF, Word, Excel, CSV, billeder (JPG/PNG)
             </p>
             <input
               ref={fileRef}
               type="file"
-              accept=".csv,.txt"
+              accept=".csv,.txt,.pdf,.docx,.doc,.xlsx,.xls,.jpg,.jpeg,.png"
               onChange={handleFileUpload}
               className="hidden"
             />

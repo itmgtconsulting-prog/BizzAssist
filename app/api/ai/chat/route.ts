@@ -41,6 +41,7 @@ import {
   generateCsv,
   generatePptx,
   sanitizeFilename,
+  docxToPreviewHtml,
   type GeneratedFile,
 } from '@/app/lib/aiFileGeneration';
 
@@ -2223,17 +2224,32 @@ async function executeTool(
             });
           }
 
-          // Upload til Supabase Storage
+          // Upload til Supabase Storage med retry
           const safeTitle = sanitizeFilename(title);
           const storagePath = `${fileUserId}/${crypto.randomUUID()}-${safeTitle}.${generated.ext}`;
           const uploadBody = new Uint8Array(generated.buffer);
           const adminSb = admin ?? createAdminClient();
-          const { error: uploadErr } = await adminSb.storage
-            .from('ai-generated')
-            .upload(storagePath, uploadBody, {
-              contentType: generated.contentType,
-              upsert: false,
-            });
+
+          // BIZZ-1266: Retry upload (transient fejl fra Supabase storage)
+          let uploadErr: { message: string } | null = null;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const { error } = await adminSb.storage
+              .from('ai-generated')
+              .upload(storagePath, uploadBody, {
+                contentType: generated.contentType,
+                upsert: false,
+              });
+            if (!error) {
+              uploadErr = null;
+              break;
+            }
+            uploadErr = error;
+            const msg = (error.message || '').toLowerCase();
+            const transient =
+              msg.includes('timeout') || msg.includes('network') || msg.includes('fetch');
+            if (!transient || attempt === 2) break;
+            await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+          }
 
           if (uploadErr) {
             logger.error('[generate_document] upload fejl:', uploadErr.message);
@@ -2260,15 +2276,32 @@ async function executeTool(
             .from('ai-generated')
             .createSignedUrl(storagePath, 86400);
 
+          // BIZZ-1266: Generér preview_html for docx (mammoth HTML-rendering)
+          let previewHtml: string | undefined;
+          if (format === 'docx') {
+            try {
+              const parsed = await docxToPreviewHtml(generated.buffer);
+              if (parsed.html.length > 0) previewHtml = parsed.html;
+            } catch {
+              /* best-effort — falder tilbage til tekst-preview */
+            }
+          }
+
           result = {
             file_id: fileId,
             file_name: `${safeTitle}.${generated.ext}`,
             download_url: signedData?.signedUrl ?? '',
             preview_text: `${generated.ext.toUpperCase()}-fil "${title}" genereret (${(generated.buffer.length / 1024).toFixed(1)} KB).`,
+            bytes: generated.buffer.length,
+            format,
+            preview_kind: previewHtml ? 'html' : 'text',
+            preview_html: previewHtml,
           };
         } catch (genErr) {
           logger.error('[generate_document] generering fejl:', genErr);
-          result = { fejl: 'Fil-generering fejlede' };
+          result = {
+            fejl: `Fil-generering fejlede: ${genErr instanceof Error ? genErr.message : 'ukendt fejl'}`,
+          };
         }
         break;
       }
@@ -3245,6 +3278,8 @@ export async function POST(request: NextRequest): Promise<Response> {
                       preview_kind: fileResult.preview_kind,
                       preview_columns: fileResult.preview_columns,
                       preview_rows: fileResult.preview_rows,
+                      // BIZZ-1266: Inkludér preview_html i SSE-event
+                      preview_html: fileResult.preview_html,
                       bytes: fileResult.bytes,
                       format: fileResult.format,
                     },

@@ -14,13 +14,41 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { Search, ChevronRight, Sparkles, Building2, MapPin, User, Loader2 } from 'lucide-react';
+import {
+  Search,
+  ChevronRight,
+  Sparkles,
+  Building2,
+  MapPin,
+  User,
+  Loader2,
+  Shield,
+  CreditCard,
+  FileSearch,
+  ShieldCheck,
+  TrendingUp,
+  BarChart3,
+  type LucideIcon,
+} from 'lucide-react';
 import {
   buildAnalysePrompt,
   type AnalyseModul,
   type AnalyseTarget,
 } from '@/app/lib/analysePromptBuilder';
 import type { UnifiedSearchResult } from '@/app/api/search/route';
+
+/** Map fra ikon-navn (string i AnalyseModul) til Lucide-komponent. */
+const IKON_MAP: Record<string, LucideIcon> = {
+  Sparkles,
+  Shield,
+  CreditCard,
+  FileSearch,
+  ShieldCheck,
+  TrendingUp,
+  BarChart3,
+  Search,
+  Building2,
+};
 
 interface Props {
   /** Analyse-modul definition */
@@ -152,7 +180,10 @@ export default function AnalyseModulLayout({ modul, children, ekstraKontekst }: 
       {/* Header */}
       <div>
         <h1 className="text-white text-xl font-bold flex items-center gap-2">
-          <Sparkles size={22} className="text-blue-400" />
+          {(() => {
+            const Icon = IKON_MAP[modul.ikon] ?? Sparkles;
+            return <Icon size={22} className="text-blue-400" />;
+          })()}
           {modul.label}
         </h1>
         <p className="text-slate-400 text-sm mt-1">{modul.beskrivelse}</p>

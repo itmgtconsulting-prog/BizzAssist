@@ -28,6 +28,10 @@ export interface AnalyseModuleConfig {
   requiredPlan: 'professionel' | 'enterprise' | null;
   /** Kort beskrivelse (DA) */
   description: string;
+  /** BIZZ-1249: Default target-type for søgefeltet */
+  defaultTarget: 'person' | 'virksomhed' | 'ejendom';
+  /** BIZZ-1249: Kort hjælpetekst der forklarer hvad brugeren får */
+  hint: string;
 }
 
 /** Registrerede analyse-moduler */
@@ -41,6 +45,8 @@ export const ANALYSE_MODULES: AnalyseModuleConfig[] = [
     enabled: { dev: true, preview: true, prod: false },
     requiredPlan: null,
     description: 'AI-genereret boligannonce med tone-vælger og BBR-data',
+    defaultTarget: 'ejendom',
+    hint: 'Søg en ejendom og vælg annonce-tone. AI henter BBR-data, vurdering og energimærke automatisk.',
   },
   {
     id: 'forsikring',
@@ -51,6 +57,8 @@ export const ANALYSE_MODULES: AnalyseModuleConfig[] = [
     enabled: { dev: true, preview: true, prod: false },
     requiredPlan: 'professionel',
     description: 'Identificér dækningsgab i kundens forsikringsportefølje',
+    defaultTarget: 'virksomhed',
+    hint: 'Vælg en kunde (person eller virksomhed), upload policeliste (CSV), og få en gap-rapport med risiko-scoring.',
   },
   {
     id: 'kreditvurdering',
@@ -61,6 +69,8 @@ export const ANALYSE_MODULES: AnalyseModuleConfig[] = [
     enabled: { dev: true, preview: true, prod: false },
     requiredPlan: 'professionel',
     description: 'Virksomheds-kreditpakke med nøgletal og risiko-scoring',
+    defaultTarget: 'virksomhed',
+    hint: 'Søg en virksomhed. AI henter regnskab, ejerskab, ejendomme med hæftelser og beregner kreditværdighed.',
   },
   {
     id: 'due-diligence',
@@ -71,6 +81,8 @@ export const ANALYSE_MODULES: AnalyseModuleConfig[] = [
     enabled: { dev: true, preview: true, prod: false },
     requiredPlan: 'enterprise',
     description: 'Automatisk DD-rapport med virksomheds-, ejendoms- og persondata',
+    defaultTarget: 'virksomhed',
+    hint: 'Vælg virksomhed (transaktions-DD) eller ejendom (ejendoms-DD). AI genererer fuld juridisk rapport.',
   },
   {
     id: 'aml-kyc',
@@ -81,6 +93,8 @@ export const ANALYSE_MODULES: AnalyseModuleConfig[] = [
     enabled: { dev: true, preview: true, prod: false },
     requiredPlan: 'enterprise',
     description: 'KYC-rapport med beneficial ownership, struktur-kompleksitet og risikoscoring',
+    defaultTarget: 'virksomhed',
+    hint: 'Søg en virksomhed. AI kortlægger ejerskabskæde, identificerer beneficial owners og scorer risiko.',
   },
   {
     id: 'ejendomsinvestor',
@@ -91,6 +105,8 @@ export const ANALYSE_MODULES: AnalyseModuleConfig[] = [
     enabled: { dev: true, preview: true, prod: false },
     requiredPlan: 'professionel',
     description: 'Portefølje-analyse og deal-screening for ejendomsinvestorer',
+    defaultTarget: 'virksomhed',
+    hint: 'Vælg virksomhed (portefølje-analyse) eller ejendom (deal-screening). AI beregner yield, belåning og friværdi.',
   },
   {
     id: 'revisor-benchmark',
@@ -101,6 +117,8 @@ export const ANALYSE_MODULES: AnalyseModuleConfig[] = [
     enabled: { dev: true, preview: true, prod: false },
     requiredPlan: 'professionel',
     description: 'Nøgletalsbenchmark og koncern-analyse for revisorer',
+    defaultTarget: 'virksomhed',
+    hint: 'Søg en virksomhed. AI sammenligner nøgletal med branche-gennemsnit og analyserer koncernstruktur.',
   },
   {
     id: 'inkasso-aktivsoegning',
@@ -111,6 +129,8 @@ export const ANALYSE_MODULES: AnalyseModuleConfig[] = [
     enabled: { dev: true, preview: true, prod: false },
     requiredPlan: 'professionel',
     description: 'Find debitors aktiver for inkassosager',
+    defaultTarget: 'person',
+    hint: 'Søg en person (debitor). AI finder ejendomme, virksomheder, køretøjer og vurderer udlægspotentiale.',
   },
   {
     id: 'kommune-energi',
@@ -121,6 +141,8 @@ export const ANALYSE_MODULES: AnalyseModuleConfig[] = [
     enabled: { dev: true, preview: true, prod: false },
     requiredPlan: 'enterprise',
     description: 'Bygningsmasse-analyse og energirenoverings-potentiale',
+    defaultTarget: 'ejendom',
+    hint: 'Vælg en kommune eller ejendom. AI analyserer bygningsmasse, energimærker og renoveringspotentiale.',
   },
 ];
 

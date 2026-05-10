@@ -102,10 +102,15 @@ REGLER:
 5. "limit" maks ${MAX_ROWS}
 6. "chartType": bar, line, scatter, pie, table
 7. Returner KUN valid JSON — ingen markdown.
+8. NULL-HÅNDTERING: Mange kolonner kan være NULL. Ved GROUP BY eller aggregering, tilføj ALTID filter: "kolonnenavn": "not.is.null" for gruppe-kolonner. Ellers får du meningsløse "—" rækker.
+9. DATAKVALITET: bbr_ejendom_status har 2,5M rækker men ikke alle har kommune_kode/energimaerke. cvr_virksomhed har 2,1M rækker med god dækning. ejf_ejerskab har 7,6M rækker med god dækning.
 
 EKSEMPLER:
-- "Ejendomme per kommune" → table=bbr_ejendom_status, select=kommune_kode,count(*)
-- "Energimærke fordeling" → table=bbr_ejendom_status, select=energimaerke,count(*), filters={is_udfaset:eq.false,energimaerke:not.is.null}`;
+- "Ejendomme per kommune" → table=bbr_ejendom_status, select=kommune_kode,count(*) as antal, filters={is_udfaset:eq.false,kommune_kode:not.is.null}, order=antal.desc
+- "Energimærke fordeling" → table=bbr_ejendom_status, select=energimaerke,count(*) as antal, filters={is_udfaset:eq.false,energimaerke:not.is.null}, order=antal.desc
+- "Virksomheder per branche" → table=cvr_virksomhed, select=branche_tekst,count(*) as antal, filters={status:eq.NORMAL,branche_tekst:not.is.null}, order=antal.desc, limit=20
+- "Selskabsformer fordeling" → table=cvr_virksomhed, select=virksomhedsform,count(*) as antal, filters={status:eq.NORMAL}, order=antal.desc
+- "Ejendomsejere per type" → table=ejf_ejerskab, select=ejer_type,count(*) as antal, filters={status:eq.Aktiv,ejer_type:not.is.null}, order=antal.desc`;
 }
 
 /**

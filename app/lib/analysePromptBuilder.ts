@@ -41,21 +41,31 @@ export const ANALYSE_MODULER: AnalyseModul[] = [
     beskrivelse: 'AI-genereret boligannonce med BBR-data, nærområde og sammenlignelige salg',
     ikon: 'Sparkles',
     instruktioner: `Skriv en professionel dansk boligannonce for den valgte ejendom.
+SPROG: Skriv ALTID korrekt dansk med æ, ø, å — ALDRIG ASCII-erstatninger (dvs. "på" IKKE "paa", "ærlig" IKKE "aerlig", "nærområde" IKKE "naeromraade"). Dette gælder OGSÅ i Word-dokumenter.
 VIGTIGT: Kald ALTID disse tools FØRST (parallelt) for at hente konkret ejendomsdata:
 - hent_bbr_data (boligareal m², værelser, etager, byggeår, materialer, energiforsyning)
 - hent_vurdering (ejendomsværdi, grundværdi)
 - hent_energimaerke (energimærke A-G)
 - hent_salgshistorik (seneste salgspris og dato)
 Brug derefter de konkrete data i annoncen — OPFIND ALDRIG fakta.
+FLERE BYGNINGER: BBR kan returnere flere bygninger på matriklen. Ignorér bygninger med status "nedrevet" eller "udfaset" — brug KUN aktive bygninger. Hvis der er flere aktive bygninger (fx hovedhus + anneks/garage/udhus), nævn dem alle med areal og anvendelse. Beskriv den primære bolig først, derefter sekundære bygninger.
 Tone: Brugeren vælger tone (luksus, familievenlig, investor, erhverv, social media).
 Struktur: Overskrift (max 10 ord), Intro (2-3 sæt.), Rumbeskrivelse (brug BBR-data: areal, værelser, materialer), Beliggenhed, Praktisk info (energimærke, byggeår, vurdering), Afslutning.
-Maks 500 ord. Skriv på dansk. Brug markdown.`,
+Maks 500 ord. Skriv på dansk med æøå. Brug markdown.
+
+Hvis brugeren har valgt Word/PDF output: kald generate_document tool med format="docx" EFTER annonceteksten. Brug sektioner:
+1. heading=ejendommens adresse, body=annonceteksten
+2. heading="Ejendomsdata", body=BBR-data tabel
+3. heading="Disclaimer", body="Oplysningerne er hentet fra BBR og offentlige registre. Verificér altid hos sælger."
+Sæt documentTitle til ejendommens adresse + "— Boligannonce".
+Hvis brugeren IKKE har bedt om fil-output: vis kun annoncen som markdown i chatten.`,
     anbefaletTools: [
       'dawa_adresse_soeg',
       'hent_bbr_data',
       'hent_vurdering',
       'hent_energimaerke',
       'hent_salgshistorik',
+      'generate_document',
     ],
     outputFormat:
       'Professionel boligannonce i markdown med overskrift, intro, rumbeskrivelse, beliggenhed og praktisk info.',

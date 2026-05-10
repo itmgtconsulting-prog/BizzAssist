@@ -40,6 +40,15 @@ const TONER: Array<{ id: Tone; label: string; emoji: string }> = [
   { id: 'linkedin', label: 'LinkedIn', emoji: '💼' },
 ];
 
+/** Output-format valg */
+type OutputFormat = 'chat' | 'docx' | 'pdf';
+
+const OUTPUT_FORMATS: Array<{ id: OutputFormat; label: string }> = [
+  { id: 'chat', label: 'Vis i chat' },
+  { id: 'docx', label: 'Word (.docx)' },
+  { id: 'pdf', label: 'PDF' },
+];
+
 const modul = ANALYSE_MODULER.find((m) => m.id === 'annonce')!;
 
 /**
@@ -51,6 +60,7 @@ export default function AnnonceClient() {
   const [bfe, setBfe] = useState('');
   const [adresse, setAdresse] = useState('');
   const [tone, setTone] = useState<Tone>('familievenlig');
+  const [outputFormat, setOutputFormat] = useState<OutputFormat>('chat');
   const [loading, setLoading] = useState(false);
   const [recentEjendomme, setRecentEjendomme] = useState<
     Array<{ bfe: number; adresse: string; dawaId?: string }>
@@ -152,11 +162,29 @@ export default function AnnonceClient() {
     const toneLabel = TONER.find((t) => t.id === tone)?.label ?? tone;
     const ekstra = `Tone: ${toneLabel}. Skriv annoncen i "${toneLabel}" tone.`;
 
-    const prompt = buildAnalysePrompt(modul, target, ekstra);
-    window.dispatchEvent(new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt } }));
+    // Byg prompt med output-format som PRIMÆR instruktion (ikke ekstra kontekst)
+    let outputInstruktion = '';
+    if (outputFormat === 'docx' || outputFormat === 'pdf') {
+      outputInstruktion = `
+
+VIGTIGT — WORD-DOKUMENT ER PÅKRÆVET:
+Når annoncen er skrevet og vist i chatten, SKAL du derefter kalde generate_document tool med:
+- format: "docx"
+- mode: "scratch"
+- title: "${adresse} — Boligannonce"
+- scratch: { sections: [{ heading: adressen, body: annonceteksten }, { heading: "Ejendomsdata", body: BBR-data som tekst }, { heading: "Disclaimer", body: "Oplysningerne er hentet fra BBR og offentlige registre." }] }
+Du SKAL kalde generate_document — brugeren har eksplicit bedt om Word-output.`;
+    }
+
+    const prompt = buildAnalysePrompt(modul, target, ekstra + outputInstruktion);
+    // BIZZ-1260: Kort brugervenlig tekst i chat-boblen
+    const displayText = `Boligannonce — ${adresse} (${tone})`;
+    window.dispatchEvent(
+      new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt, displayText } })
+    );
 
     setTimeout(() => setLoading(false), 500);
-  }, [bfe, adresse, tone]);
+  }, [bfe, adresse, tone, outputFormat]);
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -267,20 +295,6 @@ export default function AnnonceClient() {
           </div>
         )}
 
-        {/* Fallback: manuelt BFE-input */}
-        {!bfe && (
-          <div className="flex items-center gap-2">
-            <span className="text-slate-500 text-xs">eller angiv BFE manuelt:</span>
-            <input
-              type="text"
-              value={bfe}
-              onChange={(e) => setBfe(e.target.value)}
-              placeholder="BFE-nummer"
-              className="w-40 px-3 py-1.5 bg-slate-800 border border-slate-700/60 rounded-lg text-xs text-white outline-none focus:border-blue-500/60"
-            />
-          </div>
-        )}
-
         {/* Tone-vælger */}
         <div>
           <p className="text-slate-400 text-xs mb-2">Annonce-tone:</p>
@@ -297,6 +311,26 @@ export default function AnnonceClient() {
               >
                 <span>{t.emoji}</span>
                 {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Output-format vælger */}
+        <div>
+          <p className="text-slate-400 text-xs mb-2">Output-format:</p>
+          <div className="flex gap-2 flex-wrap">
+            {OUTPUT_FORMATS.map((f) => (
+              <button
+                key={f.id}
+                onClick={() => setOutputFormat(f.id)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                  outputFormat === f.id
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                    : 'bg-slate-800 text-slate-400 border border-slate-700/40 hover:text-slate-300'
+                }`}
+              >
+                {f.label}
               </button>
             ))}
           </div>

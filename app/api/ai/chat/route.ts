@@ -35,6 +35,15 @@ import type { Database } from '@/lib/supabase/types';
 import { logActivity } from '@/app/lib/activityLog';
 import { logger } from '@/app/lib/logger';
 import { assertAiAllowed } from '@/app/lib/aiGate';
+import {
+  generateDocx,
+  generateXlsx,
+  generateCsv,
+  generatePptx,
+  sanitizeFilename,
+  docxToPreviewHtml,
+  type GeneratedFile,
+} from '@/app/lib/aiFileGeneration';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -989,7 +998,9 @@ async function executeTool(
   /** BIZZ-1000: Diagram PNG base64 til injection i generate_document */
   diagramBase64?: string,
   /** BIZZ-1186: Supabase admin client for cache-first lookups */
-  admin?: ReturnType<typeof createAdminClient>
+  admin?: ReturnType<typeof createAdminClient>,
+  /** BIZZ-1263: User ID for inline file generation */
+  fileUserId?: string
 ): Promise<unknown> {
   const cached = getCached(name, input);
   if (cached !== null) return cached;
@@ -2137,30 +2148,161 @@ async function executeTool(
         // BIZZ-813: POST til /api/ai/generate-file med Claude's input.
         // BIZZ-1000: Injicér diagramBase64 i sektioner med imageBase64="DIAGRAM" placeholder.
         const fileInput = input as unknown as Record<string, unknown>;
-        if (diagramBase64 && Array.isArray(fileInput.sections)) {
-          for (const section of fileInput.sections as Record<string, unknown>[]) {
-            if (section.imageBase64 === 'DIAGRAM') {
-              section.imageBase64 = diagramBase64;
+
+        // BIZZ-1263: Claude sender ofte sections/columns/rows på top-level
+        // i stedet for inde i scratch-objektet. Wrap automatisk.
+        if (!fileInput.scratch && (fileInput.sections || fileInput.columns || fileInput.rows)) {
+          fileInput.scratch = {
+            sections: fileInput.sections,
+            columns: fileInput.columns,
+            rows: fileInput.rows,
+            subtitle: fileInput.subtitle,
+          };
+          delete fileInput.sections;
+          delete fileInput.columns;
+          delete fileInput.rows;
+          delete fileInput.subtitle;
+        }
+
+        // Sikr at mode altid er sat (Claude glemmer det nogle gange)
+        if (!fileInput.mode) {
+          fileInput.mode = 'scratch';
+        }
+
+        if (diagramBase64) {
+          const scratch = fileInput.scratch as Record<string, unknown> | undefined;
+          if (scratch && Array.isArray(scratch.sections)) {
+            for (const section of scratch.sections as Record<string, unknown>[]) {
+              if (section.imageBase64 === 'DIAGRAM') {
+                section.imageBase64 = diagramBase64;
+              }
             }
           }
         }
-        const res = await fetch(`${baseUrl}/api/ai/generate-file`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(cookieHeader ? { Cookie: cookieHeader } : {}),
-          },
-          body: JSON.stringify(fileInput),
-          signal: AbortSignal.timeout(30_000),
-        });
-        if (!res.ok) {
-          const errJson = (await res.json().catch(() => ({}))) as { error?: string };
-          result = { fejl: errJson.error ?? `generate-file fejlede (${res.status})` };
-          break;
+        // BIZZ-1263: Generér fil inline i stedet for intern HTTP fetch.
+        // Den interne fetch til /api/ai/generate-file fejler konsistent
+        // pga. Vercel self-referencing / cookie-forwarding issues.
+        try {
+          const format = (fileInput.format as string) ?? 'docx';
+          const title = (fileInput.title as string) ?? 'Dokument';
+          const scratch = fileInput.scratch as Record<string, unknown> | undefined;
+
+          let generated: GeneratedFile;
+          if (format === 'xlsx' && scratch) {
+            generated = await generateXlsx({
+              title,
+              columns: (scratch.columns ?? []) as Array<{ key: string; header: string }>,
+              rows: (scratch.rows ?? []) as Array<Record<string, string | number | boolean | null>>,
+              sheetName: (scratch.sheetName as string) ?? undefined,
+            });
+          } else if (format === 'csv' && scratch) {
+            generated = await generateCsv({
+              columns: (scratch.columns ?? []) as Array<{ key: string; header: string }>,
+              rows: (scratch.rows ?? []) as Array<Record<string, string | number | boolean | null>>,
+              delimiter: ';',
+            });
+          } else if (format === 'pptx' && scratch) {
+            generated = await generatePptx({
+              title,
+              slides:
+                (scratch.slides as Array<{
+                  title: string;
+                  bullets?: string[];
+                  table?: { columns: string[]; rows: string[][] };
+                }>) ?? [],
+            });
+          } else {
+            generated = await generateDocx({
+              title,
+              subtitle: (scratch?.subtitle as string) ?? undefined,
+              sections:
+                (scratch?.sections as Array<{
+                  heading: string;
+                  body: string;
+                  imageBase64?: string;
+                }>) ?? [],
+            });
+          }
+
+          // Upload til Supabase Storage med retry
+          const safeTitle = sanitizeFilename(title);
+          const storagePath = `${fileUserId}/${crypto.randomUUID()}-${safeTitle}.${generated.ext}`;
+          const uploadBody = new Uint8Array(generated.buffer);
+          const adminSb = admin ?? createAdminClient();
+
+          // BIZZ-1266: Retry upload (transient fejl fra Supabase storage)
+          let uploadErr: { message: string } | null = null;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const { error } = await adminSb.storage
+              .from('ai-generated')
+              .upload(storagePath, uploadBody, {
+                contentType: generated.contentType,
+                upsert: false,
+              });
+            if (!error) {
+              uploadErr = null;
+              break;
+            }
+            uploadErr = error;
+            const msg = (error.message || '').toLowerCase();
+            const transient =
+              msg.includes('timeout') || msg.includes('network') || msg.includes('fetch');
+            if (!transient || attempt === 2) break;
+            await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+          }
+
+          if (uploadErr) {
+            logger.error('[generate_document] upload fejl:', uploadErr.message);
+            result = { fejl: `Upload fejlede: ${uploadErr.message}` };
+            break;
+          }
+
+          // Track i ai_file
+          const fileId = crypto.randomUUID();
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (adminSb as any).from('ai_file').insert({
+            id: fileId,
+            user_id: fileUserId,
+            kind: 'generated',
+            file_path: storagePath,
+            file_name: `${safeTitle}.${generated.ext}`,
+            file_type: generated.contentType,
+            size_bytes: generated.buffer.length,
+            expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          });
+
+          // Signed download URL
+          const { data: signedData } = await adminSb.storage
+            .from('ai-generated')
+            .createSignedUrl(storagePath, 86400);
+
+          // BIZZ-1266: Generér preview_html for docx (mammoth HTML-rendering)
+          let previewHtml: string | undefined;
+          if (format === 'docx') {
+            try {
+              const parsed = await docxToPreviewHtml(generated.buffer);
+              if (parsed.html.length > 0) previewHtml = parsed.html;
+            } catch {
+              /* best-effort — falder tilbage til tekst-preview */
+            }
+          }
+
+          result = {
+            file_id: fileId,
+            file_name: `${safeTitle}.${generated.ext}`,
+            download_url: signedData?.signedUrl ?? '',
+            preview_text: `${generated.ext.toUpperCase()}-fil "${title}" genereret (${(generated.buffer.length / 1024).toFixed(1)} KB).`,
+            bytes: generated.buffer.length,
+            format,
+            preview_kind: previewHtml ? 'html' : 'text',
+            preview_html: previewHtml,
+          };
+        } catch (genErr) {
+          logger.error('[generate_document] generering fejl:', genErr);
+          result = {
+            fejl: `Fil-generering fejlede: ${genErr instanceof Error ? genErr.message : 'ukendt fejl'}`,
+          };
         }
-        const json = await res.json();
-        // Returner hele objektet — wrapper-laget splitter det.
-        result = json;
         break;
       }
 
@@ -3055,7 +3197,8 @@ export async function POST(request: NextRequest): Promise<Response> {
                 baseUrl,
                 request.headers.get('cookie'),
                 diagramBase64,
-                adminClient
+                adminClient,
+                auth.userId
               );
 
               // BIZZ-813: generate_document returnerer download_url —
@@ -3135,6 +3278,8 @@ export async function POST(request: NextRequest): Promise<Response> {
                       preview_kind: fileResult.preview_kind,
                       preview_columns: fileResult.preview_columns,
                       preview_rows: fileResult.preview_rows,
+                      // BIZZ-1266: Inkludér preview_html i SSE-event
+                      preview_html: fileResult.preview_html,
                       bytes: fileResult.bytes,
                       format: fileResult.format,
                     },

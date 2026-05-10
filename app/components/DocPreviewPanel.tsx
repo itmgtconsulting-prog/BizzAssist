@@ -19,15 +19,19 @@ import { useEffect, useState } from 'react';
 import { X, Download, FileText, GripVertical } from 'lucide-react';
 import { useDocPreview } from '@/app/context/DocPreviewContext';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { useAIChatContext } from '@/app/context/AIChatContext';
 
 const DEFAULT_WIDTH_PX = 520;
 const MIN_WIDTH_PX = 360;
 const MAX_WIDTH_PX = 1100;
 const DEFAULT_TOP_OFFSET_PX = 72;
+/** BIZZ-1266: AI Chat drawer bredde — matcher sm:w-[420px] i layout.tsx */
+const CHAT_DRAWER_WIDTH_PX = 420;
 
 export function DocPreviewPanel() {
   const { content, isOpen, close } = useDocPreview();
   const { lang } = useLanguage();
+  const chatCtx = useAIChatContext();
   const da = lang === 'da';
 
   const [widthPx, setWidthPx] = useState(DEFAULT_WIDTH_PX);
@@ -48,18 +52,35 @@ export function DocPreviewPanel() {
     }
   }, []);
 
-  // Publish width + open-state via CSS variable so the layout can reserve room
+  /**
+   * BIZZ-1266: Beregn right offset — skub preview til venstre for chat drawer
+   * på desktop (>= 640px / sm breakpoint). På mobile overlapper de (full-width).
+   */
+  const isChatOpen = chatCtx.drawerOpen;
+  const [isDesktop, setIsDesktop] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const check = () => setIsDesktop(window.innerWidth >= 640);
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
+  const rightOffsetPx = isChatOpen && isDesktop ? CHAT_DRAWER_WIDTH_PX : 0;
+
+  // Publish total reserved width via CSS variable so the layout can reserve room
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (isOpen) {
-      document.documentElement.style.setProperty('--bizz-docpreview-w', `${widthPx}px`);
+      // BIZZ-1266: Total plads = preview bredde + evt. chat drawer
+      const totalWidth = widthPx + rightOffsetPx;
+      document.documentElement.style.setProperty('--bizz-docpreview-w', `${totalWidth}px`);
     } else {
       document.documentElement.style.removeProperty('--bizz-docpreview-w');
     }
     return () => {
       document.documentElement.style.removeProperty('--bizz-docpreview-w');
     };
-  }, [widthPx, isOpen]);
+  }, [widthPx, isOpen, rightOffsetPx]);
 
   const startDrag = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -86,8 +107,8 @@ export function DocPreviewPanel() {
 
   return (
     <aside
-      className="fixed right-0 bottom-0 z-40 bg-slate-950 border-l border-slate-700/40 flex flex-col shadow-2xl"
-      style={{ top: `${topOffsetPx}px`, width: `${widthPx}px` }}
+      className="fixed bottom-0 z-40 bg-slate-950 border-l border-slate-700/40 flex flex-col shadow-2xl"
+      style={{ top: `${topOffsetPx}px`, width: `${widthPx}px`, right: `${rightOffsetPx}px` }}
       aria-label={da ? 'Dokument-preview' : 'Document preview'}
     >
       {/* Left-edge drag handle */}

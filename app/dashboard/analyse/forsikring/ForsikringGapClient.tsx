@@ -244,33 +244,68 @@ export default function ForsikringGapClient() {
                 />
               )}
             </div>
-            {dropdownOpen && searchResults.length > 0 && (
-              <div className="absolute z-50 w-full mt-1 bg-slate-800 border border-slate-700/60 rounded-lg shadow-xl max-h-64 overflow-y-auto">
-                {searchResults.map((result) => (
-                  <button
-                    key={`${result.type}-${result.id}`}
-                    type="button"
-                    onClick={() => selectKunde(result)}
-                    className="w-full text-left px-3 py-2.5 hover:bg-slate-700/50 transition-colors flex items-start gap-3 border-b border-slate-700/30 last:border-b-0"
-                  >
-                    <div className="mt-0.5 shrink-0">
-                      {result.type === 'company' ? (
-                        <Building2 size={14} className="text-blue-400" />
-                      ) : (
-                        <User size={14} className="text-purple-400" />
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm text-white truncate">{result.title}</div>
-                      <div className="text-xs text-slate-400 truncate">{result.subtitle}</div>
-                    </div>
-                    <span className="text-[10px] text-slate-500 shrink-0 mt-0.5">
-                      {result.type === 'company' ? 'Virksomhed' : 'Person'}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
+            {dropdownOpen &&
+              searchResults.length > 0 &&
+              (() => {
+                const persons = searchResults.filter((r) => r.type === 'person');
+                const companies = searchResults.filter((r) => r.type === 'company');
+                return (
+                  <div className="absolute z-50 w-full mt-1 bg-slate-800 border border-slate-700/60 rounded-lg shadow-xl max-h-72 overflow-y-auto">
+                    {persons.length > 0 && (
+                      <>
+                        <div className="px-3 py-1.5 flex items-center gap-1.5 bg-slate-900/60 border-b border-slate-700/30 sticky top-0">
+                          <User size={11} className="text-purple-400" />
+                          <span className="text-[10px] font-semibold text-purple-300 uppercase tracking-wider">
+                            Personer
+                          </span>
+                        </div>
+                        {persons.map((result) => (
+                          <button
+                            key={`person-${result.id}`}
+                            type="button"
+                            onClick={() => selectKunde(result)}
+                            className="w-full text-left px-3 py-2.5 hover:bg-slate-700/50 transition-colors flex items-start gap-3 border-b border-slate-700/20 last:border-b-0"
+                          >
+                            <User size={14} className="text-purple-400 mt-0.5 shrink-0" />
+                            <div className="min-w-0 flex-1">
+                              <div className="text-sm text-white truncate">{result.title}</div>
+                              <div className="text-xs text-slate-400 truncate">
+                                {result.subtitle}
+                              </div>
+                            </div>
+                          </button>
+                        ))}
+                      </>
+                    )}
+                    {companies.length > 0 && (
+                      <>
+                        <div className="px-3 py-1.5 flex items-center gap-1.5 bg-slate-900/60 border-b border-slate-700/30 sticky top-0">
+                          <Building2 size={11} className="text-blue-400" />
+                          <span className="text-[10px] font-semibold text-blue-300 uppercase tracking-wider">
+                            Virksomheder
+                          </span>
+                        </div>
+                        {companies.map((result) => (
+                          <button
+                            key={`company-${result.id}`}
+                            type="button"
+                            onClick={() => selectKunde(result)}
+                            className="w-full text-left px-3 py-2.5 hover:bg-slate-700/50 transition-colors flex items-start gap-3 border-b border-slate-700/20 last:border-b-0"
+                          >
+                            <Building2 size={14} className="text-blue-400 mt-0.5 shrink-0" />
+                            <div className="min-w-0 flex-1">
+                              <div className="text-sm text-white truncate">{result.title}</div>
+                              <div className="text-xs text-slate-400 truncate">
+                                {result.subtitle}
+                              </div>
+                            </div>
+                          </button>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
           </div>
 
           {/* Valgt kunde indikator */}
@@ -293,37 +328,6 @@ export default function ForsikringGapClient() {
               >
                 &times;
               </button>
-            </div>
-          )}
-
-          {/* Manuelt fallback */}
-          {!kundeId && (
-            <div className="space-y-3">
-              <span className="text-slate-500 text-xs">eller angiv manuelt:</span>
-              <div className="flex gap-3">
-                {(['person', 'virksomhed'] as const).map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => setKundeType(t)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                      kundeType === t
-                        ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
-                        : 'bg-slate-800 text-slate-400 border border-slate-700/40 hover:text-slate-300'
-                    }`}
-                  >
-                    {t === 'person' ? 'Person' : 'Virksomhed'}
-                  </button>
-                ))}
-              </div>
-              <input
-                type="text"
-                value={kundeId}
-                onChange={(e) => setKundeId(e.target.value)}
-                placeholder={
-                  kundeType === 'person' ? 'EnhedsNummer (fx 4000115446)' : 'CVR-nummer (8 cifre)'
-                }
-                className="w-full px-3 py-2 bg-slate-800 border border-slate-700/60 rounded-lg text-xs text-white outline-none focus:border-blue-500/60"
-              />
             </div>
           )}
 

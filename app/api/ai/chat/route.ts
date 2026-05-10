@@ -35,6 +35,14 @@ import type { Database } from '@/lib/supabase/types';
 import { logActivity } from '@/app/lib/activityLog';
 import { logger } from '@/app/lib/logger';
 import { assertAiAllowed } from '@/app/lib/aiGate';
+import {
+  generateDocx,
+  generateXlsx,
+  generateCsv,
+  generatePptx,
+  sanitizeFilename,
+  type GeneratedFile,
+} from '@/app/lib/aiFileGeneration';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -989,7 +997,9 @@ async function executeTool(
   /** BIZZ-1000: Diagram PNG base64 til injection i generate_document */
   diagramBase64?: string,
   /** BIZZ-1186: Supabase admin client for cache-first lookups */
-  admin?: ReturnType<typeof createAdminClient>
+  admin?: ReturnType<typeof createAdminClient>,
+  /** BIZZ-1263: User ID for inline file generation */
+  fileUserId?: string
 ): Promise<unknown> {
   const cached = getCached(name, input);
   if (cached !== null) return cached;
@@ -2168,32 +2178,98 @@ async function executeTool(
             }
           }
         }
-        logger.log('[generate_document] input:', JSON.stringify(fileInput).slice(0, 500));
-        const res = await fetch(`${baseUrl}/api/ai/generate-file`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(cookieHeader ? { Cookie: cookieHeader } : {}),
-          },
-          body: JSON.stringify(fileInput),
-          signal: AbortSignal.timeout(30_000),
-        });
-        if (!res.ok) {
-          const errText = await res.text().catch(() => '');
-          logger.error('[generate_document] fejl:', res.status, errText.slice(0, 300));
-          const errJson = (() => {
-            try {
-              return JSON.parse(errText) as { error?: string; details?: unknown };
-            } catch {
-              return {};
-            }
-          })();
-          result = { fejl: errJson.error ?? `generate-file fejlede (${res.status})` };
-          break;
+        // BIZZ-1263: Generér fil inline i stedet for intern HTTP fetch.
+        // Den interne fetch til /api/ai/generate-file fejler konsistent
+        // pga. Vercel self-referencing / cookie-forwarding issues.
+        try {
+          const format = (fileInput.format as string) ?? 'docx';
+          const title = (fileInput.title as string) ?? 'Dokument';
+          const scratch = fileInput.scratch as Record<string, unknown> | undefined;
+
+          let generated: GeneratedFile;
+          if (format === 'xlsx' && scratch) {
+            generated = await generateXlsx({
+              title,
+              columns: (scratch.columns ?? []) as Array<{ key: string; header: string }>,
+              rows: (scratch.rows ?? []) as Array<Record<string, string | number | boolean | null>>,
+              sheetName: (scratch.sheetName as string) ?? undefined,
+            });
+          } else if (format === 'csv' && scratch) {
+            generated = await generateCsv({
+              columns: (scratch.columns ?? []) as Array<{ key: string; header: string }>,
+              rows: (scratch.rows ?? []) as Array<Record<string, string | number | boolean | null>>,
+              delimiter: ';',
+            });
+          } else if (format === 'pptx' && scratch) {
+            generated = await generatePptx({
+              title,
+              slides:
+                (scratch.slides as Array<{
+                  title: string;
+                  bullets?: string[];
+                  table?: { columns: string[]; rows: string[][] };
+                }>) ?? [],
+            });
+          } else {
+            generated = await generateDocx({
+              title,
+              subtitle: (scratch?.subtitle as string) ?? undefined,
+              sections:
+                (scratch?.sections as Array<{
+                  heading: string;
+                  body: string;
+                  imageBase64?: string;
+                }>) ?? [],
+            });
+          }
+
+          // Upload til Supabase Storage
+          const safeTitle = sanitizeFilename(title);
+          const storagePath = `${fileUserId}/${crypto.randomUUID()}-${safeTitle}.${generated.ext}`;
+          const uploadBody = new Uint8Array(generated.buffer);
+          const adminSb = admin ?? createAdminClient();
+          const { error: uploadErr } = await adminSb.storage
+            .from('ai-generated')
+            .upload(storagePath, uploadBody, {
+              contentType: generated.contentType,
+              upsert: false,
+            });
+
+          if (uploadErr) {
+            logger.error('[generate_document] upload fejl:', uploadErr.message);
+            result = { fejl: `Upload fejlede: ${uploadErr.message}` };
+            break;
+          }
+
+          // Track i ai_file
+          const fileId = crypto.randomUUID();
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (adminSb as any).from('ai_file').insert({
+            id: fileId,
+            user_id: fileUserId,
+            kind: 'generated',
+            file_path: storagePath,
+            file_name: `${safeTitle}.${generated.ext}`,
+            file_type: generated.contentType,
+            size_bytes: generated.buffer.length,
+            expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          });
+
+          // Signed download URL
+          const { data: signedData } = await adminSb.storage
+            .from('ai-generated')
+            .createSignedUrl(storagePath, 86400);
+
+          result = {
+            file_id: fileId,
+            file_name: `${safeTitle}.${generated.ext}`,
+            download_url: signedData?.signedUrl ?? '',
+            preview_text: `${generated.ext.toUpperCase()}-fil "${title}" genereret (${(generated.buffer.length / 1024).toFixed(1)} KB).`,
+          };
+        } catch (genErr) {
+          logger.error('[generate_document] generering fejl:', genErr);
+          result = { fejl: 'Fil-generering fejlede' };
         }
-        const json = await res.json();
-        // Returner hele objektet — wrapper-laget splitter det.
-        result = json;
         break;
       }
 
@@ -3088,7 +3164,8 @@ export async function POST(request: NextRequest): Promise<Response> {
                 baseUrl,
                 request.headers.get('cookie'),
                 diagramBase64,
-                adminClient
+                adminClient,
+                auth.userId
               );
 
               // BIZZ-813: generate_document returnerer download_url —

@@ -933,6 +933,22 @@ function AIChatPanel() {
         // BIZZ-1175: ALTID opdater local messages — race condition med
         // chatCtx.activeId kunne forhindre at svaret blev vist.
         setMessages(finalMsgs);
+
+        // BIZZ-1266: Auto-åbn preview af første genererede fil (side-by-side)
+        if (generatedFiles.length > 0) {
+          const first = generatedFiles[0];
+          docPreview.open({
+            name: first.file_name,
+            fileType: first.format,
+            text: first.preview_text,
+            downloadUrl: first.download_url,
+            sizeBytes: first.bytes,
+            kind: first.preview_kind,
+            columns: first.preview_columns,
+            rows: first.preview_rows,
+            html: first.preview_html,
+          });
+        }
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {

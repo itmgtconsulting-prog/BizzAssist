@@ -40,6 +40,15 @@ const TONER: Array<{ id: Tone; label: string; emoji: string }> = [
   { id: 'linkedin', label: 'LinkedIn', emoji: '💼' },
 ];
 
+/** Output-format valg */
+type OutputFormat = 'chat' | 'docx' | 'pdf';
+
+const OUTPUT_FORMATS: Array<{ id: OutputFormat; label: string }> = [
+  { id: 'chat', label: 'Vis i chat' },
+  { id: 'docx', label: 'Word (.docx)' },
+  { id: 'pdf', label: 'PDF' },
+];
+
 const modul = ANALYSE_MODULER.find((m) => m.id === 'annonce')!;
 
 /**
@@ -51,6 +60,7 @@ export default function AnnonceClient() {
   const [bfe, setBfe] = useState('');
   const [adresse, setAdresse] = useState('');
   const [tone, setTone] = useState<Tone>('familievenlig');
+  const [outputFormat, setOutputFormat] = useState<OutputFormat>('chat');
   const [loading, setLoading] = useState(false);
   const [recentEjendomme, setRecentEjendomme] = useState<
     Array<{ bfe: number; adresse: string; dawaId?: string }>
@@ -150,13 +160,24 @@ export default function AnnonceClient() {
     };
 
     const toneLabel = TONER.find((t) => t.id === tone)?.label ?? tone;
-    const ekstra = `Tone: ${toneLabel}. Skriv annoncen i "${toneLabel}" tone.`;
+    let ekstra = `Tone: ${toneLabel}. Skriv annoncen i "${toneLabel}" tone.`;
+
+    if (outputFormat === 'docx') {
+      ekstra +=
+        '\n\nOutput: Generér ALTID et Word-dokument (.docx) via generate_document tool EFTER annoncen er vist i chatten.';
+    } else if (outputFormat === 'pdf') {
+      ekstra +=
+        '\n\nOutput: Generér ALTID en PDF-fil via generate_document tool med format="docx" EFTER annoncen er vist i chatten. (PDF genereres fra Word-skabelon.)';
+    } else {
+      ekstra +=
+        '\n\nOutput: Vis annoncen direkte i chatten som markdown. Generér IKKE et dokument medmindre brugeren beder om det.';
+    }
 
     const prompt = buildAnalysePrompt(modul, target, ekstra);
     window.dispatchEvent(new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt } }));
 
     setTimeout(() => setLoading(false), 500);
-  }, [bfe, adresse, tone]);
+  }, [bfe, adresse, tone, outputFormat]);
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -283,6 +304,26 @@ export default function AnnonceClient() {
               >
                 <span>{t.emoji}</span>
                 {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Output-format vælger */}
+        <div>
+          <p className="text-slate-400 text-xs mb-2">Output-format:</p>
+          <div className="flex gap-2 flex-wrap">
+            {OUTPUT_FORMATS.map((f) => (
+              <button
+                key={f.id}
+                onClick={() => setOutputFormat(f.id)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                  outputFormat === f.id
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                    : 'bg-slate-800 text-slate-400 border border-slate-700/40 hover:text-slate-300'
+                }`}
+              >
+                {f.label}
               </button>
             ))}
           </div>

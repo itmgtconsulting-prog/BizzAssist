@@ -51,13 +51,12 @@ Tone: Brugeren vælger tone (luksus, familievenlig, investor, erhverv, social me
 Struktur: Overskrift (max 10 ord), Intro (2-3 sæt.), Rumbeskrivelse (brug BBR-data: areal, værelser, materialer), Beliggenhed, Praktisk info (energimærke, byggeår, vurdering), Afslutning.
 Maks 500 ord. Skriv på dansk. Brug markdown.
 
-EFTER annoncen er vist: Spørg brugeren hvilket output de ønsker:
-- "Vil du have annoncen som **Word-dokument**, **PDF**, eller er markdown-versionen ovenfor nok?"
-Hvis brugeren vælger Word/PDF/Excel: kald generate_document tool med det valgte format. Brug sektioner:
+Hvis brugeren har valgt Word/PDF output: kald generate_document tool med format="docx" EFTER annonceteksten. Brug sektioner:
 1. heading=ejendommens adresse, body=annonceteksten
 2. heading="Ejendomsdata", body=BBR-data tabel
 3. heading="Disclaimer", body="Oplysningerne er hentet fra BBR og offentlige registre. Verificér altid hos sælger."
-Sæt documentTitle til ejendommens adresse + "— Boligannonce".`,
+Sæt documentTitle til ejendommens adresse + "— Boligannonce".
+Hvis brugeren IKKE har bedt om fil-output: vis kun annoncen som markdown i chatten.`,
     anbefaletTools: [
       'dawa_adresse_soeg',
       'hent_bbr_data',

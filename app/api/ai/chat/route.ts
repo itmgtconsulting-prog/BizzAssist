@@ -2137,10 +2137,34 @@ async function executeTool(
         // BIZZ-813: POST til /api/ai/generate-file med Claude's input.
         // BIZZ-1000: Injicér diagramBase64 i sektioner med imageBase64="DIAGRAM" placeholder.
         const fileInput = input as unknown as Record<string, unknown>;
-        if (diagramBase64 && Array.isArray(fileInput.sections)) {
-          for (const section of fileInput.sections as Record<string, unknown>[]) {
-            if (section.imageBase64 === 'DIAGRAM') {
-              section.imageBase64 = diagramBase64;
+
+        // BIZZ-1263: Claude sender ofte sections/columns/rows på top-level
+        // i stedet for inde i scratch-objektet. Wrap automatisk.
+        if (!fileInput.scratch && (fileInput.sections || fileInput.columns || fileInput.rows)) {
+          fileInput.scratch = {
+            sections: fileInput.sections,
+            columns: fileInput.columns,
+            rows: fileInput.rows,
+            subtitle: fileInput.subtitle,
+          };
+          delete fileInput.sections;
+          delete fileInput.columns;
+          delete fileInput.rows;
+          delete fileInput.subtitle;
+        }
+
+        // Sikr at mode altid er sat (Claude glemmer det nogle gange)
+        if (!fileInput.mode) {
+          fileInput.mode = 'scratch';
+        }
+
+        if (diagramBase64) {
+          const scratch = fileInput.scratch as Record<string, unknown> | undefined;
+          if (scratch && Array.isArray(scratch.sections)) {
+            for (const section of scratch.sections as Record<string, unknown>[]) {
+              if (section.imageBase64 === 'DIAGRAM') {
+                section.imageBase64 = diagramBase64;
+              }
             }
           }
         }

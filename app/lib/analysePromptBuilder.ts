@@ -41,15 +41,17 @@ export const ANALYSE_MODULER: AnalyseModul[] = [
     beskrivelse: 'AI-genereret boligannonce med BBR-data, nærområde og sammenlignelige salg',
     ikon: 'Sparkles',
     instruktioner: `Skriv en professionel dansk boligannonce for den valgte ejendom.
+SPROG: Skriv ALTID korrekt dansk med æ, ø, å — ALDRIG ASCII-erstatninger (dvs. "på" IKKE "paa", "ærlig" IKKE "aerlig", "nærområde" IKKE "naeromraade"). Dette gælder OGSÅ i Word-dokumenter.
 VIGTIGT: Kald ALTID disse tools FØRST (parallelt) for at hente konkret ejendomsdata:
 - hent_bbr_data (boligareal m², værelser, etager, byggeår, materialer, energiforsyning)
 - hent_vurdering (ejendomsværdi, grundværdi)
 - hent_energimaerke (energimærke A-G)
 - hent_salgshistorik (seneste salgspris og dato)
 Brug derefter de konkrete data i annoncen — OPFIND ALDRIG fakta.
+FLERE BYGNINGER: Hvis BBR returnerer flere bygninger på matriklen (fx tvillingehus, anneks, garage, udhus), NÆVN dem alle med areal og anvendelse. Beskriv den primære bolig først, derefter sekundære bygninger.
 Tone: Brugeren vælger tone (luksus, familievenlig, investor, erhverv, social media).
 Struktur: Overskrift (max 10 ord), Intro (2-3 sæt.), Rumbeskrivelse (brug BBR-data: areal, værelser, materialer), Beliggenhed, Praktisk info (energimærke, byggeår, vurdering), Afslutning.
-Maks 500 ord. Skriv på dansk. Brug markdown.
+Maks 500 ord. Skriv på dansk med æøå. Brug markdown.
 
 Hvis brugeren har valgt Word/PDF output: kald generate_document tool med format="docx" EFTER annonceteksten. Brug sektioner:
 1. heading=ejendommens adresse, body=annonceteksten

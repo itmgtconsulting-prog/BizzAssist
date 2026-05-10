@@ -426,7 +426,7 @@ async function searchCompanies(
     };
     const hits = data.results ?? [];
 
-    return hits.slice(0, 5).map((h) => {
+    return hits.slice(0, 7).map((h) => {
       const normName = normalize(h.name);
       const score = scoreMatch(normQ, normName);
       return {
@@ -484,7 +484,7 @@ async function searchPeople(
     };
     const hits = data.results ?? [];
 
-    return hits.slice(0, 5).map((h) => {
+    return hits.slice(0, 7).map((h) => {
       const normName = normalize(h.name);
       const score = scoreMatch(normQ, normName);
       const rolleText =
@@ -548,10 +548,10 @@ export async function GET(request: NextRequest) {
   ]);
 
   // Group by type — max 10 addresses (BIZZ-723: hovedejendom + lejligheder på
-  // samme matrikel kan let overstige 5), 5 companies, 5 people. Sorted by score.
+  // samme matrikel kan let overstige 5), 7 companies, 7 people (BIZZ-1267).
   const addrResults = addresses.slice(0, 10).sort((a, b) => b.score - a.score);
-  const compResults = companies.slice(0, 5).sort((a, b) => b.score - a.score);
-  const pplResults = people.slice(0, 5).sort((a, b) => b.score - a.score);
+  const compResults = companies.slice(0, 7).sort((a, b) => b.score - a.score);
+  const pplResults = people.slice(0, 7).sort((a, b) => b.score - a.score);
 
   // Grouped output: addresses → companies → people (not mixed)
   const results: UnifiedSearchResult[] = [...addrResults, ...compResults, ...pplResults];

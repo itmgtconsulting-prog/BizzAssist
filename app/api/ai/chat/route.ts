@@ -2168,7 +2168,7 @@ async function executeTool(
             }
           }
         }
-        logger.info('[generate_document] input:', JSON.stringify(fileInput).slice(0, 500));
+        logger.log('[generate_document] input:', JSON.stringify(fileInput).slice(0, 500));
         const res = await fetch(`${baseUrl}/api/ai/generate-file`, {
           method: 'POST',
           headers: {

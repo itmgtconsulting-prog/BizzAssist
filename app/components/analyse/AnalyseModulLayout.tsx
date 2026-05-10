@@ -102,7 +102,11 @@ function ResultIcon({ type }: { type: string }) {
  * @returns Layout JSX
  */
 export default function AnalyseModulLayout({ modul, children, ekstraKontekst }: Props) {
-  const [targetType, setTargetType] = useState<AnalyseTarget['type']>('virksomhed');
+  /** BIZZ-1249: Intelligent default target-type fra modul-config */
+  const modulConfig = ANALYSE_MODULES.find((m) => m.id === modul.id);
+  const [targetType, setTargetType] = useState<AnalyseTarget['type']>(
+    modulConfig?.defaultTarget ?? 'virksomhed'
+  );
   const [targetId, setTargetId] = useState('');
   const [targetLabel, setTargetLabel] = useState('');
   const [loading, setLoading] = useState(false);
@@ -223,8 +227,12 @@ export default function AnalyseModulLayout({ modul, children, ekstraKontekst }: 
         </h1>
         {/* BIZZ-1248: Brug description fra analyseModules.ts for konsistens med landing page */}
         <p className="text-slate-400 text-sm mt-1">
-          {ANALYSE_MODULES.find((m) => m.id === modul.id)?.description ?? modul.beskrivelse}
+          {modulConfig?.description ?? modul.beskrivelse}
         </p>
+        {/* BIZZ-1249: Hjælpetekst der forklarer hvad brugeren skal gøre */}
+        {modulConfig?.hint && (
+          <p className="text-slate-500 text-xs mt-2 italic">{modulConfig.hint}</p>
+        )}
       </div>
 
       {/* Target-vælger */}

@@ -10,9 +10,10 @@
 
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
-import { Search, ChevronRight, Sparkles, Clock, ArrowLeft } from 'lucide-react';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { Search, ChevronRight, Sparkles, Clock, ArrowLeft, MapPin, Loader2 } from 'lucide-react';
 import Link from 'next/link';
+import type { UnifiedSearchResult } from '@/app/api/search/route';
 import {
   buildAnalysePrompt,
   ANALYSE_MODULER,
@@ -55,6 +56,14 @@ export default function AnnonceClient() {
     Array<{ bfe: number; adresse: string; dawaId?: string }>
   >([]);
 
+  /** Autocomplete søge-state */
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<UnifiedSearchResult[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
   /** Hent seneste besøgte ejendomme fra /api/recents */
   useEffect(() => {
     fetch('/api/recents?type=ejendom&limit=3')
@@ -71,6 +80,60 @@ export default function AnnonceClient() {
         }
       })
       .catch(() => {});
+  }, []);
+
+  /**
+   * Debounced autocomplete-søgning mod /api/search filtreret til adresser.
+   */
+  const handleSearchChange = useCallback((value: string) => {
+    setSearchQuery(value);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (value.trim().length < 2) {
+      setSearchResults([]);
+      setDropdownOpen(false);
+      return;
+    }
+    debounceRef.current = setTimeout(async () => {
+      setSearchLoading(true);
+      try {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(value.trim())}`);
+        if (res.ok) {
+          const data: UnifiedSearchResult[] = await res.json();
+          const addressResults = data.filter((r) => r.type === 'address');
+          setSearchResults(addressResults);
+          setDropdownOpen(addressResults.length > 0);
+        }
+      } catch {
+        setSearchResults([]);
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 300);
+  }, []);
+
+  /**
+   * Vælg en adresse fra autocomplete — auto-udfyld BFE + adresse.
+   *
+   * @param result - Valgt søgeresultat
+   */
+  const selectAddress = useCallback((result: UnifiedSearchResult) => {
+    setBfe(result.id);
+    setAdresse(result.title);
+    setSearchQuery(result.title);
+    setDropdownOpen(false);
+    setSearchResults([]);
+  }, []);
+
+  /** Luk dropdown ved klik udenfor */
+  useEffect(() => {
+    /** @param e - Mouse event */
+    function handleClickOutside(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
   /**
@@ -143,26 +206,80 @@ export default function AnnonceClient() {
           </div>
         )}
 
-        {/* BFE + adresse */}
-        <div className="flex gap-3">
-          <div className="relative flex-1">
+        {/* BIZZ-1250: Autocomplete ejendomssøgning */}
+        <div className="relative" ref={dropdownRef}>
+          <div className="relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              onFocus={() => {
+                if (searchResults.length > 0) setDropdownOpen(true);
+              }}
+              placeholder="Søg på adresse, vejnavn eller postnummer..."
+              className="w-full pl-9 pr-10 py-2.5 bg-slate-800 border border-slate-700/60 rounded-lg text-sm text-white outline-none focus:border-blue-500/60"
+            />
+            {searchLoading && (
+              <Loader2
+                size={14}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-400 animate-spin"
+              />
+            )}
+          </div>
+          {dropdownOpen && searchResults.length > 0 && (
+            <div className="absolute z-50 w-full mt-1 bg-slate-800 border border-slate-700/60 rounded-lg shadow-xl max-h-64 overflow-y-auto">
+              {searchResults.map((result) => (
+                <button
+                  key={result.id}
+                  type="button"
+                  onClick={() => selectAddress(result)}
+                  className="w-full text-left px-3 py-2.5 hover:bg-slate-700/50 transition-colors flex items-start gap-3 border-b border-slate-700/30 last:border-b-0"
+                >
+                  <MapPin size={14} className="text-emerald-400 mt-0.5 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm text-white truncate">{result.title}</div>
+                    <div className="text-xs text-slate-400 truncate">{result.subtitle}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Valgt ejendom indikator */}
+        {bfe && (
+          <div className="flex items-center gap-2 text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2">
+            <MapPin size={12} />
+            <span className="font-medium">{adresse || `BFE ${bfe}`}</span>
+            <button
+              type="button"
+              onClick={() => {
+                setBfe('');
+                setAdresse('');
+                setSearchQuery('');
+              }}
+              className="ml-auto text-slate-400 hover:text-white"
+              aria-label="Ryd valg"
+            >
+              &times;
+            </button>
+          </div>
+        )}
+
+        {/* Fallback: manuelt BFE-input */}
+        {!bfe && (
+          <div className="flex items-center gap-2">
+            <span className="text-slate-500 text-xs">eller angiv BFE manuelt:</span>
             <input
               type="text"
               value={bfe}
               onChange={(e) => setBfe(e.target.value)}
-              placeholder="BFE-nummer (fx 2081243)"
-              className="w-full pl-9 pr-3 py-2.5 bg-slate-800 border border-slate-700/60 rounded-lg text-sm text-white outline-none focus:border-blue-500/60"
+              placeholder="BFE-nummer"
+              className="w-40 px-3 py-1.5 bg-slate-800 border border-slate-700/60 rounded-lg text-xs text-white outline-none focus:border-blue-500/60"
             />
           </div>
-          <input
-            type="text"
-            value={adresse}
-            onChange={(e) => setAdresse(e.target.value)}
-            placeholder="Adresse (valgfrit)"
-            className="w-64 px-3 py-2.5 bg-slate-800 border border-slate-700/60 rounded-lg text-sm text-white outline-none focus:border-blue-500/60"
-          />
-        </div>
+        )}
 
         {/* Tone-vælger */}
         <div>

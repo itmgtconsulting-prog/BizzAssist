@@ -1,9 +1,9 @@
 /**
- * Analyse landing page — /dashboard/analyse
+ * Analyse & Tools landing page — /dashboard/analyse
  *
- * BIZZ-1261: Ét fladt niveau med alle enabled branchespecifikke
- * analyse-moduler. AI Analyse og Data Analyse kort fjernet —
- * AI Chat er tilgængelig via sidebar, Query Builder via /analyse/data.
+ * BIZZ-1260: To sektioner:
+ *  1. Analyse — Pivot Analyse (manuel) + AI Query Builder
+ *  2. Tools — branchespecifikke analyse-moduler
  *
  * @module app/dashboard/analyse
  */
@@ -19,6 +19,8 @@ import {
   BarChart3,
   Search,
   Building2,
+  LayoutGrid,
+  Wrench,
 } from 'lucide-react';
 import { getEnabledModules } from '@/app/lib/analyseModules';
 
@@ -36,7 +38,7 @@ const iconMap: Record<string, React.ComponentType<{ size?: number; className?: s
 };
 
 /**
- * Analyse landing page med branchemoduler i ét fladt niveau.
+ * Analyse & Tools landing page med 2 sektioner.
  *
  * @returns Landing page JSX
  */
@@ -45,49 +47,104 @@ export default function AnalyseLandingPage() {
 
   return (
     <div className="flex-1 bg-[#0a1628] p-8 overflow-y-auto">
-      <h1 className="text-2xl font-bold text-white mb-2">Analyse</h1>
+      <h1 className="text-2xl font-bold text-white mb-2">Analyse & Tools</h1>
       <p className="text-slate-400 text-sm mb-8">
-        Vælg et analyse-modul nedenfor. Analysen kører via AI Chat med relevante datakilder.
+        Udforsk data med pivot-tabeller og AI, eller brug specialiserede brancheværktøjer.
       </p>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-w-5xl">
-        {enabledModules.map((modul) => {
-          const Icon = iconMap[modul.icon] ?? Sparkles;
-          const isPro = modul.requiredPlan === 'professionel';
-          const isEnt = modul.requiredPlan === 'enterprise';
-          const color = isEnt ? 'text-purple-400' : isPro ? 'text-blue-400' : 'text-emerald-400';
-          const bg = isEnt ? 'bg-purple-500/10' : isPro ? 'bg-blue-500/10' : 'bg-emerald-500/10';
-          const hoverBorder = isEnt
-            ? 'hover:border-purple-500/40'
-            : isPro
-              ? 'hover:border-blue-500/40'
-              : 'hover:border-emerald-500/40';
+      {/* ── Sektion 1: Analyse ── */}
+      <div className="mb-10">
+        <div className="flex items-center gap-2 mb-4">
+          <BarChart3 size={16} className="text-emerald-400" />
+          <h2 className="text-base font-semibold text-white">Analyse</h2>
+        </div>
 
-          return (
-            <Link
-              key={modul.id}
-              href={modul.path}
-              className={`group bg-slate-800/40 border border-slate-700/40 ${hoverBorder} rounded-2xl p-5 transition-all hover:bg-slate-800/60`}
-            >
-              <div className="flex items-center gap-3 mb-2">
-                <div
-                  className={`p-2 rounded-xl ${bg} ${color} group-hover:scale-105 transition-transform`}
-                >
-                  <Icon size={18} />
-                </div>
-                <h2 className="text-sm font-semibold text-white flex-1 truncate">{modul.label}</h2>
-                {modul.requiredPlan && (
-                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/5 text-slate-500 font-medium shrink-0">
-                    {isEnt ? 'Enterprise' : 'Pro'}
-                  </span>
-                )}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl">
+          {/* Pivot Analyse */}
+          <Link
+            href="/dashboard/analyse/pivot"
+            className="group bg-slate-800/40 border border-slate-700/40 hover:border-emerald-500/40 rounded-2xl p-5 transition-all hover:bg-slate-800/60"
+          >
+            <div className="flex items-center gap-3 mb-2">
+              <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400 group-hover:scale-105 transition-transform">
+                <LayoutGrid size={18} />
               </div>
-              <p className="text-slate-400 text-xs leading-relaxed line-clamp-2">
-                {modul.description}
-              </p>
-            </Link>
-          );
-        })}
+              <h3 className="text-sm font-semibold text-white">Pivot Analyse</h3>
+            </div>
+            <p className="text-slate-400 text-xs leading-relaxed">
+              Byg pivot-tabeller manuelt med drag-and-drop. Vælg tabel, kolonner og filtre — udforsk
+              data fra BBR ejendomme og virksomhedsregnskaber direkte.
+            </p>
+          </Link>
+
+          {/* AI Query Builder */}
+          <Link
+            href="/dashboard/analyse/data"
+            className="group bg-slate-800/40 border border-slate-700/40 hover:border-blue-500/40 rounded-2xl p-5 transition-all hover:bg-slate-800/60"
+          >
+            <div className="flex items-center gap-3 mb-2">
+              <div className="p-2 rounded-xl bg-blue-500/10 text-blue-400 group-hover:scale-105 transition-transform">
+                <Sparkles size={18} />
+              </div>
+              <h3 className="text-sm font-semibold text-white">AI Query Builder</h3>
+            </div>
+            <p className="text-slate-400 text-xs leading-relaxed">
+              Skriv en forespørgsel på dansk — AI bygger analyse med grafer og tabeller. Kan
+              analysere BBR-ejendomsdata (areal, energimærke, opførelsesår, kommune) og
+              virksomhedsregnskaber (omsætning, resultat, egenkapital).
+            </p>
+          </Link>
+        </div>
+      </div>
+
+      {/* ── Sektion 2: Tools ── */}
+      <div>
+        <div className="flex items-center gap-2 mb-4">
+          <Wrench size={16} className="text-blue-400" />
+          <h2 className="text-base font-semibold text-white">Tools</h2>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-w-5xl">
+          {enabledModules.map((modul) => {
+            const Icon = iconMap[modul.icon] ?? Sparkles;
+            const isPro = modul.requiredPlan === 'professionel';
+            const isEnt = modul.requiredPlan === 'enterprise';
+            const color = isEnt ? 'text-purple-400' : isPro ? 'text-blue-400' : 'text-emerald-400';
+            const bg = isEnt ? 'bg-purple-500/10' : isPro ? 'bg-blue-500/10' : 'bg-emerald-500/10';
+            const hoverBorder = isEnt
+              ? 'hover:border-purple-500/40'
+              : isPro
+                ? 'hover:border-blue-500/40'
+                : 'hover:border-emerald-500/40';
+
+            return (
+              <Link
+                key={modul.id}
+                href={modul.path}
+                className={`group bg-slate-800/40 border border-slate-700/40 ${hoverBorder} rounded-2xl p-5 transition-all hover:bg-slate-800/60`}
+              >
+                <div className="flex items-center gap-3 mb-2">
+                  <div
+                    className={`p-2 rounded-xl ${bg} ${color} group-hover:scale-105 transition-transform`}
+                  >
+                    <Icon size={18} />
+                  </div>
+                  <h3 className="text-sm font-semibold text-white flex-1 truncate">
+                    {modul.label}
+                  </h3>
+                  {modul.requiredPlan && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/5 text-slate-500 font-medium shrink-0">
+                      {isEnt ? 'Enterprise' : 'Pro'}
+                    </span>
+                  )}
+                </div>
+                <p className="text-slate-400 text-xs leading-relaxed line-clamp-2">
+                  {modul.description}
+                </p>
+              </Link>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

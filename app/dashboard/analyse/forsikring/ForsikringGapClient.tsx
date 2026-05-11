@@ -24,6 +24,7 @@ import {
   FileSpreadsheet,
   Building2,
   User,
+  Users,
   Loader2,
 } from 'lucide-react';
 import type { UnifiedSearchResult } from '@/app/api/search/route';
@@ -262,6 +263,14 @@ export default function ForsikringGapClient() {
         <p className="text-slate-400 text-sm mt-1">
           Identificér dækningsgab i kundens forsikringsportefølje
         </p>
+        {/* BIZZ-1224: Link til batch-analyse */}
+        <a
+          href="/dashboard/analyse/forsikring/batch"
+          className="inline-flex items-center gap-1.5 mt-2 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+        >
+          <Users size={12} />
+          Batch-analyse (1000+ kunder)
+        </a>
       </div>
 
       {/* Step indicator */}

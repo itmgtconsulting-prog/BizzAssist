@@ -198,6 +198,26 @@ export async function POST(request: NextRequest) {
           { signal: AbortSignal.timeout(15000) }
         );
 
+        // BIZZ-1262: Token-tracking — registrer forbrug i tenant.ai_token_usage
+        const tokensIn = response.usage?.input_tokens ?? 0;
+        const tokensOut = response.usage?.output_tokens ?? 0;
+        if (tokensIn > 0 || tokensOut > 0) {
+          void (async () => {
+            try {
+              const trackAdmin = createAdminClient();
+              await trackAdmin.schema('tenant').from('ai_token_usage').insert({
+                tenant_id: auth.tenantId,
+                user_id: auth.userId,
+                tokens_in: tokensIn,
+                tokens_out: tokensOut,
+                model: 'claude-sonnet-4-6',
+              });
+            } catch {
+              // Best-effort — token tracking must not break queries
+            }
+          })();
+        }
+
         const textBlock = response.content.find((b) => b.type === 'text');
         if (!textBlock || textBlock.type !== 'text') {
           sse(JSON.stringify({ error: 'AI returnerede intet svar' }));

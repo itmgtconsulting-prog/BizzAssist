@@ -1727,6 +1727,47 @@ async function resolvePersonGraph(
     }
   }
 
+  // ── BIZZ-1259: Personlige ejendomme via ejf_ejerskab ─────────────────────
+  // Henter privatejede ejendomme for personen baseret på navn-match.
+  // Samme mønster som step 4 i resolveCompanyGraph (BIZZ-1082).
+  {
+    const personNavn = personName;
+    if (personNavn && !personNavn.startsWith('Person ')) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: personProps } = await (admin as any)
+        .from('ejf_ejerskab')
+        .select('bfe_nummer, ejerandel_taeller, ejerandel_naevner')
+        .eq('ejer_navn', personNavn)
+        .eq('ejer_type', 'person')
+        .eq('status', 'gældende')
+        .limit(MAX_PROPS_PER_OWNER);
+
+      for (const pp of (personProps ?? []) as Array<{
+        bfe_nummer: number;
+        ejerandel_taeller: number | null;
+        ejerandel_naevner: number | null;
+      }>) {
+        const propId = `bfe-${pp.bfe_nummer}`;
+        if (!nodeIds.has(propId)) {
+          nodes.push({
+            id: propId,
+            label: `BFE ${pp.bfe_nummer}`,
+            type: 'property',
+            bfeNummer: pp.bfe_nummer,
+          });
+          nodeIds.add(propId);
+        }
+        edges.push({
+          from: mainId,
+          to: propId,
+          ejerandel: formatEjerandel(pp.ejerandel_taeller, pp.ejerandel_naevner),
+          personallyOwned: true,
+          ownerPersonId: mainId,
+        });
+      }
+    }
+  }
+
   // ── POST-PROCESS: berig datterselskabs-noder med personens rolle ──────────
   // Datterselskaber (level 1/2 subsidiaries) oprettes uden personRolle fordi
   // de tilføjes via cvr_virksomhed_ejerskab (virksomhed→virksomhed), ikke

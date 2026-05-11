@@ -19,28 +19,20 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
   ArrowLeft,
-  Bell,
   X,
   MapPin,
   Building2,
-  Home,
   FileText,
   Users,
   Landmark,
   BarChart3,
   Map as MapIcon,
-  Briefcase,
-  RefreshCw,
 } from 'lucide-react';
 /** BIZZ-600: PropertyMap wraps mapbox-gl (browser-only) — dynamic() keeps mapbox-gl out of initial bundle */
 // prettier-ignore
 const PropertyMap = dynamic(/* mapbox-gl */ () => import('@/app/components/ejendomme/PropertyMap'), { ssr: false, loading: () => (<div className="w-full h-64 bg-slate-800/50 rounded-xl animate-pulse flex items-center justify-center"><span className="text-slate-500 text-sm">Indlæser kort...</span></div>) });
-/** Diagram v2 — feature-flagged, kun synlig i dev/preview */
 import { erDawaId, type DawaAdresse, type DawaJordstykke } from '@/app/lib/dawa';
-import {
-  formatBenyttelseOgByggeaar,
-  benyttelseskodeTilBoligtype,
-} from '@/app/lib/benyttelseskoder';
+import { benyttelseskodeTilBoligtype } from '@/app/lib/benyttelseskoder';
 import { isUdfasetStatusLabel } from '@/app/lib/bbrKoder';
 import type { EjendomApiResponse, LiveBBRBygning } from '@/app/api/ejendom/[id]/route';
 import type { CVRVirksomhed, CVRResponse } from '@/app/api/cvr/route';
@@ -63,7 +55,7 @@ import type {
 import { gemRecentEjendom } from '@/app/lib/recentEjendomme';
 import { recordRecentVisit } from '@/app/lib/recordRecentVisit';
 import { erTracked, toggleTrackEjendom, fetchErTracked } from '@/app/lib/trackedEjendomme';
-import FoelgTooltip from '@/app/components/FoelgTooltip';
+// FoelgTooltip moved to EjendomHeader (BIZZ-1230)
 import CreateCaseModal from '@/app/components/sager/CreateCaseModal';
 import { useDomainMemberships } from '@/app/hooks/useDomainMemberships';
 import { useLanguage } from '@/app/context/LanguageContext';
@@ -80,9 +72,10 @@ import type { EjerDetalje } from './EjerKort';
 import GenerateListingModal from '@/app/components/ejendomme/GenerateListingModal';
 import EjendomOekonomiTab from './tabs/EjendomOekonomiTab';
 import EjendomBBRTab from './tabs/EjendomBBRTab';
-import DataFreshnessBadge from '@/app/components/DataFreshnessBadge';
-import FloodRiskBadge from '@/app/components/ejendomme/FloodRiskBadge';
 import EjendomOverblikTab from './tabs/EjendomOverblikTab';
+import EjendomHeader from './EjendomHeader';
+import { buildMergedSalgshistorik } from './helpers/mergedSalgshistorik';
+import { handleDownloadZip as executeDownloadZip } from './helpers/downloadZip';
 // BIZZ-583: Administrator-kort bruges nu kun via EjendomEjerforholdTab — import fjernet fra master.
 // BIZZ-601: DiagramForce + DiagramGraph-type var kun brugt i
 // BIZZ-1143: PropertyOwnerDiagram slettet — erstattet af EjerKort (ren præsentation).
@@ -1305,112 +1298,21 @@ export default function EjendomDetaljeClient({
   const [zipLoader, setZipLoader] = useState(false);
 
   /**
-   * Henter de valgte dokumenter fra Dokumenter-tabben og downloader dem som ZIP.
-   * Bygger en liste over downloadbare PDF-URL'er baseret på valgte dokument-IDs,
-   * POSTer til /api/dokumenter/zip og trigger browser-download af resultatet.
+   * Henter de valgte dokumenter og downloader dem som ZIP.
+   * BIZZ-1230: Logik ekstraheret til helpers/downloadZip.ts
    */
   const handleDownloadZip = async () => {
     if (valgteDoc.size === 0 || zipLoader) return;
-
-    const rel = bbrData?.ejendomsrelationer?.[0];
-    const bfeNummer = rel?.bfeNummer;
-    const ejerlavKode = rel?.ejerlavKode;
-    const matrikelnr = rel?.matrikelnr;
-
-    type ZipDoc = { filename: string; url: string };
-    const docs: ZipDoc[] = [];
-
-    for (const id of valgteDoc) {
-      // BBR-meddelelse
-      if (id === 'std-3' && bfeNummer) {
-        docs.push({
-          filename: 'BBR-meddelelse.pdf',
-          url: `https://bbr.dk/pls/wwwdata/get_newois_pck.show_bbr_meddelelse_pdf?i_bfe=${bfeNummer}`,
-        });
-      }
-      // Matrikelkort (intern API)
-      if (id === 'std-5' && ejerlavKode && matrikelnr) {
-        docs.push({
-          filename: `Matrikelkort_${matrikelnr}.pdf`,
-          url: `/api/matrikelkort?ejerlavKode=${ejerlavKode}&matrikelnr=${encodeURIComponent(matrikelnr)}`,
-        });
-      }
-      // Jordforureningsattest — via intern /api/jord/pdf proxy der fetcher /report/generate direkte
-      if (id === 'std-7' && ejerlavKode && matrikelnr) {
-        docs.push({
-          filename: `Jordforureningsattest_${matrikelnr}.pdf`,
-          url: `/api/jord/pdf?elav=${ejerlavKode}&matrnr=${encodeURIComponent(matrikelnr)}`,
-        });
-      }
-    }
-
-    // Planer med doklink
-    if (plandata) {
-      for (const plan of plandata) {
-        if (plan.doklink && valgteDoc.has(`pla-${plan.id}`)) {
-          docs.push({
-            filename: `Plan_${(plan.navn ?? plan.id ?? 'ukendt').replace(/[^a-zA-Z0-9æøåÆØÅ]/g, '_')}.pdf`,
-            url: plan.doklink,
-          });
-        }
-      }
-    }
-
-    // Energimærkerapporter — proxy URL åbnes direkte fra cachet state
-    if (energimaerker) {
-      for (const m of energimaerker) {
-        if (m.pdfUrl && valgteDoc.has(`energi-${m.serialId}`)) {
-          docs.push({
-            filename: `Energimaerke_${m.serialId}.pdf`,
-            url: m.pdfUrl,
-          });
-        }
-      }
-    }
-
-    if (docs.length === 0) {
-      alert(t.noDirectPdfLinks);
-      return;
-    }
-
     setZipLoader(true);
     try {
-      const adresse = dawaAdresse?.vejnavn ?? 'ejendom';
-      const res = await fetch('/api/dokumenter/zip', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          docs,
-          arkivNavn: `BizzAssist_${adresse.replace(/[^a-zA-Z0-9æøåÆØÅ]/g, '_')}`,
-        }),
+      await executeDownloadZip({
+        valgteDoc,
+        bbrData,
+        plandata,
+        energimaerker,
+        dawaAdresse,
+        t,
       });
-
-      if (!res.ok) {
-        const err = (await res.json().catch(() => ({ fejl: t.unknownError }))) as { fejl?: string };
-        alert(`ZIP-download fejlede: ${err.fejl ?? res.statusText}`);
-        return;
-      }
-
-      // Trigger browser-download
-      const springedeOver = res.headers.get('X-Springede-Over');
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download =
-        res.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1] ??
-        'dokumenter.zip';
-      a.click();
-      URL.revokeObjectURL(url);
-
-      // Informér brugeren hvis nogle dokumenter ikke kunne valideres som gyldige PDF-filer
-      if (springedeOver) {
-        const liste = springedeOver
-          .split(' | ')
-          .map((s) => `• ${s}`)
-          .join('\n');
-        alert(`${t.zipDownloaded}\n\n${liste}\n\n${t.tryOpenInBrowser}`);
-      }
     } catch (err) {
       alert(`ZIP-download fejlede: ${err instanceof Error ? err.message : t.unknownError}`);
     } finally {
@@ -1419,208 +1321,8 @@ export default function EjendomDetaljeClient({
   };
 
   // ── Kombineret salgshistorik: EJF + Tinglysning adkomster ──
-
-  /** En samlet handel der kan stamme fra EJF, tinglysning eller begge */
-  interface MergedHandel {
-    kontantKoebesum: number | null;
-    samletKoebesum: number | null;
-    /** Løsøreværdi fra EJF (inventar, maskiner m.m. der ikke er fast ejendom) */
-    loesoeresum: number | null;
-    /** Entreprisesum fra EJF (nybyggeri/ombygning inkluderet i købet) */
-    entreprisesum: number | null;
-    koebsaftaleDato: string | null;
-    overtagelsesdato: string | null;
-    overdragelsesmaade: string | null;
-    koeber: string | null;
-    koebercvr: string | null;
-    adkomstType: string | null;
-    andel: string | null;
-    tinglysningsdato: string | null;
-    tinglysningsafgift: number | null;
-    kilde: 'ejf' | 'tinglysning' | 'begge';
-    /**
-     * BIZZ-468: Struktureret liste af alle købere i denne handel med hver
-     * deres andel. Bruges af render-laget i stedet for den concatenerede
-     * `koeber`-streng så hver navn kan få sin egen andel-suffix (ikke kun
-     * den sidste). Tom liste = én køber uden andel — brug fallback til
-     * `koeber` + `andel`-felterne.
-     */
-    koebere?: { navn: string; cvr: string | null; andel: string | null }[];
-    // BIZZ-481: Udvidede EJF_Ejerskifte felter
-    /** True når handlen er tinglyst med uopfyldte betingelser — vigtigt advarselsflag */
-    betinget?: boolean | null;
-    /** Frist for opfyldelse af betingelser (ISO 8601) */
-    fristDato?: string | null;
-    /** Officiel forretningshændelse fra EJF — præcis klassificering i stedet for gæt */
-    forretningshaendelse?: string | null;
-    // BIZZ-480: Udvidede EJF_Handelsoplysninger felter
-    /** Afståelsesdato — kan afvige fra overtagelsesdato */
-    afstaaelsesdato?: string | null;
-    /** Skødetekst — beskrivelse fra skødet */
-    skoedetekst?: string | null;
-  }
-
-  /**
-   * Merger EJF-salgshistorik med tinglysning-adkomster.
-   * Matcher på overtagelsesdato (±30 dage) for at samle data fra begge kilder.
-   * Tinglysning bidrager med købernavn, adkomsttype, andel og tinglysningsafgift.
-   */
-  const mergedSalgshistorik: MergedHandel[] = (() => {
-    const merged: MergedHandel[] = [];
-    const brugteTlIdx = new Set<number>();
-
-    // Trin 1: Start med EJF-data og berig med tinglysning
-    for (const h of salgshistorik ?? []) {
-      const ejfDato = h.overtagelsesdato ?? h.koebsaftaleDato ?? '';
-      let bestMatch: TLEjer | null = null;
-      let bestIdx = -1;
-      let bestDiff = Infinity;
-
-      for (let i = 0; i < tlEjere.length; i++) {
-        if (brugteTlIdx.has(i)) continue;
-        const tlDato = tlEjere[i].overtagelsesdato ?? tlEjere[i].koebsaftaledato ?? '';
-        if (!ejfDato || !tlDato) continue;
-        const diff = Math.abs(new Date(ejfDato).getTime() - new Date(tlDato).getTime());
-        if (diff < 30 * 24 * 60 * 60 * 1000 && diff < bestDiff) {
-          bestDiff = diff;
-          bestMatch = tlEjere[i];
-          bestIdx = i;
-        }
-      }
-
-      if (bestMatch && bestIdx >= 0) brugteTlIdx.add(bestIdx);
-
-      // BIZZ-693: EJF har ofte null købesum — fallback til Tinglysning-match
-      merged.push({
-        kontantKoebesum:
-          h.kontantKoebesum ?? bestMatch?.kontantKoebesum ?? bestMatch?.koebesum ?? null,
-        samletKoebesum: h.samletKoebesum ?? bestMatch?.iAltKoebesum ?? bestMatch?.koebesum ?? null,
-        loesoeresum: h.loesoeresum,
-        entreprisesum: h.entreprisesum,
-        koebsaftaleDato: h.koebsaftaleDato,
-        overtagelsesdato: h.overtagelsesdato,
-        overdragelsesmaade: h.overdragelsesmaade,
-        // BIZZ-685/693: prefer Tinglysning match (has adkomst-detaljer),
-        // fall back til ejf-enriched navn fra /api/salgshistorik så rækker
-        // ikke længere vises som tomme købere når Tinglysning ikke matcher.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        koeber: bestMatch?.navn ?? (h as any).koeber ?? null,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        koebercvr: bestMatch?.cvr ?? (h as any).koeberCvr ?? null,
-        adkomstType: bestMatch?.adkomstType ?? null,
-        andel: bestMatch?.andel ?? null,
-        tinglysningsdato: bestMatch?.tinglysningsdato ?? null,
-        tinglysningsafgift: bestMatch?.tinglysningsafgift ?? null,
-        kilde: bestMatch ? 'begge' : 'ejf',
-        // BIZZ-480 + BIZZ-481: Propager nye EJF-felter til UI-laget.
-        betinget: h.betinget ?? null,
-        fristDato: h.fristDato ?? null,
-        forretningshaendelse: h.forretningshaendelse ?? null,
-        afstaaelsesdato: h.afstaaelsesdato ?? null,
-        skoedetekst: h.skoedetekst ?? null,
-      });
-    }
-
-    // Trin 2: Tilføj tinglysning-adkomster der ikke matchede EJF
-    for (let i = 0; i < tlEjere.length; i++) {
-      if (brugteTlIdx.has(i)) continue;
-      const e = tlEjere[i];
-      merged.push({
-        kontantKoebesum: e.kontantKoebesum ?? e.koebesum,
-        samletKoebesum: e.iAltKoebesum ?? e.koebesum,
-        // Løsøre/entreprise comes only from EJF — not available in tinglysning records
-        loesoeresum: null,
-        entreprisesum: null,
-        koebsaftaleDato: e.koebsaftaledato,
-        overtagelsesdato: e.overtagelsesdato,
-        overdragelsesmaade: e.adkomstType,
-        koeber: e.navn,
-        koebercvr: e.cvr,
-        adkomstType: e.adkomstType,
-        andel: e.andel,
-        tinglysningsdato: e.tinglysningsdato,
-        tinglysningsafgift: e.tinglysningsafgift,
-        kilde: 'tinglysning',
-      });
-    }
-
-    // BIZZ-444: Saml handler med samme dato til én linje (f.eks. 50%/50%
-    // ejere der køber sammen vises som én handel).
-    // BIZZ-844: Group på dato ALENE — tidligere (dato+sum) splittede rækker
-    // når Tinglysning-enrichment kun matchede én af flere EJF-rows på samme
-    // dato. Resulterede i "phantom"-rækker med samme dato men uden pris der
-    // gav visningen "Brian Holm Larsen, Jakob Juul Rasmussen" ved siden af
-    // en rigtig Jakob-række med pris. Ved merge foretrækkes den højeste
-    // (non-null) sum så prisen ikke går tabt.
-    const grouped: MergedHandel[] = [];
-    for (const h of merged) {
-      const dato = h.overtagelsesdato ?? h.koebsaftaleDato ?? '';
-      const existing = grouped.find((g) => {
-        const gDato = g.overtagelsesdato ?? g.koebsaftaleDato ?? '';
-        return gDato === dato && dato !== '';
-      });
-      if (existing) {
-        // Behold højeste known sum (non-null) — Tinglysning-pris overskriver
-        // EJF's null-pris.
-        if (
-          h.kontantKoebesum != null &&
-          (existing.kontantKoebesum == null || h.kontantKoebesum > existing.kontantKoebesum)
-        ) {
-          existing.kontantKoebesum = h.kontantKoebesum;
-        }
-        if (
-          h.samletKoebesum != null &&
-          (existing.samletKoebesum == null || h.samletKoebesum > existing.samletKoebesum)
-        ) {
-          existing.samletKoebesum = h.samletKoebesum;
-        }
-        if (h.tinglysningsdato && !existing.tinglysningsdato) {
-          existing.tinglysningsdato = h.tinglysningsdato;
-        }
-        if (h.tinglysningsafgift != null && existing.tinglysningsafgift == null) {
-          existing.tinglysningsafgift = h.tinglysningsafgift;
-        }
-      }
-      if (existing && h.koeber) {
-        // BIZZ-468: Build a structured koebere[] — each buyer keeps sin egen
-        // andel. Undgår den gamle string-concat-bug hvor kun sidste køber
-        // havde andel-suffix fordi første købers `andel` var null på
-        // existing-rækken selvom den faktisk var kendt på en senere række.
-        if (!existing.koebere || existing.koebere.length === 0) {
-          // Seed koebere med existing's single buyer først
-          existing.koebere = [
-            { navn: existing.koeber ?? '', cvr: existing.koebercvr, andel: existing.andel },
-          ];
-        }
-        // BIZZ-844: Skip hvis samme navn+cvr allerede er i koebere (dedup
-        // når EJF + Tinglysning returnerer samme person for samme handel).
-        const dupKey = `${h.koeber}__${h.koebercvr ?? ''}`;
-        const alreadyPresent = existing.koebere.some((k) => `${k.navn}__${k.cvr ?? ''}` === dupKey);
-        if (!alreadyPresent) {
-          existing.koebere.push({ navn: h.koeber, cvr: h.koebercvr, andel: h.andel });
-        }
-        // Rebuild koeber-strengen — inkluder andel per navn hvis minimum ét
-        // navn har en kendt andel. Hvis INGEN har andel, vis bare navnene.
-        const anyAndel = existing.koebere.some((k) => k.andel);
-        existing.koeber = existing.koebere
-          .map((k) => (anyAndel && k.andel ? `${k.navn} (${k.andel})` : k.navn))
-          .join(', ');
-        // Når flere købere med andel: ryd top-level andel (vises inline pr navn)
-        if (anyAndel) existing.andel = null;
-      } else {
-        grouped.push({ ...h });
-      }
-    }
-
-    // Sortér nyeste først
-    grouped.sort((a, b) => {
-      const da2 = a.overtagelsesdato ?? a.koebsaftaleDato ?? '';
-      const db = b.overtagelsesdato ?? b.koebsaftaleDato ?? '';
-      return db.localeCompare(da2);
-    });
-
-    return grouped;
-  })();
+  // BIZZ-1230: Merge-logik ekstraheret til helpers/mergedSalgshistorik.ts
+  const mergedSalgshistorik = buildMergedSalgshistorik(salgshistorik, tlEjere);
 
   // ── DAWA: Loading ──
   if (erDAWA && dawaStatus === 'loader') {
@@ -1657,596 +1359,67 @@ export default function EjendomDetaljeClient({
       <div className={`flex-1 flex overflow-hidden${trækker ? ' select-none' : ''}`}>
         {/* ─── Venstre: header + tabs + indhold ─── */}
         <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-          {/* ─── Header ─── */}
-          <div className="px-3 sm:px-6 pt-5 pb-0 border-b border-slate-700/50 bg-slate-900/30">
-            <div className="flex items-center justify-between mb-3">
-              <button
-                onClick={() => router.push('/dashboard/ejendomme')}
-                className="flex items-center gap-2 text-slate-400 hover:text-white text-sm transition-colors"
-              >
-                <ArrowLeft size={16} /> {t.back}
-              </button>
-              <div className="flex items-center gap-2">
-                {/* Kort-toggle knap — åbner overlay på mobil, toggle sidepanel på desktop */}
-                <button
-                  onClick={() => {
-                    if (visKort) {
-                      setKortPanelÅben((prev) => !prev);
-                    } else {
-                      setMobilKortAaben(true);
-                    }
-                  }}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-sm transition-all ${
-                    visKort && kortPanelÅben
-                      ? 'bg-blue-600/20 hover:bg-blue-600/30 border-blue-500/40 text-blue-300'
-                      : 'bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300'
-                  }`}
-                  title={da ? 'Vis/skjul kort' : 'Show/hide map'}
-                >
-                  <MapIcon size={14} />
-                  {da ? 'Kort' : 'Map'}
-                </button>
-
-                <div
-                  className="relative"
-                  onMouseEnter={() => !erFulgt && setVisFoelgTooltip(true)}
-                  onMouseLeave={() => setVisFoelgTooltip(false)}
-                >
-                  <button
-                    disabled={foelgToggling}
-                    onClick={async () => {
-                      if (foelgToggling) return;
-                      setVisFoelgTooltip(false);
-                      // Optimistic update — toggle colour immediately so the user
-                      // sees instant feedback before the Supabase write completes.
-                      const optimisticState = !erFulgt;
-                      setErFulgt(optimisticState);
-                      setFoelgToggling(true);
-                      try {
-                        const postnr = dawaAdresse?.postnr ?? '';
-                        const by = dawaAdresse?.postnrnavn ?? '';
-                        const kommune =
-                          dawaAdresse?.kommunenavn ?? dawaJordstykke?.kommune.navn ?? '';
-                        const anvendelse = bbrData?.bbr?.[0]?.anvendelse ?? null;
-                        const nyTilstand = await toggleTrackEjendom({
-                          id,
-                          adresse: adresseStreng,
-                          postnr,
-                          by,
-                          kommune,
-                          anvendelse,
-                        });
-                        // Confirm with authoritative result from the toggle function
-                        setErFulgt(nyTilstand);
-                        window.dispatchEvent(new Event('ba-tracked-changed'));
-                      } catch {
-                        // Revert optimistic update on error
-                        setErFulgt(!optimisticState);
-                      } finally {
-                        setFoelgToggling(false);
-                      }
-                    }}
-                    className={`flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm transition-all disabled:opacity-60 disabled:cursor-not-allowed ${
-                      erFulgt
-                        ? 'bg-blue-600/20 hover:bg-blue-600/30 border-blue-500/40 text-blue-300'
-                        : 'bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300'
-                    }`}
-                    aria-label={
-                      erFulgt
-                        ? da
-                          ? 'Stop med at følge ejendom'
-                          : 'Unfollow property'
-                        : da
-                          ? 'Følg ejendom'
-                          : 'Follow property'
-                    }
-                    aria-pressed={erFulgt}
-                  >
-                    <Bell size={14} className={erFulgt ? 'fill-blue-400 text-blue-400' : ''} />
-                    {erFulgt ? t.following : t.follow}
-                  </button>
-                  <FoelgTooltip lang={da ? 'da' : 'en'} visible={visFoelgTooltip} />
-                </div>
-                {/* BIZZ-1239: Annonce-knap fjernet — funktionalitet er nu i /dashboard/analyse/annonce */}
-                {/* BIZZ-808: Opret sag-knap — kun synlig for domain-brugere */}
-                {domainMemberships.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setOpretSagOpen(true)}
-                    className="flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm transition-all bg-emerald-600/20 hover:bg-emerald-600/30 border-emerald-500/40 text-emerald-300"
-                    aria-label={
-                      da ? 'Opret sag for denne ejendom' : 'Create case for this property'
-                    }
-                  >
-                    <Briefcase size={14} />
-                    {da ? 'Opret sag' : 'Create case'}
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="mb-3">
-              <div className="flex items-center gap-3">
-                <h1 className="text-white text-xl font-bold">{adresseStreng}</h1>
-                {/* BIZZ-728: Child unit (enhed med etage/dør) — link til hovedejendom.
-                    Virker for ejerlejligheder OG erhvervsenheder o.lign. — vi navigerer
-                    altid til parent-adgangsadresse (uden etage). moderBfe-stien bruges som
-                    fallback hvis Vurderingsportalen har den (giver korrekt hovedejendom-BFE
-                    til title), ellers navigerer vi direkte til adgangsadressen. */}
-                {bbrData?.parentAdgangsadresseId && !!dawaAdresse?.etage && (
-                  <button
-                    onClick={async () => {
-                      // Prefer moderBfe-path when Vurderingsportalen gave us a real
-                      // hovedejendom-BFE (ejerlejligheder) — ellers gå direkte til
-                      // adgangsadressen.
-                      if (bbrData.moderBfe) {
-                        try {
-                          const jsRes = await fetch(
-                            `/api/adresse/jordstykke?bfe=${bbrData.moderBfe}`
-                          );
-                          if (jsRes.ok) {
-                            const js = await jsRes.json();
-                            if (js?.adgangsadresseId) {
-                              router.push(`/dashboard/ejendomme/${js.adgangsadresseId}`);
-                              return;
-                            }
-                          }
-                        } catch {
-                          /* fall through to adgangsadresse */
-                        }
-                      }
-                      router.push(`/dashboard/ejendomme/${bbrData.parentAdgangsadresseId}`);
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1 bg-amber-500/15 border border-amber-500/30 rounded-lg text-amber-400 text-xs font-medium hover:bg-amber-500/25 transition-colors flex-shrink-0"
-                    title={
-                      lang === 'da'
-                        ? bbrData.moderBfe
-                          ? `Gå til hovedejendommen (BFE ${bbrData.moderBfe})`
-                          : 'Gå til hovedejendommen (bygning/adgangsadresse)'
-                        : bbrData.moderBfe
-                          ? `Go to parent property (BFE ${bbrData.moderBfe})`
-                          : 'Go to parent property (building/address)'
-                    }
-                  >
-                    <Building2 size={12} />
-                    {da ? 'Gå til hovedejendom' : 'Go to main property'}
-                  </button>
-                )}
-                {/* Moderejandom (ingen etage, men har ejerlejlighedBfe): klikbar
-                    "Gå til SFE" knap når strukturTree har en SFE med dawaId,
-                    ellers statisk badge. */}
-                {bbrData?.ejerlejlighedBfe &&
-                  !dawaAdresse?.etage &&
-                  (strukturTree?.niveau === 'sfe' && strukturTree.dawaId ? (
-                    <button
-                      onClick={() => {
-                        router.push(`/dashboard/ejendomme/${strukturTree.dawaId}`);
-                      }}
-                      className="flex items-center gap-1.5 px-3 py-1 bg-amber-500/15 border border-amber-500/30 rounded-lg text-amber-400 text-xs font-medium hover:bg-amber-500/25 transition-colors flex-shrink-0"
-                      title={
-                        da
-                          ? `Gå til SFE-ejendommen (BFE ${strukturTree.bfe})`
-                          : `Go to SFE property (BFE ${strukturTree.bfe})`
-                      }
-                    >
-                      <Building2 size={12} />
-                      {da ? 'Gå til SFE ejendom' : 'Go to SFE property'}
-                    </button>
-                  ) : (
-                    <span
-                      className="flex items-center gap-1.5 px-3 py-1 bg-amber-500/15 border border-amber-500/30 rounded-lg text-amber-400 text-xs font-medium flex-shrink-0"
-                      title={
-                        da
-                          ? `Denne ejendom er en hovedejendom (BFE ${bbrData.moderBfe ?? bbrData.ejerlejlighedBfe})`
-                          : `This property is a main property (BFE ${bbrData.moderBfe ?? bbrData.ejerlejlighedBfe})`
-                      }
-                    >
-                      <Building2 size={12} />
-                      {da ? 'Hovedejendom' : 'Main property'}
-                    </span>
-                  ))}
-                {bbrData?.ejerlejlighedBfe && (
-                  <span className="flex items-center gap-1 px-2 py-0.5 bg-purple-500/15 border border-purple-500/30 rounded-full text-purple-400 text-[10px] font-medium flex-shrink-0">
-                    {lang === 'da' ? 'Ejerlejlighed' : 'Condominium'}
-                  </span>
-                )}
-                {/* BIZZ-550: Ejendomstype-badge — primær kilde: VUR juridiskKategori,
-                     fallback: udledt fra BBR bygningsanvendelser.
-                     BIZZ-840: BBR-kolonihave (kode 520/540) overrider VUR juridiskKategori
-                     fordi VUR nogle gange fejlklassificerer kolonihaver som
-                     "Blandet bolig/erhverv" — BBR er authoritative for bygningstype. */}
-                {(() => {
-                  // 0. BBR kolonihave override (mest specifik + authoritative)
-                  if (erKolonihave) {
-                    return (
-                      <span
-                        className="flex items-center gap-1 px-2.5 py-0.5 bg-emerald-500/15 border border-emerald-500/30 rounded-full text-emerald-300 text-xs font-medium flex-shrink-0"
-                        title={
-                          da
-                            ? 'Kolonihave/fritidshytte — BBR-anvendelseskode 520 eller 540'
-                            : 'Allotment/summer house — BBR use-code 520 or 540'
-                        }
-                      >
-                        <Home size={11} />
-                        {da ? 'Kolonihave' : 'Allotment'}
-                      </span>
-                    );
-                  }
-                  // 1. VUR juridiskKategori (nyt vurderingssystem)
-                  if (vurdering?.juridiskKategori) {
-                    return (
-                      <span className="flex items-center gap-1 px-2.5 py-0.5 bg-blue-500/15 border border-blue-500/30 rounded-full text-blue-300 text-xs font-medium flex-shrink-0">
-                        <Home size={11} />
-                        {vurdering.juridiskKategori}
-                      </span>
-                    );
-                  }
-                  // 2. Udled fra BBR bygningsanvendelser (gammelt VUR system)
-                  // BIZZ-825: udfaset via central helper; 'Ikke opført' er
-                  // ikke i BBR status-kodesættet (legacy VUR-værdi) så den
-                  // fortsat string-match'es.
-                  const bygninger = bbrData?.bbr?.filter(
-                    (b) => !isUdfasetStatusLabel(b.status) && b.status !== 'Ikke opført'
-                  );
-                  if (!bygninger?.length) return null;
-                  let harBolig = false;
-                  let harErhverv = false;
-                  for (const b of bygninger) {
-                    const a = b.anvendelse.toLowerCase();
-                    if (
-                      a.includes('bolig') ||
-                      a.includes('enfamilie') ||
-                      a.includes('rækkehus') ||
-                      a.includes('kædehus') ||
-                      a.includes('dobbelthus') ||
-                      a.includes('beboelse') ||
-                      a.includes('kollegium') ||
-                      a.includes('stuehus') ||
-                      a.includes('fritliggende')
-                    ) {
-                      harBolig = true;
-                    } else if (
-                      a.includes('kontor') ||
-                      a.includes('handel') ||
-                      a.includes('lager') ||
-                      a.includes('erhverv') ||
-                      a.includes('industri') ||
-                      a.includes('fabrik') ||
-                      a.includes('værksted') ||
-                      a.includes('butik') ||
-                      a.includes('hotel') ||
-                      a.includes('produktion') ||
-                      a.includes('transport')
-                    ) {
-                      harErhverv = true;
-                    }
-                  }
-                  const kategori =
-                    harBolig && harErhverv
-                      ? 'Blandet bolig/erhverv'
-                      : harErhverv
-                        ? 'Erhvervsejendom'
-                        : harBolig
-                          ? 'Beboelsesejendom'
-                          : null;
-                  if (!kategori) return null;
-                  return (
-                    <span className="flex items-center gap-1 px-2.5 py-0.5 bg-blue-500/15 border border-blue-500/30 rounded-full text-blue-300 text-xs font-medium flex-shrink-0">
-                      <Home size={11} />
-                      {kategori}
-                    </span>
-                  );
-                })()}
-                {/* BIZZ-457: Benyttelse (VUR) + byggeår (BBR) — "Værksted (1955)" */}
-                {(() => {
-                  const nyesteByg = bbrData?.bbr?.reduce<number | null>((latest, b) => {
-                    if (b.opfoerelsesaar == null) return latest;
-                    if (latest == null || b.opfoerelsesaar > latest) return b.opfoerelsesaar;
-                    return latest;
-                  }, null);
-                  const label = formatBenyttelseOgByggeaar(
-                    vurdering?.benyttelseskode ?? null,
-                    nyesteByg ?? null,
-                    // BIZZ-574: Pass zone og ejerlejlighed-flag så fritids-
-                    // kategorier filtreres uden for sommerhuszone (forhindrer
-                    // falsk "Sommerhus"-badge på ejerlejligheder i byen).
-                    dawaAdresse?.zone ?? null,
-                    !!bbrData?.ejerlejlighedBfe
-                  );
-                  if (!label) return null;
-                  return (
-                    <span className="flex items-center gap-1 px-2.5 py-0.5 bg-emerald-500/15 border border-emerald-500/30 rounded-full text-emerald-300 text-xs font-medium flex-shrink-0">
-                      {label}
-                    </span>
-                  );
-                })()}
-              </div>
-              <div className="flex items-center gap-2 mt-2 flex-wrap">
-                {/* BIZZ-854: Ejendomstype-badge — amber for SFE/hovedejendom,
-                    emerald for ejerlejlighed. Første chip i rækken. */}
-                {(() => {
-                  const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
-                  const erEjerlej = !!dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
-                  // Skelne SFE vs. underliggende hovedejendom via strukturTree:
-                  // Hvis denne BFE matcher root-noden i træet, er det SFE.
-                  const currentBfeNum =
-                    bbrData?.ejerlejlighedBfe ??
-                    bbrData?.moderBfe ??
-                    bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
-                  const erSfe =
-                    erModer && strukturTree?.niveau === 'sfe' && currentBfeNum === strukturTree.bfe;
-                  if (erModer)
-                    return (
-                      <span
-                        className="flex items-center gap-1 px-2.5 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded-full text-amber-300 text-xs font-medium flex-shrink-0"
-                        title={
-                          da
-                            ? erSfe
-                              ? 'Samlet Fast Ejendom — matrikel-niveau ejendom'
-                              : 'Hovedejendom under en SFE'
-                            : erSfe
-                              ? 'Collective Real Property — cadastral-level property'
-                              : 'Main property under an SFE'
-                        }
-                      >
-                        <Building2 size={11} />
-                        {erSfe
-                          ? da
-                            ? 'Hovedejendom (SFE)'
-                            : 'Main property (SFE)'
-                          : da
-                            ? 'Hovedejendom'
-                            : 'Main property'}
-                      </span>
-                    );
-                  if (erEjerlej)
-                    return (
-                      <span
-                        className="flex items-center gap-1 px-2.5 py-0.5 bg-emerald-500/10 border border-emerald-500/20 rounded-full text-emerald-300 text-xs font-medium flex-shrink-0"
-                        title={
-                          da
-                            ? 'Ejerlejlighed under en hovedejendom'
-                            : 'Condominium unit under a main property'
-                        }
-                      >
-                        <Home size={11} />
-                        {da ? 'Ejerlejlighed' : 'Condominium'}
-                      </span>
-                    );
-                  return null;
-                })()}
-                <span className="flex items-center gap-1 px-2 py-0.5 bg-slate-800 border border-slate-700/50 rounded-full text-xs text-slate-300">
-                  <MapPin size={11} />
-                  {(dawaAdresse.kommunenavn || null) ?? dawaJordstykke?.kommune.navn ?? '–'}
-                </span>
-                {/* BIZZ-508: Supplerende bynavn (fx "Vejlgårde") */}
-                {dawaAdresse.supplerendebynavn && (
-                  <span className="flex items-center gap-1 px-2 py-0.5 bg-slate-800 border border-slate-700/50 rounded-full text-xs text-slate-400">
-                    {dawaAdresse.supplerendebynavn}
-                  </span>
-                )}
-                {dawaJordstykke && (
-                  <span className="flex items-center gap-1 px-2 py-0.5 bg-slate-800 border border-slate-700/50 rounded-full text-xs text-slate-300">
-                    <Building2 size={11} /> {dawaJordstykke.matrikelnr},{' '}
-                    {dawaJordstykke.ejerlav.navn}
-                  </span>
-                )}
-                {/* BIZZ-498: vis zone-badge for standard zone-værdier.
-                    BIZZ-856: "Udfaset" er zone-polygon-historik (ikke
-                    ejendommens status) — skjult da det forvirrer brugere. */}
-                {dawaAdresse.zone && dawaAdresse.zone !== 'Udfaset' && (
-                  <span
-                    className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border ${
-                      dawaAdresse.zone === 'Byzone'
-                        ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
-                        : dawaAdresse.zone === 'Landzone'
-                          ? 'bg-amber-500/10 border-amber-500/20 text-amber-400'
-                          : dawaAdresse.zone === 'Sommerhuszone'
-                            ? 'bg-orange-500/10 border-orange-500/20 text-orange-400'
-                            : 'bg-slate-800 border-slate-700/50 text-slate-300'
-                    }`}
-                    title={
-                      da
-                        ? 'Zone-klassifikation fra Plandata.dk'
-                        : 'Zone classification from Plandata.dk'
-                    }
-                  >
-                    {dawaAdresse.zone}
-                  </span>
-                )}
-                {bbrData?.ejendomsrelationer?.[0]?.bfeNummer && (
-                  <span className="px-2 py-0.5 bg-slate-800 border border-slate-700/50 rounded-full text-xs text-slate-300">
-                    BFE: {bbrData.ejendomsrelationer[0].bfeNummer}
-                  </span>
-                )}
-                {esrNummer && (
-                  <span className="px-2 py-0.5 bg-slate-800 border border-slate-700/50 rounded-full text-xs text-slate-300">
-                    ESR: {esrNummer}
-                  </span>
-                )}
-                {/* BIZZ-496: Frednings/beskyttelses-badges fra matrikeldata */}
-                {matrikelData?.jordstykker?.some((js) => js.fredskov) && (
-                  <span className="px-2 py-0.5 bg-green-900/50 border border-green-800/40 rounded-full text-[10px] font-semibold text-green-400">
-                    {t.protectedForest}
-                  </span>
-                )}
-                {matrikelData?.jordstykker?.some((js) => js.strandbeskyttelse) && (
-                  <span className="px-2 py-0.5 bg-blue-900/50 border border-blue-800/40 rounded-full text-[10px] font-semibold text-blue-400">
-                    {t.coastalProtection}
-                  </span>
-                )}
-                {matrikelData?.jordstykker?.some((js) => js.klitfredning) && (
-                  <span className="px-2 py-0.5 bg-amber-900/50 border border-amber-800/40 rounded-full text-[10px] font-semibold text-amber-400">
-                    {t.duneProtection}
-                  </span>
-                )}
-                {matrikelData?.jordstykker?.some((js) => js.jordrente) && (
-                  <span className="px-2 py-0.5 bg-purple-900/50 border border-purple-800/40 rounded-full text-[10px] font-semibold text-purple-400">
-                    {t.groundRent}
-                  </span>
-                )}
-                {/* BIZZ-919: Data freshness badge + refresh */}
-                <DataFreshnessBadge fromCache={bbrFromCache} syncedAt={bbrSyncedAt} lang={lang} />
-                <button
-                  onClick={handleBbrRefresh}
-                  disabled={bbrRefreshing}
-                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] text-slate-400 hover:text-blue-400 bg-slate-700/30 border border-slate-700/40 hover:border-blue-500/30 transition-colors disabled:opacity-50"
-                  aria-label={lang === 'da' ? 'Genindlæs data' : 'Refresh data'}
-                  title={lang === 'da' ? 'Genindlæs data' : 'Refresh data'}
-                >
-                  <RefreshCw size={9} className={bbrRefreshing ? 'animate-spin' : ''} />
-                </button>
-                {/* BIZZ-948: Oversvømmelsesrisiko-badge */}
-                <FloodRiskBadge
-                  lat={dawaAdresse?.y ?? null}
-                  lng={dawaAdresse?.x ?? null}
-                  lang={lang}
-                />
-              </div>
-            </div>
-
-            {/* BIZZ-725 / BIZZ-787: Info banner for udfasede ejendomme.
-                Root-cause fix: tidligere brugte vi Plandata zone='Udfaset'
-                som signal, men det felt indikerer kun at en zone-POLYGON i
-                Plandata er blevet afløst af en nyere polygon — det har
-                intet med ejendommens tilstand at gøre. Arnold Nielsens
-                Boulevard 62A-62C er et eksempel: alle 6 enheder blev
-                fejlagtigt banner-markeret som udfasede fordi deres
-                zone-polygon var historisk.
-
-                Korrekt signal er BBR bygning-status: hvis ALLE bygninger
-                på ejendommen har status Nedrevet/slettet, Bygning nedrevet
-                eller Bygning bortfaldet, er den fysiske ejendom udfaset.
-                Minst én aktiv bygning → vis ikke banneret. */}
-            {(() => {
-              // BIZZ-825: Central isUdfasetStatusLabel erstatter lokal Set.
-              const bygninger = bbrData?.bbr;
-              const erUdfasetEjendom =
-                !!bygninger &&
-                bygninger.length > 0 &&
-                bygninger.every((b) => isUdfasetStatusLabel(b.status));
-              return erUdfasetEjendom;
-            })() && (
-              <div
-                role="status"
-                className="mb-4 flex items-start gap-3 px-4 py-3 bg-amber-900/20 border border-amber-700/40 rounded-lg"
-              >
-                <Building2 size={16} className="text-amber-400 mt-0.5 flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-amber-200 text-sm font-medium">
-                    {da ? 'Udfaset ejendom' : 'Retired property'}
-                  </p>
-                  <p className="text-amber-100/70 text-xs mt-1 leading-relaxed">
-                    {da
-                      ? 'Alle bygninger på denne ejendom er registreret som nedrevet eller bortfaldet i BBR. Matriklen kan være sammenlagt eller ejendommen genopført under et nyt BFE-nummer.'
-                      : 'All buildings on this property are registered as demolished or withdrawn in BBR. The matrikel may have been merged or the property rebuilt under a new BFE number.'}
-                  </p>
-                  {dawaJordstykke && (
-                    <button
-                      onClick={() => {
-                        // BIZZ-763: Navigate to the universal search with
-                        // matrikel query params so the search page runs a
-                        // dedicated matrikel lookup (all ejerlejligheder on
-                        // the jordstykke) instead of a generic text search.
-                        const params = new URLSearchParams({
-                          type: 'matrikel',
-                          ejerlavKode: String(dawaJordstykke.ejerlav.kode ?? ''),
-                          matrikelnr: String(dawaJordstykke.matrikelnr ?? ''),
-                        });
-                        if (dawaJordstykke.ejerlav.navn) {
-                          params.set('ejerlavNavn', dawaJordstykke.ejerlav.navn);
-                        }
-                        router.push(`/dashboard/search?${params.toString()}`);
-                      }}
-                      className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 bg-amber-500/15 border border-amber-500/30 rounded-md text-amber-300 text-xs font-medium hover:bg-amber-500/25 transition-colors"
-                    >
-                      <Building2 size={11} />
-                      {da
-                        ? 'Find andre ejendomme på matriklen'
-                        : 'Find other properties on matrikel'}
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* BIZZ-832: Søster-enheder — skjules når ejendomsstruktur
-                er tilgængelig (redundant info). Fallback for ejendomme
-                uden strukturtræ. */}
-            {!strukturTree &&
-              !!dawaAdresse?.etage &&
-              lejligheder &&
-              lejligheder.length > 1 &&
-              (() => {
-                const siblings = lejligheder.filter(
-                  (l) =>
-                    l.adresse !==
-                    `${dawaAdresse?.vejnavn} ${dawaAdresse?.husnr}, ${dawaAdresse?.etage ?? ''}${dawaAdresse?.dør ? `. ${dawaAdresse.dør}` : ''}`
-                );
-                if (siblings.length === 0) return null;
-                return (
-                  <div className="rounded-lg border border-slate-700/50 bg-[#0f172a] p-3 space-y-2">
-                    <h3 className="text-slate-400 text-xs font-medium uppercase tracking-wide flex items-center gap-1.5">
-                      <Building2 size={12} />
-                      {da ? 'Søster-enheder' : 'Sibling units'}
-                    </h3>
-                    <div className="flex flex-wrap gap-1.5">
-                      {siblings.slice(0, 20).map((sib) => {
-                        const sibHref = sib.dawaId
-                          ? `/dashboard/ejendomme/${sib.dawaId}`
-                          : `/dashboard/ejendomme/${sib.bfe}`;
-                        // BIZZ-996: Vis husnr + etage + dør i stedet for etage + m²
-                        const husnr = dawaAdresse?.husnr ?? '';
-                        const label = [husnr, sib.etage, sib.doer].filter(Boolean).join(', ');
-                        return (
-                          <Link
-                            key={sib.bfe}
-                            href={sibHref}
-                            className="inline-flex items-center gap-1 px-2 py-1 rounded bg-slate-800/80 border border-slate-700/40 text-slate-300 text-xs hover:border-blue-500/40 hover:text-white transition-colors"
-                          >
-                            {label || `BFE ${sib.bfe}`}
-                          </Link>
-                        );
-                      })}
-                      {siblings.length > 20 && bbrData?.parentAdgangsadresseId && (
-                        <Link
-                          href={`/dashboard/ejendomme/${bbrData.parentAdgangsadresseId}`}
-                          className="text-blue-400 hover:text-blue-300 text-xs self-center"
-                        >
-                          +{siblings.length - 20}{' '}
-                          {da ? 'mere — gå til hovedejendom' : 'more — go to main property'}
-                        </Link>
-                      )}
-                      {siblings.length > 20 && !bbrData?.parentAdgangsadresseId && (
-                        <span className="text-slate-500 text-xs self-center">
-                          +{siblings.length - 20} {da ? 'mere' : 'more'}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })()}
-
-            {/* Tabs */}
-            <div role="tablist" className="flex gap-1 -mb-px overflow-x-auto scrollbar-hide">
-              {tabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  role="tab"
-                  aria-selected={aktivTab === tab.id}
-                  onClick={() => setAktivTab(tab.id)}
-                  className={`flex items-center gap-1 px-2 py-1.5 text-xs font-medium border-b-2 transition-all whitespace-nowrap ${
-                    aktivTab === tab.id
-                      ? 'border-blue-500 text-blue-300'
-                      : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600'
-                  }`}
-                >
-                  {tab.ikon}
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-          </div>
+          {/* BIZZ-1230: Header extraheret til EjendomHeader.tsx */}
+          <EjendomHeader
+            id={id}
+            da={da}
+            lang={lang}
+            adresseStreng={adresseStreng}
+            dawaAdresse={dawaAdresse}
+            dawaJordstykke={dawaJordstykke}
+            bbrData={bbrData}
+            vurdering={vurdering}
+            matrikelData={matrikelData}
+            esrNummer={esrNummer}
+            erKolonihave={erKolonihave}
+            strukturTree={strukturTree}
+            erFulgt={erFulgt}
+            foelgToggling={foelgToggling}
+            visFoelgTooltip={visFoelgTooltip}
+            setVisFoelgTooltip={setVisFoelgTooltip}
+            onToggleFoelg={async () => {
+              if (foelgToggling) return;
+              setVisFoelgTooltip(false);
+              const optimisticState = !erFulgt;
+              setErFulgt(optimisticState);
+              setFoelgToggling(true);
+              try {
+                const postnr = dawaAdresse?.postnr ?? '';
+                const by = dawaAdresse?.postnrnavn ?? '';
+                const kommune = dawaAdresse?.kommunenavn ?? dawaJordstykke?.kommune.navn ?? '';
+                const anvendelse = bbrData?.bbr?.[0]?.anvendelse ?? null;
+                const nyTilstand = await toggleTrackEjendom({
+                  id,
+                  adresse: adresseStreng,
+                  postnr,
+                  by,
+                  kommune,
+                  anvendelse,
+                });
+                setErFulgt(nyTilstand);
+                window.dispatchEvent(new Event('ba-tracked-changed'));
+              } catch {
+                setErFulgt(!optimisticState);
+              } finally {
+                setFoelgToggling(false);
+              }
+            }}
+            visKort={visKort}
+            kortPanelAaben={kortPanelÅben}
+            onToggleKortPanel={() => setKortPanelÅben((prev) => !prev)}
+            onOpenMobilKort={() => setMobilKortAaben(true)}
+            domainMemberships={domainMemberships}
+            onOpretSag={() => setOpretSagOpen(true)}
+            bbrFromCache={bbrFromCache}
+            bbrSyncedAt={bbrSyncedAt}
+            bbrRefreshing={bbrRefreshing}
+            onBbrRefresh={handleBbrRefresh}
+            aktivTab={aktivTab}
+            setAktivTab={setAktivTab}
+            tabs={tabs}
+            lejligheder={lejligheder}
+            t={t}
+          />
 
           <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-5">
             {/* ══ OVERBLIK ══ */}

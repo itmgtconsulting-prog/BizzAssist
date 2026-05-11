@@ -12,6 +12,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { parseQuery } from '@/app/lib/validate';
 import { resolveTenantId } from '@/lib/api/auth';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { logActivity } from '@/app/lib/activityLog';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -441,6 +443,12 @@ export async function GET(
     } catch {
       /* non-fatal — bare drop adressen hvis deltager-kaldet fejler */
     }
+
+    // Fire-and-forget: log owner_open for usage analytics.
+    // enhedsNummer is a public CVR identifier — not PII.
+    logActivity(createAdminClient(), session.tenantId, session.userId, 'owner_open', {
+      enhedsNummer: enhedsNr,
+    });
 
     return NextResponse.json(
       {

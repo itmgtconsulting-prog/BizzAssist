@@ -24,6 +24,7 @@ import {
   FileSpreadsheet,
   Building2,
   User,
+  Users,
   Loader2,
 } from 'lucide-react';
 import type { UnifiedSearchResult } from '@/app/api/search/route';
@@ -58,6 +59,8 @@ export default function ForsikringGapClient() {
   const [policer, setPolicer] = useState<ParsedPolice[]>([]);
   const [parseFejl, setParseFejl] = useState<Array<{ linje: number; besked: string }>>([]);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [fritekst, setFritekst] = useState('');
+  const [parseLoading, setParseLoading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Step 3: Resultat
@@ -66,22 +69,53 @@ export default function ForsikringGapClient() {
   const [error, setError] = useState<string | null>(null);
 
   /**
-   * Håndterer fil-upload og parser CSV.
+   * Håndterer fil-upload — CSV parses lokalt, andre formater sendes til AI.
    */
-  const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setFileName(file.name);
+    setParseFejl([]);
 
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const text = ev.target?.result as string;
-      const parsed = parseCsv(text);
-      setPolicer(parsed.policer);
-      setParseFejl(parsed.fejl);
-    };
-    reader.readAsText(file, 'utf-8');
+    const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+
+    // CSV/TXT: parse lokalt
+    if (ext === 'csv' || ext === 'txt') {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const text = ev.target?.result as string;
+        const parsed = parseCsv(text);
+        setPolicer(parsed.policer);
+        setParseFejl(parsed.fejl);
+      };
+      reader.readAsText(file, 'utf-8');
+      return;
+    }
+
+    // PDF/DOCX/XLSX/billeder: send til AI-parsing
+    setParseLoading(true);
+    try {
+      const buffer = await file.arrayBuffer();
+      const base64 = btoa(new Uint8Array(buffer).reduce((s, b) => s + String.fromCharCode(b), ''));
+      const res = await fetch('/api/analyse/parse-police-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pdfBase64: base64, fileName: file.name }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPolicer(data.policer ?? []);
+      } else {
+        setParseFejl([{ linje: 0, besked: 'Kunne ikke parse fil — prøv CSV-format' }]);
+      }
+    } catch {
+      setParseFejl([{ linje: 0, besked: 'Netværksfejl ved fil-parsing' }]);
+    } finally {
+      setParseLoading(false);
+    }
   }, []);
+
+  // BIZZ-1281: parseFreitekst fjernet — fritekst bruges direkte via BIZZ-1280
 
   /**
    * BIZZ-1251: Debounced autocomplete-søgning filtreret til person+company.
@@ -141,14 +175,22 @@ export default function ForsikringGapClient() {
   /**
    * Kører gap-analyse mod backend.
    */
+  /** BIZZ-1280: Kør analyse — sender policer-array ELLER fritekst direkte */
   const runAnalyse = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
+      const payload: Record<string, unknown> = { kundeType, kundeId };
+      if (policer.length > 0) {
+        payload.policer = policer;
+      } else if (fritekst.trim().length > 10) {
+        // Fritekst sendes direkte — backend parser via AI
+        payload.fritekst = fritekst.trim();
+      }
       const res = await fetch('/api/analyse/forsikring-gap', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kundeType, kundeId, policer }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => null);
@@ -163,7 +205,7 @@ export default function ForsikringGapClient() {
     } finally {
       setLoading(false);
     }
-  }, [kundeType, kundeId, policer]);
+  }, [kundeType, kundeId, policer, fritekst]);
 
   /** Risiko-farve */
   const risikoFarve = (score: string) => {
@@ -192,6 +234,14 @@ export default function ForsikringGapClient() {
         <p className="text-slate-400 text-sm mt-1">
           Identificér dækningsgab i kundens forsikringsportefølje
         </p>
+        {/* BIZZ-1224: Link til batch-analyse */}
+        <a
+          href="/dashboard/analyse/forsikring/batch"
+          className="inline-flex items-center gap-1.5 mt-2 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+        >
+          <Users size={12} />
+          Batch-analyse (1000+ kunder)
+        </a>
       </div>
 
       {/* Step indicator */}
@@ -244,33 +294,68 @@ export default function ForsikringGapClient() {
                 />
               )}
             </div>
-            {dropdownOpen && searchResults.length > 0 && (
-              <div className="absolute z-50 w-full mt-1 bg-slate-800 border border-slate-700/60 rounded-lg shadow-xl max-h-64 overflow-y-auto">
-                {searchResults.map((result) => (
-                  <button
-                    key={`${result.type}-${result.id}`}
-                    type="button"
-                    onClick={() => selectKunde(result)}
-                    className="w-full text-left px-3 py-2.5 hover:bg-slate-700/50 transition-colors flex items-start gap-3 border-b border-slate-700/30 last:border-b-0"
-                  >
-                    <div className="mt-0.5 shrink-0">
-                      {result.type === 'company' ? (
-                        <Building2 size={14} className="text-blue-400" />
-                      ) : (
-                        <User size={14} className="text-purple-400" />
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm text-white truncate">{result.title}</div>
-                      <div className="text-xs text-slate-400 truncate">{result.subtitle}</div>
-                    </div>
-                    <span className="text-[10px] text-slate-500 shrink-0 mt-0.5">
-                      {result.type === 'company' ? 'Virksomhed' : 'Person'}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
+            {dropdownOpen &&
+              searchResults.length > 0 &&
+              (() => {
+                const persons = searchResults.filter((r) => r.type === 'person');
+                const companies = searchResults.filter((r) => r.type === 'company');
+                return (
+                  <div className="absolute z-50 w-full mt-1 bg-slate-800 border border-slate-700/60 rounded-lg shadow-xl max-h-[520px] overflow-y-auto">
+                    {persons.length > 0 && (
+                      <>
+                        <div className="px-3 py-1.5 flex items-center gap-1.5 bg-slate-900/60 border-b border-slate-700/30 sticky top-0">
+                          <User size={11} className="text-purple-400" />
+                          <span className="text-[10px] font-semibold text-purple-300 uppercase tracking-wider">
+                            Personer
+                          </span>
+                        </div>
+                        {persons.map((result) => (
+                          <button
+                            key={`person-${result.id}`}
+                            type="button"
+                            onClick={() => selectKunde(result)}
+                            className="w-full text-left px-3 py-2.5 hover:bg-slate-700/50 transition-colors flex items-start gap-3 border-b border-slate-700/20 last:border-b-0"
+                          >
+                            <User size={14} className="text-purple-400 mt-0.5 shrink-0" />
+                            <div className="min-w-0 flex-1">
+                              <div className="text-sm text-white truncate">{result.title}</div>
+                              <div className="text-xs text-slate-400 truncate">
+                                {result.subtitle}
+                              </div>
+                            </div>
+                          </button>
+                        ))}
+                      </>
+                    )}
+                    {companies.length > 0 && (
+                      <>
+                        <div className="px-3 py-1.5 flex items-center gap-1.5 bg-slate-900/60 border-b border-slate-700/30 sticky top-0">
+                          <Building2 size={11} className="text-blue-400" />
+                          <span className="text-[10px] font-semibold text-blue-300 uppercase tracking-wider">
+                            Virksomheder
+                          </span>
+                        </div>
+                        {companies.map((result) => (
+                          <button
+                            key={`company-${result.id}`}
+                            type="button"
+                            onClick={() => selectKunde(result)}
+                            className="w-full text-left px-3 py-2.5 hover:bg-slate-700/50 transition-colors flex items-start gap-3 border-b border-slate-700/20 last:border-b-0"
+                          >
+                            <Building2 size={14} className="text-blue-400 mt-0.5 shrink-0" />
+                            <div className="min-w-0 flex-1">
+                              <div className="text-sm text-white truncate">{result.title}</div>
+                              <div className="text-xs text-slate-400 truncate">
+                                {result.subtitle}
+                              </div>
+                            </div>
+                          </button>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
           </div>
 
           {/* Valgt kunde indikator */}
@@ -296,37 +381,6 @@ export default function ForsikringGapClient() {
             </div>
           )}
 
-          {/* Manuelt fallback */}
-          {!kundeId && (
-            <div className="space-y-3">
-              <span className="text-slate-500 text-xs">eller angiv manuelt:</span>
-              <div className="flex gap-3">
-                {(['person', 'virksomhed'] as const).map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => setKundeType(t)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                      kundeType === t
-                        ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
-                        : 'bg-slate-800 text-slate-400 border border-slate-700/40 hover:text-slate-300'
-                    }`}
-                  >
-                    {t === 'person' ? 'Person' : 'Virksomhed'}
-                  </button>
-                ))}
-              </div>
-              <input
-                type="text"
-                value={kundeId}
-                onChange={(e) => setKundeId(e.target.value)}
-                placeholder={
-                  kundeType === 'person' ? 'EnhedsNummer (fx 4000115446)' : 'CVR-nummer (8 cifre)'
-                }
-                className="w-full px-3 py-2 bg-slate-800 border border-slate-700/60 rounded-lg text-xs text-white outline-none focus:border-blue-500/60"
-              />
-            </div>
-          )}
-
           <button
             onClick={() => setStep(2)}
             disabled={!kundeId}
@@ -340,31 +394,62 @@ export default function ForsikringGapClient() {
       {/* Step 2: Upload policer */}
       {step === 2 && (
         <div className="bg-slate-800/30 border border-slate-700/40 rounded-2xl p-6 space-y-4">
-          <h2 className="text-white font-semibold text-sm">Trin 2: Upload policeliste</h2>
+          <h2 className="text-white font-semibold text-sm">Trin 2: Angiv forsikringer</h2>
           <p className="text-slate-400 text-xs">
-            Upload en CSV-fil med kolonner: Type, Dækning, Selskab, Objekt (semikolon eller
-            komma-separeret)
+            Beskriv kundens forsikringer som fritekst, eller upload en fil (PDF, Word, Excel, CSV,
+            billede)
           </p>
 
-          {/* Drop zone */}
+          {/* Fritekst-input */}
+          <div className="space-y-2">
+            <textarea
+              value={fritekst}
+              onChange={(e) => setFritekst(e.target.value)}
+              placeholder="Beskriv kundens forsikringer her, fx:&#10;Husforsikring hos Tryg, dækning 2.500.000 kr&#10;Bilforsikring kasko hos TopDanmark, reg.nr AB12345&#10;Indboforsikring hos Alm Brand, 500.000 kr"
+              rows={4}
+              className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700/60 rounded-lg text-sm text-white placeholder:text-slate-500 outline-none focus:border-blue-500/60 resize-y min-h-[100px]"
+            />
+            {/* BIZZ-1281: "Tilføj fra tekst"-knap fjernet — fritekst bruges direkte ved "Kør analyse" (BIZZ-1280) */}
+            {fritekst.trim().length > 10 && (
+              <p className="text-slate-500 text-[10px]">
+                Fritekst bruges direkte ved &quot;Kør analyse&quot; — ingen parsing nødvendig.
+              </p>
+            )}
+          </div>
+
+          {/* Divider */}
+          <div className="flex items-center gap-3">
+            <div className="flex-1 h-px bg-slate-700/50" />
+            <span className="text-slate-500 text-xs">eller</span>
+            <div className="flex-1 h-px bg-slate-700/50" />
+          </div>
+
+          {/* Drop zone — alle formater */}
           <div
             onClick={() => fileRef.current?.click()}
-            className="border-2 border-dashed border-slate-600/60 rounded-xl p-8 text-center cursor-pointer hover:border-blue-500/40 transition-colors"
+            className="border-2 border-dashed border-slate-600/60 rounded-xl p-6 text-center cursor-pointer hover:border-blue-500/40 transition-colors"
           >
             <Upload size={24} className="mx-auto text-slate-500 mb-2" />
             <p className="text-slate-400 text-sm">
-              {fileName ? (
+              {parseLoading ? (
+                <span className="text-blue-300 flex items-center justify-center gap-2">
+                  <Loader2 size={14} className="animate-spin" /> Parser fil...
+                </span>
+              ) : fileName ? (
                 <span className="text-blue-300 flex items-center justify-center gap-2">
                   <FileSpreadsheet size={14} /> {fileName}
                 </span>
               ) : (
-                'Klik for at vælge CSV-fil'
+                'Klik for at vælge fil'
               )}
+            </p>
+            <p className="text-slate-600 text-[10px] mt-1">
+              PDF, Word, Excel, CSV, billeder (JPG/PNG)
             </p>
             <input
               ref={fileRef}
               type="file"
-              accept=".csv,.txt"
+              accept=".csv,.txt,.pdf,.docx,.doc,.xlsx,.xls,.jpg,.jpeg,.png"
               onChange={handleFileUpload}
               className="hidden"
             />
@@ -394,7 +479,7 @@ export default function ForsikringGapClient() {
             </button>
             <button
               onClick={runAnalyse}
-              disabled={policer.length === 0 || loading}
+              disabled={(policer.length === 0 && fritekst.trim().length <= 10) || loading}
               className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white px-5 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
             >
               {loading ? 'Analyserer...' : 'Kør analyse'}

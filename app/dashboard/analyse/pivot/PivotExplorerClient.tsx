@@ -17,6 +17,8 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { LayoutGrid, Loader2, ChevronLeft, Plus, Trash2, Download } from 'lucide-react';
 import { WHITELISTED_TABLES } from '@/app/lib/analyseQueryWhitelist';
+import { ANALYSE_DOMAINS } from '@/app/lib/analyseDataModel';
+import { DataModelPanel } from '@/app/components/analyse/DataModelPanel';
 
 /** BIZZ-1260: Perspective loaded dynamisk (WebAssembly kræver browser) */
 const PerspectiveViewer = dynamic(() => import('@/app/components/analyse/PerspectiveViewer'), {
@@ -48,6 +50,7 @@ let filterId = 0;
 export default function PivotExplorerClient() {
   const [selectedTable, setSelectedTable] = useState('');
   const [selectedColumns, setSelectedColumns] = useState<Set<string>>(new Set());
+  const [selectedDomain, setSelectedDomain] = useState(ANALYSE_DOMAINS[0].id);
   const [filters, setFilters] = useState<FilterRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -103,6 +106,33 @@ export default function PivotExplorerClient() {
   const deselectAllColumns = useCallback(() => {
     setSelectedColumns(new Set());
   }, []);
+
+  /**
+   * BIZZ-1269: Toggle felt fra DataModelPanel — sætter tabel og toggler kolonne.
+   *
+   * @param column - Kolonne-navn
+   * @param table - Kilde-tabel
+   */
+  const handleDomainFieldToggle = useCallback(
+    (column: string, table: string) => {
+      // Skift tabel hvis nødvendigt
+      if (selectedTable !== table) {
+        setSelectedTable(table);
+        setSelectedColumns(new Set([column]));
+        setFilters([]);
+        setData(null);
+        setError(null);
+      } else {
+        setSelectedColumns((prev) => {
+          const next = new Set(prev);
+          if (next.has(column)) next.delete(column);
+          else next.add(column);
+          return next;
+        });
+      }
+    },
+    [selectedTable]
+  );
 
   /** Tilføj et nyt filter */
   const addFilter = useCallback(() => {
@@ -224,184 +254,208 @@ export default function PivotExplorerClient() {
         </p>
       </div>
 
-      {/* ── Konfiguration ── */}
-      <div className="bg-slate-800/30 border border-slate-700/30 rounded-xl p-5 space-y-5">
-        {/* Tabel-valg */}
-        <div>
-          <label
-            htmlFor="pivot-table-select"
-            className="block text-xs font-medium text-slate-400 mb-1.5"
-          >
-            Datakilde
-          </label>
-          <select
-            id="pivot-table-select"
-            value={selectedTable}
-            onChange={(e) => handleTableChange(e.target.value)}
-            className="w-full max-w-md px-3 py-2 bg-slate-800/60 border border-slate-700/50 rounded-lg text-white text-sm focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/25"
-          >
-            <option value="">Vælg tabel...</option>
-            {WHITELISTED_TABLES.map((t) => (
-              <option key={t.table} value={t.table}>
-                {t.table.split('.')[1]} — {t.description.slice(0, 60)}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Kolonne-valg */}
-        {tableDef && (
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="text-xs font-medium text-slate-400">
-                Kolonner ({selectedColumns.size}/{availableColumns.length} valgt)
-              </label>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={selectAllColumns}
-                  className="text-[10px] text-emerald-400 hover:text-emerald-300 transition-colors"
-                >
-                  Vælg alle
-                </button>
-                <button
-                  type="button"
-                  onClick={deselectAllColumns}
-                  className="text-[10px] text-slate-500 hover:text-slate-300 transition-colors"
-                >
-                  Fravælg alle
-                </button>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {availableColumns.map(([col, meta]) => (
-                <button
-                  key={col}
-                  type="button"
-                  onClick={() => toggleColumn(col)}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs transition-all ${
-                    selectedColumns.has(col)
-                      ? 'bg-emerald-600/20 border border-emerald-500/40 text-emerald-300'
-                      : 'bg-slate-800/40 border border-slate-700/30 text-slate-500 hover:text-slate-300'
-                  }`}
-                  title={meta.description}
-                >
-                  <span>{col}</span>
-                  <span className="text-[9px] text-slate-600">{meta.type}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Filtre */}
-        {tableDef && (
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="text-xs font-medium text-slate-400">
-                Filtre ({filters.length})
-              </label>
-              <button
-                type="button"
-                onClick={addFilter}
-                className="inline-flex items-center gap-1 text-[10px] text-emerald-400 hover:text-emerald-300 transition-colors"
+      {/* ── BIZZ-1269: Visuelt felt-panel ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-4">
+        <div className="space-y-4">
+          {/* ── Konfiguration ── */}
+          <div className="bg-slate-800/30 border border-slate-700/30 rounded-xl p-5 space-y-5">
+            {/* Tabel-valg */}
+            <div>
+              <label
+                htmlFor="pivot-table-select"
+                className="block text-xs font-medium text-slate-400 mb-1.5"
               >
-                <Plus size={10} />
-                Tilføj filter
-              </button>
+                Datakilde
+              </label>
+              <select
+                id="pivot-table-select"
+                value={selectedTable}
+                onChange={(e) => handleTableChange(e.target.value)}
+                className="w-full max-w-md px-3 py-2 bg-slate-800/60 border border-slate-700/50 rounded-lg text-white text-sm focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/25"
+              >
+                <option value="">Vælg tabel...</option>
+                {WHITELISTED_TABLES.map((t) => (
+                  <option key={t.table} value={t.table}>
+                    {t.table.split('.')[1]} — {t.description.slice(0, 60)}
+                  </option>
+                ))}
+              </select>
             </div>
 
-            {filters.length > 0 && (
-              <div className="space-y-2">
-                {filters.map((f) => (
-                  <div key={f.id} className="flex items-center gap-2 flex-wrap">
-                    {/* Kolonne */}
-                    <select
-                      value={f.column}
-                      onChange={(e) => updateFilter(f.id, 'column', e.target.value)}
-                      aria-label="Filterkolonne"
-                      className="px-2 py-1.5 bg-slate-800/60 border border-slate-700/50 rounded-lg text-white text-xs focus:outline-none focus:border-emerald-500/50"
-                    >
-                      {availableColumns.map(([col]) => (
-                        <option key={col} value={col}>
-                          {col}
-                        </option>
-                      ))}
-                    </select>
-
-                    {/* Operator */}
-                    <select
-                      value={f.operator}
-                      onChange={(e) => updateFilter(f.id, 'operator', e.target.value)}
-                      aria-label="Filteroperator"
-                      className="px-2 py-1.5 bg-slate-800/60 border border-slate-700/50 rounded-lg text-white text-xs focus:outline-none focus:border-emerald-500/50"
-                    >
-                      {OPERATOR_OPTIONS.map((op) => (
-                        <option key={op.value} value={op.value}>
-                          {op.label}
-                        </option>
-                      ))}
-                    </select>
-
-                    {/* Værdi */}
-                    <input
-                      type="text"
-                      value={f.value}
-                      onChange={(e) => updateFilter(f.id, 'value', e.target.value)}
-                      placeholder="Værdi..."
-                      aria-label="Filterværdi"
-                      className="flex-1 min-w-[120px] px-2 py-1.5 bg-slate-800/60 border border-slate-700/50 rounded-lg text-white text-xs placeholder:text-slate-600 focus:outline-none focus:border-emerald-500/50"
-                    />
-
-                    {/* Slet */}
+            {/* Kolonne-valg */}
+            {tableDef && (
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-medium text-slate-400">
+                    Kolonner ({selectedColumns.size}/{availableColumns.length} valgt)
+                  </label>
+                  <div className="flex gap-2">
                     <button
                       type="button"
-                      onClick={() => removeFilter(f.id)}
-                      aria-label="Fjern filter"
-                      className="p-1.5 text-slate-500 hover:text-red-400 transition-colors"
+                      onClick={selectAllColumns}
+                      className="text-[10px] text-emerald-400 hover:text-emerald-300 transition-colors"
                     >
-                      <Trash2 size={12} />
+                      Vælg alle
+                    </button>
+                    <button
+                      type="button"
+                      onClick={deselectAllColumns}
+                      className="text-[10px] text-slate-500 hover:text-slate-300 transition-colors"
+                    >
+                      Fravælg alle
                     </button>
                   </div>
-                ))}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {availableColumns.map(([col, meta]) => (
+                    <button
+                      key={col}
+                      type="button"
+                      onClick={() => toggleColumn(col)}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs transition-all ${
+                        selectedColumns.has(col)
+                          ? 'bg-emerald-600/20 border border-emerald-500/40 text-emerald-300'
+                          : 'bg-slate-800/40 border border-slate-700/30 text-slate-500 hover:text-slate-300'
+                      }`}
+                      title={meta.description}
+                    >
+                      <span>{col}</span>
+                      <span className="text-[9px] text-slate-600">{meta.type}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Filtre */}
+            {tableDef && (
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-medium text-slate-400">
+                    Filtre ({filters.length})
+                  </label>
+                  <button
+                    type="button"
+                    onClick={addFilter}
+                    className="inline-flex items-center gap-1 text-[10px] text-emerald-400 hover:text-emerald-300 transition-colors"
+                  >
+                    <Plus size={10} />
+                    Tilføj filter
+                  </button>
+                </div>
+
+                {filters.length > 0 && (
+                  <div className="space-y-2">
+                    {filters.map((f) => (
+                      <div key={f.id} className="flex items-center gap-2 flex-wrap">
+                        {/* Kolonne */}
+                        <select
+                          value={f.column}
+                          onChange={(e) => updateFilter(f.id, 'column', e.target.value)}
+                          aria-label="Filterkolonne"
+                          className="px-2 py-1.5 bg-slate-800/60 border border-slate-700/50 rounded-lg text-white text-xs focus:outline-none focus:border-emerald-500/50"
+                        >
+                          {availableColumns.map(([col]) => (
+                            <option key={col} value={col}>
+                              {col}
+                            </option>
+                          ))}
+                        </select>
+
+                        {/* Operator */}
+                        <select
+                          value={f.operator}
+                          onChange={(e) => updateFilter(f.id, 'operator', e.target.value)}
+                          aria-label="Filteroperator"
+                          className="px-2 py-1.5 bg-slate-800/60 border border-slate-700/50 rounded-lg text-white text-xs focus:outline-none focus:border-emerald-500/50"
+                        >
+                          {OPERATOR_OPTIONS.map((op) => (
+                            <option key={op.value} value={op.value}>
+                              {op.label}
+                            </option>
+                          ))}
+                        </select>
+
+                        {/* Værdi */}
+                        <input
+                          type="text"
+                          value={f.value}
+                          onChange={(e) => updateFilter(f.id, 'value', e.target.value)}
+                          placeholder="Værdi..."
+                          aria-label="Filterværdi"
+                          className="flex-1 min-w-[120px] px-2 py-1.5 bg-slate-800/60 border border-slate-700/50 rounded-lg text-white text-xs placeholder:text-slate-600 focus:outline-none focus:border-emerald-500/50"
+                        />
+
+                        {/* Slet */}
+                        <button
+                          type="button"
+                          onClick={() => removeFilter(f.id)}
+                          aria-label="Fjern filter"
+                          className="p-1.5 text-slate-500 hover:text-red-400 transition-colors"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Indlæs-knap */}
+            {tableDef && (
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={loadData}
+                  disabled={loading}
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                >
+                  {loading ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <LayoutGrid size={14} />
+                  )}
+                  Indlæs data
+                </button>
+
+                {data && (
+                  <button
+                    type="button"
+                    onClick={exportCsv}
+                    className="px-4 py-2 bg-slate-700/50 hover:bg-slate-700 text-slate-300 rounded-lg text-sm transition-colors flex items-center gap-2"
+                  >
+                    <Download size={14} />
+                    Eksportér CSV
+                  </button>
+                )}
               </div>
             )}
           </div>
-        )}
 
-        {/* Indlæs-knap */}
-        {tableDef && (
-          <div className="flex items-center gap-3 pt-2">
-            <button
-              type="button"
-              onClick={loadData}
-              disabled={loading}
-              className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
-            >
-              {loading ? <Loader2 size={14} className="animate-spin" /> : <LayoutGrid size={14} />}
-              Indlæs data
-            </button>
-
-            {data && (
-              <button
-                type="button"
-                onClick={exportCsv}
-                className="px-4 py-2 bg-slate-700/50 hover:bg-slate-700 text-slate-300 rounded-lg text-sm transition-colors flex items-center gap-2"
-              >
-                <Download size={14} />
-                Eksportér CSV
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* ── Error ── */}
-      {error && (
-        <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 text-red-300 text-sm">
-          {error}
+          {/* ── Error ── */}
+          {error && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 text-red-300 text-sm">
+              {error}
+            </div>
+          )}
         </div>
-      )}
+
+        {/* BIZZ-1269: DataModelPanel (højre side) */}
+        <div className="hidden lg:block">
+          <div className="sticky top-6">
+            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium mb-2">
+              Datamodel
+            </p>
+            <DataModelPanel
+              selectedFields={selectedColumns}
+              onToggleField={handleDomainFieldToggle}
+              selectedDomain={selectedDomain}
+              onSelectDomain={setSelectedDomain}
+            />
+          </div>
+        </div>
+      </div>
 
       {/* ── Resultat-info ── */}
       {data && (

@@ -671,12 +671,14 @@ async function resolveCompanyGraph(
   // Henter properties fra ejf_ejerskab per person-navn. Dedup: hvis BFE
   // allerede er i grafen (fx ejet via virksomhed), tilføj kun edge — ikke node.
   // Farve-koder edges per person for visuel distinktion af fælles ejerskab.
+  // BIZZ-1285: Reduceret opacity fra 0.75 til 0.65 så personlige ejendomme
+  // matcher normale ejendomslinjer i stedet for at skille sig visuelt ud.
   const OWNER_COLORS = [
-    'rgba(52,211,153,0.75)', // emerald — person 1
-    'rgba(167,139,250,0.75)', // violet  — person 2
-    'rgba(251,191,36,0.75)', // amber   — person 3
-    'rgba(248,113,113,0.75)', // red     — person 4
-    'rgba(34,211,238,0.75)', // cyan    — person 5
+    'rgba(52,211,153,0.65)', // emerald — person 1
+    'rgba(167,139,250,0.65)', // violet  — person 2
+    'rgba(251,191,36,0.65)', // amber   — person 3
+    'rgba(248,113,113,0.65)', // red     — person 4
+    'rgba(34,211,238,0.65)', // cyan    — person 5
   ];
   const personNodes = nodes.filter((n) => n.type === 'person' && n.enhedsNummer);
   if (personNodes.length > 0) {
@@ -1724,6 +1726,61 @@ async function resolvePersonGraph(
       nodeIds.add(companyId);
       // Ingen ejerandel-tekst på rolle-edges — rollen vises allerede i boksen (personRolle)
       edges.push({ from: mainId, to: companyId });
+    }
+  }
+
+  // ── BIZZ-1259 + BIZZ-1273: Personlige ejendomme via ejf_ejerskab ─────────
+  // Prøv ejer_enheds_nummer først (præcist link), derefter navn-match som fallback.
+  // Samme mønster som step 4 i resolveCompanyGraph (BIZZ-1082).
+  {
+    let personProps: Array<{
+      bfe_nummer: number;
+      ejerandel_taeller: number | null;
+      ejerandel_naevner: number | null;
+    }> = [];
+
+    // BIZZ-1273: Præcist link via ejer_enheds_nummer (populeret af backfill)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: byEnheds } = await (admin as any)
+      .from('ejf_ejerskab')
+      .select('bfe_nummer, ejerandel_taeller, ejerandel_naevner')
+      .eq('ejer_enheds_nummer', Number(enhedsNummer))
+      .eq('status', 'gældende')
+      .limit(MAX_PROPS_PER_OWNER);
+
+    if (byEnheds && byEnheds.length > 0) {
+      personProps = byEnheds;
+    } else if (personName && !personName.startsWith('Person ')) {
+      // Fallback: navn-match (BIZZ-1259 original approach)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: byNavn } = await (admin as any)
+        .from('ejf_ejerskab')
+        .select('bfe_nummer, ejerandel_taeller, ejerandel_naevner')
+        .eq('ejer_navn', personName)
+        .eq('ejer_type', 'person')
+        .eq('status', 'gældende')
+        .limit(MAX_PROPS_PER_OWNER);
+      personProps = byNavn ?? [];
+    }
+
+    for (const pp of personProps) {
+      const propId = `bfe-${pp.bfe_nummer}`;
+      if (!nodeIds.has(propId)) {
+        nodes.push({
+          id: propId,
+          label: `BFE ${pp.bfe_nummer}`,
+          type: 'property',
+          bfeNummer: pp.bfe_nummer,
+        });
+        nodeIds.add(propId);
+      }
+      edges.push({
+        from: mainId,
+        to: propId,
+        ejerandel: formatEjerandel(pp.ejerandel_taeller, pp.ejerandel_naevner),
+        personallyOwned: true,
+        ownerPersonId: mainId,
+      });
     }
   }
 

@@ -216,6 +216,89 @@ const MAX_CHILDREN_PER_PARENT = 15;
 const MAX_PROPS_PER_COMPANY = 5;
 
 /**
+ * Formats a property address label from DiagramPropertySummary fields.
+ * Handles etage/dør for ejerlejligheder and missing addresses.
+ *
+ * @param p - Property summary
+ * @returns Formatted address label
+ */
+function formatPropertyLabel(p: DiagramPropertySummary): string {
+  const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
+  const hasAddress = !!p.adresse;
+  const rawAddr = p.adresse ?? 'Ejendom';
+  const baseAddr =
+    hasAddress && p.etage ? `${rawAddr}, ${p.etage}.${p.doer ? ` ${p.doer}` : ''}` : rawAddr;
+  return hasAddress && postBy ? `${baseAddr}, ${postBy}` : baseAddr;
+}
+
+/**
+ * Adds property nodes and overflow nodes for a set of company nodes.
+ * Shared between buildDiagramGraph and buildPersonDiagramGraph — avoids
+ * ~60 lines of duplicated property/overflow creation logic (BIZZ-587).
+ *
+ * @param nodes - Mutable nodes array to push into
+ * @param edges - Mutable edges array to push into
+ * @param seenIds - Set of already-added node IDs (prevents duplicates)
+ * @param propertiesByCvr - Map of CVR → owned properties
+ * @param opts - Options: includeOverflowItems adds clickable links to overflow nodes
+ */
+function addPropertiesAndOverflow(
+  nodes: DiagramNode[],
+  edges: DiagramEdge[],
+  seenIds: Set<string>,
+  propertiesByCvr: Map<number, DiagramPropertySummary[]>,
+  opts: { includeOverflowItems?: boolean } = {}
+): void {
+  const companyNodes = nodes.filter((n) => n.cvr != null && !n.overflowItems);
+  for (const companyNode of companyNodes) {
+    const cvr = companyNode.cvr!;
+    const props = propertiesByCvr.get(cvr);
+    if (!props || props.length === 0) continue;
+
+    const shown = props.slice(0, MAX_PROPS_PER_COMPANY);
+    for (const p of shown) {
+      const propId = `bfe-${p.bfeNummer}`;
+      // BIZZ-452: Always create edge even if node already exists (co-ownership)
+      edges.push({
+        from: companyNode.id,
+        to: propId,
+        ejerandel: p.ejerandel ?? undefined,
+      });
+      if (seenIds.has(propId)) continue;
+      seenIds.add(propId);
+      const link = p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined;
+      nodes.push({
+        id: propId,
+        label: formatPropertyLabel(p),
+        sublabel: p.ejendomstype ?? undefined,
+        type: 'property',
+        bfeNummer: p.bfeNummer,
+        link,
+      });
+    }
+
+    // BIZZ-268: Overflow node when more properties exist than shown
+    if (props.length > MAX_PROPS_PER_COMPANY) {
+      const overflowId = `props-overflow-${cvr}`;
+      const remaining = props.length - MAX_PROPS_PER_COMPANY;
+      const overflowProps = props.slice(MAX_PROPS_PER_COMPANY);
+      nodes.push({
+        id: overflowId,
+        label: `+${remaining} ejendomme`,
+        type: 'property',
+        overflowItems: opts.includeOverflowItems
+          ? overflowProps.map((p) => ({
+              label: formatPropertyLabel(p),
+              link: p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined,
+            }))
+          : undefined,
+      });
+      edges.push({ from: companyNode.id, to: overflowId });
+    }
+  }
+}
+
+/**
  * Builds a flat graph (nodes + edges) from owner chain and related companies.
  * Marks co-owners (nodes not on the main ownership path) as collapsible.
  * Optionally adds owned property nodes as leaves below each company node.
@@ -452,74 +535,11 @@ export function buildDiagramGraph(
   }
 
   // ── Property nodes — owned by company nodes already in the graph ──
-  // Snapshot company node IDs before adding properties to avoid iterating new entries
+  // BIZZ-587: Shared helper extracts property node + overflow creation logic
   if (propertiesByCvr) {
-    const companyNodes = nodes.filter((n) => n.cvr != null && !n.overflowItems);
-    for (const companyNode of companyNodes) {
-      const cvr = companyNode.cvr!;
-      const props = propertiesByCvr.get(cvr);
-      if (!props || props.length === 0) continue;
-
-      const shown = props.slice(0, MAX_PROPS_PER_COMPANY);
-      for (const p of shown) {
-        const propId = `bfe-${p.bfeNummer}`;
-        // BIZZ-452: Always create edge even if node already exists (co-ownership)
-        edges.push({
-          from: companyNode.id,
-          to: propId,
-          ejerandel: p.ejerandel ?? undefined,
-        });
-        if (seenIds.has(propId)) continue;
-        seenIds.add(propId);
-        // Link to property detail page via DAWA adgangsadresse UUID
-        const link = p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined;
-        // Merge address + postnr+by into main label (e.g. "Arnold Nielsens Boulevard 64A, 2650 Hvidovre")
-        // BIZZ-551: Append etage + dør for ejerlejligheder
-        // BIZZ-627: Når adresse mangler, vis "Ejendom" som placeholder i stedet
-        // for "BFE X" — BFE-nummeret vises separat i 3. linje i DiagramForce.
-        // Undgår duplikeret BFE-visning og signalerer tydeligt at adresse mangler.
-        const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
-        const hasAddress = !!p.adresse;
-        const rawAddr = p.adresse ?? 'Ejendom';
-        const baseAddr =
-          hasAddress && p.etage ? `${rawAddr}, ${p.etage}.${p.doer ? ` ${p.doer}` : ''}` : rawAddr;
-        const mainLabel = hasAddress && postBy ? `${baseAddr}, ${postBy}` : baseAddr;
-        nodes.push({
-          id: propId,
-          label: mainLabel,
-          sublabel: p.ejendomstype ?? undefined,
-          type: 'property',
-          bfeNummer: p.bfeNummer,
-          link,
-        });
-      }
-
-      // BIZZ-268: Overflow node when more properties exist than shown.
-      // overflowItems tillader at boksen foldes ud til en klikbar liste med
-      // adresser der linker til den enkelte ejendom.
-      if (props.length > MAX_PROPS_PER_COMPANY) {
-        const overflowId = `props-overflow-${cvr}`;
-        const remaining = props.length - MAX_PROPS_PER_COMPANY;
-        const overflowProps = props.slice(MAX_PROPS_PER_COMPANY);
-        nodes.push({
-          id: overflowId,
-          label: `+${remaining} ejendomme`,
-          type: 'property',
-          overflowItems: overflowProps.map((p) => {
-            const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
-            const rawAddr = p.adresse ?? `BFE ${p.bfeNummer}`;
-            const baseAddr = p.etage
-              ? `${rawAddr}, ${p.etage}.${p.doer ? ` ${p.doer}` : ''}`
-              : rawAddr;
-            return {
-              label: postBy ? `${baseAddr}, ${postBy}` : baseAddr,
-              link: p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined,
-            };
-          }),
-        });
-        edges.push({ from: companyNode.id, to: overflowId });
-      }
-    }
+    addPropertiesAndOverflow(nodes, edges, seenIds, propertiesByCvr, {
+      includeOverflowItems: true,
+    });
   }
 
   // ── Count expandable children per node (co-owners grouped by their target) ──
@@ -862,59 +882,9 @@ export function buildPersonDiagramGraph(
   }
 
   // ── Property nodes — owned by company nodes already in the graph ──
+  // BIZZ-587: Shared helper for property + overflow node creation
   if (propertiesByCvr) {
-    const companyNodes = nodes.filter((n) => n.cvr != null && !n.overflowItems);
-    for (const companyNode of companyNodes) {
-      const cvr = companyNode.cvr!;
-      const props = propertiesByCvr.get(cvr);
-      if (!props || props.length === 0) continue;
-
-      const shown = props.slice(0, MAX_PROPS_PER_COMPANY);
-      for (const p of shown) {
-        const propId = `bfe-${p.bfeNummer}`;
-        // BIZZ-452: Always create edge even if node already exists (co-ownership)
-        edges.push({
-          from: companyNode.id,
-          to: propId,
-          ejerandel: p.ejerandel ?? undefined,
-        });
-        if (seenIds.has(propId)) continue;
-        seenIds.add(propId);
-        // Link to property detail page via DAWA adgangsadresse UUID
-        const link = p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined;
-        // Merge address + postnr+by into main label (e.g. "Arnold Nielsens Boulevard 64A, 2650 Hvidovre")
-        // BIZZ-551: Append etage + dør for ejerlejligheder
-        // BIZZ-627: Når adresse mangler, vis "Ejendom" som placeholder i stedet
-        // for "BFE X" — BFE-nummeret vises separat i 3. linje i DiagramForce.
-        // Undgår duplikeret BFE-visning og signalerer tydeligt at adresse mangler.
-        const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
-        const hasAddress = !!p.adresse;
-        const rawAddr = p.adresse ?? 'Ejendom';
-        const baseAddr =
-          hasAddress && p.etage ? `${rawAddr}, ${p.etage}.${p.doer ? ` ${p.doer}` : ''}` : rawAddr;
-        const mainLabel = hasAddress && postBy ? `${baseAddr}, ${postBy}` : baseAddr;
-        nodes.push({
-          id: propId,
-          label: mainLabel,
-          sublabel: p.ejendomstype ?? undefined,
-          type: 'property',
-          bfeNummer: p.bfeNummer,
-          link,
-        });
-      }
-
-      // BIZZ-268: Overflow node when more properties exist than shown
-      if (props.length > MAX_PROPS_PER_COMPANY) {
-        const overflowId = `props-overflow-${cvr}`;
-        const remaining = props.length - MAX_PROPS_PER_COMPANY;
-        nodes.push({
-          id: overflowId,
-          label: `+${remaining} ejendomme`,
-          type: 'property',
-        });
-        edges.push({ from: companyNode.id, to: overflowId });
-      }
-    }
+    addPropertiesAndOverflow(nodes, edges, seenIds, propertiesByCvr);
   }
 
   // ── BIZZ-594: Personligt ejede ejendomme (bulk-data-lookup) ──────────────
@@ -943,10 +913,8 @@ export function buildPersonDiagramGraph(
     // der kan eje hundredvis af BFE'er; personens liste er altid kort.
     for (const p of aktive) {
       const propId = `bfe-${p.bfeNummer}`;
-      // Edge går nu fra container-noden, ikke direkte fra person. Det bevarer
-      // layout-adskillelsen (property-noder kommer ét lag længere ned end
-      // virksomhederne). personallyOwned-flaget bibeholdes så stiplet linje
-      // stadig signalerer privat ejerskab.
+      // Edge fra container-noden — bevarer layout-adskillelsen.
+      // personallyOwned-flaget signalerer privat ejerskab.
       edges.push({
         from: propGroupId,
         to: propId,
@@ -956,16 +924,9 @@ export function buildPersonDiagramGraph(
       if (seenIds.has(propId)) continue;
       seenIds.add(propId);
       const link = p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined;
-      // BIZZ-627: Placeholder "Ejendom" i stedet for "BFE X" når adresse mangler.
-      const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
-      const hasAddress = !!p.adresse;
-      const rawAddr = p.adresse ?? 'Ejendom';
-      const baseAddr =
-        hasAddress && p.etage ? `${rawAddr}, ${p.etage}.${p.doer ? ` ${p.doer}` : ''}` : rawAddr;
-      const mainLabel = hasAddress && postBy ? `${baseAddr}, ${postBy}` : baseAddr;
       nodes.push({
         id: propId,
-        label: mainLabel,
+        label: formatPropertyLabel(p),
         sublabel: p.ejendomstype ?? undefined,
         type: 'property',
         bfeNummer: p.bfeNummer,

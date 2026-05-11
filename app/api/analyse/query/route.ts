@@ -198,6 +198,26 @@ export async function POST(request: NextRequest) {
           { signal: AbortSignal.timeout(15000) }
         );
 
+        // BIZZ-1262: Token-tracking — registrer forbrug i tenant.ai_token_usage
+        const tokensIn = response.usage?.input_tokens ?? 0;
+        const tokensOut = response.usage?.output_tokens ?? 0;
+        if (tokensIn > 0 || tokensOut > 0) {
+          void (async () => {
+            try {
+              const trackAdmin = createAdminClient();
+              await trackAdmin.schema('tenant').from('ai_token_usage').insert({
+                tenant_id: auth.tenantId,
+                user_id: auth.userId,
+                tokens_in: tokensIn,
+                tokens_out: tokensOut,
+                model: 'claude-sonnet-4-6',
+              });
+            } catch {
+              // Best-effort — token tracking must not break queries
+            }
+          })();
+        }
+
         const textBlock = response.content.find((b) => b.type === 'text');
         if (!textBlock || textBlock.type !== 'text') {
           sse(JSON.stringify({ error: 'AI returnerede intet svar' }));
@@ -244,6 +264,25 @@ export async function POST(request: NextRequest) {
 
         const admin = createAdminClient();
         const tableName = plan.table.includes('.') ? plan.table.split('.')[1] : plan.table;
+
+        // BIZZ-1283: Runtime schema-check — verificer at tabellen eksisterer
+        {
+          const { error: probeErr } = await admin
+            .from(tableName)
+            .select('*', { count: 'exact', head: true })
+            .limit(0);
+          if (probeErr?.message?.includes('Could not find the table')) {
+            logger.warn(`[analyse/query] Tabel ${tableName} eksisterer ikke i schema`);
+            sse(
+              JSON.stringify({
+                error: `Tabellen "${tableName}" er ikke tilgængelig endnu. Prøv en anden forespørgsel — fx "Ejendomme per kommune" eller "Virksomheder per branche".`,
+              })
+            );
+            sse('[DONE]');
+            controller.close();
+            return;
+          }
+        }
 
         /* Udled hvilke rå kolonner vi skal hente (fjern aggregeringer) */
         const rawCols = plan.select
@@ -299,7 +338,18 @@ export async function POST(request: NextRequest) {
 
         if (dbError) {
           logger.error('[analyse/query] PostgREST fejl:', dbError.message);
-          sse(JSON.stringify({ error: `Databasefejl: ${dbError.message}` }));
+          // BIZZ-1283: Brugervenlig fejlbesked i stedet for rå databasefejl
+          const isMissingTable =
+            dbError.message.includes('Could not find the table') ||
+            dbError.message.includes('schema cache');
+          const isColumnError =
+            dbError.message.includes('column') && dbError.message.includes('does not exist');
+          const userMsg = isMissingTable
+            ? `Tabellen "${tableName}" er ikke tilgængelig endnu. Prøv en anden forespørgsel — fx "Ejendomme per kommune" eller "Virksomheder per branche".`
+            : isColumnError
+              ? `En kolonne i forespørgslen findes ikke. Prøv en simplere forespørgsel.`
+              : 'Data er midlertidigt utilgængelig. Prøv igen om lidt.';
+          sse(JSON.stringify({ error: userMsg }));
           sse('[DONE]');
           controller.close();
           return;

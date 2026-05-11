@@ -383,21 +383,27 @@ export default function AnalyseDataClient() {
         </button>
       </form>
 
-      {/* ── Foreslåede queries ── */}
+      {/* BIZZ-1262: Data-tilgængelighed og foreslåede queries */}
       {!result && !loading && (
-        <div className="flex flex-wrap gap-2">
-          {SUGGESTED_QUERIES.map((sq) => (
-            <button
-              key={sq}
-              onClick={() => {
-                setQuery(sq);
-                executeQuery(sq);
-              }}
-              className="px-3 py-1.5 bg-slate-800/40 border border-slate-700/30 rounded-full text-xs text-slate-400 hover:text-white hover:border-slate-600 transition-colors"
-            >
-              {sq}
-            </button>
-          ))}
+        <div className="space-y-3">
+          <p className="text-slate-500 text-xs">
+            Tilgængelig data: BBR ejendomsdata (2,5M ejendomme), CVR virksomheder (2,1M), EJF
+            ejerskab (7,6M rækker) og virksomhedsregnskaber.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {SUGGESTED_QUERIES.map((sq) => (
+              <button
+                key={sq}
+                onClick={() => {
+                  setQuery(sq);
+                  executeQuery(sq);
+                }}
+                className="px-3 py-1.5 bg-slate-800/40 border border-slate-700/30 rounded-full text-xs text-slate-400 hover:text-white hover:border-slate-600 transition-colors"
+              >
+                {sq}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
@@ -426,6 +432,17 @@ export default function AnalyseDataClient() {
               {result.rowCount.toLocaleString('da-DK')} rækker
             </p>
           </div>
+
+          {/* BIZZ-1262: Hjælpsom besked ved 0 rækker */}
+          {result.rows.length === 0 && (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4 text-amber-300 text-sm">
+              <p className="font-medium">Ingen data fundet</p>
+              <p className="text-amber-400/70 text-xs mt-1">
+                Prøv et andet filter eller tjek om datagrundlaget dækker dit spørgsmål. Visse felter
+                (fx anvendelseskode, energimærke) har begrænset dækning.
+              </p>
+            </div>
+          )}
 
           {/* Chart type toggle */}
           <div className="flex items-center gap-1">

@@ -671,12 +671,14 @@ async function resolveCompanyGraph(
   // Henter properties fra ejf_ejerskab per person-navn. Dedup: hvis BFE
   // allerede er i grafen (fx ejet via virksomhed), tilføj kun edge — ikke node.
   // Farve-koder edges per person for visuel distinktion af fælles ejerskab.
+  // BIZZ-1285: Reduceret opacity fra 0.75 til 0.65 så personlige ejendomme
+  // matcher normale ejendomslinjer i stedet for at skille sig visuelt ud.
   const OWNER_COLORS = [
-    'rgba(52,211,153,0.75)', // emerald — person 1
-    'rgba(167,139,250,0.75)', // violet  — person 2
-    'rgba(251,191,36,0.75)', // amber   — person 3
-    'rgba(248,113,113,0.75)', // red     — person 4
-    'rgba(34,211,238,0.75)', // cyan    — person 5
+    'rgba(52,211,153,0.65)', // emerald — person 1
+    'rgba(167,139,250,0.65)', // violet  — person 2
+    'rgba(251,191,36,0.65)', // amber   — person 3
+    'rgba(248,113,113,0.65)', // red     — person 4
+    'rgba(34,211,238,0.65)', // cyan    — person 5
   ];
   const personNodes = nodes.filter((n) => n.type === 'person' && n.enhedsNummer);
   if (personNodes.length > 0) {

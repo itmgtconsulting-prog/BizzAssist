@@ -115,36 +115,7 @@ export default function ForsikringGapClient() {
     }
   }, []);
 
-  /**
-   * Parser fritekst via AI og tilføjer til policer-listen.
-   */
-  const parseFreitekst = useCallback(async () => {
-    if (!fritekst.trim()) return;
-    setParseLoading(true);
-    setParseFejl([]);
-    try {
-      const res = await fetch('/api/analyse/parse-police-pdf', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          pdfBase64: btoa(unescape(encodeURIComponent(fritekst))),
-          fileName: 'fritekst.txt',
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const parsed = data.policer ?? [];
-        setPolicer((prev) => [...prev, ...parsed]);
-        if (parsed.length > 0) setFritekst('');
-      } else {
-        setParseFejl([{ linje: 0, besked: 'Kunne ikke parse tekst' }]);
-      }
-    } catch {
-      setParseFejl([{ linje: 0, besked: 'Netværksfejl' }]);
-    } finally {
-      setParseLoading(false);
-    }
-  }, [fritekst]);
+  // BIZZ-1281: parseFreitekst fjernet — fritekst bruges direkte via BIZZ-1280
 
   /**
    * BIZZ-1251: Debounced autocomplete-søgning filtreret til person+company.
@@ -438,15 +409,11 @@ export default function ForsikringGapClient() {
               rows={4}
               className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700/60 rounded-lg text-sm text-white placeholder:text-slate-500 outline-none focus:border-blue-500/60 resize-y min-h-[100px]"
             />
+            {/* BIZZ-1281: "Tilføj fra tekst"-knap fjernet — fritekst bruges direkte ved "Kør analyse" (BIZZ-1280) */}
             {fritekst.trim().length > 10 && (
-              <button
-                type="button"
-                onClick={parseFreitekst}
-                disabled={parseLoading}
-                className="text-xs bg-blue-600/80 hover:bg-blue-500 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg transition-colors"
-              >
-                {parseLoading ? 'Parser...' : 'Tilføj fra tekst'}
-              </button>
+              <p className="text-slate-500 text-[10px]">
+                Fritekst bruges direkte ved &quot;Kør analyse&quot; — ingen parsing nødvendig.
+              </p>
             )}
           </div>
 

@@ -1039,10 +1039,15 @@ function DiagramForce({
       const allParentDepths = parents
         .filter((pid) => depths.has(pid))
         .map((pid) => depths.get(pid)!);
-      const bestParentDepths =
-        companyParentDepths.length > 0 ? companyParentDepths : allParentDepths;
-      if (bestParentDepths.length > 0) {
-        depths.set(node.id, Math.min(...bestParentDepths) + 0.5);
+      if (companyParentDepths.length > 0) {
+        // Virksomheds-ejet ejendom: placer under virksomheden
+        depths.set(node.id, Math.min(...companyParentDepths) + 0.5);
+      } else if (allParentDepths.length > 0) {
+        // BIZZ-1286: Personligt ejet ejendom — placer på eget niveau UNDER personen.
+        // Bruger personDepth + 1.5 i stedet for + 0.5 for at adskille
+        // personlige ejendomme fra person-noden (undgår overlap).
+        const personParentD = Math.min(...allParentDepths);
+        depths.set(node.id, personParentD + 1.5);
       }
     }
 

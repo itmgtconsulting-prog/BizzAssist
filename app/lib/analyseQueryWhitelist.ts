@@ -172,6 +172,20 @@ export const WHITELISTED_TABLES: WhitelistedTable[] = [
     },
   },
   {
+    table: 'public.vurdering_cache',
+    description:
+      'Ejendomsvurderinger — cached fra Datafordeler VUR. Normaliserede kolonner for ejendomsværdi, grundværdi, vurderingsår. BIZZ-1274.',
+    columns: {
+      bfe_nummer: { type: 'bigint', description: 'BFE-nummer (primærnøgle)' },
+      ejendomsvaerdi: { type: 'bigint', description: 'Offentlig ejendomsværdi i DKK' },
+      grundvaerdi: { type: 'bigint', description: 'Grundværdi i DKK' },
+      vurderingsaar: { type: 'integer', description: 'Vurderingsår (fx 2024)' },
+      benyttelseskode: { type: 'text', description: 'Benyttelseskode' },
+      grundskyldspromille: { type: 'numeric', description: 'Grundskyldspromille (‰)' },
+      bebyggelsesprocent: { type: 'numeric', description: 'Bebyggelsesprocent (0-100)' },
+    },
+  },
+  {
     table: 'public.kommune_ref',
     description:
       'Kommune-lookup — 98 kommuner med kode, navn og region. Brug til at oversætte kommunekoder til navne.',

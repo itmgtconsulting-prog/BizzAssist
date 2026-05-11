@@ -186,6 +186,22 @@ export const WHITELISTED_TABLES: WhitelistedTable[] = [
     },
   },
   {
+    table: 'public.cvr_historik',
+    description:
+      'CVR ændringshistorik — alle ændringer for virksomheder (navn, adresse, status, branche, form, fusion, spaltning). BIZZ-1277.',
+    columns: {
+      cvr: { type: 'text', description: 'CVR-nummer' },
+      felt: {
+        type: 'text',
+        description: 'Felt: navn, adresse, status, branche, form, fusion, spaltning',
+      },
+      vaerdi_fra: { type: 'text', description: 'Gammel værdi' },
+      vaerdi_til: { type: 'text', description: 'Ny værdi' },
+      gyldig_fra: { type: 'date', description: 'Ændring gyldig fra dato' },
+      gyldig_til: { type: 'date', description: 'Ændring gyldig til dato (NULL = aktuel)' },
+    },
+  },
+  {
     table: 'public.kommune_ref',
     description:
       'Kommune-lookup — 98 kommuner med kode, navn og region. Brug til at oversætte kommunekoder til navne.',

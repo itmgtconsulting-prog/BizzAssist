@@ -170,13 +170,28 @@ export default function EjendomDetaljeClient({
    * Erstatter Tailwind `hidden xl:flex` som Turbopack ikke genererer korrekt
    * ved client-side navigation (FOUC i dev-mode).
    */
-  const [visKort, setVisKort] = useState(true);
+  // BIZZ-1284: Kort deferred — starter lukket og åbner efter idle/timeout.
+  // Eliminerer Mapbox GL JS (~200KB) + tile-fetch fra critical render path.
+  // Desktop: åbner efter 800ms (requestIdleCallback) for at prioritere diagram.
+  const [visKort, setVisKort] = useState(false);
   useEffect(() => {
     const mq = window.matchMedia('(min-width: 900px)');
-    setVisKort(mq.matches);
+    // Defer kort-load så diagram og data renderes først
+    const show = () => {
+      if (mq.matches) setVisKort(true);
+    };
+    const idleId =
+      typeof requestIdleCallback !== 'undefined'
+        ? requestIdleCallback(show, { timeout: 1200 })
+        : undefined;
+    const fallbackId = idleId == null ? setTimeout(show, 800) : undefined;
     const handler = (e: MediaQueryListEvent) => setVisKort(e.matches);
     mq.addEventListener('change', handler);
-    return () => mq.removeEventListener('change', handler);
+    return () => {
+      mq.removeEventListener('change', handler);
+      if (idleId != null) cancelIdleCallback(idleId);
+      if (fallbackId != null) clearTimeout(fallbackId);
+    };
   }, []);
 
   /**

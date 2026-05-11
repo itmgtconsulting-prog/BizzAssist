@@ -12,7 +12,7 @@
 
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { LayoutGrid, Loader2, ChevronLeft, Plus, Trash2, Download } from 'lucide-react';
@@ -46,6 +46,118 @@ const OPERATOR_OPTIONS: { value: FilterRow['operator']; label: string }[] = [
 ];
 
 let filterId = 0;
+
+/**
+ * BIZZ-1282: Intelligent filter-værdi input med autocomplete.
+ * Henter distinkte værdier fra /api/analyse/pivot/distinct.
+ *
+ * @param table - Tabelnavn
+ * @param column - Kolonnenavn
+ * @param value - Aktuel værdi
+ * @param onChange - Callback ved ændring
+ */
+function FilterValueInput({
+  table,
+  column,
+  value,
+  onChange,
+}: {
+  table: string;
+  column: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [suggestions, setSuggestions] = useState<
+    Array<{ value: string; count: number; label?: string }>
+  >([]);
+  const [open, setOpen] = useState(false);
+  const [fetching, setFetching] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Hent suggestions ved focus eller input-ændring */
+  const fetchSuggestions = useCallback(
+    (q: string) => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(async () => {
+        if (!table || !column) return;
+        setFetching(true);
+        try {
+          const shortTable = table.includes('.') ? table.split('.')[1] : table;
+          const url = `/api/analyse/pivot/distinct?table=${shortTable}&column=${column}${q ? `&q=${encodeURIComponent(q)}` : ''}`;
+          const res = await fetch(url);
+          if (res.ok) {
+            const data = (await res.json()) as {
+              values: Array<{ value: string; count: number; label?: string }>;
+            };
+            setSuggestions(data.values ?? []);
+            setOpen(true);
+          }
+        } catch {
+          /* ignore */
+        } finally {
+          setFetching(false);
+        }
+      }, 200);
+    },
+    [table, column]
+  );
+
+  // Luk dropdown ved klik udenfor
+  useEffect(() => {
+    /** @param e - Mouse event */
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  return (
+    <div className="relative flex-1 min-w-[120px]" ref={ref}>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          fetchSuggestions(e.target.value);
+        }}
+        onFocus={() => fetchSuggestions(value)}
+        placeholder="Værdi... (skriv for forslag)"
+        aria-label="Filterværdi"
+        className="w-full px-2 py-1.5 bg-slate-800/60 border border-slate-700/50 rounded-lg text-white text-xs placeholder:text-slate-600 focus:outline-none focus:border-emerald-500/50"
+      />
+      {open && suggestions.length > 0 && (
+        <div className="absolute z-50 w-full mt-1 bg-slate-800 border border-slate-700/60 rounded-lg shadow-xl max-h-48 overflow-y-auto">
+          {suggestions.map((s) => (
+            <button
+              key={s.value}
+              type="button"
+              onClick={() => {
+                onChange(s.value);
+                setOpen(false);
+              }}
+              className="w-full text-left px-2.5 py-1.5 hover:bg-slate-700/50 text-xs text-slate-300 flex items-center justify-between border-b border-slate-700/20 last:border-b-0"
+            >
+              <span>
+                {s.value}
+                {s.label && <span className="text-slate-500 ml-1.5">— {s.label}</span>}
+              </span>
+              <span className="text-slate-600 text-[10px] shrink-0 ml-2">
+                {s.count.toLocaleString('da-DK')}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+      {fetching && (
+        <div className="absolute right-2 top-1/2 -translate-y-1/2">
+          <Loader2 size={10} className="text-slate-500 animate-spin" />
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function PivotExplorerClient() {
   const [selectedTable, setSelectedTable] = useState('');
@@ -376,14 +488,12 @@ export default function PivotExplorerClient() {
                           ))}
                         </select>
 
-                        {/* Værdi */}
-                        <input
-                          type="text"
+                        {/* BIZZ-1282: Intelligent filter-værdi med autocomplete */}
+                        <FilterValueInput
+                          table={selectedTable ?? ''}
+                          column={f.column}
                           value={f.value}
-                          onChange={(e) => updateFilter(f.id, 'value', e.target.value)}
-                          placeholder="Værdi..."
-                          aria-label="Filterværdi"
-                          className="flex-1 min-w-[120px] px-2 py-1.5 bg-slate-800/60 border border-slate-700/50 rounded-lg text-white text-xs placeholder:text-slate-600 focus:outline-none focus:border-emerald-500/50"
+                          onChange={(v) => updateFilter(f.id, 'value', v)}
                         />
 
                         {/* Slet */}

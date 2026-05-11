@@ -203,14 +203,22 @@ export default function ForsikringGapClient() {
   /**
    * Kører gap-analyse mod backend.
    */
+  /** BIZZ-1280: Kør analyse — sender policer-array ELLER fritekst direkte */
   const runAnalyse = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
+      const payload: Record<string, unknown> = { kundeType, kundeId };
+      if (policer.length > 0) {
+        payload.policer = policer;
+      } else if (fritekst.trim().length > 10) {
+        // Fritekst sendes direkte — backend parser via AI
+        payload.fritekst = fritekst.trim();
+      }
       const res = await fetch('/api/analyse/forsikring-gap', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kundeType, kundeId, policer }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => null);
@@ -225,7 +233,7 @@ export default function ForsikringGapClient() {
     } finally {
       setLoading(false);
     }
-  }, [kundeType, kundeId, policer]);
+  }, [kundeType, kundeId, policer, fritekst]);
 
   /** Risiko-farve */
   const risikoFarve = (score: string) => {
@@ -312,7 +320,7 @@ export default function ForsikringGapClient() {
                 const persons = searchResults.filter((r) => r.type === 'person');
                 const companies = searchResults.filter((r) => r.type === 'company');
                 return (
-                  <div className="absolute z-50 w-full mt-1 bg-slate-800 border border-slate-700/60 rounded-lg shadow-xl max-h-72 overflow-y-auto">
+                  <div className="absolute z-50 w-full mt-1 bg-slate-800 border border-slate-700/60 rounded-lg shadow-xl max-h-[520px] overflow-y-auto">
                     {persons.length > 0 && (
                       <>
                         <div className="px-3 py-1.5 flex items-center gap-1.5 bg-slate-900/60 border-b border-slate-700/30 sticky top-0">
@@ -495,7 +503,7 @@ export default function ForsikringGapClient() {
             </button>
             <button
               onClick={runAnalyse}
-              disabled={policer.length === 0 || loading}
+              disabled={(policer.length === 0 && fritekst.trim().length <= 10) || loading}
               className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white px-5 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
             >
               {loading ? 'Analyserer...' : 'Kør analyse'}

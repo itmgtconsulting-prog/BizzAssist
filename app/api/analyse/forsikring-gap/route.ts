@@ -22,11 +22,13 @@ export const maxDuration = 60;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-/** Input body */
+/** Input body — enten policer-array ELLER fritekst (BIZZ-1280) */
 interface GapAnalyseBody {
   kundeType: 'person' | 'virksomhed';
   kundeId: string;
-  policer: ParsedPolice[];
+  policer?: ParsedPolice[];
+  /** BIZZ-1280: Fritekst med forsikringsbeskrivelse — parser server-side */
+  fritekst?: string;
 }
 
 /** Et fundet aktiv fra BizzAssist data */
@@ -70,6 +72,75 @@ export interface GapAnalyseResult {
     samletVaerdi: number;
     samletDaekning: number;
   };
+}
+
+// ─── BIZZ-1280: Fritekst-parsing ────────────────────────────────────────────
+
+/** Keyword→type mapping for simpel fritekst-parsing */
+const FRITEKST_TYPE_MAP: Array<{ keywords: string[]; type: ForsikringsType }> = [
+  { keywords: ['hus', 'villa', 'parcelhus', 'bolig', 'ejerlejlighed'], type: 'husforsikring' },
+  { keywords: ['bygning', 'erhvervsejendom', 'ejendom'], type: 'bygningsforsikring' },
+  { keywords: ['indbo', 'løsøre', 'bohave'], type: 'indboforsikring' },
+  { keywords: ['bil', 'køretøj', 'auto', 'kasko', 'motor'], type: 'bilforsikring' },
+  { keywords: ['erhverv', 'driftstab', 'varelager'], type: 'erhvervsforsikring' },
+  { keywords: ['ansvar', 'erstatning', 'liability'], type: 'ansvarsforsikring' },
+  { keywords: ['bestyrelse', 'd&o', 'directors'], type: 'bestyrelsesansvar' },
+  { keywords: ['arbejdsskade', 'arbejdsulykke'], type: 'arbejdsskadeforsikring' },
+  { keywords: ['rejse', 'udland'], type: 'rejseforsikring' },
+  { keywords: ['liv', 'pension', 'død'], type: 'livsforsikring' },
+];
+
+/**
+ * Parser fritekst til policer via keyword-matching.
+ * Splitter på linjer/sætninger og matcher mod kendte forsikringstyper.
+ *
+ * @param tekst - Fritekst med forsikringsbeskrivelse
+ * @returns Array af parsed policer
+ */
+function parseFritekstTilPolicer(tekst: string): ParsedPolice[] {
+  const policer: ParsedPolice[] = [];
+  const linjer = tekst
+    .split(/[\n;,]+/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  for (const linje of linjer) {
+    const lower = linje.toLowerCase();
+    let matchedType: ForsikringsType = 'andet';
+    for (const { keywords, type } of FRITEKST_TYPE_MAP) {
+      if (keywords.some((kw) => lower.includes(kw))) {
+        matchedType = type;
+        break;
+      }
+    }
+
+    // Forsøg at finde beløb (dækningssum)
+    const beloebMatch = linje.match(/(\d[\d.]*)\s*(?:kr|dkk|mio)/i);
+    let daekningssum: number | null = null;
+    if (beloebMatch) {
+      const raw = beloebMatch[1].replace(/\./g, '');
+      daekningssum = parseInt(raw, 10);
+      if (lower.includes('mio')) daekningssum *= 1_000_000;
+    }
+
+    policer.push({
+      type: matchedType,
+      rawType: linje.slice(0, 100),
+      daekningssum,
+      selskab: null,
+      objekt: null,
+      policenummer: null,
+      udloebsdato: null,
+    });
+  }
+
+  // Dedup: kun én police per type
+  const seen = new Set<string>();
+  return policer.filter((p) => {
+    if (seen.has(p.type)) return false;
+    seen.add(p.type);
+    return true;
+  });
 }
 
 // ─── Aktiv-hentning ─────────────────────────────────────────────────────────
@@ -316,22 +387,30 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Ugyldig JSON' }, { status: 400 });
   }
 
-  if (!body.kundeId || !body.kundeType || !body.policer) {
-    return NextResponse.json(
-      { error: 'Mangler kundeType, kundeId eller policer' },
-      { status: 400 }
-    );
+  if (!body.kundeId || !body.kundeType) {
+    return NextResponse.json({ error: 'Mangler kundeType eller kundeId' }, { status: 400 });
+  }
+
+  // BIZZ-1280: Enten policer-array eller fritekst er required
+  if (!body.policer?.length && !body.fritekst?.trim()) {
+    return NextResponse.json({ error: 'Mangler policer eller fritekst' }, { status: 400 });
   }
 
   try {
     const host = request.headers.get('host') ?? 'localhost:3000';
     const cookie = request.headers.get('cookie') ?? '';
 
+    // BIZZ-1280: Parse fritekst til policer via simple pattern matching
+    let policer = body.policer ?? [];
+    if (policer.length === 0 && body.fritekst?.trim()) {
+      policer = parseFritekstTilPolicer(body.fritekst.trim());
+    }
+
     // Hent aktiver
     const aktiver = await hentAktiver(body.kundeType, body.kundeId, host, cookie);
 
     // Detect gaps
-    const gaps = detectGaps(aktiver, body.policer);
+    const gaps = detectGaps(aktiver, policer);
 
     // Summary
     const forsikrede = aktiver.filter((a) => a.matchetPolice).length;

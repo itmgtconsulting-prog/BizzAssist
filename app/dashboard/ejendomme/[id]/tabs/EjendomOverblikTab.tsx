@@ -87,6 +87,16 @@ interface Props {
   energiLoader?: boolean;
   /** BIZZ-1030: Callback til at navigere til Dokumenter-fanen */
   onNavigerDokumenter?: () => void;
+  /** BIZZ-1307: Ejere fra ejerskabs-chain (prefetched) */
+  ejere?: Array<{ navn: string; andel: string | null; type: string }>;
+  /** BIZZ-1307: Seneste handel */
+  senestHandel?: { pris: number; dato: string } | null;
+  /** BIZZ-1348: Estimeret grundskyld */
+  grundskyld?: number | null;
+  /** BIZZ-1348: Estimeret ejendomsværdiskat */
+  ejendomsvaerdiskat?: number | null;
+  /** BIZZ-1348: Zoneinfo */
+  zoneinfo?: string | null;
 }
 
 /**
@@ -115,6 +125,11 @@ export default function EjendomOverblikTab({
   energimaerker,
   energiLoader,
   onNavigerDokumenter,
+  ejere,
+  senestHandel,
+  grundskyld,
+  ejendomsvaerdiskat,
+  zoneinfo,
 }: Props) {
   const da = lang === 'da';
 
@@ -449,6 +464,71 @@ export default function EjendomOverblikTab({
             onNavigate={onNavigerDokumenter}
           />
         </div>
+
+        {/* ─── BIZZ-1307: Ejerskab + Økonomi summary ─── */}
+        {(ejere?.length || senestHandel || grundskyld || ejendomsvaerdiskat || zoneinfo) && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {/* Ejere */}
+            {ejere && ejere.length > 0 && (
+              <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
+                <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">
+                  {da ? 'Ejere' : 'Owners'}
+                </p>
+                {ejere.map((e, i) => (
+                  <p key={i} className="text-slate-200 text-xs">
+                    {e.navn} {e.andel ? `(${e.andel})` : ''}
+                  </p>
+                ))}
+              </div>
+            )}
+            {/* Seneste handel */}
+            {senestHandel && (
+              <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
+                <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">
+                  {da ? 'Seneste handel' : 'Latest sale'}
+                </p>
+                <p className="text-white text-sm font-bold">
+                  {senestHandel.pris.toLocaleString('da-DK')} DKK
+                </p>
+                <p className="text-slate-400 text-[10px]">
+                  {new Date(senestHandel.dato).toLocaleDateString('da-DK', {
+                    day: 'numeric',
+                    month: 'long',
+                    year: 'numeric',
+                  })}
+                </p>
+              </div>
+            )}
+            {/* Skat */}
+            {(grundskyld || ejendomsvaerdiskat) && (
+              <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
+                <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">
+                  {da ? 'Årlig skat' : 'Annual tax'}
+                </p>
+                {grundskyld != null && grundskyld > 0 && (
+                  <p className="text-slate-200 text-xs">
+                    {da ? 'Grundskyld' : 'Land tax'}: {grundskyld.toLocaleString('da-DK')} DKK
+                  </p>
+                )}
+                {ejendomsvaerdiskat != null && ejendomsvaerdiskat > 0 && (
+                  <p className="text-slate-200 text-xs">
+                    {da ? 'Ejd.skat' : 'Prop. tax'}: {ejendomsvaerdiskat.toLocaleString('da-DK')}{' '}
+                    DKK
+                  </p>
+                )}
+              </div>
+            )}
+            {/* Zoneinfo */}
+            {zoneinfo && (
+              <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
+                <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">
+                  {da ? 'Zone' : 'Zone'}
+                </p>
+                <p className="text-slate-200 text-xs">{zoneinfo}</p>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ─── Rad 2: Bygninger (v) + Enheder (h) ─── */}
 

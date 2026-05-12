@@ -1484,6 +1484,29 @@ export default function EjendomDetaljeClient({
                 energimaerker={energimaerker}
                 energiLoader={energiLoader}
                 onNavigerDokumenter={() => setAktivTab('dokumenter')}
+                ejere={chainEjerDetaljer
+                  .filter((e) => e.type !== 'status')
+                  .map((e) => ({
+                    navn: e.navn,
+                    andel: e.andel,
+                    type: e.type,
+                  }))}
+                senestHandel={
+                  mergedSalgshistorik.length > 0
+                    ? {
+                        pris:
+                          mergedSalgshistorik[0].samletKoebesum ??
+                          mergedSalgshistorik[0].kontantKoebesum ??
+                          0,
+                        dato:
+                          mergedSalgshistorik[0].overtagelsesdato ??
+                          mergedSalgshistorik[0].koebsaftaleDato ??
+                          '',
+                      }
+                    : null
+                }
+                grundskyld={vurdering?.estimereretGrundskyld ?? null}
+                zoneinfo={dawaJordstykke ? (da ? 'Byzone' : 'Urban zone') : null}
               />
             )}
 

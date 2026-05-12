@@ -318,23 +318,37 @@ export default function EjendomDetaljeClient({
   const [strukturLoader, setStrukturLoader] = useState(false);
 
   /** Ejendomsvurderingsdata fra Datafordeler — null = ikke hentet endnu */
-  const [vurdering, setVurdering] = useState<VurderingData | null>(null);
+  const [vurdering, setVurdering] = useState<VurderingData | null>(
+    prefetched?.vurderingData?.vurdering ?? null
+  );
   /** Alle vurderinger fra Datafordeler — bruges til historiktabel */
-  const [alleVurderinger, setAlleVurderinger] = useState<VurderingData[]>([]);
+  const [alleVurderinger, setAlleVurderinger] = useState<VurderingData[]>(
+    prefetched?.vurderingData?.alle ?? []
+  );
   /** BIZZ-494: Fradrag for forbedringer (vej/kloak) — vises under Grundværdi i Økonomi-tab */
-  const [vurFradrag, setVurFradrag] = useState<VurderingResponse['fradrag']>(null);
+  const [vurFradrag, setVurFradrag] = useState<VurderingResponse['fradrag']>(
+    prefetched?.vurderingData?.fradrag ?? null
+  );
   /** BIZZ-493: Ejerboligfordeling — vises som kort i Økonomi-tab for ejerlejlighedskomplekser */
-  const [vurFordeling, setVurFordeling] = useState<VurderingResponse['fordeling']>([]);
+  const [vurFordeling, setVurFordeling] = useState<VurderingResponse['fordeling']>(
+    prefetched?.vurderingData?.fordeling ?? []
+  );
   /** BIZZ-492: Grundværdispecifikation — nedbrydning af grundværdiberegning */
   const [vurGrundvaerdispec, setVurGrundvaerdispec] = useState<
     VurderingResponse['grundvaerdispec']
-  >([]);
+  >(prefetched?.vurderingData?.grundvaerdispec ?? []);
   /** BIZZ-491: Skattefritagelser for nyeste vurdering */
-  const [vurFritagelser, setVurFritagelser] = useState<VurderingResponse['fritagelser']>([]);
+  const [vurFritagelser, setVurFritagelser] = useState<VurderingResponse['fritagelser']>(
+    prefetched?.vurderingData?.fritagelser ?? []
+  );
   /** BIZZ-490: Loftansættelse (grundskatteloft, ESL §45 4,75%-loft) — vises i SKAT-tab */
-  const [vurLoft, setVurLoft] = useState<VurderingResponse['loft']>([]);
-  /** True mens vurderingsdata hentes — starter som true når prefetch giver BBR data med det samme */
-  const [vurderingLoader, setVurderingLoader] = useState(!!prefetched?.bbrData);
+  const [vurLoft, setVurLoft] = useState<VurderingResponse['loft']>(
+    prefetched?.vurderingData?.loft ?? []
+  );
+  /** True mens vurderingsdata hentes — false når prefetched vurdering er tilgængelig */
+  const [vurderingLoader, setVurderingLoader] = useState(
+    !!prefetched?.bbrData && !prefetched?.vurderingData
+  );
   /** True = vis fuld vurderingshistorik-tabel */
   const [visVurderingHistorik, setVisVurderingHistorik] = useState(false);
 
@@ -952,34 +966,37 @@ export default function EjendomDetaljeClient({
     const controller = new AbortController();
     const signal = controller.signal;
 
-    setVurderingLoader(true);
     setEjereLoader(true);
 
-    const kommunekode = dawaJordstykke?.kommune?.kode;
-    const vurderingUrl = kommunekode
-      ? `/api/vurdering?bfeNummer=${bfeNummer}&kommunekode=${kommunekode}`
-      : `/api/vurdering?bfeNummer=${bfeNummer}`;
+    // BIZZ-1287: Skip klient-side vurdering-fetch hvis server-side prefetch leverede data
+    if (!prefetched?.vurderingData) {
+      setVurderingLoader(true);
+      const kommunekode = dawaJordstykke?.kommune?.kode;
+      const vurderingUrl = kommunekode
+        ? `/api/vurdering?bfeNummer=${bfeNummer}&kommunekode=${kommunekode}`
+        : `/api/vurdering?bfeNummer=${bfeNummer}`;
 
-    fetch(vurderingUrl, { signal })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data: VurderingResponse | null) => {
-        if (signal.aborted) return;
-        setVurdering(data?.vurdering ?? null);
-        setAlleVurderinger(data?.alle ?? []);
-        setVurFradrag(data?.fradrag ?? null);
-        setVurFordeling(data?.fordeling ?? []);
-        setVurGrundvaerdispec(data?.grundvaerdispec ?? []);
-        setVurFritagelser(data?.fritagelser ?? []);
-        setVurLoft(data?.loft ?? []);
-      })
-      .catch((err) => {
-        if (err.name === 'AbortError') return;
-        logger.error('[ejendom] Vurdering fetch error:', err);
-        setVurdering(null);
-      })
-      .finally(() => {
-        if (!signal.aborted) setVurderingLoader(false);
-      });
+      fetch(vurderingUrl, { signal })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data: VurderingResponse | null) => {
+          if (signal.aborted) return;
+          setVurdering(data?.vurdering ?? null);
+          setAlleVurderinger(data?.alle ?? []);
+          setVurFradrag(data?.fradrag ?? null);
+          setVurFordeling(data?.fordeling ?? []);
+          setVurGrundvaerdispec(data?.grundvaerdispec ?? []);
+          setVurFritagelser(data?.fritagelser ?? []);
+          setVurLoft(data?.loft ?? []);
+        })
+        .catch((err) => {
+          if (err.name === 'AbortError') return;
+          logger.error('[ejendom] Vurdering fetch error:', err);
+          setVurdering(null);
+        })
+        .finally(() => {
+          if (!signal.aborted) setVurderingLoader(false);
+        });
+    }
 
     fetch(`/api/ejerskab?bfeNummer=${bfeNummer}`, { signal })
       .then((r) => (r.ok ? r.json() : null))

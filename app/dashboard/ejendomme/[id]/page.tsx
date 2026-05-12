@@ -11,6 +11,7 @@ import { darHentAdresse } from '@/app/lib/dar';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
 import type { DawaAdresse } from '@/app/lib/dawa';
 import type { EjendomApiResponse } from '@/app/lib/fetchBbrData';
+import type { VurderingResponse } from '@/app/api/vurdering/route';
 import EjendomDetaljeClient from './EjendomDetaljeClient';
 import { logger } from '@/app/lib/logger';
 
@@ -26,6 +27,8 @@ interface EjendommeDetailPageProps {
 export interface PrefetchedPropertyData {
   dawaAdresse: DawaAdresse | null;
   bbrData: EjendomApiResponse | null;
+  /** BIZZ-1287: Server-side prefetched vurdering fra cache — eliminerer klient-side waterfall */
+  vurderingData?: VurderingResponse | null;
 }
 
 export default async function EjendommeDetailPage({
@@ -46,7 +49,47 @@ export default async function EjendommeDetailPage({
         const bbrResult = await fetchBbrForAddress(id);
         const bbrData: EjendomApiResponse = { dawaId: id, ...bbrResult };
 
-        prefetched = { dawaAdresse: adresse, bbrData };
+        // BIZZ-1287: Prefetch vurdering fra cache parallelt — eliminerer klient-side waterfall
+        let vurderingData: VurderingResponse | null = null;
+        const bfeNummer = bbrResult.ejendomsrelationer?.[0]?.bfeNummer;
+        if (bfeNummer) {
+          try {
+            const { createAdminClient } = await import('@/lib/supabase/admin');
+            const admin = createAdminClient();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: cached } = (await (admin as any)
+              .from('vurdering_cache')
+              .select(
+                'vurderinger, grundvaerdispec, fordeling, loft, fritagelser, fradrag, stale_after'
+              )
+              .eq('bfe_nummer', bfeNummer)
+              .maybeSingle()) as { data: Record<string, unknown> | null };
+
+            if (
+              cached?.vurderinger &&
+              cached.stale_after &&
+              new Date(String(cached.stale_after)) > new Date()
+            ) {
+              const vurderinger = cached.vurderinger as VurderingResponse['alle'];
+              vurderingData = {
+                vurdering: vurderinger.length > 0 ? vurderinger[0] : null,
+                alle: vurderinger,
+                fordeling: (cached.fordeling ?? []) as VurderingResponse['fordeling'],
+                grundvaerdispec: (cached.grundvaerdispec ??
+                  []) as VurderingResponse['grundvaerdispec'],
+                loft: (cached.loft ?? []) as VurderingResponse['loft'],
+                fritagelser: (cached.fritagelser ?? []) as VurderingResponse['fritagelser'],
+                fradrag: (cached.fradrag as VurderingResponse['fradrag']) ?? null,
+                fejl: null,
+                manglerNoegle: false,
+              };
+            }
+          } catch {
+            /* Cache miss — klient fetcher live */
+          }
+        }
+
+        prefetched = { dawaAdresse: adresse, bbrData, vurderingData };
       } else {
         prefetched = { dawaAdresse: null, bbrData: null };
       }

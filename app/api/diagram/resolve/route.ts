@@ -817,28 +817,82 @@ async function resolveCompanyGraph(
             ])
           );
 
+          // BIZZ-1311: Detect virksomheds-deltagere via cvr_virksomhed (forretningsnøgle)
+          // Virksomheder som ejere har enhedsNummer men er IKKE personer.
+          const virksomhedsEns = new Set<number>();
+          if (extraPersonEnheder.size > 0) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: virkRows } = await (admin as any)
+              .from('cvr_deltagerrelation')
+              .select('deltager_enhedsnummer, virksomhed_cvr')
+              .in('deltager_enhedsnummer', Array.from(extraPersonEnheder).slice(0, 50))
+              .in('type', ['interessenter', 'indehaver', 'stiftere'])
+              .is('gyldig_til', null)
+              .limit(50);
+            // Hvis en deltager OGSÅ optræder som virksomhed (fx I/S, ApS), markér
+            const enToCvr = new Map<number, string>();
+            for (const r of (virkRows ?? []) as Array<{
+              deltager_enhedsnummer: number;
+              virksomhed_cvr: string;
+            }>) {
+              enToCvr.set(r.deltager_enhedsnummer, r.virksomhed_cvr);
+            }
+            // Heuristik: navne der ender med ApS/A/S/I/S/K/S/Holding = virksomhed
+            const VIRK_SUFFIX =
+              /\b(aps|a\/s|i\/s|k\/s|p\/s|holding|invest|ejendomme|group|gmbh|ltd|inc)\b/i;
+            for (const en of extraPersonEnheder) {
+              const n = extraNavnMap.get(en) ?? '';
+              if (VIRK_SUFFIX.test(n)) virksomhedsEns.add(en);
+            }
+          }
+
           for (const [en, compRels] of extraPersonCompMap) {
             const navn = extraNavnMap.get(en);
-            if (!navn) continue; // BIZZ-1292: deltager mangler i cache — skip
-            const personId = `person-${en}`;
-            if (nodeIds.has(personId)) continue;
-            nodes.push({
-              id: personId,
-              label: navn,
-              type: 'person',
-              enhedsNummer: en,
-              link: `/dashboard/owners/${en}`,
-            });
-            nodeIds.add(personId);
+            if (!navn) continue;
 
-            for (const rel of compRels) {
-              const compId = `cvr-${rel.cvr}`;
-              if (!nodeIds.has(compId)) continue;
-              edges.push({
-                from: personId,
-                to: compId,
-                ejerandel: rel.pct != null ? `${rel.pct}%` : undefined,
+            const erVirksomhed = virksomhedsEns.has(en);
+
+            if (erVirksomhed) {
+              // Vis som virksomheds-node
+              const virkId = `cvr-en-${en}`;
+              if (nodeIds.has(virkId)) continue;
+              nodes.push({
+                id: virkId,
+                label: navn,
+                type: 'company',
+                link: `/dashboard/companies/${en}`, // Fallback — korrekt CVR-link kræver lookup
               });
+              nodeIds.add(virkId);
+              for (const rel of compRels) {
+                const compId = `cvr-${rel.cvr}`;
+                if (!nodeIds.has(compId)) continue;
+                edges.push({
+                  from: virkId,
+                  to: compId,
+                  ejerandel: rel.pct != null ? `${rel.pct}%` : undefined,
+                });
+              }
+            } else {
+              // Vis som person-node
+              const personId = `person-${en}`;
+              if (nodeIds.has(personId)) continue;
+              nodes.push({
+                id: personId,
+                label: navn,
+                type: 'person',
+                enhedsNummer: en,
+                link: `/dashboard/owners/${en}`,
+              });
+              nodeIds.add(personId);
+              for (const rel of compRels) {
+                const compId = `cvr-${rel.cvr}`;
+                if (!nodeIds.has(compId)) continue;
+                edges.push({
+                  from: personId,
+                  to: compId,
+                  ejerandel: rel.pct != null ? `${rel.pct}%` : undefined,
+                });
+              }
             }
           }
         }

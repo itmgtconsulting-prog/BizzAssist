@@ -331,6 +331,25 @@ export function isUdfasetStatusLabel(label: string | null | undefined): boolean 
   return false;
 }
 
+/**
+ * BIZZ-1304: Strengere variant — returnerer true kun for bygninger med KENDT
+ * aktiv status (Opført, Projekteret, Under opførelse, Midlertidig). Bygninger
+ * med ukendt, null eller "Ukendt (!)" status behandles som inaktive.
+ *
+ * @param label - DA/EN status-label fra BBR-data
+ * @returns true hvis bygningen har aktiv status
+ */
+export function isAktivStatusLabel(label: string | null | undefined): boolean {
+  if (!label) return false;
+  // Aktive status-koder: 1 (projekteret), 2 (under opførelse), 3+6 (opført), 7 (midlertidig)
+  for (const code of [1, 2, 3, 6, 7]) {
+    const labels = BBR_STATUS_LABELS[code];
+    if (!labels) continue;
+    if (labels.da === label || labels.en === label) return true;
+  }
+  return false;
+}
+
 // ─── Enhedsstatus (ENH_STATUS) ────────────────────────────────────────────
 const enhedStatus: Record<number, string> = {
   1: 'Til udlejning',

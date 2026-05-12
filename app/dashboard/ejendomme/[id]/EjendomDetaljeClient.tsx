@@ -33,7 +33,7 @@ import {
 const PropertyMap = dynamic(/* mapbox-gl */ () => import('@/app/components/ejendomme/PropertyMap'), { ssr: false, loading: () => (<div className="w-full h-64 bg-slate-800/50 rounded-xl animate-pulse flex items-center justify-center"><span className="text-slate-500 text-sm">Indlæser kort...</span></div>) });
 import { erDawaId, type DawaAdresse, type DawaJordstykke } from '@/app/lib/dawa';
 import { benyttelseskodeTilBoligtype } from '@/app/lib/benyttelseskoder';
-import { isUdfasetStatusLabel } from '@/app/lib/bbrKoder';
+import { isUdfasetStatusLabel, isAktivStatusLabel } from '@/app/lib/bbrKoder';
 import type { EjendomApiResponse, LiveBBRBygning } from '@/app/api/ejendom/[id]/route';
 import type { CVRVirksomhed, CVRResponse } from '@/app/api/cvr/route';
 import type { VurderingData, VurderingResponse } from '@/app/api/vurdering/route';
@@ -500,7 +500,8 @@ export default function EjendomDetaljeClient({
         }
       : undefined;
 
-    const aktiveBygninger = bbrData?.bbr?.filter((b) => !isUdfasetStatusLabel(b.status));
+    // BIZZ-1304: whitelist — kun bygninger med kendt aktiv status (ekskluderer null/"Ukendt (!)")
+    const aktiveBygninger = bbrData?.bbr?.filter((b) => isAktivStatusLabel(b.status));
     const ejendomBBR = aktiveBygninger
       ? {
           antalBygninger: aktiveBygninger.length,

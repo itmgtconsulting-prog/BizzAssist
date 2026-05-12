@@ -247,6 +247,15 @@ async function hentAktiver(
         if (!virkRes.ok) return;
         const data = await virkRes.json();
         for (const v of data?.virksomheder ?? []) {
+          // BIZZ-1295: Skip ophørte selskaber — kun aktive virksomheder er relevante for gap-analyse
+          if (v.aktiv === false) continue;
+
+          // BIZZ-1295: Check om personen har aktive roller (til=null)
+          const aktiveRoller = (v.roller ?? []).filter(
+            (r: { til: string | null }) => r.til == null
+          );
+          if (aktiveRoller.length === 0) continue;
+
           // Virksomheder personen ejer → erhvervsforsikring-gap
           aktiver.push({
             id: `virksomhed-${v.cvr}`,
@@ -259,15 +268,16 @@ async function hentAktiver(
             risikofaktorer: [],
             matchetPolice: null,
           });
-          // Bestyrelsesposter → D&O ansvarsforsikring-gap
-          const harBestyrelseRolle = v.roller?.some((r: { rolle: string }) =>
+          // Bestyrelsesposter → D&O ansvarsforsikring-gap (kun aktive roller)
+          const harBestyrelseRolle = aktiveRoller.some((r: { rolle: string }) =>
             /bestyrelse|direktion/i.test(r.rolle)
           );
           if (harBestyrelseRolle) {
+            const rolleLabels = aktiveRoller.map((r: { rolle: string }) => r.rolle).join(', ');
             aktiver.push({
               id: `bestyrelsespost-${v.cvr}`,
               type: 'bestyrelsespost',
-              label: `${v.navn} (${v.roller.map((r: { rolle: string }) => r.rolle).join(', ')})`,
+              label: `${v.navn} (${rolleLabels})`,
               vaerdi: null,
               adresse: null,
               bfe: null,

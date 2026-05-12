@@ -33,7 +33,7 @@ import {
 const PropertyMap = dynamic(/* mapbox-gl */ () => import('@/app/components/ejendomme/PropertyMap'), { ssr: false, loading: () => (<div className="w-full h-64 bg-slate-800/50 rounded-xl animate-pulse flex items-center justify-center"><span className="text-slate-500 text-sm">Indlæser kort...</span></div>) });
 import { erDawaId, type DawaAdresse, type DawaJordstykke } from '@/app/lib/dawa';
 import { benyttelseskodeTilBoligtype } from '@/app/lib/benyttelseskoder';
-import { isUdfasetStatusLabel, isAktivStatusLabel } from '@/app/lib/bbrKoder';
+import { isAktivStatusLabel } from '@/app/lib/bbrKoder';
 import type { EjendomApiResponse, LiveBBRBygning } from '@/app/api/ejendom/[id]/route';
 import type { CVRVirksomhed, CVRResponse } from '@/app/api/cvr/route';
 import type { VurderingData, VurderingResponse } from '@/app/api/vurdering/route';
@@ -548,7 +548,8 @@ export default function EjendomDetaljeClient({
    * re-renders — without this the inline .filter() would create a new array each time.
    */
   const aktiveBygningPunkter = useMemo(
-    () => bbrData?.bygningPunkter?.filter((p) => !isUdfasetStatusLabel(p.status)) ?? undefined,
+    // BIZZ-1324: whitelist for kortvisning
+    () => bbrData?.bygningPunkter?.filter((p) => isAktivStatusLabel(p.status)) ?? undefined,
     [bbrData?.bygningPunkter]
   );
 

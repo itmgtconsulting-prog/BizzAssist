@@ -26,7 +26,7 @@ import type { EjendomApiResponse } from '@/app/api/ejendom/[id]/route';
 import type { VurderingData } from '@/app/api/vurdering/route';
 import type { MatrikelEjendom } from '@/app/api/matrikel/route';
 import { formatBenyttelseOgByggeaar } from '@/app/lib/benyttelseskoder';
-import { isUdfasetStatusLabel } from '@/app/lib/bbrKoder';
+import { isUdfasetStatusLabel, isAktivStatusLabel } from '@/app/lib/bbrKoder';
 import FoelgTooltip from '@/app/components/FoelgTooltip';
 import DataFreshnessBadge from '@/app/components/DataFreshnessBadge';
 import FloodRiskBadge from '@/app/components/ejendomme/FloodRiskBadge';
@@ -306,9 +306,7 @@ export default function EjendomHeader(props: EjendomHeaderProps) {
               );
             }
             // 2. Udled fra BBR bygningsanvendelser
-            const bygninger = bbrData?.bbr?.filter(
-              (b) => !isUdfasetStatusLabel(b.status) && b.status !== 'Ikke opført'
-            );
+            const bygninger = bbrData?.bbr?.filter((b) => isAktivStatusLabel(b.status));
             if (!bygninger?.length) return null;
             let harBolig = false;
             let harErhverv = false;

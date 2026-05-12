@@ -909,7 +909,10 @@ function AIChatPanel() {
                 }
               }
             } catch {
-              // Ignorer ugyldige JSON-chunks
+              // BIZZ-1328: Log ugyldige chunks i stedet for at ignorere stille
+              if (payload && payload !== '[DONE]') {
+                console.warn('[ai-chat] Ugyldig SSE chunk:', payload.slice(0, 100));
+              }
             }
           }
         }
@@ -917,6 +920,14 @@ function AIChatPanel() {
         // Frigør ReadableStream-ressourcen eksplicit (BIZZ-126)
         reader.releaseLock();
         reader.cancel().catch(() => {});
+      }
+
+      // BIZZ-1328: Fallback-besked ved tom stream — vis fejl i stedet for stille intet
+      if (!accumulated && generatedFiles.length === 0) {
+        accumulated =
+          lang === 'da'
+            ? '⚠️ Intet svar modtaget fra AI. Prøv venligst igen.'
+            : '⚠️ No response received from AI. Please try again.';
       }
 
       // Flyt streamed tekst til message-array + persist

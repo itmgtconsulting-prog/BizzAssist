@@ -1407,6 +1407,7 @@ export default function EjendomDetaljeClient({
             esrNummer={esrNummer}
             erKolonihave={erKolonihave}
             strukturTree={strukturTree}
+            strukturLoader={strukturLoader}
             erFulgt={erFulgt}
             foelgToggling={foelgToggling}
             visFoelgTooltip={visFoelgTooltip}

@@ -717,10 +717,11 @@ export default function EjendomDetaljeClient({
    * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
+    // BIZZ-1329: Brug ejendomsrelationer BFE som primær — ejerlejlighedBfe kan pege på forkert SFE
     const erModerTl = dawaAdresse && !dawaAdresse.etage && !!bbrData?.ejerlejlighedBfe;
     const bfe = erModerTl
       ? (bbrData?.moderBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer)
-      : (bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer);
+      : (bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? bbrData?.ejerlejlighedBfe);
     if (!bfe) return;
     const controller = new AbortController();
     const signal = controller.signal;
@@ -1526,9 +1527,9 @@ export default function EjendomDetaljeClient({
                 strukturTree={strukturTree}
                 strukturLoader={strukturLoader}
                 currentBfe={
+                  bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
                   bbrData?.ejerlejlighedBfe ??
                   bbrData?.moderBfe ??
-                  bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
                   undefined
                 }
                 currentDawaId={erDAWA ? id : undefined}
@@ -1551,8 +1552,8 @@ export default function EjendomDetaljeClient({
               const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
               const bfeForTl = erModer
                 ? (bbrData?.moderBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? null)
-                : (bbrData?.ejerlejlighedBfe ??
-                  bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
+                : (bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
+                  bbrData?.ejerlejlighedBfe ??
                   null);
               return (
                 <div className={aktivTab === 'tinglysning' ? '' : 'hidden'}>
@@ -1771,7 +1772,7 @@ export default function EjendomDetaljeClient({
         )}
         {/* BIZZ-1179: AI annonce-modal */}
         <GenerateListingModal
-          bfe={bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? 0}
+          bfe={bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? bbrData?.ejerlejlighedBfe ?? 0}
           adresse={adresseStreng}
           lang={da ? 'da' : 'en'}
           open={annonceModalOpen}

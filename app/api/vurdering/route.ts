@@ -842,6 +842,38 @@ export async function GET(request: NextRequest): Promise<NextResponse<VurderingR
     const vurdering = mapNode(nyesteNode);
     const alle = sorted.map(mapNode);
 
+    /* Write-through: gem i vurdering_cache for fremtidige cache-hits */
+    try {
+      const { createAdminClient } = await import('@/lib/supabase/admin');
+      const admin = createAdminClient();
+      const staleAfter = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (admin as any).from('vurdering_cache').upsert(
+        {
+          bfe_nummer: bfeNummer,
+          vurderinger: alle,
+          grundvaerdispec: udvidede.grundvaerdispec ?? [],
+          fordeling: udvidede.fordeling ?? [],
+          loft: udvidede.loft ?? [],
+          fritagelser: udvidede.fritagelser ?? [],
+          fradrag: udvidede.fradrag ?? null,
+          foreloebig: null,
+          skatteberegning: null,
+          fetched_at: new Date().toISOString(),
+          stale_after: staleAfter,
+          ejendomsvaerdi: vurdering.ejendomsvaerdi,
+          grundvaerdi: vurdering.grundvaerdi,
+          vurderingsaar: vurdering.aar,
+          benyttelseskode: vurdering.benyttelseskode,
+          grundskyldspromille: vurdering.grundskyldspromille,
+          bebyggelsesprocent: vurdering.bebyggelsesprocent,
+        },
+        { onConflict: 'bfe_nummer' }
+      );
+    } catch {
+      /* Cache-write fejl er ikke kritisk — log men returner data */
+    }
+
     return NextResponse.json(
       {
         vurdering,

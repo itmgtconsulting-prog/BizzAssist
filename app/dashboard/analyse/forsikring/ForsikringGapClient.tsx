@@ -26,6 +26,8 @@ import {
   User,
   Users,
   Loader2,
+  Briefcase,
+  ArrowRight,
 } from 'lucide-react';
 import type { UnifiedSearchResult } from '@/app/api/search/route';
 import { parseCsv, type ParsedPolice } from '@/app/lib/parsePoliceFile';
@@ -183,7 +185,7 @@ export default function ForsikringGapClient() {
       const payload: Record<string, unknown> = { kundeType, kundeId };
       if (policer.length > 0) {
         payload.policer = policer;
-      } else if (fritekst.trim().length > 10) {
+      } else if (fritekst.trim().length >= 3) {
         // Fritekst sendes direkte — backend parser via AI
         payload.fritekst = fritekst.trim();
       }
@@ -297,62 +299,101 @@ export default function ForsikringGapClient() {
             {dropdownOpen &&
               searchResults.length > 0 &&
               (() => {
-                const persons = searchResults.filter((r) => r.type === 'person');
-                const companies = searchResults.filter((r) => r.type === 'company');
+                const virksomheder = searchResults.filter((r) => r.type === 'company').slice(0, 8);
+                const personer = searchResults.filter((r) => r.type === 'person').slice(0, 8);
+
+                const sections: {
+                  key: string;
+                  label: string;
+                  headerColor: string;
+                  items: UnifiedSearchResult[];
+                }[] = [];
+                if (virksomheder.length > 0)
+                  sections.push({
+                    key: 'comp',
+                    label: 'VIRKSOMHEDER',
+                    headerColor: 'text-blue-400',
+                    items: virksomheder,
+                  });
+                if (personer.length > 0)
+                  sections.push({
+                    key: 'pers',
+                    label: 'PERSONER',
+                    headerColor: 'text-purple-400',
+                    items: personer,
+                  });
+
                 return (
-                  <div className="absolute z-50 w-full mt-1 bg-slate-800 border border-slate-700/60 rounded-lg shadow-xl max-h-[520px] overflow-y-auto">
-                    {persons.length > 0 && (
-                      <>
-                        <div className="px-3 py-1.5 flex items-center gap-1.5 bg-slate-900/60 border-b border-slate-700/30 sticky top-0">
-                          <User size={11} className="text-purple-400" />
-                          <span className="text-[10px] font-semibold text-purple-300 uppercase tracking-wider">
-                            Personer
-                          </span>
+                  <div className="absolute z-50 w-full mt-1 bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl max-h-[70vh] overflow-y-auto">
+                    {sections.map((sec, si) => (
+                      <div key={sec.key}>
+                        <div
+                          className={`px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider ${sec.headerColor} bg-slate-800/40 ${si > 0 ? 'border-t border-slate-700/30' : ''}`}
+                        >
+                          {sec.label}
                         </div>
-                        {persons.map((result) => (
-                          <button
-                            key={`person-${result.id}`}
-                            type="button"
-                            onClick={() => selectKunde(result)}
-                            className="w-full text-left px-3 py-2.5 hover:bg-slate-700/50 transition-colors flex items-start gap-3 border-b border-slate-700/20 last:border-b-0"
-                          >
-                            <User size={14} className="text-purple-400 mt-0.5 shrink-0" />
-                            <div className="min-w-0 flex-1">
-                              <div className="text-sm text-white truncate">{result.title}</div>
-                              <div className="text-xs text-slate-400 truncate">
-                                {result.subtitle}
+                        {sec.items.map((r) => {
+                          const isCompany = r.type === 'company';
+                          const hoverBg = isCompany
+                            ? 'hover:bg-blue-600/10'
+                            : 'hover:bg-purple-600/10';
+                          const accentColor = isCompany ? 'text-blue-400' : 'text-purple-400';
+                          const iconBg = isCompany ? 'bg-blue-600/15' : 'bg-purple-600/15';
+                          const arrowIdle = isCompany
+                            ? 'text-slate-600 group-hover:text-blue-400'
+                            : 'text-slate-600 group-hover:text-purple-400';
+                          const ResultIcon = isCompany ? Briefcase : Users;
+
+                          return (
+                            <button
+                              key={`${r.type}-${r.id}`}
+                              type="button"
+                              onClick={() => selectKunde(r)}
+                              className={`w-full flex items-center gap-2 px-3 py-1.5 text-left transition-colors group ${hoverBg}`}
+                            >
+                              <div className={`p-1 rounded-md flex-shrink-0 ${iconBg}`}>
+                                <ResultIcon size={11} className={accentColor} />
                               </div>
-                            </div>
-                          </button>
-                        ))}
-                      </>
-                    )}
-                    {companies.length > 0 && (
-                      <>
-                        <div className="px-3 py-1.5 flex items-center gap-1.5 bg-slate-900/60 border-b border-slate-700/30 sticky top-0">
-                          <Building2 size={11} className="text-blue-400" />
-                          <span className="text-[10px] font-semibold text-blue-300 uppercase tracking-wider">
-                            Virksomheder
-                          </span>
-                        </div>
-                        {companies.map((result) => (
-                          <button
-                            key={`company-${result.id}`}
-                            type="button"
-                            onClick={() => selectKunde(result)}
-                            className="w-full text-left px-3 py-2.5 hover:bg-slate-700/50 transition-colors flex items-start gap-3 border-b border-slate-700/20 last:border-b-0"
-                          >
-                            <Building2 size={14} className="text-blue-400 mt-0.5 shrink-0" />
-                            <div className="min-w-0 flex-1">
-                              <div className="text-sm text-white truncate">{result.title}</div>
-                              <div className="text-xs text-slate-400 truncate">
-                                {result.subtitle}
+                              <div className="flex-1 min-w-0">
+                                {isCompany ? (
+                                  <>
+                                    <div className="flex items-center gap-1.5">
+                                      <p className="text-white text-xs font-medium truncate">
+                                        {r.title}
+                                      </p>
+                                      {r.meta?.active && (
+                                        <span
+                                          className={`inline-flex items-center px-1 py-0 rounded text-[8px] font-medium flex-shrink-0 ${r.meta.active === 'true' ? 'bg-emerald-600/20 text-emerald-400' : 'bg-red-600/20 text-red-400'}`}
+                                        >
+                                          {r.meta.active === 'true' ? 'Aktiv' : 'Ophørt'}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p className="text-slate-400 text-[10px] truncate">
+                                      CVR {r.id}
+                                      {r.meta?.industry ? ` \u00b7 ${r.meta.industry}` : ''}
+                                      {r.meta?.city ? ` \u00b7 ${r.meta.city}` : ''}
+                                    </p>
+                                  </>
+                                ) : (
+                                  <>
+                                    <p className="text-white text-xs font-medium truncate">
+                                      {r.title}
+                                    </p>
+                                    {r.subtitle && (
+                                      <p className="text-slate-400 text-[10px] truncate">
+                                        {r.subtitle}
+                                      </p>
+                                    )}
+                                  </>
+                                )}
                               </div>
-                            </div>
-                          </button>
-                        ))}
-                      </>
-                    )}
+                              <ArrowRight size={11} className={arrowIdle} />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ))}
                   </div>
                 );
               })()}
@@ -409,12 +450,6 @@ export default function ForsikringGapClient() {
               rows={4}
               className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700/60 rounded-lg text-sm text-white placeholder:text-slate-500 outline-none focus:border-blue-500/60 resize-y min-h-[100px]"
             />
-            {/* BIZZ-1281: "Tilføj fra tekst"-knap fjernet — fritekst bruges direkte ved "Kør analyse" (BIZZ-1280) */}
-            {fritekst.trim().length > 10 && (
-              <p className="text-slate-500 text-[10px]">
-                Fritekst bruges direkte ved &quot;Kør analyse&quot; — ingen parsing nødvendig.
-              </p>
-            )}
           </div>
 
           {/* Divider */}
@@ -479,7 +514,7 @@ export default function ForsikringGapClient() {
             </button>
             <button
               onClick={runAnalyse}
-              disabled={(policer.length === 0 && fritekst.trim().length <= 10) || loading}
+              disabled={(policer.length === 0 && fritekst.trim().length < 3) || loading}
               className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white px-5 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
             >
               {loading ? 'Analyserer...' : 'Kør analyse'}

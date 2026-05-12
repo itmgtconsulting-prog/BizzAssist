@@ -497,10 +497,13 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
       );
     }
 
-    // ── Trin 3: Hent vurderinger for hovedejendomme i ét batch-kald ──
-    // BIZZ-1214: Samler alle BFE'er i ét GraphQL-kald i stedet for N separate.
-    const hovedBfeList = hovedejendomItems.filter((h) => h.bfe > 0).map((h) => h.bfe);
-    const vurMap = await fetchVurderingBatch(hovedBfeList);
+    // ── Trin 3: Hent vurderinger for hovedejendomme + ejerlejligheder i ét batch-kald ──
+    // BIZZ-1214+1336: Samler alle BFE'er (hoved + ejerlejligheder) for komplet vurdering.
+    const allBfeList = [
+      ...hovedejendomItems.filter((h) => h.bfe > 0).map((h) => h.bfe),
+      ...ejerlejlighedItems.filter((e) => e.bfe > 0).map((e) => e.bfe),
+    ];
+    const vurMap = await fetchVurderingBatch(allBfeList);
 
     // ── Trin 4: Resolve DAWA ID'er for navigation ──
     // BIZZ-1214: Kun SFE + hovedejendomme — ejerlejligheder beriges
@@ -524,14 +527,16 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
         .filter((ejl) => ejl.husnr === hej.husnr)
         .map((ejl) => {
           assignedEjl.add(ejl.bfe);
+          // BIZZ-1336: Berig ejerlejligheder med vurdering fra cache
+          const ejlVur = vurMap.get(ejl.bfe);
           return {
             bfe: ejl.bfe,
             adresse: ejl.adresse,
             niveau: 'ejerlejlighed' as const,
             dawaId: dawaMap.get(ejl.adresse) ?? null,
-            ejendomsvaerdi: null,
-            grundvaerdi: null,
-            vurderingsaar: null,
+            ejendomsvaerdi: ejlVur?.ejendomsvaerdi ?? null,
+            grundvaerdi: ejlVur?.grundvaerdi ?? null,
+            vurderingsaar: ejlVur?.aar ?? null,
             tlVurdering: ejl.ejendomsVurdering,
             areal: null,
             vaerelser: null,
@@ -597,23 +602,26 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
         /* non-fatal */
       }
 
-      const children: StrukturNode[] = ejls.map((ejl) => ({
-        bfe: ejl.bfe,
-        adresse: ejl.adresse,
-        niveau: 'ejerlejlighed' as const,
-        dawaId: dawaMap.get(ejl.adresse) ?? null,
-        ejendomsvaerdi: null,
-        grundvaerdi: null,
-        vurderingsaar: null,
-        tlVurdering: ejl.ejendomsVurdering,
-        areal: null,
-        vaerelser: null,
-        ejer: null,
-        ejertype: null,
-        koebspris: null,
-        koebsdato: null,
-        children: [],
-      }));
+      const children: StrukturNode[] = ejls.map((ejl) => {
+        const ejlVur = vurMap.get(ejl.bfe);
+        return {
+          bfe: ejl.bfe,
+          adresse: ejl.adresse,
+          niveau: 'ejerlejlighed' as const,
+          dawaId: dawaMap.get(ejl.adresse) ?? null,
+          ejendomsvaerdi: ejlVur?.ejendomsvaerdi ?? null,
+          grundvaerdi: ejlVur?.grundvaerdi ?? null,
+          vurderingsaar: ejlVur?.aar ?? null,
+          tlVurdering: ejl.ejendomsVurdering,
+          areal: null,
+          vaerelser: null,
+          ejer: null,
+          ejertype: null,
+          koebspris: null,
+          koebsdato: null,
+          children: [],
+        };
+      });
 
       virtualHovedNodes.push({
         bfe: 0,

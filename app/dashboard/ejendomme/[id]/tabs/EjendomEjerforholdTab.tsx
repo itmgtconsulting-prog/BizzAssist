@@ -99,6 +99,8 @@ interface Props {
   strukturLoader?: boolean;
   /** Aktuel BFE for denne ejendom */
   currentBfe?: number;
+  /** BIZZ-1288: DAWA-ID for den aktuelle ejendom — fallback for "(denne)" match */
+  currentDawaId?: string | null;
   /** BBR enheder — bruges til at berige med værelser */
   bbrEnheder?: Array<{ etage: string | null; doer: string | null; vaerelser: number | null }>;
   /** BIZZ-1143: Ejer-detaljer fra /api/ejerskab/chain (prefetched af parent) */
@@ -123,6 +125,7 @@ export default function EjendomEjerforholdTab({
   strukturTree,
   strukturLoader,
   currentBfe,
+  currentDawaId,
   bbrEnheder,
   chainEjerDetaljer = [],
   chainLoader = false,
@@ -274,6 +277,7 @@ export default function EjendomEjerforholdTab({
                     tree={enriched}
                     lang={lang}
                     currentBfe={currentBfe}
+                    currentDawaId={currentDawaId}
                     showOwnership
                   />
                 </div>
@@ -421,6 +425,7 @@ export default function EjendomEjerforholdTab({
                       tree={enrichNode(strukturTree)}
                       lang={lang}
                       currentBfe={currentBfe}
+                      currentDawaId={currentDawaId}
                       showOwnership
                     />
                   );

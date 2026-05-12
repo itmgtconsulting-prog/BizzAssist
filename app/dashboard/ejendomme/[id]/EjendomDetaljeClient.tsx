@@ -1528,6 +1528,7 @@ export default function EjendomDetaljeClient({
                   bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
                   undefined
                 }
+                currentDawaId={erDAWA ? id : undefined}
                 bbrEnheder={
                   bbrData?.enheder?.map((e) => ({
                     etage: e.etage ?? null,

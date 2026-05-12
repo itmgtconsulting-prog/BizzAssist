@@ -68,6 +68,8 @@ interface TreeNodeProps {
   depth: number;
   lang: 'da' | 'en';
   currentBfe?: number;
+  /** BIZZ-1288: Fallback — DAWA-ID for den aktuelle ejendom (matcher når BFE er 0 eller mismatched) */
+  currentDawaId?: string | null;
   showOwnership?: boolean;
 }
 
@@ -76,13 +78,16 @@ interface TreeNodeProps {
  *
  * @param props - Node, dybde, sprog
  */
-function TreeNode({ node, depth, lang, currentBfe, showOwnership }: TreeNodeProps) {
+function TreeNode({ node, depth, lang, currentBfe, currentDawaId, showOwnership }: TreeNodeProps) {
   const [expanded, setExpanded] = useState(depth < 2);
   const style = NIVEAU_STYLE[node.niveau];
   const Icon = style.Icon;
   const hasChildren = node.children.length > 0;
   const da = lang === 'da';
-  const isCurrent = currentBfe != null && node.bfe === currentBfe;
+  // BIZZ-1288: Match på BFE (primær) eller DAWA-ID (fallback for ejerlejligheder med BFE-mismatch)
+  const isCurrent =
+    (currentBfe != null && node.bfe > 0 && node.bfe === currentBfe) ||
+    (currentDawaId != null && node.dawaId != null && node.dawaId === currentDawaId);
   const canNavigate = node.dawaId != null && !isCurrent;
 
   const vurdering = node.ejendomsvaerdi ?? node.tlVurdering;
@@ -91,15 +96,17 @@ function TreeNode({ node, depth, lang, currentBfe, showOwnership }: TreeNodeProp
   const nodeContent = (
     <>
       {/* Icon */}
-      <div className={`w-6 h-6 rounded flex items-center justify-center shrink-0 ${style.bg}`}>
-        <Icon size={14} className={style.color} />
+      <div
+        className={`w-6 h-6 rounded flex items-center justify-center shrink-0 ${isCurrent ? 'bg-blue-500/20 ring-1 ring-blue-500/40' : style.bg}`}
+      >
+        <Icon size={14} className={isCurrent ? 'text-blue-400' : style.color} />
       </div>
 
       {/* Adresse + badge */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span
-            className={`text-xs font-medium truncate ${canNavigate ? 'text-blue-300' : 'text-slate-200'}`}
+            className={`text-xs truncate ${isCurrent ? 'text-white font-semibold' : canNavigate ? 'text-blue-300 font-medium' : 'text-slate-200 font-medium'}`}
           >
             {shortAddr(node.adresse)}
           </span>
@@ -250,6 +257,7 @@ function TreeNode({ node, depth, lang, currentBfe, showOwnership }: TreeNodeProp
               depth={depth + 1}
               lang={lang}
               currentBfe={currentBfe}
+              currentDawaId={currentDawaId}
               showOwnership={showOwnership}
             />
           ))}
@@ -266,6 +274,8 @@ interface Props {
   lang: 'da' | 'en';
   /** BFE for den aktuelle ejendom (highlightes i træet) */
   currentBfe?: number;
+  /** BIZZ-1288: DAWA-ID for den aktuelle ejendom (fallback-match for ejerlejligheder) */
+  currentDawaId?: string | null;
   /** Vis ejer, købspris og købsdato på ejerlejligheder */
   showOwnership?: boolean;
 }
@@ -273,9 +283,15 @@ interface Props {
 /**
  * Viser det fulde ejendomshierarki som et collapsible tree.
  *
- * @param props - tree, lang, currentBfe
+ * @param props - tree, lang, currentBfe, currentDawaId
  */
-export default function EjendomStrukturTree({ tree, lang, currentBfe, showOwnership }: Props) {
+export default function EjendomStrukturTree({
+  tree,
+  lang,
+  currentBfe,
+  currentDawaId,
+  showOwnership,
+}: Props) {
   const da = lang === 'da';
 
   return (
@@ -301,6 +317,7 @@ export default function EjendomStrukturTree({ tree, lang, currentBfe, showOwners
         depth={0}
         lang={lang}
         currentBfe={currentBfe}
+        currentDawaId={currentDawaId}
         showOwnership={showOwnership}
       />
     </div>

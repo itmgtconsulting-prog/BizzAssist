@@ -2351,8 +2351,8 @@ function DiagramForce({
             ? 'Træk noder · Hold og træk for panorering · Dobbeltklik for zoom'
             : 'Drag nodes · Hold & drag to pan · Double-click to zoom'}
         </span>
-        {/* BIZZ-451: Toggle property nodes */}
-        {propertyCount > 0 && (
+        {/* BIZZ-451+1320: Toggle property nodes — vis altid */}
+        {
           <button
             onClick={() => {
               setShowProperties((s) => !s);
@@ -2384,9 +2384,9 @@ function DiagramForce({
                 ? `Ejendomme (${propertyCount})`
                 : `Properties (${propertyCount})`}
           </button>
-        )}
-        {/* BIZZ-1004: Toggle personligt ejede ejendomme — kun på virksomhedsdiagram */}
-        {defaultShowProperties && personalPropNodeIds.size > 0 && (
+        }
+        {/* BIZZ-1004+1316: Toggle personligt ejede ejendomme — vis altid på virksomhedsdiagram */}
+        {defaultShowProperties && (
           <button
             onClick={() => {
               setShowPersonalProps((s) => !s);

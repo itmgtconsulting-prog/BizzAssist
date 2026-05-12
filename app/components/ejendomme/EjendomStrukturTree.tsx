@@ -88,7 +88,13 @@ function TreeNode({ node, depth, lang, currentBfe, currentDawaId, showOwnership 
   const isCurrent =
     (currentBfe != null && node.bfe > 0 && node.bfe === currentBfe) ||
     (currentDawaId != null && node.dawaId != null && node.dawaId === currentDawaId);
-  const canNavigate = node.dawaId != null && !isCurrent;
+  // BIZZ-1330: Tillad navigation via BFE-fallback når dawaId mangler (fx SFE-noder)
+  const nodeHref = node.dawaId
+    ? `/dashboard/ejendomme/${node.dawaId}`
+    : node.bfe > 0
+      ? `/dashboard/ejendomme/${node.bfe}`
+      : null;
+  const canNavigate = nodeHref != null && !isCurrent;
 
   const vurdering = node.ejendomsvaerdi ?? node.tlVurdering;
 
@@ -229,9 +235,9 @@ function TreeNode({ node, depth, lang, currentBfe, currentDawaId, showOwnership 
         )}
 
         {/* Klikbar node med link */}
-        {canNavigate ? (
+        {canNavigate && nodeHref ? (
           <Link
-            href={`/dashboard/ejendomme/${node.dawaId}`}
+            href={nodeHref}
             className={`flex items-center gap-2 py-1.5 px-2 rounded-lg transition-colors flex-1 min-w-0 hover:bg-slate-700/30`}
           >
             {nodeContent}

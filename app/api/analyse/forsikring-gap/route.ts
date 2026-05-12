@@ -150,6 +150,16 @@ function parseFritekstTilPolicer(tekst: string): ParsedPolice[] {
 /**
  * Henter alle aktiver for en kunde via interne API-routes.
  *
+ * Person-flow:
+ *   1. /api/ejerskab/person-bridge → navn + fødselsdato
+ *   2. /api/ejerskab/person-properties → BFE-numre
+ *   3. /api/bfe-addresses → adresser per BFE
+ *   4. /api/cvr-public/person → virksomheder + bestyrelsesposter
+ *
+ * Virksomhed-flow:
+ *   1. /api/ejendomme-by-owner → ejendomme ejet af CVR
+ *   2. /api/tinglysning/bilbog → køretøjer
+ *
  * @param kundeType - person eller virksomhed
  * @param kundeId - enhedsNummer eller CVR
  * @param host - Request host for intern fetch
@@ -164,50 +174,96 @@ async function hentAktiver(
 ): Promise<FundetAktiv[]> {
   const base = host.startsWith('localhost') ? `http://${host}` : `https://${host}`;
   const headers = { cookie };
-  const timeout = AbortSignal.timeout(15000);
   const aktiver: FundetAktiv[] = [];
 
   if (kundeType === 'person') {
-    // Hent ejendomme + virksomheder parallelt
-    const [ejdRes, virkRes] = await Promise.allSettled([
-      fetch(`${base}/api/ejerskab/person-properties?enhedsNummer=${kundeId}`, {
+    // Step 1: Brug person-bridge til at få navn + fødselsdato fra enhedsNummer
+    let personNavn = '';
+    let foedselsdato = '';
+    try {
+      const bridgeRes = await fetch(`${base}/api/ejerskab/person-bridge?enhedsNummer=${kundeId}`, {
         headers,
-        signal: timeout,
-      }),
-      fetch(`${base}/api/cvr/person-virksomheder?enhedsNummer=${kundeId}`, {
-        headers,
-        signal: timeout,
-      }),
-    ]);
+        signal: AbortSignal.timeout(15000),
+      });
+      if (bridgeRes.ok) {
+        const bridge = await bridgeRes.json();
+        personNavn = bridge.navn ?? '';
+        foedselsdato = bridge.foedselsdato ?? '';
+      }
+    } catch (err) {
+      logger.warn('[forsikring-gap] person-bridge fejlede:', err);
+    }
 
-    // Ejendomme
-    if (ejdRes.status === 'fulfilled' && ejdRes.value.ok) {
-      try {
-        const data = await ejdRes.value.json();
-        for (const p of data?.properties ?? []) {
+    // Step 2+3: Hent ejendomme (kræver navn + fdato) OG virksomheder parallelt
+    const [ejdResult, virkResult] = await Promise.allSettled([
+      // Ejendomme via person-properties → bfe-addresses
+      (async () => {
+        if (!personNavn || !foedselsdato) return;
+        const ppRes = await fetch(
+          `${base}/api/ejerskab/person-properties?navn=${encodeURIComponent(personNavn)}&fdato=${foedselsdato}`,
+          { headers, signal: AbortSignal.timeout(10000) }
+        );
+        if (!ppRes.ok) return;
+        const ppData = await ppRes.json();
+        const bfes: number[] =
+          ppData?.bfes ?? ppData?.properties?.map((p: { bfeNummer: number }) => p.bfeNummer) ?? [];
+        if (bfes.length === 0) return;
+
+        // Berig med adresser
+        const addrRes = await fetch(`${base}/api/bfe-addresses`, {
+          method: 'POST',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bfes: bfes.slice(0, 50) }),
+          signal: AbortSignal.timeout(10000),
+        });
+        const addrMap: Record<number, string> = {};
+        if (addrRes.ok) {
+          const addrData = await addrRes.json();
+          for (const a of addrData?.addresses ?? []) {
+            addrMap[a.bfe] = a.adresse;
+          }
+        }
+
+        for (const bfe of bfes) {
           aktiver.push({
-            id: `ejendom-${p.bfeNummer}`,
+            id: `ejendom-${bfe}`,
             type: 'ejendom',
-            label: p.adresse ?? `BFE ${p.bfeNummer}`,
-            vaerdi: p.vurdering ?? null,
-            adresse: p.adresse ?? null,
-            bfe: p.bfeNummer,
+            label: addrMap[bfe] ?? `BFE ${bfe}`,
+            vaerdi: null,
+            adresse: addrMap[bfe] ?? null,
+            bfe,
             cvr: null,
             risikofaktorer: [],
             matchetPolice: null,
           });
         }
-      } catch {
-        /* ignore */
-      }
-    }
-
-    // Virksomheder → bestyrelsesposter
-    if (virkRes.status === 'fulfilled' && virkRes.value.ok) {
-      try {
-        const data = await virkRes.value.json();
+      })(),
+      // Virksomheder via cvr-public/person
+      (async () => {
+        const virkRes = await fetch(`${base}/api/cvr-public/person?enhedsNummer=${kundeId}`, {
+          headers,
+          signal: AbortSignal.timeout(15000),
+        });
+        if (!virkRes.ok) return;
+        const data = await virkRes.json();
         for (const v of data?.virksomheder ?? []) {
-          if (v.roller?.some((r: { rolle: string }) => /bestyrelse|direktion/i.test(r.rolle))) {
+          // Virksomheder personen ejer → erhvervsforsikring-gap
+          aktiver.push({
+            id: `virksomhed-${v.cvr}`,
+            type: 'virksomhed',
+            label: `${v.navn} (CVR ${v.cvr})`,
+            vaerdi: null,
+            adresse: null,
+            bfe: null,
+            cvr: String(v.cvr),
+            risikofaktorer: [],
+            matchetPolice: null,
+          });
+          // Bestyrelsesposter → D&O ansvarsforsikring-gap
+          const harBestyrelseRolle = v.roller?.some((r: { rolle: string }) =>
+            /bestyrelse|direktion/i.test(r.rolle)
+          );
+          if (harBestyrelseRolle) {
             aktiver.push({
               id: `bestyrelsespost-${v.cvr}`,
               type: 'bestyrelsespost',
@@ -221,18 +277,24 @@ async function hentAktiver(
             });
           }
         }
-      } catch {
-        /* ignore */
-      }
+      })(),
+    ]);
+
+    if (ejdResult.status === 'rejected') {
+      logger.warn('[forsikring-gap] Ejendom-hentning fejlede:', ejdResult.reason);
+    }
+    if (virkResult.status === 'rejected') {
+      logger.warn('[forsikring-gap] Virksomhed-hentning fejlede:', virkResult.reason);
     }
   } else {
-    // Virksomhed: hent ejendomme ejet af CVR
-    try {
-      const res = await fetch(`${base}/api/ejendomme-by-owner?cvr=${kundeId}`, {
-        headers,
-        signal: timeout,
-      });
-      if (res.ok) {
+    // Virksomhed: hent ejendomme ejet af CVR + køretøjer parallelt
+    const [ejdResult, bilResult] = await Promise.allSettled([
+      (async () => {
+        const res = await fetch(`${base}/api/ejendomme-by-owner?cvr=${kundeId}`, {
+          headers,
+          signal: AbortSignal.timeout(15000),
+        });
+        if (!res.ok) return;
         const data = await res.json();
         for (const p of data?.ejendomme ?? []) {
           aktiver.push({
@@ -247,20 +309,13 @@ async function hentAktiver(
             matchetPolice: null,
           });
         }
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-
-  // Bilbog (person-søgning kræver navn+fødselsdato — skip for nu, CVR virker)
-  if (kundeType === 'virksomhed') {
-    try {
-      const res = await fetch(`${base}/api/tinglysning/bilbog?cvr=${kundeId}`, {
-        headers,
-        signal: timeout,
-      });
-      if (res.ok) {
+      })(),
+      (async () => {
+        const res = await fetch(`${base}/api/tinglysning/bilbog?cvr=${kundeId}`, {
+          headers,
+          signal: AbortSignal.timeout(15000),
+        });
+        if (!res.ok) return;
         const data = await res.json();
         for (const bil of data?.biler ?? []) {
           aktiver.push({
@@ -275,9 +330,14 @@ async function hentAktiver(
             matchetPolice: null,
           });
         }
-      }
-    } catch {
-      /* ignore */
+      })(),
+    ]);
+
+    if (ejdResult.status === 'rejected') {
+      logger.warn('[forsikring-gap] Ejendom-hentning fejlede:', ejdResult.reason);
+    }
+    if (bilResult.status === 'rejected') {
+      logger.warn('[forsikring-gap] Bilbog-hentning fejlede:', bilResult.reason);
     }
   }
 

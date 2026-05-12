@@ -20,6 +20,9 @@ import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AdminAny = any;
+
 export const maxDuration = 60;
 
 /** En kunde i batch-uploaden */
@@ -91,7 +94,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Maks 5000 kunder per batch' }, { status: 400 });
   }
 
-  const admin = createAdminClient();
+  const admin = createAdminClient() as AdminAny;
 
   try {
     const { data: job, error: insertErr } = await admin
@@ -157,7 +160,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<BatchStatu
     });
   }
 
-  const admin = createAdminClient();
+  const admin = createAdminClient() as AdminAny;
   const { data: job, error: fetchErr } = await admin
     .schema('tenant')
     .from('analyse_batch_jobs')

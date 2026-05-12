@@ -104,7 +104,8 @@ function parseFritekstTilPolicer(tekst: string): ParsedPolice[] {
     .map((l) => l.trim())
     .filter(Boolean);
 
-  for (const linje of linjer) {
+  for (let idx = 0; idx < linjer.length; idx++) {
+    const linje = linjer[idx];
     const lower = linje.toLowerCase();
     let matchedType: ForsikringsType = 'andet';
     for (const { keywords, type } of FRITEKST_TYPE_MAP) {
@@ -131,6 +132,7 @@ function parseFritekstTilPolicer(tekst: string): ParsedPolice[] {
       objekt: null,
       policenummer: null,
       udloebsdato: null,
+      linje: idx + 1,
     });
   }
 
@@ -420,7 +422,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const underforsikrede = gaps.filter((g) => g.gapType === 'underforsikret').length;
     const risikoAktiver = gaps.filter((g) => g.gapType === 'risiko').length;
     const samletVaerdi = aktiver.reduce((s, a) => s + (a.vaerdi ?? 0), 0);
-    const samletDaekning = body.policer.reduce((s, p) => s + (p.daekningssum ?? 0), 0);
+    const samletDaekning = (body.policer ?? []).reduce((s, p) => s + (p.daekningssum ?? 0), 0);
 
     const result: GapAnalyseResult = {
       aktiver,

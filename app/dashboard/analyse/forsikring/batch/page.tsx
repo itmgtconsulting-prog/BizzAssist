@@ -6,6 +6,8 @@
  * @module app/dashboard/analyse/forsikring/batch
  */
 
+'use client';
+
 import dynamic from 'next/dynamic';
 
 /** BIZZ-1224: Batch-klient loaded dynamisk (fil-parsing kræver browser) */

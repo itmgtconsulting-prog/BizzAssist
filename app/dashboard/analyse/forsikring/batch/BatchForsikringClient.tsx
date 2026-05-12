@@ -61,7 +61,13 @@ interface BatchStatus {
     fejlet: number;
     totalGaps: number;
     totalUforsikrede: number;
-    topKunder: Array<{ kundeId: string; navn: string; antalGaps: number; samletVaerdi: number }>;
+    topKunder: Array<{
+      kundeId: string;
+      navn: string;
+      antalGaps: number;
+      antalUforsikrede?: number;
+      samletVaerdi: number;
+    }>;
     gapTypeCounts: Record<string, number>;
   } | null;
   error: string | null;

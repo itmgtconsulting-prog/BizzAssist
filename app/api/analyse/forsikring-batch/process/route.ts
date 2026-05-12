@@ -47,7 +47,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Mangler jobId' }, { status: 400 });
   }
 
-  const admin = createAdminClient();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const admin = createAdminClient() as any;
 
   // Hent job
   const { data: job, error: fetchErr } = await admin
@@ -62,7 +63,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Job ikke fundet' }, { status: 404 });
   }
 
-  if (job.status === 'completed' || job.status === 'failed') {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const j = job as any;
+
+  if (j.status === 'completed' || j.status === 'failed') {
     return NextResponse.json({ error: 'Job er allerede afsluttet' }, { status: 400 });
   }
 
@@ -74,7 +78,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     .eq('id', body.jobId);
 
   const kunder =
-    (job.input_data as Array<{
+    (j.input_data as Array<{
       kundeId: string;
       navn: string;
       kundeType: 'person' | 'virksomhed';
@@ -82,7 +86,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       policer: Array<{ type: string; daekningssum: number | null; objekt: string | null }>;
     }>) ?? [];
 
-  const existingResults = ((job.results as unknown[]) ?? []) as Array<{
+  const existingResults = ((j.results as unknown[]) ?? []) as Array<{
     kundeId: string;
     navn: string;
     result: GapAnalyseResult | null;
@@ -90,7 +94,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }>;
 
   // Resume fra sidst processerede
-  const startIdx = job.processed_items as number;
+  const startIdx = j.processed_items as number;
   const endIdx = Math.min(kunder.length, startIdx + MAX_PER_BATCH);
 
   const host = request.headers.get('host') ?? 'localhost:3000';

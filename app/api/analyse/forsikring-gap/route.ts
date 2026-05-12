@@ -346,11 +346,11 @@ async function hentAktiver(
 
 // ─── Gap-detektion ──────────────────────────────────────────────────────────
 
-/** Mapper aktiv-type til relevant forsikringstype */
+/** Mapper aktiv-type til relevante forsikringstyper */
 const AKTIV_TIL_FORSIKRING: Record<string, ForsikringsType[]> = {
-  ejendom: ['husforsikring', 'bygningsforsikring'],
+  ejendom: ['husforsikring', 'bygningsforsikring', 'indboforsikring'],
   køretøj: ['bilforsikring'],
-  virksomhed: ['erhvervsforsikring'],
+  virksomhed: ['erhvervsforsikring', 'ansvarsforsikring'],
   bestyrelsespost: ['bestyrelsesansvar'],
 };
 
@@ -367,22 +367,24 @@ function detectGaps(aktiver: FundetAktiv[], policer: ParsedPolice[]): Forsikring
   for (const aktiv of aktiver) {
     const relevantTypes = AKTIV_TIL_FORSIKRING[aktiv.type] ?? [];
 
-    // Find matchende police
+    // Find matchende police — prioriter specifik objekt-match, ellers type-match.
+    // En police UDEN objekt dækker alle aktiver af matchende type (fx "husforsikring"
+    // dækker alle ejendomme). En police MED objekt dækker kun det specifikke aktiv.
     const match = policer.find((p) => {
       if (!relevantTypes.includes(p.type)) return false;
-      // Fuzzy match på objekt (adresse/registreringsnummer)
+      // Specifik objekt-match: kun match hvis adresse/regnr matcher
       if (p.objekt && aktiv.adresse) {
         const pObj = p.objekt.toLowerCase();
         const aAddr = aktiv.adresse.toLowerCase();
         return pObj.includes(aAddr) || aAddr.includes(pObj);
       }
-      // Fallback: match på type alene (første match)
+      // Generel type-match: policen dækker denne aktiv-type
       return true;
     });
 
     if (match) {
       aktiv.matchetPolice = match;
-      // Tjek for underforsikring
+      // Tjek for underforsikring — kun relevant når vi har vurdering + dækningssum
       if (aktiv.vaerdi && match.daekningssum && match.daekningssum < aktiv.vaerdi * 0.8) {
         gaps.push({
           aktiv,

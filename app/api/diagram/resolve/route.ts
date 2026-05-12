@@ -770,6 +770,81 @@ async function resolveCompanyGraph(
       existingEdgeKeys.add(edgeKey);
     }
 
+    // BIZZ-1291: Hent person-ejere af ALLE virksomheder i grafen (ikke kun root).
+    // Parent-virksomheder (step 1b) og datterselskaber (step 2c) kan have
+    // person-ejere der mangler i grafen — fx Søren Winkel ejer SqWI Holding.
+    {
+      const compCvrsForPersonOwners = allCvrList.filter((c) => c !== cvr); // root er allerede håndteret i step 2
+      if (compCvrsForPersonOwners.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: extraPersonOwnerRows } = await (admin as any)
+          .from('cvr_deltagerrelation')
+          .select('virksomhed_cvr, deltager_enhedsnummer, type, ejerandel_pct')
+          .in('virksomhed_cvr', compCvrsForPersonOwners.slice(0, 30))
+          .in('type', ['register', 'reel_ejer'])
+          .is('gyldig_til', null)
+          .limit(100);
+
+        const extraPersonEnheder = new Set<number>();
+        const extraPersonCompMap = new Map<
+          number,
+          Array<{ cvr: string; type: string; pct: number | null }>
+        >();
+        for (const r of (extraPersonOwnerRows ?? []) as Array<{
+          virksomhed_cvr: string;
+          deltager_enhedsnummer: number;
+          type: string;
+          ejerandel_pct: number | null;
+        }>) {
+          if (nodeIds.has(`person-${r.deltager_enhedsnummer}`)) continue; // allerede i grafen
+          extraPersonEnheder.add(r.deltager_enhedsnummer);
+          const arr = extraPersonCompMap.get(r.deltager_enhedsnummer) ?? [];
+          arr.push({ cvr: r.virksomhed_cvr, type: r.type, pct: r.ejerandel_pct });
+          extraPersonCompMap.set(r.deltager_enhedsnummer, arr);
+        }
+
+        if (extraPersonEnheder.size > 0) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: extraDeltagere } = await (admin as any)
+            .from('cvr_deltager')
+            .select('enhedsnummer, navn')
+            .in('enhedsnummer', Array.from(extraPersonEnheder).slice(0, 50));
+
+          const extraNavnMap = new Map<number, string>(
+            ((extraDeltagere ?? []) as Array<{ enhedsnummer: number; navn: string }>).map((d) => [
+              d.enhedsnummer,
+              d.navn,
+            ])
+          );
+
+          for (const [en, compRels] of extraPersonCompMap) {
+            const navn = extraNavnMap.get(en);
+            if (!navn) continue; // BIZZ-1292: deltager mangler i cache — skip
+            const personId = `person-${en}`;
+            if (nodeIds.has(personId)) continue;
+            nodes.push({
+              id: personId,
+              label: navn,
+              type: 'person',
+              enhedsNummer: en,
+              link: `/dashboard/owners/${en}`,
+            });
+            nodeIds.add(personId);
+
+            for (const rel of compRels) {
+              const compId = `cvr-${rel.cvr}`;
+              if (!nodeIds.has(compId)) continue;
+              edges.push({
+                from: personId,
+                to: compId,
+                ejerandel: rel.pct != null ? `${rel.pct}%` : undefined,
+              });
+            }
+          }
+        }
+      }
+    }
+
     // Beregn expandableChildren for ALLE virksomheder i grafen.
     // Checker cvr_virksomhed_ejerskab for ejere/datterselskaber der IKKE allerede
     // er i grafen. Noder med 0 ekspanderbare = ingen Udvid-knap.

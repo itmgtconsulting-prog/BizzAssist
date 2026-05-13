@@ -944,6 +944,9 @@ function AIChatPanel() {
         // BIZZ-1175: ALTID opdater local messages — race condition med
         // chatCtx.activeId kunne forhindre at svaret blev vist.
         setMessages(finalMsgs);
+        // Sync context så fullpage/drawer har det fulde svar og
+        // sync-effects ikke overskriver med stale data.
+        chatCtx.setMessages(finalMsgs);
 
         // BIZZ-1266: Auto-åbn preview af første genererede fil (side-by-side)
         if (generatedFiles.length > 0) {

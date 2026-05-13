@@ -28,6 +28,7 @@ import {
   Loader2,
   Briefcase,
   ArrowRight,
+  X,
 } from 'lucide-react';
 import type { UnifiedSearchResult } from '@/app/api/search/route';
 import { parseCsv, type ParsedPolice } from '@/app/lib/parsePoliceFile';
@@ -57,13 +58,20 @@ export default function ForsikringGapClient() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Step 2: Policer
-  const [policer, setPolicer] = useState<ParsedPolice[]>([]);
+  // Step 2: Policer — multi-fil upload
+  /** Uploadede filer med deres individuelle parse-resultater */
+  const [uploadedFiles, setUploadedFiles] = useState<
+    Array<{ name: string; policer: ParsedPolice[] }>
+  >([]);
+  /** Samlet liste af alle policer fra alle uploadede filer */
+  const policer = uploadedFiles.flatMap((f) => f.policer);
   const [parseFejl, setParseFejl] = useState<Array<{ linje: number; besked: string }>>([]);
-  const [fileName, setFileName] = useState<string | null>(null);
   const [fritekst, setFritekst] = useState('');
   const [parseLoading, setParseLoading] = useState(false);
+  /** Fil der parses lige nu (vises i UI) */
+  const [parsingFileName, setParsingFileName] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
 
   // Step 3: Resultat
   const [result, setResult] = useState<GapAnalyseResult | null>(null);
@@ -71,31 +79,39 @@ export default function ForsikringGapClient() {
   const [error, setError] = useState<string | null>(null);
 
   /**
-   * Håndterer fil-upload — CSV parses lokalt, andre formater sendes til AI.
+   * Parser én fil og tilføjer resultatet til uploadedFiles.
+   * CSV/TXT parses lokalt, andre formater sendes til AI.
+   *
+   * @param file - Fil der skal parses
    */
-  const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setFileName(file.name);
-    setParseFejl([]);
+  const parseAndAddFile = useCallback(async (file: File) => {
+    // Skip duplikater (samme filnavn allerede uploadet)
+    setUploadedFiles((prev) => {
+      if (prev.some((f) => f.name === file.name)) return prev;
+      return prev;
+    });
 
     const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
 
     // CSV/TXT: parse lokalt
     if (ext === 'csv' || ext === 'txt') {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        const text = ev.target?.result as string;
-        const parsed = parseCsv(text);
-        setPolicer(parsed.policer);
-        setParseFejl(parsed.fejl);
-      };
-      reader.readAsText(file, 'utf-8');
+      const text = await file.text();
+      const parsed = parseCsv(text);
+      if (parsed.fejl.length > 0) {
+        setParseFejl((prev) => [...prev, ...parsed.fejl]);
+      }
+      if (parsed.policer.length > 0) {
+        setUploadedFiles((prev) => {
+          if (prev.some((f) => f.name === file.name)) return prev;
+          return [...prev, { name: file.name, policer: parsed.policer }];
+        });
+      }
       return;
     }
 
     // PDF/DOCX/XLSX/billeder: send til AI-parsing
     setParseLoading(true);
+    setParsingFileName(file.name);
     try {
       const buffer = await file.arrayBuffer();
       const base64 = btoa(new Uint8Array(buffer).reduce((s, b) => s + String.fromCharCode(b), ''));
@@ -106,15 +122,81 @@ export default function ForsikringGapClient() {
       });
       if (res.ok) {
         const data = await res.json();
-        setPolicer(data.policer ?? []);
+        const parsed: ParsedPolice[] = data.policer ?? [];
+        if (parsed.length > 0) {
+          setUploadedFiles((prev) => {
+            if (prev.some((f) => f.name === file.name)) return prev;
+            return [...prev, { name: file.name, policer: parsed }];
+          });
+        } else {
+          setParseFejl((prev) => [
+            ...prev,
+            { linje: 0, besked: `${file.name}: Ingen policer fundet i filen` },
+          ]);
+        }
       } else {
-        setParseFejl([{ linje: 0, besked: 'Kunne ikke parse fil — prøv CSV-format' }]);
+        setParseFejl((prev) => [
+          ...prev,
+          { linje: 0, besked: `${file.name}: Kunne ikke parse fil — prøv CSV-format` },
+        ]);
       }
     } catch {
-      setParseFejl([{ linje: 0, besked: 'Netværksfejl ved fil-parsing' }]);
+      setParseFejl((prev) => [
+        ...prev,
+        { linje: 0, besked: `${file.name}: Netværksfejl ved fil-parsing` },
+      ]);
     } finally {
       setParseLoading(false);
+      setParsingFileName(null);
     }
+  }, []);
+
+  /**
+   * Håndterer fil-upload fra input — understøtter flere filer ad gangen.
+   *
+   * @param e - Change event fra file input
+   */
+  const handleFileUpload = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (!files || files.length === 0) return;
+      setParseFejl([]);
+      // Parse filer sekventielt (AI-parsing kan kun håndtere én ad gangen)
+      for (const file of Array.from(files)) {
+        await parseAndAddFile(file);
+      }
+      // Reset input så samme fil kan vælges igen
+      if (fileRef.current) fileRef.current.value = '';
+    },
+    [parseAndAddFile]
+  );
+
+  /**
+   * Håndterer drag-and-drop af filer.
+   *
+   * @param e - Drop event
+   */
+  const handleDrop = useCallback(
+    async (e: React.DragEvent) => {
+      e.preventDefault();
+      setDragOver(false);
+      const files = e.dataTransfer.files;
+      if (!files || files.length === 0) return;
+      setParseFejl([]);
+      for (const file of Array.from(files)) {
+        await parseAndAddFile(file);
+      }
+    },
+    [parseAndAddFile]
+  );
+
+  /**
+   * Fjerner en uploadet fil og dens policer.
+   *
+   * @param name - Filnavn der skal fjernes
+   */
+  const removeFile = useCallback((name: string) => {
+    setUploadedFiles((prev) => prev.filter((f) => f.name !== name));
   }, []);
 
   // BIZZ-1281: parseFreitekst fjernet — fritekst bruges direkte via BIZZ-1280
@@ -437,8 +519,8 @@ export default function ForsikringGapClient() {
         <div className="bg-slate-800/30 border border-slate-700/40 rounded-2xl p-6 space-y-4">
           <h2 className="text-white font-semibold text-sm">Trin 2: Angiv forsikringer</h2>
           <p className="text-slate-400 text-xs">
-            Beskriv kundens forsikringer som fritekst, eller upload en fil (PDF, Word, Excel, CSV,
-            billede)
+            Beskriv kundens forsikringer som fritekst, eller upload én eller flere filer (PDF, Word,
+            Excel, CSV, billede)
           </p>
 
           {/* Fritekst-input */}
@@ -459,49 +541,86 @@ export default function ForsikringGapClient() {
             <div className="flex-1 h-px bg-slate-700/50" />
           </div>
 
-          {/* Drop zone — alle formater */}
+          {/* Drop zone — alle formater, flere filer */}
           <div
             onClick={() => fileRef.current?.click()}
-            className="border-2 border-dashed border-slate-600/60 rounded-xl p-6 text-center cursor-pointer hover:border-blue-500/40 transition-colors"
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragOver(true);
+            }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={handleDrop}
+            className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors ${
+              dragOver
+                ? 'border-blue-500/60 bg-blue-500/5'
+                : 'border-slate-600/60 hover:border-blue-500/40'
+            }`}
           >
             <Upload size={24} className="mx-auto text-slate-500 mb-2" />
             <p className="text-slate-400 text-sm">
               {parseLoading ? (
                 <span className="text-blue-300 flex items-center justify-center gap-2">
-                  <Loader2 size={14} className="animate-spin" /> Parser fil...
-                </span>
-              ) : fileName ? (
-                <span className="text-blue-300 flex items-center justify-center gap-2">
-                  <FileSpreadsheet size={14} /> {fileName}
+                  <Loader2 size={14} className="animate-spin" /> Parser {parsingFileName ?? 'fil'}
+                  ...
                 </span>
               ) : (
-                'Klik for at vælge fil'
+                'Klik eller træk filer hertil'
               )}
             </p>
             <p className="text-slate-600 text-[10px] mt-1">
-              PDF, Word, Excel, CSV, billeder (JPG/PNG)
+              PDF, Word, Excel, CSV, billeder (JPG/PNG) — flere filer ad gangen
             </p>
             <input
               ref={fileRef}
               type="file"
+              multiple
               accept=".csv,.txt,.pdf,.docx,.doc,.xlsx,.xls,.jpg,.jpeg,.png"
               onChange={handleFileUpload}
               className="hidden"
             />
           </div>
 
+          {/* Uploadede filer */}
+          {uploadedFiles.length > 0 && (
+            <div className="space-y-1.5">
+              {uploadedFiles.map((f) => (
+                <div
+                  key={f.name}
+                  className="flex items-center gap-2 bg-slate-800/60 border border-slate-700/40 rounded-lg px-3 py-2"
+                >
+                  <FileSpreadsheet size={14} className="text-blue-400 shrink-0" />
+                  <span className="text-sm text-slate-200 truncate flex-1">{f.name}</span>
+                  <span className="text-xs text-slate-500 shrink-0">
+                    {f.policer.length} {f.policer.length === 1 ? 'police' : 'policer'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeFile(f.name);
+                    }}
+                    aria-label={`Fjern ${f.name}`}
+                    className="p-1 rounded text-slate-500 hover:text-red-400 hover:bg-slate-700/40 transition-colors shrink-0"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Parse results */}
           {policer.length > 0 && (
             <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3 text-emerald-300 text-xs">
               <CheckCircle2 size={14} className="inline mr-1" />
-              {policer.length} policer indlæst
+              {policer.length} policer indlæst fra {uploadedFiles.length}{' '}
+              {uploadedFiles.length === 1 ? 'fil' : 'filer'}
             </div>
           )}
           {parseFejl.length > 0 && (
             <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-amber-300 text-xs">
               <AlertTriangle size={14} className="inline mr-1" />
-              {parseFejl.length} fejl:{' '}
-              {parseFejl.map((f) => `Linje ${f.linje}: ${f.besked}`).join(', ')}
+              {parseFejl.length} fejl: {parseFejl.map((f) => f.besked).join(', ')}
             </div>
           )}
 

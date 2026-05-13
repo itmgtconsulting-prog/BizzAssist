@@ -172,19 +172,19 @@ export default function EjendomDetaljeClient({
    */
   // BIZZ-1284: Kort deferred — starter lukket og åbner efter idle/timeout.
   // Eliminerer Mapbox GL JS (~200KB) + tile-fetch fra critical render path.
-  // Desktop: åbner efter 800ms (requestIdleCallback) for at prioritere diagram.
+  // BIZZ-1284 iter 2: Timeout øget fra 800→2000ms så overblik-tab og data
+  // renderes færdigt inden Mapbox blokerer main thread med tile-loading.
   const [visKort, setVisKort] = useState(false);
   useEffect(() => {
     const mq = window.matchMedia('(min-width: 900px)');
-    // Defer kort-load så diagram og data renderes først
     const show = () => {
       if (mq.matches) setVisKort(true);
     };
     const idleId =
       typeof requestIdleCallback !== 'undefined'
-        ? requestIdleCallback(show, { timeout: 1200 })
+        ? requestIdleCallback(show, { timeout: 2500 })
         : undefined;
-    const fallbackId = idleId == null ? setTimeout(show, 800) : undefined;
+    const fallbackId = idleId == null ? setTimeout(show, 2000) : undefined;
     const handler = (e: MediaQueryListEvent) => setVisKort(e.matches);
     mq.addEventListener('change', handler);
     return () => {
@@ -628,14 +628,16 @@ export default function EjendomDetaljeClient({
           return;
         }
         setDawaAdresse(adr);
-        const jordRes = await fetch(`/api/adresse/jordstykke?lng=${adr.x}&lat=${adr.y}`, {
-          signal,
-        });
-        if (signal.aborted) return;
-        const jord: DawaJordstykke | null = jordRes.ok ? await jordRes.json() : null;
-        if (signal.aborted) return;
-        setDawaJordstykke(jord);
+        // BIZZ-1287: Sæt dawaStatus='ok' med det samme så BBR-fetch kan starte
+        // parallelt med jordstykke-fetch (eliminerer waterfall).
         setDawaStatus('ok');
+        // Jordstykke-fetch er non-blocking — BBR venter ikke på den
+        fetch(`/api/adresse/jordstykke?lng=${adr.x}&lat=${adr.y}`, { signal })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((jord: DawaJordstykke | null) => {
+            if (!signal.aborted) setDawaJordstykke(jord);
+          })
+          .catch(() => {});
 
         // Gem besøget i "seneste sete ejendomme"-historikken
         const adresseLabel = adr.etage

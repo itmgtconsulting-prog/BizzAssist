@@ -22,6 +22,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
 import { checkRateLimit, aiRateLimit } from '@/app/lib/rateLimit';
+import { assertAiAllowed } from '@/app/lib/aiGate';
 import { logger } from '@/app/lib/logger';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getInsuranceApi } from '@/lib/db/insurance';
@@ -60,6 +61,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!auth) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  // BIZZ-1383: AI billing gate — afvis før Claude-kald
+  const blocked = await assertAiAllowed(auth.userId);
+  if (blocked) return blocked as NextResponse;
+
   const limited = await checkRateLimit(request, aiRateLimit);
   if (limited) return limited;
 

@@ -63,14 +63,14 @@ describe('matchAssetsToPolicies', () => {
     expect(results[0].bestMatch?.score).toBe(90);
   });
 
-  it('matches ejendom via delvis adresse — vejnavn + husnr (score 80)', () => {
+  it('matches ejendom via delvis adresse — husnr-prefix 47A vs 47 (score 70)', () => {
     const aktiver: Aktiv[] = [
       { type: 'ejendom', label: 'Gefionsvej 47A', adresse: 'Gefionsvej 47A, 3000 Helsingør' },
     ];
     const policer = [makePolicy({ property_address: 'Gefionsvej 47, 3000 Helsingør' })];
     const results = matchAssetsToPolicies(aktiver, policer);
-    // "gefionsvej" matcher, "47a" vs "47" matcher ikke eksakt → vejnavn-only = 40
-    expect(results[0].bestMatch).toBeNull(); // Under threshold
+    // BIZZ-1393: "47a" starts with "47" → husnr-prefix match = 70
+    expect(results[0].bestMatch?.score).toBe(70);
   });
 
   it('returns null bestMatch for uforsikret (score < 50)', () => {

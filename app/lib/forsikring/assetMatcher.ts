@@ -31,11 +31,15 @@ const MATCH_THRESHOLD = 50;
  */
 function normalize(s: string | null | undefined): string {
   if (!s) return '';
-  return s
-    .toLowerCase()
-    .replace(/[.,\-/\\]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return (
+    s
+      .toLowerCase()
+      .replace(/[.,\-/\\]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      // BIZZ-1393: Normalisér husnummer-bogstaver: "47 a" → "47a"
+      .replace(/(\d+)\s+([a-z])\b/g, '$1$2')
+  );
 }
 
 /**
@@ -83,13 +87,25 @@ function scoreEjendom(aktiv: Aktiv, policy: ForsikringPolicy): number {
   // Eksakt adresse-match
   if (aktivAddr === policyAddr) return 90;
 
+  // BIZZ-1393: Tjek om adresser indeholder hinanden (håndterer "Stengade 7" vs "Stengade 7, 3000 Helsingør")
+  if (aktivAddr.includes(policyAddr) || policyAddr.includes(aktivAddr)) {
+    return 85;
+  }
+
   // Delvis match: vejnavn + husnr
   const aktivParts = aktivAddr.split(' ');
   const policyParts = policyAddr.split(' ');
   if (aktivParts.length >= 2 && policyParts.length >= 2) {
-    // Tjek om første 2 tokens matcher (typisk "stengade 7" eller "gefionsvej 45")
+    // Tjek om første 2 tokens matcher (typisk "stengade 7" eller "gefionsvej 45a")
     if (aktivParts[0] === policyParts[0] && aktivParts[1] === policyParts[1]) {
       return 80;
+    }
+    // Vejnavn + husnr-prefix (47a vs 47)
+    if (
+      aktivParts[0] === policyParts[0] &&
+      (aktivParts[1].startsWith(policyParts[1]) || policyParts[1].startsWith(aktivParts[1]))
+    ) {
+      return 70;
     }
     // Vejnavn alene
     if (aktivParts[0] === policyParts[0]) {

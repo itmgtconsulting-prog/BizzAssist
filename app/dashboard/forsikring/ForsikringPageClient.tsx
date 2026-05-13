@@ -14,15 +14,13 @@
  * for hvert dokument. Status vises pr. dokument under upload.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ShieldCheck,
   Upload,
   FileText,
-  AlertTriangle,
   AlertCircle,
-  Info,
   Loader2,
   CheckCircle2,
   XCircle,
@@ -403,44 +401,7 @@ export default function ForsikringPageClient(): React.ReactElement {
 
   // ── Render ─────────────────────────────────────────────────
 
-  const kpis = useMemo(() => {
-    const totals = data?.totals ?? {
-      policies: 0,
-      gaps_critical: 0,
-      gaps_warning: 0,
-      gaps_info: 0,
-    };
-    return [
-      {
-        label: t.totalPolicies,
-        value: totals.policies,
-        icon: ShieldCheck,
-        color: 'text-blue-300',
-        bg: 'from-blue-600/20 to-blue-900/10',
-      },
-      {
-        label: t.gapCritical,
-        value: totals.gaps_critical,
-        icon: AlertCircle,
-        color: 'text-red-300',
-        bg: 'from-red-600/20 to-red-900/10',
-      },
-      {
-        label: t.gapWarning,
-        value: totals.gaps_warning,
-        icon: AlertTriangle,
-        color: 'text-amber-300',
-        bg: 'from-amber-600/20 to-amber-900/10',
-      },
-      {
-        label: t.gapInfo,
-        value: totals.gaps_info,
-        icon: Info,
-        color: 'text-slate-300',
-        bg: 'from-slate-600/20 to-slate-900/10',
-      },
-    ];
-  }, [t, data?.totals]);
+  const _totals = data?.totals;
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-[#0a1020] text-slate-100 min-h-screen">
@@ -549,29 +510,15 @@ export default function ForsikringPageClient(): React.ReactElement {
         </section>
       )}
 
-      {/* TRIN 3: Overblik — KPI tiles + police-tabel */}
+      {/* Uploadede policer — compact header */}
       {policies.length > 0 && (
         <div className="flex items-center gap-2 text-sm font-semibold text-white">
           <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">
             3
           </span>
-          {lang === 'da' ? 'Overblik og gaps' : 'Overview and gaps'}
-        </div>
-      )}
-      {policies.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {kpis.map((kpi) => (
-            <div
-              key={kpi.label}
-              className={`bg-gradient-to-br ${kpi.bg} border border-white/8 rounded-2xl p-5 space-y-2`}
-            >
-              <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-400">
-                <kpi.icon size={14} className={kpi.color} />
-                <span>{kpi.label}</span>
-              </div>
-              <div className={`text-3xl font-semibold ${kpi.color}`}>{kpi.value}</div>
-            </div>
-          ))}
+          {lang === 'da'
+            ? `${policies.length} policer uploadet — ${(data?.totals?.gaps_critical ?? 0) + (data?.totals?.gaps_warning ?? 0)} gaps fundet`
+            : `${policies.length} policies uploaded — ${(data?.totals?.gaps_critical ?? 0) + (data?.totals?.gaps_warning ?? 0)} gaps found`}
         </div>
       )}
 

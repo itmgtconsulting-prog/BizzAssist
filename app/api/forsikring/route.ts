@@ -81,7 +81,16 @@ export async function GET(): Promise<NextResponse> {
       },
     });
   } catch (err) {
-    logger.error('[forsikring GET]', err);
+    const message = err instanceof Error ? err.message : 'Ukendt fejl';
+    logger.error('[forsikring GET]', message);
+    // BIZZ-1380: Returnér fejltype så UI kan skelne auth-fejl fra data-fejl
+    if (
+      message.includes('membership') ||
+      message.includes('access') ||
+      message.includes('Unauthorized')
+    ) {
+      return NextResponse.json({ error: 'Ikke adgang til forsikringsmodulet' }, { status: 403 });
+    }
     return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });
   }
 }

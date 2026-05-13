@@ -72,6 +72,184 @@ interface UploadJob {
   error?: string;
 }
 
+// ─── BIZZ-1367: Analyse-sektion med customer picker ─────────────
+
+/**
+ * Gap-analyse sektion med CVR/person-søgning + start-knap.
+ * Viser også liste over tidligere analyser.
+ *
+ * @param props.lang - Sprogkode
+ */
+function AnalyseSection({ lang }: { lang: string }) {
+  const da = lang === 'da';
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<
+    Array<{ id: string; title: string; type: string; subtitle?: string }>
+  >([]);
+  const [selected, setSelected] = useState<{
+    type: 'virksomhed' | 'person';
+    id: string;
+    navn: string;
+  } | null>(null);
+  const [running, setRunning] = useState(false);
+  const [analyseResult, setAnalyseResult] = useState<{
+    analyse_id: string;
+    total_aktiver: number;
+    insured_count: number;
+    gaps_count: number;
+    total_risk_score: number;
+  } | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Debounced søgning via /api/search */
+  const handleSearch = useCallback((value: string) => {
+    setQuery(value);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (value.trim().length < 2) {
+      setResults([]);
+      return;
+    }
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(value.trim())}`);
+        if (res.ok) {
+          const data = await res.json();
+          const filtered = (
+            data as Array<{ id: string; title: string; type: string; subtitle?: string }>
+          )
+            .filter((r) => r.type === 'company' || r.type === 'person')
+            .slice(0, 8);
+          setResults(filtered);
+        }
+      } catch {
+        setResults([]);
+      }
+    }, 300);
+  }, []);
+
+  /** Start gap-analyse */
+  const startAnalyse = useCallback(async () => {
+    if (!selected || running) return;
+    setRunning(true);
+    setAnalyseResult(null);
+    try {
+      const res = await fetch('/api/forsikring/analyser', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kunde_type: selected.type,
+          kunde_id: selected.id,
+          kunde_navn: selected.navn,
+        }),
+      });
+      if (res.ok) {
+        setAnalyseResult(await res.json());
+      }
+    } catch {
+      // Handled silently
+    } finally {
+      setRunning(false);
+    }
+  }, [selected, running]);
+
+  return (
+    <section className="bg-white/5 border border-white/8 rounded-2xl p-5 space-y-3">
+      <h2 className="text-white font-semibold text-sm flex items-center gap-2">
+        <ShieldCheck size={16} className="text-blue-400" />
+        {da ? 'Koncern gap-analyse' : 'Corporate gap analysis'}
+      </h2>
+      <p className="text-slate-400 text-xs">
+        {da
+          ? 'Vælg en virksomhed eller person og kør automatisk gap-analyse mod uploadede policer.'
+          : 'Select a company or person and run automatic gap analysis against uploaded policies.'}
+      </p>
+
+      {/* Customer picker */}
+      <div className="relative">
+        <input
+          type="text"
+          value={selected ? selected.navn : query}
+          onChange={(e) => {
+            setSelected(null);
+            handleSearch(e.target.value);
+          }}
+          placeholder={
+            da ? 'Søg CVR, virksomhed eller person...' : 'Search CVR, company or person...'
+          }
+          className="w-full px-3 py-2 bg-slate-800 border border-slate-700/60 rounded-lg text-sm text-white placeholder:text-slate-500 outline-none focus:border-blue-500/60"
+        />
+        {results.length > 0 && !selected && (
+          <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl max-h-60 overflow-y-auto">
+            {results.map((r) => (
+              <button
+                key={r.id}
+                type="button"
+                onClick={() => {
+                  setSelected({
+                    type: r.type === 'company' ? 'virksomhed' : 'person',
+                    id: r.id,
+                    navn: r.title,
+                  });
+                  setResults([]);
+                  setQuery('');
+                }}
+                className="w-full text-left px-3 py-2 hover:bg-slate-700/50 text-sm"
+              >
+                <span className="text-white">{r.title}</span>
+                {r.subtitle && <span className="text-slate-400 ml-2 text-xs">{r.subtitle}</span>}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Start knap */}
+      {selected && (
+        <button
+          type="button"
+          onClick={startAnalyse}
+          disabled={running}
+          className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"
+        >
+          {running ? (
+            <>
+              <Loader2 size={14} className="animate-spin" />
+              {da ? 'Analyserer...' : 'Analyzing...'}
+            </>
+          ) : (
+            <>
+              <ShieldCheck size={14} />
+              {da ? 'Start gap-analyse' : 'Start gap analysis'}
+            </>
+          )}
+        </button>
+      )}
+
+      {/* Resultat */}
+      {analyseResult && (
+        <div className="grid grid-cols-4 gap-3 mt-2">
+          <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-3 text-center">
+            <div className="text-blue-300 text-xl font-bold">{analyseResult.total_aktiver}</div>
+            <div className="text-slate-400 text-xs">{da ? 'Aktiver' : 'Assets'}</div>
+          </div>
+          <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 text-center">
+            <div className="text-emerald-300 text-xl font-bold">{analyseResult.insured_count}</div>
+            <div className="text-slate-400 text-xs">{da ? 'Forsikrede' : 'Insured'}</div>
+          </div>
+          <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 text-center">
+            <div className="text-red-300 text-xl font-bold">{analyseResult.gaps_count}</div>
+            <div className="text-slate-400 text-xs">{da ? 'Gaps' : 'Gaps'}</div>
+          </div>
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-center">
+            <div className="text-amber-300 text-xl font-bold">{analyseResult.total_risk_score}</div>
+            <div className="text-slate-400 text-xs">{da ? 'Risk score' : 'Risk score'}</div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────
 
 /**
@@ -395,6 +573,9 @@ export default function ForsikringPageClient(): React.ReactElement {
           <p className="text-sm text-slate-400">{t.noPoliciesDesc}</p>
         </div>
       )}
+
+      {/* BIZZ-1367: Gap-analyse sektion med customer picker */}
+      {policies.length > 0 && <AnalyseSection lang={lang} />}
 
       {/* Police-tabel */}
       {policies.length > 0 && (

@@ -155,13 +155,15 @@ function AnalyseSection({ lang }: { lang: string }) {
   return (
     <section className="bg-white/5 border border-white/8 rounded-2xl p-5 space-y-3">
       <h2 className="text-white font-semibold text-sm flex items-center gap-2">
-        <ShieldCheck size={16} className="text-blue-400" />
-        {da ? 'Koncern gap-analyse' : 'Corporate gap analysis'}
+        <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">
+          1
+        </span>
+        {da ? 'Vælg kunde' : 'Select customer'}
       </h2>
       <p className="text-slate-400 text-xs">
         {da
-          ? 'Vælg en virksomhed eller person og kør automatisk gap-analyse mod uploadede policer.'
-          : 'Select a company or person and run automatic gap analysis against uploaded policies.'}
+          ? 'Vælg den virksomhed eller person du vil analysere forsikringsdækning for.'
+          : 'Select the company or person to analyse insurance coverage for.'}
       </p>
 
       {/* Customer picker */}
@@ -451,26 +453,16 @@ export default function ForsikringPageClient(): React.ReactElement {
         <p className="text-sm text-slate-400">{t.subtitle}</p>
       </header>
 
-      {/* KPI tiles */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {kpis.map((kpi) => (
-          <div
-            key={kpi.label}
-            className={`bg-gradient-to-br ${kpi.bg} border border-white/8 rounded-2xl p-5 space-y-2`}
-          >
-            <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-400">
-              <kpi.icon size={14} className={kpi.color} />
-              <span>{kpi.label}</span>
-            </div>
-            <div className={`text-3xl font-semibold ${kpi.color}`}>{kpi.value}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* BIZZ-1382: Kundevælger FØRST — giver kontekst til gap-analysen */}
+      {/* TRIN 1: Vælg kunde */}
       <AnalyseSection lang={lang} />
 
-      {/* Upload-zone */}
+      {/* TRIN 2: Upload dokumenter */}
+      <div className="flex items-center gap-2 text-sm font-semibold text-white">
+        <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">
+          2
+        </span>
+        {lang === 'da' ? 'Upload forsikringsdokumenter' : 'Upload insurance documents'}
+      </div>
       <section
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
@@ -557,6 +549,32 @@ export default function ForsikringPageClient(): React.ReactElement {
         </section>
       )}
 
+      {/* TRIN 3: Overblik — KPI tiles + police-tabel */}
+      {policies.length > 0 && (
+        <div className="flex items-center gap-2 text-sm font-semibold text-white">
+          <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">
+            3
+          </span>
+          {lang === 'da' ? 'Overblik og gaps' : 'Overview and gaps'}
+        </div>
+      )}
+      {policies.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {kpis.map((kpi) => (
+            <div
+              key={kpi.label}
+              className={`bg-gradient-to-br ${kpi.bg} border border-white/8 rounded-2xl p-5 space-y-2`}
+            >
+              <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-400">
+                <kpi.icon size={14} className={kpi.color} />
+                <span>{kpi.label}</span>
+              </div>
+              <div className={`text-3xl font-semibold ${kpi.color}`}>{kpi.value}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Error banner */}
       {error && (
         <div className="rounded-xl bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-red-200 flex items-center gap-2">
@@ -570,8 +588,8 @@ export default function ForsikringPageClient(): React.ReactElement {
         <div className="text-sm text-slate-400">{translations[lang].common.loading}</div>
       )}
 
-      {/* Empty state */}
-      {!loading && policies.length === 0 && documents.length === 0 && (
+      {/* Empty state — kun når ingen policer OG ingen dokumenter */}
+      {!loading && policies.length === 0 && documents.length === 0 && uploadJobs.length === 0 && (
         <div className="bg-white/5 border border-white/8 rounded-2xl p-10 text-center">
           <Building2 className="mx-auto text-slate-600 mb-3" size={36} />
           <h2 className="text-lg font-medium mb-1">{t.noPolicies}</h2>

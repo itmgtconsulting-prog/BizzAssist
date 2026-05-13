@@ -478,3 +478,91 @@ describe('riskLabel', () => {
   it('51-75 = høj', () => expect(riskLabel(60)).toBe('høj'));
   it('76-100 = kritisk', () => expect(riskLabel(85)).toBe('kritisk'));
 });
+
+// ─── BIZZ-1377: Branchekode-checks ─────────────────────────────
+
+describe('runGapEngine — branchekode-checks', () => {
+  it('GAP-050: flagger multibranche med uforsikret bibranche', () => {
+    const gaps = runGapEngine(
+      makeInput({
+        policy: makePolicy({ business_activity: 'Ejendomsudlejning' }),
+        branche: {
+          hovedbranche: '681020',
+          hovedbranche_tekst: 'Udlejning af erhvervsejendomme',
+          bibrancher: [{ kode: '561010', tekst: 'Restauranter' }],
+        },
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-050')).toBeDefined();
+  });
+
+  it('GAP-050: flagger ikke uden bibrancher', () => {
+    const gaps = runGapEngine(
+      makeInput({
+        branche: {
+          hovedbranche: '681020',
+          hovedbranche_tekst: 'Udlejning',
+          bibrancher: [],
+        },
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-050')).toBeUndefined();
+  });
+
+  it('GAP-051: flagger højrisiko restaurant-branche', () => {
+    const gaps = runGapEngine(
+      makeInput({
+        policy: makePolicy({ business_activity: 'Restaurant' }),
+        branche: {
+          hovedbranche: '561010',
+          hovedbranche_tekst: 'Restauranter',
+          bibrancher: [],
+        },
+      })
+    );
+    const gap = gaps.find((g) => g.check_id === 'GAP-051');
+    expect(gap).toBeDefined();
+    expect(gap?.severity).toBe('critical');
+  });
+
+  it('GAP-052: flagger CVR/police-mismatch', () => {
+    const gaps = runGapEngine(
+      makeInput({
+        policy: makePolicy({ business_activity: 'Kontorejendom' }),
+        branche: {
+          hovedbranche: '561010',
+          hovedbranche_tekst: 'Restauranter og caféer',
+          bibrancher: [],
+        },
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-052')).toBeDefined();
+  });
+
+  it('GAP-052: flagger ikke ved overlap', () => {
+    const gaps = runGapEngine(
+      makeInput({
+        policy: makePolicy({ business_activity: 'Restaurant og café' }),
+        branche: {
+          hovedbranche: '561010',
+          hovedbranche_tekst: 'Restauranter',
+          bibrancher: [],
+        },
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-052')).toBeUndefined();
+  });
+
+  it('GAP-053: flagger holding med operationel bibranche', () => {
+    const gaps = runGapEngine(
+      makeInput({
+        branche: {
+          hovedbranche: '642020',
+          hovedbranche_tekst: 'Holdingselskaber',
+          bibrancher: [{ kode: '561010', tekst: 'Restaurant' }],
+        },
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-053')).toBeDefined();
+  });
+});

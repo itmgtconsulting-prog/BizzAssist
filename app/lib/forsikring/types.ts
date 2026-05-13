@@ -265,6 +265,12 @@ export interface GapEngineInput {
   bbr: BbrPropertyFacts | null;
   /** Hvilken dato analyse er kørt — bruges til "udløber snart"-check */
   asOfDate: Date;
+  /** BIZZ-1377: Branchekoder fra CVR (til branchekode-baserede checks) */
+  branche?: {
+    hovedbranche: string | null;
+    hovedbranche_tekst: string | null;
+    bibrancher: Array<{ kode: string; tekst: string | null }>;
+  };
   /** BIZZ-1364: Optionelt asset fra koncern-walk (til asset-level checks) */
   asset?: {
     type: 'ejendom' | 'virksomhed' | 'bil' | 'bestyrelsespost';

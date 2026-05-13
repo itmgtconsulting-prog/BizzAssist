@@ -19,6 +19,7 @@
 
 import type { CoverageCode, DetectedGap, ForsikringCoverage, GapEngineInput } from './types';
 import { COVERAGE_LABELS_DA } from './types';
+import { lookupBrancheKrav, isOperationelBranche } from './brancheRisiko';
 
 // ─── Konstanter ──────────────────────────────────────────────────
 
@@ -322,6 +323,128 @@ const checkBuildingUseMismatch: CheckFn = ({ policy, bbr }) => {
  * Alle aktive checks. Tilføj nye checks her — gap-engine kalder dem
  * sekventielt og samler ikke-null resultater.
  *
+// ─── BIZZ-1377: Branchekode-baserede checks ─────────────────────
+
+/**
+ * GAP-050: Multibranche — firma med 2+ branchekoder men police kun for én.
+ */
+const checkMultibranche: CheckFn = ({ branche, policy }) => {
+  if (!branche || !branche.hovedbranche) return null;
+  if (branche.bibrancher.length === 0) return null;
+
+  const policyActivity = (policy.business_activity ?? '').toLowerCase();
+  const uncovered = branche.bibrancher.filter((b) => {
+    const tekst = (b.tekst ?? '').toLowerCase();
+    return tekst.length > 3 && !policyActivity.includes(tekst.slice(0, 8));
+  });
+
+  if (uncovered.length === 0) return null;
+
+  return {
+    check_id: 'GAP-050',
+    category: 'branche',
+    severity: 'critical',
+    title: `Multibranche: ${uncovered.length} aktivitet${uncovered.length > 1 ? 'er' : ''} ikke dækket`,
+    description: `Firmaet har ${branche.bibrancher.length + 1} registrerede branchekoder, men policen er kun tegnet til "${policy.business_activity ?? 'ukendt'}". Uforsikrede brancher: ${uncovered.map((b) => b.tekst).join(', ')}.`,
+    recommendation:
+      'Udvid policen til at dække alle registrerede aktiviteter — ellers kan erstatning bortfalde for uforsikrede aktiviteter.',
+    estimated_impact_dkk: null,
+    source_data: {
+      bibrancher: uncovered.map((b) => b.kode),
+      police_activity: policy.business_activity,
+    },
+  };
+};
+
+/**
+ * GAP-051: Højrisiko-branche mangler specifikke dækninger.
+ */
+const checkHoejrisikoBranche: CheckFn = ({ branche, policy }) => {
+  if (!branche?.hovedbranche) return null;
+  const krav = lookupBrancheKrav(branche.hovedbranche);
+  if (!krav || krav.kategori !== 'hoejrisiko') return null;
+
+  const policyText = [policy.business_activity, policy.building_use]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  const manglende = krav.kraevede_daekninger.filter((d) => !policyText.includes(d.toLowerCase()));
+
+  if (manglende.length === 0) return null;
+
+  return {
+    check_id: 'GAP-051',
+    category: 'branche',
+    severity: 'critical',
+    title: `Højrisiko-branche (${krav.label}): mangler ${manglende.length} dækning${manglende.length > 1 ? 'er' : ''}`,
+    description: `Branche "${krav.label}" kræver: ${krav.kraevede_daekninger.join(', ')}. Mangler: ${manglende.join(', ')}.`,
+    recommendation: `Kontakt forsikringsmægler for at tilkøbe manglende dækninger for ${krav.label}-aktivitet.`,
+    estimated_impact_dkk: null,
+    source_data: { branche: branche.hovedbranche, krav: krav.kraevede_daekninger, manglende },
+  };
+};
+
+/**
+ * GAP-052: CVR-branche matcher ikke police-virksomhedsart.
+ */
+const checkBrancheMismatch: CheckFn = ({ branche, policy }) => {
+  if (!branche?.hovedbranche_tekst || !policy.business_activity) return null;
+
+  const cvrTekst = branche.hovedbranche_tekst.toLowerCase();
+  const policeTekst = policy.business_activity.toLowerCase();
+
+  // Overlap-check: mindst ét ord-prefix med 4+ tegn skal matche
+  const cvrWords = cvrTekst.split(/\s+/).filter((w) => w.length >= 4);
+  const policeWords = policeTekst.split(/\s+/).filter((w) => w.length >= 4);
+  const hasOverlap = cvrWords.some((cw) =>
+    policeWords.some((pw) => cw.startsWith(pw.slice(0, 5)) || pw.startsWith(cw.slice(0, 5)))
+  );
+
+  if (hasOverlap) return null;
+
+  return {
+    check_id: 'GAP-052',
+    category: 'branche',
+    severity: 'critical',
+    title: 'CVR-branche matcher ikke police',
+    description: `CVR registrerer branchen som "${branche.hovedbranche_tekst}", men policen er tegnet som "${policy.business_activity}". Forsikringsselskabet kan afvise erstatning ved forkert virksomhedsart.`,
+    recommendation:
+      'Opdater policens virksomhedsart så den matcher CVR-registreringen, eller opdater CVR hvis branchen er ændret.',
+    estimated_impact_dkk: null,
+    source_data: {
+      cvr_branche: branche.hovedbranche_tekst,
+      police_activity: policy.business_activity,
+    },
+  };
+};
+
+/**
+ * GAP-053: Holding med operationel bibranche.
+ */
+const checkHoldingMedOperationel: CheckFn = ({ branche }) => {
+  if (!branche?.hovedbranche) return null;
+  const krav = lookupBrancheKrav(branche.hovedbranche);
+  if (!krav || krav.kategori !== 'holding') return null;
+
+  const operationelle = branche.bibrancher.filter((b) => isOperationelBranche(b.kode));
+  if (operationelle.length === 0) return null;
+
+  return {
+    check_id: 'GAP-053',
+    category: 'branche',
+    severity: 'warning',
+    title: `Holding med ${operationelle.length} operationel${operationelle.length > 1 ? 'le' : ''} bibranche${operationelle.length > 1 ? 'r' : ''}`,
+    description: `Holdingselskab (${branche.hovedbranche_tekst ?? 'holding'}) har operationelle bibrancher: ${operationelle.map((b) => b.tekst ?? b.kode).join(', ')}. Disse kræver erhvervsforsikring ud over D&O.`,
+    recommendation:
+      'Tegn erhvervsforsikring der dækker de operationelle aktiviteter, eller flyt dem til et driftsselskab med egen police.',
+    estimated_impact_dkk: null,
+    source_data: {
+      hovedbranche: branche.hovedbranche,
+      operationelle: operationelle.map((b) => b.kode),
+    },
+  };
+};
+
 // ─── BIZZ-1364: Asset-level checks ──────────────────────────────
 
 /**
@@ -443,6 +566,11 @@ function checkMissingDnO(input: GapEngineInput): DetectedGap | null {
  *   4. Identitets-checks (CVR-match)
  */
 const CHECKS: readonly CheckFn[] = [
+  // Branchekode-checks (BIZZ-1377)
+  checkMultibranche,
+  checkHoejrisikoBranche,
+  checkBrancheMismatch,
+  checkHoldingMedOperationel,
   // Asset-level checks (BIZZ-1364)
   checkUninsuredAsset,
   checkUnderinsuredAsset,

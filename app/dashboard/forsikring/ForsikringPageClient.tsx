@@ -28,6 +28,7 @@ import {
   Building2,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { useAIChatContext } from '@/app/context/AIChatContext';
 import { translations } from '@/app/lib/translations';
 
 // ─── Types ───────────────────────────────────────────────────────
@@ -81,6 +82,7 @@ interface UploadJob {
  */
 function AnalyseSection({ lang }: { lang: string }) {
   const da = lang === 'da';
+  const chatCtx = useAIChatContext();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<
     Array<{ id: string; title: string; type: string; subtitle?: string }>
@@ -315,18 +317,28 @@ function AnalyseSection({ lang }: { lang: string }) {
                   <div className="text-slate-400 text-[10px]">Gaps</div>
                 </div>
               </div>
-              {/* Rapport-knap */}
-              <Link
-                href={`/dashboard/chat?context=${encodeURIComponent(
-                  da
-                    ? 'Lav en mæglerrapport i Word-format med alle forsikringsgaps, anbefalinger og handlingsplan.'
-                    : 'Create a broker report in Word format with all coverage gaps, recommendations and action plan.'
-                )}`}
+              {/* Rapport-knap — åbner AI Chat drawer med pre-filled prompt */}
+              <button
+                type="button"
+                onClick={() => {
+                  // Åbn chat drawer
+                  chatCtx.setDrawerOpen(true);
+                  // Sæt prompt i chat input via context
+                  chatCtx.setStreamText('');
+                  // Dispatch custom event som AIChatPanel lytter på
+                  window.dispatchEvent(
+                    new CustomEvent('bizz-chat-prefill', {
+                      detail: da
+                        ? `Lav en mæglerrapport i Word-format for ${selected?.navn ?? 'kunden'}. Brug forsikringsdata fra konteksten. Inkluder: 1) Executive summary med dækningsgrad ${pct}%, 2) Forsikringsgap-tabel med alle ${analyseResult.gaps_count} gaps, 3) Anbefalinger prioriteret efter risiko, 4) Handlingsplan. Generér dokumentet direkte uden at spørge om mere info.`
+                        : `Create a broker report in Word format for ${selected?.navn ?? 'the customer'}. Use insurance data from context. Include: 1) Executive summary with ${pct}% coverage rate, 2) Gap table with all ${analyseResult.gaps_count} gaps, 3) Prioritized recommendations, 4) Action plan. Generate the document directly.`,
+                    })
+                  );
+                }}
                 className="w-full bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
               >
                 <ShieldCheck size={15} />
                 {da ? 'Lav rapport via AI Chat' : 'Generate report via AI Chat'}
-              </Link>
+              </button>
             </div>
           );
         })()}

@@ -59,6 +59,45 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const aktiver = await walkKoncern(kunde_type as 'virksomhed' | 'person', kunde_id);
     logger.log(`[forsikring/analyser] Fandt ${aktiver.length} aktiver`);
 
+    // 1b. Berig ejendom-aktiver med adresser (for matching mod policer)
+    const ejendomBfes = aktiver.filter((a) => a.type === 'ejendom' && a.bfe).map((a) => a.bfe!);
+    if (ejendomBfes.length > 0) {
+      try {
+        const proto = request.headers.get('x-forwarded-proto') ?? 'https';
+        const host = `${proto}://${request.headers.get('host') ?? 'localhost:3000'}`;
+        const cookie = request.headers.get('cookie') ?? '';
+        const addrRes = await fetch(`${host}/api/bfe-addresses?bfes=${ejendomBfes.join(',')}`, {
+          headers: { cookie },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (addrRes.ok) {
+          const addrData: Record<
+            string,
+            {
+              adresse: string | null;
+              postnr: string | null;
+              by: string | null;
+            }
+          > = await addrRes.json();
+          for (const aktiv of aktiver) {
+            if (aktiv.type === 'ejendom' && aktiv.bfe) {
+              const info = addrData[String(aktiv.bfe)];
+              if (info?.adresse) {
+                const postBy = [info.postnr, info.by].filter(Boolean).join(' ');
+                aktiv.adresse = postBy ? `${info.adresse}, ${postBy}` : info.adresse;
+                aktiv.label = aktiv.adresse;
+              }
+            }
+          }
+          logger.log(
+            `[forsikring/analyser] Beriget ${Object.keys(addrData).length} ejendomme med adresser`
+          );
+        }
+      } catch {
+        logger.warn('[forsikring/analyser] Adresse-berigelse fejlede (best-effort)');
+      }
+    }
+
     // 2. Hent policer fra tenant
     const insurance = await getInsuranceApi(auth.tenantId);
     const policer = await insurance.policies.list();

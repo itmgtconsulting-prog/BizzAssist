@@ -315,6 +315,18 @@ function AnalyseSection({ lang }: { lang: string }) {
                   <div className="text-slate-400 text-[10px]">Gaps</div>
                 </div>
               </div>
+              {/* Rapport-knap */}
+              <Link
+                href={`/dashboard/chat?context=${encodeURIComponent(
+                  da
+                    ? 'Lav en mæglerrapport i Word-format med alle forsikringsgaps, anbefalinger og handlingsplan.'
+                    : 'Create a broker report in Word format with all coverage gaps, recommendations and action plan.'
+                )}`}
+                className="w-full bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
+              >
+                <ShieldCheck size={15} />
+                {da ? 'Lav rapport via AI Chat' : 'Generate report via AI Chat'}
+              </Link>
             </div>
           );
         })()}
@@ -649,17 +661,6 @@ export default function ForsikringPageClient(): React.ReactElement {
               ? `${policies.length} policer — ${(data?.totals?.gaps_critical ?? 0) + (data?.totals?.gaps_warning ?? 0)} gaps fundet`
               : `${policies.length} policies — ${(data?.totals?.gaps_critical ?? 0) + (data?.totals?.gaps_warning ?? 0)} gaps found`}
           </div>
-          <Link
-            href={`/dashboard/chat?context=${encodeURIComponent(
-              lang === 'da'
-                ? 'Lav en mæglerrapport i Word-format med alle forsikringsgaps, anbefalinger og handlingsplan.'
-                : 'Create a broker report in Word format with all coverage gaps, recommendations and action plan.'
-            )}`}
-            className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5"
-          >
-            <ShieldCheck size={13} />
-            {lang === 'da' ? 'Lav rapport via AI' : 'Generate report via AI'}
-          </Link>
         </div>
       )}
 

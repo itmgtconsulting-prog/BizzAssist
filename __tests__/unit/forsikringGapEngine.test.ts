@@ -11,7 +11,12 @@
  *   - countBySeverity tæller korrekt
  */
 import { describe, it, expect } from 'vitest';
-import { runGapEngine, countBySeverity } from '@/app/lib/forsikring/gapEngine';
+import {
+  runGapEngine,
+  countBySeverity,
+  computeRiskScore,
+  riskLabel,
+} from '@/app/lib/forsikring/gapEngine';
 import type {
   BbrPropertyFacts,
   ForsikringCoverage,
@@ -427,4 +432,49 @@ describe('runGapEngine — asset-level checks', () => {
     );
     expect(assetGaps).toHaveLength(0);
   });
+});
+
+// ─── BIZZ-1365: Risk-scoring ────────────────────────────────────
+
+describe('computeRiskScore', () => {
+  it('returnerer base-score for GAP-100 (uforsikret)', () => {
+    const gap = runGapEngine(
+      makeInput({ asset: { type: 'ejendom', vaerdiDkk: 2_000_000, matchScore: 0 } })
+    ).find((g) => g.check_id === 'GAP-100')!;
+    expect(computeRiskScore(gap)).toBe(60); // base score
+  });
+
+  it('tilføjer +15 for bygning > 50 år', () => {
+    const gap = runGapEngine(
+      makeInput({ asset: { type: 'ejendom', vaerdiDkk: 2_000_000, matchScore: 0 } })
+    ).find((g) => g.check_id === 'GAP-100')!;
+    expect(computeRiskScore(gap, { type: 'ejendom', byggeaar: 1900 })).toBe(75);
+  });
+
+  it('tilføjer +20 for værdi > 10M', () => {
+    const gap = runGapEngine(
+      makeInput({ asset: { type: 'ejendom', vaerdiDkk: 15_000_000, matchScore: 0 } })
+    ).find((g) => g.check_id === 'GAP-100')!;
+    expect(computeRiskScore(gap, { type: 'ejendom', vaerdiDkk: 15_000_000 })).toBe(80);
+  });
+
+  it('capper ved 100', () => {
+    const gap = runGapEngine(
+      makeInput({ asset: { type: 'ejendom', vaerdiDkk: 15_000_000, matchScore: 0 } })
+    ).find((g) => g.check_id === 'GAP-100')!;
+    const score = computeRiskScore(gap, {
+      type: 'ejendom',
+      vaerdiDkk: 15_000_000,
+      byggeaar: 1900,
+      haeftelserDkk: 5_000_000,
+    });
+    expect(score).toBeLessThanOrEqual(100);
+  });
+});
+
+describe('riskLabel', () => {
+  it('0-25 = lav', () => expect(riskLabel(20)).toBe('lav'));
+  it('26-50 = middel', () => expect(riskLabel(40)).toBe('middel'));
+  it('51-75 = høj', () => expect(riskLabel(60)).toBe('høj'));
+  it('76-100 = kritisk', () => expect(riskLabel(85)).toBe('kritisk'));
 });

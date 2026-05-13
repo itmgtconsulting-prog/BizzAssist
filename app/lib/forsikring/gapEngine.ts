@@ -495,6 +495,73 @@ export function runGapEngine(input: GapEngineInput): DetectedGap[] {
   return results;
 }
 
+// ─── BIZZ-1365: Risk-scoring ────────────────────────────────────
+
+/** Base-score pr. gap-check-ID */
+const GAP_BASE_SCORES: Record<string, number> = {
+  'GAP-100': 60, // uforsikret
+  'GAP-101': 40, // underforsikret
+  'GAP-102': 70, // mortgage
+  'GAP-103': 50, // D&O
+  'GAP-001': 45, // areal-mismatch
+  'GAP-040': 35, // anvendelse-mismatch
+  'GAP-010': 20, // glas
+  'GAP-011': 15, // sanitet
+  'GAP-012': 30, // insekt/svamp
+  'GAP-013': 25, // restværdi
+  'GAP-014': 25, // stikledning
+  'GAP-020': 20, // CVR-match
+  'GAP-030': 35, // udløbet
+  'GAP-031': 20, // udløber snart
+};
+
+/**
+ * Beregn risk-score 0-100 for en gap baseret på type + asset-faktorer.
+ *
+ * @param gap - Detekteret gap
+ * @param asset - Optionelt asset (for modifiers)
+ * @returns Score 0-100
+ */
+export function computeRiskScore(gap: DetectedGap, asset?: GapEngineInput['asset']): number {
+  let score = GAP_BASE_SCORES[gap.check_id] ?? 30;
+
+  // Modifiers baseret på asset
+  if (asset) {
+    // Bygning > 50 år
+    if (asset.byggeaar && new Date().getFullYear() - asset.byggeaar > 50) {
+      score += 15;
+    }
+    // Aktiv-værdi > 5M
+    if (asset.vaerdiDkk && asset.vaerdiDkk > 10_000_000) {
+      score += 20;
+    } else if (asset.vaerdiDkk && asset.vaerdiDkk > 5_000_000) {
+      score += 10;
+    }
+    // Hæftelser
+    if (asset.haeftelserDkk && asset.haeftelserDkk > 0) {
+      score += 10;
+    }
+  }
+
+  return Math.min(100, Math.max(0, score));
+}
+
+/** Severity-label baseret på risk-score */
+export type RiskLabel = 'lav' | 'middel' | 'høj' | 'kritisk';
+
+/**
+ * Afled severity-label fra risk-score.
+ *
+ * @param score - 0-100
+ * @returns Severity-label
+ */
+export function riskLabel(score: number): RiskLabel {
+  if (score >= 76) return 'kritisk';
+  if (score >= 51) return 'høj';
+  if (score >= 26) return 'middel';
+  return 'lav';
+}
+
 /**
  * Tæl gaps pr. severity. Bruges til UI-badges og sundheds-score.
  *

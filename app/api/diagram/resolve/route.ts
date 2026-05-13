@@ -91,12 +91,15 @@ async function fetchOwnersByBfe(
     ejer_type: string;
     ejerandel_taeller: number | null;
     ejerandel_naevner: number | null;
+    ejer_enheds_nummer: number | null;
   }>
 > {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data } = await (admin as any)
     .from('ejf_ejerskab')
-    .select('ejer_navn, ejer_cvr, ejer_type, ejerandel_taeller, ejerandel_naevner')
+    .select(
+      'ejer_navn, ejer_cvr, ejer_type, ejerandel_taeller, ejerandel_naevner, ejer_enheds_nummer'
+    )
     .eq('bfe_nummer', bfe)
     .eq('status', 'gældende')
     .limit(50);
@@ -1046,6 +1049,7 @@ async function resolvePropertyGraph(
                 ejer_type: cvr ? 'virksomhed' : isStatus ? 'status' : 'person',
                 ejerandel_taeller: n.faktiskEjerandel_taeller,
                 ejerandel_naevner: n.faktiskEjerandel_naevner,
+                ejer_enheds_nummer: null,
               };
             });
           if (owners.length > 0) {
@@ -1064,33 +1068,47 @@ async function resolvePropertyGraph(
   const companyCvrs = owners
     .filter((o) => o.ejer_type === 'virksomhed' && o.ejer_cvr)
     .map((o) => o.ejer_cvr!);
-  const personNavne = owners.filter((o) => o.ejer_type === 'person').map((o) => o.ejer_navn);
+  // BIZZ-1350: Brug ejer_enheds_nummer direkte når tilgængeligt; fallback til navne-match
+  const personOwners = owners.filter((o) => o.ejer_type === 'person');
+  const personNavne = personOwners.filter((o) => !o.ejer_enheds_nummer).map((o) => o.ejer_navn);
+  const directEnNumre = personOwners
+    .filter((o) => o.ejer_enheds_nummer != null)
+    .map((o) => o.ejer_enheds_nummer!);
 
-  // Batch: virksomhedsinfo + ejendomsantal
-  const [companyBatchResult, propCountResult, deltagerBatchResult] = await Promise.all([
-    companyCvrs.length > 0
-      ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (admin as any)
-          .from('cvr_virksomhed')
-          .select('cvr, navn, virksomhedsform, branche_tekst, ophoert')
-          .in('cvr', companyCvrs.slice(0, 20))
-      : Promise.resolve({ data: [] }),
-    companyCvrs.length > 0
-      ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (admin as any)
-          .from('ejf_ejerskab')
-          .select('ejer_cvr')
-          .in('ejer_cvr', companyCvrs.slice(0, 20))
-          .eq('status', 'gældende')
-      : Promise.resolve({ data: [] }),
-    personNavne.length > 0
-      ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (admin as any)
-          .from('cvr_deltager')
-          .select('enhedsnummer, navn')
-          .in('navn', personNavne.slice(0, 20))
-      : Promise.resolve({ data: [] }),
-  ]);
+  // Batch: virksomhedsinfo + ejendomsantal + deltager-navne
+  const [companyBatchResult, propCountResult, deltagerBatchResult, directDeltagerResult] =
+    await Promise.all([
+      companyCvrs.length > 0
+        ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (admin as any)
+            .from('cvr_virksomhed')
+            .select('cvr, navn, virksomhedsform, branche_tekst, ophoert')
+            .in('cvr', companyCvrs.slice(0, 20))
+        : Promise.resolve({ data: [] }),
+      companyCvrs.length > 0
+        ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (admin as any)
+            .from('ejf_ejerskab')
+            .select('ejer_cvr')
+            .in('ejer_cvr', companyCvrs.slice(0, 20))
+            .eq('status', 'gældende')
+        : Promise.resolve({ data: [] }),
+      personNavne.length > 0
+        ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (admin as any)
+            .from('cvr_deltager')
+            .select('enhedsnummer, navn')
+            .in('navn', personNavne.slice(0, 20))
+        : Promise.resolve({ data: [] }),
+      // BIZZ-1350: Hent faktiske navne for person-ejere med direkte enhedsNummer-link
+      directEnNumre.length > 0
+        ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (admin as any)
+            .from('cvr_deltager')
+            .select('enhedsnummer, navn')
+            .in('enhedsnummer', directEnNumre.slice(0, 30))
+        : Promise.resolve({ data: [] }),
+    ]);
 
   // Byg lookup-maps
   const companyMap = new Map(
@@ -1108,11 +1126,18 @@ async function resolvePropertyGraph(
   for (const r of (propCountResult.data ?? []) as Array<{ ejer_cvr: string }>) {
     propCountMap.set(r.ejer_cvr, (propCountMap.get(r.ejer_cvr) ?? 0) + 1);
   }
+  // Navne-baseret fallback-map
   const deltagerMap = new Map(
     ((deltagerBatchResult.data ?? []) as Array<{ enhedsnummer: number; navn: string }>).map((d) => [
       d.navn,
       d.enhedsnummer,
     ])
+  );
+  // BIZZ-1350: enhedsNummer → faktisk navn map (for "Ukendt ejer" → rigtigt navn)
+  const enToNameMap = new Map(
+    ((directDeltagerResult.data ?? []) as Array<{ enhedsnummer: number; navn: string }>).map(
+      (d) => [d.enhedsnummer, d.navn]
+    )
   );
 
   for (const owner of owners) {
@@ -1147,14 +1172,19 @@ async function resolvePropertyGraph(
         ejerandel: formatEjerandel(owner.ejerandel_taeller, owner.ejerandel_naevner),
       });
     } else if (owner.ejer_type === 'person') {
-      const personEn: number | undefined = deltagerMap.get(owner.ejer_navn) ?? undefined;
+      // BIZZ-1350: Brug ejer_enheds_nummer direkte; fallback til navne-match
+      const personEn: number | undefined =
+        owner.ejer_enheds_nummer ?? deltagerMap.get(owner.ejer_navn) ?? undefined;
       const ownerId = personEn
         ? `en-${personEn}`
         : `person-${owner.ejer_navn.replace(/\s+/g, '-').toLowerCase()}`;
       if (!nodeIds.has(ownerId)) {
+        // Brug faktisk navn fra cvr_deltager når ejer_navn er generisk
+        const resolvedName =
+          personEn && enToNameMap.has(personEn) ? enToNameMap.get(personEn)! : owner.ejer_navn;
         nodes.push({
           id: ownerId,
-          label: owner.ejer_navn,
+          label: resolvedName,
           type: 'person',
           enhedsNummer: personEn,
           link: personEn ? `/dashboard/owners/${personEn}` : undefined,
@@ -2070,11 +2100,16 @@ async function enrichPropertyNodes(
   cookie: string
 ): Promise<void> {
   const propNodes = graph.nodes.filter((n) => n.type === 'property' && n.bfeNummer != null);
-  if (propNodes.length === 0) return;
+  // BIZZ-1349: Saml også BFE-numre fra overflow items
+  const overflowNodes = graph.nodes.filter((n) => n.overflowItems && n.overflowItems.length > 0);
+  const overflowBfes = overflowNodes.flatMap((n) =>
+    (n.overflowItems ?? []).filter((i) => i.bfeNummer).map((i) => i.bfeNummer!)
+  );
+  const allBfes = [...propNodes.map((n) => n.bfeNummer!), ...overflowBfes];
+  if (allBfes.length === 0) return;
 
-  const bfes = propNodes.map((n) => n.bfeNummer!).join(',');
   try {
-    const res = await fetch(`${host}/api/bfe-addresses?bfes=${bfes}`, {
+    const res = await fetch(`${host}/api/bfe-addresses?bfes=${allBfes.join(',')}`, {
       headers: { cookie },
       signal: AbortSignal.timeout(10000),
     });
@@ -2091,6 +2126,21 @@ async function enrichPropertyNodes(
       }
     > = await res.json();
 
+    /** Formatér adresse-label fra bfe-addresses response */
+    const fmtLabel = (info: {
+      adresse: string | null;
+      postnr: string | null;
+      by: string | null;
+      etage: string | null;
+      doer: string | null;
+    }): string | null => {
+      if (!info.adresse) return null;
+      const etageStr = info.etage ? `, ${info.etage}.` : '';
+      const doerStr = info.doer ? ` ${info.doer}` : '';
+      const postStr = info.postnr && info.by ? `, ${info.postnr} ${info.by}` : '';
+      return `${info.adresse}${etageStr}${doerStr}${postStr}`;
+    };
+
     for (const node of propNodes) {
       // BIZZ-1114: Skip noder der allerede har et client-supplied label (rootLabel)
       // — undgå at overskrive korrekt adresse med forkert BFE→DAWA mapping
@@ -2098,16 +2148,24 @@ async function enrichPropertyNodes(
 
       const info = data[String(node.bfeNummer)];
       if (!info?.adresse) continue;
-      // BIZZ-1103: Inkluder postnr+by i label (sublabel renderes ikke for property-noder)
-      const etageStr = info.etage ? `, ${info.etage}.` : '';
-      const doerStr = info.doer ? ` ${info.doer}` : '';
-      const postStr = info.postnr && info.by ? `, ${info.postnr} ${info.by}` : '';
-      node.label = `${info.adresse}${etageStr}${doerStr}${postStr}`;
+      node.label = fmtLabel(info) ?? node.label;
       if (info.postnr && info.by) {
         node.sublabel = `${info.postnr} ${info.by}`;
       }
       if (info.dawaId) {
         node.link = `/dashboard/ejendomme/${info.dawaId}`;
+      }
+    }
+
+    // BIZZ-1349: Berig overflow items med adresser + links
+    for (const node of overflowNodes) {
+      for (const item of node.overflowItems ?? []) {
+        if (!item.bfeNummer) continue;
+        const info = data[String(item.bfeNummer)];
+        if (!info) continue;
+        const label = fmtLabel(info);
+        if (label) item.label = label;
+        if (info.dawaId) item.link = `/dashboard/ejendomme/${info.dawaId}`;
       }
     }
   } catch {

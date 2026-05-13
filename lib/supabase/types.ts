@@ -502,6 +502,93 @@ export type AiTokenUsageRow = {
   created_at: string;
 };
 
+/** forsikring_documents row in tenant schema — uploaded PDF metadata */
+export type ForsikringDocumentRow = {
+  id: string;
+  tenant_id: string;
+  storage_path: string;
+  original_name: string;
+  mime_type: string;
+  size_bytes: number;
+  extracted_text: string | null;
+  parse_status: string;
+  parse_error: string | null;
+  policy_id: string | null;
+  uploaded_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** forsikring_policies row in tenant schema — parsed policy data */
+export type ForsikringPolicyRow = {
+  id: string;
+  tenant_id: string;
+  document_id: string | null;
+  policy_number: string;
+  insurer_name: string;
+  insurer_cvr: string | null;
+  broker_name: string | null;
+  policyholder_name: string;
+  policyholder_cvr: string | null;
+  policyholder_address: string | null;
+  property_address: string | null;
+  property_matrikel: string | null;
+  property_bfe: string | null;
+  property_entity_id: string | null;
+  business_activity: string | null;
+  building_use: string | null;
+  building_area_m2: number | null;
+  building_floors: number | null;
+  building_year_built: number | null;
+  building_has_basement: boolean | null;
+  insurance_form: string | null;
+  sum_insured_dkk: number | null;
+  annual_premium_dkk: number | null;
+  general_deductible_dkk: number | null;
+  effective_from: string | null;
+  effective_to: string | null;
+  main_renewal_date: string | null;
+  policy_issued_date: string | null;
+  raw_metadata: Record<string, unknown>;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** forsikring_coverages row in tenant schema — single coverage on a policy */
+export type ForsikringCoverageRow = {
+  id: string;
+  tenant_id: string;
+  policy_id: string;
+  coverage_code: string;
+  coverage_label: string;
+  is_covered: boolean;
+  sum_dkk: number | null;
+  deductible_dkk: number | null;
+  conditions_ref: string | null;
+  notes: string | null;
+  created_at: string;
+};
+
+/** forsikring_gaps row in tenant schema — detected coverage gaps */
+export type ForsikringGapRow = {
+  id: string;
+  tenant_id: string;
+  policy_id: string;
+  check_id: string;
+  category: string;
+  severity: string;
+  title: string;
+  description: string;
+  recommendation: string | null;
+  estimated_impact_dkk: number | null;
+  source_data: Record<string, unknown>;
+  is_resolved: boolean;
+  resolved_at: string | null;
+  resolved_by: string | null;
+  created_at: string;
+};
+
 /** email_integrations row in tenant schema — stores OAuth tokens for Gmail/LinkedIn */
 export type EmailIntegrationRow = {
   id: string;
@@ -581,6 +668,53 @@ type TenantSchemaShape = {
         last_used_at?: string | null;
       };
       Update: Partial<EmailIntegrationRow>;
+      Relationships: [];
+    };
+    forsikring_documents: {
+      Row: ForsikringDocumentRow;
+      Insert: Omit<
+        ForsikringDocumentRow,
+        | 'id'
+        | 'created_at'
+        | 'updated_at'
+        | 'extracted_text'
+        | 'parse_status'
+        | 'parse_error'
+        | 'policy_id'
+        | 'mime_type'
+      > & {
+        mime_type?: string;
+        extracted_text?: string | null;
+        parse_status?: string;
+        parse_error?: string | null;
+        policy_id?: string | null;
+      };
+      Update: Partial<ForsikringDocumentRow>;
+      Relationships: [];
+    };
+    forsikring_policies: {
+      Row: ForsikringPolicyRow;
+      Insert: Omit<ForsikringPolicyRow, 'id' | 'created_at' | 'updated_at'>;
+      Update: Partial<ForsikringPolicyRow>;
+      Relationships: [];
+    };
+    forsikring_coverages: {
+      Row: ForsikringCoverageRow;
+      Insert: Omit<ForsikringCoverageRow, 'id' | 'created_at'>;
+      Update: Partial<ForsikringCoverageRow>;
+      Relationships: [];
+    };
+    forsikring_gaps: {
+      Row: ForsikringGapRow;
+      Insert: Omit<
+        ForsikringGapRow,
+        'id' | 'created_at' | 'is_resolved' | 'resolved_at' | 'resolved_by'
+      > & {
+        is_resolved?: boolean;
+        resolved_at?: string | null;
+        resolved_by?: string | null;
+      };
+      Update: Partial<ForsikringGapRow>;
       Relationships: [];
     };
     tenant_knowledge: {

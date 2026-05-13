@@ -467,6 +467,9 @@ export default function ForsikringPageClient(): React.ReactElement {
         ))}
       </div>
 
+      {/* BIZZ-1382: Kundevælger FØRST — giver kontekst til gap-analysen */}
+      <AnalyseSection lang={lang} />
+
       {/* Upload-zone */}
       <section
         onDragOver={onDragOver}
@@ -575,9 +578,6 @@ export default function ForsikringPageClient(): React.ReactElement {
           <p className="text-sm text-slate-400">{t.noPoliciesDesc}</p>
         </div>
       )}
-
-      {/* BIZZ-1367: Gap-analyse sektion med customer picker */}
-      {policies.length > 0 && <AnalyseSection lang={lang} />}
 
       {/* Police-tabel */}
       {policies.length > 0 && (

@@ -275,26 +275,48 @@ export default function AnalyseDetailClient({ analyseId }: { analyseId: string }
         </section>
       )}
 
-      {/* BIZZ-1375: Simpel koncern-visualisering */}
+      {/* BIZZ-1386: Koncern-visualisering med forsikringsstatus */}
       {aktiver.length > 0 && (
         <section className="bg-white/5 border border-white/8 rounded-2xl p-5">
-          <h2 className="text-white font-semibold text-sm mb-3">
+          <h2 className="text-white font-semibold text-sm mb-4">
             {da ? 'Koncern-overblik' : 'Corporate overview'}
           </h2>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {(['ejendom', 'virksomhed', 'bestyrelsespost', 'bil'] as const).map((type) => {
-              const count = aktiver.filter((a) => a.type === type).length;
-              if (count === 0) return null;
-              const matched = aktiver.filter((a) => a.type === type && a.matched_policy_id).length;
-              const icon = typeIcon(type);
+          <div className="space-y-4">
+            {(['ejendom', 'virksomhed', 'bestyrelsespost'] as const).map((type) => {
+              const items = aktiver.filter((a) => a.type === type);
+              if (items.length === 0) return null;
+              const matched = items.filter((a) => a.matched_policy_id).length;
               return (
-                <div key={type} className="bg-white/3 rounded-xl p-3 flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-white/5">{icon}</div>
-                  <div>
-                    <div className="text-white text-sm font-medium capitalize">{type}</div>
-                    <div className="text-slate-400 text-xs">
-                      {matched}/{count} {da ? 'forsikrede' : 'insured'}
-                    </div>
+                <div key={type}>
+                  <div className="flex items-center gap-2 mb-2">
+                    {typeIcon(type)}
+                    <span className="text-slate-300 text-xs font-medium capitalize">{type}</span>
+                    <span className="text-slate-500 text-xs">
+                      ({matched}/{items.length} {da ? 'forsikrede' : 'insured'})
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-1.5">
+                    {items.map((a) => (
+                      <div
+                        key={a.id}
+                        className={`rounded-lg px-2.5 py-2 text-xs border ${
+                          a.matched_policy_id
+                            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                            : 'bg-red-500/10 border-red-500/30 text-red-300'
+                        }`}
+                      >
+                        <div className="truncate font-medium">{a.label}</div>
+                        <div className="text-[10px] opacity-70 mt-0.5">
+                          {a.matched_policy_id
+                            ? da
+                              ? '✓ Forsikret'
+                              : '✓ Insured'
+                            : da
+                              ? '✗ Uforsikret'
+                              : '✗ Uninsured'}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               );

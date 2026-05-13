@@ -13,9 +13,9 @@ const token = process.env.SUPABASE_ACCESS_TOKEN;
 // scoped tabeller til alle eksisterende tenant_*-schemaer via ny
 // provision_tenant_ai_tables-helper og sikrer nye tenants også får dem.
 const envs = {
-  dev: { ref: 'wkzwxfhyfmvglrqtmebw', migrations: ['040', '041', '042', '043', '045', '046', '047', '049', '050', '051'] },
-  test: { ref: 'rlkjmqjxmkxuclehbrnl', migrations: ['041', '042', '045', '049', '050', '051'] },
-  prod: { ref: 'xsyldjqcntiygrtfcszm', migrations: ['041', '042', '045', '049', '050', '051'] },
+  dev: { ref: 'wkzwxfhyfmvglrqtmebw', migrations: ['040', '041', '042', '043', '045', '046', '047', '049', '050', '051', '096'] },
+  test: { ref: 'rlkjmqjxmkxuclehbrnl', migrations: ['041', '042', '045', '049', '050', '051', '096'] },
+  prod: { ref: 'xsyldjqcntiygrtfcszm', migrations: ['041', '042', '045', '049', '050', '051', '096'] },
 };
 
 const migrationFiles = {
@@ -29,6 +29,7 @@ const migrationFiles = {
   '049': '049_plan_configs_admin_write_rls.sql',
   '050': '050_service_manager_scan_types_extended.sql',
   '051': '051_tenant_ai_feedback_notification_backfill.sql',
+  '096': '096_forsikring.sql',
 };
 
 async function runQuery(ref, sql) {

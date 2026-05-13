@@ -254,18 +254,24 @@ async function resolveCompanyGraph(
   }
 
   // 2. BIZZ-1108/1122: Hent EJERE (opad) — kun ownership-typer, ikke bestyrelse/direktion
+  // BIZZ-1317: Hent person-ejere for ALLE virksomheder i grafen (inkl. parents fra step 1b),
+  // ikke kun root-virksomheden. Uden dette mangler fx Søren Winkel som ejer af WISCH ApS.
+  const companyCvrsInGraph = [
+    cvr,
+    ...nodes.filter((n) => n.cvr && n.id !== mainId).map((n) => String(n.cvr)),
+  ];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: ownerRows } = await (admin as any)
     .from('cvr_deltagerrelation')
-    .select('deltager_enhedsnummer, type')
-    .eq('virksomhed_cvr', cvr)
+    .select('deltager_enhedsnummer, type, virksomhed_cvr')
+    .in('virksomhed_cvr', companyCvrsInGraph.slice(0, 10))
     .is('gyldig_til', null)
-    .limit(30);
+    .limit(100);
 
   // Filtrer til ownership-typer
   const ownershipRows = (ownerRows ?? []).filter((r: { type: string }) =>
     OWNERSHIP_TYPES.has(r.type)
-  ) as Array<{ deltager_enhedsnummer: number; type: string }>;
+  ) as Array<{ deltager_enhedsnummer: number; type: string; virksomhed_cvr: string }>;
 
   if (ownershipRows.length > 0) {
     const enhedsNumre = Array.from(new Set(ownershipRows.map((r) => r.deltager_enhedsnummer)));
@@ -278,12 +284,17 @@ async function resolveCompanyGraph(
       (deltagere ?? []).map((d: { enhedsnummer: number; navn: string }) => [d.enhedsnummer, d.navn])
     );
 
-    // Gruppér roller per deltager
+    // Gruppér roller per deltager + track hvilke virksomheder de ejer
     const personRollerMap = new Map<number, string[]>();
+    // BIZZ-1317: Track person→virksomhed relationer (kan have flere targets)
+    const personTargets = new Map<number, Set<string>>();
     for (const r of ownershipRows) {
       const arr = personRollerMap.get(r.deltager_enhedsnummer) ?? [];
       arr.push(r.type);
       personRollerMap.set(r.deltager_enhedsnummer, arr);
+      const targets = personTargets.get(r.deltager_enhedsnummer) ?? new Set();
+      targets.add(r.virksomhed_cvr);
+      personTargets.set(r.deltager_enhedsnummer, targets);
     }
 
     // Person-ejerandel er nice-to-have — skippes i cache-first (kræver live CVR ES)
@@ -363,11 +374,18 @@ async function resolveCompanyGraph(
         expandableChildren: expandable > 0 ? expandable : 0,
       });
       nodeIds.add(ownerId);
-      edges.push({
-        from: ownerId,
-        to: mainId,
-        ejerandel: personEjerandele.get(en) ?? undefined,
-      });
+      // BIZZ-1317: Opret edges til ALLE virksomheder personen ejer (inkl. parents)
+      const targets = personTargets.get(en) ?? new Set([cvr]);
+      for (const targetCvr of targets) {
+        const targetId = `cvr-${targetCvr}`;
+        if (nodeIds.has(targetId)) {
+          edges.push({
+            from: ownerId,
+            to: targetId,
+            ejerandel: personEjerandele.get(en) ?? undefined,
+          });
+        }
+      }
     }
   }
 

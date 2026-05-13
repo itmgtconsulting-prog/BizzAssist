@@ -172,6 +172,7 @@ interface EjfGqlResult {
  */
 async function hentBfeForCvr(cvr: string): Promise<number[]> {
   // ── Trin 1: Cache-lookup i ejf_ejerskab ──
+  let staleBfes: number[] = [];
   try {
     const admin = createAdminClient();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -196,7 +197,11 @@ async function hentBfeForCvr(cvr: string): Promise<number[]> {
         logger.log(`[forsikring-gap] Cache hit: ${bfes.length} BFE for CVR ${cvr}`);
         return [...new Set(bfes)];
       }
-      logger.log(`[forsikring-gap] Cache stale for CVR ${cvr} — falder til live EJF`);
+      logger.log(`[forsikring-gap] Cache stale for CVR ${cvr} — prøver live EJF`);
+      // Gem stale data som fallback hvis live EJF fejler
+      staleBfes = cached
+        .map((r: { bfe_nummer: number }) => r.bfe_nummer)
+        .filter((b: number) => b != null);
     }
   } catch (err) {
     logger.warn('[forsikring-gap] Cache lookup fejl:', err instanceof Error ? err.message : err);
@@ -205,6 +210,13 @@ async function hentBfeForCvr(cvr: string): Promise<number[]> {
   // ── Trin 2: Live EJF GraphQL ──
   const token = await getEjfToken();
   if (!token) {
+    // Graceful fallback: brug stale cache-data hvis live EJF ikke er tilgængelig
+    if (staleBfes.length > 0) {
+      logger.warn(
+        `[forsikring-gap] EJF token unavailable — bruger stale cache (${staleBfes.length} BFE)`
+      );
+      return [...new Set(staleBfes)];
+    }
     throw new Error('Kunne ikke hente Datafordeler-token — OAuth-nøgler mangler eller er ugyldige');
   }
 

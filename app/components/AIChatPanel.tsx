@@ -496,6 +496,42 @@ function AIChatPanel() {
       }
     }
 
+    // BIZZ-1388: Forsikrings-data for rapport-generering
+    if (pageData?.forsikringPolicer && pageData.forsikringPolicer.length > 0) {
+      const lines = [
+        `\n[FORSIKRINGSPOLICER] ${pageData.forsikringPolicer.length} uploadede policer:`,
+      ];
+      for (const p of pageData.forsikringPolicer) {
+        const gaps = [
+          p.gapsCritical > 0 ? `${p.gapsCritical} kritiske` : null,
+          p.gapsWarning > 0 ? `${p.gapsWarning} advarsler` : null,
+          p.gapsInfo > 0 ? `${p.gapsInfo} info` : null,
+        ]
+          .filter(Boolean)
+          .join(', ');
+        lines.push(
+          `- Police ${p.policenummer} (${p.selskab}) — ${p.adresse ?? 'ukendt adresse'}${gaps ? ` — gaps: ${gaps}` : ''}`
+        );
+      }
+      parts.push(lines.join('\n'));
+    }
+    if (pageData?.forsikringAnalyse) {
+      const fa = pageData.forsikringAnalyse;
+      parts.push(
+        `\n[FORSIKRING GAP-ANALYSE]${fa.kundeNavn ? ` Kunde: ${fa.kundeNavn}` : ''}\n` +
+          `Aktiver: ${fa.totalAktiver} | Forsikrede: ${fa.forsikrede} | Uforsikrede: ${fa.uforsikrede} | Risk score: ${fa.riskScore} | Gaps: ${fa.gapsCount}`
+      );
+    }
+    if (pageData?.forsikringGaps && pageData.forsikringGaps.length > 0) {
+      const lines = [`\n[FORSIKRING GAPS] ${pageData.forsikringGaps.length} detekterede gaps:`];
+      for (const g of pageData.forsikringGaps.slice(0, 30)) {
+        lines.push(
+          `- [${g.severity.toUpperCase()}] ${g.title}: ${g.description.slice(0, 100)}${g.recommendation ? ` → ${g.recommendation.slice(0, 80)}` : ''}`
+        );
+      }
+      parts.push(lines.join('\n'));
+    }
+
     return parts.length > 0 ? parts.join('\n\n') : undefined;
   }, [pathname, pageData, a]);
 

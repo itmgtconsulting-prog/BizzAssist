@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useSetAIPageContext } from '@/app/context/AIPageContext';
 import {
   ShieldCheck,
   Upload,
@@ -292,6 +293,7 @@ function localId(): string {
 export default function ForsikringPageClient(): React.ReactElement {
   const { lang } = useLanguage();
   const t = translations[lang].forsikring;
+  const setAICtx = useSetAIPageContext();
 
   const [data, setData] = useState<ListResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -323,6 +325,34 @@ export default function ForsikringPageClient(): React.ReactElement {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  /** BIZZ-1388: Sæt AI-kontekst med forsikringsdata så chat kan generere rapporter */
+  useEffect(() => {
+    if (!data) return;
+    const totals = data.totals;
+    setAICtx({
+      pageType: 'domain',
+      forsikringPolicer: data.policies.map((p) => ({
+        policenummer: p.policy_number,
+        selskab: p.insurer_name,
+        adresse: p.property_address,
+        praemie: p.annual_premium_dkk,
+        udloeber: p.effective_to,
+        gapsCritical: p.gap_counts.critical,
+        gapsWarning: p.gap_counts.warning,
+        gapsInfo: p.gap_counts.info,
+      })),
+      forsikringAnalyse: {
+        kundeNavn: null,
+        totalAktiver: 0,
+        forsikrede: 0,
+        uforsikrede: 0,
+        riskScore: 0,
+        gapsCount: totals.gaps_critical + totals.gaps_warning + totals.gaps_info,
+      },
+    });
+    return () => setAICtx(null);
+  }, [data, setAICtx]);
 
   /**
    * Upload + parse pipeline for a single file.
@@ -510,15 +540,24 @@ export default function ForsikringPageClient(): React.ReactElement {
         </section>
       )}
 
-      {/* Uploadede policer — compact header */}
+      {/* Uploadede policer — compact header med rapport-link */}
       {policies.length > 0 && (
-        <div className="flex items-center gap-2 text-sm font-semibold text-white">
-          <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">
-            3
-          </span>
-          {lang === 'da'
-            ? `${policies.length} policer uploadet — ${(data?.totals?.gaps_critical ?? 0) + (data?.totals?.gaps_warning ?? 0)} gaps fundet`
-            : `${policies.length} policies uploaded — ${(data?.totals?.gaps_critical ?? 0) + (data?.totals?.gaps_warning ?? 0)} gaps found`}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm font-semibold text-white">
+            <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">
+              3
+            </span>
+            {lang === 'da'
+              ? `${policies.length} policer — ${(data?.totals?.gaps_critical ?? 0) + (data?.totals?.gaps_warning ?? 0)} gaps fundet`
+              : `${policies.length} policies — ${(data?.totals?.gaps_critical ?? 0) + (data?.totals?.gaps_warning ?? 0)} gaps found`}
+          </div>
+          <Link
+            href="/dashboard/forsikring/rapport"
+            className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5"
+          >
+            <ShieldCheck size={13} />
+            {lang === 'da' ? 'Se rapport' : 'View report'}
+          </Link>
         </div>
       )}
 

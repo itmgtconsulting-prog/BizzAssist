@@ -33,7 +33,6 @@ import {
   Sparkles,
   Coins,
   LifeBuoy,
-  ShieldCheck,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { isDomainFeatureEnabled } from '@/app/lib/featureFlags';
@@ -84,13 +83,6 @@ const navItems = [
   // BIZZ-1037: Analyse-sektion (erstatter /dashboard/analysis)
   { icon: BarChart2, key: 'analysis' as const, href: '/dashboard/analyse', adminOnly: false },
   { icon: MessageSquare, key: 'chat' as const, href: '/dashboard/chat', adminOnly: false },
-  // BIZZ-FORSIKRING: Forsikrings-modul (MVP) — upload + gap-analyse
-  {
-    icon: ShieldCheck,
-    key: 'forsikring' as const,
-    href: '/dashboard/forsikring',
-    adminOnly: false,
-  },
   // BIZZ-656: Synligt entry-point til token-køb for almindelige brugere —
   // tidligere kunne man kun nå /dashboard/tokens via trial-blocked-banneret
   // i AI-chat, så brugere uden chat-interaktion havde ingen synlig CTA.

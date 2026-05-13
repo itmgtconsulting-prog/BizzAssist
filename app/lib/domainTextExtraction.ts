@@ -173,7 +173,69 @@ export async function extractTextFromBuffer(
         break;
       }
       case 'pdf': {
-        // pdf-parse v3+ exports PDFParse class — instantiate with
+        // BIZZ-1380: Polyfill DOMMatrix for Vercel serverless (Node.js
+        // environments without canvas/DOM APIs). pdf-parse v2 bruger
+        // pdfjs-dist som kræver DOMMatrix.
+        if (typeof globalThis.DOMMatrix === 'undefined') {
+          // Minimal DOMMatrix polyfill — pdfjs bruger kun constructor +
+          // identity-matrix til font-metric beregninger.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (globalThis as any).DOMMatrix = class DOMMatrix {
+            a = 1;
+            b = 0;
+            c = 0;
+            d = 1;
+            e = 0;
+            f = 0;
+            m11 = 1;
+            m12 = 0;
+            m13 = 0;
+            m14 = 0;
+            m21 = 0;
+            m22 = 1;
+            m23 = 0;
+            m24 = 0;
+            m31 = 0;
+            m32 = 0;
+            m33 = 1;
+            m34 = 0;
+            m41 = 0;
+            m42 = 0;
+            m43 = 0;
+            m44 = 1;
+            is2D = true;
+            isIdentity = true;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            constructor(init?: any) {
+              if (Array.isArray(init) && init.length === 6) {
+                [this.a, this.b, this.c, this.d, this.e, this.f] = init;
+                this.m11 = this.a;
+                this.m12 = this.b;
+                this.m21 = this.c;
+                this.m22 = this.d;
+                this.m41 = this.e;
+                this.m42 = this.f;
+                this.isIdentity = false;
+              }
+            }
+            inverse() {
+              return new DOMMatrix();
+            }
+            multiply() {
+              return new DOMMatrix();
+            }
+            scale() {
+              return new DOMMatrix();
+            }
+            translate() {
+              return new DOMMatrix();
+            }
+            transformPoint(p: { x?: number; y?: number }) {
+              return { x: p.x ?? 0, y: p.y ?? 0, z: 0, w: 1 };
+            }
+          };
+        }
+        // pdf-parse v2 exports PDFParse class — instantiate with
         // Uint8Array (pdfjs-dist rejects Buffer), load, then getText.
         const { PDFParse } = await import('pdf-parse');
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

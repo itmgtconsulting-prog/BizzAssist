@@ -848,4 +848,21 @@ export async function provisionTenantSchema(schemaName: string, tenantId: string
       `[provisionTenantSchema] ai_chat_tables ikke oprettet for "${schemaName}": ${chatErr.message}`
     );
   }
+
+  // BIZZ-FORSIKRING: Forsikrings-modul tabeller (forsikring_documents,
+  // forsikring_policies, forsikring_coverages, forsikring_gaps) provisioneres
+  // via separat RPC af samme grund som ai_tables — bevarer monolitisk
+  // provision_tenant_schema uændret. Idempotent via CREATE TABLE IF NOT EXISTS
+  // i provision_tenant_forsikring_tables (migration 096).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error: forsikringErr } = await (admin.rpc as any)('provision_tenant_forsikring_tables', {
+    p_schema_name: schemaName,
+    p_tenant_id: tenantId,
+  });
+
+  if (forsikringErr) {
+    logger.warn(
+      `[provisionTenantSchema] forsikring-tabeller ikke oprettet for "${schemaName}": ${forsikringErr.message}`
+    );
+  }
 }

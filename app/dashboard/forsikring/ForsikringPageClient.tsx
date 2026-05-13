@@ -226,27 +226,61 @@ function AnalyseSection({ lang }: { lang: string }) {
         </button>
       )}
 
-      {/* Resultat */}
-      {analyseResult && (
-        <div className="grid grid-cols-4 gap-3 mt-2">
-          <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-3 text-center">
-            <div className="text-blue-300 text-xl font-bold">{analyseResult.total_aktiver}</div>
-            <div className="text-slate-400 text-xs">{da ? 'Aktiver' : 'Assets'}</div>
-          </div>
-          <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 text-center">
-            <div className="text-emerald-300 text-xl font-bold">{analyseResult.insured_count}</div>
-            <div className="text-slate-400 text-xs">{da ? 'Forsikrede' : 'Insured'}</div>
-          </div>
-          <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 text-center">
-            <div className="text-red-300 text-xl font-bold">{analyseResult.gaps_count}</div>
-            <div className="text-slate-400 text-xs">{da ? 'Gaps' : 'Gaps'}</div>
-          </div>
-          <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-center">
-            <div className="text-amber-300 text-xl font-bold">{analyseResult.total_risk_score}</div>
-            <div className="text-slate-400 text-xs">{da ? 'Risk score' : 'Risk score'}</div>
-          </div>
-        </div>
-      )}
+      {/* BIZZ-1390: Resultat med dækningsgrad i stedet for risk score */}
+      {analyseResult &&
+        (() => {
+          const total = analyseResult.total_aktiver;
+          const insured = analyseResult.insured_count;
+          const pct = total > 0 ? Math.round((insured / total) * 100) : 0;
+          const isGood = pct >= 80;
+          const isBad = pct < 50;
+          return (
+            <div className="space-y-3 mt-2">
+              {/* Dækningsgrad-bar */}
+              <div className="bg-white/5 border border-white/8 rounded-xl p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm text-white font-medium">
+                    {da ? 'Dækningsgrad' : 'Coverage rate'}
+                  </span>
+                  <span
+                    className={`text-lg font-bold ${isGood ? 'text-emerald-400' : isBad ? 'text-red-400' : 'text-amber-400'}`}
+                  >
+                    {pct}%
+                  </span>
+                </div>
+                <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${isGood ? 'bg-emerald-500' : isBad ? 'bg-red-500' : 'bg-amber-500'}`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <div className="flex justify-between mt-1.5 text-xs text-slate-500">
+                  <span>
+                    {insured} {da ? 'forsikrede' : 'insured'} / {total} {da ? 'aktiver' : 'assets'}
+                  </span>
+                  <span>{analyseResult.gaps_count} gaps</span>
+                </div>
+              </div>
+              {/* Quick stats */}
+              <div className="grid grid-cols-3 gap-2">
+                <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-2.5 text-center">
+                  <div className="text-emerald-300 text-lg font-bold">{insured}</div>
+                  <div className="text-slate-400 text-[10px]">{da ? 'Forsikrede' : 'Insured'}</div>
+                </div>
+                <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-2.5 text-center">
+                  <div className="text-red-300 text-lg font-bold">{total - insured}</div>
+                  <div className="text-slate-400 text-[10px]">
+                    {da ? 'Uforsikrede' : 'Uninsured'}
+                  </div>
+                </div>
+                <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-2.5 text-center">
+                  <div className="text-amber-300 text-lg font-bold">{analyseResult.gaps_count}</div>
+                  <div className="text-slate-400 text-[10px]">Gaps</div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
     </section>
   );
 }

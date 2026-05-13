@@ -99,6 +99,27 @@ function AnalyseSection({ lang }: { lang: string }) {
     total_risk_score: number;
   } | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** BIZZ-1384: Sagsliste */
+  const [sager, setSager] = useState<
+    Array<{
+      id: string;
+      kunde_type: string;
+      kunde_id: string;
+      kunde_navn: string | null;
+      status: string;
+      police_count: number;
+      analyse_count: number;
+      updated_at: string;
+    }>
+  >([]);
+
+  /** Hent sagsliste ved mount */
+  useEffect(() => {
+    fetch('/api/forsikring/sager')
+      .then((r) => (r.ok ? r.json() : { sager: [] }))
+      .then((d) => setSager(d.sager ?? []))
+      .catch(() => {});
+  }, []);
 
   /** Debounced søgning via /api/search */
   const handleSearch = useCallback((value: string) => {
@@ -126,12 +147,23 @@ function AnalyseSection({ lang }: { lang: string }) {
     }, 300);
   }, []);
 
-  /** Start gap-analyse */
+  /** Start gap-analyse + opret/find sag */
   const startAnalyse = useCallback(async () => {
     if (!selected || running) return;
     setRunning(true);
     setAnalyseResult(null);
     try {
+      // BIZZ-1384: Auto-opret sag ved analyse
+      await fetch('/api/forsikring/sager', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kunde_type: selected.type,
+          kunde_id: selected.id,
+          kunde_navn: selected.navn,
+        }),
+      });
+      // Kør analyse
       const res = await fetch('/api/forsikring/analyser', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -143,6 +175,11 @@ function AnalyseSection({ lang }: { lang: string }) {
       });
       if (res.ok) {
         setAnalyseResult(await res.json());
+        // Refresh sagsliste
+        fetch('/api/forsikring/sager')
+          .then((r) => (r.ok ? r.json() : { sager: [] }))
+          .then((d) => setSager(d.sager ?? []))
+          .catch(() => {});
       }
     } catch {
       // Handled silently
@@ -281,6 +318,34 @@ function AnalyseSection({ lang }: { lang: string }) {
             </div>
           );
         })()}
+      {/* BIZZ-1384: Sagsliste — tidligere kunder */}
+      {sager.length > 0 && !selected && (
+        <div className="mt-3 space-y-1">
+          <div className="text-slate-500 text-[10px] uppercase tracking-wide">
+            {da ? 'Tidligere kunder' : 'Previous customers'}
+          </div>
+          {sager.slice(0, 5).map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => {
+                setSelected({
+                  type: s.kunde_type as 'virksomhed' | 'person',
+                  id: s.kunde_id,
+                  navn: s.kunde_navn ?? s.kunde_id,
+                });
+              }}
+              className="w-full text-left px-3 py-2 bg-white/3 hover:bg-white/5 rounded-lg text-xs flex items-center justify-between"
+            >
+              <span className="text-white font-medium">{s.kunde_navn ?? s.kunde_id}</span>
+              <span className="text-slate-500">
+                {s.police_count} {da ? 'policer' : 'policies'} · {s.analyse_count}{' '}
+                {da ? 'analyser' : 'analyses'}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
     </section>
   );
 }

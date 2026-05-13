@@ -190,6 +190,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
 
     // Kør gap-engine v1 (BBR-frit — kun coverage og dato-baserede checks)
+    // BIZZ-1391: Slet eksisterende gaps for policen før re-indsættelse (dedup)
+    await insurance.gaps.deleteForPolicy(policy.id);
     const detectedGaps = runGapEngine({
       policy,
       coverages,

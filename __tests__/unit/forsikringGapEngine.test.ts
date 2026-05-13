@@ -312,3 +312,119 @@ describe('countBySeverity', () => {
     expect(counts.critical).toBeGreaterThan(0);
   });
 });
+
+// ─── BIZZ-1364: Asset-level checks ──────────────────────────────
+
+describe('runGapEngine — asset-level checks', () => {
+  it('GAP-100: flagger uforsikret aktiv (matchScore 0)', () => {
+    const gaps = runGapEngine(
+      makeInput({
+        asset: { type: 'ejendom', vaerdiDkk: 2_000_000, matchScore: 0 },
+      })
+    );
+    const gap = gaps.find((g) => g.check_id === 'GAP-100');
+    expect(gap).toBeDefined();
+    expect(gap?.severity).toBe('critical'); // > 1M
+  });
+
+  it('GAP-100: flagger ikke når matchScore > 0', () => {
+    const gaps = runGapEngine(
+      makeInput({
+        asset: { type: 'ejendom', vaerdiDkk: 500_000, matchScore: 90 },
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-100')).toBeUndefined();
+  });
+
+  it('GAP-100: warning for lav-værdi aktiv', () => {
+    const gaps = runGapEngine(
+      makeInput({
+        asset: { type: 'ejendom', vaerdiDkk: 500_000, matchScore: 0 },
+      })
+    );
+    const gap = gaps.find((g) => g.check_id === 'GAP-100');
+    expect(gap?.severity).toBe('warning'); // < 1M
+  });
+
+  it('GAP-101: flagger underforsikret (sum < 90% af værdi)', () => {
+    const gaps = runGapEngine(
+      makeInput({
+        policy: makePolicy({ sum_insured_dkk: 3_000_000 }),
+        asset: { type: 'ejendom', vaerdiDkk: 5_000_000 },
+      })
+    );
+    const gap = gaps.find((g) => g.check_id === 'GAP-101');
+    expect(gap).toBeDefined();
+    expect(gap?.severity).toBe('critical'); // 60% < 70%
+  });
+
+  it('GAP-101: flagger ikke når sum >= 90% af værdi', () => {
+    const gaps = runGapEngine(
+      makeInput({
+        policy: makePolicy({ sum_insured_dkk: 4_600_000 }),
+        asset: { type: 'ejendom', vaerdiDkk: 5_000_000 },
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-101')).toBeUndefined();
+  });
+
+  it('GAP-102: flagger når hæftelser > forsikringssum', () => {
+    const gaps = runGapEngine(
+      makeInput({
+        policy: makePolicy({ sum_insured_dkk: 3_000_000 }),
+        asset: { type: 'ejendom', haeftelserDkk: 5_000_000 },
+      })
+    );
+    const gap = gaps.find((g) => g.check_id === 'GAP-102');
+    expect(gap).toBeDefined();
+    expect(gap?.severity).toBe('critical');
+  });
+
+  it('GAP-102: flagger ikke når sum >= hæftelser', () => {
+    const gaps = runGapEngine(
+      makeInput({
+        policy: makePolicy({ sum_insured_dkk: 5_000_000 }),
+        asset: { type: 'ejendom', haeftelserDkk: 3_000_000 },
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-102')).toBeUndefined();
+  });
+
+  it('GAP-103: flagger bestyrelsespost uden D&O', () => {
+    const gaps = runGapEngine(
+      makeInput({
+        asset: { type: 'bestyrelsespost', virksomhedsform: 'A/S' },
+      })
+    );
+    const gap = gaps.find((g) => g.check_id === 'GAP-103');
+    expect(gap).toBeDefined();
+    expect(gap?.severity).toBe('critical'); // A/S
+  });
+
+  it('GAP-103: warning for ApS bestyrelsespost', () => {
+    const gaps = runGapEngine(
+      makeInput({
+        asset: { type: 'bestyrelsespost', virksomhedsform: 'ApS' },
+      })
+    );
+    const gap = gaps.find((g) => g.check_id === 'GAP-103');
+    expect(gap?.severity).toBe('warning'); // ApS
+  });
+
+  it('GAP-103: flagger ikke for ejendom-aktiv', () => {
+    const gaps = runGapEngine(
+      makeInput({
+        asset: { type: 'ejendom' },
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-103')).toBeUndefined();
+  });
+
+  it('ingen asset-checks når asset er undefined', () => {
+    const gaps = runGapEngine(makeInput({}));
+    const assetGaps = gaps.filter((g) =>
+      ['GAP-100', 'GAP-101', 'GAP-102', 'GAP-103'].includes(g.check_id)
+    );
+    expect(assetGaps).toHaveLength(0);
+  });
+});

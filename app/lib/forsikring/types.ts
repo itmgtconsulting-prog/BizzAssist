@@ -265,6 +265,15 @@ export interface GapEngineInput {
   bbr: BbrPropertyFacts | null;
   /** Hvilken dato analyse er kørt — bruges til "udløber snart"-check */
   asOfDate: Date;
+  /** BIZZ-1364: Optionelt asset fra koncern-walk (til asset-level checks) */
+  asset?: {
+    type: 'ejendom' | 'virksomhed' | 'bil' | 'bestyrelsespost';
+    vaerdiDkk?: number;
+    haeftelserDkk?: number;
+    byggeaar?: number;
+    matchScore?: number;
+    virksomhedsform?: string;
+  };
 }
 
 /**

@@ -322,6 +322,120 @@ const checkBuildingUseMismatch: CheckFn = ({ policy, bbr }) => {
  * Alle aktive checks. Tilføj nye checks her — gap-engine kalder dem
  * sekventielt og samler ikke-null resultater.
  *
+// ─── BIZZ-1364: Asset-level checks ──────────────────────────────
+
+/**
+ * GAP-100: Uforsikret aktiv — ingen matchende police fundet.
+ * Severity: critical hvis værdi > 1M DKK, ellers warning.
+ *
+ * @param input - GapEngineInput med asset-data
+ * @returns DetectedGap eller null
+ */
+function checkUninsuredAsset(input: GapEngineInput): DetectedGap | null {
+  if (!input.asset || input.asset.matchScore !== 0) return null;
+  // matchScore === 0 betyder ingen match fundet
+  const value = input.asset.vaerdiDkk ?? 0;
+  const severity = value > 1_000_000 ? 'critical' : 'warning';
+  return {
+    check_id: 'GAP-100',
+    category: 'uforsikret',
+    severity,
+    title: 'Uforsikret aktiv',
+    description: `Aktivet har ingen matchende forsikringspolice. Estimeret værdi: ${value > 0 ? `${Math.round(value / 1000)}k DKK` : 'ukendt'}.`,
+    recommendation: 'Tegn forsikring der dækker dette aktiv — kontakt forsikringsmægler.',
+    estimated_impact_dkk: value > 0 ? value : null,
+    source_data: { asset_type: input.asset.type, vaerdi: value },
+  };
+}
+
+/**
+ * GAP-101: Underforsikret aktiv — police-sum < 90% af aktiv-værdi.
+ * Severity: critical hvis < 70%, ellers warning.
+ *
+ * @param input - GapEngineInput med asset-data
+ * @returns DetectedGap eller null
+ */
+function checkUnderinsuredAsset(input: GapEngineInput): DetectedGap | null {
+  if (!input.asset) return null;
+  const value = input.asset.vaerdiDkk;
+  const insured = input.policy.sum_insured_dkk;
+  if (!value || !insured || value <= 0) return null;
+  const ratio = insured / value;
+  if (ratio >= 0.9) return null;
+  const severity = ratio < 0.7 ? 'critical' : 'warning';
+  const pct = Math.round(ratio * 100);
+  return {
+    check_id: 'GAP-101',
+    category: 'underforsikret',
+    severity,
+    title: 'Underforsikret aktiv',
+    description: `Forsikringssum (${Math.round(insured / 1000)}k DKK) dækker kun ${pct}% af aktivets estimerede værdi (${Math.round(value / 1000)}k DKK).`,
+    recommendation: 'Forhøj forsikringssummen til mindst 100% af aktivets værdi.',
+    estimated_impact_dkk: value - insured,
+    source_data: { vaerdi: value, insured, ratio: pct },
+  };
+}
+
+/**
+ * GAP-102: Realkredit-gab — tinglyste hæftelser > police-sum.
+ * Severity: critical (panthaver-risiko).
+ *
+ * @param input - GapEngineInput med asset-data
+ * @returns DetectedGap eller null
+ */
+function checkMortgageGap(input: GapEngineInput): DetectedGap | null {
+  if (!input.asset) return null;
+  const haeftelser = input.asset.haeftelserDkk;
+  const insured = input.policy.sum_insured_dkk;
+  if (!haeftelser || !insured || haeftelser <= 0) return null;
+  if (insured >= haeftelser) return null;
+  return {
+    check_id: 'GAP-102',
+    category: 'realkredit',
+    severity: 'critical',
+    title: 'Hæftelser overstiger forsikringssum',
+    description: `Tinglyste hæftelser (${Math.round(haeftelser / 1000)}k DKK) overstiger forsikringssummen (${Math.round(insured / 1000)}k DKK). Panthaver risikerer tab ved totalskade.`,
+    recommendation:
+      'Forhøj forsikringssummen til mindst hæftelsesbeløbet eller aftal specifik panthavergaranti.',
+    estimated_impact_dkk: haeftelser - insured,
+    source_data: { haeftelser, insured },
+  };
+}
+
+/**
+ * GAP-103: Manglende D&O — bestyrelsespost i A/S uden D&O-police.
+ * Severity: critical for A/S, warning for ApS.
+ *
+ * @param input - GapEngineInput med asset-data
+ * @returns DetectedGap eller null
+ */
+function checkMissingDnO(input: GapEngineInput): DetectedGap | null {
+  if (!input.asset || input.asset.type !== 'bestyrelsespost') return null;
+  // Tjek om policen er en D&O-type
+  const policyText = [input.policy.business_activity, input.policy.raw_metadata?.type as string]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  const isDnO =
+    policyText.includes('d&o') ||
+    policyText.includes('bestyrelse') ||
+    policyText.includes('directors');
+  if (isDnO) return null; // Allerede dækket
+  const isAS = input.asset.virksomhedsform === 'A/S';
+  return {
+    check_id: 'GAP-103',
+    category: 'manglende_ansvar',
+    severity: isAS ? 'critical' : 'warning',
+    title: 'Manglende D&O-forsikring',
+    description: `Bestyrelsespost uden Directors & Officers forsikring. ${isAS ? 'Personligt ansvar for A/S-bestyrelsesmedlemmer.' : 'Anbefales for ApS-bestyrelser.'}`,
+    recommendation:
+      'Tegn D&O-forsikring der dækker bestyrelses- og direktionsmedlemmers personlige ansvar.',
+    estimated_impact_dkk: null,
+    source_data: { asset_type: 'bestyrelsespost', virksomhedsform: input.asset.virksomhedsform },
+  };
+}
+
+/**
  * Rækkefølge afspejler præsentations-prioritet i UI:
  *   1. Kritiske kontrakt-risici (areal, anvendelse)
  *   2. Manglende dækninger (kritisk → warning → info)
@@ -329,6 +443,12 @@ const checkBuildingUseMismatch: CheckFn = ({ policy, bbr }) => {
  *   4. Identitets-checks (CVR-match)
  */
 const CHECKS: readonly CheckFn[] = [
+  // Asset-level checks (BIZZ-1364)
+  checkUninsuredAsset,
+  checkUnderinsuredAsset,
+  checkMortgageGap,
+  checkMissingDnO,
+  // Police-level checks
   checkBbrAreaMismatch,
   checkBuildingUseMismatch,
   checkMissingInsektSvamp,

@@ -49,18 +49,6 @@ export const ANALYSE_MODULES: AnalyseModuleConfig[] = [
     hint: 'Søg en ejendom og vælg annonce-tone. AI henter BBR-data, vurdering og energimærke automatisk.',
   },
   {
-    id: 'forsikring',
-    label: 'Forsikrings-gap',
-    labelEn: 'Insurance gap',
-    icon: 'Shield',
-    path: '/dashboard/analyse/forsikring',
-    enabled: { dev: true, preview: true, prod: false },
-    requiredPlan: 'professionel',
-    description: 'Identificér dækningsgab i kundens forsikringsportefølje',
-    defaultTarget: 'virksomhed',
-    hint: 'Vælg en kunde (person eller virksomhed), upload policeliste (CSV), og få en gap-rapport med risiko-scoring.',
-  },
-  {
     id: 'kreditvurdering',
     label: 'Kreditvurdering',
     labelEn: 'Credit assessment',

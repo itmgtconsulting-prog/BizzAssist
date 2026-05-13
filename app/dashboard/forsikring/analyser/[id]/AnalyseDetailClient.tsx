@@ -21,6 +21,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Loader2,
+  Download,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 
@@ -138,6 +139,15 @@ export default function AnalyseDetailClient({ analyseId }: { analyseId: string }
             {new Date(analyse.created_at).toLocaleDateString('da-DK')}
           </p>
         </div>
+        {/* BIZZ-1376: Eksport-knap */}
+        <a
+          href={`/api/forsikring/analyser/${analyseId}/eksport?format=csv`}
+          download
+          className="ml-auto bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5"
+        >
+          <Download size={13} />
+          {da ? 'Eksportér CSV' : 'Export CSV'}
+        </a>
       </div>
 
       {/* KPI tiles */}
@@ -262,6 +272,34 @@ export default function AnalyseDetailClient({ analyseId }: { analyseId: string }
               ))}
             </div>
           )}
+        </section>
+      )}
+
+      {/* BIZZ-1375: Simpel koncern-visualisering */}
+      {aktiver.length > 0 && (
+        <section className="bg-white/5 border border-white/8 rounded-2xl p-5">
+          <h2 className="text-white font-semibold text-sm mb-3">
+            {da ? 'Koncern-overblik' : 'Corporate overview'}
+          </h2>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {(['ejendom', 'virksomhed', 'bestyrelsespost', 'bil'] as const).map((type) => {
+              const count = aktiver.filter((a) => a.type === type).length;
+              if (count === 0) return null;
+              const matched = aktiver.filter((a) => a.type === type && a.matched_policy_id).length;
+              const icon = typeIcon(type);
+              return (
+                <div key={type} className="bg-white/3 rounded-xl p-3 flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-white/5">{icon}</div>
+                  <div>
+                    <div className="text-white text-sm font-medium capitalize">{type}</div>
+                    <div className="text-slate-400 text-xs">
+                      {matched}/{count} {da ? 'forsikrede' : 'insured'}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </section>
       )}
 

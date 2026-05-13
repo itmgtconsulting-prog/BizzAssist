@@ -306,8 +306,10 @@ export default function ForsikringPageClient(): React.ReactElement {
     try {
       const res = await fetch('/api/forsikring', { cache: 'no-store' });
       if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? `HTTP ${res.status}`);
+        const body = (await res.json().catch(() => ({}))) as { error?: string; detail?: string };
+        throw new Error(
+          body.detail ? `${body.error}: ${body.detail}` : (body.error ?? `HTTP ${res.status}`)
+        );
       }
       const json = (await res.json()) as ListResponse;
       setData(json);

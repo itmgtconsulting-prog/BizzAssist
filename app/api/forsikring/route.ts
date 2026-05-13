@@ -91,6 +91,9 @@ export async function GET(): Promise<NextResponse> {
     ) {
       return NextResponse.json({ error: 'Ikke adgang til forsikringsmodulet' }, { status: 403 });
     }
-    return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Serverfejl', detail: message.slice(0, 200) },
+      { status: 500 }
+    );
   }
 }

@@ -328,7 +328,6 @@ export default function ForsikringPageClient(): React.ReactElement {
   const { lang } = useLanguage();
   const t = translations[lang].forsikring;
   const setAICtx = useSetAIPageContext();
-
   const [data, setData] = useState<ListResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -586,11 +585,15 @@ export default function ForsikringPageClient(): React.ReactElement {
               : `${policies.length} policies — ${(data?.totals?.gaps_critical ?? 0) + (data?.totals?.gaps_warning ?? 0)} gaps found`}
           </div>
           <Link
-            href="/dashboard/forsikring/rapport"
+            href={`/dashboard/chat?context=${encodeURIComponent(
+              lang === 'da'
+                ? 'Lav en mæglerrapport i Word-format med alle forsikringsgaps, anbefalinger og handlingsplan.'
+                : 'Create a broker report in Word format with all coverage gaps, recommendations and action plan.'
+            )}`}
             className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5"
           >
             <ShieldCheck size={13} />
-            {lang === 'da' ? 'Se rapport' : 'View report'}
+            {lang === 'da' ? 'Lav rapport via AI' : 'Generate report via AI'}
           </Link>
         </div>
       )}

@@ -16,6 +16,11 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { assertAiAllowed } from '@/app/lib/aiGate';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { getEjfToken } from '@/app/lib/ejfIngest';
+import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
+import { EJF_GQL_ENDPOINT, DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
+import { fetchDawa } from '@/app/lib/dawa';
 import type { ForsikringsType, ParsedPolice } from '@/app/lib/parsePoliceFile';
 
 export const maxDuration = 60;
@@ -147,22 +152,155 @@ function parseFritekstTilPolicer(tekst: string): ParsedPolice[] {
 
 // ─── Aktiv-hentning ─────────────────────────────────────────────────────────
 
+/** EJF GraphQL response for CVR-ejerskab */
+interface EjfCvrNode {
+  bestemtFastEjendomBFENr: number | null;
+}
+
+/** EJF GraphQL wrapper */
+interface EjfGqlResult {
+  data?: Record<string, { nodes?: EjfCvrNode[] }>;
+  errors?: Array<{ message: string; extensions?: { code?: string } }>;
+}
+
 /**
- * Henter alle aktiver for en kunde via interne API-routes.
+ * Henter BFE-numre for et CVR via ejf_ejerskab cache → live EJF GraphQL fallback.
+ * Ingen intern HTTP-roundtrip — kalder DB og Datafordeler direkte.
  *
- * Person-flow:
+ * @param cvr - CVR-nummer
+ * @returns Array af BFE-numre
+ */
+async function hentBfeForCvr(cvr: string): Promise<number[]> {
+  // ── Trin 1: Cache-lookup i ejf_ejerskab ──
+  try {
+    const admin = createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: cached, error: cacheErr } = await (admin as any)
+      .from('ejf_ejerskab')
+      .select('bfe_nummer, sidst_opdateret')
+      .eq('ejer_cvr', cvr)
+      .eq('status', 'gældende')
+      .limit(500);
+
+    if (!cacheErr && cached && cached.length > 0) {
+      const freshest = Math.max(
+        ...cached.map((r: { sidst_opdateret: string | null }) =>
+          r.sidst_opdateret ? new Date(r.sidst_opdateret).getTime() : 0
+        )
+      );
+      const STALE_MS = 7 * 24 * 60 * 60 * 1000;
+      if (Date.now() - freshest < STALE_MS) {
+        const bfes: number[] = cached
+          .map((r: { bfe_nummer: number }) => r.bfe_nummer)
+          .filter((b: number) => b != null);
+        logger.log(`[forsikring-gap] Cache hit: ${bfes.length} BFE for CVR ${cvr}`);
+        return [...new Set(bfes)];
+      }
+      logger.log(`[forsikring-gap] Cache stale for CVR ${cvr} — falder til live EJF`);
+    }
+  } catch (err) {
+    logger.warn('[forsikring-gap] Cache lookup fejl:', err instanceof Error ? err.message : err);
+  }
+
+  // ── Trin 2: Live EJF GraphQL ──
+  const token = await getEjfToken();
+  if (!token) {
+    throw new Error('Kunne ikke hente Datafordeler-token — OAuth-nøgler mangler eller er ugyldige');
+  }
+
+  const virkningstid = new Date().toISOString();
+  const query = `{
+    EJFCustom_EjerskabBegraenset(
+      first: 500
+      virkningstid: "${virkningstid}"
+      where: { ejendeVirksomhedCVRNr: { eq: ${parseInt(cvr, 10)} } }
+    ) {
+      nodes { bestemtFastEjendomBFENr }
+    }
+  }`;
+
+  const res = await fetch(proxyUrl(EJF_GQL_ENDPOINT), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      ...proxyHeaders(),
+    },
+    body: JSON.stringify({ query }),
+    signal: AbortSignal.timeout(proxyTimeout()),
+  });
+
+  if (res.status === 403) {
+    throw new Error('Datafordeler-adgang afvist (403) — manglende rettigheder til EJF');
+  }
+  if (!res.ok) {
+    throw new Error(`EJF GraphQL returnerede ${res.status}`);
+  }
+
+  const json = (await res.json()) as EjfGqlResult;
+  const authError = json.errors?.some(
+    (e) => e.extensions?.code === 'DAF-AUTH-0001' || e.message?.includes('not authorized')
+  );
+  if (authError) {
+    throw new Error('EJF-autorisation fejlede (DAF-AUTH-0001)');
+  }
+
+  const nodes = Object.values(json.data ?? {})[0]?.nodes ?? [];
+  const bfes = nodes.map((n) => n.bestemtFastEjendomBFENr).filter((b): b is number => b != null);
+
+  logger.log(`[forsikring-gap] Live EJF: ${bfes.length} BFE for CVR ${cvr}`);
+  return [...new Set(bfes)];
+}
+
+/**
+ * Resolver adresse for ét BFE-nummer via DAWA.
+ *
+ * @param bfe - BFE-nummer
+ * @returns Adressestreng eller null
+ */
+async function hentAdresseForBfe(bfe: number): Promise<string | null> {
+  try {
+    const res = await fetchDawa(
+      `${DAWA_BASE_URL}/bfe/${bfe}`,
+      { signal: AbortSignal.timeout(8000) },
+      { caller: 'forsikring-gap.bfe-adresse' }
+    );
+    if (!res.ok) return null;
+    const json = (await res.json()) as {
+      beliggenhedsadresse?: {
+        vejnavn?: string;
+        husnr?: string;
+        postnr?: string;
+        postnrnavn?: string;
+      };
+    };
+    const bel = json.beliggenhedsadresse;
+    if (!bel?.vejnavn) return null;
+    const parts = [bel.vejnavn, bel.husnr].filter(Boolean).join(' ');
+    const post = [bel.postnr, bel.postnrnavn].filter(Boolean).join(' ');
+    return post ? `${parts}, ${post}` : parts;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Henter alle aktiver for en kunde.
+ *
+ * Virksomhed-flow (direkte — ingen intern HTTP-roundtrip):
+ *   1. ejf_ejerskab cache → live EJF GraphQL → BFE-numre
+ *   2. DAWA → adresser per BFE
+ *   3. /api/tinglysning/bilbog → køretøjer (intern fetch, ikke kritisk)
+ *
+ * Person-flow (intern fetch — person-data kræver CVR-API):
  *   1. /api/ejerskab/person-bridge → navn + fødselsdato
  *   2. /api/ejerskab/person-properties → BFE-numre
  *   3. /api/bfe-addresses → adresser per BFE
  *   4. /api/cvr-public/person → virksomheder + bestyrelsesposter
  *
- * Virksomhed-flow:
- *   1. /api/ejendomme-by-owner → ejendomme ejet af CVR
- *   2. /api/tinglysning/bilbog → køretøjer
- *
  * @param kundeType - person eller virksomhed
  * @param kundeId - enhedsNummer eller CVR
- * @param host - Request host for intern fetch
+ * @param host - Request host for intern fetch (person-flow + bilbog)
  * @param cookie - Cookie header for auth
  * @returns Array af fundne aktiver
  */
@@ -291,63 +429,89 @@ async function hentAktiver(
     ]);
 
     if (ejdResult.status === 'rejected') {
-      logger.warn('[forsikring-gap] Ejendom-hentning fejlede:', ejdResult.reason);
+      logger.error('[forsikring-gap] Ejendom-hentning fejlede:', ejdResult.reason);
+      throw new Error('Kunne ikke hente ejendomsdata — prøv igen senere');
     }
     if (virkResult.status === 'rejected') {
       logger.warn('[forsikring-gap] Virksomhed-hentning fejlede:', virkResult.reason);
     }
   } else {
-    // Virksomhed: hent ejendomme ejet af CVR + køretøjer parallelt
-    const [ejdResult, bilResult] = await Promise.allSettled([
+    // ── Virksomhed: direkte DB + EJF (ingen intern HTTP-roundtrip) ──
+
+    // Trin 1: Hent BFE-numre via cache → live EJF fallback
+    const bfes = await hentBfeForCvr(kundeId);
+
+    // Trin 2+3: Hent adresser (DAWA) + køretøjer (bilbog) parallelt
+    const DAWA_CONCURRENCY = 10;
+    const adresseMap = new Map<number, string | null>();
+
+    const [addrResult, bilResult] = await Promise.allSettled([
+      // DAWA adresse-opslag med begrænset parallelisme
       (async () => {
-        const res = await fetch(`${base}/api/ejendomme-by-owner?cvr=${kundeId}`, {
-          headers,
-          signal: AbortSignal.timeout(15000),
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        for (const p of data?.ejendomme ?? []) {
-          aktiver.push({
-            id: `ejendom-${p.bfe}`,
-            type: 'ejendom',
-            label: p.adresse ?? `BFE ${p.bfe}`,
-            vaerdi: p.vurdering ?? null,
-            adresse: p.adresse ?? null,
-            bfe: p.bfe,
-            cvr: null,
-            risikofaktorer: [],
-            matchetPolice: null,
-          });
+        for (let i = 0; i < bfes.length; i += DAWA_CONCURRENCY) {
+          const chunk = bfes.slice(i, i + DAWA_CONCURRENCY);
+          const results = await Promise.allSettled(
+            chunk.map(async (bfe) => {
+              const addr = await hentAdresseForBfe(bfe);
+              adresseMap.set(bfe, addr);
+            })
+          );
+          for (const r of results) {
+            if (r.status === 'rejected') {
+              logger.warn('[forsikring-gap] DAWA adresse-opslag fejlede:', r.reason);
+            }
+          }
         }
       })(),
+      // Køretøjer via bilbog (intern fetch — ikke kritisk for analyse)
       (async () => {
-        const res = await fetch(`${base}/api/tinglysning/bilbog?cvr=${kundeId}`, {
-          headers,
-          signal: AbortSignal.timeout(15000),
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        for (const bil of data?.biler ?? []) {
-          aktiver.push({
-            id: `koeretoej-${bil.uuid}`,
-            type: 'køretøj',
-            label: [bil.fabrikat, bil.aargang, bil.registreringsnummer].filter(Boolean).join(' '),
-            vaerdi: null,
-            adresse: bil.registreringsnummer ?? bil.stelnummer ?? null,
-            bfe: null,
-            cvr: null,
-            risikofaktorer: [],
-            matchetPolice: null,
+        try {
+          const res = await fetch(`${base}/api/tinglysning/bilbog?cvr=${kundeId}`, {
+            headers,
+            signal: AbortSignal.timeout(15000),
           });
+          if (!res.ok) return;
+          const data = await res.json();
+          for (const bil of data?.biler ?? []) {
+            aktiver.push({
+              id: `koeretoej-${bil.uuid}`,
+              type: 'køretøj',
+              label: [bil.fabrikat, bil.aargang, bil.registreringsnummer].filter(Boolean).join(' '),
+              vaerdi: null,
+              adresse: bil.registreringsnummer ?? bil.stelnummer ?? null,
+              bfe: null,
+              cvr: null,
+              risikofaktorer: [],
+              matchetPolice: null,
+            });
+          }
+        } catch (err) {
+          logger.warn('[forsikring-gap] Bilbog fejlede:', err);
         }
       })(),
     ]);
 
-    if (ejdResult.status === 'rejected') {
-      logger.warn('[forsikring-gap] Ejendom-hentning fejlede:', ejdResult.reason);
+    if (addrResult.status === 'rejected') {
+      logger.warn('[forsikring-gap] Adresse-batch fejlede:', addrResult.reason);
     }
     if (bilResult.status === 'rejected') {
-      logger.warn('[forsikring-gap] Bilbog-hentning fejlede:', bilResult.reason);
+      logger.warn('[forsikring-gap] Bilbog fejlede:', bilResult.reason);
+    }
+
+    // Byg ejendoms-aktiver fra BFE + adresser
+    for (const bfe of bfes) {
+      const adresse = adresseMap.get(bfe) ?? null;
+      aktiver.push({
+        id: `ejendom-${bfe}`,
+        type: 'ejendom',
+        label: adresse ?? `BFE ${bfe}`,
+        vaerdi: null,
+        adresse,
+        bfe,
+        cvr: null,
+        risikofaktorer: [],
+        matchetPolice: null,
+      });
     }
   }
 
@@ -483,6 +647,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Hent aktiver
     const aktiver = await hentAktiver(body.kundeType, body.kundeId, host, cookie);
 
+    // BIZZ-1223: Hvis ingen aktiver fundet, returnér fejl — analysen kræver data
+    if (aktiver.length === 0) {
+      return NextResponse.json(
+        {
+          error:
+            body.kundeType === 'virksomhed'
+              ? 'Kunne ikke finde aktiver (ejendomme/køretøjer) for dette CVR-nummer. Prøv igen senere — data kan være midlertidigt utilgængelige.'
+              : 'Kunne ikke finde aktiver for denne person. Prøv igen senere — data kan være midlertidigt utilgængelige.',
+        },
+        { status: 404 }
+      );
+    }
+
     // Detect gaps
     const gaps = detectGaps(aktiver, policer);
 
@@ -512,7 +689,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json(result);
   } catch (err) {
-    logger.error('[forsikring-gap] Fejl:', err);
-    return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
+    const msg = err instanceof Error ? err.message : 'Ukendt fejl';
+    logger.error('[forsikring-gap] Fejl:', msg);
+    return NextResponse.json(
+      {
+        error:
+          msg.includes('Datafordeler') || msg.includes('ejendomsdata')
+            ? msg
+            : 'Kunne ikke hente data til analysen — prøv igen senere',
+      },
+      { status: 502 }
+    );
   }
 }

@@ -642,8 +642,12 @@ export default function ForsikringGapClient() {
           </div>
 
           {error && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-red-300 text-xs">
-              {error}
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 flex items-start gap-3">
+              <AlertTriangle size={18} className="text-red-400 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-red-300 text-sm font-medium">Analysen kunne ikke gennemføres</p>
+                <p className="text-red-300/80 text-xs mt-1">{error}</p>
+              </div>
             </div>
           )}
         </div>

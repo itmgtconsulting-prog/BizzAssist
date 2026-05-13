@@ -589,6 +589,43 @@ export type ForsikringGapRow = {
   created_at: string;
 };
 
+/** forsikring_analyser row in tenant schema — gap-analyse-kørsel (BIZZ-1361) */
+export type ForsikringAnalyseRow = {
+  id: string;
+  tenant_id: string;
+  kunde_type: 'virksomhed' | 'person';
+  kunde_id: string;
+  kunde_navn: string | null;
+  total_aktiver: number;
+  insured_count: number;
+  uninsured_count: number;
+  total_risk_score: number;
+  summary: Record<string, unknown> | null;
+  created_by: string | null;
+  created_at: string;
+};
+
+/** forsikring_aktiver row in tenant schema — opdagede assets (BIZZ-1361) */
+export type ForsikringAktivRow = {
+  id: string;
+  tenant_id: string;
+  analyse_id: string;
+  type: 'ejendom' | 'virksomhed' | 'bil' | 'bestyrelsespost';
+  label: string;
+  bfe: number | null;
+  cvr: string | null;
+  regnr: string | null;
+  vaerdi_dkk: number | null;
+  haeftelser_dkk: number | null;
+  byggeaar: number | null;
+  ansatte: number | null;
+  adresse: string | null;
+  matched_policy_id: string | null;
+  match_score: number | null;
+  raw_data: Record<string, unknown> | null;
+  created_at: string;
+};
+
 /** email_integrations row in tenant schema — stores OAuth tokens for Gmail/LinkedIn */
 export type EmailIntegrationRow = {
   id: string;

@@ -19,35 +19,63 @@ test.beforeEach(async ({}, testInfo) => {
 });
 
 test.describe('Virksomhed detalje — JaJR Holding ApS', () => {
+  test.describe.configure({ mode: 'serial' });
+
   test.beforeEach(async ({ page }) => {
     await page.goto('/dashboard/companies/41092807');
     await page.waitForLoadState('domcontentloaded');
     await dismissOnboarding(page);
+    // Vent på h1 med virksomhedsnavn
+    await expect(page.getByRole('heading', { name: /JaJR Holding/i })).toBeVisible({
+      timeout: 15_000,
+    });
   });
 
   test('viser virksomhedsnavn og CVR', async ({ page }) => {
-    await expect(page.getByText(/JaJR Holding/i)).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText(/41092807/)).toBeVisible();
+    await expect(page.getByText(/41092807/).first()).toBeVisible();
+  });
+
+  test('viser CVR-badges (status, type)', async ({ page }) => {
+    await expect(page.getByText(/Aktiv|Active|Normal/i).first()).toBeVisible();
+    await expect(page.getByText(/ApS|A\/S|Holding/i).first()).toBeVisible();
   });
 
   test('diagram-tab renderer graf', async ({ page }) => {
-    await page.getByRole('tab', { name: /Diagram|Relations/i }).click();
-    // Vent på at diagrammet renderer (SVG eller canvas)
-    await expect(page.locator('svg').or(page.locator('canvas')).first()).toBeVisible({
-      timeout: 20_000,
-    });
+    await page.locator('text=Diagram').first().click();
+    await expect(page.locator('svg').first()).toBeVisible({ timeout: 20_000 });
   });
 
   test('ejendomme-tab viser ejendomme', async ({ page }) => {
-    await page.getByRole('tab', { name: /Ejendomme|Properties/i }).click();
-    // Bør vise ejendomme fra datterselskaber
+    await page.locator('text=Ejendomme').first().click();
     await expect(page.getByText(/ejendom|BFE|property/i).first()).toBeVisible({ timeout: 20_000 });
   });
 
-  test('gruppe-tab viser relaterede selskaber', async ({ page }) => {
-    await page.getByRole('tab', { name: /Gruppe|Group/i }).click();
-    await expect(page.getByText(/Datterselskab|datter|Subsidiary/i).first()).toBeVisible({
+  test('virksomheder-tab viser relaterede selskaber', async ({ page }) => {
+    await page.locator('text=Virksomheder').first().click();
+    await expect(
+      page.getByText(/Datterselskab|datter|Subsidiary|moderselskab/i).first()
+    ).toBeVisible({ timeout: 15_000 });
+  });
+
+  test('regnskab-tab viser nøgletal', async ({ page }) => {
+    await page.locator('text=Regnskab').first().click();
+    await expect(
+      page.getByText(/Omsætning|Resultat|Egenkapital|Revenue|Profit|Equity|regnskab/i).first()
+    ).toBeVisible({ timeout: 20_000 });
+  });
+
+  test('personer-tab viser bestyrelse og direktion', async ({ page }) => {
+    await page.locator('text=Personer').first().click();
+    await expect(page.getByText(/Direkt|Bestyrelse|Director|Board|rolle/i).first()).toBeVisible({
       timeout: 15_000,
     });
+  });
+
+  test('tinglysning-tab loader', async ({ page }) => {
+    await page.locator('text=Tinglysning').first().click();
+    await page.waitForTimeout(5_000);
+    const panel = page.locator('main, [role="tabpanel"], .flex-1');
+    const content = await panel.first().textContent({ timeout: 10_000 });
+    expect(content?.length).toBeGreaterThan(5);
   });
 });

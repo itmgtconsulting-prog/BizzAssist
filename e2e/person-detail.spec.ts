@@ -20,18 +20,18 @@ test.beforeEach(async ({}, testInfo) => {
 });
 
 test.describe('Person detalje — Jakob Juul Rasmussen', () => {
+  test.describe.configure({ mode: 'serial' });
+
   test.beforeEach(async ({ page }) => {
     await page.goto('/dashboard/owners/4000115446');
     await page.waitForLoadState('domcontentloaded');
     await dismissOnboarding(page);
+    await expect(page.getByRole('heading', { name: /Jakob Juul Rasmussen/i })).toBeVisible({
+      timeout: 15_000,
+    });
   });
 
-  test('viser personnavn', async ({ page }) => {
-    await expect(page.getByText(/Jakob Juul Rasmussen/i)).toBeVisible({ timeout: 15_000 });
-  });
-
-  test('oversigt-tab viser roller og virksomheder', async ({ page }) => {
-    // Bør vise mindst én virksomhed (JaJR Holding, ArnBo 64b etc.)
+  test('viser personnavn og roller', async ({ page }) => {
     await expect(page.getByText(/Holding|ApS|virksomhed/i).first()).toBeVisible({
       timeout: 15_000,
     });
@@ -51,11 +51,19 @@ test.describe('Person detalje — Jakob Juul Rasmussen', () => {
     });
   });
 
+  test('virksomheder-tab viser virksomheder med roller', async ({ page }) => {
+    await page.getByRole('tab', { name: /Virksomheder|Companies/i }).click();
+    // Bør vise virksomheder med roller (ejer, direktør, bestyrelse)
+    await expect(
+      page.getByText(/Ejer|Direkt|Bestyrelse|Owner|Director|Board/i).first()
+    ).toBeVisible({ timeout: 15_000 });
+  });
+
   test('kronologi-tab viser hændelser', async ({ page }) => {
-    await page.getByRole('tab', { name: /Kronologi|Timeline/i }).click();
-    // Kronologi bør vise tidslinje med events
-    await page.waitForTimeout(3_000);
-    const content = await page.locator('[role="tabpanel"]').textContent();
-    expect(content?.length).toBeGreaterThan(10);
+    await page.locator('text=Kronologi').first().click();
+    // Kronologi bør vise tidslinje med roller og virksomheder
+    await expect(
+      page.getByText(/Bestyrelse|Direktion|Stiftere|Board|Director/i).first()
+    ).toBeVisible({ timeout: 15_000 });
   });
 });

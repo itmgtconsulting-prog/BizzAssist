@@ -625,9 +625,10 @@ export const translations = {
     /* ─── Forsikrings-modul (BIZZ-FORSIKRING) ──────────────────────── */
     forsikring: {
       title: 'Forsikringer',
-      subtitle: 'Upload bygnings-policer og find dækningsgaps automatisk',
-      uploadCta: 'Upload PDF',
-      uploadHelp: 'Træk en PDF herhen, eller klik for at vælge fil (max 20 MB)',
+      subtitle: 'Upload police-filer (PDF, Word, Excel, billeder) og find dækningsgaps automatisk',
+      uploadCta: 'Upload police-fil',
+      uploadHelp:
+        'Træk filer herhen, eller klik for at vælge. Understøtter PDF, Word, Excel, PowerPoint, billeder (PNG/JPG), email og tekstfiler (max 20 MB pr. fil).',
       uploading: 'Uploader…',
       parsing: 'Analyserer police med AI…',
       uploadFailed: 'Upload fejlede',
@@ -1314,9 +1315,11 @@ export const translations = {
     /* ─── Insurance module (BIZZ-FORSIKRING) ───────────────────────── */
     forsikring: {
       title: 'Insurance',
-      subtitle: 'Upload building policies and detect coverage gaps automatically',
-      uploadCta: 'Upload PDF',
-      uploadHelp: 'Drop a PDF here, or click to choose a file (max 20 MB)',
+      subtitle:
+        'Upload policy files (PDF, Word, Excel, images) and detect coverage gaps automatically',
+      uploadCta: 'Upload policy file',
+      uploadHelp:
+        'Drop files here, or click to choose. Supports PDF, Word, Excel, PowerPoint, images (PNG/JPG), email and text files (max 20 MB per file).',
       uploading: 'Uploading…',
       parsing: 'Analysing policy with AI…',
       uploadFailed: 'Upload failed',

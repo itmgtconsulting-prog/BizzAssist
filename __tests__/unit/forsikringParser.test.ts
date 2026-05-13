@@ -6,7 +6,7 @@
  *   - ParsedPolicySchema: validering af korrekte og ukorrekte JSON-output
  */
 import { describe, it, expect } from 'vitest';
-import { stripMarkdownFences } from '@/app/lib/forsikring/jsonHelpers';
+import { stripMarkdownFences, canParseAsText } from '@/app/lib/forsikring/jsonHelpers';
 import { ParsedPolicySchema } from '@/app/lib/forsikring/types';
 
 describe('stripMarkdownFences', () => {
@@ -148,5 +148,36 @@ describe('ParsedPolicySchema', () => {
       ],
     });
     expect(result.success).toBe(true);
+  });
+});
+
+describe('canParseAsText', () => {
+  it('returnerer true for PDF', () => {
+    expect(canParseAsText('pdf')).toBe(true);
+  });
+
+  it('returnerer true for Office-formater', () => {
+    expect(canParseAsText('docx')).toBe(true);
+    expect(canParseAsText('xlsx')).toBe(true);
+    expect(canParseAsText('pptx')).toBe(true);
+  });
+
+  it('returnerer true for plain text-familien', () => {
+    expect(canParseAsText('txt')).toBe(true);
+    expect(canParseAsText('csv')).toBe(true);
+    expect(canParseAsText('json')).toBe(true);
+    expect(canParseAsText('html')).toBe(true);
+  });
+
+  it('returnerer true for email', () => {
+    expect(canParseAsText('eml')).toBe(true);
+  });
+
+  it('returnerer false for billeder (skal bruge vision)', () => {
+    expect(canParseAsText('image')).toBe(false);
+  });
+
+  it('returnerer false for ukendt filtype', () => {
+    expect(canParseAsText('msg')).toBe(false);
   });
 });

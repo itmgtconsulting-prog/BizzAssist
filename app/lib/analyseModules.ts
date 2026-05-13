@@ -49,6 +49,19 @@ export const ANALYSE_MODULES: AnalyseModuleConfig[] = [
     hint: 'Søg en ejendom og vælg annonce-tone. AI henter BBR-data, vurdering og energimærke automatisk.',
   },
   {
+    id: 'forsikring',
+    label: 'Forsikrings-gap',
+    labelEn: 'Insurance gap',
+    icon: 'ShieldCheck',
+    path: '/dashboard/forsikring',
+    enabled: { dev: true, preview: true, prod: false },
+    requiredPlan: 'professionel',
+    description:
+      'Upload police-filer (PDF/Excel/Word/billeder), find dækningsgaps og prioritér risici',
+    defaultTarget: 'virksomhed',
+    hint: 'Upload én eller flere police-filer. AI parser indhold, normaliserer dækninger og finder kritiske gaps (insekt/svamp, glas, restværdi etc.).',
+  },
+  {
     id: 'kreditvurdering',
     label: 'Kreditvurdering',
     labelEn: 'Credit assessment',

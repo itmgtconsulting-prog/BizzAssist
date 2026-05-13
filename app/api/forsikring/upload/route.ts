@@ -26,6 +26,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { getInsuranceApi } from '@/lib/db/insurance';
 import { getTenantContext } from '@/lib/db/tenant';
 import { sanitizeFilename } from '@/app/lib/aiFileGeneration';
+import { resolveFileType, supportedLabels } from '@/app/lib/domainFileTypes';
 
 /** 20 MB hard cap matchende storage bucket file_size_limit */
 const MAX_BYTES = 20 * 1024 * 1024;
@@ -60,9 +61,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       { status: 413 }
     );
   }
-  const mime = file.type || 'application/pdf';
-  if (mime !== 'application/pdf') {
-    return NextResponse.json({ error: 'Kun PDF-filer accepteres' }, { status: 400 });
+  const mime = file.type || 'application/octet-stream';
+  const fileType = resolveFileType(mime, file.name);
+  if (!fileType) {
+    return NextResponse.json(
+      { error: `Ugyldig filtype. Tilladt: ${supportedLabels()}.` },
+      { status: 400 }
+    );
   }
 
   try {

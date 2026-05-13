@@ -26,9 +26,10 @@ import { logger } from '@/app/lib/logger';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getInsuranceApi } from '@/lib/db/insurance';
 import { getTenantContext } from '@/lib/db/tenant';
-import { parsePolicyPdf } from '@/app/lib/forsikring/parser';
+import { parsePolicyFile, parsePolicyImage, canParseAsText } from '@/app/lib/forsikring/parser';
 import { runGapEngine } from '@/app/lib/forsikring/gapEngine';
 import { COVERAGE_LABELS_DA, type CoverageCode } from '@/app/lib/forsikring/types';
+import { resolveFileType } from '@/app/lib/domainFileTypes';
 
 /** Storage bucket name (matcher upload-route) */
 const BUCKET = 'forsikring-documents';
@@ -38,6 +39,20 @@ export const maxDuration = 60;
 
 interface ParseRequestBody {
   document_id?: unknown;
+}
+
+/**
+ * Udled billed-subtype fra MIME-type. Bruges af Claude vision-routing.
+ *
+ * @param mime - Fuld MIME-type fra dokument-row (fx "image/jpeg")
+ * @returns Subtype-streng ("jpg", "png", ...) eller "png" som default
+ */
+function imageSubtypeFromMime(mime: string): string {
+  if (!mime) return 'png';
+  const sub = mime.split('/')[1]?.toLowerCase() ?? 'png';
+  // Normalisér aliaser
+  if (sub === 'jpeg') return 'jpg';
+  return sub;
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
@@ -85,12 +100,29 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       const msg = dlErr?.message ?? 'download returnerede null';
       await insurance.documents.updateParseStatus(doc.id, 'failed', { error: msg });
       logger.error('[forsikring/parse] download fejlede:', msg);
-      return NextResponse.json({ error: 'Kunne ikke hente PDF' }, { status: 500 });
+      return NextResponse.json({ error: 'Kunne ikke hente fil' }, { status: 500 });
     }
     const buffer = Buffer.from(await blob.arrayBuffer());
 
-    // Kald Claude-parser
-    const result = await parsePolicyPdf(buffer, apiKey);
+    // Route til text-parser eller vision-parser baseret på filtype
+    const fileType = resolveFileType(doc.mime_type, doc.original_name);
+    if (!fileType) {
+      const errMsg = `Filtype kunne ikke afgøres (mime=${doc.mime_type}, navn=${doc.original_name})`;
+      await insurance.documents.updateParseStatus(doc.id, 'failed', { error: errMsg });
+      return NextResponse.json({ error: errMsg }, { status: 422 });
+    }
+
+    const result =
+      fileType === 'image'
+        ? await parsePolicyImage(buffer, imageSubtypeFromMime(doc.mime_type), apiKey)
+        : canParseAsText(fileType)
+          ? await parsePolicyFile(buffer, fileType, apiKey)
+          : {
+              ok: false as const,
+              text: null,
+              error: `Filtype ${fileType} understøttes ikke endnu`,
+            };
+
     if (!result.ok) {
       await insurance.documents.updateParseStatus(doc.id, 'failed', {
         error: result.error,

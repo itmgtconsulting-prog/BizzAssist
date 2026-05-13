@@ -16,10 +16,12 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { logger } from '@/app/lib/logger';
 import { extractTextFromBuffer } from '@/app/lib/domainTextExtraction';
+import type { NormalizedFileType } from '@/app/lib/domainFileTypes';
 import { ParsedPolicySchema, type ParsedPolicy } from './types';
-import { stripMarkdownFences } from './jsonHelpers';
+import { stripMarkdownFences, canParseAsText } from './jsonHelpers';
 
-export { stripMarkdownFences };
+// Re-export for backwards compatibility — callers kan stadig importere fra parser.ts
+export { stripMarkdownFences, canParseAsText };
 
 /** Maks tekst-input til Claude (≈40k tokens for sikkerhed). */
 const MAX_TEXT_CHARS = 120_000;
@@ -102,31 +104,53 @@ REGLER:
 Returnér nu JSON for følgende police-tekst:`;
 
 /**
- * Parse en PDF-buffer til en struktureret police via Claude.
+ * Parse en fil-buffer til en struktureret police via Claude.
  *
- * @param pdfBuffer - Rå PDF-bytes
+ * Understøtter PDF, DOCX, XLSX, PPTX, RTF, plain text-familien
+ * (txt/md/csv/tsv/json/xml/yaml/log/code), HTML og EML. Billeder
+ * (PNG/JPG/GIF/WEBP) håndteres via parsePolicyImage (Claude vision).
+ *
+ * @param fileBuffer - Rå fil-bytes
+ * @param fileType - NormalizedFileType (pdf/docx/xlsx/...)
  * @param apiKey - Anthropic API-key (typisk fra BIZZASSIST_CLAUDE_KEY)
  * @returns ParseResult med tekst + struktureret police, eller fejl
  *
  * @example
  * const buf = await file.arrayBuffer().then(b => Buffer.from(b));
- * const result = await parsePolicyPdf(buf, process.env.BIZZASSIST_CLAUDE_KEY!);
+ * const result = await parsePolicyFile(buf, 'pdf', process.env.BIZZASSIST_CLAUDE_KEY!);
  * if (result.ok) {
  *   await db.insertPolicy(result.policy);
  * }
  */
-export async function parsePolicyPdf(pdfBuffer: Buffer, apiKey: string): Promise<ParseResult> {
-  // Step 1: Ekstrahér tekst fra PDF
-  const extraction = await extractTextFromBuffer(pdfBuffer, 'pdf');
+export async function parsePolicyFile(
+  fileBuffer: Buffer,
+  fileType: NormalizedFileType,
+  apiKey: string
+): Promise<ParseResult> {
+  // Step 0: Validér at filtypen kan parses tekstuelt
+  if (!canParseAsText(fileType)) {
+    return {
+      ok: false,
+      text: null,
+      error: `Filtype ${fileType} understøttes ikke af tekst-parseren. Billeder skal bruge parsePolicyImage.`,
+    };
+  }
+
+  // Step 1: Ekstrahér tekst fra fil
+  const extraction = await extractTextFromBuffer(fileBuffer, fileType);
   if (!extraction.ok) {
-    return { ok: false, text: null, error: `PDF-ekstraktion fejlede: ${extraction.error}` };
+    return {
+      ok: false,
+      text: null,
+      error: `Tekst-ekstraktion fejlede (${fileType}): ${extraction.error}`,
+    };
   }
   const text = extraction.text;
   if (text.trim().length === 0) {
     return {
       ok: false,
       text: null,
-      error: 'PDF indeholder ingen tekst (muligvis scannet billede uden OCR)',
+      error: `${fileType.toUpperCase()} indeholder ingen tekst (muligvis scannet billede uden OCR)`,
     };
   }
 
@@ -192,4 +216,124 @@ export async function parsePolicyPdf(pdfBuffer: Buffer, apiKey: string): Promise
   }
 
   return { ok: true, text, policy: validation.data };
+}
+
+/**
+ * Bagudkompatibel alias for parsePolicyFile med type='pdf'.
+ * Bevares så eksisterende API-routes ikke skal opdateres samtidig.
+ *
+ * @deprecated Brug parsePolicyFile(buffer, 'pdf', apiKey) direkte
+ * @param pdfBuffer - PDF-bytes
+ * @param apiKey - Anthropic API-key
+ * @returns ParseResult
+ */
+export async function parsePolicyPdf(pdfBuffer: Buffer, apiKey: string): Promise<ParseResult> {
+  return parsePolicyFile(pdfBuffer, 'pdf', apiKey);
+}
+
+/**
+ * Claude vision MIME-types — match dem bucket-policy tillader.
+ */
+const VISION_MIME_BY_TYPE: Record<string, 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'> =
+  {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    gif: 'image/gif',
+    webp: 'image/webp',
+  };
+
+/**
+ * Parse et police-billede (scannet PDF som JPG/PNG, foto af police) via
+ * Claude vision. Bruger samme system-prompt og output-schema som
+ * tekst-parseren, men sender base64-billede i stedet for tekst.
+ *
+ * @param imageBuffer - Billed-bytes
+ * @param mimeSubtype - 'png' | 'jpg' | 'jpeg' | 'gif' | 'webp'
+ * @param apiKey - Anthropic API-key
+ * @returns ParseResult — text-feltet er Claude's OCR-output (kan bruges senere)
+ *
+ * @example
+ * const result = await parsePolicyImage(buf, 'jpg', apiKey);
+ */
+export async function parsePolicyImage(
+  imageBuffer: Buffer,
+  mimeSubtype: string,
+  apiKey: string
+): Promise<ParseResult> {
+  const mediaType = VISION_MIME_BY_TYPE[mimeSubtype.toLowerCase()];
+  if (!mediaType) {
+    return {
+      ok: false,
+      text: null,
+      error: `Billed-format ${mimeSubtype} understøttes ikke. Brug png/jpg/gif/webp.`,
+    };
+  }
+  if (!apiKey) {
+    return { ok: false, text: null, error: 'Anthropic API-key mangler' };
+  }
+
+  const base64 = imageBuffer.toString('base64');
+  const client = new Anthropic({ apiKey });
+
+  let response: Anthropic.Message;
+  try {
+    response = await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 8000,
+      system:
+        SYSTEM_PROMPT +
+        '\n\nDu vil modtage et billede af en police (scannet PDF eller foto). ' +
+        'Læs alle synlige tekstfelter og uddrag dem som angivet i schemaet.',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: { type: 'base64', media_type: mediaType, data: base64 },
+            },
+            {
+              type: 'text',
+              text: 'Parse dette billede til struktureret JSON som beskrevet i system-prompten.',
+            },
+          ],
+        },
+      ],
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'unknown';
+    logger.error('[forsikring/parser] Claude vision-kald fejlede:', msg);
+    return { ok: false, text: null, error: `Claude vision fejlede: ${msg}` };
+  }
+
+  const textBlock = response.content.find((b) => b.type === 'text');
+  if (!textBlock || textBlock.type !== 'text') {
+    return { ok: false, text: null, error: 'Claude returnerede intet output for billede' };
+  }
+  const rawJson = textBlock.text.trim();
+  const cleaned = stripMarkdownFences(rawJson);
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'unknown';
+    return { ok: false, text: rawJson, error: `Vision-output er ikke gyldig JSON: ${msg}` };
+  }
+
+  const validation = ParsedPolicySchema.safeParse(parsed);
+  if (!validation.success) {
+    const issueSummary = validation.error.issues
+      .slice(0, 5)
+      .map((i) => `${i.path.join('.')}: ${i.message}`)
+      .join('; ');
+    return {
+      ok: false,
+      text: rawJson,
+      error: `Vision-output passer ikke til schema: ${issueSummary}`,
+    };
+  }
+
+  return { ok: true, text: rawJson, policy: validation.data };
 }

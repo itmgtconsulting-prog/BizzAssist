@@ -21,16 +21,27 @@ Du skal have:
   - Dev: https://dev.bizzassist.dk eller localhost:3000 hvis du kører lokalt
   - Test: https://test.bizzassist.dk
   - Vercel preview: link fra PR-siden i GitHub
-- [ ] **PDF-filer** til upload. Hvis du IKKE har dine egne, brug Belvedere test-sættet:
+- [ ] **Police-filer** til upload — modulet accepterer:
+  - **PDF** (`.pdf`) — anbefalet primær type
+  - **Word** (`.docx`)
+  - **Excel** (`.xlsx`, `.xls`) — fx police-lister
+  - **PowerPoint** (`.pptx`)
+  - **Billeder** (`.png`, `.jpg`, `.gif`, `.webp`) — scannede policer / foto via Claude vision
+  - **Tekstfiler** (`.txt`, `.md`, `.csv`, `.tsv`, `.json`, `.xml`, `.yaml`, `.html`, `.rtf`)
+  - **Email** (`.eml`) — forwarded police-emails
+
+  Hvis du IKKE har dine egne, brug Belvedere PDF-test-sættet:
   - `Police 50143392.pdf` (Stengade 7 — restaurant)
   - `Police 50143465.pdf` (Gefionsvej 47A — erhvervsudlejning)
   - `Police 50143511.pdf` (Klostermosevej 123 — værksted)
   - `Police 50143554 .pdf` (Bramstræde 5 — hotel)
   - `Police 67500725 .pdf` (Gefionsvej 45A — restaurant)
   - `TOP Police 9417319074.pdf` (Stjernegade 17 — beboelse)
+
 - [ ] **Browser**: Chrome, Edge eller Firefox (seneste version)
 
-Hvis migration 107 IKKE er deployet til miljøet endnu, vil upload fejle.
+Hvis migration 108 IKKE er deployet til miljøet endnu, vil upload af ikke-PDF
+filer fejle med "ugyldig MIME-type". Migration 107 + 108 skal være kørt. Tjek selv via Supabase Studio:
 Spørg DevOps om status før du fortsætter. Du kan tjekke selv via Supabase Studio
 (SQL editor):
 
@@ -57,20 +68,26 @@ navigations-links.
 **Fejler det?** Tjek at du bruger en gyldig test-bruger. Kontakt admin hvis du
 har glemt password.
 
-### 1.2 Find Forsikring i sidebar
+### 1.2 Find Forsikring — to mulige adgangsveje
 
-**Gør:** Find "Forsikring" i venstre sidebar. Den har et **blåt skjold-ikon**
-(ShieldCheck).
+**Gør:** Modulet er tilgængeligt **to steder** (begge fører til samme side):
 
-**Se:** "Forsikring" er placeret mellem "AI Chat" og "Tokens".
+**A) Top-level sidebar:** Find "Forsikring" i venstre sidebar med et
+**blåt skjold-ikon** (ShieldCheck). Placeret mellem "AI Chat" og "Tokens".
 
-**Fejler det?** Hvis "Forsikring" ikke findes:
+**B) Under Analyse-menuen:** Klik "Analyse" → "Forsikrings-gap" (også med
+skjold-ikon, requiredPlan: professionel).
 
-- ❌ **Ikke i sidebar**: Sandsynligvis er du logget ind i et miljø uden den nye
-  kode. Bekræft URL'en. Hvis du er på dev/test/prod, kontakt DevOps om deploy.
-- ✅ **"Forsikrings-gap" findes under "Analyse" sektion**: Det er det **gamle**
-  modul som skal være fjernet. Rapportér det som "old module not removed" og
-  brug det IKKE i denne test.
+**Se:** Klik én af dem. Begge fører til `/dashboard/forsikring`.
+
+**Fejler det?**
+
+- ❌ **"Forsikring" findes ikke i sidebar OG ikke under Analyse**: Du er logget
+  ind i et miljø uden den nye kode. Bekræft URL'en. Kontakt DevOps om deploy.
+- 🟡 **Kun under Analyse, ikke i top-level**: OK — feature-flag har skjult
+  top-level på det miljø. Brug Analyse-vejen.
+- ❌ **Gamle modul under `/dashboard/analyse/forsikring`**: Hvis det renderer
+  en anden side end den nye, er develop-merge ikke landet. Rapportér.
 
 ### 1.3 Naviger til Forsikring
 
@@ -106,7 +123,8 @@ har glemt password.
 **Fejler det?**
 
 - 🔴 **"Filen er for stor"**: PDF'en er over 20 MB. Brug en mindre fil.
-- 🔴 **"Kun PDF-filer accepteres"**: Du har valgt en ikke-PDF fil. Vælg `.pdf`.
+- 🔴 **"Ugyldig filtype"**: Du har valgt en filtype der ikke er understøttet
+  (fx `.exe` eller `.zip`). Brug en af de listede typer (PDF/Word/Excel/billeder/tekst).
 - 🔴 **"Upload fejlede"**: Tjek browser console (F12 → Console). Rapportér exact fejlmeddelelse.
 - 🔴 **Hænger på "Analyserer..." > 60 sek**: AI-parsing timeout. Tjek igen om 1 minut; hvis stadig fejl, rapportér.
 - 🟡 **Status hopper direkte til ✗ "Parse fejlede"**: PDF kunne ikke parses. Sandsynligvis dårlig PDF (scanned/encrypted). Prøv en anden police.
@@ -272,11 +290,46 @@ engelsk, rapportér hvilke felter.
 
 ---
 
-## Trin 5 — Stress-test (valgfri men anbefalet)
+## Trin 5 — Test alternative filtyper (anbefalet)
 
-### 5.1 Upload flere policer hurtigt
+PDF er den primære og bedst-testede filtype. De andre filtyper bruger samme
+Claude-parser bagved. Test mindst ét par yderligere typer for at bekræfte at
+multi-type upload virker.
 
-**Gør:** Træk **flere** PDF'er (3-6 stk.) til upload-zonen på én gang.
+### 5.1 Test Word/Excel-dokument
+
+**Gør:** Hvis du har en police i Word eller Excel-format, upload den. Hvis
+ikke, lav en hurtig DOCX eller XLSX med samme tekst som en af Belvedere
+PDF'erne (kopiér tekst, paste, gem).
+
+**Se:** Upload + parse virker præcis som PDF. Police vises i tabel med samme
+felter.
+
+**Fejler det?** Rapportér med fil-eksempel hvis muligt.
+
+### 5.2 Test billede (Claude vision)
+
+**Gør:** Tag et **screenshot** eller foto af en police-side (eller scan via
+mobilkamera). Gem som PNG eller JPG. Upload.
+
+**Se:**
+
+- Upload-job: "Uploader…" → "Analyserer police med AI…" (kan tage 20-40 sek for
+  billeder — vision er langsommere end tekst)
+- Slutter med ✓
+- Police vises med uddrag fra billedet
+
+**Fejler det?**
+
+- 🟡 **Parser udvinder kun delvise felter**: Billedkvalitet er afgørende for
+  OCR. Test med højere opløsning.
+- 🔴 **"Vision-output passer ikke til schema"**: Claude kunne ikke læse
+  billedet. Rapportér med screenshot.
+
+### 5.3 Upload flere policer hurtigt (stress)
+
+**Gør:** Træk **flere** filer (3-6 stk.) til upload-zonen på én gang. Du kan
+blande filtyper (fx 2 PDF + 1 XLSX + 1 billede).
 
 **Se:** Hver fil får sit eget upload-job med separate status-indikatorer.
 Filerne uploader parallelt men parses sekventielt (én ad gangen).

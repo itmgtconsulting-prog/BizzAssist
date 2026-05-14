@@ -502,13 +502,23 @@ export default function EjendomDetaljeClient({
 
     // BIZZ-1304: whitelist — kun bygninger med kendt aktiv status (ekskluderer null/"Ukendt (!)")
     const aktiveBygninger = bbrData?.bbr?.filter((b) => isAktivStatusLabel(b.status));
-    const ejendomBBR = aktiveBygninger
+    // BIZZ-1303: Sortér efter opførelsesår (ældste først) — header viser den ældste
+    // bygnings opførelsesår (originalbyggeri), ikke den nyeste (tilbygning/ombygning)
+    const sorteretBygninger = aktiveBygninger
+      ? [...aktiveBygninger].sort((a, b) => (a.opfoerelsesaar ?? 9999) - (b.opfoerelsesaar ?? 9999))
+      : undefined;
+    // BIZZ-1303: Brug størst bygning til areal (hovedbygning, ikke garage/udhus)
+    const stoersteBygning = sorteretBygninger
+      ? [...sorteretBygninger].sort(
+          (a, b) => (b.samletBygningsareal ?? 0) - (a.samletBygningsareal ?? 0)
+        )[0]
+      : undefined;
+    const ejendomBBR = sorteretBygninger
       ? {
-          antalBygninger: aktiveBygninger.length,
-          samletAreal:
-            aktiveBygninger.reduce((sum, b) => sum + (b.samletBygningsareal ?? 0), 0) || null,
-          opfoerelsesaar: aktiveBygninger[0]?.opfoerelsesaar ?? null,
-          anvendelse: aktiveBygninger[0]?.anvendelse ?? null,
+          antalBygninger: sorteretBygninger.length,
+          samletAreal: stoersteBygning?.samletBygningsareal ?? null,
+          opfoerelsesaar: sorteretBygninger[0]?.opfoerelsesaar ?? null,
+          anvendelse: stoersteBygning?.anvendelse ?? null,
         }
       : undefined;
 

@@ -31,6 +31,7 @@ import {
   Briefcase,
   ChevronDown,
   ChevronRight,
+  Trash2,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
@@ -1036,6 +1037,7 @@ export default function ForsikringPageClient(): React.ReactElement {
   const [error, setError] = useState<string | null>(null);
   const [uploadJobs, setUploadJobs] = useState<UploadJob[]>([]);
   const [dragOver, setDragOver] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   /** Fetch list data from API */
@@ -1187,13 +1189,49 @@ export default function ForsikringPageClient(): React.ReactElement {
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-[#0a1020] text-slate-100 min-h-screen">
-      {/* Heading */}
-      <header className="space-y-1">
-        <h1 className="flex items-center gap-3 text-2xl font-semibold">
-          <ShieldCheck className="text-blue-400" size={28} />
-          {t.title}
-        </h1>
-        <p className="text-sm text-slate-400">{t.subtitle}</p>
+      {/* Heading + nulstil-knap */}
+      <header className="flex items-start justify-between">
+        <div className="space-y-1">
+          <h1 className="flex items-center gap-3 text-2xl font-semibold">
+            <ShieldCheck className="text-blue-400" size={28} />
+            {t.title}
+          </h1>
+          <p className="text-sm text-slate-400">{t.subtitle}</p>
+        </div>
+        {/* BIZZ-1397: Nulstil alt — sletter alle dokumenter, policer og analyser */}
+        {(policies.length > 0 || documents.length > 0) && (
+          <button
+            type="button"
+            disabled={resetting}
+            onClick={async () => {
+              const da = lang === 'da';
+              if (
+                !window.confirm(
+                  da
+                    ? 'Slet ALLE forsikringsdata? Alle policer, dokumenter, gaps og analyser slettes permanent. Denne handling kan ikke fortrydes.'
+                    : 'Delete ALL insurance data? All policies, documents, gaps and analyses will be permanently deleted. This action cannot be undone.'
+                )
+              )
+                return;
+              setResetting(true);
+              try {
+                const res = await fetch('/api/forsikring/reset', { method: 'DELETE' });
+                if (res.ok) {
+                  setUploadJobs([]);
+                  await refresh();
+                }
+              } catch {
+                // Handled silently
+              } finally {
+                setResetting(false);
+              }
+            }}
+            className="flex items-center gap-2 px-3 py-2 text-xs rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors disabled:opacity-50"
+          >
+            {resetting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+            {lang === 'da' ? 'Nulstil alt' : 'Reset all'}
+          </button>
+        )}
       </header>
 
       {/* TRIN 1: Vælg kunde */}
@@ -1291,6 +1329,26 @@ export default function ForsikringPageClient(): React.ReactElement {
                     ? (doc.parse_error ?? t.parseFailed)
                     : doc.parse_status}
                 </span>
+                {/* BIZZ-1397: Slet individuelt dokument */}
+                <button
+                  type="button"
+                  aria-label={
+                    lang === 'da' ? `Slet ${doc.original_name}` : `Delete ${doc.original_name}`
+                  }
+                  onClick={async () => {
+                    try {
+                      const res = await fetch(`/api/forsikring/documents/${doc.id}`, {
+                        method: 'DELETE',
+                      });
+                      if (res.ok) await refresh();
+                    } catch {
+                      // Handled silently
+                    }
+                  }}
+                  className="p-1 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors shrink-0"
+                >
+                  <XCircle size={14} />
+                </button>
               </div>
             ))}
           </div>

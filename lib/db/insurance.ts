@@ -126,6 +126,10 @@ export interface InsuranceApi {
       status: ParseStatus,
       opts?: { error?: string; extractedText?: string; policyId?: string }
     ): Promise<void>;
+    /** Slet ét dokument by id */
+    delete(id: string): Promise<void>;
+    /** Slet ALLE dokumenter for tenant (bulk reset) */
+    deleteAll(): Promise<string[]>;
   };
   /** Policies — strukturerede police-data */
   policies: {
@@ -220,6 +224,31 @@ export async function getInsuranceApi(tenantId: string): Promise<InsuranceApi> {
         if (error) {
           throw new Error(`forsikring_documents.updateParseStatus: ${error.message}`);
         }
+      },
+      async delete(id) {
+        const { error } = await tenantDb(admin, schemaName)
+          .from('forsikring_documents')
+          .delete()
+          .eq('id', id)
+          .eq('tenant_id', tenantId);
+        if (error) throw new Error(`forsikring_documents.delete: ${error.message}`);
+      },
+      async deleteAll() {
+        const { data } = await tenantDb(admin, schemaName)
+          .from('forsikring_documents')
+          .select('id, storage_path')
+          .eq('tenant_id', tenantId);
+        const ids = (data ?? []).map((d: { id: string }) => d.id);
+        const paths = (data ?? [])
+          .map((d: { storage_path: string }) => d.storage_path)
+          .filter(Boolean);
+        if (ids.length > 0) {
+          await tenantDb(admin, schemaName)
+            .from('forsikring_documents')
+            .delete()
+            .eq('tenant_id', tenantId);
+        }
+        return paths as string[];
       },
     },
 

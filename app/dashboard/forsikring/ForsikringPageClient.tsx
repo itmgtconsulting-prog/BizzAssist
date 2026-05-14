@@ -317,7 +317,7 @@ function PropertyRow({ group, da }: { group: PropertyGroup; da: boolean }) {
  * @param props.policies - Policy list for cross-reference
  * @param props.da - Danish language flag
  * @param props.kundeNavn - Customer name for header
- * @param props.onRapport - Callback to trigger AI rapport generation
+ * @param props.onRapport - Callback to download gap-rapport DOCX
  */
 function UnifiedAnalyseView({
   detail,
@@ -330,7 +330,7 @@ function UnifiedAnalyseView({
   policies: PolicyRow[];
   da: boolean;
   kundeNavn: string;
-  onRapport: (pct: number) => void;
+  onRapport: () => void;
 }) {
   const { analyse, aktiver, gaps } = detail;
 
@@ -443,14 +443,14 @@ function UnifiedAnalyseView({
         ))}
       </div>
 
-      {/* Rapport-knap */}
+      {/* Rapport-knap — direkte download som DOCX */}
       <button
         type="button"
-        onClick={() => onRapport(healthScore)}
+        onClick={() => onRapport()}
         className="w-full bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
       >
-        <ShieldCheck size={15} />
-        {da ? 'Lav rapport via AI Chat' : 'Generate report via AI Chat'}
+        <FileText size={15} />
+        {da ? 'Download gap-rapport (Word)' : 'Download gap report (Word)'}
       </button>
     </div>
   );
@@ -918,18 +918,30 @@ function AnalyseSection({
           policies={policies}
           da={da}
           kundeNavn={selected?.navn ?? (da ? 'Kunden' : 'Customer')}
-          onRapport={(pct) => {
-            const prompt = da
-              ? `Generér en mæglerrapport som Word-fil (brug generate_document tool med format "docx") for ${selected?.navn ?? 'kunden'}. Brug forsikringsdata fra konteksten. Sektioner: 1) Executive summary med sundhedsscore ${pct}/100 og dækningsgrad, 2) Ejendomsoversigt med forsikringsstatus per adresse, 3) Forsikringsgap-tabel med alle ${analyseResult.gaps_count} gaps, 4) Anbefalinger prioriteret efter risiko, 5) Handlingsplan. VIGTIGT: Kald generate_document med sections — svar IKKE med ren tekst.`
-              : `Generate a broker report as a Word file (use generate_document tool with format "docx") for ${selected?.navn ?? 'the customer'}. Use insurance data from context. Sections: 1) Executive summary with health score ${pct}/100, 2) Property overview with insurance status, 3) Gap table with all ${analyseResult.gaps_count} gaps, 4) Prioritized recommendations, 5) Action plan. IMPORTANT: Call generate_document with sections — do NOT reply with plain text.`;
-            const displayText = da
-              ? `Lav mæglerrapport for ${selected?.navn ?? 'kunden'} (score ${pct}/100)`
-              : `Generate broker report for ${selected?.navn ?? 'the customer'} (score ${pct}/100)`;
-            window.dispatchEvent(
-              new CustomEvent('bizz:ai-open-with-prompt', {
-                detail: { prompt, displayText },
-              })
-            );
+          onRapport={async () => {
+            // BIZZ-1403: Direkte download af gap-rapport DOCX
+            try {
+              const res = await fetch('/api/forsikring/rapport', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  analyse_id: analyseResult.analyse_id,
+                  kunde_navn: selected?.navn ?? 'Ukendt',
+                }),
+              });
+              if (!res.ok) throw new Error('Rapport-generering fejlede');
+              const blob = await res.blob();
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `Forsikrings-Gap-Rapport-${selected?.navn ?? 'Kunde'}.docx`;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              URL.revokeObjectURL(url);
+            } catch {
+              // Handled silently — user can retry
+            }
           }}
         />
       )}

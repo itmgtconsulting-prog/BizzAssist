@@ -114,7 +114,9 @@ Vigtige regler:
 1. Returnér KUN JSON — ingen markdown, ingen forklaring.
 2. Hvis dokumentet indeholder en tabel med flere policenumre og adresser → "oversigt".
 3. Hvis dokumentet handler om ÉN specifik police med dækninger/betingelser → "police".
-4. Vær konservativ: ved tvivl mellem police og oversigt, check om der er flere policenumre.`;
+4. Vær konservativ: ved tvivl mellem police og oversigt, check om der er flere policenumre.
+5. VIGTIGT: Mange forsikringsdokumenter STARTER med et følgebrev (fx "Kære kunde, her er jeres nye forsikringsaftale...") efterfulgt af den egentlige police. Klassificér ALTID baseret på HELE dokumentet — IKKE kun den første side. Hvis teksten indeholder policenummer, dækninger, præmier, selvrisiko osv. efter et følgebrev → det er en "police", IKKE "korrespondance".
+6. Forsikringspakker (følgebrev + police + dækningsoversigt i ét dokument) = "police".`;
 
 /**
  * BIZZ-1392: Trin 1 — Detektér dokumenttype via Claude.
@@ -128,8 +130,9 @@ export async function detectDocumentType(
   apiKey: string
 ): Promise<DocumentTypeDetection> {
   const client = new Anthropic({ apiKey });
-  // Brug kun de første 3000 tegn for hurtig klassificering
-  const sample = text.length > 3000 ? text.slice(0, 3000) : text;
+  // BIZZ-1398: Øget fra 3000 til 8000 tegn — følgebreve fylder typisk 1-2 sider
+  // (~2000 tegn), så 3000 rammer kun følgebrevet og misklassificerer som korrespondance
+  const sample = text.length > 8000 ? text.slice(0, 8000) : text;
 
   try {
     const response = await client.messages.create({

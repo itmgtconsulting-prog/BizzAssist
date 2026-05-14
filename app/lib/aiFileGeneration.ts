@@ -287,17 +287,34 @@ export async function generateDocx(input: GenerateDocxInput): Promise<GeneratedF
   );
   if (input.subtitle) {
     paragraphs.push(
-      `<w:p><w:r><w:rPr><w:i/></w:rPr><w:t xml:space="preserve">${esc(input.subtitle)}</w:t></w:r></w:p>`
+      `<w:p><w:pPr><w:pStyle w:val="Subtitle"/></w:pPr><w:r><w:t xml:space="preserve">${esc(input.subtitle)}</w:t></w:r></w:p>`
     );
   }
+  // Separator line after title block
+  paragraphs.push(
+    `<w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="3b82f6"/></w:pBdr><w:spacing w:after="200"/></w:pPr></w:p>`
+  );
   for (const section of input.sections) {
     paragraphs.push(
       `<w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t xml:space="preserve">${esc(section.heading)}</w:t></w:r></w:p>`
     );
-    // Split body på newlines → ét paragraph pr linje
+    // Split body på newlines → ét paragraph pr linje. Bullet-linjer (- / • / * )
+    // renderes med ListBullet style for pænere formatering.
     const bodyLines = section.body.split(/\r?\n/);
     for (const line of bodyLines) {
-      paragraphs.push(`<w:p><w:r><w:t xml:space="preserve">${esc(line)}</w:t></w:r></w:p>`);
+      const bulletMatch = line.match(/^\s*[-•*]\s+(.*)/);
+      if (bulletMatch) {
+        paragraphs.push(
+          `<w:p><w:pPr><w:pStyle w:val="ListBullet"/></w:pPr><w:r><w:t xml:space="preserve">${esc(bulletMatch[1])}</w:t></w:r></w:p>`
+        );
+      } else if (line.match(/^\s*\d+[.)]\s/)) {
+        // Numbered items — bold number prefix
+        paragraphs.push(
+          `<w:p><w:pPr><w:ind w:left="360"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">${esc(line)}</w:t></w:r></w:p>`
+        );
+      } else {
+        paragraphs.push(`<w:p><w:r><w:t xml:space="preserve">${esc(line)}</w:t></w:r></w:p>`);
+      }
     }
     // BIZZ-934: Indlejr PNG-billede i DOCX hvis imageBase64 er sat
     if (section.imageBase64) {
@@ -322,10 +339,79 @@ export async function generateDocx(input: GenerateDocxInput): Promise<GeneratedF
     )
     .join('\n  ');
 
+  // BIZZ-1402: Professionelle styles med BizzAssist farvetema
+  const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:docDefaults>
+    <w:rPrDefault><w:rPr>
+      <w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/>
+      <w:sz w:val="22"/><w:szCs w:val="22"/>
+      <w:color w:val="1e293b"/>
+    </w:rPr></w:rPrDefault>
+    <w:pPrDefault><w:pPr>
+      <w:spacing w:after="120" w:line="276" w:lineRule="auto"/>
+    </w:pPr></w:pPrDefault>
+  </w:docDefaults>
+  <w:style w:type="paragraph" w:styleId="Heading1">
+    <w:name w:val="heading 1"/>
+    <w:pPr><w:spacing w:before="360" w:after="120"/></w:pPr>
+    <w:rPr>
+      <w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/>
+      <w:b/><w:bCs/>
+      <w:color w:val="1e40af"/>
+      <w:sz w:val="36"/><w:szCs w:val="36"/>
+    </w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="Heading2">
+    <w:name w:val="heading 2"/>
+    <w:pPr><w:spacing w:before="240" w:after="80"/><w:pBdr><w:bottom w:val="single" w:sz="4" w:space="4" w:color="3b82f6"/></w:pBdr></w:pPr>
+    <w:rPr>
+      <w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/>
+      <w:b/><w:bCs/>
+      <w:color w:val="1e3a5f"/>
+      <w:sz w:val="28"/><w:szCs w:val="28"/>
+    </w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="Subtitle">
+    <w:name w:val="Subtitle"/>
+    <w:pPr><w:spacing w:after="200"/></w:pPr>
+    <w:rPr><w:i/><w:iCs/><w:color w:val="64748b"/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="ListBullet">
+    <w:name w:val="List Bullet"/>
+    <w:pPr>
+      <w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>
+      <w:spacing w:after="60"/>
+      <w:ind w:left="720" w:hanging="360"/>
+    </w:pPr>
+    <w:rPr><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr>
+  </w:style>
+</w:styles>`;
+
+  // Numbering definition for bullet lists
+  const numberingXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:abstractNum w:abstractNumId="0">
+    <w:lvl w:ilvl="0">
+      <w:start w:val="1"/>
+      <w:numFmt w:val="bullet"/>
+      <w:lvlText w:val="&#x2022;"/>
+      <w:lvlJc w:val="left"/>
+      <w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr>
+      <w:rPr><w:rFonts w:ascii="Symbol" w:hAnsi="Symbol" w:hint="default"/><w:color w:val="3b82f6"/></w:rPr>
+    </w:lvl>
+  </w:abstractNum>
+  <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+</w:numbering>`;
+
   const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:body>
     ${paragraphs.join('\n    ')}
+    <w:sectPr>
+      <w:pgSz w:w="11906" w:h="16838"/>
+      <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720"/>
+    </w:sectPr>
   </w:body>
 </w:document>`;
 
@@ -335,6 +421,8 @@ export async function generateDocx(input: GenerateDocxInput): Promise<GeneratedF
   <Default Extension="xml" ContentType="application/xml"/>
   <Default Extension="png" ContentType="image/png"/>
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+  <Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>
 </Types>`;
 
   const relsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -344,6 +432,8 @@ export async function generateDocx(input: GenerateDocxInput): Promise<GeneratedF
 
   const wordRelsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+  <Relationship Id="rIdNumbering" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>
   ${imageRels}
 </Relationships>`;
 
@@ -351,8 +441,10 @@ export async function generateDocx(input: GenerateDocxInput): Promise<GeneratedF
   zip.file('[Content_Types].xml', contentTypesXml);
   zip.file('_rels/.rels', relsXml);
   zip.file('word/document.xml', documentXml);
+  zip.file('word/styles.xml', stylesXml);
+  zip.file('word/numbering.xml', numberingXml);
+  zip.file('word/_rels/document.xml.rels', wordRelsXml);
   if (imageFiles.length > 0) {
-    zip.file('word/_rels/document.xml.rels', wordRelsXml);
     for (const img of imageFiles) {
       zip.file(`word/media/${img.rId}.png`, img.buf);
     }

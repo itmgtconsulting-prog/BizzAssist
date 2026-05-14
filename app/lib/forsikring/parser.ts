@@ -665,19 +665,26 @@ export async function parseWithTypeDetection(
       // BIZZ-1398: Samlede police-pakker (følgebrev + police) fejlklassificeres
       // som korrespondance. Check for police-nøgleord i HELE teksten — hvis de
       // findes, er det sandsynligvis en police pakket med et følgebrev.
+      // Nøgleord med BEGGE varianter: korrekt dansk (æ/å/ø) OG garbled
+      // PDF-encoding ({/}/») som visse PDF-ekstraktorer returnerer.
       const policyKeywords = [
         'forsikringsaftale',
         'dækningsoversigt',
+        'd{kningsoversigt',
         'vilkårsnr',
+        'vilk}rsnr',
         'selvrisiko',
         'forsikringstype',
         'dækningssum',
+        'd{kningssum',
         'forsikringssted',
         'erhvervsansvar',
         'ejendomsforsikring',
         'bygningsforsikring',
         'forsikringen dækker',
+        'forsikringen d{kker',
         'forsikringen gælder',
+        'forsikringen g{lder',
       ];
       const lowerText = text.toLowerCase();
       const matchCount = policyKeywords.filter((kw) => lowerText.includes(kw)).length;

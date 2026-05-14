@@ -446,7 +446,7 @@ function UnifiedAnalyseView({
       {/* Rapport-knap */}
       <button
         type="button"
-        onClick={() => onRapport(pct)}
+        onClick={() => onRapport(healthScore)}
         className="w-full bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
       >
         <ShieldCheck size={15} />
@@ -920,8 +920,8 @@ function AnalyseSection({
           kundeNavn={selected?.navn ?? (da ? 'Kunden' : 'Customer')}
           onRapport={(pct) => {
             const prompt = da
-              ? `Lav en mæglerrapport i Word-format for ${selected?.navn ?? 'kunden'}. Brug forsikringsdata fra konteksten. Inkluder: 1) Executive summary med sundhedsscore ${pct}/100, 2) Ejendomsoversigt med forsikringsstatus, 3) Forsikringsgap-tabel med alle ${analyseResult.gaps_count} gaps, 4) Anbefalinger prioriteret efter risiko, 5) Handlingsplan. Generér dokumentet direkte uden at spørge om mere info.`
-              : `Create a broker report in Word format for ${selected?.navn ?? 'the customer'}. Use insurance data from context. Include: 1) Executive summary with health score ${pct}/100, 2) Property overview with insurance status, 3) Gap table with all ${analyseResult.gaps_count} gaps, 4) Prioritized recommendations, 5) Action plan. Generate the document directly.`;
+              ? `Generér en mæglerrapport som Word-fil (brug generate_document tool med format "docx") for ${selected?.navn ?? 'kunden'}. Brug forsikringsdata fra konteksten. Sektioner: 1) Executive summary med sundhedsscore ${pct}/100 og dækningsgrad, 2) Ejendomsoversigt med forsikringsstatus per adresse, 3) Forsikringsgap-tabel med alle ${analyseResult.gaps_count} gaps, 4) Anbefalinger prioriteret efter risiko, 5) Handlingsplan. VIGTIGT: Kald generate_document med sections — svar IKKE med ren tekst.`
+              : `Generate a broker report as a Word file (use generate_document tool with format "docx") for ${selected?.navn ?? 'the customer'}. Use insurance data from context. Sections: 1) Executive summary with health score ${pct}/100, 2) Property overview with insurance status, 3) Gap table with all ${analyseResult.gaps_count} gaps, 4) Prioritized recommendations, 5) Action plan. IMPORTANT: Call generate_document with sections — do NOT reply with plain text.`;
             const displayText = da
               ? `Lav mæglerrapport for ${selected?.navn ?? 'kunden'} (score ${pct}/100)`
               : `Generate broker report for ${selected?.navn ?? 'the customer'} (score ${pct}/100)`;

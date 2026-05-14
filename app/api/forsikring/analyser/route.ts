@@ -35,14 +35,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  let body: { kunde_type: string; kunde_id: string; kunde_navn?: string };
+  let body: { kunde_type: string; kunde_id: string; kunde_navn?: string; as_of_date?: string };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  const { kunde_type, kunde_id, kunde_navn } = body;
+  const { kunde_type, kunde_id, kunde_navn, as_of_date } = body;
   if (!kunde_type || !kunde_id || !['virksomhed', 'person'].includes(kunde_type)) {
     return NextResponse.json({ error: 'Missing or invalid kunde_type/kunde_id' }, { status: 400 });
   }
@@ -54,9 +54,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    // 1. Walk koncern → opdag aktiver
-    logger.log(`[forsikring/analyser] Walking koncern for ${kunde_type} ${kunde_id}`);
-    const aktiver = await walkKoncern(kunde_type as 'virksomhed' | 'person', kunde_id);
+    // BIZZ-1355: Parse snapshot-dato for historisk analyse
+    const snapshotDate = as_of_date ? new Date(as_of_date) : null;
+    if (snapshotDate && Number.isNaN(snapshotDate.getTime())) {
+      return NextResponse.json(
+        { error: 'Invalid as_of_date format (use YYYY-MM-DD)' },
+        { status: 400 }
+      );
+    }
+
+    // 1. Walk koncern → opdag aktiver (med valgfri snapshot-dato)
+    logger.log(
+      `[forsikring/analyser] Walking koncern for ${kunde_type} ${kunde_id}${snapshotDate ? ` as of ${as_of_date}` : ''}`
+    );
+    const aktiver = await walkKoncern(
+      kunde_type as 'virksomhed' | 'person',
+      kunde_id,
+      snapshotDate
+    );
     logger.log(`[forsikring/analyser] Fandt ${aktiver.length} aktiver`);
 
     // 1b. Berig ejendom-aktiver med adresser (for matching mod policer)
@@ -181,6 +196,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           gaps_critical: allGaps.filter((g) => g.severity === 'critical').length,
           gaps_warning: allGaps.filter((g) => g.severity === 'warning').length,
           policer_count: policer.length,
+          as_of_date: as_of_date ?? null,
         },
         created_by: auth.userId,
       })

@@ -44,11 +44,13 @@ const MAX_AKTIVER = 500;
  *
  * @param kundeType - 'virksomhed' eller 'person'
  * @param kundeId - CVR-nummer eller enhedsNummer
+ * @param asOfDate - BIZZ-1355: Snapshot-dato for historiske opslag (null = aktuel dato)
  * @returns Array af opdagede aktiver
  */
 export async function walkKoncern(
   kundeType: 'virksomhed' | 'person',
-  kundeId: string
+  kundeId: string,
+  asOfDate?: Date | null
 ): Promise<Aktiv[]> {
   const admin = createAdminClient();
   const aktiver: Aktiv[] = [];
@@ -56,7 +58,7 @@ export async function walkKoncern(
   const seenCvrs = new Set<string>();
 
   if (kundeType === 'virksomhed') {
-    await walkVirksomhed(admin, kundeId, aktiver, seenBfes, seenCvrs, 0);
+    await walkVirksomhed(admin, kundeId, aktiver, seenBfes, seenCvrs, 0, asOfDate ?? null);
   } else {
     await walkPerson(admin, kundeId, aktiver, seenBfes, seenCvrs);
   }
@@ -73,6 +75,7 @@ export async function walkKoncern(
  * @param seenBfes - Dedup set for ejendomme
  * @param seenCvrs - Dedup + cyclic detection for virksomheder
  * @param depth - Rekursionsdybde (max 3)
+ * @param asOfDate - BIZZ-1355: Snapshot-dato (null = aktuel)
  */
 async function walkVirksomhed(
   admin: ReturnType<typeof createAdminClient>,
@@ -80,19 +83,30 @@ async function walkVirksomhed(
   aktiver: Aktiv[],
   seenBfes: Set<number>,
   seenCvrs: Set<string>,
-  depth: number
+  depth: number,
+  asOfDate: Date | null
 ): Promise<void> {
   if (seenCvrs.has(cvr) || depth > 3 || aktiver.length >= MAX_AKTIVER) return;
   seenCvrs.add(cvr);
 
   // Hent ejendomme via ejf_ejerskab cache
+  // BIZZ-1355: Filtrér på gyldig_fra/gyldig_til for historiske opslag
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: ejfRows } = await (admin as any)
+  let ejfQuery = (admin as any)
     .from('ejf_ejerskab')
     .select('bfe_nummer, ejerandel_taeller, ejerandel_naevner')
-    .eq('ejer_cvr', cvr)
-    .eq('status', 'gældende')
-    .limit(100);
+    .eq('ejer_cvr', cvr);
+
+  if (asOfDate) {
+    const isoDate = asOfDate.toISOString().slice(0, 10);
+    ejfQuery = ejfQuery
+      .lte('gyldig_fra', isoDate)
+      .or(`gyldig_til.is.null,gyldig_til.gte.${isoDate}`);
+  } else {
+    ejfQuery = ejfQuery.eq('status', 'gældende');
+  }
+
+  const { data: ejfRows } = await ejfQuery.limit(100);
 
   for (const row of (ejfRows ?? []) as Array<{
     bfe_nummer: number;
@@ -114,13 +128,23 @@ async function walkVirksomhed(
   }
 
   // Hent datterselskaber via cvr_virksomhed_ejerskab cache
+  // BIZZ-1355: Historisk filtrering på gyldig_fra/gyldig_til
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: subRows } = await (admin as any)
+  let subQuery = (admin as any)
     .from('cvr_virksomhed_ejerskab')
     .select('ejet_cvr, ejerandel_min')
-    .eq('ejer_cvr', cvr)
-    .is('gyldig_til', null)
-    .limit(30);
+    .eq('ejer_cvr', cvr);
+
+  if (asOfDate) {
+    const isoDate = asOfDate.toISOString().slice(0, 10);
+    subQuery = subQuery
+      .lte('gyldig_fra', isoDate)
+      .or(`gyldig_til.is.null,gyldig_til.gte.${isoDate}`);
+  } else {
+    subQuery = subQuery.is('gyldig_til', null);
+  }
+
+  const { data: subRows } = await subQuery.limit(30);
 
   for (const sub of (subRows ?? []) as Array<{
     ejet_cvr: string;
@@ -150,7 +174,7 @@ async function walkVirksomhed(
     });
 
     // Rekursivt walk datterselskabets ejendomme
-    await walkVirksomhed(admin, sub.ejet_cvr, aktiver, seenBfes, seenCvrs, depth + 1);
+    await walkVirksomhed(admin, sub.ejet_cvr, aktiver, seenBfes, seenCvrs, depth + 1, asOfDate);
   }
 
   // Bestyrelsesposter (D&O detection)
@@ -229,7 +253,7 @@ async function walkPerson(
 
     // Ejerskabs-relationer → walk virksomheden for ejendomme
     if (ownershipTypes.has(rel.type) || (rel.ejerandel_pct && rel.ejerandel_pct > 0)) {
-      await walkVirksomhed(admin, rel.virksomhed_cvr, aktiver, seenBfes, seenCvrs, 1);
+      await walkVirksomhed(admin, rel.virksomhed_cvr, aktiver, seenBfes, seenCvrs, 1, null);
     }
   }
 

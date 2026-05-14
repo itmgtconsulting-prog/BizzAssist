@@ -485,6 +485,8 @@ function AnalyseSection({ lang, policies }: { lang: string; policies: PolicyRow[
   } | null>(null);
   /** BIZZ-1389: Full analyse detail for unified view */
   const [analyseDetail, setAnalyseDetail] = useState<AnalyseDetail | null>(null);
+  /** BIZZ-1355: Snapshot-dato for historisk analyse */
+  const [asOfDate, setAsOfDate] = useState('');
   /** BIZZ-1394: Eksisterende policer for valgt kunde */
   const [kundePolicer, setKundePolicer] = useState<PolicyRow[]>([]);
   /** BIZZ-1394: Tidligere analyse for sammenligning */
@@ -607,6 +609,7 @@ function AnalyseSection({ lang, policies }: { lang: string; policies: PolicyRow[
           kunde_type: selected.type,
           kunde_id: selected.id,
           kunde_navn: selected.navn,
+          ...(asOfDate ? { as_of_date: asOfDate } : {}),
         }),
       });
       if (res.ok) {
@@ -632,7 +635,7 @@ function AnalyseSection({ lang, policies }: { lang: string; policies: PolicyRow[
     } finally {
       setRunning(false);
     }
-  }, [selected, running]);
+  }, [selected, running, asOfDate]);
 
   return (
     <section className="bg-white/5 border border-white/8 rounded-2xl p-5 space-y-3">
@@ -686,6 +689,38 @@ function AnalyseSection({ lang, policies }: { lang: string; policies: PolicyRow[
           </div>
         )}
       </div>
+
+      {/* BIZZ-1355: Snapshot-dato for historisk analyse */}
+      {selected && !analyseResult && (
+        <div className="flex items-center gap-3 text-xs">
+          <label htmlFor="as-of-date" className="text-slate-400 whitespace-nowrap">
+            {da ? 'Snapshot-dato:' : 'Snapshot date:'}
+          </label>
+          <input
+            id="as-of-date"
+            type="date"
+            value={asOfDate}
+            onChange={(e) => setAsOfDate(e.target.value)}
+            max={new Date().toISOString().slice(0, 10)}
+            className="bg-slate-800 border border-slate-700/60 rounded px-2 py-1 text-white text-xs outline-none focus:border-blue-500/60"
+          />
+          {asOfDate && (
+            <button
+              type="button"
+              onClick={() => setAsOfDate('')}
+              className="text-slate-500 hover:text-slate-300 text-[10px]"
+              aria-label={da ? 'Ryd dato' : 'Clear date'}
+            >
+              {da ? 'ryd' : 'clear'}
+            </button>
+          )}
+          {!asOfDate && (
+            <span className="text-slate-500">
+              {da ? '(tom = aktuel dato)' : '(empty = current date)'}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* BIZZ-1394: Eksisterende policer + forrige analyse for valgt kunde */}
       {selected && !analyseResult && (kundePolicer.length > 0 || lastAnalyse) && (

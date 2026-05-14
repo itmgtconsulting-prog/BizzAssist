@@ -83,7 +83,10 @@ export type OversightParseResult =
  * BIZZ-1392: Samlet resultat fra 2-trins pipeline.
  * Kan returnere én police (ParseResult) eller N policer (OversightParseResult).
  */
-export type MultiParseResult = ParseResult | OversightParseResult;
+export type MultiParseResult = (ParseResult | OversightParseResult) & {
+  /** BIZZ-1404: Samlet token-forbrug fra alle Claude-kald i parse-pipeline */
+  tokenUsage?: { input: number; output: number };
+};
 
 // ─── BIZZ-1392: Trin 1 — Dokumenttype-detektion ─────────────────
 
@@ -165,6 +168,10 @@ export async function detectDocumentType(
       confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.5,
       reason: typeof parsed.reason === 'string' ? parsed.reason.slice(0, 200) : '',
       policy_count: typeof parsed.policy_count === 'number' ? parsed.policy_count : undefined,
+      tokenUsage: {
+        input: response.usage?.input_tokens ?? 0,
+        output: response.usage?.output_tokens ?? 0,
+      },
     };
   } catch (err) {
     logger.warn('[forsikring/parser] Dokumenttype-detektion fejlede:', err);
@@ -607,6 +614,12 @@ export async function parseWithTypeDetection(
     `[forsikring/parser] Dokumenttype: ${detection.type} (confidence: ${detection.confidence}, count: ${detection.policy_count ?? '?'})`
   );
 
+  // BIZZ-1404: Accumulate token usage from detection + subsequent parse
+  const totalTokens = {
+    input: detection.tokenUsage?.input ?? 0,
+    output: detection.tokenUsage?.output ?? 0,
+  };
+
   // Step 3: Route baseret på type
   switch (detection.type) {
     case 'oversigt': {
@@ -633,6 +646,9 @@ export async function parseWithTypeDetection(
         const msg = err instanceof Error ? err.message : 'unknown';
         return { ok: false, text, error: `Claude-kald fejlede: ${msg}` };
       }
+      // BIZZ-1404: Accumulate parse-tokens
+      totalTokens.input += response.usage?.input_tokens ?? 0;
+      totalTokens.output += response.usage?.output_tokens ?? 0;
       const textBlock = response.content.find((b) => b.type === 'text');
       if (!textBlock || textBlock.type !== 'text') {
         return { ok: false, text, error: 'Claude returnerede intet output' };
@@ -653,7 +669,13 @@ export async function parseWithTypeDetection(
           .join('; ');
         return { ok: false, text, error: `Schema-validering fejlede: ${issueSummary}` };
       }
-      return { ok: true, text, policy: validation.data, documentType: detection.type };
+      return {
+        ok: true,
+        text,
+        policy: validation.data,
+        documentType: detection.type,
+        tokenUsage: totalTokens,
+      };
     }
     case 'tilbud':
       return {

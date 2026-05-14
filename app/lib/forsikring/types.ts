@@ -43,6 +43,8 @@ export interface DocumentTypeDetection {
   reason: string;
   /** Antal policer detekteret (kun relevant for oversigt-type) */
   policy_count?: number;
+  /** BIZZ-1404: Token-forbrug fra Claude-kald */
+  tokenUsage?: { input: number; output: number };
 }
 
 /** Oversigt-entry: en police uddraget fra en forsikringsoversigt */

@@ -26,7 +26,7 @@ import { assertAiAllowed } from '@/app/lib/aiGate';
 import { logger } from '@/app/lib/logger';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getInsuranceApi } from '@/lib/db/insurance';
-import { getTenantContext } from '@/lib/db/tenant';
+import { getTenantContext, getTenantSchemaName } from '@/lib/db/tenant';
 import {
   parsePolicyImage,
   canParseAsText,
@@ -44,6 +44,35 @@ import { resolveFileType } from '@/app/lib/domainFileTypes';
 
 /** Storage bucket name (matcher upload-route) */
 const BUCKET = 'forsikring-documents';
+
+/**
+ * BIZZ-1404: Record AI token usage for forsikring parse operations.
+ * Fire-and-forget — failures silently swallowed.
+ */
+function recordParseTokens(
+  tenantId: string,
+  userId: string,
+  tokensIn: number,
+  tokensOut: number
+): void {
+  if (tokensIn === 0 && tokensOut === 0) return;
+  void (async () => {
+    try {
+      const schemaName = await getTenantSchemaName(tenantId);
+      const admin = createAdminClient();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (admin as any).schema(schemaName).from('ai_token_usage').insert({
+        tenant_id: tenantId,
+        user_id: userId,
+        tokens_in: tokensIn,
+        tokens_out: tokensOut,
+        model: 'claude-sonnet-4-6',
+      });
+    } catch {
+      // Non-critical — best-effort tracking
+    }
+  })();
+}
 
 /** Tag længere tid pga. Claude-kald (typisk 10-30 sek for en police-PDF) */
 export const maxDuration = 60;
@@ -247,6 +276,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         },
       });
 
+      // BIZZ-1404: Registrer AI token-forbrug
+      if (result.tokenUsage) {
+        recordParseTokens(
+          auth.tenantId,
+          auth.userId,
+          result.tokenUsage.input,
+          result.tokenUsage.output
+        );
+      }
+
       return NextResponse.json({
         document_type: 'oversigt',
         policies: createdPolicies,
@@ -374,6 +413,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         gap_count: detectedGaps.length,
       },
     });
+
+    // BIZZ-1404: Registrer AI token-forbrug
+    if (result.tokenUsage) {
+      recordParseTokens(
+        auth.tenantId,
+        auth.userId,
+        result.tokenUsage.input,
+        result.tokenUsage.output
+      );
+    }
 
     return NextResponse.json({
       document_type: result.documentType,

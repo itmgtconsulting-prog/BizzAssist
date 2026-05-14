@@ -40,14 +40,26 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  let body: { kunde_type: string; kunde_id: string; kunde_navn?: string; as_of_date?: string };
+  let body: {
+    kunde_type: string;
+    kunde_id: string;
+    kunde_navn?: string;
+    as_of_date?: string;
+    /** BIZZ-1404: Dokument-IDs der skal genbruges fra tidligere analyser */
+    document_ids?: string[];
+    /** BIZZ-1404: Nyligt uploadede dokument-IDs for denne analyse */
+    new_document_ids?: string[];
+    /** BIZZ-1404: Link til kundesag */
+    sag_id?: string;
+  };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  const { kunde_type, kunde_id, kunde_navn, as_of_date } = body;
+  const { kunde_type, kunde_id, kunde_navn, as_of_date, document_ids, new_document_ids, sag_id } =
+    body;
   if (!kunde_type || !kunde_id || !['virksomhed', 'person'].includes(kunde_type)) {
     return NextResponse.json({ error: 'Missing or invalid kunde_type/kunde_id' }, { status: 400 });
   }
@@ -264,6 +276,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         insured_count: insuredCount,
         uninsured_count: aktiver.length - insuredCount,
         total_risk_score: totalRiskScore,
+        sag_id: sag_id ?? null,
         summary: {
           gaps_count: allGaps.length,
           gaps_critical: allGaps.filter((g) => g.severity === 'critical').length,
@@ -308,7 +321,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
     }
 
-    // 8. Persistér gaps
+    // 8. Persistér gaps (med analyse_id for per-analyse scoping)
     if (allGaps.length > 0) {
       const gapRows = allGaps.map((g) => ({
         tenant_id: auth.tenantId,
@@ -321,12 +334,28 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         recommendation: g.recommendation,
         estimated_impact_dkk: g.estimatedImpactDkk,
         source_data: g.sourceData,
+        analyse_id: analyse.id,
       }));
 
       const { error: gapErr } = await db.from('forsikring_gaps').insert(gapRows);
 
       if (gapErr) {
         logger.error('[forsikring/analyser] Insert gaps fejl:', gapErr);
+      }
+    }
+
+    // BIZZ-1404: Link dokumenter til analysen via junction-tabel
+    const allDocIds = [...(document_ids ?? []), ...(new_document_ids ?? [])];
+    if (allDocIds.length > 0) {
+      const docLinks = allDocIds.map((docId) => ({
+        tenant_id: auth.tenantId,
+        analyse_id: analyse.id,
+        document_id: docId,
+        source: (document_ids ?? []).includes(docId) ? 'reused' : 'uploaded',
+      }));
+      const { error: linkErr } = await db.from('forsikring_analyse_documents').insert(docLinks);
+      if (linkErr) {
+        logger.warn('[forsikring/analyser] Link docs fejl:', linkErr.message);
       }
     }
 
@@ -355,11 +384,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
  *
  * @returns { analyser: ForsikringAnalyseRow[] }
  */
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   const auth = await resolveTenantId();
   if (!auth) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
+  // BIZZ-1404: Optional filter by customer
+  const kundeId = request.nextUrl.searchParams.get('kunde_id');
 
   const admin = createAdminClient();
   const schemaName = await getTenantSchemaName(auth.tenantId);
@@ -369,13 +401,19 @@ export async function GET(): Promise<NextResponse> {
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (admin as any)
+    let query = (admin as any)
       .schema(schemaName)
       .from('forsikring_analyser')
       .select('*')
       .eq('tenant_id', auth.tenantId)
       .order('created_at', { ascending: false })
       .limit(50);
+
+    if (kundeId) {
+      query = query.eq('kunde_id', kundeId);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       logger.error('[forsikring/analyser] List fejl:', error);

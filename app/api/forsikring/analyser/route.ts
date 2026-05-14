@@ -16,6 +16,11 @@ import { getInsuranceApi } from '@/lib/db/insurance';
 import { walkKoncern } from '@/app/lib/forsikring/koncernWalk';
 import { matchAssetsToPolicies } from '@/app/lib/forsikring/assetMatcher';
 import { runGapEngine, computeRiskScore } from '@/app/lib/forsikring/gapEngine';
+import {
+  runBbrCrossCheck,
+  runTinglysningCrossCheck,
+  runVurCrossCheck,
+} from '@/app/lib/forsikring/crossChecks';
 import { logActivity } from '@/app/lib/activityLog';
 import { logger } from '@/app/lib/logger';
 
@@ -74,13 +79,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
     logger.log(`[forsikring/analyser] Fandt ${aktiver.length} aktiver`);
 
+    // Request context for internal API calls (used by address enrichment + cross-checks)
+    const proto = request.headers.get('x-forwarded-proto') ?? 'https';
+    const host = `${proto}://${request.headers.get('host') ?? 'localhost:3000'}`;
+    const cookie = request.headers.get('cookie') ?? '';
+
     // 1b. Berig ejendom-aktiver med adresser (for matching mod policer)
     const ejendomBfes = aktiver.filter((a) => a.type === 'ejendom' && a.bfe).map((a) => a.bfe!);
     if (ejendomBfes.length > 0) {
       try {
-        const proto = request.headers.get('x-forwarded-proto') ?? 'https';
-        const host = `${proto}://${request.headers.get('host') ?? 'localhost:3000'}`;
-        const cookie = request.headers.get('cookie') ?? '';
         const addrRes = await fetch(`${host}/api/bfe-addresses?bfes=${ejendomBfes.join(',')}`, {
           headers: { cookie },
           signal: AbortSignal.timeout(10_000),
@@ -169,6 +176,72 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           }),
         });
       }
+    }
+
+    // 4b. BIZZ-1356: Auto-trigger eksterne cross-checks (best-effort, parallel)
+    try {
+      const [bbrResult, tlResult, vurResult] = await Promise.allSettled([
+        runBbrCrossCheck(matches, host, cookie),
+        runTinglysningCrossCheck(matches, host, cookie),
+        runVurCrossCheck(matches, host, cookie),
+      ]);
+
+      // Merge cross-check gaps into allGaps
+      if (bbrResult.status === 'fulfilled') {
+        for (const g of bbrResult.value.gaps) {
+          allGaps.push({
+            policyId: g.policyId,
+            checkId: g.check_id,
+            category: g.category,
+            severity: g.severity,
+            title: g.title,
+            description: g.description,
+            recommendation: g.recommendation,
+            estimatedImpactDkk: g.estimated_impact_dkk,
+            sourceData: g.source_data,
+            riskScore: g.riskScore,
+          });
+        }
+        logger.log(`[forsikring/analyser] BBR cross-check: ${bbrResult.value.gaps.length} gaps`);
+      }
+      if (tlResult.status === 'fulfilled') {
+        for (const g of tlResult.value.gaps) {
+          allGaps.push({
+            policyId: g.policyId,
+            checkId: g.check_id,
+            category: g.category,
+            severity: g.severity,
+            title: g.title,
+            description: g.description,
+            recommendation: g.recommendation,
+            estimatedImpactDkk: g.estimated_impact_dkk,
+            sourceData: g.source_data,
+            riskScore: g.riskScore,
+          });
+        }
+        logger.log(
+          `[forsikring/analyser] Tinglysning cross-check: ${tlResult.value.gaps.length} gaps`
+        );
+      }
+      if (vurResult.status === 'fulfilled') {
+        for (const g of vurResult.value.gaps) {
+          allGaps.push({
+            policyId: g.policyId,
+            checkId: g.check_id,
+            category: g.category,
+            severity: g.severity,
+            title: g.title,
+            description: g.description,
+            recommendation: g.recommendation,
+            estimatedImpactDkk: g.estimated_impact_dkk,
+            sourceData: g.source_data,
+            riskScore: g.riskScore,
+          });
+        }
+        logger.log(`[forsikring/analyser] VUR cross-check: ${vurResult.value.gaps.length} gaps`);
+      }
+    } catch (err) {
+      logger.warn('[forsikring/analyser] Cross-checks fejlede (best-effort):', err);
     }
 
     // 5. Beregn samlet risk-score

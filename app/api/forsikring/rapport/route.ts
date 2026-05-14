@@ -72,11 +72,49 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Analyse ikke fundet' }, { status: 404 });
     }
 
-    // Hent policer
-    const insurance = await getInsuranceApi(auth.tenantId);
-    const policies = await insurance.policies.list();
+    // BIZZ-1404: Hent policer scoped til analyse via junction-tabel
+    const { data: docLinks } = await db
+      .from('forsikring_analyse_documents')
+      .select('document_id')
+      .eq('analyse_id', analyse_id)
+      .eq('tenant_id', auth.tenantId);
+    const docIds = (docLinks ?? []).map((l: { document_id: string }) => l.document_id);
 
-    // Hent gaps for matchede policer
+    let policies: Array<{
+      id: string;
+      policy_number: string;
+      insurer_name: string;
+      property_address: string | null;
+      annual_premium_dkk: number | null;
+      effective_to: string | null;
+      sum_insured_dkk: number | null;
+    }> = [];
+
+    if (docIds.length > 0) {
+      const { data: polRows } = await db
+        .from('forsikring_policies')
+        .select(
+          'id, policy_number, insurer_name, property_address, annual_premium_dkk, effective_to, sum_insured_dkk'
+        )
+        .in('document_id', docIds)
+        .eq('tenant_id', auth.tenantId);
+      policies = polRows ?? [];
+    } else {
+      // Fallback: alle policer (legacy analyser uden junction-links)
+      const insurance = await getInsuranceApi(auth.tenantId);
+      const allPolicies = await insurance.policies.list();
+      policies = allPolicies.map((p) => ({
+        id: p.id,
+        policy_number: p.policy_number,
+        insurer_name: p.insurer_name,
+        property_address: p.property_address,
+        annual_premium_dkk: p.annual_premium_dkk,
+        effective_to: p.effective_to,
+        sum_insured_dkk: p.sum_insured_dkk,
+      }));
+    }
+
+    // Hent gaps — prefer analyse-scoped
     const matchedPolicyIds = [
       ...new Set(
         (aktiverRes.data ?? [])
@@ -94,7 +132,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       recommendation: string | null;
       check_id: string;
     }> = [];
-    if (matchedPolicyIds.length > 0) {
+    // Prøv analyse-scoped gaps først, fallback til legacy policy-scoped
+    const { data: scopedGaps } = await db
+      .from('forsikring_gaps')
+      .select('*')
+      .eq('analyse_id', analyse_id)
+      .eq('tenant_id', auth.tenantId)
+      .order('severity');
+
+    if (scopedGaps && scopedGaps.length > 0) {
+      gaps = scopedGaps;
+    } else if (matchedPolicyIds.length > 0) {
       const { data } = await db
         .from('forsikring_gaps')
         .select('*')

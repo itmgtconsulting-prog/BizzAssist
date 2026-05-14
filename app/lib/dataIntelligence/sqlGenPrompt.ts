@@ -29,6 +29,9 @@ REGLER:
 10. KRITISK — cvr-kolonner er ALTID type TEXT, ikke bigint. Cast IKKE til bigint. Ved JOIN: cvr_virksomhed.cvr = ejf_ejerskab.ejer_cvr (begge text — direkte match).
 11. Ved JOIN på kommune-navn: JOIN public.kommune_ref USING (kommune_kode) eller ON kommune_kode.
 12. Brug aldrig kolonner som ikke er nævnt i katalog/eksempler — det giver "column does not exist" fejl.
+13. PERFORMANCE — undgå joins på ejf_ejerskab (7,6M rækker) når muligt. Brug i stedet public.mv_analyse_virksomhed (har antal_ejendomme pre-aggregeret per virksomhed) eller public.mv_analyse_ejendom (har ejer-info pre-joinet per ejendom).
+14. For "find virksomheder der ejer flere end N ejendomme" → brug mv_analyse_virksomhed WHERE antal_ejendomme > N.
+15. For "ejendomme hvor ejer-virksomheden..." → brug mv_analyse_ejendom (ejer_cvr, virksomhed_navn, virksomhed_form er allerede joinet).
 
 WHITELISTEDE TABELLER:
 ${Array.from(WHITELISTED_TABLES).join(', ')}

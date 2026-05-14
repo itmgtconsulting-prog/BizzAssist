@@ -532,7 +532,14 @@ function AIChatPanel() {
       parts.push(lines.join('\n'));
     }
 
-    return parts.length > 0 ? parts.join('\n\n') : undefined;
+    // BIZZ-1401: Begræns kontekst-størrelse — for stor kontekst (>40K tegn)
+    // kan forårsage Anthropic API timeout/fejl der swallowes stille.
+    const MAX_CONTEXT_CHARS = 40_000;
+    const joined = parts.length > 0 ? parts.join('\n\n') : undefined;
+    if (joined && joined.length > MAX_CONTEXT_CHARS) {
+      return joined.slice(0, MAX_CONTEXT_CHARS) + '\n\n[Kontekst afkortet — for stor til AI-chat]';
+    }
+    return joined;
   }, [pathname, pageData, a]);
 
   /**
@@ -748,7 +755,12 @@ function AIChatPanel() {
     // uden session_id i stateless-mode. Chat fungerer stadig ende-til-ende
     // via /api/ai/chat; kun cross-device persistens preller af. Tidligere
     // afbrød vi stille her og brugeren så ingen feedback — BIZZ-839 bug.
-    const convId = await chatCtx.ensureConversation(lang as 'da' | 'en');
+    // BIZZ-1401: Timeout ensureConversation — hænger den, blokerer den hele
+    // sendMessage og brugeren ser loading-dots for evigt. 5s max.
+    const convId = await Promise.race([
+      chatCtx.ensureConversation(lang as 'da' | 'en'),
+      new Promise<string | null>((resolve) => setTimeout(() => resolve(null), 5000)),
+    ]);
     if (convId) {
       // Auto-title from first user message (non-blocking)
       if (messages.length === 0) {

@@ -2872,7 +2872,13 @@ export async function POST(request: NextRequest): Promise<Response> {
     systemPrompt += `\n\n${recentEntitiesContext}`;
   }
   if (context) {
-    systemPrompt += `\n\n## Aktuel kontekst\nBrugeren kigger på: ${context}`;
+    // BIZZ-1401: Begræns kontekst for at undgå Anthropic token-overflow
+    const MAX_CONTEXT = 40_000;
+    const trimmedContext =
+      context.length > MAX_CONTEXT
+        ? context.slice(0, MAX_CONTEXT) + '\n[Kontekst afkortet]'
+        : context;
+    systemPrompt += `\n\n## Aktuel kontekst\nBrugeren kigger på: ${trimmedContext}`;
   }
 
   // BIZZ-816: injicér user's domain-templates så AI kender deres

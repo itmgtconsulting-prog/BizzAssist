@@ -464,7 +464,15 @@ function UnifiedAnalyseView({
  * @param props.lang - Sprogkode
  * @param props.policies - Policy list for cross-referencing in unified view
  */
-function AnalyseSection({ lang, policies }: { lang: string; policies: PolicyRow[] }) {
+function AnalyseSection({
+  lang,
+  policies,
+  onRefresh,
+}: {
+  lang: string;
+  policies: PolicyRow[];
+  onRefresh: () => void;
+}) {
   const da = lang === 'da';
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<
@@ -639,12 +647,32 @@ function AnalyseSection({ lang, policies }: { lang: string; policies: PolicyRow[
 
   return (
     <section className="bg-white/5 border border-white/8 rounded-2xl p-5 space-y-3">
-      <h2 className="text-white font-semibold text-sm flex items-center gap-2">
-        <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">
-          1
-        </span>
-        {da ? 'Vælg kunde' : 'Select customer'}
-      </h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-white font-semibold text-sm flex items-center gap-2">
+          <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">
+            1
+          </span>
+          {da ? 'Vælg kunde' : 'Select customer'}
+        </h2>
+        {/* BIZZ-1395: Reset/ny kunde-knap */}
+        {selected && (
+          <button
+            type="button"
+            onClick={() => {
+              setSelected(null);
+              setQuery('');
+              setAnalyseResult(null);
+              setAnalyseDetail(null);
+              setKundePolicer([]);
+              setLastAnalyse(null);
+              setAsOfDate('');
+            }}
+            className="text-slate-400 hover:text-white text-xs px-2 py-1 rounded hover:bg-white/5 transition-colors"
+          >
+            {da ? '← Ny kunde' : '← New customer'}
+          </button>
+        )}
+      </div>
       <p className="text-slate-400 text-xs">
         {da
           ? 'Vælg den virksomhed eller person du vil analysere forsikringsdækning for.'
@@ -902,24 +930,57 @@ function AnalyseSection({ lang, policies }: { lang: string; policies: PolicyRow[
             {da ? 'Tidligere kunder' : 'Previous customers'}
           </div>
           {sager.slice(0, 5).map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => {
-                setSelected({
-                  type: s.kunde_type as 'virksomhed' | 'person',
-                  id: s.kunde_id,
-                  navn: s.kunde_navn ?? s.kunde_id,
-                });
-              }}
-              className="w-full text-left px-3 py-2 bg-white/3 hover:bg-white/5 rounded-lg text-xs flex items-center justify-between"
-            >
-              <span className="text-white font-medium">{s.kunde_navn ?? s.kunde_id}</span>
-              <span className="text-slate-500">
-                {s.police_count} {da ? 'policer' : 'policies'} · {s.analyse_count}{' '}
-                {da ? 'analyser' : 'analyses'}
-              </span>
-            </button>
+            <div key={s.id} className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setSelected({
+                    type: s.kunde_type as 'virksomhed' | 'person',
+                    id: s.kunde_id,
+                    navn: s.kunde_navn ?? s.kunde_id,
+                  });
+                }}
+                className="flex-1 text-left px-3 py-2 bg-white/3 hover:bg-white/5 rounded-lg text-xs flex items-center justify-between"
+              >
+                <span className="text-white font-medium">{s.kunde_navn ?? s.kunde_id}</span>
+                <span className="text-slate-500">
+                  {s.police_count} {da ? 'policer' : 'policies'} · {s.analyse_count}{' '}
+                  {da ? 'analyser' : 'analyses'}
+                </span>
+              </button>
+              {/* BIZZ-1395: Slet sag-knap */}
+              <button
+                type="button"
+                aria-label={
+                  da
+                    ? `Slet sag for ${s.kunde_navn ?? s.kunde_id}`
+                    : `Delete case for ${s.kunde_navn ?? s.kunde_id}`
+                }
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  if (
+                    !window.confirm(
+                      da
+                        ? `Slet sag for ${s.kunde_navn ?? s.kunde_id}? Alle policer, dokumenter og analyser slettes permanent.`
+                        : `Delete case for ${s.kunde_navn ?? s.kunde_id}? All policies, documents and analyses will be permanently deleted.`
+                    )
+                  )
+                    return;
+                  try {
+                    const res = await fetch(`/api/forsikring/sager/${s.id}`, { method: 'DELETE' });
+                    if (res.ok) {
+                      setSager((prev) => prev.filter((x) => x.id !== s.id));
+                      onRefresh();
+                    }
+                  } catch {
+                    // Handled silently
+                  }
+                }}
+                className="p-2 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors shrink-0"
+              >
+                <XCircle size={14} />
+              </button>
+            </div>
           ))}
         </div>
       )}
@@ -1136,7 +1197,7 @@ export default function ForsikringPageClient(): React.ReactElement {
       </header>
 
       {/* TRIN 1: Vælg kunde */}
-      <AnalyseSection lang={lang} policies={policies} />
+      <AnalyseSection lang={lang} policies={policies} onRefresh={refresh} />
 
       {/* TRIN 2: Upload dokumenter */}
       <div className="flex items-center gap-2 text-sm font-semibold text-white">

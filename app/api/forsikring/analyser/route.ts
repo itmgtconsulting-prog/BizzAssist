@@ -171,6 +171,43 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       riskScore: number;
     }> = [];
 
+    // BIZZ-1446: Hent branche-data for virksomheds-aktiver
+    const virksomhedAktiver = aktiver.filter((a) => a.type === 'virksomhed' && a.cvr);
+    let brancheData:
+      | {
+          hovedbranche: string | null;
+          hovedbranche_tekst: string | null;
+          bibrancher: Array<{ kode: string; tekst: string | null }>;
+        }
+      | undefined;
+    if (virksomhedAktiver.length > 0) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: virkData } = await (admin as any)
+          .from('cvr_virksomhed')
+          .select(
+            'branche_kode, branche_tekst, bibranche_1_kode, bibranche_1_tekst, bibranche_2_kode, bibranche_2_tekst, bibranche_3_kode, bibranche_3_tekst'
+          )
+          .eq('cvr_nummer', virksomhedAktiver[0].cvr)
+          .maybeSingle();
+        if (virkData) {
+          const v = virkData as Record<string, string | null>;
+          const bibrancher: Array<{ kode: string; tekst: string | null }> = [];
+          for (let i = 1; i <= 3; i++) {
+            const kode = v[`bibranche_${i}_kode`];
+            if (kode) bibrancher.push({ kode, tekst: v[`bibranche_${i}_tekst`] ?? null });
+          }
+          brancheData = {
+            hovedbranche: v.branche_kode ?? null,
+            hovedbranche_tekst: v.branche_tekst ?? null,
+            bibrancher,
+          };
+        }
+      } catch {
+        /* best-effort */
+      }
+    }
+
     for (const match of matches) {
       if (!match.bestMatch) continue;
       const gaps = runGapEngine({
@@ -178,6 +215,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         coverages: [], // TODO: hent coverages per policy
         bbr: null,
         asOfDate: new Date(),
+        branche: brancheData,
         asset: {
           type: match.aktiv.type,
           vaerdiDkk: match.aktiv.vaerdiDkk,

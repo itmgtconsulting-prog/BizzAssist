@@ -26,8 +26,12 @@ describe('lookupBrancheKrav', () => {
     expect(krav?.label).toBe('Byggeri');
   });
 
-  it('returnerer null for standard-branche (681020 = udlejning)', () => {
-    expect(lookupBrancheKrav('681020')).toBeNull();
+  it('returnerer hoejrisiko for udlejning (681020)', () => {
+    // BIZZ-1446: Udlejning er nu hoejrisiko med specifikke krav
+    const krav = lookupBrancheKrav('681020');
+    expect(krav).not.toBeNull();
+    expect(krav!.kategori).toBe('hoejrisiko');
+    expect(krav!.kraevede_daekninger).toContain('ejendomsforsikring');
   });
 
   it('returnerer null for null', () => {

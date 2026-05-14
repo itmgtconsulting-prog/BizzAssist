@@ -142,6 +142,78 @@ const HOEJRISIKO_BRANCHER: Array<{ prefix: string; krav: BrancheKrav }> = [
     prefix: '6420',
     krav: { kategori: 'holding', label: 'Holdingselskab', kraevede_daekninger: ['d&o'] },
   },
+  // BIZZ-1446: Ejendomsudlejning
+  {
+    prefix: '6810',
+    krav: {
+      kategori: 'hoejrisiko',
+      label: 'Udlejning af boliger',
+      kraevede_daekninger: [
+        'ejendomsforsikring',
+        'erhvervsansvar',
+        'huslejetab',
+        'hus_grundejer_ansvar',
+      ],
+    },
+  },
+  {
+    prefix: '6820',
+    krav: {
+      kategori: 'hoejrisiko',
+      label: 'Udlejning af erhvervsejendomme',
+      kraevede_daekninger: [
+        'ejendomsforsikring',
+        'erhvervsansvar',
+        'huslejetab',
+        'hus_grundejer_ansvar',
+      ],
+    },
+  },
+  // Detailhandel
+  {
+    prefix: '47',
+    krav: {
+      kategori: 'hoejrisiko',
+      label: 'Detailhandel',
+      kraevede_daekninger: ['erhvervsansvar', 'indbrud', 'brand', 'driftstab'],
+    },
+  },
+  // Engroshandel
+  {
+    prefix: '46',
+    krav: {
+      kategori: 'hoejrisiko',
+      label: 'Engroshandel',
+      kraevede_daekninger: ['erhvervsansvar', 'brand', 'transportansvar'],
+    },
+  },
+  // Sundhed/læge/tandlæge
+  {
+    prefix: '86',
+    krav: {
+      kategori: 'hoejrisiko',
+      label: 'Sundhedsvæsen',
+      kraevede_daekninger: ['erhvervsansvar', 'behandlingsansvar', 'patientforsikring'],
+    },
+  },
+  // IT/software
+  {
+    prefix: '62',
+    krav: {
+      kategori: 'standard',
+      label: 'IT/software',
+      kraevede_daekninger: ['erhvervsansvar', 'cyberforsikring'],
+    },
+  },
+  // Rådgivning/konsulent
+  {
+    prefix: '70',
+    krav: {
+      kategori: 'standard',
+      label: 'Rådgivning',
+      kraevede_daekninger: ['erhvervsansvar', 'professionelt_ansvar'],
+    },
+  },
 ];
 
 /**

@@ -471,6 +471,7 @@ function AnalyseSection({
   onRefresh,
   onAnalyseDetail,
   onSagChange,
+  onCustomerSelect,
 }: {
   lang: string;
   policies: PolicyRow[];
@@ -479,6 +480,10 @@ function AnalyseSection({
   onAnalyseDetail: (detail: AnalyseDetail | null, kundeNavn: string | null) => void;
   /** BIZZ-1399: Callback med sag_id når kunde vælges/analyse startes */
   onSagChange: (sagId: string | null) => void;
+  /** BIZZ-1404: Callback når kunde vælges — for analyse-historik */
+  onCustomerSelect: (
+    customer: { type: 'virksomhed' | 'person'; id: string; navn: string } | null
+  ) => void;
 }) {
   const da = lang === 'da';
   const [query, setQuery] = useState('');
@@ -717,11 +722,15 @@ function AnalyseSection({
                 key={r.id}
                 type="button"
                 onClick={() => {
-                  setSelected({
-                    type: r.type === 'company' ? 'virksomhed' : 'person',
+                  const customer = {
+                    type: (r.type === 'company' ? 'virksomhed' : 'person') as
+                      | 'virksomhed'
+                      | 'person',
                     id: r.id,
                     navn: r.title,
-                  });
+                  };
+                  setSelected(customer);
+                  onCustomerSelect(customer);
                   setResults([]);
                   setQuery('');
                 }}
@@ -963,11 +972,13 @@ function AnalyseSection({
               <button
                 type="button"
                 onClick={() => {
-                  setSelected({
+                  const customer = {
                     type: s.kunde_type as 'virksomhed' | 'person',
                     id: s.kunde_id,
                     navn: s.kunde_navn ?? s.kunde_id,
-                  });
+                  };
+                  setSelected(customer);
+                  onCustomerSelect(customer);
                 }}
                 className="flex-1 text-left px-3 py-2 bg-white/3 hover:bg-white/5 rounded-lg text-xs flex items-center justify-between"
               >
@@ -1068,6 +1079,25 @@ export default function ForsikringPageClient(): React.ReactElement {
   const [resetting, setResetting] = useState(false);
   /** BIZZ-1399: Aktiv sag-ID fra AnalyseSection — bruges til filtrering + upload */
   const [activeSagId, setActiveSagId] = useState<string | null>(null);
+  /** BIZZ-1404: Valgt kunde fra AnalyseSection — lifted op for analyse-historik */
+  const [selectedCustomer, setSelectedCustomer] = useState<{
+    type: 'virksomhed' | 'person';
+    id: string;
+    navn: string;
+  } | null>(null);
+  /** BIZZ-1404: Aktiv analyse-ID for detaljevisning */
+  const [activeAnalyseId, setActiveAnalyseId] = useState<string | null>(null);
+  /** BIZZ-1404: Analyse-historik for valgt kunde */
+  const [analyseHistorik, setAnalyseHistorik] = useState<
+    Array<{
+      id: string;
+      created_at: string;
+      total_aktiver: number;
+      insured_count: number;
+      total_risk_score: number;
+      summary: { gaps_count?: number; policer_count?: number } | null;
+    }>
+  >([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   /** Fetch list data from API */
@@ -1097,6 +1127,18 @@ export default function ForsikringPageClient(): React.ReactElement {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  /** BIZZ-1404: Hent analyse-historik når kunde vælges */
+  useEffect(() => {
+    if (!selectedCustomer) {
+      setAnalyseHistorik([]);
+      return;
+    }
+    fetch(`/api/forsikring/analyser?kunde_id=${encodeURIComponent(selectedCustomer.id)}`)
+      .then((r) => (r.ok ? r.json() : { analyser: [] }))
+      .then((d) => setAnalyseHistorik(d.analyser ?? []))
+      .catch(() => setAnalyseHistorik([]));
+  }, [selectedCustomer]);
 
   /** Analyse-detail og kundenavn fra AnalyseSection (for AI-kontekst) */
   const [aiAnalyseDetail, setAiAnalyseDetail] = useState<AnalyseDetail | null>(null);
@@ -1308,7 +1350,65 @@ export default function ForsikringPageClient(): React.ReactElement {
         onRefresh={refresh}
         onAnalyseDetail={handleAnalyseDetail}
         onSagChange={setActiveSagId}
+        onCustomerSelect={setSelectedCustomer}
       />
+
+      {/* BIZZ-1404: Analyse-historik for valgt kunde */}
+      {selectedCustomer && analyseHistorik.length > 0 && !activeAnalyseId && (
+        <section className="bg-white/5 border border-white/8 rounded-2xl p-4">
+          <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+            <FileText size={16} className="text-blue-400" />
+            {lang === 'da'
+              ? `Tidligere analyser for ${selectedCustomer.navn}`
+              : `Previous analyses for ${selectedCustomer.navn}`}
+          </h3>
+          <div className="space-y-2">
+            {analyseHistorik.map((a) => {
+              const gapCount = (a.summary as Record<string, number> | null)?.gaps_count ?? 0;
+              const pct =
+                a.total_aktiver > 0 ? Math.round((a.insured_count / a.total_aktiver) * 100) : 0;
+              return (
+                <button
+                  key={a.id}
+                  type="button"
+                  onClick={() => setActiveAnalyseId(a.id)}
+                  className="w-full text-left px-4 py-3 bg-white/3 hover:bg-white/5 rounded-xl flex items-center justify-between transition-colors"
+                >
+                  <div>
+                    <div className="text-white text-sm font-medium">
+                      {new Date(a.created_at).toLocaleDateString('da-DK', {
+                        day: 'numeric',
+                        month: 'short',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </div>
+                    <div className="text-slate-400 text-xs mt-0.5">
+                      {a.total_aktiver} {lang === 'da' ? 'ejendomme' : 'properties'} ·{' '}
+                      {a.insured_count} {lang === 'da' ? 'forsikrede' : 'insured'} · {gapCount} gaps
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span
+                      className={`text-lg font-bold ${
+                        pct >= 71
+                          ? 'text-emerald-400'
+                          : pct >= 41
+                            ? 'text-amber-400'
+                            : 'text-red-400'
+                      }`}
+                    >
+                      {pct}%
+                    </span>
+                    <ChevronRight size={16} className="text-slate-500" />
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       {/* TRIN 2: Upload dokumenter */}
       <div className="flex items-center gap-2 text-sm font-semibold text-white">

@@ -1076,9 +1076,25 @@ function AnalyseSection({
                     </label>
                   ))}
                 </div>
-                <div className="text-blue-400 text-xs">
-                  {selectedDocIds.size} / {unique.length}{' '}
-                  {da ? 'dokumenter valgt' : 'documents selected'}
+                <div className="flex items-center gap-3 text-xs">
+                  <span className="text-blue-400">
+                    {selectedDocIds.size} / {unique.length}{' '}
+                    {da ? 'dokumenter valgt' : 'documents selected'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDocIds(new Set(unique.map((d) => d.id)))}
+                    className="text-slate-500 hover:text-blue-400 transition-colors"
+                  >
+                    {da ? 'Vælg alle' : 'Select all'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDocIds(new Set())}
+                    className="text-slate-500 hover:text-red-400 transition-colors"
+                  >
+                    {da ? 'Fravælg alle' : 'Deselect all'}
+                  </button>
                 </div>
               </>
             ) : (

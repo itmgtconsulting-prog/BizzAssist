@@ -50,10 +50,12 @@ describe('walkKoncern', () => {
 
     const result = await walkKoncern('virksomhed', '12345678');
 
-    expect(result).toHaveLength(2);
-    expect(result[0].type).toBe('ejendom');
-    expect(result[0].bfe).toBe(123456);
-    expect(result[1].bfe).toBe(789012);
+    // BIZZ-1443: +1 for virksomheden selv som aktiv
+    expect(result).toHaveLength(3);
+    expect(result[0].type).toBe('virksomhed');
+    expect(result[1].type).toBe('ejendom');
+    expect(result[1].bfe).toBe(123456);
+    expect(result[2].bfe).toBe(789012);
   });
 
   it('walks datterselskaber recursively', async () => {
@@ -86,8 +88,9 @@ describe('walkKoncern', () => {
     const ejendomme = result.filter((a) => a.type === 'ejendom');
     const virksomheder = result.filter((a) => a.type === 'virksomhed');
     expect(ejendomme.length).toBeGreaterThanOrEqual(2);
-    expect(virksomheder).toHaveLength(1);
-    expect(virksomheder[0].label).toBe('Datter ApS');
+    // BIZZ-1443: parent + datter (+ evt. sub-datter) = ≥2 virksomheder
+    expect(virksomheder.length).toBeGreaterThanOrEqual(2);
+    expect(virksomheder.some((v) => v.label === 'Datter ApS')).toBe(true);
   });
 
   it('detects cyclic ownership and stops', async () => {

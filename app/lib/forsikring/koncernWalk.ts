@@ -89,6 +89,19 @@ async function walkVirksomhed(
   if (seenCvrs.has(cvr) || depth > 3 || aktiver.length >= MAX_AKTIVER) return;
   seenCvrs.add(cvr);
 
+  // BIZZ-1443: Tilføj virksomheden selv som aktiv (for ansvarsforsikring-matching)
+  const { data: virk } = await (admin as ReturnType<typeof createAdminClient>)
+    .from('cvr_virksomhed')
+    .select('navn, branche_tekst')
+    .eq('cvr_nummer', cvr)
+    .maybeSingle();
+  aktiver.push({
+    type: 'virksomhed',
+    label: (virk as { navn?: string } | null)?.navn ?? `CVR ${cvr}`,
+    cvr,
+    rawData: { branche: (virk as { branche_tekst?: string } | null)?.branche_tekst ?? null },
+  });
+
   // Hent ejendomme via ejf_ejerskab cache
   // BIZZ-1355: Filtrér på gyldig_fra/gyldig_til for historiske opslag
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

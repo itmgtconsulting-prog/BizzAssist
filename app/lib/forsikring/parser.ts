@@ -661,12 +661,38 @@ export async function parseWithTypeDetection(
         text,
         error: `Dokumentet er et forsikringstilbud — ikke en gyldig police. Upload den endelige police i stedet.`,
       };
-    case 'korrespondance':
+    case 'korrespondance': {
+      // BIZZ-1398: Samlede police-pakker (følgebrev + police) fejlklassificeres
+      // som korrespondance. Check for police-nøgleord i HELE teksten — hvis de
+      // findes, er det sandsynligvis en police pakket med et følgebrev.
+      const policyKeywords = [
+        'forsikringsaftale',
+        'dækningsoversigt',
+        'vilkårsnr',
+        'selvrisiko',
+        'forsikringstype',
+        'dækningssum',
+        'forsikringssted',
+        'erhvervsansvar',
+        'ejendomsforsikring',
+        'bygningsforsikring',
+        'forsikringen dækker',
+        'forsikringen gælder',
+      ];
+      const lowerText = text.toLowerCase();
+      const matchCount = policyKeywords.filter((kw) => lowerText.includes(kw)).length;
+      if (matchCount >= 2 && text.length > 3000) {
+        logger.log(
+          `[forsikring/parser] Korrespondance med ${matchCount} police-nøgleord → fallback til police-parsing`
+        );
+        return parsePolicyFile(fileBuffer, fileType, apiKey);
+      }
       return {
         ok: false,
         text,
         error: `Dokumentet er korrespondance (brev/email) — ikke en forsikringspolice.`,
       };
+    }
     case 'ukendt':
     default:
       // Fallback: prøv at parse som police alligevel (backward compat)

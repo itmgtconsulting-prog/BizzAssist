@@ -179,7 +179,7 @@ const SCENARIOS: Scenario[] = [
     level: 3,
     prompt: 'Find virksomheder der ejer flere end 5 ejendomme',
     expectOk: true,
-    timeBudgetMs: 75_000,
+    timeBudgetMs: 100_000,
     minRows: 0,
   },
   {
@@ -187,7 +187,7 @@ const SCENARIOS: Scenario[] = [
     level: 3,
     prompt: 'Top 10 brancher per kommune for København',
     expectOk: true,
-    timeBudgetMs: 75_000,
+    timeBudgetMs: 100_000,
     allowExplanation: true,
   },
   {
@@ -195,7 +195,7 @@ const SCENARIOS: Scenario[] = [
     level: 3,
     prompt: 'Ejendomme hvor ejer-virksomheden er ophørt',
     expectOk: true,
-    timeBudgetMs: 75_000,
+    timeBudgetMs: 100_000,
     allowExplanation: true,
   },
   {
@@ -203,7 +203,7 @@ const SCENARIOS: Scenario[] = [
     level: 3,
     prompt: 'Hvilke kommuner har flest unikke virksomhedsejere af ejendomme?',
     expectOk: true,
-    timeBudgetMs: 75_000,
+    timeBudgetMs: 100_000,
     allowExplanation: true,
   },
   {

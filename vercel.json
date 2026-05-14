@@ -77,6 +77,10 @@
       "schedule": "15 4 * * *"
     },
     {
+      "path": "/api/cron/refresh-data-catalog",
+      "schedule": "0 3 * * *"
+    },
+    {
       "path": "/api/cron/pull-dar-aendringer",
       "schedule": "0 5 * * *"
     },

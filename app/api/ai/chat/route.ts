@@ -2864,6 +2864,24 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   // Build system prompt — append knowledge base, recent entities and page context if available
   let systemPrompt = SYSTEM_PROMPT;
+
+  // BIZZ-1410: Inject data catalog (Fase 1, Lag 1 — pre-beregnet metadata om
+  // whitelistede tabeller). Caches 5 min in-memory; nightly refresh via
+  // /api/cron/refresh-data-catalog. Graceful degradation: ved fejl fortsætter
+  // AI uden catalog.
+  try {
+    const { fetchCatalog } = await import('@/app/lib/dataIntelligence/fetchCatalog');
+    const { formatCatalogForPrompt } =
+      await import('@/app/lib/dataIntelligence/formatCatalogForPrompt');
+    const { rows, computedAt } = await fetchCatalog();
+    if (rows.length > 0) {
+      const catalogMd = formatCatalogForPrompt(rows, computedAt ?? undefined);
+      systemPrompt += `\n\n${catalogMd}`;
+    }
+  } catch (catalogErr) {
+    logger.warn('[ai/chat] data catalog fetch failed (non-fatal):', catalogErr);
+  }
+
   // Inject knowledge base first so it forms stable background knowledge
   if (knowledgeContext) {
     systemPrompt += `\n\n${knowledgeContext}`;

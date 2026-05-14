@@ -72,10 +72,27 @@ interface QueryPlan {
  *
  * @returns System prompt string
  */
-function buildSystemPrompt(): string {
+async function buildSystemPrompt(): Promise<string> {
   const schema = generateSchemaDescription();
   const tableNames = WHITELISTED_TABLES.map((t) => t.table).join(', ');
-  return `Du er en data-analytiker for BizzAssist. Brugeren stiller spørgsmål på dansk.
+
+  // BIZZ-1411: Inject data catalog så Claude kender faktisk null-rate,
+  // distinct-values og top-værdier per kolonne. Graceful degradation hvis
+  // catalog ikke kan hentes.
+  let catalogSection = '';
+  try {
+    const { fetchCatalog } = await import('@/app/lib/dataIntelligence/fetchCatalog');
+    const { formatCatalogForPrompt } =
+      await import('@/app/lib/dataIntelligence/formatCatalogForPrompt');
+    const { rows, computedAt } = await fetchCatalog();
+    if (rows.length > 0) {
+      catalogSection = `\n\n${formatCatalogForPrompt(rows, computedAt ?? undefined)}\n`;
+    }
+  } catch {
+    /* Non-fatal — fortsæt uden catalog */
+  }
+
+  return `Du er en data-analytiker for BizzAssist. Brugeren stiller spørgsmål på dansk.${catalogSection}
 
 Du skal returnere en STRUKTURERET query plan som JSON — IKKE rå SQL.
 
@@ -192,7 +209,7 @@ export async function POST(request: NextRequest) {
           {
             model: 'claude-sonnet-4-6',
             max_tokens: 2048,
-            system: buildSystemPrompt(),
+            system: await buildSystemPrompt(),
             messages: [{ role: 'user', content: userQuery }],
           },
           { signal: AbortSignal.timeout(15000) }

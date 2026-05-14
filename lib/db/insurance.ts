@@ -46,6 +46,8 @@ export interface CreateDocumentInput {
   mime_type?: string;
   size_bytes: number;
   uploaded_by: string;
+  /** BIZZ-1399: Optionelt link til kundesag */
+  sag_id?: string;
 }
 
 /** Payload til at oprette en parsed police (efter Claude-parsing) */
@@ -78,6 +80,8 @@ export interface CreatePolicyInput {
   policy_issued_date: string | null;
   raw_metadata: Record<string, unknown>;
   created_by: string;
+  /** BIZZ-1399: Optionelt link til kundesag */
+  sag_id?: string;
 }
 
 /** Payload til at oprette en dækning */
@@ -201,13 +205,20 @@ export async function getInsuranceApi(tenantId: string): Promise<InsuranceApi> {
         return data as ForsikringDocument;
       },
       async create(input) {
+        const row: Record<string, unknown> = {
+          storage_path: input.storage_path,
+          original_name: input.original_name,
+          mime_type: input.mime_type ?? 'application/pdf',
+          size_bytes: input.size_bytes,
+          uploaded_by: input.uploaded_by,
+          tenant_id: tenantId,
+        };
+        // BIZZ-1399: Optionelt sag_id link
+        if (input.sag_id) row.sag_id = input.sag_id;
         const { data, error } = await tenantDb(admin, schemaName)
           .from('forsikring_documents')
-          .insert({
-            ...input,
-            mime_type: input.mime_type ?? 'application/pdf',
-            tenant_id: tenantId,
-          })
+
+          .insert(row as Record<string, never>)
           .select('*')
           .single();
         if (error) throw new Error(`forsikring_documents.create: ${error.message}`);
@@ -298,9 +309,13 @@ export async function getInsuranceApi(tenantId: string): Promise<InsuranceApi> {
         return data as ForsikringPolicy;
       },
       async create(input) {
+        const row: Record<string, unknown> = { ...input, tenant_id: tenantId };
+        // BIZZ-1399: sag_id er optional — strip undefined for at undgå PostgREST-fejl
+        if (!row.sag_id) delete row.sag_id;
         const { data, error } = await tenantDb(admin, schemaName)
           .from('forsikring_policies')
-          .insert({ ...input, tenant_id: tenantId })
+
+          .insert(row as Record<string, never>)
           .select('*')
           .single();
         if (error) throw new Error(`forsikring_policies.create: ${error.message}`);

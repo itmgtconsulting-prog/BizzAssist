@@ -10,24 +10,41 @@
  * @module api/forsikring
  */
 
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
 import { logger } from '@/app/lib/logger';
 import { getInsuranceApi } from '@/lib/db/insurance';
 import type { ForsikringGap } from '@/app/lib/forsikring/types';
 
-export async function GET(): Promise<NextResponse> {
+/**
+ * GET /api/forsikring?sag_id=xxx
+ *
+ * BIZZ-1399: Optionelt sag_id filter — returnerer kun policer/dokumenter
+ * tilknyttet den pågældende sag. Uden sag_id returneres alt (backward compat).
+ */
+export async function GET(request: NextRequest): Promise<NextResponse> {
   const auth = await resolveTenantId();
   if (!auth) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  // BIZZ-1399: Optionelt sag_id filter
+  const sagId = request.nextUrl.searchParams.get('sag_id') || null;
+
   try {
     const insurance = await getInsuranceApi(auth.tenantId);
-    const [policies, documents] = await Promise.all([
+    let [policies, documents] = await Promise.all([
       insurance.policies.list(),
       insurance.documents.list(),
     ]);
+
+    // BIZZ-1399: Filtrér per sag hvis sag_id er angivet
+    if (sagId) {
+      policies = policies.filter((p) => (p as unknown as Record<string, unknown>).sag_id === sagId);
+      documents = documents.filter(
+        (d) => (d as unknown as Record<string, unknown>).sag_id === sagId
+      );
+    }
 
     // Hent gap-tællinger for alle policer (parallelt) for KPI-badges
     const gapsByPolicy = await Promise.all(policies.map((p) => insurance.gaps.listForPolicy(p.id)));

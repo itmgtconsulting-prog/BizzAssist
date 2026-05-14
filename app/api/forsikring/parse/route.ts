@@ -101,6 +101,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!doc) {
     return NextResponse.json({ error: 'Dokument ikke fundet' }, { status: 404 });
   }
+  // BIZZ-1399: sag_id fra dokumentet propageres til policer
+  const docSagId = (doc as unknown as Record<string, unknown>).sag_id as string | undefined;
 
   // Marker som "parsing" så UI kan vise loader
   await insurance.documents.updateParseStatus(doc.id, 'parsing');
@@ -195,6 +197,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             overview_notes: oversigt.notes ?? null,
           },
           created_by: auth.userId,
+          sag_id: docSagId,
         });
 
         // Kør gap-engine (minimal — ingen dækninger fra oversigt)
@@ -310,6 +313,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         notes: parsed.notes ?? null,
       },
       created_by: auth.userId,
+      sag_id: docSagId,
     });
 
     // Persistér dækninger (også eksplicit ekskluderede med is_covered=false)

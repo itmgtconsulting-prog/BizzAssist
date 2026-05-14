@@ -470,12 +470,15 @@ function AnalyseSection({
   policies,
   onRefresh,
   onAnalyseDetail,
+  onSagChange,
 }: {
   lang: string;
   policies: PolicyRow[];
   onRefresh: () => void;
   /** BIZZ-1353: Callback med analyse-detail for AI-kontekst */
   onAnalyseDetail: (detail: AnalyseDetail | null, kundeNavn: string | null) => void;
+  /** BIZZ-1399: Callback med sag_id når kunde vælges/analyse startes */
+  onSagChange: (sagId: string | null) => void;
 }) {
   const da = lang === 'da';
   const [query, setQuery] = useState('');
@@ -539,6 +542,7 @@ function AnalyseSection({
       setAnalyseResult(null);
       setAnalyseDetail(null);
       onAnalyseDetail(null, null);
+      onSagChange(null);
       return;
     }
     // Match policies by CVR (for virksomhed) or name (for person)
@@ -570,7 +574,7 @@ function AnalyseSection({
         }
       })
       .catch(() => setLastAnalyse(null));
-  }, [selected, policies]);
+  }, [selected, policies, onAnalyseDetail, onSagChange]);
 
   /** Debounced søgning via /api/search */
   const handleSearch = useCallback((value: string) => {
@@ -605,7 +609,8 @@ function AnalyseSection({
     setAnalyseResult(null);
     try {
       // BIZZ-1384: Auto-opret sag ved analyse
-      await fetch('/api/forsikring/sager', {
+      // BIZZ-1399: Capture sag_id for upload-filtrering
+      const sagRes = await fetch('/api/forsikring/sager', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -614,6 +619,10 @@ function AnalyseSection({
           kunde_navn: selected.navn,
         }),
       });
+      if (sagRes.ok) {
+        const sagData = (await sagRes.json()) as { sag?: { id: string } };
+        if (sagData.sag?.id) onSagChange(sagData.sag.id);
+      }
       // Kør analyse
       const res = await fetch('/api/forsikring/analyser', {
         method: 'POST',
@@ -651,7 +660,7 @@ function AnalyseSection({
     } finally {
       setRunning(false);
     }
-  }, [selected, running, asOfDate]);
+  }, [selected, running, asOfDate, onAnalyseDetail, onSagChange]);
 
   return (
     <section className="bg-white/5 border border-white/8 rounded-2xl p-5 space-y-3">
@@ -1045,13 +1054,19 @@ export default function ForsikringPageClient(): React.ReactElement {
   const [uploadJobs, setUploadJobs] = useState<UploadJob[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [resetting, setResetting] = useState(false);
+  /** BIZZ-1399: Aktiv sag-ID fra AnalyseSection — bruges til filtrering + upload */
+  const [activeSagId, setActiveSagId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   /** Fetch list data from API */
   const refresh = useCallback(async () => {
     setError(null);
     try {
-      const res = await fetch('/api/forsikring', { cache: 'no-store' });
+      // BIZZ-1399: Filtrer per sag hvis aktiv
+      const url = activeSagId
+        ? `/api/forsikring?sag_id=${encodeURIComponent(activeSagId)}`
+        : '/api/forsikring';
+      const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string; detail?: string };
         throw new Error(
@@ -1065,7 +1080,7 @@ export default function ForsikringPageClient(): React.ReactElement {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeSagId]);
 
   useEffect(() => {
     void refresh();
@@ -1142,6 +1157,8 @@ export default function ForsikringPageClient(): React.ReactElement {
       try {
         const formData = new FormData();
         formData.append('file', file);
+        // BIZZ-1399: Link upload til aktiv sag
+        if (activeSagId) formData.append('sag_id', activeSagId);
         const upRes = await fetch('/api/forsikring/upload', {
           method: 'POST',
           body: formData,
@@ -1190,7 +1207,7 @@ export default function ForsikringPageClient(): React.ReactElement {
         );
       }
     },
-    [refresh, t]
+    [refresh, t, activeSagId]
   );
 
   /** Handle file picker / drop event */
@@ -1278,6 +1295,7 @@ export default function ForsikringPageClient(): React.ReactElement {
         policies={policies}
         onRefresh={refresh}
         onAnalyseDetail={handleAnalyseDetail}
+        onSagChange={setActiveSagId}
       />
 
       {/* TRIN 2: Upload dokumenter */}

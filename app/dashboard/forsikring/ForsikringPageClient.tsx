@@ -1017,7 +1017,7 @@ function AnalyseSection({
                     ? 'Dokumenter inkluderet i analysen (uncheck for at ekskludere):'
                     : 'Documents included in analysis (uncheck to exclude):'}
                 </p>
-                <div className="space-y-1.5 max-h-60 overflow-y-auto">
+                <div className="space-y-1.5">
                   {unique.map((doc) => (
                     <label
                       key={doc.id}

@@ -182,7 +182,9 @@ export function createDefaultSqlRunner(): SqlRunner {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ query: sql }),
-      signal: AbortSignal.timeout(60_000),
+      // 75s timeout — længere end Vercel's per-request limit (60-90s) skal undgås,
+      // men 60s var for kort for ejf_ejerskab joins (7.6M rækker).
+      signal: AbortSignal.timeout(75_000),
     });
     if (!res.ok) {
       const text = await res.text();

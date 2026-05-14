@@ -781,7 +781,6 @@ function AnalyseSection({
     onSagChange,
     newDocumentIds,
     selectedDocIds,
-    showDocPicker,
     wizardUploads,
   ]);
 
@@ -1462,7 +1461,7 @@ function AnalyseDetailSection({
   const total = uniqueAktiver.length;
   const insured = uniqueAktiver.filter((a) => a.matched_policy_id).length;
   const pct = total > 0 ? Math.round((insured / total) * 100) : 0;
-  const gapCount = detail.gaps.length;
+  const _gapCount = detail.gaps.length;
 
   return (
     <section className="space-y-4">
@@ -1506,38 +1505,37 @@ function AnalyseDetailSection({
         </div>
       </div>
 
-      {/* Ejendomme-liste */}
-      <div className="space-y-1.5">
-        {uniqueAktiver.map((a) => {
-          const isIns = !!a.matched_policy_id;
-          return (
-            <div
-              key={a.id}
-              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl ${isIns ? 'bg-white/3 border border-white/5' : 'bg-red-500/5 border border-red-500/20'}`}
-            >
-              {isIns ? (
-                <CheckCircle2 size={14} className="text-emerald-400" />
-              ) : (
-                <XCircle size={14} className="text-red-400" />
-              )}
-              <Home size={14} className={isIns ? 'text-emerald-400' : 'text-red-400'} />
-              <span className="text-white text-sm flex-1">{a.adresse || a.label}</span>
-              {!isIns && (
-                <span className="text-red-300 text-[10px] uppercase font-bold">
-                  {da ? 'Uforsikret' : 'Uninsured'}
-                </span>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      {/* Ejendomme-liste med expandable gaps (genbruger PropertyRow) */}
+      <div className="space-y-2">
+        {(() => {
+          // Byg policy lookup fra detail.policies (returneret fra analyser/[id])
+          const pols = ((detail as unknown as Record<string, unknown>).policies ??
+            []) as PolicyRow[];
+          const polById = new Map(pols.map((p) => [p.id, p]));
 
-      {/* Gap summary */}
-      {gapCount > 0 && (
-        <div className="text-slate-400 text-xs">
-          {gapCount} gaps {da ? 'identificeret' : 'identified'}
-        </div>
-      )}
+          // Byg PropertyGroups
+          const groups: PropertyGroup[] = uniqueAktiver.map((aktiv) => {
+            const aktivGaps = aktiv.matched_policy_id
+              ? detail.gaps.filter((g) => g.policy_id === aktiv.matched_policy_id)
+              : [];
+            return {
+              aktiv,
+              matchedPolicy: aktiv.matched_policy_id
+                ? (polById.get(aktiv.matched_policy_id) ?? null)
+                : null,
+              gaps: aktivGaps,
+            };
+          });
+          groups.sort((a, b) => {
+            const aI = a.aktiv.matched_policy_id ? 1 : 0;
+            const bI = b.aktiv.matched_policy_id ? 1 : 0;
+            if (aI !== bI) return aI - bI;
+            return b.gaps.length - a.gaps.length;
+          });
+
+          return groups.map((group) => <PropertyRow key={group.aktiv.id} group={group} da={da} />);
+        })()}
+      </div>
 
       {/* Download rapport */}
       <button

@@ -496,6 +496,12 @@ function AnalyseSection({
     navn: string;
   } | null>(null);
   const [running, setRunning] = useState(false);
+  /** BIZZ-1404: Dokument-genbrug wizard state */
+  const [showDocPicker, setShowDocPicker] = useState(false);
+  const [previousDocs, setPreviousDocs] = useState<
+    Array<{ id: string; original_name: string; created_at: string; from_analyse_id: string }>
+  >([]);
+  const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
   const [analyseResult, setAnalyseResult] = useState<{
     analyse_id: string;
     total_aktiver: number;
@@ -530,6 +536,18 @@ function AnalyseSection({
       updated_at: string;
     }>
   >([]);
+
+  /** BIZZ-1404: Hent tidligere dokumenter for genbrug-picker */
+  useEffect(() => {
+    if (!showDocPicker || !selected) {
+      setPreviousDocs([]);
+      return;
+    }
+    fetch(`/api/forsikring/documents/for-customer?kunde_id=${encodeURIComponent(selected.id)}`)
+      .then((r) => (r.ok ? r.json() : { documents: [] }))
+      .then((d) => setPreviousDocs(d.documents ?? []))
+      .catch(() => setPreviousDocs([]));
+  }, [showDocPicker, selected]);
 
   /** Hent sagsliste ved mount */
   useEffect(() => {
@@ -628,7 +646,8 @@ function AnalyseSection({
         const sagData = (await sagRes.json()) as { sag?: { id: string } };
         if (sagData.sag?.id) onSagChange(sagData.sag.id);
       }
-      // Kør analyse
+      // Kør analyse (med genbrugte dokumenter hvis valgt)
+      const reusedDocIds = [...selectedDocIds];
       const res = await fetch('/api/forsikring/analyser', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -637,6 +656,7 @@ function AnalyseSection({
           kunde_id: selected.id,
           kunde_navn: selected.navn,
           ...(asOfDate ? { as_of_date: asOfDate } : {}),
+          ...(reusedDocIds.length > 0 ? { document_ids: reusedDocIds } : {}),
         }),
       });
       if (res.ok) {
@@ -844,32 +864,138 @@ function AnalyseSection({
         </div>
       )}
 
-      {/* Start knap */}
-      {selected && (
-        <button
-          type="button"
-          onClick={startAnalyse}
-          disabled={running}
-          className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"
-        >
-          {running ? (
+      {/* BIZZ-1404: Dokument-genbrug picker */}
+      {selected && showDocPicker && (
+        <div className="bg-slate-800/50 border border-white/8 rounded-xl p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-white text-sm font-semibold">
+              {da ? 'Vælg dokumenter til analysen' : 'Select documents for analysis'}
+            </h3>
+            <button
+              type="button"
+              onClick={() => {
+                setShowDocPicker(false);
+                setSelectedDocIds(new Set());
+              }}
+              className="text-slate-500 hover:text-white text-xs"
+            >
+              {da ? 'Luk' : 'Close'}
+            </button>
+          </div>
+
+          {previousDocs.length > 0 ? (
             <>
-              <Loader2 size={14} className="animate-spin" />
-              {da ? 'Analyserer...' : 'Analyzing...'}
+              <p className="text-slate-400 text-xs">
+                {da
+                  ? 'Vælg dokumenter fra tidligere analyser der skal genbruges:'
+                  : 'Select documents from previous analyses to reuse:'}
+              </p>
+              <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                {previousDocs.map((doc) => (
+                  <label
+                    key={doc.id}
+                    className="flex items-center gap-3 px-3 py-2 bg-white/3 hover:bg-white/5 rounded-lg cursor-pointer transition-colors"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedDocIds.has(doc.id)}
+                      onChange={(e) => {
+                        setSelectedDocIds((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(doc.id);
+                          else next.delete(doc.id);
+                          return next;
+                        });
+                      }}
+                      className="rounded border-slate-600 bg-slate-700 text-blue-500 focus:ring-blue-500"
+                    />
+                    <FileText size={14} className="text-slate-400 shrink-0" />
+                    <span className="text-white text-xs flex-1 truncate">{doc.original_name}</span>
+                    <span className="text-slate-500 text-[10px] shrink-0">
+                      {new Date(doc.created_at).toLocaleDateString('da-DK', {
+                        day: 'numeric',
+                        month: 'short',
+                      })}
+                    </span>
+                  </label>
+                ))}
+              </div>
+              {selectedDocIds.size > 0 && (
+                <div className="text-blue-400 text-xs">
+                  {selectedDocIds.size}{' '}
+                  {da ? 'dokumenter valgt til genbrug' : 'documents selected for reuse'}
+                </div>
+              )}
             </>
           ) : (
-            <>
-              <ShieldCheck size={14} />
-              {lastAnalyse
-                ? da
-                  ? 'Kør ny analyse (sammenlign)'
-                  : 'Run new analysis (compare)'
-                : da
-                  ? 'Start gap-analyse'
-                  : 'Start gap analysis'}
-            </>
+            <p className="text-slate-500 text-xs">
+              {da
+                ? 'Ingen tidligere dokumenter fundet. Upload nye nedenfor.'
+                : 'No previous documents found. Upload new ones below.'}
+            </p>
           )}
-        </button>
+
+          <p className="text-slate-400 text-xs pt-2 border-t border-white/5">
+            {da
+              ? 'Du kan også uploade nye dokumenter i upload-sektionen nedenfor — de inkluderes automatisk.'
+              : 'You can also upload new documents in the upload section below — they are included automatically.'}
+          </p>
+        </div>
+      )}
+
+      {/* Start knap + doc picker toggle */}
+      {selected && (
+        <div className="flex items-center gap-2">
+          {!showDocPicker && previousDocs.length === 0 && (
+            <button
+              type="button"
+              onClick={() => setShowDocPicker(true)}
+              className="text-slate-400 hover:text-blue-400 text-xs px-3 py-2 rounded-lg border border-white/8 hover:border-blue-500/30 transition-colors"
+            >
+              <FileText size={12} className="inline mr-1" />
+              {da ? 'Genbrug dokumenter' : 'Reuse documents'}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              if (!showDocPicker && lastAnalyse) {
+                // First click: open doc picker if there might be previous docs
+                setShowDocPicker(true);
+                return;
+              }
+              startAnalyse();
+            }}
+            disabled={running}
+            className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"
+          >
+            {running ? (
+              <>
+                <Loader2 size={14} className="animate-spin" />
+                {da ? 'Analyserer...' : 'Analyzing...'}
+              </>
+            ) : (
+              <>
+                <ShieldCheck size={14} />
+                {showDocPicker
+                  ? selectedDocIds.size > 0
+                    ? da
+                      ? `Start analyse med ${selectedDocIds.size} genbrugte docs`
+                      : `Start analysis with ${selectedDocIds.size} reused docs`
+                    : da
+                      ? 'Start analyse (kun nye uploads)'
+                      : 'Start analysis (new uploads only)'
+                  : lastAnalyse
+                    ? da
+                      ? 'Kør ny analyse (sammenlign)'
+                      : 'Run new analysis (compare)'
+                    : da
+                      ? 'Start gap-analyse'
+                      : 'Start gap analysis'}
+              </>
+            )}
+          </button>
+        </div>
       )}
 
       {/* BIZZ-1394: Sammenligning med forrige analyse */}

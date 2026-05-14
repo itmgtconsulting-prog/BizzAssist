@@ -167,6 +167,19 @@ export interface InsuranceApi {
     deleteForPolicy(policyId: string): Promise<void>;
     /** Marker en gap som løst */
     markResolved(id: string, userId: string): Promise<void>;
+    /** BIZZ-1404: Hent gaps scoped til en specifik analyse */
+    listForAnalysis(analyseId: string): Promise<ForsikringGap[]>;
+  };
+  /** BIZZ-1404: Analyse-dokument junction (many-to-many) */
+  analyseDocuments: {
+    /** Link et dokument til en analyse */
+    link(analyseId: string, documentId: string, source: 'uploaded' | 'reused'): Promise<void>;
+    /** List dokumenter for en analyse */
+    listForAnalysis(analyseId: string): Promise<Array<ForsikringDocument & { source: string }>>;
+    /** List alle dokumenter på tværs af analyser for en kunde */
+    listForCustomer(
+      kundeId: string
+    ): Promise<Array<ForsikringDocument & { from_analyse_id: string }>>;
   };
 }
 
@@ -396,6 +409,98 @@ export async function getInsuranceApi(tenantId: string): Promise<InsuranceApi> {
           .eq('id', id)
           .eq('tenant_id', tenantId);
         if (error) throw new Error(`forsikring_gaps.markResolved: ${error.message}`);
+      },
+      async listForAnalysis(analyseId) {
+        const { data, error } = await tenantDb(admin, schemaName)
+          .from('forsikring_gaps')
+          .select('*')
+          .eq('tenant_id', tenantId)
+          .eq('analyse_id', analyseId)
+          .order('severity');
+        if (error) throw new Error(`forsikring_gaps.listForAnalysis: ${error.message}`);
+        return (data ?? []) as ForsikringGap[];
+      },
+    },
+
+    // BIZZ-1404: Analyse-dokument junction
+    analyseDocuments: {
+      async link(analyseId, documentId, source) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error } = await (admin as any)
+          .schema(schemaName)
+          .from('forsikring_analyse_documents')
+          .insert({
+            tenant_id: tenantId,
+            analyse_id: analyseId,
+            document_id: documentId,
+            source,
+          });
+        if (error && !error.message?.includes('duplicate'))
+          throw new Error(`analyseDocuments.link: ${error.message}`);
+      },
+      async listForAnalysis(analyseId) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data, error } = await (admin as any)
+          .schema(schemaName)
+          .from('forsikring_analyse_documents')
+          .select('document_id, source')
+          .eq('tenant_id', tenantId)
+          .eq('analyse_id', analyseId);
+        if (error) throw new Error(`analyseDocuments.listForAnalysis: ${error.message}`);
+        const docIds = (data ?? []).map((r: { document_id: string }) => r.document_id);
+        const sourceMap = new Map(
+          (data ?? []).map((r: { document_id: string; source: string }) => [
+            r.document_id,
+            r.source,
+          ])
+        );
+        if (docIds.length === 0) return [];
+        const { data: docs } = await tenantDb(admin, schemaName)
+          .from('forsikring_documents')
+          .select('*')
+          .in('id', docIds)
+          .eq('tenant_id', tenantId);
+        return (docs ?? []).map((d: Record<string, unknown>) => ({
+          ...d,
+          source: sourceMap.get(d.id as string) ?? 'uploaded',
+        })) as Array<ForsikringDocument & { source: string }>;
+      },
+      async listForCustomer(kundeId) {
+        // Hent alle analyser for denne kunde, derefter alle docs via junction
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: analyser } = await (admin as any)
+          .schema(schemaName)
+          .from('forsikring_analyser')
+          .select('id')
+          .eq('tenant_id', tenantId)
+          .eq('kunde_id', kundeId);
+        const analyseIds = (analyser ?? []).map((a: { id: string }) => a.id);
+        if (analyseIds.length === 0) return [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: links } = await (admin as any)
+          .schema(schemaName)
+          .from('forsikring_analyse_documents')
+          .select('analyse_id, document_id')
+          .in('analyse_id', analyseIds);
+        const docIds = [
+          ...new Set((links ?? []).map((l: { document_id: string }) => l.document_id)),
+        ] as string[];
+        const analyseMap = new Map(
+          (links ?? []).map((l: { document_id: string; analyse_id: string }) => [
+            l.document_id,
+            l.analyse_id,
+          ])
+        );
+        if (docIds.length === 0) return [];
+        const { data: docs } = await tenantDb(admin, schemaName)
+          .from('forsikring_documents')
+          .select('*')
+          .in('id', docIds)
+          .eq('tenant_id', tenantId);
+        return (docs ?? []).map((d: Record<string, unknown>) => ({
+          ...d,
+          from_analyse_id: analyseMap.get(d.id as string) ?? '',
+        })) as Array<ForsikringDocument & { from_analyse_id: string }>;
       },
     },
   };

@@ -1226,7 +1226,7 @@ export default function ForsikringPageClient(): React.ReactElement {
   const _totals = data?.totals;
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-[#0a1020] text-slate-100 min-h-screen">
+    <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-[#0a1020] text-slate-100">
       {/* Heading + nulstil-knap */}
       <header className="flex items-start justify-between">
         <div className="space-y-1">

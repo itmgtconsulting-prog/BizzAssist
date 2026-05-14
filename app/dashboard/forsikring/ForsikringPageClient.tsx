@@ -337,20 +337,26 @@ function UnifiedAnalyseView({
   // Build a policy lookup
   const policyById = new Map(policies.map((p) => [p.id, p]));
 
-  // Group aktiver into PropertyGroups with their gaps
-  const groups: PropertyGroup[] = aktiver.map((aktiv) => {
-    // Gaps for this aktiv's matched policy
+  // Group aktiver into PropertyGroups with their gaps — dedup by address
+  const seenAddresses = new Set<string>();
+  const groups: PropertyGroup[] = [];
+  for (const aktiv of aktiver) {
+    // BIZZ-1439: Dedup — skip duplikerede adresser (ejerskab kan have flere rækker per BFE)
+    const addrKey = aktiv.adresse || aktiv.label || aktiv.id;
+    if (seenAddresses.has(addrKey)) continue;
+    seenAddresses.add(addrKey);
+
     const aktivGaps = aktiv.matched_policy_id
       ? gaps.filter((g) => g.policy_id === aktiv.matched_policy_id)
       : [];
-    return {
+    groups.push({
       aktiv,
       matchedPolicy: aktiv.matched_policy_id
         ? (policyById.get(aktiv.matched_policy_id) ?? null)
         : null,
       gaps: aktivGaps,
-    };
-  });
+    });
+  }
 
   // Sort: uninsured first, then by gap count descending
   groups.sort((a, b) => {

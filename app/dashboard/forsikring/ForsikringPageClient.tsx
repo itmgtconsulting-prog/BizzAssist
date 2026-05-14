@@ -33,7 +33,6 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
-import { useAIChatContext } from '@/app/context/AIChatContext';
 import { translations } from '@/app/lib/translations';
 
 // ─── Types ───────────────────────────────────────────────────────
@@ -463,7 +462,6 @@ function UnifiedAnalyseView({
  */
 function AnalyseSection({ lang, policies }: { lang: string; policies: PolicyRow[] }) {
   const da = lang === 'da';
-  const chatCtx = useAIChatContext();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<
     Array<{ id: string; title: string; type: string; subtitle?: string }>
@@ -666,13 +664,15 @@ function AnalyseSection({ lang, policies }: { lang: string; policies: PolicyRow[
           da={da}
           kundeNavn={selected?.navn ?? (da ? 'Kunden' : 'Customer')}
           onRapport={(pct) => {
-            chatCtx.setDrawerOpen(true);
-            chatCtx.setStreamText('');
+            const prompt = da
+              ? `Lav en mæglerrapport i Word-format for ${selected?.navn ?? 'kunden'}. Brug forsikringsdata fra konteksten. Inkluder: 1) Executive summary med sundhedsscore ${pct}/100, 2) Ejendomsoversigt med forsikringsstatus, 3) Forsikringsgap-tabel med alle ${analyseResult.gaps_count} gaps, 4) Anbefalinger prioriteret efter risiko, 5) Handlingsplan. Generér dokumentet direkte uden at spørge om mere info.`
+              : `Create a broker report in Word format for ${selected?.navn ?? 'the customer'}. Use insurance data from context. Include: 1) Executive summary with health score ${pct}/100, 2) Property overview with insurance status, 3) Gap table with all ${analyseResult.gaps_count} gaps, 4) Prioritized recommendations, 5) Action plan. Generate the document directly.`;
+            const displayText = da
+              ? `Lav mæglerrapport for ${selected?.navn ?? 'kunden'} (score ${pct}/100)`
+              : `Generate broker report for ${selected?.navn ?? 'the customer'} (score ${pct}/100)`;
             window.dispatchEvent(
-              new CustomEvent('bizz-chat-prefill', {
-                detail: da
-                  ? `Lav en mæglerrapport i Word-format for ${selected?.navn ?? 'kunden'}. Brug forsikringsdata fra konteksten. Inkluder: 1) Executive summary med sundhedsscore ${pct}/100, 2) Ejendomsoversigt med forsikringsstatus, 3) Forsikringsgap-tabel med alle ${analyseResult.gaps_count} gaps, 4) Anbefalinger prioriteret efter risiko, 5) Handlingsplan. Generér dokumentet direkte uden at spørge om mere info.`
-                  : `Create a broker report in Word format for ${selected?.navn ?? 'the customer'}. Use insurance data from context. Include: 1) Executive summary with health score ${pct}/100, 2) Property overview with insurance status, 3) Gap table with all ${analyseResult.gaps_count} gaps, 4) Prioritized recommendations, 5) Action plan. Generate the document directly.`,
+              new CustomEvent('bizz:ai-open-with-prompt', {
+                detail: { prompt, displayText },
               })
             );
           }}

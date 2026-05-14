@@ -227,22 +227,6 @@ function AIChatPanel() {
     }
   }, [messages, streamText]);
 
-  /** BIZZ-1388: Lyt efter prefill-event fra forsikringssiden → auto-send */
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as string;
-      if (detail && !isLoading) {
-        setInput(detail);
-        // Auto-send efter kort delay så input er sat
-        setTimeout(() => {
-          setInput(detail);
-        }, 100);
-      }
-    };
-    window.addEventListener('bizz-chat-prefill', handler);
-    return () => window.removeEventListener('bizz-chat-prefill', handler);
-  }, [isLoading]);
-
   /** Fokuser input første gang panelet åbnes */
   useEffect(() => {
     let timerId: ReturnType<typeof setTimeout> | undefined;

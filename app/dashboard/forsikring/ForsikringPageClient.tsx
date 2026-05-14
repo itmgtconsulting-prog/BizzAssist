@@ -485,6 +485,15 @@ function AnalyseSection({ lang, policies }: { lang: string; policies: PolicyRow[
   } | null>(null);
   /** BIZZ-1389: Full analyse detail for unified view */
   const [analyseDetail, setAnalyseDetail] = useState<AnalyseDetail | null>(null);
+  /** BIZZ-1394: Eksisterende policer for valgt kunde */
+  const [kundePolicer, setKundePolicer] = useState<PolicyRow[]>([]);
+  /** BIZZ-1394: Tidligere analyse for sammenligning */
+  const [lastAnalyse, setLastAnalyse] = useState<{
+    total_aktiver: number;
+    insured_count: number;
+    total_risk_score: number;
+    created_at: string;
+  } | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** BIZZ-1384: Sagsliste */
   const [sager, setSager] = useState<
@@ -507,6 +516,46 @@ function AnalyseSection({ lang, policies }: { lang: string; policies: PolicyRow[
       .then((d) => setSager(d.sager ?? []))
       .catch(() => {});
   }, []);
+
+  /** BIZZ-1394: Hent eksisterende policer + forrige analyse når kunde vælges */
+  useEffect(() => {
+    if (!selected) {
+      setKundePolicer([]);
+      setLastAnalyse(null);
+      setAnalyseResult(null);
+      setAnalyseDetail(null);
+      return;
+    }
+    // Match policies by CVR (for virksomhed) or name (for person)
+    const matchedPolicer = policies.filter((p) => {
+      if (selected.type === 'virksomhed' && selected.id) {
+        return p.policyholder_name
+          ?.toLowerCase()
+          .includes(selected.navn.toLowerCase().split(' ')[0]);
+      }
+      return p.policyholder_name?.toLowerCase().includes(selected.navn.toLowerCase().split(' ')[0]);
+    });
+    setKundePolicer(matchedPolicer);
+
+    // Hent seneste analyse for denne kunde
+    fetch(`/api/forsikring/analyser`)
+      .then((r) => (r.ok ? r.json() : { analyser: [] }))
+      .then((d) => {
+        const analyser = d.analyser ?? [];
+        const match = analyser.find((a: { kunde_id: string }) => a.kunde_id === selected.id);
+        if (match) {
+          setLastAnalyse({
+            total_aktiver: match.total_aktiver,
+            insured_count: match.insured_count,
+            total_risk_score: match.total_risk_score,
+            created_at: match.created_at,
+          });
+        } else {
+          setLastAnalyse(null);
+        }
+      })
+      .catch(() => setLastAnalyse(null));
+  }, [selected, policies]);
 
   /** Debounced søgning via /api/search */
   const handleSearch = useCallback((value: string) => {
@@ -638,6 +687,74 @@ function AnalyseSection({ lang, policies }: { lang: string; policies: PolicyRow[
         )}
       </div>
 
+      {/* BIZZ-1394: Eksisterende policer + forrige analyse for valgt kunde */}
+      {selected && !analyseResult && (kundePolicer.length > 0 || lastAnalyse) && (
+        <div className="space-y-2">
+          {/* Eksisterende policer */}
+          {kundePolicer.length > 0 && (
+            <div className="bg-white/3 border border-white/5 rounded-lg p-3">
+              <div className="text-slate-300 text-xs font-medium mb-1.5 flex items-center gap-1.5">
+                <FileText size={12} />
+                {da
+                  ? `${kundePolicer.length} eksisterende policer`
+                  : `${kundePolicer.length} existing policies`}
+              </div>
+              <div className="space-y-1">
+                {kundePolicer.slice(0, 5).map((p) => (
+                  <div key={p.id} className="flex items-center justify-between text-xs">
+                    <span className="text-slate-400">
+                      {p.policy_number} — {p.insurer_name}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      {p.gap_counts.critical > 0 && (
+                        <span className="px-1 py-0.5 rounded bg-red-500/20 text-red-300 text-[10px]">
+                          {p.gap_counts.critical}
+                        </span>
+                      )}
+                      {p.gap_counts.warning > 0 && (
+                        <span className="px-1 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px]">
+                          {p.gap_counts.warning}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {kundePolicer.length > 5 && (
+                  <div className="text-slate-500 text-[10px]">
+                    +{kundePolicer.length - 5} {da ? 'flere' : 'more'}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Forrige analyse (sammenligning) */}
+          {lastAnalyse && (
+            <div className="bg-blue-500/5 border border-blue-500/20 rounded-lg p-3">
+              <div className="text-blue-300 text-xs font-medium mb-1">
+                {da ? 'Forrige analyse' : 'Previous analysis'} —{' '}
+                {new Date(lastAnalyse.created_at).toLocaleDateString('da-DK', {
+                  day: 'numeric',
+                  month: 'short',
+                  year: 'numeric',
+                })}
+              </div>
+              <div className="flex gap-4 text-xs text-slate-400">
+                <span>
+                  {lastAnalyse.total_aktiver} {da ? 'aktiver' : 'assets'}
+                </span>
+                <span>
+                  {lastAnalyse.insured_count} {da ? 'forsikrede' : 'insured'}
+                </span>
+                <span>
+                  {da ? 'Score' : 'Score'}: {lastAnalyse.total_risk_score}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Start knap */}
       {selected && (
         <button
@@ -654,10 +771,64 @@ function AnalyseSection({ lang, policies }: { lang: string; policies: PolicyRow[
           ) : (
             <>
               <ShieldCheck size={14} />
-              {da ? 'Start gap-analyse' : 'Start gap analysis'}
+              {lastAnalyse
+                ? da
+                  ? 'Kør ny analyse (sammenlign)'
+                  : 'Run new analysis (compare)'
+                : da
+                  ? 'Start gap-analyse'
+                  : 'Start gap analysis'}
             </>
           )}
         </button>
+      )}
+
+      {/* BIZZ-1394: Sammenligning med forrige analyse */}
+      {analyseResult && lastAnalyse && (
+        <div className="bg-slate-800/50 border border-white/5 rounded-lg p-3">
+          <div className="text-slate-400 text-[10px] uppercase tracking-wide mb-2">
+            {da ? 'Ændringer siden forrige analyse' : 'Changes since previous analysis'}
+          </div>
+          <div className="grid grid-cols-3 gap-3 text-xs">
+            <div>
+              <div className="text-slate-500 mb-0.5">{da ? 'Aktiver' : 'Assets'}</div>
+              <div className="text-white font-medium">
+                {lastAnalyse.total_aktiver} → {analyseResult.total_aktiver}
+                {analyseResult.total_aktiver !== lastAnalyse.total_aktiver && (
+                  <span
+                    className={`ml-1 ${analyseResult.total_aktiver > lastAnalyse.total_aktiver ? 'text-blue-400' : 'text-amber-400'}`}
+                  >
+                    ({analyseResult.total_aktiver > lastAnalyse.total_aktiver ? '+' : ''}
+                    {analyseResult.total_aktiver - lastAnalyse.total_aktiver})
+                  </span>
+                )}
+              </div>
+            </div>
+            <div>
+              <div className="text-slate-500 mb-0.5">{da ? 'Forsikrede' : 'Insured'}</div>
+              <div className="text-white font-medium">
+                {lastAnalyse.insured_count} → {analyseResult.insured_count}
+                {analyseResult.insured_count !== lastAnalyse.insured_count && (
+                  <span
+                    className={`ml-1 ${analyseResult.insured_count > lastAnalyse.insured_count ? 'text-emerald-400' : 'text-red-400'}`}
+                  >
+                    ({analyseResult.insured_count > lastAnalyse.insured_count ? '+' : ''}
+                    {analyseResult.insured_count - lastAnalyse.insured_count})
+                  </span>
+                )}
+              </div>
+            </div>
+            <div>
+              <div className="text-slate-500 mb-0.5">Gaps</div>
+              <div className="text-white font-medium">
+                → {analyseResult.gaps_count}
+                {analyseResult.gaps_count > 0 && (
+                  <span className="text-amber-400 ml-1">({analyseResult.gaps_count})</span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* BIZZ-1389: Samlet ejendomsvisning efter analyse */}

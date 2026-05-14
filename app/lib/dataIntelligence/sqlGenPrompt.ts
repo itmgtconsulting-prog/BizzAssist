@@ -25,8 +25,10 @@ REGLER:
 6. Brug danske kolonne-navne (de er på dansk allerede).
 7. Ved aggregering: brug eksplicit alias (fx COUNT(*) AS antal).
 8. NULL-håndtering: tilføj WHERE col IS NOT NULL ved GROUP BY på den kolonne.
-9. cvr_virksomhed.adresse_json indeholder kommune (->>'kommune'->>'kommuneKode'), postnummer, vejnavn.
-10. Ved JOIN på kommune-navn: JOIN public.kommune_ref ON kommune_kode.
+9. KRITISK — cvr_virksomhed HAR IKKE kolonnen kommune_kode. Kommune ligger i JSONB: adresse_json->'kommune'->>'kommuneKode'. Cast til int hvis nødvendigt: ((adresse_json->'kommune'->>'kommuneKode')::int).
+10. KRITISK — cvr-kolonner er ALTID type TEXT, ikke bigint. Cast IKKE til bigint. Ved JOIN: cvr_virksomhed.cvr = ejf_ejerskab.ejer_cvr (begge text — direkte match).
+11. Ved JOIN på kommune-navn: JOIN public.kommune_ref USING (kommune_kode) eller ON kommune_kode.
+12. Brug aldrig kolonner som ikke er nævnt i katalog/eksempler — det giver "column does not exist" fejl.
 
 WHITELISTEDE TABELLER:
 ${Array.from(WHITELISTED_TABLES).join(', ')}

@@ -248,8 +248,10 @@ export function validateSql(rawSql: string): ValidationResult {
     // alias ikke en rigtig tabel. Vi tjekker både fuldt-kvalificeret og short.
     if (WHITELISTED_TABLES.has(ref)) continue;
     if (WHITELISTED_SHORT_NAMES.has(ref)) continue;
-    // CTE-aliaser detekteres ved "WITH x AS (" eller ", x AS ("
-    const cteRegex = new RegExp(`\\b(?:with|,)\\s+${escapeRegex(ref)}\\s+as\\s*\\(`, 'i');
+    // CTE-aliaser detekteres ved "WITH x AS (" eller ",  x AS (".
+    // Bemærk: \b virker ikke før komma (komma er ikke ord-grænse), så vi
+    // matcher komma uden ordgrænse-anker.
+    const cteRegex = new RegExp(`(?:\\bwith\\s+|,\\s*)${escapeRegex(ref)}\\s+as\\s*\\(`, 'i');
     if (cteRegex.test(stripped)) continue;
     return {
       valid: false,

@@ -81,6 +81,10 @@
       "schedule": "0 3 * * *"
     },
     {
+      "path": "/api/cron/refresh-knowledge-cache",
+      "schedule": "30 3 * * *"
+    },
+    {
       "path": "/api/cron/pull-dar-aendringer",
       "schedule": "0 5 * * *"
     },

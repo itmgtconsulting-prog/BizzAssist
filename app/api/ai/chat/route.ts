@@ -629,6 +629,43 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['format', 'mode', 'title'],
     },
   },
+  {
+    // BIZZ-1420: Slå pre-beregnede aggregater op direkte uden DB-query.
+    // Topics i app/lib/dataIntelligence/topics.ts, refreshes nightly via
+    // /api/cron/refresh-knowledge-cache.
+    name: 'hent_analytics_knowledge',
+    description:
+      'Slå et pre-beregnet aggregat op i knowledge cache (dataintel.analytics_knowledge). Brug dette FØR du laver databaseforespørgsler — det er hurtigt og dækker de mest stillede spørgsmål. ' +
+      'Tilgængelige topics: ' +
+      'company_count_by_municipality (key: {kommune_kode: int}), ' +
+      'company_count_by_industry (key: {branche_kode: string}), ' +
+      'company_status_distribution (key: {}), ' +
+      'property_count_by_type (key: {anvendelseskode: string}), ' +
+      'property_count_by_municipality (key: {kommune_kode: int}), ' +
+      'avg_valuation_by_property_type (key: {anvendelseskode: string}), ' +
+      'data_coverage_bbr (key: {} eller {kommune_kode: int}), ' +
+      'data_coverage_valuation (key: {vurderingsaar: int}), ' +
+      'data_coverage_energy (key: {energimaerke: string}), ' +
+      'ownership_distribution (key: {}), ' +
+      'recent_company_registrations (key: {maaned: "YYYY-MM"}), ' +
+      'temporal_coverage (key: {table: string, column: string}). ' +
+      'Hvis key er udeladt returneres alle rækker for topic (op til 500). Output inkluderer computed_at så bruger kan se freshness.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        topic: {
+          type: 'string',
+          description: 'Topic-navn — se liste i tool-beskrivelsen',
+        },
+        key: {
+          type: 'object',
+          description:
+            'Valgfrit JSON-objekt der filtrerer på key-felter (fx {kommune_kode: 101}). Udelad for at få alle facts.',
+        },
+      },
+      required: ['topic'],
+    },
+  },
 ];
 
 // ─── Tool labels (for status messages) ──────────────────────────────────────
@@ -2306,6 +2343,31 @@ async function executeTool(
         break;
       }
 
+      case 'hent_analytics_knowledge': {
+        // BIZZ-1420: Slå pre-beregnede facts op i knowledge cache.
+        const topic = (input as { topic?: string }).topic;
+        const key = (input as { key?: Record<string, unknown> }).key;
+        if (!topic) {
+          result = { fejl: 'topic er påkrævet' };
+          break;
+        }
+        const { queryKnowledge } = await import('@/app/lib/dataIntelligence/fetchKnowledge');
+        const facts = await queryKnowledge(topic, key);
+        if (facts.length === 0) {
+          result = {
+            fejl: `Ingen facts fundet for topic="${topic}"${key ? ` med key=${JSON.stringify(key)}` : ''}. Måske mangler topic eller cron har ikke kørt endnu.`,
+          };
+        } else {
+          result = {
+            topic,
+            antal: facts.length,
+            computed_at: facts[0]?.computed_at_iso,
+            facts: facts.map((f) => ({ key: f.key, value: f.value })),
+          };
+        }
+        break;
+      }
+
       default:
         return { fejl: `Ukendt tool: ${name}` };
     }
@@ -2880,6 +2942,21 @@ export async function POST(request: NextRequest): Promise<Response> {
     }
   } catch (catalogErr) {
     logger.warn('[ai/chat] data catalog fetch failed (non-fatal):', catalogErr);
+  }
+
+  // BIZZ-1421: Inject executive knowledge summary (Fase 2, Lag 2). Top-level
+  // facts om datasættets størrelse + dækning — giver AI et instant svar på
+  // "hvor meget data har vi?" type spørgsmål uden tool-kald.
+  try {
+    const { fetchExecutiveFacts, formatExecutiveSummary } =
+      await import('@/app/lib/dataIntelligence/fetchKnowledge');
+    const facts = await fetchExecutiveFacts();
+    const summary = formatExecutiveSummary(facts);
+    if (summary) {
+      systemPrompt += `\n\n${summary}`;
+    }
+  } catch (knowledgeErr) {
+    logger.warn('[ai/chat] executive summary fetch failed (non-fatal):', knowledgeErr);
   }
 
   // Inject knowledge base first so it forms stable background knowledge

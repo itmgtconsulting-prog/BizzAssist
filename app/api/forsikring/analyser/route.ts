@@ -132,9 +132,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
     }
 
-    // 2. Hent policer fra tenant
+    // 2. Hent policer — BIZZ-1404: scope til valgte dokumenter hvis angivet
     const insurance = await getInsuranceApi(auth.tenantId);
-    const policer = await insurance.policies.list();
+    const scopeDocIds = [...(document_ids ?? []), ...(new_document_ids ?? [])];
+    let policer;
+    if (scopeDocIds.length > 0) {
+      // Kun policer parsed fra de valgte dokumenter
+      const allPolicies = await insurance.policies.list();
+      policer = allPolicies.filter((p) => p.document_id && scopeDocIds.includes(p.document_id));
+      logger.log(
+        `[forsikring/analyser] Scoped til ${policer.length} policer fra ${scopeDocIds.length} dokumenter (af ${allPolicies.length} total)`
+      );
+    } else {
+      // Fallback: alle policer (backward compat + første analyse)
+      policer = await insurance.policies.list();
+    }
 
     // 3. Match aktiver mod policer
     const matches = matchAssetsToPolicies(aktiver, policer);

@@ -88,17 +88,18 @@ BEGIN
   );
 
   -- ─── 4. Data-backfill: link eksisterende docs til analyser ─
-  -- For hver analyse: find policies der matcher via kunde_id, find deres documents, opret links
+  -- Link ALLE parsed dokumenter til ALLE analyser i samme tenant.
+  -- Pre-BIZZ-1404 var der ingen analyse-scoping, så alle docs hører
+  -- til alle analyser (backward compat). Nye analyser får præcise links.
   EXECUTE format(
     'INSERT INTO %I.forsikring_analyse_documents (tenant_id, analyse_id, document_id, source) '
-    'SELECT DISTINCT p.tenant_id, a.id, d.id, ''uploaded'' '
+    'SELECT DISTINCT a.tenant_id, a.id, d.id, ''uploaded'' '
     'FROM %I.forsikring_analyser a '
-    'JOIN %I.forsikring_policies p ON p.kunde_id = a.kunde_id AND p.tenant_id = a.tenant_id '
-    'JOIN %I.forsikring_documents d ON d.id = p.document_id AND d.tenant_id = p.tenant_id '
-    'WHERE d.id IS NOT NULL '
+    'CROSS JOIN %I.forsikring_documents d '
+    'WHERE d.parse_status = ''parsed'' AND d.tenant_id = a.tenant_id '
     'ON CONFLICT (analyse_id, document_id) DO NOTHING',
     p_schema_name,
-    p_schema_name, p_schema_name, p_schema_name
+    p_schema_name, p_schema_name
   );
 
   -- ─── 5. Backfill analyse_id på gaps via policy → analyse link ─

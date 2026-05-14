@@ -472,6 +472,7 @@ function AnalyseSection({
   onAnalyseDetail,
   onSagChange,
   onCustomerSelect,
+  newDocumentIds,
 }: {
   lang: string;
   policies: PolicyRow[];
@@ -484,6 +485,8 @@ function AnalyseSection({
   onCustomerSelect: (
     customer: { type: 'virksomhed' | 'person'; id: string; navn: string } | null
   ) => void;
+  /** BIZZ-1404: Document IDs fra nye uploads */
+  newDocumentIds: string[];
 }) {
   const da = lang === 'da';
   const [query, setQuery] = useState('');
@@ -657,6 +660,7 @@ function AnalyseSection({
           kunde_navn: selected.navn,
           ...(asOfDate ? { as_of_date: asOfDate } : {}),
           ...(reusedDocIds.length > 0 ? { document_ids: reusedDocIds } : {}),
+          ...(newDocumentIds.length > 0 ? { new_document_ids: newDocumentIds } : {}),
         }),
       });
       if (res.ok) {
@@ -1201,6 +1205,8 @@ export default function ForsikringPageClient(): React.ReactElement {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [uploadJobs, setUploadJobs] = useState<UploadJob[]>([]);
+  /** BIZZ-1404: Tracked document IDs fra uploads i denne session */
+  const [newDocumentIds, setNewDocumentIds] = useState<string[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [resetting, setResetting] = useState(false);
   /** BIZZ-1399: Aktiv sag-ID fra AnalyseSection — bruges til filtrering + upload */
@@ -1348,6 +1354,8 @@ export default function ForsikringPageClient(): React.ReactElement {
           throw new Error(body.error ?? t.uploadFailed);
         }
         const upJson = (await upRes.json()) as { document: { id: string } };
+        // BIZZ-1404: Track nye document IDs for analyse-scoping
+        setNewDocumentIds((prev) => [...prev, upJson.document.id]);
 
         // Trigger parse
         setUploadJobs((prev) =>
@@ -1477,6 +1485,7 @@ export default function ForsikringPageClient(): React.ReactElement {
         onAnalyseDetail={handleAnalyseDetail}
         onSagChange={setActiveSagId}
         onCustomerSelect={setSelectedCustomer}
+        newDocumentIds={newDocumentIds}
       />
 
       {/* BIZZ-1404: Analyse-historik for valgt kunde */}

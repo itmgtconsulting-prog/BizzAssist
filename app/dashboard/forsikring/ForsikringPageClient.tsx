@@ -1041,6 +1041,39 @@ function AnalyseSection({
                       >
                         {doc.source === 'new' ? (da ? 'ny' : 'new') : da ? 'tidligere' : 'previous'}
                       </span>
+                      {/* Slet permanent fra system */}
+                      <button
+                        type="button"
+                        aria-label={da ? `Slet ${doc.name}` : `Delete ${doc.name}`}
+                        onClick={async (e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          if (
+                            !window.confirm(
+                              da ? `Slet ${doc.name} permanent?` : `Delete ${doc.name} permanently?`
+                            )
+                          )
+                            return;
+                          try {
+                            await fetch(`/api/forsikring/documents/${doc.id}`, {
+                              method: 'DELETE',
+                            });
+                            setPreviousDocs((prev) => prev.filter((d) => d.id !== doc.id));
+                            setWizardUploads((prev) => prev.filter((u) => u.docId !== doc.id));
+                            setSelectedDocIds((prev) => {
+                              const n = new Set(prev);
+                              n.delete(doc.id);
+                              return n;
+                            });
+                            onRefresh();
+                          } catch {
+                            /* silent */
+                          }
+                        }}
+                        className="p-1 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors shrink-0"
+                      >
+                        <Trash2 size={12} />
+                      </button>
                     </label>
                   ))}
                 </div>

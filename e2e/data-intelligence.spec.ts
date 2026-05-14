@@ -255,6 +255,9 @@ const SCENARIOS: Scenario[] = [
 test.describe('Data Intelligence — E2E suite', () => {
   // Parallel mode: alle scenarier kører uafhængigt for at fange uafhængige fejl
   // (serial mode stoppede ved første fejl og skjulte andre problemer).
+  // Per-test timeout 120s da claude + sql på 2.2m rækker tager 20-30s.
+  test.setTimeout(120_000);
+
   for (const scenario of SCENARIOS) {
     test(`#${scenario.id} [N${scenario.level}] ${scenario.prompt.slice(0, 60)}`, async ({
       page,

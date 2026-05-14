@@ -30,7 +30,9 @@ import { buildSqlGenPrompt } from '@/app/lib/dataIntelligence/sqlGenPrompt';
 import { createDefaultSqlRunner } from '@/app/lib/dataIntelligence/buildCatalog';
 
 export const runtime = 'nodejs';
-export const maxDuration = 30;
+// Claude generation + SQL execution mod 2.2M-row tabeller kan tage 25-45s
+// (særligt level 3 joins). Sætter til 60 så Vercel ikke killer requesten.
+export const maxDuration = 60;
 
 interface RequestBody {
   prompt: string;

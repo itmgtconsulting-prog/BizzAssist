@@ -111,14 +111,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
               adresse: string | null;
               postnr: string | null;
               by: string | null;
+              etage: string | null;
+              doer: string | null;
             }
           > = await addrRes.json();
           for (const aktiv of aktiver) {
             if (aktiv.type === 'ejendom' && aktiv.bfe) {
               const info = addrData[String(aktiv.bfe)];
               if (info?.adresse) {
+                // BIZZ-1441: Inkluder etage/dør i adresse for ejerlejligheder
+                const etageDoer = [info.etage, info.doer].filter(Boolean).join(' ');
+                const fullAddr = etageDoer ? `${info.adresse}, ${etageDoer}` : info.adresse;
                 const postBy = [info.postnr, info.by].filter(Boolean).join(' ');
-                aktiv.adresse = postBy ? `${info.adresse}, ${postBy}` : info.adresse;
+                aktiv.adresse = postBy ? `${fullAddr}, ${postBy}` : fullAddr;
                 aktiv.label = aktiv.adresse;
               }
             }

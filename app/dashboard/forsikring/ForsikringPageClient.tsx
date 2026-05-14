@@ -567,7 +567,14 @@ function AnalyseSection({
     }
     fetch(`/api/forsikring/documents/for-customer?kunde_id=${encodeURIComponent(selected.id)}`)
       .then((r) => (r.ok ? r.json() : { documents: [] }))
-      .then((d) => setPreviousDocs(d.documents ?? []))
+      .then((d) => {
+        const docs = d.documents ?? [];
+        setPreviousDocs(docs);
+        // BIZZ-1442: Auto-check alle tidligere docs som default
+        setSelectedDocIds(
+          (prev) => new Set([...prev, ...docs.map((doc: { id: string }) => doc.id)])
+        );
+      })
       .catch(() => setPreviousDocs([]));
   }, [showDocPicker, selected]);
 
@@ -608,6 +615,8 @@ function AnalyseSection({
             setWizardUploads((prev) =>
               prev.map((j) => (j.id === jobId ? { ...j, status: 'done', docId } : j))
             );
+            // BIZZ-1442: Auto-check nye uploads
+            setSelectedDocIds((prev) => new Set([...prev, docId]));
           } catch {
             setWizardUploads((prev) =>
               prev.map((j) => (j.id === jobId ? { ...j, status: 'failed' } : j))
@@ -974,75 +983,82 @@ function AnalyseSection({
             </button>
           </div>
 
-          {previousDocs.length > 0 ? (
-            <>
-              <p className="text-slate-400 text-xs">
-                {da
-                  ? 'Vælg dokumenter fra tidligere analyser der skal genbruges:'
-                  : 'Select documents from previous analyses to reuse:'}
-              </p>
-              <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                {previousDocs.map((doc) => (
-                  <label
-                    key={doc.id}
-                    className="flex items-center gap-3 px-3 py-2 bg-white/3 hover:bg-white/5 rounded-lg cursor-pointer transition-colors"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedDocIds.has(doc.id)}
-                      onChange={(e) => {
-                        setSelectedDocIds((prev) => {
-                          const next = new Set(prev);
-                          if (e.target.checked) next.add(doc.id);
-                          else next.delete(doc.id);
-                          return next;
-                        });
-                      }}
-                      className="rounded border-slate-600 bg-slate-700 text-blue-500 focus:ring-blue-500"
-                    />
-                    <FileText size={14} className="text-slate-400 shrink-0" />
-                    <span className="text-white text-xs flex-1 truncate">{doc.original_name}</span>
-                    <span className="text-slate-500 text-[10px] shrink-0">
-                      {new Date(doc.created_at).toLocaleDateString('da-DK', {
-                        day: 'numeric',
-                        month: 'short',
-                      })}
-                    </span>
-                    {/* BIZZ-1440: Fjern fra wizard (skjul — sletter IKKE fra DB) */}
-                    <button
-                      type="button"
-                      aria-label={da ? `Fjern ${doc.original_name}` : `Remove ${doc.original_name}`}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setPreviousDocs((prev) => prev.filter((d) => d.id !== doc.id));
-                        setSelectedDocIds((prev) => {
-                          const n = new Set(prev);
-                          n.delete(doc.id);
-                          return n;
-                        });
-                      }}
-                      className="p-1 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors shrink-0"
+          {/* BIZZ-1442: Samlet doc-liste — alle docs med checkboxes */}
+          {(() => {
+            // Merge previous docs + wizard uploads til én liste
+            const allDocs = [
+              ...previousDocs.map((d) => ({
+                id: d.id,
+                name: d.original_name,
+                source: 'previous' as const,
+                done: true,
+              })),
+              ...wizardUploads
+                .filter((u) => u.status === 'done' && u.docId)
+                .map((u) => ({
+                  id: u.docId!,
+                  name: u.fileName,
+                  source: 'new' as const,
+                  done: true,
+                })),
+            ];
+            // Dedup by id
+            const seen = new Set<string>();
+            const unique = allDocs.filter((d) => {
+              if (seen.has(d.id)) return false;
+              seen.add(d.id);
+              return true;
+            });
+
+            return unique.length > 0 ? (
+              <>
+                <p className="text-slate-400 text-xs">
+                  {da
+                    ? 'Dokumenter inkluderet i analysen (uncheck for at ekskludere):'
+                    : 'Documents included in analysis (uncheck to exclude):'}
+                </p>
+                <div className="space-y-1.5 max-h-60 overflow-y-auto">
+                  {unique.map((doc) => (
+                    <label
+                      key={doc.id}
+                      className="flex items-center gap-3 px-3 py-2 bg-white/3 hover:bg-white/5 rounded-lg cursor-pointer transition-colors"
                     >
-                      <XCircle size={12} />
-                    </button>
-                  </label>
-                ))}
-              </div>
-              {selectedDocIds.size > 0 && (
-                <div className="text-blue-400 text-xs">
-                  {selectedDocIds.size}{' '}
-                  {da ? 'dokumenter valgt til genbrug' : 'documents selected for reuse'}
+                      <input
+                        type="checkbox"
+                        checked={selectedDocIds.has(doc.id)}
+                        onChange={(e) => {
+                          setSelectedDocIds((prev) => {
+                            const next = new Set(prev);
+                            if (e.target.checked) next.add(doc.id);
+                            else next.delete(doc.id);
+                            return next;
+                          });
+                        }}
+                        className="rounded border-slate-600 bg-slate-700 text-blue-500 focus:ring-blue-500"
+                      />
+                      <FileText size={14} className="text-slate-400 shrink-0" />
+                      <span className="text-white text-xs flex-1 truncate">{doc.name}</span>
+                      <span
+                        className={`text-[10px] shrink-0 ${doc.source === 'new' ? 'text-emerald-400' : 'text-slate-500'}`}
+                      >
+                        {doc.source === 'new' ? (da ? 'ny' : 'new') : da ? 'tidligere' : 'previous'}
+                      </span>
+                    </label>
+                  ))}
                 </div>
-              )}
-            </>
-          ) : (
-            <p className="text-slate-500 text-xs">
-              {da
-                ? 'Ingen tidligere dokumenter fundet. Upload nye nedenfor.'
-                : 'No previous documents found. Upload new ones below.'}
-            </p>
-          )}
+                <div className="text-blue-400 text-xs">
+                  {selectedDocIds.size} / {unique.length}{' '}
+                  {da ? 'dokumenter valgt' : 'documents selected'}
+                </div>
+              </>
+            ) : (
+              <p className="text-slate-500 text-xs">
+                {da
+                  ? 'Upload dokumenter nedenfor for at starte.'
+                  : 'Upload documents below to begin.'}
+              </p>
+            );
+          })()}
 
           {/* BIZZ-1439: Upload-zone INDE I wizard */}
           <div className="pt-2 border-t border-white/5">

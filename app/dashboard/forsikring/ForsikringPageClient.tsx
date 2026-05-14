@@ -1410,222 +1410,230 @@ export default function ForsikringPageClient(): React.ReactElement {
         </section>
       )}
 
-      {/* TRIN 2: Upload dokumenter */}
-      <div className="flex items-center gap-2 text-sm font-semibold text-white">
-        <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">
-          2
-        </span>
-        {lang === 'da' ? 'Upload forsikringsdokumenter' : 'Upload insurance documents'}
-      </div>
-      <section
-        onDragOver={onDragOver}
-        onDragLeave={onDragLeave}
-        onDrop={onDrop}
-        className={`rounded-2xl border-2 border-dashed transition-colors p-8 text-center cursor-pointer ${
-          dragOver
-            ? 'border-blue-400 bg-blue-500/5'
-            : 'border-white/10 bg-white/5 hover:border-blue-500/40'
-        }`}
-        onClick={() => fileInputRef.current?.click()}
-        role="button"
-        tabIndex={0}
-        aria-label={t.uploadCta}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            fileInputRef.current?.click();
-          }
-        }}
-      >
-        <Upload className="mx-auto text-blue-400 mb-2" size={28} />
-        <div className="font-medium">{t.uploadCta}</div>
-        <div className="text-sm text-slate-400 mt-1">{t.uploadHelp}</div>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".pdf,.docx,.xlsx,.xls,.pptx,.rtf,.txt,.md,.html,.csv,.tsv,.json,.xml,.yaml,.eml,.png,.jpg,.jpeg,.gif,.webp,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-excel,image/*,text/*,application/json,application/xml,message/rfc822"
-          multiple
-          className="hidden"
-          aria-hidden="true"
-          onChange={(e) => {
-            handleFiles(e.target.files);
-            // reset så samme fil kan vælges igen
-            e.target.value = '';
-          }}
-        />
-      </section>
-
-      {/* Upload-jobs (live status) */}
-      {uploadJobs.length > 0 && (
-        <section className="bg-white/5 border border-white/8 rounded-2xl divide-y divide-white/5">
-          {uploadJobs.map((job) => (
-            <div key={job.id} className="flex items-center gap-3 p-3 text-sm">
-              {job.status === 'uploading' && (
-                <Loader2 size={16} className="animate-spin text-blue-400" />
-              )}
-              {job.status === 'parsing' && (
-                <Loader2 size={16} className="animate-spin text-amber-400" />
-              )}
-              {job.status === 'done' && <CheckCircle2 size={16} className="text-emerald-400" />}
-              {job.status === 'failed' && <XCircle size={16} className="text-red-400" />}
-              <span className="font-medium">{job.fileName}</span>
-              <span className="text-slate-400 text-xs">
-                {job.status === 'uploading' && t.uploading}
-                {job.status === 'parsing' && t.parsing}
-                {job.status === 'done' &&
-                  (job.documentType === 'oversigt'
-                    ? `✓ Oversigt → ${job.policiesCount ?? '?'} policer`
-                    : job.documentType === 'tillaeg'
-                      ? '✓ Tillæg'
-                      : '✓')}
-                {job.status === 'failed' && (job.error ?? t.parseFailed)}
-              </span>
-            </div>
-          ))}
-        </section>
-      )}
-
-      {/* Pending documents (server-side) */}
-      {documents.length > 0 && (
-        <section className="bg-white/5 border border-white/8 rounded-2xl">
-          <header className="px-4 py-3 border-b border-white/5 text-sm font-medium text-slate-300 flex items-center gap-2">
-            <FileText size={16} />
-            {t.pendingDocuments} ({documents.length})
-          </header>
-          <div className="divide-y divide-white/5 text-sm">
-            {documents.map((doc) => (
-              <div key={doc.id} className="px-4 py-2 flex items-center gap-3">
-                <FileText size={14} className="text-slate-400" />
-                <span>{doc.original_name}</span>
-                <span className="text-xs text-slate-500 ml-auto">
-                  {doc.parse_status === 'failed'
-                    ? (doc.parse_error ?? t.parseFailed)
-                    : doc.parse_status}
-                </span>
-                {/* BIZZ-1397: Slet individuelt dokument */}
-                <button
-                  type="button"
-                  aria-label={
-                    lang === 'da' ? `Slet ${doc.original_name}` : `Delete ${doc.original_name}`
-                  }
-                  onClick={async () => {
-                    try {
-                      const res = await fetch(`/api/forsikring/documents/${doc.id}`, {
-                        method: 'DELETE',
-                      });
-                      if (res.ok) await refresh();
-                    } catch {
-                      // Handled silently
-                    }
-                  }}
-                  className="p-1 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors shrink-0"
-                >
-                  <XCircle size={14} />
-                </button>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Uploadede policer — compact header med rapport-link */}
-      {policies.length > 0 && (
-        <div className="flex items-center justify-between">
+      {/* BIZZ-1404: Upload + policer kun synlige når kunde er valgt */}
+      {selectedCustomer && (
+        <>
+          {/* TRIN 2: Upload dokumenter */}
           <div className="flex items-center gap-2 text-sm font-semibold text-white">
             <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">
-              3
+              2
             </span>
-            {lang === 'da'
-              ? `${policies.length} policer — ${(data?.totals?.gaps_critical ?? 0) + (data?.totals?.gaps_warning ?? 0)} gaps fundet`
-              : `${policies.length} policies — ${(data?.totals?.gaps_critical ?? 0) + (data?.totals?.gaps_warning ?? 0)} gaps found`}
+            {lang === 'da' ? 'Upload forsikringsdokumenter' : 'Upload insurance documents'}
           </div>
-        </div>
-      )}
+          <section
+            onDragOver={onDragOver}
+            onDragLeave={onDragLeave}
+            onDrop={onDrop}
+            className={`rounded-2xl border-2 border-dashed transition-colors p-8 text-center cursor-pointer ${
+              dragOver
+                ? 'border-blue-400 bg-blue-500/5'
+                : 'border-white/10 bg-white/5 hover:border-blue-500/40'
+            }`}
+            onClick={() => fileInputRef.current?.click()}
+            role="button"
+            tabIndex={0}
+            aria-label={t.uploadCta}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                fileInputRef.current?.click();
+              }
+            }}
+          >
+            <Upload className="mx-auto text-blue-400 mb-2" size={28} />
+            <div className="font-medium">{t.uploadCta}</div>
+            <div className="text-sm text-slate-400 mt-1">{t.uploadHelp}</div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.docx,.xlsx,.xls,.pptx,.rtf,.txt,.md,.html,.csv,.tsv,.json,.xml,.yaml,.eml,.png,.jpg,.jpeg,.gif,.webp,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-excel,image/*,text/*,application/json,application/xml,message/rfc822"
+              multiple
+              className="hidden"
+              aria-hidden="true"
+              onChange={(e) => {
+                handleFiles(e.target.files);
+                // reset så samme fil kan vælges igen
+                e.target.value = '';
+              }}
+            />
+          </section>
 
-      {/* Error banner */}
-      {error && (
-        <div className="rounded-xl bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-red-200 flex items-center gap-2">
-          <AlertCircle size={16} />
-          {error}
-        </div>
-      )}
-
-      {/* Loading state */}
-      {loading && !data && (
-        <div className="text-sm text-slate-400">{translations[lang].common.loading}</div>
-      )}
-
-      {/* Empty state — kun når ingen policer OG ingen dokumenter */}
-      {!loading && policies.length === 0 && documents.length === 0 && uploadJobs.length === 0 && (
-        <div className="bg-white/5 border border-white/8 rounded-2xl p-10 text-center">
-          <Building2 className="mx-auto text-slate-600 mb-3" size={36} />
-          <h2 className="text-lg font-medium mb-1">{t.noPolicies}</h2>
-          <p className="text-sm text-slate-400">{t.noPoliciesDesc}</p>
-        </div>
-      )}
-
-      {/* Police-tabel */}
-      {policies.length > 0 && (
-        <section className="bg-white/5 border border-white/8 rounded-2xl overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-900/40 text-slate-400 text-xs uppercase tracking-wide">
-              <tr>
-                <th className="text-left px-4 py-3">{t.colPolicy}</th>
-                <th className="text-left px-4 py-3">{t.colInsurer}</th>
-                <th className="text-left px-4 py-3">{t.colHolder}</th>
-                <th className="text-left px-4 py-3">{t.colAddress}</th>
-                <th className="text-right px-4 py-3">{t.colPremium}</th>
-                <th className="text-left px-4 py-3">{t.colExpires}</th>
-                <th className="text-center px-4 py-3">{t.colGaps}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5">
-              {policies.map((p) => (
-                <tr key={p.id} className="hover:bg-white/5 transition-colors">
-                  <td className="px-4 py-3">
-                    <Link
-                      href={`/dashboard/forsikring/${p.id}`}
-                      className="text-blue-300 hover:text-blue-200 font-medium"
-                    >
-                      {p.policy_number}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3 text-slate-300">{p.insurer_name}</td>
-                  <td className="px-4 py-3 text-slate-300">{p.policyholder_name}</td>
-                  <td className="px-4 py-3 text-slate-300">{p.property_address ?? '—'}</td>
-                  <td className="px-4 py-3 text-right text-slate-300">
-                    {formatDkk(p.annual_premium_dkk)}
-                  </td>
-                  <td className="px-4 py-3 text-slate-300">{formatDate(p.effective_to)}</td>
-                  <td className="px-4 py-3 text-center">
-                    <div className="inline-flex items-center gap-1 text-xs">
-                      {p.gap_counts.critical > 0 && (
-                        <span className="px-1.5 py-0.5 rounded bg-red-500/20 text-red-300">
-                          {p.gap_counts.critical}
-                        </span>
-                      )}
-                      {p.gap_counts.warning > 0 && (
-                        <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">
-                          {p.gap_counts.warning}
-                        </span>
-                      )}
-                      {p.gap_counts.info > 0 && (
-                        <span className="px-1.5 py-0.5 rounded bg-slate-500/20 text-slate-300">
-                          {p.gap_counts.info}
-                        </span>
-                      )}
-                      {p.gap_counts.critical === 0 &&
-                        p.gap_counts.warning === 0 &&
-                        p.gap_counts.info === 0 && (
-                          <CheckCircle2 size={14} className="text-emerald-400" />
-                        )}
-                    </div>
-                  </td>
-                </tr>
+          {/* Upload-jobs (live status) */}
+          {uploadJobs.length > 0 && (
+            <section className="bg-white/5 border border-white/8 rounded-2xl divide-y divide-white/5">
+              {uploadJobs.map((job) => (
+                <div key={job.id} className="flex items-center gap-3 p-3 text-sm">
+                  {job.status === 'uploading' && (
+                    <Loader2 size={16} className="animate-spin text-blue-400" />
+                  )}
+                  {job.status === 'parsing' && (
+                    <Loader2 size={16} className="animate-spin text-amber-400" />
+                  )}
+                  {job.status === 'done' && <CheckCircle2 size={16} className="text-emerald-400" />}
+                  {job.status === 'failed' && <XCircle size={16} className="text-red-400" />}
+                  <span className="font-medium">{job.fileName}</span>
+                  <span className="text-slate-400 text-xs">
+                    {job.status === 'uploading' && t.uploading}
+                    {job.status === 'parsing' && t.parsing}
+                    {job.status === 'done' &&
+                      (job.documentType === 'oversigt'
+                        ? `✓ Oversigt → ${job.policiesCount ?? '?'} policer`
+                        : job.documentType === 'tillaeg'
+                          ? '✓ Tillæg'
+                          : '✓')}
+                    {job.status === 'failed' && (job.error ?? t.parseFailed)}
+                  </span>
+                </div>
               ))}
-            </tbody>
-          </table>
-        </section>
+            </section>
+          )}
+
+          {/* Pending documents (server-side) */}
+          {documents.length > 0 && (
+            <section className="bg-white/5 border border-white/8 rounded-2xl">
+              <header className="px-4 py-3 border-b border-white/5 text-sm font-medium text-slate-300 flex items-center gap-2">
+                <FileText size={16} />
+                {t.pendingDocuments} ({documents.length})
+              </header>
+              <div className="divide-y divide-white/5 text-sm">
+                {documents.map((doc) => (
+                  <div key={doc.id} className="px-4 py-2 flex items-center gap-3">
+                    <FileText size={14} className="text-slate-400" />
+                    <span>{doc.original_name}</span>
+                    <span className="text-xs text-slate-500 ml-auto">
+                      {doc.parse_status === 'failed'
+                        ? (doc.parse_error ?? t.parseFailed)
+                        : doc.parse_status}
+                    </span>
+                    {/* BIZZ-1397: Slet individuelt dokument */}
+                    <button
+                      type="button"
+                      aria-label={
+                        lang === 'da' ? `Slet ${doc.original_name}` : `Delete ${doc.original_name}`
+                      }
+                      onClick={async () => {
+                        try {
+                          const res = await fetch(`/api/forsikring/documents/${doc.id}`, {
+                            method: 'DELETE',
+                          });
+                          if (res.ok) await refresh();
+                        } catch {
+                          // Handled silently
+                        }
+                      }}
+                      className="p-1 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors shrink-0"
+                    >
+                      <XCircle size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Uploadede policer — compact header med rapport-link */}
+          {policies.length > 0 && (
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">
+                  3
+                </span>
+                {lang === 'da'
+                  ? `${policies.length} policer — ${(data?.totals?.gaps_critical ?? 0) + (data?.totals?.gaps_warning ?? 0)} gaps fundet`
+                  : `${policies.length} policies — ${(data?.totals?.gaps_critical ?? 0) + (data?.totals?.gaps_warning ?? 0)} gaps found`}
+              </div>
+            </div>
+          )}
+
+          {/* Error banner */}
+          {error && (
+            <div className="rounded-xl bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-red-200 flex items-center gap-2">
+              <AlertCircle size={16} />
+              {error}
+            </div>
+          )}
+
+          {/* Loading state */}
+          {loading && !data && (
+            <div className="text-sm text-slate-400">{translations[lang].common.loading}</div>
+          )}
+
+          {/* Empty state — kun når ingen policer OG ingen dokumenter */}
+          {!loading &&
+            policies.length === 0 &&
+            documents.length === 0 &&
+            uploadJobs.length === 0 && (
+              <div className="bg-white/5 border border-white/8 rounded-2xl p-10 text-center">
+                <Building2 className="mx-auto text-slate-600 mb-3" size={36} />
+                <h2 className="text-lg font-medium mb-1">{t.noPolicies}</h2>
+                <p className="text-sm text-slate-400">{t.noPoliciesDesc}</p>
+              </div>
+            )}
+
+          {/* Police-tabel */}
+          {policies.length > 0 && (
+            <section className="bg-white/5 border border-white/8 rounded-2xl overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-900/40 text-slate-400 text-xs uppercase tracking-wide">
+                  <tr>
+                    <th className="text-left px-4 py-3">{t.colPolicy}</th>
+                    <th className="text-left px-4 py-3">{t.colInsurer}</th>
+                    <th className="text-left px-4 py-3">{t.colHolder}</th>
+                    <th className="text-left px-4 py-3">{t.colAddress}</th>
+                    <th className="text-right px-4 py-3">{t.colPremium}</th>
+                    <th className="text-left px-4 py-3">{t.colExpires}</th>
+                    <th className="text-center px-4 py-3">{t.colGaps}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {policies.map((p) => (
+                    <tr key={p.id} className="hover:bg-white/5 transition-colors">
+                      <td className="px-4 py-3">
+                        <Link
+                          href={`/dashboard/forsikring/${p.id}`}
+                          className="text-blue-300 hover:text-blue-200 font-medium"
+                        >
+                          {p.policy_number}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-3 text-slate-300">{p.insurer_name}</td>
+                      <td className="px-4 py-3 text-slate-300">{p.policyholder_name}</td>
+                      <td className="px-4 py-3 text-slate-300">{p.property_address ?? '—'}</td>
+                      <td className="px-4 py-3 text-right text-slate-300">
+                        {formatDkk(p.annual_premium_dkk)}
+                      </td>
+                      <td className="px-4 py-3 text-slate-300">{formatDate(p.effective_to)}</td>
+                      <td className="px-4 py-3 text-center">
+                        <div className="inline-flex items-center gap-1 text-xs">
+                          {p.gap_counts.critical > 0 && (
+                            <span className="px-1.5 py-0.5 rounded bg-red-500/20 text-red-300">
+                              {p.gap_counts.critical}
+                            </span>
+                          )}
+                          {p.gap_counts.warning > 0 && (
+                            <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">
+                              {p.gap_counts.warning}
+                            </span>
+                          )}
+                          {p.gap_counts.info > 0 && (
+                            <span className="px-1.5 py-0.5 rounded bg-slate-500/20 text-slate-300">
+                              {p.gap_counts.info}
+                            </span>
+                          )}
+                          {p.gap_counts.critical === 0 &&
+                            p.gap_counts.warning === 0 &&
+                            p.gap_counts.info === 0 && (
+                              <CheckCircle2 size={14} className="text-emerald-400" />
+                            )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          )}
+        </>
       )}
     </div>
   );

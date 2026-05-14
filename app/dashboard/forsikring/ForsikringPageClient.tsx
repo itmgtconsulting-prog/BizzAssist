@@ -34,6 +34,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { useSubscription } from '@/app/context/SubscriptionContext';
 import { translations } from '@/app/lib/translations';
 
 // ─── Types ───────────────────────────────────────────────────────
@@ -1330,6 +1331,7 @@ export default function ForsikringPageClient(): React.ReactElement {
   const { lang } = useLanguage();
   const t = translations[lang].forsikring;
   const setAICtx = useSetAIPageContext();
+  const { isAdmin } = useSubscription();
   const [data, setData] = useState<ListResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1570,8 +1572,8 @@ export default function ForsikringPageClient(): React.ReactElement {
           </h1>
           <p className="text-sm text-slate-400">{t.subtitle}</p>
         </div>
-        {/* BIZZ-1397: Nulstil alt — sletter alle dokumenter, policer og analyser */}
-        {(policies.length > 0 || documents.length > 0) && (
+        {/* BIZZ-1397: Nulstil alt — kun synlig for admin */}
+        {isAdmin && (policies.length > 0 || documents.length > 0) && (
           <button
             type="button"
             disabled={resetting}

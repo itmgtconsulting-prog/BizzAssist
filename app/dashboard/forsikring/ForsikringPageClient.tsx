@@ -505,6 +505,16 @@ function AnalyseSection({
     Array<{ id: string; original_name: string; created_at: string; from_analyse_id: string }>
   >([]);
   const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
+  /** BIZZ-1439: Upload-state inde i wizard */
+  const wizardFileRef = useRef<HTMLInputElement>(null);
+  const [wizardUploads, setWizardUploads] = useState<
+    Array<{
+      id: string;
+      fileName: string;
+      status: 'uploading' | 'parsing' | 'done' | 'failed';
+      docId?: string;
+    }>
+  >([]);
   const [analyseResult, setAnalyseResult] = useState<{
     analyse_id: string;
     total_aktiver: number;
@@ -551,6 +561,48 @@ function AnalyseSection({
       .then((d) => setPreviousDocs(d.documents ?? []))
       .catch(() => setPreviousDocs([]));
   }, [showDocPicker, selected]);
+
+  /** BIZZ-1439: Upload filer inde i wizard — tracker doc IDs */
+  const onWizardUpload = useCallback(
+    async (files: FileList) => {
+      for (const file of Array.from(files)) {
+        const jobId = `wiz-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        setWizardUploads((prev) => [
+          ...prev,
+          { id: jobId, fileName: file.name, status: 'uploading' },
+        ]);
+        try {
+          const formData = new FormData();
+          formData.append('file', file);
+          const upRes = await fetch('/api/forsikring/upload', { method: 'POST', body: formData });
+          if (!upRes.ok) throw new Error('Upload failed');
+          const upJson = (await upRes.json()) as { document: { id: string } };
+          const docId = upJson.document.id;
+
+          setWizardUploads((prev) =>
+            prev.map((j) => (j.id === jobId ? { ...j, status: 'parsing' } : j))
+          );
+          const parseRes = await fetch('/api/forsikring/parse', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ document_id: docId }),
+          });
+          if (!parseRes.ok) throw new Error('Parse failed');
+
+          setWizardUploads((prev) =>
+            prev.map((j) => (j.id === jobId ? { ...j, status: 'done', docId } : j))
+          );
+          // Track som wizard-upload (ikke genbrug)
+        } catch {
+          setWizardUploads((prev) =>
+            prev.map((j) => (j.id === jobId ? { ...j, status: 'failed' } : j))
+          );
+        }
+      }
+      onRefresh();
+    },
+    [onRefresh]
+  );
 
   /** Hent sagsliste ved mount */
   useEffect(() => {
@@ -650,7 +702,11 @@ function AnalyseSection({
         if (sagData.sag?.id) onSagChange(sagData.sag.id);
       }
       // Kør analyse (med genbrugte dokumenter hvis valgt)
+      // BIZZ-1439: Adskil genbrugte docs (checkboxes) og nye uploads (wizard)
       const reusedDocIds = [...selectedDocIds];
+      const wizardDocIds = wizardUploads
+        .filter((u) => u.status === 'done' && u.docId)
+        .map((u) => u.docId!);
       const res = await fetch('/api/forsikring/analyser', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -660,7 +716,9 @@ function AnalyseSection({
           kunde_navn: selected.navn,
           ...(asOfDate ? { as_of_date: asOfDate } : {}),
           ...(reusedDocIds.length > 0 ? { document_ids: reusedDocIds } : {}),
-          ...(newDocumentIds.length > 0 ? { new_document_ids: newDocumentIds } : {}),
+          ...(wizardDocIds.length > 0 || newDocumentIds.length > 0
+            ? { new_document_ids: [...wizardDocIds, ...newDocumentIds] }
+            : {}),
         }),
       });
       if (res.ok) {
@@ -939,11 +997,69 @@ function AnalyseSection({
             </p>
           )}
 
-          <p className="text-slate-400 text-xs pt-2 border-t border-white/5">
-            {da
-              ? 'Du kan også uploade nye dokumenter i upload-sektionen nedenfor — de inkluderes automatisk.'
-              : 'You can also upload new documents in the upload section below — they are included automatically.'}
-          </p>
+          {/* BIZZ-1439: Upload-zone INDE I wizard */}
+          <div className="pt-2 border-t border-white/5">
+            <p className="text-slate-400 text-xs mb-2">
+              {da
+                ? 'Upload nye dokumenter til denne analyse:'
+                : 'Upload new documents for this analysis:'}
+            </p>
+            <div
+              className="rounded-xl border-2 border-dashed border-white/10 hover:border-blue-500/40 p-4 text-center cursor-pointer transition-colors"
+              onClick={() => wizardFileRef.current?.click()}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') wizardFileRef.current?.click();
+              }}
+            >
+              <Upload size={20} className="mx-auto text-blue-400 mb-1" />
+              <div className="text-xs text-slate-300">
+                {da
+                  ? 'Klik for at uploade nye forsikringsdokumenter'
+                  : 'Click to upload new insurance documents'}
+              </div>
+              <div className="text-[10px] text-slate-500 mt-0.5">
+                PDF, Word, Excel, billeder (max 20 MB)
+              </div>
+              <input
+                ref={wizardFileRef}
+                type="file"
+                accept=".pdf,.docx,.xlsx,.xls,.pptx,.rtf,.txt,.png,.jpg,.jpeg,.gif,.webp,application/pdf,image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files) {
+                    onWizardUpload(e.target.files);
+                    e.target.value = '';
+                  }
+                }}
+              />
+            </div>
+            {/* Vis wizard upload-jobs */}
+            {wizardUploads.length > 0 && (
+              <div className="mt-2 space-y-1">
+                {wizardUploads.map((job) => (
+                  <div
+                    key={job.id}
+                    className="flex items-center gap-2 text-xs px-2 py-1 bg-white/3 rounded"
+                  >
+                    {job.status === 'done' ? (
+                      <CheckCircle2 size={12} className="text-emerald-400" />
+                    ) : job.status === 'failed' ? (
+                      <XCircle size={12} className="text-red-400" />
+                    ) : (
+                      <Loader2 size={12} className="animate-spin text-blue-400" />
+                    )}
+                    <span className="text-white truncate">{job.fileName}</span>
+                    <span className="text-slate-500 ml-auto">
+                      {job.status === 'done' ? '✓' : job.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -1545,10 +1661,33 @@ export default function ForsikringPageClient(): React.ReactElement {
         </section>
       )}
 
-      {/* BIZZ-1404: Upload + policer kun synlige når kunde er valgt */}
-      {selectedCustomer && (
+      {/* BIZZ-1439: Analyse-detalje visning når man klikker en historik-række */}
+      {activeAnalyseId && selectedCustomer && (
+        <section className="bg-white/5 border border-white/8 rounded-2xl p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-white text-sm font-semibold">
+              {lang === 'da' ? 'Analyse-detaljer' : 'Analysis details'}
+            </h3>
+            <button
+              type="button"
+              onClick={() => setActiveAnalyseId(null)}
+              className="text-slate-400 hover:text-white text-xs px-2 py-1 rounded hover:bg-white/5"
+            >
+              {lang === 'da' ? '← Tilbage til historik' : '← Back to history'}
+            </button>
+          </div>
+          <p className="text-slate-500 text-xs">
+            {lang === 'da'
+              ? 'Denne funktion er under udvikling. Vælg en analyse fra historikken for at se detaljer.'
+              : 'This feature is under development. Select an analysis from the history to view details.'}
+          </p>
+        </section>
+      )}
+
+      {/* BIZZ-1439: Global upload + police-tabel FJERNET — al data vises kun i analyse-kontekst */}
+      {/* Legacy trin 2+3 skjult — erstattet af wizard-upload i AnalyseSection */}
+      {false && selectedCustomer && (
         <>
-          {/* TRIN 2: Upload dokumenter */}
           <div className="flex items-center gap-2 text-sm font-semibold text-white">
             <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">
               2

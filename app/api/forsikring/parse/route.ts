@@ -31,6 +31,7 @@ import {
   parsePolicyImage,
   canParseAsText,
   parseWithTypeDetection,
+  normalizePolicyNumber,
   type MultiParseResult,
 } from '@/app/lib/forsikring/parser';
 import { runGapEngine } from '@/app/lib/forsikring/gapEngine';
@@ -153,9 +154,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       let totalGaps = 0;
 
       for (const entry of oversigt.policies) {
+        // BIZZ-1395: Normalisér policenummer og skip duplikater
+        const normalizedNum = normalizePolicyNumber(entry.policy_number);
+        const existing = await insurance.policies.findByNumber(normalizedNum);
+        if (existing) {
+          createdPolicies.push({ id: existing.id, policy_number: existing.policy_number });
+          continue;
+        }
+
         const policy = await insurance.policies.create({
           document_id: doc.id,
-          policy_number: entry.policy_number,
+          policy_number: normalizedNum,
           insurer_name: entry.insurer_name,
           insurer_cvr: entry.insurer_cvr ?? null,
           broker_name: oversigt.broker_name ?? null,
@@ -245,9 +254,33 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // ─── Individuel police (police/tillaeg/ukendt) ─────────────
     const parsed: ParsedPolicy = result.policy;
+    // BIZZ-1395: Normalisér policenummer og dedup mod eksisterende
+    const normalizedPolicyNum = normalizePolicyNumber(parsed.policy_number);
+    const existingPolicy = await insurance.policies.findByNumber(normalizedPolicyNum);
+    if (existingPolicy) {
+      // Police eksisterer allerede — link dokumentet og skip oprettelse
+      await insurance.documents.updateParseStatus(doc.id, 'parsed', {
+        extractedText: result.text,
+        policyId: existingPolicy.id,
+      });
+      return NextResponse.json({
+        document_type: result.documentType,
+        policy: {
+          id: existingPolicy.id,
+          policy_number: existingPolicy.policy_number,
+          insurer_name: existingPolicy.insurer_name,
+          policyholder_name: existingPolicy.policyholder_name,
+          property_address: existingPolicy.property_address,
+        },
+        deduplicated: true,
+        coverages_count: 0,
+        gaps_count: 0,
+      });
+    }
+
     const policy = await insurance.policies.create({
       document_id: doc.id,
-      policy_number: parsed.policy_number,
+      policy_number: normalizedPolicyNum,
       insurer_name: parsed.insurer_name,
       insurer_cvr: parsed.insurer_cvr ?? null,
       broker_name: parsed.broker_name ?? null,

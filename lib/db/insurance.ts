@@ -137,6 +137,8 @@ export interface InsuranceApi {
     list(): Promise<ForsikringPolicy[]>;
     /** Hent én police by id */
     get(id: string): Promise<ForsikringPolicy | null>;
+    /** BIZZ-1395: Find eksisterende police by normaliseret policenummer (dedup) */
+    findByNumber(policyNumber: string): Promise<ForsikringPolicy | null>;
     /** Opret ny police */
     create(input: CreatePolicyInput): Promise<ForsikringPolicy>;
     /** Slet en police (cascade-sletter coverages og gaps) */
@@ -261,6 +263,29 @@ export async function getInsuranceApi(tenantId: string): Promise<InsuranceApi> {
           .order('created_at', { ascending: false });
         if (error) throw new Error(`forsikring_policies.list: ${error.message}`);
         return (data ?? []) as ForsikringPolicy[];
+      },
+      /**
+       * BIZZ-1395: Find eksisterende police by normaliseret policenummer.
+       * Bruges til dedup ved re-parsing af oversigter/individuelle policer.
+       *
+       * @param policyNumber - Normaliseret policenummer (uden ledende nuller)
+       * @returns Eksisterende police eller null
+       */
+      async findByNumber(policyNumber: string) {
+        // Normalisér: fjern ledende nuller og mellemrum
+        const normalized = policyNumber.replace(/^0+/, '').replace(/\s+/g, '');
+        const { data, error } = await tenantDb(admin, schemaName)
+          .from('forsikring_policies')
+          .select('*')
+          .eq('tenant_id', tenantId)
+          .or(
+            `policy_number.eq.${normalized},policy_number.eq.0${normalized},policy_number.eq.00${normalized}`
+          )
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (error) return null;
+        return data as ForsikringPolicy | null;
       },
       async get(id) {
         const { data, error } = await tenantDb(admin, schemaName)

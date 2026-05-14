@@ -30,6 +30,17 @@ import { stripMarkdownFences, canParseAsText } from './jsonHelpers';
 // Re-export for backwards compatibility — callers kan stadig importere fra parser.ts
 export { stripMarkdownFences, canParseAsText };
 
+/**
+ * Normalisér policenummer: fjern ledende nuller, mellemrum, bindestreger.
+ * "067500725" → "67500725", "9417 319 074" → "9417319074".
+ *
+ * @param policyNumber - Rå policenummer fra parser
+ * @returns Normaliseret policenummer
+ */
+export function normalizePolicyNumber(policyNumber: string): string {
+  return policyNumber.replace(/[\s-]+/g, '').replace(/^0+/, '') || policyNumber;
+}
+
 /** Maks tekst-input til Claude (≈40k tokens for sikkerhed). */
 const MAX_TEXT_CHARS = 120_000;
 

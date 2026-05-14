@@ -74,6 +74,10 @@ interface UploadJob {
   fileName: string;
   status: 'uploading' | 'parsing' | 'done' | 'failed';
   error?: string;
+  /** BIZZ-1392: Detekteret dokumenttype fra parser */
+  documentType?: string;
+  /** BIZZ-1392: Antal policer oprettet (for oversigter) */
+  policiesCount?: number;
 }
 
 /** Aktiv fra analyse-detail API */
@@ -854,7 +858,23 @@ export default function ForsikringPageClient(): React.ReactElement {
           const body = (await parseRes.json().catch(() => ({}))) as { error?: string };
           throw new Error(body.error ?? t.parseFailed);
         }
-        setUploadJobs((prev) => prev.map((j) => (j.id === jobId ? { ...j, status: 'done' } : j)));
+        // BIZZ-1392: Vis dokumenttype + antal policer fra parse-response
+        const parseJson = (await parseRes.json().catch(() => ({}))) as {
+          document_type?: string;
+          policies_count?: number;
+        };
+        setUploadJobs((prev) =>
+          prev.map((j) =>
+            j.id === jobId
+              ? {
+                  ...j,
+                  status: 'done',
+                  documentType: parseJson.document_type,
+                  policiesCount: parseJson.policies_count,
+                }
+              : j
+          )
+        );
         await refresh();
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'unknown';
@@ -974,7 +994,12 @@ export default function ForsikringPageClient(): React.ReactElement {
               <span className="text-slate-400 text-xs">
                 {job.status === 'uploading' && t.uploading}
                 {job.status === 'parsing' && t.parsing}
-                {job.status === 'done' && '✓'}
+                {job.status === 'done' &&
+                  (job.documentType === 'oversigt'
+                    ? `✓ Oversigt → ${job.policiesCount ?? '?'} policer`
+                    : job.documentType === 'tillaeg'
+                      ? '✓ Tillæg'
+                      : '✓')}
                 {job.status === 'failed' && (job.error ?? t.parseFailed)}
               </span>
             </div>

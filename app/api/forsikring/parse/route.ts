@@ -27,9 +27,18 @@ import { logger } from '@/app/lib/logger';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getInsuranceApi } from '@/lib/db/insurance';
 import { getTenantContext } from '@/lib/db/tenant';
-import { parsePolicyFile, parsePolicyImage, canParseAsText } from '@/app/lib/forsikring/parser';
+import {
+  parsePolicyImage,
+  canParseAsText,
+  parseWithTypeDetection,
+  type MultiParseResult,
+} from '@/app/lib/forsikring/parser';
 import { runGapEngine } from '@/app/lib/forsikring/gapEngine';
-import { COVERAGE_LABELS_DA, type CoverageCode } from '@/app/lib/forsikring/types';
+import {
+  COVERAGE_LABELS_DA,
+  type CoverageCode,
+  type ParsedPolicy,
+} from '@/app/lib/forsikring/types';
 import { resolveFileType } from '@/app/lib/domainFileTypes';
 
 /** Storage bucket name (matcher upload-route) */
@@ -117,16 +126,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: errMsg }, { status: 422 });
     }
 
-    const result =
-      fileType === 'image'
-        ? await parsePolicyImage(buffer, imageSubtypeFromMime(doc.mime_type), apiKey)
-        : canParseAsText(fileType)
-          ? await parsePolicyFile(buffer, fileType, apiKey)
-          : {
-              ok: false as const,
-              text: null,
-              error: `Filtype ${fileType} understøttes ikke endnu`,
-            };
+    // BIZZ-1392: 2-trins pipeline — detektér dokumenttype, derefter parse
+    let result: MultiParseResult;
+    if (fileType === 'image') {
+      // Billeder kan ikke gennemgå trin 1 — parse direkte som police
+      result = await parsePolicyImage(buffer, imageSubtypeFromMime(doc.mime_type), apiKey);
+    } else if (canParseAsText(fileType)) {
+      result = await parseWithTypeDetection(buffer, fileType, apiKey);
+    } else {
+      result = { ok: false, text: null, error: `Filtype ${fileType} understøttes ikke endnu` };
+    }
 
     if (!result.ok) {
       await insurance.documents.updateParseStatus(doc.id, 'failed', {
@@ -136,8 +145,106 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: result.error }, { status: 422 });
     }
 
-    // Persistér police
-    const parsed = result.policy;
+    // BIZZ-1392: Håndtér baseret på dokumenttype
+    if ('oversigt' in result) {
+      // ─── Oversigt: opret N policer fra ét dokument ───────────
+      const { oversigt } = result;
+      const createdPolicies: Array<{ id: string; policy_number: string }> = [];
+      let totalGaps = 0;
+
+      for (const entry of oversigt.policies) {
+        const policy = await insurance.policies.create({
+          document_id: doc.id,
+          policy_number: entry.policy_number,
+          insurer_name: entry.insurer_name,
+          insurer_cvr: entry.insurer_cvr ?? null,
+          broker_name: oversigt.broker_name ?? null,
+          policyholder_name: entry.policyholder_name,
+          policyholder_cvr: entry.policyholder_cvr ?? null,
+          policyholder_address: null,
+          property_address: entry.property_address ?? null,
+          property_matrikel: null,
+          property_bfe: null,
+          property_entity_id: null,
+          business_activity: entry.insurance_type ?? null,
+          building_use: null,
+          building_area_m2: null,
+          building_floors: null,
+          building_year_built: null,
+          building_has_basement: null,
+          insurance_form: null,
+          sum_insured_dkk: entry.sum_insured_dkk ?? null,
+          annual_premium_dkk: entry.annual_premium_dkk ?? null,
+          general_deductible_dkk: null,
+          effective_from: entry.effective_from ?? null,
+          effective_to: entry.effective_to ?? null,
+          main_renewal_date: null,
+          policy_issued_date: null,
+          raw_metadata: {
+            source_type: 'oversigt',
+            notes: entry.notes ?? null,
+            overview_notes: oversigt.notes ?? null,
+          },
+          created_by: auth.userId,
+        });
+
+        // Kør gap-engine (minimal — ingen dækninger fra oversigt)
+        await insurance.gaps.deleteForPolicy(policy.id);
+        const detectedGaps = runGapEngine({
+          policy,
+          coverages: [],
+          bbr: null,
+          asOfDate: new Date(),
+        });
+        if (detectedGaps.length > 0) {
+          await insurance.gaps.bulkCreate(
+            detectedGaps.map((g) => ({
+              policy_id: policy.id,
+              check_id: g.check_id,
+              category: g.category,
+              severity: g.severity,
+              title: g.title,
+              description: g.description,
+              recommendation: g.recommendation,
+              estimated_impact_dkk: g.estimated_impact_dkk,
+              source_data: g.source_data,
+            }))
+          );
+          totalGaps += detectedGaps.length;
+        }
+
+        createdPolicies.push({ id: policy.id, policy_number: policy.policy_number });
+      }
+
+      // Markér dokument som parsed (link til første police)
+      await insurance.documents.updateParseStatus(doc.id, 'parsed', {
+        extractedText: result.text,
+        policyId: createdPolicies[0]?.id,
+      });
+
+      // Audit log
+      const ctx = await getTenantContext(auth.tenantId);
+      await ctx.auditLog.write({
+        action: 'forsikring.oversigt.parsed',
+        resource_type: 'forsikring_document',
+        resource_id: doc.id,
+        metadata: {
+          document_type: 'oversigt',
+          policies_created: createdPolicies.length,
+          total_gaps: totalGaps,
+        },
+      });
+
+      return NextResponse.json({
+        document_type: 'oversigt',
+        policies: createdPolicies,
+        policies_count: createdPolicies.length,
+        gaps_count: totalGaps,
+      });
+    }
+
+    // ─── Individuel police (police/tillaeg/ukendt) ─────────────
+    const parsed: ParsedPolicy = result.policy;
     const policy = await insurance.policies.create({
       document_id: doc.id,
       policy_number: parsed.policy_number,
@@ -165,7 +272,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       effective_to: parsed.effective_to ?? null,
       main_renewal_date: parsed.main_renewal_date ?? null,
       policy_issued_date: parsed.policy_issued_date ?? null,
-      raw_metadata: { notes: parsed.notes ?? null },
+      raw_metadata: {
+        document_type: result.documentType,
+        notes: parsed.notes ?? null,
+      },
       created_by: auth.userId,
     });
 
@@ -222,12 +332,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       resource_id: policy.id,
       metadata: {
         document_id: doc.id,
+        document_type: result.documentType,
         coverage_count: coverages.length,
         gap_count: detectedGaps.length,
       },
     });
 
     return NextResponse.json({
+      document_type: result.documentType,
       policy: {
         id: policy.id,
         policy_number: policy.policy_number,

@@ -16,6 +16,75 @@
 
 import { z } from 'zod';
 
+// ─── BIZZ-1392: Dokumenttype-detektion ──────────────────────────
+
+/**
+ * Dokumenttype detekteret i trin 1 af 2-trins parsing-pipeline.
+ *
+ * - police: individuel forsikringspolice → parse som hidtil (1 dok → 1 police)
+ * - oversigt: forsikringsoversigt med flere policer → split til N policer
+ * - tillaeg: tillæg/ændring til eksisterende police → match + opdatér
+ * - tilbud: fornyelsestilbud → udtrák info til notes
+ * - korrespondance: brev/email → udtrák info til notes
+ * - ukendt: kan ikke klassificeres → vis advarsel
+ */
+export type DocumentType =
+  | 'police'
+  | 'oversigt'
+  | 'tillaeg'
+  | 'tilbud'
+  | 'korrespondance'
+  | 'ukendt';
+
+/** Resultat fra trin 1: dokumenttype-detektion */
+export interface DocumentTypeDetection {
+  type: DocumentType;
+  confidence: number;
+  reason: string;
+  /** Antal policer detekteret (kun relevant for oversigt-type) */
+  policy_count?: number;
+}
+
+/** Oversigt-entry: en police uddraget fra en forsikringsoversigt */
+export const ParsedOversigtsEntrySchema = z.object({
+  policy_number: z.string().min(1).max(100),
+  insurer_name: z.string().min(1).max(200),
+  insurer_cvr: z.string().max(20).nullable().optional(),
+  policyholder_name: z.string().min(1).max(200),
+  policyholder_cvr: z.string().max(20).nullable().optional(),
+  property_address: z.string().max(500).nullable().optional(),
+  insurance_type: z.string().max(200).nullable().optional(),
+  annual_premium_dkk: z.number().int().nonnegative().nullable().optional(),
+  sum_insured_dkk: z.number().int().nonnegative().nullable().optional(),
+  effective_from: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD')
+    .nullable()
+    .optional(),
+  effective_to: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD')
+    .nullable()
+    .optional(),
+  notes: z.string().max(2000).nullable().optional(),
+});
+
+export type ParsedOversigtsEntry = z.infer<typeof ParsedOversigtsEntrySchema>;
+
+/** Schema for oversigt-parsing output: array of entries */
+export const ParsedOvesigtSchema = z.object({
+  policies: z.array(ParsedOversigtsEntrySchema).min(1).max(50),
+  broker_name: z.string().max(200).nullable().optional(),
+  overview_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD')
+    .nullable()
+    .optional(),
+  notes: z.string().max(5000).nullable().optional(),
+});
+
+export type ParsedOversigt = z.infer<typeof ParsedOvesigtSchema>;
+
 // ─── Database row types ──────────────────────────────────────────
 
 /** Status for PDF-parsing */

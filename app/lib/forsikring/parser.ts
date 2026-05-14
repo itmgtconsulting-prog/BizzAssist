@@ -17,7 +17,14 @@ import Anthropic from '@anthropic-ai/sdk';
 import { logger } from '@/app/lib/logger';
 import { extractTextFromBuffer } from '@/app/lib/domainTextExtraction';
 import type { NormalizedFileType } from '@/app/lib/domainFileTypes';
-import { ParsedPolicySchema, type ParsedPolicy } from './types';
+import {
+  ParsedPolicySchema,
+  ParsedOvesigtSchema,
+  type ParsedPolicy,
+  type ParsedOversigt,
+  type DocumentType,
+  type DocumentTypeDetection,
+} from './types';
 import { stripMarkdownFences, canParseAsText } from './jsonHelpers';
 
 // Re-export for backwards compatibility — callers kan stadig importere fra parser.ts
@@ -36,12 +43,214 @@ export type ParseResult =
       ok: true;
       text: string;
       policy: ParsedPolicy;
+      /** BIZZ-1392: Detekteret dokumenttype */
+      documentType: DocumentType;
     }
   | {
       ok: false;
       text: string | null;
       error: string;
     };
+
+/**
+ * BIZZ-1392: Resultat fra oversigt-parsing — returnerer N policer.
+ */
+export type OversightParseResult =
+  | {
+      ok: true;
+      text: string;
+      oversigt: ParsedOversigt;
+      documentType: 'oversigt';
+    }
+  | {
+      ok: false;
+      text: string | null;
+      error: string;
+    };
+
+/**
+ * BIZZ-1392: Samlet resultat fra 2-trins pipeline.
+ * Kan returnere én police (ParseResult) eller N policer (OversightParseResult).
+ */
+export type MultiParseResult = ParseResult | OversightParseResult;
+
+// ─── BIZZ-1392: Trin 1 — Dokumenttype-detektion ─────────────────
+
+/**
+ * System-prompt til dokumenttype-detektion (trin 1 i 2-trins pipeline).
+ * Hurtig klassificering — max ~200 tokens output.
+ */
+const DOC_TYPE_SYSTEM_PROMPT = `Du er en specialist i danske forsikringsdokumenter. Din opgave er at klassificere et dokument som én af disse typer:
+
+- "police": En individuel forsikringspolice for én ejendom/risiko. Indeholder typisk policenummer, dækninger, betingelser, præmie.
+- "oversigt": En forsikringsoversigt/sammenfatning der lister FLERE policer. Typisk fra mægler eller selskab. Indeholder en tabel/liste med policenumre, selskaber, adresser, præmier for flere ejendomme.
+- "tillaeg": Et tillæg, ændring eller endorsement til en eksisterende police. Refererer til et eksisterende policenummer og ændrer dækninger/betingelser.
+- "tilbud": Et fornyelsestilbud, pristilbud eller forsikringstilbud. Endnu ikke accepteret police.
+- "korrespondance": Brev, email, følgebrev, kvittering eller administrativ kommunikation. Ingen police-data.
+- "ukendt": Kan ikke klassificeres som noget af ovenstående.
+
+Returnér KUN gyldig JSON:
+{
+  "type": "police" | "oversigt" | "tillaeg" | "tilbud" | "korrespondance" | "ukendt",
+  "confidence": 0.0-1.0,
+  "reason": "Kort begrundelse (max 100 tegn)",
+  "policy_count": number | null
+}
+
+policy_count: Antal policer i dokumentet. For "police" = 1. For "oversigt" = antal listede policer. For andre = null.
+
+Vigtige regler:
+1. Returnér KUN JSON — ingen markdown, ingen forklaring.
+2. Hvis dokumentet indeholder en tabel med flere policenumre og adresser → "oversigt".
+3. Hvis dokumentet handler om ÉN specifik police med dækninger/betingelser → "police".
+4. Vær konservativ: ved tvivl mellem police og oversigt, check om der er flere policenumre.`;
+
+/**
+ * BIZZ-1392: Trin 1 — Detektér dokumenttype via Claude.
+ *
+ * @param text - Ekstraheret tekst fra dokumentet (eller første 2000 tegn)
+ * @param apiKey - Anthropic API-key
+ * @returns DocumentTypeDetection med type, confidence og reason
+ */
+export async function detectDocumentType(
+  text: string,
+  apiKey: string
+): Promise<DocumentTypeDetection> {
+  const client = new Anthropic({ apiKey });
+  // Brug kun de første 3000 tegn for hurtig klassificering
+  const sample = text.length > 3000 ? text.slice(0, 3000) : text;
+
+  try {
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 300,
+      system: DOC_TYPE_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: sample }],
+    });
+
+    const textBlock = response.content.find((b) => b.type === 'text');
+    if (!textBlock || textBlock.type !== 'text') {
+      return { type: 'ukendt', confidence: 0, reason: 'Claude returnerede intet output' };
+    }
+
+    const cleaned = stripMarkdownFences(textBlock.text.trim());
+    const parsed = JSON.parse(cleaned) as {
+      type?: string;
+      confidence?: number;
+      reason?: string;
+      policy_count?: number;
+    };
+
+    const validTypes = ['police', 'oversigt', 'tillaeg', 'tilbud', 'korrespondance', 'ukendt'];
+    const docType = validTypes.includes(parsed.type ?? '')
+      ? (parsed.type as DocumentType)
+      : 'ukendt';
+
+    return {
+      type: docType,
+      confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.5,
+      reason: typeof parsed.reason === 'string' ? parsed.reason.slice(0, 200) : '',
+      policy_count: typeof parsed.policy_count === 'number' ? parsed.policy_count : undefined,
+    };
+  } catch (err) {
+    logger.warn('[forsikring/parser] Dokumenttype-detektion fejlede:', err);
+    return { type: 'ukendt', confidence: 0, reason: 'Detektion fejlede' };
+  }
+}
+
+// ─── BIZZ-1392: Oversigt-parsing ────────────────────────────────
+
+/**
+ * System-prompt til oversigt-parsing. Returnerer array af policer fra
+ * en forsikringsoversigt.
+ */
+const OVERSIGT_SYSTEM_PROMPT = `Du er en specialist i danske forsikringsoversigter. En forsikringsoversigt er et dokument der opsummerer FLERE forsikringspolicer for en kunde.
+
+Din opgave er at udtrække ALLE policer fra oversigten og returnere dem som JSON:
+
+{
+  "policies": [
+    {
+      "policy_number": string,
+      "insurer_name": string,
+      "insurer_cvr": string | null,
+      "policyholder_name": string,
+      "policyholder_cvr": string | null,
+      "property_address": string | null,
+      "insurance_type": string | null,
+      "annual_premium_dkk": number | null,
+      "sum_insured_dkk": number | null,
+      "effective_from": string | null,
+      "effective_to": string | null,
+      "notes": string | null
+    }
+  ],
+  "broker_name": string | null,
+  "overview_date": string | null,
+  "notes": string | null
+}
+
+REGLER:
+1. Returnér KUN gyldig JSON — ingen markdown, ingen forklaring.
+2. Inkluder ALLE policer listet i oversigten — spring ingen over.
+3. Beløb: udregn til hele DKK (fx "33.998 kr" → 33998).
+4. Datoer: konverter til YYYY-MM-DD format.
+5. Hvis en police har flere adresser, opret én entry per adresse med samme policenummer.
+6. insurance_type: fx "Bygningsforsikring", "Erhvervsansvar", "Løsøre", etc.
+7. Hvis policyholder er den samme for alle policer, gentag navnet i hver entry.
+
+Returnér nu JSON for følgende forsikringsoversigt:`;
+
+/**
+ * BIZZ-1392: Parse en forsikringsoversigt til N individuelle policer.
+ *
+ * @param text - Fuld ekstraheret tekst fra oversigts-dokumentet
+ * @param apiKey - Anthropic API-key
+ * @returns OversightParseResult med array af policer
+ */
+export async function parseOversigt(text: string, apiKey: string): Promise<OversightParseResult> {
+  const client = new Anthropic({ apiKey });
+  const trimmedText = text.length > MAX_TEXT_CHARS ? text.slice(0, MAX_TEXT_CHARS) : text;
+
+  let response: Anthropic.Message;
+  try {
+    response = await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 8000,
+      system: OVERSIGT_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: trimmedText }],
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'unknown';
+    logger.error('[forsikring/parser] Oversigt-parsing fejlede:', msg);
+    return { ok: false, text, error: `Claude-kald fejlede: ${msg}` };
+  }
+
+  const textBlock = response.content.find((b) => b.type === 'text');
+  if (!textBlock || textBlock.type !== 'text') {
+    return { ok: false, text, error: 'Claude returnerede intet output for oversigt' };
+  }
+
+  const cleaned = stripMarkdownFences(textBlock.text.trim());
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'unknown';
+    return { ok: false, text, error: `Oversigt-output er ikke gyldig JSON: ${msg}` };
+  }
+
+  const validation = ParsedOvesigtSchema.safeParse(parsed);
+  if (!validation.success) {
+    const issueSummary = validation.error.issues
+      .slice(0, 5)
+      .map((i) => `${i.path.join('.')}: ${i.message}`)
+      .join('; ');
+    return { ok: false, text, error: `Oversigt-schema-validering fejlede: ${issueSummary}` };
+  }
+
+  return { ok: true, text, oversigt: validation.data, documentType: 'oversigt' };
+}
 
 /**
  * System-prompt til Claude. Beskriver opgaven, forventet schema og
@@ -215,7 +424,7 @@ export async function parsePolicyFile(
     };
   }
 
-  return { ok: true, text, policy: validation.data };
+  return { ok: true, text, policy: validation.data, documentType: 'police' };
 }
 
 /**
@@ -335,5 +544,119 @@ export async function parsePolicyImage(
     };
   }
 
-  return { ok: true, text: rawJson, policy: validation.data };
+  return { ok: true, text: rawJson, policy: validation.data, documentType: 'police' };
+}
+
+// ─── BIZZ-1392: 2-trins pipeline ───────────────────────────────
+
+/**
+ * BIZZ-1392: Fuld 2-trins parsing-pipeline med dokumenttype-detektion.
+ *
+ * Trin 1: Detektér dokumenttype (police/oversigt/tillaeg/tilbud/korrespondance/ukendt)
+ * Trin 2: Parse baseret på type:
+ *   - police → parsePolicyFile (1 dok → 1 police)
+ *   - oversigt → parseOversigt (1 dok → N policer)
+ *   - andre → returnér fejl med dokumenttype-info
+ *
+ * @param fileBuffer - Rå fil-bytes
+ * @param fileType - NormalizedFileType
+ * @param apiKey - Anthropic API-key
+ * @returns MultiParseResult — enten én police eller N policer fra oversigt
+ */
+export async function parseWithTypeDetection(
+  fileBuffer: Buffer,
+  fileType: NormalizedFileType,
+  apiKey: string
+): Promise<MultiParseResult> {
+  // Step 0: Validér at filtypen kan parses tekstuelt
+  if (!canParseAsText(fileType)) {
+    return {
+      ok: false,
+      text: null,
+      error: `Filtype ${fileType} understøttes ikke af tekst-parseren. Billeder skal bruge parsePolicyImage.`,
+    };
+  }
+
+  // Step 1: Ekstrahér tekst
+  const extraction = await extractTextFromBuffer(fileBuffer, fileType);
+  if (!extraction.ok) {
+    return { ok: false, text: null, error: `Tekst-ekstraktion fejlede: ${extraction.error}` };
+  }
+  const text = extraction.text;
+  if (text.trim().length === 0) {
+    return { ok: false, text: null, error: 'Dokumentet indeholder ingen tekst' };
+  }
+
+  // Step 2: Detektér dokumenttype
+  const detection = await detectDocumentType(text, apiKey);
+  logger.log(
+    `[forsikring/parser] Dokumenttype: ${detection.type} (confidence: ${detection.confidence}, count: ${detection.policy_count ?? '?'})`
+  );
+
+  // Step 3: Route baseret på type
+  switch (detection.type) {
+    case 'oversigt': {
+      // Parse som oversigt → N policer
+      return parseOversigt(text, apiKey);
+    }
+    case 'police':
+    case 'tillaeg': {
+      // Parse som individuel police (tillæg parses som police — caller kan matche)
+      const trimmedText = text.length > MAX_TEXT_CHARS ? text.slice(0, MAX_TEXT_CHARS) : text;
+      if (!apiKey) {
+        return { ok: false, text, error: 'Anthropic API-key mangler' };
+      }
+      const client = new Anthropic({ apiKey });
+      let response: Anthropic.Message;
+      try {
+        response = await client.messages.create({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 8000,
+          system: SYSTEM_PROMPT,
+          messages: [{ role: 'user', content: trimmedText }],
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'unknown';
+        return { ok: false, text, error: `Claude-kald fejlede: ${msg}` };
+      }
+      const textBlock = response.content.find((b) => b.type === 'text');
+      if (!textBlock || textBlock.type !== 'text') {
+        return { ok: false, text, error: 'Claude returnerede intet output' };
+      }
+      const cleaned = stripMarkdownFences(textBlock.text.trim());
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(cleaned);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'unknown';
+        return { ok: false, text, error: `JSON-parse fejlede: ${msg}` };
+      }
+      const validation = ParsedPolicySchema.safeParse(parsed);
+      if (!validation.success) {
+        const issueSummary = validation.error.issues
+          .slice(0, 5)
+          .map((i) => `${i.path.join('.')}: ${i.message}`)
+          .join('; ');
+        return { ok: false, text, error: `Schema-validering fejlede: ${issueSummary}` };
+      }
+      return { ok: true, text, policy: validation.data, documentType: detection.type };
+    }
+    case 'tilbud':
+      return {
+        ok: false,
+        text,
+        error: `Dokumentet er et forsikringstilbud — ikke en gyldig police. Upload den endelige police i stedet.`,
+      };
+    case 'korrespondance':
+      return {
+        ok: false,
+        text,
+        error: `Dokumentet er korrespondance (brev/email) — ikke en forsikringspolice.`,
+      };
+    case 'ukendt':
+    default:
+      // Fallback: prøv at parse som police alligevel (backward compat)
+      logger.warn('[forsikring/parser] Ukendt dokumenttype — fallback til police-parsing');
+      return parsePolicyFile(fileBuffer, fileType, apiKey);
+  }
 }

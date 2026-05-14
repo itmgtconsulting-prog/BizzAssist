@@ -43,6 +43,32 @@ function normalize(s: string | null | undefined): string {
 }
 
 /**
+ * BIZZ-1441: Strip etage/dør fra adresse for ejerlejlighed-matching.
+ * "gefionsvej 47a 1 sal th 3000 helsingoer" → "gefionsvej 47a 3000 helsingoer"
+ *
+ * @param addr - Normaliseret adresse
+ * @returns Adresse uden etage/dør detaljer
+ */
+function stripFloorDoor(addr: string): string {
+  return (
+    addr
+      // Fjern "X. sal", "X sal", "st", "kld", "kl" (etage)
+      .replace(/\b\d+\s*sal\b/g, '')
+      .replace(/\bst\b/g, '')
+      .replace(/\bkld?\b/g, '')
+      // Fjern "th", "tv", "mf" (dør-side)
+      .replace(/\b(th|tv|mf)\b/g, '')
+      // Fjern "lejl", "lejlighed" + nummer
+      .replace(/\blejl(?:ighed)?\s*\d*/g, '')
+      // Fjern "dør" + nummer/bogstav
+      .replace(/\bd(?:ø|oe)r\s*\w*/g, '')
+      // Clean up whitespace
+      .replace(/\s+/g, ' ')
+      .trim()
+  );
+}
+
+/**
  * Beregn match-score mellem et aktiv og en police.
  *
  * @param aktiv - Aktiv fra koncern-walk
@@ -90,6 +116,17 @@ function scoreEjendom(aktiv: Aktiv, policy: ForsikringPolicy): number {
   // BIZZ-1393: Tjek om adresser indeholder hinanden (håndterer "Stengade 7" vs "Stengade 7, 3000 Helsingør")
   if (aktivAddr.includes(policyAddr) || policyAddr.includes(aktivAddr)) {
     return 85;
+  }
+
+  // BIZZ-1441: Etage/dør-tolerant match — strip sal/dør og sammenlign base-adresser
+  const aktivBase = stripFloorDoor(aktivAddr);
+  const policyBase = stripFloorDoor(policyAddr);
+  if (
+    aktivBase &&
+    policyBase &&
+    (aktivBase === policyBase || aktivBase.includes(policyBase) || policyBase.includes(aktivBase))
+  ) {
+    return 82;
   }
 
   // Delvis match: vejnavn + husnr

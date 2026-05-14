@@ -1008,6 +1008,24 @@ function AnalyseSection({
                         month: 'short',
                       })}
                     </span>
+                    {/* BIZZ-1440: Fjern fra wizard (skjul — sletter IKKE fra DB) */}
+                    <button
+                      type="button"
+                      aria-label={da ? `Fjern ${doc.original_name}` : `Remove ${doc.original_name}`}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setPreviousDocs((prev) => prev.filter((d) => d.id !== doc.id));
+                        setSelectedDocIds((prev) => {
+                          const n = new Set(prev);
+                          n.delete(doc.id);
+                          return n;
+                        });
+                      }}
+                      className="p-1 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors shrink-0"
+                    >
+                      <XCircle size={12} />
+                    </button>
                   </label>
                 ))}
               </div>

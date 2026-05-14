@@ -565,40 +565,47 @@ function AnalyseSection({
   /** BIZZ-1439: Upload filer inde i wizard — tracker doc IDs */
   const onWizardUpload = useCallback(
     async (files: FileList) => {
-      for (const file of Array.from(files)) {
-        const jobId = `wiz-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      // BIZZ-1439: Parallel upload+parse — alle filer starter samtidigt
+      const fileArray = Array.from(files);
+      const jobs = fileArray.map((file) => {
+        const jobId = `wiz-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         setWizardUploads((prev) => [
           ...prev,
           { id: jobId, fileName: file.name, status: 'uploading' },
         ]);
-        try {
-          const formData = new FormData();
-          formData.append('file', file);
-          const upRes = await fetch('/api/forsikring/upload', { method: 'POST', body: formData });
-          if (!upRes.ok) throw new Error('Upload failed');
-          const upJson = (await upRes.json()) as { document: { id: string } };
-          const docId = upJson.document.id;
+        return { jobId, file };
+      });
 
-          setWizardUploads((prev) =>
-            prev.map((j) => (j.id === jobId ? { ...j, status: 'parsing' } : j))
-          );
-          const parseRes = await fetch('/api/forsikring/parse', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ document_id: docId }),
-          });
-          if (!parseRes.ok) throw new Error('Parse failed');
+      await Promise.allSettled(
+        jobs.map(async ({ jobId, file }) => {
+          try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const upRes = await fetch('/api/forsikring/upload', { method: 'POST', body: formData });
+            if (!upRes.ok) throw new Error('Upload failed');
+            const upJson = (await upRes.json()) as { document: { id: string } };
+            const docId = upJson.document.id;
 
-          setWizardUploads((prev) =>
-            prev.map((j) => (j.id === jobId ? { ...j, status: 'done', docId } : j))
-          );
-          // Track som wizard-upload (ikke genbrug)
-        } catch {
-          setWizardUploads((prev) =>
-            prev.map((j) => (j.id === jobId ? { ...j, status: 'failed' } : j))
-          );
-        }
-      }
+            setWizardUploads((prev) =>
+              prev.map((j) => (j.id === jobId ? { ...j, status: 'parsing' } : j))
+            );
+            const parseRes = await fetch('/api/forsikring/parse', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ document_id: docId }),
+            });
+            if (!parseRes.ok) throw new Error('Parse failed');
+
+            setWizardUploads((prev) =>
+              prev.map((j) => (j.id === jobId ? { ...j, status: 'done', docId } : j))
+            );
+          } catch {
+            setWizardUploads((prev) =>
+              prev.map((j) => (j.id === jobId ? { ...j, status: 'failed' } : j))
+            );
+          }
+        })
+      );
       onRefresh();
     },
     [onRefresh]

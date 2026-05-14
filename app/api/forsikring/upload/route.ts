@@ -71,6 +71,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
+    // BIZZ-1439: Dedup-check — skip upload+parse hvis samme filnavn+størrelse allerede eksisterer
+    const insuranceForDedup = await getInsuranceApi(auth.tenantId);
+    const existingDocs = await insuranceForDedup.documents.list();
+    const duplicate = existingDocs.find(
+      (d) =>
+        d.original_name === file.name && d.size_bytes === file.size && d.parse_status === 'parsed'
+    );
+    if (duplicate) {
+      logger.log(
+        `[forsikring/upload] Dedup: ${file.name} (${file.size}B) allerede uploaded som ${duplicate.id}`
+      );
+      return NextResponse.json({
+        document: { id: duplicate.id },
+        deduplicated: true,
+      });
+    }
+
     const buffer = Buffer.from(await file.arrayBuffer());
     const safeName = sanitizeFilename(file.name);
     // Path-konvention: {tenant_id}/{uuid}-{safeName}

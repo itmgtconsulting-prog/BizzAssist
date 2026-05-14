@@ -469,10 +469,13 @@ function AnalyseSection({
   lang,
   policies,
   onRefresh,
+  onAnalyseDetail,
 }: {
   lang: string;
   policies: PolicyRow[];
   onRefresh: () => void;
+  /** BIZZ-1353: Callback med analyse-detail for AI-kontekst */
+  onAnalyseDetail: (detail: AnalyseDetail | null, kundeNavn: string | null) => void;
 }) {
   const da = lang === 'da';
   const [query, setQuery] = useState('');
@@ -535,6 +538,7 @@ function AnalyseSection({
       setLastAnalyse(null);
       setAnalyseResult(null);
       setAnalyseDetail(null);
+      onAnalyseDetail(null, null);
       return;
     }
     // Match policies by CVR (for virksomhed) or name (for person)
@@ -628,7 +632,10 @@ function AnalyseSection({
         try {
           const detailRes = await fetch(`/api/forsikring/analyser/${result.analyse_id}`);
           if (detailRes.ok) {
-            setAnalyseDetail(await detailRes.json());
+            const detail = await detailRes.json();
+            setAnalyseDetail(detail);
+            // Notify parent to update AI context with gaps
+            onAnalyseDetail(detail, selected?.navn ?? null);
           }
         } catch {
           // Best-effort — fallback to old view if detail fails
@@ -1064,10 +1071,24 @@ export default function ForsikringPageClient(): React.ReactElement {
     void refresh();
   }, [refresh]);
 
-  /** BIZZ-1388: Sæt AI-kontekst med forsikringsdata så chat kan generere rapporter */
+  /** Analyse-detail og kundenavn fra AnalyseSection (for AI-kontekst) */
+  const [aiAnalyseDetail, setAiAnalyseDetail] = useState<AnalyseDetail | null>(null);
+  const [aiKundeNavn, setAiKundeNavn] = useState<string | null>(null);
+
+  /** Callback fra AnalyseSection når analyse er kørt */
+  const handleAnalyseDetail = useCallback(
+    (detail: AnalyseDetail | null, kundeNavn: string | null) => {
+      setAiAnalyseDetail(detail);
+      setAiKundeNavn(kundeNavn);
+    },
+    []
+  );
+
+  /** BIZZ-1388: Sæt AI-kontekst med forsikringsdata + gaps så chat kan generere rapporter */
   useEffect(() => {
     if (!data) return;
     const totals = data.totals;
+    const analyse = aiAnalyseDetail?.analyse;
     setAICtx({
       pageType: 'domain',
       forsikringPolicer: data.policies.map((p) => ({
@@ -1080,17 +1101,34 @@ export default function ForsikringPageClient(): React.ReactElement {
         gapsWarning: p.gap_counts.warning,
         gapsInfo: p.gap_counts.info,
       })),
-      forsikringAnalyse: {
-        kundeNavn: null,
-        totalAktiver: 0,
-        forsikrede: 0,
-        uforsikrede: 0,
-        riskScore: 0,
-        gapsCount: totals.gaps_critical + totals.gaps_warning + totals.gaps_info,
-      },
+      forsikringAnalyse: analyse
+        ? {
+            kundeNavn: aiKundeNavn,
+            totalAktiver: analyse.total_aktiver,
+            forsikrede: analyse.insured_count,
+            uforsikrede: analyse.uninsured_count,
+            riskScore: analyse.total_risk_score,
+            gapsCount: aiAnalyseDetail?.gaps.length ?? 0,
+          }
+        : {
+            kundeNavn: null,
+            totalAktiver: 0,
+            forsikrede: 0,
+            uforsikrede: 0,
+            riskScore: 0,
+            gapsCount: totals.gaps_critical + totals.gaps_warning + totals.gaps_info,
+          },
+      // Inkluder individuelle gaps med detaljer til AI-rapporten
+      forsikringGaps: aiAnalyseDetail?.gaps.map((g) => ({
+        severity: g.severity,
+        title: g.title,
+        description: g.description,
+        recommendation: g.recommendation,
+        policyAddress: null,
+      })),
     });
     return () => setAICtx(null);
-  }, [data, setAICtx]);
+  }, [data, setAICtx, aiAnalyseDetail, aiKundeNavn]);
 
   /**
    * Upload + parse pipeline for a single file.
@@ -1235,7 +1273,12 @@ export default function ForsikringPageClient(): React.ReactElement {
       </header>
 
       {/* TRIN 1: Vælg kunde */}
-      <AnalyseSection lang={lang} policies={policies} onRefresh={refresh} />
+      <AnalyseSection
+        lang={lang}
+        policies={policies}
+        onRefresh={refresh}
+        onAnalyseDetail={handleAnalyseDetail}
+      />
 
       {/* TRIN 2: Upload dokumenter */}
       <div className="flex items-center gap-2 text-sm font-semibold text-white">

@@ -333,7 +333,7 @@ function UnifiedAnalyseView({
   kundeNavn: string;
   onRapport: () => void;
 }) {
-  const { analyse, aktiver, gaps } = detail;
+  const { analyse: _analyse, aktiver, gaps } = detail;
 
   // Build a policy lookup
   const policyById = new Map(policies.map((p) => [p.id, p]));
@@ -343,7 +343,8 @@ function UnifiedAnalyseView({
   const groups: PropertyGroup[] = [];
   for (const aktiv of aktiver) {
     // BIZZ-1439: Dedup — skip duplikerede adresser (ejerskab kan have flere rækker per BFE)
-    const addrKey = aktiv.adresse || aktiv.label || aktiv.id;
+    // Dedup via BFE (unikt per ejendom) — IKKE adresse (ejerlejligheder har samme adresse men forskellig etage/dør)
+    const addrKey = aktiv.bfe ? String(aktiv.bfe) : aktiv.id;
     if (seenAddresses.has(addrKey)) continue;
     seenAddresses.add(addrKey);
 
@@ -368,8 +369,9 @@ function UnifiedAnalyseView({
   });
 
   // Compute health score: 0-100 (higher = better)
-  const total = analyse.total_aktiver;
-  const insured = analyse.insured_count;
+  // BIZZ-1440: Brug dedupede groups i stedet for rå analyse-tal
+  const total = groups.length;
+  const insured = groups.filter((g) => g.aktiv.matched_policy_id !== null).length;
   const pct = total > 0 ? Math.round((insured / total) * 100) : 0;
   const totalGaps = gaps.length;
   const critGaps = gaps.filter((g) => g.severity === 'critical').length;
@@ -715,12 +717,14 @@ function AnalyseSection({
         const sagData = (await sagRes.json()) as { sag?: { id: string } };
         if (sagData.sag?.id) onSagChange(sagData.sag.id);
       }
-      // Kør analyse (med genbrugte dokumenter hvis valgt)
-      // BIZZ-1439: Adskil genbrugte docs (checkboxes) og nye uploads (wizard)
+      // BIZZ-1440: Samle ALLE doc IDs (genbrugte + wizard-uploads + parent-uploads)
       const reusedDocIds = [...selectedDocIds];
       const wizardDocIds = wizardUploads
         .filter((u) => u.status === 'done' && u.docId)
         .map((u) => u.docId!);
+      const allNewDocIds = [...wizardDocIds, ...newDocumentIds];
+      // Hvis wizard er åben, send altid scoped doc IDs — aldrig fald tilbage til alle policer
+      const hasAnyDocs = reusedDocIds.length > 0 || allNewDocIds.length > 0;
       const res = await fetch('/api/forsikring/analyser', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -730,9 +734,10 @@ function AnalyseSection({
           kunde_navn: selected.navn,
           ...(asOfDate ? { as_of_date: asOfDate } : {}),
           ...(reusedDocIds.length > 0 ? { document_ids: reusedDocIds } : {}),
-          ...(wizardDocIds.length > 0 || newDocumentIds.length > 0
-            ? { new_document_ids: [...wizardDocIds, ...newDocumentIds] }
-            : {}),
+          ...(allNewDocIds.length > 0 ? { new_document_ids: allNewDocIds } : {}),
+          // BIZZ-1440: Hvis wizard er åben men ingen docs valgt, send tom array
+          // for at forhindre backend-fallback til alle policer
+          ...(!hasAnyDocs && showDocPicker ? { document_ids: [] } : {}),
         }),
       });
       if (res.ok) {
@@ -761,7 +766,17 @@ function AnalyseSection({
     } finally {
       setRunning(false);
     }
-  }, [selected, running, asOfDate, onAnalyseDetail, onSagChange]);
+  }, [
+    selected,
+    running,
+    asOfDate,
+    onAnalyseDetail,
+    onSagChange,
+    newDocumentIds,
+    selectedDocIds,
+    showDocPicker,
+    wizardUploads,
+  ]);
 
   return (
     <section className="bg-white/5 border border-white/8 rounded-2xl p-5 space-y-3">
@@ -1077,58 +1092,48 @@ function AnalyseSection({
         </div>
       )}
 
-      {/* Start knap + doc picker toggle */}
+      {/* BIZZ-1440: Start-knap — wizard åbner altid automatisk */}
       {selected && (
         <div className="flex items-center gap-2">
-          {!showDocPicker && previousDocs.length === 0 && (
+          {!showDocPicker && (
             <button
               type="button"
               onClick={() => setShowDocPicker(true)}
-              className="text-slate-400 hover:text-blue-400 text-xs px-3 py-2 rounded-lg border border-white/8 hover:border-blue-500/30 transition-colors"
+              disabled={running}
+              className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"
             >
-              <FileText size={12} className="inline mr-1" />
-              {da ? 'Genbrug dokumenter' : 'Reuse documents'}
+              <ShieldCheck size={14} />
+              {lastAnalyse
+                ? da
+                  ? 'Kør ny analyse'
+                  : 'Run new analysis'
+                : da
+                  ? 'Start gap-analyse'
+                  : 'Start gap analysis'}
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => {
-              if (!showDocPicker && lastAnalyse) {
-                // First click: open doc picker if there might be previous docs
-                setShowDocPicker(true);
-                return;
-              }
-              startAnalyse();
-            }}
-            disabled={running}
-            className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"
-          >
-            {running ? (
-              <>
-                <Loader2 size={14} className="animate-spin" />
-                {da ? 'Analyserer...' : 'Analyzing...'}
-              </>
-            ) : (
-              <>
-                <ShieldCheck size={14} />
-                {showDocPicker
-                  ? selectedDocIds.size > 0
-                    ? da
-                      ? `Start analyse med ${selectedDocIds.size} genbrugte docs`
-                      : `Start analysis with ${selectedDocIds.size} reused docs`
-                    : da
-                      ? 'Start analyse (kun nye uploads)'
-                      : 'Start analysis (new uploads only)'
-                  : lastAnalyse
-                    ? da
-                      ? 'Kør ny analyse (sammenlign)'
-                      : 'Run new analysis (compare)'
-                    : da
-                      ? 'Start gap-analyse'
-                      : 'Start gap analysis'}
-              </>
-            )}
-          </button>
+          {showDocPicker && (
+            <button
+              type="button"
+              onClick={startAnalyse}
+              disabled={running}
+              className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"
+            >
+              {running ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" />
+                  {da ? 'Analyserer...' : 'Analyzing...'}
+                </>
+              ) : (
+                <>
+                  <ShieldCheck size={14} />
+                  {da
+                    ? `Start analyse${selectedDocIds.size > 0 ? ` (${selectedDocIds.size} genbrugte` + (wizardUploads.filter((u) => u.status === 'done').length > 0 ? ` + ${wizardUploads.filter((u) => u.status === 'done').length} nye)` : ')') : wizardUploads.filter((u) => u.status === 'done').length > 0 ? ` (${wizardUploads.filter((u) => u.status === 'done').length} nye)` : ''}`
+                    : `Start analysis${selectedDocIds.size > 0 ? ` (${selectedDocIds.size} reused)` : ''}`}
+                </>
+              )}
+            </button>
+          )}
         </div>
       )}
 
@@ -1323,6 +1328,183 @@ function formatDate(iso: string | null): string {
 function localId(): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
   return `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+// ─── BIZZ-1440: Analyse-detalje sektion ──────────────────────────
+
+/**
+ * Viser en tidligere analyses resultater — ejendomme, gaps, rapport.
+ * Henter data fra GET /api/forsikring/analyser/[id].
+ */
+function AnalyseDetailSection({
+  analyseId,
+  kundeNavn,
+  lang,
+  onBack,
+}: {
+  analyseId: string;
+  kundeNavn: string;
+  lang: string;
+  onBack: () => void;
+}) {
+  const da = lang === 'da';
+  const [detail, setDetail] = useState<AnalyseDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    fetch(`/api/forsikring/analyser/${analyseId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) setDetail(d);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [analyseId]);
+
+  if (loading) {
+    return (
+      <section className="bg-white/5 border border-white/8 rounded-2xl p-6 text-center">
+        <Loader2 size={20} className="animate-spin text-blue-400 mx-auto" />
+        <p className="text-slate-400 text-xs mt-2">
+          {da ? 'Henter analyse...' : 'Loading analysis...'}
+        </p>
+      </section>
+    );
+  }
+
+  if (!detail) {
+    return (
+      <section className="bg-white/5 border border-white/8 rounded-2xl p-4">
+        <p className="text-red-400 text-sm">
+          {da ? 'Kunne ikke hente analyse' : 'Could not load analysis'}
+        </p>
+        <button type="button" onClick={onBack} className="text-blue-400 text-xs mt-2">
+          {da ? '← Tilbage' : '← Back'}
+        </button>
+      </section>
+    );
+  }
+
+  // Dedup aktiver
+  const seenBfe = new Set<string>();
+  const uniqueAktiver = detail.aktiver.filter((a) => {
+    const key = a.bfe ? String(a.bfe) : a.id;
+    if (seenBfe.has(key)) return false;
+    seenBfe.add(key);
+    return true;
+  });
+  const total = uniqueAktiver.length;
+  const insured = uniqueAktiver.filter((a) => a.matched_policy_id).length;
+  const pct = total > 0 ? Math.round((insured / total) * 100) : 0;
+  const gapCount = detail.gaps.length;
+
+  return (
+    <section className="space-y-4">
+      {/* Header med tilbage-knap */}
+      <div className="flex items-center justify-between">
+        <h3 className="text-white text-sm font-semibold">
+          {da ? 'Analyse-resultater' : 'Analysis results'} — {kundeNavn}
+        </h3>
+        <button
+          type="button"
+          onClick={onBack}
+          className="text-slate-400 hover:text-white text-xs px-2 py-1 rounded hover:bg-white/5"
+        >
+          {da ? '← Tilbage til historik' : '← Back to history'}
+        </button>
+      </div>
+
+      {/* KPI */}
+      <div className="bg-white/5 border border-white/8 rounded-xl p-4">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-white text-sm font-semibold">{kundeNavn}</span>
+          <span
+            className={`text-lg font-bold ${pct >= 71 ? 'text-emerald-400' : pct >= 41 ? 'text-amber-400' : 'text-red-400'}`}
+          >
+            {pct}%
+          </span>
+        </div>
+        <div className="grid grid-cols-3 gap-3 text-xs text-center">
+          <div>
+            <div className="text-blue-300 text-xl font-bold">{total}</div>
+            <div className="text-slate-500">{da ? 'Ejendomme' : 'Properties'}</div>
+          </div>
+          <div>
+            <div className="text-emerald-300 text-xl font-bold">{insured}</div>
+            <div className="text-slate-500">{da ? 'Forsikrede' : 'Insured'}</div>
+          </div>
+          <div>
+            <div className="text-red-300 text-xl font-bold">{total - insured}</div>
+            <div className="text-slate-500">{da ? 'Uforsikrede' : 'Uninsured'}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Ejendomme-liste */}
+      <div className="space-y-1.5">
+        {uniqueAktiver.map((a) => {
+          const isIns = !!a.matched_policy_id;
+          return (
+            <div
+              key={a.id}
+              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl ${isIns ? 'bg-white/3 border border-white/5' : 'bg-red-500/5 border border-red-500/20'}`}
+            >
+              {isIns ? (
+                <CheckCircle2 size={14} className="text-emerald-400" />
+              ) : (
+                <XCircle size={14} className="text-red-400" />
+              )}
+              <Home size={14} className={isIns ? 'text-emerald-400' : 'text-red-400'} />
+              <span className="text-white text-sm flex-1">{a.adresse || a.label}</span>
+              {!isIns && (
+                <span className="text-red-300 text-[10px] uppercase font-bold">
+                  {da ? 'Uforsikret' : 'Uninsured'}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Gap summary */}
+      {gapCount > 0 && (
+        <div className="text-slate-400 text-xs">
+          {gapCount} gaps {da ? 'identificeret' : 'identified'}
+        </div>
+      )}
+
+      {/* Download rapport */}
+      <button
+        type="button"
+        onClick={async () => {
+          try {
+            const res = await fetch('/api/forsikring/rapport', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ analyse_id: analyseId, kunde_navn: kundeNavn }),
+            });
+            if (!res.ok) return;
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Gap-Rapport-${kundeNavn}.docx`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          } catch {
+            /* silent */
+          }
+        }}
+        className="w-full bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
+      >
+        <FileText size={15} />
+        {da ? 'Download gap-rapport (Word)' : 'Download gap report (Word)'}
+      </button>
+    </section>
+  );
 }
 
 // ─── Component ───────────────────────────────────────────────────
@@ -1676,27 +1858,14 @@ export default function ForsikringPageClient(): React.ReactElement {
         </section>
       )}
 
-      {/* BIZZ-1439: Analyse-detalje visning når man klikker en historik-række */}
+      {/* BIZZ-1440: Analyse-detalje visning når man klikker en historik-række */}
       {activeAnalyseId && selectedCustomer && (
-        <section className="bg-white/5 border border-white/8 rounded-2xl p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-white text-sm font-semibold">
-              {lang === 'da' ? 'Analyse-detaljer' : 'Analysis details'}
-            </h3>
-            <button
-              type="button"
-              onClick={() => setActiveAnalyseId(null)}
-              className="text-slate-400 hover:text-white text-xs px-2 py-1 rounded hover:bg-white/5"
-            >
-              {lang === 'da' ? '← Tilbage til historik' : '← Back to history'}
-            </button>
-          </div>
-          <p className="text-slate-500 text-xs">
-            {lang === 'da'
-              ? 'Denne funktion er under udvikling. Vælg en analyse fra historikken for at se detaljer.'
-              : 'This feature is under development. Select an analysis from the history to view details.'}
-          </p>
-        </section>
+        <AnalyseDetailSection
+          analyseId={activeAnalyseId}
+          kundeNavn={selectedCustomer.navn}
+          lang={lang}
+          onBack={() => setActiveAnalyseId(null)}
+        />
       )}
 
       {/* BIZZ-1439: Global upload + police-tabel FJERNET — al data vises kun i analyse-kontekst */}

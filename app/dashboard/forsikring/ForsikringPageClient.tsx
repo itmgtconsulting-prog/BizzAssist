@@ -22,10 +22,15 @@ import {
   Upload,
   FileText,
   AlertCircle,
+  AlertTriangle,
   Loader2,
   CheckCircle2,
   XCircle,
   Building2,
+  Home,
+  Briefcase,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { useAIChatContext } from '@/app/context/AIChatContext';
@@ -72,15 +77,391 @@ interface UploadJob {
   error?: string;
 }
 
+/** Aktiv fra analyse-detail API */
+interface AnalyseAktiv {
+  id: string;
+  type: string;
+  label: string;
+  bfe: number | null;
+  cvr: string | null;
+  adresse: string | null;
+  matched_policy_id: string | null;
+  match_score: number | null;
+}
+
+/** Gap fra analyse-detail API */
+interface AnalyseGap {
+  id: string;
+  policy_id: string;
+  check_id: string;
+  severity: string;
+  title: string;
+  description: string;
+  recommendation: string | null;
+}
+
+/** Full analyse-detail response */
+interface AnalyseDetail {
+  analyse: {
+    id: string;
+    total_aktiver: number;
+    insured_count: number;
+    uninsured_count: number;
+    total_risk_score: number;
+  };
+  aktiver: AnalyseAktiv[];
+  gaps: AnalyseGap[];
+}
+
+/** Property grouped with its matched policy and relevant gaps */
+interface PropertyGroup {
+  aktiv: AnalyseAktiv;
+  matchedPolicy: PolicyRow | null;
+  gaps: AnalyseGap[];
+}
+
+// ─── BIZZ-1389: Samlet ejendomsvisning ──────────────────────────
+
+/**
+ * Expandable property row — viser aktiv med matchet police + gaps.
+ *
+ * @param props.group - Property group med aktiv, police og gaps
+ * @param props.da - Dansk sprogflag
+ */
+function PropertyRow({ group, da }: { group: PropertyGroup; da: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const isInsured = group.aktiv.matched_policy_id !== null;
+  const gapCritical = group.gaps.filter((g) => g.severity === 'critical').length;
+  const gapWarning = group.gaps.filter((g) => g.severity === 'warning').length;
+
+  /** Ikon for aktiv-type */
+  const typeIcon =
+    group.aktiv.type === 'ejendom' ? (
+      <Home size={14} className="text-emerald-400" />
+    ) : group.aktiv.type === 'virksomhed' ? (
+      <Building2 size={14} className="text-blue-400" />
+    ) : group.aktiv.type === 'bestyrelsespost' ? (
+      <Briefcase size={14} className="text-purple-400" />
+    ) : (
+      <ShieldCheck size={14} className="text-slate-400" />
+    );
+
+  return (
+    <div
+      className={`border rounded-xl overflow-hidden ${
+        isInsured ? 'border-white/8 bg-white/3' : 'border-red-500/30 bg-red-500/5'
+      }`}
+    >
+      {/* Header row — klikbar for toggle */}
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-white/3 transition-colors"
+        aria-expanded={expanded}
+        aria-label={`${expanded ? (da ? 'Luk' : 'Collapse') : da ? 'Udvid' : 'Expand'} ${group.aktiv.label}`}
+      >
+        {/* Status ikon */}
+        {isInsured ? (
+          <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
+        ) : (
+          <XCircle size={16} className="text-red-400 shrink-0" />
+        )}
+
+        {/* Type ikon + label */}
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          {typeIcon}
+          <span className="text-white text-sm font-medium truncate">{group.aktiv.label}</span>
+        </div>
+
+        {/* Police-info hvis matchet */}
+        {group.matchedPolicy && (
+          <span className="text-slate-400 text-xs shrink-0 hidden sm:block">
+            {group.matchedPolicy.insurer_name} — {group.matchedPolicy.policy_number}
+          </span>
+        )}
+
+        {/* Gap badges */}
+        {(gapCritical > 0 || gapWarning > 0) && (
+          <div className="flex items-center gap-1 shrink-0">
+            {gapCritical > 0 && (
+              <span className="px-1.5 py-0.5 rounded text-[10px] bg-red-500/20 text-red-300">
+                {gapCritical}
+              </span>
+            )}
+            {gapWarning > 0 && (
+              <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-500/20 text-amber-300">
+                {gapWarning}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Uforsikret label */}
+        {!isInsured && (
+          <span className="text-red-300 text-[10px] uppercase font-bold shrink-0">
+            {da ? 'Uforsikret' : 'Uninsured'}
+          </span>
+        )}
+
+        {/* Chevron */}
+        {expanded ? (
+          <ChevronDown size={14} className="text-slate-500 shrink-0" />
+        ) : (
+          <ChevronRight size={14} className="text-slate-500 shrink-0" />
+        )}
+      </button>
+
+      {/* Expanded detail */}
+      {expanded && (
+        <div className="border-t border-white/5 px-4 py-3 space-y-2">
+          {/* Police metadata */}
+          {group.matchedPolicy && (
+            <div className="text-xs text-slate-400 space-y-0.5">
+              <div>
+                <span className="text-slate-500">{da ? 'Police:' : 'Policy:'}</span>{' '}
+                <Link
+                  href={`/dashboard/forsikring/${group.matchedPolicy.id}`}
+                  className="text-blue-300 hover:text-blue-200"
+                >
+                  {group.matchedPolicy.policy_number}
+                </Link>{' '}
+                ({group.matchedPolicy.insurer_name})
+              </div>
+              {group.matchedPolicy.annual_premium_dkk && (
+                <div>
+                  <span className="text-slate-500">{da ? 'Præmie:' : 'Premium:'}</span>{' '}
+                  {group.matchedPolicy.annual_premium_dkk.toLocaleString('da-DK')} kr
+                </div>
+              )}
+              {group.matchedPolicy.effective_to && (
+                <div>
+                  <span className="text-slate-500">{da ? 'Udløber:' : 'Expires:'}</span>{' '}
+                  {new Date(group.matchedPolicy.effective_to).toLocaleDateString('da-DK', {
+                    day: 'numeric',
+                    month: 'short',
+                    year: 'numeric',
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Gaps for this property */}
+          {group.gaps.length > 0 ? (
+            <div className="space-y-1.5 mt-2">
+              {group.gaps.map((g) => (
+                <div
+                  key={g.id}
+                  className={`rounded-lg px-3 py-2 text-xs ${
+                    g.severity === 'critical'
+                      ? 'bg-red-500/10 border border-red-500/20'
+                      : g.severity === 'warning'
+                        ? 'bg-amber-500/10 border border-amber-500/20'
+                        : 'bg-slate-500/10 border border-slate-500/20'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    {g.severity === 'critical' ? (
+                      <AlertTriangle size={11} className="text-red-400" />
+                    ) : g.severity === 'warning' ? (
+                      <AlertCircle size={11} className="text-amber-400" />
+                    ) : (
+                      <ShieldCheck size={11} className="text-slate-400" />
+                    )}
+                    <span
+                      className={
+                        g.severity === 'critical'
+                          ? 'text-red-300 font-medium'
+                          : g.severity === 'warning'
+                            ? 'text-amber-300 font-medium'
+                            : 'text-slate-300 font-medium'
+                      }
+                    >
+                      {g.title}
+                    </span>
+                  </div>
+                  <p className="text-slate-400 ml-4">{g.description}</p>
+                  {g.recommendation && (
+                    <p className="text-slate-500 ml-4 mt-0.5 italic">{g.recommendation}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : isInsured ? (
+            <div className="text-emerald-400 text-xs flex items-center gap-1 mt-1">
+              <CheckCircle2 size={12} />
+              {da ? 'Ingen gaps — dækningen er i orden' : 'No gaps — coverage is in order'}
+            </div>
+          ) : (
+            <div className="text-red-300 text-xs mt-1">
+              {da
+                ? 'Ingen police fundet — aktivet er ikke forsikret.'
+                : 'No policy found — asset is not insured.'}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Unified analyse result view — BIZZ-1389.
+ * Groups assets by property and shows merged gaps from both systems.
+ *
+ * @param props.detail - Full analyse detail from API
+ * @param props.policies - Policy list for cross-reference
+ * @param props.da - Danish language flag
+ * @param props.kundeNavn - Customer name for header
+ * @param props.onRapport - Callback to trigger AI rapport generation
+ */
+function UnifiedAnalyseView({
+  detail,
+  policies,
+  da,
+  kundeNavn,
+  onRapport,
+}: {
+  detail: AnalyseDetail;
+  policies: PolicyRow[];
+  da: boolean;
+  kundeNavn: string;
+  onRapport: (pct: number) => void;
+}) {
+  const { analyse, aktiver, gaps } = detail;
+
+  // Build a policy lookup
+  const policyById = new Map(policies.map((p) => [p.id, p]));
+
+  // Group aktiver into PropertyGroups with their gaps
+  const groups: PropertyGroup[] = aktiver.map((aktiv) => {
+    // Gaps for this aktiv's matched policy
+    const aktivGaps = aktiv.matched_policy_id
+      ? gaps.filter((g) => g.policy_id === aktiv.matched_policy_id)
+      : [];
+    return {
+      aktiv,
+      matchedPolicy: aktiv.matched_policy_id
+        ? (policyById.get(aktiv.matched_policy_id) ?? null)
+        : null,
+      gaps: aktivGaps,
+    };
+  });
+
+  // Sort: uninsured first, then by gap count descending
+  groups.sort((a, b) => {
+    const aInsured = a.aktiv.matched_policy_id ? 1 : 0;
+    const bInsured = b.aktiv.matched_policy_id ? 1 : 0;
+    if (aInsured !== bInsured) return aInsured - bInsured;
+    return b.gaps.length - a.gaps.length;
+  });
+
+  // Compute health score: 0-100 (higher = better)
+  const total = analyse.total_aktiver;
+  const insured = analyse.insured_count;
+  const pct = total > 0 ? Math.round((insured / total) * 100) : 0;
+  const totalGaps = gaps.length;
+  const critGaps = gaps.filter((g) => g.severity === 'critical').length;
+
+  // Health: base on coverage%, penalise for critical gaps
+  const healthBase = pct;
+  const gapPenalty = Math.min(30, critGaps * 5 + Math.min(totalGaps, 20));
+  const healthScore = Math.max(0, Math.min(100, healthBase - gapPenalty));
+  const healthColor = healthScore >= 71 ? 'emerald' : healthScore >= 41 ? 'amber' : 'red';
+
+  return (
+    <div className="space-y-4">
+      {/* Niveau 1: Kundeoverblik — én KPI-række */}
+      <div className="bg-white/5 border border-white/8 rounded-xl p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-white text-sm font-semibold">{kundeNavn}</h3>
+          <span
+            className={`text-lg font-bold ${
+              healthColor === 'emerald'
+                ? 'text-emerald-400'
+                : healthColor === 'amber'
+                  ? 'text-amber-400'
+                  : 'text-red-400'
+            }`}
+          >
+            {healthScore}/100
+          </span>
+        </div>
+        <div className="grid grid-cols-4 gap-2">
+          <div className="text-center">
+            <div className="text-blue-300 text-xl font-bold">{total}</div>
+            <div className="text-slate-500 text-[10px]">{da ? 'Ejendomme' : 'Properties'}</div>
+          </div>
+          <div className="text-center">
+            <div className="text-emerald-300 text-xl font-bold">{insured}</div>
+            <div className="text-slate-500 text-[10px]">{da ? 'Forsikrede' : 'Insured'}</div>
+          </div>
+          <div className="text-center">
+            <div className="text-red-300 text-xl font-bold">{total - insured}</div>
+            <div className="text-slate-500 text-[10px]">{da ? 'Uforsikrede' : 'Uninsured'}</div>
+          </div>
+          <div className="text-center">
+            <div
+              className={`text-xl font-bold ${
+                healthColor === 'emerald'
+                  ? 'text-emerald-400'
+                  : healthColor === 'amber'
+                    ? 'text-amber-400'
+                    : 'text-red-400'
+              }`}
+            >
+              {healthScore}
+            </div>
+            <div className="text-slate-500 text-[10px]">
+              {da ? 'Sundhedsscore' : 'Health score'}
+            </div>
+          </div>
+        </div>
+        {/* Health bar */}
+        <div className="mt-3 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all ${
+              healthColor === 'emerald'
+                ? 'bg-emerald-500'
+                : healthColor === 'amber'
+                  ? 'bg-amber-500'
+                  : 'bg-red-500'
+            }`}
+            style={{ width: `${healthScore}%` }}
+          />
+        </div>
+      </div>
+
+      {/* Niveau 2: Ejendomsliste med expandable rows */}
+      <div className="space-y-2">
+        {groups.map((group) => (
+          <PropertyRow key={group.aktiv.id} group={group} da={da} />
+        ))}
+      </div>
+
+      {/* Rapport-knap */}
+      <button
+        type="button"
+        onClick={() => onRapport(pct)}
+        className="w-full bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
+      >
+        <ShieldCheck size={15} />
+        {da ? 'Lav rapport via AI Chat' : 'Generate report via AI Chat'}
+      </button>
+    </div>
+  );
+}
+
 // ─── BIZZ-1367: Analyse-sektion med customer picker ─────────────
 
 /**
  * Gap-analyse sektion med CVR/person-søgning + start-knap.
- * Viser også liste over tidligere analyser.
+ * BIZZ-1389: Viser nu unified property-centric view efter analyse.
  *
  * @param props.lang - Sprogkode
+ * @param props.policies - Policy list for cross-referencing in unified view
  */
-function AnalyseSection({ lang }: { lang: string }) {
+function AnalyseSection({ lang, policies }: { lang: string; policies: PolicyRow[] }) {
   const da = lang === 'da';
   const chatCtx = useAIChatContext();
   const [query, setQuery] = useState('');
@@ -100,6 +481,8 @@ function AnalyseSection({ lang }: { lang: string }) {
     gaps_count: number;
     total_risk_score: number;
   } | null>(null);
+  /** BIZZ-1389: Full analyse detail for unified view */
+  const [analyseDetail, setAnalyseDetail] = useState<AnalyseDetail | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** BIZZ-1384: Sagsliste */
   const [sager, setSager] = useState<
@@ -176,7 +559,17 @@ function AnalyseSection({ lang }: { lang: string }) {
         }),
       });
       if (res.ok) {
-        setAnalyseResult(await res.json());
+        const result = await res.json();
+        setAnalyseResult(result);
+        // BIZZ-1389: Fetch full detail for unified property view
+        try {
+          const detailRes = await fetch(`/api/forsikring/analyser/${result.analyse_id}`);
+          if (detailRes.ok) {
+            setAnalyseDetail(await detailRes.json());
+          }
+        } catch {
+          // Best-effort — fallback to old view if detail fails
+        }
         // Refresh sagsliste
         fetch('/api/forsikring/sager')
           .then((r) => (r.ok ? r.json() : { sager: [] }))
@@ -265,83 +658,33 @@ function AnalyseSection({ lang }: { lang: string }) {
         </button>
       )}
 
-      {/* BIZZ-1390: Resultat med dækningsgrad i stedet for risk score */}
-      {analyseResult &&
-        (() => {
-          const total = analyseResult.total_aktiver;
-          const insured = analyseResult.insured_count;
-          const pct = total > 0 ? Math.round((insured / total) * 100) : 0;
-          const isGood = pct >= 80;
-          const isBad = pct < 50;
-          return (
-            <div className="space-y-3 mt-2">
-              {/* Dækningsgrad-bar */}
-              <div className="bg-white/5 border border-white/8 rounded-xl p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm text-white font-medium">
-                    {da ? 'Dækningsgrad' : 'Coverage rate'}
-                  </span>
-                  <span
-                    className={`text-lg font-bold ${isGood ? 'text-emerald-400' : isBad ? 'text-red-400' : 'text-amber-400'}`}
-                  >
-                    {pct}%
-                  </span>
-                </div>
-                <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all ${isGood ? 'bg-emerald-500' : isBad ? 'bg-red-500' : 'bg-amber-500'}`}
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-                <div className="flex justify-between mt-1.5 text-xs text-slate-500">
-                  <span>
-                    {insured} {da ? 'forsikrede' : 'insured'} / {total} {da ? 'aktiver' : 'assets'}
-                  </span>
-                  <span>{analyseResult.gaps_count} gaps</span>
-                </div>
-              </div>
-              {/* Quick stats */}
-              <div className="grid grid-cols-3 gap-2">
-                <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-2.5 text-center">
-                  <div className="text-emerald-300 text-lg font-bold">{insured}</div>
-                  <div className="text-slate-400 text-[10px]">{da ? 'Forsikrede' : 'Insured'}</div>
-                </div>
-                <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-2.5 text-center">
-                  <div className="text-red-300 text-lg font-bold">{total - insured}</div>
-                  <div className="text-slate-400 text-[10px]">
-                    {da ? 'Uforsikrede' : 'Uninsured'}
-                  </div>
-                </div>
-                <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-2.5 text-center">
-                  <div className="text-amber-300 text-lg font-bold">{analyseResult.gaps_count}</div>
-                  <div className="text-slate-400 text-[10px]">Gaps</div>
-                </div>
-              </div>
-              {/* Rapport-knap — åbner AI Chat drawer med pre-filled prompt */}
-              <button
-                type="button"
-                onClick={() => {
-                  // Åbn chat drawer
-                  chatCtx.setDrawerOpen(true);
-                  // Sæt prompt i chat input via context
-                  chatCtx.setStreamText('');
-                  // Dispatch custom event som AIChatPanel lytter på
-                  window.dispatchEvent(
-                    new CustomEvent('bizz-chat-prefill', {
-                      detail: da
-                        ? `Lav en mæglerrapport i Word-format for ${selected?.navn ?? 'kunden'}. Brug forsikringsdata fra konteksten. Inkluder: 1) Executive summary med dækningsgrad ${pct}%, 2) Forsikringsgap-tabel med alle ${analyseResult.gaps_count} gaps, 3) Anbefalinger prioriteret efter risiko, 4) Handlingsplan. Generér dokumentet direkte uden at spørge om mere info.`
-                        : `Create a broker report in Word format for ${selected?.navn ?? 'the customer'}. Use insurance data from context. Include: 1) Executive summary with ${pct}% coverage rate, 2) Gap table with all ${analyseResult.gaps_count} gaps, 3) Prioritized recommendations, 4) Action plan. Generate the document directly.`,
-                    })
-                  );
-                }}
-                className="w-full bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
-              >
-                <ShieldCheck size={15} />
-                {da ? 'Lav rapport via AI Chat' : 'Generate report via AI Chat'}
-              </button>
-            </div>
-          );
-        })()}
+      {/* BIZZ-1389: Samlet ejendomsvisning efter analyse */}
+      {analyseResult && analyseDetail && (
+        <UnifiedAnalyseView
+          detail={analyseDetail}
+          policies={policies}
+          da={da}
+          kundeNavn={selected?.navn ?? (da ? 'Kunden' : 'Customer')}
+          onRapport={(pct) => {
+            chatCtx.setDrawerOpen(true);
+            chatCtx.setStreamText('');
+            window.dispatchEvent(
+              new CustomEvent('bizz-chat-prefill', {
+                detail: da
+                  ? `Lav en mæglerrapport i Word-format for ${selected?.navn ?? 'kunden'}. Brug forsikringsdata fra konteksten. Inkluder: 1) Executive summary med sundhedsscore ${pct}/100, 2) Ejendomsoversigt med forsikringsstatus, 3) Forsikringsgap-tabel med alle ${analyseResult.gaps_count} gaps, 4) Anbefalinger prioriteret efter risiko, 5) Handlingsplan. Generér dokumentet direkte uden at spørge om mere info.`
+                  : `Create a broker report in Word format for ${selected?.navn ?? 'the customer'}. Use insurance data from context. Include: 1) Executive summary with health score ${pct}/100, 2) Property overview with insurance status, 3) Gap table with all ${analyseResult.gaps_count} gaps, 4) Prioritized recommendations, 5) Action plan. Generate the document directly.`,
+              })
+            );
+          }}
+        />
+      )}
+      {/* Fallback: vis simple stats hvis detail ikke kan hentes */}
+      {analyseResult && !analyseDetail && (
+        <div className="bg-white/5 border border-white/8 rounded-xl p-4 text-sm text-slate-400">
+          {da ? 'Analyse gennemført' : 'Analysis complete'} — {analyseResult.total_aktiver}{' '}
+          {da ? 'aktiver' : 'assets'}, {analyseResult.gaps_count} gaps
+        </div>
+      )}
       {/* BIZZ-1384: Sagsliste — tidligere kunder */}
       {sager.length > 0 && !selected && (
         <div className="mt-3 space-y-1">
@@ -567,7 +910,7 @@ export default function ForsikringPageClient(): React.ReactElement {
       </header>
 
       {/* TRIN 1: Vælg kunde */}
-      <AnalyseSection lang={lang} />
+      <AnalyseSection lang={lang} policies={policies} />
 
       {/* TRIN 2: Upload dokumenter */}
       <div className="flex items-center gap-2 text-sm font-semibold text-white">

@@ -742,11 +742,9 @@ function AnalyseSection({
           kunde_id: selected.id,
           kunde_navn: selected.navn,
           ...(asOfDate ? { as_of_date: asOfDate } : {}),
-          ...(reusedDocIds.length > 0 ? { document_ids: reusedDocIds } : {}),
-          ...(allNewDocIds.length > 0 ? { new_document_ids: allNewDocIds } : {}),
-          // BIZZ-1440: Hvis wizard er åben men ingen docs valgt, send tom array
-          // for at forhindre backend-fallback til alle policer
-          ...(!hasAnyDocs && showDocPicker ? { document_ids: [] } : {}),
+          // BIZZ-1443: Send alle valgte doc IDs samlet — reused + nye
+          // Hvis ingen er valgt, send IKKE document_ids → backend bruger alle policer
+          ...(hasAnyDocs ? { document_ids: [...reusedDocIds, ...allNewDocIds] } : {}),
         }),
       });
       if (res.ok) {

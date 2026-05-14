@@ -63,7 +63,7 @@ export default defineConfig({
     {
       name: 'chromium-auth',
       testMatch:
-        /\/(dashboard|settings-gdpr|ai-chat|analyse|ejendom-detail|virksomhed-detail|person-detail|billing|diagram|ejendomshierarki|kort|notifikationer|pivot-analyse|search)\.spec\.ts/,
+        /\/(dashboard|settings-gdpr|ai-chat|analyse|ejendom-detail|virksomhed-detail|person-detail|billing|diagram|ejendomshierarki|forsikring|kort|notifikationer|pivot-analyse|search)\.spec\.ts/,
       dependencies: ['auth setup'],
       use: {
         ...devices['Desktop Chrome'],

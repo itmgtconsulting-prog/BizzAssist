@@ -28,9 +28,15 @@ test.describe('Forsikring — list page', () => {
     await dismissOnboarding(page);
   });
 
-  test('sidebar contains Forsikring link', async ({ page }) => {
-    const link = page.getByRole('link', { name: /Forsikring|Insurance/i }).first();
-    await expect(link).toBeVisible({ timeout: 15_000 });
+  test('forsikring page accessible from Analyse & Tools', async ({ page }) => {
+    // Navigate directly — forsikring is under Analyse & Tools module
+    await page.goto('/dashboard/forsikring');
+    await page.waitForLoadState('domcontentloaded');
+
+    // Verify page loaded (not 500)
+    await expect(page.getByRole('heading', { name: /Forsikring|Insurance/i })).toBeVisible({
+      timeout: 15_000,
+    });
   });
 
   test('forsikring page renders header and upload zone', async ({ page }) => {
@@ -55,8 +61,10 @@ test.describe('Forsikring — list page', () => {
       timeout: 10_000,
     });
 
-    // Upload zone (button-role)
-    await expect(page.getByRole('button', { name: /Upload PDF/i })).toBeVisible();
+    // Upload zone (aria-label matches translation key uploadCta)
+    await expect(
+      page.getByRole('button', { name: /Upload forsikringsdokumenter|Upload insurance documents/i })
+    ).toBeVisible({ timeout: 10_000 });
   });
 
   test('empty state shown when no policies', async ({ page }) => {

@@ -33,8 +33,8 @@ REGLER:
 11. Ved JOIN på kommune-navn: JOIN public.kommune_ref USING (kommune_kode) eller ON kommune_kode.
 12. Brug aldrig kolonner som ikke er nævnt i katalog/eksempler — det giver "column does not exist" fejl.
 13. PERFORMANCE-KRITISK — undgå ALTID joins på ejf_ejerskab eller cvr_virksomhed på tværs (7,6M + 2,2M rækker = timeout). Brug ALTID materialized views når spørgsmålet handler om ejer-relationer:
-    - public.mv_analyse_virksomhed: ÉN række per virksomhed med kolonner cvr, navn, branche_kode, virksomhedsform, status, stiftet, ophoert, ansatte, **antal_ejendomme** (pre-aggregeret).
-    - public.mv_analyse_ejendom: ÉN række per ejendom med kolonner bfe_nummer, kommune_kode, kommunenavn, region, anvendelse_kategori, energimaerke, **ejer_cvr, ejer_navn, ejer_type, virksomhed_navn, virksomhed_form, virksomhed_branche, virksomhed_ansatte** (pre-joinet).
+    - public.mv_analyse_virksomhed: ÉN række per virksomhed med kolonner cvr, navn, branche_kode, branche_tekst, virksomhedsform, status, stiftet, ophoert, ansatte (IKKE ansatte_aar!), antal_ejendomme (pre-aggregeret).
+    - public.mv_analyse_ejendom: ÉN række per ejendom med kolonner bfe_nummer, kommune_kode, kommunenavn, region, anvendelse_kode (IKKE byg021_anvendelse!), anvendelse_tekst, anvendelse_kategori, energimaerke, ejer_cvr, ejer_navn, ejer_type, virksomhed_navn, virksomhed_form, virksomhed_branche, virksomhed_ansatte (pre-joinet).
     BEMÆRK: Hvis mv_analyse_ejendom returnerer 0 rækker, FALLBACK til bbr_ejendom_status direkte (MV kan være tom midlertidigt).
 14. For "find virksomheder der ejer flere end N ejendomme" → SELECT cvr, navn, antal_ejendomme FROM mv_analyse_virksomhed WHERE antal_ejendomme > N. IKKE ejer_cvr — kolonnen findes ikke i denne MV.
 15. For "ejendomme hvor ejer-virksomheden er ophørt" → SELECT * FROM mv_analyse_ejendom WHERE ejer_type='virksomhed' AND ejer_cvr IN (SELECT cvr FROM mv_analyse_virksomhed WHERE ophoert IS NOT NULL). IKKE ejf_ejerskab JOIN cvr_virksomhed.

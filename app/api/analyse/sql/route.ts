@@ -77,6 +77,46 @@ async function logAudit(
 }
 
 /**
+ * Generer fallback-forslag når AI returnerer forklaring uden FORSLAG-linje.
+ * Matcher nøgleord i prompten og returnerer relevante alternative queries.
+ */
+function generateFallbackSuggestions(prompt: string): string[] {
+  const lower = prompt.toLowerCase();
+  if (
+    lower.includes('solgt') ||
+    lower.includes('salg') ||
+    lower.includes('pris') ||
+    lower.includes('handel') ||
+    lower.includes('købt')
+  ) {
+    return [
+      'Hvor mange ejendomme skiftede ejer de seneste 12 måneder?',
+      'Gennemsnitlig ejendomsvurdering for parcelhuse',
+      'Top 10 kommuner med flest ejerskifter',
+    ];
+  }
+  if (lower.includes('ejendom') || lower.includes('hus') || lower.includes('bolig')) {
+    return [
+      'Hvor mange ejendomme har vi data på?',
+      'Fordeling af ejendomstyper',
+      'Ejerskifter de seneste 12 måneder',
+    ];
+  }
+  if (lower.includes('virksomhed') || lower.includes('firma') || lower.includes('selskab')) {
+    return [
+      'Hvor mange virksomheder er der i alt?',
+      'Top 10 brancher efter antal virksomheder',
+      'Virksomheder stiftet de seneste 30 dage',
+    ];
+  }
+  return [
+    'Hvor mange virksomheder er der i alt?',
+    'Hvor mange ejendomme har vi data på?',
+    'Top 10 brancher efter antal virksomheder',
+  ];
+}
+
+/**
  * Generer SQL fra dansk prompt via Claude.
  */
 async function generateSql(
@@ -110,13 +150,18 @@ async function generateSql(
       .filter(Boolean);
     const explanationLine = lines[0].slice('FORKLARING:'.length).trim();
     const suggestionsLine = lines.find((l) => l.startsWith('FORSLAG:'));
-    const suggestions = suggestionsLine
+    let suggestions = suggestionsLine
       ? suggestionsLine
           .slice('FORSLAG:'.length)
           .split('|')
           .map((s) => s.trim())
           .filter(Boolean)
       : undefined;
+
+    // Fallback: generer automatiske forslag hvis AI ikke inkluderede dem
+    if (!suggestions || suggestions.length === 0) {
+      suggestions = generateFallbackSuggestions(prompt);
+    }
     return { sql: '', explanation: explanationLine, suggestions };
   }
 

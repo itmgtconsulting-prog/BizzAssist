@@ -174,6 +174,93 @@ function PrishistorikSektion({ bfe, lang }: { bfe: number; lang: string }) {
   );
 }
 
+/**
+ * BIZZ-1500: Regnskab-kort for erhvervsejendomme.
+ * Henter ejer-CVR fra ejf_ejerskab → regnskab_cache.
+ */
+function RegnskabSektion({ bfe, lang }: { bfe: number; lang: string }) {
+  const da = lang === 'da';
+  const [regnskab, setRegnskab] = useState<{
+    cvr: string;
+    navn: string;
+    omsaetning: number | null;
+    egenkapital: number | null;
+    aarsresultat: number | null;
+    seneste_aar: number | null;
+  } | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/analyse/sql`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: `SELECT v.cvr, v.navn, r.omsaetning, r.egenkapital, r.aarsresultat, r.seneste_aar FROM public.ejf_ejerskab e JOIN public.cvr_virksomhed v ON v.cvr = e.ejer_cvr JOIN public.regnskab_cache r ON r.cvr = e.ejer_cvr WHERE e.bfe_nummer = ${bfe} AND e.status = 'gældende' AND e.ejer_cvr IS NOT NULL AND r.omsaetning IS NOT NULL LIMIT 1`,
+        }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.ok && data.rows?.length > 0) setRegnskab(data.rows[0]);
+    } catch {
+      /* non-critical */
+    }
+  }, [bfe]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  if (!regnskab) return null;
+
+  return (
+    <div className="mb-4">
+      <div className="flex items-center gap-2 mb-1.5">
+        <Scale className="w-4 h-4 text-blue-400" aria-hidden />
+        <h3 className="text-white font-semibold text-sm">
+          {da ? 'Ejer-regnskab' : 'Owner financials'}
+        </h3>
+        <span className="text-xs text-slate-500">{regnskab.navn}</span>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {regnskab.omsaetning != null && (
+          <div className="bg-slate-800/20 border border-slate-700/30 rounded-lg p-3">
+            <p className="text-slate-500 text-[10px] uppercase">{da ? 'Omsætning' : 'Revenue'}</p>
+            <p className="text-white text-sm font-medium">
+              {regnskab.omsaetning.toLocaleString('da-DK')} t.DKK
+            </p>
+          </div>
+        )}
+        {regnskab.egenkapital != null && (
+          <div className="bg-slate-800/20 border border-slate-700/30 rounded-lg p-3">
+            <p className="text-slate-500 text-[10px] uppercase">{da ? 'Egenkapital' : 'Equity'}</p>
+            <p className="text-white text-sm font-medium">
+              {regnskab.egenkapital.toLocaleString('da-DK')} t.DKK
+            </p>
+          </div>
+        )}
+        {regnskab.aarsresultat != null && (
+          <div className="bg-slate-800/20 border border-slate-700/30 rounded-lg p-3">
+            <p className="text-slate-500 text-[10px] uppercase">
+              {da ? 'Årsresultat' : 'Net income'}
+            </p>
+            <p
+              className={`text-sm font-medium ${regnskab.aarsresultat >= 0 ? 'text-emerald-400' : 'text-red-400'}`}
+            >
+              {regnskab.aarsresultat.toLocaleString('da-DK')} t.DKK
+            </p>
+          </div>
+        )}
+        {regnskab.seneste_aar != null && (
+          <div className="bg-slate-800/20 border border-slate-700/30 rounded-lg p-3">
+            <p className="text-slate-500 text-[10px] uppercase">{da ? 'Regnskabsår' : 'Year'}</p>
+            <p className="text-white text-sm font-medium">{regnskab.seneste_aar}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function EjendomOekonomiTab(props: Props) {
   const {
     lang,
@@ -848,7 +935,10 @@ export default function EjendomOekonomiTab(props: Props) {
       )}
 
       {/* BIZZ-1497: Prishistorik graf fra ejerskifte_historik */}
-      {bfeNummer && <PrishistorikSektion bfe={bfeNummer} lang={lang} />}
+      {props.bfeNummer && <PrishistorikSektion bfe={props.bfeNummer} lang={lang} />}
+
+      {/* BIZZ-1500: Regnskab for virksomhedsejer */}
+      {props.bfeNummer && <RegnskabSektion bfe={props.bfeNummer} lang={lang} />}
 
       {/* BIZZ-920: Kommune-statistik fra materialized view */}
       {/* BIZZ-962: Boligmarked — salgspriser fra DST EJEN77 */}

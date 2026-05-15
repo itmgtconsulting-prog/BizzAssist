@@ -59,7 +59,7 @@ public.bbr_ejendom_status: bfe_nummer (PK bigint), kommune_kode (smallint), is_u
 
 public.ejf_ejerskab: bfe_nummer (bigint), ejer_ejf_id (uuid), virkning_fra (timestamptz), ejer_navn (text), ejer_foedselsdato (date), ejer_cvr (text), ejer_type (text CHECK 'person'|'virksomhed'), ejerandel_taeller (int), ejerandel_naevner (int), status (text CHECK 'gældende'|'historisk'), virkning_til (timestamptz), sidst_opdateret (timestamptz).
 
-public.cvr_virksomhed: cvr (text PK), navn (text), branche_kode (text), virksomhedsform (text), stiftet (date), ophoert (date), ansatte (int), adresse_json (jsonb), sidst_opdateret (timestamptz). BEMÆRK: INGEN kommune_kode kolonne — brug adresse_json->'kommune'->>'kommuneKode'.
+public.cvr_virksomhed: cvr (text PK), navn (text), branche_kode (text), branche_tekst (text), virksomhedsform (text), stiftet (date), ophoert (date), ansatte_aar (int — IKKE ansatte!), adresse_json (jsonb), sidst_opdateret (timestamptz). BEMÆRK: INGEN kommune_kode kolonne — brug adresse_json->'kommune'->>'kommuneKode'. Ansatte-kolonnen hedder ansatte_aar (IKKE ansatte).
 
 public.vurdering_cache: bfe_nummer (bigint PK), vurderinger (jsonb), ejendomsvaerdi (bigint), grundvaerdi (bigint), vurderingsaar (int), benyttelseskode (text), grundskyldspromille (numeric), bebyggelsesprocent (numeric), fetched_at (timestamptz). KRITISK: vurdering_cache har INGEN kommune_kode kolonne! Du SKAL ALTID joine med bbr_ejendom_status via bfe_nummer for at få kommune: JOIN public.bbr_ejendom_status b ON b.bfe_nummer = v.bfe_nummer og så bruge b.kommune_kode.
 

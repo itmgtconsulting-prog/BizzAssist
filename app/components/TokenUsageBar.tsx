@@ -13,6 +13,7 @@
 'use client';
 
 import { useSubscription } from '@/app/context/SubscriptionContext';
+import { resolvePlan } from '@/app/lib/subscriptions';
 import { useMemo } from 'react';
 
 /**
@@ -44,9 +45,10 @@ export default function TokenUsageBar({
   const info = useMemo(() => {
     if (!subscription) return null;
     const used = subscription.tokensUsedThisMonth ?? 0;
-    const limit = subscription.aiTokensPerMonth ?? 0;
-    if (limit <= 0 && limit !== -1) return null;
-    const isUnlimited = limit === -1;
+    const plan = resolvePlan(subscription.planId);
+    const limit = plan.aiTokensPerMonth + (subscription.bonusTokens ?? 0);
+    if (limit <= 0 && plan.aiTokensPerMonth !== -1) return null;
+    const isUnlimited = plan.aiTokensPerMonth === -1;
     const pct = isUnlimited ? 0 : Math.min((used / limit) * 100, 100);
     return { used, limit, pct, isUnlimited };
   }, [subscription]);

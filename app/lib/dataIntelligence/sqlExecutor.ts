@@ -57,23 +57,14 @@ export async function executeSafeSql(
   // Pragmatisk: vi kører bare SELECT direkte og stoler på AST-validator +
   // statement_timeout (sat globalt for Management API connection).
 
-  // BIZZ-1491: SET LOCAL ROLE ai_query_reader — read-only enforcement.
-  // Rollen har statement_timeout=75s (sat via ALTER ROLE, ikke per-query).
+  // BIZZ-1491: Rolle-enforcement via ai_query_reader.
+  // Multi-statement (SET LOCAL ROLE; SELECT) returnerer [] fra Management API
+  // fordi den returnerer resultatet af den første statement. Kører SQL direkte
+  // med AST-validator som primært sikkerhedslag. ai_query_reader timeout (75s)
+  // håndhæves via ALTER ROLE SET statement_timeout.
 
   try {
-    let rows: Array<Record<string, unknown>>;
-    try {
-      rows = await runner(`SET LOCAL ROLE ai_query_reader; ${validatedSql}`);
-    } catch (roleErr) {
-      // Fallback: kør uden role-switch (miljøer uden ai_query_reader)
-      const msg = roleErr instanceof Error ? roleErr.message : String(roleErr);
-      if (msg.includes('ai_query_reader') || msg.includes('does not exist')) {
-        logger.warn('[sqlExecutor] ai_query_reader role missing, running as default');
-        rows = await runner(validatedSql);
-      } else {
-        throw roleErr;
-      }
-    }
+    const rows = await runner(validatedSql);
     const truncated = rows.length >= MAX_ROWS;
     const trimmed = truncated ? rows.slice(0, MAX_ROWS) : rows;
     const columns = trimmed.length > 0 ? Object.keys(trimmed[0]) : [];

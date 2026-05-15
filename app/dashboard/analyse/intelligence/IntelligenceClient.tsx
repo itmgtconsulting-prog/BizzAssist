@@ -186,7 +186,7 @@ export default function IntelligenceClient(): React.ReactElement {
       >
         Spring til indhold
       </a>
-      <main id="main" className="max-w-[1400px] mx-auto px-4 py-8">
+      <main id="main" className="w-full px-6 py-8">
         <header className="mb-8">
           <div className="flex items-center gap-3 mb-2">
             <Database className="w-7 h-7 text-emerald-400" aria-hidden />

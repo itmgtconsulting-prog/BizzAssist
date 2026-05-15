@@ -291,6 +291,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         policies: createdPolicies,
         policies_count: createdPolicies.length,
         gaps_count: totalGaps,
+        tokenUsage: result.tokenUsage ?? null,
       });
     }
 
@@ -435,6 +436,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       },
       coverages_count: coverages.length,
       gaps_count: detectedGaps.length,
+      tokenUsage: result.tokenUsage ?? null,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'unknown';

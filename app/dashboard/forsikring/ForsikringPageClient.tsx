@@ -36,6 +36,7 @@ import {
 import { useLanguage } from '@/app/context/LanguageContext';
 import { useSubscription } from '@/app/context/SubscriptionContext';
 import { translations } from '@/app/lib/translations';
+import TokenUsageBar from '@/app/components/TokenUsageBar';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -482,6 +483,7 @@ function AnalyseSection({
   onSagChange,
   onCustomerSelect,
   newDocumentIds,
+  addTokenUsage,
 }: {
   lang: string;
   policies: PolicyRow[];
@@ -496,6 +498,8 @@ function AnalyseSection({
   ) => void;
   /** BIZZ-1404: Document IDs fra nye uploads */
   newDocumentIds: string[];
+  /** BIZZ-1447: Token usage callback */
+  addTokenUsage: (tokens: number) => void;
 }) {
   const da = lang === 'da';
   const [query, setQuery] = useState('');
@@ -611,6 +615,18 @@ function AnalyseSection({
               body: JSON.stringify({ document_id: docId }),
             });
             if (!parseRes.ok) throw new Error('Parse failed');
+
+            // BIZZ-1447: Opdater token-forbrug i UI
+            try {
+              const parseData = await parseRes.json();
+              if (parseData.tokenUsage) {
+                const totalTokens =
+                  (parseData.tokenUsage.input ?? 0) + (parseData.tokenUsage.output ?? 0);
+                if (totalTokens > 0) addTokenUsage(totalTokens);
+              }
+            } catch {
+              /* non-critical */
+            }
 
             setWizardUploads((prev) =>
               prev.map((j) => (j.id === jobId ? { ...j, status: 'done', docId } : j))
@@ -1592,7 +1608,7 @@ export default function ForsikringPageClient(): React.ReactElement {
   const { lang } = useLanguage();
   const t = translations[lang].forsikring;
   const setAICtx = useSetAIPageContext();
-  const { isAdmin } = useSubscription();
+  const { isAdmin, addTokenUsage } = useSubscription();
   const [data, setData] = useState<ListResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1832,6 +1848,8 @@ export default function ForsikringPageClient(): React.ReactElement {
             {t.title}
           </h1>
           <p className="text-sm text-slate-400">{t.subtitle}</p>
+          {/* BIZZ-1447: Token-forbrug bar */}
+          <TokenUsageBar className="mt-2 max-w-xs" />
         </div>
         {/* BIZZ-1397: Nulstil alt — kun synlig for admin */}
         {isAdmin && (policies.length > 0 || documents.length > 0) && (
@@ -1878,6 +1896,7 @@ export default function ForsikringPageClient(): React.ReactElement {
         onSagChange={setActiveSagId}
         onCustomerSelect={setSelectedCustomer}
         newDocumentIds={newDocumentIds}
+        addTokenUsage={addTokenUsage}
       />
 
       {/* BIZZ-1404: Analyse-historik for valgt kunde */}

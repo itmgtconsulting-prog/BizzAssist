@@ -479,6 +479,79 @@ export const temporalCoverage: TopicBuilder = async (rpc) => {
 };
 
 // ============================================================
+// Master view topics (BIZZ-1479)
+// ============================================================
+
+/**
+ * Topic: Top kommuner efter gennemsnitlig ejendomsvurdering.
+ */
+export const topVurderingByMunicipality: TopicBuilder = async (rpc) => {
+  const sql = `
+    SELECT
+      m.kommune_kode::int AS kommune_kode,
+      m.kommunenavn,
+      AVG(m.ejendomsvaerdi)::bigint AS gns_vurdering,
+      COUNT(*)::bigint AS antal
+    FROM public.mv_ejendom_master m
+    WHERE m.ejendomsvaerdi IS NOT NULL AND m.kommune_kode IS NOT NULL
+    GROUP BY m.kommune_kode, m.kommunenavn
+    HAVING COUNT(*) >= 10
+    ORDER BY gns_vurdering DESC
+    LIMIT 50
+  `;
+  try {
+    const rows = await rpc(sql);
+    return rows.map((r) => ({
+      topic: 'top_vurdering_by_municipality',
+      topic_label_da: 'Gennemsnitsvurdering per kommune',
+      key: { kommune_kode: Number(r.kommune_kode) },
+      value: {
+        kommunenavn: String(r.kommunenavn ?? ''),
+        gns_vurdering: Number(r.gns_vurdering),
+        antal: Number(r.antal),
+      },
+      source_query: sql.trim(),
+    }));
+  } catch {
+    return [];
+  }
+};
+
+/**
+ * Topic: regnskabsstatistik — omsætning + egenkapital aggregater.
+ */
+export const regnskabSummary: TopicBuilder = async (rpc) => {
+  const sql = `
+    SELECT
+      COUNT(*)::bigint AS total_regnskaber,
+      COUNT(*) FILTER (WHERE omsaetning IS NOT NULL)::bigint AS med_omsaetning,
+      AVG(omsaetning) FILTER (WHERE omsaetning IS NOT NULL AND omsaetning > 0)::bigint AS gns_omsaetning,
+      COUNT(*) FILTER (WHERE egenkapital IS NOT NULL)::bigint AS med_egenkapital
+    FROM public.regnskab_cache
+  `;
+  try {
+    const rows = await rpc(sql);
+    const r = rows[0] ?? {};
+    return [
+      {
+        topic: 'regnskab_summary',
+        topic_label_da: 'Regnskabs-dækning og gennemsnit',
+        key: {},
+        value: {
+          total_regnskaber: Number(r.total_regnskaber ?? 0),
+          med_omsaetning: Number(r.med_omsaetning ?? 0),
+          gns_omsaetning: Number(r.gns_omsaetning ?? 0),
+          med_egenkapital: Number(r.med_egenkapital ?? 0),
+        },
+        source_query: sql.trim(),
+      },
+    ];
+  } catch {
+    return [];
+  }
+};
+
+// ============================================================
 // Topic registry
 // ============================================================
 
@@ -499,4 +572,6 @@ export const ALL_TOPICS: Array<{ name: string; build: TopicBuilder }> = [
   { name: 'ownership_by_type', build: ownershipChangesByType },
   { name: 'top_property_owner_companies', build: topPropertyOwnerCompanies },
   { name: 'property_count_by_municipality_bbr', build: propertyByMunicipalityBbr },
+  { name: 'top_vurdering_by_municipality', build: topVurderingByMunicipality },
+  { name: 'regnskab_summary', build: regnskabSummary },
 ];

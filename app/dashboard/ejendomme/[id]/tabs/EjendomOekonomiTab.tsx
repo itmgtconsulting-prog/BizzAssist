@@ -17,7 +17,9 @@
 'use client';
 
 import Link from 'next/link';
-import { ChevronRight, Scale, Sparkles, Landmark, TrendingUp } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import dynamic from 'next/dynamic';
+import { ChevronRight, Scale, Sparkles, Landmark, TrendingUp, BarChart3 } from 'lucide-react';
 // ForklarVurderingWidget fjernet — redundant med "Forklar vurdering" AI-knap
 import SektionLoader from '@/app/components/SektionLoader';
 import VurderingSammenligning from '@/app/components/ejendomme/VurderingSammenligning';
@@ -93,6 +95,8 @@ interface Props {
   postnr?: string | null;
   /** BIZZ-920: Kommunekode til krydsanalyse-widget */
   kommunekode?: string | null;
+  /** BIZZ-1497: BFE-nummer for prishistorik-hentning */
+  bfeNummer?: number | null;
   /** BIZZ-1078: Adresse for AI forklaring */
   adresse?: string;
   /** BIZZ-1078: Kommune */
@@ -106,6 +110,70 @@ interface Props {
 }
 
 /** Render Økonomi-fanen. Ren præsentations-komponent. */
+/** Lazy-loaded prishistorik chart. */
+const LazyPrisChart = dynamic(
+  () => import('@/app/dashboard/analyse/prisudvikling/PrisudviklingChart'),
+  { ssr: false }
+);
+
+/**
+ * BIZZ-1497: Prishistorik-sektion med m²-pris graf.
+ * Henter data fra /api/analyse/prisudvikling.
+ */
+function PrishistorikSektion({ bfe, lang }: { bfe: number; lang: string }) {
+  const da = lang === 'da';
+  const [data, setData] = useState<{
+    prishistorik: Array<{
+      overtagelsesdato: string | null;
+      ejer_navn: string | null;
+      kontant_koebesum: number | null;
+      i_alt_koebesum: number | null;
+      m2_pris: number | null;
+    }>;
+    kommuneGennemsnit: Array<{ kvartal: string; gns_m2_pris: number; antal: number }> | null;
+  } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/analyse/prisudvikling?bfe=${bfe}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.prishistorik?.length > 0) setData(json);
+      }
+    } catch {
+      /* non-critical */
+    }
+    setLoading(false);
+  }, [bfe]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  if (loading)
+    return (
+      <div className="mb-4">
+        <SectionTitle title={da ? 'Prishistorik' : 'Price history'} />
+        <SektionLoader label={da ? 'Henter prishistorik…' : 'Loading price history…'} rows={3} />
+      </div>
+    );
+  if (!data) return null;
+
+  return (
+    <div className="mb-4">
+      <div className="flex items-center gap-2 mb-1.5">
+        <BarChart3 className="w-4 h-4 text-emerald-400" aria-hidden />
+        <h3 className="text-white font-semibold text-sm">
+          {da ? 'Prishistorik' : 'Price history'}
+        </h3>
+      </div>
+      <LazyPrisChart prishistorik={data.prishistorik} kommuneGennemsnit={data.kommuneGennemsnit} />
+    </div>
+  );
+}
+
 export default function EjendomOekonomiTab(props: Props) {
   const {
     lang,
@@ -778,6 +846,9 @@ export default function EjendomOekonomiTab(props: Props) {
           lang={lang}
         />
       )}
+
+      {/* BIZZ-1497: Prishistorik graf fra ejerskifte_historik */}
+      {bfeNummer && <PrishistorikSektion bfe={bfeNummer} lang={lang} />}
 
       {/* BIZZ-920: Kommune-statistik fra materialized view */}
       {/* BIZZ-962: Boligmarked — salgspriser fra DST EJEN77 */}

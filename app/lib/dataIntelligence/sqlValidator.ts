@@ -31,6 +31,7 @@ export const WHITELISTED_TABLES = new Set([
   'public.vurdering_cache',
   'public.cvr_historik',
   'public.kommune_ref',
+  'public.tinglysning_cache',
   'dataintel.data_catalog',
   'dataintel.analytics_knowledge',
 ]);

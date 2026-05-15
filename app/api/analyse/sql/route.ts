@@ -44,6 +44,8 @@ interface ResponseBody {
   sql: string;
   /** Forklaring hvis AI ikke kunne generere SQL */
   explanation?: string;
+  /** Alternative spørgsmål AI foreslår når den ikke kan svare */
+  suggestions?: string[];
   columns: string[];
   rows: Array<Record<string, unknown>>;
   rowCount: number;
@@ -80,7 +82,7 @@ async function logAudit(
 async function generateSql(
   apiKey: string,
   prompt: string
-): Promise<{ sql: string; explanation?: string }> {
+): Promise<{ sql: string; explanation?: string; suggestions?: string[] }> {
   const client = new Anthropic({ apiKey });
   const systemPrompt = await buildSqlGenPrompt();
   const res = await client.messages.create(
@@ -100,9 +102,22 @@ async function generateSql(
     .join('')
     .trim();
 
-  // Check for FORKLARING: prefix
+  // Check for FORKLARING: prefix (med valgfri FORSLAG: linje)
   if (text.startsWith('FORKLARING:')) {
-    return { sql: '', explanation: text.slice('FORKLARING:'.length).trim() };
+    const lines = text
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+    const explanationLine = lines[0].slice('FORKLARING:'.length).trim();
+    const suggestionsLine = lines.find((l) => l.startsWith('FORSLAG:'));
+    const suggestions = suggestionsLine
+      ? suggestionsLine
+          .slice('FORSLAG:'.length)
+          .split('|')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : undefined;
+    return { sql: '', explanation: explanationLine, suggestions };
   }
 
   // Strip markdown code-blocks hvis Claude indsætter dem alligevel
@@ -169,7 +184,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  // Hvis AI gav forklaring i stedet for SQL → returnér det
+  // Hvis AI gav forklaring i stedet for SQL → returnér det med forslag
   if (generated.explanation) {
     await logAudit(
       auth.tenantId,
@@ -186,6 +201,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       ok: true,
       sql: '',
       explanation: generated.explanation,
+      suggestions: generated.suggestions,
       columns: [],
       rows: [],
       rowCount: 0,

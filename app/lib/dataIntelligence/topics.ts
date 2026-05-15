@@ -278,6 +278,123 @@ export const dataCoverageEnergy: TopicBuilder = async (rpc) => {
 };
 
 // ============================================================
+// Ejerskifter (salgs-proxy)
+// ============================================================
+
+/**
+ * Topic: ejerskifter per måned seneste 24 måneder.
+ * Tæller nye gældende ejerskaber som "ejerskifte".
+ */
+export const ownershipChangesByMonth: TopicBuilder = async (rpc) => {
+  const sql = `
+    SELECT
+      to_char(date_trunc('month', virkning_fra), 'YYYY-MM') AS maaned,
+      COUNT(*)::bigint AS antal_ejerskifter,
+      COUNT(DISTINCT bfe_nummer)::bigint AS unikke_ejendomme
+    FROM public.ejf_ejerskab
+    WHERE status = 'gældende'
+      AND virkning_fra >= (CURRENT_DATE - INTERVAL '24 months')
+      AND virkning_fra IS NOT NULL
+    GROUP BY maaned
+    ORDER BY maaned DESC
+  `;
+  const rows = await rpc(sql);
+  return rows.map((r) => ({
+    topic: 'ownership_changes_by_month',
+    topic_label_da: 'Ejerskifter per måned',
+    key: { maaned: String(r.maaned) },
+    value: {
+      antal_ejerskifter: Number(r.antal_ejerskifter),
+      unikke_ejendomme: Number(r.unikke_ejendomme),
+    },
+    source_query: sql.trim(),
+  }));
+};
+
+/**
+ * Topic: ejerskifter per ejer-type (person vs virksomhed).
+ */
+export const ownershipChangesByType: TopicBuilder = async (rpc) => {
+  const sql = `
+    SELECT
+      ejer_type,
+      COUNT(*)::bigint AS gaeldende,
+      COUNT(*) FILTER (WHERE virkning_til IS NOT NULL)::bigint AS historiske
+    FROM public.ejf_ejerskab
+    WHERE ejer_type IS NOT NULL
+    GROUP BY ejer_type
+  `;
+  const rows = await rpc(sql);
+  return rows.map((r) => ({
+    topic: 'ownership_by_type',
+    topic_label_da: 'Ejerskaber per ejer-type',
+    key: { ejer_type: String(r.ejer_type) },
+    value: {
+      gaeldende: Number(r.gaeldende),
+      historiske: Number(r.historiske),
+    },
+    source_query: sql.trim(),
+  }));
+};
+
+/**
+ * Topic: top 50 virksomheder med flest ejendomme (gældende ejerskaber).
+ */
+export const topPropertyOwnerCompanies: TopicBuilder = async (rpc) => {
+  const sql = `
+    SELECT
+      ejer_cvr,
+      ejer_navn,
+      COUNT(DISTINCT bfe_nummer)::bigint AS antal_ejendomme
+    FROM public.ejf_ejerskab
+    WHERE ejer_cvr IS NOT NULL
+      AND status = 'gældende'
+    GROUP BY ejer_cvr, ejer_navn
+    ORDER BY antal_ejendomme DESC
+    LIMIT 50
+  `;
+  const rows = await rpc(sql);
+  return rows.map((r) => ({
+    topic: 'top_property_owner_companies',
+    topic_label_da: 'Top virksomheder efter antal ejendomme',
+    key: { ejer_cvr: String(r.ejer_cvr) },
+    value: {
+      ejer_navn: String(r.ejer_navn ?? ''),
+      antal_ejendomme: Number(r.antal_ejendomme),
+    },
+    source_query: sql.trim(),
+  }));
+};
+
+/**
+ * Topic: ejendomme per kommune (direkte fra bbr_ejendom_status, fallback for tom MV).
+ */
+export const propertyByMunicipalityBbr: TopicBuilder = async (rpc) => {
+  const sql = `
+    SELECT
+      b.kommune_kode::int AS kommune_kode,
+      k.kommunenavn,
+      COUNT(*)::bigint AS total
+    FROM public.bbr_ejendom_status b
+    JOIN public.kommune_ref k ON k.kommune_kode = b.kommune_kode
+    WHERE b.is_udfaset = false AND b.kommune_kode IS NOT NULL
+    GROUP BY b.kommune_kode, k.kommunenavn
+    ORDER BY total DESC
+  `;
+  const rows = await rpc(sql);
+  return rows.map((r) => ({
+    topic: 'property_count_by_municipality_bbr',
+    topic_label_da: 'Ejendomme per kommune (BBR)',
+    key: { kommune_kode: Number(r.kommune_kode) },
+    value: {
+      total: Number(r.total),
+      kommunenavn: String(r.kommunenavn ?? ''),
+    },
+    source_query: sql.trim(),
+  }));
+};
+
+// ============================================================
 // Misc
 // ============================================================
 
@@ -378,4 +495,8 @@ export const ALL_TOPICS: Array<{ name: string; build: TopicBuilder }> = [
   { name: 'ownership_distribution', build: ownershipDistribution },
   { name: 'recent_company_registrations', build: recentRegistrations },
   { name: 'temporal_coverage', build: temporalCoverage },
+  { name: 'ownership_changes_by_month', build: ownershipChangesByMonth },
+  { name: 'ownership_by_type', build: ownershipChangesByType },
+  { name: 'top_property_owner_companies', build: topPropertyOwnerCompanies },
+  { name: 'property_count_by_municipality_bbr', build: propertyByMunicipalityBbr },
 ];

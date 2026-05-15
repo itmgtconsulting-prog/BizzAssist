@@ -1060,14 +1060,14 @@ function AnalyseSection({
                   <button
                     type="button"
                     onClick={() => setSelectedDocIds(new Set(unique.map((d) => d.id)))}
-                    className="text-slate-500 hover:text-blue-400 transition-colors"
+                    className="px-2 py-1 text-xs bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 rounded transition-colors"
                   >
                     {da ? 'Vælg alle' : 'Select all'}
                   </button>
                   <button
                     type="button"
                     onClick={() => setSelectedDocIds(new Set())}
-                    className="text-slate-500 hover:text-red-400 transition-colors"
+                    className="px-2 py-1 text-xs bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/30 rounded transition-colors"
                   >
                     {da ? 'Fravælg alle' : 'Deselect all'}
                   </button>

@@ -63,7 +63,7 @@ public.cvr_virksomhed: cvr (text PK), navn (text), branche_kode (text), virksomh
 
 public.vurdering_cache: bfe_nummer (bigint PK), vurderinger (jsonb), ejendomsvaerdi (bigint), grundvaerdi (bigint), vurderingsaar (int), benyttelseskode (text), grundskyldspromille (numeric), bebyggelsesprocent (numeric), fetched_at (timestamptz). KRITISK: vurdering_cache har INGEN kommune_kode kolonne! Du SKAL ALTID joine med bbr_ejendom_status via bfe_nummer for at få kommune: JOIN public.bbr_ejendom_status b ON b.bfe_nummer = v.bfe_nummer og så bruge b.kommune_kode.
 
-public.regnskab_cache: cvr (text PK), years (jsonb — array af regnskabsår-objekter), es_timestamp (text), fetched_at (timestamptz). BEMÆRK: INGEN navn/omsætning-kolonner direkte — regnskabstal er INDE I years JSONB-arrayet. For omsætning: years->0->>'omsaetning'. Join med cvr_virksomhed for virksomhedsnavne.
+public.regnskab_cache: cvr (text PK), years (jsonb), seneste_aar (int), omsaetning (bigint — i t.DKK), bruttofortjeneste (bigint), resultat_foer_skat (bigint), aarsresultat (bigint), egenkapital (bigint), aktiver_i_alt (bigint), gaeld_i_alt (bigint), selskabskapital (bigint), antal_ansatte (int). BEMÆRK: De normaliserede kolonner (omsaetning osv.) er fra seneste regnskabsår. Join med cvr_virksomhed for virksomhedsnavne. Brug IKKE years JSONB direkte — brug de flade kolonner.
 
 public.tinglysning_cache: bfe_nummer (bigint PK), data (jsonb — ejendomsresumé fra Tinglysning), fetched_at (timestamptz), stale_after (timestamptz).
 
@@ -71,6 +71,24 @@ public.ejerskifte_historik: id (bigserial PK), bfe_nummer (bigint), overtagelses
   BEMÆRK: Denne tabel indeholder FAKTISKE KØBESUMMER fra Tinglysning. Brug denne til salgspris-spørgsmål! kontant_koebesum er den kontante købesum, i_alt_koebesum er totalprisen inkl. overtagelse af gæld. Ikke alle rækker har priser (berigelse pågår).
 
 public.kommune_ref: kommune_kode (int PK), kommunenavn (text), region (text).
+
+MASTER VIEWS (pre-joined, brug disse for performance):
+
+public.mv_ejerskab_beriget: bfe_nummer, ejer_navn, ejer_cvr, ejer_type, ejerandel_pct, virkning_fra, status, virksomhed_navn, virksomhedsform, branche_tekst, branche_kode, virksomhed_status, person_enhedsnummer. Kun gældende ejerskaber. Brug denne i stedet for ejf_ejerskab JOIN cvr_virksomhed.
+
+public.mv_virksomhed_struktur: ejer_cvr, ejer_navn, ejer_form, ejer_branche, ejer_status, ejet_cvr, ejet_navn, ejet_form, ejet_branche, ejet_status, ejerandel_min, ejerandel_max, ejerandel_pct. Kun gældende ejerskaber. Brug for virksomhedshierarki/koncern-spørgsmål.
+
+public.mv_deltager_beriget: virksomhed_cvr, deltager_enhedsnummer, deltager_navn, relation_type, ejer_cvr, ejerandel_pct, antal_aktive_selskaber, role_typer. Kun gældende relationer. Brug for person→virksomhed relationer.
+
+public.mv_ejendom_master: bfe_nummer, kommune_kode, kommunenavn, region, boligareal_m2, erhvervsareal_m2, grundareal, opfoerelsesaar, anvendelse_kode, anvendelse_tekst, anvendelse_kategori, energimaerke, antal_etager, antal_boligenheder, tagmateriale, opvarmningsform, ejerforholdskode, ejendomsvaerdi, grundvaerdi, vurderingsaar. Brug denne for ejendomsanalyser med vurdering — den er hurtigere end bbr_ejendom_status JOIN vurdering_cache.
+
+TINGLYSNING TABELLER:
+
+public.tinglysning_adkomst: id, bfe_nummer, ejer_navn, ejer_cvr, ejer_type, overtagelsesdato, tinglysningsdato, koebsaftale_dato, kontant_koebesum (DKK), i_alt_koebesum (DKK), dokument_id. Normaliserede skøder med salgspriser.
+
+public.tinglysning_haeftelser: id, bfe_nummer, type, kreditor_navn, kreditor_cvr, hovedstol (DKK), restgaeld (DKK), rente_pct, tinglysningsdato, dokument_id. Normaliserede pantbreve/lån.
+
+public.tinglysning_servitutter: id, bfe_nummer, type, beskrivelse, tinglysningsdato, dokument_id. Normaliserede servitutter/byrder.
 
 WHITELISTEDE TABELLER:
 ${Array.from(WHITELISTED_TABLES).join(', ')}
@@ -123,7 +141,7 @@ Spørgsmål: Top 10 kommuner efter gennemsnitlig ejendomsvurdering
 SQL: SELECT b.kommune_kode, k.kommunenavn, AVG(v.ejendomsvaerdi)::bigint AS gennemsnit, COUNT(*) AS antal FROM public.vurdering_cache v JOIN public.bbr_ejendom_status b ON b.bfe_nummer = v.bfe_nummer JOIN public.kommune_ref k ON k.kommune_kode = b.kommune_kode WHERE v.ejendomsvaerdi IS NOT NULL GROUP BY b.kommune_kode, k.kommunenavn ORDER BY gennemsnit DESC LIMIT 10
 
 Spørgsmål: Top 10 virksomheder efter omsætning
-SQL: SELECT v.cvr, v.navn, (r.years->0->>'omsaetning')::bigint AS omsaetning FROM public.regnskab_cache r JOIN public.cvr_virksomhed v ON v.cvr = r.cvr WHERE r.years IS NOT NULL AND jsonb_array_length(r.years) > 0 AND (r.years->0->>'omsaetning') IS NOT NULL ORDER BY omsaetning DESC LIMIT 10
+SQL: SELECT v.cvr, v.navn, r.omsaetning, r.seneste_aar FROM public.regnskab_cache r JOIN public.cvr_virksomhed v ON v.cvr = r.cvr WHERE r.omsaetning IS NOT NULL ORDER BY r.omsaetning DESC LIMIT 10
 
 Spørgsmål: Hvor mange ejerskifter skete i januar 2026?
 SQL: SELECT COUNT(*) AS antal_ejerskifter FROM public.ejf_ejerskab WHERE status = 'gældende' AND virkning_fra >= '2026-01-01' AND virkning_fra < '2026-02-01' LIMIT 1

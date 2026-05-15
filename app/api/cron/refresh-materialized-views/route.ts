@@ -28,11 +28,21 @@ function verifyCronSecret(request: NextRequest): boolean {
   return safeCompare(auth, `Bearer ${secret}`);
 }
 
+/**
+ * Rækkefølge er vigtig:
+ *   1. Base-views først (mv_analyse_*) — bruges af andre views/queries
+ *   2. Nye master views (118-121) — afhænger af base-tabeller
+ *   3. Portefølje/statistik sidst — afhænger af master views
+ */
 const VIEWS = [
-  'mv_virksomhed_portefolje',
-  'mv_kommune_statistik',
   'mv_analyse_ejendom',
   'mv_analyse_virksomhed',
+  'mv_ejendom_master',
+  'mv_ejerskab_beriget',
+  'mv_virksomhed_struktur',
+  'mv_deltager_beriget',
+  'mv_virksomhed_portefolje',
+  'mv_kommune_statistik',
 ];
 
 export async function GET(request: NextRequest): Promise<NextResponse> {

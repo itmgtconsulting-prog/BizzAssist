@@ -2762,15 +2762,28 @@ function DiagramForce({
               />
               <text
                 x={x + w / 2}
-                y={y + 18}
+                y={y + 14}
                 textAnchor="middle"
                 fill="rgba(165,180,200,0.95)"
-                fontSize="11"
+                fontSize="10"
                 fontWeight="600"
                 className="pointer-events-none"
               >
                 {node.label}
               </text>
+              {/* BIZZ-1504: Vis preview af de første 2 adresser */}
+              {node.overflowItems.slice(0, 2).map((item, idx) => (
+                <text
+                  key={idx}
+                  x={x + 8}
+                  y={y + 26 + idx * 10}
+                  fill="rgba(148,163,184,0.7)"
+                  fontSize="7"
+                  className="pointer-events-none"
+                >
+                  {(item.label ?? '').slice(0, 30)}
+                </text>
+              ))}
               {node.overflowItems.length > 0 && (
                 <g
                   className="cursor-pointer"

@@ -108,7 +108,16 @@ function scoreEjendom(aktiv: Aktiv, policy: ForsikringPolicy): number {
   const aktivAddr = normalize(aktiv.adresse || aktiv.label);
   const policyAddr = normalize(policy.property_address) || normalize(policy.policyholder_address);
 
-  if (!aktivAddr || !policyAddr) return 0;
+  if (!aktivAddr || !policyAddr) {
+    // BIZZ-1488: CVR-baseret fallback — policyholder tegner forsikring for sine ejendomme
+    const ejerCvr = (aktiv.rawData as Record<string, unknown> | undefined)?.ejer_cvr as
+      | string
+      | undefined;
+    if (ejerCvr && policy.policyholder_cvr && ejerCvr === policy.policyholder_cvr) {
+      return 55; // Over MATCH_THRESHOLD (50) — svag men gyldig match
+    }
+    return 0;
+  }
 
   // Eksakt adresse-match
   if (aktivAddr === policyAddr) return 90;

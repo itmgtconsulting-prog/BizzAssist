@@ -436,6 +436,33 @@ async function _hentDawaBfeDataImpl(bfe: number): Promise<DawaBfeAdresse> {
          eller fra jordstykker[0].husnumre[0].id (fallback) */
       const dawaId = bel.id ?? json.jordstykker?.[0]?.husnumre?.[0]?.id ?? null;
 
+      let etage = bel.etage ?? null;
+      let doer = bel.dør ?? null;
+
+      // BIZZ-1444: For ejerlejligheder uden etage/dør i beliggenhedsadresse —
+      // hent via DAR enhedsadresser (DAWA /adgangsadresser/{id}/enhedsadresser)
+      if (!etage && dawaId && json.ejendomstype === 'Ejerlejlighed') {
+        try {
+          const enhedRes = await fetchDawa(
+            `${DAWA_BASE_URL}/adgangsadresser/${dawaId}/enhedsadresser`,
+            { signal: AbortSignal.timeout(5000) },
+            { caller: 'ejendomme-by-owner.enhedsadresse' }
+          );
+          if (enhedRes.ok) {
+            const enheder = (await enhedRes.json()) as Array<{
+              etage?: string;
+              dør?: string;
+            }>;
+            if (enheder.length > 0) {
+              etage = enheder[0].etage ?? null;
+              doer = enheder[0].dør ?? null;
+            }
+          }
+        } catch {
+          /* non-critical */
+        }
+      }
+
       return {
         adresse: adresseStr,
         postnr: bel.postnr ?? null,
@@ -444,8 +471,8 @@ async function _hentDawaBfeDataImpl(bfe: number): Promise<DawaBfeAdresse> {
         kommuneKode: bel.kommunekode ?? null,
         ejendomstype: json.ejendomstype ?? null,
         dawaId: dawaId ?? null,
-        etage: bel.etage ?? null,
-        doer: bel.dør ?? null,
+        etage,
+        doer,
       };
     }
 

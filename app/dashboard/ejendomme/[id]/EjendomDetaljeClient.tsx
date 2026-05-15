@@ -1646,6 +1646,7 @@ export default function EjendomDetaljeClient({
                 boligareal={bbrData?.bbr?.[0]?.samletBoligareal ?? null}
                 grundareal={dawaJordstykke?.areal_m2 ?? null}
                 opfoerelsesaar={bbrData?.bbr?.[0]?.opfoerelsesaar ?? null}
+                bfeNummer={bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? null}
               />
             )}
 

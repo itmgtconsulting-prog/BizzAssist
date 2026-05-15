@@ -19,6 +19,8 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import HaeftelserSektion from '@/app/components/ejendomme/HaeftelserSektion';
+import ServitutterSektion from '@/app/components/ejendomme/ServitutterSektion';
 import Link from 'next/link';
 import {
   Building2,
@@ -1656,6 +1658,14 @@ export default function TinglysningTab({
           </>
         )}
       </div>
+
+      {/* BIZZ-1498 + BIZZ-1501: Normaliserede hæftelser og servitutter fra lokale tabeller */}
+      {bfe && (
+        <div className="space-y-3 mt-4">
+          <HaeftelserSektion bfe={bfe} lang={lang} />
+          <ServitutterSektion bfe={bfe} lang={lang} />
+        </div>
+      )}
     </div>
   );
 }

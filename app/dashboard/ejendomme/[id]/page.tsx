@@ -52,6 +52,31 @@ export default async function EjendommeDetailPage({
 
   let prefetched: PrefetchedPropertyData | undefined;
 
+  // BIZZ-1505: BFE-nummer → resolve til DAWA UUID via lokal DB og redirect
+  if (!erDawaId(id) && /^\d+$/.test(id)) {
+    try {
+      const { createClient } = await import('@supabase/supabase-js');
+      const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+      const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+      if (supabaseUrl && serviceKey) {
+        const admin = createClient(supabaseUrl, serviceKey);
+        const { data: bbrRow } = await admin
+          .from('bbr_ejendom_status')
+          .select('adgangsadresse_id')
+          .eq('bfe_nummer', Number(id))
+          .not('adgangsadresse_id', 'is', null)
+          .limit(1)
+          .single();
+        if (bbrRow?.adgangsadresse_id) {
+          const { redirect } = await import('next/navigation');
+          redirect(`/dashboard/ejendomme/${bbrRow.adgangsadresse_id}`);
+        }
+      }
+    } catch {
+      // Fallback: render med BFE som ID
+    }
+  }
+
   if (erDawaId(id)) {
     try {
       // Step 1: Fetch DAWA address server-side

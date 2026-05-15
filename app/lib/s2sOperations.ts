@@ -256,3 +256,161 @@ function parseHaeftelser(xml: string): HaeftelseRow[] {
     };
   });
 }
+
+// ── Summarisk (BIZZ-1511) ──
+
+/**
+ * Hent ejendomsresumé via EjendomSummariskHent (XML API).
+ * Alternativ til REST /ejdsummarisk — returnerer rå XML.
+ *
+ * @param bfe - BFE-nummer
+ */
+export async function fetchSummariskByBfe(bfe: number): Promise<string | null> {
+  try {
+    const mat = await lookupMatrikel(bfe);
+    const xml = buildRequest('EjendomSummariskHent', buildEjendomIdentifikator(bfe, mat));
+    return await callS2S('EjendomSummariskHent', xml);
+  } catch (err) {
+    logger.warn('[s2sOps] summarisk failed BFE', bfe, err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+// ── Seneste Ændring (BIZZ-1513) ──
+
+/**
+ * Hent seneste ændringstidspunkt for et tinglysningsobjekt.
+ *
+ * @param bfe - BFE-nummer
+ * @returns ISO timestamp eller null
+ */
+export async function fetchSenesteAendring(bfe: number): Promise<string | null> {
+  try {
+    const mat = await lookupMatrikel(bfe);
+    const xml = buildRequest(
+      'SenesteAendringTinglysningsobjektHent',
+      buildEjendomIdentifikator(bfe, mat)
+    );
+    const response = await callS2S('SenesteAendringTinglysningsobjektHent', xml);
+    const dato = response.match(/SenesteAendringDato[^>]*>([^<]+)/)?.[1] ?? null;
+    return dato;
+  } catch (err) {
+    logger.warn(
+      '[s2sOps] senesteAendring failed BFE',
+      bfe,
+      err instanceof Error ? err.message : err
+    );
+    return null;
+  }
+}
+
+// ── Ændrede Tinglysningsobjekter (BIZZ-1514) ──
+
+/** Shape af et ændret tinglysningsobjekt. */
+export interface AendretObjekt {
+  bfe: number;
+  aendringsDato: string | null;
+}
+
+/**
+ * Hent ændrede tinglysningsobjekter i et datointerval.
+ *
+ * @param fraDate - ISO dato (YYYY-MM-DD)
+ * @param tilDate - ISO dato
+ */
+export async function fetchAendredeTinglysningsobjekter(
+  fraDate: string,
+  tilDate: string
+): Promise<AendretObjekt[]> {
+  try {
+    const inner =
+      `<model:AendringsPeriode>` +
+      `<model:FraDato>${fraDate}T00:00:00.000Z</model:FraDato>` +
+      `<model:TilDato>${tilDate}T23:59:59.999Z</model:TilDato>` +
+      `</model:AendringsPeriode>`;
+    const xml = buildRequest('AendredeTinglysningsobjekterHent', inner);
+    const response = await callS2S('AendredeTinglysningsobjekterHent', xml, { timeoutMs: 90_000 });
+
+    const entries = [
+      ...response.matchAll(
+        /AendretTinglysningsobjekt>([\s\S]*?)<\/[^:]*:?AendretTinglysningsobjekt>/g
+      ),
+    ];
+    return entries
+      .map(([, entry]) => ({
+        bfe: parseInt(entry.match(/BestemtFastEjendomNummer[^>]*>(\d+)/)?.[1] ?? '0', 10),
+        aendringsDato: entry.match(/AendringsDato[^>]*>([^<]+)/)?.[1]?.split(/[+T]/)[0] ?? null,
+      }))
+      .filter((r) => r.bfe > 0);
+  } catch (err) {
+    logger.warn('[s2sOps] aendrede failed:', err instanceof Error ? err.message : err);
+    return [];
+  }
+}
+
+// ── Ejendom Søg (BIZZ-1515) ──
+
+/** Shape af et søgeresultat. */
+export interface EjendomSoegResultat {
+  bfe: number;
+  adresse: string | null;
+  matrikel: string | null;
+}
+
+/**
+ * Søg ejendom via adresse, matrikel eller ejer.
+ *
+ * @param searchText - Søgetekst
+ */
+export async function soegEjendom(searchText: string): Promise<EjendomSoegResultat[]> {
+  try {
+    const inner = `<model:SoegeTekst>${searchText}</model:SoegeTekst>`;
+    const xml = buildRequest('EjendomSoeg', inner);
+    const response = await callS2S('EjendomSoeg', xml);
+
+    const entries = [
+      ...response.matchAll(/EjendomSoegResultat>([\s\S]*?)<\/[^:]*:?EjendomSoegResultat>/g),
+    ];
+    return entries
+      .map(([, entry]) => ({
+        bfe: parseInt(entry.match(/BestemtFastEjendomNummer[^>]*>(\d+)/)?.[1] ?? '0', 10),
+        adresse: entry.match(/Adresse[^>]*>([^<]+)/)?.[1] ?? null,
+        matrikel: entry.match(/Matrikelnummer[^>]*>([^<]+)/)?.[1] ?? null,
+      }))
+      .filter((r) => r.bfe > 0);
+  } catch (err) {
+    logger.warn('[s2sOps] soegEjendom failed:', err instanceof Error ? err.message : err);
+    return [];
+  }
+}
+
+// ── Virksomhed Søg (BIZZ-1516) ──
+
+/**
+ * Søg virksomhed i Tinglysning via CVR.
+ *
+ * @param cvr - CVR-nummer
+ */
+export async function soegVirksomhed(cvr: string): Promise<EjendomSoegResultat[]> {
+  try {
+    const inner = `<model:VirksomhedCVRNummer>${cvr}</model:VirksomhedCVRNummer>`;
+    const xml = buildRequest('VirksomhedSoeg', inner);
+    const response = await callS2S('VirksomhedSoeg', xml);
+
+    const entries = [
+      ...response.matchAll(
+        /(?:Ejendom|Tinglysningsobjekt)>([\s\S]*?)<\/[^:]*:?(?:Ejendom|Tinglysningsobjekt)>/g
+      ),
+    ];
+    return entries
+      .map(([, entry]) => ({
+        bfe: parseInt(entry.match(/BestemtFastEjendomNummer[^>]*>(\d+)/)?.[1] ?? '0', 10),
+        adresse: entry.match(/Adresse[^>]*>([^<]+)/)?.[1] ?? null,
+        matrikel: entry.match(/Matrikelnummer[^>]*>([^<]+)/)?.[1] ?? null,
+      }))
+      .filter((r) => r.bfe > 0);
+  } catch (err) {
+    logger.warn('[s2sOps] soegVirksomhed failed:', err instanceof Error ? err.message : err);
+    return [];
+  }
+}

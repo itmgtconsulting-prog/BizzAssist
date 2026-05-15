@@ -21,6 +21,7 @@ import {
   Building2,
   LayoutGrid,
   Wrench,
+  Database,
 } from 'lucide-react';
 import { getEnabledModules } from '@/app/lib/analyseModules';
 
@@ -92,6 +93,27 @@ export default function AnalyseLandingPage() {
               Skriv en forespørgsel på dansk — AI bygger analyse med grafer og tabeller. Kan
               analysere BBR-ejendomsdata (areal, energimærke, opførelsesår, kommune) og
               virksomhedsregnskaber (omsætning, resultat, egenkapital).
+            </p>
+          </Link>
+
+          {/* BIZZ-1431: Data Intelligence (Smart SQL) */}
+          <Link
+            href="/dashboard/analyse/intelligence"
+            className="group bg-slate-800/40 border border-slate-700/40 hover:border-emerald-500/40 rounded-2xl p-5 transition-all hover:bg-slate-800/60"
+          >
+            <div className="flex items-center gap-3 mb-2">
+              <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400 group-hover:scale-105 transition-transform">
+                <Database size={18} />
+              </div>
+              <h3 className="text-sm font-semibold text-white">Data Intelligence</h3>
+              <span className="ml-auto text-[10px] font-medium uppercase tracking-wider text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">
+                Ny
+              </span>
+            </div>
+            <p className="text-slate-400 text-xs leading-relaxed">
+              Stil ethvert spørgsmål på dansk — AI genererer sikker PostgreSQL mod vores fulde
+              datasæt (2,2M virksomheder, 7,6M ejerskaber). Auto-genereret + valideret +
+              audit-loggét.
             </p>
           </Link>
         </div>

@@ -690,7 +690,7 @@ export async function darAutocomplete(q: string): Promise<DawaAutocompleteResult
       variants.flatMap((variant) => [
         darQuery<{ DAR_Husnummer: { nodes: DarHusnummerRaw[] } }>(`{
           DAR_Husnummer(
-            first: 6
+            first: 10
             virkningstid: "${ts}"
             registreringstid: "${ts}"
             where: { adgangsadressebetegnelse: { startsWith: "${variant}" } }
@@ -717,7 +717,7 @@ export async function darAutocomplete(q: string): Promise<DawaAutocompleteResult
           };
         }>(`{
           DAR_Adresse(
-            first: 6
+            first: 10
             virkningstid: "${ts}"
             registreringstid: "${ts}"
             where: { adressebetegnelse: { startsWith: "${variant}" } }

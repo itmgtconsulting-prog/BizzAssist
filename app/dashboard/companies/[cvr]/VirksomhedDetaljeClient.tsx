@@ -234,6 +234,9 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   const relatedFetchedRef = useRef(false);
   const relatedAbortRef = useRef<AbortController | null>(null);
 
+  /** BIZZ-1310: Datterselskab-CVR'er fra ejerskabs-cache (supplement til CVR ES) */
+  const [ejerskabDatterCvrs, setEjerskabDatterCvrs] = useState<string[]>([]);
+
   /** Ejerkæde opad (fra RelationsDiagram) — deles mellem diagram og Gruppe-tab */
   const [ownerChainShared, setOwnerChainShared] = useState<OwnerChainNode[]>([]);
   const ownerChainFetchedTopRef = useRef(false);
@@ -831,6 +834,20 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
       setRelatedCompanies(json.virksomheder ?? []);
       if (typeof json.parentEnhedsNummer === 'number')
         setParentEnhedsNummer(json.parentEnhedsNummer);
+
+      // BIZZ-1310: Supplement — hent datterselskab-CVR'er fra ejerskabs-cache
+      // (fanger selskaber som CVR ES-søgning misser, fx holding-strukturer)
+      try {
+        const ejRes = await fetch(`/api/diagram/subsidiaries?cvr=${encodeURIComponent(cvr)}`, {
+          signal: controller.signal,
+        });
+        if (ejRes.ok) {
+          const ejData = await ejRes.json();
+          setEjerskabDatterCvrs((ejData.cvrs ?? []) as string[]);
+        }
+      } catch {
+        /* non-fatal */
+      }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       setRelatedCompanies([]);
@@ -1193,12 +1210,15 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   useEffect(() => {
     if (aktivTab !== 'properties' && aktivTab !== 'diagram' && aktivTab !== 'overview') return;
 
-    /* Saml CVR-numre: hovedvirksomhed + aktive datterselskaber */
+    /* Saml CVR-numre: hovedvirksomhed + aktive datterselskaber.
+     * BIZZ-1310: Inkludér også datterselskaber fra ejerskabs-cache
+     * (cvr_virksomhed_ejerskab) da CVR ES-søgning kan misse nogle. */
     const cvrList = [
       cvr,
       ...relatedCompanies.filter((v) => v.aktiv).map((v) => String(v.cvr).padStart(8, '0')),
+      ...ejerskabDatterCvrs,
     ];
-    const uniqueCvrs = [...new Set(cvrList)].slice(0, 30);
+    const uniqueCvrs = [...new Set(cvrList)].slice(0, 50);
 
     /* BIZZ-265: For ENK virksomheder — find ejerens enhedsNummer for personligt ejede ejendomme */
     const ownerEnhedsNumre: string[] = [];

@@ -26,7 +26,7 @@ import type { EjendomApiResponse } from '@/app/api/ejendom/[id]/route';
 import type { VurderingData } from '@/app/api/vurdering/route';
 import type { MatrikelEjendom } from '@/app/api/matrikel/route';
 import { formatBenyttelseOgByggeaar } from '@/app/lib/benyttelseskoder';
-import { isUdfasetStatusLabel } from '@/app/lib/bbrKoder';
+import { isUdfasetStatusLabel, isAktivStatusLabel } from '@/app/lib/bbrKoder';
 import FoelgTooltip from '@/app/components/FoelgTooltip';
 import DataFreshnessBadge from '@/app/components/DataFreshnessBadge';
 import FloodRiskBadge from '@/app/components/ejendomme/FloodRiskBadge';
@@ -55,6 +55,8 @@ export interface EjendomHeaderProps {
   esrNummer: string | null;
   erKolonihave: boolean;
   strukturTree: import('@/app/api/ejendom-struktur/route').StrukturNode | null;
+  /** BIZZ-1333: True mens strukturdata hentes */
+  strukturLoader?: boolean;
   erFulgt: boolean;
   foelgToggling: boolean;
   visFoelgTooltip: boolean;
@@ -105,6 +107,7 @@ export default function EjendomHeader(props: EjendomHeaderProps) {
     esrNummer,
     erKolonihave,
     strukturTree,
+    strukturLoader,
     erFulgt,
     foelgToggling,
     visFoelgTooltip,
@@ -306,9 +309,7 @@ export default function EjendomHeader(props: EjendomHeaderProps) {
               );
             }
             // 2. Udled fra BBR bygningsanvendelser
-            const bygninger = bbrData?.bbr?.filter(
-              (b) => !isUdfasetStatusLabel(b.status) && b.status !== 'Ikke opført'
-            );
+            const bygninger = bbrData?.bbr?.filter((b) => isAktivStatusLabel(b.status));
             if (!bygninger?.length) return null;
             let harBolig = false;
             let harErhverv = false;
@@ -520,6 +521,7 @@ export default function EjendomHeader(props: EjendomHeaderProps) {
         dawaAdresse={dawaAdresse}
         bbrData={bbrData}
         strukturTree={strukturTree}
+        strukturLoader={strukturLoader}
         lejligheder={lejligheder}
       />
 
@@ -615,15 +617,18 @@ function SoesterEnheder({
   dawaAdresse,
   bbrData,
   strukturTree,
+  strukturLoader,
   lejligheder,
 }: {
   da: boolean;
   dawaAdresse: DawaAdresse;
   bbrData: EjendomApiResponse | null;
   strukturTree: import('@/app/api/ejendom-struktur/route').StrukturNode | null;
+  strukturLoader?: boolean;
   lejligheder: import('@/app/api/ejerlejligheder/route').Ejerlejlighed[] | null;
 }) {
-  if (strukturTree) return null;
+  // BIZZ-1333: Skjul også mens strukturtræ loader — forhindrer flash
+  if (strukturTree || strukturLoader) return null;
   if (!dawaAdresse?.etage) return null;
   if (!lejligheder || lejligheder.length <= 1) return null;
 

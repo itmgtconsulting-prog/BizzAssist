@@ -173,14 +173,13 @@ export async function extractTextFromBuffer(
         break;
       }
       case 'pdf': {
-        // pdf-parse v3+ exports PDFParse class — instantiate with
-        // Uint8Array (pdfjs-dist rejects Buffer), load, then getText.
-        const { PDFParse } = await import('pdf-parse');
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const parser = new PDFParse(new Uint8Array(buffer)) as any;
-        await parser.load();
-        const pdfResult = await parser.getText();
-        text = String(pdfResult.text ?? '');
+        // BIZZ-1380: Bruger unpdf i stedet for pdf-parse — serverless-
+        // kompatibel (ingen pdfjs-dist worker, ingen DOMMatrix krav).
+        const { extractText: extractPdfText } = await import('unpdf');
+        const pdfResult = await extractPdfText(new Uint8Array(buffer));
+        text = Array.isArray(pdfResult.text)
+          ? pdfResult.text.join('\n\n')
+          : String(pdfResult.text ?? '');
         break;
       }
       case 'eml': {

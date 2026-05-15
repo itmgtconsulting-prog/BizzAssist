@@ -404,10 +404,15 @@ export default function ChatPageClient() {
 
   // Adoptér messages fra context når de opdateres (API-fetch eller
   // Realtime/polling). Overskriv ikke under streaming.
+  // BIZZ-FIX: Tilføj length-guard så context ikke overskriver det lokale
+  // assistant-svar der netop er streamed ind (race condition: isLoadingLocal
+  // flipper til false → effect fyrer → chatCtx.messages mangler assistant-svaret).
   useEffect(() => {
     if (isLoadingLocal) return;
-    setMessages(chatCtx.messages);
-  }, [chatCtx.messages, isLoadingLocal]);
+    if (chatCtx.messages.length > messages.length) {
+      setMessages(chatCtx.messages);
+    }
+  }, [chatCtx.messages, isLoadingLocal, messages.length]);
 
   // ── Detect streaming-finish (drawer or local) ──────────────────────────
   // Bruges til at rydde streamText, ikke længere til at re-reade lokal data.
@@ -779,6 +784,9 @@ export default function ChatPageClient() {
         // BIZZ-839: Update local state if same conversation OR stateless (convId null)
         if (!convId || activeId === convId) {
           setMessages(finalMessages);
+          // Sync context så polling/drawer har det fulde svar og
+          // sync-effecten ikke overskriver med stale data.
+          chatCtx.setMessages(finalMessages);
         }
       }
     } catch (err) {

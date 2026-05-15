@@ -72,10 +72,27 @@ interface QueryPlan {
  *
  * @returns System prompt string
  */
-function buildSystemPrompt(): string {
+async function buildSystemPrompt(): Promise<string> {
   const schema = generateSchemaDescription();
   const tableNames = WHITELISTED_TABLES.map((t) => t.table).join(', ');
-  return `Du er en data-analytiker for BizzAssist. Brugeren stiller spørgsmål på dansk.
+
+  // BIZZ-1411: Inject data catalog så Claude kender faktisk null-rate,
+  // distinct-values og top-værdier per kolonne. Graceful degradation hvis
+  // catalog ikke kan hentes.
+  let catalogSection = '';
+  try {
+    const { fetchCatalog } = await import('@/app/lib/dataIntelligence/fetchCatalog');
+    const { formatCatalogForPrompt } =
+      await import('@/app/lib/dataIntelligence/formatCatalogForPrompt');
+    const { rows, computedAt } = await fetchCatalog();
+    if (rows.length > 0) {
+      catalogSection = `\n\n${formatCatalogForPrompt(rows, computedAt ?? undefined)}\n`;
+    }
+  } catch {
+    /* Non-fatal — fortsæt uden catalog */
+  }
+
+  return `Du er en data-analytiker for BizzAssist. Brugeren stiller spørgsmål på dansk.${catalogSection}
 
 Du skal returnere en STRUKTURERET query plan som JSON — IKKE rå SQL.
 
@@ -192,7 +209,7 @@ export async function POST(request: NextRequest) {
           {
             model: 'claude-sonnet-4-6',
             max_tokens: 2048,
-            system: buildSystemPrompt(),
+            system: await buildSystemPrompt(),
             messages: [{ role: 'user', content: userQuery }],
           },
           { signal: AbortSignal.timeout(15000) }
@@ -266,8 +283,9 @@ export async function POST(request: NextRequest) {
         const tableName = plan.table.includes('.') ? plan.table.split('.')[1] : plan.table;
 
         // BIZZ-1283: Runtime schema-check — verificer at tabellen eksisterer
+        // BIZZ-1314: Prøv on-demand refresh af materialized views hvis de er tomme
         {
-          const { error: probeErr } = await admin
+          const { error: probeErr, count: probeCount } = await admin
             .from(tableName)
             .select('*', { count: 'exact', head: true })
             .limit(0);
@@ -281,6 +299,27 @@ export async function POST(request: NextRequest) {
             sse('[DONE]');
             controller.close();
             return;
+          }
+          // BIZZ-1314: Materialized view eksisterer men er tom (WITH NO DATA) — refresh on-demand
+          if (tableName.startsWith('mv_') && (probeCount === 0 || probeCount === null)) {
+            logger.log(`[analyse/query] View ${tableName} er tom — forsøger on-demand refresh`);
+            sse(JSON.stringify({ status: `Opdaterer ${tableName}…` }));
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const { error: refreshErr } = await (admin as any).rpc('refresh_materialized_view', {
+                view_name: tableName,
+              });
+              if (refreshErr) {
+                logger.warn(
+                  `[analyse/query] On-demand refresh af ${tableName} fejlede:`,
+                  refreshErr.message
+                );
+              } else {
+                logger.log(`[analyse/query] On-demand refresh af ${tableName} OK`);
+              }
+            } catch (refreshErr) {
+              logger.warn(`[analyse/query] On-demand refresh exception:`, refreshErr);
+            }
           }
         }
 

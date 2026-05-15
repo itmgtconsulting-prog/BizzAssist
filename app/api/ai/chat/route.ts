@@ -132,6 +132,18 @@ const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'hent_ejendom_komplet',
+    description:
+      'Hent komplet ejendomsdata i ÉT kald: BBR (areal, opførelsesår, anvendelse, materialer), vurdering (ejendomsværdi, grundværdi), kommune, og ejer. Meget hurtigere end separate hent_bbr_data + hent_vurdering + hent_ejerskab. Brug denne som førstevalg når brugeren spørger om en ejendom via BFE-nummer.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        bfeNummer: { type: 'string', description: 'BFE-nummer (Bestemt Fast Ejendom)' },
+      },
+      required: ['bfeNummer'],
+    },
+  },
+  {
     name: 'hent_bbr_data',
     description:
       'Hent BBR-bygningsdata (opførelsesår, areal, materialer, etager, opvarmning, supplerende varme, vandforsyning, bevaringsværdighed, enheder med boligtype og energiforsyning) for en ejendom via DAWA-adresse-ID. Returnerer også ejendomsrelationer med BFE-nummer, samt hierarki-chain (BIZZ-895: SFE → hovedejendom → leaf-BFE) når ejendommen er del af en samlet fast ejendom. Felterne er: ejendomstype (sfe/bygning/ejerlejlighed), hovedejendomOpdeltIEjerlejligheder, moderBfe, hierarkiChain (array fra leaf til SFE med niveau-label).',
@@ -629,6 +641,43 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['format', 'mode', 'title'],
     },
   },
+  {
+    // BIZZ-1420: Slå pre-beregnede aggregater op direkte uden DB-query.
+    // Topics i app/lib/dataIntelligence/topics.ts, refreshes nightly via
+    // /api/cron/refresh-knowledge-cache.
+    name: 'hent_analytics_knowledge',
+    description:
+      'Slå et pre-beregnet aggregat op i knowledge cache (dataintel.analytics_knowledge). Brug dette FØR du laver databaseforespørgsler — det er hurtigt og dækker de mest stillede spørgsmål. ' +
+      'Tilgængelige topics: ' +
+      'company_count_by_municipality (key: {kommune_kode: int}), ' +
+      'company_count_by_industry (key: {branche_kode: string}), ' +
+      'company_status_distribution (key: {}), ' +
+      'property_count_by_type (key: {anvendelseskode: string}), ' +
+      'property_count_by_municipality (key: {kommune_kode: int}), ' +
+      'avg_valuation_by_property_type (key: {anvendelseskode: string}), ' +
+      'data_coverage_bbr (key: {} eller {kommune_kode: int}), ' +
+      'data_coverage_valuation (key: {vurderingsaar: int}), ' +
+      'data_coverage_energy (key: {energimaerke: string}), ' +
+      'ownership_distribution (key: {}), ' +
+      'recent_company_registrations (key: {maaned: "YYYY-MM"}), ' +
+      'temporal_coverage (key: {table: string, column: string}). ' +
+      'Hvis key er udeladt returneres alle rækker for topic (op til 500). Output inkluderer computed_at så bruger kan se freshness.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        topic: {
+          type: 'string',
+          description: 'Topic-navn — se liste i tool-beskrivelsen',
+        },
+        key: {
+          type: 'object',
+          description:
+            'Valgfrit JSON-objekt der filtrerer på key-felter (fx {kommune_kode: 101}). Udelad for at få alle facts.',
+        },
+      },
+      required: ['topic'],
+    },
+  },
 ];
 
 // ─── Tool labels (for status messages) ──────────────────────────────────────
@@ -636,6 +685,7 @@ const TOOLS: Anthropic.Tool[] = [
 const TOOL_STATUS: Record<string, string> = {
   dawa_adresse_soeg: 'Søger adresse…',
   dawa_adresse_detaljer: 'Henter adressedetaljer…',
+  hent_ejendom_komplet: 'Henter komplet ejendomsdata…',
   hent_bbr_data: 'Henter BBR-bygningsdata…',
   hent_vurdering: 'Henter ejendomsvurdering…',
   hent_ejerskab: 'Henter ejerskabsdata…',
@@ -1092,6 +1142,35 @@ async function executeTool(
           ejerlavnavn: d.ejerlavsnavn,
           bfeNummer,
         };
+        break;
+      }
+
+      case 'hent_ejendom_komplet': {
+        // BIZZ-1478: Single query against mv_ejendom_master for complete property data
+        const bfe = Number(input.bfeNummer);
+        if (!Number.isFinite(bfe) || bfe <= 0) {
+          result = { error: 'Ugyldigt BFE-nummer' };
+          break;
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: ejData } = await (admin as any)
+          .from('mv_ejendom_master')
+          .select('*')
+          .eq('bfe_nummer', bfe)
+          .limit(1)
+          .single();
+        if (!ejData) {
+          result = { error: 'Ejendom ikke fundet i mv_ejendom_master', bfeNummer: bfe };
+          break;
+        }
+        // Berig med ejerskab fra mv_ejerskab_beriget
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: ejere } = await (admin as any)
+          .from('mv_ejerskab_beriget')
+          .select('ejer_navn, ejer_cvr, ejer_type, ejerandel_pct, virksomhed_navn, virksomhedsform')
+          .eq('bfe_nummer', bfe)
+          .limit(10);
+        result = { ...ejData, ejere: ejere ?? [] };
         break;
       }
 
@@ -2306,6 +2385,31 @@ async function executeTool(
         break;
       }
 
+      case 'hent_analytics_knowledge': {
+        // BIZZ-1420: Slå pre-beregnede facts op i knowledge cache.
+        const topic = (input as { topic?: string }).topic;
+        const key = (input as { key?: Record<string, unknown> }).key;
+        if (!topic) {
+          result = { fejl: 'topic er påkrævet' };
+          break;
+        }
+        const { queryKnowledge } = await import('@/app/lib/dataIntelligence/fetchKnowledge');
+        const facts = await queryKnowledge(topic, key);
+        if (facts.length === 0) {
+          result = {
+            fejl: `Ingen facts fundet for topic="${topic}"${key ? ` med key=${JSON.stringify(key)}` : ''}. Måske mangler topic eller cron har ikke kørt endnu.`,
+          };
+        } else {
+          result = {
+            topic,
+            antal: facts.length,
+            computed_at: facts[0]?.computed_at_iso,
+            facts: facts.map((f) => ({ key: f.key, value: f.value })),
+          };
+        }
+        break;
+      }
+
       default:
         return { fejl: `Ukendt tool: ${name}` };
     }
@@ -2864,6 +2968,39 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   // Build system prompt — append knowledge base, recent entities and page context if available
   let systemPrompt = SYSTEM_PROMPT;
+
+  // BIZZ-1410: Inject data catalog (Fase 1, Lag 1 — pre-beregnet metadata om
+  // whitelistede tabeller). Caches 5 min in-memory; nightly refresh via
+  // /api/cron/refresh-data-catalog. Graceful degradation: ved fejl fortsætter
+  // AI uden catalog.
+  try {
+    const { fetchCatalog } = await import('@/app/lib/dataIntelligence/fetchCatalog');
+    const { formatCatalogForPrompt } =
+      await import('@/app/lib/dataIntelligence/formatCatalogForPrompt');
+    const { rows, computedAt } = await fetchCatalog();
+    if (rows.length > 0) {
+      const catalogMd = formatCatalogForPrompt(rows, computedAt ?? undefined);
+      systemPrompt += `\n\n${catalogMd}`;
+    }
+  } catch (catalogErr) {
+    logger.warn('[ai/chat] data catalog fetch failed (non-fatal):', catalogErr);
+  }
+
+  // BIZZ-1421: Inject executive knowledge summary (Fase 2, Lag 2). Top-level
+  // facts om datasættets størrelse + dækning — giver AI et instant svar på
+  // "hvor meget data har vi?" type spørgsmål uden tool-kald.
+  try {
+    const { fetchExecutiveFacts, formatExecutiveSummary } =
+      await import('@/app/lib/dataIntelligence/fetchKnowledge');
+    const facts = await fetchExecutiveFacts();
+    const summary = formatExecutiveSummary(facts);
+    if (summary) {
+      systemPrompt += `\n\n${summary}`;
+    }
+  } catch (knowledgeErr) {
+    logger.warn('[ai/chat] executive summary fetch failed (non-fatal):', knowledgeErr);
+  }
+
   // Inject knowledge base first so it forms stable background knowledge
   if (knowledgeContext) {
     systemPrompt += `\n\n${knowledgeContext}`;
@@ -2872,7 +3009,13 @@ export async function POST(request: NextRequest): Promise<Response> {
     systemPrompt += `\n\n${recentEntitiesContext}`;
   }
   if (context) {
-    systemPrompt += `\n\n## Aktuel kontekst\nBrugeren kigger på: ${context}`;
+    // BIZZ-1401: Begræns kontekst for at undgå Anthropic token-overflow
+    const MAX_CONTEXT = 40_000;
+    const trimmedContext =
+      context.length > MAX_CONTEXT
+        ? context.slice(0, MAX_CONTEXT) + '\n[Kontekst afkortet]'
+        : context;
+    systemPrompt += `\n\n## Aktuel kontekst\nBrugeren kigger på: ${trimmedContext}`;
   }
 
   // BIZZ-816: injicér user's domain-templates så AI kender deres

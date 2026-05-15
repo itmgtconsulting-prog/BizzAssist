@@ -27,6 +27,50 @@ import type { Ejerlejlighed } from '@/app/api/ejerlejligheder/route';
 import type { StrukturNode } from '@/app/api/ejendom-struktur/route';
 import EjendomStrukturTree from '@/app/components/ejendomme/EjendomStrukturTree';
 
+/**
+ * Skeleton-placeholder for ejendomsstruktur-træet.
+ * Matcher den endelige layoutstruktur (SFE → Hovedejendom → Ejerlejligheder)
+ * med pulserende animation for at signalere at data hentes.
+ */
+function StrukturSkeleton() {
+  return (
+    <div
+      className="space-y-3"
+      role="progressbar"
+      aria-label="Henter ejendomsstruktur"
+      aria-busy="true"
+    >
+      <div className="h-5 w-40 bg-slate-700/40 rounded animate-pulse" />
+      {/* SFE-niveau */}
+      <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3 space-y-2">
+        <div className="flex items-center gap-2">
+          <div className="w-6 h-6 bg-amber-500/10 rounded animate-pulse" />
+          <div className="h-4 w-32 bg-slate-700/40 rounded animate-pulse" />
+          <div className="h-3 w-12 bg-amber-500/10 rounded animate-pulse ml-auto" />
+        </div>
+        {/* Hovedejendom */}
+        <div className="ml-6 space-y-2 border-l border-slate-700/30 pl-3">
+          <div className="flex items-center gap-2">
+            <div className="w-5 h-5 bg-amber-500/10 rounded animate-pulse" />
+            <div className="h-3.5 w-48 bg-slate-700/40 rounded animate-pulse" />
+          </div>
+          {/* Ejerlejligheder */}
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="ml-5 flex items-center gap-2 py-1">
+              <div className="w-4 h-4 bg-emerald-500/10 rounded animate-pulse" />
+              <div
+                className="h-3 bg-slate-700/40 rounded animate-pulse"
+                style={{ width: `${140 + i * 20}px` }}
+              />
+              <div className="h-2.5 w-16 bg-slate-700/30 rounded animate-pulse ml-auto" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Simpel sektionsoverskrift — matcher parentens SectionTitle-pattern. */
 function SectionTitle({ title }: { title: string }) {
   return (
@@ -55,6 +99,8 @@ interface Props {
   strukturLoader?: boolean;
   /** Aktuel BFE for denne ejendom */
   currentBfe?: number;
+  /** BIZZ-1288: DAWA-ID for den aktuelle ejendom — fallback for "(denne)" match */
+  currentDawaId?: string | null;
   /** BBR enheder — bruges til at berige med værelser */
   bbrEnheder?: Array<{ etage: string | null; doer: string | null; vaerelser: number | null }>;
   /** BIZZ-1143: Ejer-detaljer fra /api/ejerskab/chain (prefetched af parent) */
@@ -79,6 +125,7 @@ export default function EjendomEjerforholdTab({
   strukturTree,
   strukturLoader,
   currentBfe,
+  currentDawaId,
   bbrEnheder,
   chainEjerDetaljer = [],
   chainLoader = false,
@@ -117,18 +164,16 @@ export default function EjendomEjerforholdTab({
         bbrData &&
         (() => {
           const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+          // BIZZ-1308: Brug ejendomsrelationer BFE (altid korrekt for den aktuelle adresse).
+          // ejerlejlighedBfe kan pege på en forkert lejlighed (fx Plads 10 i stedet for 18).
           const bfeForDiagram =
-            bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
+            bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? bbrData?.ejerlejlighedBfe;
 
           // Hovedejendom opdelt i EL — vis strukturtræ med ejer-data
           if (erModer) {
-            // BIZZ-1149: Loading-bar mens strukturtræ/lejligheder hentes
+            // BIZZ-1289: Skeleton mens strukturtræ/lejligheder hentes
             if (strukturLoader || lejlighederLoader) {
-              return (
-                <TabLoadingSpinner
-                  ariaLabel={da ? 'Henter ejendomsstruktur' : 'Loading property structure'}
-                />
-              );
+              return <StrukturSkeleton />;
             }
             if (strukturTree && lejligheder && lejligheder.length > 0) {
               /**
@@ -234,6 +279,7 @@ export default function EjendomEjerforholdTab({
                     tree={enriched}
                     lang={lang}
                     currentBfe={currentBfe}
+                    currentDawaId={currentDawaId}
                     showOwnership
                   />
                 </div>
@@ -241,11 +287,7 @@ export default function EjendomEjerforholdTab({
             }
             // Fallback: loading / empty state
             if (strukturLoader || lejlighederLoader) {
-              return (
-                <TabLoadingSpinner
-                  ariaLabel={da ? 'Henter ejerskabsdata' : 'Loading ownership data'}
-                />
-              );
+              return <StrukturSkeleton />;
             }
             return (
               <div className="space-y-4">
@@ -297,11 +339,8 @@ export default function EjendomEjerforholdTab({
                 />
               )}
               {/* Loading-bar mens strukturtræ hentes */}
-              {(strukturLoader || lejlighederLoader) && !strukturTree && (
-                <TabLoadingSpinner
-                  ariaLabel={da ? 'Henter ejendomsstruktur' : 'Loading property structure'}
-                />
-              )}
+              {/* BIZZ-1289: Skeleton mens strukturtræ hentes */}
+              {(strukturLoader || lejlighederLoader) && !strukturTree && <StrukturSkeleton />}
               {/* Strukturtræ under diagrammet for ejerlejligheder —
                   giver kontekst om hvor lejligheden hører til i hierarkiet */}
               {strukturTree &&
@@ -388,6 +427,7 @@ export default function EjendomEjerforholdTab({
                       tree={enrichNode(strukturTree)}
                       lang={lang}
                       currentBfe={currentBfe}
+                      currentDawaId={currentDawaId}
                       showOwnership
                     />
                   );

@@ -252,7 +252,8 @@ export default function AnalyseDataClient() {
   const [error, setError] = useState<string | null>(null);
   const [chartType, setChartType] = useState<string>('bar');
   const [showSql, setShowSql] = useState(false);
-  const [showPivot, setShowPivot] = useState(false);
+  // BIZZ-1313: Start med pivot åben — viser matrix + data side-by-side
+  const [showPivot, setShowPivot] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
 
   /**

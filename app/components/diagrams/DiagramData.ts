@@ -110,7 +110,7 @@ export interface DiagramNode {
    */
   layoutSection?: 'role';
   /** Overflow items when a parent has >MAX children — shown as expandable list */
-  overflowItems?: { label: string; cvr?: number; link?: string }[];
+  overflowItems?: { label: string; cvr?: number; link?: string; bfeNummer?: number }[];
 }
 
 /** An edge in the diagram graph */

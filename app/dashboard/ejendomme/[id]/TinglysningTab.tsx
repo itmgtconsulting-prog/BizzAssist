@@ -580,9 +580,15 @@ export default function TinglysningTab({
                     <span className="text-xs text-slate-400 tabular-nums whitespace-nowrap">
                       {formatDato(String(first.tinglysningsdato ?? first.dato ?? ''))}
                     </span>
-                    {/* Collapsed: show document type label, not individual owner name */}
+                    {/* BIZZ-1306: Vis ejernavne i collapsed tilstand */}
                     <span className="text-sm text-slate-200 truncate">
-                      {typeLabel || (da ? 'Adkomst' : 'Title')}
+                      {group.map((e) => String(e.navn)).join(' / ')}
+                      {group[0]?.andel
+                        ? ` (${group
+                            .map((e) => (e.andel ? String(e.andel) : ''))
+                            .filter(Boolean)
+                            .join(' / ')})`
+                        : ''}
                     </span>
                     <span className="text-xs text-slate-300 tabular-nums text-right">
                       {first.iAltKoebesum != null && Number(first.iAltKoebesum) > 0
@@ -649,8 +655,17 @@ export default function TinglysningTab({
                             </p>
                             {e.cvr ? (
                               <Link
-                                href={`/dashboard/virksomheder/${String(e.cvr)}`}
+                                href={`/dashboard/companies/${String(e.cvr)}`}
                                 className="text-blue-300 hover:text-blue-200 text-xs font-medium flex items-center gap-1"
+                              >
+                                <Building2 size={11} className="text-blue-400" />
+                                {String(e.navn)}
+                                <ChevronRight size={11} />
+                              </Link>
+                            ) : e.enhedsNummer ? (
+                              <Link
+                                href={`/dashboard/owners/${String(e.enhedsNummer)}`}
+                                className="text-purple-300 hover:text-purple-200 text-xs font-medium flex items-center gap-1"
                               >
                                 {String(e.navn)}
                                 <ChevronRight size={11} />

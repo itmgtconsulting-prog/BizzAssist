@@ -1039,10 +1039,15 @@ function DiagramForce({
       const allParentDepths = parents
         .filter((pid) => depths.has(pid))
         .map((pid) => depths.get(pid)!);
-      const bestParentDepths =
-        companyParentDepths.length > 0 ? companyParentDepths : allParentDepths;
-      if (bestParentDepths.length > 0) {
-        depths.set(node.id, Math.min(...bestParentDepths) + 0.5);
+      if (companyParentDepths.length > 0) {
+        // Virksomheds-ejet ejendom: placer under virksomheden
+        depths.set(node.id, Math.min(...companyParentDepths) + 0.5);
+      } else if (allParentDepths.length > 0) {
+        // BIZZ-1286: Personligt ejet ejendom — placer på eget niveau UNDER personen.
+        // Bruger personDepth + 1.5 i stedet for + 0.5 for at adskille
+        // personlige ejendomme fra person-noden (undgår overlap).
+        const personParentD = Math.min(...allParentDepths);
+        depths.set(node.id, personParentD + 1.5);
       }
     }
 
@@ -2346,8 +2351,8 @@ function DiagramForce({
             ? 'Træk noder · Hold og træk for panorering · Dobbeltklik for zoom'
             : 'Drag nodes · Hold & drag to pan · Double-click to zoom'}
         </span>
-        {/* BIZZ-451: Toggle property nodes */}
-        {propertyCount > 0 && (
+        {/* BIZZ-451+1320: Toggle property nodes — vis altid */}
+        {
           <button
             onClick={() => {
               setShowProperties((s) => !s);
@@ -2379,9 +2384,9 @@ function DiagramForce({
                 ? `Ejendomme (${propertyCount})`
                 : `Properties (${propertyCount})`}
           </button>
-        )}
-        {/* BIZZ-1004: Toggle personligt ejede ejendomme — kun på virksomhedsdiagram */}
-        {defaultShowProperties && personalPropNodeIds.size > 0 && (
+        }
+        {/* BIZZ-1004+1316: Toggle personligt ejede ejendomme — vis altid på virksomhedsdiagram */}
+        {defaultShowProperties && (
           <button
             onClick={() => {
               setShowPersonalProps((s) => !s);
@@ -2611,13 +2616,20 @@ function DiagramForce({
               fill="none"
               stroke={strokeColor}
               strokeWidth={
-                isCrossOwnership ? 1.25 : isCoOwnerEdge ? 1.5 : isPropertyEdge ? 1.25 : 2.25
+                // BIZZ-1285: personallyOwned edges bruger tynd linje som property-edges
+                isCrossOwnership
+                  ? 1.25
+                  : isCoOwnerEdge
+                    ? 1.5
+                    : isPropertyEdge || edge.personallyOwned
+                      ? 1.25
+                      : 2.25
               }
               strokeDasharray={dashArray}
             />
             <polygon
               points={
-                isPropertyEdge || isCrossOwnership
+                isPropertyEdge || isCrossOwnership || edge.personallyOwned
                   ? `${ex},${ey} ${ex - 3.5},${ey - 7} ${ex + 3.5},${ey - 7}`
                   : `${ex},${ey} ${ex - 5},${ey - 9} ${ex + 5},${ey - 9}`
               }

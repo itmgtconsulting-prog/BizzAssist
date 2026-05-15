@@ -33,7 +33,7 @@ import {
 const PropertyMap = dynamic(/* mapbox-gl */ () => import('@/app/components/ejendomme/PropertyMap'), { ssr: false, loading: () => (<div className="w-full h-64 bg-slate-800/50 rounded-xl animate-pulse flex items-center justify-center"><span className="text-slate-500 text-sm">Indlæser kort...</span></div>) });
 import { erDawaId, type DawaAdresse, type DawaJordstykke } from '@/app/lib/dawa';
 import { benyttelseskodeTilBoligtype } from '@/app/lib/benyttelseskoder';
-import { isUdfasetStatusLabel } from '@/app/lib/bbrKoder';
+import { isAktivStatusLabel } from '@/app/lib/bbrKoder';
 import type { EjendomApiResponse, LiveBBRBygning } from '@/app/api/ejendom/[id]/route';
 import type { CVRVirksomhed, CVRResponse } from '@/app/api/cvr/route';
 import type { VurderingData, VurderingResponse } from '@/app/api/vurdering/route';
@@ -170,13 +170,28 @@ export default function EjendomDetaljeClient({
    * Erstatter Tailwind `hidden xl:flex` som Turbopack ikke genererer korrekt
    * ved client-side navigation (FOUC i dev-mode).
    */
-  const [visKort, setVisKort] = useState(true);
+  // BIZZ-1284: Kort deferred — starter lukket og åbner efter idle/timeout.
+  // Eliminerer Mapbox GL JS (~200KB) + tile-fetch fra critical render path.
+  // BIZZ-1284 iter 2: Timeout øget fra 800→2000ms så overblik-tab og data
+  // renderes færdigt inden Mapbox blokerer main thread med tile-loading.
+  const [visKort, setVisKort] = useState(false);
   useEffect(() => {
     const mq = window.matchMedia('(min-width: 900px)');
-    setVisKort(mq.matches);
+    const show = () => {
+      if (mq.matches) setVisKort(true);
+    };
+    const idleId =
+      typeof requestIdleCallback !== 'undefined'
+        ? requestIdleCallback(show, { timeout: 2500 })
+        : undefined;
+    const fallbackId = idleId == null ? setTimeout(show, 2000) : undefined;
     const handler = (e: MediaQueryListEvent) => setVisKort(e.matches);
     mq.addEventListener('change', handler);
-    return () => mq.removeEventListener('change', handler);
+    return () => {
+      mq.removeEventListener('change', handler);
+      if (idleId != null) cancelIdleCallback(idleId);
+      if (fallbackId != null) clearTimeout(fallbackId);
+    };
   }, []);
 
   /**
@@ -303,23 +318,37 @@ export default function EjendomDetaljeClient({
   const [strukturLoader, setStrukturLoader] = useState(false);
 
   /** Ejendomsvurderingsdata fra Datafordeler — null = ikke hentet endnu */
-  const [vurdering, setVurdering] = useState<VurderingData | null>(null);
+  const [vurdering, setVurdering] = useState<VurderingData | null>(
+    prefetched?.vurderingData?.vurdering ?? null
+  );
   /** Alle vurderinger fra Datafordeler — bruges til historiktabel */
-  const [alleVurderinger, setAlleVurderinger] = useState<VurderingData[]>([]);
+  const [alleVurderinger, setAlleVurderinger] = useState<VurderingData[]>(
+    prefetched?.vurderingData?.alle ?? []
+  );
   /** BIZZ-494: Fradrag for forbedringer (vej/kloak) — vises under Grundværdi i Økonomi-tab */
-  const [vurFradrag, setVurFradrag] = useState<VurderingResponse['fradrag']>(null);
+  const [vurFradrag, setVurFradrag] = useState<VurderingResponse['fradrag']>(
+    prefetched?.vurderingData?.fradrag ?? null
+  );
   /** BIZZ-493: Ejerboligfordeling — vises som kort i Økonomi-tab for ejerlejlighedskomplekser */
-  const [vurFordeling, setVurFordeling] = useState<VurderingResponse['fordeling']>([]);
+  const [vurFordeling, setVurFordeling] = useState<VurderingResponse['fordeling']>(
+    prefetched?.vurderingData?.fordeling ?? []
+  );
   /** BIZZ-492: Grundværdispecifikation — nedbrydning af grundværdiberegning */
   const [vurGrundvaerdispec, setVurGrundvaerdispec] = useState<
     VurderingResponse['grundvaerdispec']
-  >([]);
+  >(prefetched?.vurderingData?.grundvaerdispec ?? []);
   /** BIZZ-491: Skattefritagelser for nyeste vurdering */
-  const [vurFritagelser, setVurFritagelser] = useState<VurderingResponse['fritagelser']>([]);
+  const [vurFritagelser, setVurFritagelser] = useState<VurderingResponse['fritagelser']>(
+    prefetched?.vurderingData?.fritagelser ?? []
+  );
   /** BIZZ-490: Loftansættelse (grundskatteloft, ESL §45 4,75%-loft) — vises i SKAT-tab */
-  const [vurLoft, setVurLoft] = useState<VurderingResponse['loft']>([]);
-  /** True mens vurderingsdata hentes — starter som true når prefetch giver BBR data med det samme */
-  const [vurderingLoader, setVurderingLoader] = useState(!!prefetched?.bbrData);
+  const [vurLoft, setVurLoft] = useState<VurderingResponse['loft']>(
+    prefetched?.vurderingData?.loft ?? []
+  );
+  /** True mens vurderingsdata hentes — false når prefetched vurdering er tilgængelig */
+  const [vurderingLoader, setVurderingLoader] = useState(
+    !!prefetched?.bbrData && !prefetched?.vurderingData
+  );
   /** True = vis fuld vurderingshistorik-tabel */
   const [visVurderingHistorik, setVisVurderingHistorik] = useState(false);
 
@@ -471,14 +500,25 @@ export default function EjendomDetaljeClient({
         }
       : undefined;
 
-    const aktiveBygninger = bbrData?.bbr?.filter((b) => !isUdfasetStatusLabel(b.status));
-    const ejendomBBR = aktiveBygninger
+    // BIZZ-1304: whitelist — kun bygninger med kendt aktiv status (ekskluderer null/"Ukendt (!)")
+    const aktiveBygninger = bbrData?.bbr?.filter((b) => isAktivStatusLabel(b.status));
+    // BIZZ-1303: Sortér efter opførelsesår (ældste først) — header viser den ældste
+    // bygnings opførelsesår (originalbyggeri), ikke den nyeste (tilbygning/ombygning)
+    const sorteretBygninger = aktiveBygninger
+      ? [...aktiveBygninger].sort((a, b) => (a.opfoerelsesaar ?? 9999) - (b.opfoerelsesaar ?? 9999))
+      : undefined;
+    // BIZZ-1303: Brug størst bygning til areal (hovedbygning, ikke garage/udhus)
+    const stoersteBygning = sorteretBygninger
+      ? [...sorteretBygninger].sort(
+          (a, b) => (b.samletBygningsareal ?? 0) - (a.samletBygningsareal ?? 0)
+        )[0]
+      : undefined;
+    const ejendomBBR = sorteretBygninger
       ? {
-          antalBygninger: aktiveBygninger.length,
-          samletAreal:
-            aktiveBygninger.reduce((sum, b) => sum + (b.samletBygningsareal ?? 0), 0) || null,
-          opfoerelsesaar: aktiveBygninger[0]?.opfoerelsesaar ?? null,
-          anvendelse: aktiveBygninger[0]?.anvendelse ?? null,
+          antalBygninger: sorteretBygninger.length,
+          samletAreal: stoersteBygning?.samletBygningsareal ?? null,
+          opfoerelsesaar: sorteretBygninger[0]?.opfoerelsesaar ?? null,
+          anvendelse: stoersteBygning?.anvendelse ?? null,
         }
       : undefined;
 
@@ -518,7 +558,8 @@ export default function EjendomDetaljeClient({
    * re-renders — without this the inline .filter() would create a new array each time.
    */
   const aktiveBygningPunkter = useMemo(
-    () => bbrData?.bygningPunkter?.filter((p) => !isUdfasetStatusLabel(p.status)) ?? undefined,
+    // BIZZ-1324: whitelist for kortvisning
+    () => bbrData?.bygningPunkter?.filter((p) => isAktivStatusLabel(p.status)) ?? undefined,
     [bbrData?.bygningPunkter]
   );
 
@@ -597,14 +638,16 @@ export default function EjendomDetaljeClient({
           return;
         }
         setDawaAdresse(adr);
-        const jordRes = await fetch(`/api/adresse/jordstykke?lng=${adr.x}&lat=${adr.y}`, {
-          signal,
-        });
-        if (signal.aborted) return;
-        const jord: DawaJordstykke | null = jordRes.ok ? await jordRes.json() : null;
-        if (signal.aborted) return;
-        setDawaJordstykke(jord);
+        // BIZZ-1287: Sæt dawaStatus='ok' med det samme så BBR-fetch kan starte
+        // parallelt med jordstykke-fetch (eliminerer waterfall).
         setDawaStatus('ok');
+        // Jordstykke-fetch er non-blocking — BBR venter ikke på den
+        fetch(`/api/adresse/jordstykke?lng=${adr.x}&lat=${adr.y}`, { signal })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((jord: DawaJordstykke | null) => {
+            if (!signal.aborted) setDawaJordstykke(jord);
+          })
+          .catch(() => {});
 
         // Gem besøget i "seneste sete ejendomme"-historikken
         const adresseLabel = adr.etage
@@ -686,10 +729,11 @@ export default function EjendomDetaljeClient({
    * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
+    // BIZZ-1329: Brug ejendomsrelationer BFE som primær — ejerlejlighedBfe kan pege på forkert SFE
     const erModerTl = dawaAdresse && !dawaAdresse.etage && !!bbrData?.ejerlejlighedBfe;
     const bfe = erModerTl
       ? (bbrData?.moderBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer)
-      : (bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer);
+      : (bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? bbrData?.ejerlejlighedBfe);
     if (!bfe) return;
     const controller = new AbortController();
     const signal = controller.signal;
@@ -937,34 +981,37 @@ export default function EjendomDetaljeClient({
     const controller = new AbortController();
     const signal = controller.signal;
 
-    setVurderingLoader(true);
     setEjereLoader(true);
 
-    const kommunekode = dawaJordstykke?.kommune?.kode;
-    const vurderingUrl = kommunekode
-      ? `/api/vurdering?bfeNummer=${bfeNummer}&kommunekode=${kommunekode}`
-      : `/api/vurdering?bfeNummer=${bfeNummer}`;
+    // BIZZ-1287: Skip klient-side vurdering-fetch hvis server-side prefetch leverede data
+    if (!prefetched?.vurderingData) {
+      setVurderingLoader(true);
+      const kommunekode = dawaJordstykke?.kommune?.kode;
+      const vurderingUrl = kommunekode
+        ? `/api/vurdering?bfeNummer=${bfeNummer}&kommunekode=${kommunekode}`
+        : `/api/vurdering?bfeNummer=${bfeNummer}`;
 
-    fetch(vurderingUrl, { signal })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data: VurderingResponse | null) => {
-        if (signal.aborted) return;
-        setVurdering(data?.vurdering ?? null);
-        setAlleVurderinger(data?.alle ?? []);
-        setVurFradrag(data?.fradrag ?? null);
-        setVurFordeling(data?.fordeling ?? []);
-        setVurGrundvaerdispec(data?.grundvaerdispec ?? []);
-        setVurFritagelser(data?.fritagelser ?? []);
-        setVurLoft(data?.loft ?? []);
-      })
-      .catch((err) => {
-        if (err.name === 'AbortError') return;
-        logger.error('[ejendom] Vurdering fetch error:', err);
-        setVurdering(null);
-      })
-      .finally(() => {
-        if (!signal.aborted) setVurderingLoader(false);
-      });
+      fetch(vurderingUrl, { signal })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data: VurderingResponse | null) => {
+          if (signal.aborted) return;
+          setVurdering(data?.vurdering ?? null);
+          setAlleVurderinger(data?.alle ?? []);
+          setVurFradrag(data?.fradrag ?? null);
+          setVurFordeling(data?.fordeling ?? []);
+          setVurGrundvaerdispec(data?.grundvaerdispec ?? []);
+          setVurFritagelser(data?.fritagelser ?? []);
+          setVurLoft(data?.loft ?? []);
+        })
+        .catch((err) => {
+          if (err.name === 'AbortError') return;
+          logger.error('[ejendom] Vurdering fetch error:', err);
+          setVurdering(null);
+        })
+        .finally(() => {
+          if (!signal.aborted) setVurderingLoader(false);
+        });
+    }
 
     fetch(`/api/ejerskab?bfeNummer=${bfeNummer}`, { signal })
       .then((r) => (r.ok ? r.json() : null))
@@ -1373,6 +1420,7 @@ export default function EjendomDetaljeClient({
             esrNummer={esrNummer}
             erKolonihave={erKolonihave}
             strukturTree={strukturTree}
+            strukturLoader={strukturLoader}
             erFulgt={erFulgt}
             foelgToggling={foelgToggling}
             visFoelgTooltip={visFoelgTooltip}
@@ -1448,6 +1496,29 @@ export default function EjendomDetaljeClient({
                 energimaerker={energimaerker}
                 energiLoader={energiLoader}
                 onNavigerDokumenter={() => setAktivTab('dokumenter')}
+                ejere={chainEjerDetaljer
+                  .filter((e) => e.type !== 'status')
+                  .map((e) => ({
+                    navn: e.navn,
+                    andel: e.andel,
+                    type: e.type,
+                  }))}
+                senestHandel={
+                  mergedSalgshistorik.length > 0
+                    ? {
+                        pris:
+                          mergedSalgshistorik[0].samletKoebesum ??
+                          mergedSalgshistorik[0].kontantKoebesum ??
+                          0,
+                        dato:
+                          mergedSalgshistorik[0].overtagelsesdato ??
+                          mergedSalgshistorik[0].koebsaftaleDato ??
+                          '',
+                      }
+                    : null
+                }
+                grundskyld={vurdering?.estimereretGrundskyld ?? null}
+                zoneinfo={dawaJordstykke ? (da ? 'Byzone' : 'Urban zone') : null}
               />
             )}
 
@@ -1491,11 +1562,12 @@ export default function EjendomDetaljeClient({
                 strukturTree={strukturTree}
                 strukturLoader={strukturLoader}
                 currentBfe={
+                  bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
                   bbrData?.ejerlejlighedBfe ??
                   bbrData?.moderBfe ??
-                  bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
                   undefined
                 }
+                currentDawaId={erDAWA ? id : undefined}
                 bbrEnheder={
                   bbrData?.enheder?.map((e) => ({
                     etage: e.etage ?? null,
@@ -1515,8 +1587,8 @@ export default function EjendomDetaljeClient({
               const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
               const bfeForTl = erModer
                 ? (bbrData?.moderBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? null)
-                : (bbrData?.ejerlejlighedBfe ??
-                  bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
+                : (bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
+                  bbrData?.ejerlejlighedBfe ??
                   null);
               return (
                 <div className={aktivTab === 'tinglysning' ? '' : 'hidden'}>
@@ -1735,7 +1807,7 @@ export default function EjendomDetaljeClient({
         )}
         {/* BIZZ-1179: AI annonce-modal */}
         <GenerateListingModal
-          bfe={bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? 0}
+          bfe={bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? bbrData?.ejerlejlighedBfe ?? 0}
           adresse={adresseStreng}
           lang={da ? 'da' : 'en'}
           open={annonceModalOpen}

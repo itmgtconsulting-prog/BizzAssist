@@ -52,13 +52,14 @@ export const ANALYSE_MODULES: AnalyseModuleConfig[] = [
     id: 'forsikring',
     label: 'Forsikrings-gap',
     labelEn: 'Insurance gap',
-    icon: 'Shield',
-    path: '/dashboard/analyse/forsikring',
+    icon: 'ShieldCheck',
+    path: '/dashboard/forsikring',
     enabled: { dev: true, preview: true, prod: false },
     requiredPlan: 'professionel',
-    description: 'Identificér dækningsgab i kundens forsikringsportefølje',
+    description:
+      'Upload police-filer (PDF/Excel/Word/billeder), find dækningsgaps og prioritér risici',
     defaultTarget: 'virksomhed',
-    hint: 'Vælg en kunde (person eller virksomhed), upload policeliste (CSV), og få en gap-rapport med risiko-scoring.',
+    hint: 'Upload én eller flere police-filer. AI parser indhold, normaliserer dækninger og finder kritiske gaps (insekt/svamp, glas, restværdi etc.).',
   },
   {
     id: 'kreditvurdering',

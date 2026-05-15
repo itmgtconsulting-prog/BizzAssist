@@ -45,5 +45,41 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       preview: v.length > 4 ? v.slice(0, 4) + '...' : v,
     };
   }
-  return NextResponse.json({ env: result, runtime: 'nodejs' });
+
+  // Test direct OAuth fetch to see exact failure
+  const clientId = process.env.DATAFORDELER_OAUTH_CLIENT_ID ?? '';
+  const clientSecret = process.env.DATAFORDELER_OAUTH_CLIENT_SECRET ?? '';
+  let oauthResult: Record<string, unknown> = { skipped: 'creds empty' };
+  if (clientId && clientSecret) {
+    const oauthStart = Date.now();
+    try {
+      const res = await fetch(
+        'https://auth.datafordeler.dk/realms/distribution/protocol/openid-connect/token',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'client_credentials',
+            client_id: clientId,
+            client_secret: clientSecret,
+          }),
+          signal: AbortSignal.timeout(10_000),
+        }
+      );
+      const text = await res.text();
+      oauthResult = {
+        status: res.status,
+        ms: Date.now() - oauthStart,
+        body_preview: text.slice(0, 200),
+        body_length: text.length,
+      };
+    } catch (err) {
+      oauthResult = {
+        error: err instanceof Error ? err.message : String(err),
+        ms: Date.now() - oauthStart,
+      };
+    }
+  }
+
+  return NextResponse.json({ env: result, oauth: oauthResult, runtime: 'nodejs' });
 }

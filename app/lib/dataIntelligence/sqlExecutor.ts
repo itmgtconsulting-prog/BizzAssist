@@ -57,12 +57,11 @@ export async function executeSafeSql(
   // Pragmatisk: vi kører bare SELECT direkte og stoler på AST-validator +
   // statement_timeout (sat globalt for Management API connection).
 
-  // For pålidelig per-query timeout og role-switch bruger vi en SQL-funktion
-  // som wrapper. Men for nu — den simpleste path: kør SELECT direkte.
-  // ai_query_reader rolle håndhæves senere når vi har en dedikeret
-  // PG-connection (TODO i prod-hardening). Indtil da: AST-validator er det
-  // primære sikkerhedslag, og service_role kan ALLE tabeller — så
-  // whitelist-validering i validator er kritisk.
+  // BIZZ-1491: SET LOCAL ROLE ai_query_reader planlagt men udskudt.
+  // Management API's default statement_timeout er for kort til joins
+  // på 7.6M-row tabeller. AST-validator + whitelist er primære sikkerhedslag.
+  // ai_query_reader re-enables når vi har dedikeret PG-connection med
+  // kontrolleret timeout.
 
   try {
     const rows = await runner(validatedSql);

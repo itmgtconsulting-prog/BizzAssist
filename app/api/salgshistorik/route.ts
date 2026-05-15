@@ -30,6 +30,7 @@ import {
 } from '@/app/lib/serviceEndpoints';
 import { LruCache } from '@/app/lib/lruCache';
 import { fetchTinglysningPriceRowsByBfe, indexPriceRowsByDate } from '@/app/lib/tinglysningPrices';
+import { fetchHistoriskAdkomsterByBfe } from '@/app/lib/tinglysningHistoriskAdkomster';
 
 // BIZZ-633: LRU-cache for salgshistorik-svar. Samme BFE slås op mange
 // gange i samme session (økonomi-tab, ejendoms-kort, diagram-berigelse).
@@ -523,6 +524,39 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
       }
     } catch (err) {
       logger.warn('[salgshistorik] tinglysning price enrichment failed:', err);
+    }
+
+    // BIZZ-1494: Berig med historiske adkomster fra XML API
+    try {
+      const historisk = await fetchHistoriskAdkomsterByBfe(bfeNummer);
+      if (historisk.length > 0) {
+        // Tilføj historiske handler der ikke allerede er i listen
+        const existingDates = new Set(handler.map((h) => (h.overtagelsesdato ?? '').slice(0, 10)));
+        for (const ha of historisk) {
+          if (!ha.dato || existingDates.has(ha.dato)) {
+            // Berig eksisterende med pris hvis mangler
+            const existing = handler.find(
+              (h) => (h.overtagelsesdato ?? '').slice(0, 10) === ha.dato
+            );
+            if (existing && existing.kontantKoebesum == null && ha.koebesumDkk != null) {
+              existing.kontantKoebesum = ha.koebesumDkk;
+            }
+            continue;
+          }
+          // Ny historisk entry
+          handler.push({
+            overtagelsesdato: ha.dato,
+            koeber: ha.adkomsthavere[0]?.navn ?? null,
+            kontantKoebesum: ha.koebesumDkk,
+            samletKoebesum: null,
+            koebsaftaleDato: null,
+            overdragelsesmaade: ha.dokumentType ?? null,
+          } as (typeof handler)[number]);
+        }
+        handler.sort((a, b) => (b.overtagelsesdato ?? '').localeCompare(a.overtagelsesdato ?? ''));
+      }
+    } catch (err) {
+      logger.warn('[salgshistorik] historisk adkomster enrichment failed:', err);
     }
 
     logger.log(

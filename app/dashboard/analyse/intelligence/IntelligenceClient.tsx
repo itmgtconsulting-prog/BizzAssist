@@ -52,7 +52,7 @@ const SUGGESTIONS = [
   'Find virksomheder der ejer mere end 5 ejendomme',
   'Hvor mange ejendomme mangler energimærke?',
   'Top 20 virksomhedsformer',
-  'Ejerskifter de seneste 12 måneder',
+  'Ejerskifter per måned de seneste 12 måneder',
   'Hvad er den nyeste ejendomsdata?',
 ];
 
@@ -186,7 +186,7 @@ export default function IntelligenceClient(): React.ReactElement {
       >
         Spring til indhold
       </a>
-      <main id="main" className="max-w-6xl mx-auto px-4 py-8">
+      <main id="main" className="max-w-[1400px] mx-auto px-4 py-8">
         <header className="mb-8">
           <div className="flex items-center gap-3 mb-2">
             <Database className="w-7 h-7 text-emerald-400" aria-hidden />
@@ -395,7 +395,7 @@ export default function IntelligenceClient(): React.ReactElement {
                           }
                         >
                           <span className="flex items-center gap-1">
-                            {c}
+                            {translateColumn(c)}
                             {sortCol === c && sortDir === 'asc' && (
                               <ChevronUp className="w-3 h-3" aria-hidden />
                             )}
@@ -445,11 +445,75 @@ export default function IntelligenceClient(): React.ReactElement {
   );
 }
 
+/** Map tekniske kolonnenavne til danske labels. */
+const COLUMN_LABELS: Record<string, string> = {
+  bfe_nummer: 'BFE-nummer',
+  kommune_kode: 'Kommunekode',
+  kommunenavn: 'Kommune',
+  region: 'Region',
+  branche_kode: 'Branchekode',
+  branche_tekst: 'Branche',
+  virksomhedsform: 'Virksomhedsform',
+  byg021_anvendelse: 'Anvendelseskode',
+  anvendelse_kode: 'Anvendelseskode',
+  anvendelse_tekst: 'Anvendelse',
+  anvendelse_kategori: 'Kategori',
+  samlet_boligareal: 'Boligareal (m²)',
+  boligareal_m2: 'Boligareal (m²)',
+  opfoerelsesaar: 'Opført',
+  energimaerke: 'Energimærke',
+  ejendomsvaerdi: 'Ejendomsværdi',
+  grundvaerdi: 'Grundværdi',
+  vurderingsaar: 'Vurderingsår',
+  ejer_navn: 'Ejer',
+  ejer_cvr: 'Ejer CVR',
+  ejer_type: 'Ejertype',
+  ejerandel_pct: 'Ejerandel (%)',
+  virkning_fra: 'Gældende fra',
+  overtagelsesdato: 'Overtagelsesdato',
+  kontant_koebesum: 'Købesum (DKK)',
+  i_alt_koebesum: 'Total købesum',
+  m2_pris: 'M²-pris',
+  antal: 'Antal',
+  total: 'Total',
+  aktive: 'Aktive',
+  ophoert: 'Ophørt',
+  stiftet: 'Stiftet',
+  ansatte: 'Ansatte',
+  antal_ejendomme: 'Antal ejendomme',
+  antal_ejerskifter: 'Antal ejerskifter',
+  unikke_ejendomme: 'Unikke ejendomme',
+  maaned: 'Måned',
+  gennemsnitspris: 'Gennemsnitspris',
+  medianpris: 'Medianpris',
+  omsaetning: 'Omsætning',
+  aarsresultat: 'Årsresultat',
+  egenkapital: 'Egenkapital',
+  seneste_aar: 'Regnskabsår',
+};
+
+/** Oversæt kolonnenavn til dansk label. */
+function translateColumn(col: string): string {
+  return COLUMN_LABELS[col] ?? col.replace(/_/g, ' ');
+}
+
 /** Format en celle-værdi til tekst-visning. */
 function formatCell(v: unknown): string {
   if (v === null || v === undefined) return '—';
   if (typeof v === 'number') return v.toLocaleString('da-DK');
   if (typeof v === 'boolean') return v ? 'ja' : 'nej';
   if (typeof v === 'object') return JSON.stringify(v);
-  return String(v);
+  const s = String(v);
+  // Konverter ISO timestamps/datoer til dansk format
+  if (/^\d{4}-\d{2}-\d{2}(T|\s)\d{2}:\d{2}/.test(s)) {
+    const d = new Date(s);
+    if (!isNaN(d.getTime()))
+      return d.toLocaleDateString('da-DK', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const d = new Date(s + 'T00:00:00');
+    if (!isNaN(d.getTime()))
+      return d.toLocaleDateString('da-DK', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+  return s;
 }

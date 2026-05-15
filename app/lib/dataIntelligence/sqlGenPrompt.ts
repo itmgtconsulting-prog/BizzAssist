@@ -59,16 +59,16 @@ public.bbr_ejendom_status: bfe_nummer (PK bigint), kommune_kode (smallint), is_u
 
 public.ejf_ejerskab: bfe_nummer (bigint), ejer_ejf_id (uuid), virkning_fra (timestamptz), ejer_navn (text), ejer_foedselsdato (date), ejer_cvr (text), ejer_type (text CHECK 'person'|'virksomhed'), ejerandel_taeller (int), ejerandel_naevner (int), status (text CHECK 'gældende'|'historisk'), virkning_til (timestamptz), sidst_opdateret (timestamptz).
 
-public.cvr_virksomhed: cvr (text PK), navn (text), branche_kode (text), virksomhedsform (text), stiftet (date), ophoert (date), ansatte (int), adresse_json (jsonb), sidst_opdateret (timestamptz). BEMÆRK: INGEN kommune_kode kolonne — brug adresse_json->'kommune'->>'kommuneKode'.
+public.cvr_virksomhed: cvr (text PK), navn (text), branche_kode (text), branche_tekst (text), virksomhedsform (text), stiftet (date), ophoert (date), ansatte_aar (int — IKKE ansatte!), adresse_json (jsonb), sidst_opdateret (timestamptz). BEMÆRK: INGEN kommune_kode kolonne — brug adresse_json->'kommune'->>'kommuneKode'. Ansatte-kolonnen hedder ansatte_aar (IKKE ansatte).
 
-public.vurdering_cache: bfe_nummer (bigint PK), vurderinger (jsonb), ejendomsvaerdi (bigint), grundvaerdi (bigint), vurderingsaar (int), benyttelseskode (text), grundskyldspromille (numeric), bebyggelsesprocent (numeric), fetched_at (timestamptz). KRITISK: vurdering_cache har INGEN kommune_kode kolonne! Du SKAL ALTID joine med bbr_ejendom_status via bfe_nummer for at få kommune: JOIN public.bbr_ejendom_status b ON b.bfe_nummer = v.bfe_nummer og så bruge b.kommune_kode.
+public.vurdering_cache: bfe_nummer (bigint PK), vurderinger (jsonb), ejendomsvaerdi (bigint), grundvaerdi (bigint), vurderingsaar (int), benyttelseskode (text), grundskyldspromille (numeric), bebyggelsesprocent (numeric), kommune_kode (smallint — backfilled fra BBR), fetched_at (timestamptz). Kommune_kode er tilgængelig via direkte kolonne ELLER join med bbr_ejendom_status. Du SKAL ALTID joine med bbr_ejendom_status via bfe_nummer for at få kommune: JOIN public.bbr_ejendom_status b ON b.bfe_nummer = v.bfe_nummer og så bruge b.kommune_kode.
 
 public.regnskab_cache: cvr (text PK), years (jsonb), seneste_aar (int), omsaetning (bigint — i t.DKK), bruttofortjeneste (bigint), resultat_foer_skat (bigint), aarsresultat (bigint), egenkapital (bigint), aktiver_i_alt (bigint), gaeld_i_alt (bigint), selskabskapital (bigint), antal_ansatte (int). BEMÆRK: De normaliserede kolonner (omsaetning osv.) er fra seneste regnskabsår. Join med cvr_virksomhed for virksomhedsnavne. Brug IKKE years JSONB direkte — brug de flade kolonner.
 
 public.tinglysning_cache: bfe_nummer (bigint PK), data (jsonb — ejendomsresumé fra Tinglysning), fetched_at (timestamptz), stale_after (timestamptz).
 
-public.ejerskifte_historik: id (bigserial PK), bfe_nummer (bigint), overtagelsesdato (date — ejerskifte-dato), fratraedelsesdato (date), ejer_navn (text), ejer_cvr (text), ejer_type (text 'person'|'virksomhed'), ejerandel_taeller (int), ejerandel_naevner (int), kontant_koebesum (bigint — KontantKoebesum fra Tinglysning i DKK), i_alt_koebesum (bigint — IAltKoebesum i DKK), koebsaftale_dato (date), dokument_id (text), kommune_kode (smallint), byg021_anvendelse (smallint), kilde (text), created_at (timestamptz).
-  BEMÆRK: Denne tabel indeholder FAKTISKE KØBESUMMER fra Tinglysning. Brug denne til salgspris-spørgsmål! kontant_koebesum er den kontante købesum, i_alt_koebesum er totalprisen inkl. overtagelse af gæld. Ikke alle rækker har priser (berigelse pågår).
+public.ejerskifte_historik: id (bigserial PK), bfe_nummer (bigint), overtagelsesdato (date — ejerskifte-dato), fratraedelsesdato (date), ejer_navn (text), ejer_cvr (text), ejer_type (text 'person'|'virksomhed'), ejerandel_taeller (int), ejerandel_naevner (int), kontant_koebesum (bigint — KontantKoebesum i DKK), i_alt_koebesum (bigint — IAltKoebesum i DKK), koebsaftale_dato (date), dokument_id (text), kommune_kode (smallint), byg021_anvendelse (smallint), boligareal_m2 (int — fra BBR), m2_pris (int — beregnet kontant_koebesum/boligareal i DKK/m²), historisk_kilde (text — 'rest_summarisk' eller 'xml_historisk_adkomst'), kilde (text), created_at (timestamptz).
+  BEMÆRK: Denne tabel indeholder FAKTISKE KØBESUMMER fra Tinglysning. Brug denne til salgspris-spørgsmål! m2_pris er beregnet automatisk. Brug WHERE kontant_koebesum IS NOT NULL for prisdata.
 
 public.kommune_ref: kommune_kode (int PK), kommunenavn (text), region (text).
 
@@ -88,7 +88,9 @@ public.tinglysning_adkomst: id, bfe_nummer, ejer_navn, ejer_cvr, ejer_type, over
 
 public.tinglysning_haeftelser: id, bfe_nummer, type, kreditor_navn, kreditor_cvr, hovedstol (DKK), restgaeld (DKK), rente_pct, tinglysningsdato, dokument_id. Normaliserede pantbreve/lån.
 
-public.tinglysning_servitutter: id, bfe_nummer, type, beskrivelse, tinglysningsdato, dokument_id. Normaliserede servitutter/byrder.
+public.tinglysning_servitutter: id, bfe_nummer, type, beskrivelse, tinglysningsdato, paategning, dokument_id. Normaliserede servitutter/byrder.
+
+public.tinglysning_dokumenter: dokument_id (text PK), dokument_type (text — 'adkomst'/'haeftelse'/'servitut'), tinglysningsdato (date), bfe_nummer (bigint), parter (jsonb), beloeb (jsonb). Central reference for alle e-TL dokumenter.
 
 WHITELISTEDE TABELLER:
 ${Array.from(WHITELISTED_TABLES).join(', ')}
@@ -148,6 +150,9 @@ SQL: SELECT COUNT(*) AS antal_ejerskifter FROM public.ejf_ejerskab WHERE status 
 
 Spørgsmål: Ejendomme der har skiftet ejer de seneste 12 måneder
 SQL: SELECT COUNT(DISTINCT bfe_nummer) AS antal_ejendomme FROM public.ejf_ejerskab WHERE status = 'gældende' AND virkning_fra >= CURRENT_DATE - INTERVAL '12 months' LIMIT 1
+
+Spørgsmål: Ejerskifter per måned de seneste 12 måneder
+SQL: SELECT to_char(date_trunc('month', virkning_fra), 'YYYY-MM') AS maaned, COUNT(*) AS antal_ejerskifter, COUNT(DISTINCT bfe_nummer) AS unikke_ejendomme FROM public.ejf_ejerskab WHERE status = 'gældende' AND virkning_fra >= CURRENT_DATE - INTERVAL '12 months' AND virkning_fra IS NOT NULL GROUP BY maaned ORDER BY maaned DESC
 
 Spørgsmål: Hvad er gennemsnitsprisen for et hus solgt i 2025?
 SQL: SELECT AVG(kontant_koebesum)::bigint AS gennemsnitspris, COUNT(*) AS antal_handler FROM public.ejerskifte_historik WHERE kontant_koebesum IS NOT NULL AND overtagelsesdato >= '2025-01-01' AND overtagelsesdato < '2026-01-01' AND byg021_anvendelse BETWEEN 110 AND 190 LIMIT 1

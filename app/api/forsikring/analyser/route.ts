@@ -154,8 +154,30 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // 3. Match aktiver mod policer
+    // BIZZ-1492: Debug-log policy adresser for at diagnosticere 0% match
+    for (const p of policer.slice(0, 5)) {
+      logger.log(
+        `[forsikring/analyser] Policy ${p.policy_number}: property_address="${p.property_address ?? 'NULL'}" policyholder_address="${p.policyholder_address ?? 'NULL'}" property_bfe="${p.property_bfe ?? 'NULL'}"`
+      );
+    }
+    for (const a of aktiver.filter((x) => x.type === 'ejendom').slice(0, 5)) {
+      logger.log(
+        `[forsikring/analyser] Aktiv ejendom: label="${a.label}" adresse="${a.adresse ?? 'NULL'}" bfe=${a.bfe ?? 'NULL'}`
+      );
+    }
+
     const matches = matchAssetsToPolicies(aktiver, policer);
     const insuredCount = matches.filter((m) => m.bestMatch !== null).length;
+
+    // BIZZ-1492: Log match-resultater for debugging
+    logger.log(
+      `[forsikring/analyser] Matches: ${insuredCount}/${matches.length} forsikrede, ${matches.length - insuredCount} uforsikrede`
+    );
+    for (const m of matches.filter((x) => x.bestMatch === null).slice(0, 3)) {
+      logger.log(
+        `[forsikring/analyser] Uforsikret: "${m.aktiv.label}" (type=${m.aktiv.type}, bfe=${m.aktiv.bfe ?? '?'})`
+      );
+    }
 
     // 4. Kør gap-engine for matchede aktiver
     const allGaps: Array<{

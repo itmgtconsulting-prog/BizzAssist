@@ -479,6 +479,75 @@ export const temporalCoverage: TopicBuilder = async (rpc) => {
 };
 
 // ============================================================
+// Pris-trends (ejerskifte_historik)
+// ============================================================
+
+/**
+ * Topic: gennemsnitlig købesum per kvartal (seneste 3 år).
+ */
+export const priceTrendsByQuarter: TopicBuilder = async (rpc) => {
+  const sql = `
+    SELECT
+      to_char(date_trunc('quarter', overtagelsesdato), 'YYYY-"Q"Q') AS kvartal,
+      AVG(kontant_koebesum)::bigint AS gns_pris,
+      COUNT(*)::bigint AS antal_handler
+    FROM public.ejerskifte_historik
+    WHERE kontant_koebesum IS NOT NULL
+      AND overtagelsesdato >= CURRENT_DATE - INTERVAL '3 years'
+    GROUP BY kvartal
+    ORDER BY kvartal DESC
+  `;
+  try {
+    const rows = await rpc(sql);
+    return rows.map((r) => ({
+      topic: 'price_trends_by_quarter',
+      topic_label_da: 'Pristrend per kvartal',
+      key: { kvartal: String(r.kvartal) },
+      value: { gns_pris: Number(r.gns_pris), antal_handler: Number(r.antal_handler) },
+      source_query: sql.trim(),
+    }));
+  } catch {
+    return [];
+  }
+};
+
+/**
+ * Topic: gennemsnitlig m²-pris per kommune (top 50).
+ */
+export const m2PriceByMunicipality: TopicBuilder = async (rpc) => {
+  const sql = `
+    SELECT
+      e.kommune_kode::int AS kommune_kode,
+      k.kommunenavn,
+      AVG(e.m2_pris)::int AS gns_m2_pris,
+      COUNT(*)::bigint AS antal
+    FROM public.ejerskifte_historik e
+    JOIN public.kommune_ref k ON k.kommune_kode = e.kommune_kode
+    WHERE e.m2_pris IS NOT NULL AND e.kommune_kode IS NOT NULL
+    GROUP BY e.kommune_kode, k.kommunenavn
+    HAVING COUNT(*) >= 5
+    ORDER BY gns_m2_pris DESC
+    LIMIT 50
+  `;
+  try {
+    const rows = await rpc(sql);
+    return rows.map((r) => ({
+      topic: 'm2_price_by_municipality',
+      topic_label_da: 'M²-pris per kommune',
+      key: { kommune_kode: Number(r.kommune_kode) },
+      value: {
+        kommunenavn: String(r.kommunenavn ?? ''),
+        gns_m2_pris: Number(r.gns_m2_pris),
+        antal: Number(r.antal),
+      },
+      source_query: sql.trim(),
+    }));
+  } catch {
+    return [];
+  }
+};
+
+// ============================================================
 // Master view topics (BIZZ-1479)
 // ============================================================
 
@@ -572,6 +641,8 @@ export const ALL_TOPICS: Array<{ name: string; build: TopicBuilder }> = [
   { name: 'ownership_by_type', build: ownershipChangesByType },
   { name: 'top_property_owner_companies', build: topPropertyOwnerCompanies },
   { name: 'property_count_by_municipality_bbr', build: propertyByMunicipalityBbr },
+  { name: 'price_trends_by_quarter', build: priceTrendsByQuarter },
+  { name: 'm2_price_by_municipality', build: m2PriceByMunicipality },
   { name: 'top_vurdering_by_municipality', build: topVurderingByMunicipality },
   { name: 'regnskab_summary', build: regnskabSummary },
 ];

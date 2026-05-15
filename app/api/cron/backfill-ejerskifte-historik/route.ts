@@ -20,6 +20,8 @@ import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
 import { fetchTinglysningPriceRowsByBfe, indexPriceRowsByDate } from '@/app/lib/tinglysningPrices';
+import { createDefaultSqlRunner } from '@/app/lib/dataIntelligence/buildCatalog';
+import { fetchHistoriskAdkomsterByBfe } from '@/app/lib/tinglysningHistoriskAdkomster';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -106,8 +108,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       }
 
       // Unikke BFE-numre
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const uniqueBfes: number[] = [
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ...new Set<number>(ejerskifter.map((e: any) => Number(e.bfe_nummer))),
       ].slice(0, MAX_BFES_PER_RUN);
 
@@ -221,7 +223,46 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           dokument_id: prices?.dokId ?? null,
           kommune_kode: bbr?.kommune_kode ?? null,
           byg021_anvendelse: bbr?.byg021_anvendelse ?? null,
+          historisk_kilde: 'rest_summarisk',
         });
+      }
+
+      // ── 4b. BIZZ-1494: Hent historiske adkomster via XML API (2 concurrent) ──
+      let xmlInserted = 0;
+      const XML_CONCURRENCY = 2;
+      for (let i = 0; i < uniqueBfes.length; i += XML_CONCURRENCY) {
+        const xmlBatch = uniqueBfes.slice(i, i + XML_CONCURRENCY);
+        const xmlResults = await Promise.allSettled(
+          xmlBatch.map((bfe) => fetchHistoriskAdkomsterByBfe(bfe))
+        );
+        for (let j = 0; j < xmlResults.length; j++) {
+          const r = xmlResults[j];
+          if (r.status !== 'fulfilled' || r.value.length === 0) continue;
+          const bfe = xmlBatch[j];
+          const bbr = bbrMap.get(bfe);
+          for (const ha of r.value) {
+            if (!ha.dato) continue;
+            rows.push({
+              bfe_nummer: bfe,
+              overtagelsesdato: ha.dato,
+              fratraedelsesdato: null,
+              ejer_navn: ha.adkomsthavere[0]?.navn ?? null,
+              ejer_cvr: null,
+              ejer_type: null,
+              ejerandel_taeller: ha.adkomsthavere[0]?.andelTaeller ?? null,
+              ejerandel_naevner: ha.adkomsthavere[0]?.andelNaevner ?? null,
+              kontant_koebesum: ha.koebesumDkk ?? null,
+              i_alt_koebesum: null,
+              koebsaftale_dato: null,
+              dokument_id: null,
+              kommune_kode: bbr?.kommune_kode ?? null,
+              byg021_anvendelse: bbr?.byg021_anvendelse ?? null,
+              historisk_kilde: 'xml_historisk_adkomst',
+            });
+            xmlInserted++;
+          }
+        }
+        if (i + XML_CONCURRENCY < uniqueBfes.length) await sleep(1000);
       }
 
       // Batch upsert 500 at a time
@@ -240,9 +281,35 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         }
       }
 
+      // ── 5. Beregn m²-pris for nye rækker (BIZZ-analyse) ──
+      if (inserted > 0) {
+        try {
+          const sqlRunner = createDefaultSqlRunner();
+          await sqlRunner(`
+            UPDATE public.ejerskifte_historik eh
+            SET boligareal_m2 = b.samlet_boligareal
+            FROM public.bbr_ejendom_status b
+            WHERE b.bfe_nummer = eh.bfe_nummer
+              AND b.samlet_boligareal IS NOT NULL AND b.samlet_boligareal > 0
+              AND eh.boligareal_m2 IS NULL
+              AND eh.bfe_nummer IN (${uniqueBfes.join(',')})
+          `);
+          await sqlRunner(`
+            UPDATE public.ejerskifte_historik
+            SET m2_pris = (kontant_koebesum / boligareal_m2)::integer
+            WHERE kontant_koebesum IS NOT NULL
+              AND boligareal_m2 IS NOT NULL AND boligareal_m2 > 0
+              AND m2_pris IS NULL
+              AND bfe_nummer IN (${uniqueBfes.join(',')})
+          `);
+        } catch (m2Err) {
+          logger.warn('[backfill-ejerskifte] m2_pris update failed:', m2Err);
+        }
+      }
+
       const elapsed = Date.now() - start;
       logger.log(
-        `[backfill-ejerskifte] done: ${inserted} inserted, ${priced} priced, ${errors} errors, ${elapsed}ms`
+        `[backfill-ejerskifte] done: ${inserted} inserted (${xmlInserted} xml), ${priced} priced, ${errors} errors, ${elapsed}ms`
       );
 
       return NextResponse.json({

@@ -1,4 +1,15 @@
-# JIRA Tickets — Tinglysning S2S XML API Integration (Epic BIZZ-9XX)
+# JIRA Tickets — Tinglysning S2S XML API Integration (Epic BIZZ-9XX) — V1 SUPERSEDED
+
+> ⚠ **DO NOT USE FOR IMPLEMENTATION.** This file is kept for historical reference only.
+>
+> **Use [`BIZZ-9XX-s2s-tickets-v2.md`](./BIZZ-9XX-s2s-tickets-v2.md) instead.**
+>
+> V1 had two critical technical errors:
+>
+> - Specified RSA-**SHA256** signature — actual production XML API requires **SHA-512**
+> - Specified new `app/lib/etl/` folder structure — actual working code uses per-operation files in `app/lib/tinglysning*.ts`
+>
+> V2 is based on the working blueprint `app/lib/tinglysningHistoriskAdkomster.ts` (BIZZ-1494) that proved the protocol in production on 2026-05-15.
 
 **Reference:** [ADR 0009](../adr/0009-s2s-xml-api-integration.md) · **BACKLOG entry:** 2.4b
 **Created:** 2026-05-15 · **Project:** BIZZ · **Component:** Tinglysning

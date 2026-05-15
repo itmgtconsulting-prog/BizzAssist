@@ -55,7 +55,10 @@ export async function getSharedOAuthToken(): Promise<string | null> {
           client_id: clientId,
           client_secret: clientSecret,
         }),
-        signal: AbortSignal.timeout(10_000),
+        // BIZZ: Vercel cold-start + DNS + TLS to auth.datafordeler.dk takes
+        // ~10s on first invocation. 10s was too tight — bumped to 30s so
+        // crons don't fail at the OAuth step before processing any data.
+        signal: AbortSignal.timeout(30_000),
       });
 
       if (!res.ok) {

@@ -167,7 +167,14 @@ async function expandCompany(
         if (co.ejer_enheds_nummer) {
           personEnMap.set(co.ejer_navn, co.ejer_enheds_nummer);
         } else {
-          personCoOwnerNames.add(co.ejer_navn);
+          // BIZZ-1445: Parse enhedsnummer fra "Ukendt ejer (en XXXXXXXXXX)" format
+          const enMatch = co.ejer_navn.match(/\(en\s*(\d+)\)/);
+          if (enMatch) {
+            const parsedEn = Number(enMatch[1]);
+            if (Number.isFinite(parsedEn)) personEnMap.set(co.ejer_navn, parsedEn);
+          } else {
+            personCoOwnerNames.add(co.ejer_navn);
+          }
         }
       }
     }

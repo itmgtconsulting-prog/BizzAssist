@@ -14,6 +14,7 @@ import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
 import { tlFetch as tlFetchBase } from '@/app/lib/tlFetch';
 import { parseQuery } from '@/app/lib/validate';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -1238,6 +1239,13 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    // ── BIZZ-1460: Write-through caching — fire-and-forget ──
+    if (hovedBfe) {
+      persistTinglysningData(Number(hovedBfe), ejere, haeftelser, servitutter).catch((err) =>
+        logger.warn('[tinglysning/summarisk] write-through failed:', err)
+      );
+    }
+
     // Full response (default — backward compatible)
     return NextResponse.json(
       {
@@ -1262,5 +1270,132 @@ export async function GET(req: NextRequest) {
       servitutter: [],
       fejl: 'Ekstern API fejl',
     });
+  }
+}
+
+/**
+ * BIZZ-1460: Write-through caching — persister parsed tinglysningsdata i normaliserede tabeller.
+ * Fire-and-forget — fejl logges men blokerer ikke API-response.
+ *
+ * @param bfe - BFE-nummer
+ * @param ejere - Parsed ejere fra summarisk XML
+ * @param haeftelser - Parsed hæftelser
+ * @param servitutter - Parsed servitutter
+ */
+async function persistTinglysningData(
+  bfe: number,
+  ejere: TLEjer[],
+  haeftelser: TLHaeftelse[],
+  servitutter: TLServitut[]
+): Promise<void> {
+  if (!Number.isFinite(bfe) || bfe <= 0) return;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const admin = createAdminClient() as any;
+
+  // 1. Adkomster (ejere med prisdata)
+  const adkomstRows = ejere
+    .filter((e) => e.overtagelsesdato || e.kontantKoebesum || e.iAltKoebesum)
+    .map((e) => ({
+      bfe_nummer: bfe,
+      ejer_navn: e.navn,
+      ejer_cvr: e.cvr,
+      ejer_type: e.type === 'selskab' ? 'virksomhed' : e.type,
+      overtagelsesdato: e.overtagelsesdato ?? null,
+      tinglysningsdato: e.tinglysningsdato ?? e.dato ?? null,
+      koebsaftale_dato: e.koebsaftaledato ?? null,
+      kontant_koebesum: e.kontantKoebesum ?? null,
+      i_alt_koebesum: e.iAltKoebesum ?? null,
+      dokument_id: e.dokumentId ?? null,
+    }));
+
+  if (adkomstRows.length > 0) {
+    await admin
+      .from('tinglysning_adkomst')
+      .upsert(adkomstRows, {
+        onConflict: 'bfe_nummer,overtagelsesdato,ejer_navn',
+        ignoreDuplicates: true,
+      })
+      .then(() => {});
+  }
+
+  // 2. Hæftelser
+  const haeftRows = haeftelser.map((h) => ({
+    bfe_nummer: bfe,
+    type: h.type ?? null,
+    kreditor_navn: h.kreditor ?? null,
+    kreditor_cvr: h.kreditorCvr ?? null,
+    hovedstol: h.beloeb ?? null,
+    restgaeld: null,
+    rente_pct: h.rente ?? null,
+    tinglysningsdato: h.dato ?? null,
+    dokument_id: h.dokumentId ?? null,
+  }));
+
+  if (haeftRows.length > 0) {
+    await admin
+      .from('tinglysning_haeftelser')
+      .upsert(haeftRows, { ignoreDuplicates: true })
+      .then(() => {});
+  }
+
+  // 3. Servitutter
+  const servRows = servitutter.map((s) => ({
+    bfe_nummer: bfe,
+    type: s.type ?? null,
+    beskrivelse: s.tekst?.slice(0, 500) ?? null,
+    tinglysningsdato: s.dato ?? null,
+    dokument_id: s.dokumentId ?? null,
+  }));
+
+  if (servRows.length > 0) {
+    await admin
+      .from('tinglysning_servitutter')
+      .upsert(servRows, { ignoreDuplicates: true })
+      .then(() => {});
+  }
+
+  // 4. Dokumenter (fra alle kilder)
+  const allDokIds = new Set<string>();
+  const dokRows: Array<Record<string, unknown>> = [];
+  for (const e of ejere) {
+    if (e.dokumentId && !allDokIds.has(e.dokumentId)) {
+      allDokIds.add(e.dokumentId);
+      dokRows.push({
+        dokument_id: e.dokumentId,
+        dokument_type: 'adkomst',
+        tinglysningsdato: e.tinglysningsdato ?? e.dato ?? null,
+        bfe_nummer: bfe,
+      });
+    }
+  }
+  for (const h of haeftelser) {
+    if (h.dokumentId && !allDokIds.has(h.dokumentId)) {
+      allDokIds.add(h.dokumentId);
+      dokRows.push({
+        dokument_id: h.dokumentId,
+        dokument_type: 'haeftelse',
+        tinglysningsdato: h.dato ?? null,
+        bfe_nummer: bfe,
+      });
+    }
+  }
+  for (const s of servitutter) {
+    if (s.dokumentId && !allDokIds.has(s.dokumentId)) {
+      allDokIds.add(s.dokumentId);
+      dokRows.push({
+        dokument_id: s.dokumentId,
+        dokument_type: 'servitut',
+        tinglysningsdato: s.dato ?? null,
+        bfe_nummer: bfe,
+      });
+    }
+  }
+
+  if (dokRows.length > 0) {
+    await admin
+      .from('tinglysning_dokumenter')
+      .upsert(dokRows, { onConflict: 'dokument_id', ignoreDuplicates: true })
+      .then(() => {});
   }
 }

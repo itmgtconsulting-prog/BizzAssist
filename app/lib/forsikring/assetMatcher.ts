@@ -104,9 +104,9 @@ function scoreEjendom(aktiv: Aktiv, policy: ForsikringPolicy): number {
     return 100;
   }
 
-  // Adresse-match
+  // Adresse-match — fallback til policyholder_address hvis property_address er null
   const aktivAddr = normalize(aktiv.adresse || aktiv.label);
-  const policyAddr = normalize(policy.property_address);
+  const policyAddr = normalize(policy.property_address) || normalize(policy.policyholder_address);
 
   if (!aktivAddr || !policyAddr) return 0;
 

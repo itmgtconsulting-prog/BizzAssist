@@ -11,7 +11,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { Landmark, ChevronDown, ChevronRight } from 'lucide-react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { createClient } from '@/lib/supabase/client';
 
 interface Haeftelse {
   type: string | null;
@@ -39,7 +39,7 @@ export default function HaeftelserSektion({ bfe, lang }: Props): React.ReactElem
 
   const load = useCallback(async () => {
     try {
-      const supabase = createClientComponentClient();
+      const supabase = createClient();
       const { data } = await supabase
         .from('tinglysning_haeftelser')
         .select('type, kreditor_navn, hovedstol, rente_pct, tinglysningsdato')

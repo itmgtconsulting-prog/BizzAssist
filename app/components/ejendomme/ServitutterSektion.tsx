@@ -11,7 +11,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { Shield, ChevronDown, ChevronRight } from 'lucide-react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { createClient } from '@/lib/supabase/client';
 
 interface Servitut {
   type: string | null;
@@ -58,7 +58,7 @@ export default function ServitutterSektion({ bfe, lang }: Props): React.ReactEle
 
   const load = useCallback(async () => {
     try {
-      const supabase = createClientComponentClient();
+      const supabase = createClient();
       const { data } = await supabase
         .from('tinglysning_servitutter')
         .select('type, beskrivelse, tinglysningsdato')

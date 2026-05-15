@@ -186,8 +186,9 @@ export default function IntelligenceChart({ columns, rows }: Props): React.React
               outerRadius={120}
               dataKey="value"
               nameKey="label"
-              label={({ label, percent }) =>
-                `${String(label).slice(0, 20)} (${(percent * 100).toFixed(0)}%)`
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              label={(props: any) =>
+                `${String(props.label ?? '').slice(0, 20)} (${((props.percent as number) * 100).toFixed(0)}%)`
               }
               labelLine={false}
             >
@@ -195,7 +196,7 @@ export default function IntelligenceChart({ columns, rows }: Props): React.React
                 <Cell key={i} fill={COLORS[i % COLORS.length]} />
               ))}
             </Pie>
-            <Tooltip content={<CustomTooltip />} formatter={(v: number) => formatNumber(v)} />
+            <Tooltip content={<CustomTooltip />} />
             <Legend
               formatter={(value: string) => <span className="text-slate-300 text-xs">{value}</span>}
             />

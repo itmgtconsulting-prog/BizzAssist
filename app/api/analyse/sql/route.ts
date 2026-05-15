@@ -212,7 +212,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   // 1. Generér SQL via Claude
-  let generated: { sql: string; explanation?: string };
+  let generated: { sql: string; explanation?: string; suggestions?: string[] };
   try {
     generated = await generateSql(apiKey, userPrompt);
   } catch (err) {

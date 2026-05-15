@@ -166,6 +166,21 @@ function extractTableReferences(sql: string): Set<string> {
   while ((match = fromRegex.exec(sql)) !== null) {
     refs.add(match[1].toLowerCase());
   }
+
+  // BIZZ-fix: Fjern falske tabel-refs der er alias.kolonne (fx "e.overtagelsesdato").
+  // Et alias er typisk 1-2 tegn og bruges efter FROM/JOIN tabel alias.
+  // Kendte schemas er "public", "dataintel" — alt med dot der IKKE starter med
+  // et kendt schema er sandsynligvis alias.kolonne og skal ignoreres.
+  const knownSchemas = new Set(['public', 'dataintel']);
+  for (const ref of refs) {
+    if (ref.includes('.')) {
+      const schema = ref.split('.')[0];
+      if (!knownSchemas.has(schema)) {
+        refs.delete(ref);
+      }
+    }
+  }
+
   return refs;
 }
 

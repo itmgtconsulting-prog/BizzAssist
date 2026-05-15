@@ -281,6 +281,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         truncated: false,
         durationMs: Date.now() - start,
         error: `SQL afvist: ${validation.reason}`,
+        suggestions: generateFallbackSuggestions(userPrompt),
       } as ResponseBody,
       { status: 400 }
     );
@@ -311,6 +312,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         truncated: false,
         durationMs: Date.now() - start,
         error: `Eksekvering fejlede: ${exec.error}`,
+        suggestions: generateFallbackSuggestions(userPrompt),
       } as ResponseBody,
       { status: 500 }
     );

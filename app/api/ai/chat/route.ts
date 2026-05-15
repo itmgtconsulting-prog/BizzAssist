@@ -132,6 +132,18 @@ const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'hent_ejendom_komplet',
+    description:
+      'Hent komplet ejendomsdata i ÉT kald: BBR (areal, opførelsesår, anvendelse, materialer), vurdering (ejendomsværdi, grundværdi), kommune, og ejer. Meget hurtigere end separate hent_bbr_data + hent_vurdering + hent_ejerskab. Brug denne som førstevalg når brugeren spørger om en ejendom via BFE-nummer.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        bfeNummer: { type: 'string', description: 'BFE-nummer (Bestemt Fast Ejendom)' },
+      },
+      required: ['bfeNummer'],
+    },
+  },
+  {
     name: 'hent_bbr_data',
     description:
       'Hent BBR-bygningsdata (opførelsesår, areal, materialer, etager, opvarmning, supplerende varme, vandforsyning, bevaringsværdighed, enheder med boligtype og energiforsyning) for en ejendom via DAWA-adresse-ID. Returnerer også ejendomsrelationer med BFE-nummer, samt hierarki-chain (BIZZ-895: SFE → hovedejendom → leaf-BFE) når ejendommen er del af en samlet fast ejendom. Felterne er: ejendomstype (sfe/bygning/ejerlejlighed), hovedejendomOpdeltIEjerlejligheder, moderBfe, hierarkiChain (array fra leaf til SFE med niveau-label).',
@@ -673,6 +685,7 @@ const TOOLS: Anthropic.Tool[] = [
 const TOOL_STATUS: Record<string, string> = {
   dawa_adresse_soeg: 'Søger adresse…',
   dawa_adresse_detaljer: 'Henter adressedetaljer…',
+  hent_ejendom_komplet: 'Henter komplet ejendomsdata…',
   hent_bbr_data: 'Henter BBR-bygningsdata…',
   hent_vurdering: 'Henter ejendomsvurdering…',
   hent_ejerskab: 'Henter ejerskabsdata…',
@@ -1129,6 +1142,35 @@ async function executeTool(
           ejerlavnavn: d.ejerlavsnavn,
           bfeNummer,
         };
+        break;
+      }
+
+      case 'hent_ejendom_komplet': {
+        // BIZZ-1478: Single query against mv_ejendom_master for complete property data
+        const bfe = Number(input.bfeNummer);
+        if (!Number.isFinite(bfe) || bfe <= 0) {
+          result = { error: 'Ugyldigt BFE-nummer' };
+          break;
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: ejData } = await (admin as any)
+          .from('mv_ejendom_master')
+          .select('*')
+          .eq('bfe_nummer', bfe)
+          .limit(1)
+          .single();
+        if (!ejData) {
+          result = { error: 'Ejendom ikke fundet i mv_ejendom_master', bfeNummer: bfe };
+          break;
+        }
+        // Berig med ejerskab fra mv_ejerskab_beriget
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: ejere } = await (admin as any)
+          .from('mv_ejerskab_beriget')
+          .select('ejer_navn, ejer_cvr, ejer_type, ejerandel_pct, virksomhed_navn, virksomhedsform')
+          .eq('bfe_nummer', bfe)
+          .limit(10);
+        result = { ...ejData, ejere: ejere ?? [] };
         break;
       }
 

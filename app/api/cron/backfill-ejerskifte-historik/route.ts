@@ -20,6 +20,7 @@ import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
 import { fetchTinglysningPriceRowsByBfe, indexPriceRowsByDate } from '@/app/lib/tinglysningPrices';
+import { createDefaultSqlRunner } from '@/app/lib/dataIntelligence/buildCatalog';
 import { fetchHistoriskAdkomsterByBfe } from '@/app/lib/tinglysningHistoriskAdkomster';
 
 export const runtime = 'nodejs';
@@ -277,6 +278,32 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           errors++;
         } else {
           inserted += batch.length;
+        }
+      }
+
+      // ── 5. Beregn m²-pris for nye rækker (BIZZ-analyse) ──
+      if (inserted > 0) {
+        try {
+          const sqlRunner = createDefaultSqlRunner();
+          await sqlRunner(`
+            UPDATE public.ejerskifte_historik eh
+            SET boligareal_m2 = b.samlet_boligareal
+            FROM public.bbr_ejendom_status b
+            WHERE b.bfe_nummer = eh.bfe_nummer
+              AND b.samlet_boligareal IS NOT NULL AND b.samlet_boligareal > 0
+              AND eh.boligareal_m2 IS NULL
+              AND eh.bfe_nummer IN (${uniqueBfes.join(',')})
+          `);
+          await sqlRunner(`
+            UPDATE public.ejerskifte_historik
+            SET m2_pris = (kontant_koebesum / boligareal_m2)::integer
+            WHERE kontant_koebesum IS NOT NULL
+              AND boligareal_m2 IS NOT NULL AND boligareal_m2 > 0
+              AND m2_pris IS NULL
+              AND bfe_nummer IN (${uniqueBfes.join(',')})
+          `);
+        } catch (m2Err) {
+          logger.warn('[backfill-ejerskifte] m2_pris update failed:', m2Err);
         }
       }
 

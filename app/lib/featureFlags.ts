@@ -48,3 +48,24 @@ export function isDomainFeatureEnabledServer(): boolean {
 export function isDiagram2Enabled(): boolean {
   return process.env.NEXT_PUBLIC_DIAGRAM2_ENABLED === 'true';
 }
+
+/**
+ * BIZZ-1517: Check om S2S Anmelder-funktionalitet er aktiveret.
+ * ALDRIG true på preview — kun production med eksplicit env var.
+ *
+ * @returns true hvis S2S anmeldelse er aktiveret
+ */
+export function isAnmelderEnabled(): boolean {
+  if (process.env.VERCEL_ENV === 'preview') return false;
+  return process.env.ENABLE_S2S_ANMELDER === 'true';
+}
+
+/**
+ * BIZZ-1517: Check om S2S forespørgsler (read-only) er aktiveret.
+ * Tilladt på alle miljøer med cert-konfiguration.
+ *
+ * @returns true hvis S2S forespørgsler kan bruges
+ */
+export function isS2SQueryEnabled(): boolean {
+  return !!(process.env.TINGLYSNING_CERT_PATH || process.env.TINGLYSNING_CERT_B64);
+}

@@ -218,6 +218,75 @@ export async function GET(req: NextRequest) {
   }
   const { uuid, section, hovedBfe } = parsed.data;
 
+  // ── BIZZ-1462: Cache-first read path — serve from local tables if fresh ──
+  if (hovedBfe && !section) {
+    const bfe = Number(hovedBfe);
+    if (Number.isFinite(bfe) && bfe > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const adminCf = createAdminClient() as any;
+      const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+      const { data: adkomstRows } = await adminCf
+        .from('tinglysning_adkomst')
+        .select('*')
+        .eq('bfe_nummer', bfe)
+        .order('overtagelsesdato', { ascending: false });
+
+      if (adkomstRows && adkomstRows.length > 0) {
+        const oldest = adkomstRows[adkomstRows.length - 1];
+        const fetchedAt = new Date(oldest.fetched_at).getTime();
+        const age = Date.now() - fetchedAt;
+
+        if (age < CACHE_TTL_MS) {
+          // Cache HIT — serve from local tables
+          const { data: haeftRows } = await adminCf
+            .from('tinglysning_haeftelser')
+            .select('*')
+            .eq('bfe_nummer', bfe);
+          const { data: servRows } = await adminCf
+            .from('tinglysning_servitutter')
+            .select('*')
+            .eq('bfe_nummer', bfe);
+
+          return NextResponse.json(
+            {
+              ejere: adkomstRows.map((a: Record<string, unknown>) => ({
+                navn: a.ejer_navn,
+                cvr: a.ejer_cvr,
+                type: a.ejer_type === 'virksomhed' ? 'selskab' : a.ejer_type,
+                overtagelsesdato: a.overtagelsesdato,
+                kontantKoebesum: a.kontant_koebesum,
+                iAltKoebesum: a.i_alt_koebesum,
+                dokumentId: a.dokument_id,
+              })),
+              haeftelser: (haeftRows ?? []).map((h: Record<string, unknown>) => ({
+                type: h.type,
+                kreditor: h.kreditor_navn,
+                beloeb: h.hovedstol,
+                dato: h.tinglysningsdato,
+                dokumentId: h.dokument_id,
+              })),
+              servitutter: (servRows ?? []).map((s: Record<string, unknown>) => ({
+                type: s.type,
+                tekst: s.beskrivelse,
+                dato: s.tinglysningsdato,
+                dokumentId: s.dokument_id,
+              })),
+              fejl: null,
+            },
+            {
+              headers: {
+                'Cache-Control': 'public, s-maxage=3600',
+                'X-Cache': 'HIT',
+                'X-Data-Age': String(Math.round(age / 1000)),
+              },
+            }
+          );
+        }
+      }
+    }
+  }
+
   const hasCert = !!(
     process.env.TINGLYSNING_CERT_PATH ||
     process.env.NEMLOGIN_DEVTEST4_CERT_PATH ||

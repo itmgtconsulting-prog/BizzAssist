@@ -57,21 +57,14 @@ export async function executeSafeSql(
   // Pragmatisk: vi kører bare SELECT direkte og stoler på AST-validator +
   // statement_timeout (sat globalt for Management API connection).
 
-  // BIZZ-1491: SET LOCAL ROLE ai_query_reader for read-only enforcement.
-  // Management API kører hver query i sin egen transaction, så SET LOCAL
-  // gælder kun for denne ene query. Fallback til direkte kørsel hvis
-  // role-switch fejler (ai_query_reader ikke oprettet i alle miljøer).
+  // BIZZ-1491: SET LOCAL ROLE ai_query_reader planlagt men udskudt.
+  // Management API's default statement_timeout er for kort til joins
+  // på 7.6M-row tabeller. AST-validator + whitelist er primære sikkerhedslag.
+  // ai_query_reader re-enables når vi har dedikeret PG-connection med
+  // kontrolleret timeout.
 
   try {
-    const wrappedSql = `SET LOCAL ROLE ai_query_reader; SET LOCAL statement_timeout = '60s'; ${validatedSql}`;
-    let rows: Array<Record<string, unknown>>;
-    try {
-      rows = await runner(wrappedSql);
-    } catch (roleErr) {
-      // Fallback: kør uden role-switch (dev/test miljøer uden ai_query_reader)
-      logger.warn('[sqlExecutor] SET LOCAL ROLE failed, running as default role:', roleErr);
-      rows = await runner(validatedSql);
-    }
+    const rows = await runner(validatedSql);
     const truncated = rows.length >= MAX_ROWS;
     const trimmed = truncated ? rows.slice(0, MAX_ROWS) : rows;
     const columns = trimmed.length > 0 ? Object.keys(trimmed[0]) : [];

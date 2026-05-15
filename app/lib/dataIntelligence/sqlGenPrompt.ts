@@ -149,6 +149,9 @@ SQL: SELECT COUNT(*) AS antal_ejerskifter FROM public.ejf_ejerskab WHERE status 
 Spørgsmål: Ejendomme der har skiftet ejer de seneste 12 måneder
 SQL: SELECT COUNT(DISTINCT bfe_nummer) AS antal_ejendomme FROM public.ejf_ejerskab WHERE status = 'gældende' AND virkning_fra >= CURRENT_DATE - INTERVAL '12 months' LIMIT 1
 
+Spørgsmål: Ejerskifter per måned de seneste 12 måneder
+SQL: SELECT to_char(date_trunc('month', virkning_fra), 'YYYY-MM') AS maaned, COUNT(*) AS antal_ejerskifter, COUNT(DISTINCT bfe_nummer) AS unikke_ejendomme FROM public.ejf_ejerskab WHERE status = 'gældende' AND virkning_fra >= CURRENT_DATE - INTERVAL '12 months' AND virkning_fra IS NOT NULL GROUP BY maaned ORDER BY maaned DESC
+
 Spørgsmål: Hvad er gennemsnitsprisen for et hus solgt i 2025?
 SQL: SELECT AVG(kontant_koebesum)::bigint AS gennemsnitspris, COUNT(*) AS antal_handler FROM public.ejerskifte_historik WHERE kontant_koebesum IS NOT NULL AND overtagelsesdato >= '2025-01-01' AND overtagelsesdato < '2026-01-01' AND byg021_anvendelse BETWEEN 110 AND 190 LIMIT 1
 

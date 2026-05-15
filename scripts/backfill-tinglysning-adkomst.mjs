@@ -34,7 +34,13 @@ const DRY_RUN = args.includes('--dry-run');
 
 const client = createClient(SUPABASE_URL, SERVICE_ROLE);
 
-const TL_BASE = process.env.DF_PROXY_URL || 'https://tinglysning.dk/tinglysning/ssl';
+const PROXY_URL = process.env.DF_PROXY_URL;
+const PROXY_SECRET = process.env.DF_PROXY_SECRET;
+const TL_REST_BASE = 'https://www.tinglysning.dk/tinglysning/ssl';
+const TL_BASE = PROXY_URL
+  ? TL_REST_BASE.replace('https://', `${PROXY_URL}/proxy/`)
+  : TL_REST_BASE;
+const PROXY_HEADERS = PROXY_SECRET ? { 'X-Proxy-Secret': PROXY_SECRET } : {};
 const CONCURRENCY = 4;
 const DELAY_MS = 400;
 
@@ -43,6 +49,7 @@ async function fetchPricesForBfe(bfe) {
   try {
     // Step 1: BFE → UUID
     const searchRes = await fetch(`${TL_BASE}/ejendom/hovednoteringsnummer?hovednoteringsnummer=${bfe}`, {
+      headers: { Accept: 'application/json', ...PROXY_HEADERS },
       signal: AbortSignal.timeout(10000),
     });
     if (!searchRes.ok) return [];
@@ -55,6 +62,7 @@ async function fetchPricesForBfe(bfe) {
 
     // Step 2: UUID → summarisk XML → price rows
     const xmlRes = await fetch(`${TL_BASE}/ejdsummarisk/${uuid}`, {
+      headers: { Accept: 'application/xml', ...PROXY_HEADERS },
       signal: AbortSignal.timeout(15000),
     });
     if (!xmlRes.ok) return [];

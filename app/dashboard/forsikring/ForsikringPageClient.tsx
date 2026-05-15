@@ -807,7 +807,7 @@ function AnalyseSection({
           <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">
             1
           </span>
-          {da ? 'Vælg kunde' : 'Select customer'}
+          {da ? 'Vælg forsikringsejer' : 'Select policyholder'}
         </h2>
         {/* BIZZ-1395: Reset/ny kunde-knap */}
         {selected && (
@@ -830,7 +830,7 @@ function AnalyseSection({
       </div>
       <p className="text-slate-400 text-xs">
         {da
-          ? 'Vælg den virksomhed eller person du vil analysere forsikringsdækning for.'
+          ? 'Vælg den virksomhed eller person du vil analysere forsikringsdækning for (forsikringsejer).'
           : 'Select the company or person to analyse insurance coverage for.'}
       </p>
 
@@ -912,43 +912,7 @@ function AnalyseSection({
       {/* BIZZ-1394: Eksisterende policer + forrige analyse for valgt kunde */}
       {selected && !analyseResult && (kundePolicer.length > 0 || lastAnalyse) && (
         <div className="space-y-2">
-          {/* Eksisterende policer */}
-          {kundePolicer.length > 0 && (
-            <div className="bg-white/3 border border-white/5 rounded-lg p-3">
-              <div className="text-slate-300 text-xs font-medium mb-1.5 flex items-center gap-1.5">
-                <FileText size={12} />
-                {da
-                  ? `${kundePolicer.length} eksisterende policer`
-                  : `${kundePolicer.length} existing policies`}
-              </div>
-              <div className="space-y-1">
-                {kundePolicer.slice(0, 5).map((p) => (
-                  <div key={p.id} className="flex items-center justify-between text-xs">
-                    <span className="text-slate-400">
-                      {p.policy_number} — {p.insurer_name}
-                    </span>
-                    <div className="flex items-center gap-1">
-                      {p.gap_counts.critical > 0 && (
-                        <span className="px-1 py-0.5 rounded bg-red-500/20 text-red-300 text-[10px]">
-                          {p.gap_counts.critical}
-                        </span>
-                      )}
-                      {p.gap_counts.warning > 0 && (
-                        <span className="px-1 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px]">
-                          {p.gap_counts.warning}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-                {kundePolicer.length > 5 && (
-                  <div className="text-slate-500 text-[10px]">
-                    +{kundePolicer.length - 5} {da ? 'flere' : 'more'}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+          {/* BIZZ-1485: Eksisterende policer boks fjernet — unødvendig visning */}
 
           {/* Forrige analyse (sammenligning) */}
           {lastAnalyse && (
@@ -1063,11 +1027,7 @@ function AnalyseSection({
                         onClick={async (e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          if (
-                            !window.confirm(
-                              da ? `Slet ${doc.name} permanent?` : `Delete ${doc.name} permanently?`
-                            )
-                          )
+                          if (!window.confirm(da ? `Slet ${doc.name}?` : `Delete ${doc.name}?`))
                             return;
                           try {
                             await fetch(`/api/forsikring/documents/${doc.id}`, {

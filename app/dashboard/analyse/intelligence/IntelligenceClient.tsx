@@ -186,7 +186,7 @@ export default function IntelligenceClient(): React.ReactElement {
       >
         Spring til indhold
       </a>
-      <main id="main" className="max-w-6xl mx-auto px-4 py-8">
+      <main id="main" className="max-w-[1400px] mx-auto px-4 py-8">
         <header className="mb-8">
           <div className="flex items-center gap-3 mb-2">
             <Database className="w-7 h-7 text-emerald-400" aria-hidden />
@@ -451,5 +451,17 @@ function formatCell(v: unknown): string {
   if (typeof v === 'number') return v.toLocaleString('da-DK');
   if (typeof v === 'boolean') return v ? 'ja' : 'nej';
   if (typeof v === 'object') return JSON.stringify(v);
-  return String(v);
+  const s = String(v);
+  // Konverter ISO timestamps/datoer til dansk format
+  if (/^\d{4}-\d{2}-\d{2}(T|\s)\d{2}:\d{2}/.test(s)) {
+    const d = new Date(s);
+    if (!isNaN(d.getTime()))
+      return d.toLocaleDateString('da-DK', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const d = new Date(s + 'T00:00:00');
+    if (!isNaN(d.getTime()))
+      return d.toLocaleDateString('da-DK', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+  return s;
 }

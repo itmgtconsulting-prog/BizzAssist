@@ -49,7 +49,7 @@ Vi har IKKE handelspriser. Men vi HAR ejerskifte-data i ejf_ejerskab (7,6M rækk
 - For "solgte ejendomme" → tæl ejerskifter: WHERE status = 'gældende' AND virkning_fra >= dato
 - For "ejerskifter i januar 2026" → WHERE virkning_fra >= '2026-01-01' AND virkning_fra < '2026-02-01'
 - Brug ALDRIG ordene "solgt"/"salg" i forklaringer — sig "ejerskifte" da vi ikke har prisdata.
-Hvis brugeren spørger om salgspriser: forklar at vi har ejerskiftedata men ikke priser, og FORESLÅ ejerskifte-queries.
+For salgspris-spørgsmål: BRUG ejerskifte_historik tabellen! Den har kontant_koebesum og i_alt_koebesum fra Tinglysning. Ikke alle rækker har priser endnu (berigelse pågår), men brug WHERE kontant_koebesum IS NOT NULL for prisdata.
 
 TABEL-KOLONNER (brug KUN disse):
 
@@ -66,6 +66,9 @@ public.vurdering_cache: bfe_nummer (bigint PK), vurderinger (jsonb), ejendomsvae
 public.regnskab_cache: cvr (text PK), years (jsonb — array af regnskabsår-objekter), es_timestamp (text), fetched_at (timestamptz). BEMÆRK: INGEN navn/omsætning-kolonner direkte — regnskabstal er INDE I years JSONB-arrayet. For omsætning: years->0->>'omsaetning'. Join med cvr_virksomhed for virksomhedsnavne.
 
 public.tinglysning_cache: bfe_nummer (bigint PK), data (jsonb — ejendomsresumé fra Tinglysning), fetched_at (timestamptz), stale_after (timestamptz).
+
+public.ejerskifte_historik: id (bigserial PK), bfe_nummer (bigint), overtagelsesdato (date — ejerskifte-dato), fratraedelsesdato (date), ejer_navn (text), ejer_cvr (text), ejer_type (text 'person'|'virksomhed'), ejerandel_taeller (int), ejerandel_naevner (int), kontant_koebesum (bigint — KontantKoebesum fra Tinglysning i DKK), i_alt_koebesum (bigint — IAltKoebesum i DKK), koebsaftale_dato (date), dokument_id (text), kommune_kode (smallint), byg021_anvendelse (smallint), kilde (text), created_at (timestamptz).
+  BEMÆRK: Denne tabel indeholder FAKTISKE KØBESUMMER fra Tinglysning. Brug denne til salgspris-spørgsmål! kontant_koebesum er den kontante købesum, i_alt_koebesum er totalprisen inkl. overtagelse af gæld. Ikke alle rækker har priser (berigelse pågår).
 
 public.kommune_ref: kommune_kode (int PK), kommunenavn (text), region (text).
 
@@ -129,12 +132,16 @@ Spørgsmål: Ejendomme der har skiftet ejer de seneste 12 måneder
 SQL: SELECT COUNT(DISTINCT bfe_nummer) AS antal_ejendomme FROM public.ejf_ejerskab WHERE status = 'gældende' AND virkning_fra >= CURRENT_DATE - INTERVAL '12 months' LIMIT 1
 
 Spørgsmål: Hvad er gennemsnitsprisen for et hus solgt i 2025?
-FORKLARING: Vi har ikke handelspriser i datasættet. Vi har ejerskiftedata (hvem der ejer hvad og hvornår) samt offentlige ejendomsvurderinger — men ikke faktiske salgspriser.
-FORSLAG: Hvor mange ejendomme skiftede ejer i 2025? | Gennemsnitlig ejendomsvurdering for parcelhuse | Top 10 kommuner med flest ejerskifter i 2025
+SQL: SELECT AVG(kontant_koebesum)::bigint AS gennemsnitspris, COUNT(*) AS antal_handler FROM public.ejerskifte_historik WHERE kontant_koebesum IS NOT NULL AND overtagelsesdato >= '2025-01-01' AND overtagelsesdato < '2026-01-01' AND byg021_anvendelse BETWEEN 110 AND 190 LIMIT 1
 
 Spørgsmål: Hvor mange boliger er solgt i 2025?
-FORKLARING: Vi har ikke salgsdata, men vi kan vise ejerskifter — dvs. ejendomme der har skiftet ejer, hvilket typisk svarer til et salg.
-FORSLAG: Hvor mange ejendomme skiftede ejer i 2025? | Ejerskifter fordelt per måned i 2025 | Virksomheder der har købt flest ejendomme i 2025
+SQL: SELECT COUNT(*) AS antal_ejerskifter, COUNT(kontant_koebesum) AS med_pris FROM public.ejerskifte_historik WHERE overtagelsesdato >= '2025-01-01' AND overtagelsesdato < '2026-01-01' LIMIT 1
+
+Spørgsmål: Top 10 kommuner med højest gennemsnitspris for ejendomme
+SQL: SELECT e.kommune_kode, k.kommunenavn, AVG(e.kontant_koebesum)::bigint AS gns_pris, COUNT(*) AS antal FROM public.ejerskifte_historik e JOIN public.kommune_ref k ON k.kommune_kode = e.kommune_kode WHERE e.kontant_koebesum IS NOT NULL AND e.kommune_kode IS NOT NULL GROUP BY e.kommune_kode, k.kommunenavn HAVING COUNT(*) >= 5 ORDER BY gns_pris DESC LIMIT 10
+
+Spørgsmål: Dyreste ejendomshandler de seneste 12 måneder
+SQL: SELECT bfe_nummer, ejer_navn, kontant_koebesum, overtagelsesdato, kommune_kode FROM public.ejerskifte_historik WHERE kontant_koebesum IS NOT NULL AND overtagelsesdato >= CURRENT_DATE - INTERVAL '12 months' ORDER BY kontant_koebesum DESC LIMIT 20
 
 Spørgsmål: Lav fusion mellem virksomheder
 FORKLARING: Det kan jeg ikke — det kræver skrive-adgang. Jeg kan kun læse data, ikke ændre.

@@ -32,6 +32,7 @@ export const WHITELISTED_TABLES = new Set([
   'public.cvr_historik',
   'public.kommune_ref',
   'public.tinglysning_cache',
+  'public.ejerskifte_historik',
   'dataintel.data_catalog',
   'dataintel.analytics_knowledge',
 ]);

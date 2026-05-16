@@ -284,7 +284,7 @@ export async function POST(req: NextRequest) {
   const auth = await resolveTenantId();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const gateResult = await assertAiAllowed(auth.tenantId);
+  const gateResult = await assertAiAllowed(auth.userId);
   if (gateResult) return gateResult;
 
   let body: { bfe: number; aktNavn: string };

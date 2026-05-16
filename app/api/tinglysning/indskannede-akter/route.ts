@@ -22,6 +22,7 @@ import * as Sentry from '@sentry/nextjs';
 import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
 import { logger } from '@/app/lib/logger';
+import { tlFetch as tlFetchShared } from '@/app/lib/tlFetch';
 import https from 'https';
 import fs from 'fs';
 import path from 'path';
@@ -52,7 +53,8 @@ const XML_API_SERVICE_PATH = '/ElektroniskAkt/EjendomStamoplysningerHent';
 // ─── Namespaces ───────────────────────────────────────────────────────────────
 
 const NS_MSG = 'http://rep.oio.dk/tinglysning.dk/service/message/elektroniskakt/1/';
-const NS_SCHEMA = 'http://rep.oio.dk/tinglysning.dk/schema/elektroniskakt/1/';
+const NS_MODEL = 'http://rep.oio.dk/tinglysning.dk/schema/model/1/';
+const NS_KMS = 'http://rep.oio.dk/kms.dk/xml/schemas/2005/03/11/';
 const NS_DS = 'http://www.w3.org/2000/09/xmldsig#';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -121,20 +123,34 @@ function extractPemFromP12(
  * @param certPem - OCES certifikat i PEM
  * @returns Signeret XML-string
  */
-function buildSignedRequest(ejendomUuid: string, privateKeyPem: string, certPem: string): string {
-  const safeUuid = ejendomUuid.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
+function buildSignedRequest(
+  bfe: string,
+  districtName: string,
+  districtId: string,
+  matrikelnr: string,
+  privateKeyPem: string,
+  certPem: string
+): string {
   const XSD_LOC = `${NS_MSG} http://rep.oio.dk/tinglysning.dk/service/message/elektroniskakt/1/EjendomStamoplysningerHent.xsd`;
+  const paddedMatNr = matrikelnr.replace(/^(\d+)/, (m) => m.padStart(4, '0'));
 
   const unsignedXml =
     `<?xml version="1.0" encoding="UTF-8"?>` +
     `<EjendomStamoplysningerHent` +
     ` xmlns="${NS_MSG}"` +
-    ` xmlns:eakt="${NS_SCHEMA}"` +
+    ` xmlns:model="${NS_MODEL}"` +
+    ` xmlns:kms="${NS_KMS}"` +
     ` xmlns:ds="${NS_DS}"` +
     ` xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"` +
     ` xsi:schemaLocation="${XSD_LOC}">` +
-    `<eakt:EjendomIdentifikator>${safeUuid}</eakt:EjendomIdentifikator>` +
+    `<model:EjendomIdentifikator>` +
+    `<model:BestemtFastEjendomNummer>${bfe}</model:BestemtFastEjendomNummer>` +
+    `<model:Matrikel>` +
+    `<kms:CadastralDistrictName>${districtName}</kms:CadastralDistrictName>` +
+    `<kms:CadastralDistrictIdentifier>${districtId}</kms:CadastralDistrictIdentifier>` +
+    `<model:Matrikelnummer>${paddedMatNr}</model:Matrikelnummer>` +
+    `</model:Matrikel>` +
+    `</model:EjendomIdentifikator>` +
     `</EjendomStamoplysningerHent>`;
 
   const doc = new DOMParser().parseFromString(unsignedXml, 'application/xml');
@@ -383,18 +399,40 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Certifikat kunne ikke parses' }, { status: 503 });
     }
 
-    // Trin 2: Byg og sign XML
+    // Trin 2: Hent matrikel-info fra REST (kræves af S2S EjendomIdentifikator)
+    const sumRes = await tlFetchShared(`/ejdsummarisk/${ejendomId}`, { accept: 'application/xml' });
+    if (sumRes.status !== 200) {
+      return NextResponse.json({ ejendomId, akter: [] } satisfies IndskannedeAkterResponse, {
+        headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
+      });
+    }
+    const sumXml = sumRes.body;
+    const bfe = sumXml.match(/BestemtFastEjendomNummer>(\d+)/)?.[1] ?? '';
+    const distName = sumXml.match(/CadastralDistrictName>([^<]+)/)?.[1] ?? '';
+    const distId = sumXml.match(/CadastralDistrictIdentifier>([^<]+)/)?.[1] ?? '';
+    const matNr = sumXml.match(/Matrikelnummer>([^<]+)/)?.[1] ?? '';
+
+    if (!bfe || !distName || !distId || !matNr) {
+      logger.warn(
+        `[indskannede-akter] Matrikel-info ufuldstændig: bfe=${bfe} dist=${distName}/${distId} mat=${matNr}`
+      );
+      return NextResponse.json({ ejendomId, akter: [] } satisfies IndskannedeAkterResponse, {
+        headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
+      });
+    }
+
+    // Trin 3: Byg og sign XML
     let signedXml: string;
     try {
-      signedXml = buildSignedRequest(ejendomId, privateKeyPem, certPem);
+      signedXml = buildSignedRequest(bfe, distName, distId, matNr, privateKeyPem, certPem);
     } catch (signErr) {
       logger.error('[indskannede-akter] XMLDSig signing fejlede:', signErr);
       return NextResponse.json({ error: 'XML signing fejlede' }, { status: 503 });
     }
 
-    // Trin 3: POST til XML API
+    // Trin 4: POST til XML API
     logger.log(
-      `[indskannede-akter] Kalder S2S XML API: ${TL_XML_API_BASE}${XML_API_SERVICE_PATH} for ejendomId=${ejendomId}`
+      `[indskannede-akter] Kalder S2S XML API: ${TL_XML_API_BASE}${XML_API_SERVICE_PATH} for BFE=${bfe} mat=${matNr}`
     );
     const xmlRes = await callXmlApi(signedXml);
 

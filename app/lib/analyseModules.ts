@@ -49,6 +49,19 @@ export const ANALYSE_MODULES: AnalyseModuleConfig[] = [
     hint: 'Søg en ejendom og vælg annonce-tone. AI henter BBR-data, vurdering og energimærke automatisk.',
   },
   {
+    id: 'finansieringsrapport',
+    label: 'Finansieringsrapport',
+    labelEn: 'Finance report',
+    icon: 'Landmark',
+    path: '/dashboard/analyse/finansieringsrapport',
+    enabled: { dev: true, preview: true, prod: false },
+    requiredPlan: 'professionel',
+    description:
+      'AI-genereret teknisk ejendomsbeskrivelse til bank/realkredit — BBR, vurdering, hæftelser, risiko-flag (BIZZ-1557)',
+    defaultTarget: 'ejendom',
+    hint: 'Søg en ejendom og vælg tone (realkredit/bankrådgiver/memo). AI samler BBR, vurdering, tinglysning, servitutter og leverer en finansierings-egnet rapport.',
+  },
+  {
     id: 'forsikring',
     label: 'Forsikrings-gap',
     labelEn: 'Insurance gap',

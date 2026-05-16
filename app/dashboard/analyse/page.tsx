@@ -22,6 +22,7 @@ import {
   LayoutGrid,
   Wrench,
   Database,
+  Landmark,
 } from 'lucide-react';
 import { getEnabledModules } from '@/app/lib/analyseModules';
 
@@ -36,6 +37,7 @@ const iconMap: Record<string, React.ComponentType<{ size?: number; className?: s
   BarChart3,
   Search,
   Building2,
+  Landmark,
 };
 
 /**

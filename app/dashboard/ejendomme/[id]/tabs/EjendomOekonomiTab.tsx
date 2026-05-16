@@ -625,10 +625,18 @@ export default function EjendomOekonomiTab(props: Props) {
                           </span>
                         </div>
                         <span className="text-amber-200/80">
-                          {fv.ejendomsvaerdi ? formatDKK(fv.ejendomsvaerdi) : formatDKK(0)}
+                          {fv.ejendomsvaerdi
+                            ? formatDKK(fv.ejendomsvaerdi)
+                            : da
+                              ? 'Fastsættes ikke'
+                              : 'N/A'}
                         </span>
                         <span className="text-amber-200/80">
-                          {fv.grundvaerdi ? formatDKK(fv.grundvaerdi) : '0 DKK'}
+                          {fv.grundvaerdi
+                            ? formatDKK(fv.grundvaerdi)
+                            : da
+                              ? 'Fastsættes ikke'
+                              : 'N/A'}
                         </span>
                         <span className="text-slate-400 text-right">–</span>
                       </div>

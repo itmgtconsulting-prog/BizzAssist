@@ -1148,34 +1148,24 @@ export default function EjendomDetaljeClient({
    * Proever foerst adgangsadresse-ID fra DAWA, derefter BFE-nummer fra BBR.
    * Disse er separate fra de endelige vurderinger fra Datafordeler.
    *
-   * BFE-valg: for moderejendomme (ingen etage + ejerlejlighedBfe sat) bruger vi moderBfe
-   * direkte fremfor adresseId, fordi adresseId-søgning returnerer child-enheder på adressen
-   * og kan give forelobige vurderinger for en forkert ejerlejlighed.
+   * BFE-valg: Vurderingsportalen indekserer foreløbige vurderinger på
+   * hovedejendom-BFE (ejendomsrelationer[0].bfeNummer), IKKE SFE-BFE (moderBfe).
+   * Brug altid ejendomsrelation-BFE. adresseId undgås da den matcher child-enheder.
    * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
     if (!erDAWA) return;
 
-    // Moderejandom: ingen etage OG VP fandt child-ejerlejlighed → brug moderBfe direkte.
-    // adresseId-søgning returnerer child-enheder på adressen; moderBfe giver korrekt parent-dokument.
-    const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
-
     const params = new URLSearchParams();
-    if (erModer) {
-      const moderBfe = bbrData?.moderBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
-      if (!moderBfe) return;
-      params.set('bfeNummer', String(moderBfe));
+    // Brug ejendomsrelation-BFE (= hovedejendom-BFE) til VP-søgning.
+    // moderBfe peger på SFE-niveauet, som VP ikke indekserer.
+    const bfeNummer = bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
+    if (bfeNummer) {
+      params.set('bfeNummer', String(bfeNummer));
+    } else if (dawaAdresse?.id) {
+      params.set('adresseId', dawaAdresse.id);
     } else {
-      // Always use BFE as primary — most reliable for VP matching.
-      // adresseId as fallback only when BFE unavailable.
-      const bfeNummer = bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
-      if (bfeNummer) {
-        params.set('bfeNummer', String(bfeNummer));
-      } else if (dawaAdresse?.id) {
-        params.set('adresseId', dawaAdresse.id);
-      } else {
-        return;
-      }
+      return;
     }
 
     const controller = new AbortController();

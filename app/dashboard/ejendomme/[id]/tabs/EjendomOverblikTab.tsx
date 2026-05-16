@@ -415,42 +415,62 @@ export default function EjendomOverblikTab({
             </p>
           ) : null}
 
-          {/* ── Forelobig vurdering — vises hvis nyere end nuvaerende vurdering ── */}
+          {/* ── Forelobig vurdering — vises hvis nyere end nuvaerende vurdering ELLER ingen officiel ── */}
           {(() => {
             const nyesteForelobig = forelobige.length > 0 ? forelobige[0] : null;
-            const erNyere =
-              nyesteForelobig && (!vurdering?.aar || nyesteForelobig.vurderingsaar > vurdering.aar);
-            if (!nyesteForelobig || !erNyere) return null;
+            if (!nyesteForelobig) return null;
+            // Vis foreløbig hvis den er nyere end officiel ELLER der slet ikke er officiel vurdering
+            const erRelevant = !vurdering?.aar || nyesteForelobig.vurderingsaar >= vurdering.aar;
+            if (!erRelevant) return null;
             return (
               <div className="mt-2 bg-amber-500/5 border border-amber-500/20 rounded-xl p-3">
                 <div className="flex items-center gap-2 mb-1.5">
                   <span className="px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] text-amber-400 font-medium">
                     {t.preliminary}
                   </span>
+                  <span className="text-slate-600 text-[10px]">
+                    {nyesteForelobig.vurderingsaar}
+                  </span>
                 </div>
                 <div className="grid grid-cols-2 gap-x-2 gap-y-1">
                   <div>
-                    <p className="text-slate-500 text-xs leading-none mb-0.5">
-                      {t.propertyValue}
-                      <span className="ml-1 text-slate-600">({nyesteForelobig.vurderingsaar})</span>
-                    </p>
+                    <p className="text-slate-500 text-xs leading-none mb-0.5">{t.propertyValue}</p>
                     <p className="text-amber-200 text-sm font-medium">
                       {nyesteForelobig.ejendomsvaerdi
                         ? formatDKK(nyesteForelobig.ejendomsvaerdi)
-                        : formatDKK(0)}
+                        : da
+                          ? 'Fastsættes ikke'
+                          : 'Not assessed'}
                     </p>
                   </div>
                   <div>
-                    <p className="text-slate-500 text-xs leading-none mb-0.5">
-                      {t.landValue}
-                      <span className="ml-1 text-slate-600">({nyesteForelobig.vurderingsaar})</span>
-                    </p>
+                    <p className="text-slate-500 text-xs leading-none mb-0.5">{t.landValue}</p>
                     <p className="text-amber-200 text-sm font-medium">
                       {nyesteForelobig.grundvaerdi
                         ? formatDKK(nyesteForelobig.grundvaerdi)
-                        : '0 DKK'}
+                        : da
+                          ? 'Fastsættes ikke'
+                          : 'Not assessed'}
                     </p>
                   </div>
+                  {nyesteForelobig.grundskyld != null && nyesteForelobig.grundskyld > 0 && (
+                    <div>
+                      <p className="text-slate-500 text-xs leading-none mb-0.5">{t.groundTax}</p>
+                      <p className="text-amber-200 text-sm font-medium">
+                        {formatDKK(nyesteForelobig.grundskyld)}
+                      </p>
+                    </div>
+                  )}
+                  {nyesteForelobig.totalSkat != null && nyesteForelobig.totalSkat > 0 && (
+                    <div>
+                      <p className="text-slate-500 text-xs leading-none mb-0.5">
+                        {da ? 'Skat i alt' : 'Total tax'}
+                      </p>
+                      <p className="text-amber-200 text-sm font-medium">
+                        {formatDKK(nyesteForelobig.totalSkat)}
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             );

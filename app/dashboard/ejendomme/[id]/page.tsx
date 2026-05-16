@@ -54,6 +54,9 @@ export default async function EjendommeDetailPage({
 
   // BIZZ-1505: BFE-nummer → resolve til DAWA UUID via lokal DB og redirect
   if (!erDawaId(id) && /^\d+$/.test(id)) {
+    let resolved = false;
+
+    // Strategi 1: Opslag i bbr_ejendom_status (hurtigst — lokal DB)
     try {
       const { createClient } = await import('@supabase/supabase-js');
       const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
@@ -70,10 +73,35 @@ export default async function EjendommeDetailPage({
         if (bbrRow?.adgangsadresse_id) {
           const { redirect } = await import('next/navigation');
           redirect(`/dashboard/ejendomme/${bbrRow.adgangsadresse_id}`);
+          resolved = true; // redirect throws, but guard anyway
         }
       }
     } catch {
-      // Fallback: render med BFE som ID
+      // bbr_ejendom_status har ikke denne BFE — prøv DAWA fallback
+    }
+
+    // Strategi 2: DAWA /bfe/{bfe} — fanger SFE-BFE'er der ikke er i bbr_ejendom_status
+    if (!resolved) {
+      try {
+        const { fetchDawa } = await import('@/app/lib/dawa');
+        const bfeRes = await fetchDawa(
+          `https://dawa.aws.dk/bfe/${id}`,
+          { signal: AbortSignal.timeout(5000) },
+          { caller: 'ejendom-page.bfe-resolve' }
+        );
+        if (bfeRes.ok) {
+          const bfeData = (await bfeRes.json()) as {
+            beliggenhedsadresse?: { id?: string };
+          };
+          const dawaId = bfeData?.beliggenhedsadresse?.id;
+          if (dawaId) {
+            const { redirect } = await import('next/navigation');
+            redirect(`/dashboard/ejendomme/${dawaId}`);
+          }
+        }
+      } catch {
+        // Fallback: render med BFE som ID (klienten viser fejl-tilstand)
+      }
     }
   }
 

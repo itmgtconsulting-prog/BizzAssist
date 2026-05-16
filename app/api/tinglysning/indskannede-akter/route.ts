@@ -439,31 +439,10 @@ export async function GET(req: NextRequest) {
 
       logger.log(`[indskannede-akter] Fandt ${akter.length} akter for ejendomId=${ejendomId}`);
 
-      return NextResponse.json(
-        {
-          ejendomId,
-          akter,
-          _debug: {
-            xmlApiStatus: 200,
-            bfe,
-            distName,
-            distId,
-            matNr,
-            responseLen: responseXml.length,
-            hasDokFil: responseXml.includes('DokumentFilnavn'),
-            akterCount: akter.length,
-            regexTest:
-              /<(?:[a-zA-Z0-9]+:)?DokumentFilnavnTekst[^>]*>([^<]+)<\/(?:[a-zA-Z0-9]+:)?DokumentFilnavnTekst>/g.test(
-                responseXml
-              ),
-            xmlSample: responseXml.substring(
-              Math.max(0, responseXml.indexOf('DokumentFilnavn') - 100),
-              responseXml.indexOf('DokumentFilnavn') + 200
-            ),
-          },
-        },
-        { headers: { 'Cache-Control': 'no-store' } }
-      );
+      const result: IndskannedeAkterResponse = { ejendomId, akter };
+      return NextResponse.json(result, {
+        headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
+      });
     }
 
     // Non-200: log og returner debug-info

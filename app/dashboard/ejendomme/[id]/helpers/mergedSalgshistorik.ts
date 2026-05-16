@@ -209,7 +209,10 @@ export function buildMergedSalgshistorik(
     const dato = h.overtagelsesdato ?? h.koebsaftaleDato ?? '';
     const existing = grouped.find((g) => {
       const gDato = g.overtagelsesdato ?? g.koebsaftaleDato ?? '';
-      return gDato === dato && dato !== '';
+      if (!gDato || !dato) return false;
+      // Tolerér ±3 dage — EJF og Tinglysning har ofte 1 dags forskel pga. UTC/CET
+      const diff = Math.abs(new Date(gDato).getTime() - new Date(dato).getTime());
+      return diff < 3 * 24 * 60 * 60 * 1000;
     });
     if (existing) {
       // Behold hoejeste known sum (non-null) — Tinglysning-pris overskriver

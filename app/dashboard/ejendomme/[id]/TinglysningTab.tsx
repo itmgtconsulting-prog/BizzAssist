@@ -101,6 +101,21 @@ export default function TinglysningTab({
   /** Backwards-compat alias for template code */
   const indskannedeAkterNavne = indskannedeAkter.map((a) => a.aktNavn);
 
+  /**
+   * BIZZ-1584: Smart PDF-link for pre-digitale dokumenter.
+   * Returnerer indskannet akt-download URL hvis tilgængelig, ellers standard dokument-URL.
+   */
+  const getPdfUrl = (docId: string, docDato: string | null): string => {
+    // Hvis der er indskannede akter OG dokumentet er pre-digitalt (< 2009), link direkte til akt
+    if (indskannedeAkter.length > 0 && docDato) {
+      const year = parseInt(docDato.split('-')[0] ?? '9999', 10);
+      if (year < 2009) {
+        return `/api/tinglysning/indskannede-akter/download?aktNavn=${encodeURIComponent(indskannedeAkter[0].aktNavn)}`;
+      }
+    }
+    return `/api/tinglysning/dokument?uuid=${docId}&ejendomId=${tlUuid}`;
+  };
+
   const toggleDoc = (docId: string) => {
     setSelectedDocs((prev) => {
       const n = new Set(prev);
@@ -629,7 +644,15 @@ export default function TinglysningTab({
                     >
                       {docId && (
                         <a
-                          href={`/api/tinglysning/dokument?uuid=${docId}&ejendomId=${tlUuid}`}
+                          href={getPdfUrl(
+                            docId,
+                            String(
+                              first?.dato ??
+                                first?.tinglysningsdato ??
+                                first?.overtagelsesdato ??
+                                ''
+                            )
+                          )}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
@@ -878,7 +901,7 @@ export default function TinglysningTab({
                     >
                       {docId && (
                         <a
-                          href={`/api/tinglysning/dokument?uuid=${docId}&ejendomId=${tlUuid}`}
+                          href={getPdfUrl(docId, String(h.dato ?? ''))}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
@@ -1373,10 +1396,12 @@ export default function TinglysningTab({
                         // hoveddok + bilag (BIZZ-474) gjorde det umuligt at skelne
                         // selve servitut-teksten fra bilag i den samlede PDF.
                         //
-                        // Når docId mangler (pre-digitale servitutter), skjul
-                        // PDF-knappen — bilag tilgås via badgen/detaljesektionen.
-                        if (!docId) return null;
-                        const pdfUrl = `/api/tinglysning/dokument?uuid=${docId}`;
+                        // BIZZ-1584: For pre-digitale servitutter (uden docId),
+                        // vis indskannet akt-link hvis tilgængeligt
+                        if (!docId && indskannedeAkter.length === 0) return null;
+                        const pdfUrl = docId
+                          ? getPdfUrl(docId, String(s.dato ?? ''))
+                          : `/api/tinglysning/indskannede-akter/download?aktNavn=${encodeURIComponent(indskannedeAkter[0]?.aktNavn ?? '')}`;
                         return (
                           <a
                             href={pdfUrl}

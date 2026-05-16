@@ -426,7 +426,7 @@ export async function GET(req: NextRequest) {
           status: 200,
           headers: {
             'Content-Type': mimeType,
-            'Content-Disposition': `attachment; filename="${safeFilename}"`,
+            'Content-Disposition': `inline; filename="${safeFilename}"`,
             'Content-Length': String(pdfBuffer.byteLength),
             'Cache-Control': 'private, no-store',
           },

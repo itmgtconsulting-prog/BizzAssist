@@ -454,11 +454,11 @@ export default function IntelligenceClient(): React.ReactElement {
               </div>
             )}
 
-            {/* Result table */}
+            {/* Result table — max 400px højde med scroll */}
             {sortedRows.length > 0 && (
-              <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-x-auto">
+              <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-x-auto max-h-[400px] overflow-y-auto">
                 <table className="w-full text-sm">
-                  <thead className="bg-slate-800/50">
+                  <thead className="bg-slate-800 sticky top-0 z-10">
                     <tr>
                       {response.columns.map((c) => (
                         <th

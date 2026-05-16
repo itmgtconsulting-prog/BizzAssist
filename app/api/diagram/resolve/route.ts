@@ -2324,6 +2324,75 @@ async function enrichNoeglePersoner(
  * @param host - Request host for internt API-kald
  * @param cookie - Auth cookie
  */
+/**
+ * BIZZ-1587: Berig "Ukendt ejer (en NNNN)" placeholder-noder ved at slå op i
+ * CVR ES Vrvirksomhed. Nogle enhedsnumre er fejlcached som personer men er
+ * faktisk holdingselskaber — konvertér dem til company-noder.
+ *
+ * Kører på alle diagram-typer (company/property/person) før respons.
+ */
+async function enrichVirksomhedFejlcacheNodes(graph: DiagramGraph): Promise<void> {
+  const CVR_ES_USER = process.env.CVR_ES_USER ?? '';
+  const CVR_ES_PASS = process.env.CVR_ES_PASS ?? '';
+  if (!CVR_ES_USER || !CVR_ES_PASS) return;
+
+  const isPlaceholderLabel = (label: string): boolean => /^Ukendt ejer\s*\(en\s*\d+\)$/.test(label);
+
+  const placeholders = graph.nodes.filter(
+    (n) => n.type === 'person' && typeof n.enhedsNummer === 'number' && isPlaceholderLabel(n.label)
+  );
+  if (placeholders.length === 0) return;
+
+  const auth = Buffer.from(`${CVR_ES_USER}:${CVR_ES_PASS}`).toString('base64');
+  const CVR_ES_BASE = 'http://distribution.virk.dk/cvr-permanent';
+
+  try {
+    const results = await Promise.allSettled(
+      placeholders.map((node) =>
+        fetch(`${CVR_ES_BASE}/virksomhed/_search`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Basic ${auth}` },
+          body: JSON.stringify({
+            query: { term: { 'Vrvirksomhed.enhedsNummer': String(node.enhedsNummer) } },
+            _source: ['Vrvirksomhed.cvrNummer', 'Vrvirksomhed.navne.navn'],
+            size: 1,
+          }),
+          signal: AbortSignal.timeout(5000),
+        })
+          .then((r) => (r.ok ? r.json() : null))
+          .catch(() => null)
+      )
+    );
+    let converted = 0;
+    for (let i = 0; i < placeholders.length; i++) {
+      const result = results[i];
+      if (result.status !== 'fulfilled' || !result.value) continue;
+      const src = result.value?.hits?.hits?.[0]?._source?.Vrvirksomhed;
+      if (!src) continue;
+      const cvrNr = src.cvrNummer;
+      const navne = src.navne;
+      let navn: string | undefined;
+      if (Array.isArray(navne) && navne.length > 0) {
+        navn = navne[navne.length - 1]?.navn;
+      }
+      if (!cvrNr || !navn) continue;
+      const node = placeholders[i];
+      node.label = navn;
+      node.type = 'company';
+      node.cvr = Number(cvrNr);
+      node.link = `/dashboard/companies/${cvrNr}`;
+      converted++;
+    }
+    if (converted > 0) {
+      logger.log(
+        `[diagram/resolve] virksomhed-fejlcache enrichment konverterede ${converted}/${placeholders.length} noder`
+      );
+    }
+  } catch (err) {
+    logger.warn('[diagram/resolve] virksomhed-fejlcache enrichment fejl:', err);
+  }
+}
+
 async function enrichPropertyNodes(
   graph: DiagramGraph,
   host: string,
@@ -2515,6 +2584,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
     if (type === 'person') {
       await enrichNoeglePersoner(graph, admin, Number(id));
     }
+
+    // BIZZ-1587: Berig fejlcachede person-enhedsnumre der faktisk er virksomheder
+    await enrichVirksomhedFejlcacheNodes(graph);
 
     // Berig property-noder med adresser (best-effort)
     await enrichPropertyNodes(graph, reqHost, reqCookie);

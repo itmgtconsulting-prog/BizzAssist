@@ -29,14 +29,12 @@ test.beforeEach(async ({}, testInfo) => {
 });
 
 test('BIZZ-1587: Belvedere diagram resolver virksomhed-fejlcache som company', async ({ page }) => {
-  const res = await page.request.post('/api/diagram/resolve', {
-    data: { cvr: BELVEDERE_CVR },
-  });
+  const res = await page.request.get(`/api/diagram/resolve?type=company&id=${BELVEDERE_CVR}`);
   expect(res.status()).toBe(200);
   const data = (await res.json()) as {
-    nodes?: Array<{ id: string; label: string; type: string; cvr?: number }>;
+    graph?: { nodes?: Array<{ id: string; label: string; type: string; cvr?: number }> };
   };
-  const nodes = data.nodes ?? [];
+  const nodes = data.graph?.nodes ?? [];
   console.log(`[BIZZ-1587] ${nodes.length} noder i total`);
 
   // Ingen "Ukendt ejer (en NNNN)" tilbage

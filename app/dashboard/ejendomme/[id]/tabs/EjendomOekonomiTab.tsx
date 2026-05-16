@@ -452,21 +452,51 @@ export default function EjendomOekonomiTab(props: Props) {
               /* Aktuelle tal — ejendommen har egne vurderinger */
               <div className="grid grid-cols-3 gap-3 mb-3">
                 <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                  <p className="text-slate-400 text-xs mb-1">
-                    {t.propertyValue}
-                    {vurdering.aar && (
-                      <span className="ml-1 text-slate-500">({vurdering.aar})</span>
+                  <div className="flex items-start justify-between mb-1">
+                    <p className="text-slate-400 text-xs">
+                      {t.propertyValue}
+                      {vurdering.aar && (
+                        <span className="ml-1 text-slate-500">({vurdering.aar})</span>
+                      )}
+                    </p>
+                    {forelobige.length > 0 && forelobige[0].ejendomsvaerdi != null && (
+                      <span className="text-amber-400 text-[10px] font-medium text-right leading-tight">
+                        {forelobige[0].vurderingsaar} {t.preliminary}
+                      </span>
                     )}
-                  </p>
-                  <p className="text-white text-lg font-bold">
-                    {vurdering.ejendomsvaerdi ? formatDKK(vurdering.ejendomsvaerdi) : formatDKK(0)}
-                  </p>
+                  </div>
+                  <div className="flex items-baseline justify-between">
+                    <p className="text-white text-lg font-bold">
+                      {vurdering.ejendomsvaerdi
+                        ? formatDKK(vurdering.ejendomsvaerdi)
+                        : formatDKK(0)}
+                    </p>
+                    {forelobige.length > 0 && forelobige[0].ejendomsvaerdi != null && (
+                      <p className="text-amber-400/80 text-sm font-semibold tabular-nums">
+                        {formatDKK(forelobige[0].ejendomsvaerdi)}
+                      </p>
+                    )}
+                  </div>
                 </div>
                 <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                  <p className="text-slate-400 text-xs mb-1">{t.landValue}</p>
-                  <p className="text-white text-lg font-bold">
-                    {vurdering.grundvaerdi ? formatDKK(vurdering.grundvaerdi) : formatDKK(0)}
-                  </p>
+                  <div className="flex items-start justify-between mb-1">
+                    <p className="text-slate-400 text-xs">{t.landValue}</p>
+                    {forelobige.length > 0 && forelobige[0].grundvaerdi != null && (
+                      <span className="text-amber-400 text-[10px] font-medium text-right leading-tight">
+                        {forelobige[0].vurderingsaar} {t.preliminary}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-baseline justify-between">
+                    <p className="text-white text-lg font-bold">
+                      {vurdering.grundvaerdi ? formatDKK(vurdering.grundvaerdi) : formatDKK(0)}
+                    </p>
+                    {forelobige.length > 0 && forelobige[0].grundvaerdi != null && (
+                      <p className="text-amber-400/80 text-sm font-semibold tabular-nums">
+                        {formatDKK(forelobige[0].grundvaerdi)}
+                      </p>
+                    )}
+                  </div>
                 </div>
                 <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
                   <p className="text-slate-400 text-xs mb-1">{t.plotArea}</p>

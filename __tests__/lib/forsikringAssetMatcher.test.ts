@@ -42,17 +42,8 @@ function makePolicy(overrides: Partial<ForsikringPolicy> = {}): ForsikringPolicy
 /** Helper: bygger en minimal Aktiv */
 function makeAktiv(overrides: Partial<Aktiv> = {}): Aktiv {
   return {
-    id: 'a1',
     type: 'ejendom',
     label: 'Test ejendom',
-    adresse: null,
-    bfe: null,
-    cvr: null,
-    regnr: null,
-    vaerdiDkk: null,
-    haeftelserDkk: null,
-    byggeaar: null,
-    rawData: null,
     ...overrides,
   } as Aktiv;
 }
@@ -186,7 +177,7 @@ describe('matchAssetsToPolicies — bil-matching', () => {
   });
 
   it('Ingen regnr giver score 0', () => {
-    const aktiv = makeAktiv({ type: 'bil', regnr: null });
+    const aktiv = makeAktiv({ type: 'bil', regnr: undefined });
     const policy = makePolicy();
     const [m] = matchAssetsToPolicies([aktiv], [policy]);
     expect(m.bestMatch).toBeNull();
@@ -228,7 +219,7 @@ describe('matchAssetsToPolicies — edge cases', () => {
   });
 
   it('Aktiv uden bfe + adresse + CVR matcher intet', () => {
-    const aktiv = makeAktiv({ bfe: null, adresse: null, label: 'BFE 12345' });
+    const aktiv = makeAktiv({ bfe: undefined, adresse: undefined, label: 'BFE 12345' });
     const policy = makePolicy({ property_address: 'Stengade 7' });
     const [m] = matchAssetsToPolicies([aktiv], [policy]);
     expect(m.bestMatch).toBeNull();

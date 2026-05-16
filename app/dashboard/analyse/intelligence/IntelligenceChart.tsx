@@ -91,13 +91,17 @@ function isTemporal(rows: Array<Record<string, unknown>>, col: string): boolean 
 
 /**
  * Auto-detect den bedste chart-type baseret på kolonne-typer.
+ *
+ * BIZZ-1555: Tilføjet `valueCols` for multi-series chart-rendering når der er
+ * 2+ numeriske kolonner (fx "antal_huse, antal_lejligheder, total" pr. måned).
+ * Den primære `valueCol` bevares for backward compat med single-series-renderen.
  */
 function detectChartType(
   columns: string[],
   rows: Array<Record<string, unknown>>
-): { type: ChartType; labelCol: string; valueCol: string } {
+): { type: ChartType; labelCol: string; valueCol: string; valueCols: string[] } {
   if (columns.length < 2 || rows.length === 0) {
-    return { type: 'none', labelCol: '', valueCol: '' };
+    return { type: 'none', labelCol: '', valueCol: '', valueCols: [] };
   }
 
   // Find label og value kolonner
@@ -107,26 +111,31 @@ function detectChartType(
   if (numericCols.length === 0 || nonNumericCols.length === 0) {
     // Hvis alle er numeriske, brug første som label
     if (numericCols.length >= 2) {
-      return { type: 'bar', labelCol: numericCols[0], valueCol: numericCols[1] };
+      return {
+        type: 'bar',
+        labelCol: numericCols[0],
+        valueCol: numericCols[1],
+        valueCols: numericCols.slice(1),
+      };
     }
-    return { type: 'none', labelCol: '', valueCol: '' };
+    return { type: 'none', labelCol: '', valueCol: '', valueCols: [] };
   }
 
   const labelCol = nonNumericCols[0];
   const valueCol = numericCols[0];
 
-  // Dato-kolonne → line chart
+  // Dato-kolonne → line chart (single eller multi-series afhængigt af antal numeriske kolonner)
   if (isTemporal(rows, labelCol)) {
-    return { type: 'line', labelCol, valueCol };
+    return { type: 'line', labelCol, valueCol, valueCols: numericCols };
   }
 
-  // Få rækker → pie chart
-  if (rows.length <= 10 && rows.length >= 2) {
-    return { type: 'pie', labelCol, valueCol };
+  // Få rækker + præcis 1 value-kolonne → pie chart
+  if (rows.length <= 10 && rows.length >= 2 && numericCols.length === 1) {
+    return { type: 'pie', labelCol, valueCol, valueCols: numericCols };
   }
 
   // Default → bar chart
-  return { type: 'bar', labelCol, valueCol };
+  return { type: 'bar', labelCol, valueCol, valueCols: numericCols };
 }
 
 /**
@@ -158,19 +167,30 @@ function CustomTooltip({
  * IntelligenceChart — auto-detected chart for query results.
  */
 export default function IntelligenceChart({ columns, rows }: Props): React.ReactElement | null {
-  const { type, labelCol, valueCol } = useMemo(
+  const { type, labelCol, valueCol, valueCols } = useMemo(
     () => detectChartType(columns, rows),
     [columns, rows]
   );
 
-  /** Chart data med numerisk cast. */
+  /**
+   * Chart data med numerisk cast.
+   * BIZZ-1555: Tilføjer ALLE numeriske kolonner som separate keys så multi-series
+   * line chart kan plotte flere linjer (huse + lejligheder + total).
+   */
   const chartData = useMemo(() => {
     const maxRows = type === 'pie' ? 10 : 30;
-    return rows.slice(0, maxRows).map((row) => ({
-      label: String(row[labelCol] ?? ''),
-      value: Number(row[valueCol]) || 0,
-    }));
-  }, [rows, labelCol, valueCol, type]);
+    return rows.slice(0, maxRows).map((row) => {
+      const item: Record<string, string | number> = {
+        label: String(row[labelCol] ?? ''),
+        value: Number(row[valueCol]) || 0,
+      };
+      // Multi-series: tilføj alle numeriske kolonner som keys (incl. valueCol)
+      for (const col of valueCols) {
+        item[col] = Number(row[col]) || 0;
+      }
+      return item;
+    });
+  }, [rows, labelCol, valueCol, valueCols, type]);
 
   if (type === 'none' || chartData.length === 0) return null;
 
@@ -212,14 +232,25 @@ export default function IntelligenceChart({ columns, rows }: Props): React.React
               tickFormatter={(v: number) => formatNumber(v)}
             />
             <Tooltip content={<CustomTooltip />} />
-            <Line
-              type="monotone"
-              dataKey="value"
-              stroke="#10b981"
-              strokeWidth={2}
-              dot={{ fill: '#10b981', r: 4 }}
-              name={valueCol}
-            />
+            {valueCols.length > 1 && (
+              <Legend
+                formatter={(value: string) => (
+                  <span className="text-slate-300 text-xs">{value}</span>
+                )}
+              />
+            )}
+            {/* BIZZ-1555: Multi-series — én Line pr. numerisk kolonne. */}
+            {valueCols.map((col, i) => (
+              <Line
+                key={col}
+                type="monotone"
+                dataKey={col}
+                stroke={COLORS[i % COLORS.length]}
+                strokeWidth={2}
+                dot={{ fill: COLORS[i % COLORS.length], r: 4 }}
+                name={col}
+              />
+            ))}
           </LineChart>
         ) : (
           <BarChart data={chartData} layout="vertical" margin={{ left: 10 }}>

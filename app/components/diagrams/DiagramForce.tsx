@@ -2926,8 +2926,9 @@ function DiagramForce({
                           const parts = node.label.split(',').map((s) => s.trim());
                           const street = parts[0] ?? node.label;
                           const postBy = parts.slice(1).join(', ');
-                          // Truncate street to fit in box (NODE_W=320, ~30 chars at 11px)
-                          const maxStreet = 32;
+                          // BIZZ-1543: maxStreet 32→36 så "vejnavn nr. etage. dør"
+                          // ikke trunkeres unødigt nu hvor etage er flyttet til linje 1.
+                          const maxStreet = 36;
                           const streetText =
                             street.length > maxStreet ? street.slice(0, maxStreet) + '…' : street;
                           return (

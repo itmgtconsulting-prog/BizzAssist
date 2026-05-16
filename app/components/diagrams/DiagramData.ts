@@ -226,9 +226,42 @@ function formatPropertyLabel(p: DiagramPropertySummary): string {
   const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
   const hasAddress = !!p.adresse;
   const rawAddr = p.adresse ?? 'Ejendom';
+  // BIZZ-1543: Brug mellemrum mellem adresse og etage (ikke komma).
+  // DiagramForce.tsx splitter label på komma for at lave linje 1 / linje 2.
+  // Med komma havnede etage/dør på linje 2 sammen med postnr+by, så to
+  // ejerlejligheder i samme opgang så identiske ud. Med space holdes
+  // "vejnavn nr. etage. dør" samlet på linje 1.
   const baseAddr =
-    hasAddress && p.etage ? `${rawAddr}, ${p.etage}.${p.doer ? ` ${p.doer}` : ''}` : rawAddr;
+    hasAddress && p.etage ? `${rawAddr} ${p.etage}.${p.doer ? ` ${p.doer}` : ''}` : rawAddr;
   return hasAddress && postBy ? `${baseAddr}, ${postBy}` : baseAddr;
+}
+
+/**
+ * BIZZ-1542: Bygger ejendoms-detalje-link med robust fallback.
+ *
+ * For ejerlejligheder (har etage) bruger vi BFE-nummeret som ID i URL'en,
+ * fordi DAWA-UUID fra diagrammet ofte er en enhedsadresse-UUID der ikke kan
+ * resolves via /adgangsadresser. page.tsx resolver så BFE→DAWA via
+ * bbr_ejendom_status eller DAWA jordstykker-chain.
+ *
+ * For normalejendomme bruges DAWA UUID når tilgængelig (præserverer
+ * server-side prefetch optimering); ellers BFE som fallback.
+ *
+ * @param p - Property summary med bfeNummer + dawaId
+ * @returns URL til ejendoms-detaljeside eller undefined hvis ingen identifier
+ */
+function buildPropertyLink(p: DiagramPropertySummary): string | undefined {
+  const isEjerlejlighed = !!p.etage;
+  if (isEjerlejlighed && p.bfeNummer) {
+    return `/dashboard/ejendomme/${p.bfeNummer}`;
+  }
+  if (p.dawaId) {
+    return `/dashboard/ejendomme/${p.dawaId}`;
+  }
+  if (p.bfeNummer) {
+    return `/dashboard/ejendomme/${p.bfeNummer}`;
+  }
+  return undefined;
 }
 
 /**
@@ -266,14 +299,13 @@ function addPropertiesAndOverflow(
       });
       if (seenIds.has(propId)) continue;
       seenIds.add(propId);
-      const link = p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined;
       nodes.push({
         id: propId,
         label: formatPropertyLabel(p),
         sublabel: p.ejendomstype ?? undefined,
         type: 'property',
         bfeNummer: p.bfeNummer,
-        link,
+        link: buildPropertyLink(p),
       });
     }
 
@@ -289,7 +321,7 @@ function addPropertiesAndOverflow(
         overflowItems: opts.includeOverflowItems
           ? overflowProps.map((p) => ({
               label: formatPropertyLabel(p),
-              link: p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined,
+              link: buildPropertyLink(p),
             }))
           : undefined,
       });
@@ -923,14 +955,13 @@ export function buildPersonDiagramGraph(
       });
       if (seenIds.has(propId)) continue;
       seenIds.add(propId);
-      const link = p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined;
       nodes.push({
         id: propId,
         label: formatPropertyLabel(p),
         sublabel: p.ejendomstype ?? undefined,
         type: 'property',
         bfeNummer: p.bfeNummer,
-        link,
+        link: buildPropertyLink(p),
       });
     }
   }

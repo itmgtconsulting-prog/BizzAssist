@@ -10,7 +10,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Landmark, ChevronDown, ChevronRight } from 'lucide-react';
+import { Landmark, ChevronDown, ChevronRight, Download } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 
 interface Haeftelse {
@@ -19,6 +19,8 @@ interface Haeftelse {
   hovedstol: number | null;
   rente_pct: number | null;
   tinglysningsdato: string | null;
+  /** BIZZ-1567: Tinglysnings-dokument UUID for PDF-download */
+  dokument_id: string | null;
 }
 
 interface Props {
@@ -42,7 +44,7 @@ export default function HaeftelserSektion({ bfe, lang }: Props): React.ReactElem
       const supabase = createClient();
       const { data } = await supabase
         .from('tinglysning_haeftelser')
-        .select('type, kreditor_navn, hovedstol, rente_pct, tinglysningsdato')
+        .select('type, kreditor_navn, hovedstol, rente_pct, tinglysningsdato, dokument_id')
         .eq('bfe_nummer', bfe)
         .order('tinglysningsdato', { ascending: false });
       if (data && data.length > 0) setRows(data as Haeftelse[]);
@@ -95,6 +97,8 @@ export default function HaeftelserSektion({ bfe, lang }: Props): React.ReactElem
                 <th className="text-right py-2 px-2">{da ? 'Hovedstol' : 'Principal'}</th>
                 <th className="text-right py-2 px-2">{da ? 'Rente' : 'Rate'}</th>
                 <th className="text-right py-2 px-2">{da ? 'Dato' : 'Date'}</th>
+                {/* BIZZ-1567: PDF-download kolonne */}
+                <th className="text-right py-2 px-2 w-12">{da ? 'PDF' : 'PDF'}</th>
               </tr>
             </thead>
             <tbody>
@@ -112,6 +116,23 @@ export default function HaeftelserSektion({ bfe, lang }: Props): React.ReactElem
                     {h.tinglysningsdato
                       ? new Date(h.tinglysningsdato).toLocaleDateString('da-DK')
                       : '—'}
+                  </td>
+                  {/* BIZZ-1567: PDF-download via eksisterende /api/tinglysning/dokument */}
+                  <td className="py-1.5 px-2 text-right">
+                    {h.dokument_id ? (
+                      <a
+                        href={`/api/tinglysning/dokument?uuid=${encodeURIComponent(h.dokument_id)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center justify-center p-1 rounded text-slate-400 hover:text-amber-400 hover:bg-amber-500/10 transition-colors"
+                        title={da ? 'Download tinglyst PDF' : 'Download registered PDF'}
+                        aria-label={da ? 'Download tinglyst PDF' : 'Download registered PDF'}
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                      </a>
+                    ) : (
+                      <span className="text-slate-700">—</span>
+                    )}
                   </td>
                 </tr>
               ))}

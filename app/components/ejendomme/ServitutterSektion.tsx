@@ -10,13 +10,15 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Shield, ChevronDown, ChevronRight } from 'lucide-react';
+import { Shield, ChevronDown, ChevronRight, Download } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 
 interface Servitut {
   type: string | null;
   beskrivelse: string | null;
   tinglysningsdato: string | null;
+  /** BIZZ-1567: Tinglysnings-dokument UUID for PDF-download */
+  dokument_id: string | null;
 }
 
 /** Farvekodning per servitut-type. */
@@ -61,7 +63,7 @@ export default function ServitutterSektion({ bfe, lang }: Props): React.ReactEle
       const supabase = createClient();
       const { data } = await supabase
         .from('tinglysning_servitutter')
-        .select('type, beskrivelse, tinglysningsdato')
+        .select('type, beskrivelse, tinglysningsdato, dokument_id')
         .eq('bfe_nummer', bfe)
         .order('tinglysningsdato', { ascending: false });
       if (data && data.length > 0) setRows(data as Servitut[]);
@@ -123,9 +125,22 @@ export default function ServitutterSektion({ bfe, lang }: Props): React.ReactEle
                         ? new Date(s.tinglysningsdato).toLocaleDateString('da-DK')
                         : '—'}
                     </span>
-                    <span className="text-slate-300">
+                    <span className="text-slate-300 flex-1">
                       {s.beskrivelse?.slice(0, 200) ?? '(ingen beskrivelse)'}
                     </span>
+                    {/* BIZZ-1567: PDF-download via eksisterende /api/tinglysning/dokument */}
+                    {s.dokument_id && (
+                      <a
+                        href={`/api/tinglysning/dokument?uuid=${encodeURIComponent(s.dokument_id)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center justify-center p-0.5 rounded text-slate-500 hover:text-blue-400 hover:bg-blue-500/10 transition-colors shrink-0"
+                        title={da ? 'Download tinglyst PDF' : 'Download registered PDF'}
+                        aria-label={da ? 'Download tinglyst PDF' : 'Download registered PDF'}
+                      >
+                        <Download className="w-3 h-3" />
+                      </a>
+                    )}
                   </div>
                 ))}
               </div>

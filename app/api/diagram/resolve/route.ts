@@ -1993,6 +1993,41 @@ async function resolvePersonGraph(
     }
   }
 
+  // ── BIZZ-1545: Fjern historiske ejer-edges. cvr_virksomhed_ejerskab har
+  // dårlige gyldig_til-data (alle NULL selv for ophørte relationer). Hvis et
+  // selskab har flere virksomheds-parents OG mindst én har defineret ejerandel,
+  // betragter vi de uden ejerandel som historiske og fjerner dem.
+  {
+    const cvrEdgeGroups = new Map<string, Array<{ idx: number; hasEjerandel: boolean }>>();
+    for (let i = 0; i < edges.length; i++) {
+      const e = edges[i];
+      // Kun virksomhed→virksomhed-edges (hierarki)
+      if (!e.from.startsWith('cvr-') || !e.to.startsWith('cvr-')) continue;
+      const arr = cvrEdgeGroups.get(e.to) ?? [];
+      arr.push({ idx: i, hasEjerandel: !!e.ejerandel });
+      cvrEdgeGroups.set(e.to, arr);
+    }
+    const indicesToRemove = new Set<number>();
+    for (const [, parents] of cvrEdgeGroups) {
+      if (parents.length < 2) continue;
+      const withEjerandel = parents.filter((p) => p.hasEjerandel);
+      // Hvis nogen har ejerandel og andre ikke har, behold KUN dem med ejerandel
+      if (withEjerandel.length > 0 && withEjerandel.length < parents.length) {
+        for (const p of parents) {
+          if (!p.hasEjerandel) indicesToRemove.add(p.idx);
+        }
+      }
+    }
+    if (indicesToRemove.size > 0) {
+      // Slet baglæns for at undgå index-shift
+      const sorted = Array.from(indicesToRemove).sort((a, b) => b - a);
+      for (const idx of sorted) edges.splice(idx, 1);
+      logger.log(
+        `[diagram/resolve] BIZZ-1545: fjernet ${indicesToRemove.size} historiske ejer-edges uden ejerandel`
+      );
+    }
+  }
+
   // ── ROLLE-VIRKSOMHEDER (bestyrelse/direktion — direkte under person) ─────
   // Vises direkte under personen med rolle-tekst på edge (ingen container-node).
   // layoutSection: 'role' sikrer at DiagramForce placerer dem lavere end ejerskab.

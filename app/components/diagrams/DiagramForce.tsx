@@ -1052,21 +1052,33 @@ function DiagramForce({
       }
     }
 
-    // BIZZ-1205: Rolle-virksomheder (layoutSection='role') placeres NEDERST
-    // i diagrammet, under ejerskabs-hierarkiet. Ejerskabs-virksomheder beholder
-    // deres naturlige depth fra BFS (direkte under personen og nedad).
+    // BIZZ-1205/1545: Rolle-virksomheder (layoutSection='role') placeres MELLEM
+    // personligt ejede ejendomme og ejer-virksomheder. Tidligere placeret
+    // nederst, hvilket gjorde diagrammet svært at læse for personer med mange
+    // rolle-virksomheder. Hierarki-orden: person → personlige ejendomme →
+    // rolle-virksomheder → ejer-virksomheder → sub-virksomheder.
     const roleNodes = filteredGraph.nodes.filter((n) => n.layoutSection === 'role');
     if (roleNodes.length > 0) {
-      // Find dybeste ejerskabs-node
-      let maxOwnerDepth = 1;
+      // Find depth af personally-owned properties (max) og ejer-virksomheder (min)
+      let maxPropDepth = -Infinity;
+      let minEjerDepth = Infinity;
       for (const [id, d] of depths) {
         const node = nodeById.get(id);
-        if (node?.layoutSection === 'role') continue;
-        if (d > maxOwnerDepth) maxOwnerDepth = d;
+        if (!node || node.layoutSection === 'role') continue;
+        if (node.type === 'property' || id.startsWith('props-overflow-')) {
+          if (d > maxPropDepth) maxPropDepth = d;
+        } else if (node.type === 'company' && d > 0) {
+          // Ejer-virksomheder ligger ved depth 1+ (under personen)
+          if (d < minEjerDepth) minEjerDepth = d;
+        }
       }
-      // Placér rolle-noder 2 niveauer under dybeste ejerskabs-node
+      // Placér rolle-noder midt mellem properties og ejer (default 0.75 hvis ingen properties)
+      const targetDepth =
+        maxPropDepth !== -Infinity && minEjerDepth !== Infinity
+          ? (maxPropDepth + minEjerDepth) / 2
+          : 0.75;
       for (const node of roleNodes) {
-        depths.set(node.id, maxOwnerDepth + 2);
+        depths.set(node.id, targetDepth);
       }
     }
 

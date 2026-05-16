@@ -1015,12 +1015,16 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         .limit(500);
 
       if (!cacheErr && cached && cached.length > 0) {
+        // BIZZ-1588: Personer skifter sjældent ejerskab — brug 90-dages threshold
+        // i stedet for default 7. Live EJF kan ikke lookup person-ejere uden CPR,
+        // så alternativet til stale cache er tom liste.
+        const PERSON_STALE_MS = 90 * 24 * 60 * 60 * 1000;
         const freshest = Math.max(
           ...cached.map((r: { sidst_opdateret: string | null }) =>
             r.sidst_opdateret ? new Date(r.sidst_opdateret).getTime() : 0
           )
         );
-        if (Date.now() - freshest < EJF_STALE_MS) {
+        if (Date.now() - freshest < PERSON_STALE_MS) {
           for (const row of cached as Array<{
             bfe_nummer: number;
             ejer_enheds_nummer: string | null;

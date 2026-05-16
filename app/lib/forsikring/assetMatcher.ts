@@ -104,16 +104,24 @@ function scoreEjendom(aktiv: Aktiv, policy: ForsikringPolicy): number {
     return 100;
   }
 
-  // Adresse-match — fallback til policyholder_address hvis property_address er null
+  // BIZZ-1488/1492/1552: Adresse-match — brug KUN property_address.
+  // policyholder_address er ofte virksomhedens HQ (fx "Belvedere Ejendomme A/S,
+  // København S") og matcher aldrig de faktiske ejendomme. CVR-fallback nedenfor
+  // dækker tilfældet hvor policen er tegnet på CVR-niveau uden specifik adresse.
   const aktivAddr = normalize(aktiv.adresse || aktiv.label);
-  const policyAddr = normalize(policy.property_address) || normalize(policy.policyholder_address);
+  const policyAddr = normalize(policy.property_address);
+
+  // CVR-fallback: hvis policen mangler property_address men har policyholder_cvr
+  // der matcher ejer-CVR på aktivet, betragter vi det som en svag policiel dækning.
+  const ejerCvr = (aktiv.rawData as Record<string, unknown> | undefined)?.ejer_cvr as
+    | string
+    | undefined;
+  const cvrFallbackMatch =
+    !!ejerCvr && !!policy.policyholder_cvr && ejerCvr === policy.policyholder_cvr;
 
   if (!aktivAddr || !policyAddr) {
     // BIZZ-1488: CVR-baseret fallback — policyholder tegner forsikring for sine ejendomme
-    const ejerCvr = (aktiv.rawData as Record<string, unknown> | undefined)?.ejer_cvr as
-      | string
-      | undefined;
-    if (ejerCvr && policy.policyholder_cvr && ejerCvr === policy.policyholder_cvr) {
+    if (cvrFallbackMatch) {
       return 55; // Over MATCH_THRESHOLD (50) — svag men gyldig match
     }
     return 0;
@@ -157,6 +165,12 @@ function scoreEjendom(aktiv: Aktiv, policy: ForsikringPolicy): number {
     if (aktivParts[0] === policyParts[0]) {
       return 40;
     }
+  }
+
+  // BIZZ-1488/1492/1552: Hvis adresse-match fejler fuldstændigt MEN CVR matcher,
+  // betragt det som svag policiel dækning (CVR-bærer-police).
+  if (cvrFallbackMatch) {
+    return 55;
   }
 
   return 0;

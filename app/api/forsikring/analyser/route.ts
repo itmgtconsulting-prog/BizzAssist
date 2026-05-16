@@ -16,6 +16,7 @@ import { getInsuranceApi } from '@/lib/db/insurance';
 import { walkKoncern } from '@/app/lib/forsikring/koncernWalk';
 import { matchAssetsToPolicies } from '@/app/lib/forsikring/assetMatcher';
 import { runGapEngine, computeRiskScore } from '@/app/lib/forsikring/gapEngine';
+import type { ForsikringCoverage } from '@/app/lib/forsikring/types';
 import {
   runBbrCrossCheck,
   runTinglysningCrossCheck,
@@ -132,8 +133,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             `[forsikring/analyser] Beriget ${Object.keys(addrData).length} ejendomme med adresser`
           );
         }
-      } catch {
-        logger.warn('[forsikring/analyser] Adresse-berigelse fejlede (best-effort)');
+      } catch (err) {
+        // BIZZ-1488/1492/1552: Log fejlen så vi kan diagnosticere når adresse-
+        // berigelse fejler (tidligere stille fallback) — aktiver beholder så kun
+        // BFE-nummeret som label hvilket fejler alle matches.
+        logger.error('[forsikring/analyser] Adresse-berigelse fejlede:', err);
       }
     }
 
@@ -230,11 +234,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
     }
 
+    // BIZZ-1488/1492/1552: Batch-fetch coverages per policy så gap-engine
+    // får faktiske dækningsdata (tidligere hardkodet til []) — uden disse
+    // rapporterede checkMissingGlas/Sanitet/etc. altid "mangler".
+    const policyIds = matches.filter((m) => m.bestMatch).map((m) => m.bestMatch!.policy.id);
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    if (policyIds.length > 0) {
+      const coveragePromises = policyIds.map((id) =>
+        insurance.coverages.listForPolicy(id).then((rows) => ({ id, rows }))
+      );
+      const results = await Promise.all(coveragePromises);
+      for (const r of results) coveragesByPolicy.set(r.id, r.rows);
+    }
+
     for (const match of matches) {
       if (!match.bestMatch) continue;
+      const policyCoverages = coveragesByPolicy.get(match.bestMatch.policy.id) ?? [];
       const gaps = runGapEngine({
         policy: match.bestMatch.policy,
-        coverages: [], // TODO: hent coverages per policy
+        coverages: policyCoverages,
         bbr: null,
         asOfDate: new Date(),
         branche: brancheData,

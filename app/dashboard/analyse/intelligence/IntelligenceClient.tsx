@@ -83,66 +83,69 @@ export default function IntelligenceClient(): React.ReactElement {
    * ingen rows + ingen forklaring (typisk AI hallucinering hvor SQL eksekverede
    * men returnerede tomt resultat).
    */
-  const submit = useCallback(async (q: string) => {
-    if (!q.trim() || q.length < 3) {
-      setError('Skriv mindst 3 tegn');
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    setResponse(null);
-    setSortCol(null);
-    setSortDir(null);
-    try {
-      const res = await fetch('/api/analyse/sql', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: q.trim(),
-          ...(previousPrompt && previousSql ? { previousPrompt, previousSql } : {}),
-        }),
-        signal: AbortSignal.timeout(95_000),
-      });
-      let data: SqlResponse;
-      try {
-        data = (await res.json()) as SqlResponse;
-      } catch {
-        setError(
-          `Server svarede ikke korrekt (HTTP ${res.status}). Prøv at omformulere spørgsmålet eller del det op i mindre dele.`
-        );
+  const submit = useCallback(
+    async (q: string) => {
+      if (!q.trim() || q.length < 3) {
+        setError('Skriv mindst 3 tegn');
         return;
       }
-      if (!res.ok && !data.ok) {
-        setError(data.error || `Ukendt fejl (HTTP ${res.status})`);
-        setResponse(data);
-      } else {
-        // BIZZ-1555: Synliggør stille fejl-cases
-        // - response.ok=true men ingen sql, ingen explanation, ingen rows → bug
-        if (data.ok && !data.sql && !data.explanation && data.rows.length === 0) {
+      setLoading(true);
+      setError(null);
+      setResponse(null);
+      setSortCol(null);
+      setSortDir(null);
+      try {
+        const res = await fetch('/api/analyse/sql', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: q.trim(),
+            ...(previousPrompt && previousSql ? { previousPrompt, previousSql } : {}),
+          }),
+          signal: AbortSignal.timeout(95_000),
+        });
+        let data: SqlResponse;
+        try {
+          data = (await res.json()) as SqlResponse;
+        } catch {
           setError(
-            'AI returnerede et tomt svar. Prøv at omformulere eller del spørgsmålet op i mindre dele (fx start med "hvor mange boliger solgt i hvidovre", spørg så efter m²-pris bagefter).'
+            `Server svarede ikke korrekt (HTTP ${res.status}). Prøv at omformulere spørgsmålet eller del det op i mindre dele.`
           );
+          return;
         }
-        setResponse(data);
-        // Gem kontekst til follow-up
-        if (data.ok && data.sql) {
-          setPreviousPrompt(q.trim());
-          setPreviousSql(data.sql);
+        if (!res.ok && !data.ok) {
+          setError(data.error || `Ukendt fejl (HTTP ${res.status})`);
+          setResponse(data);
+        } else {
+          // BIZZ-1555: Synliggør stille fejl-cases
+          // - response.ok=true men ingen sql, ingen explanation, ingen rows → bug
+          if (data.ok && !data.sql && !data.explanation && data.rows.length === 0) {
+            setError(
+              'AI returnerede et tomt svar. Prøv at omformulere eller del spørgsmålet op i mindre dele (fx start med "hvor mange boliger solgt i hvidovre", spørg så efter m²-pris bagefter).'
+            );
+          }
+          setResponse(data);
+          // Gem kontekst til follow-up
+          if (data.ok && data.sql) {
+            setPreviousPrompt(q.trim());
+            setPreviousSql(data.sql);
+          }
         }
+      } catch (err) {
+        // BIZZ-1555: Skeln mellem timeout og generisk netværksfejl
+        if (err instanceof DOMException && err.name === 'TimeoutError') {
+          setError(
+            'Spørgsmålet tog over 95 sekunder. Det er typisk for komplekse joins (fx m²-pris kræver BBR-data). Prøv at del spørgsmålet op eller spørg mere specifikt.'
+          );
+        } else {
+          setError(err instanceof Error ? err.message : 'Netværksfejl');
+        }
+      } finally {
+        setLoading(false);
       }
-    } catch (err) {
-      // BIZZ-1555: Skeln mellem timeout og generisk netværksfejl
-      if (err instanceof DOMException && err.name === 'TimeoutError') {
-        setError(
-          'Spørgsmålet tog over 95 sekunder. Det er typisk for komplekse joins (fx m²-pris kræver BBR-data). Prøv at del spørgsmålet op eller spørg mere specifikt.'
-        );
-      } else {
-        setError(err instanceof Error ? err.message : 'Netværksfejl');
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    },
+    [previousPrompt, previousSql]
+  );
 
   /** Form submit handler. */
   const handleSubmit = useCallback(
@@ -426,7 +429,6 @@ export default function IntelligenceClient(): React.ReactElement {
                   onSubmit={(e) => {
                     e.preventDefault();
                     if (followUp.trim().length >= 3) {
-                      setPrompt(followUp);
                       submit(followUp);
                       setFollowUp('');
                     }

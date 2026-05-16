@@ -451,6 +451,10 @@ export async function GET(req: NextRequest) {
             matNr,
             responseLen: responseXml.length,
             hasDokFil: responseXml.includes('DokumentFilnavn'),
+            xmlSample: responseXml.substring(
+              Math.max(0, responseXml.indexOf('DokumentFilnavn') - 100),
+              responseXml.indexOf('DokumentFilnavn') + 200
+            ),
           },
         },
         { headers: { 'Cache-Control': 'no-store' } }

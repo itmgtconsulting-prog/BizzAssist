@@ -451,6 +451,11 @@ export async function GET(req: NextRequest) {
             matNr,
             responseLen: responseXml.length,
             hasDokFil: responseXml.includes('DokumentFilnavn'),
+            akterCount: akter.length,
+            regexTest:
+              /<(?:[a-zA-Z0-9]+:)?DokumentFilnavnTekst[^>]*>([^<]+)<\/(?:[a-zA-Z0-9]+:)?DokumentFilnavnTekst>/g.test(
+                responseXml
+              ),
             xmlSample: responseXml.substring(
               Math.max(0, responseXml.indexOf('DokumentFilnavn') - 100),
               responseXml.indexOf('DokumentFilnavn') + 200

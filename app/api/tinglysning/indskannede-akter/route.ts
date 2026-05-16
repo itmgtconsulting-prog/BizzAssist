@@ -442,10 +442,22 @@ export async function GET(req: NextRequest) {
 
       logger.log(`[indskannede-akter] Fandt ${akter.length} akter for ejendomId=${ejendomId}`);
 
-      const result: IndskannedeAkterResponse = { ejendomId, akter };
-      return NextResponse.json(result, {
-        headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
-      });
+      return NextResponse.json(
+        {
+          ejendomId,
+          akter,
+          _debug: {
+            xmlApiStatus: 200,
+            bfe,
+            distName,
+            distId,
+            matNr,
+            responseLen: responseXml.length,
+            hasDokFil: responseXml.includes('DokumentFilnavn'),
+          },
+        },
+        { headers: { 'Cache-Control': 'no-store' } }
+      );
     }
 
     // Non-200: log og returner debug-info

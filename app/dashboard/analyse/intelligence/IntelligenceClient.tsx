@@ -10,7 +10,7 @@
 
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import {
   Search,
@@ -67,6 +67,17 @@ export default function IntelligenceClient(): React.ReactElement {
   const [response, setResponse] = useState<SqlResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showSql, setShowSql] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  /** Tjek admin-status ved mount. */
+  useEffect(() => {
+    fetch('/api/auth/me')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.isAdmin) setIsAdmin(true);
+      })
+      .catch(() => {});
+  }, []);
   const [showChart, setShowChart] = useState(true);
   const [chartType, setChartType] = useState<'auto' | 'bar' | 'pie' | 'line'>('auto');
   const [sortCol, setSortCol] = useState<string | null>(null);
@@ -384,8 +395,8 @@ export default function IntelligenceClient(): React.ReactElement {
               </div>
             )}
 
-            {/* SQL (collapsible) */}
-            {response.sql && (
+            {/* SQL (collapsible) — kun synlig for administratorer */}
+            {response.sql && isAdmin && (
               <div className="bg-slate-900 border border-slate-800 rounded-lg">
                 <button
                   onClick={() => setShowSql((v) => !v)}

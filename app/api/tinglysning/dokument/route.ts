@@ -1101,86 +1101,8 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Parse XML til sektioner
-    const sections = parseXmlToSections(xml);
-    const docTitle = sections[0]?.title ?? 'Tinglysningsdokument';
-
-    // Generer PDF med pdfkit
-    const doc = new PDFDocument({
-      size: 'A4',
-      margin: 50,
-      info: { Title: docTitle, Author: 'BizzAssist' },
-    });
-    const chunks: Buffer[] = [];
-    doc.on('data', (chunk: Buffer) => chunks.push(chunk));
-
-    // Header
-    doc.fontSize(8).fillColor('#94a3b8').text('BizzAssist — Tinglysningsdokument', 50, 30);
-    doc
-      .fontSize(8)
-      .text(
-        new Date().toLocaleDateString('da-DK', { day: 'numeric', month: 'long', year: 'numeric' }),
-        50,
-        30,
-        { align: 'right' }
-      );
-
-    // Titel
-    doc.moveDown(1.5);
-    doc.fontSize(18).fillColor('#1e293b').text(docTitle, { align: 'center' });
-    doc.moveDown(0.3);
-    doc.fontSize(9).fillColor('#64748b').text(`Dokument-ID: ${uuid}`, { align: 'center' });
-    doc.moveDown(1);
-
-    // Sektioner
-    for (const section of sections.slice(1)) {
-      // Sektion-header
-      doc.fontSize(12).fillColor('#2563eb').text(section.title);
-      doc.moveDown(0.3);
-      doc.strokeColor('#e2e8f0').lineWidth(0.5).moveTo(50, doc.y).lineTo(545, doc.y).stroke();
-      doc.moveDown(0.4);
-
-      // Felter
-      for (const field of section.fields) {
-        let y = doc.y;
-        if (y > 750) {
-          doc.addPage();
-          y = doc.y; // reset y efter sideskift — ellers renderes content usynligt under siden
-        }
-
-        if (field.label === 'Tekst' && field.value.length > 80) {
-          // Længere tekst — fuld bredde
-          doc
-            .fontSize(8)
-            .fillColor('#64748b')
-            .text(field.label + ':', 50);
-          doc.fontSize(9).fillColor('#1e293b').text(field.value, 50, undefined, { width: 495 });
-          doc.moveDown(0.3);
-        } else {
-          // Label : Value layout
-          doc
-            .fontSize(9)
-            .fillColor('#64748b')
-            .text(field.label + ':', 50, y, { width: 160 });
-          doc.fontSize(9).fillColor('#1e293b').text(field.value, 220, y, { width: 325 });
-          doc.moveDown(0.2);
-        }
-      }
-      doc.moveDown(0.5);
-    }
-
-    // Footer
-    doc.fontSize(7).fillColor('#94a3b8').text(`Genereret af ${companyInfo.legalLine}`, 50, 780, {
-      align: 'center',
-    });
-
-    doc.end();
-
-    // Vent på at PDF er færdig
-    const pdfBuffer = await new Promise<Buffer>((resolve) => {
-      doc.on('end', () => resolve(Buffer.concat(chunks)));
-    });
-
+    // BIZZ-1584: Brug det officielle layout fra generateDocumentPdfFromUuid
+    const pdfBuffer = await generateDocumentPdfFromUuid(uuid!);
     const alias = xml.match(/DokumentAliasIdentifikator[^>]*>([^<]+)/)?.[1] ?? uuid;
     const filename = `tinglysning-${alias}.pdf`;
 

@@ -274,6 +274,38 @@ describe('matchAssetsToPolicies — BIZZ-1592 normalisering', () => {
   });
 });
 
+// ─── BIZZ-1592 scopeDocIds-fallback simulering ─────────────────────────────
+
+describe('analyser scopeDocIds-fallback (BIZZ-1592)', () => {
+  it('simulerer: tom policer-array efter scopedocids-filter giver 0 forsikrede', () => {
+    // Når UI sender stale doc IDs der ikke matcher nogen policies,
+    // og analyser-routen IKKE har vores fallback, ender vi her:
+    const aktiver: Aktiv[] = [
+      { type: 'ejendom', label: '1', bfe: 1, adresse: 'Stengade 7, 3000 Helsingør' } as Aktiv,
+      { type: 'ejendom', label: '2', bfe: 2, adresse: 'Bramstræde 5, 3000 Helsingør' } as Aktiv,
+    ];
+    const ingenPolicer: ReturnType<typeof makePolicy>[] = [];
+    const results = matchAssetsToPolicies(aktiver, ingenPolicer);
+    expect(results.filter((r) => r.bestMatch).length).toBe(0); // alle uforsikrede
+  });
+
+  it('verifikation: med rigtige policer (fallback aktivt) matches korrekt', () => {
+    // Når fallback i analyser-route har brugt ALLE policies, får vi matches:
+    const aktiver: Aktiv[] = [
+      { type: 'ejendom', label: '1', bfe: 1, adresse: 'Stengade 7, 3000 Helsingør' } as Aktiv,
+      { type: 'ejendom', label: '2', bfe: 2, adresse: 'Bramstræde 5, 3000 Helsingør' } as Aktiv,
+      { type: 'ejendom', label: '3', bfe: 3, adresse: 'Fenrisvej 23, 3000 Helsingør' } as Aktiv,
+    ];
+    const allePolicer = [
+      makePolicy({ id: 'p1', property_address: 'Stengade 7, 3000 Helsingør' }),
+      makePolicy({ id: 'p2', property_address: 'Bramstræde 5, 3000 Helsingør' }),
+    ];
+    const results = matchAssetsToPolicies(aktiver, allePolicer);
+    const insured = results.filter((r) => r.bestMatch).length;
+    expect(insured).toBe(2); // Stengade + Bramstræde matches; Fenrisvej uforsikret
+  });
+});
+
 // ─── BIZZ-1592: BELVEDERE-scenario ─────────────────────────────────────────
 
 describe('matchAssetsToPolicies — BELVEDERE-scenario (BIZZ-1592)', () => {

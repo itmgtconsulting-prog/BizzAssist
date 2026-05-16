@@ -18,6 +18,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
+import { buildChainCacheKey, getCached, setCached } from '@/app/lib/ejerskab/cache';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -341,6 +342,21 @@ export async function GET(req: NextRequest) {
 
   if (!bfe) {
     return NextResponse.json({ nodes: [], edges: [], mainId: '', fejl: 'bfe er påkrævet' });
+  }
+
+  // BIZZ-1582: Server-side cache. Hit returnerer payload uden eksterne
+  // API-kald (Tinglysning + CVR ES + EJF tager 1.5-5s; cache-hit <100ms).
+  // Klient-cache (HTTP s-maxage) blev kun delt per browser; denne deles
+  // på tværs af brugere via Supabase.
+  const cacheKey = buildChainCacheKey(bfe, ejendomstypeHint);
+  const cached = await getCached<OwnershipChainResponse>(cacheKey);
+  if (cached) {
+    return NextResponse.json(cached, {
+      headers: {
+        'Cache-Control': 'public, s-maxage=1800, stale-while-revalidate=600',
+        'X-Cache': 'HIT',
+      },
+    });
   }
 
   const nodes: ChainNode[] = [];
@@ -867,16 +883,25 @@ export async function GET(req: NextRequest) {
 
   const fejl: string | null = null;
 
-  return NextResponse.json(
-    {
-      nodes,
-      edges,
-      mainId,
-      ejerDetaljer,
-      fejl,
-    } as OwnershipChainResponse,
-    {
-      headers: { 'Cache-Control': 'public, s-maxage=1800, stale-while-revalidate=600' },
-    }
-  );
+  const payload: OwnershipChainResponse = {
+    nodes,
+    edges,
+    mainId,
+    ejerDetaljer,
+    fejl,
+  };
+
+  // BIZZ-1582: Fire-and-forget cache-write. Vi venter ikke på Supabase-
+  // skrivning før vi svarer brugeren.
+  void setCached(cacheKey, payload, {
+    bfeNummer: Number(bfe) || undefined,
+    ttlMinutes: 360,
+  });
+
+  return NextResponse.json(payload, {
+    headers: {
+      'Cache-Control': 'public, s-maxage=1800, stale-while-revalidate=600',
+      'X-Cache': 'MISS',
+    },
+  });
 }

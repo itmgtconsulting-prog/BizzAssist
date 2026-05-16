@@ -98,9 +98,6 @@ export default function TinglysningTab({
   const [indskannedeAkter, setIndskannedeAkter] = useState<
     { aktNavn: string; beskrivelse: string | null; dato: string | null; loebNr: number }[]
   >([]);
-  /** Backwards-compat alias for template code */
-  const indskannedeAkterNavne = indskannedeAkter.map((a) => a.aktNavn);
-
   /**
    * BIZZ-1584: Smart PDF-link for pre-digitale dokumenter.
    * Returnerer indskannet akt-download URL hvis tilgængelig, ellers standard dokument-URL.
@@ -1657,67 +1654,9 @@ export default function TinglysningTab({
           </>
         )}
 
-        {/* ── INDSKANNEDE AKTER (pre-digitale dokumenter fra EjendomIndskannetAktSamling) ── */}
-        {indskannedeAkterNavne.length > 0 && (
-          <>
-            <div className="px-4 py-1.5 bg-amber-500/5 border-b border-slate-700/20">
-              <span className="text-[10px] font-semibold text-amber-400 uppercase tracking-wider">
-                {da ? 'Indskannede akter' : 'Scanned acts'} {`(${indskannedeAkterNavne.length})`}
-              </span>
-            </div>
-
-            {/* Advarsel om potentielt store filer */}
-            <div className="px-4 py-2 border-b border-slate-700/10 flex items-start gap-2 bg-amber-500/5">
-              <svg
-                viewBox="0 0 16 16"
-                className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5"
-                fill="currentColor"
-              >
-                <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 3.5a.75.75 0 0 1 .75.75v3a.75.75 0 0 1-1.5 0v-3A.75.75 0 0 1 8 4.5zm0 6.25a.875.875 0 1 1 0-1.75.875.875 0 0 1 0 1.75z" />
-              </svg>
-              <p className="text-amber-300/80 text-[10px] leading-relaxed">
-                {da
-                  ? 'Disse akter er indskannede papirdokumenter fra før den digitale tinglysning (ca. 2009). De kan være meget store (hundredvis af sider) og kan tage tid at downloade.'
-                  : 'These acts are scanned paper documents from before digital land registration (approx. 2009). They may be very large (hundreds of pages) and may take time to download.'}
-              </p>
-            </div>
-
-            {indskannedeAkter.map((akt) => (
-              <div
-                key={akt.aktNavn}
-                className="grid grid-cols-[24px_1fr_auto] gap-x-2 px-4 py-2.5 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-center"
-              >
-                <span className="text-slate-500 text-[10px] tabular-nums text-center">
-                  {akt.loebNr}
-                </span>
-                <div className="min-w-0">
-                  <span className="text-sm text-slate-200 truncate block">{akt.aktNavn}</span>
-                  {(akt.beskrivelse || akt.dato) && (
-                    <span className="text-[10px] text-slate-500">
-                      {akt.beskrivelse && <span>{akt.beskrivelse}</span>}
-                      {akt.beskrivelse && akt.dato && ' · '}
-                      {akt.dato && <span>{akt.dato}</span>}
-                    </span>
-                  )}
-                </div>
-                <a
-                  href={`/api/tinglysning/indskannede-akter/download?aktNavn=${encodeURIComponent(akt.aktNavn)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300 transition-colors px-2 py-1 border border-amber-500/30 rounded-md hover:border-amber-400/50"
-                  title={
-                    da
-                      ? 'Download som PDF — kan være stor fil'
-                      : 'Download as PDF — may be a large file'
-                  }
-                >
-                  <FileText size={11} />
-                  PDF
-                </a>
-              </div>
-            ))}
-          </>
-        )}
+        {/* BIZZ-1584: Indskannede akter-sektion fjernet — PDF-knapper på
+            servitut/hæftelse-rækker linker nu direkte til indskannede akter
+            for pre-digitale dokumenter via getPdfUrl(). */}
       </div>
 
       {/* BIZZ-1498 + BIZZ-1501: Normaliserede hæftelser og servitutter fra lokale tabeller */}

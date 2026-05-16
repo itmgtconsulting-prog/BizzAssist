@@ -52,9 +52,11 @@ export default async function EjendommeDetailPage({
 
   let prefetched: PrefetchedPropertyData | undefined;
 
-  // BIZZ-1505: BFE-nummer → resolve til DAWA UUID via lokal DB og redirect
+  // BIZZ-1505: BFE-nummer → resolve til DAWA UUID via lokal DB eller DAWA, derefter redirect.
+  // VIGTIGT: redirect() kaster en NEXT_REDIRECT-fejl der SKAL bobble op til Next.js —
+  // derfor må vi aldrig kalde redirect() inde i en try/catch der sluger alle fejl.
   if (!erDawaId(id) && /^\d+$/.test(id)) {
-    let resolved = false;
+    let resolvedDawaId: string | null = null;
 
     // Strategi 1: Opslag i bbr_ejendom_status (hurtigst — lokal DB)
     try {
@@ -71,37 +73,53 @@ export default async function EjendommeDetailPage({
           .limit(1)
           .single();
         if (bbrRow?.adgangsadresse_id) {
-          const { redirect } = await import('next/navigation');
-          redirect(`/dashboard/ejendomme/${bbrRow.adgangsadresse_id}`);
-          resolved = true; // redirect throws, but guard anyway
+          resolvedDawaId = bbrRow.adgangsadresse_id as string;
         }
       }
     } catch {
       // bbr_ejendom_status har ikke denne BFE — prøv DAWA fallback
     }
 
-    // Strategi 2: DAWA /bfe/{bfe} — fanger SFE-BFE'er der ikke er i bbr_ejendom_status
-    if (!resolved) {
+    // Strategi 2: DAWA jordstykker→adgangsadresser — fanger SFE-BFE'er der
+    // ikke er i bbr_ejendom_status. DAWA /bfe/{bfe} er fjernet, så vi går
+    // via /jordstykker?bfenummer=X → /adgangsadresser?ejerlavkode=Y&matrikelnr=Z
+    if (!resolvedDawaId) {
       try {
         const { fetchDawa } = await import('@/app/lib/dawa');
-        const bfeRes = await fetchDawa(
-          `https://dawa.aws.dk/bfe/${id}`,
+        const jordRes = await fetchDawa(
+          `https://dawa.aws.dk/jordstykker?bfenummer=${id}&struktur=mini`,
           { signal: AbortSignal.timeout(5000) },
-          { caller: 'ejendom-page.bfe-resolve' }
+          { caller: 'ejendom-page.bfe-resolve-jordstykke' }
         );
-        if (bfeRes.ok) {
-          const bfeData = (await bfeRes.json()) as {
-            beliggenhedsadresse?: { id?: string };
-          };
-          const dawaId = bfeData?.beliggenhedsadresse?.id;
-          if (dawaId) {
-            const { redirect } = await import('next/navigation');
-            redirect(`/dashboard/ejendomme/${dawaId}`);
+        if (jordRes.ok) {
+          const jordstykker = (await jordRes.json()) as Array<{
+            ejerlavkode?: number;
+            matrikelnr?: string;
+          }>;
+          const js = jordstykker[0];
+          if (js?.ejerlavkode && js?.matrikelnr) {
+            const adrRes = await fetchDawa(
+              `https://dawa.aws.dk/adgangsadresser?ejerlavkode=${js.ejerlavkode}&matrikelnr=${encodeURIComponent(js.matrikelnr)}&struktur=mini&per_side=1`,
+              { signal: AbortSignal.timeout(5000) },
+              { caller: 'ejendom-page.bfe-resolve-adgangsadresse' }
+            );
+            if (adrRes.ok) {
+              const adresser = (await adrRes.json()) as Array<{ id: string }>;
+              if (adresser[0]?.id) {
+                resolvedDawaId = adresser[0].id;
+              }
+            }
           }
         }
       } catch {
         // Fallback: render med BFE som ID (klienten viser fejl-tilstand)
       }
+    }
+
+    // Redirect skal stå UDENFOR try/catch så NEXT_REDIRECT-fejlen bobler op.
+    if (resolvedDawaId) {
+      const { redirect } = await import('next/navigation');
+      redirect(`/dashboard/ejendomme/${resolvedDawaId}`);
     }
   }
 

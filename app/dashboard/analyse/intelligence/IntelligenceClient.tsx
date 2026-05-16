@@ -71,9 +71,8 @@ export default function IntelligenceClient(): React.ReactElement {
   const [showChart, setShowChart] = useState(true);
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>(null);
-  /** Chat-kontekst: forrige prompt + SQL til iterativ tilpasning. */
-  const [previousPrompt, setPreviousPrompt] = useState<string | null>(null);
-  const [previousSql, setPreviousSql] = useState<string | null>(null);
+  /** Chat-historik: alle prompts i rækkefølge — sendes som fuld kontekst til AI. */
+  const [chatHistory, setChatHistory] = useState<{ prompt: string; sql: string }[]>([]);
 
   /**
    * Submit en prompt til API'en.
@@ -95,12 +94,14 @@ export default function IntelligenceClient(): React.ReactElement {
       setSortCol(null);
       setSortDir(null);
       try {
+        // Send seneste kontekst fra chat-historik (forrige prompt + SQL)
+        const lastEntry = chatHistory.length > 0 ? chatHistory[chatHistory.length - 1] : null;
         const res = await fetch('/api/analyse/sql', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             prompt: q.trim(),
-            ...(previousPrompt && previousSql ? { previousPrompt, previousSql } : {}),
+            ...(lastEntry ? { previousPrompt: lastEntry.prompt, previousSql: lastEntry.sql } : {}),
           }),
           signal: AbortSignal.timeout(95_000),
         });
@@ -125,10 +126,9 @@ export default function IntelligenceClient(): React.ReactElement {
             );
           }
           setResponse(data);
-          // Gem kontekst til follow-up
+          // Tilføj til chat-historik
           if (data.ok && data.sql) {
-            setPreviousPrompt(q.trim());
-            setPreviousSql(data.sql);
+            setChatHistory((prev) => [...prev, { prompt: q.trim(), sql: data.sql }]);
           }
         }
       } catch (err) {
@@ -144,7 +144,7 @@ export default function IntelligenceClient(): React.ReactElement {
         setLoading(false);
       }
     },
-    [previousPrompt, previousSql]
+    [chatHistory]
   );
 
   /** Form submit handler. */
@@ -349,6 +349,25 @@ export default function IntelligenceClient(): React.ReactElement {
               </div>
             )}
 
+            {/* Chat-historik — viser alle prompts i rækkefølge */}
+            {chatHistory.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {chatHistory.map((entry, i) => (
+                  <span
+                    key={i}
+                    className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full ${
+                      i === chatHistory.length - 1
+                        ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                        : 'bg-slate-800 text-slate-400 border border-slate-700'
+                    }`}
+                  >
+                    {i > 0 && <span className="text-slate-600 mr-0.5">→</span>}
+                    {entry.prompt.length > 50 ? entry.prompt.slice(0, 50) + '…' : entry.prompt}
+                  </span>
+                ))}
+              </div>
+            )}
+
             {/* SQL (collapsible) */}
             {response.sql && (
               <div className="bg-slate-900 border border-slate-800 rounded-lg">
@@ -516,8 +535,7 @@ export default function IntelligenceClient(): React.ReactElement {
                 setPrompt('');
                 setFollowUp('');
                 setError(null);
-                setPreviousPrompt(null);
-                setPreviousSql(null);
+                setChatHistory([]);
               }}
               className="text-sm text-emerald-400 hover:text-emerald-300"
             >

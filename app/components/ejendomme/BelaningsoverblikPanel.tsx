@@ -2,35 +2,26 @@
  * BelaningsoverblikPanel — Kompakt belåningsoverblik i Økonomi-tabben.
  *
  * Viser:
- *   - Samlet belåning (sum af hovedstol fra tinglysning_haeftelser)
+ *   - Samlet belåning (sum af hovedstol)
  *   - Belåningsgrad i % (total gæld / ejendomsværdi)
  *   - Kreditor-fordeling (top kreditorer grupperet)
- *   - Rente-gennemsnit
+ *   - Rente-profil (fast vs. variabel)
  *
  * BIZZ-1520: Nyt panel — giver hurtigt finansielt overblik uden at skifte
- * til Tinglysning-tabben. Henter fra tinglysning_haeftelser (cache-first).
+ * til Tinglysning-tabben. Data modtages som prop fra parent (EjendomDetaljeClient)
+ * der allerede henter hæftelser via /api/tinglysning/summarisk.
  *
  * @module app/components/ejendomme/BelaningsoverblikPanel
  */
 
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
 import { Landmark } from 'lucide-react';
-import { createClient } from '@/lib/supabase/client';
-
-interface Haeftelse {
-  type: string | null;
-  kreditor_navn: string | null;
-  hovedstol: number | null;
-  restgaeld: number | null;
-  rente_pct: number | null;
-  tinglysningsdato: string | null;
-}
+import type { TLHaeftelse } from '@/app/api/tinglysning/summarisk/route';
 
 interface Props {
-  /** BFE-nummer for ejendommen. */
-  bfe: number;
+  /** Hæftelser fra tinglysning summarisk. */
+  haeftelser: TLHaeftelse[];
   /** Aktuel ejendomsværdi fra vurdering — bruges til belåningsgrad. */
   ejendomsvaerdi: number | null;
   /** Sprogkode. */
@@ -40,67 +31,49 @@ interface Props {
 /**
  * Kompakt belåningsoverblik med nøgletal.
  *
- * @param props - BFE, ejendomsværdi, sprog
- * @returns Panel med belåningsgrad, kreditor-fordeling og renteinfo
+ * @param props - Hæftelser, ejendomsværdi, sprog
+ * @returns Panel med belåningsgrad, kreditor-fordeling og renteinfo — null hvis ingen hæftelser
  */
 export default function BelaningsoverblikPanel({
-  bfe,
+  haeftelser,
   ejendomsvaerdi,
   lang,
 }: Props): React.ReactElement | null {
   const da = lang === 'da';
-  const [rows, setRows] = useState<Haeftelse[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const load = useCallback(async () => {
-    try {
-      const supabase = createClient();
-      const { data } = await supabase
-        .from('tinglysning_haeftelser')
-        .select('type, kreditor_navn, hovedstol, restgaeld, rente_pct, tinglysningsdato')
-        .eq('bfe_nummer', bfe)
-        .order('tinglysningsdato', { ascending: false });
-      if (data && data.length > 0) setRows(data as Haeftelse[]);
-    } catch {
-      /* non-critical */
-    }
-    setLoading(false);
-  }, [bfe]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  if (loading || rows.length === 0) return null;
+  if (haeftelser.length === 0) return null;
 
   // ── Beregninger ──
-  const samletHovedstol = rows.reduce((sum, h) => sum + (h.hovedstol ?? 0), 0);
-  const samletRestgaeld = rows.reduce((sum, h) => sum + (h.restgaeld ?? 0), 0);
-  // Brug restgæld hvis tilgængelig, ellers hovedstol
-  const effektivGaeld = samletRestgaeld > 0 ? samletRestgaeld : samletHovedstol;
+  const samletBeloeb = haeftelser.reduce((sum, h) => sum + (h.beloeb ?? 0), 0);
 
   // Belåningsgrad
   const belaningsgrad =
-    ejendomsvaerdi && ejendomsvaerdi > 0
-      ? Math.round((effektivGaeld / ejendomsvaerdi) * 100)
+    ejendomsvaerdi && ejendomsvaerdi > 0 && samletBeloeb > 0
+      ? Math.round((samletBeloeb / ejendomsvaerdi) * 100)
       : null;
 
   // Kreditor-gruppering (top 3)
   const kreditorMap = new Map<string, number>();
-  for (const h of rows) {
-    const navn = h.kreditor_navn ?? (da ? 'Ukendt' : 'Unknown');
-    kreditorMap.set(navn, (kreditorMap.get(navn) ?? 0) + (h.hovedstol ?? 0));
+  for (const h of haeftelser) {
+    const navn = h.kreditor ?? h.kreditorbetegnelse ?? (da ? 'Ukendt' : 'Unknown');
+    kreditorMap.set(navn, (kreditorMap.get(navn) ?? 0) + (h.beloeb ?? 0));
   }
   const sortedKreditorer = Array.from(kreditorMap.entries())
     .sort((a, b) => b[1] - a[1])
     .slice(0, 3);
 
-  // Rente-gennemsnit (kun for rækker med rente)
-  const medRente = rows.filter((h) => h.rente_pct != null && h.rente_pct > 0);
+  // Rente-profil
+  const medRente = haeftelser.filter((h) => h.rente != null && h.rente > 0);
   const gnsRente =
     medRente.length > 0
-      ? medRente.reduce((sum, h) => sum + (h.rente_pct ?? 0), 0) / medRente.length
+      ? medRente.reduce((sum, h) => sum + (h.rente ?? 0), 0) / medRente.length
       : null;
+  const antalFast = haeftelser.filter((h) => h.renteType?.toLowerCase() === 'fast').length;
+  const antalVariabel = haeftelser.filter((h) => h.renteType?.toLowerCase() === 'variabel').length;
+
+  // Seneste tinglysningsdato
+  const sortedByDate = haeftelser
+    .filter((h) => h.dato)
+    .sort((a, b) => (b.dato ?? '').localeCompare(a.dato ?? ''));
 
   // Belåningsgrad farve
   const belaningsFarve =
@@ -130,7 +103,7 @@ export default function BelaningsoverblikPanel({
           {da ? 'Belåningsoverblik' : 'Mortgage overview'}
         </h3>
         <span className="text-xs text-slate-500">
-          ({rows.length} {da ? 'pantbreve' : 'mortgages'})
+          ({haeftelser.length} {da ? 'pantbreve' : 'mortgages'})
         </span>
       </div>
 
@@ -142,13 +115,8 @@ export default function BelaningsoverblikPanel({
             {da ? 'Samlet belåning' : 'Total debt'}
           </p>
           <p className="text-white text-sm font-bold tabular-nums">
-            {effektivGaeld > 0 ? `${effektivGaeld.toLocaleString('da-DK')} kr.` : '—'}
+            {samletBeloeb > 0 ? `${samletBeloeb.toLocaleString('da-DK')} kr.` : '—'}
           </p>
-          {samletRestgaeld > 0 && samletRestgaeld !== samletHovedstol && (
-            <p className="text-slate-500 text-[10px] mt-0.5">
-              {da ? 'Hovedstol:' : 'Principal:'} {samletHovedstol.toLocaleString('da-DK')} kr.
-            </p>
-          )}
         </div>
 
         {/* Belåningsgrad */}
@@ -166,14 +134,14 @@ export default function BelaningsoverblikPanel({
           )}
         </div>
 
-        {/* Antal pantbreve */}
+        {/* Antal pantbreve + seneste dato */}
         <div className="bg-slate-800/40 border border-slate-700/40 rounded-lg p-3">
           <p className="text-slate-500 text-[10px] uppercase">{da ? 'Pantbreve' : 'Mortgages'}</p>
-          <p className="text-white text-sm font-bold">{rows.length}</p>
-          {rows[0]?.tinglysningsdato && (
+          <p className="text-white text-sm font-bold">{haeftelser.length}</p>
+          {sortedByDate[0]?.dato && (
             <p className="text-slate-500 text-[10px] mt-0.5">
               {da ? 'Seneste:' : 'Latest:'}{' '}
-              {new Date(rows[0].tinglysningsdato).toLocaleDateString(da ? 'da-DK' : 'en-GB', {
+              {new Date(sortedByDate[0].dato).toLocaleDateString(da ? 'da-DK' : 'en-GB', {
                 year: 'numeric',
                 month: 'short',
               })}
@@ -181,29 +149,39 @@ export default function BelaningsoverblikPanel({
           )}
         </div>
 
-        {/* Gns. rente */}
+        {/* Gns. rente + profil */}
         <div className="bg-slate-800/40 border border-slate-700/40 rounded-lg p-3">
           <p className="text-slate-500 text-[10px] uppercase">{da ? 'Gns. rente' : 'Avg. rate'}</p>
           <p className="text-white text-sm font-bold tabular-nums">
             {gnsRente != null ? `${gnsRente.toFixed(2)}%` : '—'}
           </p>
-          {medRente.length > 0 && medRente.length < rows.length && (
+          {(antalFast > 0 || antalVariabel > 0) && (
             <p className="text-slate-500 text-[10px] mt-0.5">
-              ({medRente.length}/{rows.length} {da ? 'med rente' : 'with rate'})
+              {antalFast > 0 && (
+                <span className="text-blue-400">
+                  {antalFast} {da ? 'fast' : 'fixed'}
+                </span>
+              )}
+              {antalFast > 0 && antalVariabel > 0 && ' · '}
+              {antalVariabel > 0 && (
+                <span className="text-amber-400">
+                  {antalVariabel} {da ? 'variabel' : 'variable'}
+                </span>
+              )}
             </p>
           )}
         </div>
       </div>
 
       {/* Kreditor-fordeling */}
-      {sortedKreditorer.length > 0 && samletHovedstol > 0 && (
+      {sortedKreditorer.length > 0 && samletBeloeb > 0 && (
         <div className="space-y-2">
           <p className="text-slate-400 text-xs font-medium">
             {da ? 'Kreditor-fordeling' : 'Creditor distribution'}
           </p>
           <div className="space-y-1.5">
             {sortedKreditorer.map(([navn, beloeb]) => {
-              const pct = Math.round((beloeb / samletHovedstol) * 100);
+              const pct = Math.round((beloeb / samletBeloeb) * 100);
               return (
                 <div key={navn} className="space-y-0.5">
                   <div className="flex items-center justify-between text-xs">

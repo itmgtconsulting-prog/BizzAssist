@@ -33,6 +33,7 @@ import { formatDKK } from '@/app/lib/mock/ejendomme';
 import { getHandelstypeInfo, handelstypeBadgeClasses } from '@/app/lib/ejfKoder';
 import type { VurderingData, VurderingResponse } from '@/app/api/vurdering/route';
 import type { ForelobigVurdering } from '@/app/api/vurdering-forelobig/route';
+import type { TLHaeftelse } from '@/app/api/tinglysning/summarisk/route';
 
 /** Merged handel fra EJF + Tinglysning — samme shape som i parent-komponenten. */
 export interface MergedHandel {
@@ -98,6 +99,8 @@ interface Props {
   kommunekode?: string | null;
   /** BIZZ-1497: BFE-nummer for prishistorik-hentning */
   bfeNummer?: number | null;
+  /** BIZZ-1520: Hæftelser fra tinglysning summarisk — bruges til belåningsoverblik */
+  tlHaeftelser?: TLHaeftelse[];
   /** BIZZ-1078: Adresse for AI forklaring */
   adresse?: string;
   /** BIZZ-1078: Kommune */
@@ -933,9 +936,9 @@ export default function EjendomOekonomiTab(props: Props) {
       )}
 
       {/* BIZZ-1520: Belåningsoverblik — samlet gæld, belåningsgrad, kreditor-fordeling */}
-      {props.bfeNummer && (
+      {props.tlHaeftelser && props.tlHaeftelser.length > 0 && (
         <BelaningsoverblikPanel
-          bfe={props.bfeNummer}
+          haeftelser={props.tlHaeftelser}
           ejendomsvaerdi={vurdering?.ejendomsvaerdi ?? null}
           lang={lang}
         />

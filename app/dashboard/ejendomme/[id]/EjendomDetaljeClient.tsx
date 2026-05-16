@@ -285,7 +285,7 @@ export default function EjendomDetaljeClient({
   /** Tinglysning adkomster (ejerskifter) — bruges til at berige salgshistorik med købernavne */
   const [tlEjere, setTlEjere] = useState<TLEjer[]>([]);
   /** Tinglysning hæftelser — pantebreve og lån tinglyst på ejendommen */
-  const [_tlHaeftelser, setTlHaeftelser] = useState<TLHaeftelse[]>([]);
+  const [tlHaeftelser, setTlHaeftelser] = useState<TLHaeftelse[]>([]);
   /** True mens tinglysning summarisk data hentes */
   const [tlSumLoader, setTlSumLoader] = useState(false);
   /** True når tinglysningsdata er fra test-fallback BFE (ikke den rigtige ejendom) */
@@ -1637,6 +1637,7 @@ export default function EjendomDetaljeClient({
                 grundareal={dawaJordstykke?.areal_m2 ?? null}
                 opfoerelsesaar={bbrData?.bbr?.[0]?.opfoerelsesaar ?? null}
                 bfeNummer={bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? null}
+                tlHaeftelser={tlHaeftelser}
               />
             )}
 

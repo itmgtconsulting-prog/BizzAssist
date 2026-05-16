@@ -153,6 +153,31 @@ test.describe('BIZZ-1544 person personligt ejet', () => {
   });
 });
 
+// BIZZ-1545: persondiagram diagram renderer + Pecunia kun ét sted
+test.describe('BIZZ-1545 persondiagram', () => {
+  test('jakob persondiagram renderer SVG med Pecunia uden duplikat-edges', async ({ page }) => {
+    await page.setViewportSize({ width: 1800, height: 1400 });
+    await page.goto('/dashboard/owners/4000115446');
+    await page.waitForLoadState('domcontentloaded');
+    await dismissOnboarding(page);
+    await expect(page.getByRole('heading', { name: /Jakob Juul Rasmussen/i })).toBeVisible({
+      timeout: 15000,
+    });
+    await page
+      .locator('a, button')
+      .filter({ hasText: /Diagram/ })
+      .nth(0)
+      .click();
+    await page.waitForTimeout(15000);
+    // Pecunia IT Consulting skal kun vises som én node (ingen duplikater)
+    const pecuniaTexts = await page
+      .locator('svg text', { hasText: /Pecunia IT Consulting/i })
+      .count();
+    expect(pecuniaTexts).toBeGreaterThan(0);
+    expect(pecuniaTexts).toBeLessThanOrEqual(2); // typisk 1 (kun label) eller 2 (label + sub-tekst)
+  });
+});
+
 // BIZZ-1546: WISCH layout — persons og properties må ikke overlappe
 test.describe('Diagram — wisch layout (BIZZ-1546)', () => {
   test('persons og properties har min vertical gap', async ({ page }) => {

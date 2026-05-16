@@ -511,7 +511,6 @@ export default function IntelligenceClient(): React.ReactElement {
               onClick={() => {
                 setResponse(null);
                 setPrompt('');
-                setFollowUp('');
                 setError(null);
                 setChatHistory([]);
               }}

@@ -94,8 +94,12 @@ export default function TinglysningTab({
   const [showMatrikler, setShowMatrikler] = useState(false);
   const [showNoteringer, setShowNoteringer] = useState(false);
   const [showTillaeg, setShowTillaeg] = useState(false);
-  /** Indskannede akter — pre-digitale akt-navne fra EjendomIndskannetAktSamling i ejdsummarisk */
-  const [indskannedeAkterNavne, setIndskannedeAkterNavne] = useState<string[]>([]);
+  /** Indskannede akter — hentes via S2S EjendomStamoplysningerHent */
+  const [indskannedeAkter, setIndskannedeAkter] = useState<
+    { aktNavn: string; beskrivelse: string | null; dato: string | null; loebNr: number }[]
+  >([]);
+  /** Backwards-compat alias for template code */
+  const indskannedeAkterNavne = indskannedeAkter.map((a) => a.aktNavn);
 
   const toggleDoc = (docId: string) => {
     setSelectedDocs((prev) => {
@@ -125,7 +129,7 @@ export default function TinglysningTab({
     setBilagRefs([]);
     setTingbogsattest(null);
     setTlUuid(null);
-    setIndskannedeAkterNavne([]);
+    setIndskannedeAkter([]);
 
     const controller = new AbortController();
     const { signal } = controller;
@@ -155,6 +159,17 @@ export default function TinglysningTab({
           return;
         }
         setTlUuid(tlData.uuid);
+
+        // BIZZ-1512: Hent indskannede akter via S2S (fire-and-forget — non-blocking)
+        fetch(`/api/tinglysning/indskannede-akter?ejendomId=${tlData.uuid}`, { signal })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((res) => {
+            if (res?.akter?.length > 0) setIndskannedeAkter(res.akter);
+          })
+          .catch(() => {
+            /* non-critical */
+          });
+
         // Trin 2: Hent summariske data i 3 parallelle sektions-kald
         // Progressiv loading — hver sektion vises straks den er klar
         const base = `/api/tinglysning/summarisk?uuid=${tlData.uuid}`;
@@ -202,7 +217,17 @@ export default function TinglysningTab({
             .then((res) => {
               if (res) {
                 setServitutter(res.servitutter ?? []);
-                setIndskannedeAkterNavne(res.indskannedeAkterNavne ?? []);
+                // Legacy: sæt akter fra ejdsummarisk som fallback
+                if (res.indskannedeAkterNavne?.length > 0 && indskannedeAkter.length === 0) {
+                  setIndskannedeAkter(
+                    (res.indskannedeAkterNavne as string[]).map((n: string, i: number) => ({
+                      aktNavn: n,
+                      beskrivelse: null,
+                      dato: null,
+                      loebNr: i + 1,
+                    }))
+                  );
+                }
               }
               setServituterLoading(false);
             })
@@ -1632,15 +1657,26 @@ export default function TinglysningTab({
               </p>
             </div>
 
-            {indskannedeAkterNavne.map((aktNavn, i) => (
+            {indskannedeAkter.map((akt) => (
               <div
-                key={aktNavn}
+                key={akt.aktNavn}
                 className="grid grid-cols-[24px_1fr_auto] gap-x-2 px-4 py-2.5 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-center"
               >
-                <span className="text-slate-500 text-[10px] tabular-nums text-center">{i + 1}</span>
-                <span className="text-sm text-slate-200 truncate">{aktNavn}</span>
+                <span className="text-slate-500 text-[10px] tabular-nums text-center">
+                  {akt.loebNr}
+                </span>
+                <div className="min-w-0">
+                  <span className="text-sm text-slate-200 truncate block">{akt.aktNavn}</span>
+                  {(akt.beskrivelse || akt.dato) && (
+                    <span className="text-[10px] text-slate-500">
+                      {akt.beskrivelse && <span>{akt.beskrivelse}</span>}
+                      {akt.beskrivelse && akt.dato && ' · '}
+                      {akt.dato && <span>{akt.dato}</span>}
+                    </span>
+                  )}
+                </div>
                 <a
-                  href={`/api/tinglysning/indskannede-akter/download?aktNavn=${encodeURIComponent(aktNavn)}`}
+                  href={`/api/tinglysning/indskannede-akter/download?aktNavn=${encodeURIComponent(akt.aktNavn)}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300 transition-colors px-2 py-1 border border-amber-500/30 rounded-md hover:border-amber-400/50"

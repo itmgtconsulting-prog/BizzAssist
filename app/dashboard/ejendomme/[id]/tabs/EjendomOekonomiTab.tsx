@@ -22,6 +22,7 @@ import dynamic from 'next/dynamic';
 import { ChevronRight, Scale, Sparkles, Landmark, TrendingUp, BarChart3 } from 'lucide-react';
 // ForklarVurderingWidget fjernet — redundant med "Forklar vurdering" AI-knap
 import SektionLoader from '@/app/components/SektionLoader';
+import BelaningsoverblikPanel from '@/app/components/ejendomme/BelaningsoverblikPanel';
 import VurderingSammenligning from '@/app/components/ejendomme/VurderingSammenligning';
 import KommuneStatistikWidget from '@/app/components/analyse/KommuneStatistikWidget';
 import BoligmarkedWidget from '@/app/components/ejendomme/BoligmarkedWidget';
@@ -923,6 +924,15 @@ export default function EjendomOekonomiTab(props: Props) {
         </div>
       )}
 
+      {/* BIZZ-1520: Belåningsoverblik — samlet gæld, belåningsgrad, kreditor-fordeling */}
+      {props.bfeNummer && (
+        <BelaningsoverblikPanel
+          bfe={props.bfeNummer}
+          ejendomsvaerdi={vurdering?.ejendomsvaerdi ?? null}
+          lang={lang}
+        />
+      )}
+
       {/* BIZZ-958: Vurdering sammenligning — benchmark mod postnummer */}
       {postnr && vurdering && !opdeltIEjerlejligheder && (
         <VurderingSammenligning
@@ -949,7 +959,6 @@ export default function EjendomOekonomiTab(props: Props) {
       <ByggeomkostningBadge lang={lang} />
       {kommunekode && <KommuneStatistikWidget kommunekode={kommunekode} lang={lang} />}
 
-      {/* Hæftelser fjernet — vises nu under Tinglysning-tab */}
       {/* BIZZ-325: Udbudshistorik og Lignende handler fjernet — ingen datakilde tilgængelig endnu */}
     </div>
   );

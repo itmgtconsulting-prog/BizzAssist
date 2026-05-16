@@ -2144,7 +2144,14 @@ async function enrichPropertyNodes(
       }
     > = await res.json();
 
-    /** Formatér adresse-label fra bfe-addresses response */
+    /**
+     * Formatér adresse-label fra bfe-addresses response.
+     * BIZZ-1543: Brug mellemrum mellem adresse og etage (ikke komma).
+     * DiagramForce splitter label på komma for at lave linje 1 / linje 2.
+     * Med komma havnede etage/dør på linje 2 sammen med postnr+by, så to
+     * ejerlejligheder i samme opgang så identiske ud. Med space holdes
+     * "vejnavn nr. etage. dør" samlet på linje 1.
+     */
     const fmtLabel = (info: {
       adresse: string | null;
       postnr: string | null;
@@ -2153,10 +2160,27 @@ async function enrichPropertyNodes(
       doer: string | null;
     }): string | null => {
       if (!info.adresse) return null;
-      const etageStr = info.etage ? `, ${info.etage}.` : '';
+      const etageStr = info.etage ? ` ${info.etage}.` : '';
       const doerStr = info.doer ? ` ${info.doer}` : '';
       const postStr = info.postnr && info.by ? `, ${info.postnr} ${info.by}` : '';
       return `${info.adresse}${etageStr}${doerStr}${postStr}`;
+    };
+
+    /**
+     * BIZZ-1542: Byg property-link med BFE-fallback for ejerlejligheder.
+     * For ejerlejligheder (har etage) bruger vi BFE-URL fremfor DAWA UUID,
+     * fordi DAWA UUID'er for enhedsadresser ikke kan resolves via
+     * /adgangsadresser → "Adresse ikke fundet". page.tsx resolver BFE→DAWA
+     * via bbr_ejendom_status eller jordstykker-chain.
+     */
+    const buildLink = (
+      info: { etage: string | null; dawaId: string | null },
+      bfeNummer: number | null
+    ): string | undefined => {
+      if (info.etage && bfeNummer) return `/dashboard/ejendomme/${bfeNummer}`;
+      if (info.dawaId) return `/dashboard/ejendomme/${info.dawaId}`;
+      if (bfeNummer) return `/dashboard/ejendomme/${bfeNummer}`;
+      return undefined;
     };
 
     for (const node of propNodes) {
@@ -2170,9 +2194,8 @@ async function enrichPropertyNodes(
       if (info.postnr && info.by) {
         node.sublabel = `${info.postnr} ${info.by}`;
       }
-      if (info.dawaId) {
-        node.link = `/dashboard/ejendomme/${info.dawaId}`;
-      }
+      const link = buildLink(info, node.bfeNummer ?? null);
+      if (link) node.link = link;
     }
 
     // BIZZ-1349: Berig overflow items med adresser + links
@@ -2183,7 +2206,8 @@ async function enrichPropertyNodes(
         if (!info) continue;
         const label = fmtLabel(info);
         if (label) item.label = label;
-        if (info.dawaId) item.link = `/dashboard/ejendomme/${info.dawaId}`;
+        const link = buildLink(info, item.bfeNummer ?? null);
+        if (link) item.link = link;
       }
     }
   } catch {

@@ -20,7 +20,7 @@ import { assertAiAllowed } from '@/app/lib/aiGate';
 import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
 import { recordAiUsage } from '@/app/lib/aiTracking';
-import { createClient } from '@supabase/supabase-js';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120; // PDF kan være 100+ sider — Claude Vision tager tid
@@ -86,24 +86,23 @@ export interface AktExtraction {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-/** Hent admin Supabase client. */
+/** Hent admin Supabase client (service_role — bypasser RLS). */
 function getAdmin() {
-  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-  return createClient(url, key);
+  return createAdminClient();
 }
 
 /** Tjek cache — returnér cached extraction hvis den eksisterer. */
 async function getCached(bfe: number, aktNavn: string): Promise<AktExtraction | null> {
   try {
     const admin = getAdmin();
-    const { data } = await admin
-      .from('tinglysning_akt_extraction')
+    const { data } = await (admin as ReturnType<typeof createAdminClient>)
+      .from('tinglysning_akt_extraction' as never)
       .select('extraction')
       .eq('bfe_nummer', bfe)
       .eq('akt_navn', aktNavn)
       .maybeSingle();
-    return (data?.extraction as AktExtraction) ?? null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return ((data as any)?.extraction as AktExtraction) ?? null;
   } catch {
     return null;
   }
@@ -113,7 +112,8 @@ async function getCached(bfe: number, aktNavn: string): Promise<AktExtraction | 
 async function saveCache(bfe: number, aktNavn: string, extraction: AktExtraction): Promise<void> {
   try {
     const admin = getAdmin();
-    await admin.from('tinglysning_akt_extraction').upsert(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (admin as any).from('tinglysning_akt_extraction').upsert(
       {
         bfe_nummer: bfe,
         akt_navn: aktNavn,
@@ -393,7 +393,8 @@ export async function POST(req: NextRequest) {
             kilde: 'ai_extraction',
           }));
         if (rows.length > 0) {
-          await admin
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (admin as any)
             .from('ejerskifte_historik')
             .upsert(rows, { onConflict: 'bfe_nummer,overtagelsesdato', ignoreDuplicates: true });
           logger.log(`[extract-akt] Backfilled ${rows.length} handler til ejerskifte_historik`);

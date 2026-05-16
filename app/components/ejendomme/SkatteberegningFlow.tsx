@@ -97,9 +97,13 @@ export default function SkatteberegningFlow({
         {da ? 'Skatteberegning trin for trin' : 'Tax calculation step by step'}
       </h3>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 items-start">
-        {/* BIZZ-1043: Grundskyld-flow — self-start for top-alignment */}
-        <div className="space-y-0 self-start">
+      {/* BIZZ-1556: gap-6 → gap-x-8 gap-y-3 forhindrer tekst-overlap mellem
+          kolonnerne. items-stretch + flex-col i hver kolonne lader os pushe
+          result-boksen til bunden så Årlig grundskyld og Årlig ejendomsværdiskat
+          top-aligned uanset kolonnehøjder. */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3 items-stretch">
+        {/* Grundskyld-flow */}
+        <div className="flex flex-col">
           <p className="text-slate-400 text-xs font-medium mb-2">
             {da ? 'Grundskyld' : 'Land tax'}
           </p>
@@ -153,8 +157,10 @@ export default function SkatteberegningFlow({
 
           {promille != null && <FlowArrow label={`× ${promille}‰`} />}
 
+          {/* BIZZ-1556: mt-auto pusher result-boksen til bunden så den top-aligner
+              med højre kolonnes result-boks uanset antal FlowSteps. */}
           {grundskyld != null && (
-            <>
+            <div className="mt-auto">
               {!promille && <FlowArrow />}
               <FlowStep
                 label={da ? 'Årlig grundskyld' : 'Annual land tax'}
@@ -162,13 +168,13 @@ export default function SkatteberegningFlow({
                 note={da ? 'Betales til kommunen' : 'Paid to municipality'}
                 color="blue"
               />
-            </>
+            </div>
           )}
         </div>
 
         {/* Ejendomsværdiskat-flow */}
         {!erKolonihave && ejendomsvaerdi != null && (
-          <div className="space-y-0">
+          <div className="flex flex-col">
             <p className="text-slate-400 text-xs font-medium mb-2">
               {da ? 'Ejendomsværdiskat' : 'Property value tax'}
             </p>
@@ -181,24 +187,27 @@ export default function SkatteberegningFlow({
 
             <FlowArrow label={da ? '0,51% / 1,4%' : '0.51% / 1.4%'} />
 
-            {ejendomsskat != null ? (
-              <FlowStep
-                label={da ? 'Årlig ejendomsværdiskat' : 'Annual property value tax'}
-                value={formatDKK(ejendomsskat)}
-                note={
-                  da
-                    ? '0,51% op til progressionsgrænse, 1,4% over'
-                    : '0.51% up to threshold, 1.4% above'
-                }
-                color="blue"
-              />
-            ) : (
-              <FlowStep
-                label={da ? 'Ejendomsværdiskat' : 'Property value tax'}
-                value={da ? 'Beregnes af SKAT' : 'Calculated by tax authority'}
-                color="slate"
-              />
-            )}
+            {/* BIZZ-1556: mt-auto for at top-aligne med venstre kolonne. */}
+            <div className="mt-auto">
+              {ejendomsskat != null ? (
+                <FlowStep
+                  label={da ? 'Årlig ejendomsværdiskat' : 'Annual property value tax'}
+                  value={formatDKK(ejendomsskat)}
+                  note={
+                    da
+                      ? '0,51% op til progressionsgrænse, 1,4% over'
+                      : '0.51% up to threshold, 1.4% above'
+                  }
+                  color="blue"
+                />
+              ) : (
+                <FlowStep
+                  label={da ? 'Ejendomsværdiskat' : 'Property value tax'}
+                  value={da ? 'Beregnes af SKAT' : 'Calculated by tax authority'}
+                  color="slate"
+                />
+              )}
+            </div>
           </div>
         )}
       </div>

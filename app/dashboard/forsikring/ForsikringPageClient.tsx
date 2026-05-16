@@ -989,6 +989,39 @@ function AnalyseSection({
 
             return unique.length > 0 ? (
               <>
+                {/* BIZZ-1551: Master-checkbox header — erstatter separate
+                    Vælg-alle/Fravælg-alle knapper. Stater: alle valgt → checked,
+                    ingen valgt → unchecked, blandet → indeterminate (visuel mellem-state). */}
+                {(() => {
+                  const total = unique.length;
+                  const sel = unique.filter((d) => selectedDocIds.has(d.id)).length;
+                  const allChecked = sel === total;
+                  const noneChecked = sel === 0;
+                  return (
+                    <label className="flex items-center gap-3 px-3 py-2 bg-blue-500/5 border border-blue-500/20 rounded-lg cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={allChecked}
+                        ref={(el) => {
+                          if (el) el.indeterminate = !allChecked && !noneChecked;
+                        }}
+                        onChange={(e) => {
+                          if (e.target.checked) setSelectedDocIds(new Set(unique.map((d) => d.id)));
+                          else setSelectedDocIds(new Set());
+                        }}
+                        className="rounded border-slate-600 bg-slate-700 text-blue-500 focus:ring-blue-500"
+                      />
+                      <span className="text-blue-300 text-xs font-medium flex-1">
+                        {da
+                          ? `${sel} / ${total} dokumenter valgt`
+                          : `${sel} / ${total} documents selected`}
+                      </span>
+                      <span className="text-slate-500 text-[10px]">
+                        {da ? 'Klik for at vælge/fravælge alle' : 'Click to select/deselect all'}
+                      </span>
+                    </label>
+                  );
+                })()}
                 <p className="text-slate-400 text-xs">
                   {da
                     ? 'Dokumenter inkluderet i analysen (uncheck for at ekskludere):'
@@ -1052,26 +1085,8 @@ function AnalyseSection({
                     </label>
                   ))}
                 </div>
-                <div className="flex items-center gap-3 text-xs">
-                  <span className="text-blue-400">
-                    {selectedDocIds.size} / {unique.length}{' '}
-                    {da ? 'dokumenter valgt' : 'documents selected'}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedDocIds(new Set(unique.map((d) => d.id)))}
-                    className="px-2 py-1 text-xs bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 rounded transition-colors"
-                  >
-                    {da ? 'Vælg alle' : 'Select all'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedDocIds(new Set())}
-                    className="px-2 py-1 text-xs bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/30 rounded transition-colors"
-                  >
-                    {da ? 'Fravælg alle' : 'Deselect all'}
-                  </button>
-                </div>
+                {/* BIZZ-1551: Vælg-alle/Fravælg-alle knapper fjernet — master-checkbox
+                    øverst håndterer det nu i standard UX-mønster. */}
               </>
             ) : (
               <p className="text-slate-500 text-xs">

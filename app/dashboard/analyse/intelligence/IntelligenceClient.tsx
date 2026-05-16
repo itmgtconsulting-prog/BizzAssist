@@ -209,7 +209,10 @@ export default function IntelligenceClient(): React.ReactElement {
   }, [response]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
+    // BIZZ-1554: flex-1 + min-w-0 sikrer at content udnytter fuld bredde af
+    // dashboard-layoutets flex-container. Tidligere uden flex-1 kollapsede
+    // viewporten til ~450px når response-grid bestod af enkelte rows.
+    <div className="flex-1 min-w-0 min-h-screen bg-slate-950 text-slate-100 overflow-y-auto">
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:bg-emerald-600 focus:text-white focus:px-4 focus:py-2 focus:rounded"

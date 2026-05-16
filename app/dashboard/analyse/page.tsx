@@ -19,7 +19,6 @@ import {
   BarChart3,
   Search,
   Building2,
-  LayoutGrid,
   Wrench,
   Database,
   Landmark,
@@ -63,40 +62,8 @@ export default function AnalyseLandingPage() {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl">
-          {/* Pivot Analyse */}
-          <Link
-            href="/dashboard/analyse/pivot"
-            className="group bg-slate-800/40 border border-slate-700/40 hover:border-emerald-500/40 rounded-2xl p-5 transition-all hover:bg-slate-800/60"
-          >
-            <div className="flex items-center gap-3 mb-2">
-              <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400 group-hover:scale-105 transition-transform">
-                <LayoutGrid size={18} />
-              </div>
-              <h3 className="text-sm font-semibold text-white">Pivot Analyse</h3>
-            </div>
-            <p className="text-slate-400 text-xs leading-relaxed">
-              Byg pivot-tabeller manuelt med drag-and-drop. Vælg tabel, kolonner og filtre — udforsk
-              data fra BBR ejendomme og virksomhedsregnskaber direkte.
-            </p>
-          </Link>
-
-          {/* AI Query Builder */}
-          <Link
-            href="/dashboard/analyse/data"
-            className="group bg-slate-800/40 border border-slate-700/40 hover:border-blue-500/40 rounded-2xl p-5 transition-all hover:bg-slate-800/60"
-          >
-            <div className="flex items-center gap-3 mb-2">
-              <div className="p-2 rounded-xl bg-blue-500/10 text-blue-400 group-hover:scale-105 transition-transform">
-                <Sparkles size={18} />
-              </div>
-              <h3 className="text-sm font-semibold text-white">AI Query Builder</h3>
-            </div>
-            <p className="text-slate-400 text-xs leading-relaxed">
-              Skriv en forespørgsel på dansk — AI bygger analyse med grafer og tabeller. Kan
-              analysere BBR-ejendomsdata (areal, energimærke, opførelsesår, kommune) og
-              virksomhedsregnskaber (omsætning, resultat, egenkapital).
-            </p>
-          </Link>
+          {/* BIZZ-1553: Pivot Analyse + AI Query Builder fjernet — virker ikke. */}
+          {/* Data Intelligence dækker behovet bedre. */}
 
           {/* BIZZ-1431: Data Intelligence (Smart SQL) */}
           <Link

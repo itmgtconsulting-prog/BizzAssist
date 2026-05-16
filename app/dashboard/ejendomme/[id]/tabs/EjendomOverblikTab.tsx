@@ -125,11 +125,13 @@ export default function EjendomOverblikTab({
   energimaerker,
   energiLoader,
   onNavigerDokumenter,
-  ejere,
-  senestHandel,
+  // BIZZ-1547+1548+1549: ejere/senestHandel/zoneinfo bevaret for
+  // bagudkompatibilitet — vises ikke længere i Oversigt-fanen.
+  ejere: _ejere,
+  senestHandel: _senestHandel,
   grundskyld,
   ejendomsvaerdiskat,
-  zoneinfo,
+  zoneinfo: _zoneinfo,
 }: Props) {
   const da = lang === 'da';
 
@@ -485,68 +487,28 @@ export default function EjendomOverblikTab({
           />
         </div>
 
-        {/* ─── BIZZ-1307: Ejerskab + Økonomi summary ─── */}
-        {(ejere?.length || senestHandel || grundskyld || ejendomsvaerdiskat || zoneinfo) && (
+        {/* ─── Økonomi summary ───
+           BIZZ-1547: Zone-kort fjernet — zone vises som badge i ejendomsheader.
+           BIZZ-1548: "Seneste handel"-kort fjernet — data findes i Økonomi/Salgshistorik-fanen.
+           BIZZ-1549: "Ejere"-kort fjernet — data findes i Ejerskab- og Tinglysnings-fanen. */}
+        {(grundskyld || ejendomsvaerdiskat) && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {/* Ejere */}
-            {ejere && ejere.length > 0 && (
-              <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
-                <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">
-                  {da ? 'Ejere' : 'Owners'}
-                </p>
-                {ejere.map((e, i) => (
-                  <p key={i} className="text-slate-200 text-xs">
-                    {e.navn} {e.andel ? `(${e.andel})` : ''}
-                  </p>
-                ))}
-              </div>
-            )}
-            {/* Seneste handel */}
-            {senestHandel && (
-              <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
-                <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">
-                  {da ? 'Seneste handel' : 'Latest sale'}
-                </p>
-                <p className="text-white text-sm font-bold">
-                  {senestHandel.pris.toLocaleString('da-DK')} DKK
-                </p>
-                <p className="text-slate-400 text-[10px]">
-                  {new Date(senestHandel.dato).toLocaleDateString('da-DK', {
-                    day: 'numeric',
-                    month: 'long',
-                    year: 'numeric',
-                  })}
-                </p>
-              </div>
-            )}
             {/* Skat */}
-            {(grundskyld || ejendomsvaerdiskat) && (
-              <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
-                <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">
-                  {da ? 'Årlig skat' : 'Annual tax'}
+            <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
+              <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">
+                {da ? 'Årlig skat' : 'Annual tax'}
+              </p>
+              {grundskyld != null && grundskyld > 0 && (
+                <p className="text-slate-200 text-xs">
+                  {da ? 'Grundskyld' : 'Land tax'}: {grundskyld.toLocaleString('da-DK')} DKK
                 </p>
-                {grundskyld != null && grundskyld > 0 && (
-                  <p className="text-slate-200 text-xs">
-                    {da ? 'Grundskyld' : 'Land tax'}: {grundskyld.toLocaleString('da-DK')} DKK
-                  </p>
-                )}
-                {ejendomsvaerdiskat != null && ejendomsvaerdiskat > 0 && (
-                  <p className="text-slate-200 text-xs">
-                    {da ? 'Ejd.skat' : 'Prop. tax'}: {ejendomsvaerdiskat.toLocaleString('da-DK')}{' '}
-                    DKK
-                  </p>
-                )}
-              </div>
-            )}
-            {/* Zoneinfo */}
-            {zoneinfo && (
-              <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
-                <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">
-                  {da ? 'Zone' : 'Zone'}
+              )}
+              {ejendomsvaerdiskat != null && ejendomsvaerdiskat > 0 && (
+                <p className="text-slate-200 text-xs">
+                  {da ? 'Ejd.skat' : 'Prop. tax'}: {ejendomsvaerdiskat.toLocaleString('da-DK')} DKK
                 </p>
-                <p className="text-slate-200 text-xs">{zoneinfo}</p>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         )}
 

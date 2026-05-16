@@ -817,7 +817,12 @@ async function resolveCompanyGraph(
           type: string;
           ejerandel_pct: number | null;
         }>) {
-          if (nodeIds.has(`person-${r.deltager_enhedsnummer}`)) continue; // allerede i grafen
+          // BIZZ-1540: Tjek BÅDE en-${en} OG person-${en} for at undgå duplikater
+          if (
+            nodeIds.has(`en-${r.deltager_enhedsnummer}`) ||
+            nodeIds.has(`person-${r.deltager_enhedsnummer}`)
+          )
+            continue;
           extraPersonEnheder.add(r.deltager_enhedsnummer);
           const arr = extraPersonCompMap.get(r.deltager_enhedsnummer) ?? [];
           arr.push({ cvr: r.virksomhed_cvr, type: r.type, pct: r.ejerandel_pct });
@@ -894,8 +899,10 @@ async function resolveCompanyGraph(
                 });
               }
             } else {
-              // Vis som person-node
-              const personId = `person-${en}`;
+              // BIZZ-1540: Brug en-${en} (ikke person-${en}) for konsistent ID
+              // med øvrige person-noder. Forhindrer duplikat-noder på samme person
+              // når samme enhedsnummer optræder via flere data-spor.
+              const personId = `en-${en}`;
               if (nodeIds.has(personId)) continue;
               nodes.push({
                 id: personId,
@@ -1237,6 +1244,16 @@ async function resolvePropertyGraph(
   // ── BIZZ-1139: CVR ES fallback for person-ejere uden enhedsNummer ───────
   // cvr_deltager dækker kun cached deltagere. CVR ES deltager/_search har
   // alle registrerede deltagere og giver højere hit-rate.
+  //
+  // BIZZ-1540: Udvidet til også at re-resolve nodes der HAR enhedsNummer men
+  // mangler navn (label er placeholder som "Person N" eller "Ukendt ejer").
+  // Disse rammer typisk dødsboer, udenlandske ejere og personer der ikke er
+  // i cvr_deltager-cachen endnu.
+  const isPlaceholderName = (label: string): boolean =>
+    /^Person\s+\d+$/.test(label) ||
+    label === 'Ukendt ejer' ||
+    /^Ukendt ejer\s*\(en\s*\d+\)$/.test(label);
+
   {
     const CVR_ES_BASE = 'http://distribution.virk.dk/cvr-permanent';
     const CVR_ES_USER = process.env.CVR_ES_USER ?? '';
@@ -1247,37 +1264,75 @@ async function resolvePropertyGraph(
     if (personsWithoutEn.length > 0 && CVR_ES_USER && CVR_ES_PASS) {
       try {
         const auth = Buffer.from(`${CVR_ES_USER}:${CVR_ES_PASS}`).toString('base64');
+        // BIZZ-1540: Parse "(en NNNN)" fra labels som "Ukendt ejer (en 4001768042)"
+        // → brug enhedsnummer direkte i CVR ES-opslaget. Når label er pseudo-navn
+        // som "Ukendt ejer", giver navne-match ingen hits.
         const results = await Promise.allSettled(
-          personsWithoutEn.map((node) =>
-            fetch(`${CVR_ES_BASE}/deltager/_search`, {
+          personsWithoutEn.map((node) => {
+            const enMatch = node.label.match(/\(en\s*(\d+)\)/);
+            const enFromLabel = enMatch ? Number(enMatch[1]) : null;
+            const body =
+              enFromLabel != null
+                ? {
+                    query: {
+                      match: { 'Vrdeltagerperson.enhedsNummer': String(enFromLabel) },
+                    },
+                    _source: ['Vrdeltagerperson.enhedsNummer', 'Vrdeltagerperson.navne.navn'],
+                    size: 1,
+                  }
+                : {
+                    query: { match: { 'Vrdeltagerperson.navne.navn': node.label } },
+                    _source: ['Vrdeltagerperson.enhedsNummer', 'Vrdeltagerperson.navne.navn'],
+                    size: 1,
+                  };
+            return fetch(`${CVR_ES_BASE}/deltager/_search`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', Authorization: `Basic ${auth}` },
-              body: JSON.stringify({
-                query: { match: { 'Vrdeltagerperson.navne.navn': node.label } },
-                _source: ['Vrdeltagerperson.enhedsNummer'],
-                size: 1,
-              }),
+              body: JSON.stringify(body),
               signal: AbortSignal.timeout(5000),
             })
               .then((r) => (r.ok ? r.json() : null))
-              .catch(() => null)
-          )
+              .catch(() => null);
+          })
         );
         for (let i = 0; i < personsWithoutEn.length; i++) {
           const result = results[i];
           if (result.status !== 'fulfilled' || !result.value) continue;
-          const enr = result.value?.hits?.hits?.[0]?._source?.Vrdeltagerperson?.enhedsNummer;
-          if (typeof enr !== 'number') continue;
+          const src = result.value?.hits?.hits?.[0]?._source?.Vrdeltagerperson;
+          const enr = src?.enhedsNummer;
+          if (typeof enr !== 'number' && typeof enr !== 'string') continue;
+          const enrNum = Number(enr);
+          if (!Number.isFinite(enrNum)) continue;
           const node = personsWithoutEn[i];
-          node.enhedsNummer = enr;
-          node.link = `/dashboard/owners/${enr}`;
-          // Opdater node ID fra person-... til en-... for korrekt expand
+          // Hvis en-${enrNum} allerede findes (samme person via andet spor),
+          // merge edges og fjern denne duplikat-node
+          const newId = `en-${enrNum}`;
           const oldId = node.id;
-          const newId = `en-${enr}`;
+          if (nodeIds.has(newId)) {
+            // Dedup: redirect edges fra oldId til existing newId, fjern oldId-noden
+            for (const edge of edges) {
+              if (edge.from === oldId) edge.from = newId;
+              if (edge.to === oldId) edge.to = newId;
+            }
+            const idx = nodes.indexOf(node);
+            if (idx >= 0) nodes.splice(idx, 1);
+            nodeIds.delete(oldId);
+            continue;
+          }
+          // Resolve det rigtige navn fra CVR ES hvis tilgængeligt
+          const navne = src?.navne;
+          let realName: string | undefined;
+          if (Array.isArray(navne) && navne.length > 0) {
+            realName = navne[navne.length - 1]?.navn;
+          } else if (typeof navne === 'string') {
+            realName = navne;
+          }
+          if (realName) node.label = realName;
+          node.enhedsNummer = enrNum;
+          node.link = `/dashboard/owners/${enrNum}`;
           node.id = newId;
           nodeIds.delete(oldId);
           nodeIds.add(newId);
-          // Opdater edges der peger på den gamle ID
           for (const edge of edges) {
             if (edge.from === oldId) edge.from = newId;
             if (edge.to === oldId) edge.to = newId;
@@ -1287,7 +1342,7 @@ async function resolvePropertyGraph(
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             await (admin as any)
               .from('cvr_deltager')
-              .upsert({ enhedsnummer: enr, navn: node.label }, { onConflict: 'enhedsnummer' });
+              .upsert({ enhedsnummer: enrNum, navn: node.label }, { onConflict: 'enhedsnummer' });
           } catch {
             /* writeback non-fatal */
           }
@@ -1300,6 +1355,70 @@ async function resolvePropertyGraph(
         }
       } catch (err) {
         logger.warn('[diagram/resolve] CVR ES person-fallback fejl:', err);
+      }
+    }
+
+    // BIZZ-1540: Re-resolve nodes WITH enhedsNummer but placeholder labels.
+    // Bruger CVR ES Vrdeltagerperson opslag på enhedsNummer (ikke navne-match)
+    // for at finde det rigtige navn, og writeback til cvr_deltager.
+    const personsWithEnButPlaceholder = nodes.filter(
+      (n) => n.type === 'person' && typeof n.enhedsNummer === 'number' && isPlaceholderName(n.label)
+    );
+    if (personsWithEnButPlaceholder.length > 0 && CVR_ES_USER && CVR_ES_PASS) {
+      try {
+        const auth = Buffer.from(`${CVR_ES_USER}:${CVR_ES_PASS}`).toString('base64');
+        const results = await Promise.allSettled(
+          personsWithEnButPlaceholder.map((node) =>
+            fetch(`${CVR_ES_BASE}/deltager/_search`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Basic ${auth}` },
+              body: JSON.stringify({
+                query: {
+                  match: { 'Vrdeltagerperson.enhedsNummer': String(node.enhedsNummer) },
+                },
+                _source: ['Vrdeltagerperson.navne.navn'],
+                size: 1,
+              }),
+              signal: AbortSignal.timeout(5000),
+            })
+              .then((r) => (r.ok ? r.json() : null))
+              .catch(() => null)
+          )
+        );
+        for (let i = 0; i < personsWithEnButPlaceholder.length; i++) {
+          const result = results[i];
+          if (result.status !== 'fulfilled' || !result.value) continue;
+          const navne = result.value?.hits?.hits?.[0]?._source?.Vrdeltagerperson?.navne;
+          // navne er typisk array af { navn, periode: { gyldigFra, gyldigTil } }
+          let navn: string | undefined;
+          if (Array.isArray(navne) && navne.length > 0) {
+            navn = navne[navne.length - 1]?.navn; // nyeste navn
+          } else if (typeof navne === 'string') {
+            navn = navne;
+          }
+          if (!navn) continue;
+          const node = personsWithEnButPlaceholder[i];
+          node.label = navn;
+          // Writeback til cvr_deltager
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            await (admin as any)
+              .from('cvr_deltager')
+              .upsert({ enhedsnummer: node.enhedsNummer, navn }, { onConflict: 'enhedsnummer' });
+          } catch {
+            /* writeback non-fatal */
+          }
+        }
+        const resolved = personsWithEnButPlaceholder.filter(
+          (n) => !isPlaceholderName(n.label)
+        ).length;
+        if (resolved > 0) {
+          logger.log(
+            `[diagram/resolve] CVR ES en-fallback resolved ${resolved}/${personsWithEnButPlaceholder.length} placeholder-personer`
+          );
+        }
+      } catch (err) {
+        logger.warn('[diagram/resolve] CVR ES en-fallback fejl:', err);
       }
     }
   }

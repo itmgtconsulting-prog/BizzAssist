@@ -52,7 +52,8 @@ const PERSON_ROW_H = 14;
 
 /** Compute dynamic node height based on node properties */
 /** Max overflow items shown before "vis alle" */
-const OVERFLOW_INITIAL_SHOW = 5;
+/** BIZZ-563/1541: Legacy konstant — kollapseret overflow viser kun count + knap nu. */
+const _OVERFLOW_INITIAL_SHOW = 5;
 
 /** Compute node height — expandedOverflowIds makes overflow nodes taller when expanded */
 function getNodeH(node: DiagramNode, expandedOverflowIds?: Set<string>): number {
@@ -2724,13 +2725,12 @@ function DiagramForce({
         // overlap med sibling-noder. Modal viser fuld liste (BIZZ-479).
         const w = node.overflowItems ? NODE_W_PROPERTY : isProperty ? NODE_W_PROPERTY : NODE_W;
         const x = pos.x - w / 2;
-        // Overflow-noder: forankr fra toppen (brug kollapseret højde) så de udvider nedad
-        const collapsedH = node.overflowItems
-          ? 30 +
-            Math.min(node.overflowItems.length, OVERFLOW_INITIAL_SHOW) * 16 +
-            (node.overflowItems.length > OVERFLOW_INITIAL_SHOW ? 20 : 0)
-          : h;
-        const y = pos.y - collapsedH / 2;
+        // BIZZ-1541: Brug `h` (= getNodeH) til y-anker også for overflow.
+        // Tidligere brugte vi en legacy collapsedH-formel (30 + items*16 + 20)
+        // der gav ~130px for 11+ items, mens den faktiske kollapsede højde er
+        // 46px (kun count + "Vis alle"-knap). Det forskudte y-ankret 42px op
+        // og fik overflow-boksen til at overlappe sibling-property-noder.
+        const y = pos.y - h / 2;
 
         // ── Overflow list node — BIZZ-563: kompakt count-only visning ──
         // Tidligere viste vi de første 5 adresser inline, men det gjorde boksen

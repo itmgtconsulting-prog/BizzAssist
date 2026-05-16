@@ -195,11 +195,40 @@ function tlHttpRequest(
   });
 }
 
-/** Kalder ElektroniskAkt XML API med EjendomStamoplysningerHent. */
-function callXmlApi(signedXml: string): Promise<{ status: number; buffer: Buffer }> {
-  const xmlUrl = new URL(TL_XML_API_BASE + XML_API_SERVICE_PATH);
-  const body = Buffer.from(signedXml, 'utf-8');
+/**
+ * Kalder ElektroniskAkt XML API via Hetzner-proxy (Vercel) eller direkte mTLS (lokal dev).
+ * Proxyen håndterer mTLS-certifikatet for os.
+ */
+async function callXmlApi(signedXml: string): Promise<{ status: number; buffer: Buffer }> {
+  const proxyUrl = process.env.DF_PROXY_URL ?? '';
+  const proxySecret = process.env.DF_PROXY_SECRET ?? '';
+  const targetUrl = `${TL_XML_API_BASE}${XML_API_SERVICE_PATH}`;
 
+  // Proxy-path: Vercel → Hetzner proxy → Tinglysning (mTLS på proxy)
+  if (proxyUrl) {
+    const proxied = targetUrl.replace('https://', `${proxyUrl}/proxy/`);
+    try {
+      const res = await fetch(proxied, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/xml',
+          'Tinglysning-Message-ID': `uuid:${randomUUID()}`,
+          ...(proxySecret ? { 'X-Proxy-Secret': proxySecret } : {}),
+        },
+        body: signedXml,
+        signal: AbortSignal.timeout(120_000),
+      });
+      const buf = Buffer.from(await res.arrayBuffer());
+      return { status: res.status, buffer: buf };
+    } catch (proxyErr) {
+      logger.warn('[indskannede-akter] Proxy fejlede, prøver direkte mTLS:', proxyErr);
+      // Fall through to direct mTLS
+    }
+  }
+
+  // Direkte mTLS (lokal dev)
+  const xmlUrl = new URL(targetUrl);
+  const body = Buffer.from(signedXml, 'utf-8');
   return tlHttpRequest(
     {
       hostname: xmlUrl.hostname,

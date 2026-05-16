@@ -112,6 +112,62 @@ export default async function EjendommeDetailPage({
           }
         }
       } catch {
+        // Fallback: prøv Vurderingsportalen for ejerlejligheder
+      }
+    }
+
+    // Strategi 3: Vurderingsportalen — ejerlejligheder har ingen egen jordstykke,
+    // så vi slår BFE op i VP for at få vejnavn + husnr + postnr, hvorefter vi
+    // resolver building's adgangsadresse via DAWA.
+    if (!resolvedDawaId) {
+      try {
+        const vpRes = await fetch(
+          'https://api-fs.vurderingsportalen.dk/preliminaryproperties/_search',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+            },
+            body: JSON.stringify({
+              query: { term: { bfeNumbers: parseInt(id, 10) } },
+              size: 1,
+              _source: ['roadName', 'houseNumber', 'zipcode', 'municipalityNumber'],
+            }),
+            signal: AbortSignal.timeout(5000),
+          }
+        );
+        if (vpRes.ok) {
+          const vpData = (await vpRes.json()) as {
+            hits?: {
+              hits?: Array<{
+                _source?: {
+                  roadName?: string;
+                  houseNumber?: string;
+                  zipcode?: string;
+                  municipalityNumber?: string;
+                };
+              }>;
+            };
+          };
+          const src = vpData.hits?.hits?.[0]?._source;
+          if (src?.roadName && src?.houseNumber && src?.zipcode) {
+            const { fetchDawa } = await import('@/app/lib/dawa');
+            const adrRes = await fetchDawa(
+              `https://dawa.aws.dk/adgangsadresser?vejnavn=${encodeURIComponent(src.roadName)}&husnr=${encodeURIComponent(src.houseNumber)}&postnr=${encodeURIComponent(src.zipcode)}&struktur=mini&per_side=1`,
+              { signal: AbortSignal.timeout(5000) },
+              { caller: 'ejendom-page.bfe-resolve-vp-adresse' }
+            );
+            if (adrRes.ok) {
+              const adresser = (await adrRes.json()) as Array<{ id: string }>;
+              if (adresser[0]?.id) {
+                resolvedDawaId = adresser[0].id;
+              }
+            }
+          }
+        }
+      } catch {
         // Fallback: render med BFE som ID (klienten viser fejl-tilstand)
       }
     }

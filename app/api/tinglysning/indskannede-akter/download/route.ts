@@ -314,13 +314,26 @@ async function callXmlApi(
  * @returns base64-decoded dokumentindhold som Buffer, eller null ved parse-fejl
  */
 function parseXmlApiResponse(xml: string): Buffer | null {
-  // IndskannetDokumentData er base64-encoded filindhold jf. XSD
-  const match = xml.match(
-    /<(?:[^:>]+:)?IndskannetDokumentData[^>]*>([\s\S]+?)<\/(?:[^:>]+:)?IndskannetDokumentData>/
-  );
-  if (!match?.[1]) return null;
-  const b64 = match[1].replace(/\s/g, '');
-  if (!b64) return null;
+  // IndskannetDokumentData indeholder base64-encoded PDF (typisk 3-10 MB).
+  // Regex med [\s\S]+? er for langsom på store strings — brug indexOf.
+  const marker = 'IndskannetDokumentData>';
+  const firstHit = xml.indexOf(marker);
+  if (firstHit === -1) return null;
+
+  // Data starter lige efter første "IndskannetDokumentData>"
+  const dataStart = firstHit + marker.length;
+
+  // Closing tag: næste forekomst af "IndskannetDokumentData>" efter data-start
+  // (det vil matche "</ns1:IndskannetDokumentData>" — vi finder bare markøren)
+  const secondHit = xml.indexOf(marker, dataStart);
+  if (secondHit === -1) return null;
+
+  // Data slutter ved "</" lige før closing tag
+  const closeStart = xml.lastIndexOf('<', secondHit);
+  if (closeStart <= dataStart) return null;
+
+  const b64 = xml.substring(dataStart, closeStart).replace(/\s/g, '');
+  if (!b64 || b64.length < 100) return null;
   try {
     return Buffer.from(b64, 'base64');
   } catch {

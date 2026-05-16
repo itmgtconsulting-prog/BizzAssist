@@ -19,6 +19,7 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { assertAiAllowed } from '@/app/lib/aiGate';
 import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
+import { recordAiUsage } from '@/app/lib/aiTracking';
 import { createClient } from '@supabase/supabase-js';
 
 export const runtime = 'nodejs';
@@ -228,6 +229,8 @@ async function extractWithAI(
   haeftelser: ExtractedHaeftelse[];
   servitutter: ExtractedServitut[];
   ejendomsInfo: AktExtraction['ejendomsInfo'];
+  inputTokens: number;
+  outputTokens: number;
 }> {
   const client = new Anthropic({ apiKey });
 
@@ -250,6 +253,10 @@ async function extractWithAI(
     },
     { signal: AbortSignal.timeout(90000) }
   );
+
+  // Gem token-usage for debitering
+  const inputTokens = res.usage?.input_tokens ?? 0;
+  const outputTokens = res.usage?.output_tokens ?? 0;
 
   const text = res.content
     .filter((b): b is Anthropic.TextBlock => b.type === 'text')
@@ -274,6 +281,8 @@ async function extractWithAI(
         kommune: null,
         ejerlav: null,
       },
+      inputTokens,
+      outputTokens,
     };
   } catch {
     logger.warn('[extract-akt] JSON parse failed:', jsonStr.slice(0, 200));
@@ -282,6 +291,8 @@ async function extractWithAI(
       haeftelser: [],
       servitutter: [],
       ejendomsInfo: { matrikel: null, adresse: null, areal: null, kommune: null, ejerlav: null },
+      inputTokens,
+      outputTokens,
     };
   }
 }
@@ -356,11 +367,50 @@ export async function POST(req: NextRequest) {
     // Gem i cache
     await saveCache(bfe, aktNavn, extraction);
 
+    // BIZZ-1596: Debiter AI-tokens
+    await recordAiUsage({
+      userId: auth.userId,
+      tenantId: auth.tenantId,
+      route: 'ai.extract-akt',
+      inputTokens: result.inputTokens,
+      outputTokens: result.outputTokens,
+      model: 'claude-sonnet-4-6',
+    });
+
+    // BIZZ-1598: Backfill handler til fælles ejerskifte_historik
+    if (result.handler.length > 0) {
+      try {
+        const admin = getAdmin();
+        const rows = result.handler
+          .filter((h) => h.dato)
+          .map((h) => ({
+            bfe_nummer: bfe,
+            overtagelsesdato: h.dato,
+            ejer_navn: h.koeber?.[0]?.navn ?? null,
+            kontant_koebesum: h.kontantKoebesum ?? h.koebesum,
+            i_alt_koebesum: h.koebesum,
+            overdragelsesmaade: h.dokumentType,
+            kilde: 'ai_extraction',
+          }));
+        if (rows.length > 0) {
+          await admin
+            .from('ejerskifte_historik')
+            .upsert(rows, { onConflict: 'bfe_nummer,overtagelsesdato', ignoreDuplicates: true });
+          logger.log(`[extract-akt] Backfilled ${rows.length} handler til ejerskifte_historik`);
+        }
+      } catch (backfillErr) {
+        logger.warn('[extract-akt] Backfill fejlede:', backfillErr);
+      }
+    }
+
     logger.log(
-      `[extract-akt] BFE ${bfe}: fandt ${result.handler.length} handler, ${result.haeftelser.length} hæftelser, ${result.servitutter.length} servitutter`
+      `[extract-akt] BFE ${bfe}: fandt ${result.handler.length} handler, ${result.haeftelser.length} hæftelser, ${result.servitutter.length} servitutter (${result.inputTokens + result.outputTokens} tokens)`
     );
 
-    return NextResponse.json(extraction);
+    return NextResponse.json({
+      ...extraction,
+      tokensUsed: result.inputTokens + result.outputTokens,
+    });
   } catch (err) {
     Sentry.captureException(err);
     const msg = err instanceof Error ? err.message : String(err);

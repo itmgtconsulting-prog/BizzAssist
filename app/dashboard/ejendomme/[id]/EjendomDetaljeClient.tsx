@@ -980,10 +980,15 @@ export default function EjendomDetaljeClient({
    */
   useEffect(() => {
     if (!erDAWA || !bbrData?.ejendomsrelationer?.length) return;
-    // BIZZ-1213: Fjernet dawaAdresse-dependency for at køre parallelt med adresse-fetch.
-    // Moderejandom-check bruger nu bbrData alene (ejerlejlighedBfe + moderBfe).
-    // Ejerlejlighed: brug ejendomsrelationer-BFE. Moderejandom: brug moderBfe.
-    const erModer = !bbrData.ejerlejlighedBfe ? false : !!bbrData.moderBfe;
+    // BIZZ-1585: Vent på dawaAdresse for at skelne leaf-ejerlejlighed (har etage)
+    // fra moderejandom (ingen etage). Tidligere BIZZ-1213 fjernede dawaAdresse-
+    // dep for at parallelisere — men det gjorde erModer=true for BÅDE leaf og
+    // moder (begge har ejerlejlighedBfe + moderBfe set), så vi fetched vurdering
+    // og ejerskab for MODER's BFE i stedet for leaf-ejerlejlighedens egen.
+    // dawaAdresse er typisk allerede prefetched server-side, så latency-hit er
+    // få 100ms — bedre end at vise forkerte ejer-data eller "Opdelt ejerskab".
+    if (!dawaAdresse) return;
+    const erModer = !dawaAdresse.etage && !!bbrData.ejerlejlighedBfe;
     const bfeNummer = erModer
       ? (bbrData.moderBfe ?? bbrData.ejendomsrelationer[0]?.bfeNummer)
       : bbrData.ejendomsrelationer[0]?.bfeNummer;
@@ -1043,8 +1048,12 @@ export default function EjendomDetaljeClient({
     // BIZZ-1143: Fetch ejerskab/chain + diagram/resolve PARALLELT og gem resultatet.
     // EjerKort og DiagramV2 modtager data via props — ingen intern fetch i child.
     const erEjerlej = !!bbrData.ejerlejlighedBfe;
+    // BIZZ-1586: Brug mellemrum (ikke komma) mellem husnr og etage så
+    // diagram-renderen ikke splitter etage/dør ned på linje 2. Komma kun
+    // mellem adresselinje og postnr/by. Matcher mønstret fra BIZZ-1543
+    // (DiagramData.ts) som rettede samme bug for virksomheds-/persondiagrammer.
     const chainAdresse = dawaAdresse
-      ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
+      ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? ` ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
       : '';
     const chainParams = new URLSearchParams({
       bfe: String(bfeNummer),
@@ -1094,10 +1103,11 @@ export default function EjendomDetaljeClient({
       });
 
     return () => controller.abort();
-    // BIZZ-1213: Fjernet dawaAdresse fra deps — vurdering/ejerskab starter nu
-    // med det samme bbrData er tilgængelig (parallelt med adresse-fetch)
+    // BIZZ-1585: dawaAdresse er nu obligatorisk for at skelne leaf-ejerlejlighed
+    // fra moderejandom (etage-checket på linje ~989). Hvis adresse-fetch er
+    // server-side prefetched (page.tsx) er der ingen reel latency-hit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, erDAWA, bbrData]);
+  }, [id, erDAWA, bbrData, dawaAdresse]);
 
   /**
    * Henter matrikeldata (jordstykker, landbrugsnotering m.m.) fra Datafordeler MAT-registret.

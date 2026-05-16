@@ -1421,6 +1421,64 @@ async function resolvePropertyGraph(
         logger.warn('[diagram/resolve] CVR ES en-fallback fejl:', err);
       }
     }
+
+    // BIZZ-1587: Nogle "person"-enhedsnumre er faktisk virksomheder (fx
+    // holdingselskaber registreret som ejere). Hvis Vrdeltagerperson ikke
+    // matched, prøv Vrvirksomhed.enhedsNummer — hvis hit, konvertér noden
+    // til company-type med korrekt CVR + navn + link.
+    const stillPlaceholder = nodes.filter(
+      (n) => n.type === 'person' && typeof n.enhedsNummer === 'number' && isPlaceholderName(n.label)
+    );
+    if (stillPlaceholder.length > 0 && CVR_ES_USER && CVR_ES_PASS) {
+      try {
+        const auth = Buffer.from(`${CVR_ES_USER}:${CVR_ES_PASS}`).toString('base64');
+        const results = await Promise.allSettled(
+          stillPlaceholder.map((node) =>
+            fetch(`${CVR_ES_BASE}/virksomhed/_search`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Basic ${auth}` },
+              body: JSON.stringify({
+                query: {
+                  term: { 'Vrvirksomhed.enhedsNummer': String(node.enhedsNummer) },
+                },
+                _source: ['Vrvirksomhed.cvrNummer', 'Vrvirksomhed.navne.navn'],
+                size: 1,
+              }),
+              signal: AbortSignal.timeout(5000),
+            })
+              .then((r) => (r.ok ? r.json() : null))
+              .catch(() => null)
+          )
+        );
+        let converted = 0;
+        for (let i = 0; i < stillPlaceholder.length; i++) {
+          const result = results[i];
+          if (result.status !== 'fulfilled' || !result.value) continue;
+          const src = result.value?.hits?.hits?.[0]?._source?.Vrvirksomhed;
+          if (!src) continue;
+          const cvrNr = src.cvrNummer;
+          const navne = src.navne;
+          let navn: string | undefined;
+          if (Array.isArray(navne) && navne.length > 0) {
+            navn = navne[navne.length - 1]?.navn;
+          }
+          if (!cvrNr || !navn) continue;
+          const node = stillPlaceholder[i];
+          node.label = navn;
+          node.type = 'company';
+          node.cvr = Number(cvrNr);
+          node.link = `/dashboard/companies/${cvrNr}`;
+          converted++;
+        }
+        if (converted > 0) {
+          logger.log(
+            `[diagram/resolve] CVR ES virksomhed-fallback konverterede ${converted}/${stillPlaceholder.length} fejlcachede person-noder til company`
+          );
+        }
+      } catch (err) {
+        logger.warn('[diagram/resolve] CVR ES virksomhed-fallback fejl:', err);
+      }
+    }
   }
 
   // ── HIERARKI OPAD: hvem ejer ejer-virksomhederne? ──────────────────────

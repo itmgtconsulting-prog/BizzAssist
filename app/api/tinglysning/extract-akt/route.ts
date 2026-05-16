@@ -113,7 +113,7 @@ async function saveCache(bfe: number, aktNavn: string, extraction: AktExtraction
   try {
     const admin = getAdmin();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (admin as any).from('tinglysning_akt_extraction').upsert(
+    const { error: upsertError } = await (admin as any).from('tinglysning_akt_extraction').upsert(
       {
         bfe_nummer: bfe,
         akt_navn: aktNavn,
@@ -122,8 +122,11 @@ async function saveCache(bfe: number, aktNavn: string, extraction: AktExtraction
       },
       { onConflict: 'bfe_nummer,akt_navn' }
     );
+    if (upsertError) {
+      logger.error('[extract-akt] Cache upsert error:', upsertError.message, upsertError.code);
+    }
   } catch (err) {
-    logger.warn('[extract-akt] Cache save failed:', err);
+    logger.error('[extract-akt] Cache save failed:', err);
   }
 }
 

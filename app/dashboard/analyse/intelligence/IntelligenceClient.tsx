@@ -63,7 +63,6 @@ type SortDir = 'asc' | 'desc' | null;
  */
 export default function IntelligenceClient(): React.ReactElement {
   const [prompt, setPrompt] = useState('');
-  const [followUp, setFollowUp] = useState('');
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState<SqlResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -94,14 +93,13 @@ export default function IntelligenceClient(): React.ReactElement {
       setSortCol(null);
       setSortDir(null);
       try {
-        // Send seneste kontekst fra chat-historik (forrige prompt + SQL)
-        const lastEntry = chatHistory.length > 0 ? chatHistory[chatHistory.length - 1] : null;
+        // Send fuld chat-historik som kontekst til AI
         const res = await fetch('/api/analyse/sql', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             prompt: q.trim(),
-            ...(lastEntry ? { previousPrompt: lastEntry.prompt, previousSql: lastEntry.sql } : {}),
+            ...(chatHistory.length > 0 ? { chatHistory } : {}),
           }),
           signal: AbortSignal.timeout(95_000),
         });
@@ -246,18 +244,51 @@ export default function IntelligenceClient(): React.ReactElement {
           </p>
         </header>
 
-        {/* Prompt input */}
+        {/* Prompt input med kontekst-tags over */}
         <form onSubmit={handleSubmit} className="mb-6">
-          <label htmlFor="prompt" className="block text-sm font-medium text-slate-300 mb-2">
-            Dit spørgsmål
-          </label>
+          {/* Kontekst-tags — viser hele chat-historikken som fjernbare tags */}
+          {chatHistory.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {chatHistory.map((entry, i) => (
+                <span
+                  key={i}
+                  className="inline-flex items-center gap-1.5 text-xs pl-2.5 pr-1 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700 group"
+                >
+                  <span className="text-slate-500 text-[10px] font-mono">{i + 1}.</span>
+                  {entry.prompt}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setChatHistory((prev) => prev.filter((_, idx) => idx !== i));
+                    }}
+                    className="ml-0.5 p-0.5 rounded-full hover:bg-red-500/20 hover:text-red-400 text-slate-500 transition-colors"
+                    aria-label={`Fjern: ${entry.prompt}`}
+                  >
+                    <svg
+                      viewBox="0 0 12 12"
+                      className="w-3 h-3"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    >
+                      <path d="M3 3l6 6M9 3l-6 6" />
+                    </svg>
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           <div className="flex gap-2">
             <input
               id="prompt"
               type="text"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Fx: Hvilken kommune har flest virksomheder?"
+              placeholder={
+                chatHistory.length > 0
+                  ? 'Tilpas: tilføj kolonner, filtrer, ændr sortering...'
+                  : 'Fx: Hvilken kommune har flest virksomheder?'
+              }
               className="flex-1 px-4 py-3 bg-slate-900 border border-slate-700 rounded-lg focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
               disabled={loading}
               maxLength={1000}
@@ -267,14 +298,14 @@ export default function IntelligenceClient(): React.ReactElement {
               type="submit"
               disabled={loading || prompt.trim().length < 3}
               className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 disabled:cursor-not-allowed rounded-lg font-medium flex items-center gap-2 transition-colors"
-              aria-label="Spørg"
+              aria-label={chatHistory.length > 0 ? 'Tilpas' : 'Spørg'}
             >
               {loading ? (
                 <Loader2 className="w-5 h-5 animate-spin" aria-hidden />
               ) : (
                 <Search className="w-5 h-5" aria-hidden />
               )}
-              Spørg
+              {chatHistory.length > 0 ? 'Tilpas' : 'Spørg'}
             </button>
           </div>
         </form>
@@ -349,25 +380,6 @@ export default function IntelligenceClient(): React.ReactElement {
               </div>
             )}
 
-            {/* Chat-historik — viser alle prompts i rækkefølge */}
-            {chatHistory.length > 0 && (
-              <div className="flex flex-wrap items-center gap-1.5">
-                {chatHistory.map((entry, i) => (
-                  <span
-                    key={i}
-                    className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full ${
-                      i === chatHistory.length - 1
-                        ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
-                        : 'bg-slate-800 text-slate-400 border border-slate-700'
-                    }`}
-                  >
-                    {i > 0 && <span className="text-slate-600 mr-0.5">→</span>}
-                    {entry.prompt.length > 50 ? entry.prompt.slice(0, 50) + '…' : entry.prompt}
-                  </span>
-                ))}
-              </div>
-            )}
-
             {/* SQL (collapsible) */}
             {response.sql && (
               <div className="bg-slate-900 border border-slate-800 rounded-lg">
@@ -439,40 +451,6 @@ export default function IntelligenceClient(): React.ReactElement {
             {/* Chart */}
             {showChart && response.rows.length > 0 && response.columns.length >= 2 && (
               <LazyChart columns={response.columns} rows={response.rows} />
-            )}
-
-            {/* Follow-up / tilpas resultat — placeret lige under graf for synlighed */}
-            {response?.ok && response.sql && (
-              <div className="bg-slate-900/50 border border-emerald-500/20 rounded-lg p-3">
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    if (followUp.trim().length >= 3) {
-                      submit(followUp);
-                      setFollowUp('');
-                    }
-                  }}
-                  className="flex gap-2 items-center"
-                >
-                  <Lightbulb className="w-4 h-4 text-emerald-400 flex-shrink-0" aria-hidden />
-                  <input
-                    type="text"
-                    value={followUp}
-                    onChange={(e) => setFollowUp(e.target.value)}
-                    placeholder="Tilpas: filtrer kommune, ændr sortering, tilføj kolonner..."
-                    className="flex-1 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm focus:border-emerald-500 focus:outline-none"
-                    disabled={loading}
-                    maxLength={500}
-                  />
-                  <button
-                    type="submit"
-                    disabled={loading || followUp.trim().length < 3}
-                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors whitespace-nowrap"
-                  >
-                    {loading ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden /> : 'Tilpas'}
-                  </button>
-                </form>
-              </div>
             )}
 
             {/* Result table — max 400px højde med scroll */}

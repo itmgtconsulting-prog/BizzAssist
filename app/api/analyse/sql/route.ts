@@ -37,10 +37,8 @@ export const maxDuration = 90;
 
 interface RequestBody {
   prompt: string;
-  /** Tidligere SQL fra forrige iteration — bruges til chat-refinement. */
-  previousSql?: string;
-  /** Tidligere prompt fra forrige iteration. */
-  previousPrompt?: string;
+  /** Fuld chat-historik — alle tidligere prompts + genereret SQL i rækkefølge. */
+  chatHistory?: { prompt: string; sql: string }[];
 }
 
 interface ResponseBody {
@@ -126,20 +124,21 @@ function generateFallbackSuggestions(prompt: string): string[] {
 async function generateSql(
   apiKey: string,
   prompt: string,
-  previousPrompt?: string,
-  previousSql?: string
+  chatHistory?: { prompt: string; sql: string }[]
 ): Promise<{ sql: string; explanation?: string; suggestions?: string[] }> {
   const client = new Anthropic({ apiKey });
   const systemPrompt = await buildSqlGenPrompt();
 
-  // Byg messages — inkluder kontekst fra tidligere iteration hvis tilgængelig
+  // Byg messages — inkluder fuld chat-historik som kontekst
   const messages: Anthropic.MessageParam[] = [];
-  if (previousPrompt && previousSql) {
-    messages.push({ role: 'user', content: previousPrompt });
-    messages.push({
-      role: 'assistant',
-      content: `\`\`\`sql\n${previousSql}\n\`\`\``,
-    });
+  if (chatHistory && chatHistory.length > 0) {
+    for (const entry of chatHistory) {
+      messages.push({ role: 'user', content: entry.prompt });
+      messages.push({
+        role: 'assistant',
+        content: `\`\`\`sql\n${entry.sql}\n\`\`\``,
+      });
+    }
   }
   messages.push({ role: 'user', content: prompt });
 
@@ -232,7 +231,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // 1. Generér SQL via Claude
   let generated: { sql: string; explanation?: string; suggestions?: string[] };
   try {
-    generated = await generateSql(apiKey, userPrompt, body.previousPrompt, body.previousSql);
+    generated = await generateSql(apiKey, userPrompt, body.chatHistory);
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Claude-fejl';
     logger.warn('[analyse/sql] Claude generation failed:', msg);

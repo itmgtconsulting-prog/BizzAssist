@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EjendomStamoplysningerSvar xmlns="http://rep.oio.dk/tinglysning.dk/service/message/elektroniskakt/1/">
+  <Ejendom>
+    <BFEnummer>100000001</BFEnummer>
+    <Matrikel>
+      <MatrikelNummer>12a</MatrikelNummer>
+      <Ejerlav>Testby</Ejerlav>
+    </Matrikel>
+    <Areal>
+      <GrundArealM2>850</GrundArealM2>
+      <BygningArealM2>180</BygningArealM2>
+    </Areal>
+    <Anvendelse>Beboelse</Anvendelse>
+  </Ejendom>
+</EjendomStamoplysningerSvar>

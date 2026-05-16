@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EjendomServitutterSvar xmlns="http://rep.oio.dk/tinglysning.dk/service/message/elektroniskakt/1/">
+  <Servitutter>
+    <Servitut>
+      <ServitutType>Vejret</ServitutType>
+      <TinglystDato>1985-04-12</TinglystDato>
+      <Beskrivelse>Vejret til naboejendom 12b</Beskrivelse>
+      <Status>Aktiv</Status>
+    </Servitut>
+    <Servitut>
+      <ServitutType>Forkøbsret</ServitutType>
+      <TinglystDato>2010-11-03</TinglystDato>
+      <Beskrivelse>Forkøbsret for kommunen</Beskrivelse>
+      <Status>Aktiv</Status>
+    </Servitut>
+  </Servitutter>
+</EjendomServitutterSvar>

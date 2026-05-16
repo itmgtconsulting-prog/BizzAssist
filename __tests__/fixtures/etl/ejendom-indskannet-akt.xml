@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EjendomIndskannetAktSvar xmlns="http://rep.oio.dk/tinglysning.dk/service/message/elektroniskakt/1/">
+  <IndskannetAkt>
+    <DokumentId>akt-2020-06-15-001</DokumentId>
+    <TinglystDato>2020-06-15</TinglystDato>
+    <DokumentType>Skoede</DokumentType>
+    <SideAntal>12</SideAntal>
+    <IndskannetDokumentData>UEsDBBQAAAAIAA==PLACEHOLDER_BASE64_PDF_PAYLOAD==</IndskannetDokumentData>
+  </IndskannetAkt>
+</EjendomIndskannetAktSvar>

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EjendomAdkomsterSvar xmlns="http://rep.oio.dk/tinglysning.dk/service/message/elektroniskakt/1/">
+  <Adkomster>
+    <Adkomst>
+      <AdkomstType>Tinglyst</AdkomstType>
+      <TinglystDato>2020-06-15</TinglystDato>
+      <OvertagelsesDato>2020-06-01</OvertagelsesDato>
+      <KontantKoebesum>4250000</KontantKoebesum>
+      <Andel>1/1</Andel>
+      <Ejer>
+        <Type>Person</Type>
+        <Navn>Anders Andersen</Navn>
+        <EnhedsNummer>99999991</EnhedsNummer>
+      </Ejer>
+    </Adkomst>
+    <Adkomst>
+      <AdkomstType>Tinglyst</AdkomstType>
+      <TinglystDato>2015-03-10</TinglystDato>
+      <OvertagelsesDato>2015-03-01</OvertagelsesDato>
+      <KontantKoebesum>3100000</KontantKoebesum>
+      <Andel>1/1</Andel>
+      <Ejer>
+        <Type>Virksomhed</Type>
+        <Navn>ACME Holding A/S</Navn>
+        <CVR>99999992</CVR>
+      </Ejer>
+    </Adkomst>
+  </Adkomster>
+</EjendomAdkomsterSvar>

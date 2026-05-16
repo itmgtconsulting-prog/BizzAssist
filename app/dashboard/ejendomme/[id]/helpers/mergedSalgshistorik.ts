@@ -57,9 +57,20 @@ export interface MergedHandel {
  * @param tlEjere - Tinglysning adkomster fra /api/tinglysning/summarisk
  * @returns Sorteret liste af merged handler (nyeste foerst)
  */
+/** AI-ekstraheret handel fra /api/tinglysning/extract-akt. */
+export interface AiExtractedHandel {
+  dato: string | null;
+  dokumentType: string | null;
+  koeber: { navn: string }[];
+  saelger: { navn: string }[];
+  koebesum: number | null;
+  kontantKoebesum: number | null;
+}
+
 export function buildMergedSalgshistorik(
   salgshistorik: HandelData[] | null,
-  tlEjere: TLEjer[]
+  tlEjere: TLEjer[],
+  aiHandler?: AiExtractedHandel[]
 ): MergedHandel[] {
   const merged: MergedHandel[] = [];
   const brugteTlIdx = new Set<number>();
@@ -137,6 +148,52 @@ export function buildMergedSalgshistorik(
       tinglysningsafgift: e.tinglysningsafgift,
       kilde: 'tinglysning',
     });
+  }
+
+  // Trin 3: Tilfoej AI-ekstraherede handler der ikke matchede EJF/TL
+  if (aiHandler && aiHandler.length > 0) {
+    for (const ai of aiHandler) {
+      if (!ai.dato) continue;
+      const aiTime = new Date(ai.dato).getTime();
+      const alreadyExists = merged.some((m) => {
+        const mDato = m.overtagelsesdato ?? m.koebsaftaleDato ?? '';
+        if (!mDato) return false;
+        return Math.abs(new Date(mDato).getTime() - aiTime) < 60 * 24 * 60 * 60 * 1000;
+      });
+
+      if (alreadyExists) {
+        // Berig eksisterende match med AI-data (købesum, sælger)
+        const match = merged.find((m) => {
+          const mDato = m.overtagelsesdato ?? m.koebsaftaleDato ?? '';
+          return mDato && Math.abs(new Date(mDato).getTime() - aiTime) < 60 * 24 * 60 * 60 * 1000;
+        });
+        if (match) {
+          if (ai.koebesum && !match.samletKoebesum) match.samletKoebesum = ai.koebesum;
+          if (ai.kontantKoebesum && !match.kontantKoebesum)
+            match.kontantKoebesum = ai.kontantKoebesum;
+          if (ai.dokumentType && !match.overdragelsesmaade)
+            match.overdragelsesmaade = ai.dokumentType;
+        }
+      } else {
+        // Ny handel kun fra AI
+        merged.push({
+          kontantKoebesum: ai.kontantKoebesum ?? ai.koebesum,
+          samletKoebesum: ai.koebesum,
+          loesoeresum: null,
+          entreprisesum: null,
+          koebsaftaleDato: null,
+          overtagelsesdato: ai.dato,
+          overdragelsesmaade: ai.dokumentType,
+          koeber: ai.koeber?.map((k) => k.navn).join(', ') ?? null,
+          koebercvr: null,
+          adkomstType: ai.dokumentType,
+          andel: null,
+          tinglysningsdato: null,
+          tinglysningsafgift: null,
+          kilde: 'tinglysning', // AI-data stammer fra scannede tinglysningsdokumenter
+        });
+      }
+    }
   }
 
   // BIZZ-444: Saml handler med samme dato til en linje (f.eks. 50%/50%

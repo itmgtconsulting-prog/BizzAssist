@@ -61,6 +61,10 @@ export default function AktExtractionButton({ bfe, aktNavn, lang }: Props) {
         tokensUsed: data.tokensUsed ?? 0,
         fromCache: data.fromCache ?? false,
       });
+      // Refresh salgshistorik efter 2 sek — ny data er nu i cache
+      if (!data.fromCache) {
+        setTimeout(() => window.location.reload(), 2000);
+      }
     } catch {
       setError(da ? 'Netværksfejl' : 'Network error');
     } finally {

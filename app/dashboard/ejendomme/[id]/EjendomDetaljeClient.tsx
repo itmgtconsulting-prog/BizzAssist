@@ -284,6 +284,17 @@ export default function EjendomDetaljeClient({
 
   /** Tinglysning adkomster (ejerskifter) — bruges til at berige salgshistorik med købernavne */
   const [tlEjere, setTlEjere] = useState<TLEjer[]>([]);
+  /** AI-ekstraherede handler fra tinglysning_akt_extraction cache. */
+  const [aiHandler, setAiHandler] = useState<
+    {
+      dato: string | null;
+      dokumentType: string | null;
+      koeber: { navn: string }[];
+      saelger: { navn: string }[];
+      koebesum: number | null;
+      kontantKoebesum: number | null;
+    }[]
+  >([]);
   /** Tinglysning hæftelser — pantebreve og lån tinglyst på ejendommen */
   const [tlHaeftelser, setTlHaeftelser] = useState<TLHaeftelse[]>([]);
   /** True mens tinglysning summarisk data hentes */
@@ -1359,7 +1370,28 @@ export default function EjendomDetaljeClient({
 
   // ── Kombineret salgshistorik: EJF + Tinglysning adkomster ──
   // BIZZ-1230: Merge-logik ekstraheret til helpers/mergedSalgshistorik.ts
-  const mergedSalgshistorik = buildMergedSalgshistorik(salgshistorik, tlEjere);
+  const mergedSalgshistorik = buildMergedSalgshistorik(salgshistorik, tlEjere, aiHandler);
+
+  // BIZZ-1598: Hent AI-ekstraherede handler fra cache (fire-and-forget)
+  useEffect(() => {
+    const bfeNum = bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
+    if (!bfeNum) return;
+    fetch(`/api/tinglysning/indskannede-akter?ejendomId=`).catch(() => null);
+    // Hent fra akt_extraction cache via SQL
+    fetch('/api/analyse/sql', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: `SELECT extraction FROM public.tinglysning_akt_extraction WHERE bfe_nummer = ${bfeNum} LIMIT 1`,
+      }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        const extraction = data?.rows?.[0]?.extraction;
+        if (extraction?.handler?.length > 0) setAiHandler(extraction.handler);
+      })
+      .catch(() => {});
+  }, [bbrData?.ejendomsrelationer]);
 
   // ── DAWA: Loading ──
   if (erDAWA && dawaStatus === 'loader') {

@@ -129,6 +129,94 @@ test.describe('Diagram — dedup + overflow position', () => {
   });
 });
 
+// BIZZ-1544: persondetail Ejendomme-tab viser personligt ejede ejendomme
+test.describe('BIZZ-1544 person personligt ejet', () => {
+  test('Jakob ejendomme-tab viser "Personligt ejet" sektion med ejendomme', async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 1200 });
+    await page.goto('/dashboard/owners/4000115446');
+    await page.waitForLoadState('domcontentloaded');
+    await dismissOnboarding(page);
+    await expect(page.getByRole('heading', { name: /Jakob Juul Rasmussen/i })).toBeVisible({
+      timeout: 15_000,
+    });
+    await page
+      .locator('main button, main a')
+      .filter({ hasText: /Ejendomme/ })
+      .first()
+      .click();
+    // Vent længere — personalBfes triggeres efter aktivTab-skift + person-bridge + bfe-addresses
+    await page.waitForTimeout(40000);
+
+    // "Personligt ejet" sektion skal være synlig som første gruppe
+    const privatHeading = page.getByText(/Personligt ejet/i).first();
+    await expect(privatHeading).toBeVisible({ timeout: 10_000 });
+  });
+});
+
+// BIZZ-1546: WISCH layout — persons og properties må ikke overlappe
+test.describe('Diagram — wisch layout (BIZZ-1546)', () => {
+  test('persons og properties har min vertical gap', async ({ page }) => {
+    await page.setViewportSize({ width: 1800, height: 1400 });
+    await page.goto('/dashboard/companies/32569501');
+    await page.waitForLoadState('domcontentloaded');
+    await dismissOnboarding(page);
+    await page
+      .locator('button, a')
+      .filter({ hasText: /^Diagram$/ })
+      .first()
+      .click();
+    await page.waitForTimeout(10000);
+    const udvidBtn = page
+      .locator('button')
+      .filter({ hasText: /Udvid|Expand/ })
+      .first();
+    if (await udvidBtn.isVisible().catch(() => false)) await udvidBtn.click();
+    await page.waitForTimeout(3000);
+
+    const layout = await page.evaluate(() => {
+      const groups = Array.from(document.querySelectorAll('svg g[style*="cursor"]'));
+      const out: Array<{ type: string; label: string; y: number }> = [];
+      for (const g of groups) {
+        const rect = g.querySelector('rect');
+        const text = Array.from(g.querySelectorAll('text'))
+          .map((t) => t.textContent ?? '')
+          .join(' | ');
+        if (!rect || !text) continue;
+        const fill = rect.getAttribute('fill') ?? '';
+        const stroke = rect.getAttribute('stroke') ?? '';
+        let type = 'unknown';
+        if (fill.includes('139,92,246') || stroke.includes('139,92,246')) type = 'person';
+        else if (
+          fill.includes('5,150,105') ||
+          stroke.includes('5,150,105') ||
+          fill.includes('emerald') ||
+          stroke.includes('16,185,129')
+        )
+          type = 'property';
+        else type = 'company';
+        out.push({
+          type,
+          label: text.substring(0, 60),
+          y: parseFloat(rect.getAttribute('y') ?? '0'),
+        });
+      }
+      return out;
+    });
+
+    // BIZZ-1546: maxPersonY → minPropertyY skal have min 80px gap (med h/2 = 40px buffer)
+    const personYs = layout.filter((n) => n.type === 'person').map((n) => n.y);
+    const propertyYs = layout
+      .filter((n) => /BFE \d/.test(n.label) || n.label.includes('m²'))
+      .map((n) => n.y);
+    if (personYs.length > 0 && propertyYs.length > 0) {
+      const maxPersonY = Math.max(...personYs);
+      const minPropertyY = Math.min(...propertyYs.filter((y) => y > maxPersonY));
+      const gap = minPropertyY - maxPersonY;
+      expect(gap).toBeGreaterThan(80);
+    }
+  });
+});
+
 // BIZZ-1542+1543: Diagram property labels + ejerlejlighed navigation
 test.describe('Diagram — property labels + navigation', () => {
   test('BIZZ-1543: ejerlejlighed label has etage on line 1 (Belvedere)', async ({ page }) => {

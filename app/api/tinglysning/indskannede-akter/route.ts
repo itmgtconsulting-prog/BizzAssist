@@ -448,15 +448,25 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Non-200: log og returner tom liste
-    logger.log(
-      `[indskannede-akter] XML API HTTP ${xmlRes.status}:`,
-      xmlRes.buffer.toString('utf-8').substring(0, 500)
-    );
+    // Non-200: log og returner debug-info
+    const faultBody = xmlRes.buffer.toString('utf-8').substring(0, 500);
+    logger.log(`[indskannede-akter] XML API HTTP ${xmlRes.status}: ${faultBody}`);
 
-    return NextResponse.json({ ejendomId, akter: [] } satisfies IndskannedeAkterResponse, {
-      headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
-    });
+    return NextResponse.json(
+      {
+        ejendomId,
+        akter: [],
+        _debug: {
+          xmlApiStatus: xmlRes.status,
+          bfe,
+          distName,
+          distId,
+          matNr,
+          fault: faultBody.substring(0, 300),
+        },
+      },
+      { headers: { 'Cache-Control': 'no-store' } }
+    );
   } catch (err) {
     Sentry.captureException(err);
     const msg = err instanceof Error ? err.message : String(err);

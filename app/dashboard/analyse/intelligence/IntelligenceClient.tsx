@@ -419,6 +419,41 @@ export default function IntelligenceClient(): React.ReactElement {
               <LazyChart columns={response.columns} rows={response.rows} />
             )}
 
+            {/* Follow-up / tilpas resultat — placeret lige under graf for synlighed */}
+            {response?.ok && response.sql && (
+              <div className="bg-slate-900/50 border border-emerald-500/20 rounded-lg p-3">
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (followUp.trim().length >= 3) {
+                      setPrompt(followUp);
+                      submit(followUp);
+                      setFollowUp('');
+                    }
+                  }}
+                  className="flex gap-2 items-center"
+                >
+                  <Lightbulb className="w-4 h-4 text-emerald-400 flex-shrink-0" aria-hidden />
+                  <input
+                    type="text"
+                    value={followUp}
+                    onChange={(e) => setFollowUp(e.target.value)}
+                    placeholder="Tilpas: filtrer kommune, ændr sortering, tilføj kolonner..."
+                    className="flex-1 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm focus:border-emerald-500 focus:outline-none"
+                    disabled={loading}
+                    maxLength={500}
+                  />
+                  <button
+                    type="submit"
+                    disabled={loading || followUp.trim().length < 3}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors whitespace-nowrap"
+                  >
+                    {loading ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden /> : 'Tilpas'}
+                  </button>
+                </form>
+              </div>
+            )}
+
             {/* Result table */}
             {sortedRows.length > 0 && (
               <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-x-auto">
@@ -469,46 +504,6 @@ export default function IntelligenceClient(): React.ReactElement {
                     Viser de første 200 af {response.rows.length} rækker.
                   </p>
                 )}
-              </div>
-            )}
-
-            {/* Follow-up / tilpas resultat */}
-            {response?.ok && response.sql && (
-              <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
-                <p className="text-sm text-slate-400 mb-2">Tilpas resultatet:</p>
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    if (followUp.trim().length >= 3) {
-                      setPrompt(followUp);
-                      submit(followUp);
-                      setFollowUp('');
-                    }
-                  }}
-                  className="flex gap-2"
-                >
-                  <input
-                    type="text"
-                    value={followUp}
-                    onChange={(e) => setFollowUp(e.target.value)}
-                    placeholder="Fx: Filtrer kun Hvidovre, sorter efter beløb, vis som procent..."
-                    className="flex-1 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm focus:border-emerald-500 focus:outline-none"
-                    disabled={loading}
-                    maxLength={500}
-                  />
-                  <button
-                    type="submit"
-                    disabled={loading || followUp.trim().length < 3}
-                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 disabled:cursor-not-allowed rounded-lg text-sm font-medium flex items-center gap-1.5 transition-colors"
-                  >
-                    {loading ? (
-                      <Loader2 className="w-4 h-4 animate-spin" aria-hidden />
-                    ) : (
-                      <Lightbulb className="w-4 h-4" aria-hidden />
-                    )}
-                    Tilpas
-                  </button>
-                </form>
               </div>
             )}
 

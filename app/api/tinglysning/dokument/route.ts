@@ -867,35 +867,37 @@ export async function GET(req: NextRequest) {
         const base = host.startsWith('localhost') ? `http://${host}` : `https://${host}`;
         const cookie = req.headers.get('cookie') ?? '';
 
-        // Hent liste af indskannede akter for dette BFE/UUID
-        const bfeParam = req.nextUrl.searchParams.get('bfe') ?? '';
-        if (bfeParam) {
+        // Hent liste af indskannede akter via ejendomId (UUID) eller BFE
+        const ejendomIdParam = req.nextUrl.searchParams.get('ejendomId') ?? '';
+        if (ejendomIdParam) {
           const akterRes = await fetch(
-            `${base}/api/tinglysning/indskannede-akter?bfe=${bfeParam}`,
-            { headers: { cookie }, signal: AbortSignal.timeout(10000) }
+            `${base}/api/tinglysning/indskannede-akter?ejendomId=${ejendomIdParam}`,
+            { headers: { cookie }, signal: AbortSignal.timeout(30000) }
           );
           if (akterRes.ok) {
             const akterData = (await akterRes.json()) as {
               akter?: Array<{ aktNavn: string; dokumentId?: string }>;
             };
-            // Find akt der matcher uuid eller brug den første
-            const matchAkt =
-              akterData.akter?.find((a) => a.dokumentId === uuid) ?? akterData.akter?.[0];
-            if (matchAkt?.aktNavn) {
-              const dlRes = await fetch(
-                `${base}/api/tinglysning/indskannede-akter/download?aktNavn=${encodeURIComponent(matchAkt.aktNavn)}`,
-                { headers: { cookie }, signal: AbortSignal.timeout(15000) }
-              );
-              if (dlRes.ok && dlRes.headers.get('content-type')?.includes('pdf')) {
-                const pdfBuf = await dlRes.arrayBuffer();
-                return new NextResponse(new Uint8Array(pdfBuf), {
-                  status: 200,
-                  headers: {
-                    'Content-Type': 'application/pdf',
-                    'Content-Disposition': `inline; filename="indskannet-${uuid}.pdf"`,
-                    'X-Source': 'S2S-indskannet',
-                  },
-                });
+            if (akterData.akter && akterData.akter.length > 0) {
+              // Find akt der matcher uuid eller brug den første
+              const matchAkt =
+                akterData.akter.find((a) => a.dokumentId === uuid) ?? akterData.akter[0];
+              if (matchAkt?.aktNavn) {
+                const dlRes = await fetch(
+                  `${base}/api/tinglysning/indskannede-akter/download?aktNavn=${encodeURIComponent(matchAkt.aktNavn)}`,
+                  { headers: { cookie }, signal: AbortSignal.timeout(120000) }
+                );
+                if (dlRes.ok && dlRes.headers.get('content-type')?.includes('pdf')) {
+                  const pdfBuf = await dlRes.arrayBuffer();
+                  return new NextResponse(new Uint8Array(pdfBuf), {
+                    status: 200,
+                    headers: {
+                      'Content-Type': 'application/pdf',
+                      'Content-Disposition': `inline; filename="indskannet-${matchAkt.aktNavn}.pdf"`,
+                      'X-Source': 'S2S-indskannet',
+                    },
+                  });
+                }
               }
             }
           }

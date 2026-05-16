@@ -629,7 +629,7 @@ export default function TinglysningTab({
                     >
                       {docId && (
                         <a
-                          href={`/api/tinglysning/dokument?uuid=${docId}`}
+                          href={`/api/tinglysning/dokument?uuid=${docId}&ejendomId=${tlUuid}`}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
@@ -878,7 +878,7 @@ export default function TinglysningTab({
                     >
                       {docId && (
                         <a
-                          href={`/api/tinglysning/dokument?uuid=${docId}`}
+                          href={`/api/tinglysning/dokument?uuid=${docId}&ejendomId=${tlUuid}`}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"

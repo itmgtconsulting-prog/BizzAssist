@@ -91,45 +91,60 @@ function getAdmin() {
   return createAdminClient();
 }
 
-/** Tjek cache — returnér cached extraction hvis den eksisterer. */
+/** Tjek cache via rå PostgREST (bypasser Supabase JS typed client). */
 async function getCached(bfe: number, aktNavn: string): Promise<AktExtraction | null> {
   try {
-    const admin = getAdmin();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (admin as any)
-      .from('tinglysning_akt_extraction')
-      .select('extraction')
-      .eq('bfe_nummer', bfe)
-      .eq('akt_navn', aktNavn)
-      .maybeSingle();
-    if (error) logger.warn('[extract-akt] Cache read error:', error.message);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return ((data as any)?.extraction as AktExtraction) ?? null;
-  } catch (err) {
-    logger.warn('[extract-akt] Cache read exception:', err);
+    const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+    if (!url || !key) return null;
+
+    const res = await fetch(
+      `${url}/rest/v1/tinglysning_akt_extraction?bfe_nummer=eq.${bfe}&akt_navn=eq.${encodeURIComponent(aktNavn)}&select=extraction&limit=1`,
+      {
+        headers: { apikey: key, Authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(5000),
+      }
+    );
+    if (!res.ok) return null;
+    const rows = await res.json();
+    return rows?.[0]?.extraction ?? null;
+  } catch {
     return null;
   }
 }
 
-/** Gem extraction i cache. */
+/** Gem extraction i cache via rå PostgREST. */
 async function saveCache(bfe: number, aktNavn: string, extraction: AktExtraction): Promise<void> {
   try {
-    const admin = getAdmin();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: upsertError } = await (admin as any).from('tinglysning_akt_extraction').upsert(
+    const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+    if (!url || !key) return;
+
+    const res = await fetch(
+      `${url}/rest/v1/tinglysning_akt_extraction?on_conflict=bfe_nummer,akt_navn`,
       {
-        bfe_nummer: bfe,
-        akt_navn: aktNavn,
-        extraction,
-        extracted_at: new Date().toISOString(),
-      },
-      { onConflict: 'bfe_nummer,akt_navn' }
+        method: 'POST',
+        headers: {
+          apikey: key,
+          Authorization: `Bearer ${key}`,
+          'Content-Type': 'application/json',
+          Prefer: 'resolution=merge-duplicates',
+        },
+        body: JSON.stringify({
+          bfe_nummer: bfe,
+          akt_navn: aktNavn,
+          extraction,
+          extracted_at: new Date().toISOString(),
+        }),
+        signal: AbortSignal.timeout(10000),
+      }
     );
-    if (upsertError) {
-      logger.error('[extract-akt] Cache upsert error:', upsertError.message, upsertError.code);
+    if (!res.ok) {
+      const err = await res.text().catch(() => '');
+      logger.error(`[extract-akt] Cache save failed: ${res.status} ${err.slice(0, 200)}`);
     }
   } catch (err) {
-    logger.error('[extract-akt] Cache save failed:', err);
+    logger.error('[extract-akt] Cache save exception:', err);
   }
 }
 

@@ -114,14 +114,12 @@ export function signXmlBody(unsignedXml: string, rootElementName: string): Signe
  * @returns true hvis signaturen er gyldig og fra trusted cert
  */
 export function verifyXmlSignature(signedXml: string, trustedCert: string): boolean {
-  // TODO BIZZ-XX12 (Fase 3): implementer
-  // - Parse signedXml, find <ds:Signature>
-  // - Brug xml-crypto's SignedXml.checkSignature()
-  // - Verificer X509Certificate i KeyInfo matcher trustedCert (eller er signed by det)
-  // - Return true/false
-
-  void signedXml;
-  void trustedCert;
-
-  throw new Error('verifyXmlSignature: not implemented — see BIZZ-XX12 (Fase 3, ADR 0009)');
+  // BIZZ-1518: Implementeringen ligger i app/lib/s2sClient.ts hvor signering
+  // også er. Vi re-eksporterer her så callback-handlers kan importere fra
+  // begge moduler under refaktor-perioden.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const impl = require('@/app/lib/s2sClient') as {
+    verifyXmlSignature: (xml: string, pem: string) => boolean;
+  };
+  return impl.verifyXmlSignature(signedXml, trustedCert);
 }

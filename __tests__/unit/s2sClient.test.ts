@@ -16,7 +16,13 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import forge from 'node-forge';
-import { signXmlBody, callS2S, NS, loadOcesCertAndKey } from '@/app/lib/s2sClient';
+import {
+  signXmlBody,
+  callS2S,
+  NS,
+  loadOcesCertAndKey,
+  verifyXmlSignature,
+} from '@/app/lib/s2sClient';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -230,6 +236,123 @@ describe('loadOcesCertAndKey', () => {
     } catch (err) {
       expect((err as Error).message).toMatch(/TINGLYSNING_CERT_PATH\/B64/);
     }
+  });
+});
+
+// ─── verifyXmlSignature (BIZZ-1518) ────────────────────────────────────────
+
+describe('verifyXmlSignature', () => {
+  /** Helper — sign via xml-crypto's SignedXml så roundtrip checkSignature går clean.
+   * signXmlBody i prod producerer hand-rolled signaturer der godkendes af Tinglysning
+   * men ikke nødvendigvis af xml-crypto's strict checkSignature — vi tester derfor
+   * verifyXmlSignature ved at producere fixture med xml-crypto selv. */
+  async function prepareSignedFixture(): Promise<{
+    signed: string;
+    trustedPem: string;
+    otherPem: string;
+  }> {
+    const { SignedXml } = await import('xml-crypto');
+    const tc = generateTestCert();
+    const otherTc = generateTestCert();
+
+    const unsigned =
+      '<EjendomSummariskSvar xmlns="http://rep.oio.dk/tinglysning.dk/service/message/elektroniskakt/1/">' +
+      '<BFEnummer>100000001</BFEnummer>' +
+      '</EjendomSummariskSvar>';
+
+    const toPem = (b64: string) => {
+      const cleaned = b64.replace(/\s/g, '');
+      const lines: string[] = [];
+      for (let i = 0; i < cleaned.length; i += 64) lines.push(cleaned.slice(i, i + 64));
+      return `-----BEGIN CERTIFICATE-----\n${lines.join('\n')}\n-----END CERTIFICATE-----\n`;
+    };
+
+    const sig = new SignedXml({
+      privateKey: tc.privateKeyPem,
+      publicCert: toPem(tc.certBase64),
+      signatureAlgorithm: 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha512',
+      canonicalizationAlgorithm: 'http://www.w3.org/2001/10/xml-exc-c14n#',
+    });
+    sig.addReference({
+      xpath: '/*',
+      transforms: [
+        'http://www.w3.org/2000/09/xmldsig#enveloped-signature',
+        'http://www.w3.org/2001/10/xml-exc-c14n#',
+      ],
+      digestAlgorithm: 'http://www.w3.org/2001/04/xmlenc#sha256',
+      uri: '',
+    });
+    sig.getKeyInfoContent = () =>
+      `<X509Data><X509Certificate>${tc.certBase64}</X509Certificate></X509Data>`;
+    sig.computeSignature(unsigned);
+    const signed = sig.getSignedXml();
+
+    return {
+      signed,
+      trustedPem: toPem(tc.certBase64),
+      otherPem: toPem(otherTc.certBase64),
+    };
+  }
+
+  it('accepterer gyldigt signeret XML med matching trusted cert', async () => {
+    const { signed, trustedPem } = await prepareSignedFixture();
+    expect(verifyXmlSignature(signed, trustedPem)).toBe(true);
+  });
+
+  it('afviser hvis cert ikke matcher trusted', async () => {
+    const { signed, otherPem } = await prepareSignedFixture();
+    expect(verifyXmlSignature(signed, otherPem)).toBe(false);
+  });
+
+  it('afviser hvis XML er tampered (digest mismatch)', async () => {
+    const { signed, trustedPem } = await prepareSignedFixture();
+    // Modificér en BFE-værdi efter signering
+    const tampered = signed.replace('100000001', '999999999');
+    expect(verifyXmlSignature(tampered, trustedPem)).toBe(false);
+  });
+
+  it('afviser hvis Signature-element mangler', () => {
+    const noSig =
+      '<EjendomSummariskSvar xmlns="http://rep.oio.dk/tinglysning.dk/service/message/elektroniskakt/1/">' +
+      '<BFEnummer>100000001</BFEnummer>' +
+      '</EjendomSummariskSvar>';
+    expect(
+      verifyXmlSignature(noSig, '-----BEGIN CERTIFICATE-----\nABC\n-----END CERTIFICATE-----\n')
+    ).toBe(false);
+  });
+
+  it('afviser tomme/ugyldige inputs', () => {
+    expect(verifyXmlSignature('', 'cert')).toBe(false);
+    expect(verifyXmlSignature('<xml/>', '')).toBe(false);
+    expect(verifyXmlSignature('not xml at all', 'cert')).toBe(false);
+  });
+
+  it('XSW-defense: afviser multiple Signature-elementer', async () => {
+    const { signed, trustedPem } = await prepareSignedFixture();
+    // Injecter en anden Signature-block (XSW attack pattern)
+    const xsw = signed.replace(
+      '</EjendomSummariskSvar>',
+      '<Signature xmlns="http://www.w3.org/2000/09/xmldsig#"><SignedInfo/></Signature></EjendomSummariskSvar>'
+    );
+    expect(verifyXmlSignature(xsw, trustedPem)).toBe(false);
+  });
+
+  it('XSW-defense: afviser ekstern Reference URI', async () => {
+    const { signed, trustedPem } = await prepareSignedFixture();
+    // Ændrer Reference URI til ekstern URL — XSW attack indicator
+    // (Tinglysning bruger altid "" eller same-document fragment "#id")
+    const xswUri = signed.replace(
+      /Reference URI="[^"]*"/,
+      'Reference URI="http://evil.example/payload"'
+    );
+    expect(verifyXmlSignature(xswUri, trustedPem)).toBe(false);
+  });
+
+  it('completes verifikation under 100ms', async () => {
+    const { signed, trustedPem } = await prepareSignedFixture();
+    const start = Date.now();
+    verifyXmlSignature(signed, trustedPem);
+    expect(Date.now() - start).toBeLessThan(100);
   });
 });
 

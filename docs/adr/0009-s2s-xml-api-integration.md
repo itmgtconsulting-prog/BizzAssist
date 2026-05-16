@@ -13,6 +13,7 @@ BizzAssist bruger i dag Tinglysningsrettens **HTTP API** (`https://www.tinglysni
 
 - ✅ Prod OCES erhvervscertifikat udstedt: `CN=BizzAssist, NTRDK-44718502`, RID `UI:DK-O:G:c12026c7-9ef1-4c03-ae26-00f4cb3be7e9`, gyldig 2026-03-24 → 2029-03-23
 - ✅ Cert + privat nøgle i Vercel prod env: `TINGLYSNING_CERT_B64`, `TINGLYSNING_CERT_PASSWORD`
+- ✅ Trusted response-cert til callback-verifikation: `TINGLYSNING_RESPONSE_TRUST_CERT` (PEM, BIZZ-1518). Indhentes ved at signere et test-S2S kald mod prod og udtrække X509Certificate fra response-signaturen — gem som PEM-string i Vercel env. Ved cert-rotation hos Tinglysning skal denne env opdateres synkront ellers afviser vi alle callbacks.
 - ✅ Hetzner-proxy (`bizzassist-proxy`, 204.168.164.252) udfører mTLS til Tinglysning prod via `xml-api.tinglysning.dk` (whitelist verificeret)
 - ✅ Organisations-niveau S2S-godkendelse for CVR 44718502: Storkunde, S2S grundlæggende/forespørger/anmelder bruger — alle `Ja`
 - ✅ Cert registreret som S2S-aktør i prod via `tinglysning.dk/tmv/administration/s2sSysParam` (verificeret 2026-05-12 — `EjendomSummariskHent`-test kommer forbi cert-lookup, fejler nu kun på XML schema validation)

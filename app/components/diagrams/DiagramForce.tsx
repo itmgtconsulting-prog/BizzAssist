@@ -1375,6 +1375,47 @@ function DiagramForce({
       }
     }
 
+    // BIZZ-1546: Enforce min vertical gap mellem persons og properties.
+    // Når persons spænder over flere sub-rows (fx 7 persons → 2 sub-rows), kan
+    // properties i et lavere depth-bucket ende for tæt på second person sub-row
+    // pga. den fractional depth (personDepth + 1.5 → kun 0.5 unit fra persons).
+    // Vi shifter property-noder ned så deres TOP er mindst MIN_PERSON_PROP_GAP
+    // pixels under den nederste person-noden.
+    const MIN_PERSON_PROP_GAP = 120; // px gap mellem nederste person og øverste property
+    const personYs: number[] = [];
+    const propertyEntries: Array<{ id: string; y: number }> = [];
+    for (const [id, yVal] of yMap) {
+      const n = nodeById.get(id);
+      if (!n) continue;
+      if (n.type === 'person') personYs.push(yVal);
+      else if (n.type === 'property' || id.startsWith('props-overflow-')) {
+        propertyEntries.push({ id, y: yVal });
+      }
+    }
+    if (personYs.length > 0 && propertyEntries.length > 0) {
+      const maxPersonY = Math.max(...personYs);
+      // Find tightest property-Y der ligger under maxPersonY
+      const minPropY = Math.min(...propertyEntries.map((p) => p.y));
+      const requiredMinPropY = maxPersonY + MIN_PERSON_PROP_GAP;
+      if (minPropY < requiredMinPropY) {
+        const shift = requiredMinPropY - minPropY;
+        for (const p of propertyEntries) {
+          yMap.set(p.id, p.y + shift);
+        }
+        // Shift også alle øvrige noder (companies osv.) der ligger på eller under
+        // den shiftede property-Y for at bevare vertikal rækkefølge
+        for (const [id, yVal] of Array.from(yMap)) {
+          const n = nodeById.get(id);
+          if (!n) continue;
+          if (n.type === 'person') continue;
+          if (n.type === 'property' || id.startsWith('props-overflow-')) continue;
+          if (yVal >= minPropY) {
+            yMap.set(id, yVal + shift);
+          }
+        }
+      }
+    }
+
     // Properties er nu i byDepth med depth + 0.5 (egen linje under ejer).
     // Overflow-noder placeres på absolut bottom-row efter ALLE andre noder.
     const OVERFLOW_BOTTOM_GAP = 80;

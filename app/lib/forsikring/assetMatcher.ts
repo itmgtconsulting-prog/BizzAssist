@@ -34,7 +34,18 @@ function normalize(s: string | null | undefined): string {
   return (
     s
       .toLowerCase()
+      // BIZZ-1592: æ/ø/å → ae/oe/aa så "Helsingør" matcher "Helsingoer"
+      // (forsikrings-policer skrives ofte uden diakritiske tegn)
+      .replace(/æ/g, 'ae')
+      .replace(/ø/g, 'oe')
+      .replace(/å/g, 'aa')
+      // Fjern øvrige diakritiske tegn (é, ü, osv) via NFD-dekomposition
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
       .replace(/[.,\-/\\]/g, ' ')
+      // BIZZ-1592: fjern "nr." / "nr" token mellem vejnavn og husnummer
+      // ("Stengade nr. 7" → "stengade 7") så det matcher "Stengade 7"
+      .replace(/\bnr\.?\b\s*/g, '')
       .replace(/\s+/g, ' ')
       .trim()
       // BIZZ-1393: Normalisér husnummer-bogstaver: "47 a" → "47a"

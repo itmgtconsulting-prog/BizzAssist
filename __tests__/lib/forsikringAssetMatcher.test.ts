@@ -225,3 +225,134 @@ describe('matchAssetsToPolicies — edge cases', () => {
     expect(m.bestMatch).toBeNull();
   });
 });
+
+// ─── BIZZ-1592: æ/ø/å + "nr." normalisering ────────────────────────────────
+
+describe('matchAssetsToPolicies — BIZZ-1592 normalisering', () => {
+  it('æ/ø/å normaliseres: "Helsingør" matcher policy "Helsingoer"', () => {
+    const aktiv = makeAktiv({ adresse: 'Stengade 7, 3000 Helsingør' });
+    const policy = makePolicy({ property_address: 'Stengade 7, 3000 Helsingoer' });
+    const [m] = matchAssetsToPolicies([aktiv], [policy]);
+    expect(m.bestMatch?.score).toBeGreaterThanOrEqual(85);
+  });
+
+  it('æ/ø/å normaliseres begge veje: "Tårnvej" ↔ "Taarnvej"', () => {
+    const aktiv = makeAktiv({ adresse: 'Tårnvej 12, 2000 Frederiksberg' });
+    const policy = makePolicy({ property_address: 'Taarnvej 12, 2000 Frederiksberg' });
+    const [m] = matchAssetsToPolicies([aktiv], [policy]);
+    expect(m.bestMatch?.score).toBeGreaterThanOrEqual(85);
+  });
+
+  it('"nr." token fjernes: "Stengade nr. 7" matcher "Stengade 7"', () => {
+    const aktiv = makeAktiv({ adresse: 'Stengade 7, 3000 Helsingør' });
+    const policy = makePolicy({ property_address: 'Stengade nr. 7, 3000 Helsingør' });
+    const [m] = matchAssetsToPolicies([aktiv], [policy]);
+    expect(m.bestMatch?.score).toBeGreaterThanOrEqual(85);
+  });
+
+  it('"nr" uden punktum fjernes også: "Vejvej nr 3"', () => {
+    const aktiv = makeAktiv({ adresse: 'Vejvej 3' });
+    const policy = makePolicy({ property_address: 'Vejvej nr 3' });
+    const [m] = matchAssetsToPolicies([aktiv], [policy]);
+    expect(m.bestMatch?.score).toBeGreaterThanOrEqual(85);
+  });
+
+  it('combineret: æ/ø/å + nr. + etage/dør tolerant', () => {
+    const aktiv = makeAktiv({ adresse: 'Frederiksborgvej 12A, 1. sal th, 3000 Helsingør' });
+    const policy = makePolicy({
+      property_address: 'Frederiksborgvej nr. 12A, 3000 Helsingoer',
+    });
+    const [m] = matchAssetsToPolicies([aktiv], [policy]);
+    expect(m.bestMatch?.score).toBeGreaterThanOrEqual(80);
+  });
+
+  it('diakritiske tegn (é, ü) fjernes ved NFD-normalisering', () => {
+    const aktiv = makeAktiv({ adresse: 'Café Avenue 1' });
+    const policy = makePolicy({ property_address: 'Cafe Avenue 1' });
+    const [m] = matchAssetsToPolicies([aktiv], [policy]);
+    expect(m.bestMatch?.score).toBeGreaterThanOrEqual(85);
+  });
+});
+
+// ─── BIZZ-1592: BELVEDERE-scenario ─────────────────────────────────────────
+
+describe('matchAssetsToPolicies — BELVEDERE-scenario (BIZZ-1592)', () => {
+  // Simuleret med 5 ejendomme + 3 policer fra reel sag
+  // (forenklet: rigtige sagen har 17/9, men dækker samme failure-modes)
+  it('CVR-fallback redder ejendomme uden adresse-match', () => {
+    const aktiver: Aktiv[] = [
+      // Ejendom med adresse + ejer_cvr — kun ejer_cvr matcher policy
+      {
+        type: 'ejendom',
+        label: 'BFE 100',
+        bfe: 100,
+        adresse: 'Ukendt Vej 1',
+        rawData: { ejer_cvr: '24301117' },
+      } as Aktiv,
+      {
+        type: 'ejendom',
+        label: 'BFE 101',
+        bfe: 101,
+        adresse: 'Anden Vej 2',
+        rawData: { ejer_cvr: '24301117' },
+      } as Aktiv,
+    ];
+    const policies = [
+      makePolicy({
+        id: 'belvedere-1',
+        policyholder_cvr: '24301117',
+        policyholder_name: 'BELVEDERE EJENDOMME A/S',
+        property_address: null,
+      }),
+    ];
+    const results = matchAssetsToPolicies(aktiver, policies);
+    // Begge ejendomme bør have et match via CVR-fallback (score 55)
+    expect(results[0].bestMatch?.score).toBeGreaterThanOrEqual(55);
+    expect(results[1].bestMatch?.score).toBeGreaterThanOrEqual(55);
+  });
+
+  it('blandet match-set: adresse-match + CVR-fallback giver høj dækningsgrad', () => {
+    const aktiver: Aktiv[] = [
+      {
+        type: 'ejendom',
+        label: '1',
+        bfe: 1,
+        adresse: 'Stengade 7, 3000 Helsingør',
+        rawData: { ejer_cvr: '24301117' },
+      } as Aktiv,
+      {
+        type: 'ejendom',
+        label: '2',
+        bfe: 2,
+        adresse: 'Stengade 9, 3000 Helsingør',
+        rawData: { ejer_cvr: '24301117' },
+      } as Aktiv,
+      {
+        type: 'ejendom',
+        label: '3',
+        bfe: 3,
+        adresse: 'Lukket Vej 5',
+        rawData: { ejer_cvr: '24301117' },
+      } as Aktiv,
+    ];
+    const policies = [
+      makePolicy({
+        id: 'p-1',
+        property_address: 'Stengade 7, 3000 Helsingoer',
+        policyholder_cvr: '24301117',
+      }),
+      makePolicy({
+        id: 'p-2',
+        property_address: 'Stengade nr. 9, 3000 Helsingør',
+        policyholder_cvr: '24301117',
+      }),
+      makePolicy({ id: 'p-3', policyholder_cvr: '24301117' }), // koncern-police uden adresse
+    ];
+    const results = matchAssetsToPolicies(aktiver, policies);
+    const dækningPct = (results.filter((r) => r.bestMatch).length / results.length) * 100;
+    expect(dækningPct).toBe(100); // alle 3 har match
+    expect(results[0].bestMatch?.score).toBeGreaterThanOrEqual(85); // adresse
+    expect(results[1].bestMatch?.score).toBeGreaterThanOrEqual(85); // adresse (nr.+ø-normalisering)
+    expect(results[2].bestMatch?.score).toBe(55); // kun CVR-fallback
+  });
+});

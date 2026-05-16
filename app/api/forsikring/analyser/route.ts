@@ -14,6 +14,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { getTenantSchemaName } from '@/lib/db/tenant';
 import { getInsuranceApi } from '@/lib/db/insurance';
 import { walkKoncern } from '@/app/lib/forsikring/koncernWalk';
+import * as Sentry from '@sentry/nextjs';
 import { matchAssetsToPolicies } from '@/app/lib/forsikring/assetMatcher';
 import { runGapEngine, computeRiskScore } from '@/app/lib/forsikring/gapEngine';
 import type { ForsikringCoverage } from '@/app/lib/forsikring/types';
@@ -181,6 +182,37 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       logger.log(
         `[forsikring/analyser] Uforsikret: "${m.aktiv.label}" (type=${m.aktiv.type}, bfe=${m.aktiv.bfe ?? '?'})`
       );
+    }
+
+    // BIZZ-1592: Sentry-breadcrumb når 0% match-rate detekteres på trods af
+    // policer (alert til oss — typisk symptom på scopeDocIds-bug, manglende
+    // adresse-parsing eller manglende ejer_cvr på aktiver).
+    if (matches.length > 0 && insuredCount === 0 && policer.length > 0) {
+      Sentry.captureMessage('[forsikring/analyser] 0% match-rate trods policer', {
+        level: 'warning',
+        tags: {
+          tenant_id: auth.tenantId,
+          kunde_type,
+          aktiver_count: String(matches.length),
+          policer_count: String(policer.length),
+        },
+        extra: {
+          // Sample af aktiver der ikke matchede (op til 5)
+          aktiver_sample: matches.slice(0, 5).map((m) => ({
+            type: m.aktiv.type,
+            label: m.aktiv.label,
+            bfe: m.aktiv.bfe ?? null,
+            har_adresse: !!m.aktiv.adresse,
+            har_ejer_cvr: !!(m.aktiv.rawData as { ejer_cvr?: string } | undefined)?.ejer_cvr,
+          })),
+          policer_sample: policer.slice(0, 5).map((p) => ({
+            id: p.id,
+            har_property_address: !!p.property_address,
+            har_property_bfe: !!p.property_bfe,
+            har_policyholder_cvr: !!p.policyholder_cvr,
+          })),
+        },
+      });
     }
 
     // 4. Kør gap-engine for matchede aktiver

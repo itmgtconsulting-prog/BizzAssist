@@ -395,16 +395,20 @@ export async function GET(req: NextRequest) {
       const p12Buffer = loadCertBuffer();
       ({ privateKeyPem, certPem } = extractPemFromP12(p12Buffer, CERT_PASSWORD));
     } catch (certErr) {
-      logger.error('[indskannede-akter] P12-parsing fejlede:', certErr);
-      return NextResponse.json({ error: 'Certifikat kunne ikke parses' }, { status: 503 });
+      const msg = certErr instanceof Error ? certErr.message : String(certErr);
+      return NextResponse.json(
+        { ejendomId, akter: [], _debug: { step: 'cert', error: msg } },
+        { status: 503 }
+      );
     }
 
     // Trin 2: Hent matrikel-info fra REST (kræves af S2S EjendomIdentifikator)
     const sumRes = await tlFetchShared(`/ejdsummarisk/${ejendomId}`, { accept: 'application/xml' });
     if (sumRes.status !== 200) {
-      return NextResponse.json({ ejendomId, akter: [] } satisfies IndskannedeAkterResponse, {
-        headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
-      });
+      return NextResponse.json(
+        { ejendomId, akter: [], _debug: { step: 'rest', status: sumRes.status } },
+        { headers: { 'Cache-Control': 'no-store' } }
+      );
     }
     const sumXml = sumRes.body;
     const bfe = sumXml.match(/BestemtFastEjendomNummer>(\d+)/)?.[1] ?? '';
@@ -413,12 +417,10 @@ export async function GET(req: NextRequest) {
     const matNr = sumXml.match(/Matrikelnummer>([^<]+)/)?.[1] ?? '';
 
     if (!bfe || !distName || !distId || !matNr) {
-      logger.warn(
-        `[indskannede-akter] Matrikel-info ufuldstændig: bfe=${bfe} dist=${distName}/${distId} mat=${matNr}`
+      return NextResponse.json(
+        { ejendomId, akter: [], _debug: { step: 'matrikel', bfe, distName, distId, matNr } },
+        { headers: { 'Cache-Control': 'no-store' } }
       );
-      return NextResponse.json({ ejendomId, akter: [] } satisfies IndskannedeAkterResponse, {
-        headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
-      });
     }
 
     // Trin 3: Byg og sign XML

@@ -95,9 +95,11 @@ test.describe('Ejendomshierarki — SFE BFE navigation', () => {
       { timeout: 20_000 }
     );
 
-    // Ejendomsstruktur tree — kan være under folden, scroll til den
+    // Ejendomsstruktur ligger på Ejerskab-fanen
+    await page.locator('text=Ejerskab').first().click();
+
     const treeHeading = page.getByText('Ejendomsstruktur').first();
-    await treeHeading.scrollIntoViewIfNeeded({ timeout: 20_000 });
+    await treeHeading.scrollIntoViewIfNeeded({ timeout: 25_000 });
     await expect(treeHeading).toBeVisible({ timeout: 5_000 });
 
     // SFE badge i træet
@@ -153,9 +155,11 @@ test.describe('Ejendomshierarki — SFE BFE navigation', () => {
       { timeout: 20_000 }
     );
 
-    // Scroll ned til ejendomsstruktur-sektionen
+    // Naviger til Ejerskab-fanen hvor ejendomsstruktur ligger
+    await page.locator('text=Ejerskab').first().click();
+
     const treeHeading = page.getByText('Ejendomsstruktur').first();
-    await treeHeading.scrollIntoViewIfNeeded({ timeout: 20_000 });
+    await treeHeading.scrollIntoViewIfNeeded({ timeout: 25_000 });
 
     // Find alle klikbare links i ejendomsstruktur-træet
     const strukturLinks = page.locator(

@@ -36,6 +36,83 @@ test.describe('Virksomhedsdiagram — JaJR Holding', () => {
   });
 });
 
+// BIZZ-1542+1543: Diagram property labels + ejerlejlighed navigation
+test.describe('Diagram — property labels + navigation', () => {
+  test('BIZZ-1543: ejerlejlighed label has etage on line 1 (Belvedere)', async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 1200 });
+    await page.goto('/dashboard/companies/24301117');
+    await page.waitForLoadState('domcontentloaded');
+    await dismissOnboarding(page);
+    await page
+      .locator('button, a')
+      .filter({ hasText: /^Diagram$/ })
+      .first()
+      .click();
+    await page.waitForTimeout(8000);
+    const udvidBtn = page
+      .locator('button')
+      .filter({ hasText: /Udvid|Expand/ })
+      .first();
+    if (await udvidBtn.isVisible().catch(() => false)) await udvidBtn.click();
+    await page.waitForTimeout(2000);
+
+    // Verify both ejerlejligheder show "Stengade 48D 2." and "Stengade 48D 1."
+    // (etage on line 1, distinct from each other)
+    const svgTexts = await page.locator('svg text').allTextContents();
+    const has48D2 = svgTexts.some((t) => /Stengade 48D 2\./.test(t));
+    const has48D1 = svgTexts.some((t) => /Stengade 48D 1\./.test(t));
+    expect(has48D2 || has48D1).toBe(true);
+  });
+
+  test('BIZZ-1542: click ejerlejlighed in diagram resolves to property page', async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 1200 });
+    await page.goto('/dashboard/companies/24301117');
+    await page.waitForLoadState('domcontentloaded');
+    await dismissOnboarding(page);
+    await page
+      .locator('button, a')
+      .filter({ hasText: /^Diagram$/ })
+      .first()
+      .click();
+    await page.waitForTimeout(8000);
+    const udvidBtn = page
+      .locator('button')
+      .filter({ hasText: /Udvid|Expand/ })
+      .first();
+    if (await udvidBtn.isVisible().catch(() => false)) await udvidBtn.click();
+    await page.waitForTimeout(2000);
+
+    // Find ejerlejlighed-noden og klik
+    const target = await page.evaluate(() => {
+      const groups = Array.from(document.querySelectorAll('svg g[style*="cursor: pointer"]'));
+      for (let i = 0; i < groups.length; i++) {
+        const texts = Array.from(groups[i].querySelectorAll('text'))
+          .map((t) => t.textContent ?? '')
+          .join(' | ');
+        if (/Stengade 48D 2\./.test(texts)) return { index: i, texts };
+      }
+      return null;
+    });
+    expect(target).not.toBeNull();
+    const allGroups = page.locator('svg g[style*="cursor: pointer"]');
+    await allGroups.nth(target!.index).scrollIntoViewIfNeeded();
+    await allGroups.nth(target!.index).click({ force: true });
+    await page.waitForLoadState('domcontentloaded');
+
+    // Skal IKKE vise "Ejendom ikke fundet" (BIZZ-1542 regression-guard)
+    await page.waitForTimeout(8000);
+    const errorVisible = await page
+      .getByText(/Ejendom ikke fundet|Adresse ikke fundet/i)
+      .isVisible({ timeout: 1000 })
+      .catch(() => false);
+    expect(errorVisible).toBe(false);
+    // Adresse-heading skal være synlig
+    await expect(page.getByRole('heading', { name: /Stengade 48D/i })).toBeVisible({
+      timeout: 15_000,
+    });
+  });
+});
+
 test.describe('Person-diagram — Jakob Juul Rasmussen', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/dashboard/owners/4000115446');

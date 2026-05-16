@@ -31,6 +31,12 @@ import {
 import { LruCache } from '@/app/lib/lruCache';
 import { fetchTinglysningPriceRowsByBfe, indexPriceRowsByDate } from '@/app/lib/tinglysningPrices';
 import { fetchHistoriskAdkomsterByBfe } from '@/app/lib/tinglysningHistoriskAdkomster';
+import {
+  readCachedHandler,
+  isCacheFresh,
+  upsertHandlerRows,
+  type CachedHandlerRow,
+} from '@/app/lib/tinglysningHandlerCache';
 
 // BIZZ-633: LRU-cache for salgshistorik-svar. Samme BFE slås op mange
 // gange i samme session (økonomi-tab, ejendoms-kort, diagram-berigelse).
@@ -478,14 +484,57 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
       }
     }
 
-    // ─── BIZZ-685/693 iter 2: Tinglysning price enrichment ───────────────────
-    // For rows where EJF returned no price (all rows in practice — EJF's
-    // GraphQL never exposes KontantKoebesum), chain to Tinglysning's summarisk
-    // XML to fold in price + koebsaftaleDato + tinglysningsdato. Matched on
-    // overtagelsesdato → YYYY-MM-DD. Failures are swallowed so users still
-    // see the EJF-owned rows when Tinglysning is down.
+    // ─── BIZZ-685/693 iter 2 + BIZZ-1590: Tinglysning price enrichment ──────
+    // Cache-first: tjek public.tinglysning_handler først (sparer REST-roundtrip
+    // ~600-1500ms ved cache-hit). Hvis cache er stale/empty → live-fetch + skriv
+    // tilbage (fire-and-forget). EJF's GraphQL eksponerer aldrig KontantKoebesum
+    // så denne berigelse er kritisk for visning af salgspriser.
     try {
-      const priceRows = await fetchTinglysningPriceRowsByBfe(bfeNummer);
+      let priceRows: ReturnType<typeof indexPriceRowsByDate> extends Map<string, infer T>
+        ? T[]
+        : never;
+      let usedCache = false;
+
+      const cached = await readCachedHandler(bfeNummer);
+      if (cached.length > 0 && isCacheFresh(cached)) {
+        // Map cache-rows → TinglysningPriceRow shape så indexPriceRowsByDate fungerer
+        priceRows = cached.map((c: CachedHandlerRow) => ({
+          overtagelsesdato: c.overtagelsesdato,
+          tinglysningsdato: c.tinglysningsdato,
+          koebsaftaleDato: null, // ikke i cache pt — tab af denne ene felt acceptabel
+          kontantKoebesum: c.kontant_koebesum,
+          iAltKoebesum: c.ialt_koebesum,
+          dokumentId: c.dokument_id,
+        }));
+        usedCache = true;
+      } else {
+        priceRows = await fetchTinglysningPriceRowsByBfe(bfeNummer);
+        // Skriv til cache fire-and-forget — næste opslag rammer cache
+        if (priceRows.length > 0) {
+          void upsertHandlerRows(
+            bfeNummer,
+            priceRows
+              .filter((p) => p.overtagelsesdato)
+              .map((p) => ({
+                overtagelsesdato: p.overtagelsesdato as string,
+                dokument_id: p.dokumentId,
+                tinglysningsdato: p.tinglysningsdato,
+                koeber_navn: null,
+                koeber_cvr: null,
+                adkomst_type: null,
+                kontant_koebesum: p.kontantKoebesum,
+                ialt_koebesum: p.iAltKoebesum,
+                loesoere: null,
+                entreprise: null,
+                tinglysningsafgift: null,
+                andel: null,
+              }))
+          );
+        }
+      }
+      if (usedCache) {
+        logger.log('[salgshistorik] cache-hit on tinglysning_handler', { bfe: bfeNummer });
+      }
       if (priceRows.length > 0) {
         const byDate = indexPriceRowsByDate(priceRows);
         for (const row of handler) {

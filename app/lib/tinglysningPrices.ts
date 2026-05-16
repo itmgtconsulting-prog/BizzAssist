@@ -60,10 +60,17 @@ function parseMoney(s: string | undefined): number | null {
  * uses end-tag back-references.
  */
 function parsePriceRowsFromSummarisk(xml: string): TinglysningPriceRow[] {
+  // BIZZ-1590 harden: gammel pattern `[^:]*:?AdkomstSummarisk` consumede over
+  // multiple entries når XML manglede namespace-prefix (prod har altid <ns:>
+  // så bug var aldrig synlig — fundet under bizz-1550 fixture-tests). Ny
+  // pattern bruger \b word-boundary så `AdkomstSummarisk` ikke matcher
+  // inde i `AdkomstSummariskSamling`.
   const adkomstSection =
-    xml.match(/AdkomstSummariskSamling[\s\S]*?<\/[^:]*:?AdkomstSummariskSamling/)?.[0] ?? '';
+    xml.match(/AdkomstSummariskSamling\b[\s\S]*?<\/[^>]*?AdkomstSummariskSamling\b/)?.[0] ?? '';
   const entries = [
-    ...adkomstSection.matchAll(/AdkomstSummarisk>([\s\S]*?)<\/[^:]*:?AdkomstSummarisk/g),
+    ...adkomstSection.matchAll(
+      /<[^>]*?AdkomstSummarisk\b[^>]*>([\s\S]*?)<\/[^>]*?AdkomstSummarisk\b/g
+    ),
   ];
   const out: TinglysningPriceRow[] = [];
   for (const [, entry] of entries) {

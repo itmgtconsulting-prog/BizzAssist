@@ -106,65 +106,175 @@ async function generateDocumentPdfFromUuid(uuid: string): Promise<Buffer> {
 
   const doc = new PDFDocument({
     size: 'A4',
-    margin: 50,
-    info: { Title: docTitle, Author: 'BizzAssist' },
+    margin: 60,
+    info: { Title: `Aktuelt tinglyst dokument — ${docTitle}`, Author: 'BizzAssist' },
   });
   const chunks: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => chunks.push(chunk));
 
-  // Header
-  doc.fontSize(8).fillColor('#94a3b8').text('BizzAssist — Tinglysningsdokument', 50, 30);
-  doc
-    .fontSize(8)
-    .text(
-      new Date().toLocaleDateString('da-DK', { day: 'numeric', month: 'long', year: 'numeric' }),
-      50,
-      30,
-      { align: 'right' }
-    );
+  const LEFT = 60;
+  const RIGHT = 535;
+  const LABEL_X = 60;
+  const VALUE_X = 250;
+  const LABEL_W = 180;
+  const VALUE_W = RIGHT - VALUE_X;
 
-  // Titel
-  doc.moveDown(1.5);
-  doc.fontSize(18).fillColor('#1e293b').text(docTitle, { align: 'center' });
-  doc.moveDown(0.3);
-  doc.fontSize(9).fillColor('#64748b').text(`Dokument-ID: ${uuid}`, { align: 'center' });
-  doc.moveDown(1);
+  /** Stiplet separator-linje (officielt tinglysnings-format). */
+  const dottedLine = () => {
+    const y = doc.y;
+    doc.save();
+    doc.strokeColor('#999999').lineWidth(0.5).dash(2, { space: 2 });
+    doc.moveTo(LEFT, y).lineTo(RIGHT, y).stroke();
+    doc.restore();
+    doc.moveDown(0.6);
+  };
 
-  // Sektioner
-  for (const section of sections.slice(1)) {
-    doc.fontSize(12).fillColor('#2563eb').text(section.title);
-    doc.moveDown(0.3);
-    doc.strokeColor('#e2e8f0').lineWidth(0.5).moveTo(50, doc.y).lineTo(545, doc.y).stroke();
+  /** Label: value par i to-kolonne layout. */
+  const field = (label: string, value: string) => {
+    if (doc.y > 720) doc.addPage();
+    const y = doc.y;
+    doc.fontSize(10).fillColor('#333333').text(`${label}:`, LABEL_X, y, { width: LABEL_W });
+    doc.fontSize(10).fillColor('#000000').text(value, VALUE_X, y, { width: VALUE_W });
     doc.moveDown(0.4);
+  };
 
-    for (const field of section.fields) {
-      let y = doc.y;
-      if (y > 750) {
-        doc.addPage();
-        y = doc.y;
-      }
-      if (field.label === 'Tekst' && field.value.length > 80) {
-        doc
-          .fontSize(8)
-          .fillColor('#64748b')
-          .text(field.label + ':', 50);
-        doc.fontSize(9).fillColor('#1e293b').text(field.value, 50, undefined, { width: 495 });
-        doc.moveDown(0.3);
-      } else {
-        doc
-          .fontSize(9)
-          .fillColor('#64748b')
-          .text(field.label + ':', 50, y, { width: 160 });
-        doc.fontSize(9).fillColor('#1e293b').text(field.value, 220, y, { width: 325 });
-        doc.moveDown(0.2);
-      }
-    }
+  /** Sektions-header med label: value på samme linje. */
+  const sectionField = (label: string, value: string) => {
+    if (doc.y > 720) doc.addPage();
+    const y = doc.y;
+    doc
+      .fontSize(11)
+      .fillColor('#333333')
+      .font('Helvetica-Bold')
+      .text(`${label}:`, LABEL_X, y, { width: LABEL_W });
+    doc
+      .fontSize(11)
+      .fillColor('#000000')
+      .font('Helvetica')
+      .text(value, VALUE_X, y, { width: VALUE_W });
     doc.moveDown(0.5);
+  };
+
+  // ── Titel + Segl ──
+  doc.moveDown(1);
+  doc
+    .fontSize(20)
+    .fillColor('#000000')
+    .font('Helvetica-Bold')
+    .text('Aktuelt tinglyst dokument', { align: 'center' });
+  doc.moveDown(0.3);
+  // Tinglysningsrettens segl (øverste højre hjørne)
+  try {
+    const seglPath = `${process.cwd()}/public/assets/tinglysningsretten-segl.png`;
+    if (fs.existsSync(seglPath)) {
+      doc.image(seglPath, RIGHT - 80, 55, { width: 80 });
+    }
+  } catch {
+    /* non-critical */
+  }
+  doc.moveDown(1);
+  doc.font('Helvetica');
+
+  // ── Dokument ──
+  dottedLine();
+  doc.fontSize(11).fillColor('#333333').font('Helvetica-Bold').text('Dokument:', LABEL_X);
+  doc.font('Helvetica');
+  const alias = xml.match(/DokumentAliasIdentifikator[^>]*>([^<]+)/)?.[1];
+  if (alias) field('Dato/løbenummer', alias);
+  doc.moveDown(0.3);
+
+  // ── Type ──
+  dottedLine();
+  doc.fontSize(11).fillColor('#333333').font('Helvetica-Bold').text(`${docTitle}:`, LABEL_X);
+  doc.font('Helvetica');
+  doc.moveDown(0.3);
+
+  // ── Senest påtegnet ──
+  dottedLine();
+  const tlDato = xml.match(/TinglysningsDato[^>]*>([^<]+)/)?.[1];
+  if (tlDato) {
+    const d = new Date(tlDato.split('+')[0]);
+    sectionField(
+      'Senest påtegnet',
+      d.toLocaleDateString('da-DK', { day: '2-digit', month: '2-digit', year: 'numeric' }) +
+        ' ' +
+        d.toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    );
+  }
+  doc.moveDown(0.3);
+
+  // ── Ejendom ──
+  dottedLine();
+  doc.fontSize(11).fillColor('#333333').font('Helvetica-Bold').text('Ejendom:', LABEL_X);
+  doc.font('Helvetica');
+  doc.moveDown(0.2);
+  const matrikel = xml.match(/CadastralDistrictName[^>]*>([^<]+)/)?.[1];
+  const matNr = xml.match(/Matrikelnummer[^>]*>([^<]+)/)?.[1];
+  const bfe = xml.match(/BestemtFastEjendomNummer[^>]*>([^<]+)/)?.[1];
+  if (matrikel && matNr) field('Landsejerlav', matrikel);
+  if (matrikel && matNr) field('Matrikelnummer', matNr);
+  if (bfe) field('BFE-nummer', bfe);
+  doc.moveDown(0.3);
+
+  // ── Beløb og vilkår ──
+  const beloebSections = sections.find((s) => s.title === 'Beløb og vilkår');
+  if (beloebSections && beloebSections.fields.length > 0) {
+    dottedLine();
+    for (const f of beloebSections.fields) field(f.label, f.value);
+    doc.moveDown(0.3);
   }
 
-  doc.fontSize(7).fillColor('#94a3b8').text(`Genereret af ${companyInfo.legalLine}`, 50, 780, {
-    align: 'center',
-  });
+  // ── Parter ──
+  const parterSection = sections.find((s) => s.title === 'Parter');
+  if (parterSection && parterSection.fields.length > 0) {
+    dottedLine();
+    // Gruppér parter efter rolle
+    let currentRole = '';
+    for (const f of parterSection.fields) {
+      if (f.label === 'Rolle' && f.value !== currentRole) {
+        currentRole = f.value;
+        doc.moveDown(0.2);
+        doc
+          .fontSize(11)
+          .fillColor('#333333')
+          .font('Helvetica-Bold')
+          .text(`${f.value.charAt(0).toUpperCase() + f.value.slice(1)}:`, LABEL_X);
+        doc.font('Helvetica');
+        doc.moveDown(0.2);
+      } else if (f.label !== 'Rolle') {
+        field(f.label, f.value);
+      }
+    }
+    doc.moveDown(0.3);
+  }
+
+  // ── Dokumenttekst ──
+  const tekstSection = sections.find((s) => s.title === 'Dokumenttekst');
+  if (tekstSection && tekstSection.fields.length > 0) {
+    dottedLine();
+    doc.fontSize(11).fillColor('#333333').font('Helvetica-Bold').text('Dokumenttekst:', LABEL_X);
+    doc.font('Helvetica');
+    doc.moveDown(0.3);
+    for (const f of tekstSection.fields) {
+      if (doc.y > 720) doc.addPage();
+      doc
+        .fontSize(9)
+        .fillColor('#000000')
+        .text(f.value, LABEL_X, undefined, { width: RIGHT - LABEL_X });
+      doc.moveDown(0.3);
+    }
+  }
+
+  // ── Footer ──
+  dottedLine();
+  doc
+    .fontSize(7)
+    .fillColor('#999999')
+    .text(`Genereret af ${companyInfo.legalLine} — data fra Tinglysningsretten`, LEFT, undefined, {
+      align: 'center',
+      width: RIGHT - LEFT,
+    });
+
   doc.end();
 
   return new Promise<Buffer>((resolve) => {

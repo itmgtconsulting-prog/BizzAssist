@@ -40,6 +40,7 @@ import { withBraveCache } from '@/app/lib/searchCache';
 import { BRAVE_SEARCH_ENDPOINT } from '@/app/lib/serviceEndpoints';
 import { resolveTenantId } from '@/lib/api/auth';
 import { assertAiAllowed } from '@/app/lib/aiGate';
+import { recordAiUsage } from '@/app/lib/aiTracking';
 import { logger } from '@/app/lib/logger';
 
 export const runtime = 'nodejs';
@@ -1138,6 +1139,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const totalOutputTokens = response.usage?.output_tokens ?? 0;
     let totalTokens = totalInputTokens + totalOutputTokens;
 
+    await recordAiUsage({
+      userId: auth.userId,
+      tenantId: auth.tenantId,
+      route: 'ai.person-article-search',
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      model: 'claude-sonnet-4-6',
+    });
+
     const finalText = response.content
       .filter((b): b is Anthropic.TextBlock => b.type === 'text')
       .map((b) => b.text)
@@ -1221,8 +1231,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             ],
           });
 
-          totalTokens +=
-            (phoneResponse.usage?.input_tokens ?? 0) + (phoneResponse.usage?.output_tokens ?? 0);
+          const phoneInputTokens = phoneResponse.usage?.input_tokens ?? 0;
+          const phoneOutputTokens = phoneResponse.usage?.output_tokens ?? 0;
+          totalTokens += phoneInputTokens + phoneOutputTokens;
+
+          await recordAiUsage({
+            userId: auth.userId,
+            tenantId: auth.tenantId,
+            route: 'ai.person-article-search',
+            inputTokens: phoneInputTokens,
+            outputTokens: phoneOutputTokens,
+            model: 'claude-haiku-4-5-20251001',
+          });
 
           const extraText = phoneResponse.content
             .filter((b): b is Anthropic.TextBlock => b.type === 'text')

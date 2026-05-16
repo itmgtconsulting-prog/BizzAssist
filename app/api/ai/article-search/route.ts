@@ -37,6 +37,7 @@ import { checkRateLimit, braveRateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
 import { assertAiAllowed } from '@/app/lib/aiGate';
+import { recordAiUsage } from '@/app/lib/aiTracking';
 import { BRAVE_SEARCH_ENDPOINT } from '@/app/lib/serviceEndpoints';
 
 export const runtime = 'nodejs';
@@ -898,6 +899,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (articles.length === 0) {
       logger.warn('[article-search] Ingen artikler parsede. Råsvar:', finalText.slice(0, 500));
     }
+
+    await recordAiUsage({
+      userId: auth.userId,
+      tenantId: auth.tenantId,
+      route: 'ai.article-search',
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      model: 'claude-sonnet-4-6',
+    });
 
     const result: ArticleSearchResponse = {
       articles,

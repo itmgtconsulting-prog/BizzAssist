@@ -35,6 +35,7 @@ import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
 import { resolveTenantId } from '@/lib/api/auth';
 import { assertAiAllowed } from '@/app/lib/aiGate';
+import { recordAiUsage } from '@/app/lib/aiTracking';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
 import { parseBody } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
@@ -1088,6 +1089,15 @@ export async function POST(request: NextRequest): Promise<Response> {
             },
             { signal: AbortSignal.timeout(60_000) }
           );
+
+          await recordAiUsage({
+            userId: auth.userId,
+            tenantId: auth.tenantId,
+            route: 'ai.analysis.run',
+            inputTokens: response.usage?.input_tokens ?? 0,
+            outputTokens: response.usage?.output_tokens ?? 0,
+            model: 'claude-sonnet-4-6',
+          });
 
           // If Claude wants to use tools, execute them and loop
           if (response.stop_reason === 'tool_use') {

@@ -31,6 +31,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { resolveTenantId } from '@/lib/api/auth';
 import { assertAiAllowed } from '@/app/lib/aiGate';
+import { recordAiUsage } from '@/app/lib/aiTracking';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
 import { createAdminClient } from '@/lib/supabase/admin';
@@ -218,22 +219,14 @@ export async function POST(request: NextRequest) {
         // BIZZ-1262: Token-tracking — registrer forbrug i tenant.ai_token_usage
         const tokensIn = response.usage?.input_tokens ?? 0;
         const tokensOut = response.usage?.output_tokens ?? 0;
-        if (tokensIn > 0 || tokensOut > 0) {
-          void (async () => {
-            try {
-              const trackAdmin = createAdminClient();
-              await trackAdmin.schema('tenant').from('ai_token_usage').insert({
-                tenant_id: auth.tenantId,
-                user_id: auth.userId,
-                tokens_in: tokensIn,
-                tokens_out: tokensOut,
-                model: 'claude-sonnet-4-6',
-              });
-            } catch {
-              // Best-effort — token tracking must not break queries
-            }
-          })();
-        }
+        await recordAiUsage({
+          userId: auth.userId,
+          tenantId: auth.tenantId,
+          route: 'ai.analyse.query',
+          inputTokens: tokensIn,
+          outputTokens: tokensOut,
+          model: 'claude-sonnet-4-6',
+        });
 
         const textBlock = response.content.find((b) => b.type === 'text');
         if (!textBlock || textBlock.type !== 'text') {

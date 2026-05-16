@@ -68,6 +68,7 @@ export default function IntelligenceClient(): React.ReactElement {
   const [error, setError] = useState<string | null>(null);
   const [showSql, setShowSql] = useState(false);
   const [showChart, setShowChart] = useState(true);
+  const [chartType, setChartType] = useState<'auto' | 'bar' | 'pie' | 'line'>('auto');
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>(null);
   /** Chat-historik: alle prompts i rækkefølge — sendes som fuld kontekst til AI. */
@@ -145,11 +146,14 @@ export default function IntelligenceClient(): React.ReactElement {
     [chatHistory]
   );
 
-  /** Form submit handler. */
+  /** Form submit handler — blanker input efter submit. */
   const handleSubmit = useCallback(
     (e: React.FormEvent) => {
       e.preventDefault();
-      submit(prompt);
+      if (prompt.trim().length >= 3) {
+        submit(prompt);
+        setPrompt('');
+      }
     },
     [prompt, submit]
   );
@@ -443,6 +447,30 @@ export default function IntelligenceClient(): React.ReactElement {
                       <BarChart3 className="w-4 h-4" aria-hidden />
                       Graf
                     </button>
+                    {showChart && (
+                      <>
+                        <span>•</span>
+                        {(['auto', 'bar', 'pie', 'line'] as const).map((t) => (
+                          <button
+                            key={t}
+                            onClick={() => setChartType(t)}
+                            className={`text-xs px-2 py-0.5 rounded transition-colors ${
+                              chartType === t
+                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                : 'text-slate-500 hover:text-slate-300'
+                            }`}
+                          >
+                            {t === 'auto'
+                              ? 'Auto'
+                              : t === 'bar'
+                                ? 'Søjle'
+                                : t === 'pie'
+                                  ? 'Cirkel'
+                                  : 'Linje'}
+                          </button>
+                        ))}
+                      </>
+                    )}
                   </>
                 )}
               </div>
@@ -450,7 +478,11 @@ export default function IntelligenceClient(): React.ReactElement {
 
             {/* Chart */}
             {showChart && response.rows.length > 0 && response.columns.length >= 2 && (
-              <LazyChart columns={response.columns} rows={response.rows} />
+              <LazyChart
+                columns={response.columns}
+                rows={response.rows}
+                forceChartType={chartType === 'auto' ? undefined : chartType}
+              />
             )}
 
             {/* Result table — max 400px højde med scroll */}

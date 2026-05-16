@@ -33,6 +33,8 @@ import {
 interface Props {
   columns: string[];
   rows: Array<Record<string, unknown>>;
+  /** Bruger-valgt chart-type — overskriver auto-detection. */
+  forceChartType?: ChartType;
 }
 
 type ChartType = 'bar' | 'pie' | 'line' | 'none';
@@ -166,11 +168,14 @@ function CustomTooltip({
 /**
  * IntelligenceChart — auto-detected chart for query results.
  */
-export default function IntelligenceChart({ columns, rows }: Props): React.ReactElement | null {
-  const { type, labelCol, valueCol, valueCols } = useMemo(
-    () => detectChartType(columns, rows),
-    [columns, rows]
-  );
+export default function IntelligenceChart({
+  columns,
+  rows,
+  forceChartType,
+}: Props): React.ReactElement | null {
+  const detected = useMemo(() => detectChartType(columns, rows), [columns, rows]);
+  const { labelCol, valueCol, valueCols } = detected;
+  const type = forceChartType ?? detected.type;
 
   /**
    * Chart data med numerisk cast.

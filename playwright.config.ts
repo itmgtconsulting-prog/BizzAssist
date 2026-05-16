@@ -63,7 +63,7 @@ export default defineConfig({
     {
       name: 'chromium-auth',
       testMatch:
-        /\/(dashboard|settings-gdpr|ai-chat|analyse|data-intelligence|data-intelligence-ui|ejendom-detail|virksomhed-detail|person-detail|billing|diagram|ejendomshierarki|forsikring|kort|notifikationer|pivot-analyse|search|salgshistorik-cache-verify|forsikring-debug|forsikring-belvedere-fix|person-ejendomme-cache|diagram-virksomhed-fallback)\.spec\.ts/,
+        /\/(dashboard|settings-gdpr|ai-chat|analyse|data-intelligence|data-intelligence-ui|ejendom-detail|virksomhed-detail|person-detail|billing|diagram|ejendomshierarki|forsikring|kort|notifikationer|pivot-analyse|search|salgshistorik-cache-verify|forsikring-debug|forsikring-belvedere-fix|person-ejendomme-cache|diagram-virksomhed-fallback|intelligence-width)\.spec\.ts/,
       dependencies: ['auth setup'],
       use: {
         ...devices['Desktop Chrome'],

@@ -496,56 +496,81 @@ export default function IntelligenceClient(): React.ReactElement {
               />
             )}
 
-            {/* Result table — max 400px højde med scroll */}
+            {/* Result table — max 400px højde med scroll.
+                BIZZ-1593: end-of-list marker + sticky footer info-bar så brugeren
+                ved at hun har set alle rækker (tidligere ingen visuel cue ved
+                bunden af tabellen, kun række-tæller øverst). */}
             {sortedRows.length > 0 && (
-              <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-x-auto max-h-[400px] overflow-y-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-slate-800 sticky top-0 z-10">
-                    <tr>
-                      {response.columns.map((c) => (
-                        <th
-                          key={c}
-                          className="px-4 py-3 text-left font-medium text-slate-300 cursor-pointer hover:text-emerald-400 select-none transition-colors"
-                          scope="col"
-                          onClick={() => handleSort(c)}
-                          aria-sort={
-                            sortCol === c && sortDir
-                              ? sortDir === 'asc'
-                                ? 'ascending'
-                                : 'descending'
-                              : 'none'
-                          }
-                        >
-                          <span className="flex items-center gap-1">
-                            {translateColumn(c)}
-                            {sortCol === c && sortDir === 'asc' && (
-                              <ChevronUp className="w-3 h-3" aria-hidden />
-                            )}
-                            {sortCol === c && sortDir === 'desc' && (
-                              <ChevronDown className="w-3 h-3" aria-hidden />
-                            )}
-                          </span>
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sortedRows.slice(0, 200).map((row, i) => (
-                      <tr key={i} className="border-t border-slate-800 hover:bg-slate-800/30">
+              <div className="bg-slate-900 border border-slate-800 rounded-lg flex flex-col max-h-[440px]">
+                <div className="overflow-x-auto overflow-y-auto flex-1">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-800 sticky top-0 z-10">
+                      <tr>
                         {response.columns.map((c) => (
-                          <td key={c} className="px-4 py-2 text-slate-200">
-                            {formatCell(row[c])}
-                          </td>
+                          <th
+                            key={c}
+                            className="px-4 py-3 text-left font-medium text-slate-300 cursor-pointer hover:text-emerald-400 select-none transition-colors"
+                            scope="col"
+                            onClick={() => handleSort(c)}
+                            aria-sort={
+                              sortCol === c && sortDir
+                                ? sortDir === 'asc'
+                                  ? 'ascending'
+                                  : 'descending'
+                                : 'none'
+                            }
+                          >
+                            <span className="flex items-center gap-1">
+                              {translateColumn(c)}
+                              {sortCol === c && sortDir === 'asc' && (
+                                <ChevronUp className="w-3 h-3" aria-hidden />
+                              )}
+                              {sortCol === c && sortDir === 'desc' && (
+                                <ChevronDown className="w-3 h-3" aria-hidden />
+                              )}
+                            </span>
+                          </th>
                         ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {response.rows.length > 200 && (
-                  <p className="px-4 py-3 text-xs text-slate-500 border-t border-slate-800">
-                    Viser de første 200 af {response.rows.length} rækker.
-                  </p>
-                )}
+                    </thead>
+                    <tbody>
+                      {sortedRows.slice(0, 200).map((row, i) => (
+                        <tr key={i} className="border-t border-slate-800 hover:bg-slate-800/30">
+                          {response.columns.map((c) => (
+                            <td key={c} className="px-4 py-2 text-slate-200">
+                              {formatCell(row[c])}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                      {/* BIZZ-1593: End-of-list marker — vises kun når alle rækker er
+                          rendret (ikke ved 200+ row truncation). */}
+                      {response.rows.length <= 200 && (
+                        <tr aria-hidden>
+                          <td
+                            colSpan={response.columns.length}
+                            className="px-4 py-3 text-center text-xs text-slate-600 border-t border-slate-800"
+                          >
+                            — Slut på resultater ({response.rows.length}{' '}
+                            {response.rows.length === 1 ? 'række' : 'rækker'}) —
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                {/* BIZZ-1593: Sticky footer info-bar, altid synlig i bunden af container. */}
+                <div className="border-t border-slate-800 bg-slate-900/95 px-4 py-2 text-xs text-slate-400 flex items-center justify-between flex-shrink-0">
+                  <span>
+                    {response.rows.length > 200
+                      ? `Viser de første 200 af ${response.rows.length} rækker`
+                      : `${response.rows.length} ${response.rows.length === 1 ? 'række' : 'rækker'} i alt`}
+                  </span>
+                  <span className="text-slate-600">
+                    {response.columns.length}{' '}
+                    {response.columns.length === 1 ? 'kolonne' : 'kolonner'}
+                  </span>
+                </div>
               </div>
             )}
 

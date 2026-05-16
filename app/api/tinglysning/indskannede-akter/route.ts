@@ -329,29 +329,24 @@ function parseStamoplysningerXml(xml: string): IndskannetAkt[] {
     akter.push({ aktNavn, beskrivelse, dato, loebNr: i + 1 });
   }
 
-  // Fallback: parse DokumentFilnavnTekst fra EjendomIndskannetAktSamling
+  // Fallback: parse ALLE DokumentFilnavnTekst i hele XML (S2S response wrapper varierer)
   if (akter.length === 0) {
-    const samlingStart = xml.indexOf('EjendomIndskannetAktSamling>');
-    const samlingEnd = xml.indexOf('/EjendomIndskannetAktSamling>');
-    if (samlingStart !== -1 && samlingEnd !== -1) {
-      const samlingBlock = xml.substring(samlingStart, samlingEnd);
-      const filnavnMatches = [
-        ...samlingBlock.matchAll(
-          /<(?:[a-zA-Z]+:)?DokumentFilnavnTekst>([^<]+)<\/(?:[a-zA-Z]+:)?DokumentFilnavnTekst>/g
-        ),
-      ];
-      const seen = new Set<string>();
-      for (const [, navn] of filnavnMatches) {
-        const trimmed = navn.trim();
-        if (trimmed && !seen.has(trimmed)) {
-          seen.add(trimmed);
-          akter.push({
-            aktNavn: trimmed,
-            beskrivelse: null,
-            dato: null,
-            loebNr: akter.length + 1,
-          });
-        }
+    const filnavnMatches = [
+      ...xml.matchAll(
+        /<(?:[a-zA-Z0-9]+:)?DokumentFilnavnTekst[^>]*>([^<]+)<\/(?:[a-zA-Z0-9]+:)?DokumentFilnavnTekst>/g
+      ),
+    ];
+    const seen = new Set<string>();
+    for (const [, navn] of filnavnMatches) {
+      const trimmed = navn.trim();
+      if (trimmed && !seen.has(trimmed)) {
+        seen.add(trimmed);
+        akter.push({
+          aktNavn: trimmed,
+          beskrivelse: null,
+          dato: null,
+          loebNr: akter.length + 1,
+        });
       }
     }
   }

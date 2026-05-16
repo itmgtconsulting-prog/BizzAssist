@@ -63,6 +63,7 @@ type SortDir = 'asc' | 'desc' | null;
  */
 export default function IntelligenceClient(): React.ReactElement {
   const [prompt, setPrompt] = useState('');
+  const [followUp, setFollowUp] = useState('');
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState<SqlResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -70,6 +71,9 @@ export default function IntelligenceClient(): React.ReactElement {
   const [showChart, setShowChart] = useState(true);
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>(null);
+  /** Chat-kontekst: forrige prompt + SQL til iterativ tilpasning. */
+  const [previousPrompt, setPreviousPrompt] = useState<string | null>(null);
+  const [previousSql, setPreviousSql] = useState<string | null>(null);
 
   /**
    * Submit en prompt til API'en.
@@ -93,7 +97,10 @@ export default function IntelligenceClient(): React.ReactElement {
       const res = await fetch('/api/analyse/sql', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: q.trim() }),
+        body: JSON.stringify({
+          prompt: q.trim(),
+          ...(previousPrompt && previousSql ? { previousPrompt, previousSql } : {}),
+        }),
         signal: AbortSignal.timeout(95_000),
       });
       let data: SqlResponse;
@@ -117,6 +124,11 @@ export default function IntelligenceClient(): React.ReactElement {
           );
         }
         setResponse(data);
+        // Gem kontekst til follow-up
+        if (data.ok && data.sql) {
+          setPreviousPrompt(q.trim());
+          setPreviousSql(data.sql);
+        }
       }
     } catch (err) {
       // BIZZ-1555: Skeln mellem timeout og generisk netværksfejl
@@ -460,12 +472,55 @@ export default function IntelligenceClient(): React.ReactElement {
               </div>
             )}
 
+            {/* Follow-up / tilpas resultat */}
+            {response?.ok && response.sql && (
+              <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
+                <p className="text-sm text-slate-400 mb-2">Tilpas resultatet:</p>
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (followUp.trim().length >= 3) {
+                      setPrompt(followUp);
+                      submit(followUp);
+                      setFollowUp('');
+                    }
+                  }}
+                  className="flex gap-2"
+                >
+                  <input
+                    type="text"
+                    value={followUp}
+                    onChange={(e) => setFollowUp(e.target.value)}
+                    placeholder="Fx: Filtrer kun Hvidovre, sorter efter beløb, vis som procent..."
+                    className="flex-1 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm focus:border-emerald-500 focus:outline-none"
+                    disabled={loading}
+                    maxLength={500}
+                  />
+                  <button
+                    type="submit"
+                    disabled={loading || followUp.trim().length < 3}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 disabled:cursor-not-allowed rounded-lg text-sm font-medium flex items-center gap-1.5 transition-colors"
+                  >
+                    {loading ? (
+                      <Loader2 className="w-4 h-4 animate-spin" aria-hidden />
+                    ) : (
+                      <Lightbulb className="w-4 h-4" aria-hidden />
+                    )}
+                    Tilpas
+                  </button>
+                </form>
+              </div>
+            )}
+
             {/* New question */}
             <button
               onClick={() => {
                 setResponse(null);
                 setPrompt('');
+                setFollowUp('');
                 setError(null);
+                setPreviousPrompt(null);
+                setPreviousSql(null);
               }}
               className="text-sm text-emerald-400 hover:text-emerald-300"
             >

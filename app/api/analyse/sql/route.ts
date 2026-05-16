@@ -37,6 +37,10 @@ export const maxDuration = 90;
 
 interface RequestBody {
   prompt: string;
+  /** Tidligere SQL fra forrige iteration — bruges til chat-refinement. */
+  previousSql?: string;
+  /** Tidligere prompt fra forrige iteration. */
+  previousPrompt?: string;
 }
 
 interface ResponseBody {
@@ -121,16 +125,30 @@ function generateFallbackSuggestions(prompt: string): string[] {
  */
 async function generateSql(
   apiKey: string,
-  prompt: string
+  prompt: string,
+  previousPrompt?: string,
+  previousSql?: string
 ): Promise<{ sql: string; explanation?: string; suggestions?: string[] }> {
   const client = new Anthropic({ apiKey });
   const systemPrompt = await buildSqlGenPrompt();
+
+  // Byg messages — inkluder kontekst fra tidligere iteration hvis tilgængelig
+  const messages: Anthropic.MessageParam[] = [];
+  if (previousPrompt && previousSql) {
+    messages.push({ role: 'user', content: previousPrompt });
+    messages.push({
+      role: 'assistant',
+      content: `\`\`\`sql\n${previousSql}\n\`\`\``,
+    });
+  }
+  messages.push({ role: 'user', content: prompt });
+
   const res = await client.messages.create(
     {
       model: 'claude-sonnet-4-6',
       max_tokens: 1024,
       system: systemPrompt,
-      messages: [{ role: 'user', content: prompt }],
+      messages,
     },
     { signal: AbortSignal.timeout(15000) }
   );
@@ -214,7 +232,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // 1. Generér SQL via Claude
   let generated: { sql: string; explanation?: string; suggestions?: string[] };
   try {
-    generated = await generateSql(apiKey, userPrompt);
+    generated = await generateSql(apiKey, userPrompt, body.previousPrompt, body.previousSql);
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Claude-fejl';
     logger.warn('[analyse/sql] Claude generation failed:', msg);

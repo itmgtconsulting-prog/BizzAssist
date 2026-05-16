@@ -95,15 +95,18 @@ function getAdmin() {
 async function getCached(bfe: number, aktNavn: string): Promise<AktExtraction | null> {
   try {
     const admin = getAdmin();
-    const { data } = await (admin as ReturnType<typeof createAdminClient>)
-      .from('tinglysning_akt_extraction' as never)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (admin as any)
+      .from('tinglysning_akt_extraction')
       .select('extraction')
       .eq('bfe_nummer', bfe)
       .eq('akt_navn', aktNavn)
       .maybeSingle();
+    if (error) logger.warn('[extract-akt] Cache read error:', error.message);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return ((data as any)?.extraction as AktExtraction) ?? null;
-  } catch {
+  } catch (err) {
+    logger.warn('[extract-akt] Cache read exception:', err);
     return null;
   }
 }

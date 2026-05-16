@@ -117,9 +117,15 @@ export default function AktExtractionButton({ bfe, aktNavn, lang }: Props) {
             <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-emerald-500/20 text-emerald-300 leading-none">
               AI
             </span>
+            <span className="text-[10px] text-slate-500 ml-1">(~50k tokens)</span>
           </>
         )}
       </button>
+      <p className="text-slate-600 text-[10px] mt-1">
+        {da
+          ? 'AI læser den scannede akt og udtrækker historiske handler, hæftelser og servitutter. Data deles med alle brugere.'
+          : 'AI reads the scanned deed and extracts historical transactions. Data is shared with all users.'}
+      </p>
       {error && <p className="text-red-400 text-xs mt-2">{error}</p>}
     </div>
   );

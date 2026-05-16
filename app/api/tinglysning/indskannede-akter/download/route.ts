@@ -34,9 +34,10 @@ import { logger } from '@/app/lib/logger';
 import https from 'https';
 import fs from 'fs';
 import path from 'path';
-import { randomUUID } from 'crypto';
-import { SignedXml } from 'xml-crypto';
+import crypto, { randomUUID } from 'crypto';
 import forge from 'node-forge';
+import { DOMParser } from '@xmldom/xmldom';
+import { ExclusiveCanonicalization } from 'xml-crypto';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -127,7 +128,6 @@ function extractPemFromP12(
  * @returns Signeret XML-string
  */
 function buildSignedRequest(aktNavn: string, privateKeyPem: string, certPem: string): string {
-  // Undgå XML-injection i aktNavn (validering sker allerede i route handler)
   const safeAktNavn = aktNavn
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -135,33 +135,61 @@ function buildSignedRequest(aktNavn: string, privateKeyPem: string, certPem: str
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
 
-  const unsignedXml = [
-    `<EjendomIndskannetAktHent`,
-    ` xmlns="${NS_MSG}"`,
-    ` xmlns:eakt="${NS_SCHEMA}"`,
-    ` xmlns:ds="${NS_DS}">`,
-    `<eakt:DokumentFilnavnTekst>${safeAktNavn}</eakt:DokumentFilnavnTekst>`,
-    `</EjendomIndskannetAktHent>`,
-  ].join('');
+  // xsi:schemaLocation er PÅKRÆVET — uden den fejler Tinglysningens XSD-validering
+  // med "cvc-elt.1.a: Cannot find the declaration of element".
+  const XSD_LOC = `${NS_MSG} http://rep.oio.dk/tinglysning.dk/service/message/elektroniskakt/1/EjendomIndskannetAktHent.xsd`;
 
-  const signer = new SignedXml({
-    privateKey: privateKeyPem,
-    publicCert: certPem,
-    canonicalizationAlgorithm: 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315',
-    signatureAlgorithm: 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256',
-  });
+  const unsignedXml =
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<EjendomIndskannetAktHent` +
+    ` xmlns="${NS_MSG}"` +
+    ` xmlns:eakt="${NS_SCHEMA}"` +
+    ` xmlns:ds="${NS_DS}"` +
+    ` xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"` +
+    ` xsi:schemaLocation="${XSD_LOC}">` +
+    `<eakt:DokumentFilnavnTekst>${safeAktNavn}</eakt:DokumentFilnavnTekst>` +
+    `</EjendomIndskannetAktHent>`;
 
-  signer.addReference({
-    xpath: '/*',
-    transforms: [
-      'http://www.w3.org/2000/09/xmldsig#enveloped-signature',
-      'http://www.w3.org/TR/2001/REC-xml-c14n-20010315',
-    ],
-    digestAlgorithm: 'http://www.w3.org/2001/04/xmlenc#sha256',
-  });
+  // Manuel XMLDSig — xml-crypto's SignedXml producerer forkert namespace-prefix
+  const doc = new DOMParser().parseFromString(unsignedXml, 'application/xml');
+  const c14n = new ExclusiveCanonicalization().process(doc.documentElement, {});
+  const digestB64 = crypto.createHash('sha256').update(c14n, 'utf8').digest('base64');
 
-  signer.computeSignature(unsignedXml);
-  return signer.getSignedXml();
+  const signedInfo =
+    `<ds:SignedInfo xmlns:ds="${NS_DS}">` +
+    `<ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>` +
+    `<ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha512"/>` +
+    `<ds:Reference URI="">` +
+    `<ds:Transforms>` +
+    `<ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/>` +
+    `<ds:Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>` +
+    `</ds:Transforms>` +
+    `<ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>` +
+    `<ds:DigestValue>${digestB64}</ds:DigestValue>` +
+    `</ds:Reference>` +
+    `</ds:SignedInfo>`;
+
+  const siDoc = new DOMParser().parseFromString(signedInfo, 'application/xml');
+  const c14nSI = new ExclusiveCanonicalization().process(siDoc.documentElement, {});
+  const sigVal = crypto
+    .createSign('RSA-SHA512')
+    .update(c14nSI, 'utf8')
+    .sign(privateKeyPem, 'base64');
+
+  // Konverter PEM cert til base64 DER for X509Certificate-element
+  const certB64 = certPem
+    .replace(/-----BEGIN CERTIFICATE-----/g, '')
+    .replace(/-----END CERTIFICATE-----/g, '')
+    .replace(/\s/g, '');
+
+  const sigEl =
+    `<ds:Signature Id="Signature-${randomUUID()}">` +
+    signedInfo +
+    `<ds:SignatureValue>${sigVal}</ds:SignatureValue>` +
+    `<ds:KeyInfo><ds:X509Data><ds:X509Certificate>${certB64}</ds:X509Certificate></ds:X509Data></ds:KeyInfo>` +
+    `</ds:Signature>`;
+
+  return unsignedXml.replace('</EjendomIndskannetAktHent>', `${sigEl}</EjendomIndskannetAktHent>`);
 }
 
 // ─── HTTP helpers ─────────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed — afventer ARCHITECT-godkendelse.
+Accepted (2026-05-16) — implementering kan begynde med L2.1 (BIZZ-1562).
 
 ## Context
 

@@ -22,6 +22,7 @@ import dynamic from 'next/dynamic';
 import { ChevronRight, Scale, Sparkles, Landmark, TrendingUp, BarChart3 } from 'lucide-react';
 // ForklarVurderingWidget fjernet — redundant med "Forklar vurdering" AI-knap
 import SektionLoader from '@/app/components/SektionLoader';
+import AktExtractionButton from '@/app/components/ejendomme/AktExtractionButton';
 import BelaningsoverblikPanel from '@/app/components/ejendomme/BelaningsoverblikPanel';
 import VurderingSammenligning from '@/app/components/ejendomme/VurderingSammenligning';
 import KommuneStatistikWidget from '@/app/components/analyse/KommuneStatistikWidget';
@@ -263,6 +264,33 @@ function RegnskabSektion({ bfe, lang }: { bfe: number; lang: string }) {
       </div>
     </div>
   );
+}
+
+/**
+ * BIZZ-1597: Loader der henter indskannede akter og viser AI-ekstraktion-knap.
+ */
+function AktExtractionLoader({ bfeNummer, lang }: { bfeNummer?: number | null; lang: string }) {
+  const [aktNavn, setAktNavn] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!bfeNummer) return;
+    // Hent tinglysning UUID → indskannede akter
+    fetch(`/api/tinglysning?bfe=${bfeNummer}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((tl) => {
+        if (!tl?.uuid) return;
+        return fetch(`/api/tinglysning/indskannede-akter?ejendomId=${tl.uuid}`);
+      })
+      .then((r) => (r?.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.akter?.length > 0) setAktNavn(data.akter[0].aktNavn);
+      })
+      .catch(() => {});
+  }, [bfeNummer]);
+
+  if (!aktNavn || !bfeNummer) return null;
+
+  return <AktExtractionButton bfe={bfeNummer} aktNavn={aktNavn} lang={lang} />;
 }
 
 export default function EjendomOekonomiTab(props: Props) {
@@ -964,6 +992,9 @@ export default function EjendomOekonomiTab(props: Props) {
           )}
         </div>
       )}
+
+      {/* BIZZ-1597: AI-ekstraktion af scannede akter — ved salgshistorik */}
+      <AktExtractionLoader bfeNummer={props.bfeNummer} lang={lang} />
 
       {/* BIZZ-1520: Belåningsoverblik — samlet gæld, belåningsgrad, kreditor-fordeling */}
       {props.tlHaeftelser && props.tlHaeftelser.length > 0 && (

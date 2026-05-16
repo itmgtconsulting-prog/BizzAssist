@@ -147,7 +147,16 @@ async function downloadAktPdf(
 
 // ─── AI Extraction ──────────────────────────────────────────────────────────
 
-const EXTRACTION_PROMPT = `Du er en ekspert i danske tinglysningsdokumenter. Analysér denne indskannede tingbogsakt GRUNDIGT og udtrk AL struktureret data.
+const EXTRACTION_PROMPT = `Du er en ekspert i danske tinglysningsdokumenter. Analysér denne indskannede tingbogsakt GRUNDIGT og udtræk AL struktureret data.
+
+VIGTIGT: Tingbogsakter indeholder HELE ejendommens historie — typisk 50-150 sider med ALLE ejerskifter, pantbreve og servitutter fra ejendommens oprindelse til i dag. Du SKAL finde ALLE ejerskifter — ikke kun det nyeste.
+
+Typiske dokumenttyper du skal lede efter:
+- SKØDE (endeligt skøde, betinget skøde, auktionsskøde)
+- KØBEKONTRAKT
+- ARVEUDLÆG / BOOPGØRELSE
+- GAVEBREV
+Hvert ejerskifte har typisk en ny side med "GENPART" eller "ENDELIGT SKØDE" som overskrift.
 
 Returnér ET JSON-objekt med disse 4 sektioner:
 
@@ -201,12 +210,14 @@ Returnér ET JSON-objekt med disse 4 sektioner:
 }
 
 REGLER:
-- Scan ALLE sider grundigt — akten kan indeholde 100+ sider med ejendommens HELE historie
-- Udtrk ALLE handler/ejerskifter du finder (ikke kun det nyeste)
+- Scan ALLE sider grundigt — akten indeholder ejendommens HELE historie (ofte 100+ sider)
+- Udtræk ALLE handler/ejerskifter — der er typisk 3-8 ejerskifter i en akt
+- Kig efter GENPART-overskrifter, nye stempelafgift-beløb, nye navne — det indikerer nyt ejerskifte
 - Dato i ISO format (YYYY-MM-DD). Brug dit bedste skøn for gamle datoer
 - Købesum som heltal i DKK (null hvis ikke angivet)
 - CPR-numre maskeres: kun de første 6 cifre + "****"
-- Gamle håndskrevne dokumenter: gør dit bedste, marker usikre felter med null
+- Gamle håndskrevne/maskinskrevne dokumenter: gør dit bedste, marker usikre felter med null
+- INKLUDÉR også handler hvor du kun kan se dato + navn men ikke købesum
 - Returnér KUN valid JSON. Ingen forklaring, ingen markdown.`;
 
 async function extractWithAI(

@@ -146,16 +146,30 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const insurance = await getInsuranceApi(auth.tenantId);
     const scopeDocIds = [...(document_ids ?? []), ...(new_document_ids ?? [])];
     let policer;
+    const allPolicies = await insurance.policies.list();
     if (scopeDocIds.length > 0) {
       // Kun policer parsed fra de valgte dokumenter
-      const allPolicies = await insurance.policies.list();
       policer = allPolicies.filter((p) => p.document_id && scopeDocIds.includes(p.document_id));
-      logger.log(
-        `[forsikring/analyser] Scoped til ${policer.length} policer fra ${scopeDocIds.length} dokumenter (af ${allPolicies.length} total)`
-      );
+
+      // BIZZ-1592 FIX: hvis scopeDocIds filtrerer ALLE policer væk (typisk
+      // når UI har stale document_ids fra slettede/re-uploadede docs), fald
+      // tilbage til "alle policer for kunden" så vi ikke producerer 0/N
+      // forsikrede pga. UI-state-mismatch. Match-pipeline'n filtrerer alligevel
+      // policer der ikke kan matches mod aktiver — så vi inkluderer hellere
+      // for mange policer end for få.
+      if (policer.length === 0 && allPolicies.length > 0) {
+        logger.warn(
+          `[forsikring/analyser] scopeDocIds filtrerede ALLE ${allPolicies.length} policer væk — fallback til alle policer (UI-state-mismatch?)`
+        );
+        policer = allPolicies;
+      } else {
+        logger.log(
+          `[forsikring/analyser] Scoped til ${policer.length} policer fra ${scopeDocIds.length} dokumenter (af ${allPolicies.length} total)`
+        );
+      }
     } else {
       // Fallback: alle policer (backward compat + første analyse)
-      policer = await insurance.policies.list();
+      policer = allPolicies;
     }
 
     // 3. Match aktiver mod policer

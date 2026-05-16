@@ -85,6 +85,10 @@
       "schedule": "30 3 * * *"
     },
     {
+      "path": "/api/cron/refresh-intel-scorecards",
+      "schedule": "0 4 * * *"
+    },
+    {
       "path": "/api/cron/pull-dar-aendringer",
       "schedule": "0 5 * * *"
     },

@@ -36,6 +36,99 @@ test.describe('Virksomhedsdiagram — JaJR Holding', () => {
   });
 });
 
+// BIZZ-1540+1541: Diagram dedup + overflow-position guards
+test.describe('Diagram — dedup + overflow position', () => {
+  test('BIZZ-1540: ingen duplikat ukendt-ejer noder på samme enhedsNummer', async ({ page }) => {
+    await page.setViewportSize({ width: 1800, height: 1400 });
+    await page.goto('/dashboard/companies/24301117');
+    await page.waitForLoadState('domcontentloaded');
+    await dismissOnboarding(page);
+    await page
+      .locator('button, a')
+      .filter({ hasText: /^Diagram$/ })
+      .first()
+      .click();
+    await page.waitForTimeout(10000);
+    const udvidBtn = page
+      .locator('button')
+      .filter({ hasText: /Udvid|Expand/ })
+      .first();
+    if (await udvidBtn.isVisible().catch(() => false)) await udvidBtn.click();
+    await page.waitForTimeout(3000);
+
+    // Find alle "Ukendt ejer (en NNNN)" labels og tjek at ingen enhedsnummer
+    // optræder flere gange (dedup)
+    const ukendtLabels = await page.evaluate(() => {
+      const texts = Array.from(document.querySelectorAll('svg text')).map(
+        (t) => t.textContent ?? ''
+      );
+      return texts.filter((t) => /Ukendt ejer\s*\(en\s*\d+\)/.test(t));
+    });
+    const enheder = ukendtLabels
+      .map((l) => l.match(/\(en\s*(\d+)\)/)?.[1])
+      .filter((x): x is string => !!x);
+    const unique = new Set(enheder);
+    expect(enheder.length).toBe(unique.size);
+  });
+
+  test('BIZZ-1541: overflow-boks overlapper ikke property-sibling-noder', async ({ page }) => {
+    await page.setViewportSize({ width: 1800, height: 1400 });
+    await page.goto('/dashboard/companies/24301117');
+    await page.waitForLoadState('domcontentloaded');
+    await dismissOnboarding(page);
+    await page
+      .locator('button, a')
+      .filter({ hasText: /^Diagram$/ })
+      .first()
+      .click();
+    await page.waitForTimeout(10000);
+    const udvidBtn = page
+      .locator('button')
+      .filter({ hasText: /Udvid|Expand/ })
+      .first();
+    if (await udvidBtn.isVisible().catch(() => false)) await udvidBtn.click();
+    await page.waitForTimeout(3000);
+
+    // Find overflow-boksen og verificér at den ikke overlapper sibling property-noder
+    const layout = await page.evaluate(() => {
+      const groups = Array.from(document.querySelectorAll('svg g[style*="cursor"]'));
+      const out: Array<{ label: string; y: number; height: number }> = [];
+      for (const g of groups) {
+        const rect = g.querySelector('rect');
+        const text = Array.from(g.querySelectorAll('text'))
+          .map((t) => t.textContent ?? '')
+          .join(' | ');
+        if (rect && text) {
+          const y = parseFloat(rect.getAttribute('y') ?? '0');
+          const h = parseFloat(rect.getAttribute('height') ?? '0');
+          out.push({ label: text.substring(0, 50), y, height: h });
+        }
+      }
+      return out;
+    });
+
+    const overflowBox = layout.find((n) => /\+\d+ ejendomme/.test(n.label));
+    const propertyBoxes = layout.filter((n) => /Stengade|Stenges/.test(n.label));
+
+    if (overflowBox && propertyBoxes.length > 0) {
+      const overflowTop = overflowBox.y;
+      const overflowBottom = overflowBox.y + overflowBox.height;
+      // Overflow-boks skal ikke overlappe nogen property-boks
+      for (const p of propertyBoxes) {
+        const pTop = p.y;
+        const pBottom = p.y + p.height;
+        const overlap = overflowTop < pBottom && overflowBottom > pTop;
+        if (overlap) {
+          console.log(
+            `Overlap: overflow [${overflowTop}-${overflowBottom}] vs ${p.label} [${pTop}-${pBottom}]`
+          );
+        }
+        expect(overlap).toBe(false);
+      }
+    }
+  });
+});
+
 // BIZZ-1542+1543: Diagram property labels + ejerlejlighed navigation
 test.describe('Diagram — property labels + navigation', () => {
   test('BIZZ-1543: ejerlejlighed label has etage on line 1 (Belvedere)', async ({ page }) => {

@@ -2243,6 +2243,62 @@ async function resolvePersonGraph(
     }
   }
 
+  // ── Virksomheds-ejede ejendomme ──────────────────────────────────────────
+  // BIZZ-1545: Hent ejendomme for alle ejer-virksomheder i grafen.
+  // Vises som property-noder under hver virksomhed.
+  const ownerCompanyCvrs = nodes
+    .filter((n) => n.type === 'company' && n.cvr && n.layoutSection !== 'role')
+    .map((n) => String(n.cvr));
+  if (ownerCompanyCvrs.length > 0) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: compProps } = await (admin as any)
+      .from('ejf_ejerskab')
+      .select('bfe_nummer, ejer_cvr')
+      .in('ejer_cvr', ownerCompanyCvrs)
+      .eq('status', 'gældende')
+      .limit(100);
+
+    const propsByCvr = new Map<string, number[]>();
+    for (const row of (compProps ?? []) as Array<{ bfe_nummer: number; ejer_cvr: string }>) {
+      if (!propsByCvr.has(row.ejer_cvr)) propsByCvr.set(row.ejer_cvr, []);
+      propsByCvr.get(row.ejer_cvr)!.push(row.bfe_nummer);
+    }
+
+    for (const [cvr, bfes] of propsByCvr) {
+      const compId = `cvr-${cvr}`;
+      const shown = bfes.slice(0, MAX_PROPS_PER_OWNER);
+      for (const bfe of shown) {
+        const propId = `bfe-${bfe}`;
+        if (nodeIds.has(propId)) continue;
+        nodes.push({
+          id: propId,
+          label: `BFE ${bfe}`,
+          type: 'property',
+          bfeNummer: bfe,
+        });
+        nodeIds.add(propId);
+        edges.push({ from: compId, to: propId });
+      }
+      // Overflow count
+      if (bfes.length > MAX_PROPS_PER_OWNER) {
+        const overflowId = `props-overflow-${cvr}`;
+        if (!nodeIds.has(overflowId)) {
+          nodes.push({
+            id: overflowId,
+            label: `+${bfes.length - MAX_PROPS_PER_OWNER} ejendomme`,
+            type: 'property',
+            overflowItems: bfes.slice(MAX_PROPS_PER_OWNER).map((b) => ({
+              bfeNummer: b,
+              label: `BFE ${b}`,
+            })),
+          });
+          nodeIds.add(overflowId);
+          edges.push({ from: compId, to: overflowId });
+        }
+      }
+    }
+  }
+
   return { nodes, edges, mainId };
 }
 

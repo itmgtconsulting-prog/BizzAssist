@@ -356,6 +356,7 @@ export default function EjendomOekonomiTab(props: Props) {
     purchasePrice: da ? 'Købesum' : 'Purchase price',
     cashPrice: da ? 'Kontant' : 'Cash',
     buyerName: da ? 'Køber' : 'Buyer',
+    sellerName: da ? 'Sælger' : 'Seller',
     registrationDate: da ? 'Tinglyst' : 'Registered',
     registrationFee: da ? 'Tinglysningsafgift' : 'Registration fee',
     loesoereSum: da ? 'Løsøre' : 'Movables',
@@ -794,6 +795,8 @@ export default function EjendomOekonomiTab(props: Props) {
                   <tr className="border-b border-slate-700/30 text-slate-500 text-xs uppercase tracking-wider">
                     <th className="text-left px-4 py-2.5 font-medium">{t.date}</th>
                     <th className="text-left px-4 py-2.5 font-medium">{t.buyerName}</th>
+                    {/* BIZZ-1583: Sælger udledes fra forrige (kronologisk ældre) handels køber. */}
+                    <th className="text-left px-4 py-2.5 font-medium">{t.sellerName}</th>
                     <th className="text-left px-4 py-2.5 font-medium">{t.type}</th>
                     <th className="text-right px-4 py-2.5 font-medium">{t.purchasePrice}</th>
                     <th className="text-right px-4 py-2.5 font-medium">{t.cashPrice}</th>
@@ -809,6 +812,11 @@ export default function EjendomOekonomiTab(props: Props) {
                     /** Primær dato: købsaftaledato foretrukkes, ellers overtagelsesdato */
                     const dato = h.koebsaftaleDato ?? h.overtagelsesdato;
                     const overdragelse = h.overdragelsesmaade ?? h.adkomstType;
+                    // BIZZ-1583: Sælger = køber fra forrige (ældre) handel.
+                    // Array er sorteret nyeste-først, så index i+1 er den ældre.
+                    const prev = mergedSalgshistorik[i + 1];
+                    const saelgerNavn = prev?.koeber ?? null;
+                    const saelgerCvr = prev?.koebercvr ?? null;
                     return (
                       <tr
                         key={i}
@@ -860,6 +868,39 @@ export default function EjendomOekonomiTab(props: Props) {
                             </div>
                           ) : (
                             <span className="text-slate-500 text-xs">—</span>
+                          )}
+                        </td>
+                        {/* BIZZ-1583: Sælger-kolonne — afledt fra forrige (ældre) handels køber. */}
+                        <td className="px-4 py-2.5">
+                          {saelgerNavn ? (
+                            <div>
+                              <p className="text-slate-300 text-sm leading-tight">
+                                {saelgerCvr ? (
+                                  <Link
+                                    href={`/dashboard/companies/${saelgerCvr}`}
+                                    className="hover:text-blue-400 transition-colors"
+                                  >
+                                    {saelgerNavn}
+                                  </Link>
+                                ) : (
+                                  saelgerNavn
+                                )}
+                              </p>
+                              {saelgerCvr && (
+                                <p className="text-slate-500 text-[10px]">CVR {saelgerCvr}</p>
+                              )}
+                            </div>
+                          ) : (
+                            <span
+                              className="text-slate-500 text-xs"
+                              title={
+                                da
+                                  ? 'Ingen tidligere handel registreret'
+                                  : 'No prior transaction recorded'
+                              }
+                            >
+                              —
+                            </span>
                           )}
                         </td>
                         <td className="px-4 py-2.5">

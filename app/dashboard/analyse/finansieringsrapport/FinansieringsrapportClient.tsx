@@ -138,8 +138,8 @@ export default function FinansieringsrapportClient(): React.ReactElement {
           </p>
         </header>
 
-        {/* Søgning */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 mb-6">
+        {/* BIZZ-1605: Fuld bredde — grid layout med søgning + rapport side-by-side på desktop */}
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 mb-6 w-full">
           <label
             htmlFor="property-search"
             className="block text-sm font-medium text-slate-300 mb-2"
@@ -225,7 +225,7 @@ export default function FinansieringsrapportClient(): React.ReactElement {
 
         {/* Info-sektion — vises kun før første rapport-generering */}
         {!selected && (
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full">
             <h2 className="text-sm font-semibold text-white mb-3">Hvad indeholder rapporten?</h2>
             <ul className="space-y-2 text-sm text-slate-400">
               <li>

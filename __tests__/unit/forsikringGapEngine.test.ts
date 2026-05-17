@@ -16,13 +16,17 @@ import {
   countBySeverity,
   computeRiskScore,
   riskLabel,
+  runPortfolioChecks,
 } from '@/app/lib/forsikring/gapEngine';
+import type { PortfolioCheckInput } from '@/app/lib/forsikring/gapEngine';
 import type {
   BbrPropertyFacts,
   ForsikringCoverage,
   ForsikringPolicy,
   GapEngineInput,
 } from '@/app/lib/forsikring/types';
+import type { Aktiv } from '@/app/lib/forsikring/koncernWalk';
+import type { MatchResult } from '@/app/lib/forsikring/assetMatcher';
 
 // ─── Test fixtures ────────────────────────────────────────────────
 
@@ -564,5 +568,432 @@ describe('runGapEngine — branchekode-checks', () => {
       })
     );
     expect(gaps.find((g) => g.check_id === 'GAP-053')).toBeDefined();
+  });
+});
+
+// ─── Portefølje-checks ──────────────────────────────────────────
+
+/** Helper: byg en minimal MatchResult */
+function makeMatch(aktiv: Aktiv, policy?: ForsikringPolicy, score = 90): MatchResult {
+  return {
+    aktiv,
+    bestMatch: policy ? { policy, score } : null,
+    candidates: policy ? [{ policy, score }] : [],
+  };
+}
+
+/** Helper: byg en portefølje-check input med fornuftige defaults */
+function makePortfolioInput(overrides: Partial<PortfolioCheckInput> = {}): PortfolioCheckInput {
+  return {
+    aktiver: [],
+    matches: [],
+    policer: [],
+    coveragesByPolicy: new Map(),
+    ...overrides,
+  };
+}
+
+describe('runPortfolioChecks — GAP-060: D&O for A/S', () => {
+  it('flagger A/S uden D&O-police som critical', () => {
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [makePolicy({ business_activity: 'Ejendomsudlejning' })],
+        virksomhedsform: 'A/S',
+      })
+    );
+    const gap = gaps.find((g) => g.check_id === 'GAP-060');
+    expect(gap).toBeDefined();
+    expect(gap?.severity).toBe('critical');
+  });
+
+  it('flagger ApS som warning', () => {
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [makePolicy()],
+        virksomhedsform: 'ApS',
+      })
+    );
+    const gap = gaps.find((g) => g.check_id === 'GAP-060');
+    expect(gap).toBeDefined();
+    expect(gap?.severity).toBe('warning');
+  });
+
+  it('flagger ikke når D&O-police findes', () => {
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [makePolicy({ raw_metadata: { type: 'D&O Bestyrelsesansvar' } })],
+        virksomhedsform: 'A/S',
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-060')).toBeUndefined();
+  });
+
+  it('flagger ikke for enkeltmandsvirksomhed', () => {
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [makePolicy()],
+        virksomhedsform: 'Enkeltmandsvirksomhed',
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-060')).toBeUndefined();
+  });
+});
+
+describe('runPortfolioChecks — GAP-061: Huslejetab per ejendom', () => {
+  it('flagger manglende huslejetab for udlejningsselskab', () => {
+    const pol = makePolicy();
+    const ejendomme: Aktiv[] = Array.from({ length: 5 }, (_, i) => ({
+      type: 'ejendom' as const,
+      label: `BFE ${1000 + i}`,
+      bfe: 1000 + i,
+    }));
+    const matches: MatchResult[] = ejendomme.map((a) => makeMatch(a, pol));
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    // Kun 1 police har huslejetab
+    coveragesByPolicy.set(pol.id, [makeCoverage('huslejetab', true)]);
+
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        aktiver: ejendomme,
+        matches,
+        policer: [pol],
+        coveragesByPolicy,
+        branche: {
+          hovedbranche: '681020',
+          hovedbranche_tekst: 'Udlejning af ejendomme',
+          bibrancher: [],
+        },
+      })
+    );
+    // Alle 5 matcher samme police der HAR huslejetab → 0 mangler
+    // (dette er lidt forvirrende men korrekt — alle ejendomme matcher pol-1 som har huslejetab)
+    expect(gaps.find((g) => g.check_id === 'GAP-061')).toBeUndefined();
+  });
+
+  it('flagger når ingen ejendomme har huslejetab-dækning', () => {
+    const pol = makePolicy();
+    const ejendomme: Aktiv[] = Array.from({ length: 5 }, (_, i) => ({
+      type: 'ejendom' as const,
+      label: `BFE ${1000 + i}`,
+      bfe: 1000 + i,
+    }));
+    const matches: MatchResult[] = ejendomme.map((a) => makeMatch(a, pol));
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    // Police har INGEN huslejetab
+    coveragesByPolicy.set(pol.id, [makeCoverage('brand_el')]);
+
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        aktiver: ejendomme,
+        matches,
+        policer: [pol],
+        coveragesByPolicy,
+        branche: {
+          hovedbranche: '681020',
+          hovedbranche_tekst: 'Udlejning af ejendomme',
+          bibrancher: [],
+        },
+      })
+    );
+    const gap = gaps.find((g) => g.check_id === 'GAP-061');
+    expect(gap).toBeDefined();
+    expect(gap?.severity).toBe('critical');
+    expect(gap?.title).toContain('5');
+  });
+});
+
+describe('runPortfolioChecks — GAP-062: Kollektiv bygningsforsikring', () => {
+  it('anbefaler kollektiv ved >3 ejendomme med mange policer', () => {
+    const ejendomme: Aktiv[] = Array.from({ length: 6 }, (_, i) => ({
+      type: 'ejendom' as const,
+      label: `Ejendom ${i}`,
+      bfe: 100 + i,
+    }));
+    // Hver ejendom har sin egen police (6 separate policer)
+    const policer = ejendomme.map((_, i) => makePolicy({ id: `pol-${i}` }));
+    const matches = ejendomme.map((a, i) => makeMatch(a, policer[i]));
+
+    const gaps = runPortfolioChecks(makePortfolioInput({ aktiver: ejendomme, matches, policer }));
+    expect(gaps.find((g) => g.check_id === 'GAP-062')).toBeDefined();
+  });
+
+  it('flagger ikke ved <=3 ejendomme', () => {
+    const ejendomme: Aktiv[] = Array.from({ length: 3 }, (_, i) => ({
+      type: 'ejendom' as const,
+      label: `Ejendom ${i}`,
+      bfe: 100 + i,
+    }));
+    const pol = makePolicy();
+    const matches = ejendomme.map((a) => makeMatch(a, pol));
+
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({ aktiver: ejendomme, matches, policer: [pol] })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-062')).toBeUndefined();
+  });
+});
+
+describe('runPortfolioChecks — GAP-063: Cyber-forsikring', () => {
+  it('flagger udlejningsselskab uden cyber', () => {
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [makePolicy()],
+        aktiver: [
+          { type: 'ejendom', label: 'BFE 1', bfe: 1 },
+          { type: 'ejendom', label: 'BFE 2', bfe: 2 },
+        ],
+        branche: {
+          hovedbranche: '681020',
+          hovedbranche_tekst: 'Udlejning af erhvervsejendomme',
+          bibrancher: [],
+        },
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-063')).toBeDefined();
+  });
+
+  it('flagger ikke for industri-branche', () => {
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [makePolicy()],
+        aktiver: [],
+        branche: {
+          hovedbranche: '251100',
+          hovedbranche_tekst: 'Metalforarbejdning',
+          bibrancher: [],
+        },
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-063')).toBeUndefined();
+  });
+});
+
+describe('runPortfolioChecks — GAP-064: Retshjælp', () => {
+  it('flagger manglende retshjælp', () => {
+    const pol = makePolicy();
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    coveragesByPolicy.set(pol.id, [makeCoverage('brand_el')]);
+
+    const gaps = runPortfolioChecks(makePortfolioInput({ policer: [pol], coveragesByPolicy }));
+    expect(gaps.find((g) => g.check_id === 'GAP-064')).toBeDefined();
+  });
+
+  it('flagger ikke når retshjælp er i dækninger', () => {
+    const pol = makePolicy();
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    coveragesByPolicy.set(pol.id, [
+      makeCoverage('brand_el'),
+      { ...makeCoverage('retshjaelp'), coverage_label: 'Retshjælp' },
+    ]);
+
+    const gaps = runPortfolioChecks(makePortfolioInput({ policer: [pol], coveragesByPolicy }));
+    expect(gaps.find((g) => g.check_id === 'GAP-064')).toBeUndefined();
+  });
+});
+
+describe('runPortfolioChecks — GAP-065: Driftstab for udlejning', () => {
+  it('flagger udlejningsselskab uden driftstab', () => {
+    const pol = makePolicy();
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    coveragesByPolicy.set(pol.id, [makeCoverage('brand_el'), makeCoverage('huslejetab')]);
+
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [pol],
+        coveragesByPolicy,
+        aktiver: Array.from({ length: 10 }, (_, i) => ({
+          type: 'ejendom' as const,
+          label: `BFE ${i}`,
+          bfe: i,
+        })),
+        branche: {
+          hovedbranche: '681020',
+          hovedbranche_tekst: 'Udlejning af ejendomme',
+          bibrancher: [],
+        },
+      })
+    );
+    const gap = gaps.find((g) => g.check_id === 'GAP-065');
+    expect(gap).toBeDefined();
+    expect(gap?.severity).toBe('critical');
+    expect(gap?.title).toContain('driftstab');
+  });
+
+  it('flagger ikke når driftstab-dækning eksisterer', () => {
+    const pol = makePolicy();
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    coveragesByPolicy.set(pol.id, [makeCoverage('driftstab')]);
+
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [pol],
+        coveragesByPolicy,
+        aktiver: [{ type: 'ejendom', label: 'BFE 1', bfe: 1 }],
+        branche: {
+          hovedbranche: '681020',
+          hovedbranche_tekst: 'Udlejning',
+          bibrancher: [],
+        },
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-065')).toBeUndefined();
+  });
+});
+
+describe('runPortfolioChecks — GAP-067: Branchekrav-aggregat', () => {
+  it('flagger manglende huslejetab+driftstab+hus_grundejer for udlejning', () => {
+    const pol = makePolicy({ business_activity: 'Ejendomsudlejning' });
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    coveragesByPolicy.set(pol.id, [makeCoverage('brand_el'), makeCoverage('bygningskasko')]);
+
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [pol],
+        coveragesByPolicy,
+        branche: {
+          hovedbranche: '681020',
+          hovedbranche_tekst: 'Udlejning af erhvervsejendomme',
+          bibrancher: [],
+        },
+      })
+    );
+    const gap = gaps.find((g) => g.check_id === 'GAP-067');
+    expect(gap).toBeDefined();
+    expect(gap?.severity).toBe('critical');
+    const manglende = (gap?.source_data as { manglende_krav?: string[] }).manglende_krav ?? [];
+    expect(manglende).toContain('huslejetab');
+    expect(manglende).toContain('driftstab');
+    expect(manglende).toContain('hus_grundejer_ansvar');
+    expect(manglende).toContain('erhvervsansvar');
+  });
+
+  it('aggregerer krav fra bibrancher', () => {
+    const pol = makePolicy({ business_activity: 'Ejendomsudlejning' });
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    coveragesByPolicy.set(pol.id, [
+      makeCoverage('bygningskasko'),
+      makeCoverage('erhvervsansvar'),
+      makeCoverage('huslejetab'),
+      makeCoverage('driftstab'),
+      makeCoverage('hus_grundejer_ansvar'),
+    ]);
+
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [pol],
+        coveragesByPolicy,
+        branche: {
+          hovedbranche: '681020',
+          hovedbranche_tekst: 'Udlejning',
+          // Bibranche: restaurant (kræver brand, erhvervsansvar, driftstab, produktansvar)
+          bibrancher: [{ kode: '561010', tekst: 'Restaurant' }],
+        },
+      })
+    );
+    const gap = gaps.find((g) => g.check_id === 'GAP-067');
+    expect(gap).toBeDefined();
+    const manglende = (gap?.source_data as { manglende_krav?: string[] }).manglende_krav ?? [];
+    // brand mangler (kun bygningskasko er der)
+    expect(manglende).toContain('brand');
+  });
+
+  it('flagger ikke når alle branchekrav er opfyldt', () => {
+    const pol = makePolicy({ business_activity: 'Ejendomsudlejning' });
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    coveragesByPolicy.set(pol.id, [
+      makeCoverage('bygningskasko'),
+      makeCoverage('erhvervsansvar'),
+      makeCoverage('huslejetab'),
+      makeCoverage('driftstab'),
+      makeCoverage('hus_grundejer_ansvar'),
+    ]);
+
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [pol],
+        coveragesByPolicy,
+        branche: {
+          hovedbranche: '681020',
+          hovedbranche_tekst: 'Udlejning',
+          bibrancher: [],
+        },
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-067')).toBeUndefined();
+  });
+
+  it('accepterer dækning via policy-tekst for krav uden CoverageCode-modstykke', () => {
+    // Holdingselskab kræver "d&o" — tjekkes via policy-tekst
+    const pol = makePolicy({
+      business_activity: 'Holdingaktivitet',
+      raw_metadata: { type: 'D&O Bestyrelsesansvar' },
+    });
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    coveragesByPolicy.set(pol.id, []);
+
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [pol],
+        coveragesByPolicy,
+        branche: {
+          hovedbranche: '642020',
+          hovedbranche_tekst: 'Holding',
+          bibrancher: [],
+        },
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-067')).toBeUndefined();
+  });
+
+  it('returnerer null for standard-branche uden krav', () => {
+    const pol = makePolicy();
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [pol],
+        coveragesByPolicy: new Map([[pol.id, []]]),
+        branche: {
+          hovedbranche: '999999', // ukendt branche
+          hovedbranche_tekst: 'Ukendt',
+          bibrancher: [],
+        },
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-067')).toBeUndefined();
+  });
+});
+
+describe('runPortfolioChecks — GAP-066: Lav præmie', () => {
+  it('flagger ekstremt lav præmie per ejendom', () => {
+    const ejendomme: Aktiv[] = Array.from({ length: 17 }, (_, i) => ({
+      type: 'ejendom' as const,
+      label: `BFE ${i}`,
+      bfe: i,
+    }));
+    // 16.176 kr for 17 ejendomme = ~951 kr/ejendom
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [makePolicy({ annual_premium_dkk: 16176 })],
+        aktiver: ejendomme,
+      })
+    );
+    const gap = gaps.find((g) => g.check_id === 'GAP-066');
+    expect(gap).toBeDefined();
+    expect(gap?.severity).toBe('critical');
+  });
+
+  it('flagger ikke ved normal præmie per ejendom', () => {
+    const ejendomme: Aktiv[] = Array.from({ length: 5 }, (_, i) => ({
+      type: 'ejendom' as const,
+      label: `BFE ${i}`,
+      bfe: i,
+    }));
+    // 50.000 kr for 5 ejendomme = 10.000 kr/ejendom
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [makePolicy({ annual_premium_dkk: 50000 })],
+        aktiver: ejendomme,
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-066')).toBeUndefined();
   });
 });

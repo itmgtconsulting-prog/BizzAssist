@@ -17,9 +17,17 @@
  * @module app/lib/forsikring/gapEngine
  */
 
-import type { CoverageCode, DetectedGap, ForsikringCoverage, GapEngineInput } from './types';
+import type {
+  CoverageCode,
+  DetectedGap,
+  ForsikringCoverage,
+  ForsikringPolicy,
+  GapEngineInput,
+} from './types';
 import { COVERAGE_LABELS_DA } from './types';
 import { lookupBrancheKrav, isOperationelBranche } from './brancheRisiko';
+import type { Aktiv } from './koncernWalk';
+import type { MatchResult } from './assetMatcher';
 
 // ─── Konstanter ──────────────────────────────────────────────────
 
@@ -656,6 +664,15 @@ const GAP_BASE_SCORES: Record<string, number> = {
   'GAP-020': 20, // CVR-match
   'GAP-030': 35, // udløbet
   'GAP-031': 20, // udløber snart
+  // Portefølje-checks
+  'GAP-060': 55, // D&O mangler (A/S)
+  'GAP-061': 60, // huslejetab mangler
+  'GAP-062': 40, // kollektiv bygning
+  'GAP-063': 35, // cyber
+  'GAP-064': 25, // retshjælp
+  'GAP-065': 55, // driftstab mangler
+  'GAP-066': 50, // lav præmie
+  'GAP-067': 65, // branchekrav aggregat
 };
 
 /**
@@ -721,4 +738,557 @@ export function countBySeverity(gaps: DetectedGap[]): {
     warning: gaps.filter((g) => g.severity === 'warning').length,
     info: gaps.filter((g) => g.severity === 'info').length,
   };
+}
+
+// ─── Portefølje-niveau checks ──────────────────────────────────
+
+/**
+ * Input til portefølje-checks. Modtager alle aktiver, matches,
+ * policer og dækninger for hele koncernen — ikke per-police.
+ */
+export interface PortfolioCheckInput {
+  /** Alle aktiver fra koncern-walk */
+  aktiver: Aktiv[];
+  /** Match-resultater fra assetMatcher */
+  matches: MatchResult[];
+  /** Alle policer i scope */
+  policer: ForsikringPolicy[];
+  /** Dækninger per police-ID */
+  coveragesByPolicy: Map<string, ForsikringCoverage[]>;
+  /** Branchedata for hovedvirksomheden */
+  branche?: {
+    hovedbranche: string | null;
+    hovedbranche_tekst: string | null;
+    bibrancher: Array<{ kode: string; tekst: string | null }>;
+  };
+  /** Virksomhedsform (A/S, ApS, etc.) */
+  virksomhedsform?: string | null;
+  /** Samlet årlig præmie på tværs af alle policer */
+  totalPraemieDkk?: number;
+}
+
+/** Type for en portefølje-check-funktion */
+type PortfolioCheckFn = (input: PortfolioCheckInput) => DetectedGap | null;
+
+/**
+ * GAP-060: A/S uden D&O-police.
+ * Tjekker om nogen police i porteføljen dækker D&O — ellers kritisk for A/S.
+ */
+const checkPortfolioDnO: PortfolioCheckFn = ({ policer, virksomhedsform }) => {
+  if (!virksomhedsform) return null;
+  const isAS = virksomhedsform.toUpperCase().includes('A/S');
+  const isApS = virksomhedsform.toUpperCase().includes('APS');
+  if (!isAS && !isApS) return null;
+
+  const hasDnO = policer.some((p) => {
+    const text = [
+      p.business_activity,
+      p.raw_metadata?.type as string,
+      p.raw_metadata?.insurance_type as string,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    return (
+      text.includes('d&o') ||
+      text.includes('bestyrelse') ||
+      text.includes('directors') ||
+      text.includes('ledelses')
+    );
+  });
+  if (hasDnO) return null;
+
+  return {
+    check_id: 'GAP-060',
+    category: 'manglende_ansvar',
+    severity: isAS ? 'critical' : 'warning',
+    title: `Ingen D&O-forsikring for ${virksomhedsform}`,
+    description:
+      `Virksomheden er registreret som ${virksomhedsform} men har ingen Directors & Officers forsikring. ` +
+      (isAS
+        ? 'For A/S-selskaber med bestyrelse er der personligt ansvar for bestyrelsesmedlemmer — D&O er kritisk.'
+        : 'For ApS anbefales D&O-forsikring til at dække direktionens personlige ansvar.'),
+    recommendation:
+      'Tegn D&O-forsikring (bestyrelsesansvar) der dækker bestyrelses- og direktionsmedlemmers personlige ansvar.',
+    estimated_impact_dkk: null,
+    source_data: { virksomhedsform },
+  };
+};
+
+/**
+ * GAP-061: Huslejetab mangler for ejendomme i udlejningsselskab.
+ * Tæller hvor mange ejendomme der har huslejetab-dækning vs. antal ejendomme.
+ */
+const checkPortfolioHuslejetab: PortfolioCheckFn = ({ matches, coveragesByPolicy, branche }) => {
+  if (!branche?.hovedbranche) return null;
+  const krav = lookupBrancheKrav(branche.hovedbranche);
+  if (!krav || !krav.kraevede_daekninger.includes('huslejetab')) return null;
+
+  const ejendomMatches = matches.filter((m) => m.aktiv.type === 'ejendom');
+  if (ejendomMatches.length <= 1) return null;
+
+  let medHuslejetab = 0;
+  for (const m of ejendomMatches) {
+    if (!m.bestMatch) continue;
+    const covs = coveragesByPolicy.get(m.bestMatch.policy.id) ?? [];
+    if (covs.some((c) => c.coverage_code === 'huslejetab' && c.is_covered)) {
+      medHuslejetab++;
+    }
+  }
+
+  const udenHuslejetab = ejendomMatches.length - medHuslejetab;
+  if (udenHuslejetab === 0) return null;
+
+  return {
+    check_id: 'GAP-061',
+    category: 'uforsikret',
+    severity: 'critical',
+    title: `Huslejetab mangler for ${udenHuslejetab} af ${ejendomMatches.length} ejendomme`,
+    description:
+      `Virksomheden er et udlejningsselskab med ${ejendomMatches.length} ejendomme, ` +
+      `men kun ${medHuslejetab} har huslejetab-dækning. ` +
+      `Ved brand eller vandskade mistes lejeindtægt fra de ${udenHuslejetab} ejendomme uden dækning.`,
+    recommendation:
+      'Tegn huslejetab-forsikring for alle udlejningsejendomme — enten via individuelle policer ' +
+      'eller én kollektiv ejendomsforsikring med huslejetab-dækning.',
+    estimated_impact_dkk: null,
+    source_data: {
+      total_ejendomme: ejendomMatches.length,
+      med_huslejetab: medHuslejetab,
+      uden_huslejetab: udenHuslejetab,
+    },
+  };
+};
+
+/**
+ * GAP-062: Kollektiv bygningsforsikring anbefalet.
+ * Ved >3 ejendomme anbefales én samlet police i stedet for enkelt-policer.
+ */
+const checkKollektivBygning: PortfolioCheckFn = ({ matches }) => {
+  const ejendomMatches = matches.filter((m) => m.aktiv.type === 'ejendom');
+  if (ejendomMatches.length <= 3) return null;
+
+  // Tæl unikke policer der matcher ejendomme
+  const uniquePolicies = new Set(
+    ejendomMatches.filter((m) => m.bestMatch).map((m) => m.bestMatch!.policy.id)
+  );
+
+  // Hvis der allerede er 1-2 policer for mange ejendomme, har de sandsynligvis kollektiv
+  if (uniquePolicies.size <= 2 && uniquePolicies.size > 0) return null;
+
+  const forsikrede = ejendomMatches.filter((m) => m.bestMatch !== null).length;
+  const uforsikrede = ejendomMatches.length - forsikrede;
+
+  return {
+    check_id: 'GAP-062',
+    category: 'optimering',
+    severity: uforsikrede > 0 ? 'critical' : 'warning',
+    title: `${ejendomMatches.length} ejendomme — kollektiv bygningsforsikring anbefales`,
+    description:
+      `Virksomheden ejer ${ejendomMatches.length} ejendomme` +
+      (uforsikrede > 0 ? ` (${uforsikrede} uden police)` : '') +
+      `. Med ${uniquePolicies.size || 'ingen'} separate policer er der risiko for ` +
+      `dækningshuller og højere samlet præmie. Én kollektiv police sikrer ensartet dækning og bedre præmie.`,
+    recommendation:
+      'Indhent tilbud på kollektiv bygningsforsikring der dækker alle ejendomme ' +
+      'under én police — giver typisk 15-25% rabat og eliminerer dækningshuller.',
+    estimated_impact_dkk: null,
+    source_data: {
+      total_ejendomme: ejendomMatches.length,
+      forsikrede,
+      uforsikrede,
+      unikke_policer: uniquePolicies.size,
+    },
+  };
+};
+
+/**
+ * GAP-063: Cyber-forsikring mangler.
+ * Warning for virksomheder med lejerdata/betalingsinfo eller >5 ansatte.
+ */
+const checkPortfolioCyber: PortfolioCheckFn = ({ policer, branche, aktiver }) => {
+  if (!branche?.hovedbranche) return null;
+
+  // Brancher der håndterer persondata: udlejning, sundhed, IT, detail, engros
+  const dataRisikoPrefixes = ['68', '86', '62', '47', '46', '55', '56'];
+  const clean = branche.hovedbranche.replace(/\./g, '').trim();
+  const isDataRisiko = dataRisikoPrefixes.some((p) => clean.startsWith(p));
+  if (!isDataRisiko) return null;
+
+  const hasCyber = policer.some((p) => {
+    const text = [
+      p.business_activity,
+      p.raw_metadata?.type as string,
+      p.raw_metadata?.insurance_type as string,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    return (
+      text.includes('cyber') || text.includes('it-kriminal') || text.includes('databeskyttelse')
+    );
+  });
+  if (hasCyber) return null;
+
+  const ejendomCount = aktiver.filter((a) => a.type === 'ejendom').length;
+  return {
+    check_id: 'GAP-063',
+    category: 'manglende_ansvar',
+    severity: 'warning',
+    title: 'Ingen cyber-forsikring',
+    description:
+      `Virksomheden (branche: ${branche.hovedbranche_tekst ?? clean}) håndterer ` +
+      (ejendomCount > 0 ? `lejerdata fra ${ejendomCount} ejendomme, ` : '') +
+      `betalingsoplysninger og persondata. Uden cyber-forsikring bæres tab fra ` +
+      `datalæk, ransomware eller GDPR-bøder af virksomheden selv.`,
+    recommendation:
+      'Overvej cyber-forsikring der dækker datalæk, ransomware, IT-kriminalitet og GDPR-bøder.',
+    estimated_impact_dkk: null,
+    source_data: {
+      branche: branche.hovedbranche,
+      ejendom_count: ejendomCount,
+    },
+  };
+};
+
+/**
+ * GAP-064: Retshjælpsforsikring mangler.
+ * Warning hvis ingen police har retshjælp-dækning.
+ */
+const checkPortfolioRetshjaelp: PortfolioCheckFn = ({ policer, coveragesByPolicy }) => {
+  if (policer.length === 0) return null;
+
+  // Tjek om nogen police har retshjælp i tekst eller dækninger
+  const hasRetshjaelp = policer.some((p) => {
+    const text = [p.business_activity, p.raw_metadata?.type as string]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    if (text.includes('retshjælp') || text.includes('retshjaelp')) return true;
+
+    const covs = coveragesByPolicy.get(p.id) ?? [];
+    return covs.some(
+      (c) =>
+        c.is_covered &&
+        (c.coverage_code.includes('retshjaelp') ||
+          c.coverage_label.toLowerCase().includes('retshjælp'))
+    );
+  });
+  if (hasRetshjaelp) return null;
+
+  return {
+    check_id: 'GAP-064',
+    category: 'manglende_ansvar',
+    severity: 'warning',
+    title: 'Ingen retshjælpsforsikring',
+    description:
+      'Ingen af virksomhedens policer inkluderer retshjælpsforsikring. ' +
+      'Ved tvister med lejere, leverandører eller naboer dækkes advokatomkostninger ' +
+      'ikke uden retshjælp-dækning.',
+    recommendation:
+      'Tilkøb retshjælpsforsikring — enten som tillæg til eksisterende police eller som separat police.',
+    estimated_impact_dkk: null,
+    source_data: {},
+  };
+};
+
+/**
+ * GAP-065: Driftstab mangler for udlejningsselskab.
+ * Tjekker om nogen police har driftstab-dækning for udlejningsbranche.
+ */
+const checkPortfolioDriftstab: PortfolioCheckFn = ({
+  policer,
+  coveragesByPolicy,
+  branche,
+  aktiver,
+}) => {
+  if (!branche?.hovedbranche) return null;
+  const krav = lookupBrancheKrav(branche.hovedbranche);
+  if (!krav || !krav.kraevede_daekninger.includes('driftstab')) return null;
+
+  const hasDriftstab = policer.some((p) => {
+    const covs = coveragesByPolicy.get(p.id) ?? [];
+    if (covs.some((c) => c.coverage_code === 'driftstab' && c.is_covered)) return true;
+    const text = [p.business_activity, p.raw_metadata?.type as string]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    return text.includes('driftstab');
+  });
+  if (hasDriftstab) return null;
+
+  const ejendomCount = aktiver.filter((a) => a.type === 'ejendom').length;
+  return {
+    check_id: 'GAP-065',
+    category: 'uforsikret',
+    severity: 'critical',
+    title: 'Ingen driftstabsforsikring',
+    description:
+      `Udlejningsselskab med ${ejendomCount} ejendomme har ingen driftstabsforsikring. ` +
+      `Ved brand, vandskade eller storm der gør en ejendom ubeboelig mistes lejeindtægt ` +
+      `i genopbygningsperioden (typisk 6-18 måneder). Huslejetab dækker kun den direkte ` +
+      `lejeindtægt — driftstab dækker også øvrige faste udgifter.`,
+    recommendation:
+      'Tegn driftstabsforsikring der dækker tabt lejeindtægt og faste udgifter ' +
+      'i genopbygningsperioden for alle ejendomme.',
+    estimated_impact_dkk: null,
+    source_data: {
+      branche: branche.hovedbranche,
+      ejendom_count: ejendomCount,
+    },
+  };
+};
+
+/**
+ * GAP-066: Lav præmie i forhold til porteføljestørrelse.
+ * Warning hvis samlet præmie er suspekt lav ift. antal ejendomme.
+ */
+const checkLavPraemie: PortfolioCheckFn = ({ policer, aktiver }) => {
+  const ejendomCount = aktiver.filter((a) => a.type === 'ejendom').length;
+  if (ejendomCount <= 1) return null;
+
+  const totalPraemie = policer.reduce((sum, p) => sum + (p.annual_premium_dkk ?? 0), 0);
+  if (totalPraemie === 0) return null;
+
+  // Tommelfingerregel: ~5.000-15.000 kr/ejendom/år for bygningsforsikring
+  const praemiePerEjendom = totalPraemie / ejendomCount;
+  if (praemiePerEjendom >= 3_000) return null;
+
+  return {
+    check_id: 'GAP-066',
+    category: 'optimering',
+    severity: 'critical',
+    title: `Ekstremt lav præmie: ${Math.round(totalPraemie).toLocaleString('da-DK')} kr for ${ejendomCount} ejendomme`,
+    description:
+      `Samlet årlig præmie er ${Math.round(totalPraemie).toLocaleString('da-DK')} kr ` +
+      `for ${ejendomCount} ejendomme (${Math.round(praemiePerEjendom).toLocaleString('da-DK')} kr/ejendom). ` +
+      `Normal bygningsforsikring ligger på 5.000-15.000 kr/ejendom/år. ` +
+      `Den lave præmie indikerer at ikke alle ejendomme er forsikret.`,
+    recommendation:
+      'Verificér at alle ejendomme er dækket af en police. Indhent tilbud på ' +
+      'kollektiv bygningsforsikring for hele porteføljen.',
+    estimated_impact_dkk: null,
+    source_data: {
+      total_praemie: totalPraemie,
+      ejendom_count: ejendomCount,
+      praemie_per_ejendom: Math.round(praemiePerEjendom),
+    },
+  };
+};
+
+/**
+ * Mapping fra branchekrav-streng (fra brancheRisiko.ts) til canonical
+ * CoverageCode. Bruges af GAP-067 til at verificere at de påkrævede
+ * dækninger fra branchen faktisk er tilstede som coverage-rækker.
+ *
+ * Krav uden CoverageCode-modstykke (d&o, cyberforsikring, arbejdsskade,
+ * all-risk, transportansvar, godsforsikring, maskinkasko, miljoeansvar,
+ * professionelt_ansvar, behandlingsansvar, patientforsikring, indbrud,
+ * rejsegods) tjekkes via policy-tekst i stedet.
+ */
+const KRAV_TO_COVERAGE_CODE: Record<string, CoverageCode> = {
+  brand: 'brand_el',
+  ejendomsforsikring: 'bygningskasko',
+  erhvervsansvar: 'erhvervsansvar',
+  huslejetab: 'huslejetab',
+  hus_grundejer_ansvar: 'hus_grundejer_ansvar',
+  driftstab: 'driftstab',
+  forurening: 'forurening',
+  produktansvar: 'erhvervsansvar', // produktansvar normaliseres til erhvervsansvar
+};
+
+/**
+ * Læsbare labels for branchekrav-strenge (til UI-output).
+ */
+const KRAV_LABELS_DA: Record<string, string> = {
+  brand: 'Brand',
+  ejendomsforsikring: 'Ejendomsforsikring (bygningskasko)',
+  erhvervsansvar: 'Erhvervsansvar',
+  huslejetab: 'Huslejetab',
+  hus_grundejer_ansvar: 'Hus- og grundejeransvar',
+  driftstab: 'Driftstab',
+  forurening: 'Forurening',
+  produktansvar: 'Produktansvar',
+  'd&o': 'D&O / Bestyrelsesansvar',
+  cyberforsikring: 'Cyber-forsikring',
+  arbejdsskade: 'Arbejdsskadeforsikring',
+  'all-risk': 'All-risk',
+  transportansvar: 'Transportansvar',
+  godsforsikring: 'Godsforsikring',
+  maskinkasko: 'Maskinkasko',
+  miljoeansvar: 'Miljøansvar',
+  professionelt_ansvar: 'Professionelt ansvar',
+  behandlingsansvar: 'Behandlingsansvar',
+  patientforsikring: 'Patientforsikring',
+  indbrud: 'Indbrud',
+  rejsegods: 'Rejsegods',
+};
+
+/**
+ * Tjek om en branchekrav-streng er dækket et sted i porteføljen.
+ * Bruger først coverage-koder, falder tilbage til policy-tekst-søgning.
+ *
+ * @param krav - Branchekrav-streng (fx "huslejetab", "d&o")
+ * @param policer - Alle policer i scope
+ * @param coveragesByPolicy - Dækninger per police-ID
+ * @returns true hvis kravet er dækket et sted
+ */
+function isKravCovered(
+  krav: string,
+  policer: ForsikringPolicy[],
+  coveragesByPolicy: Map<string, ForsikringCoverage[]>
+): boolean {
+  const kravLower = krav.toLowerCase();
+  const coverageCode = KRAV_TO_COVERAGE_CODE[kravLower];
+
+  // 1. Tjek coverage-koder hvis kravet mapper til en kanonisk kode
+  if (coverageCode) {
+    for (const pol of policer) {
+      const covs = coveragesByPolicy.get(pol.id) ?? [];
+      if (covs.some((c) => c.coverage_code === coverageCode && c.is_covered)) {
+        return true;
+      }
+    }
+  }
+
+  // 2. Fallback: søg i policy-tekst (business_activity, building_use, raw_metadata.type)
+  //    samt i coverage-labels (for at fange varianter ikke i kanonisk liste)
+  for (const pol of policer) {
+    const text = [
+      pol.business_activity,
+      pol.building_use,
+      pol.raw_metadata?.type as string | undefined,
+      pol.raw_metadata?.insurance_type as string | undefined,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    if (text.includes(kravLower)) return true;
+
+    // Tjek også coverage-labels (frie tekst-felter)
+    const covs = coveragesByPolicy.get(pol.id) ?? [];
+    if (covs.some((c) => c.is_covered && c.coverage_label.toLowerCase().includes(kravLower))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * GAP-067: Branchekrav-check på portefølje-niveau.
+ *
+ * Aggregerer påkrævede dækninger fra hovedbranche + alle bibrancher
+ * og verificerer at hver krævet dækning findes et sted i porteføljen
+ * (via coverage-koder ELLER policy-tekst).
+ *
+ * Adskiller sig fra GAP-051 (per-police, tekst-baseret) ved at:
+ * - Aggregerer på tværs af hovedbranche + bibrancher
+ * - Tjekker faktiske coverage-koder, ikke kun policy-tekst
+ * - Rapporterer ÉT samlet gap med alle manglende dækninger
+ */
+const checkBranchekravPortfolio: PortfolioCheckFn = ({ branche, policer, coveragesByPolicy }) => {
+  if (!branche?.hovedbranche || policer.length === 0) return null;
+
+  // Saml påkrævede dækninger fra hovedbranche + bibrancher
+  const allKrav = new Set<string>();
+  const kravKilder = new Map<string, string>(); // krav → branche-label
+  const hovedKrav = lookupBrancheKrav(branche.hovedbranche);
+  if (hovedKrav) {
+    for (const k of hovedKrav.kraevede_daekninger) {
+      allKrav.add(k.toLowerCase());
+      kravKilder.set(k.toLowerCase(), hovedKrav.label);
+    }
+  }
+  for (const b of branche.bibrancher) {
+    const biKrav = lookupBrancheKrav(b.kode);
+    if (biKrav) {
+      for (const k of biKrav.kraevede_daekninger) {
+        if (!allKrav.has(k.toLowerCase())) {
+          allKrav.add(k.toLowerCase());
+          kravKilder.set(k.toLowerCase(), biKrav.label);
+        }
+      }
+    }
+  }
+
+  if (allKrav.size === 0) return null;
+
+  // Find manglende krav
+  const manglende: Array<{ krav: string; kilde: string }> = [];
+  for (const krav of allKrav) {
+    if (!isKravCovered(krav, policer, coveragesByPolicy)) {
+      manglende.push({ krav, kilde: kravKilder.get(krav) ?? 'branche' });
+    }
+  }
+
+  if (manglende.length === 0) return null;
+
+  const manglendeLabels = manglende.map((m) => KRAV_LABELS_DA[m.krav] ?? m.krav).join(', ');
+  const kilderLabels = Array.from(new Set(manglende.map((m) => m.kilde))).join(', ');
+
+  return {
+    check_id: 'GAP-067',
+    category: 'branche',
+    severity: 'critical',
+    title: `Branchekrav: ${manglende.length} påkrævet${manglende.length > 1 ? 'e' : ''} dækning${manglende.length > 1 ? 'er' : ''} mangler`,
+    description:
+      `Virksomhedens registrerede aktiviteter (${kilderLabels}) kræver dækninger der ` +
+      `ikke findes i porteføljen: ${manglendeLabels}. ` +
+      `Uden disse dækninger kan erstatning bortfalde for aktiviteter der er ` +
+      `omfattet af branchekoden.`,
+    recommendation:
+      `Tegn de manglende dækninger eller udvid eksisterende policer. ` +
+      `Hvis aktiviteten ikke længere udøves, opdater CVR-registreringen.`,
+    estimated_impact_dkk: null,
+    source_data: {
+      hovedbranche: branche.hovedbranche,
+      bibrancher: branche.bibrancher.map((b) => b.kode),
+      manglende_krav: manglende.map((m) => m.krav),
+      manglende_labels: manglende.map((m) => KRAV_LABELS_DA[m.krav] ?? m.krav),
+    },
+  };
+};
+
+/**
+ * Alle portefølje-checks i præsentationsrækkefølge.
+ */
+const PORTFOLIO_CHECKS: readonly PortfolioCheckFn[] = [
+  checkBranchekravPortfolio,
+  checkPortfolioDnO,
+  checkPortfolioDriftstab,
+  checkPortfolioHuslejetab,
+  checkKollektivBygning,
+  checkLavPraemie,
+  checkPortfolioCyber,
+  checkPortfolioRetshjaelp,
+];
+
+/**
+ * Kør portefølje-niveau checks på tværs af alle aktiver og policer.
+ *
+ * Disse checks supplerer per-police/per-aktiv checks fra runGapEngine
+ * og fanger mangler der kun er synlige når man ser hele porteføljen samlet:
+ * - Manglende D&O for A/S (GAP-060)
+ * - Huslejetab mangler for ejendomme (GAP-061)
+ * - Kollektiv bygningsforsikring anbefalet (GAP-062)
+ * - Cyber-forsikring mangler (GAP-063)
+ * - Retshjælp mangler (GAP-064)
+ * - Driftstab mangler for udlejning (GAP-065)
+ * - Lav præmie vs. portefølje (GAP-066)
+ *
+ * @param input - Portefølje-data: aktiver, matches, policer, dækninger
+ * @returns Liste af detekterede portefølje-gaps
+ */
+export function runPortfolioChecks(input: PortfolioCheckInput): DetectedGap[] {
+  const results: DetectedGap[] = [];
+  for (const check of PORTFOLIO_CHECKS) {
+    try {
+      const result = check(input);
+      if (result) results.push(result);
+    } catch {
+      continue;
+    }
+  }
+  return results;
 }

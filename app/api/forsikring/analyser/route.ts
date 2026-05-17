@@ -16,7 +16,7 @@ import { getInsuranceApi } from '@/lib/db/insurance';
 import { walkKoncern } from '@/app/lib/forsikring/koncernWalk';
 import * as Sentry from '@sentry/nextjs';
 import { matchAssetsToPolicies } from '@/app/lib/forsikring/assetMatcher';
-import { runGapEngine, computeRiskScore } from '@/app/lib/forsikring/gapEngine';
+import { runGapEngine, computeRiskScore, runPortfolioChecks } from '@/app/lib/forsikring/gapEngine';
 import type { ForsikringCoverage } from '@/app/lib/forsikring/types';
 import {
   runBbrCrossCheck,
@@ -243,7 +243,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       riskScore: number;
     }> = [];
 
-    // BIZZ-1446: Hent branche-data for virksomheds-aktiver
+    // BIZZ-1446: Hent branche-data + virksomhedsform for virksomheds-aktiver
     const virksomhedAktiver = aktiver.filter((a) => a.type === 'virksomhed' && a.cvr);
     let brancheData:
       | {
@@ -252,13 +252,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           bibrancher: Array<{ kode: string; tekst: string | null }>;
         }
       | undefined;
+    let virksomhedsform: string | null = null;
     if (virksomhedAktiver.length > 0) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: virkData } = await (admin as any)
           .from('cvr_virksomhed')
           .select(
-            'branche_kode, branche_tekst, bibranche_1_kode, bibranche_1_tekst, bibranche_2_kode, bibranche_2_tekst, bibranche_3_kode, bibranche_3_tekst'
+            'branche_kode, branche_tekst, bibranche_1_kode, bibranche_1_tekst, bibranche_2_kode, bibranche_2_tekst, bibranche_3_kode, bibranche_3_tekst, virksomhedsform'
           )
           .eq('cvr_nummer', virksomhedAktiver[0].cvr)
           .maybeSingle();
@@ -274,6 +275,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             hovedbranche_tekst: v.branche_tekst ?? null,
             bibrancher,
           };
+          virksomhedsform = v.virksomhedsform ?? null;
         }
       } catch {
         /* best-effort */
@@ -330,6 +332,46 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         });
       }
     }
+
+    // 4a. Portefølje-niveau checks (D&O, huslejetab, driftstab, cyber, retshjælp, kollektiv)
+    const portfolioGaps = runPortfolioChecks({
+      aktiver,
+      matches,
+      policer,
+      coveragesByPolicy,
+      branche: brancheData,
+      virksomhedsform,
+    });
+
+    // Find virksomhedens matched police — portefølje-gaps hører til virksomheds-
+    // niveauet, ikke til en tilfældig ejendomspolice. Fallback-rækkefølge:
+    //   1. Police matched til hovedvirksomhed (CVR-aktiv)
+    //   2. Første police i scope
+    //   3. Streng 'portfolio' hvis ingen policer findes
+    const hovedCvr = kunde_type === 'virksomhed' ? kunde_id : null;
+    const virksomhedMatch = matches.find(
+      (m) => m.aktiv.type === 'virksomhed' && m.aktiv.cvr === hovedCvr && m.bestMatch
+    );
+    const portfolioPolicyId =
+      virksomhedMatch?.bestMatch?.policy.id ?? policer[0]?.id ?? 'portfolio';
+
+    for (const gap of portfolioGaps) {
+      allGaps.push({
+        policyId: portfolioPolicyId,
+        checkId: gap.check_id,
+        category: gap.category,
+        severity: gap.severity,
+        title: gap.title,
+        description: gap.description,
+        recommendation: gap.recommendation,
+        estimatedImpactDkk: gap.estimated_impact_dkk,
+        sourceData: gap.source_data,
+        riskScore: computeRiskScore(gap),
+      });
+    }
+    logger.log(
+      `[forsikring/analyser] Portefølje-checks: ${portfolioGaps.length} gaps (${portfolioGaps.filter((g) => g.severity === 'critical').length} kritiske)`
+    );
 
     // 4b. BIZZ-1356: Auto-trigger eksterne cross-checks (best-effort, parallel)
     try {

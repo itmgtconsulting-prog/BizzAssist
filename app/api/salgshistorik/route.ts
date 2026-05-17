@@ -29,6 +29,7 @@ import {
   DATAFORDELER_TOKEN_URL,
 } from '@/app/lib/serviceEndpoints';
 import { LruCache } from '@/app/lib/lruCache';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { fetchTinglysningPriceRowsByBfe, indexPriceRowsByDate } from '@/app/lib/tinglysningPrices';
 import { fetchHistoriskAdkomsterByBfe } from '@/app/lib/tinglysningHistoriskAdkomster';
 import {
@@ -244,15 +245,57 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
 
   const { bfeNummer } = parsed.data;
 
-  // BIZZ-633: LRU cache-hit → undgå hele EJF round-trip'en. Salgshistorik er
-  // en særlig hot path fordi både Økonomi-tab, ejendoms-kort og
-  // diagram-enrichment trigger samme BFE-lookup.
+  // BIZZ-633: L1 in-memory LRU cache → instant return
   const cached = salgshistorikCache.get(bfeNummer);
   if (cached) {
     return NextResponse.json(cached, {
       status: 200,
-      headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
+      headers: {
+        'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600',
+        'X-Cache-Hit': 'lru',
+      },
     });
+  }
+
+  // BIZZ-1607: L2 persistent Supabase cache → survives cold starts
+  try {
+    const admin = createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: cacheRow } = await (admin as any)
+      .from('salgshistorik_cache')
+      .select('payload, fetched_at, ttl_hours, hit_count')
+      .eq('bfe_nummer', bfeNummer)
+      .single();
+    if (cacheRow) {
+      const row = cacheRow as {
+        payload: unknown;
+        fetched_at: string;
+        ttl_hours: number;
+        hit_count: number;
+      };
+      const age = Date.now() - new Date(row.fetched_at).getTime();
+      const ttlMs = (row.ttl_hours ?? 24) * 3_600_000;
+      if (age < ttlMs) {
+        const result = row.payload as SalgshistorikResponse;
+        salgshistorikCache.set(bfeNummer, result);
+        // Bump hit count (fire-and-forget)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        void (admin as any)
+          .from('salgshistorik_cache')
+          .update({ hit_count: row.hit_count + 1, last_hit_at: new Date().toISOString() })
+          .eq('bfe_nummer', bfeNummer)
+          .then(() => {});
+        return NextResponse.json(result, {
+          status: 200,
+          headers: {
+            'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600',
+            'X-Cache-Hit': 'supabase',
+          },
+        });
+      }
+    }
+  } catch {
+    // Cache lookup fejlede — fortsæt til live fetch
   }
 
   const token = await getSharedOAuthToken();
@@ -621,6 +664,21 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
       manglerAdgang: false,
     };
     salgshistorikCache.set(bfeNummer, responseData);
+    // BIZZ-1607: Persist til L2 Supabase cache (fire-and-forget)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    void (createAdminClient() as any)
+      .from('salgshistorik_cache')
+      .upsert(
+        {
+          bfe_nummer: bfeNummer,
+          payload: responseData,
+          fetched_at: new Date().toISOString(),
+          ttl_hours: 24,
+          hit_count: 0,
+        },
+        { onConflict: 'bfe_nummer' }
+      )
+      .then(() => {});
     return NextResponse.json(responseData, {
       status: 200,
       headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },

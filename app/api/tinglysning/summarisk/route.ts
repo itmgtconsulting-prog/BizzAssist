@@ -313,7 +313,17 @@ export async function GET(req: NextRequest) {
     // Only ejere section uses the 25KB optimisation (adkomst is always near the top).
     const needsFullXml = !section || section === 'servitutter' || section === 'haeftelser';
     const maxBytes = needsFullXml ? 0 : 25_000;
-    const res = await tlFetch(`/ejdsummarisk/${uuid}`, maxBytes);
+
+    // BIZZ-1615: Retry med exponential backoff ved 429 (rate limit)
+    let res = await tlFetch(`/ejdsummarisk/${uuid}`, maxBytes);
+    if (res.status === 429) {
+      for (const delayMs of [1000, 3000, 8000]) {
+        await new Promise((r) => setTimeout(r, delayMs));
+        res = await tlFetch(`/ejdsummarisk/${uuid}`, maxBytes);
+        if (res.status !== 429) break;
+      }
+    }
+
     if (res.status !== 200) {
       return NextResponse.json({
         ejere: [],

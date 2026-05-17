@@ -382,7 +382,7 @@ const checkMultibranche: CheckFn = ({ branche, policy }) => {
 /**
  * GAP-051: Højrisiko-branche mangler specifikke dækninger.
  */
-const checkHoejrisikoBranche: CheckFn = ({ branche, policy }) => {
+const _checkHoejrisikoBranche: CheckFn = ({ branche, policy }) => {
   if (!branche?.hovedbranche) return null;
   const krav = lookupBrancheKrav(branche.hovedbranche);
   if (!krav || krav.kategori !== 'hoejrisiko') return null;
@@ -410,7 +410,7 @@ const checkHoejrisikoBranche: CheckFn = ({ branche, policy }) => {
 /**
  * GAP-052: CVR-branche matcher ikke police-virksomhedsart.
  */
-const checkBrancheMismatch: CheckFn = ({ branche, policy }) => {
+const _checkBrancheMismatch: CheckFn = ({ branche, policy }) => {
   if (!branche?.hovedbranche_tekst || !policy.business_activity) return null;
 
   const cvrTekst = branche.hovedbranche_tekst.toLowerCase();
@@ -591,8 +591,12 @@ function checkMissingDnO(input: GapEngineInput): DetectedGap | null {
 const CHECKS: readonly CheckFn[] = [
   // Branchekode-checks (BIZZ-1377)
   checkMultibranche,
-  checkHoejrisikoBranche,
-  checkBrancheMismatch,
+  // GAP-051 (checkHoejrisikoBranche) er deaktiveret — overlapper med
+  // GAP-067 (branchekrav-aggregat på portefølje-niveau) der bruger
+  // faktiske coverage-koder i stedet for kun policy-tekst.
+  // GAP-052 (checkBrancheMismatch) er deaktiveret — gav false-positives
+  // på ansvarsforsikringer hvor "ansvarsforsikring" ikke matcher
+  // branche-tekst, men dækningen er reelt korrekt for virksomheden.
   checkHoldingMedOperationel,
   // Asset-level checks (BIZZ-1364)
   checkUninsuredAsset,
@@ -804,12 +808,19 @@ const checkPortfolioDnO: PortfolioCheckFn = ({ policer, virksomhedsform }) => {
     severity: isAS ? 'critical' : 'warning',
     title: `Ingen D&O-forsikring for ${virksomhedsform}`,
     description:
-      `Virksomheden er registreret som ${virksomhedsform} men har ingen Directors & Officers forsikring. ` +
+      `D&O (Directors & Officers) er en personlig ansvarsforsikring for bestyrelse og direktion. ` +
+      `Uden D&O hæfter ledelsen personligt — med privat formue — for økonomiske krav fra aktionærer, ` +
+      `kreditorer, kunder, lejere eller myndigheder ved fx påståede pligtforsømmelser, fejlagtige beslutninger, ` +
+      `misvisende oplysninger i regnskabet eller manglende overholdelse af lovgivning. ` +
       (isAS
-        ? 'For A/S-selskaber med bestyrelse er der personligt ansvar for bestyrelsesmedlemmer — D&O er kritisk.'
-        : 'For ApS anbefales D&O-forsikring til at dække direktionens personlige ansvar.'),
+        ? `For A/S med bestyrelse er D&O kritisk: efter selskabslovens §361 har bestyrelsesmedlemmer personligt ` +
+          `ansvar for tab forvoldt ved uagtsomhed. Erstatningskrav kan let nå millionbeløb og rammer den enkeltes privatøkonomi.`
+        : `For ApS anbefales D&O da direktionen har personligt ansvar for tab forvoldt ved uagtsomhed. ` +
+          `Uden D&O risikerer indehaver/direktør at hæfte privat for fx forkerte regnskabstal eller misvisende oplysninger til kreditorer.`),
     recommendation:
-      'Tegn D&O-forsikring (bestyrelsesansvar) der dækker bestyrelses- og direktionsmedlemmers personlige ansvar.',
+      `Tegn D&O-forsikring (bestyrelsesansvar) der dækker advokatomkostninger og erstatningskrav mod ` +
+      `bestyrelses- og direktionsmedlemmer. Dækker typisk både retssagsomkostninger, forligsbeløb og ` +
+      `myndighedsundersøgelser. Pris afhænger af omsætning, branche og bestyrelsens størrelse.`,
     estimated_impact_dkk: null,
     source_data: { virksomhedsform },
   };
@@ -882,16 +893,18 @@ const checkKollektivBygning: PortfolioCheckFn = ({ matches }) => {
   return {
     check_id: 'GAP-062',
     category: 'optimering',
-    severity: uforsikrede > 0 ? 'critical' : 'warning',
-    title: `${ejendomMatches.length} ejendomme — kollektiv bygningsforsikring anbefales`,
+    // Altid 'info' — kollektiv er en anbefaling, ikke en mangel.
+    // Hvis ejendomme er uforsikrede dækkes det allerede af GAP-100
+    // (uforsikret aktiv) på den enkelte ejendoms-række.
+    severity: 'info',
+    title: `${ejendomMatches.length} ejendomme — kollektiv bygningsforsikring kan overvejes`,
     description:
-      `Virksomheden ejer ${ejendomMatches.length} ejendomme` +
-      (uforsikrede > 0 ? ` (${uforsikrede} uden police)` : '') +
-      `. Med ${uniquePolicies.size || 'ingen'} separate policer er der risiko for ` +
-      `dækningshuller og højere samlet præmie. Én kollektiv police sikrer ensartet dækning og bedre præmie.`,
+      `Virksomheden ejer ${ejendomMatches.length} ejendomme fordelt på ${uniquePolicies.size || 'ingen'} ` +
+      `separate policer. Hvis den enkelte ejendom er korrekt forsikret er dækningen i orden — ` +
+      `men én kollektiv police kan give administrative fordele og ensartet dækning på tværs af porteføljen.`,
     recommendation:
-      'Indhent tilbud på kollektiv bygningsforsikring der dækker alle ejendomme ' +
-      'under én police — giver typisk 15-25% rabat og eliminerer dækningshuller.',
+      'Indhent tilbud på kollektiv bygningsforsikring som alternativ til de individuelle policer. ' +
+      'Vurder om de administrative fordele og ensartet dækning opvejer evt. ulemper.',
     estimated_impact_dkk: null,
     source_data: {
       total_ejendomme: ejendomMatches.length,
@@ -997,6 +1010,7 @@ const checkPortfolioRetshjaelp: PortfolioCheckFn = ({ policer, coveragesByPolicy
  * Tjekker om nogen police har driftstab-dækning for udlejningsbranche.
  */
 const checkPortfolioDriftstab: PortfolioCheckFn = ({
+  matches,
   policer,
   coveragesByPolicy,
   branche,
@@ -1017,20 +1031,38 @@ const checkPortfolioDriftstab: PortfolioCheckFn = ({
   });
   if (hasDriftstab) return null;
 
+  // Overlap-undgåelse: For udlejningsselskaber dækker huslejetab den
+  // primære driftstabsrisiko (tabt lejeindtægt). Hvis huslejetab er
+  // dækket på majoriteten af ejendommene, undertrykker vi GAP-065 for
+  // at undgå at dublere GAP-061 (huslejetab per ejendom) på UI.
+  // Driftstab kan stadig være relevant som udvidet dækning, men det er
+  // ikke en kritisk mangel når huslejetab håndterer kerneeksponeringen.
+  const ejendomMatches = matches.filter((m) => m.aktiv.type === 'ejendom' && m.bestMatch);
+  if (ejendomMatches.length > 0) {
+    const medHuslejetab = ejendomMatches.filter((m) => {
+      const covs = coveragesByPolicy.get(m.bestMatch!.policy.id) ?? [];
+      return covs.some((c) => c.coverage_code === 'huslejetab' && c.is_covered);
+    }).length;
+    // Hvis mindst halvdelen af forsikrede ejendomme har huslejetab,
+    // er driftstabsrisikoen i hovedsagen dækket — skip GAP-065.
+    if (medHuslejetab >= ejendomMatches.length / 2) return null;
+  }
+
   const ejendomCount = aktiver.filter((a) => a.type === 'ejendom').length;
   return {
     check_id: 'GAP-065',
     category: 'uforsikret',
-    severity: 'critical',
+    severity: 'warning',
     title: 'Ingen driftstabsforsikring',
     description:
-      `Udlejningsselskab med ${ejendomCount} ejendomme har ingen driftstabsforsikring. ` +
-      `Ved brand, vandskade eller storm der gør en ejendom ubeboelig mistes lejeindtægt ` +
-      `i genopbygningsperioden (typisk 6-18 måneder). Huslejetab dækker kun den direkte ` +
-      `lejeindtægt — driftstab dækker også øvrige faste udgifter.`,
+      `Udlejningsselskab med ${ejendomCount} ejendomme har ingen driftstabsforsikring og ` +
+      `mindre end halvdelen af ejendommene har huslejetab. Ved brand, vandskade eller storm ` +
+      `der gør en ejendom ubeboelig dækker huslejetab tabt lejeindtægt, mens driftstab også ` +
+      `omfatter virksomhedens øvrige faste udgifter (administration, renter, lønninger) ` +
+      `i genopbygningsperioden.`,
     recommendation:
-      'Tegn driftstabsforsikring der dækker tabt lejeindtægt og faste udgifter ' +
-      'i genopbygningsperioden for alle ejendomme.',
+      'Overvej driftstabsforsikring som supplement til huslejetab — særligt hvis virksomheden ' +
+      'har faste udgifter ud over lejeindtægterne der skal dækkes i genopbygningsperioden.',
     estimated_impact_dkk: null,
     source_data: {
       branche: branche.hovedbranche,
@@ -1043,7 +1075,7 @@ const checkPortfolioDriftstab: PortfolioCheckFn = ({
  * GAP-066: Lav præmie i forhold til porteføljestørrelse.
  * Warning hvis samlet præmie er suspekt lav ift. antal ejendomme.
  */
-const checkLavPraemie: PortfolioCheckFn = ({ policer, aktiver }) => {
+const _checkLavPraemie: PortfolioCheckFn = ({ policer, aktiver }) => {
   const ejendomCount = aktiver.filter((a) => a.type === 'ejendom').length;
   if (ejendomCount <= 1) return null;
 
@@ -1261,7 +1293,10 @@ const PORTFOLIO_CHECKS: readonly PortfolioCheckFn[] = [
   checkPortfolioDriftstab,
   checkPortfolioHuslejetab,
   checkKollektivBygning,
-  checkLavPraemie,
+  // GAP-066 (checkLavPraemie) er deaktiveret — produktet udtaler sig
+  // ikke om økonomi/præmie-niveau, kun om dækningsmangler. Hvis præmien
+  // er suspekt lav fordi ikke alle ejendomme er forsikrede, fanges det
+  // allerede af GAP-100 (uforsikret aktiv) på den enkelte ejendoms-række.
   checkPortfolioCyber,
   checkPortfolioRetshjaelp,
 ];

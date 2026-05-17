@@ -1481,18 +1481,11 @@ export default function PersonDetailPageClient({
       String(v.cvr).padStart(8, '0')
     );
 
-    /* Tilføj datterselskaber fra relatedCompanies */
-    const subsidieCvrs: string[] = [];
-    for (const [, related] of relatedCompanies) {
-      for (const r of related) {
-        if (r.aktiv) subsidieCvrs.push(String(r.cvr).padStart(8, '0'));
-      }
-    }
-
-    const uniqueCvrs = [...new Set([...ejerCvrs, ...andreVirksomhedCvrs, ...subsidieCvrs])].slice(
-      0,
-      30
-    );
+    // BIZZ-1588: Datterselskaber tilføjes IKKE til initial fetch — de triggede
+    // abort af igangværende fetch når relatedCompanies opdateres. Ejendomme
+    // ejet via subsidiaries dukker op via ejf_ejerskab BFE-opslag (server-side)
+    // og behøver ikke klient-side CVR-parameter.
+    const uniqueCvrs = [...new Set([...ejerCvrs, ...andreVirksomhedCvrs])].slice(0, 30);
 
     // BIZZ-264: Also fetch person's directly owned properties via enhedsNummer
     const personEnhedsNumre = data?.enhedsNummer ? [String(data.enhedsNummer)] : [];
@@ -1534,8 +1527,9 @@ export default function PersonDetailPageClient({
         .catch(() => {})
         .finally(() => setHandlerLoading(false));
     }
+    // BIZZ-1588: relatedCompanies fjernet fra deps — triggede abort+re-fetch
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [derived, relatedCompanies, fetchEjendommeProgressively]);
+  }, [derived, fetchEjendommeProgressively]);
 
   /**
    * BIZZ-597 Fase 2: Batch-enrichment når properties-tab aktiveres.

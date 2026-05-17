@@ -513,7 +513,7 @@ describe('runGapEngine — branchekode-checks', () => {
     expect(gaps.find((g) => g.check_id === 'GAP-050')).toBeUndefined();
   });
 
-  it('GAP-051: flagger højrisiko restaurant-branche', () => {
+  it('GAP-051 er deaktiveret (erstattet af GAP-067 på portefølje-niveau)', () => {
     const gaps = runGapEngine(
       makeInput({
         policy: makePolicy({ business_activity: 'Restaurant' }),
@@ -524,32 +524,16 @@ describe('runGapEngine — branchekode-checks', () => {
         },
       })
     );
-    const gap = gaps.find((g) => g.check_id === 'GAP-051');
-    expect(gap).toBeDefined();
-    expect(gap?.severity).toBe('critical');
+    expect(gaps.find((g) => g.check_id === 'GAP-051')).toBeUndefined();
   });
 
-  it('GAP-052: flagger CVR/police-mismatch', () => {
+  it('GAP-052 er deaktiveret (gav false-positives på ansvarsforsikringer)', () => {
     const gaps = runGapEngine(
       makeInput({
         policy: makePolicy({ business_activity: 'Kontorejendom' }),
         branche: {
           hovedbranche: '561010',
           hovedbranche_tekst: 'Restauranter og caféer',
-          bibrancher: [],
-        },
-      })
-    );
-    expect(gaps.find((g) => g.check_id === 'GAP-052')).toBeDefined();
-  });
-
-  it('GAP-052: flagger ikke ved overlap', () => {
-    const gaps = runGapEngine(
-      makeInput({
-        policy: makePolicy({ business_activity: 'Restaurant og café' }),
-        branche: {
-          hovedbranche: '561010',
-          hovedbranche_tekst: 'Restauranter',
           bibrancher: [],
         },
       })
@@ -703,7 +687,7 @@ describe('runPortfolioChecks — GAP-061: Huslejetab per ejendom', () => {
 });
 
 describe('runPortfolioChecks — GAP-062: Kollektiv bygningsforsikring', () => {
-  it('anbefaler kollektiv ved >3 ejendomme med mange policer', () => {
+  it('anbefaler kollektiv ved >3 ejendomme med mange policer (info-severity)', () => {
     const ejendomme: Aktiv[] = Array.from({ length: 6 }, (_, i) => ({
       type: 'ejendom' as const,
       label: `Ejendom ${i}`,
@@ -714,7 +698,10 @@ describe('runPortfolioChecks — GAP-062: Kollektiv bygningsforsikring', () => {
     const matches = ejendomme.map((a, i) => makeMatch(a, policer[i]));
 
     const gaps = runPortfolioChecks(makePortfolioInput({ aktiver: ejendomme, matches, policer }));
-    expect(gaps.find((g) => g.check_id === 'GAP-062')).toBeDefined();
+    const gap = gaps.find((g) => g.check_id === 'GAP-062');
+    expect(gap).toBeDefined();
+    // Kollektiv er en anbefaling — aldrig kritisk.
+    expect(gap?.severity).toBe('info');
   });
 
   it('flagger ikke ved <=3 ejendomme', () => {
@@ -792,10 +779,11 @@ describe('runPortfolioChecks — GAP-064: Retshjælp', () => {
 });
 
 describe('runPortfolioChecks — GAP-065: Driftstab for udlejning', () => {
-  it('flagger udlejningsselskab uden driftstab', () => {
+  it('flagger udlejningsselskab uden driftstab som warning', () => {
+    // Ingen matches → ingen huslejetab-overlap-undertrykkelse → fyrer som warning
     const pol = makePolicy();
     const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
-    coveragesByPolicy.set(pol.id, [makeCoverage('brand_el'), makeCoverage('huslejetab')]);
+    coveragesByPolicy.set(pol.id, [makeCoverage('brand_el')]);
 
     const gaps = runPortfolioChecks(
       makePortfolioInput({
@@ -815,8 +803,38 @@ describe('runPortfolioChecks — GAP-065: Driftstab for udlejning', () => {
     );
     const gap = gaps.find((g) => g.check_id === 'GAP-065');
     expect(gap).toBeDefined();
-    expect(gap?.severity).toBe('critical');
+    expect(gap?.severity).toBe('warning');
     expect(gap?.title).toContain('driftstab');
+  });
+
+  it('skipper når huslejetab dækker majoriteten af ejendomme (overlap-undgåelse)', () => {
+    const pol = makePolicy();
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    coveragesByPolicy.set(pol.id, [makeCoverage('brand_el'), makeCoverage('huslejetab')]);
+
+    const ejendomme: Aktiv[] = Array.from({ length: 4 }, (_, i) => ({
+      type: 'ejendom' as const,
+      label: `BFE ${i}`,
+      bfe: i,
+    }));
+    // Alle 4 ejendomme matchet til samme police der har huslejetab
+    const matches: MatchResult[] = ejendomme.map((a) => makeMatch(a, pol));
+
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        aktiver: ejendomme,
+        matches,
+        policer: [pol],
+        coveragesByPolicy,
+        branche: {
+          hovedbranche: '681020',
+          hovedbranche_tekst: 'Udlejning af ejendomme',
+          bibrancher: [],
+        },
+      })
+    );
+    // Huslejetab dækker 100% → driftstab undertrykkes for at undgå overlap med GAP-061
+    expect(gaps.find((g) => g.check_id === 'GAP-065')).toBeUndefined();
   });
 
   it('flagger ikke når driftstab-dækning eksisterer', () => {
@@ -962,35 +980,19 @@ describe('runPortfolioChecks — GAP-067: Branchekrav-aggregat', () => {
   });
 });
 
-describe('runPortfolioChecks — GAP-066: Lav præmie', () => {
-  it('flagger ekstremt lav præmie per ejendom', () => {
+describe('runPortfolioChecks — GAP-066: Lav præmie (deaktiveret)', () => {
+  it('GAP-066 fyrer aldrig — produktet udtaler sig ikke om økonomi', () => {
+    // Selv med ekstremt lav præmie (16.176 kr for 17 ejendomme) skal
+    // GAP-066 ikke fyre. Uforsikrede ejendomme dækkes af GAP-100 i
+    // stedet, så vi har ikke behov for økonomi-baseret rapportering.
     const ejendomme: Aktiv[] = Array.from({ length: 17 }, (_, i) => ({
       type: 'ejendom' as const,
       label: `BFE ${i}`,
       bfe: i,
     }));
-    // 16.176 kr for 17 ejendomme = ~951 kr/ejendom
     const gaps = runPortfolioChecks(
       makePortfolioInput({
         policer: [makePolicy({ annual_premium_dkk: 16176 })],
-        aktiver: ejendomme,
-      })
-    );
-    const gap = gaps.find((g) => g.check_id === 'GAP-066');
-    expect(gap).toBeDefined();
-    expect(gap?.severity).toBe('critical');
-  });
-
-  it('flagger ikke ved normal præmie per ejendom', () => {
-    const ejendomme: Aktiv[] = Array.from({ length: 5 }, (_, i) => ({
-      type: 'ejendom' as const,
-      label: `BFE ${i}`,
-      bfe: i,
-    }));
-    // 50.000 kr for 5 ejendomme = 10.000 kr/ejendom
-    const gaps = runPortfolioChecks(
-      makePortfolioInput({
-        policer: [makePolicy({ annual_premium_dkk: 50000 })],
         aktiver: ejendomme,
       })
     );

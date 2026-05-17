@@ -1044,11 +1044,12 @@ function DiagramForce({
         // Virksomheds-ejet ejendom: placer under virksomheden
         depths.set(node.id, Math.min(...companyParentDepths) + 0.5);
       } else if (allParentDepths.length > 0) {
-        // BIZZ-1286: Personligt ejet ejendom — placer på eget niveau UNDER personen.
-        // Bruger personDepth + 1.5 i stedet for + 0.5 for at adskille
-        // personlige ejendomme fra person-noden (undgår overlap).
+        // BIZZ-1546: Personligt ejet ejendom — placer MELLEM person og virksomheder.
+        // personDepth + 0.5 giver depth -0.5 (person er -1, virksomheder er 0),
+        // så ejendomme vises OVER virksomheds-rækken. MIN_PERSON_PROP_GAP i
+        // nodeYMap sikrer tilstrækkelig vertikal afstand til person-noden.
         const personParentD = Math.min(...allParentDepths);
-        depths.set(node.id, personParentD + 1.5);
+        depths.set(node.id, personParentD + 0.5);
       }
     }
 

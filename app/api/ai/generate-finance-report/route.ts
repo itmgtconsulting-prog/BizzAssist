@@ -21,6 +21,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { resolveTenantId } from '@/lib/api/auth';
 import { assertAiAllowed } from '@/app/lib/aiGate';
+import { recordAiUsage } from '@/app/lib/aiTracking';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
 
@@ -291,8 +292,28 @@ Skriv rapporten i "${body.tone}" tone. Husk disclaimer nederst med dagens dato.`
           }
         }
 
+        // BIZZ-1601: Hent usage fra finalMessage og send til klient + track
+        const final = await claudeStream.finalMessage();
+        const inputTokens = final.usage?.input_tokens ?? 0;
+        const outputTokens = final.usage?.output_tokens ?? 0;
+        sse(
+          JSON.stringify({
+            usage: { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens },
+          })
+        );
+
         sse('[DONE]');
         controller.close();
+
+        // Fire-and-forget: persist token usage
+        void recordAiUsage({
+          userId: auth.userId,
+          tenantId: auth.tenantId,
+          route: 'ai.generate-finance-report',
+          inputTokens,
+          outputTokens,
+          model: 'claude-sonnet-4-6',
+        });
       } catch (err) {
         logger.error('[ai/generate-finance-report] Claude fejl:', err);
         sse(JSON.stringify({ error: 'Ekstern API fejl' }));

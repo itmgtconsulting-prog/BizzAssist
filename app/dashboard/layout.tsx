@@ -99,6 +99,11 @@ const SIDEBAR_MAX = 480;
 /** Bredde når sidebar er foldet ind (ikoner only) */
 const SIDEBAR_COLLAPSED = 56;
 
+/** BIZZ-1610: Chat-panel resize constraints */
+const CHAT_PANEL_DEFAULT = 420;
+const CHAT_PANEL_MIN = 320;
+const CHAT_PANEL_MAX = 800;
+
 /**
  * Outer wrapper that provides SubscriptionContext to the entire dashboard.
  * Delegates all rendering to DashboardLayoutInner.
@@ -443,6 +448,10 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   const [sidebarBredde, setSidebarBredde] = useState(SIDEBAR_DEFAULT);
   const sidebarTrækStart = useRef<{ x: number; bredde: number } | null>(null);
 
+  /** BIZZ-1610: Chat-panel bredde — kan trækkes af brugeren */
+  const [chatPanelBredde, setChatPanelBredde] = useState(CHAT_PANEL_DEFAULT);
+  const chatTrækStart = useRef<{ x: number; bredde: number } | null>(null);
+
   /** Start sidebar-resize ved mousedown på bjælken */
   const onSidebarDragStart = useCallback(
     (e: React.MouseEvent) => {
@@ -465,6 +474,31 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
       document.addEventListener('mouseup', onUp);
     },
     [sidebarBredde]
+  );
+
+  /** BIZZ-1610: Start chat-panel resize ved mousedown på venstre kant */
+  const onChatDragStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      chatTrækStart.current = { x: e.clientX, bredde: chatPanelBredde };
+
+      const onMove = (ev: MouseEvent) => {
+        if (!chatTrækStart.current) return;
+        // Panel er right-aligned — drag til venstre øger bredden
+        const delta = chatTrækStart.current.x - ev.clientX;
+        setChatPanelBredde(
+          Math.min(CHAT_PANEL_MAX, Math.max(CHAT_PANEL_MIN, chatTrækStart.current.bredde + delta))
+        );
+      };
+      const onUp = () => {
+        chatTrækStart.current = null;
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    },
+    [chatPanelBredde]
   );
 
   // ── Global søgning ────────────────────────────────────────────────────────
@@ -1274,29 +1308,42 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
       )}
       {/* Drawer panel — never unmounted, only visually hidden */}
       <div
-        className={`fixed top-0 right-0 h-full z-40 w-full sm:w-[420px] bg-[#0f172a] border-l border-white/10 shadow-2xl flex flex-col transform transition-transform duration-300 ease-in-out ${
+        className={`fixed top-0 right-0 h-full z-40 w-full bg-[#0f172a] border-l border-white/10 shadow-2xl flex flex-row transform transition-transform duration-300 ease-in-out ${
           chatCtx.drawerOpen && pathname !== '/dashboard/chat'
             ? 'translate-x-0'
             : 'translate-x-full pointer-events-none'
         }`}
+        style={{ width: `min(100vw, ${chatPanelBredde}px)` }}
         aria-hidden={!chatCtx.drawerOpen || pathname === '/dashboard/chat'}
       >
-        <ErrorBoundary
-          lang={lang}
-          fallback={
-            <div className="p-4 text-center">
-              <p className="text-sm text-slate-400 mb-3">Chat er midlertidigt utilgængelig</p>
-              <button
-                onClick={() => window.location.reload()}
-                className="text-xs text-blue-400 hover:text-blue-300 border border-slate-700 rounded-lg px-3 py-1.5 transition-colors"
-              >
-                Prøv igen
-              </button>
-            </div>
-          }
+        {/* BIZZ-1610: Resize-handle venstre kant */}
+        <div
+          className="hidden sm:flex w-1.5 cursor-col-resize items-center justify-center group hover:bg-blue-500/20 transition-colors shrink-0"
+          title="Træk for at justere chatbredde"
+          onMouseDown={onChatDragStart}
+          role="separator"
+          aria-label="Træk for at justere chatbredde"
         >
-          <AIChatPanel />
-        </ErrorBoundary>
+          <div className="w-0.5 h-8 rounded-full bg-slate-700 group-hover:bg-blue-400 transition-colors" />
+        </div>
+        <div className="flex-1 flex flex-col min-w-0">
+          <ErrorBoundary
+            lang={lang}
+            fallback={
+              <div className="p-4 text-center">
+                <p className="text-sm text-slate-400 mb-3">Chat er midlertidigt utilgængelig</p>
+                <button
+                  onClick={() => window.location.reload()}
+                  className="text-xs text-blue-400 hover:text-blue-300 border border-slate-700 rounded-lg px-3 py-1.5 transition-colors"
+                >
+                  Prøv igen
+                </button>
+              </div>
+            }
+          >
+            <AIChatPanel />
+          </ErrorBoundary>
+        </div>
       </div>
 
       {/* BIZZ-808: Support chat popup — controlled af supportOpen state,

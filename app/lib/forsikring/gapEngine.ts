@@ -85,10 +85,20 @@ function parseDate(s: string | null): Date | null {
 type CheckFn = (input: GapEngineInput) => DetectedGap | null;
 
 /**
+ * BIZZ-1609: Helper — returner true hvis aktivet IKKE er en ejendom.
+ * Bygningsforsikrings-checks skal skippes for virksomheder, biler og bestyrelsesposter.
+ */
+function isNonEjendom(input: GapEngineInput): boolean {
+  return !!input.asset && input.asset.type !== 'ejendom';
+}
+
+/**
  * GAP-001: BBR-areal afviger > 15% fra police.
  * Udløser bagudregulering af præmie hos forsikringsselskab.
  */
-const checkBbrAreaMismatch: CheckFn = ({ policy, bbr }) => {
+const checkBbrAreaMismatch: CheckFn = (input) => {
+  if (isNonEjendom(input)) return null;
+  const { policy, bbr } = input;
   if (!bbr || policy.building_area_m2 === null || bbr.bebygget_areal_m2 === null) {
     return null;
   }
@@ -130,8 +140,10 @@ function makeMissingCoverageCheck(
   severity: 'info' | 'warning' | 'critical',
   description: string
 ): CheckFn {
-  return ({ coverages }) => {
-    if (hasCoverage(coverages, code)) return null;
+  return (input) => {
+    // BIZZ-1609: Bygningsdæknings-checks kun relevante for ejendomme
+    if (isNonEjendom(input)) return null;
+    if (hasCoverage(input.coverages, code)) return null;
     return {
       check_id: checkId,
       category: 'daekning',
@@ -165,6 +177,7 @@ const checkMissingSanitet = makeMissingCoverageCheck(
 
 /** GAP-012: Mangler insekt/svamp-dækning (kritisk for ældre bygninger) */
 const checkMissingInsektSvamp: CheckFn = (input) => {
+  if (isNonEjendom(input)) return null;
   if (hasCoverage(input.coverages, 'insekt_svamp')) return null;
   const buildYear = input.policy.building_year_built;
   // Skærp severity for bygninger >50 år
@@ -287,7 +300,9 @@ const checkRenewalUpcoming: CheckFn = ({ policy, asOfDate }) => {
 };
 
 /** GAP-040: BBR-anvendelse vs. police-virksomhedsart */
-const checkBuildingUseMismatch: CheckFn = ({ policy, bbr }) => {
+const checkBuildingUseMismatch: CheckFn = (input) => {
+  if (isNonEjendom(input)) return null;
+  const { policy, bbr } = input;
   if (!bbr || !bbr.anvendelse_label || !policy.business_activity) return null;
   const bbrLower = bbr.anvendelse_label.toLowerCase();
   const policeLower = policy.business_activity.toLowerCase();

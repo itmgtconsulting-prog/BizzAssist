@@ -2894,6 +2894,9 @@ function DiagramForce({
             <title>
               {node.label}
               {isCeased ? ' (Ophørt)' : ''}
+              {node.label === 'Navnebeskyttet ejer'
+                ? ' — Ejerens navn er beskyttet iht. CPR-lovens §28. Ejerskabet er registreret men navnet kan ikke vises.'
+                : ''}
               {node.sublabel ? ` — ${node.sublabel}` : ''}
             </title>
             <rect
@@ -2941,7 +2944,28 @@ function DiagramForce({
 
               return (
                 <>
-                  {isPerson ? (
+                  {isPerson && node.label === 'Navnebeskyttet ejer' ? (
+                    /* BIZZ-1587: Lås-ikon for navnebeskyttede ejere */
+                    <g transform={`translate(${x + 14}, ${pos.y - 6})`}>
+                      <rect
+                        x={2}
+                        y={5}
+                        width={8}
+                        height={7}
+                        rx={1.5}
+                        fill="none"
+                        stroke="rgba(250,204,21,0.7)"
+                        strokeWidth={1.2}
+                      />
+                      <path
+                        d="M3.5 5V3.5a2.5 2.5 0 0 1 5 0V5"
+                        fill="none"
+                        stroke="rgba(250,204,21,0.7)"
+                        strokeWidth={1.2}
+                        strokeLinecap="round"
+                      />
+                    </g>
+                  ) : isPerson ? (
                     <circle
                       cx={x + 20}
                       cy={pos.y}
@@ -3033,7 +3057,18 @@ function DiagramForce({
                           >
                             {node.label.length > 44 ? node.label.slice(0, 44) + '…' : node.label}
                           </text>
-                          {node.personRolle ? (
+                          {/* BIZZ-1587: Info-tekst for navnebeskyttede ejere */}
+                          {node.label === 'Navnebeskyttet ejer' ? (
+                            <text
+                              x={x + 30}
+                              y={topY + 23}
+                              fill="rgba(250,204,21,0.75)"
+                              fontSize="8"
+                              className="pointer-events-none"
+                            >
+                              Navn skjult iht. CPR-loven §28
+                            </text>
+                          ) : node.personRolle ? (
                             <text
                               x={x + 30}
                               y={topY + 23}

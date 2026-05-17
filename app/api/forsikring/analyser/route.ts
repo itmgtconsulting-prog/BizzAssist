@@ -255,30 +255,50 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     let virksomhedsform: string | null = null;
     if (virksomhedAktiver.length > 0) {
       try {
+        // Hent core CVR-data først (branche + virksomhedsform er kerne-felter
+        // der findes i alle miljøer). Bibrancher hentes separat fordi de er
+        // tilføjet af migration 104 og ikke nødvendigvis applied overalt.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: virkData } = await (admin as any)
+        const { data: coreData } = await (admin as any)
           .from('cvr_virksomhed')
-          .select(
-            'branche_kode, branche_tekst, bibranche1_kode, bibranche1_tekst, bibranche2_kode, bibranche2_tekst, bibranche3_kode, bibranche3_tekst, virksomhedsform'
-          )
+          .select('branche_kode, branche_tekst, virksomhedsform')
           .eq('cvr', virksomhedAktiver[0].cvr)
           .maybeSingle();
-        if (virkData) {
-          const v = virkData as Record<string, string | null>;
+
+        if (coreData) {
+          const core = coreData as Record<string, string | null>;
+          virksomhedsform = core.virksomhedsform ?? null;
+
+          // Forsøg at hente bibrancher (kan fejle hvis migration 104 ikke applied)
           const bibrancher: Array<{ kode: string; tekst: string | null }> = [];
-          for (let i = 1; i <= 3; i++) {
-            const kode = v[`bibranche${i}_kode`];
-            if (kode) bibrancher.push({ kode, tekst: v[`bibranche${i}_tekst`] ?? null });
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: biData } = await (admin as any)
+              .from('cvr_virksomhed')
+              .select(
+                'bibranche1_kode, bibranche1_tekst, bibranche2_kode, bibranche2_tekst, bibranche3_kode, bibranche3_tekst'
+              )
+              .eq('cvr', virksomhedAktiver[0].cvr)
+              .maybeSingle();
+            if (biData) {
+              const v = biData as Record<string, string | null>;
+              for (let i = 1; i <= 3; i++) {
+                const kode = v[`bibranche${i}_kode`];
+                if (kode) bibrancher.push({ kode, tekst: v[`bibranche${i}_tekst`] ?? null });
+              }
+            }
+          } catch {
+            /* bibrancher-kolonner findes ikke i dette miljø — fortsæt uden */
           }
+
           brancheData = {
-            hovedbranche: v.branche_kode ?? null,
-            hovedbranche_tekst: v.branche_tekst ?? null,
+            hovedbranche: core.branche_kode ?? null,
+            hovedbranche_tekst: core.branche_tekst ?? null,
             bibrancher,
           };
-          virksomhedsform = v.virksomhedsform ?? null;
         }
-      } catch {
-        /* best-effort */
+      } catch (err) {
+        logger.warn('[forsikring/analyser] Branche-fetch fejlede:', err);
       }
     }
 

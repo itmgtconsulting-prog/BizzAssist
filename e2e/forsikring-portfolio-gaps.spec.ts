@@ -25,12 +25,18 @@ import { AUTH_STATE_PATH } from './helpers';
 const BELVEDERE_CVR = '24301117';
 const BELVEDERE_NAVN = 'BELVEDERE EJENDOMME A/S';
 
-/** Portefølje-check-IDs der forventes på Belvedere */
+/**
+ * Portefølje-check-IDs der forventes på Belvedere uanset miljø.
+ *
+ * NOTE: GAP-066 (lav præmie) afhænger af de faktiske policy-præmier og
+ * er derfor IKKE strikt påkrævet — preview-data har 122k kr samlet for
+ * 17 ejendomme (~7k/ejendom), over threshold på 3k. Lokalt miljø med
+ * 952 kr-policen ville derimod udløse GAP-066.
+ */
 const FORVENTEDE_PORTFOLIO_GAPS = [
   'GAP-060', // D&O mangler for A/S
-  'GAP-062', // Kollektiv bygningsforsikring anbefales
-  'GAP-066', // Ekstremt lav præmie
-  'GAP-067', // Branchekrav-aggregat
+  'GAP-062', // Kollektiv bygningsforsikring anbefales (>3 ejendomme)
+  'GAP-067', // Branchekrav-aggregat (huslejetab, driftstab, hus_grundejer_ansvar)
 ];
 
 test.beforeEach(async ({}, testInfo) => {

@@ -23,6 +23,7 @@ import { z } from 'zod';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
 import { tlPost } from '@/app/lib/tlFetch';
+import { fetchSenesteAendring as s2sFetchSenesteAendring } from '@/app/lib/s2sOperations';
 import { parseQuery } from '@/app/lib/validate';
 
 export const runtime = 'nodejs';
@@ -75,7 +76,26 @@ export async function GET(req: NextRequest): Promise<NextResponse<SenesteAendrin
     );
   }
 
-  // Byg ejendomIdentifikator efter Tinglysning JSON-format
+  // BIZZ-1526: S2S XML-first med REST-fallback (kun for BFE-opslag)
+  const useS2S = process.env.TL_SENESTEAENDRING_USE_XML !== 'false';
+
+  if (useS2S && bfe) {
+    try {
+      const dato = await s2sFetchSenesteAendring(Number(bfe));
+      return NextResponse.json(
+        { aendringsDato: dato },
+        { status: 200, headers: { 'Cache-Control': 'private, max-age=300' } }
+      );
+    } catch (err) {
+      logger.warn(
+        '[senesteaendring] S2S fejlede, falder tilbage til REST:',
+        err instanceof Error ? err.message : err
+      );
+      // Fall through to REST
+    }
+  }
+
+  // REST-fallback (eller ejerlav+matrikel som S2S ikke understøtter)
   const ejendomIdentifikator: Record<string, unknown> = bfe
     ? { BestemtFastEjendomNummer: bfe }
     : {
@@ -94,7 +114,6 @@ export async function GET(req: NextRequest): Promise<NextResponse<SenesteAendrin
     const res = await tlPost('/tinglysningsobjekter/senesteaendring', requestBody);
 
     if (res.status === 404) {
-      // Tinglysning kender ikke objektet — det er ikke en fejl, blot ingen data
       return NextResponse.json(
         { aendringsDato: null },
         { status: 200, headers: { 'Cache-Control': 'private, max-age=600' } }
@@ -112,12 +131,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<SenesteAendrin
     const aendringsDato = json?.SenesteAendringTinglysningsobjektHentResultat?.AendringsDato;
     return NextResponse.json(
       { aendringsDato: aendringsDato ?? null },
-      {
-        status: 200,
-        // 5 min cache — aendringer er sjældne men vi vil ikke aggressivt
-        // poll'e tinglysning for samme bfe
-        headers: { 'Cache-Control': 'private, max-age=300' },
-      }
+      { status: 200, headers: { 'Cache-Control': 'private, max-age=300' } }
     );
   } catch (err) {
     logger.error('[senesteaendring] Fejl:', err instanceof Error ? err.message : err);

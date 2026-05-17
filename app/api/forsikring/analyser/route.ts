@@ -547,8 +547,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
     }
 
-    // BIZZ-1404: Link dokumenter til analysen via junction-tabel
-    const allDocIds = [...(document_ids ?? []), ...(new_document_ids ?? [])];
+    // BIZZ-1404: Link dokumenter til analysen via junction-tabel.
+    // Dedup via Set så samme document_id ikke insertes to gange — frontend
+    // duplikat-detektion auto-vælger eksisterende doc_id når en fil med
+    // samme navn uploades, hvilket kan give overlap mellem document_ids
+    // og new_document_ids.
+    const allDocIds = Array.from(
+      new Set<string>([...(document_ids ?? []), ...(new_document_ids ?? [])])
+    );
     if (allDocIds.length > 0) {
       const docLinks = allDocIds.map((docId) => ({
         tenant_id: auth.tenantId,

@@ -619,7 +619,7 @@ function AnalyseSection({
     Array<{
       id: string;
       fileName: string;
-      status: 'uploading' | 'parsing' | 'done' | 'failed';
+      status: 'uploading' | 'parsing' | 'done' | 'failed' | 'skipped_duplicate';
       docId?: string;
     }>
   >([]);
@@ -680,64 +680,95 @@ function AnalyseSection({
   /** BIZZ-1439: Upload filer inde i wizard — tracker doc IDs */
   const onWizardUpload = useCallback(
     async (files: FileList) => {
+      // Duplikat-detektion: byg map fra filnavn → existing doc_id baseret på
+      // previousDocs (kundens tidligere uploadede dokumenter). Vi normaliserer
+      // til lowercase + trim så små variationer i filnavn ikke spoiler match.
+      const existingByName = new Map<string, string>();
+      for (const doc of previousDocs) {
+        existingByName.set(doc.original_name.toLowerCase().trim(), doc.id);
+      }
+
       // BIZZ-1439: Parallel upload+parse — alle filer starter samtidigt
       const fileArray = Array.from(files);
       const jobs = fileArray.map((file) => {
         const jobId = `wiz-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const existingDocId = existingByName.get(file.name.toLowerCase().trim());
+
+        if (existingDocId) {
+          // Duplikat fundet — auto-vælg den eksisterende og spring upload over.
+          // Sparer Claude-tokens + undgår duplikate policer i analysen.
+          setWizardUploads((prev) => [
+            ...prev,
+            {
+              id: jobId,
+              fileName: file.name,
+              status: 'skipped_duplicate',
+              docId: existingDocId,
+            },
+          ]);
+          setSelectedDocIds((prev) => new Set([...prev, existingDocId]));
+          return { jobId, file, skipped: true };
+        }
+
         setWizardUploads((prev) => [
           ...prev,
           { id: jobId, fileName: file.name, status: 'uploading' },
         ]);
-        return { jobId, file };
+        return { jobId, file, skipped: false };
       });
 
       await Promise.allSettled(
-        jobs.map(async ({ jobId, file }) => {
-          try {
-            const formData = new FormData();
-            formData.append('file', file);
-            const upRes = await fetch('/api/forsikring/upload', { method: 'POST', body: formData });
-            if (!upRes.ok) throw new Error('Upload failed');
-            const upJson = (await upRes.json()) as { document: { id: string } };
-            const docId = upJson.document.id;
-
-            setWizardUploads((prev) =>
-              prev.map((j) => (j.id === jobId ? { ...j, status: 'parsing' } : j))
-            );
-            const parseRes = await fetch('/api/forsikring/parse', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ document_id: docId }),
-            });
-            if (!parseRes.ok) throw new Error('Parse failed');
-
-            // BIZZ-1447: Opdater token-forbrug i UI
+        jobs
+          .filter((j) => !j.skipped)
+          .map(async ({ jobId, file }) => {
             try {
-              const parseData = await parseRes.json();
-              if (parseData.tokenUsage) {
-                const totalTokens =
-                  (parseData.tokenUsage.input ?? 0) + (parseData.tokenUsage.output ?? 0);
-                if (totalTokens > 0) addTokenUsage(totalTokens);
-              }
-            } catch {
-              /* non-critical */
-            }
+              const formData = new FormData();
+              formData.append('file', file);
+              const upRes = await fetch('/api/forsikring/upload', {
+                method: 'POST',
+                body: formData,
+              });
+              if (!upRes.ok) throw new Error('Upload failed');
+              const upJson = (await upRes.json()) as { document: { id: string } };
+              const docId = upJson.document.id;
 
-            setWizardUploads((prev) =>
-              prev.map((j) => (j.id === jobId ? { ...j, status: 'done', docId } : j))
-            );
-            // BIZZ-1442: Auto-check nye uploads
-            setSelectedDocIds((prev) => new Set([...prev, docId]));
-          } catch {
-            setWizardUploads((prev) =>
-              prev.map((j) => (j.id === jobId ? { ...j, status: 'failed' } : j))
-            );
-          }
-        })
+              setWizardUploads((prev) =>
+                prev.map((j) => (j.id === jobId ? { ...j, status: 'parsing' } : j))
+              );
+              const parseRes = await fetch('/api/forsikring/parse', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ document_id: docId }),
+              });
+              if (!parseRes.ok) throw new Error('Parse failed');
+
+              // BIZZ-1447: Opdater token-forbrug i UI
+              try {
+                const parseData = await parseRes.json();
+                if (parseData.tokenUsage) {
+                  const totalTokens =
+                    (parseData.tokenUsage.input ?? 0) + (parseData.tokenUsage.output ?? 0);
+                  if (totalTokens > 0) addTokenUsage(totalTokens);
+                }
+              } catch {
+                /* non-critical */
+              }
+
+              setWizardUploads((prev) =>
+                prev.map((j) => (j.id === jobId ? { ...j, status: 'done', docId } : j))
+              );
+              // BIZZ-1442: Auto-check nye uploads
+              setSelectedDocIds((prev) => new Set([...prev, docId]));
+            } catch {
+              setWizardUploads((prev) =>
+                prev.map((j) => (j.id === jobId ? { ...j, status: 'failed' } : j))
+              );
+            }
+          })
       );
       onRefresh();
     },
-    [onRefresh]
+    [onRefresh, previousDocs]
   );
 
   /** Hent sagsliste ved mount */
@@ -837,14 +868,21 @@ function AnalyseSection({
         const sagData = (await sagRes.json()) as { sag?: { id: string } };
         if (sagData.sag?.id) onSagChange(sagData.sag.id);
       }
-      // BIZZ-1440: Samle ALLE doc IDs (genbrugte + wizard-uploads + parent-uploads)
+      // BIZZ-1440: Samle ALLE doc IDs (genbrugte + wizard-uploads + parent-uploads).
+      // Dedup via Set så samme doc_id ikke sendes to gange — duplikat-detektion
+      // i wizard-upload (skipped_duplicate) auto-tilføjer existing doc_id til
+      // selectedDocIds, hvilket kan overlappe med wizardDocIds for almindelige
+      // uploads. Junction-tabellen forsikring_analyse_documents har unique
+      // constraint, så duplikerede inserts ville fejle.
       const reusedDocIds = [...selectedDocIds];
       const wizardDocIds = wizardUploads
         .filter((u) => u.status === 'done' && u.docId)
         .map((u) => u.docId!);
-      const allNewDocIds = [...wizardDocIds, ...newDocumentIds];
+      const allDocIds = Array.from(
+        new Set<string>([...reusedDocIds, ...wizardDocIds, ...newDocumentIds])
+      );
       // Hvis wizard er åben, send altid scoped doc IDs — aldrig fald tilbage til alle policer
-      const hasAnyDocs = reusedDocIds.length > 0 || allNewDocIds.length > 0;
+      const hasAnyDocs = allDocIds.length > 0;
       const res = await fetch('/api/forsikring/analyser', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -853,9 +891,9 @@ function AnalyseSection({
           kunde_id: selected.id,
           kunde_navn: selected.navn,
           ...(asOfDate ? { as_of_date: asOfDate } : {}),
-          // BIZZ-1443: Send alle valgte doc IDs samlet — reused + nye
+          // BIZZ-1443: Send alle valgte doc IDs samlet — reused + nye, dedupet
           // Hvis ingen er valgt, send IKKE document_ids → backend bruger alle policer
-          ...(hasAnyDocs ? { document_ids: [...reusedDocIds, ...allNewDocIds] } : {}),
+          ...(hasAnyDocs ? { document_ids: allDocIds } : {}),
         }),
       });
       if (res.ok) {
@@ -1237,18 +1275,34 @@ function AnalyseSection({
                 {wizardUploads.map((job) => (
                   <div
                     key={job.id}
-                    className="flex items-center gap-2 text-xs px-2 py-1 bg-white/3 rounded"
+                    className={`flex items-center gap-2 text-xs px-2 py-1 rounded ${
+                      job.status === 'skipped_duplicate'
+                        ? 'bg-amber-500/10 border border-amber-500/20'
+                        : 'bg-white/3'
+                    }`}
                   >
                     {job.status === 'done' ? (
                       <CheckCircle2 size={12} className="text-emerald-400" />
+                    ) : job.status === 'skipped_duplicate' ? (
+                      <AlertCircle size={12} className="text-amber-400" />
                     ) : job.status === 'failed' ? (
                       <XCircle size={12} className="text-red-400" />
                     ) : (
                       <Loader2 size={12} className="animate-spin text-blue-400" />
                     )}
                     <span className="text-white truncate">{job.fileName}</span>
-                    <span className="text-slate-500 ml-auto">
-                      {job.status === 'done' ? '✓' : job.status}
+                    <span
+                      className={`ml-auto ${
+                        job.status === 'skipped_duplicate' ? 'text-amber-300' : 'text-slate-500'
+                      }`}
+                    >
+                      {job.status === 'done'
+                        ? '✓'
+                        : job.status === 'skipped_duplicate'
+                          ? da
+                            ? 'Findes allerede — bruger eksisterende'
+                            : 'Already exists — using existing'
+                          : job.status}
                     </span>
                   </div>
                 ))}
@@ -1294,8 +1348,8 @@ function AnalyseSection({
                 <>
                   <ShieldCheck size={14} />
                   {da
-                    ? `Start analyse${selectedDocIds.size > 0 ? ` (${selectedDocIds.size} genbrugte` + (wizardUploads.filter((u) => u.status === 'done').length > 0 ? ` + ${wizardUploads.filter((u) => u.status === 'done').length} nye)` : ')') : wizardUploads.filter((u) => u.status === 'done').length > 0 ? ` (${wizardUploads.filter((u) => u.status === 'done').length} nye)` : ''}`
-                    : `Start analysis${selectedDocIds.size > 0 ? ` (${selectedDocIds.size} reused)` : ''}`}
+                    ? `Start analyse${selectedDocIds.size > 0 ? ` (${selectedDocIds.size} dokument${selectedDocIds.size === 1 ? '' : 'er'})` : ''}`
+                    : `Start analysis${selectedDocIds.size > 0 ? ` (${selectedDocIds.size} document${selectedDocIds.size === 1 ? '' : 's'})` : ''}`}
                 </>
               )}
             </button>

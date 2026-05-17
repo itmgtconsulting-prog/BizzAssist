@@ -325,6 +325,22 @@ export async function GET(req: NextRequest) {
     }
 
     if (res.status !== 200) {
+      // BIZZ-1615: Fallback til persistent cache ved rate-limit eller fejl
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: cached } = await (createAdminClient() as any)
+          .from('tinglysning_summarisk_cache')
+          .select('payload')
+          .eq('uuid', uuid)
+          .single();
+        if (cached?.payload) {
+          return NextResponse.json(cached.payload, {
+            headers: { 'X-Cache-Hit': 'supabase-fallback' },
+          });
+        }
+      } catch {
+        /* cache miss — return empty */
+      }
       return NextResponse.json({
         ejere: [],
         haeftelser: [],
@@ -1325,21 +1341,38 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    // BIZZ-1615: Persist til summarisk_cache (fire-and-forget) for rate-limit fallback
+    const fullResult = {
+      ejere,
+      haeftelser,
+      servitutter,
+      bilagRefs,
+      indskannedeAkterNavne,
+      tingbogsattest,
+      fejl: null,
+    };
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      void (createAdminClient() as any)
+        .from('tinglysning_summarisk_cache')
+        .upsert(
+          {
+            uuid,
+            bfe_nummer: hovedBfe ? Number(hovedBfe) : null,
+            payload: fullResult,
+            fetched_at: new Date().toISOString(),
+          },
+          { onConflict: 'uuid' }
+        )
+        .then(() => {});
+    } catch {
+      /* cache write non-critical */
+    }
+
     // Full response (default — backward compatible)
-    return NextResponse.json(
-      {
-        ejere,
-        haeftelser,
-        servitutter,
-        bilagRefs,
-        indskannedeAkterNavne,
-        tingbogsattest,
-        fejl: null,
-      },
-      {
-        headers: { 'Cache-Control': 'public, s-maxage=3600' },
-      }
-    );
+    return NextResponse.json(fullResult, {
+      headers: { 'Cache-Control': 'public, s-maxage=3600' },
+    });
   } catch (err) {
     // Log for server-side debugging, but never expose err.message to the client.
     logger.error('[tinglysning/summarisk] Fejl:', err instanceof Error ? err.message : String(err));

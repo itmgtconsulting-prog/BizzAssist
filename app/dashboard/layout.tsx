@@ -444,8 +444,12 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
       .catch(() => {});
   }, [accessGranted]);
 
-  /** Sidebarbredde — kan trækkes af brugeren */
-  const [sidebarBredde, setSidebarBredde] = useState(SIDEBAR_DEFAULT);
+  /** Sidebarbredde — kan trækkes af brugeren. BIZZ-1616: Persisteres i localStorage. */
+  const [sidebarBredde, setSidebarBredde] = useState(() => {
+    if (typeof window === 'undefined') return SIDEBAR_DEFAULT;
+    const saved = localStorage.getItem('bizzassist-sidebar-width');
+    return saved ? Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Number(saved))) : SIDEBAR_DEFAULT;
+  });
   const sidebarTrækStart = useRef<{ x: number; bredde: number } | null>(null);
 
   /** BIZZ-1610: Chat-panel bredde — kan trækkes af brugeren */
@@ -466,6 +470,12 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
         );
       };
       const onUp = () => {
+        // BIZZ-1616: Persist sidebar-bredde
+        try {
+          localStorage.setItem('bizzassist-sidebar-width', String(sidebarBredde));
+        } catch {
+          /* */
+        }
         sidebarTrækStart.current = null;
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
@@ -798,13 +808,15 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
           {/* AI Chat panel moved to topbar drawer — see AIChatDrawer below */}
         </aside>
 
-        {/* Resize-bjælke — kun desktop */}
+        {/* BIZZ-1616: Resize-bjælke — bredere hitarea (w-3) + tydeligere visuelt */}
         <div
           onMouseDown={onSidebarDragStart}
-          className="hidden lg:flex w-1.5 cursor-col-resize items-center justify-center group hover:bg-blue-500/20 transition-colors shrink-0"
+          className="hidden lg:flex w-3 cursor-col-resize items-center justify-center group hover:bg-blue-500/10 transition-colors shrink-0"
           title={s.resizeHandle}
+          role="separator"
+          aria-label={s.resizeHandle}
         >
-          <div className="w-0.5 h-10 rounded-full bg-slate-700 group-hover:bg-blue-400 transition-colors" />
+          <div className="w-0.5 h-12 rounded-full bg-slate-700/50 group-hover:bg-blue-400 group-hover:w-1 transition-all" />
         </div>
       </div>
 

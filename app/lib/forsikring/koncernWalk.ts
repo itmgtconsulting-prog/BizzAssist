@@ -93,7 +93,7 @@ async function walkVirksomhed(
   const { data: virk } = await (admin as ReturnType<typeof createAdminClient>)
     .from('cvr_virksomhed')
     .select('navn, branche_tekst')
-    .eq('cvr_nummer', cvr)
+    .eq('cvr', cvr)
     .maybeSingle();
   aktiver.push({
     type: 'virksomhed',

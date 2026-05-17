@@ -259,16 +259,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         const { data: virkData } = await (admin as any)
           .from('cvr_virksomhed')
           .select(
-            'branche_kode, branche_tekst, bibranche_1_kode, bibranche_1_tekst, bibranche_2_kode, bibranche_2_tekst, bibranche_3_kode, bibranche_3_tekst, virksomhedsform'
+            'branche_kode, branche_tekst, bibranche1_kode, bibranche1_tekst, bibranche2_kode, bibranche2_tekst, bibranche3_kode, bibranche3_tekst, virksomhedsform'
           )
-          .eq('cvr_nummer', virksomhedAktiver[0].cvr)
+          .eq('cvr', virksomhedAktiver[0].cvr)
           .maybeSingle();
         if (virkData) {
           const v = virkData as Record<string, string | null>;
           const bibrancher: Array<{ kode: string; tekst: string | null }> = [];
           for (let i = 1; i <= 3; i++) {
-            const kode = v[`bibranche_${i}_kode`];
-            if (kode) bibrancher.push({ kode, tekst: v[`bibranche_${i}_tekst`] ?? null });
+            const kode = v[`bibranche${i}_kode`];
+            if (kode) bibrancher.push({ kode, tekst: v[`bibranche${i}_tekst`] ?? null });
           }
           brancheData = {
             hovedbranche: v.branche_kode ?? null,

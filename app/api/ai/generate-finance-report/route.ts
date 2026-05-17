@@ -54,7 +54,7 @@ const TONE_DESCRIPTIONS: Record<FinanceReportTone, string> = {
  * @returns System prompt
  */
 function buildSystemPrompt(tone: FinanceReportTone): string {
-  return `Du er en ejendomsanalytiker der skriver tekniske finansieringsrapporter for danske banker og realkreditselskaber.
+  return `Du er en ejendomsanalytiker der skriver tekniske ejendomsbeskrivelser for danske banker og realkreditselskaber.
 
 Tone: ${TONE_DESCRIPTIONS[tone]}
 
@@ -256,7 +256,7 @@ export async function POST(request: NextRequest) {
   }
 
   const today = new Date().toISOString().slice(0, 10);
-  const userMessage = `Generer en finansieringsrapport for denne ejendom:
+  const userMessage = `Generer en teknisk ejendomsbeskrivelse for denne ejendom:
 
 ADRESSE: ${body.adresse}
 BFE: ${body.bfe}

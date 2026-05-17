@@ -1431,6 +1431,16 @@ export default function EjendomDetaljeClient({
   // BIZZ-1230: Merge-logik ekstraheret til helpers/mergedSalgshistorik.ts
   const mergedSalgshistorik = buildMergedSalgshistorik(salgshistorik, tlEjere, aiHandler);
 
+  // BIZZ-1608: Debug — fjern efter diagnostik
+  if (typeof window !== 'undefined' && mergedSalgshistorik.length > 0) {
+    console.log('[BIZZ-1608] merged salgshistorik:', mergedSalgshistorik.length, 'rækker');
+    mergedSalgshistorik.forEach((h, i) =>
+      console.log(
+        `  [${i}] dato=${(h.overtagelsesdato ?? h.koebsaftaleDato ?? '?').slice(0, 10)} koeber=${h.koeber?.slice(0, 30) ?? 'null'} kilde=${h.kilde}`
+      )
+    );
+  }
+
   // BIZZ-1598: Hent AI-ekstraherede handler fra cache via dedikeret endpoint
   useEffect(() => {
     const bfeNum = bbrData?.ejendomsrelationer?.[0]?.bfeNummer;

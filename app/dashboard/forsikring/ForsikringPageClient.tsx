@@ -453,7 +453,11 @@ function UnifiedAnalyseView({
             {healthScore}/100
           </span>
         </div>
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-5 gap-2">
+          <div className="text-center">
+            <div className="text-purple-300 text-xl font-bold">{virksomhedGroups.length}</div>
+            <div className="text-slate-500 text-[10px]">{da ? 'Virksomheder' : 'Companies'}</div>
+          </div>
           <div className="text-center">
             <div className="text-blue-300 text-xl font-bold">{total}</div>
             <div className="text-slate-500 text-[10px]">{da ? 'Ejendomme' : 'Properties'}</div>

@@ -13,7 +13,6 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { Search, Landmark, ArrowLeft, MapPin, Loader2, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
 import type { UnifiedSearchResult } from '@/app/api/search/route';
-import GenerateFinanceReportModal from '@/app/components/ejendomme/GenerateFinanceReportModal';
 
 /** Valgt ejendom til rapport-generering */
 interface SelectedProperty {
@@ -207,18 +206,43 @@ export default function FinansieringsrapportClient(): React.ReactElement {
           )}
         </div>
 
-        {/* BIZZ-1589: Inline rapport-panel — spans full grid width */}
+        {/* BIZZ-1617: Generer-knap sender prompt til AI Chat side-panel */}
         {selected && (
-          <div className="lg:col-span-2">
-            <GenerateFinanceReportModal
-              key={selected.bfe}
-              bfe={selected.bfe}
-              adresse={selected.adresse}
-              lang="da"
-              open={true}
-              onClose={() => setSelected(null)}
-              mode="panel"
-            />
+          <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-6">
+            <p className="text-sm text-slate-300 mb-4">
+              Vælg en tone og klik Generer for at sende prompten til AI Chat:
+            </p>
+            <div className="flex flex-wrap gap-2 mb-4">
+              {(['realkredit', 'bankraadgiver', 'memo'] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => {
+                    const toneLabel =
+                      t === 'realkredit'
+                        ? 'Realkredit (formel)'
+                        : t === 'bankraadgiver'
+                          ? 'Bankrådgiver (key-points)'
+                          : 'Internt memo (kort)';
+                    const prompt = `Generér en teknisk ejendomsbeskrivelse for ${selected.adresse} (BFE ${selected.bfe}) i "${t}" tone. Inkluder: identifikation, BBR tekniske data, vurdering & skat, tinglyst belåning & ejerforhold, servitutter, plan- og lokalforhold, risiko-flag, og disclaimer med dato.`;
+                    window.dispatchEvent(
+                      new CustomEvent('bizz:ai-open-with-prompt', {
+                        detail: {
+                          prompt,
+                          displayText: `Teknisk ejendomsbeskrivelse — ${selected.adresse} (${toneLabel})`,
+                        },
+                      })
+                    );
+                  }}
+                  className="px-4 py-2.5 rounded-lg text-sm border bg-emerald-600/20 border-emerald-500/50 text-emerald-200 hover:bg-emerald-600/30 transition-colors"
+                >
+                  {t === 'realkredit'
+                    ? 'Realkredit'
+                    : t === 'bankraadgiver'
+                      ? 'Bankrådgiver'
+                      : 'Memo'}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 

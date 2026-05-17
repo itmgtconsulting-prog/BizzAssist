@@ -184,17 +184,24 @@ export default function IntelligenceChart({
    */
   const chartData = useMemo(() => {
     const maxRows = type === 'pie' ? 10 : 30;
-    return rows.slice(0, maxRows).map((row) => {
-      const item: Record<string, string | number> = {
-        label: String(row[labelCol] ?? ''),
-        value: Number(row[valueCol]) || 0,
-      };
-      // Multi-series: tilføj alle numeriske kolonner som keys (incl. valueCol)
-      for (const col of valueCols) {
-        item[col] = Number(row[col]) || 0;
-      }
-      return item;
-    });
+    return (
+      rows
+        .slice(0, maxRows)
+        .map((row) => {
+          const item: Record<string, string | number> = {
+            label: String(row[labelCol] ?? ''),
+            value: Number(row[valueCol]) || 0,
+          };
+          // Multi-series: tilføj alle numeriske kolonner som keys (incl. valueCol)
+          for (const col of valueCols) {
+            item[col] = Number(row[col]) || 0;
+          }
+          return item;
+        })
+        // BIZZ-1613: Filtrer rækker hvor alle value-kolonner er 0/null — undgår
+        // falske datapunkter der trækker grafen mod nul i perioder uden data.
+        .filter((item) => valueCols.some((col) => (item[col] as number) > 0))
+    );
   }, [rows, labelCol, valueCol, valueCols, type]);
 
   if (type === 'none' || chartData.length === 0) return null;

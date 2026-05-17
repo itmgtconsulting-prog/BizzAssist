@@ -82,26 +82,36 @@ const TONE_DESCRIPTIONS: Record<ListingTone, string> = {
  * @returns System prompt
  */
 function buildSystemPrompt(tone: ListingTone): string {
+  const isSocialMedia = tone === 'facebook' || tone === 'instagram' || tone === 'linkedin';
+
   return `Du er en erfaren dansk ejendomsmægler der skriver professionelle boligannoncer.
 
 TONE: ${TONE_DESCRIPTIONS[tone]}
-
+${
+  isSocialMedia
+    ? `
+FORMATERING:
+- Skriv i ren tekst — INGEN markdown (ingen #, ##, **, ---)
+- Brug linjeskift til afsnit
+- Emojis er tilladt (maks 3-4 stk)
+- Teksten skal kunne copy-pastes direkte til ${tone === 'facebook' ? 'Facebook' : tone === 'instagram' ? 'Instagram' : 'LinkedIn'} uden redigering`
+    : `
 STRUKTUR (brug denne rækkefølge):
 1. **Overskrift** — max 10 ord, fængende og specifik for boligen
 2. **Intro** — 2-3 sætninger der fanger læseren og sætter stemningen
 3. **Rumbeskrivelse** — beskriv de vigtigste rum baseret på BBR-data (antal værelser, areal, etage)
 4. **Beliggenhed** — beskriv nærområdet, transport, indkøb baseret på adressen
 5. **Praktisk info** — energimærke, opførelsesår, ejendomsværdi, grundværdi
-6. **Afslutning** — opfordring til kontakt/fremvisning
+6. **Afslutning** — opfordring til kontakt/fremvisning`
+}
 
 REGLER:
 - Skriv på korrekt dansk — ingen anglicismer
 - Fakta-først: brug de konkrete tal du modtager, opfind aldrig data
-- Maks 500 ord
+- Maks ${isSocialMedia ? (tone === 'instagram' ? '100' : tone === 'facebook' ? '150' : '200') : '500'} ord
 - Skriv i 2. person ("din nye bolig", "du vil elske")
 - Skriv udelukkende annonceteksten — ingen kommentarer, forbehold eller meta-tekst
-- Hvis data mangler for et felt, spring det over i stedet for at skrive "ukendt"
-- Formatér med markdown (## for overskrift, **fed** for fremhævelser)`;
+- Hvis data mangler for et felt, spring det over i stedet for at skrive "ukendt"${isSocialMedia ? '' : '\n- Formatér med markdown (## for overskrift, **fed** for fremhævelser)'}`;
 }
 
 /**

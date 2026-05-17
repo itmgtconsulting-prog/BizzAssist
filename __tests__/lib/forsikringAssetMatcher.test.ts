@@ -84,7 +84,7 @@ describe('matchAssetsToPolicies — ejendom-matching', () => {
     expect(m.bestMatch?.score).toBeGreaterThan(0);
   });
 
-  it('CVR-fallback (BIZZ-1488/1492/1552): tom property_address, matchende CVR', () => {
+  it('CVR-fallback (BIZZ-1488/1492/1552): tom property_address, matchende CVR — kandidat men IKKE bestMatch', () => {
     const aktiv = makeAktiv({
       bfe: 999,
       adresse: 'Søbyvej 11, 2650 Hvidovre',
@@ -96,10 +96,13 @@ describe('matchAssetsToPolicies — ejendom-matching', () => {
       property_address: null,
     });
     const [m] = matchAssetsToPolicies([aktiv], [policy]);
-    expect(m.bestMatch?.score).toBe(55); // CVR-fallback
+    // CVR-fallback giver 45 (under threshold 50) — vises som kandidat, men tæller ikke som forsikret
+    expect(m.bestMatch).toBeNull();
+    expect(m.candidates.length).toBe(1);
+    expect(m.candidates[0].score).toBe(45);
   });
 
-  it('CVR-fallback når adresse-match fejler men CVR matcher', () => {
+  it('CVR-fallback når adresse-match fejler men CVR matcher — kandidat men IKKE bestMatch', () => {
     const aktiv = makeAktiv({
       adresse: 'Søbyvej 11, 2650 Hvidovre',
       rawData: { ejer_cvr: '24301117' },
@@ -109,8 +112,9 @@ describe('matchAssetsToPolicies — ejendom-matching', () => {
       property_address: 'Helt anden vej 99, 9999 Andenby',
     });
     const [m] = matchAssetsToPolicies([aktiv], [policy]);
-    // Adresse-match fejler → CVR-fallback → 55
-    expect(m.bestMatch?.score).toBe(55);
+    // Adresse-match fejler → CVR-fallback → 45 (under threshold) → ingen bestMatch
+    expect(m.bestMatch).toBeNull();
+    expect(m.candidates[0].score).toBe(45);
   });
 
   it('BIZZ-1488/1492/1552: bruger IKKE policyholder_address som adresse-fallback', () => {
@@ -338,9 +342,12 @@ describe('matchAssetsToPolicies — BELVEDERE-scenario (BIZZ-1592)', () => {
       }),
     ];
     const results = matchAssetsToPolicies(aktiver, policies);
-    // Begge ejendomme bør have et match via CVR-fallback (score 55)
-    expect(results[0].bestMatch?.score).toBeGreaterThanOrEqual(55);
-    expect(results[1].bestMatch?.score).toBeGreaterThanOrEqual(55);
+    // CVR-fallback giver 45 (under threshold) — ejendomme uden adresse-match er IKKE forsikret
+    expect(results[0].bestMatch).toBeNull();
+    expect(results[1].bestMatch).toBeNull();
+    // Men de vises som kandidater
+    expect(results[0].candidates[0].score).toBe(45);
+    expect(results[1].candidates[0].score).toBe(45);
   });
 
   it('blandet match-set: adresse-match + CVR-fallback giver høj dækningsgrad', () => {
@@ -381,10 +388,11 @@ describe('matchAssetsToPolicies — BELVEDERE-scenario (BIZZ-1592)', () => {
       makePolicy({ id: 'p-3', policyholder_cvr: '24301117' }), // koncern-police uden adresse
     ];
     const results = matchAssetsToPolicies(aktiver, policies);
+    // Kun de 2 ejendomme med adresse-match er forsikret — CVR-fallback alene er IKKE nok
     const dækningPct = (results.filter((r) => r.bestMatch).length / results.length) * 100;
-    expect(dækningPct).toBe(100); // alle 3 har match
+    expect(Math.round(dækningPct)).toBe(67); // 2/3 = 66.7% → 67%
     expect(results[0].bestMatch?.score).toBeGreaterThanOrEqual(85); // adresse
     expect(results[1].bestMatch?.score).toBeGreaterThanOrEqual(85); // adresse (nr.+ø-normalisering)
-    expect(results[2].bestMatch?.score).toBe(55); // kun CVR-fallback
+    expect(results[2].bestMatch).toBeNull(); // kun CVR-fallback → under threshold
   });
 });

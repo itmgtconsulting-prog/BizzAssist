@@ -133,7 +133,7 @@ function scoreEjendom(aktiv: Aktiv, policy: ForsikringPolicy): number {
   if (!aktivAddr || !policyAddr) {
     // BIZZ-1488: CVR-baseret fallback — policyholder tegner forsikring for sine ejendomme
     if (cvrFallbackMatch) {
-      return 55; // Over MATCH_THRESHOLD (50) — svag men gyldig match
+      return 45; // Under MATCH_THRESHOLD (50) — vises som kandidat, men tæller ikke som forsikret
     }
     return 0;
   }
@@ -179,9 +179,9 @@ function scoreEjendom(aktiv: Aktiv, policy: ForsikringPolicy): number {
   }
 
   // BIZZ-1488/1492/1552: Hvis adresse-match fejler fuldstændigt MEN CVR matcher,
-  // betragt det som svag policiel dækning (CVR-bærer-police).
+  // vis som kandidat men tæl IKKE som forsikret (score under threshold).
   if (cvrFallbackMatch) {
-    return 55;
+    return 45;
   }
 
   return 0;

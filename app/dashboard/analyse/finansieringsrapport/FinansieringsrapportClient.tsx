@@ -23,10 +23,12 @@ interface SelectedProperty {
 
 /**
  * Finansieringsrapport analyse-modul.
+ *
+ * BIZZ-1589: Rapporten vises nu inline under input-formen (panel mode)
+ * i stedet for modal-popup. Layout udnytter full content-width.
  */
 export default function FinansieringsrapportClient(): React.ReactElement {
   const [selected, setSelected] = useState<SelectedProperty | null>(null);
-  const [modalOpen, setModalOpen] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<UnifiedSearchResult[]>([]);
@@ -97,7 +99,6 @@ export default function FinansieringsrapportClient(): React.ReactElement {
             bfe: Number(bfe),
             adresse: result.title,
           });
-          setModalOpen(true);
         }
       }
     } catch {
@@ -107,7 +108,8 @@ export default function FinansieringsrapportClient(): React.ReactElement {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
-      <main className="w-full px-6 py-8 max-w-4xl mx-auto">
+      {/* BIZZ-1589: max-w-6xl (op fra 4xl) så inline-rapport får mere bredde. */}
+      <main className="w-full px-6 py-8 max-w-6xl mx-auto">
         {/* Tilbage-link */}
         <Link
           href="/dashboard/analyse"
@@ -186,6 +188,8 @@ export default function FinansieringsrapportClient(): React.ReactElement {
           </div>
 
           {selected && (
+            // BIZZ-1589: Lille opsummeringsblok der erstatter den tidligere
+            // "Generér rapport"-knap — selve rapporten loader nu inline neden under.
             <div className="mt-4 p-3 bg-emerald-950/30 border border-emerald-900 rounded-lg flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <MapPin size={16} className="text-emerald-400" />
@@ -195,56 +199,62 @@ export default function FinansieringsrapportClient(): React.ReactElement {
                 </div>
               </div>
               <button
-                onClick={() => setModalOpen(true)}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-sm text-white font-medium transition-colors"
+                onClick={() => setSelected(null)}
+                className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
               >
-                Generér rapport
+                Skift ejendom
               </button>
             </div>
           )}
         </div>
 
-        {/* Info-sektion */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
-          <h2 className="text-sm font-semibold text-white mb-3">Hvad indeholder rapporten?</h2>
-          <ul className="space-y-2 text-sm text-slate-400">
-            <li>
-              • <strong className="text-slate-300">Identifikation</strong> — adresse, BFE, kommune,
-              zone-status
-            </li>
-            <li>
-              • <strong className="text-slate-300">Tekniske data</strong> — opførelsesår, areal,
-              materialer, energimærke, opvarmning
-            </li>
-            <li>
-              • <strong className="text-slate-300">Vurdering &amp; skat</strong> — offentlig +
-              foreløbig vurdering, grundskyld
-            </li>
-            <li>
-              • <strong className="text-slate-300">Tinglyste forhold</strong> — hæftelser,
-              ejer-andele, seneste handel
-            </li>
-            <li>
-              • <strong className="text-slate-300">Servitutter</strong> — type + vurderings-impact
-              (neutral/reducerende)
-            </li>
-            <li>
-              • <strong className="text-slate-300">Risiko-flag</strong> — sammenfatning til banken
-            </li>
-          </ul>
-        </div>
-      </main>
+        {/* BIZZ-1589: Inline rapport-panel under input-blokken */}
+        {selected && (
+          <div className="mb-6">
+            <GenerateFinanceReportModal
+              key={selected.bfe}
+              bfe={selected.bfe}
+              adresse={selected.adresse}
+              lang="da"
+              open={true}
+              onClose={() => setSelected(null)}
+              mode="panel"
+            />
+          </div>
+        )}
 
-      {/* Modal */}
-      {selected && (
-        <GenerateFinanceReportModal
-          bfe={selected.bfe}
-          adresse={selected.adresse}
-          lang="da"
-          open={modalOpen}
-          onClose={() => setModalOpen(false)}
-        />
-      )}
+        {/* Info-sektion — vises kun før første rapport-generering */}
+        {!selected && (
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+            <h2 className="text-sm font-semibold text-white mb-3">Hvad indeholder rapporten?</h2>
+            <ul className="space-y-2 text-sm text-slate-400">
+              <li>
+                • <strong className="text-slate-300">Identifikation</strong> — adresse, BFE,
+                kommune, zone-status
+              </li>
+              <li>
+                • <strong className="text-slate-300">Tekniske data</strong> — opførelsesår, areal,
+                materialer, energimærke, opvarmning
+              </li>
+              <li>
+                • <strong className="text-slate-300">Vurdering &amp; skat</strong> — offentlig +
+                foreløbig vurdering, grundskyld
+              </li>
+              <li>
+                • <strong className="text-slate-300">Tinglyste forhold</strong> — hæftelser,
+                ejer-andele, seneste handel
+              </li>
+              <li>
+                • <strong className="text-slate-300">Servitutter</strong> — type + vurderings-impact
+                (neutral/reducerende)
+              </li>
+              <li>
+                • <strong className="text-slate-300">Risiko-flag</strong> — sammenfatning til banken
+              </li>
+            </ul>
+          </div>
+        )}
+      </main>
     </div>
   );
 }

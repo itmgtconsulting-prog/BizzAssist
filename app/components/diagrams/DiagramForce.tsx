@@ -1095,7 +1095,8 @@ function DiagramForce({
   }, [filteredGraph, effectiveGraph.mainId]);
 
   // ── Layout constants ──
-  const BASE_LEVEL_GAP = 160;
+  // BIZZ-1546: Øget fra 160 → 200 for tydeligere vertikal adskillelse
+  const BASE_LEVEL_GAP = 200;
   /** Max nodes per row before wrapping to sub-rows */
   const MAX_PER_ROW = 5;
   /** Base vertical offset between sub-rows within the same depth level */
@@ -1393,7 +1394,8 @@ function DiagramForce({
     // pga. den fractional depth (personDepth + 1.5 → kun 0.5 unit fra persons).
     // Vi shifter property-noder ned så deres TOP er mindst MIN_PERSON_PROP_GAP
     // pixels under den nederste person-noden.
-    const MIN_PERSON_PROP_GAP = 120; // px gap mellem nederste person og øverste property
+    // BIZZ-1546: Øget fra 120 → 200 for tydeligere vertikal adskillelse
+    const MIN_PERSON_PROP_GAP = 200;
     const personYs: number[] = [];
     const propertyEntries: Array<{ id: string; y: number }> = [];
     for (const [id, yVal] of yMap) {

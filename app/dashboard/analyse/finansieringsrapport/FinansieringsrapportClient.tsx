@@ -131,129 +131,132 @@ export default function FinansieringsrapportClient(): React.ReactElement {
               </p>
             </div>
           </div>
-          <p className="text-slate-500 text-sm max-w-2xl">
+          <p className="text-slate-500 text-sm">
             Søg en ejendom og generér en teknisk ejendomsbeskrivelse baseret på BBR, vurdering,
             tinglysning og servitutter. Vælg mellem tre tonarter: realkredit (formel), bankrådgiver
             (key-points) eller internt memo (kort bullets).
           </p>
         </header>
 
-        {/* BIZZ-1605: Fuld bredde — grid layout med søgning + rapport side-by-side på desktop */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 mb-6 w-full">
-          <label
-            htmlFor="property-search"
-            className="block text-sm font-medium text-slate-300 mb-2"
-          >
-            Søg ejendom
-          </label>
-          <div className="relative" ref={dropdownRef}>
-            <div className="flex items-center gap-2 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-500/20">
-              <Search size={16} className="text-slate-500" />
-              <input
-                id="property-search"
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Adresse, BFE-nummer eller matrikel…"
-                className="flex-1 bg-transparent text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none"
-                onFocus={() => searchResults.length > 0 && setDropdownOpen(true)}
-              />
-              {searchLoading && (
-                <Loader2 size={14} className="text-slate-500 animate-spin" aria-hidden />
+        {/* BIZZ-1605: Grid layout — søgning fylder hele bredden */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 lg:col-span-2">
+            <label
+              htmlFor="property-search"
+              className="block text-sm font-medium text-slate-300 mb-2"
+            >
+              Søg ejendom
+            </label>
+            <div className="relative" ref={dropdownRef}>
+              <div className="flex items-center gap-2 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-500/20">
+                <Search size={16} className="text-slate-500" />
+                <input
+                  id="property-search"
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Adresse, BFE-nummer eller matrikel…"
+                  className="flex-1 bg-transparent text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none"
+                  onFocus={() => searchResults.length > 0 && setDropdownOpen(true)}
+                />
+                {searchLoading && (
+                  <Loader2 size={14} className="text-slate-500 animate-spin" aria-hidden />
+                )}
+              </div>
+
+              {dropdownOpen && searchResults.length > 0 && (
+                <div className="absolute z-10 mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg shadow-xl max-h-80 overflow-y-auto">
+                  {searchResults
+                    .filter((r) => r.type === 'address')
+                    .map((r) => (
+                      <button
+                        key={r.id}
+                        onClick={() => handleSelect(r)}
+                        className="w-full px-3 py-2.5 text-left hover:bg-slate-800 flex items-center gap-3 border-b border-slate-800 last:border-b-0 transition-colors"
+                      >
+                        <MapPin size={14} className="text-emerald-400 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-slate-200 truncate">{r.title}</p>
+                          {r.subtitle && (
+                            <p className="text-xs text-slate-500 truncate">{r.subtitle}</p>
+                          )}
+                        </div>
+                        <ChevronRight size={14} className="text-slate-600" />
+                      </button>
+                    ))}
+                </div>
               )}
             </div>
 
-            {dropdownOpen && searchResults.length > 0 && (
-              <div className="absolute z-10 mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg shadow-xl max-h-80 overflow-y-auto">
-                {searchResults
-                  .filter((r) => r.type === 'address')
-                  .map((r) => (
-                    <button
-                      key={r.id}
-                      onClick={() => handleSelect(r)}
-                      className="w-full px-3 py-2.5 text-left hover:bg-slate-800 flex items-center gap-3 border-b border-slate-800 last:border-b-0 transition-colors"
-                    >
-                      <MapPin size={14} className="text-emerald-400 flex-shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm text-slate-200 truncate">{r.title}</p>
-                        {r.subtitle && (
-                          <p className="text-xs text-slate-500 truncate">{r.subtitle}</p>
-                        )}
-                      </div>
-                      <ChevronRight size={14} className="text-slate-600" />
-                    </button>
-                  ))}
+            {selected && (
+              // BIZZ-1589: Lille opsummeringsblok der erstatter den tidligere
+              // "Generér rapport"-knap — selve rapporten loader nu inline neden under.
+              <div className="mt-4 p-3 bg-emerald-950/30 border border-emerald-900 rounded-lg flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <MapPin size={16} className="text-emerald-400" />
+                  <div>
+                    <p className="text-sm text-emerald-200 font-medium">{selected.adresse}</p>
+                    <p className="text-xs text-emerald-500">BFE {selected.bfe}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelected(null)}
+                  className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+                >
+                  Skift ejendom
+                </button>
               </div>
             )}
           </div>
 
+          {/* BIZZ-1589: Inline rapport-panel — spans full grid width */}
           {selected && (
-            // BIZZ-1589: Lille opsummeringsblok der erstatter den tidligere
-            // "Generér rapport"-knap — selve rapporten loader nu inline neden under.
-            <div className="mt-4 p-3 bg-emerald-950/30 border border-emerald-900 rounded-lg flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <MapPin size={16} className="text-emerald-400" />
-                <div>
-                  <p className="text-sm text-emerald-200 font-medium">{selected.adresse}</p>
-                  <p className="text-xs text-emerald-500">BFE {selected.bfe}</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setSelected(null)}
-                className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
-              >
-                Skift ejendom
-              </button>
+            <div className="lg:col-span-2">
+              <GenerateFinanceReportModal
+                key={selected.bfe}
+                bfe={selected.bfe}
+                adresse={selected.adresse}
+                lang="da"
+                open={true}
+                onClose={() => setSelected(null)}
+                mode="panel"
+              />
+            </div>
+          )}
+
+          {/* Info-sektion — vises kun før første rapport-generering */}
+          {!selected && (
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 lg:col-span-2">
+              <h2 className="text-sm font-semibold text-white mb-3">Hvad indeholder rapporten?</h2>
+              <ul className="space-y-2 text-sm text-slate-400">
+                <li>
+                  • <strong className="text-slate-300">Identifikation</strong> — adresse, BFE,
+                  kommune, zone-status
+                </li>
+                <li>
+                  • <strong className="text-slate-300">Tekniske data</strong> — opførelsesår, areal,
+                  materialer, energimærke, opvarmning
+                </li>
+                <li>
+                  • <strong className="text-slate-300">Vurdering &amp; skat</strong> — offentlig +
+                  foreløbig vurdering, grundskyld
+                </li>
+                <li>
+                  • <strong className="text-slate-300">Tinglyste forhold</strong> — hæftelser,
+                  ejer-andele, seneste handel
+                </li>
+                <li>
+                  • <strong className="text-slate-300">Servitutter</strong> — type +
+                  vurderings-impact (neutral/reducerende)
+                </li>
+                <li>
+                  • <strong className="text-slate-300">Risiko-flag</strong> — sammenfatning til
+                  banken
+                </li>
+              </ul>
             </div>
           )}
         </div>
-
-        {/* BIZZ-1589: Inline rapport-panel under input-blokken */}
-        {selected && (
-          <div className="mb-6">
-            <GenerateFinanceReportModal
-              key={selected.bfe}
-              bfe={selected.bfe}
-              adresse={selected.adresse}
-              lang="da"
-              open={true}
-              onClose={() => setSelected(null)}
-              mode="panel"
-            />
-          </div>
-        )}
-
-        {/* Info-sektion — vises kun før første rapport-generering */}
-        {!selected && (
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full">
-            <h2 className="text-sm font-semibold text-white mb-3">Hvad indeholder rapporten?</h2>
-            <ul className="space-y-2 text-sm text-slate-400">
-              <li>
-                • <strong className="text-slate-300">Identifikation</strong> — adresse, BFE,
-                kommune, zone-status
-              </li>
-              <li>
-                • <strong className="text-slate-300">Tekniske data</strong> — opførelsesår, areal,
-                materialer, energimærke, opvarmning
-              </li>
-              <li>
-                • <strong className="text-slate-300">Vurdering &amp; skat</strong> — offentlig +
-                foreløbig vurdering, grundskyld
-              </li>
-              <li>
-                • <strong className="text-slate-300">Tinglyste forhold</strong> — hæftelser,
-                ejer-andele, seneste handel
-              </li>
-              <li>
-                • <strong className="text-slate-300">Servitutter</strong> — type + vurderings-impact
-                (neutral/reducerende)
-              </li>
-              <li>
-                • <strong className="text-slate-300">Risiko-flag</strong> — sammenfatning til banken
-              </li>
-            </ul>
-          </div>
-        )}
       </main>
     </div>
   );

@@ -1595,9 +1595,10 @@ async function resolvePropertyGraph(
 
     // Person-ejere: find registrerede ejere af ALLE virksomheder i hierarkiet
     // — viser hvem der reelt ejer ejendommen gennem holdingselskaber
-    const allCompCvrs = nodes
-      .filter((n) => n.type === 'company' && n.cvr)
-      .map((n) => String(n.cvr));
+    const allCompCvrs = [
+      ...new Set(nodes.filter((n) => n.type === 'company' && n.cvr).map((n) => String(n.cvr))),
+    ];
+    logger.log(`[diagram/resolve] person-ejer lookup for ${allCompCvrs.length} virksomheder`);
     if (allCompCvrs.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: personOwnerRows } = await (admin as any)
@@ -1616,6 +1617,9 @@ async function resolvePropertyGraph(
         personEnheder.add(r.deltager_enhedsnummer);
       }
 
+      logger.log(
+        `[diagram/resolve] fandt ${personEnheder.size} person-enheder fra deltagerrelation`
+      );
       if (personEnheder.size > 0) {
         // Batch-hent navne
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1641,7 +1645,12 @@ async function resolvePropertyGraph(
 
           if (!nodeIds.has(personId)) {
             const pNavn = nameMap.get(r.deltager_enhedsnummer);
-            if (!pNavn) continue; // Skip personer uden navn i cache
+            if (!pNavn) {
+              logger.log(
+                `[diagram/resolve] skip person en=${r.deltager_enhedsnummer} — ikke i cvr_deltager`
+              );
+              continue;
+            }
             nodes.push({
               id: personId,
               label: pNavn,
@@ -1661,7 +1670,17 @@ async function resolvePropertyGraph(
     }
   }
 
-  return { nodes, edges, mainId };
+  // BIZZ-1612: Dedup noder — sektion 1b og L1 kan tilføje same virksomhed.
+  // Beholder første forekomst (har korrekte edges).
+  const seenNodeIds = new Set<string>();
+  const dedupedNodes: DiagramNode[] = [];
+  for (const n of nodes) {
+    if (seenNodeIds.has(n.id)) continue;
+    seenNodeIds.add(n.id);
+    dedupedNodes.push(n);
+  }
+
+  return { nodes: dedupedNodes, edges, mainId };
 }
 
 /**

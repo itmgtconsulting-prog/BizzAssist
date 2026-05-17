@@ -18,6 +18,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { X, Copy, Check, Sparkles, RefreshCw, Landmark } from 'lucide-react';
+import TokenUsageBar from '@/app/components/TokenUsageBar';
 
 /** Rapport-tone */
 type FinanceTone = 'realkredit' | 'bankraadgiver' | 'memo';
@@ -210,6 +211,8 @@ export default function GenerateFinanceReportModal(props: Props): React.ReactEle
             ))}
           </div>
         </div>
+        {/* BIZZ-1614: Token-status ved generer-knap */}
+        <TokenUsageBar className="mb-2" />
         <div className="flex gap-2">
           <button
             onClick={generate}

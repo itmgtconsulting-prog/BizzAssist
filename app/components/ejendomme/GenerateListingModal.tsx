@@ -25,6 +25,7 @@ import {
   Download,
   MessageSquare,
 } from 'lucide-react';
+import TokenUsageBar from '@/app/components/TokenUsageBar';
 
 /** Tone-valg for annoncen */
 type ListingTone =
@@ -457,6 +458,8 @@ export default function GenerateListingModal({
                   ? `Generér en professionel boligannonce for ${adresse}`
                   : `Generate a professional listing for ${adresse}`}
               </p>
+              {/* BIZZ-1614: Token-status ved generer-knap */}
+              <TokenUsageBar className="mb-2" />
               <div className="flex gap-2">
                 <button
                   onClick={mode === 'variants' ? generateVariants : generate}

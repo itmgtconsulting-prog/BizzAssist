@@ -22,6 +22,7 @@ import dynamic from 'next/dynamic';
 import { ChevronRight, Scale, Sparkles, Landmark, TrendingUp, BarChart3 } from 'lucide-react';
 // ForklarVurderingWidget fjernet — redundant med "Forklar vurdering" AI-knap
 import SektionLoader from '@/app/components/SektionLoader';
+import TokenUsageBar from '@/app/components/TokenUsageBar';
 import AktExtractionButton from '@/app/components/ejendomme/AktExtractionButton';
 import BelaningsoverblikPanel from '@/app/components/ejendomme/BelaningsoverblikPanel';
 import VurderingSammenligning from '@/app/components/ejendomme/VurderingSammenligning';
@@ -380,7 +381,9 @@ export default function EjendomOekonomiTab(props: Props) {
   return (
     <div className="space-y-5">
       {/* BIZZ-1078: Vurderings-AI-knapper */}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        {/* BIZZ-1614: Token-status ved AI-knapper */}
+        <TokenUsageBar className="mr-2" compact />
         <button
           type="button"
           onClick={() => {

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EjendomSummariskSvar xmlns="http://rep.oio.dk/tinglysning.dk/service/message/elektroniskakt/1/">
+  <Ejendom>
+    <BFEnummer>100000001</BFEnummer>
+    <Adresse>Testvej 1, 9999 Testby</Adresse>
+    <EjendomsVurdering>5400000</EjendomsVurdering>
+    <Ejerlejlighed>false</Ejerlejlighed>
+    <SamletEjendom>true</SamletEjendom>
+    <EjendomStatus>Aktiv</EjendomStatus>
+  </Ejendom>
+</EjendomSummariskSvar>

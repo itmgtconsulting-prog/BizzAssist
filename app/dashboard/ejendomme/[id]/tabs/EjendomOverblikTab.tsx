@@ -21,7 +21,7 @@ import Link from 'next/link';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
 import { formatDKK } from '@/app/lib/mock/ejendomme';
-import { isUdfasetStatusLabel } from '@/app/lib/bbrKoder';
+import { isAktivStatusLabel } from '@/app/lib/bbrKoder';
 import type { EjendomApiResponse } from '@/app/api/ejendom/[id]/route';
 import type { VurderingData } from '@/app/api/vurdering/route';
 import type { ForelobigVurdering } from '@/app/api/vurdering-forelobig/route';
@@ -87,6 +87,16 @@ interface Props {
   energiLoader?: boolean;
   /** BIZZ-1030: Callback til at navigere til Dokumenter-fanen */
   onNavigerDokumenter?: () => void;
+  /** BIZZ-1307: Ejere fra ejerskabs-chain (prefetched) */
+  ejere?: Array<{ navn: string; andel: string | null; type: string }>;
+  /** BIZZ-1307: Seneste handel */
+  senestHandel?: { pris: number; dato: string } | null;
+  /** BIZZ-1348: Estimeret grundskyld */
+  grundskyld?: number | null;
+  /** BIZZ-1348: Estimeret ejendomsværdiskat */
+  ejendomsvaerdiskat?: number | null;
+  /** BIZZ-1348: Zoneinfo */
+  zoneinfo?: string | null;
 }
 
 /**
@@ -115,6 +125,13 @@ export default function EjendomOverblikTab({
   energimaerker,
   energiLoader,
   onNavigerDokumenter,
+  // BIZZ-1547+1548+1549: ejere/senestHandel/zoneinfo bevaret for
+  // bagudkompatibilitet — vises ikke længere i Oversigt-fanen.
+  ejere: _ejere,
+  senestHandel: _senestHandel,
+  grundskyld,
+  ejendomsvaerdiskat,
+  zoneinfo: _zoneinfo,
 }: Props) {
   const da = lang === 'da';
 
@@ -400,42 +417,62 @@ export default function EjendomOverblikTab({
             </p>
           ) : null}
 
-          {/* ── Forelobig vurdering — vises hvis nyere end nuvaerende vurdering ── */}
+          {/* ── Forelobig vurdering — vises hvis nyere end nuvaerende vurdering ELLER ingen officiel ── */}
           {(() => {
             const nyesteForelobig = forelobige.length > 0 ? forelobige[0] : null;
-            const erNyere =
-              nyesteForelobig && (!vurdering?.aar || nyesteForelobig.vurderingsaar > vurdering.aar);
-            if (!nyesteForelobig || !erNyere) return null;
+            if (!nyesteForelobig) return null;
+            // Vis foreløbig hvis den er nyere end officiel ELLER der slet ikke er officiel vurdering
+            const erRelevant = !vurdering?.aar || nyesteForelobig.vurderingsaar >= vurdering.aar;
+            if (!erRelevant) return null;
             return (
               <div className="mt-2 bg-amber-500/5 border border-amber-500/20 rounded-xl p-3">
                 <div className="flex items-center gap-2 mb-1.5">
                   <span className="px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] text-amber-400 font-medium">
                     {t.preliminary}
                   </span>
+                  <span className="text-slate-600 text-[10px]">
+                    {nyesteForelobig.vurderingsaar}
+                  </span>
                 </div>
                 <div className="grid grid-cols-2 gap-x-2 gap-y-1">
                   <div>
-                    <p className="text-slate-500 text-xs leading-none mb-0.5">
-                      {t.propertyValue}
-                      <span className="ml-1 text-slate-600">({nyesteForelobig.vurderingsaar})</span>
-                    </p>
+                    <p className="text-slate-500 text-xs leading-none mb-0.5">{t.propertyValue}</p>
                     <p className="text-amber-200 text-sm font-medium">
                       {nyesteForelobig.ejendomsvaerdi
                         ? formatDKK(nyesteForelobig.ejendomsvaerdi)
-                        : formatDKK(0)}
+                        : da
+                          ? 'Fastsættes ikke'
+                          : 'Not assessed'}
                     </p>
                   </div>
                   <div>
-                    <p className="text-slate-500 text-xs leading-none mb-0.5">
-                      {t.landValue}
-                      <span className="ml-1 text-slate-600">({nyesteForelobig.vurderingsaar})</span>
-                    </p>
+                    <p className="text-slate-500 text-xs leading-none mb-0.5">{t.landValue}</p>
                     <p className="text-amber-200 text-sm font-medium">
                       {nyesteForelobig.grundvaerdi
                         ? formatDKK(nyesteForelobig.grundvaerdi)
-                        : '0 DKK'}
+                        : da
+                          ? 'Fastsættes ikke'
+                          : 'Not assessed'}
                     </p>
                   </div>
+                  {nyesteForelobig.grundskyld != null && nyesteForelobig.grundskyld > 0 && (
+                    <div>
+                      <p className="text-slate-500 text-xs leading-none mb-0.5">{t.groundTax}</p>
+                      <p className="text-amber-200 text-sm font-medium">
+                        {formatDKK(nyesteForelobig.grundskyld)}
+                      </p>
+                    </div>
+                  )}
+                  {nyesteForelobig.totalSkat != null && nyesteForelobig.totalSkat > 0 && (
+                    <div>
+                      <p className="text-slate-500 text-xs leading-none mb-0.5">
+                        {da ? 'Skat i alt' : 'Total tax'}
+                      </p>
+                      <p className="text-amber-200 text-sm font-medium">
+                        {formatDKK(nyesteForelobig.totalSkat)}
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -450,13 +487,38 @@ export default function EjendomOverblikTab({
           />
         </div>
 
+        {/* ─── Økonomi summary ───
+           BIZZ-1547: Zone-kort fjernet — zone vises som badge i ejendomsheader.
+           BIZZ-1548: "Seneste handel"-kort fjernet — data findes i Økonomi/Salgshistorik-fanen.
+           BIZZ-1549: "Ejere"-kort fjernet — data findes i Ejerskab- og Tinglysnings-fanen. */}
+        {(grundskyld || ejendomsvaerdiskat) && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {/* Skat */}
+            <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
+              <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">
+                {da ? 'Årlig skat' : 'Annual tax'}
+              </p>
+              {grundskyld != null && grundskyld > 0 && (
+                <p className="text-slate-200 text-xs">
+                  {da ? 'Grundskyld' : 'Land tax'}: {grundskyld.toLocaleString('da-DK')} DKK
+                </p>
+              )}
+              {ejendomsvaerdiskat != null && ejendomsvaerdiskat > 0 && (
+                <p className="text-slate-200 text-xs">
+                  {da ? 'Ejd.skat' : 'Prop. tax'}: {ejendomsvaerdiskat.toLocaleString('da-DK')} DKK
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* ─── Rad 2: Bygninger (v) + Enheder (h) ─── */}
 
         {/* Bygninger */}
         {(() => {
           // BIZZ-825: central udfaset-tjek
           const bygninger = (bbrData?.bbr ?? [])
-            .filter((b) => !isUdfasetStatusLabel(b.status))
+            .filter((b) => isAktivStatusLabel(b.status))
             .sort((a, b) => (a.bygningsnr ?? 9999) - (b.bygningsnr ?? 9999));
           const totAreal = bygninger.reduce((s, b) => s + (b.samletBygningsareal ?? 0), 0);
           const boligAreal = bygninger.reduce((s, b) => s + (b.samletBoligareal ?? 0), 0);

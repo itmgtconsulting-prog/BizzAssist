@@ -706,9 +706,17 @@ export default function EjendommeListesideClient() {
    * Debounced DAWA-søgning.
    * Nulstiller søgningFærdig ved søgningsændring, sætter den til true når svaret modtages.
    * Dropdown forbliver åben via søgningFærdig selvom resultater er tomme (viser "ingen fundet").
+   *
+   * BIZZ-1331: AbortController annullerer stale requests — forhindrer race
+   * condition hvor en hurtig "ar"-response overskriver den korrekte response.
    */
+  const abortRef = useRef<AbortController | null>(null);
   useEffect(() => {
     setSøgningFærdig(false);
+    // Abort forrige in-flight request
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     const timer = setTimeout(async () => {
       if (søgning.trim().length < 2) {
         setResultater([]);
@@ -716,13 +724,25 @@ export default function EjendommeListesideClient() {
         return;
       }
       setSøgerDAWA(true);
-      const res = await fetch(`/api/adresse/autocomplete?q=${encodeURIComponent(søgning)}`);
-      const data: DawaAutocompleteResult[] = res.ok ? await res.json() : [];
-      setResultater(data);
-      setSøgerDAWA(false);
-      setSøgningFærdig(true);
+      try {
+        const res = await fetch(`/api/adresse/autocomplete?q=${encodeURIComponent(søgning)}`, {
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) return;
+        const data: DawaAutocompleteResult[] = res.ok ? await res.json() : [];
+        setResultater(data);
+        setSøgningFærdig(true);
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        setResultater([]);
+      } finally {
+        if (!controller.signal.aborted) setSøgerDAWA(false);
+      }
     }, 220);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
   }, [søgning]);
 
   /**

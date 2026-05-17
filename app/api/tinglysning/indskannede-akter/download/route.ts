@@ -34,9 +34,10 @@ import { logger } from '@/app/lib/logger';
 import https from 'https';
 import fs from 'fs';
 import path from 'path';
-import { randomUUID } from 'crypto';
-import { SignedXml } from 'xml-crypto';
+import crypto, { randomUUID } from 'crypto';
 import forge from 'node-forge';
+import { DOMParser } from '@xmldom/xmldom';
+import { ExclusiveCanonicalization } from 'xml-crypto';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -127,7 +128,6 @@ function extractPemFromP12(
  * @returns Signeret XML-string
  */
 function buildSignedRequest(aktNavn: string, privateKeyPem: string, certPem: string): string {
-  // Undgå XML-injection i aktNavn (validering sker allerede i route handler)
   const safeAktNavn = aktNavn
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -135,33 +135,61 @@ function buildSignedRequest(aktNavn: string, privateKeyPem: string, certPem: str
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
 
-  const unsignedXml = [
-    `<EjendomIndskannetAktHent`,
-    ` xmlns="${NS_MSG}"`,
-    ` xmlns:eakt="${NS_SCHEMA}"`,
-    ` xmlns:ds="${NS_DS}">`,
-    `<eakt:DokumentFilnavnTekst>${safeAktNavn}</eakt:DokumentFilnavnTekst>`,
-    `</EjendomIndskannetAktHent>`,
-  ].join('');
+  // xsi:schemaLocation er PÅKRÆVET — uden den fejler Tinglysningens XSD-validering
+  // med "cvc-elt.1.a: Cannot find the declaration of element".
+  const XSD_LOC = `${NS_MSG} http://rep.oio.dk/tinglysning.dk/service/message/elektroniskakt/1/EjendomIndskannetAktHent.xsd`;
 
-  const signer = new SignedXml({
-    privateKey: privateKeyPem,
-    publicCert: certPem,
-    canonicalizationAlgorithm: 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315',
-    signatureAlgorithm: 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256',
-  });
+  const unsignedXml =
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<EjendomIndskannetAktHent` +
+    ` xmlns="${NS_MSG}"` +
+    ` xmlns:eakt="${NS_SCHEMA}"` +
+    ` xmlns:ds="${NS_DS}"` +
+    ` xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"` +
+    ` xsi:schemaLocation="${XSD_LOC}">` +
+    `<eakt:DokumentFilnavnTekst>${safeAktNavn}</eakt:DokumentFilnavnTekst>` +
+    `</EjendomIndskannetAktHent>`;
 
-  signer.addReference({
-    xpath: '/*',
-    transforms: [
-      'http://www.w3.org/2000/09/xmldsig#enveloped-signature',
-      'http://www.w3.org/TR/2001/REC-xml-c14n-20010315',
-    ],
-    digestAlgorithm: 'http://www.w3.org/2001/04/xmlenc#sha256',
-  });
+  // Manuel XMLDSig — xml-crypto's SignedXml producerer forkert namespace-prefix
+  const doc = new DOMParser().parseFromString(unsignedXml, 'application/xml');
+  const c14n = new ExclusiveCanonicalization().process(doc.documentElement, {});
+  const digestB64 = crypto.createHash('sha256').update(c14n, 'utf8').digest('base64');
 
-  signer.computeSignature(unsignedXml);
-  return signer.getSignedXml();
+  const signedInfo =
+    `<ds:SignedInfo xmlns:ds="${NS_DS}">` +
+    `<ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>` +
+    `<ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha512"/>` +
+    `<ds:Reference URI="">` +
+    `<ds:Transforms>` +
+    `<ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/>` +
+    `<ds:Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>` +
+    `</ds:Transforms>` +
+    `<ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>` +
+    `<ds:DigestValue>${digestB64}</ds:DigestValue>` +
+    `</ds:Reference>` +
+    `</ds:SignedInfo>`;
+
+  const siDoc = new DOMParser().parseFromString(signedInfo, 'application/xml');
+  const c14nSI = new ExclusiveCanonicalization().process(siDoc.documentElement, {});
+  const sigVal = crypto
+    .createSign('RSA-SHA512')
+    .update(c14nSI, 'utf8')
+    .sign(privateKeyPem, 'base64');
+
+  // Konverter PEM cert til base64 DER for X509Certificate-element
+  const certB64 = certPem
+    .replace(/-----BEGIN CERTIFICATE-----/g, '')
+    .replace(/-----END CERTIFICATE-----/g, '')
+    .replace(/\s/g, '');
+
+  const sigEl =
+    `<ds:Signature Id="Signature-${randomUUID()}">` +
+    signedInfo +
+    `<ds:SignatureValue>${sigVal}</ds:SignatureValue>` +
+    `<ds:KeyInfo><ds:X509Data><ds:X509Certificate>${certB64}</ds:X509Certificate></ds:X509Data></ds:KeyInfo>` +
+    `</ds:Signature>`;
+
+  return unsignedXml.replace('</EjendomIndskannetAktHent>', `${sigEl}</EjendomIndskannetAktHent>`);
 }
 
 // ─── HTTP helpers ─────────────────────────────────────────────────────────────
@@ -223,12 +251,44 @@ function tlHttpRequest(
  * @param signedXml - Signeret XML-request
  * @returns HTTP status og response body som Buffer
  */
-function callXmlApi(
+/**
+ * Kalder XML API via Hetzner-proxy (Vercel) eller direkte mTLS (lokal dev).
+ */
+async function callXmlApi(
   signedXml: string
 ): Promise<{ status: number; headers: Record<string, string>; buffer: Buffer }> {
-  const xmlUrl = new URL(TL_XML_API_BASE + XML_API_SERVICE_PATH);
-  const body = Buffer.from(signedXml, 'utf-8');
+  const proxyUrl = process.env.DF_PROXY_URL ?? '';
+  const proxySecret = process.env.DF_PROXY_SECRET ?? '';
+  const targetUrl = `${TL_XML_API_BASE}${XML_API_SERVICE_PATH}`;
 
+  // Proxy-path: Vercel → Hetzner proxy → Tinglysning (mTLS på proxy)
+  if (proxyUrl) {
+    const proxied = targetUrl.replace('https://', `${proxyUrl}/proxy/`);
+    try {
+      const res = await fetch(proxied, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/xml',
+          'Tinglysning-Message-ID': `uuid:${randomUUID()}`,
+          ...(proxySecret ? { 'X-Proxy-Secret': proxySecret } : {}),
+        },
+        body: signedXml,
+        signal: AbortSignal.timeout(120_000),
+      });
+      const buf = Buffer.from(await res.arrayBuffer());
+      const hdrs: Record<string, string> = {};
+      res.headers.forEach((v, k) => {
+        hdrs[k] = v;
+      });
+      return { status: res.status, headers: hdrs, buffer: buf };
+    } catch (proxyErr) {
+      logger.warn('[indskannede-akter/download] Proxy fejlede, prøver direkte mTLS:', proxyErr);
+    }
+  }
+
+  // Direkte mTLS (lokal dev)
+  const xmlUrl = new URL(targetUrl);
+  const body = Buffer.from(signedXml, 'utf-8');
   return tlHttpRequest(
     {
       hostname: xmlUrl.hostname,
@@ -236,10 +296,8 @@ function callXmlApi(
       path: xmlUrl.pathname,
       method: 'POST',
       headers: {
-        // Ny S2S HTTP-stil (s2s-dokumentation-07): application/xml, ingen SOAPAction
         'Content-Type': 'application/xml',
         'Content-Length': String(body.byteLength),
-        // Header-navn og format bekræftet af e-TL XML API (400-svar ved forkert format)
         'Tinglysning-Message-ID': `uuid:${randomUUID()}`,
       },
     },
@@ -256,13 +314,26 @@ function callXmlApi(
  * @returns base64-decoded dokumentindhold som Buffer, eller null ved parse-fejl
  */
 function parseXmlApiResponse(xml: string): Buffer | null {
-  // IndskannetDokumentData er base64-encoded filindhold jf. XSD
-  const match = xml.match(
-    /<(?:[^:>]+:)?IndskannetDokumentData[^>]*>([\s\S]+?)<\/(?:[^:>]+:)?IndskannetDokumentData>/
-  );
-  if (!match?.[1]) return null;
-  const b64 = match[1].replace(/\s/g, '');
-  if (!b64) return null;
+  // IndskannetDokumentData indeholder base64-encoded PDF (typisk 3-10 MB).
+  // Regex med [\s\S]+? er for langsom på store strings — brug indexOf.
+  const marker = 'IndskannetDokumentData>';
+  const firstHit = xml.indexOf(marker);
+  if (firstHit === -1) return null;
+
+  // Data starter lige efter første "IndskannetDokumentData>"
+  const dataStart = firstHit + marker.length;
+
+  // Closing tag: næste forekomst af "IndskannetDokumentData>" efter data-start
+  // (det vil matche "</ns1:IndskannetDokumentData>" — vi finder bare markøren)
+  const secondHit = xml.indexOf(marker, dataStart);
+  if (secondHit === -1) return null;
+
+  // Data slutter ved "</" lige før closing tag
+  const closeStart = xml.lastIndexOf('<', secondHit);
+  if (closeStart <= dataStart) return null;
+
+  const b64 = xml.substring(dataStart, closeStart).replace(/\s/g, '');
+  if (!b64 || b64.length < 100) return null;
   try {
     return Buffer.from(b64, 'base64');
   } catch {
@@ -355,7 +426,7 @@ export async function GET(req: NextRequest) {
           status: 200,
           headers: {
             'Content-Type': mimeType,
-            'Content-Disposition': `attachment; filename="${safeFilename}"`,
+            'Content-Disposition': `inline; filename="${safeFilename}"`,
             'Content-Length': String(pdfBuffer.byteLength),
             'Cache-Control': 'private, no-store',
           },

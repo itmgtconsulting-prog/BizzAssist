@@ -436,6 +436,33 @@ async function _hentDawaBfeDataImpl(bfe: number): Promise<DawaBfeAdresse> {
          eller fra jordstykker[0].husnumre[0].id (fallback) */
       const dawaId = bel.id ?? json.jordstykker?.[0]?.husnumre?.[0]?.id ?? null;
 
+      let etage = bel.etage ?? null;
+      let doer = bel.dør ?? null;
+
+      // BIZZ-1444: For ejerlejligheder uden etage/dør i beliggenhedsadresse —
+      // hent via DAR enhedsadresser (DAWA /adgangsadresser/{id}/enhedsadresser)
+      if (!etage && dawaId && json.ejendomstype === 'Ejerlejlighed') {
+        try {
+          const enhedRes = await fetchDawa(
+            `${DAWA_BASE_URL}/adgangsadresser/${dawaId}/enhedsadresser`,
+            { signal: AbortSignal.timeout(5000) },
+            { caller: 'ejendomme-by-owner.enhedsadresse' }
+          );
+          if (enhedRes.ok) {
+            const enheder = (await enhedRes.json()) as Array<{
+              etage?: string;
+              dør?: string;
+            }>;
+            if (enheder.length > 0) {
+              etage = enheder[0].etage ?? null;
+              doer = enheder[0].dør ?? null;
+            }
+          }
+        } catch {
+          /* non-critical */
+        }
+      }
+
       return {
         adresse: adresseStr,
         postnr: bel.postnr ?? null,
@@ -444,8 +471,8 @@ async function _hentDawaBfeDataImpl(bfe: number): Promise<DawaBfeAdresse> {
         kommuneKode: bel.kommunekode ?? null,
         ejendomstype: json.ejendomstype ?? null,
         dawaId: dawaId ?? null,
-        etage: bel.etage ?? null,
-        doer: bel.dør ?? null,
+        etage,
+        doer,
       };
     }
 
@@ -857,9 +884,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     );
   }
 
-  // ── BIZZ-1014: Cache-first — tjek ejf_ejerskab tabel for CVR lookups ──
-  // Samme mønster som BIZZ-1013: query lokal cache først, fallback til live EJF.
-  // Person-lookups (enhedsNummer) går altid live da ejf_ejerskab ikke har enhedsNummer-kolonne.
+  // ── BIZZ-1014 / BIZZ-1588: Cache-first — tjek ejf_ejerskab tabel ──
+  // CVR-lookups bruger ejer_cvr; person-lookups bruger ejer_enheds_nummer
+  // (kolonnen er backfillet for 1.5M rækker — se reference_ejf_ingestion_hybrid).
+  // Tidligere kommentar om manglende enhedsNummer-kolonne var forkert (BIZZ-1588).
   const EJF_STALE_MS = 7 * 24 * 60 * 60 * 1000; // 7 dage
   let cacheFullHit = false;
   const bfeTilCvr = new Map<number, string>();
@@ -968,9 +996,75 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     }
   }
 
-  // ── BIZZ-1158: Cache-first for person-lookups via ejf_ejerskab ──
-  // Person-lookups bruger ejer_navn match (ejf_ejerskab har ikke enhedsNummer).
-  // Resolver personnavn fra cvr_deltager og søger i ejf_ejerskab.
+  // ── BIZZ-1588: Cache-first for person-lookups via ejer_enheds_nummer ──
+  // Primær path: direkte match på ejer_enheds_nummer kolonnen i ejf_ejerskab.
+  // Mere pålideligt end navnematch (håndterer navneskift, dubletter, mellemnavne).
+  if (!cacheFullHit && enhedsNumre.length > 0 && cvrNumre.length === 0) {
+    try {
+      const admin = createAdminClient();
+      const enhedsStrings = enhedsNumre.map((e) => String(e));
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: cached, error: cacheErr } = await (admin as any)
+        .from('ejf_ejerskab')
+        .select(
+          'bfe_nummer, ejer_enheds_nummer, ejer_navn, ejerandel_taeller, ejerandel_naevner, virkning_fra, sidst_opdateret'
+        )
+        .in('ejer_enheds_nummer', enhedsStrings)
+        .eq('status', 'gældende')
+        .limit(500);
+
+      if (!cacheErr && cached && cached.length > 0) {
+        // BIZZ-1588: Personer skifter sjældent ejerskab — brug 90-dages threshold
+        // i stedet for default 7. Live EJF kan ikke lookup person-ejere uden CPR,
+        // så alternativet til stale cache er tom liste.
+        const PERSON_STALE_MS = 90 * 24 * 60 * 60 * 1000;
+        const freshest = Math.max(
+          ...cached.map((r: { sidst_opdateret: string | null }) =>
+            r.sidst_opdateret ? new Date(r.sidst_opdateret).getTime() : 0
+          )
+        );
+        if (Date.now() - freshest < PERSON_STALE_MS) {
+          for (const row of cached as Array<{
+            bfe_nummer: number;
+            ejer_enheds_nummer: string | null;
+            ejer_navn: string;
+            ejerandel_taeller: number | null;
+            ejerandel_naevner: number | null;
+            virkning_fra: string | null;
+          }>) {
+            const bfe = row.bfe_nummer;
+            bfeTilCvr.set(bfe, `person-${row.ejer_enheds_nummer ?? enhedsNumre[0]}`);
+            if (
+              row.ejerandel_taeller != null &&
+              row.ejerandel_naevner != null &&
+              row.ejerandel_naevner > 0
+            ) {
+              bfeTilEjerandel.set(
+                bfe,
+                `${Math.round((row.ejerandel_taeller / row.ejerandel_naevner) * 100)}%`
+              );
+            }
+            ownerBuyDateByBfe.set(bfe, row.virkning_fra ?? null);
+            aktivByBfe.set(bfe, true);
+          }
+          cacheFullHit = true;
+          logger.log(
+            `[ejendomme-by-owner] Person cache hit (enhedsNummer): ${bfeTilCvr.size} BFE for ${enhedsNumre.length} enhedsNumre`
+          );
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        '[ejendomme-by-owner] Person cache lookup (enhedsNummer) fejl:',
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+
+  // ── BIZZ-1158: Fallback cache-first for person-lookups via ejer_navn ──
+  // Hvis enhedsNummer-match returnerede 0 (gamle rækker uden ejer_enheds_nummer),
+  // prøv navnematch som fallback. Resolver personnavn fra cvr_deltager.
   if (!cacheFullHit && enhedsNumre.length > 0 && cvrNumre.length === 0) {
     try {
       const admin = createAdminClient();
@@ -1026,14 +1120,14 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
             }
             cacheFullHit = true;
             logger.log(
-              `[ejendomme-by-owner] Person cache hit: ${bfeTilCvr.size} BFE for ${personNavne.length} navne`
+              `[ejendomme-by-owner] Person cache hit (navn-fallback): ${bfeTilCvr.size} BFE for ${personNavne.length} navne`
             );
           }
         }
       }
     } catch (err) {
       logger.warn(
-        '[ejendomme-by-owner] Person cache lookup fejl:',
+        '[ejendomme-by-owner] Person cache lookup (navn) fejl:',
         err instanceof Error ? err.message : err
       );
     }

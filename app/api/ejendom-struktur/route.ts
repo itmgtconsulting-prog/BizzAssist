@@ -149,22 +149,32 @@ function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
 
 // ─── VUR GraphQL helper ─────────────────────────────────────────────────────
 
+/** VUR-resultat per BFE */
+interface VurResult {
+  ejendomsvaerdi: number | null;
+  grundvaerdi: number | null;
+  aar: number | null;
+}
+
 /**
- * Henter ejendomsvurdering fra Datafordeler VUR GraphQL for et BFE-nummer.
+ * BIZZ-1214: Batch-henter ejendomsvurderinger fra Datafordeler VUR GraphQL.
+ * Samler alle BFE'er i ét GraphQL-kald i stedet for N separate kald.
  *
- * @param bfe - BFE-nummer
- * @returns Vurderingsdata eller null
+ * @param bfeList - Array af BFE-numre
+ * @returns Map fra BFE → vurderingsdata
  */
-async function fetchVurderingForBfe(
-  bfe: number
-): Promise<{ ejendomsvaerdi: number | null; grundvaerdi: number | null; aar: number | null }> {
+async function fetchVurderingBatch(bfeList: number[]): Promise<Map<number, VurResult>> {
+  const result = new Map<number, VurResult>();
+  if (bfeList.length === 0) return result;
+
   try {
     const token = await getSharedOAuthToken();
-    if (!token) return { ejendomsvaerdi: null, grundvaerdi: null, aar: null };
+    if (!token) return result;
 
     const query = `query($bfe: [Int!]!) {
       VUR_BFEKrydsreference(where: { BFEnummer: { in: $bfe } }) {
         nodes {
+          BFEnummer
           VUR_Ejendomsvurdering {
             nodes {
               ejendomsvaerdi
@@ -184,16 +194,17 @@ async function fetchVurderingForBfe(
         Authorization: `Bearer ${token}`,
         ...proxyHeaders(),
       },
-      body: JSON.stringify({ query, variables: { bfe: [bfe] } }),
+      body: JSON.stringify({ query, variables: { bfe: bfeList } }),
       signal: AbortSignal.timeout(proxyTimeout()),
     });
 
-    if (!resp.ok) return { ejendomsvaerdi: null, grundvaerdi: null, aar: null };
+    if (!resp.ok) return result;
 
     const data = (await resp.json()) as {
       data?: {
         VUR_BFEKrydsreference?: {
           nodes?: Array<{
+            BFEnummer: number;
             VUR_Ejendomsvurdering?: {
               nodes?: Array<{
                 ejendomsvaerdi: number | null;
@@ -206,24 +217,22 @@ async function fetchVurderingForBfe(
       };
     };
 
-    const vurderinger =
-      data.data?.VUR_BFEKrydsreference?.nodes?.[0]?.VUR_Ejendomsvurdering?.nodes ?? [];
-    if (vurderinger.length === 0) return { ejendomsvaerdi: null, grundvaerdi: null, aar: null };
-
-    // Nyeste vurdering (højeste år)
-    const nyeste = vurderinger.reduce((a, b) =>
-      (b.vurderingsaar ?? 0) > (a.vurderingsaar ?? 0) ? b : a
-    );
-
-    return {
-      ejendomsvaerdi: nyeste.ejendomsvaerdi,
-      grundvaerdi: nyeste.grundvaerdi,
-      aar: nyeste.vurderingsaar,
-    };
+    for (const node of data.data?.VUR_BFEKrydsreference?.nodes ?? []) {
+      const vurderinger = node.VUR_Ejendomsvurdering?.nodes ?? [];
+      if (vurderinger.length === 0) continue;
+      const nyeste = vurderinger.reduce((a, b) =>
+        (b.vurderingsaar ?? 0) > (a.vurderingsaar ?? 0) ? b : a
+      );
+      result.set(node.BFEnummer, {
+        ejendomsvaerdi: nyeste.ejendomsvaerdi,
+        grundvaerdi: nyeste.grundvaerdi,
+        aar: nyeste.vurderingsaar,
+      });
+    }
   } catch (err) {
-    logger.warn(`[ejendom-struktur] VUR fetch fejl for BFE ${bfe}:`, err);
-    return { ejendomsvaerdi: null, grundvaerdi: null, aar: null };
+    logger.warn(`[ejendom-struktur] VUR batch fetch fejl:`, err);
   }
+  return result;
 }
 
 // ─── DAWA adresse-resolver ──────────────────────────────────────────────────
@@ -388,25 +397,37 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
   }
 
   try {
-    // ── Trin 1: Hent alle ejendomme på matriklen via Tinglysning ──
-    const searchPath = `/ejendom/landsejerlavmatrikel?landsejerlavid=${encodeURIComponent(ejerlavKode)}&matrikelnr=${encodeURIComponent(matrikelnr)}`;
-    const tlResult = await tlFetch(searchPath);
+    // ── Trin 1: Hent alle ejendomme via Tinglysning ──
+    // BIZZ-1218: Søg BÅDE på matrikel OG SFE BFE for at fange ejendomme
+    // på flere matrikler under samme SFE (fx 62A, 62B, 62C).
+    const matrikelPath = `/ejendom/landsejerlavmatrikel?landsejerlavid=${encodeURIComponent(ejerlavKode)}&matrikelnr=${encodeURIComponent(matrikelnr)}`;
+    const searches: Promise<{ status: number; body: string }>[] = [tlFetch(matrikelPath)];
+    // Hvis vi kender SFE BFE, søg også direkte på den for at fange alle underenheder
+    if (sfeBfe) {
+      searches.push(tlFetch(`/ejendom/hovednoteringsnummer?hovednoteringsnummer=${sfeBfe}`));
+    }
+    const searchResults = await Promise.all(searches);
 
-    if (tlResult.status !== 200) {
-      logger.error(`[ejendom-struktur] Tinglysning svarede ${tlResult.status}`);
-      return NextResponse.json(
-        { tree: null, fejl: `Tinglysning svarede ${tlResult.status}` },
-        { status: 200 }
-      );
+    const items: TLSearchItem[] = [];
+    const seenUuids = new Set<string>();
+    for (const tlResult of searchResults) {
+      if (tlResult.status !== 200) continue;
+      try {
+        const parsed = JSON.parse(tlResult.body) as { items: TLSearchItem[] };
+        for (const item of parsed.items ?? []) {
+          if (seenUuids.has(item.uuid)) continue;
+          seenUuids.add(item.uuid);
+          items.push(item);
+        }
+      } catch {
+        /* ignore malformed response */
+      }
     }
 
-    let items: TLSearchItem[];
-    try {
-      const parsed = JSON.parse(tlResult.body) as { items: TLSearchItem[] };
-      items = parsed.items ?? [];
-    } catch {
+    if (items.length === 0 && searchResults[0].status !== 200) {
+      logger.error(`[ejendom-struktur] Tinglysning svarede ${searchResults[0].status}`);
       return NextResponse.json(
-        { tree: null, fejl: 'Ugyldig tinglysning-respons' },
+        { tree: null, fejl: `Tinglysning svarede ${searchResults[0].status}` },
         { status: 200 }
       );
     }
@@ -476,20 +497,20 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
       );
     }
 
-    // ── Trin 3: Hent vurderinger for hovedejendomme parallelt ──
-    const vurderinger = await Promise.all(
-      hovedejendomItems.map(async (hej) => {
-        if (hej.bfe <= 0)
-          return { bfe: hej.bfe, ejendomsvaerdi: null, grundvaerdi: null, aar: null };
-        return { bfe: hej.bfe, ...(await fetchVurderingForBfe(hej.bfe)) };
-      })
-    );
-    const vurMap = new Map(vurderinger.map((v) => [v.bfe, v]));
+    // ── Trin 3: Hent vurderinger for hovedejendomme + ejerlejligheder i ét batch-kald ──
+    // BIZZ-1214+1336: Samler alle BFE'er (hoved + ejerlejligheder) for komplet vurdering.
+    const allBfeList = [
+      ...hovedejendomItems.filter((h) => h.bfe > 0).map((h) => h.bfe),
+      ...ejerlejlighedItems.filter((e) => e.bfe > 0).map((e) => e.bfe),
+    ];
+    const vurMap = await fetchVurderingBatch(allBfeList);
 
     // ── Trin 4: Resolve DAWA ID'er for navigation ──
-    const allItems = [...sfeItems, ...hovedejendomItems, ...ejerlejlighedItems];
+    // BIZZ-1214: Kun SFE + hovedejendomme — ejerlejligheder beriges
+    // klient-side via lejligheder-data (sparer 50+ DAWA-kald for store bygninger).
+    const parentItems = [...sfeItems, ...hovedejendomItems];
     const dawaIds = await Promise.all(
-      allItems.map(async (item) => {
+      parentItems.map(async (item) => {
         const id = await resolveDawaId(item.adresse, item.etage, item.doer);
         return { bfe: item.bfe, adresse: item.adresse, dawaId: id };
       })
@@ -506,14 +527,16 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
         .filter((ejl) => ejl.husnr === hej.husnr)
         .map((ejl) => {
           assignedEjl.add(ejl.bfe);
+          // BIZZ-1336: Berig ejerlejligheder med vurdering fra cache
+          const ejlVur = vurMap.get(ejl.bfe);
           return {
             bfe: ejl.bfe,
             adresse: ejl.adresse,
             niveau: 'ejerlejlighed' as const,
             dawaId: dawaMap.get(ejl.adresse) ?? null,
-            ejendomsvaerdi: null,
-            grundvaerdi: null,
-            vurderingsaar: null,
+            ejendomsvaerdi: ejlVur?.ejendomsvaerdi ?? null,
+            grundvaerdi: ejlVur?.grundvaerdi ?? null,
+            vurderingsaar: ejlVur?.aar ?? null,
             tlVurdering: ejl.ejendomsVurdering,
             areal: null,
             vaerelser: null,
@@ -579,23 +602,26 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
         /* non-fatal */
       }
 
-      const children: StrukturNode[] = ejls.map((ejl) => ({
-        bfe: ejl.bfe,
-        adresse: ejl.adresse,
-        niveau: 'ejerlejlighed' as const,
-        dawaId: dawaMap.get(ejl.adresse) ?? null,
-        ejendomsvaerdi: null,
-        grundvaerdi: null,
-        vurderingsaar: null,
-        tlVurdering: ejl.ejendomsVurdering,
-        areal: null,
-        vaerelser: null,
-        ejer: null,
-        ejertype: null,
-        koebspris: null,
-        koebsdato: null,
-        children: [],
-      }));
+      const children: StrukturNode[] = ejls.map((ejl) => {
+        const ejlVur = vurMap.get(ejl.bfe);
+        return {
+          bfe: ejl.bfe,
+          adresse: ejl.adresse,
+          niveau: 'ejerlejlighed' as const,
+          dawaId: dawaMap.get(ejl.adresse) ?? null,
+          ejendomsvaerdi: ejlVur?.ejendomsvaerdi ?? null,
+          grundvaerdi: ejlVur?.grundvaerdi ?? null,
+          vurderingsaar: ejlVur?.aar ?? null,
+          tlVurdering: ejl.ejendomsVurdering,
+          areal: null,
+          vaerelser: null,
+          ejer: null,
+          ejertype: null,
+          koebspris: null,
+          koebsdato: null,
+          children: [],
+        };
+      });
 
       virtualHovedNodes.push({
         bfe: 0,
@@ -630,6 +656,26 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
         /* non-fatal */
       }
     }
+    // BIZZ-1217: Fallback til DAWA BFE-lookup for SFE-noder uden dawaId.
+    // SFE-adressen mangler ofte etage/dør og resolver til en forkert adresse.
+    // DAWA /bfe/{bfe} returnerer beliggenhedsadresse.id som er stabil.
+    if (!sfeDawaId && sfeBfe) {
+      try {
+        const bfeRes = await fetchDawa(
+          `https://dawa.aws.dk/bfe/${sfeBfe}`,
+          { signal: AbortSignal.timeout(5000) },
+          { caller: 'ejendom-struktur.sfe-resolve' }
+        );
+        if (bfeRes.ok) {
+          const bfeData = (await bfeRes.json()) as {
+            beliggenhedsadresse?: { id?: string };
+          };
+          sfeDawaId = bfeData?.beliggenhedsadresse?.id ?? null;
+        }
+      } catch {
+        /* non-fatal */
+      }
+    }
 
     const root: StrukturNode = {
       bfe: sfeBfe ?? sfeItem?.bfe ?? 0,
@@ -649,26 +695,25 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
       children: [...hovedejendomNodes, ...virtualHovedNodes],
     };
 
-    // ── BIZZ-1137: Berig ejerlejligheder med korrekt dawaId via DAWA /bfe/{bfe} ──
-    // TL-adressen for anparts-ejendomme mangler etage/dør, så DAWA-resolveren
-    // finder adgangsadressen (hovedejendom) i stedet for den specifikke lejlighed.
-    // DAWA /bfe/{bfe} returnerer beliggenhedsadresse.id som er den korrekte UUID.
+    // ── BIZZ-1137/BIZZ-1214: Resolve dawaId via DAWA /bfe/{bfe} for noder
+    // uden dawaId — KUN SFE og hovedejendomme for at undgå N+1 DAWA-kald.
+    // Ejerlejligheder beriges klient-side via lejligheder-data.
     {
-      /** Samler alle ejerlejlighed-noder der mangler dawaId eller har forkert */
-      function collectEjlNodes(node: StrukturNode): StrukturNode[] {
+      /** Samler SFE/hovedejendom noder uden dawaId */
+      function collectParentNodesWithoutDawaId(node: StrukturNode): StrukturNode[] {
         const result: StrukturNode[] = [];
-        if (node.niveau === 'ejerlejlighed' && node.bfe > 0) {
+        if (!node.dawaId && node.bfe > 0 && node.niveau !== 'ejerlejlighed') {
           result.push(node);
         }
         for (const child of node.children) {
-          result.push(...collectEjlNodes(child));
+          result.push(...collectParentNodesWithoutDawaId(child));
         }
         return result;
       }
-      const ejlNodes = collectEjlNodes(root);
-      if (ejlNodes.length > 0) {
+      const parentNodes = collectParentNodesWithoutDawaId(root);
+      if (parentNodes.length > 0) {
         await Promise.allSettled(
-          ejlNodes.map(async (node) => {
+          parentNodes.map(async (node) => {
             try {
               const res = await fetchDawa(
                 `https://dawa.aws.dk/bfe/${node.bfe}`,

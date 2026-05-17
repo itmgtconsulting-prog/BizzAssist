@@ -565,9 +565,20 @@ async function phaseRenderXml(
   const CHUNK = 1000;
   const runStart = Date.now();
 
-  // Resume from last cursor (UUID of last processed entry, or '0' for start)
+  // Resume from last cursor (UUID of last processed entry, or '0' for start).
+  // BIZZ-1595: Guard mod korrupt cursor (legacy code-version skrev pageId i
+  // stedet for UUID). Hvis værdien IKKE ligner en UUID, log warning og
+  // restart fra begyndelsen i stedet for at .lt('id', '40') som returnerer
+  // 0 rows og fanger routen i en infinite no-progress loop.
   const cursor = await getProgress(admin, RENDER_XML_PROGRESS_KEY);
-  const afterId = cursor && cursor !== '0' ? cursor : null;
+  const isValidUuid =
+    cursor && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cursor);
+  if (cursor && cursor !== '0' && !isValidUuid) {
+    logger.warn(
+      `[generate-sitemap] render-xml cursor er ikke en valid UUID (got "${cursor}") — restarter fra begyndelsen`
+    );
+  }
+  const afterId = isValidUuid ? cursor : null;
 
   // Track pages: if resuming, figure out which page_id we're on
   // by counting how many entries come before our cursor.

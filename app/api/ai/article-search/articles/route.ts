@@ -33,6 +33,7 @@ import { checkRateLimit, braveRateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
 import { assertAiAllowed } from '@/app/lib/aiGate';
+import { recordAiUsage } from '@/app/lib/aiTracking';
 
 export const runtime = 'nodejs';
 export const maxDuration = 90;
@@ -919,7 +920,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       messages: [{ role: 'user', content: userMessage }],
     });
 
-    const totalTokens = (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0);
+    const totalInputTokens = response.usage?.input_tokens ?? 0;
+    const totalOutputTokens = response.usage?.output_tokens ?? 0;
+    const totalTokens = totalInputTokens + totalOutputTokens;
     const finalText = response.content
       .filter((b): b is Anthropic.TextBlock => b.type === 'text')
       .map((b) => b.text)
@@ -933,6 +936,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     logger.log(
       `[article-search/articles] "${searchLabel}" [${entityType}][ai]: ${articles.length} artikler, tokens=${totalTokens}`
     );
+
+    await recordAiUsage({
+      userId: auth.userId,
+      tenantId: auth.tenantId,
+      route: 'ai.article-search.articles',
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      model: 'claude-sonnet-4-6',
+    });
 
     return NextResponse.json({
       articles,

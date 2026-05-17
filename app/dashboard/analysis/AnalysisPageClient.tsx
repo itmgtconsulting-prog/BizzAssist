@@ -34,9 +34,17 @@ import {
   ChevronRight,
   Briefcase,
   User,
+  Shield,
+  CreditCard,
+  FileSearch,
+  ShieldCheck,
+  TrendingUp,
+  BarChart3,
 } from 'lucide-react';
+import Link from 'next/link';
 import { useLanguage } from '@/app/context/LanguageContext';
 import type { UnifiedSearchResult } from '@/app/api/search/route';
+import { getEnabledModules } from '@/app/lib/analyseModules';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -754,6 +762,79 @@ export default function AnalysisPageClient() {
               );
             })}
           </div>
+
+          {/* ── Branchespecifikke analyse-moduler ── */}
+          {(() => {
+            const mods = getEnabledModules();
+            if (mods.length === 0) return null;
+            /** Map fra ikon-streng til Lucide-komponent */
+            const iconMap: Record<
+              string,
+              React.ComponentType<{ size?: number; className?: string }>
+            > = {
+              Sparkles: ClipboardCheck,
+              Shield,
+              CreditCard,
+              FileSearch,
+              ShieldCheck,
+              TrendingUp,
+              BarChart3,
+              Search,
+              Building2,
+            };
+            const planColor: Record<string, string> = {
+              professionel: 'text-blue-400',
+              enterprise: 'text-purple-400',
+            };
+            const planBg: Record<string, string> = {
+              professionel: 'bg-blue-500/10',
+              enterprise: 'bg-purple-500/10',
+            };
+            return (
+              <div className="mt-8 space-y-3">
+                <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">
+                  {lang === 'da' ? 'Branchemoduler' : 'Industry modules'}
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {mods.map((m) => {
+                    const Icon = iconMap[m.icon] ?? Building2;
+                    const color = planColor[m.requiredPlan ?? ''] ?? 'text-emerald-400';
+                    const bg = planBg[m.requiredPlan ?? ''] ?? 'bg-emerald-500/10';
+                    return (
+                      <Link
+                        key={m.id}
+                        href={m.path}
+                        className="group w-full text-left rounded-2xl border border-white/8 bg-white/5 p-5 transition-all duration-150 hover:border-white/20 hover:bg-white/8"
+                      >
+                        <div className="flex items-start gap-4">
+                          <div
+                            className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${bg}`}
+                          >
+                            <Icon size={18} className={color} />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <h3 className="text-sm font-semibold text-slate-200 truncate">
+                                {m.label}
+                              </h3>
+                              {m.requiredPlan && (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/5 text-slate-500 font-medium shrink-0">
+                                  {m.requiredPlan === 'enterprise' ? 'Enterprise' : 'Pro'}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-500 mt-1 line-clamp-2">
+                              {m.description}
+                            </p>
+                          </div>
+                        </div>
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Decorative empty-state hint below the grid */}
           <div className="mt-6 rounded-2xl border border-white/5 bg-white/3 p-6 flex items-center gap-4">

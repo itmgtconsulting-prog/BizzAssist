@@ -77,6 +77,22 @@
       "schedule": "15 4 * * *"
     },
     {
+      "path": "/api/cron/refresh-data-catalog",
+      "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/refresh-knowledge-cache",
+      "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/api/cron/refresh-intel-scorecards",
+      "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron/backfill-tinglysning-handler",
+      "schedule": "0 5 * * *"
+    },
+    {
       "path": "/api/cron/pull-dar-aendringer",
       "schedule": "0 5 * * *"
     },
@@ -113,6 +129,10 @@
       "schedule": "30 5 * * *"
     },
     {
+      "path": "/api/cron/gap-fill-cvr-deltager",
+      "schedule": "0 6 * * *"
+    },
+    {
       "path": "/api/cron/purge-unverified-users",
       "schedule": "0 5 * * *"
     },
@@ -135,6 +155,10 @@
     {
       "path": "/api/cron/refresh-regnskab-cache",
       "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/cron/backfill-ejerskifte-historik",
+      "schedule": "30 4 * * *"
     }
   ]
 }

@@ -300,6 +300,29 @@ Tinglysning (the Danish Land Registry) holds all legal rights on properties.
 
 ---
 
+### 2.4b · Tinglysning S2S XML API Integration
+
+**Priority:** P1 · **Effort:** XL · **Depends on:** 2.4 · **Epic:** BIZZ-9XX · **ADR:** [0009](adr/0009-s2s-xml-api-integration.md)
+
+HTTP API udgår 2026-09-18 og erstattes af REST API. Anmelder-funktionalitet (oprette tinglysningssager) er kun mulig via HTTP XML API (S2S/SOAP).
+
+**Status pr. 2026-05-12:**
+
+- ✅ Prod OCES cert udstedt, registreret som S2S-aktør (verified via `EjendomSummariskHent` call mod prod)
+- ✅ Hetzner-proxy whitelistet, mTLS virker
+- 🟡 Klient-stubs lagt i `app/lib/etl/` — body-impl. mangler
+
+**Beslutning:** Begge BizzAssist-miljøer (prod + preview) peger på **prod Tinglysning XML API**. Vi bruger ikke Tinglysning's test-miljø.
+
+**Faser (se ADR 0009 for fuld breakdown):**
+
+- [ ] **Fase 1 (P1, ~3-5 dage):** Forespørger MVP — `EjendomSummariskHent` + `EjendomStamoplysningerHent` end-to-end. Sub-tasks BIZZ-XX1 … BIZZ-XX7.
+- [ ] **Fase 2 (P2, ~5 dage):** Resterende forespørgsels-operationer (Adkomster, Servitutter, Hæftelser, Søg) + XSD-typer-generator. BIZZ-XX8 … BIZZ-XX10.
+- [ ] **Fase 3 (P1, ~7-10 dage):** Anmelder + 4 callback-services. ⚠️ Høj-risk — feature-flagged. BIZZ-XX11 … BIZZ-XX16.
+- [ ] **Fase 4 (P1, parallelt):** Miljø-setup — `TINGLYSNING_XML_BASE_URL` på Production+Preview, guard mod anmelder fra preview. BIZZ-XX17 … BIZZ-XX19.
+
+---
+
 ### 2.5 · DAWA / DAR — Address & Geocoding
 
 **Priority:** P1 · **Effort:** S · **Depends on:** Phase 1

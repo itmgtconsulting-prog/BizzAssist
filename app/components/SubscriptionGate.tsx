@@ -17,12 +17,16 @@ import Link from 'next/link';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { useSubscription } from '@/app/context/SubscriptionContext';
 import { resolvePlan, isWithinPaymentGrace, type UserSubscription } from '@/app/lib/subscriptions';
+import { hasModuleAccess } from '@/app/lib/moduleAccess';
+
+/** Feature type — basic features or module-level gating (BIZZ-1241) */
+type FeatureType = 'ai' | 'search' | 'detail' | `module:${string}`;
 
 interface Props {
   /** Content to render if access is granted */
   children: React.ReactNode;
-  /** Specific feature to check */
-  requiredFeature?: 'ai' | 'search' | 'detail';
+  /** Specific feature to check — supports 'module:xxx' for analyse-module gating */
+  requiredFeature?: FeatureType;
   /** Whether the subscription is functional (paid/trial/free) — passed from layout */
   isFunctional?: boolean;
 }
@@ -46,6 +50,12 @@ function hasAccess(sub: UserSubscription | null, feature?: string): boolean {
 
   // All active plans have access to search and detail views
   if (!feature) return true;
+
+  // BIZZ-1241: Module-level gating — 'module:kreditvurdering' etc.
+  if (feature.startsWith('module:')) {
+    const moduleId = feature.slice('module:'.length);
+    return hasModuleAccess(sub, moduleId);
+  }
 
   switch (feature) {
     case 'ai':
@@ -103,6 +113,11 @@ export default function SubscriptionGate({
     description = da
       ? 'Opgrader til Professionel eller Enterprise for at bruge AI-assistenten.'
       : 'Upgrade to Professional or Enterprise to use the AI assistant.';
+  } else if (requiredFeature?.startsWith('module:')) {
+    title = da ? 'Modul ikke inkluderet i dit abonnement' : 'Module not included in your plan';
+    description = da
+      ? 'Opgrader dit abonnement eller tilkøb dette modul for at få adgang.'
+      : 'Upgrade your subscription or purchase this module add-on to get access.';
   } else {
     title = da ? 'Funktion ikke tilgængelig' : 'Feature not available';
     description = da
@@ -147,7 +162,7 @@ export default function SubscriptionGate({
  * @param feature - Feature to check
  * @returns Object with access boolean and subscription data
  */
-export function useSubscriptionAccess(feature?: 'ai' | 'search' | 'detail') {
+export function useSubscriptionAccess(feature?: FeatureType) {
   const { subscription: sub, checked, isAdmin } = useSubscription();
 
   return {

@@ -52,7 +52,8 @@ const PERSON_ROW_H = 14;
 
 /** Compute dynamic node height based on node properties */
 /** Max overflow items shown before "vis alle" */
-const OVERFLOW_INITIAL_SHOW = 5;
+/** BIZZ-563/1541: Legacy konstant — kollapseret overflow viser kun count + knap nu. */
+const _OVERFLOW_INITIAL_SHOW = 5;
 
 /** Compute node height — expandedOverflowIds makes overflow nodes taller when expanded */
 function getNodeH(node: DiagramNode, expandedOverflowIds?: Set<string>): number {
@@ -1039,28 +1040,46 @@ function DiagramForce({
       const allParentDepths = parents
         .filter((pid) => depths.has(pid))
         .map((pid) => depths.get(pid)!);
-      const bestParentDepths =
-        companyParentDepths.length > 0 ? companyParentDepths : allParentDepths;
-      if (bestParentDepths.length > 0) {
-        depths.set(node.id, Math.min(...bestParentDepths) + 0.5);
+      if (companyParentDepths.length > 0) {
+        // Virksomheds-ejet ejendom: placer under virksomheden
+        depths.set(node.id, Math.min(...companyParentDepths) + 0.5);
+      } else if (allParentDepths.length > 0) {
+        // BIZZ-1546: Personligt ejet ejendom — placer MELLEM person og virksomheder.
+        // personDepth + 0.5 giver depth -0.5 (person er -1, virksomheder er 0),
+        // så ejendomme vises OVER virksomheds-rækken. MIN_PERSON_PROP_GAP i
+        // nodeYMap sikrer tilstrækkelig vertikal afstand til person-noden.
+        const personParentD = Math.min(...allParentDepths);
+        depths.set(node.id, personParentD + 0.5);
       }
     }
 
-    // BIZZ-1205: Rolle-virksomheder (layoutSection='role') placeres NEDERST
-    // i diagrammet, under ejerskabs-hierarkiet. Ejerskabs-virksomheder beholder
-    // deres naturlige depth fra BFS (direkte under personen og nedad).
+    // BIZZ-1205/1545: Rolle-virksomheder (layoutSection='role') placeres MELLEM
+    // personligt ejede ejendomme og ejer-virksomheder. Tidligere placeret
+    // nederst, hvilket gjorde diagrammet svært at læse for personer med mange
+    // rolle-virksomheder. Hierarki-orden: person → personlige ejendomme →
+    // rolle-virksomheder → ejer-virksomheder → sub-virksomheder.
     const roleNodes = filteredGraph.nodes.filter((n) => n.layoutSection === 'role');
     if (roleNodes.length > 0) {
-      // Find dybeste ejerskabs-node
-      let maxOwnerDepth = 1;
+      // Find depth af personally-owned properties (max) og ejer-virksomheder (min)
+      let maxPropDepth = -Infinity;
+      let minEjerDepth = Infinity;
       for (const [id, d] of depths) {
         const node = nodeById.get(id);
-        if (node?.layoutSection === 'role') continue;
-        if (d > maxOwnerDepth) maxOwnerDepth = d;
+        if (!node || node.layoutSection === 'role') continue;
+        if (node.type === 'property' || id.startsWith('props-overflow-')) {
+          if (d > maxPropDepth) maxPropDepth = d;
+        } else if (node.type === 'company' && d > 0) {
+          // Ejer-virksomheder ligger ved depth 1+ (under personen)
+          if (d < minEjerDepth) minEjerDepth = d;
+        }
       }
-      // Placér rolle-noder 2 niveauer under dybeste ejerskabs-node
+      // Placér rolle-noder midt mellem properties og ejer (default 0.75 hvis ingen properties)
+      const targetDepth =
+        maxPropDepth !== -Infinity && minEjerDepth !== Infinity
+          ? (maxPropDepth + minEjerDepth) / 2
+          : 0.75;
       for (const node of roleNodes) {
-        depths.set(node.id, maxOwnerDepth + 2);
+        depths.set(node.id, targetDepth);
       }
     }
 
@@ -1077,7 +1096,8 @@ function DiagramForce({
   }, [filteredGraph, effectiveGraph.mainId]);
 
   // ── Layout constants ──
-  const BASE_LEVEL_GAP = 160;
+  // BIZZ-1546: Øget fra 160 → 200 for tydeligere vertikal adskillelse
+  const BASE_LEVEL_GAP = 200;
   /** Max nodes per row before wrapping to sub-rows */
   const MAX_PER_ROW = 5;
   /** Base vertical offset between sub-rows within the same depth level */
@@ -1365,6 +1385,48 @@ function DiagramForce({
         for (let i = 0; i < companies.length; i++) {
           const subRow = Math.floor(i / MAX_PER_ROW);
           yMap.set(companies[i], companyBaseY + subRow * coRowGap);
+        }
+      }
+    }
+
+    // BIZZ-1546: Enforce min vertical gap mellem persons og properties.
+    // Når persons spænder over flere sub-rows (fx 7 persons → 2 sub-rows), kan
+    // properties i et lavere depth-bucket ende for tæt på second person sub-row
+    // pga. den fractional depth (personDepth + 1.5 → kun 0.5 unit fra persons).
+    // Vi shifter property-noder ned så deres TOP er mindst MIN_PERSON_PROP_GAP
+    // pixels under den nederste person-noden.
+    // BIZZ-1546: Øget fra 120 → 200 for tydeligere vertikal adskillelse
+    const MIN_PERSON_PROP_GAP = 200;
+    const personYs: number[] = [];
+    const propertyEntries: Array<{ id: string; y: number }> = [];
+    for (const [id, yVal] of yMap) {
+      const n = nodeById.get(id);
+      if (!n) continue;
+      if (n.type === 'person') personYs.push(yVal);
+      else if (n.type === 'property' || id.startsWith('props-overflow-')) {
+        propertyEntries.push({ id, y: yVal });
+      }
+    }
+    if (personYs.length > 0 && propertyEntries.length > 0) {
+      const maxPersonY = Math.max(...personYs);
+      // Find tightest property-Y der ligger under maxPersonY
+      const minPropY = Math.min(...propertyEntries.map((p) => p.y));
+      const requiredMinPropY = maxPersonY + MIN_PERSON_PROP_GAP;
+      if (minPropY < requiredMinPropY) {
+        const shift = requiredMinPropY - minPropY;
+        for (const p of propertyEntries) {
+          yMap.set(p.id, p.y + shift);
+        }
+        // Shift også alle øvrige noder (companies osv.) der ligger på eller under
+        // den shiftede property-Y for at bevare vertikal rækkefølge
+        for (const [id, yVal] of Array.from(yMap)) {
+          const n = nodeById.get(id);
+          if (!n) continue;
+          if (n.type === 'person') continue;
+          if (n.type === 'property' || id.startsWith('props-overflow-')) continue;
+          if (yVal >= minPropY) {
+            yMap.set(id, yVal + shift);
+          }
         }
       }
     }
@@ -2346,8 +2408,8 @@ function DiagramForce({
             ? 'Træk noder · Hold og træk for panorering · Dobbeltklik for zoom'
             : 'Drag nodes · Hold & drag to pan · Double-click to zoom'}
         </span>
-        {/* BIZZ-451: Toggle property nodes */}
-        {propertyCount > 0 && (
+        {/* BIZZ-451+1320: Toggle property nodes — vis altid */}
+        {
           <button
             onClick={() => {
               setShowProperties((s) => !s);
@@ -2379,9 +2441,9 @@ function DiagramForce({
                 ? `Ejendomme (${propertyCount})`
                 : `Properties (${propertyCount})`}
           </button>
-        )}
-        {/* BIZZ-1004: Toggle personligt ejede ejendomme — kun på virksomhedsdiagram */}
-        {defaultShowProperties && personalPropNodeIds.size > 0 && (
+        }
+        {/* BIZZ-1004+1316: Toggle personligt ejede ejendomme — vis altid på virksomhedsdiagram */}
+        {defaultShowProperties && (
           <button
             onClick={() => {
               setShowPersonalProps((s) => !s);
@@ -2611,13 +2673,20 @@ function DiagramForce({
               fill="none"
               stroke={strokeColor}
               strokeWidth={
-                isCrossOwnership ? 1.25 : isCoOwnerEdge ? 1.5 : isPropertyEdge ? 1.25 : 2.25
+                // BIZZ-1285: personallyOwned edges bruger tynd linje som property-edges
+                isCrossOwnership
+                  ? 1.25
+                  : isCoOwnerEdge
+                    ? 1.5
+                    : isPropertyEdge || edge.personallyOwned
+                      ? 1.25
+                      : 2.25
               }
               strokeDasharray={dashArray}
             />
             <polygon
               points={
-                isPropertyEdge || isCrossOwnership
+                isPropertyEdge || isCrossOwnership || edge.personallyOwned
                   ? `${ex},${ey} ${ex - 3.5},${ey - 7} ${ex + 3.5},${ey - 7}`
                   : `${ex},${ey} ${ex - 5},${ey - 9} ${ex + 5},${ey - 9}`
               }
@@ -2712,13 +2781,12 @@ function DiagramForce({
         // overlap med sibling-noder. Modal viser fuld liste (BIZZ-479).
         const w = node.overflowItems ? NODE_W_PROPERTY : isProperty ? NODE_W_PROPERTY : NODE_W;
         const x = pos.x - w / 2;
-        // Overflow-noder: forankr fra toppen (brug kollapseret højde) så de udvider nedad
-        const collapsedH = node.overflowItems
-          ? 30 +
-            Math.min(node.overflowItems.length, OVERFLOW_INITIAL_SHOW) * 16 +
-            (node.overflowItems.length > OVERFLOW_INITIAL_SHOW ? 20 : 0)
-          : h;
-        const y = pos.y - collapsedH / 2;
+        // BIZZ-1541: Brug `h` (= getNodeH) til y-anker også for overflow.
+        // Tidligere brugte vi en legacy collapsedH-formel (30 + items*16 + 20)
+        // der gav ~130px for 11+ items, mens den faktiske kollapsede højde er
+        // 46px (kun count + "Vis alle"-knap). Det forskudte y-ankret 42px op
+        // og fik overflow-boksen til at overlappe sibling-property-noder.
+        const y = pos.y - h / 2;
 
         // ── Overflow list node — BIZZ-563: kompakt count-only visning ──
         // Tidligere viste vi de første 5 adresser inline, men det gjorde boksen
@@ -2750,15 +2818,28 @@ function DiagramForce({
               />
               <text
                 x={x + w / 2}
-                y={y + 18}
+                y={y + 14}
                 textAnchor="middle"
                 fill="rgba(165,180,200,0.95)"
-                fontSize="11"
+                fontSize="10"
                 fontWeight="600"
                 className="pointer-events-none"
               >
                 {node.label}
               </text>
+              {/* BIZZ-1504: Vis preview af de første 2 adresser */}
+              {node.overflowItems.slice(0, 2).map((item, idx) => (
+                <text
+                  key={idx}
+                  x={x + 8}
+                  y={y + 26 + idx * 10}
+                  fill="rgba(148,163,184,0.7)"
+                  fontSize="7"
+                  className="pointer-events-none"
+                >
+                  {(item.label ?? '').slice(0, 30)}
+                </text>
+              ))}
               {node.overflowItems.length > 0 && (
                 <g
                   className="cursor-pointer"
@@ -2816,6 +2897,9 @@ function DiagramForce({
             <title>
               {node.label}
               {isCeased ? ' (Ophørt)' : ''}
+              {node.label === 'Navnebeskyttet ejer'
+                ? ' — Ejerens navn er beskyttet iht. CPR-lovens §28. Ejerskabet er registreret men navnet kan ikke vises.'
+                : ''}
               {node.sublabel ? ` — ${node.sublabel}` : ''}
             </title>
             <rect
@@ -2863,7 +2947,28 @@ function DiagramForce({
 
               return (
                 <>
-                  {isPerson ? (
+                  {isPerson && node.label === 'Navnebeskyttet ejer' ? (
+                    /* BIZZ-1587: Lås-ikon for navnebeskyttede ejere */
+                    <g transform={`translate(${x + 14}, ${pos.y - 6})`}>
+                      <rect
+                        x={2}
+                        y={5}
+                        width={8}
+                        height={7}
+                        rx={1.5}
+                        fill="none"
+                        stroke="rgba(250,204,21,0.7)"
+                        strokeWidth={1.2}
+                      />
+                      <path
+                        d="M3.5 5V3.5a2.5 2.5 0 0 1 5 0V5"
+                        fill="none"
+                        stroke="rgba(250,204,21,0.7)"
+                        strokeWidth={1.2}
+                        strokeLinecap="round"
+                      />
+                    </g>
+                  ) : isPerson ? (
                     <circle
                       cx={x + 20}
                       cy={pos.y}
@@ -2901,8 +3006,9 @@ function DiagramForce({
                           const parts = node.label.split(',').map((s) => s.trim());
                           const street = parts[0] ?? node.label;
                           const postBy = parts.slice(1).join(', ');
-                          // Truncate street to fit in box (NODE_W=320, ~30 chars at 11px)
-                          const maxStreet = 32;
+                          // BIZZ-1543: maxStreet 32→36 så "vejnavn nr. etage. dør"
+                          // ikke trunkeres unødigt nu hvor etage er flyttet til linje 1.
+                          const maxStreet = 36;
                           const streetText =
                             street.length > maxStreet ? street.slice(0, maxStreet) + '…' : street;
                           return (
@@ -2954,7 +3060,18 @@ function DiagramForce({
                           >
                             {node.label.length > 44 ? node.label.slice(0, 44) + '…' : node.label}
                           </text>
-                          {node.personRolle ? (
+                          {/* BIZZ-1587: Info-tekst for navnebeskyttede ejere */}
+                          {node.label === 'Navnebeskyttet ejer' ? (
+                            <text
+                              x={x + 30}
+                              y={topY + 23}
+                              fill="rgba(250,204,21,0.75)"
+                              fontSize="8"
+                              className="pointer-events-none"
+                            >
+                              Navn skjult iht. CPR-loven §28
+                            </text>
+                          ) : node.personRolle ? (
                             <text
                               x={x + 30}
                               y={topY + 23}
@@ -3338,7 +3455,7 @@ function DiagramForce({
   const canvasEl = (
     <div
       ref={containerRef}
-      className={`bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden select-none ${isFullscreen ? 'flex-1' : ''}`}
+      className={`bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden select-none relative ${isFullscreen ? 'flex-1 z-[55]' : 'z-0'}`}
       style={{
         minHeight: isFullscreen ? undefined : '500px',
         maxHeight: isFullscreen ? undefined : '85vh',

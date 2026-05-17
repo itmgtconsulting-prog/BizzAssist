@@ -17,6 +17,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { resolveTenantId } from '@/lib/api/auth';
 import { assertAiAllowed } from '@/app/lib/aiGate';
+import { recordAiUsage } from '@/app/lib/aiTracking';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
 import {
@@ -81,26 +82,36 @@ const TONE_DESCRIPTIONS: Record<ListingTone, string> = {
  * @returns System prompt
  */
 function buildSystemPrompt(tone: ListingTone): string {
+  const isSocialMedia = tone === 'facebook' || tone === 'instagram' || tone === 'linkedin';
+
   return `Du er en erfaren dansk ejendomsmægler der skriver professionelle boligannoncer.
 
 TONE: ${TONE_DESCRIPTIONS[tone]}
-
+${
+  isSocialMedia
+    ? `
+FORMATERING:
+- Skriv i ren tekst — INGEN markdown (ingen #, ##, **, ---)
+- Brug linjeskift til afsnit
+- Emojis er tilladt (maks 3-4 stk)
+- Teksten skal kunne copy-pastes direkte til ${tone === 'facebook' ? 'Facebook' : tone === 'instagram' ? 'Instagram' : 'LinkedIn'} uden redigering`
+    : `
 STRUKTUR (brug denne rækkefølge):
 1. **Overskrift** — max 10 ord, fængende og specifik for boligen
 2. **Intro** — 2-3 sætninger der fanger læseren og sætter stemningen
 3. **Rumbeskrivelse** — beskriv de vigtigste rum baseret på BBR-data (antal værelser, areal, etage)
 4. **Beliggenhed** — beskriv nærområdet, transport, indkøb baseret på adressen
 5. **Praktisk info** — energimærke, opførelsesår, ejendomsværdi, grundværdi
-6. **Afslutning** — opfordring til kontakt/fremvisning
+6. **Afslutning** — opfordring til kontakt/fremvisning`
+}
 
 REGLER:
 - Skriv på korrekt dansk — ingen anglicismer
 - Fakta-først: brug de konkrete tal du modtager, opfind aldrig data
-- Maks 500 ord
+- Maks ${isSocialMedia ? (tone === 'instagram' ? '100' : tone === 'facebook' ? '150' : '200') : '500'} ord
 - Skriv i 2. person ("din nye bolig", "du vil elske")
 - Skriv udelukkende annonceteksten — ingen kommentarer, forbehold eller meta-tekst
-- Hvis data mangler for et felt, spring det over i stedet for at skrive "ukendt"
-- Formatér med markdown (## for overskrift, **fed** for fremhævelser)`;
+- Hvis data mangler for et felt, spring det over i stedet for at skrive "ukendt"${isSocialMedia ? '' : '\n- Formatér med markdown (## for overskrift, **fed** for fremhævelser)'}`;
 }
 
 /**
@@ -276,7 +287,7 @@ Skriv annoncen i "${body.tone}" tone.${comparablesContext ? ' Brug de sammenlign
       try {
         const client = new Anthropic({ apiKey });
         // BIZZ-1199: Ægte streaming — forward content_block_delta events direkte
-        const stream = client.messages.stream(
+        const claudeStream = client.messages.stream(
           {
             model: 'claude-sonnet-4-6',
             max_tokens: 2048,
@@ -286,14 +297,34 @@ Skriv annoncen i "${body.tone}" tone.${comparablesContext ? ' Brug de sammenlign
           { signal: AbortSignal.timeout(30000) }
         );
 
-        for await (const event of stream) {
+        for await (const event of claudeStream) {
           if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
             sse(JSON.stringify({ t: event.delta.text }));
           }
         }
 
+        // BIZZ-1601: Hent usage fra finalMessage og send til klient + track
+        const final = await claudeStream.finalMessage();
+        const inputTokens = final.usage?.input_tokens ?? 0;
+        const outputTokens = final.usage?.output_tokens ?? 0;
+        sse(
+          JSON.stringify({
+            usage: { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens },
+          })
+        );
+
         sse('[DONE]');
         controller.close();
+
+        // Fire-and-forget: persist token usage
+        void recordAiUsage({
+          userId: auth.userId,
+          tenantId: auth.tenantId,
+          route: 'ai.generate-listing',
+          inputTokens,
+          outputTokens,
+          model: 'claude-sonnet-4-6',
+        });
       } catch (err) {
         logger.error('[ai/generate-listing] Claude fejl:', err);
         sse(JSON.stringify({ error: 'Ekstern API fejl' }));

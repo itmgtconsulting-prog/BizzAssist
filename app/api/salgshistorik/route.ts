@@ -29,7 +29,15 @@ import {
   DATAFORDELER_TOKEN_URL,
 } from '@/app/lib/serviceEndpoints';
 import { LruCache } from '@/app/lib/lruCache';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { fetchTinglysningPriceRowsByBfe, indexPriceRowsByDate } from '@/app/lib/tinglysningPrices';
+import { fetchHistoriskAdkomsterByBfe } from '@/app/lib/tinglysningHistoriskAdkomster';
+import {
+  readCachedHandler,
+  isCacheFresh,
+  upsertHandlerRows,
+  type CachedHandlerRow,
+} from '@/app/lib/tinglysningHandlerCache';
 
 // BIZZ-633: LRU-cache for salgshistorik-svar. Samme BFE slås op mange
 // gange i samme session (økonomi-tab, ejendoms-kort, diagram-berigelse).
@@ -237,15 +245,57 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
 
   const { bfeNummer } = parsed.data;
 
-  // BIZZ-633: LRU cache-hit → undgå hele EJF round-trip'en. Salgshistorik er
-  // en særlig hot path fordi både Økonomi-tab, ejendoms-kort og
-  // diagram-enrichment trigger samme BFE-lookup.
+  // BIZZ-633: L1 in-memory LRU cache → instant return
   const cached = salgshistorikCache.get(bfeNummer);
   if (cached) {
     return NextResponse.json(cached, {
       status: 200,
-      headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
+      headers: {
+        'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600',
+        'X-Cache-Hit': 'lru',
+      },
     });
+  }
+
+  // BIZZ-1607: L2 persistent Supabase cache → survives cold starts
+  try {
+    const admin = createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: cacheRow } = await (admin as any)
+      .from('salgshistorik_cache')
+      .select('payload, fetched_at, ttl_hours, hit_count')
+      .eq('bfe_nummer', bfeNummer)
+      .single();
+    if (cacheRow) {
+      const row = cacheRow as {
+        payload: unknown;
+        fetched_at: string;
+        ttl_hours: number;
+        hit_count: number;
+      };
+      const age = Date.now() - new Date(row.fetched_at).getTime();
+      const ttlMs = (row.ttl_hours ?? 24) * 3_600_000;
+      if (age < ttlMs) {
+        const result = row.payload as SalgshistorikResponse;
+        salgshistorikCache.set(bfeNummer, result);
+        // Bump hit count (fire-and-forget)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        void (admin as any)
+          .from('salgshistorik_cache')
+          .update({ hit_count: row.hit_count + 1, last_hit_at: new Date().toISOString() })
+          .eq('bfe_nummer', bfeNummer)
+          .then(() => {});
+        return NextResponse.json(result, {
+          status: 200,
+          headers: {
+            'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600',
+            'X-Cache-Hit': 'supabase',
+          },
+        });
+      }
+    }
+  } catch {
+    // Cache lookup fejlede — fortsæt til live fetch
   }
 
   const token = await getSharedOAuthToken();
@@ -477,14 +527,57 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
       }
     }
 
-    // ─── BIZZ-685/693 iter 2: Tinglysning price enrichment ───────────────────
-    // For rows where EJF returned no price (all rows in practice — EJF's
-    // GraphQL never exposes KontantKoebesum), chain to Tinglysning's summarisk
-    // XML to fold in price + koebsaftaleDato + tinglysningsdato. Matched on
-    // overtagelsesdato → YYYY-MM-DD. Failures are swallowed so users still
-    // see the EJF-owned rows when Tinglysning is down.
+    // ─── BIZZ-685/693 iter 2 + BIZZ-1590: Tinglysning price enrichment ──────
+    // Cache-first: tjek public.tinglysning_handler først (sparer REST-roundtrip
+    // ~600-1500ms ved cache-hit). Hvis cache er stale/empty → live-fetch + skriv
+    // tilbage (fire-and-forget). EJF's GraphQL eksponerer aldrig KontantKoebesum
+    // så denne berigelse er kritisk for visning af salgspriser.
     try {
-      const priceRows = await fetchTinglysningPriceRowsByBfe(bfeNummer);
+      let priceRows: ReturnType<typeof indexPriceRowsByDate> extends Map<string, infer T>
+        ? T[]
+        : never;
+      let usedCache = false;
+
+      const cached = await readCachedHandler(bfeNummer);
+      if (cached.length > 0 && isCacheFresh(cached)) {
+        // Map cache-rows → TinglysningPriceRow shape så indexPriceRowsByDate fungerer
+        priceRows = cached.map((c: CachedHandlerRow) => ({
+          overtagelsesdato: c.overtagelsesdato,
+          tinglysningsdato: c.tinglysningsdato,
+          koebsaftaleDato: null, // ikke i cache pt — tab af denne ene felt acceptabel
+          kontantKoebesum: c.kontant_koebesum,
+          iAltKoebesum: c.ialt_koebesum,
+          dokumentId: c.dokument_id,
+        }));
+        usedCache = true;
+      } else {
+        priceRows = await fetchTinglysningPriceRowsByBfe(bfeNummer);
+        // Skriv til cache fire-and-forget — næste opslag rammer cache
+        if (priceRows.length > 0) {
+          void upsertHandlerRows(
+            bfeNummer,
+            priceRows
+              .filter((p) => p.overtagelsesdato)
+              .map((p) => ({
+                overtagelsesdato: p.overtagelsesdato as string,
+                dokument_id: p.dokumentId,
+                tinglysningsdato: p.tinglysningsdato,
+                koeber_navn: null,
+                koeber_cvr: null,
+                adkomst_type: null,
+                kontant_koebesum: p.kontantKoebesum,
+                ialt_koebesum: p.iAltKoebesum,
+                loesoere: null,
+                entreprise: null,
+                tinglysningsafgift: null,
+                andel: null,
+              }))
+          );
+        }
+      }
+      if (usedCache) {
+        logger.log('[salgshistorik] cache-hit on tinglysning_handler', { bfe: bfeNummer });
+      }
       if (priceRows.length > 0) {
         const byDate = indexPriceRowsByDate(priceRows);
         for (const row of handler) {
@@ -525,6 +618,39 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
       logger.warn('[salgshistorik] tinglysning price enrichment failed:', err);
     }
 
+    // BIZZ-1494: Berig med historiske adkomster fra XML API
+    try {
+      const historisk = await fetchHistoriskAdkomsterByBfe(bfeNummer);
+      if (historisk.length > 0) {
+        // Tilføj historiske handler der ikke allerede er i listen
+        const existingDates = new Set(handler.map((h) => (h.overtagelsesdato ?? '').slice(0, 10)));
+        for (const ha of historisk) {
+          if (!ha.dato || existingDates.has(ha.dato)) {
+            // Berig eksisterende med pris hvis mangler
+            const existing = handler.find(
+              (h) => (h.overtagelsesdato ?? '').slice(0, 10) === ha.dato
+            );
+            if (existing && existing.kontantKoebesum == null && ha.koebesumDkk != null) {
+              existing.kontantKoebesum = ha.koebesumDkk;
+            }
+            continue;
+          }
+          // Ny historisk entry
+          handler.push({
+            overtagelsesdato: ha.dato,
+            koeber: ha.adkomsthavere[0]?.navn ?? null,
+            kontantKoebesum: ha.koebesumDkk,
+            samletKoebesum: null,
+            koebsaftaleDato: null,
+            overdragelsesmaade: ha.dokumentType ?? null,
+          } as (typeof handler)[number]);
+        }
+        handler.sort((a, b) => (b.overtagelsesdato ?? '').localeCompare(a.overtagelsesdato ?? ''));
+      }
+    } catch (err) {
+      logger.warn('[salgshistorik] historisk adkomster enrichment failed:', err);
+    }
+
     logger.log(
       `[salgshistorik] ${handler.length} ejerskab-events fundet for BFE ${bfeNummer} via EJFCustom`
     );
@@ -538,6 +664,21 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
       manglerAdgang: false,
     };
     salgshistorikCache.set(bfeNummer, responseData);
+    // BIZZ-1607: Persist til L2 Supabase cache (fire-and-forget)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    void (createAdminClient() as any)
+      .from('salgshistorik_cache')
+      .upsert(
+        {
+          bfe_nummer: bfeNummer,
+          payload: responseData,
+          fetched_at: new Date().toISOString(),
+          ttl_hours: 24,
+          hit_count: 0,
+        },
+        { onConflict: 'bfe_nummer' }
+      )
+      .then(() => {});
     return NextResponse.json(responseData, {
       status: 200,
       headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },

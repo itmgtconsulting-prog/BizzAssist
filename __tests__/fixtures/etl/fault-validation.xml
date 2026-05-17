@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <soap:Fault>
+      <faultcode>soap:Client</faultcode>
+      <faultstring>Manglende eller ugyldig signatur</faultstring>
+      <detail>
+        <FejlInformation xmlns="http://rep.oio.dk/tinglysning.dk/schema/model/1/">
+          <FejlKode>VAL-001</FejlKode>
+          <FejlTekst>Signature element ikke fundet i request body</FejlTekst>
+        </FejlInformation>
+      </detail>
+    </soap:Fault>
+  </soap:Body>
+</soap:Envelope>

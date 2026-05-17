@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { resolveTenantId } from '@/lib/api/auth';
 import { assertAiAllowed } from '@/app/lib/aiGate';
+import { recordAiUsage } from '@/app/lib/aiTracking';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
 
@@ -139,6 +140,15 @@ Foreløbig vurdering (${input.forelobigAar ?? '?'}):
             sse(JSON.stringify({ t: textBlock.text.slice(i, i + CHUNK_SIZE) }));
           }
         }
+
+        await recordAiUsage({
+          userId: auth.userId,
+          tenantId: auth.tenantId,
+          route: 'ai.forklar-vurdering',
+          inputTokens: response.usage?.input_tokens ?? 0,
+          outputTokens: response.usage?.output_tokens ?? 0,
+          model: 'claude-sonnet-4-6',
+        });
 
         sse('[DONE]');
         controller.close();

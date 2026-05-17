@@ -21,6 +21,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
 import { resolveTenantId } from '@/lib/api/auth';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { logActivity } from '@/app/lib/activityLog';
 import { logger } from '@/app/lib/logger';
 
 /** Zod schema for the [id] dynamic param — UUID format */
@@ -85,6 +87,12 @@ export async function GET(
     // BIZZ-1015 cache-first reverted — forårsagede BBR-fejl i test-miljø.
     // Cache-first kræver at cache_bbr-migration er applied i alle miljøer.
     const result = await fetchBbrForAddress(id);
+
+    // Fire-and-forget: log property_open for usage analytics.
+    // DAWA adresse-UUID is not PII — it's a public infrastructure identifier.
+    logActivity(createAdminClient(), auth.tenantId, auth.userId, 'property_open', {
+      dawaId: id,
+    });
 
     return NextResponse.json(
       { dawaId: id, ...result },

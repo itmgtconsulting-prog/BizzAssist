@@ -146,7 +146,7 @@ function extractRegisterRelations(enhedsNummer, rels) {
         ...((org.medlemsData ?? []).flatMap((md) => md?.attributter ?? [])),
       ];
 
-      const hasEjerReg = allAttrs.some(
+      const hasActiveEjerReg = allAttrs.some(
         (a) =>
           a?.type === 'FUNKTION' &&
           (a?.vaerdier ?? []).some(
@@ -154,7 +154,14 @@ function extractRegisterRelations(enhedsNummer, rels) {
               v?.vaerdi === 'EJERREGISTER' && v?.periode?.gyldigTil == null
           )
       );
-      if (!hasEjerReg) continue;
+      // BIZZ-1290: Også processer deltagere med UDLØBET EJERREGISTER —
+      // ellers forbliver gamle rows med gyldig_til=null i DB fra tidlige backfills.
+      const hasAnyEjerReg = allAttrs.some(
+        (a) =>
+          a?.type === 'FUNKTION' &&
+          (a?.vaerdier ?? []).some((v) => v?.vaerdi === 'EJERREGISTER')
+      );
+      if (!hasActiveEjerReg && !hasAnyEjerReg) continue;
 
       // Find ejerandel fra EJERANDEL_PROCENT
       let ejerandelPct = null;

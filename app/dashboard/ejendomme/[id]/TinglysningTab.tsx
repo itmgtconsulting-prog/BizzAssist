@@ -19,6 +19,8 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import HaeftelserSektion from '@/app/components/ejendomme/HaeftelserSektion';
+import ServitutterSektion from '@/app/components/ejendomme/ServitutterSektion';
 import Link from 'next/link';
 import {
   Building2,
@@ -92,8 +94,24 @@ export default function TinglysningTab({
   const [showMatrikler, setShowMatrikler] = useState(false);
   const [showNoteringer, setShowNoteringer] = useState(false);
   const [showTillaeg, setShowTillaeg] = useState(false);
-  /** Indskannede akter — pre-digitale akt-navne fra EjendomIndskannetAktSamling i ejdsummarisk */
-  const [indskannedeAkterNavne, setIndskannedeAkterNavne] = useState<string[]>([]);
+  /** Indskannede akter — hentes via S2S EjendomStamoplysningerHent */
+  const [indskannedeAkter, setIndskannedeAkter] = useState<
+    { aktNavn: string; beskrivelse: string | null; dato: string | null; loebNr: number }[]
+  >([]);
+  /**
+   * BIZZ-1584: Smart PDF-link for pre-digitale dokumenter.
+   * Returnerer indskannet akt-download URL hvis tilgængelig, ellers standard dokument-URL.
+   */
+  const getPdfUrl = (docId: string, docDato: string | null): string => {
+    // Hvis der er indskannede akter OG dokumentet er pre-digitalt (< 2009), link direkte til akt
+    if (indskannedeAkter.length > 0 && docDato) {
+      const year = parseInt(docDato.split('-')[0] ?? '9999', 10);
+      if (year < 2009) {
+        return `/api/tinglysning/indskannede-akter/download?aktNavn=${encodeURIComponent(indskannedeAkter[0].aktNavn)}`;
+      }
+    }
+    return `/api/tinglysning/dokument?uuid=${docId}&ejendomId=${tlUuid}`;
+  };
 
   const toggleDoc = (docId: string) => {
     setSelectedDocs((prev) => {
@@ -123,7 +141,7 @@ export default function TinglysningTab({
     setBilagRefs([]);
     setTingbogsattest(null);
     setTlUuid(null);
-    setIndskannedeAkterNavne([]);
+    setIndskannedeAkter([]);
 
     const controller = new AbortController();
     const { signal } = controller;
@@ -153,6 +171,17 @@ export default function TinglysningTab({
           return;
         }
         setTlUuid(tlData.uuid);
+
+        // BIZZ-1512: Hent indskannede akter via S2S (fire-and-forget — non-blocking)
+        fetch(`/api/tinglysning/indskannede-akter?ejendomId=${tlData.uuid}`, { signal })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((res) => {
+            if (res?.akter?.length > 0) setIndskannedeAkter(res.akter);
+          })
+          .catch(() => {
+            /* non-critical */
+          });
+
         // Trin 2: Hent summariske data i 3 parallelle sektions-kald
         // Progressiv loading — hver sektion vises straks den er klar
         const base = `/api/tinglysning/summarisk?uuid=${tlData.uuid}`;
@@ -200,7 +229,17 @@ export default function TinglysningTab({
             .then((res) => {
               if (res) {
                 setServitutter(res.servitutter ?? []);
-                setIndskannedeAkterNavne(res.indskannedeAkterNavne ?? []);
+                // Legacy: sæt akter fra ejdsummarisk som fallback
+                if (res.indskannedeAkterNavne?.length > 0 && indskannedeAkter.length === 0) {
+                  setIndskannedeAkter(
+                    (res.indskannedeAkterNavne as string[]).map((n: string, i: number) => ({
+                      aktNavn: n,
+                      beskrivelse: null,
+                      dato: null,
+                      loebNr: i + 1,
+                    }))
+                  );
+                }
               }
               setServituterLoading(false);
             })
@@ -580,9 +619,15 @@ export default function TinglysningTab({
                     <span className="text-xs text-slate-400 tabular-nums whitespace-nowrap">
                       {formatDato(String(first.tinglysningsdato ?? first.dato ?? ''))}
                     </span>
-                    {/* Collapsed: show document type label, not individual owner name */}
+                    {/* BIZZ-1306: Vis ejernavne i collapsed tilstand */}
                     <span className="text-sm text-slate-200 truncate">
-                      {typeLabel || (da ? 'Adkomst' : 'Title')}
+                      {group.map((e) => String(e.navn)).join(' / ')}
+                      {group[0]?.andel
+                        ? ` (${group
+                            .map((e) => (e.andel ? String(e.andel) : ''))
+                            .filter(Boolean)
+                            .join(' / ')})`
+                        : ''}
                     </span>
                     <span className="text-xs text-slate-300 tabular-nums text-right">
                       {first.iAltKoebesum != null && Number(first.iAltKoebesum) > 0
@@ -596,7 +641,15 @@ export default function TinglysningTab({
                     >
                       {docId && (
                         <a
-                          href={`/api/tinglysning/dokument?uuid=${docId}`}
+                          href={getPdfUrl(
+                            docId,
+                            String(
+                              first?.dato ??
+                                first?.tinglysningsdato ??
+                                first?.overtagelsesdato ??
+                                ''
+                            )
+                          )}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
@@ -649,8 +702,17 @@ export default function TinglysningTab({
                             </p>
                             {e.cvr ? (
                               <Link
-                                href={`/dashboard/virksomheder/${String(e.cvr)}`}
+                                href={`/dashboard/companies/${String(e.cvr)}`}
                                 className="text-blue-300 hover:text-blue-200 text-xs font-medium flex items-center gap-1"
+                              >
+                                <Building2 size={11} className="text-blue-400" />
+                                {String(e.navn)}
+                                <ChevronRight size={11} />
+                              </Link>
+                            ) : e.enhedsNummer ? (
+                              <Link
+                                href={`/dashboard/owners/${String(e.enhedsNummer)}`}
+                                className="text-purple-300 hover:text-purple-200 text-xs font-medium flex items-center gap-1"
                               >
                                 {String(e.navn)}
                                 <ChevronRight size={11} />
@@ -836,7 +898,7 @@ export default function TinglysningTab({
                     >
                       {docId && (
                         <a
-                          href={`/api/tinglysning/dokument?uuid=${docId}`}
+                          href={getPdfUrl(docId, String(h.dato ?? ''))}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
@@ -1331,10 +1393,12 @@ export default function TinglysningTab({
                         // hoveddok + bilag (BIZZ-474) gjorde det umuligt at skelne
                         // selve servitut-teksten fra bilag i den samlede PDF.
                         //
-                        // Når docId mangler (pre-digitale servitutter), skjul
-                        // PDF-knappen — bilag tilgås via badgen/detaljesektionen.
-                        if (!docId) return null;
-                        const pdfUrl = `/api/tinglysning/dokument?uuid=${docId}`;
+                        // BIZZ-1584: For pre-digitale servitutter (uden docId),
+                        // vis indskannet akt-link hvis tilgængeligt
+                        if (!docId && indskannedeAkter.length === 0) return null;
+                        const pdfUrl = docId
+                          ? getPdfUrl(docId, String(s.dato ?? ''))
+                          : `/api/tinglysning/indskannede-akter/download?aktNavn=${encodeURIComponent(indskannedeAkter[0]?.aktNavn ?? '')}`;
                         return (
                           <a
                             href={pdfUrl}
@@ -1590,57 +1654,23 @@ export default function TinglysningTab({
           </>
         )}
 
-        {/* ── INDSKANNEDE AKTER (pre-digitale dokumenter fra EjendomIndskannetAktSamling) ── */}
-        {indskannedeAkterNavne.length > 0 && (
-          <>
-            <div className="px-4 py-1.5 bg-amber-500/5 border-b border-slate-700/20">
-              <span className="text-[10px] font-semibold text-amber-400 uppercase tracking-wider">
-                {da ? 'Indskannede akter' : 'Scanned acts'} {`(${indskannedeAkterNavne.length})`}
-              </span>
-            </div>
-
-            {/* Advarsel om potentielt store filer */}
-            <div className="px-4 py-2 border-b border-slate-700/10 flex items-start gap-2 bg-amber-500/5">
-              <svg
-                viewBox="0 0 16 16"
-                className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5"
-                fill="currentColor"
-              >
-                <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 3.5a.75.75 0 0 1 .75.75v3a.75.75 0 0 1-1.5 0v-3A.75.75 0 0 1 8 4.5zm0 6.25a.875.875 0 1 1 0-1.75.875.875 0 0 1 0 1.75z" />
-              </svg>
-              <p className="text-amber-300/80 text-[10px] leading-relaxed">
-                {da
-                  ? 'Disse akter er indskannede papirdokumenter fra før den digitale tinglysning (ca. 2009). De kan være meget store (hundredvis af sider) og kan tage tid at downloade.'
-                  : 'These acts are scanned paper documents from before digital land registration (approx. 2009). They may be very large (hundreds of pages) and may take time to download.'}
-              </p>
-            </div>
-
-            {indskannedeAkterNavne.map((aktNavn, i) => (
-              <div
-                key={aktNavn}
-                className="grid grid-cols-[24px_1fr_auto] gap-x-2 px-4 py-2.5 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-center"
-              >
-                <span className="text-slate-500 text-[10px] tabular-nums text-center">{i + 1}</span>
-                <span className="text-sm text-slate-200 truncate">{aktNavn}</span>
-                <a
-                  href={`/api/tinglysning/indskannede-akter/download?aktNavn=${encodeURIComponent(aktNavn)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300 transition-colors px-2 py-1 border border-amber-500/30 rounded-md hover:border-amber-400/50"
-                  title={
-                    da
-                      ? 'Download som PDF — kan være stor fil'
-                      : 'Download as PDF — may be a large file'
-                  }
-                >
-                  <FileText size={11} />
-                  PDF
-                </a>
-              </div>
-            ))}
-          </>
-        )}
+        {/* BIZZ-1584: Indskannede akter-sektion fjernet — PDF-knapper på
+            servitut/hæftelse-rækker linker nu direkte til indskannede akter
+            for pre-digitale dokumenter via getPdfUrl(). */}
       </div>
+
+      {/* BIZZ-1498 + BIZZ-1501: Normaliserede hæftelser og servitutter fra lokale tabeller */}
+      {bfe && (
+        <div className="space-y-3 mt-4">
+          <HaeftelserSektion bfe={bfe} lang={lang} />
+          <ServitutterSektion bfe={bfe} lang={lang} />
+        </div>
+      )}
+
+      {/* BIZZ-1597: AI-ekstraktion flyttet til Økonomi-tab ved salgshistorik */}
     </div>
   );
 }
+
+/* BIZZ-1597: AktExtractionButton flyttet til app/components/ejendomme/AktExtractionButton.tsx
+   og bruges nu i Økonomi-tabben ved salgshistorik. */

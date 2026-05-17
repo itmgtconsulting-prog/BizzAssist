@@ -176,6 +176,62 @@ async function provisionTenantForUser(userId: string, userEmail: string): Promis
       // Non-fatal — tenant + membership exist, tables can be created later
     }
 
+    // 4. Expose schema to PostgREST so .schema() queries work (BIZZ-1206).
+    // Supabase PostgREST only serves schemas listed in db_schema config.
+    // Without this, tenantDb(schemaName) returns 406/500 for all queries.
+    try {
+      const pgrstRes = await fetch(`https://api.supabase.com/v1/projects/${projectRef}/postgrest`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${accessToken}` },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (pgrstRes.ok) {
+        const pgrstConfig = (await pgrstRes.json()) as { db_schema: string };
+        const schemas = pgrstConfig.db_schema.split(',').map((s: string) => s.trim());
+        if (!schemas.includes(schemaName)) {
+          schemas.push(schemaName);
+          const patchRes = await fetch(
+            `https://api.supabase.com/v1/projects/${projectRef}/postgrest`,
+            {
+              method: 'PATCH',
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ db_schema: schemas.join(',') }),
+              signal: AbortSignal.timeout(10000),
+            }
+          );
+          if (!patchRes.ok) {
+            logger.error(
+              '[provisionTenant] PostgREST schema exposure failed:',
+              (await patchRes.text()).substring(0, 300)
+            );
+          }
+        }
+      }
+    } catch (pgrstErr) {
+      logger.error('[provisionTenant] PostgREST config update error:', pgrstErr);
+    }
+
+    // 5. Provision ai_chat tables (BIZZ-1206). The trg_auto_provision_ai_chat
+    // trigger fires on tenant INSERT, but the schema doesn't exist yet at that
+    // point so it skips. Run provision_ai_chat_tables explicitly after DDL.
+    try {
+      const chatSql = `SELECT public.provision_ai_chat_tables('${schemaName}', '${tenantId}'::uuid)`;
+      await fetch(`https://api.supabase.com/v1/projects/${projectRef}/database/query`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ query: chatSql }),
+        signal: AbortSignal.timeout(10000),
+      });
+    } catch (chatErr) {
+      logger.error('[provisionTenant] ai_chat provisioning error:', chatErr);
+    }
+
     return tenantId;
   } catch (err) {
     logger.error('[provisionTenant] Unexpected error:', err);

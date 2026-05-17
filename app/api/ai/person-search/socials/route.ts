@@ -22,6 +22,7 @@ import { checkRateLimit, braveRateLimit } from '@/app/lib/rateLimit';
 import { withBraveCache } from '@/app/lib/searchCache';
 import { resolveTenantId } from '@/lib/api/auth';
 import { assertAiAllowed } from '@/app/lib/aiGate';
+import { recordAiUsage } from '@/app/lib/aiTracking';
 import { BRAVE_SEARCH_ENDPOINT } from '@/app/lib/serviceEndpoints';
 import { logger } from '@/app/lib/logger';
 
@@ -571,11 +572,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       messages: [{ role: 'user', content: userMessage }],
     });
 
-    const totalTokens = (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0);
+    const totalInputTokens = response.usage?.input_tokens ?? 0;
+    const totalOutputTokens = response.usage?.output_tokens ?? 0;
+    const totalTokens = totalInputTokens + totalOutputTokens;
     const finalText = response.content
       .filter((b): b is Anthropic.TextBlock => b.type === 'text')
       .map((b) => b.text)
       .join('');
+
+    await recordAiUsage({
+      userId: auth.userId,
+      tenantId: auth.tenantId,
+      route: 'ai.person-search.socials',
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      model: 'claude-sonnet-4-6',
+    });
 
     const {
       socials: claudeSocials,

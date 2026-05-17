@@ -1,0 +1,327 @@
+/**
+ * Cron: Backfill ejerskifte-historik med Tinglysning købesummer
+ *
+ * BIZZ-1454: Populerer public.ejerskifte_historik ved at:
+ *   1. Hente nye ejerskifter fra ejf_ejerskab (virkning_fra seneste 30 dage
+ *      eller alle hvis tabellen er tom).
+ *   2. Berige med Tinglysning købesummer via fetchTinglysningPriceRowsByBfe.
+ *   3. Tilføje kommune_kode + byg021_anvendelse fra bbr_ejendom_status.
+ *   4. Upsert til ejerskifte_historik.
+ *
+ * Rate-limit: max 200 BFE-opslag per kørsel (Tinglysning API = 10 req/s).
+ * Schedule: 30 4 * * * UTC (dagligt 04:30, efter pull-tinglysning-aendringer).
+ *
+ * @module api/cron/backfill-ejerskifte-historik
+ */
+
+import { NextRequest, NextResponse } from 'next/server';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { safeCompare } from '@/lib/safeCompare';
+import { logger } from '@/app/lib/logger';
+import { withCronMonitor } from '@/app/lib/cronMonitor';
+import { fetchTinglysningPriceRowsByBfe, indexPriceRowsByDate } from '@/app/lib/tinglysningPrices';
+import { createDefaultSqlRunner } from '@/app/lib/dataIntelligence/buildCatalog';
+import { fetchHistoriskAdkomsterByBfe } from '@/app/lib/tinglysningHistoriskAdkomster';
+
+export const runtime = 'nodejs';
+export const maxDuration = 300;
+
+/** Max antal BFE'er der beriges per kørsel (Tinglysning rate limit). */
+const MAX_BFES_PER_RUN = 200;
+
+/** Concurrent requests mod Tinglysning (10 req/s limit). */
+const CONCURRENCY = 4;
+
+/**
+ * Sleep utility for rate limiting.
+ *
+ * @param ms - millisekunder at vente
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * GET handler — kræver CRON_SECRET bearer token.
+ */
+export async function GET(request: NextRequest): Promise<NextResponse> {
+  // ── Auth ──
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = request.headers.get('authorization') ?? '';
+  const token = authHeader.replace(/^Bearer\s+/i, '');
+  const isVercelCron = request.headers.get('x-vercel-cron') === '1';
+  const isProd = process.env.NODE_ENV === 'production';
+
+  if (isProd && (!cronSecret || !safeCompare(token, cronSecret))) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  if (isProd && !isVercelCron) {
+    return NextResponse.json({ error: 'Missing x-vercel-cron' }, { status: 403 });
+  }
+
+  return withCronMonitor(
+    { jobName: 'backfill-ejerskifte-historik', schedule: '30 4 * * *', intervalMinutes: 1440 },
+    async () => {
+      const start = Date.now();
+      const supabase = createAdminClient();
+
+      // ── 1. Find BFE'er med nye ejerskifter der ikke er i historik endnu ──
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: lastRow } = await (supabase as any)
+        .from('ejerskifte_historik')
+        .select('created_at')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      const sinceDate = lastRow?.created_at
+        ? new Date(new Date(lastRow.created_at).getTime() - 7 * 86_400_000)
+            .toISOString()
+            .slice(0, 10)
+        : '2020-01-01';
+
+      logger.log(`[backfill-ejerskifte] since=${sinceDate}`);
+
+      // Hent ejerskifter der endnu ikke er backfilled
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: ejerskifter, error: ejfError } = await (supabase as any)
+        .from('ejf_ejerskab')
+        .select(
+          'bfe_nummer, ejer_navn, ejer_cvr, ejer_type, ejerandel_taeller, ejerandel_naevner, virkning_fra, virkning_til, status'
+        )
+        .eq('status', 'gældende')
+        .gte('virkning_fra', sinceDate)
+        .order('virkning_fra', { ascending: false })
+        .limit(MAX_BFES_PER_RUN * 2);
+
+      if (ejfError) {
+        logger.error('[backfill-ejerskifte] EJF query failed:', ejfError.message);
+        return NextResponse.json({ error: ejfError.message }, { status: 500 });
+      }
+
+      if (!ejerskifter || ejerskifter.length === 0) {
+        return NextResponse.json({
+          ok: true,
+          message: 'Ingen nye ejerskifter at berige',
+          durationMs: Date.now() - start,
+        });
+      }
+
+      // Unikke BFE-numre
+      const uniqueBfes: number[] = [
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ...new Set<number>(ejerskifter.map((e: any) => Number(e.bfe_nummer))),
+      ].slice(0, MAX_BFES_PER_RUN);
+
+      logger.log(
+        `[backfill-ejerskifte] ${ejerskifter.length} ejerskifter, ${uniqueBfes.length} unikke BFE'er`
+      );
+
+      // ── 2. Hent BBR-data for kommune + anvendelse ──
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: bbrData } = await (supabase as any)
+        .from('bbr_ejendom_status')
+        .select('bfe_nummer, kommune_kode, byg021_anvendelse')
+        .in('bfe_nummer', uniqueBfes);
+
+      const bbrMap = new Map<
+        number,
+        { kommune_kode: number | null; byg021_anvendelse: number | null }
+      >();
+      for (const b of bbrData ?? []) {
+        bbrMap.set(b.bfe_nummer, {
+          kommune_kode: b.kommune_kode,
+          byg021_anvendelse: b.byg021_anvendelse,
+        });
+      }
+
+      // ── 3. Berig med Tinglysning købesummer (concurrent, rate-limited) ──
+      const priceMap = new Map<
+        number,
+        Map<
+          string,
+          {
+            kontant: number | null;
+            ialt: number | null;
+            koebsaftale: string | null;
+            dokId: string | null;
+          }
+        >
+      >();
+
+      let fetched = 0;
+      let priced = 0;
+
+      for (let i = 0; i < uniqueBfes.length; i += CONCURRENCY) {
+        const batch = uniqueBfes.slice(i, i + CONCURRENCY);
+        const results = await Promise.allSettled(
+          batch.map((bfe) => fetchTinglysningPriceRowsByBfe(bfe))
+        );
+
+        for (let j = 0; j < results.length; j++) {
+          const result = results[j];
+          const bfe = batch[j];
+          fetched++;
+          if (result.status === 'fulfilled' && result.value.length > 0) {
+            const indexed = indexPriceRowsByDate(result.value);
+            const m = new Map<
+              string,
+              {
+                kontant: number | null;
+                ialt: number | null;
+                koebsaftale: string | null;
+                dokId: string | null;
+              }
+            >();
+            for (const [date, row] of indexed) {
+              m.set(date, {
+                kontant: row.kontantKoebesum,
+                ialt: row.iAltKoebesum,
+                koebsaftale: row.koebsaftaleDato,
+                dokId: row.dokumentId,
+              });
+              priced++;
+            }
+            priceMap.set(bfe, m);
+          }
+        }
+
+        // Rate limit: ~10 req/s → 4 concurrent * 400ms gap ≈ 10 req/s
+        if (i + CONCURRENCY < uniqueBfes.length) {
+          await sleep(400);
+        }
+      }
+
+      // ── 4. Upsert til ejerskifte_historik ──
+      let inserted = 0;
+      let errors = 0;
+      const rows = [];
+
+      for (const ej of ejerskifter) {
+        if (!uniqueBfes.includes(ej.bfe_nummer)) continue;
+
+        const bbr = bbrMap.get(ej.bfe_nummer);
+        const dateKey = ej.virkning_fra
+          ? new Date(ej.virkning_fra).toISOString().slice(0, 10)
+          : null;
+        const prices = dateKey ? priceMap.get(ej.bfe_nummer)?.get(dateKey) : undefined;
+
+        rows.push({
+          bfe_nummer: ej.bfe_nummer,
+          overtagelsesdato: dateKey,
+          fratraedelsesdato: ej.virkning_til
+            ? new Date(ej.virkning_til).toISOString().slice(0, 10)
+            : null,
+          ejer_navn: ej.ejer_navn,
+          ejer_cvr: ej.ejer_cvr,
+          ejer_type: ej.ejer_type,
+          ejerandel_taeller: ej.ejerandel_taeller,
+          ejerandel_naevner: ej.ejerandel_naevner,
+          kontant_koebesum: prices?.kontant ?? null,
+          i_alt_koebesum: prices?.ialt ?? null,
+          koebsaftale_dato: prices?.koebsaftale ?? null,
+          dokument_id: prices?.dokId ?? null,
+          kommune_kode: bbr?.kommune_kode ?? null,
+          byg021_anvendelse: bbr?.byg021_anvendelse ?? null,
+          historisk_kilde: 'rest_summarisk',
+        });
+      }
+
+      // ── 4b. BIZZ-1494: Hent historiske adkomster via XML API (2 concurrent) ──
+      let xmlInserted = 0;
+      const XML_CONCURRENCY = 2;
+      for (let i = 0; i < uniqueBfes.length; i += XML_CONCURRENCY) {
+        const xmlBatch = uniqueBfes.slice(i, i + XML_CONCURRENCY);
+        const xmlResults = await Promise.allSettled(
+          xmlBatch.map((bfe) => fetchHistoriskAdkomsterByBfe(bfe))
+        );
+        for (let j = 0; j < xmlResults.length; j++) {
+          const r = xmlResults[j];
+          if (r.status !== 'fulfilled' || r.value.length === 0) continue;
+          const bfe = xmlBatch[j];
+          const bbr = bbrMap.get(bfe);
+          for (const ha of r.value) {
+            if (!ha.dato) continue;
+            rows.push({
+              bfe_nummer: bfe,
+              overtagelsesdato: ha.dato,
+              fratraedelsesdato: null,
+              ejer_navn: ha.adkomsthavere[0]?.navn ?? null,
+              ejer_cvr: null,
+              ejer_type: null,
+              ejerandel_taeller: ha.adkomsthavere[0]?.andelTaeller ?? null,
+              ejerandel_naevner: ha.adkomsthavere[0]?.andelNaevner ?? null,
+              kontant_koebesum: ha.koebesumDkk ?? null,
+              i_alt_koebesum: null,
+              koebsaftale_dato: null,
+              dokument_id: null,
+              kommune_kode: bbr?.kommune_kode ?? null,
+              byg021_anvendelse: bbr?.byg021_anvendelse ?? null,
+              historisk_kilde: 'xml_historisk_adkomst',
+            });
+            xmlInserted++;
+          }
+        }
+        if (i + XML_CONCURRENCY < uniqueBfes.length) await sleep(1000);
+      }
+
+      // Batch upsert 500 at a time
+      for (let i = 0; i < rows.length; i += 500) {
+        const batch = rows.slice(i, i + 500);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error: upsertError } = await (supabase as any)
+          .from('ejerskifte_historik')
+          .upsert(batch, { onConflict: 'bfe_nummer,overtagelsesdato,ejer_navn' });
+
+        if (upsertError) {
+          logger.error('[backfill-ejerskifte] upsert failed:', upsertError.message);
+          errors++;
+        } else {
+          inserted += batch.length;
+        }
+      }
+
+      // ── 5. Beregn m²-pris for nye rækker (BIZZ-analyse) ──
+      if (inserted > 0) {
+        try {
+          const sqlRunner = createDefaultSqlRunner();
+          await sqlRunner(`
+            UPDATE public.ejerskifte_historik eh
+            SET boligareal_m2 = b.samlet_boligareal
+            FROM public.bbr_ejendom_status b
+            WHERE b.bfe_nummer = eh.bfe_nummer
+              AND b.samlet_boligareal IS NOT NULL AND b.samlet_boligareal > 0
+              AND eh.boligareal_m2 IS NULL
+              AND eh.bfe_nummer IN (${uniqueBfes.join(',')})
+          `);
+          await sqlRunner(`
+            UPDATE public.ejerskifte_historik
+            SET m2_pris = (kontant_koebesum / boligareal_m2)::integer
+            WHERE kontant_koebesum IS NOT NULL
+              AND boligareal_m2 IS NOT NULL AND boligareal_m2 > 0
+              AND m2_pris IS NULL
+              AND bfe_nummer IN (${uniqueBfes.join(',')})
+          `);
+        } catch (m2Err) {
+          logger.warn('[backfill-ejerskifte] m2_pris update failed:', m2Err);
+        }
+      }
+
+      const elapsed = Date.now() - start;
+      logger.log(
+        `[backfill-ejerskifte] done: ${inserted} inserted (${xmlInserted} xml), ${priced} priced, ${errors} errors, ${elapsed}ms`
+      );
+
+      return NextResponse.json({
+        ok: true,
+        ejerskifter: ejerskifter.length,
+        uniqueBfes: uniqueBfes.length,
+        fetched,
+        priced,
+        inserted,
+        errors,
+        durationMs: elapsed,
+      });
+    }
+  );
+}

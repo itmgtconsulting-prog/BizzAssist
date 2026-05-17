@@ -238,6 +238,8 @@ export async function GET(): Promise<NextResponse> {
           freeTrialDays: planRow.free_trial_days ?? 0,
           // BIZZ-541: per-plan grace window; fall back to 0 (no grace)
           paymentGraceHours: (planRow as { payment_grace_hours?: number }).payment_grace_hours ?? 0,
+          // BIZZ-1241: module list from DB or empty
+          modules: (planRow as { modules?: string[] }).modules ?? [],
         };
       }
     }

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EjendomHaeftelserSvar xmlns="http://rep.oio.dk/tinglysning.dk/service/message/elektroniskakt/1/">
+  <Haeftelser>
+    <Haeftelse>
+      <HaeftelseType>Pantebrev</HaeftelseType>
+      <TinglystDato>2020-06-15</TinglystDato>
+      <HovedStol>3000000</HovedStol>
+      <Restgaeld>2750000</Restgaeld>
+      <Kreditor>
+        <Navn>Test Realkredit A/S</Navn>
+        <CVR>99999993</CVR>
+      </Kreditor>
+      <Prioritet>1</Prioritet>
+    </Haeftelse>
+    <Haeftelse>
+      <HaeftelseType>Ejerpantebrev</HaeftelseType>
+      <TinglystDato>2022-09-01</TinglystDato>
+      <HovedStol>500000</HovedStol>
+      <Restgaeld>500000</Restgaeld>
+      <Prioritet>2</Prioritet>
+    </Haeftelse>
+  </Haeftelser>
+</EjendomHaeftelserSvar>

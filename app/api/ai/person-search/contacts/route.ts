@@ -21,6 +21,7 @@ import { checkRateLimit, braveRateLimit } from '@/app/lib/rateLimit';
 import { withBraveCache } from '@/app/lib/searchCache';
 import { resolveTenantId } from '@/lib/api/auth';
 import { assertAiAllowed } from '@/app/lib/aiGate';
+import { recordAiUsage } from '@/app/lib/aiTracking';
 import { BRAVE_SEARCH_ENDPOINT } from '@/app/lib/serviceEndpoints';
 import { logger } from '@/app/lib/logger';
 
@@ -409,7 +410,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       messages: [{ role: 'user', content: userMessage }],
     });
 
-    totalTokens = (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0);
+    const inputTokens = response.usage?.input_tokens ?? 0;
+    const outputTokens = response.usage?.output_tokens ?? 0;
+    totalTokens = inputTokens + outputTokens;
     const finalText = response.content
       .filter((b): b is Anthropic.TextBlock => b.type === 'text')
       .map((b) => b.text)
@@ -417,6 +420,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     contacts = parseContactsResponse(finalText);
     // personName omitted from log — PII
+    await recordAiUsage({
+      userId: auth.userId,
+      tenantId: auth.tenantId,
+      route: 'ai.person-search.contacts',
+      inputTokens,
+      outputTokens,
+      model: 'claude-haiku-4-5-20251001',
+    });
   } catch (err) {
     logger.error('[person-search/contacts] Claude fejl:', err);
     // Returner tomt resultat frem for fejl — kontakter er nice-to-have
@@ -451,8 +462,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           system: buildPhoneSystemPrompt(),
         });
 
-        totalTokens +=
-          (phoneResponse.usage?.input_tokens ?? 0) + (phoneResponse.usage?.output_tokens ?? 0);
+        const phoneInputTokens = phoneResponse.usage?.input_tokens ?? 0;
+        const phoneOutputTokens = phoneResponse.usage?.output_tokens ?? 0;
+        totalTokens += phoneInputTokens + phoneOutputTokens;
+        await recordAiUsage({
+          userId: auth.userId,
+          tenantId: auth.tenantId,
+          route: 'ai.person-search.contacts',
+          inputTokens: phoneInputTokens,
+          outputTokens: phoneOutputTokens,
+          model: 'claude-haiku-4-5-20251001',
+        });
         const phoneText = phoneResponse.content
           .filter((b): b is Anthropic.TextBlock => b.type === 'text')
           .map((b) => b.text)

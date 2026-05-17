@@ -62,7 +62,8 @@ export default defineConfig({
     /* ── Authenticated pages — depend on auth setup ── */
     {
       name: 'chromium-auth',
-      testMatch: /\/(dashboard|settings-gdpr|ai-chat)\.spec\.ts/,
+      testMatch:
+        /\/(dashboard|settings-gdpr|ai-chat|ai-token-tracking|analyse|data-intelligence|data-intelligence-ui|ejendom-detail|virksomhed-detail|person-detail|billing|diagram|ejendomshierarki|forsikring|kort|notifikationer|pivot-analyse|search|salgshistorik-cache-verify|forsikring-debug|forsikring-belvedere-fix|forsikring-cvr-threshold|forsikring-portfolio-gaps|person-ejendomme-cache|diagram-virksomhed-fallback|intelligence-width|intelligence-end-of-list|salgshistorik-saelger|finansieringsrapport-inline)\.spec\.ts/,
       dependencies: ['auth setup'],
       use: {
         ...devices['Desktop Chrome'],

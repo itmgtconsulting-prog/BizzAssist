@@ -1,12 +1,13 @@
 /**
- * BIZZ-819 (AI-chat Supabase 2/3): /api/ai/sessions — list + create
- * chat-sessions for current user.
+ * BIZZ-819 / BIZZ-1206: /api/ai/sessions — list + create chat sessions.
+ *
+ * Uses RPC-based aiChatDb to bypass PostgREST schema config dependency.
  *
  * GET  /api/ai/sessions?include_archived=0&limit=50
- *      → list sessions DESC by last_msg_at (archived udeladt default).
+ *      → list sessions DESC by last_msg_at (archived excluded by default).
  * POST /api/ai/sessions
  *      body: { title?, context_type?, context_id? }
- *      → opret session + return full row.
+ *      → create session + return full row.
  *
  * @module api/ai/sessions
  */
@@ -33,26 +34,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const limit = Math.max(1, Math.min(Number.isFinite(limitRaw) ? limitRaw : 50, 200));
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let q: any = (ctx.db as any)
-      .from('ai_chat_sessions')
-      .select(
-        'id, tenant_id, user_id, title, context_type, context_id, last_msg_at, archived_at, created_at, updated_at'
-      )
-      .eq('user_id', ctx.userId)
-      .order('last_msg_at', { ascending: false })
-      .limit(limit);
-    if (!includeArchived) {
-      q = q.is('archived_at', null);
-    }
-    const { data, error } = await q;
-    if (error) {
-      logger.error('[ai/sessions GET]', error.message);
-      return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
-    }
-    return NextResponse.json({ sessions: data ?? [] });
+    const sessions = await ctx.listSessions({ includeArchived, limit });
+    return NextResponse.json({ sessions });
   } catch (err) {
-    logger.error('[ai/sessions GET] exception:', err);
+    logger.error('[ai/sessions GET]', err);
     return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
   }
 }
@@ -79,27 +64,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (ctx.db as any)
-      .from('ai_chat_sessions')
-      .insert({
-        tenant_id: ctx.tenantId,
-        user_id: ctx.userId,
-        title: parsed.data.title ?? 'Ny samtale',
-        context_type: parsed.data.context_type ?? null,
-        context_id: parsed.data.context_id ?? null,
-      })
-      .select(
-        'id, tenant_id, user_id, title, context_type, context_id, last_msg_at, archived_at, created_at, updated_at'
-      )
-      .single();
-    if (error || !data) {
-      logger.error('[ai/sessions POST]', error?.message);
-      return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
-    }
-    return NextResponse.json({ session: data }, { status: 201 });
+    const session = await ctx.createSession({
+      title: parsed.data.title,
+      contextType: parsed.data.context_type ?? null,
+      contextId: parsed.data.context_id ?? null,
+    });
+    return NextResponse.json({ session }, { status: 201 });
   } catch (err) {
-    logger.error('[ai/sessions POST] exception:', err);
+    logger.error('[ai/sessions POST]', err);
     return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
   }
 }

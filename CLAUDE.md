@@ -170,6 +170,48 @@ Full process: `docs/agents/RELEASE_PROCESS.md`
 
 ---
 
+## Git Branching & Review (CRITICAL — all agents must follow)
+
+### Branch model
+
+- **`develop`** — primary development branch. All code pushes go here. Deploys automatically to `test.bizzassist.dk`.
+- **`main`** — production release branch. Updated only via PR merge from `develop`. Deploys to `bizzassist.dk`.
+- `develop` is typically 30-100+ commits ahead of `main`.
+
+### Code agent workflow
+
+1. Write code on `develop`
+2. Push to `origin/develop`
+3. Add JIRA comment with commit SHA + branch name
+4. Transition ticket to **In Review** (transition ID 31)
+5. **NEVER** set ticket to Done — only the review agent does that
+
+### Review agent workflow (In Review → Done or To Do)
+
+1. `git fetch origin develop` — **ALWAYS fetch develop, NEVER use main**
+2. `git log origin/develop --oneline | grep -i <ticket-nr>` to find commits
+3. `git show origin/develop:<filepath>` to read files
+4. Run unit tests if applicable
+5. Visual inspection via Playwright against `test.bizzassist.dk` (deploys from develop)
+6. **OK** → JIRA comment with evidence → transition to **Done** (ID 41)
+7. **NOT OK** → JIRA comment with what failed → transition to **To Do** (ID 11)
+
+### JIRA transition IDs
+
+| ID  | Target status |
+| --- | ------------- |
+| 2   | On Hold       |
+| 11  | To Do         |
+| 21  | In Progress   |
+| 31  | In Review     |
+| 41  | Done          |
+
+### Common mistake (causes infinite loop)
+
+If the review agent checks `main` instead of `develop`, it will find no commits → set ticket to To Do → code agent sets back to In Review → loop. **Always use `origin/develop`.**
+
+---
+
 ## Mandatory Pre-Session Reading
 
 **Before starting any task**, read these documents to understand the full system:

@@ -87,6 +87,7 @@
     "resend": "^6.9.4",
     "stripe": "^21.0.1",
     "twilio": "^5.13.1",
+    "unpdf": "^1.6.2",
     "xml-crypto": "^6.1.2"
   },
   "overrides": {

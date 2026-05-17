@@ -14,6 +14,7 @@ import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
 import { tlFetch as tlFetchBase } from '@/app/lib/tlFetch';
 import { parseQuery } from '@/app/lib/validate';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -217,6 +218,75 @@ export async function GET(req: NextRequest) {
   }
   const { uuid, section, hovedBfe } = parsed.data;
 
+  // ── BIZZ-1462: Cache-first read path — serve from local tables if fresh ──
+  if (hovedBfe && !section) {
+    const bfe = Number(hovedBfe);
+    if (Number.isFinite(bfe) && bfe > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const adminCf = createAdminClient() as any;
+      const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+      const { data: adkomstRows } = await adminCf
+        .from('tinglysning_adkomst')
+        .select('*')
+        .eq('bfe_nummer', bfe)
+        .order('overtagelsesdato', { ascending: false });
+
+      if (adkomstRows && adkomstRows.length > 0) {
+        const oldest = adkomstRows[adkomstRows.length - 1];
+        const fetchedAt = new Date(oldest.fetched_at).getTime();
+        const age = Date.now() - fetchedAt;
+
+        if (age < CACHE_TTL_MS) {
+          // Cache HIT — serve from local tables
+          const { data: haeftRows } = await adminCf
+            .from('tinglysning_haeftelser')
+            .select('*')
+            .eq('bfe_nummer', bfe);
+          const { data: servRows } = await adminCf
+            .from('tinglysning_servitutter')
+            .select('*')
+            .eq('bfe_nummer', bfe);
+
+          return NextResponse.json(
+            {
+              ejere: adkomstRows.map((a: Record<string, unknown>) => ({
+                navn: a.ejer_navn,
+                cvr: a.ejer_cvr,
+                type: a.ejer_type === 'virksomhed' ? 'selskab' : a.ejer_type,
+                overtagelsesdato: a.overtagelsesdato,
+                kontantKoebesum: a.kontant_koebesum,
+                iAltKoebesum: a.i_alt_koebesum,
+                dokumentId: a.dokument_id,
+              })),
+              haeftelser: (haeftRows ?? []).map((h: Record<string, unknown>) => ({
+                type: h.type,
+                kreditor: h.kreditor_navn,
+                beloeb: h.hovedstol,
+                dato: h.tinglysningsdato,
+                dokumentId: h.dokument_id,
+              })),
+              servitutter: (servRows ?? []).map((s: Record<string, unknown>) => ({
+                type: s.type,
+                tekst: s.beskrivelse,
+                dato: s.tinglysningsdato,
+                dokumentId: s.dokument_id,
+              })),
+              fejl: null,
+            },
+            {
+              headers: {
+                'Cache-Control': 'public, s-maxage=3600',
+                'X-Cache': 'HIT',
+                'X-Data-Age': String(Math.round(age / 1000)),
+              },
+            }
+          );
+        }
+      }
+    }
+  }
+
   const hasCert = !!(
     process.env.TINGLYSNING_CERT_PATH ||
     process.env.NEMLOGIN_DEVTEST4_CERT_PATH ||
@@ -243,8 +313,34 @@ export async function GET(req: NextRequest) {
     // Only ejere section uses the 25KB optimisation (adkomst is always near the top).
     const needsFullXml = !section || section === 'servitutter' || section === 'haeftelser';
     const maxBytes = needsFullXml ? 0 : 25_000;
-    const res = await tlFetch(`/ejdsummarisk/${uuid}`, maxBytes);
+
+    // BIZZ-1615: Retry med exponential backoff ved 429 (rate limit)
+    let res = await tlFetch(`/ejdsummarisk/${uuid}`, maxBytes);
+    if (res.status === 429) {
+      for (const delayMs of [1000, 3000, 8000]) {
+        await new Promise((r) => setTimeout(r, delayMs));
+        res = await tlFetch(`/ejdsummarisk/${uuid}`, maxBytes);
+        if (res.status !== 429) break;
+      }
+    }
+
     if (res.status !== 200) {
+      // BIZZ-1615: Fallback til persistent cache ved rate-limit eller fejl
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: cached } = await (createAdminClient() as any)
+          .from('tinglysning_summarisk_cache')
+          .select('payload')
+          .eq('uuid', uuid)
+          .single();
+        if (cached?.payload) {
+          return NextResponse.json(cached.payload, {
+            headers: { 'X-Cache-Hit': 'supabase-fallback' },
+          });
+        }
+      } catch {
+        /* cache miss — return empty */
+      }
       return NextResponse.json({
         ejere: [],
         haeftelser: [],
@@ -1238,21 +1334,45 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    // ── BIZZ-1460: Write-through caching — fire-and-forget ──
+    if (hovedBfe) {
+      persistTinglysningData(Number(hovedBfe), ejere, haeftelser, servitutter).catch((err) =>
+        logger.warn('[tinglysning/summarisk] write-through failed:', err)
+      );
+    }
+
+    // BIZZ-1615: Persist til summarisk_cache (fire-and-forget) for rate-limit fallback
+    const fullResult = {
+      ejere,
+      haeftelser,
+      servitutter,
+      bilagRefs,
+      indskannedeAkterNavne,
+      tingbogsattest,
+      fejl: null,
+    };
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      void (createAdminClient() as any)
+        .from('tinglysning_summarisk_cache')
+        .upsert(
+          {
+            uuid,
+            bfe_nummer: hovedBfe ? Number(hovedBfe) : null,
+            payload: fullResult,
+            fetched_at: new Date().toISOString(),
+          },
+          { onConflict: 'uuid' }
+        )
+        .then(() => {});
+    } catch {
+      /* cache write non-critical */
+    }
+
     // Full response (default — backward compatible)
-    return NextResponse.json(
-      {
-        ejere,
-        haeftelser,
-        servitutter,
-        bilagRefs,
-        indskannedeAkterNavne,
-        tingbogsattest,
-        fejl: null,
-      },
-      {
-        headers: { 'Cache-Control': 'public, s-maxage=3600' },
-      }
-    );
+    return NextResponse.json(fullResult, {
+      headers: { 'Cache-Control': 'public, s-maxage=3600' },
+    });
   } catch (err) {
     // Log for server-side debugging, but never expose err.message to the client.
     logger.error('[tinglysning/summarisk] Fejl:', err instanceof Error ? err.message : String(err));
@@ -1262,5 +1382,132 @@ export async function GET(req: NextRequest) {
       servitutter: [],
       fejl: 'Ekstern API fejl',
     });
+  }
+}
+
+/**
+ * BIZZ-1460: Write-through caching — persister parsed tinglysningsdata i normaliserede tabeller.
+ * Fire-and-forget — fejl logges men blokerer ikke API-response.
+ *
+ * @param bfe - BFE-nummer
+ * @param ejere - Parsed ejere fra summarisk XML
+ * @param haeftelser - Parsed hæftelser
+ * @param servitutter - Parsed servitutter
+ */
+async function persistTinglysningData(
+  bfe: number,
+  ejere: TLEjer[],
+  haeftelser: TLHaeftelse[],
+  servitutter: TLServitut[]
+): Promise<void> {
+  if (!Number.isFinite(bfe) || bfe <= 0) return;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const admin = createAdminClient() as any;
+
+  // 1. Adkomster (ejere med prisdata)
+  const adkomstRows = ejere
+    .filter((e) => e.overtagelsesdato || e.kontantKoebesum || e.iAltKoebesum)
+    .map((e) => ({
+      bfe_nummer: bfe,
+      ejer_navn: e.navn,
+      ejer_cvr: e.cvr,
+      ejer_type: e.type === 'selskab' ? 'virksomhed' : e.type,
+      overtagelsesdato: e.overtagelsesdato ?? null,
+      tinglysningsdato: e.tinglysningsdato ?? e.dato ?? null,
+      koebsaftale_dato: e.koebsaftaledato ?? null,
+      kontant_koebesum: e.kontantKoebesum ?? null,
+      i_alt_koebesum: e.iAltKoebesum ?? null,
+      dokument_id: e.dokumentId ?? null,
+    }));
+
+  if (adkomstRows.length > 0) {
+    await admin
+      .from('tinglysning_adkomst')
+      .upsert(adkomstRows, {
+        onConflict: 'bfe_nummer,overtagelsesdato,ejer_navn',
+        ignoreDuplicates: true,
+      })
+      .then(() => {});
+  }
+
+  // 2. Hæftelser
+  const haeftRows = haeftelser.map((h) => ({
+    bfe_nummer: bfe,
+    type: h.type ?? null,
+    kreditor_navn: h.kreditor ?? null,
+    kreditor_cvr: h.kreditorCvr ?? null,
+    hovedstol: h.beloeb ?? null,
+    restgaeld: null,
+    rente_pct: h.rente ?? null,
+    tinglysningsdato: h.dato ?? null,
+    dokument_id: h.dokumentId ?? null,
+  }));
+
+  if (haeftRows.length > 0) {
+    await admin
+      .from('tinglysning_haeftelser')
+      .upsert(haeftRows, { ignoreDuplicates: true })
+      .then(() => {});
+  }
+
+  // 3. Servitutter
+  const servRows = servitutter.map((s) => ({
+    bfe_nummer: bfe,
+    type: s.type ?? null,
+    beskrivelse: s.tekst?.slice(0, 500) ?? null,
+    tinglysningsdato: s.dato ?? null,
+    dokument_id: s.dokumentId ?? null,
+  }));
+
+  if (servRows.length > 0) {
+    await admin
+      .from('tinglysning_servitutter')
+      .upsert(servRows, { ignoreDuplicates: true })
+      .then(() => {});
+  }
+
+  // 4. Dokumenter (fra alle kilder)
+  const allDokIds = new Set<string>();
+  const dokRows: Array<Record<string, unknown>> = [];
+  for (const e of ejere) {
+    if (e.dokumentId && !allDokIds.has(e.dokumentId)) {
+      allDokIds.add(e.dokumentId);
+      dokRows.push({
+        dokument_id: e.dokumentId,
+        dokument_type: 'adkomst',
+        tinglysningsdato: e.tinglysningsdato ?? e.dato ?? null,
+        bfe_nummer: bfe,
+      });
+    }
+  }
+  for (const h of haeftelser) {
+    if (h.dokumentId && !allDokIds.has(h.dokumentId)) {
+      allDokIds.add(h.dokumentId);
+      dokRows.push({
+        dokument_id: h.dokumentId,
+        dokument_type: 'haeftelse',
+        tinglysningsdato: h.dato ?? null,
+        bfe_nummer: bfe,
+      });
+    }
+  }
+  for (const s of servitutter) {
+    if (s.dokumentId && !allDokIds.has(s.dokumentId)) {
+      allDokIds.add(s.dokumentId);
+      dokRows.push({
+        dokument_id: s.dokumentId,
+        dokument_type: 'servitut',
+        tinglysningsdato: s.dato ?? null,
+        bfe_nummer: bfe,
+      });
+    }
+  }
+
+  if (dokRows.length > 0) {
+    await admin
+      .from('tinglysning_dokumenter')
+      .upsert(dokRows, { onConflict: 'dokument_id', ignoreDuplicates: true })
+      .then(() => {});
   }
 }

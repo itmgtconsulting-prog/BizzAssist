@@ -13,7 +13,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Building2, ChevronRight, Users } from 'lucide-react';
+import { Building2, Users } from 'lucide-react';
 
 /** Ejer-detalje fra /api/ejerskab/chain → ejerDetaljer[] */
 export interface EjerDetalje {
@@ -64,125 +64,115 @@ export default function EjerKort({
     gave: da ? 'Gave' : 'Gift',
   };
 
+  // BIZZ-1305: Saml ejere i én tabel i stedet for separate kort
+  const statusEjere = ejerDetaljer.filter((e) => e.type === 'status');
+  const realEjere = ejerDetaljer.filter((e) => e.type !== 'status');
+
   return (
     <div className="space-y-2">
-      {ejerDetaljer.map((ejer, i) => (
-        <div key={i} className="bg-slate-800/40 border border-slate-700/40 rounded-xl px-3 py-2.5">
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex items-center gap-2.5">
-              <div
-                className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                  ejer.type === 'selskab'
-                    ? 'bg-blue-500/20 border border-blue-500/30'
-                    : ejer.type === 'status'
-                      ? 'bg-slate-600/20 border border-slate-600/30'
-                      : 'bg-purple-500/20 border border-purple-500/30'
-                }`}
-              >
-                {ejer.type === 'selskab' ? (
-                  <Building2 size={15} className="text-blue-400" />
-                ) : ejer.type === 'status' ? (
-                  <Building2 size={15} className="text-slate-400" />
-                ) : (
-                  <Users size={15} className="text-purple-400" />
-                )}
-              </div>
-              <div>
-                {ejer.type === 'status' ? (
-                  <p className="text-slate-300 font-semibold text-sm">{ejer.navn}</p>
-                ) : ejer.cvr ? (
-                  <Link
-                    href={`/dashboard/companies/${ejer.cvr}`}
-                    className="text-blue-300 font-semibold text-sm hover:text-blue-200 transition-colors flex items-center gap-1 underline decoration-blue-500/30 hover:decoration-blue-400/50"
-                  >
-                    {ejer.navn} {ejer.andel ? `(${ejer.andel})` : ''}
-                    {ejer.isCeased && (
-                      <span className="ml-1.5 text-[10px] font-medium text-red-400 bg-red-500/15 border border-red-500/30 rounded px-1.5 py-0.5">
-                        {da ? 'Ophørt' : 'Ceased'}
-                      </span>
-                    )}
-                    <ChevronRight size={13} />
-                  </Link>
-                ) : ejer.enhedsNummer ? (
-                  <Link
-                    href={`/dashboard/owners/${ejer.enhedsNummer}`}
-                    className="text-purple-300 font-semibold text-sm hover:text-purple-200 transition-colors flex items-center gap-1 underline decoration-purple-500/30 hover:decoration-purple-400/50"
-                  >
-                    {ejer.navn} {ejer.andel ? `(${ejer.andel})` : ''}
-                    <ChevronRight size={13} />
-                  </Link>
-                ) : (
-                  <p className="text-white font-semibold text-sm">
-                    {ejer.navn} {ejer.andel ? `(${ejer.andel})` : ''}
-                  </p>
-                )}
-                {ejer.adresse && (
-                  <p className="text-slate-400 text-xs mt-0.5 break-words">{ejer.adresse}</p>
-                )}
-              </div>
-            </div>
+      {/* Status-ejere (fx "Ejerskab registreret på ejerlejligheder") */}
+      {statusEjere.map((ejer, i) => (
+        <div
+          key={`status-${i}`}
+          className="bg-slate-800/40 border border-slate-700/40 rounded-xl px-4 py-3"
+        >
+          <div className="flex items-center gap-2">
+            <Building2 size={14} className="text-slate-400" />
+            <p className="text-slate-300 text-sm">{ejer.navn}</p>
           </div>
-
-          {ejer.type === 'status' ? (
-            <p className="text-slate-500 text-xs mt-2 pt-2 border-t border-slate-700/30">
-              {da
-                ? 'Ejerskab registreret på de enkelte ejerlejligheder'
-                : 'Ownership registered on the individual condominiums'}
-            </p>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1.5 mt-2 pt-2 border-t border-slate-700/30">
-              {ejer.overtagelsesdato && (
-                <div>
-                  <p className="text-slate-500 text-[10px] uppercase tracking-wider">
-                    {da ? 'Overtagelsesdato' : 'Acquisition date'}
-                  </p>
-                  <p className="text-slate-200 text-xs">
-                    {new Date(ejer.overtagelsesdato.split('+')[0]).toLocaleDateString('da-DK', {
-                      day: 'numeric',
-                      month: 'long',
-                      year: 'numeric',
-                    })}
-                  </p>
-                </div>
-              )}
-              <div>
-                <p className="text-slate-500 text-[10px] uppercase tracking-wider">
-                  {da ? 'Ejertype' : 'Owner type'}
-                </p>
-                <p className="text-slate-200 text-xs">
-                  {ejer.type === 'selskab'
-                    ? da
-                      ? 'Selskab'
-                      : 'Company'
-                    : da
-                      ? 'Privatperson'
-                      : 'Private person'}
-                </p>
-              </div>
-              {ejer.adkomstType && (
-                <div>
-                  <p className="text-slate-500 text-[10px] uppercase tracking-wider">
-                    {da ? 'Adkomsttype' : 'Title type'}
-                  </p>
-                  <p className="text-slate-200 text-xs">
-                    {adkomstTypeMap[ejer.adkomstType] ?? ejer.adkomstType}
-                  </p>
-                </div>
-              )}
-              {ejer.koebesum != null && ejer.koebesum > 0 && (
-                <div>
-                  <p className="text-slate-500 text-[10px] uppercase tracking-wider">
-                    {da ? 'Købesum' : 'Purchase price'}
-                  </p>
-                  <p className="text-slate-200 text-xs">
-                    {ejer.koebesum.toLocaleString('da-DK')} DKK
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
+          <p className="text-slate-500 text-xs mt-1">
+            {da
+              ? 'Ejerskab registreret på de enkelte ejerlejligheder'
+              : 'Ownership registered on the individual condominiums'}
+          </p>
         </div>
       ))}
+
+      {/* Ejertabel */}
+      {realEjere.length > 0 && (
+        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-slate-500 border-b border-slate-700/30">
+                  <th className="px-3 py-2 text-left font-medium">{da ? 'Ejer' : 'Owner'}</th>
+                  <th className="px-3 py-2 text-right font-medium">{da ? 'Andel' : 'Share'}</th>
+                  <th className="px-3 py-2 text-left font-medium">
+                    {da ? 'Overtagelse' : 'Acquired'}
+                  </th>
+                  <th className="px-3 py-2 text-left font-medium">{da ? 'Adkomst' : 'Title'}</th>
+                  <th className="px-3 py-2 text-right font-medium">{da ? 'Købesum' : 'Price'}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-700/20">
+                {realEjere.map((ejer, i) => {
+                  const Icon = ejer.type === 'selskab' ? Building2 : Users;
+                  const iconColor = ejer.type === 'selskab' ? 'text-blue-400' : 'text-purple-400';
+                  const linkColor =
+                    ejer.type === 'selskab'
+                      ? 'text-blue-300 hover:text-blue-200'
+                      : 'text-purple-300 hover:text-purple-200';
+                  const href = ejer.cvr
+                    ? `/dashboard/companies/${ejer.cvr}`
+                    : ejer.enhedsNummer
+                      ? `/dashboard/owners/${ejer.enhedsNummer}`
+                      : null;
+
+                  return (
+                    <tr key={i} className="hover:bg-slate-700/10">
+                      <td className="px-3 py-2">
+                        <div className="flex items-center gap-2">
+                          <Icon size={13} className={iconColor} />
+                          {href ? (
+                            <Link
+                              href={href}
+                              className={`font-medium transition-colors ${linkColor}`}
+                            >
+                              {ejer.navn}
+                              {ejer.isCeased && (
+                                <span className="ml-1 text-[9px] text-red-400 bg-red-500/15 border border-red-500/30 rounded px-1 py-0.5">
+                                  {da ? 'Ophørt' : 'Ceased'}
+                                </span>
+                              )}
+                            </Link>
+                          ) : (
+                            <span className="text-slate-200 font-medium">{ejer.navn}</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-right text-slate-300 font-medium">
+                        {ejer.andel ?? '–'}
+                      </td>
+                      <td className="px-3 py-2 text-slate-400">
+                        {ejer.overtagelsesdato
+                          ? new Date(ejer.overtagelsesdato.split('+')[0]).toLocaleDateString(
+                              'da-DK',
+                              {
+                                day: 'numeric',
+                                month: 'short',
+                                year: 'numeric',
+                              }
+                            )
+                          : '–'}
+                      </td>
+                      <td className="px-3 py-2 text-slate-400">
+                        {ejer.adkomstType
+                          ? (adkomstTypeMap[ejer.adkomstType] ?? ejer.adkomstType)
+                          : '–'}
+                      </td>
+                      <td className="px-3 py-2 text-right text-slate-300">
+                        {ejer.koebesum != null && ejer.koebesum > 0
+                          ? `${ejer.koebesum.toLocaleString('da-DK')} DKK`
+                          : '–'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

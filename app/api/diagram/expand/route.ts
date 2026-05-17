@@ -111,7 +111,7 @@ async function expandCompany(
     });
   }
 
-  // Overflow
+  // Overflow — labels beriges med adresser nedenfor i enrichOverflowItems()
   if (newProps.length > MAX_PROPS_PER_EXPAND) {
     const overflowId = `props-overflow-${nodeId}`;
     newNodes.push({
@@ -120,6 +120,7 @@ async function expandCompany(
       type: 'status',
       overflowItems: newProps.slice(MAX_PROPS_PER_EXPAND).map((p) => ({
         label: `BFE ${p.bfe_nummer}`,
+        bfeNummer: p.bfe_nummer,
       })),
     });
     newEdges.push({ from: nodeId, to: overflowId });
@@ -143,23 +144,41 @@ async function expandCompany(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: coOwnerRows } = await (admin as any)
       .from('ejf_ejerskab')
-      .select('bfe_nummer, ejer_cvr, ejer_navn, ejer_type, ejerandel_taeller, ejerandel_naevner')
+      .select(
+        'bfe_nummer, ejer_cvr, ejer_navn, ejer_type, ejerandel_taeller, ejerandel_naevner, ejer_enheds_nummer'
+      )
       .in('bfe_nummer', allBfes.slice(0, 50))
       .eq('status', 'gældende')
       .limit(200);
 
-    // Batch-hent enhedsNummer for person-medejere via cvr_deltager navne-match.
-    // Gør det muligt at expandere person-noder der kommer fra ejf_ejerskab.
+    // BIZZ-1350: Byg enhedsNummer-map fra ejf_ejerskab.ejer_enheds_nummer
+    // (direkte link) + fallback til cvr_deltager navne-match.
+    const personEnMap = new Map<string, number>();
     const personCoOwnerNames = new Set<string>();
     for (const co of (coOwnerRows ?? []) as Array<{
       ejer_cvr: string | null;
       ejer_navn: string;
       ejer_type: string;
+      ejer_enheds_nummer: number | null;
     }>) {
       if (co.ejer_cvr === cvr || co.ejer_cvr) continue;
-      if (co.ejer_type === 'person') personCoOwnerNames.add(co.ejer_navn);
+      if (co.ejer_type === 'person') {
+        // Direkte link fra ejf_ejerskab (migration 098)
+        if (co.ejer_enheds_nummer) {
+          personEnMap.set(co.ejer_navn, co.ejer_enheds_nummer);
+        } else {
+          // BIZZ-1445: Parse enhedsnummer fra "Ukendt ejer (en XXXXXXXXXX)" format
+          const enMatch = co.ejer_navn.match(/\(en\s*(\d+)\)/);
+          if (enMatch) {
+            const parsedEn = Number(enMatch[1]);
+            if (Number.isFinite(parsedEn)) personEnMap.set(co.ejer_navn, parsedEn);
+          } else {
+            personCoOwnerNames.add(co.ejer_navn);
+          }
+        }
+      }
     }
-    const personEnMap = new Map<string, number>();
+    // Fallback: navne-match via cvr_deltager for person-ejere uden ejer_enheds_nummer
     if (personCoOwnerNames.size > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: deltagerMatches } = await (admin as any)
@@ -167,8 +186,22 @@ async function expandCompany(
         .select('enhedsnummer, navn')
         .in('navn', Array.from(personCoOwnerNames).slice(0, 20));
       for (const d of (deltagerMatches ?? []) as Array<{ enhedsnummer: number; navn: string }>) {
-        // Kun sæt hvis ikke allerede sat (undgå overwrite ved duplikat-navne)
         if (!personEnMap.has(d.navn)) personEnMap.set(d.navn, d.enhedsnummer);
+      }
+    }
+
+    // BIZZ-1350: Hent faktiske navne for person-ejere via cvr_deltager
+    // når ejer_navn er generisk ("Ukendt ejer" etc.)
+    const personNameMap = new Map<number, string>();
+    const enNumre = [...personEnMap.values()];
+    if (enNumre.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: nameRows } = await (admin as any)
+        .from('cvr_deltager')
+        .select('enhedsnummer, navn')
+        .in('enhedsnummer', enNumre.slice(0, 30));
+      for (const r of (nameRows ?? []) as Array<{ enhedsnummer: number; navn: string }>) {
+        personNameMap.set(r.enhedsnummer, r.navn);
       }
     }
 
@@ -228,9 +261,13 @@ async function expandCompany(
             isCeased: false,
           });
         } else {
+          // BIZZ-1350: Brug det faktiske navn fra cvr_deltager når
+          // ejer_navn er generisk ("Ukendt ejer" etc.)
+          const resolvedName =
+            personEn && personNameMap.has(personEn) ? personNameMap.get(personEn)! : co.ejer_navn;
           newNodes.push({
             id: coId,
-            label: co.ejer_navn,
+            label: resolvedName,
             type: 'person',
             enhedsNummer: personEn,
             link: personEn ? `/dashboard/owners/${personEn}` : undefined,
@@ -1114,12 +1151,17 @@ export async function POST(request: NextRequest): Promise<NextResponse<ExpandRes
       );
     }
 
-    // Berig property-noder med adresser (best-effort)
+    // Berig property-noder + overflow items med adresser (best-effort)
     const propNodes = result.nodes.filter((n) => n.type === 'property' && n.bfeNummer != null);
-    if (propNodes.length > 0) {
+    // BIZZ-1349: Saml også BFE-numre fra overflow items
+    const overflowNodes = result.nodes.filter((n) => n.overflowItems && n.overflowItems.length > 0);
+    const overflowBfes = overflowNodes.flatMap((n) =>
+      (n.overflowItems ?? []).filter((i) => i.bfeNummer).map((i) => i.bfeNummer!)
+    );
+    const allBfes = [...propNodes.map((n) => n.bfeNummer!), ...overflowBfes];
+    if (allBfes.length > 0) {
       try {
-        const bfes = propNodes.map((n) => n.bfeNummer!).join(',');
-        const addrRes = await fetch(`${reqHost}/api/bfe-addresses?bfes=${bfes}`, {
+        const addrRes = await fetch(`${reqHost}/api/bfe-addresses?bfes=${allBfes.join(',')}`, {
           headers: { cookie: reqCookie },
           signal: AbortSignal.timeout(10000),
         });
@@ -1135,16 +1177,63 @@ export async function POST(request: NextRequest): Promise<NextResponse<ExpandRes
               doer: string | null;
             }
           > = await addrRes.json();
+
+          /**
+           * Formatér adresse-label. BIZZ-1543: space mellem adresse og etage
+           * (ikke komma) så etage/dør forbliver på linje 1 i diagram-renderen
+           * der splitter labels på komma.
+           */
+          const fmtLabel = (info: {
+            adresse: string | null;
+            postnr: string | null;
+            by: string | null;
+            etage: string | null;
+            doer: string | null;
+          }): string | null => {
+            if (!info.adresse) return null;
+            const etageStr = info.etage ? ` ${info.etage}.` : '';
+            const doerStr = info.doer ? ` ${info.doer}` : '';
+            const postStr = info.postnr && info.by ? `, ${info.postnr} ${info.by}` : '';
+            return `${info.adresse}${etageStr}${doerStr}${postStr}`;
+          };
+
+          /**
+           * BIZZ-1542: Byg property-link med BFE-fallback for ejerlejligheder.
+           * Enhedsadresse-UUID'er fra diagrammet kan ikke resolves via DAWA
+           * /adgangsadresser — BFE-URL'en falder igennem til page.tsx' nye
+           * BFE→DAWA resolver.
+           */
+          const buildLink = (
+            info: { etage: string | null; dawaId: string | null },
+            bfeNummer: number | null
+          ): string | undefined => {
+            if (info.etage && bfeNummer) return `/dashboard/ejendomme/${bfeNummer}`;
+            if (info.dawaId) return `/dashboard/ejendomme/${info.dawaId}`;
+            if (bfeNummer) return `/dashboard/ejendomme/${bfeNummer}`;
+            return undefined;
+          };
+
+          // Berig regulære property-noder
           for (const node of propNodes) {
             const info = addrData[String(node.bfeNummer)];
             if (!info?.adresse) continue;
-            const etageStr = info.etage ? `, ${info.etage}.` : '';
-            const doerStr = info.doer ? ` ${info.doer}` : '';
-            // BIZZ-1103: Inkluder postnr+by i label (sublabel renderes ikke for property-noder)
-            const postStr = info.postnr && info.by ? `, ${info.postnr} ${info.by}` : '';
-            node.label = `${info.adresse}${etageStr}${doerStr}${postStr}`;
+            node.label = fmtLabel(info) ?? node.label;
             if (info.postnr && info.by) node.sublabel = `${info.postnr} ${info.by}`;
-            if (info.dawaId) node.link = `/dashboard/ejendomme/${info.dawaId}`;
+            const link = buildLink(info, node.bfeNummer ?? null);
+            if (link) node.link = link;
+          }
+
+          // BIZZ-1349: Berig overflow items med adresser + links
+          for (const node of overflowNodes) {
+            for (const item of node.overflowItems ?? []) {
+              if (!item.bfeNummer) continue;
+              const info = addrData[String(item.bfeNummer)];
+              if (!info) continue;
+              const label = fmtLabel(info);
+              if (label) item.label = label;
+              const link = buildLink(info, item.bfeNummer ?? null);
+              if (link) item.link = link;
+            }
           }
         }
       } catch {

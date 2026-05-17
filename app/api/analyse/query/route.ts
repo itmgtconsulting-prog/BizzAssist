@@ -31,6 +31,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { resolveTenantId } from '@/lib/api/auth';
 import { assertAiAllowed } from '@/app/lib/aiGate';
+import { recordAiUsage } from '@/app/lib/aiTracking';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
 import { createAdminClient } from '@/lib/supabase/admin';
@@ -72,10 +73,27 @@ interface QueryPlan {
  *
  * @returns System prompt string
  */
-function buildSystemPrompt(): string {
+async function buildSystemPrompt(): Promise<string> {
   const schema = generateSchemaDescription();
   const tableNames = WHITELISTED_TABLES.map((t) => t.table).join(', ');
-  return `Du er en data-analytiker for BizzAssist. Brugeren stiller spørgsmål på dansk.
+
+  // BIZZ-1411: Inject data catalog så Claude kender faktisk null-rate,
+  // distinct-values og top-værdier per kolonne. Graceful degradation hvis
+  // catalog ikke kan hentes.
+  let catalogSection = '';
+  try {
+    const { fetchCatalog } = await import('@/app/lib/dataIntelligence/fetchCatalog');
+    const { formatCatalogForPrompt } =
+      await import('@/app/lib/dataIntelligence/formatCatalogForPrompt');
+    const { rows, computedAt } = await fetchCatalog();
+    if (rows.length > 0) {
+      catalogSection = `\n\n${formatCatalogForPrompt(rows, computedAt ?? undefined)}\n`;
+    }
+  } catch {
+    /* Non-fatal — fortsæt uden catalog */
+  }
+
+  return `Du er en data-analytiker for BizzAssist. Brugeren stiller spørgsmål på dansk.${catalogSection}
 
 Du skal returnere en STRUKTURERET query plan som JSON — IKKE rå SQL.
 
@@ -102,10 +120,15 @@ REGLER:
 5. "limit" maks ${MAX_ROWS}
 6. "chartType": bar, line, scatter, pie, table
 7. Returner KUN valid JSON — ingen markdown.
+8. NULL-HÅNDTERING: Mange kolonner kan være NULL. Ved GROUP BY eller aggregering, tilføj ALTID filter: "kolonnenavn": "not.is.null" for gruppe-kolonner. Ellers får du meningsløse "—" rækker.
+9. DATAKVALITET: bbr_ejendom_status har 2,5M rækker men ikke alle har kommune_kode/energimaerke. cvr_virksomhed har 2,1M rækker med god dækning. ejf_ejerskab har 7,6M rækker med god dækning.
 
 EKSEMPLER:
-- "Ejendomme per kommune" → table=bbr_ejendom_status, select=kommune_kode,count(*)
-- "Energimærke fordeling" → table=bbr_ejendom_status, select=energimaerke,count(*), filters={is_udfaset:eq.false,energimaerke:not.is.null}`;
+- "Ejendomme per kommune" → table=bbr_ejendom_status, select=kommune_kode,count(*) as antal, filters={is_udfaset:eq.false,kommune_kode:not.is.null}, order=antal.desc
+- "Energimærke fordeling" → table=bbr_ejendom_status, select=energimaerke,count(*) as antal, filters={is_udfaset:eq.false,energimaerke:not.is.null}, order=antal.desc
+- "Virksomheder per branche" → table=cvr_virksomhed, select=branche_tekst,count(*) as antal, filters={status:eq.NORMAL,branche_tekst:not.is.null}, order=antal.desc, limit=20
+- "Selskabsformer fordeling" → table=cvr_virksomhed, select=virksomhedsform,count(*) as antal, filters={status:eq.NORMAL}, order=antal.desc
+- "Ejendomsejere per type" → table=ejf_ejerskab, select=ejer_type,count(*) as antal, filters={status:eq.Aktiv,ejer_type:not.is.null}, order=antal.desc`;
 }
 
 /**
@@ -187,11 +210,23 @@ export async function POST(request: NextRequest) {
           {
             model: 'claude-sonnet-4-6',
             max_tokens: 2048,
-            system: buildSystemPrompt(),
+            system: await buildSystemPrompt(),
             messages: [{ role: 'user', content: userQuery }],
           },
           { signal: AbortSignal.timeout(15000) }
         );
+
+        // BIZZ-1262: Token-tracking — registrer forbrug i tenant.ai_token_usage
+        const tokensIn = response.usage?.input_tokens ?? 0;
+        const tokensOut = response.usage?.output_tokens ?? 0;
+        await recordAiUsage({
+          userId: auth.userId,
+          tenantId: auth.tenantId,
+          route: 'ai.analyse.query',
+          inputTokens: tokensIn,
+          outputTokens: tokensOut,
+          model: 'claude-sonnet-4-6',
+        });
 
         const textBlock = response.content.find((b) => b.type === 'text');
         if (!textBlock || textBlock.type !== 'text') {
@@ -239,6 +274,47 @@ export async function POST(request: NextRequest) {
 
         const admin = createAdminClient();
         const tableName = plan.table.includes('.') ? plan.table.split('.')[1] : plan.table;
+
+        // BIZZ-1283: Runtime schema-check — verificer at tabellen eksisterer
+        // BIZZ-1314: Prøv on-demand refresh af materialized views hvis de er tomme
+        {
+          const { error: probeErr, count: probeCount } = await admin
+            .from(tableName)
+            .select('*', { count: 'exact', head: true })
+            .limit(0);
+          if (probeErr?.message?.includes('Could not find the table')) {
+            logger.warn(`[analyse/query] Tabel ${tableName} eksisterer ikke i schema`);
+            sse(
+              JSON.stringify({
+                error: `Tabellen "${tableName}" er ikke tilgængelig endnu. Prøv en anden forespørgsel — fx "Ejendomme per kommune" eller "Virksomheder per branche".`,
+              })
+            );
+            sse('[DONE]');
+            controller.close();
+            return;
+          }
+          // BIZZ-1314: Materialized view eksisterer men er tom (WITH NO DATA) — refresh on-demand
+          if (tableName.startsWith('mv_') && (probeCount === 0 || probeCount === null)) {
+            logger.log(`[analyse/query] View ${tableName} er tom — forsøger on-demand refresh`);
+            sse(JSON.stringify({ status: `Opdaterer ${tableName}…` }));
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const { error: refreshErr } = await (admin as any).rpc('refresh_materialized_view', {
+                view_name: tableName,
+              });
+              if (refreshErr) {
+                logger.warn(
+                  `[analyse/query] On-demand refresh af ${tableName} fejlede:`,
+                  refreshErr.message
+                );
+              } else {
+                logger.log(`[analyse/query] On-demand refresh af ${tableName} OK`);
+              }
+            } catch (refreshErr) {
+              logger.warn(`[analyse/query] On-demand refresh exception:`, refreshErr);
+            }
+          }
+        }
 
         /* Udled hvilke rå kolonner vi skal hente (fjern aggregeringer) */
         const rawCols = plan.select
@@ -294,7 +370,18 @@ export async function POST(request: NextRequest) {
 
         if (dbError) {
           logger.error('[analyse/query] PostgREST fejl:', dbError.message);
-          sse(JSON.stringify({ error: `Databasefejl: ${dbError.message}` }));
+          // BIZZ-1283: Brugervenlig fejlbesked i stedet for rå databasefejl
+          const isMissingTable =
+            dbError.message.includes('Could not find the table') ||
+            dbError.message.includes('schema cache');
+          const isColumnError =
+            dbError.message.includes('column') && dbError.message.includes('does not exist');
+          const userMsg = isMissingTable
+            ? `Tabellen "${tableName}" er ikke tilgængelig endnu. Prøv en anden forespørgsel — fx "Ejendomme per kommune" eller "Virksomheder per branche".`
+            : isColumnError
+              ? `En kolonne i forespørgslen findes ikke. Prøv en simplere forespørgsel.`
+              : 'Data er midlertidigt utilgængelig. Prøv igen om lidt.';
+          sse(JSON.stringify({ error: userMsg }));
           sse('[DONE]');
           controller.close();
           return;

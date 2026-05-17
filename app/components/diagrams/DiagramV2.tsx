@@ -248,7 +248,7 @@ export default function DiagramV2({
     <DiagramForce
       graph={graph}
       lang={lang}
-      defaultShowProperties={rootType !== 'person'}
+      defaultShowProperties={true}
       onExpand={handleExpand}
       onCollapse={handleCollapse}
       onNodeClick={onNodeClick}

@@ -45,6 +45,12 @@ import { Lock } from 'lucide-react';
 interface Message {
   role: 'user' | 'assistant';
   content: string;
+  /**
+   * BIZZ-1260: Kort brugervenlig tekst vist i chat-boblen i stedet for
+   * den fulde prompt. Bruges af analyse-moduler der sender lange
+   * system-instruktioner som content — brugeren ser kun displayText.
+   */
+  displayText?: string;
   /** BIZZ-812: Attached files (metadata only — extracted text lives in content). */
   attachments?: Array<{
     name: string;
@@ -490,7 +496,50 @@ function AIChatPanel() {
       }
     }
 
-    return parts.length > 0 ? parts.join('\n\n') : undefined;
+    // BIZZ-1388: Forsikrings-data for rapport-generering
+    if (pageData?.forsikringPolicer && pageData.forsikringPolicer.length > 0) {
+      const lines = [
+        `\n[FORSIKRINGSPOLICER] ${pageData.forsikringPolicer.length} uploadede policer:`,
+      ];
+      for (const p of pageData.forsikringPolicer) {
+        const gaps = [
+          p.gapsCritical > 0 ? `${p.gapsCritical} kritiske` : null,
+          p.gapsWarning > 0 ? `${p.gapsWarning} advarsler` : null,
+          p.gapsInfo > 0 ? `${p.gapsInfo} info` : null,
+        ]
+          .filter(Boolean)
+          .join(', ');
+        lines.push(
+          `- Police ${p.policenummer} (${p.selskab}) — ${p.adresse ?? 'ukendt adresse'}${gaps ? ` — gaps: ${gaps}` : ''}`
+        );
+      }
+      parts.push(lines.join('\n'));
+    }
+    if (pageData?.forsikringAnalyse) {
+      const fa = pageData.forsikringAnalyse;
+      parts.push(
+        `\n[FORSIKRING GAP-ANALYSE]${fa.kundeNavn ? ` Kunde: ${fa.kundeNavn}` : ''}\n` +
+          `Aktiver: ${fa.totalAktiver} | Forsikrede: ${fa.forsikrede} | Uforsikrede: ${fa.uforsikrede} | Risk score: ${fa.riskScore} | Gaps: ${fa.gapsCount}`
+      );
+    }
+    if (pageData?.forsikringGaps && pageData.forsikringGaps.length > 0) {
+      const lines = [`\n[FORSIKRING GAPS] ${pageData.forsikringGaps.length} detekterede gaps:`];
+      for (const g of pageData.forsikringGaps.slice(0, 30)) {
+        lines.push(
+          `- [${g.severity.toUpperCase()}] ${g.title}: ${g.description.slice(0, 100)}${g.recommendation ? ` → ${g.recommendation.slice(0, 80)}` : ''}`
+        );
+      }
+      parts.push(lines.join('\n'));
+    }
+
+    // BIZZ-1401: Begræns kontekst-størrelse — for stor kontekst (>40K tegn)
+    // kan forårsage Anthropic API timeout/fejl der swallowes stille.
+    const MAX_CONTEXT_CHARS = 40_000;
+    const joined = parts.length > 0 ? parts.join('\n\n') : undefined;
+    if (joined && joined.length > MAX_CONTEXT_CHARS) {
+      return joined.slice(0, MAX_CONTEXT_CHARS) + '\n\n[Kontekst afkortet — for stor til AI-chat]';
+    }
+    return joined;
   }, [pathname, pageData, a]);
 
   /**
@@ -561,11 +610,15 @@ function AIChatPanel() {
 
   // BIZZ-956 + BIZZ-993: Lytt efter AI-knap events og auto-send
   const pendingSendRef = useRef(false);
+  /** BIZZ-1260: Kort tekst vist i chat-boblen i stedet for den fulde prompt */
+  const pendingDisplayTextRef = useRef<string | null>(null);
   useEffect(() => {
     const handler = (event: Event) => {
-      const ce = event as CustomEvent<{ prompt: string }>;
+      const ce = event as CustomEvent<{ prompt: string; displayText?: string }>;
       if (ce.detail?.prompt) {
         setInput(ce.detail.prompt);
+        // BIZZ-1260: Gem displayText så chat-boblen viser kort tekst
+        pendingDisplayTextRef.current = ce.detail.displayText ?? null;
         chatCtx.setDrawerOpen(true);
         // BIZZ-993: Markér at næste input-opdatering skal auto-sende
         pendingSendRef.current = true;
@@ -683,9 +736,13 @@ function AIChatPanel() {
       size: att.size,
       truncated: att.truncated,
     }));
+    // BIZZ-1260: Brug pendingDisplayTextRef som kort visuel tekst i boblen
+    const displayText = pendingDisplayTextRef.current ?? undefined;
+    pendingDisplayTextRef.current = null;
     const userMsg: Message = {
       role: 'user',
       content: composedContent,
+      ...(displayText ? { displayText } : {}),
       ...(attachmentsMeta.length > 0 ? { attachments: attachmentsMeta } : {}),
     };
     // Clear the chat attachments now — they're baked into this turn's
@@ -698,7 +755,12 @@ function AIChatPanel() {
     // uden session_id i stateless-mode. Chat fungerer stadig ende-til-ende
     // via /api/ai/chat; kun cross-device persistens preller af. Tidligere
     // afbrød vi stille her og brugeren så ingen feedback — BIZZ-839 bug.
-    const convId = await chatCtx.ensureConversation(lang as 'da' | 'en');
+    // BIZZ-1401: Timeout ensureConversation — hænger den, blokerer den hele
+    // sendMessage og brugeren ser loading-dots for evigt. 5s max.
+    const convId = await Promise.race([
+      chatCtx.ensureConversation(lang as 'da' | 'en'),
+      new Promise<string | null>((resolve) => setTimeout(() => resolve(null), 5000)),
+    ]);
     if (convId) {
       // Auto-title from first user message (non-blocking)
       if (messages.length === 0) {
@@ -895,7 +957,10 @@ function AIChatPanel() {
                 }
               }
             } catch {
-              // Ignorer ugyldige JSON-chunks
+              // BIZZ-1328: Log ugyldige chunks i stedet for at ignorere stille
+              if (payload && payload !== '[DONE]') {
+                console.warn('[ai-chat] Ugyldig SSE chunk:', payload.slice(0, 100));
+              }
             }
           }
         }
@@ -903,6 +968,14 @@ function AIChatPanel() {
         // Frigør ReadableStream-ressourcen eksplicit (BIZZ-126)
         reader.releaseLock();
         reader.cancel().catch(() => {});
+      }
+
+      // BIZZ-1328: Fallback-besked ved tom stream — vis fejl i stedet for stille intet
+      if (!accumulated && generatedFiles.length === 0) {
+        accumulated =
+          lang === 'da'
+            ? '⚠️ Intet svar modtaget fra AI. Prøv venligst igen.'
+            : '⚠️ No response received from AI. Please try again.';
       }
 
       // Flyt streamed tekst til message-array + persist
@@ -919,6 +992,25 @@ function AIChatPanel() {
         // BIZZ-1175: ALTID opdater local messages — race condition med
         // chatCtx.activeId kunne forhindre at svaret blev vist.
         setMessages(finalMsgs);
+        // Sync context så fullpage/drawer har det fulde svar og
+        // sync-effects ikke overskriver med stale data.
+        chatCtx.setMessages(finalMsgs);
+
+        // BIZZ-1266: Auto-åbn preview af første genererede fil (side-by-side)
+        if (generatedFiles.length > 0) {
+          const first = generatedFiles[0];
+          docPreview.open({
+            name: first.file_name,
+            fileType: first.format,
+            text: first.preview_text,
+            downloadUrl: first.download_url,
+            sizeBytes: first.bytes,
+            kind: first.preview_kind,
+            columns: first.preview_columns,
+            rows: first.preview_rows,
+            html: first.preview_html,
+          });
+        }
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {
@@ -1206,11 +1298,15 @@ function AIChatPanel() {
             ) : (
               <>
                 {messages.map((msg, i) => {
+                  // BIZZ-1260: Vis displayText (kort brugervenlig tekst) hvis
+                  // det findes — bruges af analyse-moduler der sender lange
+                  // system-instruktioner som content.
                   // BIZZ-812: Strip the attachment text-block from display —
                   // it's kept in content for the AI's context window but
                   // renders as chips instead of a wall of text.
-                  const displayContent =
-                    msg.role === 'user' && msg.attachments && msg.attachments.length > 0
+                  const displayContent = msg.displayText
+                    ? msg.displayText
+                    : msg.role === 'user' && msg.attachments && msg.attachments.length > 0
                       ? msg.content
                           .split(/\n\n---\n\n/)
                           .slice(-1)[0]

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EjendomSoegSvar xmlns="http://rep.oio.dk/tinglysning.dk/service/message/elektroniskakt/1/">
+  <Soegeresultat>
+    <AntalFundet>2</AntalFundet>
+    <Ejendomme>
+      <Ejendom>
+        <BFEnummer>100000001</BFEnummer>
+        <Adresse>Testvej 1, 9999 Testby</Adresse>
+        <MatrikelNummer>12a Testby</MatrikelNummer>
+      </Ejendom>
+      <Ejendom>
+        <BFEnummer>100000002</BFEnummer>
+        <Adresse>Testvej 3, 9999 Testby</Adresse>
+        <MatrikelNummer>12b Testby</MatrikelNummer>
+      </Ejendom>
+    </Ejendomme>
+  </Soegeresultat>
+</EjendomSoegSvar>

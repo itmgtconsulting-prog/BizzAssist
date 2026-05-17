@@ -283,8 +283,19 @@ export function AIChatContextProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      await refreshConversations();
+      const convs = await refreshConversations();
       if (cancelled) return;
+
+      // Hvis initial load fejlede (auth endnu ikke refreshed), retry efter 2s.
+      // Supabase middleware refresher session-cookie asynkront, så første kald
+      // kan ramme en expired session.
+      if (convs.length === 0 && persistenceError) {
+        await new Promise((r) => setTimeout(r, 2000));
+        if (cancelled) return;
+        await refreshConversations();
+        if (cancelled) return;
+      }
+
       // Engangs-migration af localStorage → Supabase. Kører efter sessions
       // er loadet så vi ikke duplikerer hvis migration allerede er done.
       try {
@@ -300,6 +311,7 @@ export function AIChatContextProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshConversations]);
 
   // ── Auto-close drawer ved navigation til fullpage ────────────────────────

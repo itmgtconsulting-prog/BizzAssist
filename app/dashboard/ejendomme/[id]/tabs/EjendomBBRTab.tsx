@@ -23,7 +23,7 @@ import SektionLoader from '@/app/components/SektionLoader';
 import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
 import { formatDKK } from '@/app/lib/mock/ejendomme';
 import { tekniskAnlaegTekst, tekniskAnlaegKategori } from '@/app/lib/bbrTekniskAnlaegKoder';
-import { isUdfasetStatusLabel } from '@/app/lib/bbrKoder';
+import { isUdfasetStatusLabel, isAktivStatusLabel } from '@/app/lib/bbrKoder';
 import type { EjendomApiResponse } from '@/app/api/ejendom/[id]/route';
 import type { VurderingData } from '@/app/api/vurdering/route';
 import type { DawaAdresse, DawaJordstykke } from '@/app/lib/dawa';
@@ -233,9 +233,9 @@ export default function EjendomBBRTab({
       {(() => {
         const alleBygninger = bbrData?.bbr ?? [];
         const geodataIds = new Set((bbrData?.bygningPunkter ?? []).map((p) => p.id));
-        // BIZZ-825: central udfaset-tjek
+        // BIZZ-1304: whitelist — kun vis bygninger med kendt aktiv status
         const bygninger = alleBygninger
-          .filter((b) => !isUdfasetStatusLabel(b.status))
+          .filter((b) => isAktivStatusLabel(b.status))
           .sort((a, b) => (a.bygningsnr ?? 9999) - (b.bygningsnr ?? 9999));
         const totAreal = bygninger.reduce((s, b) => s + (b.samletBygningsareal ?? 0), 0);
         const boligAreal = bygninger.reduce((s, b) => s + (b.samletBoligareal ?? 0), 0);
@@ -554,7 +554,13 @@ export default function EjendomBBRTab({
 
       {/* Enheder — kun summary-boksen, detaljelisten erstattes af Ejendomsstruktur */}
       {(() => {
-        const enheder = bbrData?.enheder ?? [];
+        // BIZZ-1304: Filtrér enheder der tilhører inaktive bygninger
+        const aktiveBygIds = new Set(
+          (bbrData?.bbr ?? []).filter((b) => isAktivStatusLabel(b.status)).map((b) => b.id)
+        );
+        const enheder = (bbrData?.enheder ?? []).filter(
+          (e) => !e.bygningId || aktiveBygIds.has(e.bygningId)
+        );
         const boligEnh = enheder.filter((e) => (e.arealBolig ?? 0) > 0).length;
         const erhvEnh = enheder.filter((e) => (e.arealErhverv ?? 0) > 0).length;
         const totAreal = enheder.reduce((s, e) => s + (e.areal ?? 0), 0);
@@ -579,11 +585,17 @@ export default function EjendomBBRTab({
         const bygningsnrMap = new Map(
           (bbrData?.bygningPunkter ?? []).map((p) => [p.id, p.bygningsnr ?? 9999])
         );
-        const enheder = (bbrData?.enheder ?? []).slice().sort((a, b) => {
-          const nrA = a.bygningId ? (bygningsnrMap.get(a.bygningId) ?? 9999) : 9999;
-          const nrB = b.bygningId ? (bygningsnrMap.get(b.bygningId) ?? 9999) : 9999;
-          return nrA - nrB;
-        });
+        // BIZZ-1304: Filtrér enheder der tilhører inaktive bygninger
+        const aktiveBygIds2 = new Set(
+          (bbrData?.bbr ?? []).filter((b) => isAktivStatusLabel(b.status)).map((b) => b.id)
+        );
+        const enheder = (bbrData?.enheder ?? [])
+          .filter((e) => !e.bygningId || aktiveBygIds2.has(e.bygningId))
+          .sort((a, b) => {
+            const nrA = a.bygningId ? (bygningsnrMap.get(a.bygningId) ?? 9999) : 9999;
+            const nrB = b.bygningId ? (bygningsnrMap.get(b.bygningId) ?? 9999) : 9999;
+            return nrA - nrB;
+          });
         return (
           <div>
             {bbrLoader ? (

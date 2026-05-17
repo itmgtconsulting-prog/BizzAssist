@@ -175,6 +175,36 @@ export interface AIPageData {
     type: string;
     ejerandel?: string | null;
   }>;
+
+  /**
+   * BIZZ-1388: Forsikrings-data fra gap-analyse. Sættes af forsikringssiden
+   * så AI Chat kan generere mæglerrapporter med alle gaps og anbefalinger.
+   */
+  forsikringPolicer?: Array<{
+    policenummer: string;
+    selskab: string;
+    adresse: string | null;
+    praemie: number | null;
+    udloeber: string | null;
+    gapsCritical: number;
+    gapsWarning: number;
+    gapsInfo: number;
+  }>;
+  forsikringGaps?: Array<{
+    severity: string;
+    title: string;
+    description: string;
+    recommendation: string | null;
+    policyAddress: string | null;
+  }>;
+  forsikringAnalyse?: {
+    kundeNavn: string | null;
+    totalAktiver: number;
+    forsikrede: number;
+    uforsikrede: number;
+    riskScore: number;
+    gapsCount: number;
+  };
 }
 
 // ─── Context ─────────────────────────────────────────────────────────────────

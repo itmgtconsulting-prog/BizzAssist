@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<VirksomhedSoegSvar xmlns="http://rep.oio.dk/tinglysning.dk/service/message/elektroniskakt/1/">
+  <Soegeresultat>
+    <AntalFundet>1</AntalFundet>
+    <Virksomheder>
+      <Virksomhed>
+        <CVR>99999992</CVR>
+        <Navn>ACME Holding A/S</Navn>
+        <Adresse>Testvej 1, 9999 Testby</Adresse>
+        <Status>Aktiv</Status>
+      </Virksomhed>
+    </Virksomheder>
+  </Soegeresultat>
+</VirksomhedSoegSvar>

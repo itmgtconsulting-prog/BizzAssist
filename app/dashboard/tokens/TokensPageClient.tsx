@@ -38,9 +38,11 @@ import {
   AlertTriangle,
   X,
   Shield,
+  BarChart3,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { formatTokens, resolvePlan, type PlanId } from '@/app/lib/subscriptions';
+import type { UsageHistoryRow } from '@/app/api/ai/usage-history/route';
 import { scopeColor } from '@/app/lib/scopeColors';
 import type { ApiTokenRecord } from '@/app/api/tokens/route';
 
@@ -103,6 +105,13 @@ const translations = {
     available: 'Tilgængelige',
     of: 'af',
     used: 'brugt',
+    historyTitle: 'Forbrugshistorik',
+    historySubtitle: 'Seneste AI-kald og token-forbrug',
+    historyEmpty: 'Ingen forbrugshistorik endnu.',
+    historyMore: 'Vis mere',
+    historyRoute: 'Funktion',
+    historyTokens: 'Tokens',
+    historyDate: 'Dato',
     buyTitle: 'Køb flere tokens',
     buySubtitle: 'Vælg en pakke for at fylde op',
     buy: 'Køb',
@@ -169,6 +178,13 @@ const translations = {
     available: 'Available',
     of: 'of',
     used: 'used',
+    historyTitle: 'Usage History',
+    historySubtitle: 'Recent AI calls and token consumption',
+    historyEmpty: 'No usage history yet.',
+    historyMore: 'Show more',
+    historyRoute: 'Feature',
+    historyTokens: 'Tokens',
+    historyDate: 'Date',
     buyTitle: 'Buy More Tokens',
     buySubtitle: 'Choose a pack to top up',
     buy: 'Buy',
@@ -219,6 +235,35 @@ const translations = {
     apiDocsLink: 'API documentation',
   },
 } as const;
+
+// ─── Route label mapping (BIZZ-1604) ────────────────────────────────────────
+
+/** Maps internal AI route identifiers to user-friendly labels. */
+const ROUTE_LABELS: Record<string, string> = {
+  'ai.chat': 'AI Chat',
+  'ai.generate-listing': 'Boligannonce',
+  'ai.generate-finance-report': 'Teknisk ejendomsbeskrivelse',
+  'ai.article-search': 'Artikelsøgning',
+  'ai.article-search.articles': 'Artikelsøgning',
+  'ai.article-search.socials': 'Social-links',
+  'ai.person-search.contacts': 'Personsøgning',
+  'ai.person-search.articles': 'Person-artikler',
+  'ai.person-search.socials': 'Person-socials',
+  'ai.person-article-search': 'Person-artikelsøgning',
+  'ai.forklar-vurdering': 'Forklar vurdering',
+  'ai.analysis': 'Analyse',
+};
+
+/**
+ * Returns a user-friendly label for an AI route identifier.
+ *
+ * @param route - Internal route string (e.g. 'ai.chat') or null
+ * @returns Human-readable label
+ */
+function routeLabel(route: string | null): string {
+  if (!route) return '—';
+  return ROUTE_LABELS[route] ?? route.replace('ai.', '').replace(/-/g, ' ');
+}
 
 // ─── AI Token helpers ────────────────────────────────────────────────────────
 
@@ -624,6 +669,11 @@ export default function TokensPageClient() {
   const [loading, setLoading] = useState(true);
   const [buyingPackId, setBuyingPackId] = useState<string | null>(null);
 
+  // ── Usage history state (BIZZ-1604) ──
+  const [usageRows, setUsageRows] = useState<UsageHistoryRow[]>([]);
+  const [usageTotal, setUsageTotal] = useState(0);
+  const [usageLoading, setUsageLoading] = useState(false);
+
   // ── API key state ──
   const [apiKeys, setApiKeys] = useState<ApiTokenRecord[]>([]);
   const [apiLoading, setApiLoading] = useState(false);
@@ -691,6 +741,32 @@ export default function TokensPageClient() {
       fetchApiKeys();
     }
   }, [activeTab, fetchApiKeys]);
+
+  // ── Fetch usage history (BIZZ-1604) ──
+
+  /** Loads usage history rows with pagination. */
+  const fetchUsageHistory = useCallback(async (offset = 0, append = false) => {
+    setUsageLoading(true);
+    try {
+      const res = await fetch(`/api/ai/usage-history?limit=10&offset=${offset}`);
+      if (res.ok) {
+        const data: { rows: UsageHistoryRow[]; total: number } = await res.json();
+        setUsageRows((prev) => (append ? [...prev, ...data.rows] : data.rows));
+        setUsageTotal(data.total);
+      }
+    } catch {
+      // Silently fail
+    } finally {
+      setUsageLoading(false);
+    }
+  }, []);
+
+  /** Fetch usage history on mount (AI tab) */
+  useEffect(() => {
+    if (activeTab === 'ai' && usageRows.length === 0) {
+      fetchUsageHistory(0);
+    }
+  }, [activeTab, fetchUsageHistory, usageRows.length]);
 
   // ── Derived AI values ──
   const sub = subData?.subscription ?? null;
@@ -977,6 +1053,68 @@ export default function TokensPageClient() {
                   )}
                 </div>
               )}
+
+              {/* Usage History (BIZZ-1604) */}
+              <div className="rounded-xl bg-slate-800/40 border border-slate-700/40 p-6 space-y-4">
+                <div>
+                  <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                    <BarChart3 className="w-5 h-5 text-blue-400" />
+                    {t.historyTitle}
+                  </h2>
+                  <p className="text-slate-400 text-sm mt-1">{t.historySubtitle}</p>
+                </div>
+
+                {usageRows.length === 0 && !usageLoading ? (
+                  <p className="text-center py-6 text-slate-500 text-sm">{t.historyEmpty}</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-slate-400 text-xs border-b border-slate-700/50">
+                          <th className="text-left py-2 px-2 font-medium">{t.historyDate}</th>
+                          <th className="text-left py-2 px-2 font-medium">{t.historyRoute}</th>
+                          <th className="text-right py-2 px-2 font-medium">{t.historyTokens}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {usageRows.map((row) => (
+                          <tr
+                            key={row.id}
+                            className="border-b border-slate-700/20 hover:bg-slate-700/10"
+                          >
+                            <td className="py-2 px-2 text-slate-400 whitespace-nowrap">
+                              {new Date(row.created_at).toLocaleDateString(
+                                lang === 'da' ? 'da-DK' : 'en-GB',
+                                {
+                                  day: '2-digit',
+                                  month: 'short',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                }
+                              )}
+                            </td>
+                            <td className="py-2 px-2 text-slate-300">{routeLabel(row.route)}</td>
+                            <td className="py-2 px-2 text-right text-white font-medium tabular-nums">
+                              {formatTokens(row.tokens_in + row.tokens_out)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {usageRows.length < usageTotal && (
+                  <button
+                    type="button"
+                    onClick={() => fetchUsageHistory(usageRows.length, true)}
+                    disabled={usageLoading}
+                    className="w-full py-2 text-sm text-blue-400 hover:text-blue-300 disabled:opacity-50"
+                  >
+                    {usageLoading ? '...' : t.historyMore}
+                  </button>
+                )}
+              </div>
 
               {/* Buy More Tokens */}
               <div className="rounded-xl bg-slate-800/40 border border-slate-700/40 p-6 space-y-5">

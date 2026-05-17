@@ -35,6 +35,15 @@ import type { Database } from '@/lib/supabase/types';
 import { logActivity } from '@/app/lib/activityLog';
 import { logger } from '@/app/lib/logger';
 import { assertAiAllowed } from '@/app/lib/aiGate';
+import {
+  generateDocx,
+  generateXlsx,
+  generateCsv,
+  generatePptx,
+  sanitizeFilename,
+  docxToPreviewHtml,
+  type GeneratedFile,
+} from '@/app/lib/aiFileGeneration';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -120,6 +129,18 @@ const TOOLS: Anthropic.Tool[] = [
         dawaId: { type: 'string', description: 'DAWA adgangsadresse UUID' },
       },
       required: ['dawaId'],
+    },
+  },
+  {
+    name: 'hent_ejendom_komplet',
+    description:
+      'Hent komplet ejendomsdata i ÉT kald: BBR (areal, opførelsesår, anvendelse, materialer), vurdering (ejendomsværdi, grundværdi), kommune, og ejer. Meget hurtigere end separate hent_bbr_data + hent_vurdering + hent_ejerskab. Brug denne som førstevalg når brugeren spørger om en ejendom via BFE-nummer.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        bfeNummer: { type: 'string', description: 'BFE-nummer (Bestemt Fast Ejendom)' },
+      },
+      required: ['bfeNummer'],
     },
   },
   {
@@ -620,6 +641,43 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['format', 'mode', 'title'],
     },
   },
+  {
+    // BIZZ-1420: Slå pre-beregnede aggregater op direkte uden DB-query.
+    // Topics i app/lib/dataIntelligence/topics.ts, refreshes nightly via
+    // /api/cron/refresh-knowledge-cache.
+    name: 'hent_analytics_knowledge',
+    description:
+      'Slå et pre-beregnet aggregat op i knowledge cache (dataintel.analytics_knowledge). Brug dette FØR du laver databaseforespørgsler — det er hurtigt og dækker de mest stillede spørgsmål. ' +
+      'Tilgængelige topics: ' +
+      'company_count_by_municipality (key: {kommune_kode: int}), ' +
+      'company_count_by_industry (key: {branche_kode: string}), ' +
+      'company_status_distribution (key: {}), ' +
+      'property_count_by_type (key: {anvendelseskode: string}), ' +
+      'property_count_by_municipality (key: {kommune_kode: int}), ' +
+      'avg_valuation_by_property_type (key: {anvendelseskode: string}), ' +
+      'data_coverage_bbr (key: {} eller {kommune_kode: int}), ' +
+      'data_coverage_valuation (key: {vurderingsaar: int}), ' +
+      'data_coverage_energy (key: {energimaerke: string}), ' +
+      'ownership_distribution (key: {}), ' +
+      'recent_company_registrations (key: {maaned: "YYYY-MM"}), ' +
+      'temporal_coverage (key: {table: string, column: string}). ' +
+      'Hvis key er udeladt returneres alle rækker for topic (op til 500). Output inkluderer computed_at så bruger kan se freshness.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        topic: {
+          type: 'string',
+          description: 'Topic-navn — se liste i tool-beskrivelsen',
+        },
+        key: {
+          type: 'object',
+          description:
+            'Valgfrit JSON-objekt der filtrerer på key-felter (fx {kommune_kode: 101}). Udelad for at få alle facts.',
+        },
+      },
+      required: ['topic'],
+    },
+  },
 ];
 
 // ─── Tool labels (for status messages) ──────────────────────────────────────
@@ -627,6 +685,7 @@ const TOOLS: Anthropic.Tool[] = [
 const TOOL_STATUS: Record<string, string> = {
   dawa_adresse_soeg: 'Søger adresse…',
   dawa_adresse_detaljer: 'Henter adressedetaljer…',
+  hent_ejendom_komplet: 'Henter komplet ejendomsdata…',
   hent_bbr_data: 'Henter BBR-bygningsdata…',
   hent_vurdering: 'Henter ejendomsvurdering…',
   hent_ejerskab: 'Henter ejerskabsdata…',
@@ -899,7 +958,34 @@ Systemet injicerer automatisk ID'er fra den side brugeren kigger på under "Tilg
 - Er "BFE-nummer: XXXXXXX" listet → kald hent_vurdering, hent_ejerskab osv. direkte. Søg IKKE adressen.
 - Er "CVR-nummer: XXXXXXXX" listet → kald hent_cvr_virksomhed direkte. Søg IKKE CVR.
 - Kald ALDRIG soeg_person_cvr hvis enhedsNummer allerede er i konteksten.
-- Kald ALDRIG dawa_adresse_soeg hvis adresseId eller bfeNummer allerede er i konteksten.`;
+- Kald ALDRIG dawa_adresse_soeg hvis adresseId eller bfeNummer allerede er i konteksten.
+
+## Forsikrings-gap-analyse (BIZZ-1222)
+Når brugeren beder om forsikringsanalyse, gap-analyse, eller beskriver en kundes forsikringsportefølje:
+
+1. **Indsaml data parallelt** baseret på forsikringstype:
+   - Husforsikring: hent_ejendomme_for_person + hent_bbr_data + hent_vurdering (byggematerialer, areal, vurdering)
+   - Bilforsikring: hent_bilbog (bilpantebreve, leasingaftaler — viser registrerede køretøjer)
+   - Erhvervsforsikring: hent_cvr_virksomhed + hent_regnskab_noegletal (branche, omsætning, ansatte)
+   - Bestyrelsesansvar (D&O): hent_person_virksomheder (roller i virksomheder)
+   - Bygningsforsikring: hent_bbr_data (materialer, byggeår, areal, tag, ydervægge)
+
+2. **Gap-detektion** — identificér automatisk:
+   - **Uforsikret aktiv**: Ejendom/køretøj fundet i data men IKKE nævnt i kundens policer
+   - **Underforsikret**: Dækningssum < ejendomsvurdering (sammenlign police med hent_forelobig_vurdering)
+   - **Manglende ansvar**: Bestyrelsesposter uden D&O-forsikring
+   - **Risikofaktorer**: Byggeår < 1960 (asbest-risiko), tagmateriale (brand), fredskov/strandbeskyttelse
+   - **Udløbne policer**: Policer der er udløbet eller udløber snart
+
+3. **Output-format**:
+   - Tabel: Forsikringstype | Eksisterende dækning | Anbefalet | Gap | Risiko (Lav/Middel/Høj)
+   - Rangér gaps efter risiko-score (Høj → Middel → Lav)
+   - Afslut med: "Vil du have dette som en rapport (Word/PDF), eller skal vi dykke ned i et specifikt gap?"
+
+4. **Vigtige regler**:
+   - OPFIND ALDRIG forsikringspriser — angiv kun dækningsmæssige gaps
+   - Brug KUN data fra BizzAssist-registre — gæt aldrig om kundens policer
+   - DISCLAIMER: "Dette er en indikativ analyse baseret på offentlige registerdata. Endelig rådgivning bør ske af en forsikringsformidler."`;
 
 // ─── Tool result cache ──────────────────────────────────────────────────────
 
@@ -962,7 +1048,9 @@ async function executeTool(
   /** BIZZ-1000: Diagram PNG base64 til injection i generate_document */
   diagramBase64?: string,
   /** BIZZ-1186: Supabase admin client for cache-first lookups */
-  admin?: ReturnType<typeof createAdminClient>
+  admin?: ReturnType<typeof createAdminClient>,
+  /** BIZZ-1263: User ID for inline file generation */
+  fileUserId?: string
 ): Promise<unknown> {
   const cached = getCached(name, input);
   if (cached !== null) return cached;
@@ -1054,6 +1142,35 @@ async function executeTool(
           ejerlavnavn: d.ejerlavsnavn,
           bfeNummer,
         };
+        break;
+      }
+
+      case 'hent_ejendom_komplet': {
+        // BIZZ-1478: Single query against mv_ejendom_master for complete property data
+        const bfe = Number(input.bfeNummer);
+        if (!Number.isFinite(bfe) || bfe <= 0) {
+          result = { error: 'Ugyldigt BFE-nummer' };
+          break;
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: ejData } = await (admin as any)
+          .from('mv_ejendom_master')
+          .select('*')
+          .eq('bfe_nummer', bfe)
+          .limit(1)
+          .single();
+        if (!ejData) {
+          result = { error: 'Ejendom ikke fundet i mv_ejendom_master', bfeNummer: bfe };
+          break;
+        }
+        // Berig med ejerskab fra mv_ejerskab_beriget
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: ejere } = await (admin as any)
+          .from('mv_ejerskab_beriget')
+          .select('ejer_navn, ejer_cvr, ejer_type, ejerandel_pct, virksomhed_navn, virksomhedsform')
+          .eq('bfe_nummer', bfe)
+          .limit(10);
+        result = { ...ejData, ejere: ejere ?? [] };
         break;
       }
 
@@ -2110,30 +2227,186 @@ async function executeTool(
         // BIZZ-813: POST til /api/ai/generate-file med Claude's input.
         // BIZZ-1000: Injicér diagramBase64 i sektioner med imageBase64="DIAGRAM" placeholder.
         const fileInput = input as unknown as Record<string, unknown>;
-        if (diagramBase64 && Array.isArray(fileInput.sections)) {
-          for (const section of fileInput.sections as Record<string, unknown>[]) {
-            if (section.imageBase64 === 'DIAGRAM') {
-              section.imageBase64 = diagramBase64;
+
+        // BIZZ-1263: Claude sender ofte sections/columns/rows på top-level
+        // i stedet for inde i scratch-objektet. Wrap automatisk.
+        if (!fileInput.scratch && (fileInput.sections || fileInput.columns || fileInput.rows)) {
+          fileInput.scratch = {
+            sections: fileInput.sections,
+            columns: fileInput.columns,
+            rows: fileInput.rows,
+            subtitle: fileInput.subtitle,
+          };
+          delete fileInput.sections;
+          delete fileInput.columns;
+          delete fileInput.rows;
+          delete fileInput.subtitle;
+        }
+
+        // Sikr at mode altid er sat (Claude glemmer det nogle gange)
+        if (!fileInput.mode) {
+          fileInput.mode = 'scratch';
+        }
+
+        if (diagramBase64) {
+          const scratch = fileInput.scratch as Record<string, unknown> | undefined;
+          if (scratch && Array.isArray(scratch.sections)) {
+            for (const section of scratch.sections as Record<string, unknown>[]) {
+              if (section.imageBase64 === 'DIAGRAM') {
+                section.imageBase64 = diagramBase64;
+              }
             }
           }
         }
-        const res = await fetch(`${baseUrl}/api/ai/generate-file`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(cookieHeader ? { Cookie: cookieHeader } : {}),
-          },
-          body: JSON.stringify(fileInput),
-          signal: AbortSignal.timeout(30_000),
-        });
-        if (!res.ok) {
-          const errJson = (await res.json().catch(() => ({}))) as { error?: string };
-          result = { fejl: errJson.error ?? `generate-file fejlede (${res.status})` };
+        // BIZZ-1263: Generér fil inline i stedet for intern HTTP fetch.
+        // Den interne fetch til /api/ai/generate-file fejler konsistent
+        // pga. Vercel self-referencing / cookie-forwarding issues.
+        try {
+          const format = (fileInput.format as string) ?? 'docx';
+          const title = (fileInput.title as string) ?? 'Dokument';
+          const scratch = fileInput.scratch as Record<string, unknown> | undefined;
+
+          let generated: GeneratedFile;
+          if (format === 'xlsx' && scratch) {
+            generated = await generateXlsx({
+              title,
+              columns: (scratch.columns ?? []) as Array<{ key: string; header: string }>,
+              rows: (scratch.rows ?? []) as Array<Record<string, string | number | boolean | null>>,
+              sheetName: (scratch.sheetName as string) ?? undefined,
+            });
+          } else if (format === 'csv' && scratch) {
+            generated = await generateCsv({
+              columns: (scratch.columns ?? []) as Array<{ key: string; header: string }>,
+              rows: (scratch.rows ?? []) as Array<Record<string, string | number | boolean | null>>,
+              delimiter: ';',
+            });
+          } else if (format === 'pptx' && scratch) {
+            generated = await generatePptx({
+              title,
+              slides:
+                (scratch.slides as Array<{
+                  title: string;
+                  bullets?: string[];
+                  table?: { columns: string[]; rows: string[][] };
+                }>) ?? [],
+            });
+          } else {
+            generated = await generateDocx({
+              title,
+              subtitle: (scratch?.subtitle as string) ?? undefined,
+              sections:
+                (scratch?.sections as Array<{
+                  heading: string;
+                  body: string;
+                  imageBase64?: string;
+                }>) ?? [],
+            });
+          }
+
+          // Upload til Supabase Storage med retry
+          const safeTitle = sanitizeFilename(title);
+          const storagePath = `${fileUserId}/${crypto.randomUUID()}-${safeTitle}.${generated.ext}`;
+          const uploadBody = new Uint8Array(generated.buffer);
+          const adminSb = admin ?? createAdminClient();
+
+          // BIZZ-1266: Retry upload (transient fejl fra Supabase storage)
+          let uploadErr: { message: string } | null = null;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const { error } = await adminSb.storage
+              .from('ai-generated')
+              .upload(storagePath, uploadBody, {
+                contentType: generated.contentType,
+                upsert: false,
+              });
+            if (!error) {
+              uploadErr = null;
+              break;
+            }
+            uploadErr = error;
+            const msg = (error.message || '').toLowerCase();
+            const transient =
+              msg.includes('timeout') || msg.includes('network') || msg.includes('fetch');
+            if (!transient || attempt === 2) break;
+            await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+          }
+
+          if (uploadErr) {
+            logger.error('[generate_document] upload fejl:', uploadErr.message);
+            result = { fejl: `Upload fejlede: ${uploadErr.message}` };
+            break;
+          }
+
+          // Track i ai_file
+          const fileId = crypto.randomUUID();
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (adminSb as any).from('ai_file').insert({
+            id: fileId,
+            user_id: fileUserId,
+            kind: 'generated',
+            file_path: storagePath,
+            file_name: `${safeTitle}.${generated.ext}`,
+            file_type: generated.contentType,
+            size_bytes: generated.buffer.length,
+            expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          });
+
+          // Signed download URL
+          const { data: signedData } = await adminSb.storage
+            .from('ai-generated')
+            .createSignedUrl(storagePath, 86400);
+
+          // BIZZ-1266: Generér preview_html for docx (mammoth HTML-rendering)
+          let previewHtml: string | undefined;
+          if (format === 'docx') {
+            try {
+              const parsed = await docxToPreviewHtml(generated.buffer);
+              if (parsed.html.length > 0) previewHtml = parsed.html;
+            } catch {
+              /* best-effort — falder tilbage til tekst-preview */
+            }
+          }
+
+          result = {
+            file_id: fileId,
+            file_name: `${safeTitle}.${generated.ext}`,
+            download_url: signedData?.signedUrl ?? '',
+            preview_text: `${generated.ext.toUpperCase()}-fil "${title}" genereret (${(generated.buffer.length / 1024).toFixed(1)} KB).`,
+            bytes: generated.buffer.length,
+            format,
+            preview_kind: previewHtml ? 'html' : 'text',
+            preview_html: previewHtml,
+          };
+        } catch (genErr) {
+          logger.error('[generate_document] generering fejl:', genErr);
+          result = {
+            fejl: `Fil-generering fejlede: ${genErr instanceof Error ? genErr.message : 'ukendt fejl'}`,
+          };
+        }
+        break;
+      }
+
+      case 'hent_analytics_knowledge': {
+        // BIZZ-1420: Slå pre-beregnede facts op i knowledge cache.
+        const topic = (input as { topic?: string }).topic;
+        const key = (input as { key?: Record<string, unknown> }).key;
+        if (!topic) {
+          result = { fejl: 'topic er påkrævet' };
           break;
         }
-        const json = await res.json();
-        // Returner hele objektet — wrapper-laget splitter det.
-        result = json;
+        const { queryKnowledge } = await import('@/app/lib/dataIntelligence/fetchKnowledge');
+        const facts = await queryKnowledge(topic, key);
+        if (facts.length === 0) {
+          result = {
+            fejl: `Ingen facts fundet for topic="${topic}"${key ? ` med key=${JSON.stringify(key)}` : ''}. Måske mangler topic eller cron har ikke kørt endnu.`,
+          };
+        } else {
+          result = {
+            topic,
+            antal: facts.length,
+            computed_at: facts[0]?.computed_at_iso,
+            facts: facts.map((f) => ({ key: f.key, value: f.value })),
+          };
+        }
         break;
       }
 
@@ -2695,6 +2968,39 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   // Build system prompt — append knowledge base, recent entities and page context if available
   let systemPrompt = SYSTEM_PROMPT;
+
+  // BIZZ-1410: Inject data catalog (Fase 1, Lag 1 — pre-beregnet metadata om
+  // whitelistede tabeller). Caches 5 min in-memory; nightly refresh via
+  // /api/cron/refresh-data-catalog. Graceful degradation: ved fejl fortsætter
+  // AI uden catalog.
+  try {
+    const { fetchCatalog } = await import('@/app/lib/dataIntelligence/fetchCatalog');
+    const { formatCatalogForPrompt } =
+      await import('@/app/lib/dataIntelligence/formatCatalogForPrompt');
+    const { rows, computedAt } = await fetchCatalog();
+    if (rows.length > 0) {
+      const catalogMd = formatCatalogForPrompt(rows, computedAt ?? undefined);
+      systemPrompt += `\n\n${catalogMd}`;
+    }
+  } catch (catalogErr) {
+    logger.warn('[ai/chat] data catalog fetch failed (non-fatal):', catalogErr);
+  }
+
+  // BIZZ-1421: Inject executive knowledge summary (Fase 2, Lag 2). Top-level
+  // facts om datasættets størrelse + dækning — giver AI et instant svar på
+  // "hvor meget data har vi?" type spørgsmål uden tool-kald.
+  try {
+    const { fetchExecutiveFacts, formatExecutiveSummary } =
+      await import('@/app/lib/dataIntelligence/fetchKnowledge');
+    const facts = await fetchExecutiveFacts();
+    const summary = formatExecutiveSummary(facts);
+    if (summary) {
+      systemPrompt += `\n\n${summary}`;
+    }
+  } catch (knowledgeErr) {
+    logger.warn('[ai/chat] executive summary fetch failed (non-fatal):', knowledgeErr);
+  }
+
   // Inject knowledge base first so it forms stable background knowledge
   if (knowledgeContext) {
     systemPrompt += `\n\n${knowledgeContext}`;
@@ -2703,7 +3009,13 @@ export async function POST(request: NextRequest): Promise<Response> {
     systemPrompt += `\n\n${recentEntitiesContext}`;
   }
   if (context) {
-    systemPrompt += `\n\n## Aktuel kontekst\nBrugeren kigger på: ${context}`;
+    // BIZZ-1401: Begræns kontekst for at undgå Anthropic token-overflow
+    const MAX_CONTEXT = 40_000;
+    const trimmedContext =
+      context.length > MAX_CONTEXT
+        ? context.slice(0, MAX_CONTEXT) + '\n[Kontekst afkortet]'
+        : context;
+    systemPrompt += `\n\n## Aktuel kontekst\nBrugeren kigger på: ${trimmedContext}`;
   }
 
   // BIZZ-816: injicér user's domain-templates så AI kender deres
@@ -3028,7 +3340,8 @@ export async function POST(request: NextRequest): Promise<Response> {
                 baseUrl,
                 request.headers.get('cookie'),
                 diagramBase64,
-                adminClient
+                adminClient,
+                auth.userId
               );
 
               // BIZZ-813: generate_document returnerer download_url —
@@ -3108,6 +3421,8 @@ export async function POST(request: NextRequest): Promise<Response> {
                       preview_kind: fileResult.preview_kind,
                       preview_columns: fileResult.preview_columns,
                       preview_rows: fileResult.preview_rows,
+                      // BIZZ-1266: Inkludér preview_html i SSE-event
+                      preview_html: fileResult.preview_html,
                       bytes: fileResult.bytes,
                       format: fileResult.format,
                     },

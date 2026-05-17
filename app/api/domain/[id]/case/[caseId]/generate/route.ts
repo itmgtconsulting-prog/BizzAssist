@@ -19,6 +19,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { assertDomainMember } from '@/app/lib/domainAuth';
 import { assertDomainAiAllowed } from '@/app/lib/domainAiGate';
+import { recordAiUsage } from '@/app/lib/aiTracking';
 import { buildGenerationContext } from '@/app/lib/domainPromptBuilder';
 import {
   parseGenerationOutput,
@@ -238,7 +239,17 @@ async function runGeneration(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .map((b) => (b as any).text as string)
       .join('');
-    tokensUsed = (resp.usage?.input_tokens ?? 0) + (resp.usage?.output_tokens ?? 0);
+    const inputTokens = resp.usage?.input_tokens ?? 0;
+    const outputTokens = resp.usage?.output_tokens ?? 0;
+    tokensUsed = inputTokens + outputTokens;
+    await recordAiUsage({
+      userId: actorUserId,
+      tenantId: null,
+      route: 'ai.domain.case.generate',
+      inputTokens,
+      outputTokens,
+      model: CLAUDE_MODEL,
+    });
   } catch (err) {
     return fail(`Claude call failed: ${err instanceof Error ? err.message : String(err)}`);
   }

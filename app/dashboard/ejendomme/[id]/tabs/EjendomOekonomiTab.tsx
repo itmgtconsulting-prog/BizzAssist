@@ -17,9 +17,14 @@
 'use client';
 
 import Link from 'next/link';
-import { ChevronRight, Scale, Sparkles, Landmark, TrendingUp } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import dynamic from 'next/dynamic';
+import { ChevronRight, Scale, Sparkles, Landmark, TrendingUp, BarChart3 } from 'lucide-react';
 // ForklarVurderingWidget fjernet — redundant med "Forklar vurdering" AI-knap
 import SektionLoader from '@/app/components/SektionLoader';
+import TokenUsageBar from '@/app/components/TokenUsageBar';
+import AktExtractionButton from '@/app/components/ejendomme/AktExtractionButton';
+import BelaningsoverblikPanel from '@/app/components/ejendomme/BelaningsoverblikPanel';
 import VurderingSammenligning from '@/app/components/ejendomme/VurderingSammenligning';
 import KommuneStatistikWidget from '@/app/components/analyse/KommuneStatistikWidget';
 import BoligmarkedWidget from '@/app/components/ejendomme/BoligmarkedWidget';
@@ -30,6 +35,7 @@ import { formatDKK } from '@/app/lib/mock/ejendomme';
 import { getHandelstypeInfo, handelstypeBadgeClasses } from '@/app/lib/ejfKoder';
 import type { VurderingData, VurderingResponse } from '@/app/api/vurdering/route';
 import type { ForelobigVurdering } from '@/app/api/vurdering-forelobig/route';
+import type { TLHaeftelse } from '@/app/api/tinglysning/summarisk/route';
 
 /** Merged handel fra EJF + Tinglysning — samme shape som i parent-komponenten. */
 export interface MergedHandel {
@@ -93,6 +99,12 @@ interface Props {
   postnr?: string | null;
   /** BIZZ-920: Kommunekode til krydsanalyse-widget */
   kommunekode?: string | null;
+  /** BIZZ-1497: BFE-nummer for prishistorik-hentning */
+  bfeNummer?: number | null;
+  /** BIZZ-1520: Hæftelser fra tinglysning summarisk — bruges til belåningsoverblik */
+  tlHaeftelser?: TLHaeftelse[];
+  /** BIZZ-1597: AI-ekstraherede handler allerede cached — skjul "Berig"-knap */
+  hasAiData?: boolean;
   /** BIZZ-1078: Adresse for AI forklaring */
   adresse?: string;
   /** BIZZ-1078: Kommune */
@@ -106,6 +118,195 @@ interface Props {
 }
 
 /** Render Økonomi-fanen. Ren præsentations-komponent. */
+/** Lazy-loaded prishistorik chart. */
+const LazyPrisChart = dynamic(
+  () => import('@/app/dashboard/analyse/prisudvikling/PrisudviklingChart'),
+  { ssr: false }
+);
+
+/**
+ * BIZZ-1497: Prishistorik-sektion med m²-pris graf.
+ * Henter data fra /api/analyse/prisudvikling.
+ */
+function PrishistorikSektion({ bfe, lang }: { bfe: number; lang: string }) {
+  const da = lang === 'da';
+  const [data, setData] = useState<{
+    prishistorik: Array<{
+      overtagelsesdato: string | null;
+      ejer_navn: string | null;
+      kontant_koebesum: number | null;
+      i_alt_koebesum: number | null;
+      m2_pris: number | null;
+    }>;
+    kommuneGennemsnit: Array<{ kvartal: string; gns_m2_pris: number; antal: number }> | null;
+  } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/analyse/prisudvikling?bfe=${bfe}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.prishistorik?.length > 0) setData(json);
+      }
+    } catch {
+      /* non-critical */
+    }
+    setLoading(false);
+  }, [bfe]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  if (loading)
+    return (
+      <div className="mb-4">
+        <SectionTitle title={da ? 'Prishistorik' : 'Price history'} />
+        <SektionLoader label={da ? 'Henter prishistorik…' : 'Loading price history…'} rows={3} />
+      </div>
+    );
+  if (!data) return null;
+
+  return (
+    <div className="mb-4">
+      <div className="flex items-center gap-2 mb-1.5">
+        <BarChart3 className="w-4 h-4 text-emerald-400" aria-hidden />
+        <h3 className="text-white font-semibold text-sm">
+          {da ? 'Prishistorik' : 'Price history'}
+        </h3>
+      </div>
+      <LazyPrisChart prishistorik={data.prishistorik} kommuneGennemsnit={data.kommuneGennemsnit} />
+    </div>
+  );
+}
+
+/**
+ * BIZZ-1500: Regnskab-kort for erhvervsejendomme.
+ * Henter ejer-CVR fra ejf_ejerskab → regnskab_cache.
+ */
+function RegnskabSektion({ bfe, lang }: { bfe: number; lang: string }) {
+  const da = lang === 'da';
+  const [regnskab, setRegnskab] = useState<{
+    cvr: string;
+    navn: string;
+    omsaetning: number | null;
+    egenkapital: number | null;
+    aarsresultat: number | null;
+    seneste_aar: number | null;
+  } | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/analyse/sql`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: `SELECT v.cvr, v.navn, r.omsaetning, r.egenkapital, r.aarsresultat, r.seneste_aar FROM public.ejf_ejerskab e JOIN public.cvr_virksomhed v ON v.cvr = e.ejer_cvr JOIN public.regnskab_cache r ON r.cvr = e.ejer_cvr WHERE e.bfe_nummer = ${bfe} AND e.status = 'gældende' AND e.ejer_cvr IS NOT NULL AND r.omsaetning IS NOT NULL LIMIT 1`,
+        }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.ok && data.rows?.length > 0) setRegnskab(data.rows[0]);
+    } catch {
+      /* non-critical */
+    }
+  }, [bfe]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  if (!regnskab) return null;
+
+  return (
+    <div className="mb-4">
+      <div className="flex items-center gap-2 mb-1.5">
+        <Scale className="w-4 h-4 text-blue-400" aria-hidden />
+        <h3 className="text-white font-semibold text-sm">
+          {da ? 'Ejer-regnskab' : 'Owner financials'}
+        </h3>
+        <span className="text-xs text-slate-500">{regnskab.navn}</span>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {regnskab.omsaetning != null && (
+          <div className="bg-slate-800/20 border border-slate-700/30 rounded-lg p-3">
+            <p className="text-slate-500 text-[10px] uppercase">{da ? 'Omsætning' : 'Revenue'}</p>
+            <p className="text-white text-sm font-medium">
+              {regnskab.omsaetning.toLocaleString('da-DK')} t.DKK
+            </p>
+          </div>
+        )}
+        {regnskab.egenkapital != null && (
+          <div className="bg-slate-800/20 border border-slate-700/30 rounded-lg p-3">
+            <p className="text-slate-500 text-[10px] uppercase">{da ? 'Egenkapital' : 'Equity'}</p>
+            <p className="text-white text-sm font-medium">
+              {regnskab.egenkapital.toLocaleString('da-DK')} t.DKK
+            </p>
+          </div>
+        )}
+        {regnskab.aarsresultat != null && (
+          <div className="bg-slate-800/20 border border-slate-700/30 rounded-lg p-3">
+            <p className="text-slate-500 text-[10px] uppercase">
+              {da ? 'Årsresultat' : 'Net income'}
+            </p>
+            <p
+              className={`text-sm font-medium ${regnskab.aarsresultat >= 0 ? 'text-emerald-400' : 'text-red-400'}`}
+            >
+              {regnskab.aarsresultat.toLocaleString('da-DK')} t.DKK
+            </p>
+          </div>
+        )}
+        {regnskab.seneste_aar != null && (
+          <div className="bg-slate-800/20 border border-slate-700/30 rounded-lg p-3">
+            <p className="text-slate-500 text-[10px] uppercase">{da ? 'Regnskabsår' : 'Year'}</p>
+            <p className="text-white text-sm font-medium">{regnskab.seneste_aar}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * BIZZ-1597: Loader der henter indskannede akter og viser AI-ekstraktion-knap.
+ */
+function AktExtractionLoader({
+  bfeNummer,
+  lang,
+  hasAiData,
+}: {
+  bfeNummer?: number | null;
+  lang: string;
+  hasAiData?: boolean;
+}) {
+  const [aktNavn, setAktNavn] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!bfeNummer) return;
+    // Hent tinglysning UUID → indskannede akter
+    fetch(`/api/tinglysning?bfe=${bfeNummer}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((tl) => {
+        if (!tl?.uuid) return;
+        return fetch(`/api/tinglysning/indskannede-akter?ejendomId=${tl.uuid}`);
+      })
+      .then((r) => (r?.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.akter?.length > 0) setAktNavn(data.akter[0].aktNavn);
+      })
+      .catch(() => {});
+  }, [bfeNummer]);
+
+  if (!aktNavn || !bfeNummer) return null;
+
+  // Skjul knappen hvis AI-data allerede er cached og vist i tabellen
+  if (hasAiData) return null;
+
+  return <AktExtractionButton bfe={bfeNummer} aktNavn={aktNavn} lang={lang} />;
+}
+
 export default function EjendomOekonomiTab(props: Props) {
   const {
     lang,
@@ -169,6 +370,7 @@ export default function EjendomOekonomiTab(props: Props) {
     purchasePrice: da ? 'Købesum' : 'Purchase price',
     cashPrice: da ? 'Kontant' : 'Cash',
     buyerName: da ? 'Køber' : 'Buyer',
+    sellerName: da ? 'Sælger' : 'Seller',
     registrationDate: da ? 'Tinglyst' : 'Registered',
     registrationFee: da ? 'Tinglysningsafgift' : 'Registration fee',
     loesoereSum: da ? 'Løsøre' : 'Movables',
@@ -179,7 +381,9 @@ export default function EjendomOekonomiTab(props: Props) {
   return (
     <div className="space-y-5">
       {/* BIZZ-1078: Vurderings-AI-knapper */}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        {/* BIZZ-1614: Token-status ved AI-knapper */}
+        <TokenUsageBar className="mr-2" compact />
         <button
           type="button"
           onClick={() => {
@@ -293,21 +497,51 @@ export default function EjendomOekonomiTab(props: Props) {
               /* Aktuelle tal — ejendommen har egne vurderinger */
               <div className="grid grid-cols-3 gap-3 mb-3">
                 <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                  <p className="text-slate-400 text-xs mb-1">
-                    {t.propertyValue}
-                    {vurdering.aar && (
-                      <span className="ml-1 text-slate-500">({vurdering.aar})</span>
+                  <div className="flex items-start justify-between mb-1">
+                    <p className="text-slate-400 text-xs">
+                      {t.propertyValue}
+                      {vurdering.aar && (
+                        <span className="ml-1 text-slate-500">({vurdering.aar})</span>
+                      )}
+                    </p>
+                    {forelobige.length > 0 && forelobige[0].ejendomsvaerdi != null && (
+                      <span className="text-amber-400 text-[10px] font-medium text-right leading-tight">
+                        {forelobige[0].vurderingsaar} {t.preliminary}
+                      </span>
                     )}
-                  </p>
-                  <p className="text-white text-lg font-bold">
-                    {vurdering.ejendomsvaerdi ? formatDKK(vurdering.ejendomsvaerdi) : formatDKK(0)}
-                  </p>
+                  </div>
+                  <div className="flex items-baseline justify-between">
+                    <p className="text-white text-lg font-bold">
+                      {vurdering.ejendomsvaerdi
+                        ? formatDKK(vurdering.ejendomsvaerdi)
+                        : formatDKK(0)}
+                    </p>
+                    {forelobige.length > 0 && forelobige[0].ejendomsvaerdi != null && (
+                      <p className="text-amber-400/80 text-sm font-semibold tabular-nums">
+                        {formatDKK(forelobige[0].ejendomsvaerdi)}
+                      </p>
+                    )}
+                  </div>
                 </div>
                 <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                  <p className="text-slate-400 text-xs mb-1">{t.landValue}</p>
-                  <p className="text-white text-lg font-bold">
-                    {vurdering.grundvaerdi ? formatDKK(vurdering.grundvaerdi) : formatDKK(0)}
-                  </p>
+                  <div className="flex items-start justify-between mb-1">
+                    <p className="text-slate-400 text-xs">{t.landValue}</p>
+                    {forelobige.length > 0 && forelobige[0].grundvaerdi != null && (
+                      <span className="text-amber-400 text-[10px] font-medium text-right leading-tight">
+                        {forelobige[0].vurderingsaar} {t.preliminary}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-baseline justify-between">
+                    <p className="text-white text-lg font-bold">
+                      {vurdering.grundvaerdi ? formatDKK(vurdering.grundvaerdi) : formatDKK(0)}
+                    </p>
+                    {forelobige.length > 0 && forelobige[0].grundvaerdi != null && (
+                      <p className="text-amber-400/80 text-sm font-semibold tabular-nums">
+                        {formatDKK(forelobige[0].grundvaerdi)}
+                      </p>
+                    )}
+                  </div>
                 </div>
                 <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
                   <p className="text-slate-400 text-xs mb-1">{t.plotArea}</p>
@@ -469,10 +703,18 @@ export default function EjendomOekonomiTab(props: Props) {
                           </span>
                         </div>
                         <span className="text-amber-200/80">
-                          {fv.ejendomsvaerdi ? formatDKK(fv.ejendomsvaerdi) : formatDKK(0)}
+                          {fv.ejendomsvaerdi
+                            ? formatDKK(fv.ejendomsvaerdi)
+                            : da
+                              ? 'Fastsættes ikke'
+                              : 'N/A'}
                         </span>
                         <span className="text-amber-200/80">
-                          {fv.grundvaerdi ? formatDKK(fv.grundvaerdi) : '0 DKK'}
+                          {fv.grundvaerdi
+                            ? formatDKK(fv.grundvaerdi)
+                            : da
+                              ? 'Fastsættes ikke'
+                              : 'N/A'}
                         </span>
                         <span className="text-slate-400 text-right">–</span>
                       </div>
@@ -564,19 +806,20 @@ export default function EjendomOekonomiTab(props: Props) {
           ) : mergedSalgshistorik.length > 0 ? (
             <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl overflow-hidden overflow-x-auto">
               {/* BIZZ-324: table expanded with tinglysningsdato, tinglysningsafgift, loesoeresum and entreprisesum */}
-              <table className="w-full text-sm min-w-[900px]">
+              <table className="w-full text-sm min-w-[700px]">
                 <thead>
                   <tr className="border-b border-slate-700/30 text-slate-500 text-xs uppercase tracking-wider">
                     <th className="text-left px-4 py-2.5 font-medium">{t.date}</th>
                     <th className="text-left px-4 py-2.5 font-medium">{t.buyerName}</th>
+                    {/* BIZZ-1583: Sælger udledes fra forrige (kronologisk ældre) handels køber. */}
+                    <th className="text-left px-4 py-2.5 font-medium">{t.sellerName}</th>
                     <th className="text-left px-4 py-2.5 font-medium">{t.type}</th>
                     <th className="text-right px-4 py-2.5 font-medium">{t.purchasePrice}</th>
                     <th className="text-right px-4 py-2.5 font-medium">{t.cashPrice}</th>
-                    <th className="text-right px-4 py-2.5 font-medium">{t.loesoereSum}</th>
-                    <th className="text-right px-4 py-2.5 font-medium">{t.entrepriseSum}</th>
                     <th className="text-right px-4 py-2.5 font-medium">{t.registrationDate}</th>
-                    <th className="text-right px-4 py-2.5 font-medium">{t.registrationFee}</th>
-                    <th className="text-right px-4 py-2.5 font-medium">{t.share}</th>
+                    <th className="text-center px-4 py-2.5 font-medium">
+                      {da ? 'Kilde' : 'Source'}
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -584,6 +827,11 @@ export default function EjendomOekonomiTab(props: Props) {
                     /** Primær dato: købsaftaledato foretrukkes, ellers overtagelsesdato */
                     const dato = h.koebsaftaleDato ?? h.overtagelsesdato;
                     const overdragelse = h.overdragelsesmaade ?? h.adkomstType;
+                    // BIZZ-1583: Sælger = køber fra forrige (ældre) handel.
+                    // Array er sorteret nyeste-først, så index i+1 er den ældre.
+                    const prev = mergedSalgshistorik[i + 1];
+                    const saelgerNavn = prev?.koeber ?? null;
+                    const saelgerCvr = prev?.koebercvr ?? null;
                     return (
                       <tr
                         key={i}
@@ -635,6 +883,39 @@ export default function EjendomOekonomiTab(props: Props) {
                             </div>
                           ) : (
                             <span className="text-slate-500 text-xs">—</span>
+                          )}
+                        </td>
+                        {/* BIZZ-1583: Sælger-kolonne — afledt fra forrige (ældre) handels køber. */}
+                        <td className="px-4 py-2.5">
+                          {saelgerNavn ? (
+                            <div>
+                              <p className="text-slate-300 text-sm leading-tight">
+                                {saelgerCvr ? (
+                                  <Link
+                                    href={`/dashboard/companies/${saelgerCvr}`}
+                                    className="hover:text-blue-400 transition-colors"
+                                  >
+                                    {saelgerNavn}
+                                  </Link>
+                                ) : (
+                                  saelgerNavn
+                                )}
+                              </p>
+                              {saelgerCvr && (
+                                <p className="text-slate-500 text-[10px]">CVR {saelgerCvr}</p>
+                              )}
+                            </div>
+                          ) : (
+                            <span
+                              className="text-slate-500 text-xs"
+                              title={
+                                da
+                                  ? 'Ingen tidligere handel registreret'
+                                  : 'No prior transaction recorded'
+                              }
+                            >
+                              —
+                            </span>
                           )}
                         </td>
                         <td className="px-4 py-2.5">
@@ -718,16 +999,6 @@ export default function EjendomOekonomiTab(props: Props) {
                             ? `${h.kontantKoebesum.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
                             : '—'}
                         </td>
-                        <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
-                          {h.loesoeresum != null
-                            ? `${h.loesoeresum.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
-                            : '—'}
-                        </td>
-                        <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
-                          {h.entreprisesum != null
-                            ? `${h.entreprisesum.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
-                            : '—'}
-                        </td>
                         <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs whitespace-nowrap">
                           {h.tinglysningsdato
                             ? new Date(h.tinglysningsdato).toLocaleDateString(
@@ -740,13 +1011,19 @@ export default function EjendomOekonomiTab(props: Props) {
                               )
                             : '—'}
                         </td>
-                        <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
-                          {h.tinglysningsafgift != null
-                            ? `${h.tinglysningsafgift.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
-                            : '—'}
-                        </td>
-                        <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
-                          {h.andel ?? '—'}
+                        {/* BIZZ-1599: Kilde-badge */}
+                        <td className="px-4 py-2.5 text-center">
+                          <span
+                            className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-medium leading-none ${
+                              h.kilde === 'begge'
+                                ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                                : h.kilde === 'ejf'
+                                  ? 'bg-blue-500/15 text-blue-300 border border-blue-500/30'
+                                  : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                            }`}
+                          >
+                            {h.kilde === 'begge' ? 'EJF+TL' : h.kilde === 'ejf' ? 'EJF' : 'TL'}
+                          </span>
                         </td>
                       </tr>
                     );
@@ -768,6 +1045,18 @@ export default function EjendomOekonomiTab(props: Props) {
         </div>
       )}
 
+      {/* BIZZ-1597: AI-ekstraktion af scannede akter — ved salgshistorik */}
+      <AktExtractionLoader bfeNummer={props.bfeNummer} lang={lang} hasAiData={props.hasAiData} />
+
+      {/* BIZZ-1520: Belåningsoverblik — samlet gæld, belåningsgrad, kreditor-fordeling */}
+      {props.tlHaeftelser && props.tlHaeftelser.length > 0 && (
+        <BelaningsoverblikPanel
+          haeftelser={props.tlHaeftelser}
+          ejendomsvaerdi={vurdering?.ejendomsvaerdi ?? null}
+          lang={lang}
+        />
+      )}
+
       {/* BIZZ-958: Vurdering sammenligning — benchmark mod postnummer */}
       {postnr && vurdering && !opdeltIEjerlejligheder && (
         <VurderingSammenligning
@@ -779,6 +1068,12 @@ export default function EjendomOekonomiTab(props: Props) {
         />
       )}
 
+      {/* BIZZ-1497: Prishistorik graf fra ejerskifte_historik */}
+      {props.bfeNummer && <PrishistorikSektion bfe={props.bfeNummer} lang={lang} />}
+
+      {/* BIZZ-1500: Regnskab for virksomhedsejer */}
+      {props.bfeNummer && <RegnskabSektion bfe={props.bfeNummer} lang={lang} />}
+
       {/* BIZZ-920: Kommune-statistik fra materialized view */}
       {/* BIZZ-962: Boligmarked — salgspriser fra DST EJEN77 */}
       {kommunekode && <BoligmarkedWidget kommunekode={kommunekode} lang={lang} />}
@@ -788,7 +1083,6 @@ export default function EjendomOekonomiTab(props: Props) {
       <ByggeomkostningBadge lang={lang} />
       {kommunekode && <KommuneStatistikWidget kommunekode={kommunekode} lang={lang} />}
 
-      {/* Hæftelser fjernet — vises nu under Tinglysning-tab */}
       {/* BIZZ-325: Udbudshistorik og Lignende handler fjernet — ingen datakilde tilgængelig endnu */}
     </div>
   );

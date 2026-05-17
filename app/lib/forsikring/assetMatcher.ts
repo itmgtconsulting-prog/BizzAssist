@@ -196,9 +196,27 @@ function scoreEjendom(aktiv: Aktiv, policy: ForsikringPolicy): number {
  * @returns Score 0-100
  */
 function scoreVirksomhed(aktiv: Aktiv, policy: ForsikringPolicy): number {
-  // CVR-match
+  // CVR-match (eksakt)
   if (aktiv.cvr && policy.policyholder_cvr && aktiv.cvr === policy.policyholder_cvr) {
     return 100;
+  }
+
+  // BIZZ-1620: Koncern-policer dækker ofte hele virksomheden via moderselskabets
+  // CVR eller en generel police-type. Match virksomheds-aktiv mod policer der
+  // har coverage_type indeholdende "erhverv", "virksomhed", "ansvar", "drift"
+  // eller "koncern" — disse dækker typisk virksomhedsaktiviteten.
+  const coverageText = normalize(
+    [policy.insurance_form, policy.business_activity, policy.policyholder_name].join(' ')
+  );
+  if (
+    coverageText.includes('erhverv') ||
+    coverageText.includes('virksomhed') ||
+    coverageText.includes('ansvar') ||
+    coverageText.includes('drift') ||
+    coverageText.includes('koncern')
+  ) {
+    // Police dækker erhvervsaktivitet — score 70 (under eksakt CVR-match men over threshold)
+    return 70;
   }
 
   // Navn-match

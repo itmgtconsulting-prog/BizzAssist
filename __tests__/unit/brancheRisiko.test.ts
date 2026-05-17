@@ -23,7 +23,7 @@ describe('lookupBrancheKrav', () => {
   it('returnerer hoejrisiko for byggeri (41)', () => {
     const krav = lookupBrancheKrav('411000');
     expect(krav?.kategori).toBe('hoejrisiko');
-    expect(krav?.label).toBe('Byggeri');
+    expect(krav?.label).toBe('Bygningsfærdiggørelse');
   });
 
   it('returnerer hoejrisiko for udlejning (681020)', () => {

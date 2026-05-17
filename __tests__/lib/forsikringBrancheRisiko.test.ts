@@ -31,7 +31,7 @@ describe('lookupBrancheKrav', () => {
 
   it('matcher byggeri (41)', () => {
     const k = lookupBrancheKrav('412000');
-    expect(k?.label).toBe('Byggeri');
+    expect(k?.label).toBe('Bygningsfærdiggørelse');
     expect(k?.kraevede_daekninger).toContain('all-risk');
     expect(k?.kraevede_daekninger).toContain('arbejdsskade');
   });
@@ -42,9 +42,13 @@ describe('lookupBrancheKrav', () => {
   });
 
   it('længste prefix vinder (specifik over generel)', () => {
-    // 41 og evt 411 — 41 matcher byggeri
-    const k = lookupBrancheKrav('41');
-    expect(k?.label).toBe('Byggeri');
+    // 4520 (autoværksted) skal vinde over 45 (handel med motorkøretøjer)
+    const specifik = lookupBrancheKrav('452010');
+    expect(specifik?.label).toBe('Autoværksted/lakering');
+
+    // 6810 (boligudlejning) skal vinde over 68 (ejendomsmægler/admin)
+    const ejendom = lookupBrancheKrav('681020');
+    expect(ejendom?.label).toBe('Udlejning af boliger');
   });
 });
 

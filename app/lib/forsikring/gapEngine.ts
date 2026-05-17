@@ -1122,6 +1122,8 @@ const KRAV_LABELS_DA: Record<string, string> = {
   patientforsikring: 'Patientforsikring',
   indbrud: 'Indbrud',
   rejsegods: 'Rejsegods',
+  kasko: 'Kasko',
+  kriminalitet: 'Kriminalitetsforsikring',
 };
 
 /**

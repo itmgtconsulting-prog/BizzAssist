@@ -318,7 +318,51 @@ async function extractWithAI(
   }
 }
 
-// ─── Route Handler ──────────────────────────────────────────────────────────
+// ─── Route Handlers ─────────────────────────────────────────────────────────
+
+/**
+ * GET /api/tinglysning/extract-akt?bfe=<number>
+ *
+ * Returnerer cached AI-ekstraktion for en ejendom (uden at køre AI).
+ * Bruges af EjendomDetaljeClient til at tjekke om data allerede er hentet.
+ *
+ * @returns { cached: boolean, handler?: AktHandler[] }
+ */
+export async function GET(req: NextRequest) {
+  const auth = await resolveTenantId();
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const bfe = Number(req.nextUrl.searchParams.get('bfe'));
+  if (!bfe || isNaN(bfe)) {
+    return NextResponse.json({ error: 'bfe parameter påkrævet' }, { status: 400 });
+  }
+
+  try {
+    const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+    if (!url || !key) {
+      return NextResponse.json({ cached: false });
+    }
+
+    const res = await fetch(
+      `${url}/rest/v1/tinglysning_akt_extraction?bfe_nummer=eq.${bfe}&select=extraction&limit=1`,
+      {
+        headers: { apikey: key, Authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(5000),
+      }
+    );
+    if (!res.ok) return NextResponse.json({ cached: false });
+
+    const rows = await res.json();
+    const extraction = rows?.[0]?.extraction;
+    if (extraction?.handler?.length > 0) {
+      return NextResponse.json({ cached: true, handler: extraction.handler });
+    }
+    return NextResponse.json({ cached: false });
+  } catch {
+    return NextResponse.json({ cached: false });
+  }
+}
 
 export async function POST(req: NextRequest) {
   const limited = await checkRateLimit(req, heavyRateLimit);

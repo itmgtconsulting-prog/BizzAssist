@@ -1431,26 +1431,18 @@ export default function EjendomDetaljeClient({
   // BIZZ-1230: Merge-logik ekstraheret til helpers/mergedSalgshistorik.ts
   const mergedSalgshistorik = buildMergedSalgshistorik(salgshistorik, tlEjere, aiHandler);
 
-  // BIZZ-1598: Hent AI-ekstraherede handler fra cache (fire-and-forget)
+  // BIZZ-1598: Hent AI-ekstraherede handler fra cache via dedikeret endpoint
   useEffect(() => {
     const bfeNum = bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
     if (!bfeNum) return;
-    // Hent fra akt_extraction cache via SQL
-    fetch('/api/analyse/sql', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        prompt: `SELECT extraction FROM public.tinglysning_akt_extraction WHERE bfe_nummer = ${bfeNum} LIMIT 1`,
-      }),
-    })
+    fetch(`/api/tinglysning/extract-akt?bfe=${bfeNum}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
-        const extraction = data?.rows?.[0]?.extraction;
-        // BIZZ-1591: startTransition — AI-handler er Økonomi-tab data
-        if (extraction?.handler?.length > 0)
+        if (data?.cached && data?.handler?.length > 0) {
           startTransition(() => {
-            setAiHandler(extraction.handler);
+            setAiHandler(data.handler);
           });
+        }
       })
       .catch(() => {});
   }, [bbrData?.ejendomsrelationer]);

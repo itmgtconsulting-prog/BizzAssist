@@ -1479,6 +1479,16 @@ async function resolvePropertyGraph(
         logger.warn('[diagram/resolve] CVR ES virksomhed-fallback fejl:', err);
       }
     }
+
+    // BIZZ-1587: Noder der stadig har placeholder-label efter både person- og
+    // virksomheds-lookup er sandsynligvis navnebeskyttede (CPR). Relabel dem
+    // til "Navnebeskyttet ejer" så brugeren ikke ser kryptiske enhedsnumre.
+    const finalPlaceholder = nodes.filter(
+      (n) => n.type === 'person' && typeof n.enhedsNummer === 'number' && isPlaceholderName(n.label)
+    );
+    for (const node of finalPlaceholder) {
+      node.label = 'Navnebeskyttet ejer';
+    }
   }
 
   // ── HIERARKI OPAD: hvem ejer ejer-virksomhederne? ──────────────────────

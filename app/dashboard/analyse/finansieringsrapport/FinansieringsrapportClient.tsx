@@ -108,8 +108,8 @@ export default function FinansieringsrapportClient(): React.ReactElement {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
-      {/* BIZZ-1589: max-w-6xl (op fra 4xl) så inline-rapport får mere bredde. */}
-      <main className="w-full px-6 py-8 max-w-6xl mx-auto">
+      {/* BIZZ-1605: fuld bredde — max-w fjernet */}
+      <main className="w-full px-6 py-8 mx-auto">
         {/* Tilbage-link */}
         <Link
           href="/dashboard/analyse"
@@ -125,16 +125,16 @@ export default function FinansieringsrapportClient(): React.ReactElement {
               <Landmark size={22} />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-white">Finansieringsrapport</h1>
+              <h1 className="text-2xl font-bold text-white">Teknisk ejendomsbeskrivelse</h1>
               <p className="text-slate-400 text-sm mt-1">
                 AI-genereret teknisk ejendomsbeskrivelse til bank/realkredit-brug
               </p>
             </div>
           </div>
           <p className="text-slate-500 text-sm max-w-2xl">
-            Søg en ejendom og generér en finansieringsrapport baseret på BBR, vurdering, tinglysning
-            og servitutter. Vælg mellem tre tonarter: realkredit (formel), bankrådgiver (key-points)
-            eller internt memo (kort bullets).
+            Søg en ejendom og generér en teknisk ejendomsbeskrivelse baseret på BBR, vurdering,
+            tinglysning og servitutter. Vælg mellem tre tonarter: realkredit (formel), bankrådgiver
+            (key-points) eller internt memo (kort bullets).
           </p>
         </header>
 

@@ -242,7 +242,7 @@ const translations = {
 const ROUTE_LABELS: Record<string, string> = {
   'ai.chat': 'AI Chat',
   'ai.generate-listing': 'Boligannonce',
-  'ai.generate-finance-report': 'Finansrapport',
+  'ai.generate-finance-report': 'Teknisk ejendomsbeskrivelse',
   'ai.article-search': 'Artikelsøgning',
   'ai.article-search.articles': 'Artikelsøgning',
   'ai.article-search.socials': 'Social-links',

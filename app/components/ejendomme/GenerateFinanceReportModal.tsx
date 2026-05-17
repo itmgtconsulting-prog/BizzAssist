@@ -160,7 +160,7 @@ export default function GenerateFinanceReportModal(props: Props): React.ReactEle
     <div
       className={
         isPanel
-          ? 'bg-slate-900 border border-slate-700 rounded-xl w-full flex flex-col'
+          ? 'bg-slate-900 border border-slate-700 rounded-xl w-full max-h-[80vh] flex flex-col'
           : 'bg-slate-900 border border-slate-700 rounded-xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-2xl'
       }
     >
@@ -170,7 +170,7 @@ export default function GenerateFinanceReportModal(props: Props): React.ReactEle
           <Landmark className="w-5 h-5 text-emerald-400" aria-hidden />
           <div>
             <h2 id="finance-report-title" className="text-lg font-semibold text-white">
-              {da ? 'Finansieringsrapport' : 'Finance report'}
+              {da ? 'Teknisk ejendomsbeskrivelse' : 'Technical property description'}
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">{adresse}</p>
           </div>

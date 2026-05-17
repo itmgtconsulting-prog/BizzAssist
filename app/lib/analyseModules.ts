@@ -50,8 +50,8 @@ export const ANALYSE_MODULES: AnalyseModuleConfig[] = [
   },
   {
     id: 'finansieringsrapport',
-    label: 'Finansieringsrapport',
-    labelEn: 'Finance report',
+    label: 'Teknisk ejendomsbeskrivelse',
+    labelEn: 'Technical property description',
     icon: 'Landmark',
     path: '/dashboard/analyse/finansieringsrapport',
     enabled: { dev: true, preview: true, prod: false },

@@ -102,6 +102,8 @@ interface Props {
   bfeNummer?: number | null;
   /** BIZZ-1520: Hæftelser fra tinglysning summarisk — bruges til belåningsoverblik */
   tlHaeftelser?: TLHaeftelse[];
+  /** BIZZ-1597: AI-ekstraherede handler allerede cached — skjul "Berig"-knap */
+  hasAiData?: boolean;
   /** BIZZ-1078: Adresse for AI forklaring */
   adresse?: string;
   /** BIZZ-1078: Kommune */
@@ -269,7 +271,15 @@ function RegnskabSektion({ bfe, lang }: { bfe: number; lang: string }) {
 /**
  * BIZZ-1597: Loader der henter indskannede akter og viser AI-ekstraktion-knap.
  */
-function AktExtractionLoader({ bfeNummer, lang }: { bfeNummer?: number | null; lang: string }) {
+function AktExtractionLoader({
+  bfeNummer,
+  lang,
+  hasAiData,
+}: {
+  bfeNummer?: number | null;
+  lang: string;
+  hasAiData?: boolean;
+}) {
   const [aktNavn, setAktNavn] = useState<string | null>(null);
 
   useEffect(() => {
@@ -289,6 +299,9 @@ function AktExtractionLoader({ bfeNummer, lang }: { bfeNummer?: number | null; l
   }, [bfeNummer]);
 
   if (!aktNavn || !bfeNummer) return null;
+
+  // Skjul knappen hvis AI-data allerede er cached og vist i tabellen
+  if (hasAiData) return null;
 
   return <AktExtractionButton bfe={bfeNummer} aktNavn={aktNavn} lang={lang} />;
 }
@@ -1035,7 +1048,7 @@ export default function EjendomOekonomiTab(props: Props) {
       )}
 
       {/* BIZZ-1597: AI-ekstraktion af scannede akter — ved salgshistorik */}
-      <AktExtractionLoader bfeNummer={props.bfeNummer} lang={lang} />
+      <AktExtractionLoader bfeNummer={props.bfeNummer} lang={lang} hasAiData={props.hasAiData} />
 
       {/* BIZZ-1520: Belåningsoverblik — samlet gæld, belåningsgrad, kreditor-fordeling */}
       {props.tlHaeftelser && props.tlHaeftelser.length > 0 && (

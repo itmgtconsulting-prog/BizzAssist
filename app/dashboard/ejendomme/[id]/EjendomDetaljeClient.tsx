@@ -13,7 +13,16 @@
  * - SVG-baseret ejerstrukturtræ
  */
 
-import { useState, use, useEffect, useRef, useCallback, useMemo, Suspense } from 'react';
+import {
+  useState,
+  use,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+  Suspense,
+  startTransition,
+} from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -783,16 +792,19 @@ export default function EjendomDetaljeClient({
       .then(async (data) => {
         if (signal.aborted) return;
         if (data && !data.error) {
-          setTlTestFallback(!!data.testFallback);
-          setTinglysningData({
-            tinglystAreal: data.tinglystAreal ?? null,
-            ejerlejlighedNr: data.ejerlejlighedNr ?? null,
-            fordelingstal: data.fordelingstal ?? null,
+          // BIZZ-1591: startTransition — tinglysning er ikke Oversigt-critical
+          startTransition(() => {
+            setTlTestFallback(!!data.testFallback);
+            setTinglysningData({
+              tinglystAreal: data.tinglystAreal ?? null,
+              ejerlejlighedNr: data.ejerlejlighedNr ?? null,
+              fordelingstal: data.fordelingstal ?? null,
+            });
+            // ESR-nummer = kommuneNummer-ejendomsnummer
+            if (data.ejendomsnummer && data.kommuneNummer) {
+              setEsrNummer(`${data.kommuneNummer}-${data.ejendomsnummer}`);
+            }
           });
-          // ESR-nummer = kommuneNummer-ejendomsnummer
-          if (data.ejendomsnummer && data.kommuneNummer) {
-            setEsrNummer(`${data.kommuneNummer}-${data.ejendomsnummer}`);
-          }
           // Hent ejere + hæftelser for Økonomi-tab (sektions-kald)
           if (data.uuid) {
             Promise.all([
@@ -805,8 +817,10 @@ export default function EjendomDetaljeClient({
             ])
               .then(([ejereData, haeftelserData]) => {
                 if (signal.aborted) return;
-                if (ejereData) setTlEjere(ejereData.ejere ?? []);
-                if (haeftelserData) setTlHaeftelser(haeftelserData.haeftelser ?? []);
+                startTransition(() => {
+                  if (ejereData) setTlEjere(ejereData.ejere ?? []);
+                  if (haeftelserData) setTlHaeftelser(haeftelserData.haeftelser ?? []);
+                });
               })
               .catch((err) => {
                 if (err.name === 'AbortError') return;
@@ -909,12 +923,17 @@ export default function EjendomDetaljeClient({
       .then((r) => (r.ok ? r.json() : { lejligheder: [] }))
       .then((data: { lejligheder: import('@/app/api/ejerlejligheder/route').Ejerlejlighed[] }) => {
         if (controller.signal.aborted) return;
-        setLejligheder(data.lejligheder);
+        // BIZZ-1591: startTransition — ejerlejligheder er BBR-tab data
+        startTransition(() => {
+          setLejligheder(data.lejligheder);
+        });
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
         logger.error('[ejendom] Ejerlejligheder fetch error:', err);
-        setLejligheder([]);
+        startTransition(() => {
+          setLejligheder([]);
+        });
       })
       .finally(() => {
         if (!controller.signal.aborted) setLejlighederLoader(false);
@@ -954,7 +973,10 @@ export default function EjendomDetaljeClient({
       .then((r) => (r.ok ? r.json() : { tree: null }))
       .then((data: { tree: import('@/app/api/ejendom-struktur/route').StrukturNode | null }) => {
         if (controller.signal.aborted) return;
-        setStrukturTree(data.tree);
+        // BIZZ-1591: startTransition — struktur er BBR-tab data
+        startTransition(() => {
+          setStrukturTree(data.tree);
+        });
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
@@ -1065,7 +1087,10 @@ export default function EjendomDetaljeClient({
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (signal.aborted) return;
-        setChainEjerDetaljer((data?.ejerDetaljer as EjerDetalje[]) ?? []);
+        // BIZZ-1591: startTransition — ejerskab chain er Ejerskab-tab data
+        startTransition(() => {
+          setChainEjerDetaljer((data?.ejerDetaljer as EjerDetalje[]) ?? []);
+        });
       })
       .catch(() => {})
       .finally(() => {
@@ -1078,7 +1103,11 @@ export default function EjendomDetaljeClient({
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (signal.aborted) return;
-        if (data) setPrefetchedDiagramGraph(data);
+        // BIZZ-1591: startTransition — diagram er Ejerskab-tab data
+        if (data)
+          startTransition(() => {
+            setPrefetchedDiagramGraph(data);
+          });
       })
       .catch(() => {})
       .finally(() => {
@@ -1090,13 +1119,18 @@ export default function EjendomDetaljeClient({
       .then((r) => (r.ok ? r.json() : null))
       .then((data: SalgshistorikResponse | null) => {
         if (signal.aborted) return;
-        setSalgshistorikManglerAdgang(data?.manglerAdgang ?? false);
-        setSalgshistorik(data?.handler ?? []);
+        // BIZZ-1591: startTransition — salgshistorik er Økonomi-tab data
+        startTransition(() => {
+          setSalgshistorikManglerAdgang(data?.manglerAdgang ?? false);
+          setSalgshistorik(data?.handler ?? []);
+        });
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
         logger.error('[ejendom] Salgshistorik fetch error:', err);
-        setSalgshistorik([]);
+        startTransition(() => {
+          setSalgshistorik([]);
+        });
       })
       .finally(() => {
         if (!signal.aborted) setSalgshistorikLoader(false);
@@ -1124,7 +1158,11 @@ export default function EjendomDetaljeClient({
       .then((r) => r.json())
       .then((data: MatrikelResponse) => {
         if (controller.signal.aborted) return;
-        if (data.matrikel) setMatrikelData(data.matrikel);
+        // BIZZ-1591: startTransition — matrikel er BBR-tab data
+        if (data.matrikel)
+          startTransition(() => {
+            setMatrikelData(data.matrikel);
+          });
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
@@ -1197,12 +1235,17 @@ export default function EjendomDetaljeClient({
       .then((r) => (r.ok ? r.json() : null))
       .then((data: ForelobigVurderingResponse | null) => {
         if (controller.signal.aborted) return;
-        setForelobige(data?.forelobige ?? []);
+        // BIZZ-1591: startTransition — foreløbig vurdering er SKAT-tab data
+        startTransition(() => {
+          setForelobige(data?.forelobige ?? []);
+        });
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
         logger.error('[ejendom] Forelobig vurdering fetch error:', err);
-        setForelobige([]);
+        startTransition(() => {
+          setForelobige([]);
+        });
       })
       .finally(() => {
         if (!controller.signal.aborted) setForelobigLoader(false);
@@ -1289,9 +1332,12 @@ export default function EjendomDetaljeClient({
       .then((r) => (r.ok ? r.json() : null))
       .then((data: JordResponse | null) => {
         if (controller.signal.aborted) return;
-        setJordData(data?.items ?? null);
-        setJordIngenData(data?.ingenData ?? false);
-        setJordFejl(data?.fejl ?? null);
+        // BIZZ-1591: startTransition — jordforurening er BBR-tab data
+        startTransition(() => {
+          setJordData(data?.items ?? null);
+          setJordIngenData(data?.ingenData ?? false);
+          setJordFejl(data?.fejl ?? null);
+        });
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
@@ -1323,8 +1369,11 @@ export default function EjendomDetaljeClient({
       .then((r) => (r.ok ? r.json() : null))
       .then((data: PlandataResponse | null) => {
         if (controller.signal.aborted) return;
-        setPlandata(data?.planer ?? null);
-        if (data?.fejl) setPlandataFejl(data.fejl);
+        // BIZZ-1591: startTransition — plandata er BBR/Dokumenter-tab data
+        startTransition(() => {
+          setPlandata(data?.planer ?? null);
+          if (data?.fejl) setPlandataFejl(data.fejl);
+        });
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
@@ -1386,7 +1435,6 @@ export default function EjendomDetaljeClient({
   useEffect(() => {
     const bfeNum = bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
     if (!bfeNum) return;
-    fetch(`/api/tinglysning/indskannede-akter?ejendomId=`).catch(() => null);
     // Hent fra akt_extraction cache via SQL
     fetch('/api/analyse/sql', {
       method: 'POST',
@@ -1398,7 +1446,11 @@ export default function EjendomDetaljeClient({
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         const extraction = data?.rows?.[0]?.extraction;
-        if (extraction?.handler?.length > 0) setAiHandler(extraction.handler);
+        // BIZZ-1591: startTransition — AI-handler er Økonomi-tab data
+        if (extraction?.handler?.length > 0)
+          startTransition(() => {
+            setAiHandler(extraction.handler);
+          });
       })
       .catch(() => {});
   }, [bbrData?.ejendomsrelationer]);
@@ -1679,6 +1731,7 @@ export default function EjendomDetaljeClient({
                 grundareal={dawaJordstykke?.areal_m2 ?? null}
                 opfoerelsesaar={bbrData?.bbr?.[0]?.opfoerelsesaar ?? null}
                 bfeNummer={bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? null}
+                hasAiData={aiHandler.length > 0}
                 tlHaeftelser={tlHaeftelser}
               />
             )}

@@ -67,64 +67,129 @@ test.describe('AI token tracking — chat endpoint', () => {
   });
 });
 
-test.describe('AI token tracking — generate-listing endpoint', () => {
-  test('generate-listing returns usage event in SSE stream', async ({ page }) => {
+test.describe('AI token tracking — backend integration', () => {
+  test('tokensUsedThisMonth increases after AI chat call (real backend)', async ({ page }) => {
     await page.goto('/dashboard');
     await page.waitForLoadState('domcontentloaded');
     await dismissOnboarding(page);
 
-    // Mock the generate-listing endpoint
-    await page.route('/api/ai/generate-listing', async (route) => {
-      await route.fulfill({
-        status: 200,
-        headers: { 'Content-Type': 'text/event-stream' },
-        body: buildSseWithUsage('En smuk ejendom med udsigt over byen.', 800, 200),
-      });
-    });
+    // Step 1: Read current token usage from backend
+    const subBefore = await page.request.fetch('/api/subscription');
+    if (subBefore.status() !== 200) {
+      test.skip(true, 'No active subscription — cannot verify token tracking');
+      return;
+    }
+    const dataBefore = await subBefore.json();
+    const usedBefore = dataBefore?.subscription?.tokensUsedThisMonth ?? 0;
 
-    // Intercept subscription endpoint to verify it gets called for token refresh
-    let _subscriptionCalled = false;
-    await page.route('/api/subscription', async (route) => {
-      _subscriptionCalled = true;
-      await route.continue();
-    });
+    // Step 2: Send a real AI chat message (will hit Claude and record usage)
+    const chatInput = page.getByPlaceholder(/Stil et spørgsmål/i).first();
+    await expect(chatInput).toBeVisible({ timeout: 15_000 });
+    await chatInput.fill('Sig "test" og intet andet');
+    await chatInput.press('Enter');
 
-    // Navigate to a property page that has the listing generator
-    // We verify via API call directly since the UI flow depends on feature flags
+    // Wait for response to complete (look for the token balance update in UI)
+    await page.waitForTimeout(8_000);
+
+    // Step 3: Read token usage again — should have increased
+    const subAfter = await page.request.fetch('/api/subscription');
+    expect(subAfter.status()).toBe(200);
+    const dataAfter = await subAfter.json();
+    const usedAfter = dataAfter?.subscription?.tokensUsedThisMonth ?? 0;
+
+    // Token usage must have increased (we consumed at least some tokens)
+    expect(usedAfter).toBeGreaterThan(usedBefore);
+  });
+
+  test('generate-listing endpoint tracks tokens (real backend)', async ({ page }) => {
+    await page.goto('/dashboard');
+    await page.waitForLoadState('domcontentloaded');
+    await dismissOnboarding(page);
+
+    // Read current usage
+    const subBefore = await page.request.fetch('/api/subscription');
+    if (subBefore.status() !== 200) {
+      test.skip(true, 'No active subscription — cannot verify token tracking');
+      return;
+    }
+    const dataBefore = await subBefore.json();
+    const usedBefore = dataBefore?.subscription?.tokensUsedThisMonth ?? 0;
+
+    // Call generate-listing directly (needs real BFE)
     const response = await page.request.fetch('/api/ai/generate-listing', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      data: JSON.stringify({ bfe: 123456, adresse: 'Testvej 1', tone: 'luksus' }),
+      data: JSON.stringify({
+        bfe: 5977869,
+        adresse: 'Testvej 1, 2100 København Ø',
+        tone: 'luksus',
+      }),
     });
 
-    // Should receive SSE or error (not 500)
-    expect(response.status()).not.toBe(500);
+    // Should get 200 (SSE) or 404 (feature flag off) — not 500
+    expect([200, 404]).toContain(response.status());
+    if (response.status() === 404) {
+      test.skip(true, 'NEXT_PUBLIC_ENABLE_LISTING_GENERATOR not enabled');
+      return;
+    }
+
+    // Consume stream body
+    await response.text();
+    // Give fire-and-forget recordAiUsage time to persist
+    await page.waitForTimeout(3_000);
+
+    // Verify usage increased
+    const subAfter = await page.request.fetch('/api/subscription');
+    const dataAfter = await subAfter.json();
+    const usedAfter = dataAfter?.subscription?.tokensUsedThisMonth ?? 0;
+
+    expect(usedAfter).toBeGreaterThan(usedBefore);
   });
 });
 
 test.describe('AI token tracking — generate-finance-report endpoint', () => {
-  test('generate-finance-report returns usage event in SSE stream', async ({ page }) => {
+  test('generate-finance-report tracks tokens (real backend)', async ({ page }) => {
     await page.goto('/dashboard');
     await page.waitForLoadState('domcontentloaded');
     await dismissOnboarding(page);
 
-    // Mock the generate-finance-report endpoint
-    await page.route('/api/ai/generate-finance-report', async (route) => {
-      await route.fulfill({
-        status: 200,
-        headers: { 'Content-Type': 'text/event-stream' },
-        body: buildSseWithUsage('Finansieringsanalyse for ejendommen.', 1200, 400),
-      });
-    });
+    // Read current usage
+    const subBefore = await page.request.fetch('/api/subscription');
+    if (subBefore.status() !== 200) {
+      test.skip(true, 'No active subscription — cannot verify token tracking');
+      return;
+    }
+    const dataBefore = await subBefore.json();
+    const usedBefore = dataBefore?.subscription?.tokensUsedThisMonth ?? 0;
 
-    // Verify endpoint is accessible and returns SSE (not 500)
+    // Call generate-finance-report
     const response = await page.request.fetch('/api/ai/generate-finance-report', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      data: JSON.stringify({ bfe: 123456, adresse: 'Testvej 1', tone: 'professionel' }),
+      data: JSON.stringify({
+        bfe: 5977869,
+        adresse: 'Testvej 1, 2100 København Ø',
+        tone: 'professionel',
+      }),
     });
 
-    expect(response.status()).not.toBe(500);
+    // Should get 200 (SSE) or 404 — not 500
+    expect([200, 404]).toContain(response.status());
+    if (response.status() === 404) {
+      test.skip(true, 'Feature not enabled');
+      return;
+    }
+
+    // Consume stream and wait for tracking
+    await response.text();
+    await page.waitForTimeout(3_000);
+
+    // Verify usage increased
+    const subAfter = await page.request.fetch('/api/subscription');
+    const dataAfter = await subAfter.json();
+    const usedAfter = dataAfter?.subscription?.tokensUsedThisMonth ?? 0;
+
+    expect(usedAfter).toBeGreaterThan(usedBefore);
   });
 });
 

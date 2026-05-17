@@ -803,7 +803,7 @@ export default function EjendomOekonomiTab(props: Props) {
           ) : mergedSalgshistorik.length > 0 ? (
             <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl overflow-hidden overflow-x-auto">
               {/* BIZZ-324: table expanded with tinglysningsdato, tinglysningsafgift, loesoeresum and entreprisesum */}
-              <table className="w-full text-sm min-w-[900px]">
+              <table className="w-full text-sm min-w-[700px]">
                 <thead>
                   <tr className="border-b border-slate-700/30 text-slate-500 text-xs uppercase tracking-wider">
                     <th className="text-left px-4 py-2.5 font-medium">{t.date}</th>
@@ -813,11 +813,7 @@ export default function EjendomOekonomiTab(props: Props) {
                     <th className="text-left px-4 py-2.5 font-medium">{t.type}</th>
                     <th className="text-right px-4 py-2.5 font-medium">{t.purchasePrice}</th>
                     <th className="text-right px-4 py-2.5 font-medium">{t.cashPrice}</th>
-                    <th className="text-right px-4 py-2.5 font-medium">{t.loesoereSum}</th>
-                    <th className="text-right px-4 py-2.5 font-medium">{t.entrepriseSum}</th>
                     <th className="text-right px-4 py-2.5 font-medium">{t.registrationDate}</th>
-                    <th className="text-right px-4 py-2.5 font-medium">{t.registrationFee}</th>
-                    <th className="text-right px-4 py-2.5 font-medium">{t.share}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -997,16 +993,6 @@ export default function EjendomOekonomiTab(props: Props) {
                             ? `${h.kontantKoebesum.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
                             : '—'}
                         </td>
-                        <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
-                          {h.loesoeresum != null
-                            ? `${h.loesoeresum.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
-                            : '—'}
-                        </td>
-                        <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
-                          {h.entreprisesum != null
-                            ? `${h.entreprisesum.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
-                            : '—'}
-                        </td>
                         <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs whitespace-nowrap">
                           {h.tinglysningsdato
                             ? new Date(h.tinglysningsdato).toLocaleDateString(
@@ -1018,14 +1004,6 @@ export default function EjendomOekonomiTab(props: Props) {
                                 }
                               )
                             : '—'}
-                        </td>
-                        <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
-                          {h.tinglysningsafgift != null
-                            ? `${h.tinglysningsafgift.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
-                            : '—'}
-                        </td>
-                        <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
-                          {h.andel ?? '—'}
                         </td>
                       </tr>
                     );

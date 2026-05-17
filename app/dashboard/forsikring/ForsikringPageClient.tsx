@@ -93,6 +93,12 @@ interface AnalyseAktiv {
   adresse: string | null;
   matched_policy_id: string | null;
   match_score: number | null;
+  /**
+   * Rå koncernwalk-metadata. For ejendomme indeholder den
+   * `ejer_cvr` så ejendommen kan grupperes under den virksomhed
+   * der ejer den. For virksomheder indeholder den branche-info.
+   */
+  raw_data: Record<string, unknown> | null;
 }
 
 /** Gap fra analyse-detail API */
@@ -341,18 +347,22 @@ function UnifiedAnalyseView({
 
   // Group aktiver into PropertyGroups with their gaps — dedup by address
   const seenAddresses = new Set<string>();
-  const groups: PropertyGroup[] = [];
+  const allGroups: PropertyGroup[] = [];
   for (const aktiv of aktiver) {
     // BIZZ-1439: Dedup — skip duplikerede adresser (ejerskab kan have flere rækker per BFE)
     // Dedup via BFE (unikt per ejendom) — IKKE adresse (ejerlejligheder har samme adresse men forskellig etage/dør)
-    const addrKey = aktiv.bfe ? String(aktiv.bfe) : aktiv.id;
+    const addrKey = aktiv.bfe
+      ? String(aktiv.bfe)
+      : aktiv.type === 'virksomhed' && aktiv.cvr
+        ? `cvr:${aktiv.cvr}`
+        : aktiv.id;
     if (seenAddresses.has(addrKey)) continue;
     seenAddresses.add(addrKey);
 
     const aktivGaps = aktiv.matched_policy_id
       ? gaps.filter((g) => g.policy_id === aktiv.matched_policy_id)
       : [];
-    groups.push({
+    allGroups.push({
       aktiv,
       matchedPolicy: aktiv.matched_policy_id
         ? (policyById.get(aktiv.matched_policy_id) ?? null)
@@ -361,18 +371,60 @@ function UnifiedAnalyseView({
     });
   }
 
-  // Sort: uninsured first, then by gap count descending
-  groups.sort((a, b) => {
-    const aInsured = a.aktiv.matched_policy_id ? 1 : 0;
-    const bInsured = b.aktiv.matched_policy_id ? 1 : 0;
-    if (aInsured !== bInsured) return aInsured - bInsured;
-    return b.gaps.length - a.gaps.length;
-  });
+  // Split into companies and properties for tree-grouping
+  const virksomhedGroups = allGroups.filter((g) => g.aktiv.type === 'virksomhed');
+  const ejendomGroups = allGroups.filter((g) => g.aktiv.type === 'ejendom');
+  const otherGroups = allGroups.filter(
+    (g) => g.aktiv.type !== 'virksomhed' && g.aktiv.type !== 'ejendom'
+  );
+
+  /**
+   * Build company-tree: hver virksomhed med sine ejendomme grupperet under.
+   * En ejendom matches til en virksomhed via `raw_data.ejer_cvr`.
+   * Ejendomme uden matchende virksomhed havner i en "andre"-bucket.
+   */
+  const ejendommeByCvr = new Map<string, PropertyGroup[]>();
+  const orphanEjendomme: PropertyGroup[] = [];
+  for (const eg of ejendomGroups) {
+    const ejerCvr = (eg.aktiv.raw_data as { ejer_cvr?: string } | null)?.ejer_cvr;
+    if (ejerCvr && virksomhedGroups.some((v) => v.aktiv.cvr === ejerCvr)) {
+      const list = ejendommeByCvr.get(ejerCvr) ?? [];
+      list.push(eg);
+      ejendommeByCvr.set(ejerCvr, list);
+    } else {
+      orphanEjendomme.push(eg);
+    }
+  }
+
+  /** Sort properties: uforsikrede først, derefter flest gaps */
+  function sortProperties(list: PropertyGroup[]): PropertyGroup[] {
+    return [...list].sort((a, b) => {
+      const aInsured = a.aktiv.matched_policy_id ? 1 : 0;
+      const bInsured = b.aktiv.matched_policy_id ? 1 : 0;
+      if (aInsured !== bInsured) return aInsured - bInsured;
+      return b.gaps.length - a.gaps.length;
+    });
+  }
+
+  /** Tree-node: en virksomhed + dens ejendomme */
+  interface VirksomhedsTree {
+    virksomhed: PropertyGroup;
+    ejendomme: PropertyGroup[];
+  }
+
+  // Sortér virksomheder: hovedvirksomheden (flest egne ejendomme) først
+  const virksomhedsTraeer: VirksomhedsTree[] = virksomhedGroups
+    .map((v) => ({
+      virksomhed: v,
+      ejendomme: sortProperties(ejendommeByCvr.get(v.aktiv.cvr ?? '') ?? []),
+    }))
+    .sort((a, b) => b.ejendomme.length - a.ejendomme.length);
 
   // Compute health score: 0-100 (higher = better)
   // BIZZ-1440: Brug dedupede groups i stedet for rå analyse-tal
-  const total = groups.length;
-  const insured = groups.filter((g) => g.aktiv.matched_policy_id !== null).length;
+  // KPI'er regnes på EJENDOMME (ikke virksomheder) for at matche "X af 17 forsikrede"
+  const total = ejendomGroups.length;
+  const insured = ejendomGroups.filter((g) => g.aktiv.matched_policy_id !== null).length;
   const pct = total > 0 ? Math.round((insured / total) * 100) : 0;
   const totalGaps = gaps.length;
   const critGaps = gaps.filter((g) => g.severity === 'critical').length;
@@ -446,11 +498,54 @@ function UnifiedAnalyseView({
         </div>
       </div>
 
-      {/* Niveau 2: Ejendomsliste med expandable rows */}
-      <div className="space-y-2">
-        {groups.map((group) => (
-          <PropertyRow key={group.aktiv.id} group={group} da={da} />
+      {/* Niveau 2: Virksomheds-træer med ejendomme grupperet under */}
+      <div className="space-y-4">
+        {virksomhedsTraeer.map((tree) => (
+          <div key={tree.virksomhed.aktiv.id} className="space-y-2">
+            {/* Virksomheds-række (header) */}
+            <PropertyRow group={tree.virksomhed} da={da} />
+
+            {/* Ejendomme under denne virksomhed — indrykket */}
+            {tree.ejendomme.length > 0 && (
+              <div className="ml-6 pl-3 border-l border-white/8 space-y-2">
+                <div className="text-slate-500 text-[11px] uppercase tracking-wide py-1">
+                  {da
+                    ? `${tree.ejendomme.length} ${tree.ejendomme.length === 1 ? 'ejendom' : 'ejendomme'} ejet af ${tree.virksomhed.aktiv.label}`
+                    : `${tree.ejendomme.length} ${tree.ejendomme.length === 1 ? 'property' : 'properties'} owned by ${tree.virksomhed.aktiv.label}`}
+                </div>
+                {tree.ejendomme.map((eg) => (
+                  <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
+                ))}
+              </div>
+            )}
+          </div>
         ))}
+
+        {/* Ejendomme uden ejer-virksomhed (orphans) — personligt ejede eller manglende kæde */}
+        {orphanEjendomme.length > 0 && (
+          <div className="space-y-2">
+            <div className="text-slate-500 text-[11px] uppercase tracking-wide py-1">
+              {da
+                ? `${orphanEjendomme.length} ${orphanEjendomme.length === 1 ? 'ejendom' : 'ejendomme'} uden virksomheds-tilknytning`
+                : `${orphanEjendomme.length} ${orphanEjendomme.length === 1 ? 'property' : 'properties'} without company link`}
+            </div>
+            {sortProperties(orphanEjendomme).map((eg) => (
+              <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
+            ))}
+          </div>
+        )}
+
+        {/* Øvrige aktiver (bestyrelsesposter, biler) */}
+        {otherGroups.length > 0 && (
+          <div className="space-y-2">
+            <div className="text-slate-500 text-[11px] uppercase tracking-wide py-1">
+              {da ? 'Øvrige aktiver' : 'Other assets'}
+            </div>
+            {otherGroups.map((eg) => (
+              <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Rapport-knap — direkte download som DOCX */}

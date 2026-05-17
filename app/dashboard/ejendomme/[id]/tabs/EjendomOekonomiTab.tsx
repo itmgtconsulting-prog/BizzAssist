@@ -817,6 +817,9 @@ export default function EjendomOekonomiTab(props: Props) {
                     <th className="text-right px-4 py-2.5 font-medium">{t.purchasePrice}</th>
                     <th className="text-right px-4 py-2.5 font-medium">{t.cashPrice}</th>
                     <th className="text-right px-4 py-2.5 font-medium">{t.registrationDate}</th>
+                    <th className="text-center px-4 py-2.5 font-medium">
+                      {da ? 'Kilde' : 'Source'}
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1007,6 +1010,20 @@ export default function EjendomOekonomiTab(props: Props) {
                                 }
                               )
                             : '—'}
+                        </td>
+                        {/* BIZZ-1599: Kilde-badge */}
+                        <td className="px-4 py-2.5 text-center">
+                          <span
+                            className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-medium leading-none ${
+                              h.kilde === 'begge'
+                                ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                                : h.kilde === 'ejf'
+                                  ? 'bg-blue-500/15 text-blue-300 border border-blue-500/30'
+                                  : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                            }`}
+                          >
+                            {h.kilde === 'begge' ? 'EJF+TL' : h.kilde === 'ejf' ? 'EJF' : 'TL'}
+                          </span>
                         </td>
                       </tr>
                     );

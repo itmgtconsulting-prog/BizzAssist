@@ -158,6 +158,18 @@ export const ANALYSE_MODULES: AnalyseModuleConfig[] = [
     defaultTarget: 'ejendom',
     hint: 'Vælg en kommune eller ejendom. AI analyserer bygningsmasse, energimærker og renoveringspotentiale.',
   },
+  {
+    id: 'vurderingsrapport',
+    label: 'Vurderingsrapport',
+    labelEn: 'Valuation report',
+    icon: 'FileSearch',
+    path: '/dashboard/analyse/vurderingsrapport',
+    enabled: { dev: true, preview: true, prod: false },
+    requiredPlan: 'professionel',
+    description: 'Sags-baseret ejendomsvurdering med upload-zoner og tab-rapport',
+    defaultTarget: 'ejendom',
+    hint: 'Opret en sag, vælg kunde og ejendom, upload dokumentation og generer en struktureret vurderingsrapport.',
+  },
 ];
 
 /**

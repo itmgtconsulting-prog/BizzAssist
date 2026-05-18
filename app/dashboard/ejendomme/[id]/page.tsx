@@ -244,7 +244,7 @@ export default async function EjendommeDetailPage({
         }
         const bbrData: EjendomApiResponse = { dawaId: id, ...bbrResult };
         // Marker cached BBR for klienten
-        if (bbrFromCache) (bbrData as Record<string, unknown>)['_bbrCached'] = true;
+        if (bbrFromCache) (bbrData as unknown as Record<string, unknown>)['_bbrCached'] = true;
 
         // BIZZ-1287+1323+1327: Prefetch vurdering + ejerskab parallelt fra cache
         let vurderingData: VurderingResponse | null = null;

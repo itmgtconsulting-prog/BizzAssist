@@ -68,12 +68,37 @@ const sessionDismissed = new Set<string>();
  * @returns All available tags grouped by type, up to TAGS_PER_TYPE each
  */
 async function loadAllTags(): Promise<RecentTag[]> {
-  const [searchRes, propRes, companyRes, personRes] = await Promise.all([
-    fetch('/api/recents?type=search').catch(() => null),
-    fetch('/api/recents?type=property').catch(() => null),
-    fetch('/api/recents?type=company').catch(() => null),
-    fetch('/api/recents?type=person').catch(() => null),
-  ]);
+  // BIZZ-1582: Single request replaces 4 parallel requests (saves ~3s on cold start).
+  const allRes = await fetch('/api/recents?type=all').catch(() => null);
+  const allData: Record<string, unknown>[] = allRes
+    ? (
+        (await allRes.json().catch(() => ({ recents: [] }))) as {
+          recents: Record<string, unknown>[];
+        }
+      ).recents
+    : [];
+
+  // Split into per-type buckets (same shape as the 4 individual responses)
+  const byEntityType: Record<string, Record<string, unknown>[]> = {
+    search: [],
+    property: [],
+    company: [],
+    person: [],
+  };
+  for (const r of allData) {
+    const t = r.entity_type as string;
+    if (byEntityType[t]) byEntityType[t].push(r);
+  }
+
+  // Build fake response objects for backward-compat with the parser below
+  const fakeRes = (items: Record<string, unknown>[]) =>
+    items.length > 0 ? { ok: true, json: async () => ({ recents: items }) } : null;
+  const [searchRes, propRes, companyRes, personRes] = [
+    fakeRes(byEntityType.search),
+    fakeRes(byEntityType.property),
+    fakeRes(byEntityType.company),
+    fakeRes(byEntityType.person),
+  ] as (Response | null)[];
 
   // Collect up to TAGS_PER_TYPE entries per type in insertion order
   const byType: Record<RecentTag['type'], RecentTag[]> = {
@@ -198,10 +223,23 @@ const RecentEntityTagBar = React.memo(function RecentEntityTagBar({
     refresh();
   }, [refresh]);
 
-  // Re-load whenever any part of the app signals that recents have changed
+  // BIZZ-1582: Debounce recents-updated events — recordRecentVisit fires
+  // multiple POSTs + events within milliseconds, causing 3x full re-fetches.
+  // 1.5s debounce collapses them into a single refresh.
   useEffect(() => {
-    window.addEventListener('ba-recents-updated', refresh);
-    return () => window.removeEventListener('ba-recents-updated', refresh);
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const handler = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        refresh();
+        timer = null;
+      }, 1500);
+    };
+    window.addEventListener('ba-recents-updated', handler);
+    return () => {
+      window.removeEventListener('ba-recents-updated', handler);
+      if (timer) clearTimeout(timer);
+    };
   }, [refresh]);
 
   /**

@@ -53,8 +53,31 @@ export async function GET(request: NextRequest) {
       | 'company'
       | 'property'
       | 'person'
-      | 'search';
+      | 'search'
+      | 'all';
     const admin = createAdminClient();
+
+    // BIZZ-1582: type=all returns all types in a single query (saves 3 round-trips
+    // from RecentEntityTagBar which previously fired 4 parallel requests).
+    if (entityType === 'all') {
+      const { data, error } = await admin
+        .from(TABLE)
+        .select('*')
+        .eq('tenant_id', auth.tenantId)
+        .eq('user_id', auth.userId)
+        .in('entity_type', ['property', 'company', 'person', 'search'])
+        .order('visited_at', { ascending: false })
+        .limit(30);
+
+      if (error) {
+        logger.error('[recents GET] DB error:', error);
+        return NextResponse.json(
+          { error: 'Databasefejl ved hentning af seneste' },
+          { status: 500 }
+        );
+      }
+      return NextResponse.json({ recents: data ?? [] });
+    }
 
     const { data, error } = await admin
       .from(TABLE)

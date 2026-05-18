@@ -1281,7 +1281,11 @@ async function resolvePropertyGraph(
                     size: 1,
                   }
                 : {
-                    query: { match: { 'Vrdeltagerperson.navne.navn': node.label } },
+                    // BIZZ-1625: match_phrase i stedet for match — ES match tokenizer
+                    // splitter på mellemrum og matcher hvert token uafhængigt, så
+                    // "Mette Borchardt Jørgensen" kunne matche "Peter Borchardt" via
+                    // fælles token "Borchardt". match_phrase kræver alle tokens i rækkefølge.
+                    query: { match_phrase: { 'Vrdeltagerperson.navne.navn': node.label } },
                     _source: ['Vrdeltagerperson.enhedsNummer', 'Vrdeltagerperson.navne.navn'],
                     size: 1,
                   };

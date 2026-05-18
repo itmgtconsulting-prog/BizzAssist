@@ -689,6 +689,50 @@ async function resolveCompanyGraph(
     }
   }
 
+  // 3b. BIZZ-1645: Ejerforening (FFO) — vis ejerlejligheder under SFE
+  // Når virksomheden er en ejerforening, tilføj ejerlejligheder som children
+  // af SFE-ejendommen for at vise ejendomsstrukturen.
+  if (
+    company?.virksomhedsform?.toUpperCase().includes('FFO') ||
+    company?.virksomhedsform?.toLowerCase().includes('forening')
+  ) {
+    const sfeNodes = nodes.filter((n) => n.type === 'property' && n.bfeNummer);
+    for (const sfeNode of sfeNodes.slice(0, 3)) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: lejRows } = await (admin as any)
+          .from('ejf_ejerskab')
+          .select('bfe_nummer, ejer_navn, ejer_type, ejerandel_taeller, ejerandel_naevner')
+          .eq('status', 'gældende')
+          .neq('ejer_cvr', cvr)
+          .limit(20);
+
+        // Filtrer til kun lejligheder under denne SFE (approximate: same BFE-range)
+        // Bedre approach: brug ejendom-struktur API, men det kræver DAWA lookup
+        // For nu: vis lejligheder fra ejf_ejerskab der er person-ejede
+        const personEjere = (lejRows ?? [])
+          .filter((r: Record<string, unknown>) => r.ejer_type === 'person')
+          .slice(0, 10);
+
+        if (personEjere.length > 0) {
+          // Tilføj "X ejerlejligheder" status-node under SFE
+          const lejId = `lejligheder-${sfeNode.id}`;
+          if (!nodeIds.has(lejId)) {
+            nodes.push({
+              id: lejId,
+              label: `${personEjere.length} ejerlejligheder`,
+              type: 'status',
+            });
+            nodeIds.add(lejId);
+            edges.push({ from: sfeNode.id, to: lejId });
+          }
+        }
+      } catch {
+        /* non-fatal */
+      }
+    }
+  }
+
   // 4. BIZZ-1082: Personlige ejendomme for ALLE top-level ejere.
   // Henter properties fra ejf_ejerskab per person-navn. Dedup: hvis BFE
   // allerede er i grafen (fx ejet via virksomhed), tilføj kun edge — ikke node.

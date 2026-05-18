@@ -48,6 +48,8 @@ export interface CreateDocumentInput {
   uploaded_by: string;
   /** BIZZ-1399: Optionelt link til kundesag */
   sag_id?: string;
+  /** BIZZ-1632: Kunde-ID for at isolere dokumenter per kunde */
+  kunde_id?: string;
 }
 
 /** Payload til at oprette en parsed police (efter Claude-parsing) */

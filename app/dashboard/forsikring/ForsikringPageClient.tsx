@@ -2166,7 +2166,11 @@ export default function ForsikringPageClient(): React.ReactElement {
                         : job.documentType === 'tillaeg'
                           ? '✓ Tillæg'
                           : '✓')}
-                    {job.status === 'failed' && (job.error ?? t.parseFailed)}
+                    {job.status === 'failed' && (
+                      <span className="text-red-400" title={job.error ?? t.parseFailed}>
+                        {job.error ?? t.parseFailed}
+                      </span>
+                    )}
                   </span>
                 </div>
               ))}
@@ -2185,7 +2189,14 @@ export default function ForsikringPageClient(): React.ReactElement {
                   <div key={doc.id} className="px-4 py-2 flex items-center gap-3">
                     <FileText size={14} className="text-slate-400" />
                     <span>{doc.original_name}</span>
-                    <span className="text-xs text-slate-500 ml-auto">
+                    <span
+                      className={`text-xs ml-auto max-w-[300px] truncate ${doc.parse_status === 'failed' ? 'text-red-400' : 'text-slate-500'}`}
+                      title={
+                        doc.parse_status === 'failed'
+                          ? (doc.parse_error ?? t.parseFailed)
+                          : doc.parse_status
+                      }
+                    >
                       {doc.parse_status === 'failed'
                         ? (doc.parse_error ?? t.parseFailed)
                         : doc.parse_status}

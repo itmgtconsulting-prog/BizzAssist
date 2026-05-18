@@ -896,7 +896,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
   const solgtDatoByBfe = new Map<number, string | null>();
   const ownerBuyDateByBfe = new Map<number, string | null>();
 
-  if (cvrNumre.length > 0 && enhedsNumre.length === 0) {
+  // BIZZ-1623: Fjernet `&& enhedsNumre.length === 0` — CVR-cache skal køre
+  // uanset om personen OGSÅ har enhedsNummer (personer med virksomheder).
+  if (cvrNumre.length > 0) {
     try {
       const admin = createAdminClient();
       const cvrStrings = cvrNumre.map((c) => String(c));
@@ -999,7 +1001,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
   // ── BIZZ-1588: Cache-first for person-lookups via ejer_enheds_nummer ──
   // Primær path: direkte match på ejer_enheds_nummer kolonnen i ejf_ejerskab.
   // Mere pålideligt end navnematch (håndterer navneskift, dubletter, mellemnavne).
-  if (!cacheFullHit && enhedsNumre.length > 0 && cvrNumre.length === 0) {
+  // BIZZ-1623: Fjernet `&& cvrNumre.length === 0` — person-cache skal køre
+  // uanset om personen OGSÅ har CVR-virksomheder. Paths er additive.
+  if (!cacheFullHit && enhedsNumre.length > 0) {
     try {
       const admin = createAdminClient();
       const enhedsStrings = enhedsNumre.map((e) => String(e));
@@ -1065,7 +1069,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
   // ── BIZZ-1158: Fallback cache-first for person-lookups via ejer_navn ──
   // Hvis enhedsNummer-match returnerede 0 (gamle rækker uden ejer_enheds_nummer),
   // prøv navnematch som fallback. Resolver personnavn fra cvr_deltager.
-  if (!cacheFullHit && enhedsNumre.length > 0 && cvrNumre.length === 0) {
+  // BIZZ-1623: Fjernet `&& cvrNumre.length === 0` — person fallback skal også
+  // køre når personen har virksomheder (CVR + enhedsNummer sammen).
+  if (!cacheFullHit && enhedsNumre.length > 0) {
     try {
       const admin = createAdminClient();
       // Hent personnavne for enhedsNumre

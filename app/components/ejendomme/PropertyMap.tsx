@@ -1192,7 +1192,7 @@ function PropertyMap({
         onClick={onAdresseValgt ? handleKlik : undefined}
         onMouseMove={onAdresseValgt ? handleMouseMove : undefined}
         onMouseLeave={onAdresseValgt ? handleMouseLeave : undefined}
-        cursor={onAdresseValgt ? (søgerAdresse ? 'wait' : 'crosshair') : 'grab'}
+        cursor={søgerAdresse ? 'wait' : 'grab'}
         onZoomEnd={handleZoomEnd}
       >
         <NavigationControl position="bottom-right" showCompass={false} />

@@ -105,6 +105,10 @@ interface Props {
   bbrEnheder?: Array<{ etage: string | null; doer: string | null; vaerelser: number | null }>;
   /** BIZZ-1143: Ejer-detaljer fra /api/ejerskab/chain (prefetched af parent) */
   chainEjerDetaljer?: EjerDetalje[];
+  /** BIZZ-1582: True when deeper ejerkæde levels are available */
+  chainHasMore?: boolean;
+  /** BIZZ-1582: Callback to re-fetch chain with depth=3 */
+  onExpandChain?: () => void;
   /** BIZZ-1143: True mens chain-data hentes */
   chainLoader?: boolean;
   /** BIZZ-1143: Prefetched diagram-graf fra /api/diagram/resolve */
@@ -128,6 +132,8 @@ export default function EjendomEjerforholdTab({
   currentDawaId,
   bbrEnheder,
   chainEjerDetaljer = [],
+  chainHasMore = false,
+  onExpandChain,
   chainLoader = false,
   prefetchedDiagramGraph = null,
   diagramResolveLoader = false,
@@ -320,7 +326,23 @@ export default function EjendomEjerforholdTab({
                   ariaLabel={da ? 'Henter ejerskabsdata' : 'Loading ownership data'}
                 />
               ) : (
-                <EjerKort ejerDetaljer={chainEjerDetaljer} lang={lang} />
+                <>
+                  <EjerKort ejerDetaljer={chainEjerDetaljer} lang={lang} />
+                  {chainHasMore && onExpandChain && (
+                    <button
+                      type="button"
+                      onClick={onExpandChain}
+                      className="text-sm text-blue-400 hover:text-blue-300 underline underline-offset-2 transition-colors"
+                      aria-label={
+                        da
+                          ? 'Udvid ejerkæde til dybere niveauer'
+                          : 'Expand ownership chain to deeper levels'
+                      }
+                    >
+                      {da ? 'Vis dybere ejerkæde...' : 'Show deeper ownership chain...'}
+                    </button>
+                  )}
+                </>
               )}
               {/* BIZZ-1143: DiagramV2 med prefetched graf fra parent */}
               {diagramResolveLoader ? (

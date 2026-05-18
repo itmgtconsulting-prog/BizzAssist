@@ -19,6 +19,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
 import { buildChainCacheKey, getCached, setCached } from '@/app/lib/ejerskab/cache';
+import { fetchEjfEjereDirekt } from '@/app/lib/ejerskab/fetchEjfEjereDirekt';
+import { fetchTlEjereDirekt } from '@/app/lib/tinglysning/fetchTlEjere';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -109,6 +111,9 @@ export interface OwnershipChainResponse {
   mainId: string;
   ejerDetaljer: ChainEjerDetalje[];
   fejl: string | null;
+  /** BIZZ-1582: True when there are company owners that could be expanded
+   *  to deeper levels (current depth < MAX_DEPTH). UI shows "Udvid" button. */
+  hasMore?: boolean;
 }
 
 // ─── Config ─────────────────────────────────────────────────────────────────
@@ -116,6 +121,9 @@ export interface OwnershipChainResponse {
 const CVR_ES_BASE = 'http://distribution.virk.dk/cvr-permanent';
 const CVR_ES_USER = process.env.CVR_ES_USER ?? '';
 const CVR_ES_PASS = process.env.CVR_ES_PASS ?? '';
+/** BIZZ-1582: Default depth 2 (saves 400-800ms per ekstra niveau).
+ *  Klienten kan bede om depth=3 via "Udvid ejerkæde"-knap. */
+const DEFAULT_DEPTH = 2;
 const MAX_DEPTH = 3;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -339,6 +347,12 @@ export async function GET(req: NextRequest) {
    */
   const ejendomstypeHint = (req.nextUrl.searchParams.get('type') ?? '').toLowerCase();
   const skipTinglysning = ejendomstypeHint.includes('ejerlejlighed');
+  /** BIZZ-1582: Klient-styret depth (default 2, max 3). Reducer latency
+   *  ved at begrænse CVR ES recursion-niveauer for standardvisning. */
+  const requestedDepth = Math.min(
+    Math.max(parseInt(req.nextUrl.searchParams.get('depth') ?? '', 10) || DEFAULT_DEPTH, 1),
+    MAX_DEPTH
+  );
 
   if (!bfe) {
     return NextResponse.json({ nodes: [], edges: [], mainId: '', fejl: 'bfe er påkrævet' });
@@ -348,7 +362,7 @@ export async function GET(req: NextRequest) {
   // API-kald (Tinglysning + CVR ES + EJF tager 1.5-5s; cache-hit <100ms).
   // Klient-cache (HTTP s-maxage) blev kun delt per browser; denne deles
   // på tværs af brugere via Supabase.
-  const cacheKey = buildChainCacheKey(bfe, ejendomstypeHint);
+  const cacheKey = buildChainCacheKey(bfe, ejendomstypeHint) + `:d${requestedDepth}`;
   const cached = await getCached<OwnershipChainResponse>(cacheKey);
   if (cached) {
     return NextResponse.json(cached, {
@@ -384,121 +398,98 @@ export async function GET(req: NextRequest) {
     [];
   const ejfPersonsToResolve: { navn: string; nodeIdx: number; detaljeIdx: number }[] = [];
 
-  // Forward the caller's session cookie so internal API routes can authenticate.
-  const cookieHeader = req.headers.get('cookie') ?? '';
-
-  // BIZZ-328: Start EJF lookup in parallel with Tinglysning — used as fallback
+  // BIZZ-1582: Direct lib calls replace HTTP self-calls (saves 200-600ms).
+  // Start EJF lookup in parallel with Tinglysning — used as fallback
   // if Tinglysning doesn't return real owners (common for ejerlejligheder).
-  // Starting early saves ~200ms by overlapping with the Tinglysning round-trip.
-  const ejfPromise = fetch(`${req.nextUrl.origin}/api/ejerskab?bfeNummer=${bfe}`, {
-    headers: { cookie: cookieHeader },
-    signal: AbortSignal.timeout(15000),
-  })
-    .then((r) => (r.ok ? r.json() : null))
-    .catch(() => null);
+  const ejfPromise = fetchEjfEjereDirekt(Number(bfe)).catch(() => null);
 
   // Trin 1: Prøv Tinglysning API — har navne, adkomsttype, evt. CVR.
   // BIZZ-470: For ejerlejligheder (identificeret via ?type=ejerlejlighed)
   // springer vi helt over — Tinglysning returnerer ikke de reelle ejere
   // alligevel, og EJF-fallbacken henter dem hurtigt via ejfPromise.
+  // BIZZ-1582: Direct lib call replaces two sequential HTTP self-calls
+  // (tinglysning search + summarisk parse), saving 200-600ms overhead.
   if (!skipTinglysning)
     try {
-      const tlRes = await fetch(`${req.nextUrl.origin}/api/tinglysning?bfe=${bfe}`, {
-        headers: { cookie: cookieHeader },
-        signal: AbortSignal.timeout(30000),
-      });
-      if (tlRes.ok) {
-        const tlData = await tlRes.json();
-        if (tlData.uuid && !tlData.error) {
-          // Hent KUN ejere-sektion fra summarisk (undgår at parse 90KB+ XML for servitutter)
-          const tlSumRes = await fetch(
-            `${req.nextUrl.origin}/api/tinglysning/summarisk?uuid=${tlData.uuid}&section=ejere`,
-            {
-              headers: { cookie: cookieHeader },
-              signal: AbortSignal.timeout(30000),
+      const tlResult = await fetchTlEjereDirekt(bfe);
+      if (tlResult.ejere.length > 0) {
+        const ejere = tlResult.ejere;
+        for (const ejer of ejere) {
+          if (ejer.cvr) {
+            const id = `cvr-${ejer.cvr}`;
+            if (!seenIds.has(id)) {
+              seenIds.add(id);
+              nodes.push({
+                id,
+                label: ejer.navn || `CVR ${ejer.cvr}`,
+                type: 'company',
+                cvr: parseInt(ejer.cvr, 10),
+                link: `/dashboard/companies/${ejer.cvr}`,
+              });
+              companyOwnersToResolve.push({
+                nodeId: id,
+                cvr: parseInt(ejer.cvr, 10),
+                depth: 0,
+              });
             }
-          );
-          if (tlSumRes.ok) {
-            const sumData = await tlSumRes.json();
-            const ejere = sumData.ejere ?? [];
-            for (const ejer of ejere) {
-              if (ejer.cvr) {
-                const id = `cvr-${ejer.cvr}`;
-                if (!seenIds.has(id)) {
-                  seenIds.add(id);
-                  nodes.push({
-                    id,
-                    label: ejer.navn || `CVR ${ejer.cvr}`,
-                    type: 'company',
-                    cvr: parseInt(ejer.cvr, 10),
-                    link: `/dashboard/companies/${ejer.cvr}`,
-                  });
-                  companyOwnersToResolve.push({
-                    nodeId: id,
-                    cvr: parseInt(ejer.cvr, 10),
-                    depth: 0,
-                  });
-                }
-                edges.push({ from: id, to: mainId, ejerandel: ejer.andel ?? undefined });
-                ejerDetaljer.push({
-                  navn: ejer.navn,
-                  cvr: ejer.cvr,
-                  enhedsNummer: null,
-                  type: 'selskab',
-                  andel: ejer.andel,
-                  adresse: ejer.adresse ?? null,
-                  overtagelsesdato: ejer.overtagelsesdato ?? null,
-                  adkomstType: ejer.adkomstType ?? null,
-                  koebesum: ejer.koebesum ?? null,
-                });
-              } else {
-                // Tjek om "ejeren" egentlig er en status-tekst (fx "Opdelt i ejerlejligheder")
-                const erStatus = STATUS_TEKST_RE.test(ejer.navn ?? '');
+            edges.push({ from: id, to: mainId, ejerandel: ejer.andel ?? undefined });
+            ejerDetaljer.push({
+              navn: ejer.navn,
+              cvr: ejer.cvr,
+              enhedsNummer: null,
+              type: 'selskab',
+              andel: ejer.andel,
+              adresse: ejer.adresse ?? null,
+              overtagelsesdato: ejer.overtagelsesdato ?? null,
+              adkomstType: ejer.adkomstType ?? null,
+              koebesum: ejer.koebesum ?? null,
+            });
+          } else {
+            // Tjek om "ejeren" egentlig er en status-tekst (fx "Opdelt i ejerlejligheder")
+            const erStatus = STATUS_TEKST_RE.test(ejer.navn ?? '');
 
-                if (erStatus) {
-                  const id = `status-${nodes.length}`;
-                  nodes.push({ id, label: ejer.navn, type: 'status' });
-                  edges.push({ from: id, to: mainId });
-                  ejerDetaljer.push({
-                    navn: ejer.navn,
-                    cvr: null,
-                    enhedsNummer: null,
-                    type: 'status' as 'person',
-                    andel: null,
-                    adresse: null,
-                    overtagelsesdato: null,
-                    adkomstType: null,
-                    koebesum: null,
-                  });
-                } else {
-                  const id = `person-${nodes.length}`;
-                  // BIZZ-386: Push node immediately (without enhedsNummer) so id is stable,
-                  // then batch-resolve enhedsNummer for all persons after the loop.
-                  nodes.push({
-                    id,
-                    label: ejer.navn || 'Person',
-                    type: 'person',
-                  });
-                  edges.push({ from: id, to: mainId, ejerandel: ejer.andel ?? undefined });
-                  ejerDetaljer.push({
-                    navn: ejer.navn,
-                    cvr: null,
-                    type: 'person',
-                    andel: ejer.andel,
-                    adresse: ejer.adresse ?? null,
-                    overtagelsesdato: ejer.overtagelsesdato ?? null,
-                    adkomstType: ejer.adkomstType ?? null,
-                    koebesum: ejer.koebesum ?? null,
-                    enhedsNummer: null,
-                  });
-                  // Track node/detaljer indices so we can patch them after batch lookup
-                  tlPersonsToResolve.push({
-                    navn: ejer.navn,
-                    nodeIdx: nodes.length - 1,
-                    detaljeIdx: ejerDetaljer.length - 1,
-                  });
-                }
-              }
+            if (erStatus) {
+              const id = `status-${nodes.length}`;
+              nodes.push({ id, label: ejer.navn, type: 'status' });
+              edges.push({ from: id, to: mainId });
+              ejerDetaljer.push({
+                navn: ejer.navn,
+                cvr: null,
+                enhedsNummer: null,
+                type: 'status' as 'person',
+                andel: null,
+                adresse: null,
+                overtagelsesdato: null,
+                adkomstType: null,
+                koebesum: null,
+              });
+            } else {
+              const id = `person-${nodes.length}`;
+              // BIZZ-386: Push node immediately (without enhedsNummer) so id is stable,
+              // then batch-resolve enhedsNummer for all persons after the loop.
+              nodes.push({
+                id,
+                label: ejer.navn || 'Person',
+                type: 'person',
+              });
+              edges.push({ from: id, to: mainId, ejerandel: ejer.andel ?? undefined });
+              ejerDetaljer.push({
+                navn: ejer.navn,
+                cvr: null,
+                type: 'person',
+                andel: ejer.andel,
+                adresse: ejer.adresse ?? null,
+                overtagelsesdato: ejer.overtagelsesdato ?? null,
+                adkomstType: ejer.adkomstType ?? null,
+                koebesum: ejer.koebesum ?? null,
+                enhedsNummer: null,
+              });
+              // Track node/detaljer indices so we can patch them after batch lookup
+              tlPersonsToResolve.push({
+                navn: ejer.navn,
+                nodeIdx: nodes.length - 1,
+                detaljeIdx: ejerDetaljer.length - 1,
+              });
             }
           }
         }
@@ -548,19 +539,15 @@ export async function GET(req: NextRequest) {
 
   // BIZZ-329: Cross-reference with EJF to remove historical owners that Tinglysning
   // still reports. EJF uses virkningstid=nu so only has current owners.
+  // BIZZ-1582: ejfPromise now returns EjfEjereResult directly (no HTTP overhead).
   if (harFaktiskeEjere) {
     try {
-      const ejfData = await ejfPromise;
-      if (ejfData?.ejere?.length > 0) {
-        const ejfCvrs = new Set(
-          ejfData.ejere
-            .filter((e: { cvr: string | null }) => e.cvr)
-            .map((e: { cvr: string }) => e.cvr)
-        );
+      const ejfResult = await ejfPromise;
+      const ejfEjere = ejfResult?.ejere ?? [];
+      if (ejfEjere.length > 0) {
+        const ejfCvrs = new Set(ejfEjere.filter((e) => e.cvr).map((e) => e.cvr!));
         const ejfNames = new Set(
-          ejfData.ejere
-            .filter((e: { personNavn: string | null }) => e.personNavn)
-            .map((e: { personNavn: string }) => e.personNavn.toLowerCase())
+          ejfEjere.filter((e) => e.personNavn).map((e) => e.personNavn!.toLowerCase())
         );
 
         // Remove nodes that are NOT in EJF's current owner list
@@ -609,10 +596,10 @@ export async function GET(req: NextRequest) {
     nodes.filter((n) => n.type === 'company' || n.type === 'person').length === 0
   ) {
     try {
-      // BIZZ-328: Use pre-fetched EJF promise (started in parallel with Tinglysning)
-      const ejfData = await ejfPromise;
-      if (ejfData) {
-        const ejere = ejfData.ejere ?? [];
+      // BIZZ-1582: Direct lib call (no HTTP overhead) — pre-fetched in parallel with TL.
+      const ejfResult = await ejfPromise;
+      if (ejfResult) {
+        const ejere = ejfResult.ejere ?? [];
 
         for (const ejer of ejere) {
           const andel =
@@ -759,8 +746,8 @@ export async function GET(req: NextRequest) {
   // serialising independent network calls (common for ejerlejligheder with many owners).
   let currentLevel = companyOwnersToResolve.splice(0);
   while (currentLevel.length > 0) {
-    // Filter out items that have already hit MAX_DEPTH before firing requests
-    const eligible = currentLevel.filter(({ depth }) => depth < MAX_DEPTH);
+    // Filter out items that have already hit requested depth before firing requests
+    const eligible = currentLevel.filter(({ depth }) => depth < requestedDepth);
     if (eligible.length === 0) break;
 
     // Fire all fetchCompanyOwners calls at this depth level in parallel
@@ -835,6 +822,10 @@ export async function GET(req: NextRequest) {
     currentLevel = nextLevel;
   }
 
+  // BIZZ-1582: If there are still unresolved companies at depth limit, deeper
+  // levels exist. The client can re-fetch with depth=3 to expand.
+  const hasMore = requestedDepth < MAX_DEPTH && currentLevel.length > 0;
+
   // Propagate isCeased from resolved company nodes til ejerDetaljer entries.
   // Skal ske FØR filtreringen nedenfor, så detaljerne bevarer advarslen
   // om at en direkte ejer er ophørt selvom noden fjernes fra diagrammet.
@@ -889,6 +880,7 @@ export async function GET(req: NextRequest) {
     mainId,
     ejerDetaljer,
     fejl,
+    hasMore,
   };
 
   // BIZZ-1582: Fire-and-forget cache-write. Vi venter ikke på Supabase-

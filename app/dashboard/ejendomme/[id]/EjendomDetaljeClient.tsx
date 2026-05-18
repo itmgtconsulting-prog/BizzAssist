@@ -381,6 +381,8 @@ export default function EjendomDetaljeClient({
 
   /** BIZZ-1143: Ejer-detaljer fra /api/ejerskab/chain (prefetched parallelt) */
   const [chainEjerDetaljer, setChainEjerDetaljer] = useState<EjerDetalje[]>([]);
+  /** BIZZ-1582: True when deeper ejerkæde levels are available (depth < 3) */
+  const [chainHasMore, setChainHasMore] = useState(false);
   /** BIZZ-1143: True mens chain-data hentes */
   const [chainLoader, setChainLoader] = useState(false);
   /** BIZZ-1143: Prefetched diagram-graf fra /api/diagram/resolve */
@@ -1090,6 +1092,7 @@ export default function EjendomDetaljeClient({
         // BIZZ-1591: startTransition — ejerskab chain er Ejerskab-tab data
         startTransition(() => {
           setChainEjerDetaljer((data?.ejerDetaljer as EjerDetalje[]) ?? []);
+          setChainHasMore(!!data?.hasMore);
         });
       })
       .catch(() => {})
@@ -1663,6 +1666,36 @@ export default function EjendomDetaljeClient({
                 }
                 chainEjerDetaljer={chainEjerDetaljer}
                 chainLoader={chainLoader}
+                chainHasMore={chainHasMore}
+                onExpandChain={() => {
+                  // BIZZ-1582: Re-fetch med depth=3 for at udvide ejerkæden
+                  const erEjerlej = !!bbrData?.ejerlejlighedBfe;
+                  const expandAdresse = dawaAdresse
+                    ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? ` ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
+                    : '';
+                  const expandBfe =
+                    bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
+                    bbrData?.ejerlejlighedBfe ??
+                    bbrData?.moderBfe;
+                  if (!expandBfe) return;
+                  const p = new URLSearchParams({
+                    bfe: String(expandBfe),
+                    adresse: expandAdresse,
+                    depth: '3',
+                  });
+                  if (erEjerlej) p.set('type', 'ejerlejlighed');
+                  setChainLoader(true);
+                  fetch(`/api/ejerskab/chain?${p}`)
+                    .then((r) => (r.ok ? r.json() : null))
+                    .then((data) => {
+                      if (data) {
+                        setChainEjerDetaljer((data.ejerDetaljer as EjerDetalje[]) ?? []);
+                        setChainHasMore(!!data.hasMore);
+                      }
+                    })
+                    .catch(() => {})
+                    .finally(() => setChainLoader(false));
+                }}
                 prefetchedDiagramGraph={prefetchedDiagramGraph}
                 diagramResolveLoader={diagramResolveLoader}
               />

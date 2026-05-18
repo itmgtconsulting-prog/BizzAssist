@@ -9,8 +9,8 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
+import { getInsuranceApi } from '@/lib/db/insurance';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { getTenantSchemaName, tenantDb } from '@/lib/db/tenant';
 import { logger } from '@/app/lib/logger';
 
 /**
@@ -30,61 +30,43 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const admin = createAdminClient();
-    const schemaName = await getTenantSchemaName(auth.tenantId);
-    if (!schemaName) {
-      return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const db = tenantDb(admin as any, schemaName);
+    const insurance = await getInsuranceApi(auth.tenantId);
 
     // Hent alle dokumenter for denne kunde
-    const { data: docs, error: listErr } = await db
-      .from('forsikring_documents')
-      .select('id, storage_path')
-      .eq('tenant_id', auth.tenantId)
-      .eq('kunde_id', kundeId);
+    const allDocs = await insurance.documents.list();
+    const kundeDocs = allDocs.filter((d) => d.kunde_id === kundeId);
 
-    if (listErr) {
-      logger.error('[forsikring/documents/bulk] list error:', listErr.message);
-      return NextResponse.json({ error: 'Kunne ikke hente dokumenter' }, { status: 500 });
-    }
-
-    if (!docs || docs.length === 0) {
+    if (kundeDocs.length === 0) {
       return NextResponse.json({ deleted: 0 });
     }
 
     // Slet filer fra Storage
-    const storagePaths = (docs as Array<{ storage_path: string }>)
-      .map((d) => d.storage_path)
-      .filter(Boolean);
+    const admin = createAdminClient();
+    const storagePaths = kundeDocs.map((d) => d.storage_path).filter(Boolean);
     if (storagePaths.length > 0) {
       const { error: storageErr } = await admin.storage
         .from('forsikring-documents')
         .remove(storagePaths);
       if (storageErr) {
         logger.warn('[forsikring/documents/bulk] storage delete fejl:', storageErr.message);
-        // Fortsæt med DB-sletning selvom storage fejler
       }
     }
 
-    // Slet rækker fra DB
-    const docIds = (docs as Array<{ id: string }>).map((d) => d.id);
-    const { error: deleteErr } = await db
-      .from('forsikring_documents')
-      .delete()
-      .eq('tenant_id', auth.tenantId)
-      .eq('kunde_id', kundeId);
-
-    if (deleteErr) {
-      logger.error('[forsikring/documents/bulk] delete error:', deleteErr.message);
-      return NextResponse.json({ error: 'Kunne ikke slette dokumenter' }, { status: 500 });
+    // Slet rækker fra DB (én ad gangen via insurance API)
+    let deleted = 0;
+    for (const doc of kundeDocs) {
+      try {
+        await insurance.documents.delete(doc.id);
+        deleted++;
+      } catch {
+        logger.warn(`[forsikring/documents/bulk] Kunne ikke slette doc ${doc.id}`);
+      }
     }
 
-    logger.log(`[forsikring/documents/bulk] Slettet ${docIds.length} docs for kunde ${kundeId}`);
-
-    return NextResponse.json({ deleted: docIds.length });
+    logger.log(
+      `[forsikring/documents/bulk] Slettet ${deleted}/${kundeDocs.length} docs for kunde ${kundeId}`
+    );
+    return NextResponse.json({ deleted });
   } catch (err) {
     logger.error('[forsikring/documents/bulk]', err);
     return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });

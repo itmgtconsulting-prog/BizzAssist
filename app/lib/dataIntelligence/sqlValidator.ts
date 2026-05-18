@@ -122,6 +122,21 @@ const FORBIDDEN_FUNCTIONS = [
   'pg_reload_conf',
 ];
 
+/**
+ * BIZZ-1624: MySQL-only dato-funktioner der ikke eksisterer i PostgreSQL.
+ * AI genererer til tider YEAR(), MONTH() etc. trods prompt-instruktion.
+ * Fanger fejlen tidligt med en brugervenlig fejlbesked + forslag.
+ */
+const MYSQL_DATE_FUNCTIONS = [
+  'year',
+  'month',
+  'day',
+  'dayofweek',
+  'dayofyear',
+  'weekday',
+  'date_format',
+];
+
 export interface ValidationResult {
   valid: boolean;
   /** SQL med eventuel LIMIT-injection; uændret hvis valid var false */
@@ -194,6 +209,13 @@ export function validateSql(rawSql: string): ValidationResult {
     return { valid: false, sanitized_sql: '', reason: 'SQL er tom' };
   }
 
+  // BIZZ-1624: Auto-rewrite MySQL date functions to PostgreSQL equivalents.
+  // Claude sometimes generates YEAR(col) despite prompt instructions.
+  // Silent fix avoids user-facing errors for a common AI mistake.
+  rawSql = rawSql.replace(/\bYEAR\s*\(\s*([^)]+)\)/gi, 'EXTRACT(YEAR FROM $1)');
+  rawSql = rawSql.replace(/\bMONTH\s*\(\s*([^)]+)\)/gi, 'EXTRACT(MONTH FROM $1)');
+  rawSql = rawSql.replace(/\bDAY\s*\(\s*([^)]+)\)/gi, 'EXTRACT(DAY FROM $1)');
+
   // Maximal længde — undgå DoS via stort input
   if (rawSql.length > 10_000) {
     return { valid: false, sanitized_sql: rawSql, reason: 'SQL er for lang (max 10.000 tegn)' };
@@ -262,6 +284,20 @@ export function validateSql(rawSql: string): ValidationResult {
         valid: false,
         sanitized_sql: rawSql,
         reason: `Forbudt funktion: ${fn}()`,
+      };
+    }
+  }
+
+  // BIZZ-1624: Reject MySQL-only date functions with helpful error message
+  for (const fn of MYSQL_DATE_FUNCTIONS) {
+    const re = new RegExp(`\\b${fn}\\s*\\(`, 'i');
+    if (re.test(stripped)) {
+      const pgAlternative =
+        fn === 'date_format' ? 'to_char()' : `EXTRACT(${fn.toUpperCase()} FROM col)`;
+      return {
+        valid: false,
+        sanitized_sql: rawSql,
+        reason: `${fn.toUpperCase()}() er MySQL-syntax og findes ikke i PostgreSQL. Brug ${pgAlternative} i stedet.`,
       };
     }
   }

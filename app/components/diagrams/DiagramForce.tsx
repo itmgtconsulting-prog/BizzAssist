@@ -2837,7 +2837,12 @@ function DiagramForce({
                   fontSize="7"
                   className="pointer-events-none"
                 >
-                  {(item.label ?? '').slice(0, 30)}
+                  {(item.label?.startsWith('BFE ')
+                    ? lang === 'da'
+                      ? 'Ejendom'
+                      : 'Property'
+                    : (item.label ?? '')
+                  ).slice(0, 30)}
                 </text>
               ))}
               {node.overflowItems.length > 0 && (
@@ -3633,7 +3638,11 @@ function DiagramForce({
               }`}
             >
               <span className="text-slate-500 mr-2">•</span>
-              {item.label}
+              {item.label?.startsWith('BFE ')
+                ? lang === 'da'
+                  ? 'Ejendom'
+                  : 'Property'
+                : item.label}
             </a>
           ))}
         </div>

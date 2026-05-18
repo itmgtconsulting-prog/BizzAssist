@@ -50,6 +50,8 @@ interface PlanConfigRow {
   max_sales: number | null;
   sales_count: number;
   sort_order: number;
+  /** BIZZ-1618: Analyse-modul IDs inkluderet i planen */
+  modules: string[] | null;
   updated_at: string;
 }
 
@@ -201,6 +203,8 @@ function mapRow(row: PlanConfigRow, defaults?: (typeof PLANS)[PlanId]) {
     maxSales: row.max_sales ?? null,
     salesCount: row.sales_count ?? 0,
     sortOrder: row.sort_order ?? 0,
+    // BIZZ-1618: DB modules overskriver hardcoded; tom array = brug default
+    modules: row.modules && row.modules.length > 0 ? row.modules : (defaults?.modules ?? []),
     updatedAt: row.updated_at ?? '',
   };
 }
@@ -267,6 +271,7 @@ export async function GET(): Promise<NextResponse> {
           maxSales: null,
           salesCount: 0,
           sortOrder: LEGACY_PLAN_IDS.indexOf(id) + 1,
+          modules: d.modules,
           updatedAt: '',
         });
       }
@@ -323,6 +328,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           max_sales: updates.maxSales ?? null,
           sales_count: updates.salesCount ?? 0,
           sort_order: updates.sortOrder ?? 99,
+          // BIZZ-1618: Dynamisk modul-tildeling
+          modules: Array.isArray(updates.modules) ? updates.modules : [],
           updated_at: new Date().toISOString(),
           updated_by: user.id,
         };
@@ -404,6 +411,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         if (updates.maxSales !== undefined) updateFields.max_sales = updates.maxSales;
         if (updates.salesCount !== undefined) updateFields.sales_count = updates.salesCount;
         if (updates.sortOrder !== undefined) updateFields.sort_order = updates.sortOrder;
+        // BIZZ-1618: Dynamisk modul-tildeling
+        if (updates.modules !== undefined)
+          updateFields.modules = Array.isArray(updates.modules) ? updates.modules : [];
 
         // Use upsert to handle both existing and new-to-DB plans
         const defaults = LEGACY_PLAN_IDS.includes(planId as PlanId)

@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import { AdminNavTabs } from '../AdminNavTabs';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { ANALYSE_MODULES } from '@/app/lib/analyseModules';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -63,6 +64,8 @@ interface PlanConfig {
   maxSales: number | null;
   salesCount: number;
   sortOrder: number;
+  /** BIZZ-1618: Analyse-moduler inkluderet i planen */
+  modules: string[];
   updatedAt: string | null;
 }
 
@@ -140,6 +143,7 @@ const NEW_PLAN_DEFAULTS: Omit<PlanConfig, 'id'> = {
   maxSales: null,
   salesCount: 0,
   sortOrder: 99,
+  modules: [],
   updatedAt: null,
 };
 
@@ -332,7 +336,7 @@ export default function PlansClient() {
   const updatePlanField = (
     planId: string,
     field: keyof PlanConfig,
-    value: number | boolean | string
+    value: number | boolean | string | string[]
   ) => {
     setPlanEdits((prev) => ({
       ...prev,
@@ -379,6 +383,7 @@ export default function PlansClient() {
           maxSales: merged.maxSales,
           salesCount: merged.salesCount,
           sortOrder: merged.sortOrder,
+          modules: merged.modules ?? [],
         }),
       });
       if (!res.ok) {
@@ -1454,6 +1459,39 @@ export default function PlansClient() {
                                   ? 'Fra Stripe Dashboard → Products → Price ID'
                                   : 'From Stripe Dashboard → Products → Price ID'}
                               </p>
+                            </div>
+
+                            {/* BIZZ-1618: Analyse-moduler — checkboxes */}
+                            <div>
+                              <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-2">
+                                {da ? 'Analyse-moduler' : 'Analysis modules'}
+                              </label>
+                              <div className="grid grid-cols-2 gap-1.5">
+                                {ANALYSE_MODULES.map((m) => {
+                                  const planModules =
+                                    (getPlanValue(plan, 'modules') as string[]) ?? [];
+                                  const checked = planModules.includes(m.id);
+                                  return (
+                                    <label
+                                      key={m.id}
+                                      className="flex items-center gap-2 text-xs text-slate-300 hover:text-white cursor-pointer py-1"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        onChange={() => {
+                                          const next = checked
+                                            ? planModules.filter((id) => id !== m.id)
+                                            : [...planModules, m.id];
+                                          updatePlanField(plan.id, 'modules', next);
+                                        }}
+                                        className="rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-500/30 w-3.5 h-3.5"
+                                      />
+                                      {da ? m.label : m.labelEn}
+                                    </label>
+                                  );
+                                })}
+                              </div>
                             </div>
 
                             {/* Action buttons */}

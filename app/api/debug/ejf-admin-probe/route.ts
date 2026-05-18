@@ -194,7 +194,61 @@ export async function GET(): Promise<NextResponse> {
     )
   );
 
-  // ── 11. Introspection ──
+  // ── 11. EjerskabBegraenset felt-probe — alle mulige felter ──
+  const ejerskabFields = [
+    'bestemtFastEjendomBFENr',
+    'ejendeVirksomhedCVRNr',
+    'ejerforholdskode',
+    'faktiskEjerandel_taeller',
+    'faktiskEjerandel_naevner',
+    'status',
+    'virkningFra',
+    'virkningTil',
+    'behandlingsID',
+    'forretningshaendelse',
+    'forretningsomraade',
+    'forretningsproces',
+    'id_namespace',
+    'id_lokalId',
+    'registreringFra',
+    'registreringsaktoer',
+    'registreringTil',
+    'virkningsaktoer',
+  ];
+  // Test hvert felt individuelt for at finde hvilke der eksisterer
+  for (const field of ejerskabFields) {
+    results.push(
+      await probe(
+        token,
+        `EjerskabB.${field}`,
+        `{ EJFCustom_EjerskabBegraenset(first: 1, virkningstid: "${VT}") { nodes { ${field} } } }`
+      )
+    );
+  }
+
+  // Test relationer
+  const ejerskabRelations = [
+    'ejendePersonBegraenset { navn { navn } }',
+    'ejerskabAdministreresAfPersonEllerVirksomhedsoplysninger { navn }',
+    'ejendomsadministratorErPersonEllerVirksomhedsoplysninger { navn }',
+    'oplysningerEjesAfEjerskab { navn fiktivtPVnummer }',
+    'ejerskabEjesAfEjerskab { id_lokalId }',
+    'virksomhedCVRNr_20_Virksomhed_CVRNummer_ref { CVRNummer }',
+    'ejendeVirksomhedCVRNr_20_Virksomhed_CVRNummer_ref { CVRNummer }',
+    'personBegraenset { navn { navn } foedselsdato }',
+  ];
+  for (const rel of ejerskabRelations) {
+    const relName = rel.split('{')[0].trim().split(' ')[0];
+    results.push(
+      await probe(
+        token,
+        `EjerskabB.rel:${relName}`,
+        `{ EJFCustom_EjerskabBegraenset(first: 1, virkningstid: "${VT}") { nodes { id_lokalId ${rel} } } }`
+      )
+    );
+  }
+
+  // ── 12. Introspection ──
   results.push(
     await probe(
       token,

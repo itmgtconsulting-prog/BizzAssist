@@ -360,13 +360,27 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
     : [];
   const aktuelStatus = gyldigNu(statusser);
   const rawStatus = aktuelStatus?.status ?? aktuelStatus?.statuskode ?? null;
-  const aktiv = rawStatus === 'NORMAL' || rawStatus === 'AKTIV';
+  const metadata = src.virksomhedMetadata as Record<string, unknown> | undefined;
+  const sammensatStatus =
+    typeof metadata?.sammensatStatus === 'string' ? metadata.sammensatStatus : '';
 
   // ── Start/slut-dato ──
   const livsforloeb = Array.isArray(src.livsforloeb)
     ? (src.livsforloeb as (Periodic & Record<string, unknown>)[])
     : [];
   const forloeb = gyldigNu(livsforloeb);
+  const harSlutdato = livsforloeb.some(
+    (l) => (l as { periode?: { gyldigTil?: string | null } }).periode?.gyldigTil != null
+  );
+  // BIZZ-1648: sammensatStatus er den pålidelige kilde — ejerforeninger/
+  // foreninger har ofte atypiske statuskoder (hverken NORMAL/AKTIV),
+  // men sammensatStatus viser korrekt "Normal" / "Ophørt" etc.
+  const ceased =
+    sammensatStatus === 'Ophørt' ||
+    sammensatStatus === 'Slettet' ||
+    harSlutdato ||
+    rawStatus === 'OPHOERT';
+  const aktiv = !ceased;
   const startdate = forloeb?.periode?.gyldigFra ? formatDate(forloeb.periode.gyldigFra) : null;
   const enddate = aktiv
     ? null
@@ -404,7 +418,6 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
   const formaalFromArr = gyldigNu(formaalArr)?.formaal ?? null;
 
   // ── Registreret kapital (fra virksomhedMetadata.nyesteKapital) ──
-  const metadata = src.virksomhedMetadata as Record<string, unknown> | undefined;
   const nyesteKapital = metadata?.nyesteKapital as Record<string, unknown> | undefined;
   const registreretKapitalMeta =
     nyesteKapital &&

@@ -137,10 +137,12 @@ function mapHit(hit: Record<string, unknown>): CVRSearchResult | null {
   const livsforloeb = Array.isArray(src.livsforloeb)
     ? (src.livsforloeb as { periode?: { gyldigTil?: string | null } }[])
     : [];
-  const harSlutdato = livsforloeb.some((l) => l.periode?.gyldigTil != null);
-  // BIZZ-1648: sammensatStatus er den pålidelige kilde — ejerforeninger/
-  // foreninger har ofte atypiske statuskoder (hverken NORMAL/AKTIV/""),
-  // men sammensatStatus viser korrekt "Normal" / "Ophørt" etc.
+  // BIZZ-1648: Tjek kun den seneste livsforloeb-periode — virksomheder kan
+  // have historiske perioder med slutdato (f.eks. genregistreret efter ophør).
+  const senestePeriode = livsforloeb[livsforloeb.length - 1];
+  const harSlutdato = senestePeriode?.periode?.gyldigTil != null;
+  // sammensatStatus er den pålidelige kilde — ejerforeninger/foreninger
+  // har ofte atypiske statuskoder (hverken NORMAL/AKTIV/"").
   const ceased =
     sammensatStatus === 'Ophørt' ||
     sammensatStatus === 'Slettet' ||

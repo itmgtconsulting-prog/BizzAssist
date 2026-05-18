@@ -95,10 +95,12 @@ export async function hentCvrStatus(cvr: number): Promise<CvrStatus | null> {
     const navn = gyldigNu(navne)?.navn ?? null;
 
     const livsforloeb = Array.isArray(hit.livsforloeb) ? (hit.livsforloeb as Periodic[]) : [];
-    const harSlutdato = livsforloeb.some((l) => l.periode?.gyldigTil != null);
+    // BIZZ-1648: Tjek kun seneste livsforloeb-periode (genregistreringer)
+    const senestePeriode = livsforloeb[livsforloeb.length - 1];
+    const harSlutdato = senestePeriode?.periode?.gyldigTil != null;
     const meta = hit.virksomhedMetadata as Record<string, unknown> | undefined;
     const sammensatStatus = typeof meta?.sammensatStatus === 'string' ? meta.sammensatStatus : '';
-    const isCeased = harSlutdato || sammensatStatus === 'Ophørt';
+    const isCeased = harSlutdato || sammensatStatus === 'Ophørt' || sammensatStatus === 'Slettet';
 
     const result: CvrStatus = { cvr, navn, isCeased };
     cvrStatusCache.set(cvr, result);

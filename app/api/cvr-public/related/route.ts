@@ -249,11 +249,15 @@ export async function GET(req: NextRequest) {
     const meta = src.virksomhedMetadata as Record<string, unknown> | undefined;
     const sammensatStatus = typeof meta?.sammensatStatus === 'string' ? meta.sammensatStatus : '';
     const livsforloeb = Array.isArray(src.livsforloeb) ? (src.livsforloeb as Periodic[]) : [];
-    const harSlutdato = livsforloeb.some((l) => l.periode?.gyldigTil != null);
-    const aktiv =
-      (statusVal === 'NORMAL' || statusVal === 'AKTIV' || statusVal === '') &&
-      sammensatStatus !== 'Ophørt' &&
-      !harSlutdato;
+    // BIZZ-1648: Tjek kun seneste livsforloeb-periode (genregistreringer)
+    const senestePeriode = livsforloeb[livsforloeb.length - 1];
+    const harSlutdato = senestePeriode?.periode?.gyldigTil != null;
+    const ceased =
+      sammensatStatus === 'Ophørt' ||
+      sammensatStatus === 'Slettet' ||
+      harSlutdato ||
+      statusVal === 'OPHOERT';
+    const aktiv = !ceased;
     const maanedsBeskæf = meta?.nyesteErstMaanedsbeskaeftigelse as
       | Record<string, unknown>
       | undefined;

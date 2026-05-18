@@ -40,6 +40,15 @@ export interface GapRapportInput {
     description: string;
     recommendation: string | null;
   }>;
+  /** BIZZ-1633: Dækninger per police — vises i rapporten så kunden ser det fulde billede */
+  coverages?: Array<{
+    policy_id: string;
+    coverage_code: string;
+    coverage_label: string;
+    is_covered: boolean;
+    sum_insured_dkk: number | null;
+    deductible_dkk: number | null;
+  }>;
 }
 
 /** XML-escape */
@@ -285,6 +294,38 @@ export async function buildGapRapportDocx(input: GapRapportInput): Promise<Buffe
             { color: GRAY, size: 20 }
           )
         );
+      }
+
+      // BIZZ-1633: Vis eksisterende dækninger (grøn) FØR gaps (rød/gul)
+      const ejendomCoverages = (input.coverages ?? []).filter(
+        (c) => c.policy_id === a.matched_policy_id && c.is_covered
+      );
+      if (ejendomCoverages.length > 0) {
+        const covRows: string[] = [
+          tr(
+            tc('Dækning', { bg: TABLE_HEADER_BG, bold: true, color: 'ffffff', width: 3500 }),
+            tc('Forsikringssum', { bg: TABLE_HEADER_BG, bold: true, color: 'ffffff', width: 2500 }),
+            tc('Selvrisiko', { bg: TABLE_HEADER_BG, bold: true, color: 'ffffff', width: 2000 })
+          ),
+        ];
+        for (const cov of ejendomCoverages) {
+          covRows.push(
+            tr(
+              tc(`✓ ${cov.coverage_label}`, {
+                bg: LIGHT_GREEN_BG,
+                bold: true,
+                color: GREEN,
+                width: 3500,
+              }),
+              tc(fmtDkk(cov.sum_insured_dkk), { bg: LIGHT_GREEN_BG, width: 2500 }),
+              tc(fmtDkk(cov.deductible_dkk), { bg: LIGHT_GREEN_BG, color: GRAY, width: 2000 })
+            )
+          );
+        }
+        body.push(
+          `<w:tbl><w:tblPr><w:tblW w:w="8000" w:type="dxa"/><w:tblBorders><w:top w:val="single" w:sz="2" w:color="${GREEN}"/><w:bottom w:val="single" w:sz="2" w:color="e2e8f0"/><w:left w:val="single" w:sz="6" w:color="${GREEN}"/><w:insideH w:val="single" w:sz="2" w:color="e2e8f0"/><w:insideV w:val="single" w:sz="2" w:color="e2e8f0"/></w:tblBorders></w:tblPr>${covRows.join('')}</w:tbl>`
+        );
+        body.push(spacer());
       }
 
       const ejendomGaps = gaps.filter((g) => g.policy_id === a.matched_policy_id);

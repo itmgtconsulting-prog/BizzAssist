@@ -47,22 +47,25 @@ export async function GET(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = (admin as any).schema(schemaName);
 
-    const [analyseResult, aktiverResult, gapsResult, policiesResult] = await Promise.all([
-      db
-        .from('forsikring_analyser')
-        .select('*')
-        .eq('id', id)
-        .eq('tenant_id', auth.tenantId)
-        .maybeSingle(),
-      db
-        .from('forsikring_aktiver')
-        .select('*')
-        .eq('analyse_id', id)
-        .eq('tenant_id', auth.tenantId)
-        .order('type'),
-      db.from('forsikring_gaps').select('*').eq('tenant_id', auth.tenantId),
-      db.from('forsikring_policies').select('*').eq('tenant_id', auth.tenantId),
-    ]);
+    const [analyseResult, aktiverResult, gapsResult, policiesResult, coveragesResult] =
+      await Promise.all([
+        db
+          .from('forsikring_analyser')
+          .select('*')
+          .eq('id', id)
+          .eq('tenant_id', auth.tenantId)
+          .maybeSingle(),
+        db
+          .from('forsikring_aktiver')
+          .select('*')
+          .eq('analyse_id', id)
+          .eq('tenant_id', auth.tenantId)
+          .order('type'),
+        db.from('forsikring_gaps').select('*').eq('tenant_id', auth.tenantId),
+        db.from('forsikring_policies').select('*').eq('tenant_id', auth.tenantId),
+        // BIZZ-1633: Hent dækninger for rapport
+        db.from('forsikring_coverages').select('*').eq('tenant_id', auth.tenantId),
+      ]);
 
     if (!analyseResult.data) {
       return NextResponse.json({ error: 'Analyse ikke fundet' }, { status: 404 });
@@ -72,6 +75,7 @@ export async function GET(
     const aktiver = aktiverResult.data ?? [];
     const gaps = gapsResult.data ?? [];
     const policies = policiesResult.data ?? [];
+    const coverages = coveragesResult.data ?? [];
 
     if (format === 'csv') {
       return generateCsv(analyse, aktiver, gaps);
@@ -111,6 +115,15 @@ export async function GET(
           title: String(g.title ?? ''),
           description: String(g.description ?? ''),
           recommendation: (g.recommendation as string) ?? null,
+        })),
+        // BIZZ-1633: Dækninger per police
+        coverages: coverages.map((c: Record<string, unknown>) => ({
+          policy_id: String(c.policy_id ?? ''),
+          coverage_code: String(c.coverage_code ?? ''),
+          coverage_label: String(c.label ?? c.coverage_code ?? ''),
+          is_covered: c.is_covered !== false,
+          sum_insured_dkk: (c.sum_insured_dkk as number) ?? null,
+          deductible_dkk: (c.deductible_dkk as number) ?? null,
         })),
       });
 

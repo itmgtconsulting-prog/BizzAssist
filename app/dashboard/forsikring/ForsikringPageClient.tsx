@@ -664,8 +664,11 @@ function AnalyseSection({
 
   /** BIZZ-1404: Hent tidligere dokumenter for genbrug-picker */
   useEffect(() => {
+    // BIZZ-1631: Nulstil state STRAKS ved kundeskift — forhindrer at forrige
+    // kundes docs/analyser vises mens ny data hentes.
+    setPreviousDocs([]);
+    setSelectedDocIds(new Set());
     if (!showDocPicker || !selected) {
-      setPreviousDocs([]);
       return;
     }
     fetch(`/api/forsikring/documents/for-customer?kunde_id=${encodeURIComponent(selected.id)}`)
@@ -674,9 +677,7 @@ function AnalyseSection({
         const docs = d.documents ?? [];
         setPreviousDocs(docs);
         // BIZZ-1442: Auto-check alle tidligere docs som default
-        setSelectedDocIds(
-          (prev) => new Set([...prev, ...docs.map((doc: { id: string }) => doc.id)])
-        );
+        setSelectedDocIds(new Set(docs.map((doc: { id: string }) => doc.id)));
       })
       .catch(() => setPreviousDocs([]));
   }, [showDocPicker, selected]);

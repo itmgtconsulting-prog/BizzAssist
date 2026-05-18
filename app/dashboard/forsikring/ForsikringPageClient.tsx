@@ -1810,10 +1810,12 @@ export default function ForsikringPageClient(): React.ReactElement {
   const refresh = useCallback(async () => {
     setError(null);
     try {
-      // BIZZ-1399: Filtrer per sag hvis aktiv
-      const url = activeSagId
-        ? `/api/forsikring?sag_id=${encodeURIComponent(activeSagId)}`
-        : '/api/forsikring';
+      // BIZZ-1631: Filtrer per kunde + sag
+      const params = new URLSearchParams();
+      if (activeSagId) params.set('sag_id', activeSagId);
+      if (selectedCustomer?.id) params.set('kunde_id', selectedCustomer.id);
+      const qs = params.toString();
+      const url = qs ? `/api/forsikring?${qs}` : '/api/forsikring';
       const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string; detail?: string };
@@ -1828,7 +1830,7 @@ export default function ForsikringPageClient(): React.ReactElement {
     } finally {
       setLoading(false);
     }
-  }, [activeSagId]);
+  }, [activeSagId, selectedCustomer?.id]);
 
   useEffect(() => {
     void refresh();

@@ -74,8 +74,8 @@ function recordParseTokens(
   })();
 }
 
-/** Tag længere tid pga. Claude-kald (typisk 10-30 sek for en police-PDF) */
-export const maxDuration = 60;
+/** Øget fra 60 → 120s — nogle policer kræver lang Claude-processing */
+export const maxDuration = 120;
 
 interface ParseRequestBody {
   document_id?: unknown;
@@ -126,6 +126,30 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   const insurance = await getInsuranceApi(auth.tenantId);
+
+  // Cleanup stuck "parsing" docs (Vercel timeout dræber processen uden at
+  // catch-blokken kører → status forbliver "parsing" permanent).
+  // Reset docs der har været "parsing" i >3 min til "failed".
+  try {
+    const allDocs = await insurance.documents.list();
+    const now = Date.now();
+    for (const d of allDocs) {
+      if (d.parse_status === 'parsing' && d.created_at) {
+        const age = now - new Date(d.created_at).getTime();
+        if (age > 3 * 60 * 1000) {
+          await insurance.documents.updateParseStatus(d.id, 'failed', {
+            error: `Timeout: parsing brugte mere end 3 minutter (sandsynligvis Vercel serverless timeout)`,
+          });
+          logger.warn(
+            `[forsikring/parse] Reset stuck doc "${d.original_name}" (${d.id}) fra parsing → failed`
+          );
+        }
+      }
+    }
+  } catch {
+    // Cleanup er non-fatal
+  }
+
   const doc = await insurance.documents.get(documentId);
   if (!doc) {
     return NextResponse.json({ error: 'Dokument ikke fundet' }, { status: 404 });

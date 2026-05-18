@@ -132,7 +132,7 @@ export async function detectDocumentType(
   text: string,
   apiKey: string
 ): Promise<DocumentTypeDetection> {
-  const client = new Anthropic({ apiKey });
+  const client = new Anthropic({ apiKey, timeout: 100_000 });
   // BIZZ-1398: Øget fra 3000 til 8000 tegn — følgebreve fylder typisk 1-2 sider
   // (~2000 tegn), så 3000 rammer kun følgebrevet og misklassificerer som korrespondance
   const sample = text.length > 8000 ? text.slice(0, 8000) : text;
@@ -230,7 +230,7 @@ Returnér nu JSON for følgende forsikringsoversigt:`;
  * @returns OversightParseResult med array af policer
  */
 export async function parseOversigt(text: string, apiKey: string): Promise<OversightParseResult> {
-  const client = new Anthropic({ apiKey });
+  const client = new Anthropic({ apiKey, timeout: 100_000 });
   const trimmedText = text.length > MAX_TEXT_CHARS ? text.slice(0, MAX_TEXT_CHARS) : text;
 
   let response: Anthropic.Message;
@@ -391,7 +391,7 @@ export async function parsePolicyFile(
   if (!apiKey) {
     return { ok: false, text, error: 'Anthropic API-key mangler' };
   }
-  const client = new Anthropic({ apiKey });
+  const client = new Anthropic({ apiKey, timeout: 100_000 });
 
   let response: Anthropic.Message;
   try {
@@ -504,7 +504,7 @@ export async function parsePolicyImage(
   }
 
   const base64 = imageBuffer.toString('base64');
-  const client = new Anthropic({ apiKey });
+  const client = new Anthropic({ apiKey, timeout: 100_000 });
 
   let response: Anthropic.Message;
   try {
@@ -633,7 +633,7 @@ export async function parseWithTypeDetection(
       if (!apiKey) {
         return { ok: false, text, error: 'Anthropic API-key mangler' };
       }
-      const client = new Anthropic({ apiKey });
+      const client = new Anthropic({ apiKey, timeout: 100_000 });
       let response: Anthropic.Message;
       try {
         response = await client.messages.create({

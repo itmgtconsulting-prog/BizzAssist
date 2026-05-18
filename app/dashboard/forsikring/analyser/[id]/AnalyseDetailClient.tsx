@@ -139,15 +139,25 @@ export default function AnalyseDetailClient({ analyseId }: { analyseId: string }
             {new Date(analyse.created_at).toLocaleDateString('da-DK')}
           </p>
         </div>
-        {/* BIZZ-1376: Eksport-knap */}
-        <a
-          href={`/api/forsikring/analyser/${analyseId}/eksport?format=csv`}
-          download
-          className="ml-auto bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5"
-        >
-          <Download size={13} />
-          {da ? 'Eksportér CSV' : 'Export CSV'}
-        </a>
+        {/* BIZZ-1618: Eksport-knapper — DOCX (primær) + CSV (sekundær) */}
+        <div className="ml-auto flex items-center gap-2">
+          <a
+            href={`/api/forsikring/analyser/${analyseId}/eksport?format=docx`}
+            download
+            className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5"
+          >
+            <Download size={13} />
+            {da ? 'Download rapport' : 'Download report'}
+          </a>
+          <a
+            href={`/api/forsikring/analyser/${analyseId}/eksport?format=csv`}
+            download
+            className="bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5"
+          >
+            <Download size={13} />
+            CSV
+          </a>
+        </div>
       </div>
 
       {/* KPI tiles */}

@@ -167,7 +167,34 @@ export async function GET(): Promise<NextResponse> {
     )
   );
 
-  // ── 8. Introspection ──
+  // ── 8. WHERE-filter test på virksomhedCVRNr ──
+  results.push(
+    await probe(
+      token,
+      '14. Admin WHERE virksomhedCVRNr=34671761',
+      `{ EJFCustom_EjendomsadministratorBegraenset(first: 50, virkningstid: "${VT}", where: { virksomhedCVRNr: { eq: 34671761 } }) { nodes { id_lokalId bestemtFastEjendomBFENr virksomhedCVRNr status } } }`
+    )
+  );
+
+  // ── 9. Brugerens query-struktur med fuld relation ──
+  results.push(
+    await probe(
+      token,
+      '15. Admin + ejendomsadministratorErPersonEllerVirksomhedsoplysninger',
+      `{ EJFCustom_EjendomsadministratorBegraenset(first: 3, virkningstid: "${VT}") { nodes { id_lokalId bestemtFastEjendomBFENr virksomhedCVRNr ejendomsadministratorErPersonEllerVirksomhedsoplysninger { navn fiktivtPVnummer } } } }`
+    )
+  );
+
+  // ── 10. CVR-ref relation (fra brugerens query) ──
+  results.push(
+    await probe(
+      token,
+      '16. Admin + virksomhedCVRNr_20 ref',
+      `{ EJFCustom_EjendomsadministratorBegraenset(first: 3, virkningstid: "${VT}") { nodes { id_lokalId bestemtFastEjendomBFENr virksomhedCVRNr_20_Virksomhed_CVRNummer_ref { CVRNummer } } } }`
+    )
+  );
+
+  // ── 11. Introspection ──
   results.push(
     await probe(
       token,

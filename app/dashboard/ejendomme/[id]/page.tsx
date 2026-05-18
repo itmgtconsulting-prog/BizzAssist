@@ -227,7 +227,13 @@ export default async function EjendommeDetailPage({
               .maybeSingle();
             if (cached?.bfe_nummer) {
               bbrResult.ejendomsrelationer = [
-                { bfeNummer: Number(cached.bfe_nummer), kommuneKode: cached.kommune_kode },
+                {
+                  bfeNummer: Number(cached.bfe_nummer),
+                  ejendomsnummer: null,
+                  ejendomstype: null,
+                  ejerlavKode: null,
+                  matrikelnr: null,
+                },
               ];
               bbrResult.bbrFejl = `Viser cached BBR-data fra ${new Date(cached.bbr_fetched_at).toLocaleDateString('da-DK')}. Live data utilgængelig.`;
               bbrFromCache = true;

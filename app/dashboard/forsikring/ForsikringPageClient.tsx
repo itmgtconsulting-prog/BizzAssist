@@ -729,6 +729,8 @@ function AnalyseSection({
             try {
               const formData = new FormData();
               formData.append('file', file);
+              // BIZZ-1632: Link dokument til valgt kunde
+              if (selected?.id) formData.append('kunde_id', selected.id);
               const upRes = await fetch('/api/forsikring/upload', {
                 method: 'POST',
                 body: formData,
@@ -1097,6 +1099,41 @@ function AnalyseSection({
               {da ? 'Luk' : 'Close'}
             </button>
           </div>
+
+          {/* BIZZ-1632: Slet alle dokumenter for denne kunde */}
+          {previousDocs.length > 0 && (
+            <button
+              type="button"
+              onClick={async () => {
+                if (
+                  !selected?.id ||
+                  !confirm(
+                    da
+                      ? `Slet alle ${previousDocs.length} dokumenter for ${selected.navn}?`
+                      : `Delete all ${previousDocs.length} documents for ${selected.navn}?`
+                  )
+                )
+                  return;
+                try {
+                  const r = await fetch(
+                    `/api/forsikring/documents/bulk?kunde_id=${encodeURIComponent(selected.id)}`,
+                    { method: 'DELETE' }
+                  );
+                  if (r.ok) {
+                    setPreviousDocs([]);
+                    setSelectedDocIds(new Set());
+                  }
+                } catch {
+                  /* non-fatal */
+                }
+              }}
+              className="text-xs text-red-400 hover:text-red-300 underline"
+            >
+              {da
+                ? `Slet alle ${previousDocs.length} dokumenter for ${selected.navn}`
+                : `Delete all ${previousDocs.length} documents for ${selected.navn}`}
+            </button>
+          )}
 
           {/* BIZZ-1442: Samlet doc-liste — alle docs med checkboxes */}
           {(() => {
@@ -1882,6 +1919,8 @@ export default function ForsikringPageClient(): React.ReactElement {
         formData.append('file', file);
         // BIZZ-1399: Link upload til aktiv sag
         if (activeSagId) formData.append('sag_id', activeSagId);
+        // BIZZ-1632: Link dokument til valgt kunde
+        if (selectedCustomer?.id) formData.append('kunde_id', selectedCustomer.id);
         const upRes = await fetch('/api/forsikring/upload', {
           method: 'POST',
           body: formData,

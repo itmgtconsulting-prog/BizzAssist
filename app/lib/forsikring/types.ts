@@ -111,6 +111,10 @@ export interface ForsikringDocument {
   parse_error: string | null;
   policy_id: string | null;
   uploaded_by: string | null;
+  /** BIZZ-1632: Kunde-ID for at isolere dokumenter per kunde */
+  kunde_id: string | null;
+  /** BIZZ-1399: Sag-ID (forsikringssag) */
+  sag_id: string | null;
   created_at: string;
   updated_at: string;
 }

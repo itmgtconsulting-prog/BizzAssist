@@ -106,6 +106,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // BIZZ-1399: Optionelt sag_id fra FormData
     const sagId = formData.get('sag_id');
     const sagIdStr = typeof sagId === 'string' && sagId.length > 0 ? sagId : undefined;
+    // BIZZ-1632: kunde_id for at isolere dokumenter per kunde
+    const kundeId = formData.get('kunde_id');
+    const kundeIdStr = typeof kundeId === 'string' && kundeId.length > 0 ? kundeId : undefined;
 
     // Opret række i forsikring_documents
     const insurance = await getInsuranceApi(auth.tenantId);
@@ -116,6 +119,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       size_bytes: file.size,
       uploaded_by: auth.userId,
       sag_id: sagIdStr,
+      kunde_id: kundeIdStr,
     });
 
     // Audit log

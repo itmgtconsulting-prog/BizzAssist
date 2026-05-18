@@ -1403,6 +1403,77 @@ const checkBranchekravPortfolio: PortfolioCheckFn = ({ branche, policer, coverag
 };
 
 /**
+ * GAP-070: Dobbelt-forsikring — samme ejendom (adresse) dækket af 2+ policer.
+ */
+const checkDobbeltForsikring: PortfolioCheckFn = ({ policer }) => {
+  const adresseMap = new Map<string, string[]>();
+  for (const p of policer) {
+    const addr = (p.property_address ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+    if (!addr || addr.length < 5) continue;
+    const existing = adresseMap.get(addr) ?? [];
+    existing.push(p.policy_number);
+    adresseMap.set(addr, existing);
+  }
+  const doubles = [...adresseMap.entries()].filter(([, nums]) => nums.length >= 2);
+  if (doubles.length === 0) return null;
+  const first = doubles[0];
+  return {
+    check_id: 'GAP-070',
+    category: 'optimering',
+    severity: 'warning',
+    title: `Dobbelt-forsikring: ${doubles.length} adresse${doubles.length > 1 ? 'r' : ''} dækket af flere policer`,
+    description:
+      `${doubles.length} ejendom${doubles.length > 1 ? 'me' : ''} er forsikret af 2+ policer. ` +
+      `Eksempel: "${first[0]}" dækkes af police ${first[1].join(' + ')}. ` +
+      `Ved dobbelt-forsikring betaler kunden unødvendig præmie.`,
+    recommendation: 'Konsolidér dækningen til én police per ejendom.',
+    estimated_impact_dkk: null,
+    source_data: { doubles: doubles.map(([a, nums]) => ({ adresse: a, policer: nums })) },
+  };
+};
+
+/**
+ * GAP-071: Dæknings-overlap — samme coverage_code på 2+ policer for samme adresse.
+ */
+const checkDaekningsOverlap: PortfolioCheckFn = ({ policer, coveragesByPolicy }) => {
+  const adresseCoverages = new Map<string, Map<string, string[]>>();
+  for (const p of policer) {
+    const addr = (p.property_address ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+    if (!addr || addr.length < 5) continue;
+    const covs = coveragesByPolicy.get(p.id) ?? [];
+    for (const c of covs) {
+      if (!c.is_covered) continue;
+      const covMap = adresseCoverages.get(addr) ?? new Map<string, string[]>();
+      const existing = covMap.get(c.coverage_code) ?? [];
+      existing.push(p.policy_number);
+      covMap.set(c.coverage_code, existing);
+      adresseCoverages.set(addr, covMap);
+    }
+  }
+  const overlaps: Array<{ adresse: string; coverage: string; policer: string[] }> = [];
+  for (const [addr, covMap] of adresseCoverages) {
+    for (const [code, nums] of covMap) {
+      if (nums.length >= 2) overlaps.push({ adresse: addr, coverage: code, policer: nums });
+    }
+  }
+  if (overlaps.length === 0) return null;
+  const ex = overlaps[0];
+  return {
+    check_id: 'GAP-071',
+    category: 'optimering',
+    severity: 'info',
+    title: `Dæknings-overlap: ${overlaps.length} dækning${overlaps.length > 1 ? 'er' : ''} er dubleret`,
+    description:
+      `${overlaps.length} dækningstype${overlaps.length > 1 ? 'r' : ''} findes i flere policer ` +
+      `for samme ejendom. Eksempel: "${ex.coverage}" på "${ex.adresse}" ` +
+      `dækkes af police ${ex.policer.join(' + ')}.`,
+    recommendation: 'Fjern dubletter fra den mindst fordelagtige police.',
+    estimated_impact_dkk: null,
+    source_data: { overlaps },
+  };
+};
+
+/**
  * Alle portefølje-checks i præsentationsrækkefølge.
  */
 const PORTFOLIO_CHECKS: readonly PortfolioCheckFn[] = [
@@ -1417,6 +1488,9 @@ const PORTFOLIO_CHECKS: readonly PortfolioCheckFn[] = [
   // allerede af GAP-100 (uforsikret aktiv) på den enkelte ejendoms-række.
   checkPortfolioCyber,
   checkPortfolioRetshjaelp,
+  // BIZZ-1635: Dobbelt-forsikring og overlap-detektion
+  checkDobbeltForsikring,
+  checkDaekningsOverlap,
 ];
 
 /**

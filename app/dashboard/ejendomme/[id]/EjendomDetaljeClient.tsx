@@ -423,7 +423,9 @@ export default function EjendomDetaljeClient({
   const [expandedPlaner, setExpandedPlaner] = useState<Set<string>>(new Set());
 
   /** Salgshistorik fra EJF Datafordeler — handler med prisdata */
-  const [salgshistorik, setSalgshistorik] = useState<HandelData[] | null>(null);
+  const [salgshistorik, setSalgshistorik] = useState<HandelData[] | null>(
+    prefetched?.salgshistorikData ?? null
+  );
   /** True mens salgshistorik hentes */
   const [salgshistorikLoader, setSalgshistorikLoader] = useState(false);
   /** True hvis EJF-adgang mangler hos Geodatastyrelsen */
@@ -1142,27 +1144,33 @@ export default function EjendomDetaljeClient({
         if (!signal.aborted) setDiagramResolveLoader(false);
       });
 
-    setSalgshistorikLoader(true);
-    fetch(`/api/salgshistorik?bfeNummer=${bfeNummer}`, { signal })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data: SalgshistorikResponse | null) => {
-        if (signal.aborted) return;
-        // BIZZ-1591: startTransition — salgshistorik er Økonomi-tab data
-        startTransition(() => {
-          setSalgshistorikManglerAdgang(data?.manglerAdgang ?? false);
-          setSalgshistorik(data?.handler ?? []);
+    // BIZZ-1630: Skip klient-side fetch hvis server-side prefetch leverede data
+    if (prefetched?.salgshistorikData && prefetched.salgshistorikData.length > 0) {
+      // Allerede sat via useState init — ingen fetch nødvendig
+    } else {
+      setSalgshistorikLoader(true);
+    }
+    if (!prefetched?.salgshistorikData)
+      fetch(`/api/salgshistorik?bfeNummer=${bfeNummer}`, { signal })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data: SalgshistorikResponse | null) => {
+          if (signal.aborted) return;
+          // BIZZ-1591: startTransition — salgshistorik er Økonomi-tab data
+          startTransition(() => {
+            setSalgshistorikManglerAdgang(data?.manglerAdgang ?? false);
+            setSalgshistorik(data?.handler ?? []);
+          });
+        })
+        .catch((err) => {
+          if (err.name === 'AbortError') return;
+          logger.error('[ejendom] Salgshistorik fetch error:', err);
+          startTransition(() => {
+            setSalgshistorik([]);
+          });
+        })
+        .finally(() => {
+          if (!signal.aborted) setSalgshistorikLoader(false);
         });
-      })
-      .catch((err) => {
-        if (err.name === 'AbortError') return;
-        logger.error('[ejendom] Salgshistorik fetch error:', err);
-        startTransition(() => {
-          setSalgshistorik([]);
-        });
-      })
-      .finally(() => {
-        if (!signal.aborted) setSalgshistorikLoader(false);
-      });
 
     return () => controller.abort();
     // BIZZ-1585: dawaAdresse er nu obligatorisk for at skelne leaf-ejerlejlighed

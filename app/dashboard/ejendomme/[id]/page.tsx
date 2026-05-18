@@ -12,6 +12,7 @@ import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
 import type { DawaAdresse } from '@/app/lib/dawa';
 import type { EjendomApiResponse } from '@/app/lib/fetchBbrData';
 import type { VurderingResponse } from '@/app/api/vurdering/route';
+import type { HandelData } from '@/app/api/salgshistorik/route';
 import EjendomDetaljeClient from './EjendomDetaljeClient';
 import { logger } from '@/app/lib/logger';
 
@@ -42,6 +43,8 @@ export interface PrefetchedPropertyData {
   vurderingData?: VurderingResponse | null;
   /** BIZZ-1323: Server-side prefetched ejerskab fra ejf_ejerskab — sparer 300-800ms */
   ejerskabData?: PrefetchedEjerskab | null;
+  /** BIZZ-1630: Server-side prefetched salgshistorik fra ejerskifte_historik — sparer 300-1500ms */
+  salgshistorikData?: HandelData[] | null;
 }
 
 export default async function EjendommeDetailPage({
@@ -249,14 +252,15 @@ export default async function EjendommeDetailPage({
         // BIZZ-1287+1323+1327: Prefetch vurdering + ejerskab parallelt fra cache
         let vurderingData: VurderingResponse | null = null;
         let ejerskabData: PrefetchedEjerskab | null = null;
+        let salgshistorikData: HandelData[] | null = null;
         const bfeNummer = bbrResult.ejendomsrelationer?.[0]?.bfeNummer;
 
         if (bfeNummer) {
           const { createAdminClient } = await import('@/lib/supabase/admin');
           const admin = createAdminClient();
 
-          // Kør begge cache-lookups parallelt
-          const [vurResult, ejfResult] = await Promise.allSettled([
+          // Kør alle cache-lookups parallelt
+          const [vurResult, ejfResult, shResult] = await Promise.allSettled([
             // Vurdering fra cache
             (async () => {
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -303,13 +307,36 @@ export default async function EjendommeDetailPage({
               }
               return null;
             })(),
+            // BIZZ-1630: Salgshistorik fra ejerskifte_historik (537k rækker)
+            (async () => {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const { data: handler } = await (admin as any)
+                .from('ejerskifte_historik')
+                .select(
+                  'overtagelsesdato, ejer_navn, ejer_cvr, ejer_type, ejerandel_taeller, ejerandel_naevner, kontant_koebesum, i_alt_koebesum, koebsaftale_dato, dokument_id, historisk_kilde'
+                )
+                .eq('bfe_nummer', bfeNummer)
+                .order('overtagelsesdato', { ascending: false })
+                .limit(20);
+              if (handler && (handler as unknown[]).length > 0) {
+                return handler as HandelData[];
+              }
+              return null;
+            })(),
           ]);
 
           if (vurResult.status === 'fulfilled') vurderingData = vurResult.value;
           if (ejfResult.status === 'fulfilled') ejerskabData = ejfResult.value;
+          if (shResult.status === 'fulfilled') salgshistorikData = shResult.value;
         }
 
-        prefetched = { dawaAdresse: adresse, bbrData, vurderingData, ejerskabData };
+        prefetched = {
+          dawaAdresse: adresse,
+          bbrData,
+          vurderingData,
+          ejerskabData,
+          salgshistorikData,
+        };
       } else {
         prefetched = { dawaAdresse: null, bbrData: null };
       }

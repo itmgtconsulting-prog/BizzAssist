@@ -186,8 +186,59 @@ export default async function EjendommeDetailPage({
 
       if (adresse) {
         // Step 2: Fetch BBR data server-side (uses DAWA UUID)
-        const bbrResult = await fetchBbrForAddress(id);
+        // BIZZ-1627: Race BBR live fetch vs timeout — fallback til bbr_ejendom_status
+        // cache når Datafordeler er langsom/nede. Giver <50ms response i stedet for 1-3s.
+        let bbrResult: Omit<EjendomApiResponse, 'dawaId'>;
+        let bbrFromCache = false;
+        try {
+          bbrResult = await Promise.race([
+            fetchBbrForAddress(id),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('BBR_TIMEOUT')), 4000)
+            ),
+          ]);
+        } catch {
+          // Live BBR fejlede/timeouted — prøv cache fallback fra bbr_ejendom_status
+          bbrResult = {
+            bbr: null,
+            enheder: null,
+            bygningPunkter: null,
+            ejendomsrelationer: null,
+            ejerlejlighedBfe: null,
+            moderBfe: null,
+            parentAdgangsadresseId: null,
+            opgange: null,
+            etager: null,
+            tekniskeAnlaeg: null,
+            bbrFejl:
+              'BBR-data midlertidigt utilgængeligt — Datafordeler API svarer ikke. Prøv igen om lidt.',
+          };
+          try {
+            const { createAdminClient } = await import('@/lib/supabase/admin');
+            const admin = createAdminClient();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: cached } = await (admin as any)
+              .from('bbr_ejendom_status')
+              .select(
+                'bfe_nummer, kommune_kode, samlet_boligareal, samlet_erhvervsareal, grundareal, bebygget_areal, opfoerelsesaar, byg021_anvendelse, energimaerke, antal_etager, antal_boligenheder, bygninger, enheder, ejerforholdskode, bbr_fetched_at'
+              )
+              .eq('adgangsadresse_id', id)
+              .eq('is_udfaset', false)
+              .maybeSingle();
+            if (cached?.bfe_nummer) {
+              bbrResult.ejendomsrelationer = [
+                { bfeNummer: Number(cached.bfe_nummer), kommuneKode: cached.kommune_kode },
+              ];
+              bbrResult.bbrFejl = `Viser cached BBR-data fra ${new Date(cached.bbr_fetched_at).toLocaleDateString('da-DK')}. Live data utilgængelig.`;
+              bbrFromCache = true;
+            }
+          } catch {
+            // Cache lookup fejlede — beholder den tomme bbrResult med fejlbesked
+          }
+        }
         const bbrData: EjendomApiResponse = { dawaId: id, ...bbrResult };
+        // Marker cached BBR for klienten
+        if (bbrFromCache) (bbrData as Record<string, unknown>)['_bbrCached'] = true;
 
         // BIZZ-1287+1323+1327: Prefetch vurdering + ejerskab parallelt fra cache
         let vurderingData: VurderingResponse | null = null;

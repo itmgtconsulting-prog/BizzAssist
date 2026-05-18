@@ -34,6 +34,10 @@ async function probe(token: string, name: string, query: string) {
     const errors = json.errors?.map((e: { message: string }) => e.message.slice(0, 100)) ?? [];
     const firstKey = Object.keys(json.data ?? {})[0];
     const nodes = firstKey ? (json.data[firstKey]?.nodes ?? []) : [];
+    // Scan for CVR 34671761 in bulk results
+    const matchingCvr = nodes.filter(
+      (n: Record<string, unknown>) => n.virksomhedCVRNr === 34671761
+    );
     return {
       name,
       ok: res.ok && errors.length === 0,
@@ -41,6 +45,15 @@ async function probe(token: string, name: string, query: string) {
       nodes: nodes.length,
       errors,
       sample: nodes[0] ?? null,
+      matchingCvr34671761: matchingCvr.length > 0 ? matchingCvr : undefined,
+      uniqueCvrs:
+        nodes.length > 10
+          ? [
+              ...new Set(
+                nodes.map((n: Record<string, unknown>) => n.virksomhedCVRNr).filter(Boolean)
+              ),
+            ].length
+          : undefined,
     };
   } catch (err) {
     return { name, ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -173,6 +186,24 @@ export async function GET(): Promise<NextResponse> {
       token,
       '14. Admin WHERE virksomhedCVRNr=34671761',
       `{ EJFCustom_EjendomsadministratorBegraenset(first: 50, virkningstid: "${VT}", where: { virksomhedCVRNr: { eq: 34671761 } }) { nodes { id_lokalId bestemtFastEjendomBFENr virksomhedCVRNr status } } }`
+    )
+  );
+
+  // ── 8b. Hent MANGE noder og filtrer klient-side for CVR 34671761 ──
+  results.push(
+    await probe(
+      token,
+      '14b. Admin first:500 scan for CVR 34671761',
+      `{ EJFCustom_EjendomsadministratorBegraenset(first: 500, virkningstid: "${VT}") { nodes { bestemtFastEjendomBFENr virksomhedCVRNr status } } }`
+    )
+  );
+
+  // ── 8c. Prøv WHERE på BFE 5319188 (Stjernegade 7 SFE) ──
+  results.push(
+    await probe(
+      token,
+      '14c. Admin WHERE BFE=5319188 (Stjernegade 7)',
+      `{ EJFCustom_EjendomsadministratorBegraenset(first: 10, virkningstid: "${VT}", where: { bestemtFastEjendomBFENr: { eq: 5319188 } }) { nodes { id_lokalId bestemtFastEjendomBFENr virksomhedCVRNr status } } }`
     )
   );
 

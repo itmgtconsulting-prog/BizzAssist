@@ -995,11 +995,22 @@ export default function PersonDetailPageClient({
           antalVirksomheder: person.virksomheder.length,
         });
         // Opdater recent tag-bar (virker også ved direkte URL-navigation)
+        // BIZZ-1626: Gem adresse + virksomheds-CVR'er i entity_data til dedup
+        const adr = person.beliggenhedsadresse;
+        const adresseStr = adr?.vejnavn
+          ? `${adr.vejnavn} ${adr.husnummerFra ?? ''}${adr.bogstavFra ?? ''}, ${adr.postnummer ?? ''} ${adr.postdistrikt ?? ''}`.trim()
+          : '';
         recordRecentVisit(
           'person',
           String(person.enhedsNummer),
           person.navn,
-          `/dashboard/owners/${person.enhedsNummer}`
+          `/dashboard/owners/${person.enhedsNummer}`,
+          {
+            adresse: adresseStr,
+            virksomheder: JSON.stringify(
+              person.virksomheder.slice(0, 5).map((v) => ({ cvr: String(v.cvr) }))
+            ),
+          }
         );
       })
       .catch((err) => setError(err.message))

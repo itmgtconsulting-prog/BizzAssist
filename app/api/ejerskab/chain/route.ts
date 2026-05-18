@@ -456,7 +456,7 @@ export async function GET(req: NextRequest) {
                 navn: ejer.navn,
                 cvr: null,
                 enhedsNummer: null,
-                type: 'status' as 'person',
+                type: 'status',
                 andel: null,
                 adresse: null,
                 overtagelsesdato: null,
@@ -569,6 +569,15 @@ export async function GET(req: NextRequest) {
         }
 
         if (toRemove.size > 0) {
+          // BIZZ-1625: Collect removed person names BEFORE filtering nodes array,
+          // otherwise nodes.filter(toRemove) returns empty (nodes already filtered).
+          const removedPersonNames = new Set<string>();
+          for (const node of nodes) {
+            if (toRemove.has(node.id) && node.type === 'person') {
+              removedPersonNames.add(node.label.toLowerCase());
+            }
+          }
+
           // Remove stale nodes and their edges
           const filtered = nodes.filter((n) => !toRemove.has(n.id));
           nodes.length = 0;
@@ -577,16 +586,12 @@ export async function GET(req: NextRequest) {
           edges.length = 0;
           edges.push(...filteredEdges);
           // Also clean ejerDetaljer — both CVR-based AND person-name-based.
-          // BIZZ-1625: Person-ejere (cvr=null) blev ikke filtreret, så ejerkort
-          // og diagram viste forskellige ejere.
-          const removedNames = new Set<string>();
-          for (const node of nodes.filter((n) => toRemove.has(n.id) && n.type === 'person')) {
-            removedNames.add(node.label.toLowerCase());
-          }
           const cleanedDetaljer = ejerDetaljer.filter((d) => {
             if (d.cvr && !ejfCvrs.has(d.cvr) && !ejfCvrs.has(d.cvr.replace(/^0+/, '')))
               return false;
-            if (!d.cvr && d.type === 'person' && removedNames.has(d.navn.toLowerCase()))
+            // BIZZ-1625: Person-ejere (cvr=null) der blev fjernet fra diagram
+            // skal også fjernes fra ejerDetaljer så ejerkort og diagram matcher.
+            if (!d.cvr && d.type === 'person' && removedPersonNames.has(d.navn.toLowerCase()))
               return false;
             return true;
           });

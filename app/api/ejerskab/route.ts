@@ -256,7 +256,6 @@ async function queryEJF(bfeNummer: number, token: string): Promise<EJFQueryResul
         faktiskEjerandel_naevner
         status
         virkningFra
-        ejerskabAdministreresAfPersonEllerVirksomhedsoplysninger { navn }
       }
     }
   }`;

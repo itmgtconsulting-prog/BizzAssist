@@ -183,4 +183,43 @@ describe('validateSql — edge cases', () => {
     );
     expect(r.valid).toBe(true);
   });
+
+  it('EXTRACT(YEAR FROM col) forveksles ikke med tabel-reference', () => {
+    const r = validateSql(
+      'SELECT EXTRACT(YEAR FROM overtagelsesdato)::int AS aar, COUNT(*) AS antal FROM ejerskifte_historik GROUP BY aar ORDER BY aar DESC LIMIT 20'
+    );
+    expect(r.valid).toBe(true);
+  });
+
+  it('MySQL YEAR() auto-rewrites til EXTRACT og validerer', () => {
+    const r = validateSql(
+      'SELECT YEAR(overtagelsesdato) AS aar, COUNT(*) FROM ejerskifte_historik GROUP BY aar LIMIT 20'
+    );
+    expect(r.valid).toBe(true);
+    expect(r.sanitized_sql).toContain('EXTRACT(YEAR FROM overtagelsesdato)');
+  });
+
+  it('TRIM(LEADING FROM col) forveksles ikke med tabel-reference', () => {
+    const r = validateSql("SELECT TRIM(LEADING '0' FROM ejer_cvr) FROM ejf_ejerskab LIMIT 10");
+    expect(r.valid).toBe(true);
+  });
+
+  it('SUBSTRING(col FROM n) forveksles ikke med tabel-reference', () => {
+    const r = validateSql('SELECT SUBSTRING(navn FROM 1 FOR 5) FROM cvr_virksomhed LIMIT 10');
+    expect(r.valid).toBe(true);
+  });
+
+  it('IS DISTINCT FROM forveksles ikke med tabel-reference', () => {
+    const r = validateSql(
+      'SELECT * FROM ejf_ejerskab WHERE ejer_cvr IS DISTINCT FROM ejer_navn LIMIT 10'
+    );
+    expect(r.valid).toBe(true);
+  });
+
+  it('IS NOT DISTINCT FROM forveksles ikke med tabel-reference', () => {
+    const r = validateSql(
+      'SELECT * FROM ejf_ejerskab WHERE ejer_cvr IS NOT DISTINCT FROM ejer_navn LIMIT 10'
+    );
+    expect(r.valid).toBe(true);
+  });
 });

@@ -173,12 +173,22 @@ function extractWords(sql: string): string[] {
  */
 function extractTableReferences(sql: string): Set<string> {
   const refs = new Set<string>();
+  // PostgreSQL has several constructs where FROM appears inside an expression
+  // but does NOT reference a table:
+  //   EXTRACT(YEAR FROM col), TRIM(LEADING FROM col), SUBSTRING(col FROM n),
+  //   OVERLAY(s PLACING s FROM n), IS [NOT] DISTINCT FROM expr
+  // Strip these before scanning for table references.
+  let cleaned = sql;
+  // 1. Function calls that use FROM inside parentheses: EXTRACT, TRIM, SUBSTRING, OVERLAY
+  cleaned = cleaned.replace(/\b(?:EXTRACT|TRIM|SUBSTRING|OVERLAY)\s*\([^)]*\)/gi, ' ');
+  // 2. IS [NOT] DISTINCT FROM — comparison operator, not a table reference
+  cleaned = cleaned.replace(/\bIS\s+(?:NOT\s+)?DISTINCT\s+FROM\s+/gi, 'IS_DISTINCT_FROM ');
   // Match FROM/JOIN/INTO patterns med valgfri schema.table
   // Bruger \w fordi vi har validatet at sql ikke har kommentar-injection
   const fromRegex =
     /\b(?:from|join|update|into)\s+([a-zA-Z_][\w]*\.[a-zA-Z_][\w]*|[a-zA-Z_][\w]*)/gi;
   let match: RegExpExecArray | null;
-  while ((match = fromRegex.exec(sql)) !== null) {
+  while ((match = fromRegex.exec(cleaned)) !== null) {
     refs.add(match[1].toLowerCase());
   }
 

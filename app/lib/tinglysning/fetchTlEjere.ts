@@ -143,7 +143,23 @@ async function parseSummariskEjere(uuid: string): Promise<TlEjer[]> {
     ...adkomstSection.matchAll(/AdkomstSummarisk>([\s\S]*?)<\/ns:AdkomstSummarisk/g),
   ];
 
-  for (const [, entry] of adkomstEntries) {
+  // BIZZ-1625: TL-resuméet indeholder ALLE historiske adkomster, ikke kun den
+  // aktuelle. Brug kun den SENESTE adkomst (højest overtagelsesdato) for at
+  // undgå at vise tidligere ejere (fx Peter Borchardt) som nuværende.
+  // Hvis ingen har overtagelsesdato: behold alle entries (fallback).
+  let filteredEntries = adkomstEntries;
+  if (adkomstEntries.length > 1) {
+    const withDates = adkomstEntries.map((match) => {
+      const dato = match[1].match(/SkoedeOvertagelsesDato[^>]*>([^<]+)/)?.[1]?.split('+')[0] ?? '';
+      return { match, dato };
+    });
+    const maxDato = withDates.reduce((best, cur) => (cur.dato > best ? cur.dato : best), '');
+    if (maxDato) {
+      filteredEntries = withDates.filter((w) => w.dato === maxDato).map((w) => w.match);
+    }
+  }
+
+  for (const [, entry] of filteredEntries) {
     const adkomstType = entry.match(/AdkomstType[^>]*>([^<]+)/)?.[1] ?? null;
     const overtagelsesdato =
       entry.match(/SkoedeOvertagelsesDato[^>]*>([^<]+)/)?.[1]?.split('+')[0] ?? null;

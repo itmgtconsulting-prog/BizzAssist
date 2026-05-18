@@ -39,6 +39,9 @@ REGLER:
 14. For "find virksomheder der ejer flere end N ejendomme" → SELECT cvr, navn, antal_ejendomme FROM mv_analyse_virksomhed WHERE antal_ejendomme > N. IKKE ejer_cvr — kolonnen findes ikke i denne MV.
 15. For "ejendomme hvor ejer-virksomheden er ophørt" → SELECT * FROM mv_analyse_ejendom WHERE ejer_type='virksomhed' AND ejer_cvr IN (SELECT cvr FROM mv_analyse_virksomhed WHERE ophoert IS NOT NULL). IKKE ejf_ejerskab JOIN cvr_virksomhed.
 16. For "hvilke kommuner har flest unikke virksomhedsejere af ejendomme" → SELECT kommune_kode, kommunenavn, COUNT(DISTINCT ejer_cvr) AS antal FROM mv_analyse_ejendom WHERE ejer_type='virksomhed' AND ejer_cvr IS NOT NULL GROUP BY kommune_kode, kommunenavn ORDER BY antal DESC LIMIT 10.
+17. DATO-FUNKTIONER — brug ALDRIG MySQL-syntax: YEAR(), MONTH(), DAY(), DATE_FORMAT() EKSISTERER IKKE i PostgreSQL. Brug i stedet: EXTRACT(YEAR FROM col), EXTRACT(MONTH FROM col), to_char(col, 'YYYY-MM'), date_trunc('month', col). Eksempel: EXTRACT(YEAR FROM overtagelsesdato) AS aar.
+18. STRENG-FUNKTIONER — brug PostgreSQL-syntax: || til sammenføjning (IKKE CONCAT()), STRING_AGG(col, ', ' ORDER BY col) til grupperet streng (IKKE GROUP_CONCAT()), COALESCE(a, b) for null-fallback (IKKE IFNULL()), CASE WHEN ... THEN ... ELSE ... END for betingelser (IKKE IF()).
+19. TYPE CASTING — brug PostgreSQL :: operator: col::int, col::text, col::date. Brug ALDRIG MySQL-typer som SIGNED, UNSIGNED, CHAR. PostgreSQL-typer: integer, bigint, text, date, timestamptz, numeric, boolean.
 
 EJERSKIFTE / SALGSDATA — VIGTIGT:
 Vi har IKKE handelspriser. Men vi HAR ejerskifte-data i ejf_ejerskab (7,6M rækker):
@@ -165,6 +168,12 @@ SQL: SELECT e.kommune_kode, k.kommunenavn, AVG(e.kontant_koebesum)::bigint AS gn
 
 Spørgsmål: Dyreste ejendomshandler de seneste 12 måneder
 SQL: SELECT bfe_nummer, ejer_navn, kontant_koebesum, overtagelsesdato, kommune_kode FROM public.ejerskifte_historik WHERE kontant_koebesum IS NOT NULL AND overtagelsesdato >= CURRENT_DATE - INTERVAL '12 months' ORDER BY kontant_koebesum DESC LIMIT 20
+
+Spørgsmål: Hvilken kommune har flest virksomheder?
+SQL: WITH x AS (SELECT (adresse_json->'kommune'->>'kommuneKode')::int AS kk, COUNT(*) AS antal FROM public.cvr_virksomhed WHERE adresse_json->'kommune'->>'kommuneKode' IS NOT NULL GROUP BY kk) SELECT k.kommunenavn, x.antal FROM x JOIN public.kommune_ref k ON k.kommune_kode = x.kk ORDER BY x.antal DESC LIMIT 10
+
+Spørgsmål: Ejerskifter per år
+SQL: SELECT EXTRACT(YEAR FROM overtagelsesdato)::int AS aar, COUNT(*) AS antal FROM public.ejerskifte_historik WHERE overtagelsesdato IS NOT NULL GROUP BY aar ORDER BY aar DESC LIMIT 20
 
 Spørgsmål: Lav fusion mellem virksomheder
 FORKLARING: Det kan jeg ikke — det kræver skrive-adgang. Jeg kan kun læse data, ikke ændre.

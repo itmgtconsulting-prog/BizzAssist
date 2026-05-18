@@ -576,9 +576,17 @@ export async function GET(req: NextRequest) {
           const filteredEdges = edges.filter((e) => !toRemove.has(e.from) && !toRemove.has(e.to));
           edges.length = 0;
           edges.push(...filteredEdges);
-          // Also clean ejerDetaljer
+          // Also clean ejerDetaljer — both CVR-based AND person-name-based.
+          // BIZZ-1625: Person-ejere (cvr=null) blev ikke filtreret, så ejerkort
+          // og diagram viste forskellige ejere.
+          const removedNames = new Set<string>();
+          for (const node of nodes.filter((n) => toRemove.has(n.id) && n.type === 'person')) {
+            removedNames.add(node.label.toLowerCase());
+          }
           const cleanedDetaljer = ejerDetaljer.filter((d) => {
             if (d.cvr && !ejfCvrs.has(d.cvr) && !ejfCvrs.has(d.cvr.replace(/^0+/, '')))
+              return false;
+            if (!d.cvr && d.type === 'person' && removedNames.has(d.navn.toLowerCase()))
               return false;
             return true;
           });

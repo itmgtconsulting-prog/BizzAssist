@@ -281,6 +281,9 @@ export default function EjendomDetaljeClient({
    * requests, så Vercel serverless ikke queuer op (16s → <1s per kald).
    */
   const [wave2Ready, setWave2Ready] = useState(!!prefetched?.bbrData);
+  /** BIZZ-1650: Auto-retry tæller for BBR-fejl */
+  const [bbrRetryCount, setBbrRetryCount] = useState(0);
+  const bbrRetryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** BIZZ-919: Cache-metadata fra BBR API-response */
   const [bbrFromCache, setBbrFromCache] = useState(false);
   const [bbrSyncedAt, setBbrSyncedAt] = useState<string | null>(null);
@@ -736,6 +739,15 @@ export default function EjendomDetaljeClient({
         if (err.name === 'AbortError') return;
         logger.error('[ejendom] BBR fetch error:', err);
         setBbrData(null);
+        // BIZZ-1650: Auto-retry med exponential backoff (5s, 15s, 45s, 120s)
+        const RETRY_DELAYS = [5000, 15000, 45000, 120000];
+        if (bbrRetryCount < RETRY_DELAYS.length) {
+          const delay = RETRY_DELAYS[bbrRetryCount];
+          bbrRetryTimer.current = setTimeout(() => {
+            setBbrRetryCount((c) => c + 1);
+            setBbrRefreshKey((k) => k + 1);
+          }, delay);
+        }
       })
       .finally(() => {
         if (!controller.signal.aborted) {
@@ -745,7 +757,10 @@ export default function EjendomDetaljeClient({
           setWave2Ready(true);
         }
       });
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      if (bbrRetryTimer.current) clearTimeout(bbrRetryTimer.current);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, erDAWA, dawaStatus, bbrRefreshKey]);
 

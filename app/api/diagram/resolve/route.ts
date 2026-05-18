@@ -1825,6 +1825,10 @@ async function resolvePersonGraph(
     ejerandel_max: number | null;
   }>) {
     if (parentOfCvr.has(row.ejet_cvr)) continue; // første parent vinder
+    // BIZZ-1622: Skip ejerskab hvis den ejede virksomhed er ophørt — dette
+    // fanger stale relationer hvor gyldig_til ikke er opdateret i backfill.
+    const ownedCompany = companyMap.get(row.ejet_cvr);
+    if (ownedCompany?.ophoert != null) continue;
     parentOfCvr.set(row.ejet_cvr, row.ejer_cvr);
     const children = childrenOfCvr.get(row.ejer_cvr) ?? [];
     children.push({
@@ -1860,15 +1864,18 @@ async function resolvePersonGraph(
     });
     nodeIds.add(companyId);
 
-    // Kun top-level virksomheder (uden parent i grafen) forbindes til personen
-    if (!parentOfCvr.has(cvrStr)) {
-      topLevelCvrs.push(cvrStr);
-      // Ejerandel fra register/interessenter/indehaver
-      const regPct = registerEjerandelMap.get(cvrStr);
-      // BIZZ-1207: ENK-virksomheder er per definition 100% ejet af deltageren.
-      // I/S med interessenter-type uden ejerandel_pct vises som "Ejer".
-      const company = companyMap.get(cvrStr);
-      const isEnk = (company?.virksomhedsform ?? '').toLowerCase().includes('enkeltmand');
+    // BIZZ-1621: Personens direkte ejerskab → ALTID top-level. Tidligere
+    // blev virksomheder skjult som datterselskaber når en anden af personens
+    // virksomheder også ejede dem via cvr_virksomhed_ejerskab. Nu forbindes
+    // alle personens virksomheder til personen + evt. parent→child edge vises også.
+    topLevelCvrs.push(cvrStr);
+    // Ejerandel fra register/interessenter/indehaver
+    const regPct = registerEjerandelMap.get(cvrStr);
+    // BIZZ-1207: ENK-virksomheder er per definition 100% ejet af deltageren.
+    // I/S med interessenter-type uden ejerandel_pct vises som "Ejer".
+    {
+      const companyForEnk = companyMap.get(cvrStr);
+      const isEnk = (companyForEnk?.virksomhedsform ?? '').toLowerCase().includes('enkeltmand');
       const ejerandel = regPct != null ? `${Math.round(regPct)}%` : isEnk ? '100%' : 'Ejer';
       edges.push({ from: mainId, to: companyId, ejerandel });
     }
@@ -1947,6 +1954,9 @@ async function resolvePersonGraph(
         if (!nodeIds.has(parentId)) continue;
 
         if (nodeIds.has(subId)) {
+          // BIZZ-1622: Skip edge til ophørte virksomheder (stale ejerskab i backfill)
+          const existingNode = nodes.find((n) => n.id === subId);
+          if (existingNode?.isCeased) continue;
           // Allerede i grafen → tilføj edge hvis mangler
           if (!edges.some((e) => e.from === parentId && e.to === subId)) {
             edges.push({

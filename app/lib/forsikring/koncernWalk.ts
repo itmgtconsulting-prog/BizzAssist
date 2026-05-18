@@ -102,6 +102,66 @@ async function walkVirksomhed(
     rawData: { branche: (virk as { branche_tekst?: string } | null)?.branche_tekst ?? null },
   });
 
+  // BIZZ-1646: Detect ejerforening (FFO) — resolve via /api/ejerforening/ejendomme pattern
+  const isFFO =
+    (virk as { virksomhedsform?: string } | null)?.virksomhedsform?.toUpperCase().includes('FFO') ||
+    (virk as { virksomhedsform?: string } | null)?.virksomhedsform
+      ?.toLowerCase()
+      .includes('forening');
+
+  if (isFFO && depth === 0) {
+    // E/F: Hent administrerede ejendomme via ejerforholdskode 30 i bbr_ejendom_status
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: bbrRows } = await (admin as any)
+        .from('bbr_ejendom_status')
+        .select('bfe_nummer, samlet_boligareal, grundareal, adgangsadresse_id')
+        .eq('ejerforholdskode', '30')
+        .limit(50);
+
+      // Alternativ: EJF lookup direkte
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: ejfAll } = await (admin as any)
+        .from('ejf_ejerskab')
+        .select('bfe_nummer')
+        .eq('ejer_cvr', cvr)
+        .eq('status', 'gældende')
+        .limit(100);
+
+      const ejfBfes = new Set((ejfAll ?? []).map((r: { bfe_nummer: number }) => r.bfe_nummer));
+
+      for (const row of (bbrRows ?? []) as Array<{
+        bfe_nummer: number;
+        samlet_boligareal: number | null;
+        grundareal: number | null;
+      }>) {
+        if (!ejfBfes.has(row.bfe_nummer)) continue;
+        if (seenBfes.has(row.bfe_nummer) || aktiver.length >= MAX_AKTIVER) continue;
+        seenBfes.add(row.bfe_nummer);
+        aktiver.push({
+          type: 'ejendom',
+          label: `BFE ${row.bfe_nummer}`,
+          bfe: row.bfe_nummer,
+          rawData: { ejerforening: true, boligareal: row.samlet_boligareal },
+        });
+      }
+
+      // Hvis EJF har direkte poster, brug dem også
+      for (const row of (ejfAll ?? []) as Array<{ bfe_nummer: number }>) {
+        if (seenBfes.has(row.bfe_nummer) || aktiver.length >= MAX_AKTIVER) continue;
+        seenBfes.add(row.bfe_nummer);
+        aktiver.push({
+          type: 'ejendom',
+          label: `BFE ${row.bfe_nummer}`,
+          bfe: row.bfe_nummer,
+          rawData: { ejerforening: true },
+        });
+      }
+    } catch {
+      /* non-fatal — fallback til standard flow */
+    }
+  }
+
   // Hent ejendomme via ejf_ejerskab cache
   // BIZZ-1355: Filtrér på gyldig_fra/gyldig_til for historiske opslag
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

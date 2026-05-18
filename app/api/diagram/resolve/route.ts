@@ -678,9 +678,10 @@ async function resolveCompanyGraph(
           id: overflowId,
           label: `+${overflowCount} ejendomme`,
           type: 'status',
+          // BIZZ-1647: Inkluder bfeNummer så enrichPropertyNodes kan resolve adresser
           overflowItems: props
             .slice(MAX_PROPS_PER_OWNER)
-            .map((p) => ({ label: `BFE ${p.bfe_nummer}` })),
+            .map((p) => ({ label: `BFE ${p.bfe_nummer}`, bfeNummer: p.bfe_nummer })),
         });
         nodeIds.add(overflowId);
         edges.push({ from: compNode.id, to: overflowId });

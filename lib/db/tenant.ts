@@ -865,4 +865,19 @@ export async function provisionTenantSchema(schemaName: string, tenantId: string
       `[provisionTenantSchema] forsikring-tabeller ikke oprettet for "${schemaName}": ${forsikringErr.message}`
     );
   }
+
+  // BIZZ-1661: Vurderingsrapport-tabeller (vurdering_sager, vurdering_upload_zoner,
+  // vurdering_dokumenter, vurdering_rapport_tabs) provisioneres via separat RPC.
+  // Idempotent via CREATE TABLE IF NOT EXISTS i provision_tenant_vurdering_sager (migration 146).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error: vurderingErr } = await (admin.rpc as any)('provision_tenant_vurdering_sager', {
+    p_schema_name: schemaName,
+    p_tenant_id: tenantId,
+  });
+
+  if (vurderingErr) {
+    logger.warn(
+      `[provisionTenantSchema] vurdering-tabeller ikke oprettet for "${schemaName}": ${vurderingErr.message}`
+    );
+  }
 }

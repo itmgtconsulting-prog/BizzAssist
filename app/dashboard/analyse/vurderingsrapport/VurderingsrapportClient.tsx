@@ -171,6 +171,7 @@ export default function VurderingsrapportClient() {
   const handleCreate = useCallback(async () => {
     if (!formKunde) return;
     setCreating(true);
+    setError(null);
     try {
       const r = await fetch('/api/vurderingsrapport/sager', {
         method: 'POST',
@@ -188,9 +189,12 @@ export default function VurderingsrapportClient() {
       if (r.ok) {
         const data = await r.json();
         router.push(`/dashboard/analyse/vurderingsrapport/${data.sag.id}`);
+      } else {
+        const errData = await r.json().catch(() => null);
+        setError(errData?.error ?? `Kunne ikke oprette sag (HTTP ${r.status})`);
       }
-    } catch {
-      /* ignore */
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Netværksfejl ved oprettelse');
     } finally {
       setCreating(false);
     }

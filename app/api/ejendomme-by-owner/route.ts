@@ -837,6 +837,33 @@ async function hentDawaBfeData(bfe: number): Promise<DawaBfeAdresse> {
         /* bfe_adresse_cache fallback non-critical */
       }
     }
+    // BIZZ-1670: Write-through — gem succesfuld resolve i bfe_adresse_cache
+    // så næste opslag er instant (fallback 1-3 kører ikke igen for denne BFE).
+    if (result.adresse) {
+      try {
+        const admin = createAdminClient();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        void (admin as any).from('bfe_adresse_cache').upsert(
+          {
+            bfe_nummer: bfe,
+            adresse: result.adresse,
+            etage: result.etage ?? null,
+            doer: result.doer ?? null,
+            postnr: result.postnr ?? null,
+            postnrnavn: result.by ?? null,
+            kommune: result.kommune ?? null,
+            kommune_kode: result.kommuneKode ?? null,
+            dawa_id: result.dawaId ?? null,
+            ejendomstype: result.ejendomstype ?? null,
+            kilde: 'auto',
+            sidst_opdateret: new Date().toISOString(),
+          },
+          { onConflict: 'bfe_nummer' }
+        );
+      } catch {
+        /* write-through non-critical */
+      }
+    }
     return result;
   });
   _bfeFetchInFlight.set(bfe, promise);

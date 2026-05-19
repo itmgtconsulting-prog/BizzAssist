@@ -718,8 +718,11 @@ export default function EjendomDetaljeClient({
    */
   useEffect(() => {
     if (!erDAWA || dawaStatus !== 'ok') return;
-    // Skip BBR fetch hvis server-side prefetch allerede leverede data (undtagen ved refresh)
-    if (prefetched?.bbrData && bbrRefreshKey === 0) return;
+    // Skip BBR fetch hvis server-side prefetch allerede leverede REEL data (undtagen ved refresh).
+    // BIZZ-1650b: Tjek at bbr-arrayet faktisk har indhold — ellers timeouted serveren
+    // og vi sidder fast med "utilgængelig" uden client-side retry.
+    if (prefetched?.bbrData?.bbr && prefetched.bbrData.bbr.length > 0 && bbrRefreshKey === 0)
+      return;
     const controller = new AbortController();
     setBbrLoader(true);
     fetch(`/api/ejendom/${id}`, { signal: controller.signal })
@@ -729,7 +732,8 @@ export default function EjendomDetaljeClient({
         const synced = r.headers.get('X-Synced-At');
         setBbrFromCache(cacheHit === 'true');
         setBbrSyncedAt(synced);
-        return r.ok ? (r.json() as Promise<EjendomApiResponse>) : null;
+        if (!r.ok) throw new Error(`BBR API HTTP ${r.status}`);
+        return r.json() as Promise<EjendomApiResponse>;
       })
       .then((data) => {
         if (controller.signal.aborted) return;

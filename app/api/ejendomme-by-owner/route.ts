@@ -1013,16 +1013,23 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
               .limit(10);
 
             if (allOwners && allOwners.length > 0) {
-              const newest = allOwners[0] as {
+              // Tjek om NOGEN gældende ejer matcher vores CVR-sæt — ikke kun
+              // den nyeste. Ejerlejligheder har ofte flere samtidige gældende
+              // ejere (virksomhed + ejerforening), og ejerforeningens nyere
+              // virkning_fra skal ikke markere virksomhedens ejerskab som "solgt".
+              const ownerRows = allOwners as Array<{
                 ejer_cvr: string | null;
                 virkning_fra: string | null;
-              };
-              if (newest.ejer_cvr && queriedCvrSet.has(newest.ejer_cvr)) {
+              }>;
+              const hasActiveOwnership = ownerRows.some(
+                (o) => o.ejer_cvr && queriedCvrSet.has(o.ejer_cvr)
+              );
+              if (hasActiveOwnership) {
                 aktivByBfe.set(bfe, true);
               } else {
-                // Ejendommen er solgt — den queried CVR er ikke længere nyeste ejer
+                // Ejendommen er solgt — ingen af de gældende ejere matcher vores CVR
                 aktivByBfe.set(bfe, false);
-                solgtDatoByBfe.set(bfe, newest.virkning_fra ?? null);
+                solgtDatoByBfe.set(bfe, ownerRows[0]?.virkning_fra ?? null);
               }
             } else {
               aktivByBfe.set(bfe, true);

@@ -126,11 +126,18 @@ export const METRICS: MetricDefinition[] = [
   {
     name: 'avg_koebesum',
     displayName: 'Gennemsnitlig købesum',
-    description: 'Gennemsnit af kontante købesummer',
+    // BIZZ-1682: Filtrerer gaver/arv (koebesum < 100k) og porteføljehandler
+    // (> 100M). Brug median_koebesum for mere retvisende central-værdi.
+    description:
+      'Gennemsnit af kontante købesummer (filtreret: ekskluderer gaver under 100.000 og porteføljehandler over 100M). VIGTIGT: Brug median_koebesum i stedet — aritmetisk gennemsnit er misvisende for ejendomspriser pga. skæv fordeling.',
     type: 'avg',
     sql: 'AVG(kontant_koebesum)',
     table: 'ejerskifte_historik',
-    filters: ['kontant_koebesum IS NOT NULL'],
+    filters: [
+      'kontant_koebesum IS NOT NULL',
+      'kontant_koebesum > 100000',
+      'kontant_koebesum < 100000000',
+    ],
     format: 'currency_dkk',
     unit: 'DKK',
     examples: [
@@ -140,12 +147,17 @@ export const METRICS: MetricDefinition[] = [
   },
   {
     name: 'median_koebesum',
-    displayName: 'Median købesum',
-    description: 'Median af kontante købesummer (50. percentil)',
+    displayName: 'Median købesum (anbefalet)',
+    description:
+      'Median af kontante købesummer (50. percentil) — den mest retvisende central-værdi for ejendomspriser. Foretrækkes over avg_koebesum.',
     type: 'median',
     sql: 'PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY kontant_koebesum)',
     table: 'ejerskifte_historik',
-    filters: ['kontant_koebesum IS NOT NULL'],
+    filters: [
+      'kontant_koebesum IS NOT NULL',
+      'kontant_koebesum > 100000',
+      'kontant_koebesum < 100000000',
+    ],
     format: 'currency_dkk',
     unit: 'DKK',
     examples: ['Medianpris for boliger i 2025', 'Median købesum per kommune'],

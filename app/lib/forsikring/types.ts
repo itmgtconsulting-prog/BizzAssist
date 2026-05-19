@@ -346,6 +346,12 @@ export interface GapEngineInput {
     hovedbranche_tekst: string | null;
     bibrancher: Array<{ kode: string; tekst: string | null }>;
   };
+  /** BIZZ-1672: Ejerforening/administrator-data fra ejf_administrator */
+  ejerforening?: {
+    cvr: string | null;
+    navn: string | null;
+    type: 'virksomhed' | 'person' | 'ukendt';
+  } | null;
   /** BIZZ-1364: Optionelt asset fra koncern-walk (til asset-level checks) */
   asset?: {
     type: 'ejendom' | 'virksomhed' | 'bil' | 'bestyrelsespost';

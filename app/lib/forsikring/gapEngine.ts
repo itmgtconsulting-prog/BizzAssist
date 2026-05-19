@@ -449,6 +449,66 @@ const checkBasementRisk: CheckFn = (input) => {
   };
 };
 
+// ─── BIZZ-1672: Ejerforening cross-checks ──────────────────────
+
+/**
+ * GAP-006: Ejerforening administrerer ejendommen — verificér fællesforsikring.
+ *
+ * Når en ejendom administreres af en ejerforening, bør fællesforsikringen
+ * dække bygning+grund. Individuel police bør supplere med indbo/ansvar.
+ */
+const checkEjerforeningVerifikation: CheckFn = (input) => {
+  if (!input.ejerforening || input.ejerforening.type !== 'virksomhed') return null;
+  const ef = input.ejerforening;
+  const label = ef.navn ?? (ef.cvr ? `CVR ${ef.cvr}` : 'Ejerforening');
+  return {
+    check_id: 'GAP-006',
+    category: 'ejerforening',
+    severity: 'warning',
+    title: `${label} administrerer ejendommen — verificér fællesforsikring`,
+    description:
+      `Ejendommen administreres af ${label}. ` +
+      `Ejerforeningens fællesforsikring bør dække bygning, grund og fællesarealer. ` +
+      `Verificér at fællesforsikringen er aktiv og dækningen er tilstrækkelig.`,
+    recommendation: 'Indhent kopi af ejerforeningens fællesforsikringspolice og verificér dækning.',
+    estimated_impact_dkk: null,
+    source_data: { ejerforening_cvr: ef.cvr, ejerforening_navn: ef.navn },
+  };
+};
+
+/**
+ * GAP-007: Ejerlejlighed med ejerforening — individuel indbo/ansvar anbefales.
+ *
+ * Fællesforsikringen dækker typisk bygning men IKKE individuel indbo og ansvar.
+ */
+/**
+ * GAP-007: Ejerlejlighed med ejerforening — individuel hus/grundejeransvar anbefales.
+ *
+ * Fællesforsikringen dækker typisk bygning men individuel ansvarsdækning
+ * bør supplere.
+ */
+const checkEjerforeningIndboDaekning: CheckFn = (input) => {
+  if (!input.ejerforening || input.ejerforening.type !== 'virksomhed') return null;
+  const hasAnsvar = hasCoverage(input.coverages, 'hus_grundejer_ansvar');
+  const hasGlas = hasCoverage(input.coverages, 'glas');
+  if (hasAnsvar && hasGlas) return null;
+  const mangler = [];
+  if (!hasAnsvar) mangler.push('hus/grundejeransvar');
+  if (!hasGlas) mangler.push('glas');
+  return {
+    check_id: 'GAP-007',
+    category: 'daekning',
+    severity: 'info',
+    title: `Ejerlejlighed med ejerforening — ${mangler.join(' + ')} anbefales`,
+    description:
+      `Ejerforeningens fællesforsikring dækker typisk bygning og fællesarealer, ` +
+      `men individuel ${mangler.join(' og ')}-dækning bør tegnes separat.`,
+    recommendation: `Tegn individuel ${mangler.join(' og ')}-dækning.`,
+    estimated_impact_dkk: null,
+    source_data: { missing: mangler },
+  };
+};
+
 // ─── Registry ────────────────────────────────────────────────────
 
 /**
@@ -720,6 +780,9 @@ const CHECKS: readonly CheckFn[] = [
   checkOldBuildingRisk,
   checkSoftRoof,
   checkBasementRisk,
+  // BIZZ-1672: Ejerforening cross-checks
+  checkEjerforeningVerifikation,
+  checkEjerforeningIndboDaekning,
   checkMissingInsektSvamp,
   checkMissingRestvaerdi,
   checkMissingStikledning,
@@ -778,6 +841,8 @@ const GAP_BASE_SCORES: Record<string, number> = {
   'GAP-003': 35, // gammel bygning uden rør/svamp
   'GAP-004': 55, // blødt tag (stråtag)
   'GAP-005': 30, // kælder uden jordskade/stikledning
+  'GAP-006': 30, // ejerforening — verificér fællesforsikring
+  'GAP-007': 20, // ejerlejlighed indbo/ansvar anbefales
   'GAP-010': 20, // glas
   'GAP-011': 15, // sanitet
   'GAP-012': 30, // insekt/svamp

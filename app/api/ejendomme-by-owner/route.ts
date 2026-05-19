@@ -1465,6 +1465,43 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     }
   } // end !cacheFullHit
 
+  // BIZZ-1672: Administrerede ejendomme fra ejf_administrator.
+  // For ejerforeninger (og andre virksomheder) — tilføj BFE'er de administrerer.
+  if (cvrNumre.length > 0) {
+    try {
+      const admin = createAdminClient();
+      const cvrStrings = cvrNumre.map((c) => String(c));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: adminRows } = await (admin as any)
+        .from('ejf_administrator')
+        .select('bfe_nummer, virksomhed_cvr')
+        .in('virksomhed_cvr', cvrStrings)
+        .eq('status', 'gældende')
+        .limit(200);
+
+      if (adminRows && adminRows.length > 0) {
+        let addedCount = 0;
+        for (const row of adminRows as Array<{
+          bfe_nummer: number;
+          virksomhed_cvr: string;
+        }>) {
+          if (!bfeTilCvr.has(row.bfe_nummer)) {
+            bfeTilCvr.set(row.bfe_nummer, row.virksomhed_cvr.padStart(8, '0'));
+            aktivByBfe.set(row.bfe_nummer, true);
+            addedCount++;
+          }
+        }
+        if (addedCount > 0) {
+          logger.log(
+            `[ejendomme-by-owner] ejf_administrator: ${addedCount} administrerede BFE tilføjet`
+          );
+        }
+      }
+    } catch {
+      /* ejf_administrator lookup non-fatal */
+    }
+  }
+
   try {
     const alleBfe = [...bfeTilCvr.keys()];
     const totalBfe = alleBfe.length;

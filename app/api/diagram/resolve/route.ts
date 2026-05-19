@@ -734,6 +734,64 @@ async function resolveCompanyGraph(
     }
   }
 
+  // 3c. BIZZ-1672: Administrerede ejendomme fra ejf_administrator.
+  // Når en virksomhed (typisk ejerforening) administrerer ejendomme, vis dem
+  // som property-noder med "Administrerer"-edge. Bruger ejf_administrator
+  // tabellen (migration 148).
+  for (const compNode of nodes.filter(
+    (n) => (n.type === 'company' || n.type === 'main') && n.cvr
+  )) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: adminRows } = await (admin as any)
+        .from('ejf_administrator')
+        .select('bfe_nummer')
+        .eq('virksomhed_cvr', String(compNode.cvr))
+        .eq('status', 'gældende')
+        .limit(50);
+
+      const adminBfes = (adminRows ?? []) as Array<{ bfe_nummer: number }>;
+      // Filtrer BFE'er der allerede er i grafen (undgå duplikater)
+      const newAdminBfes = adminBfes.filter((r) => !bfesInGraph.has(r.bfe_nummer));
+
+      const shownAdmin = newAdminBfes.slice(0, MAX_PROPS_PER_OWNER);
+      for (const ab of shownAdmin) {
+        const propId = `bfe-${ab.bfe_nummer}`;
+        if (!nodeIds.has(propId)) {
+          nodes.push({
+            id: propId,
+            label: `BFE ${ab.bfe_nummer}`,
+            type: 'property',
+            bfeNummer: ab.bfe_nummer,
+          });
+          nodeIds.add(propId);
+        }
+        bfesInGraph.add(ab.bfe_nummer);
+        edges.push({
+          from: compNode.id,
+          to: propId,
+          ejerandel: 'Administrerer',
+        });
+      }
+      if (newAdminBfes.length > MAX_PROPS_PER_OWNER) {
+        const overflowCount = newAdminBfes.length - MAX_PROPS_PER_OWNER;
+        const overflowId = `admin-overflow-${compNode.id}`;
+        nodes.push({
+          id: overflowId,
+          label: `+${overflowCount} administrerede`,
+          type: 'status',
+          overflowItems: newAdminBfes
+            .slice(MAX_PROPS_PER_OWNER)
+            .map((p) => ({ label: `BFE ${p.bfe_nummer}`, bfeNummer: p.bfe_nummer })),
+        });
+        nodeIds.add(overflowId);
+        edges.push({ from: compNode.id, to: overflowId });
+      }
+    } catch {
+      /* ejf_administrator lookup non-fatal */
+    }
+  }
+
   // 4. BIZZ-1082: Personlige ejendomme for ALLE top-level ejere.
   // Henter properties fra ejf_ejerskab per person-navn. Dedup: hvis BFE
   // allerede er i grafen (fx ejet via virksomhed), tilføj kun edge — ikke node.

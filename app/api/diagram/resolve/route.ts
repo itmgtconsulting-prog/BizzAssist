@@ -389,12 +389,91 @@ async function resolveCompanyGraph(
     }
   }
 
-  // BIZZ-1663: Step 2b (ejerens personlige virksomheder) FJERNET.
-  // Inkluderede ALLE virksomheder ejerne var interessent/indehaver i —
-  // uanset om de var i target-selskabets ejerkæde. Søskendeselskaber
-  // og fremmede virksomheder forurenede diagrammet. Personlige
-  // virksomheder vises i stedet via "Udvid"-knappen (expandableChildren)
-  // på person-noden, som allerede tæller ejerens øvrige relationer.
+  // 2b. BIZZ-1122 + BIZZ-1663: Ejerens personlige virksomheder (enkeltmand).
+  // Kun 'indehaver'-typen vises — 'interessenter' inkluderede alle virksomheder
+  // ejerne var medejer af, inkl. søskendeselskaber og fremmede virksomheder.
+  if (ownershipRows.length > 0) {
+    const ownerEnheder = Array.from(new Set(ownershipRows.map((r) => r.deltager_enhedsnummer)));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: personalCompRows } = await (admin as any)
+      .from('cvr_deltagerrelation')
+      .select('virksomhed_cvr, deltager_enhedsnummer, type')
+      .in('deltager_enhedsnummer', ownerEnheder.slice(0, 5))
+      .eq('type', 'indehaver')
+      .is('gyldig_til', null)
+      .limit(20);
+
+    if (personalCompRows?.length) {
+      const personalCvrs = Array.from(
+        new Set(
+          (personalCompRows as Array<{ virksomhed_cvr: string; deltager_enhedsnummer: number }>)
+            .map((r) => r.virksomhed_cvr)
+            .filter((c) => c !== cvr && !nodeIds.has(`cvr-${c}`))
+        )
+      );
+
+      if (personalCvrs.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: personalComps } = await (admin as any)
+          .from('cvr_virksomhed')
+          .select('cvr, navn, virksomhedsform, branche_tekst, ophoert')
+          .in('cvr', personalCvrs.slice(0, 10));
+
+        // Hent ejendomsantal for at sætte expandableChildren korrekt
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: pcPropCounts } = await (admin as any)
+          .from('ejf_ejerskab')
+          .select('ejer_cvr')
+          .in('ejer_cvr', personalCvrs.slice(0, 10))
+          .eq('status', 'gældende');
+        const pcPropMap = new Map<string, number>();
+        for (const r of (pcPropCounts ?? []) as Array<{ ejer_cvr: string }>) {
+          pcPropMap.set(r.ejer_cvr, (pcPropMap.get(r.ejer_cvr) ?? 0) + 1);
+        }
+
+        for (const pc of (personalComps ?? []) as Array<{
+          cvr: string;
+          navn: string;
+          virksomhedsform: string | null;
+          branche_tekst: string | null;
+          ophoert: string | null;
+        }>) {
+          if (pc.ophoert != null) continue;
+          const pcId = `cvr-${pc.cvr}`;
+          if (nodeIds.has(pcId)) continue;
+          const pcSubParts = [pc.virksomhedsform, pc.branche_tekst].filter(Boolean);
+          // Find ejer-noden denne virksomhed tilhører
+          // Personlige virksomheder vises som siblings af main (ikke under person)
+
+          const pcPropCount = pcPropMap.get(pc.cvr) ?? 0;
+          nodes.push({
+            id: pcId,
+            label: pc.navn,
+            sublabel: pcSubParts.length > 0 ? pcSubParts.join(' · ') : undefined,
+            branche: pc.branche_tekst ?? undefined,
+            type: 'company',
+            cvr: Number(pc.cvr),
+            link: `/dashboard/companies/${pc.cvr}`,
+            isCeased: false,
+            // expandableChildren: 0 = ingen Udvid-knap, >0 = vis knap
+            expandableChildren: pcPropCount > 0 ? pcPropCount : 0,
+          });
+          nodeIds.add(pcId);
+          // Edge fra person-ejer — IT Management consulting kobles til Jakob,
+          // ikke til JaJR Holding. DiagramForce placerer den på samme depth
+          // som main via downward BFS fra person-noden (depth -1 + 1 = 0).
+          const ownerRow = (
+            personalCompRows as Array<{
+              virksomhed_cvr: string;
+              deltager_enhedsnummer: number;
+            }>
+          ).find((r) => r.virksomhed_cvr === pc.cvr);
+          const personId = ownerRow ? `en-${ownerRow.deltager_enhedsnummer}` : mainId;
+          edges.push({ from: personId, to: pcId });
+        }
+      }
+    }
+  }
 
   // 2c. Datterselskaber via cache (cvr_virksomhed_ejerskab)
   const MAX_TOTAL_NODES = 50;
@@ -661,7 +740,6 @@ async function resolveCompanyGraph(
   // Farve-koder edges per person for visuel distinktion af fælles ejerskab.
   // BIZZ-1285: Reduceret opacity fra 0.75 til 0.65 så personlige ejendomme
   // matcher normale ejendomslinjer i stedet for at skille sig visuelt ud.
-  // Personlige ejendomme — vises under person-noder med farve-kode
   const OWNER_COLORS = [
     'rgba(52,211,153,0.65)', // emerald — person 1
     'rgba(167,139,250,0.65)', // violet  — person 2
@@ -671,6 +749,7 @@ async function resolveCompanyGraph(
   ];
   const personNodes = nodes.filter((n) => n.type === 'person' && n.enhedsNummer);
   if (personNodes.length > 0) {
+    // Batch-fetch personlige ejendomme for alle person-ejere
     const personNavne = new Map<string, string>();
     for (const pn of personNodes) {
       personNavne.set(pn.id, pn.label);
@@ -697,6 +776,7 @@ async function resolveCompanyGraph(
         ejerandel_naevner: number | null;
       }>) {
         const propId = `bfe-${pp.bfe_nummer}`;
+        // Dedup: tilføj kun node hvis den ikke allerede er i grafen
         if (!nodeIds.has(propId)) {
           nodes.push({
             id: propId,

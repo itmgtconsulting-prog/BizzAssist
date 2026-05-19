@@ -403,6 +403,88 @@ async function resolveLejlighederViaDawa(
     })
   );
 
+  // BIZZ-1678: VP BFE-fallback for lejligheder med bfe===0 efter TL+DAWA.
+  // Vurderingsportalen ES har BFE for de fleste ejerlejligheder og er hurtigere
+  // end TL (single batch query vs. N serial TL-kald).
+  const missingBfe = lejligheder.filter((l) => l.bfe === 0 && l.adresse);
+  if (missingBfe.length > 0) {
+    try {
+      // Batch: hent alle adresser på denne matrikel fra VP i ét kald
+      const firstAddr = lejligheder[0]?.adresse ?? '';
+      const vejMatch = firstAddr
+        .split(',')[0]
+        .trim()
+        .match(/^(.+?)\s+\d/);
+      const postMatch = firstAddr.match(/(\d{4})\s+\S/);
+      if (vejMatch && postMatch) {
+        const vpRes = await fetch(
+          'https://api-fs.vurderingsportalen.dk/preliminaryproperties/_search',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0',
+            },
+            body: JSON.stringify({
+              query: {
+                bool: {
+                  must: [
+                    { prefix: { 'roadName.keyword': vejMatch[1] } },
+                    { term: { zipcode: postMatch[1] } },
+                  ],
+                },
+              },
+              size: 200,
+              _source: ['bfeNumbers', 'roadName', 'houseNumber', 'floor', 'door', 'address'],
+            }),
+            signal: AbortSignal.timeout(8000),
+          }
+        );
+        if (vpRes.ok) {
+          const vpData = (await vpRes.json()) as {
+            hits?: {
+              hits?: Array<{
+                _source?: {
+                  bfeNumbers?: number[];
+                  address?: string;
+                  floor?: string;
+                  door?: string;
+                  houseNumber?: string;
+                };
+              }>;
+            };
+          };
+          // Build address→BFE map from VP results
+          const vpBfeMap = new Map<string, number>();
+          for (const hit of vpData.hits?.hits ?? []) {
+            const src = hit._source;
+            if (!src?.bfeNumbers?.[0] || !src.address) continue;
+            // Normaliser: "Skyttegårdvej 1, st. th, 2500 Valby" → lowercase trimmed
+            vpBfeMap.set(src.address.toLowerCase().trim(), src.bfeNumbers[0]);
+          }
+          // Match missing lejligheder
+          let resolved = 0;
+          for (const lej of missingBfe) {
+            const normAddr = lej.adresse.toLowerCase().trim();
+            const bfe = vpBfeMap.get(normAddr);
+            if (bfe && bfe > 0) {
+              lej.bfe = bfe;
+              resolved++;
+            }
+          }
+          if (resolved > 0) {
+            logger.log(
+              `[ejerlejligheder] VP BFE fallback: ${resolved}/${missingBfe.length} resolved`
+            );
+          }
+        }
+      }
+    } catch {
+      /* VP fallback non-fatal */
+    }
+  }
+
   // Sidste skridt: for lejligheder med BFE men ingen koebspris/koebsdato fra
   // summarisk, prøv salgshistorik-API (BIZZ-685) som nu indeholder Tinglysning
   // /dokaktuel pris-enrichment + reverse-inference. Giver pris på rækker hvor

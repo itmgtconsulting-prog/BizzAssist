@@ -189,7 +189,7 @@ export default function PropertyOwnerCard({
     ? ejendom.etage
       ? `${ejendom.adresse}, ${ejendom.etage}.${ejendom.doer ? ` ${ejendom.doer}` : ''}`
       : ejendom.adresse
-    : `BFE ${formatBfe(ejendom.bfeNummer)}`;
+    : `BFE ${formatBfe(ejendom.bfeNummer)} — ${da ? 'adresse ukendt' : 'address unknown'}`;
   const postalLinje =
     ejendom.postnr && ejendom.by ? `${ejendom.postnr} ${ejendom.by}` : (ejendom.kommune ?? null);
 

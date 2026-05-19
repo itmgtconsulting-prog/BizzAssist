@@ -533,11 +533,32 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
     const tlResult = await tlFetch(searchPath);
 
     if (tlResult.status !== 200) {
-      logger.error(`[ejerlejligheder] Tinglysning svarede ${tlResult.status}`);
-      return NextResponse.json(
-        { lejligheder: [], fejl: `Tinglysning svarede ${tlResult.status}` },
-        { status: 200 }
+      logger.warn(
+        `[ejerlejligheder] Tinglysning svarede ${tlResult.status} — prøver DAWA fallback`
       );
+      // BIZZ-1585: Kør DAWA fallback når TL fejler (404/500) — TL mangler
+      // data for mange matrikler. DAWA finder adresser med etage/dør.
+      try {
+        const dawaFallback = await resolveLejlighederViaDawa(ejerlavKode, matrikelnr, moderBfe);
+        if (dawaFallback.length > 0) {
+          logger.log(
+            `[ejerlejligheder] DAWA fallback (TL ${tlResult.status}): ${dawaFallback.length} lejligheder for ejerlav ${ejerlavKode} matr. ${matrikelnr}`
+          );
+          return NextResponse.json(
+            { lejligheder: dawaFallback, fejl: null },
+            {
+              status: 200,
+              headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
+            }
+          );
+        }
+      } catch (dawaErr) {
+        logger.warn(
+          '[ejerlejligheder] DAWA fallback fejlede:',
+          dawaErr instanceof Error ? dawaErr.message : dawaErr
+        );
+      }
+      return NextResponse.json({ lejligheder: [], fejl: null }, { status: 200 });
     }
 
     let items: TLSearchItem[];

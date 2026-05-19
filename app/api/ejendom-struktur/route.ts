@@ -424,10 +424,82 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
       }
     }
 
-    if (items.length === 0 && searchResults[0].status !== 200) {
-      logger.error(`[ejendom-struktur] Tinglysning svarede ${searchResults[0].status}`);
+    // BIZZ-1678: Når TL fejler, byg minimalt strukturtræ fra DAWA adresser
+    // på matriklen. Giver brugeren overblik over lejligheder selv uden TL.
+    if (items.length === 0) {
+      try {
+        const dawaRes = await fetch(
+          `https://api.dataforsyningen.dk/adgangsadresser?ejerlavkode=${ejerlavKode}&matrikelnr=${encodeURIComponent(matrikelnr)}&per_side=5`,
+          { signal: AbortSignal.timeout(5000) }
+        );
+        if (dawaRes.ok) {
+          const adgangsadresser = (await dawaRes.json()) as Array<{
+            id: string;
+            adressebetegnelse: string;
+            postnr: string;
+            postnrnavn: string;
+          }>;
+          if (adgangsadresser.length > 0) {
+            const sfeLabel = `${adgangsadresser[0].adressebetegnelse?.split(',')[0] ?? 'SFE'}`;
+            const sfeNode: StrukturNode = {
+              bfe: sfeBfe ?? 0,
+              adresse: `${sfeLabel}, ${adgangsadresser[0].postnr} ${adgangsadresser[0].postnrnavn}`,
+              niveau: 'sfe',
+              dawaId: null,
+              ejendomsvaerdi: null,
+              grundvaerdi: null,
+              vurderingsaar: null,
+              tlVurdering: null,
+              areal: null,
+              vaerelser: null,
+              ejer: null,
+              ejertype: null,
+              koebspris: null,
+              koebsdato: null,
+              children: adgangsadresser.map((adg) => ({
+                bfe: 0,
+                adresse: adg.adressebetegnelse,
+                niveau: 'hovedejendom' as const,
+                dawaId: adg.id,
+                ejendomsvaerdi: null,
+                grundvaerdi: null,
+                vurderingsaar: null,
+                tlVurdering: null,
+                areal: null,
+                vaerelser: null,
+                ejer: null,
+                ejertype: null,
+                koebspris: null,
+                koebsdato: null,
+                children: [],
+              })),
+            };
+            logger.log(
+              `[ejendom-struktur] DAWA fallback: ${adgangsadresser.length} adgangsadresser for ejerlav ${ejerlavKode} matr. ${matrikelnr}`
+            );
+            return NextResponse.json(
+              { tree: sfeNode, fejl: null },
+              {
+                status: 200,
+                headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
+              }
+            );
+          }
+        }
+      } catch {
+        /* DAWA fallback non-fatal */
+      }
+      if (searchResults[0].status !== 200) {
+        logger.error(`[ejendom-struktur] Tinglysning svarede ${searchResults[0].status}`);
+      }
       return NextResponse.json(
-        { tree: null, fejl: `Tinglysning svarede ${searchResults[0].status}` },
+        {
+          tree: null,
+          fejl:
+            searchResults[0].status !== 200
+              ? `Tinglysning svarede ${searchResults[0].status}`
+              : null,
+        },
         { status: 200 }
       );
     }

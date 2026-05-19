@@ -734,85 +734,8 @@ async function resolveCompanyGraph(
     }
   }
 
-  // 3c. BIZZ-1672: Administrerede ejendomme fra ejf_administrator.
-  // For virksomheder der administrerer ejendomme (typisk ejerforeninger):
-  // - BFE'er allerede i grafen (fra ejerskab): ændr edge-label til "Administrerer"
-  // - Nye BFE'er: tilføj som property-noder med "Administrerer"-edge
-  // - Merge overflow med eksisterende overflow-kasse (undgå 2 kasser)
-  for (const compNode of nodes.filter(
-    (n) => (n.type === 'company' || n.type === 'main') && n.cvr
-  )) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: adminRows } = await (admin as any)
-        .from('ejf_administrator')
-        .select('bfe_nummer')
-        .eq('virksomhed_cvr', String(compNode.cvr))
-        .eq('status', 'gældende')
-        .limit(50);
-
-      const adminBfes = new Set(
-        ((adminRows ?? []) as Array<{ bfe_nummer: number }>).map((r) => r.bfe_nummer)
-      );
-      if (adminBfes.size === 0) continue;
-
-      // Ændr eksisterende ejer-edges til "Administrerer" for BFE'er der er administrator
-      for (const edge of edges) {
-        if (edge.from === compNode.id && edge.to.startsWith('bfe-')) {
-          const edgeBfe = parseInt(edge.to.replace('bfe-', ''), 10);
-          if (adminBfes.has(edgeBfe)) {
-            edge.ejerandel = 'Administrerer';
-          }
-        }
-      }
-
-      // Tilføj nye BFE'er der ikke allerede er i grafen
-      const newAdminBfes = [...adminBfes].filter((bfe) => !bfesInGraph.has(bfe));
-      for (const ab of newAdminBfes.slice(0, MAX_PROPS_PER_OWNER)) {
-        const propId = `bfe-${ab}`;
-        if (!nodeIds.has(propId)) {
-          nodes.push({
-            id: propId,
-            label: `BFE ${ab}`,
-            type: 'property',
-            bfeNummer: ab,
-          });
-          nodeIds.add(propId);
-        }
-        bfesInGraph.add(ab);
-        edges.push({ from: compNode.id, to: propId, ejerandel: 'Administrerer' });
-      }
-
-      // Merge overflow med eksisterende overflow-kasse hvis den findes
-      if (newAdminBfes.length > MAX_PROPS_PER_OWNER) {
-        const existingOverflowId = `props-overflow-${compNode.id}`;
-        const existingOverflow = nodes.find((n) => n.id === existingOverflowId);
-        const extraItems = newAdminBfes
-          .slice(MAX_PROPS_PER_OWNER)
-          .map((b) => ({ label: `BFE ${b}`, bfeNummer: b }));
-
-        if (existingOverflow && existingOverflow.overflowItems) {
-          // Merge into existing overflow
-          existingOverflow.overflowItems.push(...extraItems);
-          const total = existingOverflow.overflowItems?.length ?? 0;
-          existingOverflow.label = `+${total} ejendomme`;
-        } else {
-          // Ny overflow-kasse
-          const overflowId = `admin-overflow-${compNode.id}`;
-          nodes.push({
-            id: overflowId,
-            label: `+${extraItems.length} administrerede`,
-            type: 'status',
-            overflowItems: extraItems,
-          });
-          nodeIds.add(overflowId);
-          edges.push({ from: compNode.id, to: overflowId });
-        }
-      }
-    } catch {
-      /* ejf_administrator lookup non-fatal */
-    }
-  }
+  // BIZZ-1672: Administrator-data vises KUN som kort over ejertabellen
+  // på ejendomssiden — IKKE som noder i virksomhedsdiagrammet.
 
   // 4. BIZZ-1082: Personlige ejendomme for ALLE top-level ejere.
   // Henter properties fra ejf_ejerskab per person-navn. Dedup: hvis BFE
@@ -1810,63 +1733,8 @@ async function resolvePropertyGraph(
     dedupedNodes.push(n);
   }
 
-  // BIZZ-1672: Vis administrator (ejerforening) for denne ejendom.
-  // Henter fra ejf_administrator-tabellen og tilføjer som node med "Administrerer"-edge.
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: adminRows } = await (admin as any)
-      .from('ejf_administrator')
-      .select('id_lokal_id, virksomhed_cvr, person_navn, administrator_type')
-      .eq('bfe_nummer', bfe)
-      .eq('status', 'gældende')
-      .limit(5);
-
-    for (const row of (adminRows ?? []) as Array<{
-      id_lokal_id: string;
-      virksomhed_cvr: string | null;
-      person_navn: string | null;
-      administrator_type: string;
-    }>) {
-      if (row.administrator_type === 'virksomhed' && row.virksomhed_cvr) {
-        const adminNodeId = `admin-cvr-${row.virksomhed_cvr}`;
-        if (!seenNodeIds.has(adminNodeId)) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { data: compRow } = await (admin as any)
-            .from('cvr_virksomhed')
-            .select('navn, virksomhedsform')
-            .eq('cvr_nummer', row.virksomhed_cvr)
-            .maybeSingle();
-          const comp = compRow as { navn: string; virksomhedsform: string } | null;
-          dedupedNodes.push({
-            id: adminNodeId,
-            label: comp?.navn ?? `CVR ${row.virksomhed_cvr}`,
-            sublabel: comp?.virksomhedsform
-              ? `${comp.virksomhedsform} · Administrerer`
-              : 'Administrerer',
-            type: 'company',
-            cvr: Number(row.virksomhed_cvr),
-            link: `/dashboard/companies/${row.virksomhed_cvr}`,
-          });
-          seenNodeIds.add(adminNodeId);
-        }
-        edges.push({ from: adminNodeId, to: mainId, ejerandel: 'Administrerer' });
-      } else if (row.person_navn) {
-        const adminNodeId = `admin-person-${row.id_lokal_id}`;
-        if (!seenNodeIds.has(adminNodeId)) {
-          dedupedNodes.push({
-            id: adminNodeId,
-            label: row.person_navn,
-            sublabel: 'Administrerer',
-            type: 'person',
-          });
-          seenNodeIds.add(adminNodeId);
-        }
-        edges.push({ from: adminNodeId, to: mainId, ejerandel: 'Administrerer' });
-      }
-    }
-  } catch {
-    /* ejf_administrator lookup non-fatal */
-  }
+  // BIZZ-1672: Administrator-data vises KUN som kort over ejertabellen
+  // på ejendomssiden (via /api/ejendomsadmin) — IKKE i diagrammet.
 
   return { nodes: dedupedNodes, edges, mainId };
 }

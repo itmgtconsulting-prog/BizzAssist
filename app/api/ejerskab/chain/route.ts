@@ -754,6 +754,27 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // BIZZ-1655: Fjern "Opdelt i ejerlejligheder" status-noder når EJF
+  // har fundet faktiske ejere. Status-teksten er misvisende når vi har
+  // reelle ejere at vise — undgår at brugeren ser "Opdelt" som klikbar.
+  const harRealEjereNu = nodes.some((n) => n.type === 'company' || n.type === 'person');
+  if (harRealEjereNu) {
+    const statusNodeIds = new Set(nodes.filter((n) => n.type === 'status').map((n) => n.id));
+    if (statusNodeIds.size > 0) {
+      const cleanedNodes = nodes.filter((n) => !statusNodeIds.has(n.id));
+      nodes.length = 0;
+      nodes.push(...cleanedNodes);
+      const cleanedEdges = edges.filter(
+        (e) => !statusNodeIds.has(e.from) && !statusNodeIds.has(e.to)
+      );
+      edges.length = 0;
+      edges.push(...cleanedEdges);
+      const cleanedDetaljer = ejerDetaljer.filter((d) => d.type !== 'status');
+      ejerDetaljer.length = 0;
+      ejerDetaljer.push(...cleanedDetaljer);
+    }
+  }
+
   // Resolver virksomhedsejere rekursivt (BFS, niveau-for-niveau parallelt — BIZZ-356)
   // Items at the same depth are fetched in parallel via Promise.allSettled to avoid
   // serialising independent network calls (common for ejerlejligheder with many owners).

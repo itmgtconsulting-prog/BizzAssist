@@ -151,19 +151,22 @@ export default function VurderingsrapportClient() {
   const handleSelectEjendom = useCallback(async (result: UnifiedSearchResult) => {
     setEjdQuery('');
     setEjdResults([]);
+    // BIZZ-1683: Sæt adresse med det samme (instant feedback),
+    // hent BFE i baggrunden (1-3s BBR-kald).
+    setFormEjendom({ bfe: 0, adresse: result.title, dawaId: result.id });
     try {
       const r = await fetch(`/api/ejendom/${result.id}`);
       if (r.ok) {
         const data = await r.json();
         const bfe = data?.ejendomsrelationer?.[0]?.bfeNummer;
-        setFormEjendom({
-          bfe: bfe ? Number(bfe) : 0,
-          adresse: result.title,
-          dawaId: result.id,
-        });
+        if (bfe) {
+          setFormEjendom((prev) =>
+            prev?.dawaId === result.id ? { ...prev, bfe: Number(bfe) } : prev
+          );
+        }
       }
     } catch {
-      /* ignore */
+      /* BFE-resolve non-critical — sag kan oprettes uden BFE */
     }
   }, []);
 

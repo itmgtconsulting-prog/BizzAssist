@@ -212,10 +212,37 @@ export default function SagDetaljeClient({ sagId }: Props) {
                   )}
                 </button>
                 {isOpen && (
-                  <div className="px-4 pb-3 border-t border-slate-800">
-                    <p className="text-xs text-slate-500 mt-2 mb-2">
-                      Upload dokumenter eller skriv noter til denne zone.
-                    </p>
+                  <div className="px-4 pb-3 border-t border-slate-800 space-y-3">
+                    {/* BIZZ-1684: Fritekst-noter til AI-kontekst */}
+                    <div className="mt-2">
+                      <label className="text-xs text-slate-500 block mb-1">
+                        Noter til AI-generering
+                      </label>
+                      <textarea
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-xs text-white placeholder:text-slate-600 focus:outline-none focus:border-blue-500 resize-y min-h-[60px]"
+                        placeholder={`Skriv noter om ${zone.label.toLowerCase()}...`}
+                        defaultValue={
+                          (
+                            data.zoner.find((z) => z.zone_type === zone.key) as
+                              | { fritekst?: string }
+                              | undefined
+                          )?.fritekst ?? ''
+                        }
+                        onBlur={async (e) => {
+                          const zoneRow = data.zoner.find((z) => z.zone_type === zone.key);
+                          if (!zoneRow?.id) return;
+                          await fetch(
+                            `/api/vurderingsrapport/sager/${sagId}/zoner/${String(zoneRow.id)}`,
+                            {
+                              method: 'PATCH',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ fritekst: e.target.value }),
+                            }
+                          ).catch(() => {});
+                        }}
+                      />
+                    </div>
+                    {/* Upload-zone */}
                     <div className="border-2 border-dashed border-slate-700 rounded-lg p-4 text-center text-xs text-slate-500 hover:border-slate-600 cursor-pointer transition-colors">
                       <Upload size={16} className="mx-auto mb-1" />
                       Klik eller træk filer hertil

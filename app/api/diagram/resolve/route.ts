@@ -1788,6 +1788,64 @@ async function resolvePropertyGraph(
     dedupedNodes.push(n);
   }
 
+  // BIZZ-1672: Vis administrator (ejerforening) for denne ejendom.
+  // Henter fra ejf_administrator-tabellen og tilføjer som node med "Administrerer"-edge.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: adminRows } = await (admin as any)
+      .from('ejf_administrator')
+      .select('id_lokal_id, virksomhed_cvr, person_navn, administrator_type')
+      .eq('bfe_nummer', bfe)
+      .eq('status', 'gældende')
+      .limit(5);
+
+    for (const row of (adminRows ?? []) as Array<{
+      id_lokal_id: string;
+      virksomhed_cvr: string | null;
+      person_navn: string | null;
+      administrator_type: string;
+    }>) {
+      if (row.administrator_type === 'virksomhed' && row.virksomhed_cvr) {
+        const adminNodeId = `admin-cvr-${row.virksomhed_cvr}`;
+        if (!seenNodeIds.has(adminNodeId)) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: compRow } = await (admin as any)
+            .from('cvr_virksomhed')
+            .select('navn, virksomhedsform')
+            .eq('cvr_nummer', row.virksomhed_cvr)
+            .maybeSingle();
+          const comp = compRow as { navn: string; virksomhedsform: string } | null;
+          dedupedNodes.push({
+            id: adminNodeId,
+            label: comp?.navn ?? `CVR ${row.virksomhed_cvr}`,
+            sublabel: comp?.virksomhedsform
+              ? `${comp.virksomhedsform} · Administrerer`
+              : 'Administrerer',
+            type: 'company',
+            cvr: Number(row.virksomhed_cvr),
+            link: `/dashboard/companies/${row.virksomhed_cvr}`,
+          });
+          seenNodeIds.add(adminNodeId);
+        }
+        edges.push({ from: adminNodeId, to: mainId, ejerandel: 'Administrerer' });
+      } else if (row.person_navn) {
+        const adminNodeId = `admin-person-${row.id_lokal_id}`;
+        if (!seenNodeIds.has(adminNodeId)) {
+          dedupedNodes.push({
+            id: adminNodeId,
+            label: row.person_navn,
+            sublabel: 'Administrerer',
+            type: 'person',
+          });
+          seenNodeIds.add(adminNodeId);
+        }
+        edges.push({ from: adminNodeId, to: mainId, ejerandel: 'Administrerer' });
+      }
+    }
+  } catch {
+    /* ejf_administrator lookup non-fatal */
+  }
+
   return { nodes: dedupedNodes, edges, mainId };
 }
 

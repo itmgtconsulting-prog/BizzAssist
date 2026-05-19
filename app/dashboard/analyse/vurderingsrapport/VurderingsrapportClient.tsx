@@ -287,7 +287,7 @@ export default function VurderingsrapportClient() {
                   {kundeLoading && <Loader2 size={14} className="animate-spin text-slate-500" />}
                 </div>
                 {kundeResults.length > 0 && (
-                  <div className="absolute z-10 mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg shadow-xl max-h-60 overflow-y-auto">
+                  <div className="absolute z-10 mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg shadow-xl max-h-[28rem] overflow-y-auto">
                     {kundeResults.map((r) => (
                       <button
                         key={r.id}
@@ -366,7 +366,7 @@ export default function VurderingsrapportClient() {
                   {ejdLoading && <Loader2 size={14} className="animate-spin text-slate-500" />}
                 </div>
                 {ejdResults.length > 0 && (
-                  <div className="absolute z-10 mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg shadow-xl max-h-60 overflow-y-auto">
+                  <div className="absolute z-10 mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg shadow-xl max-h-[28rem] overflow-y-auto">
                     {ejdResults.map((r) => (
                       <button
                         key={r.id}

@@ -20,6 +20,19 @@ import type { DiagramNode, DiagramEdge, DiagramGraph } from '@/app/components/di
 /** Max ejendomme per ejer-node i initial graf */
 const MAX_PROPS_PER_OWNER = 5;
 
+/**
+ * Formatér ejerandel fra min/max til læsbar streng.
+ * "100%" når min===max, "25-50%" ved range, undefined når ukendt.
+ */
+function formatEjerandelRange(
+  min: number | null | undefined,
+  max: number | null | undefined
+): string | undefined {
+  if (min == null) return undefined;
+  if (max == null || min === max) return `${min}%`;
+  return `${min}-${max}%`;
+}
+
 interface ResolveResponse {
   graph: DiagramGraph | null;
   error?: string;
@@ -224,7 +237,7 @@ async function resolveCompanyGraph(
               ejerandel_min: number | null;
               ejerandel_max: number | null;
             }>
-          ).map((r) => [r.ejer_cvr, r.ejerandel_min != null ? `${r.ejerandel_min}%` : undefined])
+          ).map((r) => [r.ejer_cvr, formatEjerandelRange(r.ejerandel_min, r.ejerandel_max)])
         );
 
         for (const pCvr of parentCvrs) {
@@ -389,91 +402,9 @@ async function resolveCompanyGraph(
     }
   }
 
-  // 2b. BIZZ-1122 + BIZZ-1663: Ejerens personlige virksomheder (enkeltmand).
-  // Kun 'indehaver'-typen vises — 'interessenter' inkluderede alle virksomheder
-  // ejerne var medejer af, inkl. søskendeselskaber og fremmede virksomheder.
-  if (ownershipRows.length > 0) {
-    const ownerEnheder = Array.from(new Set(ownershipRows.map((r) => r.deltager_enhedsnummer)));
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: personalCompRows } = await (admin as any)
-      .from('cvr_deltagerrelation')
-      .select('virksomhed_cvr, deltager_enhedsnummer, type')
-      .in('deltager_enhedsnummer', ownerEnheder.slice(0, 5))
-      .eq('type', 'indehaver')
-      .is('gyldig_til', null)
-      .limit(20);
-
-    if (personalCompRows?.length) {
-      const personalCvrs = Array.from(
-        new Set(
-          (personalCompRows as Array<{ virksomhed_cvr: string; deltager_enhedsnummer: number }>)
-            .map((r) => r.virksomhed_cvr)
-            .filter((c) => c !== cvr && !nodeIds.has(`cvr-${c}`))
-        )
-      );
-
-      if (personalCvrs.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: personalComps } = await (admin as any)
-          .from('cvr_virksomhed')
-          .select('cvr, navn, virksomhedsform, branche_tekst, ophoert')
-          .in('cvr', personalCvrs.slice(0, 10));
-
-        // Hent ejendomsantal for at sætte expandableChildren korrekt
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: pcPropCounts } = await (admin as any)
-          .from('ejf_ejerskab')
-          .select('ejer_cvr')
-          .in('ejer_cvr', personalCvrs.slice(0, 10))
-          .eq('status', 'gældende');
-        const pcPropMap = new Map<string, number>();
-        for (const r of (pcPropCounts ?? []) as Array<{ ejer_cvr: string }>) {
-          pcPropMap.set(r.ejer_cvr, (pcPropMap.get(r.ejer_cvr) ?? 0) + 1);
-        }
-
-        for (const pc of (personalComps ?? []) as Array<{
-          cvr: string;
-          navn: string;
-          virksomhedsform: string | null;
-          branche_tekst: string | null;
-          ophoert: string | null;
-        }>) {
-          if (pc.ophoert != null) continue;
-          const pcId = `cvr-${pc.cvr}`;
-          if (nodeIds.has(pcId)) continue;
-          const pcSubParts = [pc.virksomhedsform, pc.branche_tekst].filter(Boolean);
-          // Find ejer-noden denne virksomhed tilhører
-          // Personlige virksomheder vises som siblings af main (ikke under person)
-
-          const pcPropCount = pcPropMap.get(pc.cvr) ?? 0;
-          nodes.push({
-            id: pcId,
-            label: pc.navn,
-            sublabel: pcSubParts.length > 0 ? pcSubParts.join(' · ') : undefined,
-            branche: pc.branche_tekst ?? undefined,
-            type: 'company',
-            cvr: Number(pc.cvr),
-            link: `/dashboard/companies/${pc.cvr}`,
-            isCeased: false,
-            // expandableChildren: 0 = ingen Udvid-knap, >0 = vis knap
-            expandableChildren: pcPropCount > 0 ? pcPropCount : 0,
-          });
-          nodeIds.add(pcId);
-          // Edge fra person-ejer — IT Management consulting kobles til Jakob,
-          // ikke til JaJR Holding. DiagramForce placerer den på samme depth
-          // som main via downward BFS fra person-noden (depth -1 + 1 = 0).
-          const ownerRow = (
-            personalCompRows as Array<{
-              virksomhed_cvr: string;
-              deltager_enhedsnummer: number;
-            }>
-          ).find((r) => r.virksomhed_cvr === pc.cvr);
-          const personId = ownerRow ? `en-${ownerRow.deltager_enhedsnummer}` : mainId;
-          edges.push({ from: personId, to: pcId });
-        }
-      }
-    }
-  }
+  // BIZZ-1680: Personlige virksomheder (enkeltmand) FJERNET fra virksomhedsdiagram.
+  // De har ingen ejerandel i hovedvirksomheden og tilføjede irrelevante noder.
+  // Person-diagrammet viser stadig personlige virksomheder (resolvePersonGraph).
 
   // 2c. Datterselskaber via cache (cvr_virksomhed_ejerskab)
   const MAX_TOTAL_NODES = 50;
@@ -515,10 +446,7 @@ async function resolveCompanyGraph(
             ejerandel_min: number | null;
             ejerandel_max: number | null;
           }>
-        ).map((r) => [
-          r.ejet_cvr,
-          r.ejerandel_min != null ? `${r.ejerandel_min}-${r.ejerandel_max}%` : undefined,
-        ])
+        ).map((r) => [r.ejet_cvr, formatEjerandelRange(r.ejerandel_min, r.ejerandel_max)])
       );
 
       for (const subCvr of subCvrs) {
@@ -605,8 +533,7 @@ async function resolveCompanyGraph(
           edges.push({
             from: parentId,
             to: l2Id,
-            ejerandel:
-              l2.ejerandel_min != null ? `${l2.ejerandel_min}-${l2.ejerandel_max}%` : undefined,
+            ejerandel: formatEjerandelRange(l2.ejerandel_min, l2.ejerandel_max),
           });
         }
       }
@@ -834,7 +761,7 @@ async function resolveCompanyGraph(
       edges.push({
         from: fromId,
         to: toId,
-        ejerandel: r.ejerandel_min != null ? `${r.ejerandel_min}-${r.ejerandel_max}%` : undefined,
+        ejerandel: formatEjerandelRange(r.ejerandel_min, r.ejerandel_max),
         crossOwnership: true,
       });
       existingEdgeKeys.add(edgeKey);
@@ -1593,8 +1520,7 @@ async function resolvePropertyGraph(
         edges.push({
           from: ownerId,
           to: childId,
-          ejerandel:
-            row.ejerandel_min != null ? `${row.ejerandel_min}-${row.ejerandel_max}%` : undefined,
+          ejerandel: formatEjerandelRange(row.ejerandel_min, row.ejerandel_max),
         });
       }
     }
@@ -1639,8 +1565,7 @@ async function resolvePropertyGraph(
           edges.push({
             from: ownerId,
             to: childId,
-            ejerandel:
-              row.ejerandel_min != null ? `${row.ejerandel_min}-${row.ejerandel_max}%` : undefined,
+            ejerandel: formatEjerandelRange(row.ejerandel_min, row.ejerandel_max),
           });
         }
       }
@@ -1892,8 +1817,7 @@ async function resolvePersonGraph(
     const children = childrenOfCvr.get(row.ejer_cvr) ?? [];
     children.push({
       cvr: row.ejet_cvr,
-      ejerandel:
-        row.ejerandel_min != null ? `${row.ejerandel_min}-${row.ejerandel_max}%` : undefined,
+      ejerandel: formatEjerandelRange(row.ejerandel_min, row.ejerandel_max),
     });
     childrenOfCvr.set(row.ejer_cvr, children);
   }
@@ -2048,8 +1972,7 @@ async function resolvePersonGraph(
         edges.push({
           from: parentId,
           to: subId,
-          ejerandel:
-            row.ejerandel_min != null ? `${row.ejerandel_min}-${row.ejerandel_max}%` : undefined,
+          ejerandel: formatEjerandelRange(row.ejerandel_min, row.ejerandel_max),
         });
       }
 
@@ -2122,8 +2045,7 @@ async function resolvePersonGraph(
           edges.push({
             from: parentId,
             to: subId,
-            ejerandel:
-              row.ejerandel_min != null ? `${row.ejerandel_min}-${row.ejerandel_max}%` : undefined,
+            ejerandel: formatEjerandelRange(row.ejerandel_min, row.ejerandel_max),
           });
         }
       }

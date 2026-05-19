@@ -24,6 +24,7 @@ import { z } from 'zod';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { resolveTenantId } from '@/lib/api/auth';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
 import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
@@ -120,6 +121,51 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejendomsad
   const parsed = parseQuery(request, querySchema);
   if (!parsed.success) return parsed.response as NextResponse<EjendomsadminResponse>;
   const { bfeNummer } = parsed.data;
+
+  // BIZZ-1659: Cache-first fra ejf_administrator-tabel (backfilled data)
+  try {
+    const admin = createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: cached } = await (admin as any)
+      .from('ejf_administrator')
+      .select(
+        'id_lokal_id, administrator_type, virksomhed_cvr, person_navn, virkning_fra, virkning_til, status'
+      )
+      .eq('bfe_nummer', bfeNummer)
+      .eq('status', 'gældende');
+
+    if (cached && cached.length > 0) {
+      const administratorer: AdministratorInfo[] = (
+        cached as Array<{
+          id_lokal_id: string;
+          administrator_type: string;
+          virksomhed_cvr: string | null;
+          person_navn: string | null;
+          virkning_fra: string | null;
+          virkning_til: string | null;
+          status: string;
+        }>
+      ).map((row) => ({
+        id: row.id_lokal_id,
+        type: row.administrator_type as AdministratorInfo['type'],
+        cvr: row.virksomhed_cvr,
+        navn: row.person_navn,
+        foedselsdato: null,
+        virkningFra: row.virkning_fra,
+        virkningTil: row.virkning_til,
+        status: row.status,
+      }));
+      logger.log(
+        `[ejendomsadmin] Cache hit: ${administratorer.length} admins for BFE ${bfeNummer}`
+      );
+      return NextResponse.json(
+        { bfeNummer, administratorer, fejl: null, manglerAdgang: false },
+        { headers: { 'Cache-Control': 'public, s-maxage=86400, stale-while-revalidate=3600' } }
+      );
+    }
+  } catch {
+    /* cache lookup non-fatal — fall through to live API */
+  }
 
   const token = await getSharedOAuthToken().catch(() => null);
   if (!token) {

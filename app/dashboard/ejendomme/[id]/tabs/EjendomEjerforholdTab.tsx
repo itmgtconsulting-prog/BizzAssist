@@ -152,12 +152,17 @@ export default function EjendomEjerforholdTab({
 
   return (
     <div className="space-y-2">
-      {/* BIZZ-583: Administrator-kort (ejerforening/adv./udlejer). Skjules
-          automatisk hvis ejendommen ingen admin-relation har. Bruger
-          primær BFE fra ejendomsrelationer (samme som andre tabs). */}
-      {bbrData?.ejendomsrelationer?.[0]?.bfeNummer && (
-        <EjendomAdministratorCard bfeNummer={bbrData.ejendomsrelationer[0].bfeNummer} lang={lang} />
-      )}
+      {/* BIZZ-583 + BIZZ-1659: Administrator-kort. Fallback-kæde for BFE:
+          ejendomsrelationer → ejerlejlighedBfe → moderBfe → currentBfe.
+          Skjules automatisk hvis ingen admin-relation i EJF. */}
+      {(() => {
+        const adminBfe =
+          bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
+          bbrData?.ejerlejlighedBfe ??
+          bbrData?.moderBfe ??
+          currentBfe;
+        return adminBfe ? <EjendomAdministratorCard bfeNummer={adminBfe} lang={lang} /> : null;
+      })()}
       {/* Loading state — blå progress bar kun mens BBR-data hentes */}
       {(bbrLoader || !bbrData) && (
         <TabLoadingSpinner ariaLabel={da ? 'Henter ejerskabsdata' : 'Loading ownership data'} />

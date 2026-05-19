@@ -402,9 +402,9 @@ async function resolveCompanyGraph(
     }
   }
 
-  // BIZZ-1680: Personlige virksomheder (enkeltmand) FJERNET fra virksomhedsdiagram.
-  // De har ingen ejerandel i hovedvirksomheden og tilføjede irrelevante noder.
-  // Person-diagrammet viser stadig personlige virksomheder (resolvePersonGraph).
+  // BIZZ-1680: Enkeltmandsvirksomheder vises IKKE i initial diagram.
+  // De er ikke direkte relateret til hovedvirksomhedens ejerskabsstruktur.
+  // Vises kun via "Udvid"-knap på person-noder (expandableChildren).
 
   // 2c. Datterselskaber via cache (cvr_virksomhed_ejerskab)
   const MAX_TOTAL_NODES = 50;

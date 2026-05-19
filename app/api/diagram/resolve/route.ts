@@ -428,7 +428,45 @@ async function resolveCompanyGraph(
       .is('gyldig_til', null)
       .limit(30);
 
-    const subCvrs = ((cachedSubs ?? []) as Array<{ ejet_cvr: string }>).map((r) => r.ejet_cvr);
+    // BIZZ-1680: Filtrer datterselskaber hvor main har NULL-ejerandel men en
+    // ANDEN virksomhed har reel ejerandel → main's entry er sandsynligvis historisk.
+    const rawSubs = (cachedSubs ?? []) as Array<{
+      ejet_cvr: string;
+      ejerandel_min: number | null;
+      ejerandel_max: number | null;
+    }>;
+    const subsWithAndel = rawSubs.filter((r) => r.ejerandel_min != null);
+    const subsWithoutAndel = rawSubs.filter((r) => r.ejerandel_min == null);
+
+    // For subs uden ejerandel: tjek om en ANDEN virksomhed har reel ejerandel
+    const validSubsWithoutAndel: typeof subsWithoutAndel = [];
+    if (subsWithoutAndel.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: otherOwners } = await (admin as any)
+        .from('cvr_virksomhed_ejerskab')
+        .select('ejet_cvr, ejer_cvr, ejerandel_min')
+        .in(
+          'ejet_cvr',
+          subsWithoutAndel.map((r) => r.ejet_cvr)
+        )
+        .not('ejerandel_min', 'is', null)
+        .is('gyldig_til', null)
+        .limit(100);
+
+      const hasRealOwner = new Set(
+        ((otherOwners ?? []) as Array<{ ejet_cvr: string }>).map((r) => r.ejet_cvr)
+      );
+      for (const sub of subsWithoutAndel) {
+        if (!hasRealOwner.has(sub.ejet_cvr)) {
+          // Ingen anden ejer med reel ejerandel → behold (ægte datterselskab)
+          validSubsWithoutAndel.push(sub);
+        }
+        // Ellers: en anden virksomhed ejer den med reel andel → main's entry er historisk
+      }
+    }
+
+    const filteredSubs = [...subsWithAndel, ...validSubsWithoutAndel];
+    const subCvrs = filteredSubs.map((r) => r.ejet_cvr);
 
     if (subCvrs.length > 0) {
       // Batch-hent virksomhedsinfo
@@ -451,7 +489,7 @@ async function resolveCompanyGraph(
       );
       const ejerandelMap = new Map(
         (
-          (cachedSubs ?? []) as Array<{
+          filteredSubs as Array<{
             ejet_cvr: string;
             ejerandel_min: number | null;
             ejerandel_max: number | null;

@@ -965,26 +965,36 @@ export default function EjendomDetaljeClient({
     });
     // BIZZ-695: Send ejerlejlighedBfe so DAWA fallback can look up owners via ejf_ejerskab
     if (bbrData?.ejerlejlighedBfe) params.set('moderBfe', String(bbrData.ejerlejlighedBfe));
-    fetch(`/api/ejerlejligheder?${params}`, { signal: controller.signal })
-      .then((r) => (r.ok ? r.json() : { lejligheder: [] }))
-      .then((data: { lejligheder: import('@/app/api/ejerlejligheder/route').Ejerlejlighed[] }) => {
-        if (controller.signal.aborted) return;
-        // BIZZ-1591: startTransition — ejerlejligheder er BBR-tab data
-        startTransition(() => {
-          setLejligheder(data.lejligheder);
+    // BIZZ-1675: Delay 1.5s — undgår TL 429 rate-limit ved at lade
+    // tinglysning/summarisk-kald køre færdigt før ejerlejligheder starter.
+    const delayMs = 1500;
+    const delayTimer = setTimeout(() => {
+      fetch(`/api/ejerlejligheder?${params}`, { signal: controller.signal })
+        .then((r) => (r.ok ? r.json() : { lejligheder: [] }))
+        .then(
+          (data: { lejligheder: import('@/app/api/ejerlejligheder/route').Ejerlejlighed[] }) => {
+            if (controller.signal.aborted) return;
+            // BIZZ-1591: startTransition — ejerlejligheder er BBR-tab data
+            startTransition(() => {
+              setLejligheder(data.lejligheder);
+            });
+          }
+        )
+        .catch((err) => {
+          if (err.name === 'AbortError') return;
+          logger.error('[ejendom] Ejerlejligheder fetch error:', err);
+          startTransition(() => {
+            setLejligheder([]);
+          });
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setLejlighederLoader(false);
         });
-      })
-      .catch((err) => {
-        if (err.name === 'AbortError') return;
-        logger.error('[ejendom] Ejerlejligheder fetch error:', err);
-        startTransition(() => {
-          setLejligheder([]);
-        });
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLejlighederLoader(false);
-      });
-    return () => controller.abort();
+    }, delayMs);
+    return () => {
+      clearTimeout(delayTimer);
+      controller.abort();
+    };
   }, [id, erDAWA, dawaStatus, dawaAdresse, bbrData, matrikelData]);
 
   /**

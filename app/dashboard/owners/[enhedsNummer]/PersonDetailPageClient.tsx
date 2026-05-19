@@ -1492,14 +1492,38 @@ export default function PersonDetailPageClient({
       String(v.cvr).padStart(8, '0')
     );
 
-    // BIZZ-1588: Datterselskaber tilføjes IKKE til initial fetch — de triggede
-    // abort af igangværende fetch når relatedCompanies opdateres. Ejendomme
-    // ejet via subsidiaries dukker op via ejf_ejerskab BFE-opslag (server-side)
-    // og behøver ikke klient-side CVR-parameter.
     const uniqueCvrs = [...new Set([...ejerCvrs, ...andreVirksomhedCvrs])].slice(0, 30);
 
     // BIZZ-264: Also fetch person's directly owned properties via enhedsNummer
     const personEnhedsNumre = data?.enhedsNummer ? [String(data.enhedsNummer)] : [];
+
+    // BIZZ-1690: Hent datterselskabs-CVR'er asynkront og re-fetch ejendomme
+    // når de er klar. Parallelt med initial ejendomme-fetch.
+    if (ejerCvrs.length > 0) {
+      void (async () => {
+        try {
+          const subResults = await Promise.all(
+            ejerCvrs.slice(0, 5).map(async (cvr) => {
+              const r = await fetch(`/api/diagram/subsidiaries?cvr=${cvr}`);
+              if (!r.ok) return [];
+              const d = await r.json();
+              return (d.cvrs ?? []) as string[];
+            })
+          );
+          const subCvrs = subResults.flat();
+          if (subCvrs.length > 0) {
+            const expanded = [...new Set([...uniqueCvrs, ...subCvrs])].slice(0, 50);
+            const expandedKey = [...expanded, ...personEnhedsNumre].sort().join(',');
+            if (ejendomFetchKeyRef.current !== expandedKey) {
+              ejendomFetchKeyRef.current = expandedKey;
+              void fetchEjendommeProgressively(expanded, personEnhedsNumre);
+            }
+          }
+        } catch {
+          /* non-fatal */
+        }
+      })();
+    }
 
     const fetchKey = [...uniqueCvrs, ...personEnhedsNumre].sort().join(',');
     if (ejendomFetchKeyRef.current === fetchKey) return;

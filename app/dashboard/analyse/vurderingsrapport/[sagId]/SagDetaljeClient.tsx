@@ -73,6 +73,10 @@ export default function SagDetaljeClient({ sagId }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [expandedZones, setExpandedZones] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState('identifikation');
+  /** BIZZ-1685: AI-generering state */
+  const [generating, setGenerating] = useState(false);
+  const [genError, setGenError] = useState<string | null>(null);
+  const [genSuccess, setGenSuccess] = useState(false);
 
   /** Hent sag-data */
   const refresh = useCallback(async () => {
@@ -90,6 +94,29 @@ export default function SagDetaljeClient({ sagId }: Props) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  /** BIZZ-1685: Trigger AI-generering af alle 8 rapport-tabs */
+  const handleGenerate = useCallback(async () => {
+    setGenerating(true);
+    setGenError(null);
+    setGenSuccess(false);
+    try {
+      const r = await fetch(`/api/vurderingsrapport/sager/${sagId}/generate-tabs`, {
+        method: 'POST',
+      });
+      if (r.ok) {
+        setGenSuccess(true);
+        await refresh();
+      } else {
+        const errData = await r.json().catch(() => null);
+        setGenError(errData?.error ?? `Generering fejlede (HTTP ${r.status})`);
+      }
+    } catch (err) {
+      setGenError(err instanceof Error ? err.message : 'Netværksfejl');
+    } finally {
+      setGenerating(false);
+    }
+  }, [sagId, refresh]);
 
   const toggleZone = (key: string) => {
     setExpandedZones((prev) => {
@@ -202,9 +229,40 @@ export default function SagDetaljeClient({ sagId }: Props) {
 
         {/* Højre: Rapport-tabs */}
         <div>
-          <h2 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
-            <FileText size={14} /> Rapport
-          </h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+              <FileText size={14} /> Rapport
+            </h2>
+            <button
+              type="button"
+              onClick={handleGenerate}
+              disabled={generating}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-xl text-xs font-semibold flex items-center gap-2 transition-colors"
+              aria-label="Generer rapport med AI"
+            >
+              {generating ? (
+                <>
+                  <Loader2 size={13} className="animate-spin" />
+                  Genererer...
+                </>
+              ) : (
+                <>
+                  <FileText size={13} />
+                  Generer rapport (AI)
+                </>
+              )}
+            </button>
+          </div>
+          {genError && (
+            <div className="mb-3 px-3 py-2 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-xs">
+              {genError}
+            </div>
+          )}
+          {genSuccess && !generating && (
+            <div className="mb-3 px-3 py-2 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-emerald-400 text-xs">
+              Rapport genereret — data vises nedenfor.
+            </div>
+          )}
           {/* Tab-bar */}
           <div className="flex flex-wrap gap-1 mb-4">
             {TAB_CONFIG.map((tab) => (

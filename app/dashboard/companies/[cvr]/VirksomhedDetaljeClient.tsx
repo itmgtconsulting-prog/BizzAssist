@@ -1243,8 +1243,11 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
       uniqueCvrs,
       ownerEnhedsNumre.length > 0 ? ownerEnhedsNumre : undefined
     );
+    // BIZZ-1664: ejerskabDatterCvrs tilføjet til dep-array — når ejerskabs-
+    // cache loader datterselskaber ind, re-triggers ejendomme-fetchen med
+    // det komplette CVR-sæt (inkl. datter-CVR'er som CVR ES missede).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aktivTab, cvr, relatedCompanies, fetchEjendommeProgressively]);
+  }, [aktivTab, cvr, relatedCompanies, ejerskabDatterCvrs, fetchEjendommeProgressively]);
 
   /** Lazy-load regnskabstal for alle relaterede virksomheder (parallelt) */
   useEffect(() => {

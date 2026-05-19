@@ -318,7 +318,7 @@ export default function EjendomEjerforholdTab({
                     </p>
                     <p className="text-slate-500 text-xs mt-0.5">
                       {da
-                        ? 'Lejlighedslisten kunne ikke hentes — ejerskabsdata vises for moderejendommen.'
+                        ? 'Lejlighedslisten kunne ikke hentes — ejerskabsdata vises for hovedejendommen.'
                         : 'Apartment list unavailable — showing ownership data for the parent property.'}
                     </p>
                   </div>

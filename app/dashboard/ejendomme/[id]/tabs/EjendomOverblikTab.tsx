@@ -129,8 +129,8 @@ export default function EjendomOverblikTab({
   // bagudkompatibilitet — vises ikke længere i Oversigt-fanen.
   ejere: _ejere,
   senestHandel: _senestHandel,
-  grundskyld,
-  ejendomsvaerdiskat,
+  grundskyld: _grundskyld,
+  ejendomsvaerdiskat: _ejendomsvaerdiskat,
   zoneinfo: _zoneinfo,
 }: Props) {
   const da = lang === 'da';
@@ -487,30 +487,9 @@ export default function EjendomOverblikTab({
           />
         </div>
 
-        {/* ─── Økonomi summary ───
-           BIZZ-1547: Zone-kort fjernet — zone vises som badge i ejendomsheader.
-           BIZZ-1548: "Seneste handel"-kort fjernet — data findes i Økonomi/Salgshistorik-fanen.
-           BIZZ-1549: "Ejere"-kort fjernet — data findes i Ejerskab- og Tinglysnings-fanen. */}
-        {(grundskyld || ejendomsvaerdiskat) && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {/* Skat */}
-            <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
-              <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">
-                {da ? 'Årlig skat' : 'Annual tax'}
-              </p>
-              {grundskyld != null && grundskyld > 0 && (
-                <p className="text-slate-200 text-xs">
-                  {da ? 'Grundskyld' : 'Land tax'}: {grundskyld.toLocaleString('da-DK')} DKK
-                </p>
-              )}
-              {ejendomsvaerdiskat != null && ejendomsvaerdiskat > 0 && (
-                <p className="text-slate-200 text-xs">
-                  {da ? 'Ejd.skat' : 'Prop. tax'}: {ejendomsvaerdiskat.toLocaleString('da-DK')} DKK
-                </p>
-              )}
-            </div>
-          </div>
-        )}
+        {/* BIZZ-1668: Estimeret skat-boks fjernet — viste forkerte beløb
+           (estimereretGrundskyld ≠ faktisk grundskyld fra SKAT-tabben).
+           Korrekte skattebeløb findes på SKAT-fanen. */}
 
         {/* ─── Rad 2: Bygninger (v) + Enheder (h) ─── */}
 

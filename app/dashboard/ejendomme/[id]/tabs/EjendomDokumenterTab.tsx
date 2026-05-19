@@ -747,7 +747,7 @@ export default function EjendomDokumenterTab(props: Props) {
           {!!dawaAdresse?.etage && !!bbrData?.moderBfe && (
             <div className="px-4 pb-2 text-xs text-slate-500 italic">
               {da
-                ? `Energimærker hentes fra moderejendommen (BFE ${bbrData.moderBfe}) — mærker registreres på bygningsniveau.`
+                ? `Energimærker hentes fra hovedejendommen (BFE ${bbrData.moderBfe}) — mærker registreres på bygningsniveau.`
                 : `Energy labels are fetched from the parent property (BFE ${bbrData.moderBfe}) — labels are registered at building level.`}
             </div>
           )}

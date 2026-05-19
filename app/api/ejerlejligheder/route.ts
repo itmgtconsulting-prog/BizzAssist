@@ -232,7 +232,7 @@ function parseDoerSortValue(doer: string | null | undefined): number {
 async function resolveLejlighederViaDawa(
   ejerlavKode: string,
   matrikelnr: string,
-  moderBfe?: number
+  _moderBfe?: number
 ): Promise<Ejerlejlighed[]> {
   const DAWA_BASE = 'https://dawa.aws.dk';
 
@@ -246,53 +246,8 @@ async function resolveLejlighederViaDawa(
   const adgangsadresser = (await adgRes.json()) as Array<{ id: string; adressebetegnelse: string }>;
   if (adgangsadresser.length === 0) return [];
 
-  // Step 2: Pre-load owner from ejf_ejerskab using moderBfe (= ejerlejligheds-BFE)
-  // BIZZ-695: Klienten sender ejerlejlighedBfe som moderBfe parameter.
-  let cachedOwner: { navn: string; type: 'person' | 'selskab' | 'ukendt' } | null = null;
-  if (moderBfe) {
-    try {
-      // Look up ejerskab for the moderBfe itself — ejf_ejerskab might have it
-      const { createAdminClient } = await import('@/lib/supabase/admin');
-      const admin = createAdminClient();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: moderRows } = (await (admin as any)
-        .from('ejf_ejerskab')
-        .select('ejer_navn, ejer_type, ejer_cvr')
-        .eq('bfe_nummer', moderBfe)
-        .eq('status', 'gældende')
-        .limit(1)) as {
-        data: Array<{ ejer_navn: string; ejer_type: string; ejer_cvr: string | null }> | null;
-      };
-      if (moderRows && moderRows.length > 0) {
-        let navn = moderRows[0].ejer_navn;
-        const ejerType =
-          moderRows[0].ejer_type === 'virksomhed'
-            ? ('selskab' as const)
-            : moderRows[0].ejer_type === 'person'
-              ? ('person' as const)
-              : ('ukendt' as const);
-
-        // Enrich virksomhedsnavn fra cvr_virksomhed når ejer_navn bare er "CVR XXXXXXXX"
-        if (ejerType === 'selskab' && moderRows[0].ejer_cvr && navn.startsWith('CVR ')) {
-          try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const { data: cvrRow } = (await (admin as any)
-              .from('cvr_virksomhed')
-              .select('navn')
-              .eq('cvr', moderRows[0].ejer_cvr)
-              .maybeSingle()) as { data: { navn: string } | null };
-            if (cvrRow?.navn) navn = cvrRow.navn;
-          } catch {
-            /* CVR lookup non-fatal */
-          }
-        }
-
-        cachedOwner = { navn, type: ejerType };
-      }
-    } catch {
-      /* non-fatal */
-    }
-  }
+  // BIZZ-1677: cachedOwner FJERNET — kopierede moder-ejer til alle children-EL.
+  // TL-berigelsen (BIZZ-724 iter 3) populerer korrekt ejer pr. EL-BFE.
 
   // Step 3: For each adgangsadresse, find all adresser with etage/dør
   const lejligheder: Ejerlejlighed[] = [];
@@ -322,8 +277,11 @@ async function resolveLejlighederViaDawa(
         etage: unit.etage,
         doer: unit.dør,
         beskrivelse: unit.betegnelse,
-        ejer: cachedOwner?.navn ?? '–',
-        ejertype: cachedOwner?.type ?? 'ukendt',
+        // BIZZ-1677: Sæt IKKE moder-ejer på alle units — det giver forkert
+        // data (alle EL viser samme person). TL-berigelsen nedenfor populerer
+        // den korrekte ejer pr. BFE via /ejdsummarisk.
+        ejer: '–',
+        ejertype: 'ukendt',
         areal: null,
         koebspris: null,
         koebsdato: null,

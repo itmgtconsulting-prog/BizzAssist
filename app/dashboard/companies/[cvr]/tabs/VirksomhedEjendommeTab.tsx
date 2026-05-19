@@ -186,8 +186,13 @@ export default function VirksomhedEjendommeTab({
                 nameByCvr.set(data.vat, data.name);
                 for (const rv of relatedCompanies) nameByCvr.set(rv.cvr, rv.navn);
 
-                // Split into active and sold
-                const aktive = ejendommeData.filter((e) => e.aktiv !== false);
+                // BIZZ-1672: Split into owned, administered and sold
+                const administrerede = ejendommeData.filter(
+                  (e) => e.administreret === true && e.aktiv !== false
+                );
+                const aktive = ejendommeData.filter(
+                  (e) => e.aktiv !== false && e.administreret !== true
+                );
                 const solgte = ejendommeData.filter((e) => e.aktiv === false);
 
                 // Group active by ownerCvr (normalized to number)
@@ -325,6 +330,35 @@ export default function VirksomhedEjendommeTab({
                         </div>
                       );
                     })}
+                    {/* BIZZ-1672: Administrerede ejendomme */}
+                    {administrerede.length > 0 && (
+                      <div className="pt-4 border-t border-teal-500/20">
+                        <div className="flex items-center gap-2 mb-3">
+                          <Shield size={14} className="text-teal-400" />
+                          <h3 className="text-sm font-semibold text-teal-300">
+                            {lang === 'da'
+                              ? `Administrerede ejendomme (${administrerede.length})`
+                              : `Administered properties (${administrerede.length})`}
+                          </h3>
+                        </div>
+                        <p className="text-slate-500 text-xs mb-3">
+                          {lang === 'da'
+                            ? 'Følgende ejendomme administreres af denne virksomhed/ejerforening.'
+                            : 'The following properties are administered by this company/association.'}
+                        </p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                          {administrerede.map((ej) => (
+                            <PropertyOwnerCard
+                              key={ej.bfeNummer}
+                              ejendom={ej}
+                              showOwner={false}
+                              lang={lang}
+                              preEnriched={preEnrichedByBfe.get(ej.bfeNummer) ?? null}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     {/* Fold-out for sold properties — grouped by historical owner */}
                     {solgte.length > 0 && (
                       <div className="pt-4 border-t border-slate-700/30">

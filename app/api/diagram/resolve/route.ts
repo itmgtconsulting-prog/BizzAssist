@@ -735,9 +735,10 @@ async function resolveCompanyGraph(
   }
 
   // 3c. BIZZ-1672: Administrerede ejendomme fra ejf_administrator.
-  // Når en virksomhed (typisk ejerforening) administrerer ejendomme, vis dem
-  // som property-noder med "Administrerer"-edge. Bruger ejf_administrator
-  // tabellen (migration 148).
+  // For virksomheder der administrerer ejendomme (typisk ejerforeninger):
+  // - BFE'er allerede i grafen (fra ejerskab): ændr edge-label til "Administrerer"
+  // - Nye BFE'er: tilføj som property-noder med "Administrerer"-edge
+  // - Merge overflow med eksisterende overflow-kasse (undgå 2 kasser)
   for (const compNode of nodes.filter(
     (n) => (n.type === 'company' || n.type === 'main') && n.cvr
   )) {
@@ -750,42 +751,63 @@ async function resolveCompanyGraph(
         .eq('status', 'gældende')
         .limit(50);
 
-      const adminBfes = (adminRows ?? []) as Array<{ bfe_nummer: number }>;
-      // Filtrer BFE'er der allerede er i grafen (undgå duplikater)
-      const newAdminBfes = adminBfes.filter((r) => !bfesInGraph.has(r.bfe_nummer));
+      const adminBfes = new Set(
+        ((adminRows ?? []) as Array<{ bfe_nummer: number }>).map((r) => r.bfe_nummer)
+      );
+      if (adminBfes.size === 0) continue;
 
-      const shownAdmin = newAdminBfes.slice(0, MAX_PROPS_PER_OWNER);
-      for (const ab of shownAdmin) {
-        const propId = `bfe-${ab.bfe_nummer}`;
+      // Ændr eksisterende ejer-edges til "Administrerer" for BFE'er der er administrator
+      for (const edge of edges) {
+        if (edge.from === compNode.id && edge.to.startsWith('bfe-')) {
+          const edgeBfe = parseInt(edge.to.replace('bfe-', ''), 10);
+          if (adminBfes.has(edgeBfe)) {
+            edge.ejerandel = 'Administrerer';
+          }
+        }
+      }
+
+      // Tilføj nye BFE'er der ikke allerede er i grafen
+      const newAdminBfes = [...adminBfes].filter((bfe) => !bfesInGraph.has(bfe));
+      for (const ab of newAdminBfes.slice(0, MAX_PROPS_PER_OWNER)) {
+        const propId = `bfe-${ab}`;
         if (!nodeIds.has(propId)) {
           nodes.push({
             id: propId,
-            label: `BFE ${ab.bfe_nummer}`,
+            label: `BFE ${ab}`,
             type: 'property',
-            bfeNummer: ab.bfe_nummer,
+            bfeNummer: ab,
           });
           nodeIds.add(propId);
         }
-        bfesInGraph.add(ab.bfe_nummer);
-        edges.push({
-          from: compNode.id,
-          to: propId,
-          ejerandel: 'Administrerer',
-        });
+        bfesInGraph.add(ab);
+        edges.push({ from: compNode.id, to: propId, ejerandel: 'Administrerer' });
       }
+
+      // Merge overflow med eksisterende overflow-kasse hvis den findes
       if (newAdminBfes.length > MAX_PROPS_PER_OWNER) {
-        const overflowCount = newAdminBfes.length - MAX_PROPS_PER_OWNER;
-        const overflowId = `admin-overflow-${compNode.id}`;
-        nodes.push({
-          id: overflowId,
-          label: `+${overflowCount} administrerede`,
-          type: 'status',
-          overflowItems: newAdminBfes
-            .slice(MAX_PROPS_PER_OWNER)
-            .map((p) => ({ label: `BFE ${p.bfe_nummer}`, bfeNummer: p.bfe_nummer })),
-        });
-        nodeIds.add(overflowId);
-        edges.push({ from: compNode.id, to: overflowId });
+        const existingOverflowId = `props-overflow-${compNode.id}`;
+        const existingOverflow = nodes.find((n) => n.id === existingOverflowId);
+        const extraItems = newAdminBfes
+          .slice(MAX_PROPS_PER_OWNER)
+          .map((b) => ({ label: `BFE ${b}`, bfeNummer: b }));
+
+        if (existingOverflow && existingOverflow.overflowItems) {
+          // Merge into existing overflow
+          existingOverflow.overflowItems.push(...extraItems);
+          const total = existingOverflow.overflowItems?.length ?? 0;
+          existingOverflow.label = `+${total} ejendomme`;
+        } else {
+          // Ny overflow-kasse
+          const overflowId = `admin-overflow-${compNode.id}`;
+          nodes.push({
+            id: overflowId,
+            label: `+${extraItems.length} administrerede`,
+            type: 'status',
+            overflowItems: extraItems,
+          });
+          nodeIds.add(overflowId);
+          edges.push({ from: compNode.id, to: overflowId });
+        }
       }
     } catch {
       /* ejf_administrator lookup non-fatal */

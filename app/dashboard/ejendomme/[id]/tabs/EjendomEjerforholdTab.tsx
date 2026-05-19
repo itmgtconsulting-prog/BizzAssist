@@ -295,24 +295,71 @@ export default function EjendomEjerforholdTab({
             if (strukturLoader || lejlighederLoader) {
               return <StrukturSkeleton />;
             }
+            // BIZZ-1656: Når lejligheder er tomme (TL matrikelsøgning dækker
+            // ikke alle matrikler), vis ejerkæde + diagram i stedet for en
+            // ubrugelig "opdelt" placeholder. Brugeren ser mindst admin +
+            // moderejendommens ejerskabsdata.
             return (
               <div className="space-y-4">
-                <SectionTitle title={t.ownershipStructure} />
-                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-6 text-center space-y-3">
-                  <div className="w-12 h-12 bg-amber-500/10 rounded-xl flex items-center justify-center mx-auto">
-                    <Building2 size={22} className="text-amber-400" />
+                <div className="bg-slate-800/40 border border-amber-500/20 rounded-xl p-4 flex items-start gap-3">
+                  <div className="w-8 h-8 bg-amber-500/10 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <Building2 size={16} className="text-amber-400" />
                   </div>
-                  <p className="text-slate-300 text-sm font-medium">
-                    {da
-                      ? 'Ejendommen er opdelt i ejerlejligheder'
-                      : 'Property is divided into condominiums'}
-                  </p>
-                  <p className="text-slate-500 text-xs max-w-md mx-auto">
-                    {da
-                      ? 'Ejerskab er registreret på de enkelte ejerlejligheder.'
-                      : 'Ownership is registered on individual condominium units.'}
-                  </p>
+                  <div>
+                    <p className="text-slate-300 text-sm font-medium">
+                      {da
+                        ? 'Ejendommen er opdelt i ejerlejligheder'
+                        : 'Property is divided into condominiums'}
+                    </p>
+                    <p className="text-slate-500 text-xs mt-0.5">
+                      {da
+                        ? 'Lejlighedslisten kunne ikke hentes — ejerskabsdata vises for moderejendommen.'
+                        : 'Apartment list unavailable — showing ownership data for the parent property.'}
+                    </p>
+                  </div>
                 </div>
+                {bfeForDiagram && (
+                  <>
+                    {chainLoader ? (
+                      <TabLoadingSpinner
+                        ariaLabel={da ? 'Henter ejerskabsdata' : 'Loading ownership data'}
+                      />
+                    ) : (
+                      <>
+                        <EjerKort ejerDetaljer={chainEjerDetaljer} lang={lang} />
+                        {chainHasMore && onExpandChain && (
+                          <button
+                            type="button"
+                            onClick={onExpandChain}
+                            className="text-sm text-blue-400 hover:text-blue-300 underline underline-offset-2 transition-colors"
+                            aria-label={
+                              da
+                                ? 'Udvid ejerkæde til dybere niveauer'
+                                : 'Expand ownership chain to deeper levels'
+                            }
+                          >
+                            {da ? 'Vis dybere ejerkæde...' : 'Show deeper ownership chain...'}
+                          </button>
+                        )}
+                      </>
+                    )}
+                    {diagramResolveLoader ? (
+                      <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />
+                    ) : (
+                      <DiagramV2
+                        rootType="property"
+                        rootId={String(bfeForDiagram)}
+                        rootLabel={
+                          dawaAdresse
+                            ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
+                            : `BFE ${bfeForDiagram}`
+                        }
+                        lang={lang}
+                        prefetchedGraph={prefetchedDiagramGraph}
+                      />
+                    )}
+                  </>
+                )}
               </div>
             );
           }

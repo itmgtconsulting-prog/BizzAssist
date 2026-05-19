@@ -797,6 +797,47 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
         return parseDoerSortValue(a.doer) - parseDoerSortValue(b.doer);
       });
 
+    // BIZZ-1656: Augmentér med DAWA — TL matrikelsøgning kan returnere
+    // delvise resultater (fx kun 1. sal men ikke stuen). DAWA finder ALLE
+    // adresser på matriklen. Tilføj units DAWA kender men TL ikke fandt.
+    try {
+      const dawaExtra = await resolveLejlighederViaDawa(ejerlavKode, matrikelnr, moderBfe);
+      if (dawaExtra.length > 0) {
+        const existingAddrs = new Set(
+          lejligheder.map((l) => l.adresse.toLowerCase().replace(/\s+/g, ' ').trim())
+        );
+        let added = 0;
+        for (const dLej of dawaExtra) {
+          const normAddr = dLej.adresse.toLowerCase().replace(/\s+/g, ' ').trim();
+          if (!existingAddrs.has(normAddr)) {
+            lejligheder.push(dLej);
+            existingAddrs.add(normAddr);
+            added++;
+          }
+        }
+        if (added > 0) {
+          logger.log(
+            `[ejerlejligheder] DAWA augment: ${added} ekstra lejligheder tilføjet for ejerlav ${ejerlavKode} matr. ${matrikelnr}`
+          );
+          // Re-sort after merge
+          lejligheder.sort((a, b) => {
+            const addrA = a.adresse.split(',')[0].trim();
+            const addrB = b.adresse.split(',')[0].trim();
+            if (addrA !== addrB) return addrA.localeCompare(addrB, 'da');
+            const etageA = parseEtageSortValue(a.etage);
+            const etageB = parseEtageSortValue(b.etage);
+            if (etageA !== etageB) return etageA - etageB;
+            return parseDoerSortValue(a.doer) - parseDoerSortValue(b.doer);
+          });
+        }
+      }
+    } catch (dawaErr) {
+      logger.warn(
+        '[ejerlejligheder] DAWA augment fejlede (non-fatal):',
+        dawaErr instanceof Error ? dawaErr.message : dawaErr
+      );
+    }
+
     // BIZZ-784: filter udfasede ejerlejligheder unless klienten eksplicit
     // beder om dem. `udfaset=null` (ukendt) tæller som aktiv så vi ikke
     // skjuler enheder på basis af en heuristic der ikke kunne afgøres.

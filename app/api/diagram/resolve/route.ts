@@ -276,7 +276,7 @@ async function resolveCompanyGraph(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: ownerRows } = await (admin as any)
     .from('cvr_deltagerrelation')
-    .select('deltager_enhedsnummer, type, virksomhed_cvr')
+    .select('deltager_enhedsnummer, type, virksomhed_cvr, ejerandel_pct')
     .in('virksomhed_cvr', companyCvrsInGraph.slice(0, 10))
     .is('gyldig_til', null)
     .limit(100);
@@ -284,7 +284,12 @@ async function resolveCompanyGraph(
   // Filtrer til ownership-typer
   const ownershipRows = (ownerRows ?? []).filter((r: { type: string }) =>
     OWNERSHIP_TYPES.has(r.type)
-  ) as Array<{ deltager_enhedsnummer: number; type: string; virksomhed_cvr: string }>;
+  ) as Array<{
+    deltager_enhedsnummer: number;
+    type: string;
+    virksomhed_cvr: string;
+    ejerandel_pct: number | null;
+  }>;
 
   if (ownershipRows.length > 0) {
     const enhedsNumre = Array.from(new Set(ownershipRows.map((r) => r.deltager_enhedsnummer)));
@@ -310,8 +315,13 @@ async function resolveCompanyGraph(
       personTargets.set(r.deltager_enhedsnummer, targets);
     }
 
-    // Person-ejerandel er nice-to-have — skippes i cache-first (kræver live CVR ES)
+    // BIZZ-1680: Populér person-ejerandel fra cvr_deltagerrelation
     const personEjerandele = new Map<number, string>();
+    for (const r of ownershipRows) {
+      if (r.ejerandel_pct != null && r.ejerandel_pct > 0) {
+        personEjerandele.set(r.deltager_enhedsnummer, `${r.ejerandel_pct}%`);
+      }
+    }
 
     // BIZZ-1125: Batch-beregn expandableChildren for person-noder.
     // Tæl virksomheder med interessenter/indehaver-rolle eller ejerandel_pct > 0,
@@ -449,8 +459,7 @@ async function resolveCompanyGraph(
         ).map((r) => [r.ejet_cvr, formatEjerandelRange(r.ejerandel_min, r.ejerandel_max)])
       );
 
-      // BIZZ-1680: Kun vis datterselskaber med faktisk ejerandel-data.
-      // Virksomheder uden ejerandel vises kun via "Udvid"-knap.
+      // BIZZ-1680: Vis direkte datterselskaber (niveau 1) — med eller uden ejerandel.
       for (const subCvr of subCvrs) {
         if (nodes.length >= MAX_TOTAL_NODES) break;
         const subId = `cvr-${subCvr}`;
@@ -459,7 +468,6 @@ async function resolveCompanyGraph(
         const cached = subMap.get(subCvr);
         if (cached?.ophoert != null) continue;
         const andel = ejerandelMap.get(subCvr);
-        if (!andel) continue; // Spring over virksomheder uden registreret ejerandel
 
         const sublabelParts = [cached?.virksomhedsform, cached?.branche_tekst].filter(Boolean);
         nodes.push({

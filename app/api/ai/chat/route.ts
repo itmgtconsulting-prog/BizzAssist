@@ -678,6 +678,31 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['topic'],
     },
   },
+  {
+    name: 'data_intelligence',
+    description:
+      'Kør en data-forespørgsel mod BizzAssist databasen via Data Intelligence. ' +
+      'Genererer SQL automatisk, validerer og eksekverer. Brug dette til statistik, ' +
+      'aggregeringer og analyser der ikke er dækket af andre tools — fx ' +
+      '"Hvor mange handler over 10M i Hvidovre i 2025?", "Top 10 virksomheder med flest ejendomme", ' +
+      '"Gennemsnitlig grundværdi pr. kommune". Returnerer tabeldata med kolonner og rækker.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        prompt: {
+          type: 'string',
+          description:
+            'Struktureret prompt til DI-backend — beskriv præcist hvad der skal hentes, filtre, sortering, aggregering. Fx "Antal ejerskifter i 2025 grouperet pr. kommune, sorteret faldende"',
+        },
+        chart_type: {
+          type: 'string',
+          enum: ['table', 'bar', 'line', 'pie', 'number'],
+          description: 'Ønsket visualiseringstype for resultatet (default: table)',
+        },
+      },
+      required: ['prompt'],
+    },
+  },
 ];
 
 // ─── Tool labels (for status messages) ──────────────────────────────────────
@@ -720,6 +745,8 @@ const TOOL_STATUS: Record<string, string> = {
   hent_ejendomme_for_person: 'Henter personens ejendomme…',
   // BIZZ-813
   generate_document: 'Genererer fil…',
+  // BIZZ-1697
+  data_intelligence: 'Kører data-analyse…',
 };
 
 // ─── System prompt ──────────────────────────────────────────────────────────
@@ -2405,6 +2432,58 @@ async function executeTool(
             antal: facts.length,
             computed_at: facts[0]?.computed_at_iso,
             facts: facts.map((f) => ({ key: f.key, value: f.value })),
+          };
+        }
+        break;
+      }
+
+      case 'data_intelligence': {
+        // BIZZ-1697: Data Intelligence — kør SQL mod database via DI-backend
+        const diPrompt = (input as { prompt?: string; chart_type?: string }).prompt;
+        const chartType = (input as { chart_type?: string }).chart_type ?? 'table';
+        if (!diPrompt) {
+          result = { fejl: 'prompt er påkrævet' };
+          break;
+        }
+        try {
+          const diRes = await fetch(`${baseUrl}/api/analyse/sql`, {
+            method: 'POST',
+            headers: { ...internalFetchOpts.headers, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: diPrompt }),
+            signal: AbortSignal.timeout(25000),
+          });
+          if (!diRes.ok) {
+            const errBody = await diRes.json().catch(() => null);
+            result = {
+              fejl: errBody?.error ?? `Data Intelligence fejlede (HTTP ${diRes.status})`,
+            };
+          } else {
+            const diData = (await diRes.json()) as {
+              columns?: string[];
+              rows?: unknown[][];
+              sql?: string;
+              rowCount?: number;
+              error?: string;
+            };
+            if (diData.error) {
+              result = { fejl: diData.error };
+            } else {
+              // Returnér data UDEN SQL til Claude — brugeren skal ikke se SQL
+              result = {
+                columns: diData.columns ?? [],
+                rows: (diData.rows ?? []).slice(0, 50),
+                rowCount: diData.rowCount ?? 0,
+                chartType,
+                afkortet: (diData.rows?.length ?? 0) > 50,
+              };
+            }
+          }
+        } catch (diErr) {
+          result = {
+            fejl:
+              diErr instanceof Error && diErr.name === 'TimeoutError'
+                ? 'Forespørgslen tog for lang tid (>25s)'
+                : 'Data Intelligence netværksfejl',
           };
         }
         break;

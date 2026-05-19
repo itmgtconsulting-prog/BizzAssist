@@ -194,10 +194,12 @@ export default async function EjendommeDetailPage({
         let bbrResult: Omit<EjendomApiResponse, 'dawaId'>;
         let bbrFromCache = false;
         try {
+          // BIZZ-1650: Øget timeout fra 4s til 8s — Datafordeler kan tage 5-7s
+          // ved belastning. 4s triggede fejl-banner før DF havde svaret.
           bbrResult = await Promise.race([
             fetchBbrForAddress(id),
             new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error('BBR_TIMEOUT')), 4000)
+              setTimeout(() => reject(new Error('BBR_TIMEOUT')), 8000)
             ),
           ]);
         } catch {

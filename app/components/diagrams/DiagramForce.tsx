@@ -1053,14 +1053,58 @@ function DiagramForce({
       }
     }
 
-    // BIZZ-1205/1545: Rolle-virksomheder (layoutSection='role') placeres MELLEM
-    // personligt ejede ejendomme og ejer-virksomheder. Tidligere placeret
-    // nederst, hvilket gjorde diagrammet svært at læse for personer med mange
-    // rolle-virksomheder. Hierarki-orden: person → personlige ejendomme →
-    // rolle-virksomheder → ejer-virksomheder → sub-virksomheder.
+    // BIZZ-1669: Person-diagram layout-rækkefølge:
+    //   person (0) → personlige ejendomme (1) → rolle-virksomheder (2) →
+    //   ejer-virksomheder (3+) → sub-virksomheder → virksomheds-ejendomme.
+    //
+    // BFS placerer ejer-virksomheder ved depth 1 (direkte under person),
+    // men de skal ned under rolle-virksomheder. Offset ejer-virksomheder
+    // og deres children med +2 for at give plads til personlige ejendomme
+    // (depth 1) og rolle-virksomheder (depth 2).
     const roleNodes = filteredGraph.nodes.filter((n) => n.layoutSection === 'role');
-    if (roleNodes.length > 0) {
-      // Find depth af personally-owned properties (max) og ejer-virksomheder (min)
+    const hasPersonRoot = filteredGraph.nodes.some(
+      (n) => n.id === effectiveGraph.mainId && n.type === 'person'
+    );
+
+    if (hasPersonRoot && roleNodes.length > 0) {
+      // Find personlige ejendomme (directly connected to person via personallyOwned edge)
+      const personalPropIds = new Set<string>();
+      for (const e of filteredGraph.edges) {
+        if (
+          e.from === effectiveGraph.mainId &&
+          (e as { personallyOwned?: boolean }).personallyOwned
+        ) {
+          personalPropIds.add(e.to);
+        }
+      }
+
+      // Offset alle IKKE-personlige-ejendom noder (ejer-virksomheder + deres children)
+      // med +2 for at give plads til personlige ejendomme (1) og roller (2)
+      const ROLE_DEPTH = 2;
+      const OWNER_OFFSET = 2;
+      for (const [id, d] of depths) {
+        if (id === effectiveGraph.mainId) continue; // person stays at 0
+        const node = nodeById.get(id);
+        if (!node) continue;
+        if (node.layoutSection === 'role') continue; // handled below
+        if (personalPropIds.has(id) || id.startsWith('props-overflow-en-')) {
+          // Personlige ejendomme: depth 1 (allerede korrekt fra BFS)
+          depths.set(id, 1);
+        } else if (
+          node.type === 'company' ||
+          (node.type === 'property' && !personalPropIds.has(id))
+        ) {
+          // Ejer-virksomheder + virksomheds-ejendomme: shift ned
+          depths.set(id, d + OWNER_OFFSET);
+        }
+      }
+
+      // Rolle-virksomheder: fast depth 2 (mellem personlige ejendomme og ejerskab)
+      for (const node of roleNodes) {
+        depths.set(node.id, ROLE_DEPTH);
+      }
+    } else if (roleNodes.length > 0) {
+      // Non-person diagrams: behold gammel logik
       let maxPropDepth = -Infinity;
       let minEjerDepth = Infinity;
       for (const [id, d] of depths) {
@@ -1069,11 +1113,9 @@ function DiagramForce({
         if (node.type === 'property' || id.startsWith('props-overflow-')) {
           if (d > maxPropDepth) maxPropDepth = d;
         } else if (node.type === 'company' && d > 0) {
-          // Ejer-virksomheder ligger ved depth 1+ (under personen)
           if (d < minEjerDepth) minEjerDepth = d;
         }
       }
-      // Placér rolle-noder midt mellem properties og ejer (default 0.75 hvis ingen properties)
       const targetDepth =
         maxPropDepth !== -Infinity && minEjerDepth !== Infinity
           ? (maxPropDepth + minEjerDepth) / 2

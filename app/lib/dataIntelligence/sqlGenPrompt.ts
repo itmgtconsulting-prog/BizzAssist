@@ -42,6 +42,7 @@ REGLER:
 17. DATO-FUNKTIONER — brug ALDRIG MySQL-syntax: YEAR(), MONTH(), DAY(), DATE_FORMAT() EKSISTERER IKKE i PostgreSQL. Brug i stedet: EXTRACT(YEAR FROM col), EXTRACT(MONTH FROM col), to_char(col, 'YYYY-MM'), date_trunc('month', col). Eksempel: EXTRACT(YEAR FROM overtagelsesdato) AS aar.
 18. STRENG-FUNKTIONER — brug PostgreSQL-syntax: || til sammenføjning (IKKE CONCAT()), STRING_AGG(col, ', ' ORDER BY col) til grupperet streng (IKKE GROUP_CONCAT()), COALESCE(a, b) for null-fallback (IKKE IFNULL()), CASE WHEN ... THEN ... ELSE ... END for betingelser (IKKE IF()).
 19. TYPE CASTING — brug PostgreSQL :: operator: col::int, col::text, col::date. Brug ALDRIG MySQL-typer som SIGNED, UNSIGNED, CHAR. PostgreSQL-typer: integer, bigint, text, date, timestamptz, numeric, boolean.
+20. GROUP BY — ALLE kolonner i SELECT der IKKE er aggregerede (COUNT, SUM, AVG, MIN, MAX) SKAL stå i GROUP BY. Tjek ALTID dette inden du returnerer SQL. Eksempel: SELECT a, b, COUNT(*) → GROUP BY a, b. Glemmer du dette, fejler PostgreSQL med "must appear in the GROUP BY clause".
 
 EJERSKIFTE / SALGSDATA — VIGTIGT:
 Vi har IKKE handelspriser. Men vi HAR ejerskifte-data i ejf_ejerskab (7,6M rækker):
@@ -200,6 +201,9 @@ SQL: SELECT b.kommune_kode, k.kommunenavn, SUM(h.hovedstol_dkk)::bigint AS samle
 
 Spørgsmål: Hvilke typer servitutter er mest udbredte?
 SQL: SELECT tekst, COUNT(*) AS antal FROM public.tinglysning_servitut WHERE tekst IS NOT NULL GROUP BY tekst ORDER BY antal DESC LIMIT 20
+
+Spørgsmål: Gennemsnitspriser for bolig per kommune
+SQL: SELECT b.kommune_kode, k.kommunenavn, AVG(e.koebesum)::bigint AS gennemsnitspris, COUNT(*) AS antal_handler FROM public.ejendomshandel e JOIN public.bbr_ejendom_status b ON b.bfe_nummer = e.bfe_nummer JOIN public.kommune_ref k ON k.kommune_kode = b.kommune_kode WHERE e.koebesum IS NOT NULL AND b.byg021_anvendelse BETWEEN 110 AND 190 GROUP BY b.kommune_kode, k.kommunenavn HAVING COUNT(*) >= 3 ORDER BY gennemsnitspris DESC LIMIT 50
 
 Spørgsmål: Dyreste ejendomssalg i 2025
 SQL: SELECT e.bfe_nummer, e.dato, e.koebesum, e.koeber_navne, b.kommune_kode, k.kommunenavn FROM public.ejendomshandel e JOIN public.bbr_ejendom_status b ON b.bfe_nummer = e.bfe_nummer JOIN public.kommune_ref k ON k.kommune_kode = b.kommune_kode WHERE e.koebesum IS NOT NULL AND e.dato >= '2025-01-01' AND e.dato < '2026-01-01' ORDER BY e.koebesum DESC LIMIT 20

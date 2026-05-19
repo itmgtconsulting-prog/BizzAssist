@@ -193,6 +193,26 @@ async function generateSql(
 }
 
 /**
+ * Check if a SQL execution error is retryable by asking the AI to fix it.
+ * Covers common AI mistakes: missing GROUP BY columns, wrong column names,
+ * type mismatches, ambiguous columns.
+ *
+ * @param error - PostgreSQL error message
+ * @returns true if the error is a fixable SQL mistake
+ */
+function isRetryableError(error: string): boolean {
+  const retryablePatterns = [
+    'must appear in the GROUP BY clause',
+    'column .* does not exist',
+    'does not exist',
+    'ambiguous',
+    'operator does not exist',
+    'invalid input syntax',
+  ];
+  return retryablePatterns.some((p) => new RegExp(p, 'i').test(error));
+}
+
+/**
  * POST handler.
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
@@ -304,13 +324,37 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  // 3. Eksekvér
-  const exec = await executeSafeSql(validation.sanitized_sql);
+  // 3. Eksekvér (med auto-retry ved SQL-fejl som GROUP BY, column not found)
+  let exec = await executeSafeSql(validation.sanitized_sql);
+  let finalSql = validation.sanitized_sql;
+
+  if (!exec.ok && exec.error && isRetryableError(exec.error)) {
+    try {
+      const retryResult = await generateSql(
+        apiKey,
+        `Følgende SQL fejlede:\n${finalSql}\n\nFejl: ${exec.error}\n\nRet SQL'en så den virker. Returnér KUN den rettede SQL.`,
+        body.chatHistory
+      );
+      if (retryResult.sql) {
+        const retryValidation = validateSql(retryResult.sql);
+        if (retryValidation.valid) {
+          const retryExec = await executeSafeSql(retryValidation.sanitized_sql);
+          if (retryExec.ok) {
+            exec = retryExec;
+            finalSql = retryValidation.sanitized_sql;
+          }
+        }
+      }
+    } catch {
+      /* retry failed — fall through to original error */
+    }
+  }
+
   await logAudit(
     auth.tenantId,
     auth.userId,
     userPrompt,
-    validation.sanitized_sql,
+    finalSql,
     true,
     exec.ok,
     exec.rowCount,
@@ -322,7 +366,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json(
       {
         ok: false,
-        sql: validation.sanitized_sql,
+        sql: finalSql,
         columns: [],
         rows: [],
         rowCount: 0,

@@ -296,6 +296,52 @@ export default function EjendomEjerforholdTab({
                 </div>
               );
             }
+            // BIZZ-1677: Lejligheder fundet via DAWA men strukturTree er null
+            // (TL matrikelsøgning fejlede). Vis lejligheder som simpel liste.
+            if (!strukturTree && lejligheder && lejligheder.length > 0) {
+              return (
+                <div className="space-y-4">
+                  <SectionTitle title={t.ownershipStructure} />
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                    <div className="px-4 py-2 border-b border-slate-700/30">
+                      <p className="text-slate-400 text-xs">
+                        {da
+                          ? `${lejligheder.length} ejerlejligheder`
+                          : `${lejligheder.length} condominiums`}
+                      </p>
+                    </div>
+                    <div className="divide-y divide-slate-700/20 max-h-96 overflow-y-auto">
+                      {lejligheder.map((l, i) => (
+                        <div
+                          key={i}
+                          className="px-4 py-2 flex items-center justify-between text-xs"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-emerald-400 text-[10px]">EL</span>
+                            {l.dawaId ? (
+                              <a
+                                href={`/dashboard/ejendomme/${l.dawaId}`}
+                                className="text-slate-200 hover:text-blue-300 truncate"
+                              >
+                                {l.adresse}
+                              </a>
+                            ) : (
+                              <span className="text-slate-200 truncate">{l.adresse}</span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3 flex-shrink-0 text-slate-500">
+                            {l.ejer && l.ejer !== '–' && (
+                              <span className="text-slate-400">{l.ejer}</span>
+                            )}
+                            {l.areal != null && <span>{l.areal} m²</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              );
+            }
             // Fallback: loading / empty state
             if (strukturLoader || lejlighederLoader) {
               return <StrukturSkeleton />;

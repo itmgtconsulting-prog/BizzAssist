@@ -89,11 +89,17 @@ function dedupPersonRecents(rows: Record<string, unknown>[]): Record<string, unk
       return true;
     }
 
+    // BIZZ-1626 fix: entries uden virksomheder-array OG uden adresse
+    // dedupes på display_name alene — legacy entity_data har kun
+    // antalVirksomheder/erVirksomhed men ikke virksomheder[]/adresse.
+    const currentHasNoData = virksomheder.length === 0 && !adresse;
+    const existingHasNoData = existing.cvrs.size === 0 && !existing.adresse;
+    const noDataToCompare = currentHasNoData || existingHasNoData;
+
     // Samme navn — tjek om det er samme fysiske person
     const cvrOverlap = virksomheder.some((cvr) => existing.cvrs.has(cvr));
     const adresseMatch =
       adresse.length > 3 && existing.adresse.length > 3 && adresse === existing.adresse;
-    const noDataToCompare = virksomheder.length === 0 && existing.cvrs.size === 0;
 
     if (!cvrOverlap && !adresseMatch && !noDataToCompare) {
       // Forskellige person — behold begge

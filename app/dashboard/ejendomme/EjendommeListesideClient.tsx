@@ -729,7 +729,64 @@ export default function EjendommeListesideClient() {
           signal: controller.signal,
         });
         if (controller.signal.aborted) return;
-        const data: DawaAutocompleteResult[] = res.ok ? await res.json() : [];
+        let data: DawaAutocompleteResult[] = res.ok ? await res.json() : [];
+
+        // BIZZ-1674: DAWA datavask fallback ved stavefejl — når autocomplete
+        // returnerer 0 resultater, prøv datavask (Levenshtein-afstand).
+        if (data.length === 0 && søgning.trim().length >= 5) {
+          try {
+            const dvRes = await fetch(
+              `https://api.dataforsyningen.dk/datavask/adresser?betegnelse=${encodeURIComponent(søgning.trim())}`,
+              { signal: controller.signal }
+            );
+            if (dvRes.ok && !controller.signal.aborted) {
+              const dvData = (await dvRes.json()) as {
+                kategori?: string;
+                resultater?: Array<{
+                  adresse?: {
+                    id?: string;
+                    vejnavn?: string;
+                    husnr?: string;
+                    etage?: string | null;
+                    dør?: string | null;
+                    postnr?: string;
+                    postnrnavn?: string;
+                    adressebetegnelse?: string;
+                  };
+                }>;
+              };
+              if (dvData.kategori && ['A', 'B'].includes(dvData.kategori)) {
+                data = (dvData.resultater ?? [])
+                  .filter((r) => r.adresse?.id && r.adresse?.vejnavn)
+                  .slice(0, 8)
+                  .map((r) => {
+                    const a = r.adresse!;
+                    return {
+                      type: (a.etage ? 'adresse' : 'adgangsadresse') as
+                        | 'adresse'
+                        | 'adgangsadresse',
+                      tekst: a.adressebetegnelse ?? `${a.vejnavn} ${a.husnr ?? ''}`,
+                      adresse: {
+                        id: a.id!,
+                        vejnavn: a.vejnavn!,
+                        husnr: a.husnr ?? '',
+                        etage: a.etage ?? undefined,
+                        dør: a.dør ?? undefined,
+                        postnr: a.postnr ?? '',
+                        postnrnavn: a.postnrnavn ?? '',
+                        kommunenavn: '',
+                        x: 0,
+                        y: 0,
+                      },
+                    };
+                  });
+              }
+            }
+          } catch {
+            /* datavask non-fatal */
+          }
+        }
+
         setResultater(data);
         setSøgningFærdig(true);
       } catch (err) {

@@ -41,6 +41,9 @@ export const WHITELISTED_TABLES = new Set([
   'public.tinglysning_haeftelser',
   'public.tinglysning_servitutter',
   'public.tinglysning_dokumenter',
+  'public.ejendomshandel',
+  'public.tinglysning_haeftelse',
+  'public.tinglysning_servitut',
   'dataintel.data_catalog',
   'dataintel.analytics_knowledge',
 ]);

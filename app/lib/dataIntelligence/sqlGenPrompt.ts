@@ -85,7 +85,16 @@ public.mv_deltager_beriget: virksomhed_cvr, deltager_enhedsnummer, deltager_navn
 
 public.mv_ejendom_master: bfe_nummer, kommune_kode, kommunenavn, region, boligareal_m2, erhvervsareal_m2, grundareal, opfoerelsesaar, anvendelse_kode, anvendelse_tekst, anvendelse_kategori, energimaerke, antal_etager, antal_boligenheder, tagmateriale, opvarmningsform, ejerforholdskode, ejendomsvaerdi, grundvaerdi, vurderingsaar. Brug denne for ejendomsanalyser med vurdering — den er hurtigere end bbr_ejendom_status JOIN vurdering_cache.
 
-TINGLYSNING TABELLER:
+TINGLYSNING TABELLER (backfilled fra e-TL SSL cert-auth):
+
+public.ejendomshandel: id (uuid PK), bfe_nummer (int), dato (date — overtagelsesdato), koebsaftale_dato (date), tinglyst_dato (date), koebesum (numeric — KontantKoebesum i DKK), samlet_koebesum (numeric — IAltKoebesum i DKK), andel_taeller (int), andel_naevner (int), koeber_navne (text[]), koeber_cvrs (text[]), saelger_navne (text[]), saelger_cvrs (text[]), kilde (text), sidst_opdateret (timestamptz).
+  BEMÆRK: Denne tabel har FAKTISKE SALGSPRISER fra Tinglysning. Den har IKKE kommune_kode — JOIN med bbr_ejendom_status via bfe_nummer for kommune. Brug WHERE koebesum IS NOT NULL for prisdata.
+
+public.tinglysning_haeftelse: id (serial PK), bfe_nummer (int), prioritet (int), type (text — 'Pantebrev'/'Ejerpantebrev'), hovedstol_dkk (bigint), kreditor_navn (text), kreditor_cvr (text), tinglyst_dato (date), akt_navn (text), status (text — 'gældende'/'aflyst'), sidst_opdateret (timestamptz).
+  BEMÆRK: Denne tabel har PANT/LÅN-data med beløb og prioritering.
+
+public.tinglysning_servitut: id (serial PK), bfe_nummer (int), prioritet (int), tekst (text — servitut-beskrivelse), type (text), tinglyst_dato (date), akt_navn (text), paataleberettiget (text), sidst_opdateret (timestamptz).
+  BEMÆRK: Denne tabel har servitutter/byrder/deklarationer.
 
 public.tinglysning_adkomst: id, bfe_nummer, ejer_navn, ejer_cvr, ejer_type, overtagelsesdato, tinglysningsdato, koebsaftale_dato, kontant_koebesum (DKK), i_alt_koebesum (DKK), dokument_id. Normaliserede skøder med salgspriser.
 
@@ -94,6 +103,11 @@ public.tinglysning_haeftelser: id, bfe_nummer, type, kreditor_navn, kreditor_cvr
 public.tinglysning_servitutter: id, bfe_nummer, type, beskrivelse, tinglysningsdato, paategning, dokument_id. Normaliserede servitutter/byrder.
 
 public.tinglysning_dokumenter: dokument_id (text PK), dokument_type (text — 'adkomst'/'haeftelse'/'servitut'), tinglysningsdato (date), bfe_nummer (bigint), parter (jsonb), beloeb (jsonb). Central reference for alle e-TL dokumenter.
+
+VIGTIG — VALG AF SALGSPRIS-TABEL:
+- Brug public.ejendomshandel for salgspris-spørgsmål — den har flest priser (58K+ rækker med koebesum).
+- Brug public.ejerskifte_historik KUN for ejerskifte-spørgsmål UDEN pris (572K rækker, men kontant_koebesum er sjældent udfyldt).
+- For kommune-filtrering på ejendomshandel: JOIN public.bbr_ejendom_status b ON b.bfe_nummer = e.bfe_nummer og brug b.kommune_kode.
 
 WHITELISTEDE TABELLER:
 ${Array.from(WHITELISTED_TABLES).join(', ')}
@@ -174,6 +188,21 @@ SQL: WITH x AS (SELECT (adresse_json->'kommune'->>'kommuneKode')::int AS kk, COU
 
 Spørgsmål: Ejerskifter per år
 SQL: SELECT EXTRACT(YEAR FROM overtagelsesdato)::int AS aar, COUNT(*) AS antal FROM public.ejerskifte_historik WHERE overtagelsesdato IS NOT NULL GROUP BY aar ORDER BY aar DESC LIMIT 20
+
+Spørgsmål: Gennemsnitlig salgspris i Hvidovre pr år
+SQL: SELECT EXTRACT(YEAR FROM e.dato)::int AS aar, AVG(e.koebesum)::bigint AS gennemsnitspris, COUNT(*) AS antal_handler FROM public.ejendomshandel e JOIN public.bbr_ejendom_status b ON b.bfe_nummer = e.bfe_nummer WHERE b.kommune_kode = 167 AND e.koebesum IS NOT NULL GROUP BY aar ORDER BY aar DESC LIMIT 50
+
+Spørgsmål: Salgspriser pr kommune de seneste 5 år
+SQL: SELECT b.kommune_kode, k.kommunenavn, AVG(e.koebesum)::bigint AS gns_pris, COUNT(*) AS antal FROM public.ejendomshandel e JOIN public.bbr_ejendom_status b ON b.bfe_nummer = e.bfe_nummer JOIN public.kommune_ref k ON k.kommune_kode = b.kommune_kode WHERE e.koebesum IS NOT NULL AND e.dato >= CURRENT_DATE - INTERVAL '5 years' GROUP BY b.kommune_kode, k.kommunenavn HAVING COUNT(*) >= 5 ORDER BY gns_pris DESC LIMIT 30
+
+Spørgsmål: Samlet realkreditgæld per kommune
+SQL: SELECT b.kommune_kode, k.kommunenavn, SUM(h.hovedstol_dkk)::bigint AS samlet_gaeld, COUNT(*) AS antal_laan FROM public.tinglysning_haeftelse h JOIN public.bbr_ejendom_status b ON b.bfe_nummer = h.bfe_nummer JOIN public.kommune_ref k ON k.kommune_kode = b.kommune_kode WHERE h.hovedstol_dkk IS NOT NULL AND h.status = 'gældende' GROUP BY b.kommune_kode, k.kommunenavn ORDER BY samlet_gaeld DESC LIMIT 20
+
+Spørgsmål: Hvilke typer servitutter er mest udbredte?
+SQL: SELECT tekst, COUNT(*) AS antal FROM public.tinglysning_servitut WHERE tekst IS NOT NULL GROUP BY tekst ORDER BY antal DESC LIMIT 20
+
+Spørgsmål: Dyreste ejendomssalg i 2025
+SQL: SELECT e.bfe_nummer, e.dato, e.koebesum, e.koeber_navne, b.kommune_kode, k.kommunenavn FROM public.ejendomshandel e JOIN public.bbr_ejendom_status b ON b.bfe_nummer = e.bfe_nummer JOIN public.kommune_ref k ON k.kommune_kode = b.kommune_kode WHERE e.koebesum IS NOT NULL AND e.dato >= '2025-01-01' AND e.dato < '2026-01-01' ORDER BY e.koebesum DESC LIMIT 20
 
 Spørgsmål: Lav fusion mellem virksomheder
 FORKLARING: Det kan jeg ikke — det kræver skrive-adgang. Jeg kan kun læse data, ikke ændre.

@@ -1802,7 +1802,10 @@ async function resolvePersonGraph(
 
   // Klassificér virksomheder: ejerskab = register, interessenter, eller indehaver
   // Virksomheder UDEN ejerskabsrolle → Øvrige roller (direktør, bestyrelse)
-  const OWNERSHIP_ROLES = ['register', 'interessenter', 'indehaver', 'stifter'];
+  // BIZZ-1669: 'stifter' fjernet — stifteren er ikke nødvendigvis ejer.
+  // Mange virksomheder hvor personen kun er stifter (ikke ejer) forurenede
+  // ejerskabsstrukturen. Stiftere vises nu i rolle-sektionen i stedet.
+  const OWNERSHIP_ROLES = ['register', 'interessenter', 'indehaver'];
   const ownershipCvrs: string[] = [];
   const roleCvrs: string[] = [];
   for (const [cvr, roller] of personVirkRollerMap) {

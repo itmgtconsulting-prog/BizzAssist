@@ -342,6 +342,9 @@ export default function EjendomOekonomiTab(props: Props) {
     !!vurdering &&
     (vurdering.ejendomsvaerdi == null || vurdering.ejendomsvaerdi === 0) &&
     (vurdering.grundvaerdi == null || vurdering.grundvaerdi === 0);
+  // BIZZ-1688: Skjul foreløbige vurderinger for opdelte hovedejendomme —
+  // de stammer fra én enkelt EL og er misvisende for hele bygningen.
+  const skjulForelobige = !!opdeltIEjerlejligheder;
 
   const t = {
     propertyValuation: da ? 'Ejendomsvurdering' : 'Property valuation',
@@ -504,11 +507,13 @@ export default function EjendomOekonomiTab(props: Props) {
                         <span className="ml-1 text-slate-500">({vurdering.aar})</span>
                       )}
                     </p>
-                    {forelobige.length > 0 && forelobige[0].ejendomsvaerdi != null && (
-                      <span className="text-amber-400 text-[10px] font-medium text-right leading-tight">
-                        {forelobige[0].vurderingsaar} {t.preliminary}
-                      </span>
-                    )}
+                    {!skjulForelobige &&
+                      forelobige.length > 0 &&
+                      forelobige[0].ejendomsvaerdi != null && (
+                        <span className="text-amber-400 text-[10px] font-medium text-right leading-tight">
+                          {forelobige[0].vurderingsaar} {t.preliminary}
+                        </span>
+                      )}
                   </div>
                   <div className="flex items-baseline justify-between">
                     <p className="text-white text-lg font-bold">
@@ -516,31 +521,37 @@ export default function EjendomOekonomiTab(props: Props) {
                         ? formatDKK(vurdering.ejendomsvaerdi)
                         : formatDKK(0)}
                     </p>
-                    {forelobige.length > 0 && forelobige[0].ejendomsvaerdi != null && (
-                      <p className="text-amber-400/80 text-sm font-semibold tabular-nums">
-                        {formatDKK(forelobige[0].ejendomsvaerdi)}
-                      </p>
-                    )}
+                    {!skjulForelobige &&
+                      forelobige.length > 0 &&
+                      forelobige[0].ejendomsvaerdi != null && (
+                        <p className="text-amber-400/80 text-sm font-semibold tabular-nums">
+                          {formatDKK(forelobige[0].ejendomsvaerdi)}
+                        </p>
+                      )}
                   </div>
                 </div>
                 <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
                   <div className="flex items-start justify-between mb-1">
                     <p className="text-slate-400 text-xs">{t.landValue}</p>
-                    {forelobige.length > 0 && forelobige[0].grundvaerdi != null && (
-                      <span className="text-amber-400 text-[10px] font-medium text-right leading-tight">
-                        {forelobige[0].vurderingsaar} {t.preliminary}
-                      </span>
-                    )}
+                    {!skjulForelobige &&
+                      forelobige.length > 0 &&
+                      forelobige[0].grundvaerdi != null && (
+                        <span className="text-amber-400 text-[10px] font-medium text-right leading-tight">
+                          {forelobige[0].vurderingsaar} {t.preliminary}
+                        </span>
+                      )}
                   </div>
                   <div className="flex items-baseline justify-between">
                     <p className="text-white text-lg font-bold">
                       {vurdering.grundvaerdi ? formatDKK(vurdering.grundvaerdi) : formatDKK(0)}
                     </p>
-                    {forelobige.length > 0 && forelobige[0].grundvaerdi != null && (
-                      <p className="text-amber-400/80 text-sm font-semibold tabular-nums">
-                        {formatDKK(forelobige[0].grundvaerdi)}
-                      </p>
-                    )}
+                    {!skjulForelobige &&
+                      forelobige.length > 0 &&
+                      forelobige[0].grundvaerdi != null && (
+                        <p className="text-amber-400/80 text-sm font-semibold tabular-nums">
+                          {formatDKK(forelobige[0].grundvaerdi)}
+                        </p>
+                      )}
                   </div>
                 </div>
                 <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">

@@ -255,11 +255,77 @@ export default function SagDetaljeClient({ sagId }: Props) {
                         }}
                       />
                     </div>
-                    {/* Upload-zone */}
-                    <div className="border-2 border-dashed border-slate-700 rounded-lg p-4 text-center text-xs text-slate-500 hover:border-slate-600 cursor-pointer transition-colors">
+                    {/* BIZZ-1692: Funktionel file-upload */}
+                    <label
+                      className="border-2 border-dashed border-slate-700 rounded-lg p-4 text-center text-xs text-slate-500 hover:border-blue-500/50 cursor-pointer transition-colors block"
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.currentTarget.classList.add('border-blue-500');
+                      }}
+                      onDragLeave={(e) => {
+                        e.currentTarget.classList.remove('border-blue-500');
+                      }}
+                      onDrop={async (e) => {
+                        e.preventDefault();
+                        e.currentTarget.classList.remove('border-blue-500');
+                        const files = e.dataTransfer.files;
+                        if (!files.length) return;
+                        const zoneRow = data.zoner.find((z) => z.zone_type === zone.key);
+                        if (!zoneRow?.id) return;
+                        for (const file of Array.from(files)) {
+                          const fd = new FormData();
+                          fd.append('file', file);
+                          fd.append('zone_id', String(zoneRow.id));
+                          await fetch(`/api/vurderingsrapport/sager/${sagId}/upload`, {
+                            method: 'POST',
+                            body: fd,
+                          }).catch(() => {});
+                        }
+                        await refresh();
+                      }}
+                    >
+                      <input
+                        type="file"
+                        multiple
+                        className="hidden"
+                        accept=".pdf,.xlsx,.xls,.csv,.doc,.docx,.png,.jpg,.jpeg"
+                        onChange={async (e) => {
+                          const files = e.target.files;
+                          if (!files?.length) return;
+                          const zoneRow = data.zoner.find((z) => z.zone_type === zone.key);
+                          if (!zoneRow?.id) return;
+                          for (const file of Array.from(files)) {
+                            const fd = new FormData();
+                            fd.append('file', file);
+                            fd.append('zone_id', String(zoneRow.id));
+                            await fetch(`/api/vurderingsrapport/sager/${sagId}/upload`, {
+                              method: 'POST',
+                              body: fd,
+                            }).catch(() => {});
+                          }
+                          await refresh();
+                          e.target.value = '';
+                        }}
+                      />
                       <Upload size={16} className="mx-auto mb-1" />
                       Klik eller træk filer hertil
-                    </div>
+                    </label>
+                    {/* Vis uploadede filer */}
+                    {docs.length > 0 && (
+                      <div className="space-y-1 mt-2">
+                        {docs.map((d, i) => (
+                          <div
+                            key={i}
+                            className="flex items-center gap-2 text-xs text-slate-400 px-2 py-1 bg-slate-800/50 rounded"
+                          >
+                            <FileText size={11} />
+                            <span className="truncate flex-1">
+                              {String(d.original_name ?? 'Fil')}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -267,8 +333,8 @@ export default function SagDetaljeClient({ sagId }: Props) {
           })}
         </div>
 
-        {/* Højre: Rapport-tabs */}
-        <div>
+        {/* Højre: Rapport-tabs — BIZZ-1693: sticky så panelet følger scroll */}
+        <div className="lg:sticky lg:top-4 lg:self-start">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-white flex items-center gap-2">
               <FileText size={14} /> Rapport

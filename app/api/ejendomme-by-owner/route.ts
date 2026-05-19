@@ -762,6 +762,51 @@ async function hentDawaBfeData(bfe: number): Promise<DawaBfeAdresse> {
       const vpResult = await _hentVPAdresseForBfe(bfe);
       if (vpResult.adresse) return { ...result, ...vpResult };
     }
+    // Fallback 3: bbr_ejendom_status cache → DAWA adgangsadresse resolve.
+    // Catches BFE'er where both DAWA /bfe and VP return nothing but we have
+    // a cached adgangsadresse_id from prior BBR enrichment (46k+ rows).
+    if (!result.adresse) {
+      try {
+        const admin = createAdminClient();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: row } = await (admin as any)
+          .from('bbr_ejendom_status')
+          .select('adgangsadresse_id, kommune_kode')
+          .eq('bfe_nummer', bfe)
+          .maybeSingle();
+        if (row?.adgangsadresse_id) {
+          const addrRes = await fetchDawa(
+            `${DAWA_BASE_URL}/adgangsadresser/${row.adgangsadresse_id}?struktur=mini`,
+            { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+            { caller: 'ejendomme-by-owner.bbr-cache-fallback' }
+          );
+          if (addrRes.ok) {
+            const addr = (await addrRes.json()) as {
+              id?: string;
+              vejnavn?: string;
+              husnr?: string;
+              postnr?: string;
+              postnrnavn?: string;
+              kommunekode?: string;
+              kommunenavn?: string;
+            };
+            if (addr.vejnavn) {
+              return {
+                ...result,
+                adresse: `${addr.vejnavn} ${addr.husnr ?? ''}`.trim(),
+                postnr: addr.postnr ?? null,
+                by: addr.postnrnavn ?? null,
+                kommune: addr.kommunenavn ?? null,
+                kommuneKode: addr.kommunekode ?? null,
+                dawaId: addr.id ?? row.adgangsadresse_id,
+              };
+            }
+          }
+        }
+      } catch {
+        /* bbr cache fallback is non-critical */
+      }
+    }
     return result;
   });
   _bfeFetchInFlight.set(bfe, promise);

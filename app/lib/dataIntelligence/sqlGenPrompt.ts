@@ -105,6 +105,11 @@ public.tinglysning_servitutter: id, bfe_nummer, type, beskrivelse, tinglysningsd
 
 public.tinglysning_dokumenter: dokument_id (text PK), dokument_type (text — 'adkomst'/'haeftelse'/'servitut'), tinglysningsdato (date), bfe_nummer (bigint), parter (jsonb), beloeb (jsonb). Central reference for alle e-TL dokumenter.
 
+VIGTIG — ANVENDELSESFILTER:
+- Filtrér KUN på byg021_anvendelse når brugeren eksplicit nævner en bygningstype (parcelhus, etagebolig, erhverv, sommerhus).
+- For generelle spørgsmål om "boligpriser", "salgspriser", "priser per kommune" → filtrér IKKE på anvendelse, da byg021_anvendelse er NULL for mange BFE'er og det udelukker data.
+- "bolig" i en generel kontekst = alle ejendomme med en pris, IKKE kun byg021_anvendelse BETWEEN 110 AND 190.
+
 VIGTIG — VALG AF SALGSPRIS-TABEL:
 - Brug public.ejendomshandel for salgspris-spørgsmål — den har flest priser (58K+ rækker med koebesum).
 - Brug public.ejerskifte_historik KUN for ejerskifte-spørgsmål UDEN pris (572K rækker, men kontant_koebesum er sjældent udfyldt).
@@ -203,7 +208,7 @@ Spørgsmål: Hvilke typer servitutter er mest udbredte?
 SQL: SELECT tekst, COUNT(*) AS antal FROM public.tinglysning_servitut WHERE tekst IS NOT NULL GROUP BY tekst ORDER BY antal DESC LIMIT 20
 
 Spørgsmål: Gennemsnitspriser for bolig per kommune
-SQL: SELECT b.kommune_kode, k.kommunenavn, AVG(e.koebesum)::bigint AS gennemsnitspris, COUNT(*) AS antal_handler FROM public.ejendomshandel e JOIN public.bbr_ejendom_status b ON b.bfe_nummer = e.bfe_nummer JOIN public.kommune_ref k ON k.kommune_kode = b.kommune_kode WHERE e.koebesum IS NOT NULL AND b.byg021_anvendelse BETWEEN 110 AND 190 GROUP BY b.kommune_kode, k.kommunenavn HAVING COUNT(*) >= 3 ORDER BY gennemsnitspris DESC LIMIT 50
+SQL: SELECT b.kommune_kode, k.kommunenavn, AVG(e.koebesum)::bigint AS gennemsnitspris, COUNT(*) AS antal_handler FROM public.ejendomshandel e JOIN public.bbr_ejendom_status b ON b.bfe_nummer = e.bfe_nummer JOIN public.kommune_ref k ON k.kommune_kode = b.kommune_kode WHERE e.koebesum IS NOT NULL GROUP BY b.kommune_kode, k.kommunenavn HAVING COUNT(*) >= 3 ORDER BY gennemsnitspris DESC LIMIT 50
 
 Spørgsmål: Dyreste ejendomssalg i 2025
 SQL: SELECT e.bfe_nummer, e.dato, e.koebesum, e.koeber_navne, b.kommune_kode, k.kommunenavn FROM public.ejendomshandel e JOIN public.bbr_ejendom_status b ON b.bfe_nummer = e.bfe_nummer JOIN public.kommune_ref k ON k.kommune_kode = b.kommune_kode WHERE e.koebesum IS NOT NULL AND e.dato >= '2025-01-01' AND e.dato < '2026-01-01' ORDER BY e.koebesum DESC LIMIT 20

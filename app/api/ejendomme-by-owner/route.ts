@@ -807,6 +807,36 @@ async function hentDawaBfeData(bfe: number): Promise<DawaBfeAdresse> {
         /* bbr cache fallback is non-critical */
       }
     }
+    // BIZZ-1670: Fallback 4 — bfe_adresse_cache (manuelt/backfill-populeret)
+    // Fanger BFE'er som DAWA /bfe, VP og bbr_ejendom_status ikke kender.
+    if (!result.adresse) {
+      try {
+        const admin = createAdminClient();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: cached } = await (admin as any)
+          .from('bfe_adresse_cache')
+          .select(
+            'adresse, etage, doer, postnr, postnrnavn, kommune, kommune_kode, dawa_id, ejendomstype'
+          )
+          .eq('bfe_nummer', bfe)
+          .maybeSingle();
+        if (cached?.adresse) {
+          return {
+            adresse: cached.adresse,
+            postnr: cached.postnr ?? null,
+            by: cached.postnrnavn ?? null,
+            kommune: cached.kommune ?? null,
+            kommuneKode: cached.kommune_kode ?? null,
+            ejendomstype: cached.ejendomstype ?? null,
+            dawaId: cached.dawa_id ?? null,
+            etage: cached.etage ?? null,
+            doer: cached.doer ?? null,
+          };
+        }
+      } catch {
+        /* bfe_adresse_cache fallback non-critical */
+      }
+    }
     return result;
   });
   _bfeFetchInFlight.set(bfe, promise);

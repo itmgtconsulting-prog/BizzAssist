@@ -449,6 +449,8 @@ async function resolveCompanyGraph(
         ).map((r) => [r.ejet_cvr, formatEjerandelRange(r.ejerandel_min, r.ejerandel_max)])
       );
 
+      // BIZZ-1680: Kun vis datterselskaber med faktisk ejerandel-data.
+      // Virksomheder uden ejerandel vises kun via "Udvid"-knap.
       for (const subCvr of subCvrs) {
         if (nodes.length >= MAX_TOTAL_NODES) break;
         const subId = `cvr-${subCvr}`;
@@ -456,6 +458,8 @@ async function resolveCompanyGraph(
 
         const cached = subMap.get(subCvr);
         if (cached?.ophoert != null) continue;
+        const andel = ejerandelMap.get(subCvr);
+        if (!andel) continue; // Spring over virksomheder uden registreret ejerandel
 
         const sublabelParts = [cached?.virksomhedsform, cached?.branche_tekst].filter(Boolean);
         nodes.push({
@@ -472,7 +476,7 @@ async function resolveCompanyGraph(
         edges.push({
           from: mainId,
           to: subId,
-          ejerandel: ejerandelMap.get(subCvr),
+          ejerandel: andel,
         });
       }
 
@@ -486,6 +490,7 @@ async function resolveCompanyGraph(
           .is('gyldig_til', null)
           .limit(50);
 
+        // BIZZ-1680: Kun level 2 med faktisk ejerandel
         for (const l2 of (level2Subs ?? []) as Array<{
           ejer_cvr: string;
           ejet_cvr: string;
@@ -493,6 +498,7 @@ async function resolveCompanyGraph(
           ejerandel_max: number | null;
         }>) {
           if (nodes.length >= MAX_TOTAL_NODES) break;
+          if (l2.ejerandel_min == null) continue; // Kun med registreret ejerandel
           const l2Id = `cvr-${l2.ejet_cvr}`;
           const parentId = `cvr-${l2.ejer_cvr}`;
           if (nodeIds.has(l2Id)) continue;
@@ -933,9 +939,8 @@ async function resolveCompanyGraph(
       expandMap.set(r.ejer_cvr, (expandMap.get(r.ejer_cvr) ?? 0) + 1);
     }
 
-    // Sæt expandableChildren på alle virksomheds-noder
+    // Sæt expandableChildren på alle virksomheds-noder (inkl. main)
     for (const node of allCompanyNodes) {
-      if (node.type === 'main') continue; // main har aldrig Udvid
       const cvrStr = String(node.cvr);
       const count = expandMap.get(cvrStr) ?? 0;
       // Behold eksisterende expandableChildren (fx ejendomme) men tilføj ejerskab

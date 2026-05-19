@@ -461,8 +461,8 @@ export default function EjendomOekonomiTab(props: Props) {
                 </p>
                 <p className="text-slate-400 text-xs max-w-2xl">
                   {da
-                    ? `Denne ejendom er opdelt i ${lejlighederCount ?? 'flere'} ejerlejligheder. Vurderingsstyrelsen registrerer ikke en samlet ejendoms- eller grundværdi på hovedejendommen — vurderinger fordeles i stedet på de enkelte lejligheder. Se individuelle vurderinger i Ejerforhold-fanen.`
-                    : `This property is divided into ${lejlighederCount ?? 'multiple'} condominiums. The Danish Valuation Agency registers no combined property or land value on the main property — valuations are distributed to individual units instead. See per-unit valuations in the Ownership tab.`}
+                    ? `Denne ejendom er opdelt i ${lejlighederCount || 'flere'} ejerlejligheder. Vurderingsstyrelsen registrerer ikke en samlet ejendoms- eller grundværdi på hovedejendommen — vurderinger fordeles i stedet på de enkelte lejligheder. Se individuelle vurderinger i Ejerforhold-fanen.`
+                    : `This property is divided into ${lejlighederCount || 'multiple'} condominiums. The Danish Valuation Agency registers no combined property or land value on the main property — valuations are distributed to individual units instead. See per-unit valuations in the Ownership tab.`}
                 </p>
                 {vurdering.vurderetAreal != null && (
                   <p className="text-slate-500 text-xs">

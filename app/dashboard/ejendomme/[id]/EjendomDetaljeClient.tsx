@@ -1823,7 +1823,19 @@ export default function EjendomDetaljeClient({
                     );
                   })()
                 }
-                lejlighederCount={lejligheder?.length ?? 0}
+                lejlighederCount={
+                  // BIZZ-1667: Brug bedste tilgængelige kilde for antal EL.
+                  // lejligheder (TL+DAWA) kan være 0 selvom ejendommen har mange.
+                  // Fallback: strukturTree children → BBR enheder.
+                  (lejligheder?.length || 0) > 0
+                    ? lejligheder!.length
+                    : strukturTree?.children?.reduce(
+                        (sum, c) => sum + (c.children?.length || 0),
+                        0
+                      ) ||
+                      bbrData?.enheder?.length ||
+                      0
+                }
                 postnr={dawaAdresse?.postnr ?? null}
                 kommunekode={
                   dawaJordstykke?.kommune?.kode ? String(dawaJordstykke.kommune.kode) : null

@@ -26,6 +26,7 @@ import {
   BarChart3,
   FolderOpen,
 } from 'lucide-react';
+import TokenUsageBar from '@/app/components/TokenUsageBar';
 
 /** Zone-type konfiguration */
 const ZONE_CONFIG = [
@@ -77,6 +78,8 @@ export default function SagDetaljeClient({ sagId }: Props) {
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
   const [genSuccess, setGenSuccess] = useState(false);
+  /** BIZZ-1686: Tokens brugt ved sidste generering */
+  const [lastTokensUsed, setLastTokensUsed] = useState<number | null>(null);
 
   /** Hent sag-data */
   const refresh = useCallback(async () => {
@@ -105,7 +108,12 @@ export default function SagDetaljeClient({ sagId }: Props) {
         method: 'POST',
       });
       if (r.ok) {
+        const result = await r.json().catch(() => null);
         setGenSuccess(true);
+        // BIZZ-1686: Vis tokens brugt
+        if (result?.tokens_used?.total) {
+          setLastTokensUsed(result.tokens_used.total);
+        }
         await refresh();
       } else {
         const errData = await r.json().catch(() => null);
@@ -175,6 +183,11 @@ export default function SagDetaljeClient({ sagId }: Props) {
             ) : null}
           </div>
         </div>
+      </div>
+
+      {/* BIZZ-1686: Token-forbrug under header */}
+      <div className="mb-4">
+        <TokenUsageBar />
       </div>
 
       {/* To-delt layout */}
@@ -287,7 +300,9 @@ export default function SagDetaljeClient({ sagId }: Props) {
           )}
           {genSuccess && !generating && (
             <div className="mb-3 px-3 py-2 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-emerald-400 text-xs">
-              Rapport genereret — data vises nedenfor.
+              Rapport genereret
+              {lastTokensUsed ? ` — ${lastTokensUsed.toLocaleString('da-DK')} tokens brugt` : ''}.
+              Data vises nedenfor.
             </div>
           )}
           {/* Tab-bar */}

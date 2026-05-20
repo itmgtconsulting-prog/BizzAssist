@@ -2475,7 +2475,7 @@ async function executeTool(
           const diRes = await fetch(`${baseUrl}/api/analyse/sql`, {
             method: 'POST',
             headers: { ...internalFetchOpts.headers, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: diPrompt }),
+            body: JSON.stringify({ prompt: diPrompt }),
             signal: AbortSignal.timeout(25000),
           });
           if (!diRes.ok) {

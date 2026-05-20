@@ -30,24 +30,50 @@ loadDotenv({
   path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local'),
 });
 
-const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
 // BIZZ-903: BBR v2 via API-key + proxy (samme stien som prod-appen).
 // Proxy-secret er valgfri (kun nødvendig via Hetzner-proxy).
 const DF_API_KEY = process.env.DATAFORDELER_API_KEY;
 const DF_PROXY_URL = process.env.DF_PROXY_URL;
 const DF_PROXY_SECRET = process.env.DF_PROXY_SECRET;
 
-if (!SUPABASE_URL || !SERVICE_ROLE) {
-  console.error('Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY');
-  process.exit(1);
-}
 if (!DF_API_KEY) {
   console.error('Missing DATAFORDELER_API_KEY');
   process.exit(1);
 }
 
 const args = process.argv.slice(2);
+
+// ─── Environment resolution ──────────────────────────────────────────────────
+const ENV_REFS = {
+  dev: 'wkzwxfhyfmvglrqtmebw',
+  preview: 'rlkjmqjxmkxuclehbrnl',
+  prod: 'xsyldjqcntiygrtfcszm',
+};
+const TARGET_ENV = (() => { const a = args.find(x => x.startsWith('--env=')); return a ? a.split('=')[1] : 'local'; })();
+
+let SUPABASE_URL, SERVICE_ROLE;
+if (TARGET_ENV === 'local') {
+  SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
+} else {
+  const ref = ENV_REFS[TARGET_ENV];
+  if (!ref) { console.error(`Unknown env: ${TARGET_ENV}`); process.exit(1); }
+  const token = process.env.SUPABASE_ACCESS_TOKEN;
+  if (!token) { console.error('SUPABASE_ACCESS_TOKEN required for remote env'); process.exit(1); }
+  const keysRes = await fetch(`https://api.supabase.com/v1/projects/${ref}/api-keys`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const keys = await keysRes.json();
+  const serviceKey = keys.find((k) => k.name === 'service_role')?.api_key;
+  if (!serviceKey) { console.error(`service_role key not found for ${ref}`); process.exit(1); }
+  SUPABASE_URL = `https://${ref}.supabase.co`;
+  SERVICE_ROLE = serviceKey;
+}
+
+if (!SUPABASE_URL || !SERVICE_ROLE) {
+  console.error('Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY');
+  process.exit(1);
+}
 const LIMIT = (() => {
   const a = args.find((x) => x.startsWith('--limit='));
   return a ? parseInt(a.split('=')[1], 10) : Infinity;

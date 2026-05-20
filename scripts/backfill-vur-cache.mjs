@@ -208,14 +208,13 @@ async function main() {
     // Hent BFE-numre fra ejf_ejerskab der ikke allerede er i vurdering_cache
     let bfeList;
     {
-      // Hent distinct BFE fra ejf_ejerskab minus eksisterende cache
-      // BFE > 200000 har typisk vurderinger (SFE/hovedejendomme).
-      // Lave BFE'er (ejerlejligheder) har sjældent selvstændige vurderinger.
+      // Hent distinct BFE fra ejf_ejerskab minus eksisterende cache.
+      // Alle BFE-numre inkluderes — test viste at BFE < 200000 (ejerlejligheder)
+      // også har vurderinger i VUR registret (3-5 per BFE).
       const { data: rawBfes } = await client
         .from('ejf_ejerskab')
         .select('bfe_nummer')
         .eq('status', 'gældende')
-        .gte('bfe_nummer', 200000)
         .order('bfe_nummer')
         .range(offset, offset + BATCH_SIZE - 1);
 

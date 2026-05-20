@@ -346,13 +346,13 @@ export default function IntelligenceClient(): React.ReactElement {
         </a>
         <main id="main" className="w-full px-6 py-4">
           {/* BIZZ-1716: Kompakt header — søgefelt fjernet, al input via AI Chat til højre */}
-          <header className="mb-6">
-            <div className="flex items-center gap-3 mb-1">
-              <Database className="w-6 h-6 text-emerald-400" aria-hidden />
-              <h1 className="text-xl font-bold">Data Intelligence</h1>
+          <header className="mb-3">
+            <div className="flex items-center gap-2 mb-0.5">
+              <Database className="w-5 h-5 text-emerald-400" aria-hidden />
+              <h1 className="text-lg font-bold">Data Intelligence</h1>
             </div>
             {!response && (
-              <p className="text-slate-500 text-sm">
+              <p className="text-slate-500 text-xs">
                 Stil et spørgsmål i AI Chat til højre — resultater vises her.
               </p>
             )}

@@ -220,10 +220,13 @@ function AIChatPanel() {
     }
   }, [chatCtx.messages, isLoading, messages.length]);
 
-  /** Scroll til bunden ved nye beskeder eller stream-opdatering */
+  /** Scroll til bunden ved nye beskeder eller stream-opdatering — kun inden for chat-containeren */
   useEffect(() => {
-    {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = messagesEndRef.current;
+    if (!el) return;
+    const container = el.closest('.overflow-y-auto');
+    if (container) {
+      container.scrollTop = container.scrollHeight;
     }
   }, [messages, streamText]);
 
@@ -1103,10 +1106,10 @@ function AIChatPanel() {
     <div className="flex flex-col h-full overflow-hidden bg-[#0f172a]">
       {/* ── Drawer header ────────────────────────────────────────────────── */}
       <div className="shrink-0">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
-          <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 bg-blue-600/25 rounded-lg flex items-center justify-center shrink-0">
-              <Sparkles size={13} className="text-blue-400" />
+        <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 bg-blue-600/25 rounded-lg flex items-center justify-center shrink-0">
+              <Sparkles size={12} className="text-blue-400" />
             </div>
             <span className="text-slate-200 text-sm font-semibold">{a.title}</span>
             {isLoading && toolStatus && (
@@ -1170,7 +1173,7 @@ function AIChatPanel() {
             const Wrapper = isRed ? 'button' : 'div';
             return (
               <Wrapper
-                className={`flex items-center gap-2 px-4 pb-2 w-full ${isRed ? 'cursor-pointer hover:bg-white/5 rounded-lg transition-colors group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-inset' : ''}`}
+                className={`flex items-center gap-2 px-3 pb-1 w-full ${isRed ? 'cursor-pointer hover:bg-white/5 rounded-lg transition-colors group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-inset' : ''}`}
                 {...(isRed
                   ? {
                       onClick: () => router.push('/dashboard/tokens'),
@@ -1306,7 +1309,7 @@ function AIChatPanel() {
           )}
 
         {/* AI disclaimer */}
-        <p className="px-4 pb-2 text-xs text-slate-500">
+        <p className="px-3 pb-1 text-[11px] text-slate-500">
           ⚠️ Svar genereret af AI er ikke nødvendigvis korrekte. Verificér altid vigtig information.
         </p>
       </div>

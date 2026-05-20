@@ -161,8 +161,8 @@
       "schedule": "30 4 * * *"
     },
     {
-      "path": "/api/cron/sync-bfe-adresse",
-      "schedule": "0 5 * * *"
+      "path": "/api/cron/sync-tinglysning-detail",
+      "schedule": "45 3 * * *"
     }
   ]
 }

@@ -109,11 +109,16 @@ export default function IntelligenceClient(): React.ReactElement {
     let unsub: (() => void) | undefined;
     import('@/app/lib/diResultStore').then(({ subscribeDiResult }) => {
       unsub = subscribeDiResult((result) => {
-        // Konvertér unknown[][] til Record<string, unknown>[]
+        // Rows kan være Record<string,unknown>[] ELLER unknown[][] — håndtér begge
         const recordRows = result.rows.map((row) => {
+          if (row && typeof row === 'object' && !Array.isArray(row)) {
+            return row as Record<string, unknown>; // Allerede objekt
+          }
+          // Array-format → konvertér via kolonne-index
+          const arr = row as unknown[];
           const obj: Record<string, unknown> = {};
           result.columns.forEach((col, i) => {
-            obj[col] = row[i];
+            obj[col] = arr[i];
           });
           return obj;
         });
@@ -125,7 +130,12 @@ export default function IntelligenceClient(): React.ReactElement {
           truncated: result.afkortet,
           durationMs: 0,
           sql: '',
-          chartRecommendation: result.chartType === 'table' ? null : result.chartType,
+          chartRecommendation:
+            result.chartType !== 'table'
+              ? result.chartType
+              : result.columns.length >= 2
+                ? 'bar'
+                : null,
         } as SqlResponse);
         setPrompt(result.query);
         setError(null);

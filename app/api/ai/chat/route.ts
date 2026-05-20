@@ -771,6 +771,13 @@ Tilgængelige tabeller:
 
 Brug data_intelligence til statistik og analyser. Vis ALDRIG SQL til brugeren — kun det formaterede resultat.
 
+Når du modtager data_intelligence resultater:
+- Formatér altid som **markdown tabel** med | header | separators |
+- For enkelt-tal (1 række, 1-2 kolonner): vis som **stort nøgletal** i fed tekst
+- Tilføj kontekst: "Baseret på X rækker i databasen"
+- Hvis rowCount er højt, nævn at data er afkortet
+- Brug danske tal-formater (1.234.567 ikke 1,234,567)
+
 ## Workflow ved ejendomsspørgsmål
 1. Søg adressen med dawa_adresse_soeg
 2. Kald SAMTIDIGT: dawa_adresse_detaljer + hent_bbr_data (begge bruger dawaId)

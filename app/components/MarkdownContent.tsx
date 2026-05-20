@@ -129,6 +129,70 @@ export default function MarkdownContent({ text }: { text: string }) {
       continue;
     }
 
+    // BIZZ-1699: Markdown tabel-detection (| col1 | col2 |)
+    if (line.includes('|') && line.trim().startsWith('|')) {
+      // Saml alle sammenhængende tabel-linjer
+      const tableLines: string[] = [line];
+      let li = lines.indexOf(line, elements.length > 0 ? 0 : 0);
+      // Peek ahead for rest of table
+      while (li + 1 < lines.length) {
+        const nextLine = lines[li + 1];
+        if (nextLine.includes('|') && nextLine.trim().startsWith('|')) {
+          tableLines.push(nextLine);
+          // Skip this line in outer loop by adding empty element
+          li++;
+        } else {
+          break;
+        }
+      }
+      // Skip separator rows (|---|---|)
+      const dataRows = tableLines.filter((tl) => !tl.match(/^\|[\s\-:]+\|$/));
+      if (dataRows.length >= 1) {
+        const parseRow = (r: string) =>
+          r
+            .split('|')
+            .slice(1, -1)
+            .map((c) => c.trim());
+        const headers = parseRow(dataRows[0]);
+        const rows = dataRows.slice(1).map(parseRow);
+        elements.push(
+          <div
+            key={`table-${keyCounter++}`}
+            className="overflow-x-auto my-2 bg-slate-800/40 border border-slate-700/40 rounded-lg"
+          >
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-slate-500 border-b border-slate-700/40">
+                  {headers.map((h, i) => (
+                    <th key={i} className="px-2 py-1.5 text-left font-medium">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-700/20">
+                {rows.map((row, ri) => (
+                  <tr key={ri} className="hover:bg-slate-700/20">
+                    {row.map((cell, ci) => (
+                      <td key={ci} className="px-2 py-1.5 text-slate-300">
+                        {renderInline(cell)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+        // Skip the table lines we just consumed
+        // (Hacky: push empty strings into lines array to skip)
+        for (let skip = 1; skip < tableLines.length; skip++) {
+          elements.push(<React.Fragment key={`skip-${keyCounter++}`} />);
+        }
+        continue;
+      }
+    }
+
     elements.push(
       <p key={`p-${keyCounter++}`} className="text-sm leading-relaxed">
         {renderInline(line)}

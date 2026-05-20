@@ -309,7 +309,7 @@ export default function IntelligenceClient(): React.ReactElement {
         >
           Spring til indhold
         </a>
-        <main id="main" className="w-full px-6 py-8">
+        <main id="main" className="w-full px-6 py-4">
           {/* BIZZ-1716: Kompakt header — søgefelt fjernet, al input via AI Chat til højre */}
           <header className="mb-6">
             <div className="flex items-center gap-3 mb-1">

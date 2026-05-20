@@ -3371,6 +3371,18 @@ export async function POST(request: NextRequest): Promise<Response> {
               })
               .catch(() => {}); // non-critical — best-effort tracking
 
+            // BIZZ-1687: Persist til ai_token_usage tabel for audit + rapportering
+            void import('@/app/lib/aiTracking').then(({ recordAiUsage }) =>
+              recordAiUsage({
+                userId,
+                tenantId: resolvedTenantId ?? null,
+                route: 'ai.chat',
+                inputTokens: totalInputTokens,
+                outputTokens: totalOutputTokens,
+                model: 'claude-sonnet-4-6',
+              })
+            );
+
             // Fire-and-forget: record in tenant.ai_token_usage for auditable per-tenant billing
             if (resolvedTenantId) {
               recordTenantTokenUsage(

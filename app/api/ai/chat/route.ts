@@ -768,6 +768,12 @@ Tilgængelige tabeller:
 - mv_analyse_ejendom: beriget ejendomsview (bfe, adresse, postnr, kommune, ejendomsvaerdi, grundvaerdi, boligareal, ejer_cvr, ejer_navn)
 - mv_analyse_virksomhed: beriget virksomhedsview (cvr, navn, branche, kommune, antal_ejendomme, samlet_ejendomsvaerdi)
 - kommune_ref: kommune-referencetabel (kode, navn, region)
+- ejendomshandel: 58K salgspriser (bfe_nummer, dato, koebesum, type, koeber_navne) — PRIMÆR for prisdata
+- ejerskifte_historik: 572K ejerskifter (bfe_nummer, overtagelsesdato, ejer_navn/cvr, kontant_koebesum)
+- tinglysning_adkomst: normaliserede skøder med priser
+- cvr_deltager: personer med roller (enhedsnummer, navn, antal_aktive_selskaber)
+- cvr_deltagerrelation: person→virksomhed relationer (type, gyldig_fra/til, ejerandel_pct)
+- ejf_administrator: ejendomsadministratorer (bfe_nummer, virksomhed_cvr, status)
 
 Brug data_intelligence til statistik og analyser. Vis ALDRIG SQL til brugeren — kun det formaterede resultat.
 

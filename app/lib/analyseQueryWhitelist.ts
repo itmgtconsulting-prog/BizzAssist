@@ -233,6 +233,86 @@ export const WHITELISTED_TABLES: WhitelistedTable[] = [
       },
     },
   },
+  // BIZZ-1725: Tilføjede tabeller for salgspriser, ejerskifter, personer, administratorer
+  {
+    table: 'public.ejendomshandel',
+    description:
+      'Ejendomshandler med faktiske salgspriser fra Tinglysning. 58K+ rækker med købesum. PRIMÆR tabel for salgspris-spørgsmål.',
+    columns: {
+      bfe_nummer: { type: 'integer', description: 'BFE-nummer for ejendommen' },
+      dato: { type: 'date', description: 'Handelsdato' },
+      koebsaftale_dato: { type: 'date', description: 'Dato for købekontrakt' },
+      type: { type: 'text', description: 'Handelstype (skøde, arv, gave osv.)' },
+      koebesum: { type: 'numeric', description: 'Faktisk købesum i DKK' },
+      samlet_koebesum: { type: 'numeric', description: 'Samlet købesum inkl. løsøre' },
+      koeber_navne: { type: 'text[]', description: 'Købernavne (array)' },
+      koeber_cvrs: { type: 'text[]', description: 'Køber-CVR numre (array)' },
+    },
+  },
+  {
+    table: 'public.ejerskifte_historik',
+    description:
+      'Ejerskifte-historik — 572K rækker. Alle ejerskifter med ejer, dato, pris. Brug ejendomshandel for bedre prisdata.',
+    columns: {
+      bfe_nummer: { type: 'bigint', description: 'BFE-nummer' },
+      overtagelsesdato: { type: 'date', description: 'Overtagelsesdato' },
+      ejer_navn: { type: 'text', description: 'Ejer-navn' },
+      ejer_cvr: { type: 'text', description: 'Ejer-CVR (null for personer)' },
+      ejer_type: { type: 'text', description: 'person / virksomhed' },
+      kontant_koebesum: { type: 'bigint', description: 'Kontant købesum i DKK' },
+      i_alt_koebesum: { type: 'bigint', description: 'Samlet købesum i DKK' },
+    },
+  },
+  {
+    table: 'public.tinglysning_adkomst',
+    description: 'Tinglysning adkomster — normaliserede skøder med salgspriser og ejerskifter.',
+    columns: {
+      bfe_nummer: { type: 'bigint', description: 'BFE-nummer' },
+      ejer_navn: { type: 'text', description: 'Ejer/køber-navn' },
+      ejer_cvr: { type: 'text', description: 'CVR-nummer' },
+      overtagelsesdato: { type: 'date', description: 'Overtagelsesdato' },
+      kontant_koebesum: { type: 'bigint', description: 'Kontant købesum DKK' },
+      i_alt_koebesum: { type: 'bigint', description: 'Samlet købesum DKK' },
+    },
+  },
+  {
+    table: 'public.cvr_deltager',
+    description:
+      'CVR personer/deltagere — navne, roller, aktive selskaber. Brug til person-søgning.',
+    columns: {
+      enhedsnummer: { type: 'bigint', description: 'Person enhedsNummer (primærnøgle)' },
+      navn: { type: 'text', description: 'Fuldt navn' },
+      is_aktiv: { type: 'boolean', description: 'Har aktive roller' },
+      antal_aktive_selskaber: { type: 'integer', description: 'Antal aktive virksomheder' },
+    },
+  },
+  {
+    table: 'public.cvr_deltagerrelation',
+    description: 'Person-virksomhed relationer — hvem har hvilke roller i hvilke virksomheder.',
+    columns: {
+      virksomhed_cvr: { type: 'text', description: 'CVR-nummer på virksomhed' },
+      deltager_enhedsnummer: { type: 'bigint', description: 'Person enhedsNummer' },
+      type: { type: 'text', description: 'Rolletype (register, direktør, bestyrelsesmedlem osv.)' },
+      gyldig_fra: { type: 'date', description: 'Rolle gyldig fra' },
+      gyldig_til: { type: 'date', description: 'Rolle gyldig til (null = aktiv)' },
+      ejerandel_pct: {
+        type: 'numeric',
+        description: 'Ejerandel i procent (kun for register-type)',
+      },
+    },
+  },
+  {
+    table: 'public.ejf_administrator',
+    description:
+      'Ejendomsadministratorer — ejerforeninger, udlejere, advokater der administrerer ejendomme.',
+    columns: {
+      bfe_nummer: { type: 'bigint', description: 'Den administrerede ejendoms BFE' },
+      administrator_type: { type: 'text', description: 'virksomhed / person / ukendt' },
+      virksomhed_cvr: { type: 'text', description: 'CVR for virksomheds-administratorer' },
+      person_navn: { type: 'text', description: 'Navn for person-administratorer' },
+      status: { type: 'text', description: 'gældende / historisk' },
+    },
+  },
 ];
 
 /**

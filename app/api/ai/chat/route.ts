@@ -774,6 +774,8 @@ Tilgængelige tabeller:
 - cvr_deltager: personer med roller (enhedsnummer, navn, antal_aktive_selskaber)
 - cvr_deltagerrelation: person→virksomhed relationer (type, gyldig_fra/til, ejerandel_pct)
 - ejf_administrator: ejendomsadministratorer (bfe_nummer, virksomhed_cvr, status)
+- ejf_ejerskifte: ejerskifter med handelstype (bfe_nummer, overtagelsesdato, overdragelsesmaade, handelsoplysninger_lokal_id). VIGTIGT: overdragelsesmaade = 'Almindelig fri handel' for reelle markedshandler
+- ejf_handelsoplysninger: salgspriser (id_lokal_id, samlet_koebesum, kontant_koebesum, koebsaftale_dato, valutakode). JOIN ejf_ejerskifte ON handelsoplysninger_lokal_id = id_lokal_id
 
 Brug data_intelligence til statistik og analyser. Vis ALDRIG SQL til brugeren — kun det formaterede resultat.
 

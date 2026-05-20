@@ -233,6 +233,45 @@ export const WHITELISTED_TABLES: WhitelistedTable[] = [
       },
     },
   },
+  // BIZZ-1726+1727: EJF Ejerskifte + Handelsoplysninger fra Datafordeler
+  {
+    table: 'public.ejf_ejerskifte',
+    description:
+      'EJF ejerskifter — komplet ejerskifte-historik med BFE, handelstype og pris-kobling. JOIN ejf_handelsoplysninger via handelsoplysninger_lokal_id for priser.',
+    columns: {
+      id_lokal_id: { type: 'text', description: 'Ejerskifte ID (primærnøgle)' },
+      bfe_nummer: { type: 'bigint', description: 'BFE-nummer for ejendommen' },
+      overtagelsesdato: { type: 'timestamptz', description: 'Overtagelsesdato' },
+      overdragelsesmaade: {
+        type: 'text',
+        description:
+          'Handelstype: Almindelig fri handel, Familieoverdragelse, Arv, Gave, Tvangsauktion, Interessesammenfald. VIGTIGT: filtrer på "Almindelig fri handel" for reelle markedspriser.',
+      },
+      betinget: { type: 'boolean', description: 'Om skødet er betinget' },
+      forretningshaendelse: { type: 'text', description: 'Endeligt skøde, Skifteretsattest osv.' },
+      handelsoplysninger_lokal_id: {
+        type: 'text',
+        description: 'FK til ejf_handelsoplysninger.id_lokal_id (pris-data)',
+      },
+      status: { type: 'text', description: 'gældende / historisk' },
+    },
+  },
+  {
+    table: 'public.ejf_handelsoplysninger',
+    description:
+      'EJF salgspriser — kontant + samlet købesum fra Datafordeler. Kobles til ejf_ejerskifte via id_lokal_id = ejf_ejerskifte.handelsoplysninger_lokal_id.',
+    columns: {
+      id_lokal_id: { type: 'text', description: 'Handelsoplysning ID (primærnøgle)' },
+      samlet_koebesum: { type: 'bigint', description: 'Samlet købesum i DKK' },
+      kontant_koebesum: { type: 'bigint', description: 'Kontant købesum i DKK' },
+      loesoeressum: { type: 'bigint', description: 'Løsøresum i DKK' },
+      entreprisesum: { type: 'bigint', description: 'Entreprisesum i DKK' },
+      koebsaftale_dato: { type: 'date', description: 'Dato for købekontrakt' },
+      valutakode: { type: 'text', description: 'Valuta (typisk DKK)' },
+      forretningshaendelse: { type: 'text', description: 'Endeligt skøde, Skifteretsattest osv.' },
+      status: { type: 'text', description: 'gældende / historisk' },
+    },
+  },
   // BIZZ-1725: Tilføjede tabeller for salgspriser, ejerskifter, personer, administratorer
   {
     table: 'public.ejendomshandel',

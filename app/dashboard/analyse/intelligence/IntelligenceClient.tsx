@@ -290,7 +290,7 @@ export default function IntelligenceClient(): React.ReactElement {
     // BIZZ-1554: flex-1 + min-w-0 sikrer at content udnytter fuld bredde af
     // dashboard-layoutets flex-container. Tidligere uden flex-1 kollapsede
     // viewporten til ~450px når response-grid bestod af enkelte rows.
-    <div className="flex-1 min-w-0 min-h-screen bg-slate-950 text-slate-100 flex">
+    <div className="flex-1 min-w-0 h-[calc(100vh-3.5rem)] bg-slate-950 text-slate-100 flex">
       {/* Venstre: DI resultater */}
       <div className="flex-1 min-w-0 overflow-y-auto">
         <a
@@ -601,7 +601,7 @@ export default function IntelligenceClient(): React.ReactElement {
         </main>
       </div>
       {/* Højre: Embedded AI Chat */}
-      <div className="w-[380px] shrink-0 border-l border-slate-800 bg-slate-900/50 flex flex-col h-screen sticky top-0 z-10 relative">
+      <div className="w-[380px] shrink-0 border-l border-slate-800 bg-slate-900/50 flex flex-col h-[calc(100vh-3.5rem)] sticky top-0 z-10 relative">
         <EmbeddedChat />
       </div>
     </div>

@@ -777,6 +777,9 @@ Når du modtager data_intelligence resultater:
 - Tilføj kontekst: "Baseret på X rækker i databasen"
 - Hvis rowCount er højt, nævn at data er afkortet
 - Brug danske tal-formater (1.234.567 ikke 1,234,567)
+- Foreslå 2-3 opfølgninger: "Du kan f.eks. bede mig om at: filtrere på kommune, vise som graf, eller sammenligne med et andet år."
+
+Iterativ forbedring: Når brugeren beder om ændringer til et data-resultat ("vis kun København", "sortér faldende", "kun aktive"), modificér din seneste data_intelligence prompt — bevar filtre og aggregeringer og tilføj/ændr kun det brugeren beder om. Kald data_intelligence igen med den opdaterede prompt.
 
 ## Workflow ved ejendomsspørgsmål
 1. Søg adressen med dawa_adresse_soeg

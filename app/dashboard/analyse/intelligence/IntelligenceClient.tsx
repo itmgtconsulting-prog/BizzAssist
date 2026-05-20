@@ -652,7 +652,7 @@ export default function IntelligenceClient(): React.ReactElement {
         </main>
       </div>
       {/* Højre: Embedded AI Chat */}
-      <div className="w-[380px] shrink-0 border-l border-slate-800 bg-slate-900/50 flex flex-col h-screen sticky top-0">
+      <div className="w-[380px] shrink-0 border-l border-slate-800 bg-slate-900/50 flex flex-col h-screen sticky top-0 z-10 relative">
         <EmbeddedChat />
       </div>
     </div>

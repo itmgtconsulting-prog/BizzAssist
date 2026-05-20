@@ -160,7 +160,7 @@ function AIChatPanel() {
   const [attachBusy, setAttachBusy] = useState(false);
   const [attachError, setAttachError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   /** AbortController for at kunne stoppe streaming */
   const abortRef = useRef<AbortController | null>(null);
   /** Refresh token info from subscription context (server-authoritative) */
@@ -1623,9 +1623,8 @@ function AIChatPanel() {
                   }}
                 />
               </label>
-              <input
+              <textarea
                 ref={inputRef}
-                type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
@@ -1635,7 +1634,8 @@ function AIChatPanel() {
                   }
                 }}
                 placeholder={a.inputPlaceholder}
-                className="flex-1 bg-transparent text-slate-300 text-xs placeholder-slate-600 focus:outline-none"
+                rows={4}
+                className="flex-1 bg-transparent text-slate-300 text-xs placeholder-slate-600 focus:outline-none resize-none"
               />
               {isLoading ? (
                 <button

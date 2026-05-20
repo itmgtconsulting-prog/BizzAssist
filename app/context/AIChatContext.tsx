@@ -161,9 +161,15 @@ function apiRowToMessage(row: ApiMessageRow): ChatMessage | null {
 }
 
 function apiSessionToConversation(s: ApiSession): Conversation {
+  // BIZZ-1718: Bedre fallback-titel end "Samtale"
+  let title = s.title;
+  if (!title || title === 'Ny samtale') {
+    const d = new Date(s.last_msg_at ?? s.created_at);
+    title = `Samtale ${d.toLocaleDateString('da-DK', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`;
+  }
   return {
     id: s.id,
-    title: s.title ?? 'Samtale',
+    title,
     messages: [],
     createdAt: s.created_at,
   };
@@ -271,7 +277,11 @@ export function AIChatContextProvider({ children }: { children: ReactNode }) {
       // Success → clear error-flag hvis det var sat
       setPersistenceError(false);
       const data = (await res.json()) as { sessions?: ApiSession[] };
-      const convs = (data.sessions ?? []).map(apiSessionToConversation);
+      // BIZZ-1718: Filtrer tomme sessions (aldrig brugt, ingen messages)
+      // og sessions uden titel (vises som "Ny samtale" duplikater).
+      const convs = (data.sessions ?? [])
+        .filter((s) => s.last_msg_at != null)
+        .map(apiSessionToConversation);
       setConversations(convs);
       return convs;
     } catch {

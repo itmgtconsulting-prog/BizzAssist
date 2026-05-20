@@ -139,24 +139,25 @@ export default function IntelligenceClient(): React.ReactElement {
     [chatWidth]
   );
 
-  // BIZZ-1708: Subscribe til DI-resultater fra AI Chat sidebar
+  // BIZZ-1708 + BIZZ-1717: Subscribe til DI-resultater fra AI Chat
   useEffect(() => {
     let unsub: (() => void) | undefined;
     import('@/app/lib/diResultStore').then(({ subscribeDiResult }) => {
       unsub = subscribeDiResult((result) => {
-        // Rows kan være Record<string,unknown>[] ELLER unknown[][] — håndtér begge
-        const recordRows = result.rows.map((row) => {
-          if (row && typeof row === 'object' && !Array.isArray(row)) {
-            return row as Record<string, unknown>; // Allerede objekt
-          }
-          // Array-format → konvertér via kolonne-index
-          const arr = row as unknown[];
+        if (!result.columns?.length || !result.rows?.length) return;
+        // Konvertér rows til Record-format — DI-tabel kræver kolonne-keys
+        const recordRows: Array<Record<string, unknown>> = [];
+        for (const row of result.rows) {
           const obj: Record<string, unknown> = {};
-          result.columns.forEach((col, i) => {
-            obj[col] = arr[i];
-          });
-          return obj;
-        });
+          if (Array.isArray(row)) {
+            result.columns.forEach((col, i) => {
+              obj[col] = row[i];
+            });
+          } else if (row && typeof row === 'object') {
+            Object.assign(obj, row);
+          }
+          recordRows.push(obj);
+        }
         setResponse({
           ok: true,
           columns: result.columns,
@@ -655,7 +656,7 @@ export default function IntelligenceClient(): React.ReactElement {
       {/* Højre: Embedded AI Chat */}
       <div
         style={{ width: chatWidth }}
-        className="shrink-0 bg-slate-900/50 flex flex-col h-[calc(100vh-3.5rem)] sticky top-0 z-10 relative"
+        className="shrink-0 bg-slate-900/50 flex flex-col h-[calc(100vh-3.5rem)] sticky top-0 z-20 relative"
       >
         <EmbeddedChat />
       </div>

@@ -1,17 +1,19 @@
 /**
- * Data Intelligence — /dashboard/analyse/intelligence (BIZZ-1428)
+ * Data Intelligence — /dashboard/analyse/intelligence
  *
- * Smart SQL endpoint — dansk-prompt → AI genererer SQL → AST-validator →
- * read-only execution → resultat med chart-recommendation.
+ * BIZZ-1701: Redirecter til AI Chat — DI-funktionalitet er nu integreret
+ * i AI Chat via data_intelligence tool (BIZZ-1697).
  *
  * @module app/dashboard/analyse/intelligence
  */
 
-import IntelligenceClient from './IntelligenceClient';
+import { redirect } from 'next/navigation';
 
 /**
- * Server entry — renderer IntelligenceClient (klient-komponent for state).
+ * Server entry — redirect til AI Chat.
  */
 export default function AnalyseIntelligencePage() {
-  return <IntelligenceClient />;
+  // AI Chat sidebar er tilgængelig fra alle dashboard-sider.
+  // Redirect til hoved-dashboard hvor chatten kan bruges direkte.
+  redirect('/dashboard');
 }

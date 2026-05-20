@@ -85,6 +85,33 @@ export default function IntelligenceClient(): React.ReactElement {
   /** Chat-historik: alle prompts i rækkefølge — sendes som fuld kontekst til AI. */
   const [chatHistory, setChatHistory] = useState<{ prompt: string; sql: string }[]>([]);
 
+  // BIZZ-1708: Subscribe til DI-resultater fra AI Chat sidebar
+  useEffect(() => {
+    let unsub: (() => void) | undefined;
+    import('@/app/lib/diResultStore').then(({ subscribeDiResult }) => {
+      unsub = subscribeDiResult((result) => {
+        // Konvertér unknown[][] til Record<string, unknown>[]
+        const recordRows = result.rows.map((row) => {
+          const obj: Record<string, unknown> = {};
+          result.columns.forEach((col, i) => {
+            obj[col] = row[i];
+          });
+          return obj;
+        });
+        setResponse({
+          columns: result.columns,
+          rows: recordRows,
+          rowCount: result.rowCount,
+          sql: '',
+          chartRecommendation: result.chartType === 'table' ? null : result.chartType,
+        } as unknown as SqlResponse);
+        setPrompt(result.query);
+        setError(null);
+      });
+    });
+    return () => unsub?.();
+  }, []);
+
   /**
    * Submit en prompt til API'en.
    * BIZZ-1555: Tilføjet client-side AbortSignal.timeout (95s — over server's

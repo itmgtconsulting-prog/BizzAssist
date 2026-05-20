@@ -3574,6 +3574,36 @@ export async function POST(request: NextRequest): Promise<Response> {
                 };
               }
 
+              // BIZZ-1708: Emit DI-result som separat SSE-event for rendering
+              // i DI-hovedområdet (fuld bredde tabel/graf).
+              if (
+                toolBlock.name === 'data_intelligence' &&
+                typeof result === 'object' &&
+                result !== null &&
+                'columns' in result
+              ) {
+                const diResult = result as {
+                  columns: string[];
+                  rows: unknown[][];
+                  rowCount: number;
+                  chartType?: string;
+                  afkortet?: boolean;
+                };
+                sse(
+                  controller,
+                  JSON.stringify({
+                    di_result: {
+                      columns: diResult.columns,
+                      rows: diResult.rows,
+                      rowCount: diResult.rowCount,
+                      chartType: diResult.chartType ?? 'table',
+                      afkortet: diResult.afkortet ?? false,
+                      query: (toolBlock.input as { prompt?: string }).prompt ?? '',
+                    },
+                  })
+                );
+              }
+
               return {
                 type: 'tool_result' as const,
                 tool_use_id: toolBlock.id,

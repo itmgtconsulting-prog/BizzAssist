@@ -902,6 +902,15 @@ function AIChatPanel() {
                   preview_rows?: string[][];
                   preview_html?: string;
                 };
+                /** BIZZ-1708: DI-resultat fra data_intelligence tool */
+                di_result?: {
+                  columns: string[];
+                  rows: unknown[][];
+                  rowCount: number;
+                  chartType: string;
+                  afkortet: boolean;
+                  query: string;
+                };
               };
               // Only update UI if user is still viewing this conversation
               const isActive = chatCtx.activeId === convId;
@@ -932,6 +941,26 @@ function AIChatPanel() {
                   setToolStatus(parsed.status);
                   chatCtx.setToolStatus(parsed.status);
                 }
+              } else if (parsed.di_result) {
+                // BIZZ-1708: Push DI-resultat til shared store for rendering
+                // i DI-hovedområdet (fuld bredde).
+                const dr = parsed.di_result!;
+                void import('@/app/lib/diResultStore').then(({ pushDiResult }) =>
+                  pushDiResult({
+                    columns: dr.columns,
+                    rows: dr.rows,
+                    rowCount: dr.rowCount,
+                    chartType: (dr.chartType ?? 'table') as
+                      | 'table'
+                      | 'bar'
+                      | 'line'
+                      | 'pie'
+                      | 'number',
+                    afkortet: dr.afkortet,
+                    query: dr.query,
+                    timestamp: Date.now(),
+                  })
+                );
               } else if (parsed.generated_file) {
                 // BIZZ-814: buffer til senere attach på final message.
                 // Vis status så brugeren ser progress mens Claude formulerer

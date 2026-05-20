@@ -1025,10 +1025,23 @@ function AIChatPanel() {
           setMessages(finalMsgs);
         }
       } else {
-        const finalMsgs = [
-          ...newMessages,
-          { role: 'assistant' as const, content: a.connectionError },
-        ];
+        // BIZZ-1695: Mere specifik fejlbesked baseret på fejltype
+        let errorMsg = a.connectionError;
+        if (
+          err instanceof TypeError &&
+          (err.message.includes('fetch') || err.message.includes('network'))
+        ) {
+          errorMsg =
+            lang === 'da'
+              ? 'Netværksfejl — tjek din internetforbindelse og prøv igen.'
+              : 'Network error — check your internet connection and try again.';
+        } else if (err instanceof Error && err.message.includes('timeout')) {
+          errorMsg =
+            lang === 'da'
+              ? 'Forespørgslen tog for lang tid. Prøv et kortere spørgsmål eller start en ny samtale.'
+              : 'Request timed out. Try a shorter question or start a new conversation.';
+        }
+        const finalMsgs = [...newMessages, { role: 'assistant' as const, content: errorMsg }];
         setMessages(finalMsgs);
         chatCtx.persistConversation(convId, finalMsgs);
       }

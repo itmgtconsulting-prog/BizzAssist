@@ -2493,14 +2493,21 @@ async function executeTool(
             if (diData.error) {
               result = { fejl: diData.error };
             } else {
-              // Returnér data UDEN SQL til Claude — brugeren skal ikke se SQL
+              // BIZZ-1717: Returner KUN opsummering til Claude — IKKE data.
+              // Data pusher via SSE di_result event til DI-panelet.
+              // Claude skal opsummere, IKKE gengive tabellen.
+              const rowCount = diData.rowCount ?? 0;
+              const cols = diData.columns ?? [];
               result = {
-                columns: diData.columns ?? [],
-                rows: (diData.rows ?? []).slice(0, 50),
-                rowCount: diData.rowCount ?? 0,
+                status: 'ok',
+                rowCount,
+                columns: cols,
                 chartType,
-                afkortet: (diData.rows?.length ?? 0) > 50,
+                besked: `Resultatet (${rowCount} rækker, ${cols.length} kolonner) vises nu i Data Intelligence-panelet til venstre. Giv brugeren en kort opsummering af hvad dataen viser — vis IKKE tabellen.`,
               };
+              // Gem rå data for SSE push (sker i tool-result post-processing)
+              (result as Record<string, unknown>)._diRawRows = (diData.rows ?? []).slice(0, 50);
+              (result as Record<string, unknown>)._diAfkortet = (diData.rows?.length ?? 0) > 50;
             }
           }
         } catch (diErr) {
@@ -3573,8 +3580,8 @@ export async function POST(request: NextRequest): Promise<Response> {
                 };
               }
 
-              // BIZZ-1708: Emit DI-result som separat SSE-event for rendering
-              // i DI-hovedområdet (fuld bredde tabel/graf).
+              // BIZZ-1717: Emit DI-result med RÅ data til frontend-store.
+              // Claude får kun opsummering — DI-panelet renderer data.
               if (
                 toolBlock.name === 'data_intelligence' &&
                 typeof result === 'object' &&
@@ -3583,24 +3590,33 @@ export async function POST(request: NextRequest): Promise<Response> {
               ) {
                 const diResult = result as {
                   columns: string[];
-                  rows: unknown[][];
                   rowCount: number;
                   chartType?: string;
-                  afkortet?: boolean;
+                  _diRawRows?: unknown[];
+                  _diAfkortet?: boolean;
                 };
                 sse(
                   controller,
                   JSON.stringify({
                     di_result: {
                       columns: diResult.columns,
-                      rows: diResult.rows,
+                      rows: diResult._diRawRows ?? [],
                       rowCount: diResult.rowCount,
                       chartType: diResult.chartType ?? 'table',
-                      afkortet: diResult.afkortet ?? false,
+                      afkortet: diResult._diAfkortet ?? false,
                       query: (toolBlock.input as { prompt?: string }).prompt ?? '',
                     },
                   })
                 );
+              }
+
+              // BIZZ-1717: Fjern rå data fra tool-result til Claude
+              // Claude får opsummering + kolonner + rowCount — nok til samtale
+              // men IKKE rå rows (de vises i DI-panelet)
+              if (typeof result === 'object' && result !== null) {
+                const r = result as Record<string, unknown>;
+                delete r._diRawRows;
+                delete r._diAfkortet;
               }
 
               return {

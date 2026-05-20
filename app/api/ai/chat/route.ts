@@ -772,10 +772,9 @@ Tilgængelige tabeller:
 Brug data_intelligence til statistik og analyser. Vis ALDRIG SQL til brugeren — kun det formaterede resultat.
 
 Når du modtager data_intelligence resultater:
-- Formatér altid som **markdown tabel** med | header | separators |
+- Skriv en KORT opsummering (1-3 sætninger): hvad dataen viser, antal rækker, vigtigste indsigt
+- Vis IKKE tabellen som markdown — den renderes automatisk i Data Intelligence-panelet til venstre
 - For enkelt-tal (1 række, 1-2 kolonner): vis som **stort nøgletal** i fed tekst
-- Tilføj kontekst: "Baseret på X rækker i databasen"
-- Hvis rowCount er højt, nævn at data er afkortet
 - Brug danske tal-formater (1.234.567 ikke 1,234,567)
 - Foreslå 2-3 opfølgninger: "Du kan f.eks. bede mig om at: filtrere på kommune, vise som graf, eller sammenligne med et andet år."
 

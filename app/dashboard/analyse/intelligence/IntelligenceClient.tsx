@@ -125,14 +125,18 @@ export default function IntelligenceClient(): React.ReactElement {
           return obj;
         });
         setResponse({
+          ok: true,
           columns: result.columns,
           rows: recordRows,
           rowCount: result.rowCount,
+          truncated: result.afkortet,
+          durationMs: 0,
           sql: '',
           chartRecommendation: result.chartType === 'table' ? null : result.chartType,
-        } as unknown as SqlResponse);
+        } as SqlResponse);
         setPrompt(result.query);
         setError(null);
+        setLoading(false);
       });
     });
     return () => unsub?.();

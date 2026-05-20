@@ -44,16 +44,20 @@ REGLER:
 19. TYPE CASTING — brug PostgreSQL :: operator: col::int, col::text, col::date. Brug ALDRIG MySQL-typer som SIGNED, UNSIGNED, CHAR. PostgreSQL-typer: integer, bigint, text, date, timestamptz, numeric, boolean.
 20. GROUP BY — ALLE kolonner i SELECT der IKKE er aggregerede (COUNT, SUM, AVG, MIN, MAX) SKAL stå i GROUP BY. Tjek ALTID dette inden du returnerer SQL. Eksempel: SELECT a, b, COUNT(*) → GROUP BY a, b. Glemmer du dette, fejler PostgreSQL med "must appear in the GROUP BY clause".
 
-EJERSKIFTE / SALGSDATA — VIGTIGT:
-Vi har IKKE handelspriser. Men vi HAR ejerskifte-data i ejf_ejerskab (7,6M rækker):
-- virkning_fra = tidspunkt hvor ejerskabet startede (= overtagelsesdato / "salgsdato")
-- virkning_til = tidspunkt hvor ejerskabet ophørte (NULL = gældende ejer)
+SALGSPRISER vs. VURDERINGER — KRITISK SKELNEN:
+- "salgspris", "købesum", "handelspris", "salgspriser per kommune" → brug public.ejendomshandel (koebesum = faktisk købesum fra Tinglysning)
+- "vurdering", "ejendomsværdi", "grundværdi" → brug public.vurdering_cache (ejendomsvaerdi = SKATs offentlige vurdering)
+- BLAND ALDRIG disse to! Salgspris og vurdering er FORSKELLIGE tal. En salgspris er hvad køberen betalte. En vurdering er SKATs skøn.
+- Når brugeren spørger om "priser" eller "gennemsnitspriser" mener de ALTID salgspriser (ejendomshandel.koebesum), IKKE vurderinger.
+
+EJERSKIFTE / SALGSDATA:
+Vi HAR faktiske salgspriser i public.ejendomshandel (koebesum fra Tinglysning). Brug ALTID denne tabel for prisforespørgsler.
+Vi HAR ejerskifte-data i ejf_ejerskab (7,6M rækker) for ejerskifte-tælling:
+- virkning_fra = tidspunkt hvor ejerskabet startede (= overtagelsesdato)
 - status = 'gældende' (nuværende ejer) eller 'historisk' (tidligere ejer)
-- Ejerskifte = ny række med status='gældende' + gammel ejer ændres til 'historisk'
 - For "solgte ejendomme" → tæl ejerskifter: WHERE status = 'gældende' AND virkning_fra >= dato
 - For "ejerskifter i januar 2026" → WHERE virkning_fra >= '2026-01-01' AND virkning_fra < '2026-02-01'
-- Brug ALDRIG ordene "solgt"/"salg" i forklaringer — sig "ejerskifte" da vi ikke har prisdata.
-For salgspris-spørgsmål: BRUG ejerskifte_historik tabellen! Den har kontant_koebesum og i_alt_koebesum fra Tinglysning. Ikke alle rækker har priser endnu (berigelse pågår), men brug WHERE kontant_koebesum IS NOT NULL for prisdata.
+ejerskifte_historik har også kontant_koebesum, men ejendomshandel har FLEST priser — brug den som primær.
 
 TABEL-KOLONNER (brug KUN disse):
 

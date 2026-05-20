@@ -188,7 +188,7 @@ Spørgsmål: Hvor mange boliger er solgt i 2025?
 SQL: SELECT COUNT(*) AS antal_ejerskifter, COUNT(kontant_koebesum) AS med_pris FROM public.ejerskifte_historik WHERE overtagelsesdato >= '2025-01-01' AND overtagelsesdato < '2026-01-01' LIMIT 1
 
 Spørgsmål: Top 10 kommuner med højest gennemsnitspris for ejendomme
-SQL: SELECT e.kommune_kode, k.kommunenavn, AVG(e.kontant_koebesum)::bigint AS gns_pris, COUNT(*) AS antal FROM public.ejerskifte_historik e JOIN public.kommune_ref k ON k.kommune_kode = e.kommune_kode WHERE e.kontant_koebesum IS NOT NULL AND e.kommune_kode IS NOT NULL GROUP BY e.kommune_kode, k.kommunenavn HAVING COUNT(*) >= 5 ORDER BY gns_pris DESC LIMIT 10
+SQL: SELECT e.kommune_kode, k.kommunenavn, AVG(e.kontant_koebesum)::bigint AS gns_pris, COUNT(*) AS antal FROM public.ejerskifte_historik e JOIN public.kommune_ref k ON k.kommune_kode = e.kommune_kode WHERE e.kontant_koebesum IS NOT NULL AND e.kommune_kode IS NOT NULL GROUP BY e.kommune_kode, k.kommunenavn ORDER BY gns_pris DESC LIMIT 10
 
 Spørgsmål: Dyreste ejendomshandler de seneste 12 måneder
 SQL: SELECT bfe_nummer, ejer_navn, kontant_koebesum, overtagelsesdato, kommune_kode FROM public.ejerskifte_historik WHERE kontant_koebesum IS NOT NULL AND overtagelsesdato >= CURRENT_DATE - INTERVAL '12 months' ORDER BY kontant_koebesum DESC LIMIT 20
@@ -203,7 +203,7 @@ Spørgsmål: Gennemsnitlig salgspris i Hvidovre pr år
 SQL: SELECT EXTRACT(YEAR FROM e.dato)::int AS aar, AVG(e.koebesum)::bigint AS gennemsnitspris, COUNT(*) AS antal_handler FROM public.ejendomshandel e JOIN public.bbr_ejendom_status b ON b.bfe_nummer = e.bfe_nummer WHERE b.kommune_kode = 167 AND e.koebesum IS NOT NULL GROUP BY aar ORDER BY aar DESC LIMIT 50
 
 Spørgsmål: Salgspriser pr kommune de seneste 5 år
-SQL: SELECT b.kommune_kode, k.kommunenavn, AVG(e.koebesum)::bigint AS gns_pris, COUNT(*) AS antal FROM public.ejendomshandel e JOIN public.bbr_ejendom_status b ON b.bfe_nummer = e.bfe_nummer JOIN public.kommune_ref k ON k.kommune_kode = b.kommune_kode WHERE e.koebesum IS NOT NULL AND e.dato >= CURRENT_DATE - INTERVAL '5 years' GROUP BY b.kommune_kode, k.kommunenavn HAVING COUNT(*) >= 5 ORDER BY gns_pris DESC LIMIT 30
+SQL: SELECT b.kommune_kode, k.kommunenavn, AVG(e.koebesum)::bigint AS gns_pris, COUNT(*) AS antal FROM public.ejendomshandel e JOIN public.bbr_ejendom_status b ON b.bfe_nummer = e.bfe_nummer JOIN public.kommune_ref k ON k.kommune_kode = b.kommune_kode WHERE e.koebesum IS NOT NULL AND e.dato >= CURRENT_DATE - INTERVAL '5 years' GROUP BY b.kommune_kode, k.kommunenavn ORDER BY gns_pris DESC LIMIT 30
 
 Spørgsmål: Samlet realkreditgæld per kommune
 SQL: SELECT b.kommune_kode, k.kommunenavn, SUM(h.hovedstol_dkk)::bigint AS samlet_gaeld, COUNT(*) AS antal_laan FROM public.tinglysning_haeftelse h JOIN public.bbr_ejendom_status b ON b.bfe_nummer = h.bfe_nummer JOIN public.kommune_ref k ON k.kommune_kode = b.kommune_kode WHERE h.hovedstol_dkk IS NOT NULL AND h.status = 'gældende' GROUP BY b.kommune_kode, k.kommunenavn ORDER BY samlet_gaeld DESC LIMIT 20
@@ -212,7 +212,7 @@ Spørgsmål: Hvilke typer servitutter er mest udbredte?
 SQL: SELECT tekst, COUNT(*) AS antal FROM public.tinglysning_servitut WHERE tekst IS NOT NULL GROUP BY tekst ORDER BY antal DESC LIMIT 20
 
 Spørgsmål: Gennemsnitspriser for bolig per kommune
-SQL: SELECT b.kommune_kode, k.kommunenavn, AVG(e.koebesum)::bigint AS gennemsnitspris, COUNT(*) AS antal_handler FROM public.ejendomshandel e JOIN public.bbr_ejendom_status b ON b.bfe_nummer = e.bfe_nummer JOIN public.kommune_ref k ON k.kommune_kode = b.kommune_kode WHERE e.koebesum IS NOT NULL GROUP BY b.kommune_kode, k.kommunenavn HAVING COUNT(*) >= 3 ORDER BY gennemsnitspris DESC LIMIT 50
+SQL: SELECT b.kommune_kode, k.kommunenavn, AVG(e.koebesum)::bigint AS gennemsnitspris, COUNT(*) AS antal_handler FROM public.ejendomshandel e JOIN public.bbr_ejendom_status b ON b.bfe_nummer = e.bfe_nummer JOIN public.kommune_ref k ON k.kommune_kode = b.kommune_kode WHERE e.koebesum IS NOT NULL GROUP BY b.kommune_kode, k.kommunenavn ORDER BY gennemsnitspris DESC LIMIT 50
 
 Spørgsmål: Dyreste ejendomssalg i 2025
 SQL: SELECT e.bfe_nummer, e.dato, e.koebesum, e.koeber_navne, b.kommune_kode, k.kommunenavn FROM public.ejendomshandel e JOIN public.bbr_ejendom_status b ON b.bfe_nummer = e.bfe_nummer JOIN public.kommune_ref k ON k.kommune_kode = b.kommune_kode WHERE e.koebesum IS NOT NULL AND e.dato >= '2025-01-01' AND e.dato < '2026-01-01' ORDER BY e.koebesum DESC LIMIT 20

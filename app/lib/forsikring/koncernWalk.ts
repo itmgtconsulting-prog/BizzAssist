@@ -157,6 +157,32 @@ async function walkVirksomhed(
           rawData: { ejerforening: true },
         });
       }
+
+      // BIZZ-1691: Hent administrerede ejendomme fra ejf_administrator
+      // Ejerforeningen administrerer typisk ALLE EL'er i bygningen,
+      // ikke kun de 6 kælder-EL'er den direkte ejer.
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: adminRows } = await (admin as any)
+          .from('ejf_administrator')
+          .select('bfe_nummer')
+          .eq('virksomhed_cvr', cvr)
+          .eq('status', 'gældende')
+          .limit(200);
+
+        for (const row of (adminRows ?? []) as Array<{ bfe_nummer: number }>) {
+          if (seenBfes.has(row.bfe_nummer) || aktiver.length >= MAX_AKTIVER) continue;
+          seenBfes.add(row.bfe_nummer);
+          aktiver.push({
+            type: 'ejendom',
+            label: `BFE ${row.bfe_nummer}`,
+            bfe: row.bfe_nummer,
+            rawData: { ejerforening: true, administreret: true },
+          });
+        }
+      } catch {
+        /* ejf_administrator lookup non-fatal */
+      }
     } catch {
       /* non-fatal — fallback til standard flow */
     }

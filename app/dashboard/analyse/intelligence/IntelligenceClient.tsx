@@ -81,26 +81,32 @@ export default function IntelligenceClient(): React.ReactElement {
       .catch(() => {});
   }, []);
 
-  // BIZZ-1707: Start ny AI Chat samtale med DI-velkomst (embedded, ikke drawer)
+  // BIZZ-1707 + BIZZ-1720: Start ny AI Chat samtale med DI-velkomst.
+  // Nulstil HELT (messages + stream + tool) og sæt velkomst EFTER
+  // createConversation resolver for at undgå race med sync-effekter.
   const chatCtx = useAIChatContext();
   const chatInitRef = useRef(false);
   useEffect(() => {
     if (chatInitRef.current) return;
     chatInitRef.current = true;
-    // Luk drawer hvis den er åben — chatten er embedded på DI-siden
     chatCtx.setDrawerOpen(false);
-    void chatCtx.createConversation('da').then(() => {
-      chatCtx.setMessages([]);
-      chatCtx.setStreamText('');
-      chatCtx.setToolStatus('');
-      chatCtx.setIsStreaming(false);
-      chatCtx.setMessages([
-        {
-          role: 'assistant',
-          content:
-            '**Data Intelligence klar!**\n\nStil mig et spørgsmål om virksomheder, ejendomme eller ejerskaber — resultatet vises til venstre.\n\nPrøv fx: *"Top 10 kommuner med flest virksomheder"*',
-        },
-      ]);
+    // Nulstil straks — forhindrer gammel samtale fra at flashe
+    chatCtx.setStreamText('');
+    chatCtx.setToolStatus('');
+    chatCtx.setIsStreaming(false);
+    chatCtx.setMessages([]);
+    void chatCtx.createConversation('da').then((newId) => {
+      if (!newId) return;
+      // Vent en tick så context har opdateret activeId
+      requestAnimationFrame(() => {
+        chatCtx.setMessages([
+          {
+            role: 'assistant',
+            content:
+              '**Data Intelligence klar!**\n\nStil mig et spørgsmål om virksomheder, ejendomme eller ejerskaber — resultatet vises til venstre.\n\nPrøv fx: *"Top 10 kommuner med flest virksomheder"*',
+          },
+        ]);
+      });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

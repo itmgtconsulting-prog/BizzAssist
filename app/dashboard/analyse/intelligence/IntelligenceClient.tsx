@@ -10,7 +10,14 @@
 
 'use client';
 
-import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import {
+  useState,
+  useCallback,
+  useMemo,
+  useEffect,
+  useRef,
+  type MouseEvent as ReactMouseEvent,
+} from 'react';
 import dynamic from 'next/dynamic';
 import { useAIChatContext } from '@/app/context/AIChatContext';
 
@@ -103,6 +110,34 @@ export default function IntelligenceClient(): React.ReactElement {
   const [sortDir, setSortDir] = useState<SortDir>(null);
   /** Chat-historik: alle prompts i rækkefølge — sendes som fuld kontekst til AI. */
   const [chatHistory, setChatHistory] = useState<{ prompt: string; sql: string }[]>([]);
+
+  // Resizable divider mellem DI-panel og AI Chat
+  const [chatWidth, setChatWidth] = useState(380);
+  const isDragging = useRef(false);
+  const handleDividerDown = useCallback(
+    (e: ReactMouseEvent) => {
+      e.preventDefault();
+      isDragging.current = true;
+      const startX = e.clientX;
+      const startW = chatWidth;
+      const onMove = (ev: globalThis.MouseEvent) => {
+        const delta = startX - ev.clientX;
+        setChatWidth(Math.max(280, Math.min(700, startW + delta)));
+      };
+      const onUp = () => {
+        isDragging.current = false;
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    },
+    [chatWidth]
+  );
 
   // BIZZ-1708: Subscribe til DI-resultater fra AI Chat sidebar
   useEffect(() => {
@@ -610,8 +645,18 @@ export default function IntelligenceClient(): React.ReactElement {
           )}
         </main>
       </div>
+      {/* Resizable divider */}
+      <div
+        onMouseDown={handleDividerDown}
+        className="w-1.5 shrink-0 cursor-col-resize bg-slate-800 hover:bg-emerald-500/40 active:bg-emerald-500/60 transition-colors"
+        role="separator"
+        aria-label="Justér panelbredde"
+      />
       {/* Højre: Embedded AI Chat */}
-      <div className="w-[380px] shrink-0 border-l border-slate-800 bg-slate-900/50 flex flex-col h-[calc(100vh-3.5rem)] sticky top-0 z-10 relative">
+      <div
+        style={{ width: chatWidth }}
+        className="shrink-0 bg-slate-900/50 flex flex-col h-[calc(100vh-3.5rem)] sticky top-0 z-10 relative"
+      >
         <EmbeddedChat />
       </div>
     </div>

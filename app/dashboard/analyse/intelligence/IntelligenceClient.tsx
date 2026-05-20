@@ -10,8 +10,9 @@
 
 'use client';
 
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import dynamic from 'next/dynamic';
+import { useAIChatContext } from '@/app/context/AIChatContext';
 import {
   Search,
   Loader2,
@@ -77,6 +78,31 @@ export default function IntelligenceClient(): React.ReactElement {
         if (d?.isAdmin) setIsAdmin(true);
       })
       .catch(() => {});
+  }, []);
+
+  // BIZZ-1707: Auto-åbn AI Chat drawer med ny samtale når DI-siden loader
+  const chatCtx = useAIChatContext();
+  const chatInitRef = useRef(false);
+  useEffect(() => {
+    if (chatInitRef.current) return;
+    chatInitRef.current = true;
+    // Start ny samtale + åbn drawer
+    void chatCtx.createConversation('da').then(() => {
+      chatCtx.setMessages([]);
+      chatCtx.setStreamText('');
+      chatCtx.setToolStatus('');
+      chatCtx.setIsStreaming(false);
+      // Sæt velkomstbesked
+      chatCtx.setMessages([
+        {
+          role: 'assistant',
+          content:
+            '🔍 **Data Intelligence klar!**\n\nStil mig et spørgsmål om virksomheder, ejendomme eller ejerskaber — jeg genererer SQL og viser resultatet her.\n\nPrøv fx: *"Top 10 kommuner med flest virksomheder"*',
+        },
+      ]);
+      chatCtx.setDrawerOpen(true);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [showChart, setShowChart] = useState(true);
   const [chartType, setChartType] = useState<'auto' | 'bar' | 'pie' | 'line'>('auto');

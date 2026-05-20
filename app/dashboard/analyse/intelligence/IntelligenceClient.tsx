@@ -49,16 +49,7 @@ interface SqlResponse {
   error?: string;
 }
 
-const SUGGESTIONS = [
-  'Hvor mange virksomheder er der i alt?',
-  'Top 10 brancher efter antal aktive virksomheder',
-  'Hvilken kommune har flest virksomheder?',
-  'Find virksomheder der ejer mere end 5 ejendomme',
-  'Hvor mange ejendomme mangler energimærke?',
-  'Top 20 virksomhedsformer',
-  'Ejerskifter per måned de seneste 12 måneder',
-  'Hvad er den nyeste ejendomsdata?',
-];
+// BIZZ-1716: Suggestions fjernet — al input sker via embedded AI Chat
 
 type SortDir = 'asc' | 'desc' | null;
 
@@ -309,66 +300,30 @@ export default function IntelligenceClient(): React.ReactElement {
           Spring til indhold
         </a>
         <main id="main" className="w-full px-6 py-8">
-          <header className="mb-8">
-            <div className="flex items-center gap-3 mb-2">
-              <Database className="w-7 h-7 text-emerald-400" aria-hidden />
-              <h1 className="text-2xl font-bold">Data Intelligence</h1>
+          {/* BIZZ-1716: Kompakt header — søgefelt fjernet, al input via AI Chat til højre */}
+          <header className="mb-6">
+            <div className="flex items-center gap-3 mb-1">
+              <Database className="w-6 h-6 text-emerald-400" aria-hidden />
+              <h1 className="text-xl font-bold">Data Intelligence</h1>
             </div>
-            <p className="text-slate-400 max-w-2xl">
-              Stil et spørgsmål på dansk om vores virksomheds- og ejendomsdata. AI&apos;en genererer
-              sikker PostgreSQL og kører den read-only mod vores datasæt.
-            </p>
+            {!response && (
+              <p className="text-slate-500 text-sm">
+                Stil et spørgsmål i AI Chat til højre — resultater vises her.
+              </p>
+            )}
           </header>
 
-          {/* Prompt input med kontekst-tags over */}
-          <form onSubmit={handleSubmit} className="mb-6">
-            {/* Kontekst-tags — viser hele chat-historikken som fjernbare tags */}
-            {chatHistory.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mb-2">
-                {chatHistory.map((entry, i) => (
-                  <span
-                    key={i}
-                    className="inline-flex items-center gap-1.5 text-xs pl-2.5 pr-1 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700 group"
-                  >
-                    <span className="text-slate-500 text-[10px] font-mono">{i + 1}.</span>
-                    {entry.prompt}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setChatHistory((prev) => prev.filter((_, idx) => idx !== i));
-                      }}
-                      className="ml-0.5 p-0.5 rounded-full hover:bg-red-500/20 hover:text-red-400 text-slate-500 transition-colors"
-                      aria-label={`Fjern: ${entry.prompt}`}
-                    >
-                      <svg
-                        viewBox="0 0 12 12"
-                        className="w-3 h-3"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                      >
-                        <path d="M3 3l6 6M9 3l-6 6" />
-                      </svg>
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
+          {/* Skjult form — beholdes for direkte DI-kald fra suggestions */}
+          <form onSubmit={handleSubmit} className="hidden">
             <div className="flex gap-2">
               <input
                 id="prompt"
                 type="text"
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
-                placeholder={
-                  chatHistory.length > 0
-                    ? 'Tilpas: tilføj kolonner, filtrer, ændr sortering...'
-                    : 'Fx: Hvilken kommune har flest virksomheder?'
-                }
-                className="flex-1 px-4 py-3 bg-slate-900 border border-slate-700 rounded-lg focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                className="flex-1"
                 disabled={loading}
                 maxLength={1000}
-                aria-label="Dit spørgsmål"
               />
               <button
                 type="submit"
@@ -386,21 +341,15 @@ export default function IntelligenceClient(): React.ReactElement {
             </div>
           </form>
 
-          {/* Forslag */}
-          {!response && !loading && (
-            <div className="mb-6">
-              <p className="text-sm text-slate-400 mb-3">Eller prøv et af disse spørgsmål:</p>
-              <div className="flex flex-wrap gap-2">
-                {SUGGESTIONS.map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => handleSuggestion(s)}
-                    className="text-sm px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg transition-colors text-left"
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
+          {/* BIZZ-1716: Tom-tilstand — vis hint om AI Chat */}
+          {!response && !loading && !error && (
+            <div className="flex flex-col items-center justify-center py-20 text-center">
+              <BarChart3 className="w-16 h-16 text-slate-700 mb-4" />
+              <p className="text-slate-400 text-sm mb-2">Ingen data endnu</p>
+              <p className="text-slate-600 text-xs max-w-sm">
+                Stil et spørgsmål i AI Chat til højre — fx &quot;Top 10 kommuner med flest
+                virksomheder&quot; — og resultatet vises her med graf og tabel.
+              </p>
             </div>
           )}
 

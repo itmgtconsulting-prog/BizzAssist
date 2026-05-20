@@ -63,3 +63,5 @@ test-results/
 probe-*.mjs
 verify-all-recent.mjs
 verify-hotfix*.mjs
+scripts/jira-create-issues.mjs
+scripts/populate-sitemap-cache.sh

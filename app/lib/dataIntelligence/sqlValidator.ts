@@ -44,6 +44,9 @@ export const WHITELISTED_TABLES = new Set([
   'public.ejendomshandel',
   'public.tinglysning_haeftelse',
   'public.tinglysning_servitut',
+  'public.ejf_ejerskifte',
+  'public.ejf_handelsoplysninger',
+  'public.v_ejerskifte_handel',
   'dataintel.data_catalog',
   'dataintel.analytics_knowledge',
 ]);

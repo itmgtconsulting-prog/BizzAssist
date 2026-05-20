@@ -109,11 +109,22 @@ public.tinglysning_servitutter: id, bfe_nummer, type, beskrivelse, tinglysningsd
 
 public.tinglysning_dokumenter: dokument_id (text PK), dokument_type (text — 'adkomst'/'haeftelse'/'servitut'), tinglysningsdato (date), bfe_nummer (bigint), parter (jsonb), beloeb (jsonb). Central reference for alle e-TL dokumenter.
 
+EJF TABELLER (officielle handelsdata fra Ejendomsfortegnelsen):
+
+public.ejf_ejerskifte: id_lokal_id (text PK), bfe_nummer (bigint), overdragelsesmaade (text — 'Almindelig fri handel'/'Familieoverdragelse'/'Anden overdragelse'/'Tvangsauktion'), overtagelsesdato (timestamptz), handelsoplysninger_lokal_id (text — FK til ejf_handelsoplysninger), virkning_fra (timestamptz), virkning_til (timestamptz), status (text).
+  BEMÆRK: Officielle ejerskifter med handelstype. JOIN med ejf_handelsoplysninger via handelsoplysninger_lokal_id for priser.
+
+public.ejf_handelsoplysninger: id_lokal_id (text PK), kontant_koebesum (bigint DKK), samlet_koebesum (bigint DKK), loesoeresum (bigint), entreprisesum (bigint), koebsaftale_dato (date), valutakode (text), virkning_fra (timestamptz), virkning_til (timestamptz), status (text).
+  BEMÆRK: Officielle handelspriser fra EJF — bedre datakvalitet end ejendomshandel (Tinglysning-scraping).
+
+public.v_ejerskifte_handel: bfe_nummer, overdragelsesmaade, overtagelsesdato, status, kontant_koebesum, samlet_koebesum, loesoeresum, entreprisesum, koebsaftale_dato, valutakode. Pre-joined view — brug denne for prisforespørgsler med handelstype.
+  For "priser per handelstype" → SELECT overdragelsesmaade, AVG(samlet_koebesum)::bigint, COUNT(*) FROM v_ejerskifte_handel WHERE samlet_koebesum IS NOT NULL GROUP BY overdragelsesmaade.
+  For "tvangsauktioner" → WHERE overdragelsesmaade = 'Tvangsauktion'.
+
 VIGTIG — ANVENDELSESFILTER + OUTLIER-HÅNDTERING:
+- Filtrér KUN på byg021_anvendelse når brugeren eksplicit nævner en bygningstype (parcelhus, etagebolig, erhverv, sommerhus). Ellers udelukkes data (mange BFE'er har NULL byg021_anvendelse).
 - Filtrér ALTID på koebesum > 100000 AND koebesum < 100000000 for at fjerne gaver/arv (0-100k) og porteføljehandler (>100M).
-- For "boligpriser" / "salgspriser": filtrer på byg021_anvendelse IN ('120','130','140','150','160','185','190') via JOIN bbr_ejendom_status. Det er bolig-koder (parcelhus, rækkehus, etagebolig, kollegium osv.). UDEN dette filter inkluderes erhverv, jord og porteføljer der skæver gennemsnit.
 - Brug MEDIAN (PERCENTILE_CONT(0.5)) i stedet for AVG for prisstatistik — ejendomspriser er skæve.
-- "bolig" = byg021_anvendelse BETWEEN '110' AND '199' (alle boligtyper).
 
 VIGTIG — VALG AF SALGSPRIS-TABEL:
 - Brug public.ejendomshandel for salgspris-spørgsmål — den har flest priser (58K+ rækker med koebesum).

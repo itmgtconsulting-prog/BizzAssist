@@ -2476,7 +2476,8 @@ async function executeTool(
             method: 'POST',
             headers: { ...internalFetchOpts.headers, 'Content-Type': 'application/json' },
             body: JSON.stringify({ prompt: diPrompt }),
-            signal: AbortSignal.timeout(25000),
+            // BIZZ-1719: Reduceret fra 25s til 15s — hurtigere feedback på mobil
+            signal: AbortSignal.timeout(15000),
           });
           if (!diRes.ok) {
             const errBody = await diRes.json().catch(() => null);
@@ -3221,7 +3222,9 @@ export async function POST(request: NextRequest): Promise<Response> {
         // Stream allerede lukket — stop heartbeat
         if (heartbeatInterval) clearInterval(heartbeatInterval);
       }
-    }, 15_000);
+      // BIZZ-1719: Reduceret fra 15s til 8s — mobil Safari lukker SSE
+      // hurtigere end desktop. 8s sikrer heartbeat under tool-kald.
+    }, 8_000);
   };
   const stopHeartbeat = () => {
     if (heartbeatInterval) {

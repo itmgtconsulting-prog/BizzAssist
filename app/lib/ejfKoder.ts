@@ -68,6 +68,49 @@ const HANDELSTYPER: Record<string, HandelstypeInfo> = {
     descriptionEn: 'Transaction type not reported in EJF.',
     color: 'slate',
   },
+  // BIZZ-1730: Tekst-værdier fra EJF_Ejerskifte.overdragelsesmaade
+  'Almindelig fri handel': {
+    label: 'Fri handel',
+    labelEn: 'Free sale',
+    description: 'Almindelig fri handel — armslængdeprincippet.',
+    descriptionEn: "Arm's length transaction.",
+    color: 'emerald',
+  },
+  Familieoverdragelse: {
+    label: 'Familie',
+    labelEn: 'Family',
+    description: 'Familieoverdragelse — nærtstående parter.',
+    descriptionEn: 'Family transfer.',
+    color: 'blue',
+  },
+  Interessesammenfald: {
+    label: 'Interessesammenfald',
+    labelEn: 'Related parties',
+    description: 'Interessesammenfald — koncern-intern eller fælles interesser.',
+    descriptionEn: 'Related party transaction.',
+    color: 'blue',
+  },
+  Arv: {
+    label: 'Arv',
+    labelEn: 'Inheritance',
+    description: 'Arveudlæg — ejendom overtaget ved dødsfald.',
+    descriptionEn: 'Inherited property.',
+    color: 'amber',
+  },
+  Gave: {
+    label: 'Gave',
+    labelEn: 'Gift',
+    description: 'Gaveoverdragelse — ingen eller symbolsk købesum.',
+    descriptionEn: 'Gift transfer — no or nominal price.',
+    color: 'amber',
+  },
+  Tvangsauktion: {
+    label: 'Tvangsauktion',
+    labelEn: 'Forced sale',
+    description: 'Solgt på tvangsauktion — finansiel distress.',
+    descriptionEn: 'Forced sale — financial distress.',
+    color: 'amber',
+  },
 };
 
 /**

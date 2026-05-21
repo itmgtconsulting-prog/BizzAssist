@@ -126,10 +126,10 @@ export const METRICS: MetricDefinition[] = [
   {
     name: 'avg_koebesum',
     displayName: 'Gennemsnitlig købesum',
-    // BIZZ-1682: Filtrerer gaver/arv (koebesum < 100k) og porteføljehandler
-    // (> 100M). Brug median_koebesum for mere retvisende central-værdi.
+    // BIZZ-1732: Filtrerer på fri handel via ejf_ejerskifte.overdragelsesmaade.
+    // Ekskluderer arv, gave, familieoverdragelser, tvangsauktioner + outliers.
     description:
-      'Gennemsnit af kontante købesummer (filtreret: ekskluderer gaver under 100.000 og porteføljehandler over 100M). VIGTIGT: Brug median_koebesum i stedet — aritmetisk gennemsnit er misvisende for ejendomspriser pga. skæv fordeling.',
+      'Gennemsnit af kontante købesummer for frie handler (ekskluderer arv/gave/tvang). VIGTIGT: Brug median_koebesum i stedet — aritmetisk gennemsnit er misvisende for ejendomspriser pga. skæv fordeling.',
     type: 'avg',
     sql: 'AVG(kontant_koebesum)',
     table: 'ejerskifte_historik',
@@ -137,6 +137,8 @@ export const METRICS: MetricDefinition[] = [
       'kontant_koebesum IS NOT NULL',
       'kontant_koebesum > 100000',
       'kontant_koebesum < 100000000',
+      // BIZZ-1732: kun fri handel — join mod ejf_ejerskifte
+      "EXISTS (SELECT 1 FROM ejf_ejerskifte es WHERE es.bfe_nummer = ejerskifte_historik.bfe_nummer AND es.overdragelsesmaade = 'Almindelig fri handel' AND es.overtagelsesdato::date = ejerskifte_historik.overtagelsesdato::date)",
     ],
     format: 'currency_dkk',
     unit: 'DKK',
@@ -148,8 +150,9 @@ export const METRICS: MetricDefinition[] = [
   {
     name: 'median_koebesum',
     displayName: 'Median købesum (anbefalet)',
+    // BIZZ-1732: Filtrerer på fri handel via ejf_ejerskifte.overdragelsesmaade.
     description:
-      'Median af kontante købesummer (50. percentil) — den mest retvisende central-værdi for ejendomspriser. Foretrækkes over avg_koebesum.',
+      'Median af kontante købesummer for frie handler (50. percentil) — den mest retvisende central-værdi for ejendomspriser. Foretrækkes over avg_koebesum.',
     type: 'median',
     sql: 'PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY kontant_koebesum)',
     table: 'ejerskifte_historik',
@@ -157,6 +160,8 @@ export const METRICS: MetricDefinition[] = [
       'kontant_koebesum IS NOT NULL',
       'kontant_koebesum > 100000',
       'kontant_koebesum < 100000000',
+      // BIZZ-1732: kun fri handel
+      "EXISTS (SELECT 1 FROM ejf_ejerskifte es WHERE es.bfe_nummer = ejerskifte_historik.bfe_nummer AND es.overdragelsesmaade = 'Almindelig fri handel' AND es.overtagelsesdato::date = ejerskifte_historik.overtagelsesdato::date)",
     ],
     format: 'currency_dkk',
     unit: 'DKK',

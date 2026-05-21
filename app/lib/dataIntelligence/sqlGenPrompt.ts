@@ -124,6 +124,11 @@ public.v_ejerskifte_handel: bfe_nummer, overdragelsesmaade, overtagelsesdato, st
 VIGTIG — ANVENDELSESFILTER + OUTLIER-HÅNDTERING:
 - Filtrér KUN på byg021_anvendelse når brugeren eksplicit nævner en bygningstype (parcelhus, etagebolig, erhverv, sommerhus). Ellers udelukkes data (mange BFE'er har NULL byg021_anvendelse).
 - Filtrér ALTID på koebesum > 100000 AND koebesum < 100000000 for at fjerne gaver/arv (0-100k) og porteføljehandler (>100M).
+
+VIGTIG — PRIS-STATISTIK KRÆVER FRI HANDEL FILTER (BIZZ-1714):
+- For ALLE pris-aggregeringer (AVG, MEDIAN, SUM af købesummer): brug ALTID v_ejerskifte_handel med WHERE overdragelsesmaade = 'Almindelig fri handel'
+- Arv, gave, familieoverdragelser og tvangsauktioner har ikke-markedskonforme priser og forurener statistik
+- Tvangsauktioner: separat metric — brug WHERE overdragelsesmaade = 'Tvangsauktion' KUN når brugeren spørger specifikt om tvangsauktioner
 - Brug MEDIAN (PERCENTILE_CONT(0.5)) i stedet for AVG for prisstatistik — ejendomspriser er skæve.
 
 VIGTIG — VALG AF SALGSPRIS-TABEL:

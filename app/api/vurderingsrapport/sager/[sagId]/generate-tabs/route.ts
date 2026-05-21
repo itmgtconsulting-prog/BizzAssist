@@ -25,6 +25,7 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getTenantSchemaName } from '@/lib/db/tenant';
 import { collectEjendomData } from '@/app/lib/vurdering/collectEjendomData';
+import { findReferenceejendomme } from '@/app/lib/vurdering/findReferenceejendomme';
 import { logger } from '@/app/lib/logger';
 
 export const maxDuration = 45;
@@ -68,6 +69,15 @@ export async function POST(
     const dawaId = sag.ejendom_dawa_id as string | null;
 
     const ejendomData = bfe ? await collectEjendomData(bfe, dawaId) : null;
+
+    // ── BIZZ-1739: Referenceejendomme auto-lookup ─────────────────────────
+    const senestePris =
+      ejendomData?.salgshistorik?.[0]?.kontantKoebesum ??
+      ejendomData?.salgshistorik?.[0]?.samletKoebesum ??
+      null;
+    const refResult = bfe
+      ? await findReferenceejendomme(bfe, ejendomData?.bbr?.samletBoligareal ?? null, senestePris)
+      : null;
 
     // Saml parsed upload-data per zone
     const parsedByZone: Record<string, unknown[]> = {};
@@ -198,7 +208,10 @@ export async function POST(
       risiko: {
         lejeindtaegter: parsedByZone.lejeindtaegter ?? [],
         driftsudgifter: parsedByZone.driftsudgifter ?? [],
-        referencer: parsedByZone.referenceejendomme ?? [],
+        uploadReferencer: parsedByZone.referenceejendomme ?? [],
+        // BIZZ-1739: Auto-fundne referenceejendomme med kvm-pris + trykprøvning
+        referenceejendomme: refResult?.referencer ?? [],
+        trykproevning: refResult?.trykproevning ?? null,
       },
     };
 
@@ -235,6 +248,7 @@ export async function POST(
       servitutter: (ejendomData?.servitutter?.length ?? 0) > 0,
       haeftelser: (ejendomData?.haeftelser?.length ?? 0) > 0,
       beliggenhed: !!ejendomData?.beliggenhed,
+      referenceejendomme: (refResult?.referencer?.length ?? 0) > 0,
     };
 
     return NextResponse.json({

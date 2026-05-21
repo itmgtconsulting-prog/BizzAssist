@@ -120,42 +120,73 @@ export async function findReferenceejendomme(
       return emptyResult;
     }
 
-    // Step 2: Find sammenlignelige handler
-    // Søg inden for de seneste 3 år, kun fri handel, med pris
+    // Step 2: Find sammenlignelige handler via ejf_ejerskifte
+    // BIZZ-1731: Brug ejf_ejerskifte med overdragelsesmaade-filter.
+    // ejendomshandel-tabellen har ikke overdragelsesmaade i alle envs.
     const treAarSiden = new Date();
     treAarSiden.setFullYear(treAarSiden.getFullYear() - 3);
     const datoFilter = treAarSiden.toISOString().split('T')[0];
 
-    // Build query: handler med pris, fri handel, nyere end 3 år
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const query = (admin as any)
-      .from('ejendomshandel')
-      .select('bfe_nummer, dato, kontant_koebesum, samlet_koebesum, overdragelsesmaade')
-      .neq('bfe_nummer', bfe) // Ekskluder ejendommen selv
-      .gte('dato', datoFilter)
-      .or('kontant_koebesum.gt.0,samlet_koebesum.gt.0')
-      .in('overdragelsesmaade', ['Almindelig fri handel', 'Fri handel', 'Frit salg'])
-      .order('dato', { ascending: false })
-      .limit(50);
+    const { data: ejerskifter } = await (admin as any)
+      .from('ejf_ejerskifte')
+      .select('bfe_nummer, overtagelsesdato, overdragelsesmaade, handelsoplysninger_lokal_id')
+      .neq('bfe_nummer', bfe)
+      .eq('status', 'gældende')
+      .gte('overtagelsesdato', datoFilter)
+      .in('overdragelsesmaade', ['Almindelig fri handel', 'Almindelig fri handel særlige vilkår'])
+      .not('handelsoplysninger_lokal_id', 'is', null)
+      .order('overtagelsesdato', { ascending: false })
+      .limit(100);
 
-    // Filtrer på kommune_kode via bbr_ejendom_status-join er ikke muligt
-    // direkte. Vi henter 50 handler og filtrerer post-hoc med postnr.
-    // For at begrænse, brug kommune_kode som prefilter via bfe_adresse_cache.
-    // Men PostgREST doesn't support JOINs natively. Approach: fetch from
-    // bfe_adresse_cache first to get BFEs in same postnr, then filter.
+    if (!ejerskifter || ejerskifter.length === 0) {
+      return emptyResult;
+    }
 
-    // Alternative: use RPC or filter in application layer
-    // For simplicity, query ejendomshandel broadly and enrich after.
-    const { data: handler } = await query;
+    // Hent priser fra handelsoplysninger
+    const handelsIds = (ejerskifter as Array<Record<string, unknown>>)
+      .map((e) => e.handelsoplysninger_lokal_id as string)
+      .filter((id, i, arr) => arr.indexOf(id) === i);
 
-    if (!handler || handler.length === 0) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: handelsData } = await (admin as any)
+      .from('ejf_handelsoplysninger')
+      .select('id_lokal_id, samlet_koebesum, kontant_koebesum')
+      .in('id_lokal_id', handelsIds.slice(0, 100));
+
+    const handelsMap = new Map<string, Record<string, unknown>>(
+      ((handelsData ?? []) as Array<Record<string, unknown>>).map((h) => [
+        h.id_lokal_id as string,
+        h,
+      ])
+    );
+
+    // Byg handler-array med priser
+    const handler = (ejerskifter as Array<Record<string, unknown>>)
+      .map((e) => {
+        const hId = e.handelsoplysninger_lokal_id as string;
+        const h = handelsMap.get(hId);
+        const kontant = (h?.kontant_koebesum as number) ?? null;
+        const samlet = (h?.samlet_koebesum as number) ?? null;
+        if (!kontant && !samlet) return null; // Ingen pris → skip
+        return {
+          bfe_nummer: e.bfe_nummer as number,
+          dato: e.overtagelsesdato as string,
+          kontant_koebesum: kontant,
+          samlet_koebesum: samlet,
+          overdragelsesmaade: e.overdragelsesmaade as string,
+        };
+      })
+      .filter((h): h is NonNullable<typeof h> => h !== null);
+
+    if (handler.length === 0) {
       return emptyResult;
     }
 
     // Step 3: Get postnr + boligareal for candidate BFEs
-    const candidateBfes = (handler as Array<Record<string, unknown>>)
-      .map((h) => h.bfe_nummer as number)
-      .filter((b, i, arr) => arr.indexOf(b) === i); // deduplicate
+    const candidateBfes = handler
+      .map((h) => h.bfe_nummer)
+      .filter((b, i, arr) => arr.indexOf(b) === i);
 
     const [adresseResult, bbrBulkResult] = await Promise.all([
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -187,8 +218,8 @@ export async function findReferenceejendomme(
     // Step 4: Filter + enrich + calculate kvm-pris
     const referencer: Referenceejendom[] = [];
 
-    for (const h of handler as Array<Record<string, unknown>>) {
-      const hBfe = h.bfe_nummer as number;
+    for (const h of handler) {
+      const hBfe = h.bfe_nummer;
       const adresseInfo = adresseMap.get(hBfe);
       const bbrInfo = bbrMap.get(hBfe);
 
@@ -204,7 +235,7 @@ export async function findReferenceejendomme(
         if (cat1 !== cat2) continue;
       }
 
-      const pris = (h.kontant_koebesum as number) ?? (h.samlet_koebesum as number) ?? null;
+      const pris = h.kontant_koebesum ?? h.samlet_koebesum ?? null;
       const hAreal = bbrInfo?.samlet_boligareal as number | null;
       const kvmPris = pris && hAreal && hAreal > 0 ? Math.round(pris / hAreal) : null;
 
@@ -220,10 +251,10 @@ export async function findReferenceejendomme(
         bfeNummer: hBfe,
         adresse: fullAdresse ?? null,
         postnr: hPostnr ?? null,
-        salgsdato: (h.dato as string) ?? null,
-        kontantKoebesum: (h.kontant_koebesum as number) ?? null,
-        samletKoebesum: (h.samlet_koebesum as number) ?? null,
-        overdragelsesmaade: (h.overdragelsesmaade as string) ?? null,
+        salgsdato: h.dato ?? null,
+        kontantKoebesum: h.kontant_koebesum,
+        samletKoebesum: h.samlet_koebesum,
+        overdragelsesmaade: h.overdragelsesmaade ?? null,
         boligareal: hAreal ?? null,
         kvmPris,
       });

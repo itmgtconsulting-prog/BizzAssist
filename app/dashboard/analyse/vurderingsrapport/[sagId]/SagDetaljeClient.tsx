@@ -27,6 +27,7 @@ import {
   FolderOpen,
 } from 'lucide-react';
 import TokenUsageBar from '@/app/components/TokenUsageBar';
+import RapportTabRenderer from '@/app/components/vurdering/RapportTabRenderer';
 
 /** Zone-type konfiguration */
 const ZONE_CONFIG = [
@@ -402,9 +403,10 @@ export default function SagDetaljeClient({ sagId }: Props) {
                 );
               }
               return (
-                <pre className="text-xs text-slate-300 whitespace-pre-wrap">
-                  {JSON.stringify(tabData.indhold, null, 2)}
-                </pre>
+                <RapportTabRenderer
+                  tabKey={activeTab}
+                  indhold={tabData.indhold as Record<string, unknown>}
+                />
               );
             })()}
           </div>

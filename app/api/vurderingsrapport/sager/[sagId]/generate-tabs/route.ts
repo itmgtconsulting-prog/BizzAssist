@@ -1,10 +1,21 @@
 /**
  * POST /api/vurderingsrapport/sager/[sagId]/generate-tabs
  *
- * BIZZ-1642: Generer alle 8 rapport-tabs automatisk fra:
- * 1. BizzAssist data (BBR, vurdering, ejerskab, tinglysning, salgshistorik)
- * 2. Parsed upload-data fra vurdering_dokumenter
- * 3. Fritekst-noter fra upload-zoner
+ * BIZZ-1642 + BIZZ-1737: Generer alle 8 rapport-tabs fra BizzAssist data.
+ *
+ * Data hentes via collectEjendomData helper der orkestrerer parallelle
+ * opslag mod BBR, VUR, EJF, Tinglysning S2S, og DAWA. Alle kilder er
+ * non-fatal — partial data er bedre end ingen data.
+ *
+ * Tabs:
+ *   1. identifikation — adresse, BFE, matrikel, zone, ejerforhold
+ *   2. bygningsdata — BBR konstruktion, arealer, materialer
+ *   3. energi — energimaerke, opvarmning, vandforsyning
+ *   4. vurdering_skat — ejendomsvaerdi, grundvaerdi, grundskyld
+ *   5. tinglysning — ejere, salgshistorik, haeftelser
+ *   6. servitutter — tinglysning S2S servitutter
+ *   7. beliggenhed — adresse, kommune, region, zone, koordinater
+ *   8. risiko — uploads (lejeindtaegter, driftsudgifter, referencer)
  *
  * @module api/vurderingsrapport/sager/[sagId]/generate-tabs
  */
@@ -13,9 +24,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getTenantSchemaName } from '@/lib/db/tenant';
+import { collectEjendomData } from '@/app/lib/vurdering/collectEjendomData';
 import { logger } from '@/app/lib/logger';
 
-export const maxDuration = 30;
+export const maxDuration = 45;
 
 export async function POST(
   _req: NextRequest,
@@ -33,7 +45,7 @@ export async function POST(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = (admin as any).schema(schemaName);
 
-    // Hent sag + parsed uploads
+    // Hent sag + parsed uploads parallelt
     const [sagResult, docsResult, zonerResult] = await Promise.all([
       db
         .from('vurdering_sager')
@@ -51,73 +63,13 @@ export async function POST(
     const docs = (docsResult.data ?? []) as Array<Record<string, unknown>>;
     const zoner = (zonerResult.data ?? []) as Array<Record<string, unknown>>;
 
-    // Hent BizzAssist-data for ejendommen
-    let bbrData: Record<string, unknown> | null = null;
-    let vurderingData: Record<string, unknown> | null = null;
-    let ejerskabData: Array<Record<string, unknown>> = [];
-    let salgshistorikData: Array<Record<string, unknown>> = [];
+    // ── BIZZ-1737: Hent komplet ejendomsdata fra alle BizzAssist-kilder ────
+    const bfe = sag.ejendom_bfe as number | null;
+    const dawaId = sag.ejendom_dawa_id as string | null;
 
-    if (sag.ejendom_dawa_id) {
-      // BBR
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: bbr } = await (admin as any)
-          .from('bbr_ejendom_status')
-          .select('*')
-          .eq('adgangsadresse_id', sag.ejendom_dawa_id)
-          .maybeSingle();
-        if (bbr) bbrData = bbr;
-      } catch {
-        /* non-fatal */
-      }
-    }
+    const ejendomData = bfe ? await collectEjendomData(bfe, dawaId) : null;
 
-    if (sag.ejendom_bfe) {
-      // Vurdering
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: vur } = await (admin as any)
-          .from('vurdering_cache')
-          .select('*')
-          .eq('bfe_nummer', sag.ejendom_bfe)
-          .maybeSingle();
-        if (vur) vurderingData = vur;
-      } catch {
-        /* non-fatal */
-      }
-
-      // Ejerskab
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: ejf } = await (admin as any)
-          .from('ejf_ejerskab')
-          .select(
-            'ejer_navn, ejer_cvr, ejer_type, ejerandel_taeller, ejerandel_naevner, virkning_fra'
-          )
-          .eq('bfe_nummer', sag.ejendom_bfe)
-          .eq('status', 'gældende')
-          .limit(10);
-        if (ejf) ejerskabData = ejf;
-      } catch {
-        /* non-fatal */
-      }
-
-      // Salgshistorik
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: salg } = await (admin as any)
-          .from('ejerskifte_historik')
-          .select('overtagelsesdato, ejer_navn, kontant_koebesum, i_alt_koebesum')
-          .eq('bfe_nummer', sag.ejendom_bfe)
-          .order('overtagelsesdato', { ascending: false })
-          .limit(10);
-        if (salg) salgshistorikData = salg;
-      } catch {
-        /* non-fatal */
-      }
-    }
-
-    // Saml parsed data per zone
+    // Saml parsed upload-data per zone
     const parsedByZone: Record<string, unknown[]> = {};
     for (const d of docs) {
       const zone = zoner.find((z) => z.id === d.zone_id);
@@ -131,60 +83,118 @@ export async function POST(
       if (z.fritekst) fritekstByZone[z.zone_type as string] = z.fritekst as string;
     }
 
-    // Generer tab-indhold (data-mapping, ikke AI)
+    // ── Byg 8 rapport-tabs med rig data ────────────────────────────────────
+
+    const bbr = ejendomData?.bbr;
+    const vur = ejendomData?.vurdering;
+    const bel = ejendomData?.beliggenhed;
+
     const tabs: Record<string, unknown> = {
       identifikation: {
-        adresse: sag.ejendom_adresse,
+        adresse: bel?.adresse ?? sag.ejendom_adresse,
         bfe: sag.ejendom_bfe,
-        kommune: bbrData?.kommune_kode ?? null,
-        matrikel: null,
-        zone: bbrData?.zone ?? null,
-        ejerforholdskode: bbrData?.ejerforholdskode ?? null,
+        matrikelnr: bel?.matrikelnr ?? null,
+        ejerlavsnavn: bel?.ejerlavsnavn ?? null,
+        ejerlavskode: bel?.ejerlavskode ?? null,
+        kommune: bel?.kommunenavn ?? null,
+        region: bel?.regionsnavn ?? null,
+        postnr: bel?.postnr ?? null,
+        postnrnavn: bel?.postnrnavn ?? null,
+        zone: bel?.zone ?? null,
+        ejerforholdskode: bbr?.ejerforholdskode ?? null,
+        bygningsanvendelse: bbr?.bygningsanvendelse ?? null,
+        benyttelseskode: vur?.benyttelseskode ?? null,
+        juridiskKategori: vur?.juridiskKategori ?? null,
       },
+
       bygningsdata: {
-        opfoerelsesaar: bbrData?.opfoerelsesaar ?? null,
-        bebygget_areal: bbrData?.bebygget_areal ?? null,
-        samlet_boligareal: bbrData?.samlet_boligareal ?? null,
-        samlet_erhvervsareal: bbrData?.samlet_erhvervsareal ?? null,
-        grundareal: bbrData?.grundareal ?? null,
-        antal_etager: bbrData?.antal_etager ?? null,
-        tagmateriale: bbrData?.tagmateriale ?? null,
-        ydervaeg: bbrData?.ydervaeg_materiale ?? null,
-        opvarmning: bbrData?.opvarmningsform ?? null,
+        opfoerelsesaar: bbr?.opfoerelsesaar ?? null,
+        omTilbygningsaar: bbr?.omTilbygningsaar ?? null,
+        bebyggetAreal: bbr?.bebyggetAreal ?? null,
+        samletBygningsareal: bbr?.samletBygningsareal ?? null,
+        samletBoligareal: bbr?.samletBoligareal ?? null,
+        samletErhvervsareal: bbr?.samletErhvervsareal ?? null,
+        grundareal: bbr?.grundareal ?? bel?.grundareal ?? null,
+        antalEtager: bbr?.antalEtager ?? null,
+        tagdaekningsmateriale: bbr?.tagdaekningsmateriale ?? null,
+        ydervaegMateriale: bbr?.ydervaegMateriale ?? null,
+        fredning: bbr?.fredning ?? null,
+        bevaringsvaerdighed: bbr?.bevaringsvaerdighed ?? null,
+        asbestholdigtMateriale: bbr?.asbestholdigtMateriale ?? null,
+        bebyggelsesprocent: vur?.bebyggelsesprocent ?? null,
       },
+
       energi: {
-        energimaerke: bbrData?.energimaerke ?? null,
-        energimaerke_dato: bbrData?.energimaerke_dato ?? null,
+        energimaerke: bbr?.energimaerke ?? null,
+        energimaerkeDato: bbr?.energimaerkeDato ?? null,
+        opvarmning: bbr?.opvarmning ?? null,
+        opvarmningsmiddel: bbr?.opvarmningsmiddel ?? null,
+        supplerendeVarme: bbr?.supplerendeVarme ?? null,
+        vandforsyning: bbr?.vandforsyning ?? null,
+        afloebsforhold: bbr?.afloebsforhold ?? null,
       },
+
       vurdering_skat: {
-        ejendomsvaerdi: vurderingData?.ejendomsvaerdi ?? null,
-        grundvaerdi: vurderingData?.grundvaerdi ?? null,
-        vurderingsaar: vurderingData?.vurderingsaar ?? null,
+        ejendomsvaerdi: vur?.ejendomsvaerdi ?? null,
+        grundvaerdi: vur?.grundvaerdi ?? null,
+        afgiftspligtigEjendomsvaerdi: vur?.afgiftspligtigEjendomsvaerdi ?? null,
+        afgiftspligtigGrundvaerdi: vur?.afgiftspligtigGrundvaerdi ?? null,
+        estimeretGrundskyld: vur?.estimeretGrundskyld ?? null,
+        grundskyldspromille: vur?.grundskyldspromille ?? null,
+        vurderingsaar: vur?.vurderingsaar ?? null,
+        vurderetAreal: vur?.vurderetAreal ?? null,
       },
+
       tinglysning: {
-        ejere: ejerskabData.map((e) => ({
-          navn: e.ejer_navn,
-          cvr: e.ejer_cvr,
-          type: e.ejer_type,
-          andel:
-            e.ejerandel_taeller && e.ejerandel_naevner
-              ? `${Math.round(((e.ejerandel_taeller as number) / (e.ejerandel_naevner as number)) * 100)}%`
-              : null,
+        ejere: (ejendomData?.ejere ?? []).map((e) => ({
+          navn: e.navn,
+          cvr: e.cvr,
+          type: e.type,
+          andel: e.andelProcent,
+          virkningFra: e.virkningFra,
         })),
-        salgshistorik: salgshistorikData.map((s) => ({
+        salgshistorik: (ejendomData?.salgshistorik ?? []).map((s) => ({
           dato: s.overtagelsesdato,
-          ejer: s.ejer_navn,
-          pris: s.kontant_koebesum ?? s.i_alt_koebesum,
+          koebsaftaleDato: s.koebsaftaleDato,
+          ejer: s.ejerNavn,
+          cvr: s.ejerCvr,
+          kontantPris: s.kontantKoebesum,
+          samletPris: s.samletKoebesum,
+          overdragelsesmaade: s.overdragelsesmaadeLabel ?? s.overdragelsesmaade,
+          betinget: s.betinget,
+        })),
+        haeftelser: (ejendomData?.haeftelser ?? []).map((h) => ({
+          dato: h.dato,
+          type: h.type,
+          hovedstolDkk: h.hovedstolDkk,
+          restgaeldDkk: h.restgaeldDkk,
+          kreditor: h.kreditor,
+          rente: h.rente,
         })),
       },
+
       servitutter: {
+        servitutter: (ejendomData?.servitutter ?? []).map((s) => ({
+          dato: s.dato,
+          type: s.type,
+          aktNummer: s.aktNummer,
+          beskrivelse: s.beskrivelse,
+        })),
         noter: fritekstByZone.oevrige ?? null,
       },
+
       beliggenhed: {
-        adresse: sag.ejendom_adresse,
+        adresse: bel?.adresse ?? sag.ejendom_adresse,
+        kommune: bel?.kommunenavn ?? null,
+        region: bel?.regionsnavn ?? null,
+        postnr: bel?.postnr ?? null,
+        postnrnavn: bel?.postnrnavn ?? null,
+        zone: bel?.zone ?? null,
+        koordinater: bel?.koordinater ?? null,
         noter: fritekstByZone.besigtigelse ?? null,
         besigtigelse: parsedByZone.besigtigelse ?? [],
       },
+
       risiko: {
         lejeindtaegter: parsedByZone.lejeindtaegter ?? [],
         driftsudgifter: parsedByZone.driftsudgifter ?? [],
@@ -216,7 +226,22 @@ export async function POST(
       })
       .eq('id', sagId);
 
-    return NextResponse.json({ ok: true, tabs_generated: Object.keys(tabs).length });
+    // Rapporter datakomplethed
+    const dataSources = {
+      bbr: !!ejendomData?.bbr,
+      vurdering: !!ejendomData?.vurdering,
+      ejere: (ejendomData?.ejere?.length ?? 0) > 0,
+      salgshistorik: (ejendomData?.salgshistorik?.length ?? 0) > 0,
+      servitutter: (ejendomData?.servitutter?.length ?? 0) > 0,
+      haeftelser: (ejendomData?.haeftelser?.length ?? 0) > 0,
+      beliggenhed: !!ejendomData?.beliggenhed,
+    };
+
+    return NextResponse.json({
+      ok: true,
+      tabs_generated: Object.keys(tabs).length,
+      data_sources: dataSources,
+    });
   } catch (err) {
     logger.error('[vurdering/generate-tabs]', err);
     return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });

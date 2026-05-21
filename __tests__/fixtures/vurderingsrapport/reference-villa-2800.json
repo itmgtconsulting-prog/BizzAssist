@@ -1,0 +1,186 @@
+{
+  "description": "Reference fixture: Villa i 2800 Kongens Lyngby — BFE 10012345",
+  "bfe": 10012345,
+  "tabs": {
+    "identifikation": {
+      "adresse": "Skovvej 42, 2800 Kongens Lyngby",
+      "bfe": 10012345,
+      "matrikelnr": "12a",
+      "ejerlavsnavn": "Kongens Lyngby By, Lyngby",
+      "ejerlavskode": 701234,
+      "kommune": "Lyngby-Taarbæk",
+      "region": "Hovedstaden",
+      "postnr": "2800",
+      "postnrnavn": "Kongens Lyngby",
+      "zone": "Byzone",
+      "ejerforholdskode": "10",
+      "bygningsanvendelse": "120",
+      "benyttelseskode": null,
+      "juridiskKategori": null
+    },
+    "bygningsdata": {
+      "opfoerelsesaar": 1952,
+      "omTilbygningsaar": 1998,
+      "bebyggetAreal": 142,
+      "samletBygningsareal": 142,
+      "samletBoligareal": 142,
+      "samletErhvervsareal": null,
+      "grundareal": 845,
+      "antalEtager": 1,
+      "tagdaekningsmateriale": "Tegl",
+      "ydervaegMateriale": "Mursten",
+      "fredning": null,
+      "bevaringsvaerdighed": null,
+      "asbestholdigtMateriale": null,
+      "bebyggelsesprocent": 16.8
+    },
+    "energi": {
+      "energimaerke": "D",
+      "energimaerkeDato": "2019-03-15",
+      "opvarmning": "Fjernvarme",
+      "opvarmningsmiddel": "Fjernvarme/blokvarme",
+      "supplerendeVarme": null,
+      "vandforsyning": "Alment vandforsyningsanlæg",
+      "afloebsforhold": "Afløb til spildevandsforsyningens renseanlæg"
+    },
+    "vurdering_skat": {
+      "ejendomsvaerdi": 5200000,
+      "grundvaerdi": 2800000,
+      "afgiftspligtigEjendomsvaerdi": 5200000,
+      "afgiftspligtigGrundvaerdi": 2800000,
+      "estimeretGrundskyld": 73360,
+      "grundskyldspromille": 26.2,
+      "vurderingsaar": 2024,
+      "vurderetAreal": 845
+    },
+    "tinglysning": {
+      "ejere": [
+        {
+          "navn": "Jensen Holding ApS",
+          "cvr": 12345678,
+          "type": "virksomhed",
+          "andel": "100%",
+          "virkningFra": "2018-06-01"
+        }
+      ],
+      "salgshistorik": [
+        {
+          "dato": "2018-06-01",
+          "koebsaftaleDato": "2018-05-15",
+          "ejer": "Jensen Holding ApS",
+          "cvr": 12345678,
+          "kontantPris": 4500000,
+          "samletPris": 4500000,
+          "overdragelsesmaade": "Fri handel",
+          "betinget": false
+        },
+        {
+          "dato": "2010-03-01",
+          "koebsaftaleDato": null,
+          "ejer": "Hansen Familie",
+          "cvr": null,
+          "kontantPris": 3200000,
+          "samletPris": 3200000,
+          "overdragelsesmaade": "Fri handel",
+          "betinget": false
+        }
+      ],
+      "haeftelser": [
+        {
+          "dato": "2018-06-01",
+          "type": "Realkreditpantebrev",
+          "hovedstolDkk": 3600000,
+          "restgaeldDkk": 2900000,
+          "kreditor": "Realkredit Danmark",
+          "rente": 1.5
+        }
+      ]
+    },
+    "servitutter": {
+      "servitutter": [
+        {
+          "dato": "1965-04-10",
+          "type": "Byggelinje",
+          "aktNummer": "A-1965-12345",
+          "beskrivelse": "Byggelinje 5m fra vejskel mod Skovvej"
+        }
+      ],
+      "noter": null
+    },
+    "beliggenhed": {
+      "adresse": "Skovvej 42, 2800 Kongens Lyngby",
+      "kommune": "Lyngby-Taarbæk",
+      "region": "Hovedstaden",
+      "postnr": "2800",
+      "postnrnavn": "Kongens Lyngby",
+      "zone": "Byzone",
+      "koordinater": { "x": 12.4925, "y": 55.7703 },
+      "noter": null,
+      "besigtigelse": []
+    },
+    "risiko": {
+      "lejeindtaegter": [],
+      "driftsudgifter": [],
+      "uploadReferencer": [],
+      "referenceejendomme": [
+        {
+          "bfeNummer": 10012400,
+          "adresse": "Skovvej 38, 2800 Kongens Lyngby",
+          "postnr": "2800",
+          "salgsdato": "2024-09-15",
+          "kontantKoebesum": 5800000,
+          "samletKoebesum": 5800000,
+          "overdragelsesmaade": "Fri handel",
+          "boligareal": 155,
+          "kvmPris": 37419
+        },
+        {
+          "bfeNummer": 10012500,
+          "adresse": "Parkvej 12, 2800 Kongens Lyngby",
+          "postnr": "2800",
+          "salgsdato": "2024-07-01",
+          "kontantKoebesum": 4900000,
+          "samletKoebesum": 4900000,
+          "overdragelsesmaade": "Fri handel",
+          "boligareal": 130,
+          "kvmPris": 37692
+        },
+        {
+          "bfeNummer": 10012600,
+          "adresse": "Engvej 5, 2800 Kongens Lyngby",
+          "postnr": "2800",
+          "salgsdato": "2024-03-20",
+          "kontantKoebesum": 5200000,
+          "samletKoebesum": 5200000,
+          "overdragelsesmaade": "Fri handel",
+          "boligareal": 148,
+          "kvmPris": 35135
+        }
+      ],
+      "trykproevning": {
+        "ejendomKvmPris": 31690,
+        "referenceMedianKvmPris": 37419,
+        "referenceGennemsnitKvmPris": 36749,
+        "afvigelseProcent": -15,
+        "flagget": false
+      }
+    }
+  },
+  "validation_rules": {
+    "exact_match_fields": [
+      "tabs.identifikation.bfe",
+      "tabs.vurdering_skat.ejendomsvaerdi",
+      "tabs.vurdering_skat.grundvaerdi",
+      "tabs.bygningsdata.opfoerelsesaar",
+      "tabs.bygningsdata.samletBoligareal",
+      "tabs.tinglysning.salgshistorik[0].kontantPris"
+    ],
+    "non_null_fields": [
+      "tabs.identifikation.adresse",
+      "tabs.identifikation.kommune",
+      "tabs.bygningsdata.grundareal",
+      "tabs.energi.energimaerke",
+      "tabs.tinglysning.ejere"
+    ]
+  }
+}

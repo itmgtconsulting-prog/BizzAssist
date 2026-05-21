@@ -100,6 +100,8 @@ export default function ForsikringDetailClient({ policyId }: Props): React.React
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  // BIZZ-1734: Tvangsauktion flag
+  const [tvangsauktion, setTvangsauktion] = useState<{ dato: string } | null>(null);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -121,6 +123,22 @@ export default function ForsikringDetailClient({ policyId }: Props): React.React
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // BIZZ-1734: Tjek for tvangsauktion på ejendommen
+  useEffect(() => {
+    const bfe = data?.policy?.property_bfe;
+    if (!bfe) return;
+    let cancelled = false;
+    fetch(`/api/ejerskab/tvangsauktion?bfe=${bfe}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!cancelled && d?.tvangsauktion) setTvangsauktion(d.tvangsauktion);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [data?.policy?.property_bfe]);
 
   const handleDelete = useCallback(async () => {
     if (!confirm(t.confirmDelete)) return;
@@ -203,6 +221,17 @@ export default function ForsikringDetailClient({ policyId }: Props): React.React
           )}
           {policy.business_activity && (
             <div className="text-xs text-slate-400 mt-1">{policy.business_activity}</div>
+          )}
+          {/* BIZZ-1734: Tvangsauktion info */}
+          {tvangsauktion && (
+            <div className="mt-2 flex items-center gap-1.5 text-xs text-amber-300 bg-amber-500/10 rounded px-2 py-1">
+              <AlertTriangle size={12} />
+              <span>
+                {lang === 'da'
+                  ? `Ejendom solgt på tvangsauktion ${formatDate(tvangsauktion.dato)}`
+                  : `Property sold at forced sale ${formatDate(tvangsauktion.dato)}`}
+              </span>
+            </div>
           )}
         </MetadataCard>
 

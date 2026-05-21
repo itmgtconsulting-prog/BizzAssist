@@ -1087,7 +1087,7 @@ export default function EjendomOekonomiTab(props: Props) {
 
       {/* BIZZ-920: Kommune-statistik fra materialized view */}
       {/* BIZZ-962: Boligmarked — salgspriser fra DST EJEN77 */}
-      {kommunekode && <BoligmarkedWidget kommunekode={kommunekode} lang={lang} />}
+      {kommunekode && <BoligmarkedWidget kommunekode={kommunekode} postnr={postnr} lang={lang} />}
       {/* BIZZ-1079: Byggeaktivitet flyttet til BBR-tab */}
       {/* BIZZ-1046: Elpris + byggeomkostninger flyttet fra Oversigt-tab */}
       {kommunekode && <EnergiWidget kommunekode={kommunekode} lang={lang} />}

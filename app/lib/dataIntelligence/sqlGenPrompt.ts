@@ -22,6 +22,7 @@ REGLER:
    FORKLARING: <kort dansk forklaring>
    FORSLAG: <forslag1> | <forslag2> | <forslag3>
    FORSLAG-linjen er OBLIGATORISK — du SKAL altid inkludere 2-3 relaterede spørgsmål du KAN besvare med SQL. Brug | som separator.
+   VIGTIGT (BIZZ-1769): Forslagene SKAL være unikke og kontekst-specifikke for brugerens spørgsmål. Gentag ALDRIG de samme 4 standard-forslag. Basér forslagene på det aktuelle datasæt og den specifikke query.
 3. Brug KUN whitelistede tabeller (se nedenfor).
 4. Brug ALTID schema-prefix (fx public.cvr_virksomhed).
 5. Inkluder ALTID LIMIT (default 1000, max 10000).
@@ -39,7 +40,8 @@ REGLER:
 14. For "find virksomheder der ejer flere end N ejendomme" → SELECT cvr, navn, antal_ejendomme FROM mv_analyse_virksomhed WHERE antal_ejendomme > N. IKKE ejer_cvr — kolonnen findes ikke i denne MV.
 15. For "ejendomme hvor ejer-virksomheden er ophørt" → SELECT * FROM mv_analyse_ejendom WHERE ejer_type='virksomhed' AND ejer_cvr IN (SELECT cvr FROM mv_analyse_virksomhed WHERE ophoert IS NOT NULL). IKKE ejf_ejerskab JOIN cvr_virksomhed.
 16. For "hvilke kommuner har flest unikke virksomhedsejere af ejendomme" → SELECT kommune_kode, kommunenavn, COUNT(DISTINCT ejer_cvr) AS antal FROM mv_analyse_ejendom WHERE ejer_type='virksomhed' AND ejer_cvr IS NOT NULL GROUP BY kommune_kode, kommunenavn ORDER BY antal DESC LIMIT 10.
-17. DATO-FUNKTIONER — brug ALDRIG MySQL-syntax: YEAR(), MONTH(), DAY(), DATE_FORMAT() EKSISTERER IKKE i PostgreSQL. Brug i stedet: EXTRACT(YEAR FROM col), EXTRACT(MONTH FROM col), to_char(col, 'YYYY-MM'), date_trunc('month', col). Eksempel: EXTRACT(YEAR FROM overtagelsesdato) AS aar.
+17. DATO-TOLKNINGER (BIZZ-1769): "seneste 12 måneder" = NOW() - INTERVAL '12 months' til NOW(), IKKE kalenderåret. "i 2024" = '2024-01-01' til '2024-12-31'. "sidste år" = forrige kalenderår. Brug ALTID CURRENT_DATE for "i dag".
+18. DATO-FUNKTIONER — brug ALDRIG MySQL-syntax: YEAR(), MONTH(), DAY(), DATE_FORMAT() EKSISTERER IKKE i PostgreSQL. Brug i stedet: EXTRACT(YEAR FROM col), EXTRACT(MONTH FROM col), to_char(col, 'YYYY-MM'), date_trunc('month', col). Eksempel: EXTRACT(YEAR FROM overtagelsesdato) AS aar.
 18. STRENG-FUNKTIONER — brug PostgreSQL-syntax: || til sammenføjning (IKKE CONCAT()), STRING_AGG(col, ', ' ORDER BY col) til grupperet streng (IKKE GROUP_CONCAT()), COALESCE(a, b) for null-fallback (IKKE IFNULL()), CASE WHEN ... THEN ... ELSE ... END for betingelser (IKKE IF()).
 19. TYPE CASTING — brug PostgreSQL :: operator: col::int, col::text, col::date. Brug ALDRIG MySQL-typer som SIGNED, UNSIGNED, CHAR. PostgreSQL-typer: integer, bigint, text, date, timestamptz, numeric, boolean.
 20. GROUP BY — ALLE kolonner i SELECT der IKKE er aggregerede (COUNT, SUM, AVG, MIN, MAX) SKAL stå i GROUP BY. Tjek ALTID dette inden du returnerer SQL. Eksempel: SELECT a, b, COUNT(*) → GROUP BY a, b. Glemmer du dette, fejler PostgreSQL med "must appear in the GROUP BY clause".

@@ -107,7 +107,7 @@ Returner JSON med dette format:
   "select": "kommune_kode, count(*) as antal",
   "filters": { "is_udfaset": "eq.false" },
   "order": "antal.desc",
-  "limit": 50,
+  "limit": 200,
   "chartType": "bar",
   "summary": "Antal ejendomme per kommune"
 }

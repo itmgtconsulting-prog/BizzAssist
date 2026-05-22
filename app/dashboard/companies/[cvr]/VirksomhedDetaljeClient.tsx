@@ -198,6 +198,33 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
 
   /** Styrer om nyheder/sociale medier-panelet er synligt på desktop. */
   const [nyhedsPanelÅben, setNyhedsPanelÅben] = useState(true);
+  // BIZZ-1779: Resizable sidebar
+  const [sidebarWidth, setSidebarWidth] = useState(340);
+  const sidebarDragging = useRef(false);
+  const handleSidebarDividerDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      sidebarDragging.current = true;
+      const startX = e.clientX;
+      const startW = sidebarWidth;
+      const onMove = (ev: globalThis.MouseEvent) => {
+        const delta = startX - ev.clientX;
+        setSidebarWidth(Math.max(260, Math.min(600, startW + delta)));
+      };
+      const onUp = () => {
+        sidebarDragging.current = false;
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    },
+    [sidebarWidth]
+  );
 
   /** Styrer om mobil nyheder-overlay er åbent. */
   const [mobilNyhederAaben, setMobilNyhederAaben] = useState(false);
@@ -1867,14 +1894,21 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
       </div>
       {/* END left: main content */}
 
-      {/* ─── Adskillelseslinie — nyheder (desktop) ─── */}
-      {isDesktop && nyhedsPanelÅben && data && <div className="w-1.5 flex-shrink-0 bg-slate-800" />}
+      {/* ─── Resizable divider — nyheder (desktop) ─── */}
+      {isDesktop && nyhedsPanelÅben && data && (
+        <div
+          onMouseDown={handleSidebarDividerDown}
+          className="w-1.5 flex-shrink-0 cursor-col-resize bg-slate-800 hover:bg-blue-500/40 active:bg-blue-500/60 transition-colors"
+          role="separator"
+          aria-label="Justér panelbredde"
+        />
+      )}
 
       {/* ─── Nyheder/sociale medier panel (desktop) ─── */}
       {isDesktop && nyhedsPanelÅben && data && (
         <div
           className="flex-shrink-0 self-stretch flex flex-col overflow-hidden border-l border-slate-700/50"
-          style={{ width: 340 }}
+          style={{ width: sidebarWidth }}
         >
           {/* Panel-header */}
           <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-700/50 flex-shrink-0">

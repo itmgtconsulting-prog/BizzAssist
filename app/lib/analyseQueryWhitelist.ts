@@ -352,6 +352,58 @@ export const WHITELISTED_TABLES: WhitelistedTable[] = [
       status: { type: 'text', description: 'gældende / historisk' },
     },
   },
+  // BIZZ-1747: Tinglysning + BFE adresse tabeller
+  {
+    table: 'public.tinglysning_servitut',
+    description:
+      'Tinglysning servitutter — 702K rækker. Deklarationer, byggelinjer, ledningsrettigheder, tilslutningspligter. Kobles til ejendomme via bfe_nummer.',
+    columns: {
+      bfe_nummer: { type: 'integer', description: 'BFE-nummer for ejendommen' },
+      type: {
+        type: 'text',
+        description: 'Servituttype (Byggelinje, Ledningsret, Tilslutningspligt osv.)',
+      },
+      tekst: { type: 'text', description: 'Servitut-beskrivelse' },
+      tinglyst_dato: { type: 'date', description: 'Dato for tinglysning' },
+      akt_navn: { type: 'text', description: 'Akt-reference' },
+      ai_classification: { type: 'text', description: 'AI-klassificering af servituttype' },
+      prioritet: { type: 'integer', description: 'Prioritetsrækkefølge' },
+      status: { type: 'text', description: 'gældende / historisk' },
+    },
+  },
+  {
+    table: 'public.tinglysning_haeftelse',
+    description:
+      'Tinglysning hæftelser — 197K rækker. Pantebreve, realkreditlån, ejerpantebreve. Kobles til ejendomme via bfe_nummer.',
+    columns: {
+      bfe_nummer: { type: 'integer', description: 'BFE-nummer for ejendommen' },
+      type: {
+        type: 'text',
+        description: 'Hæftelsestype (Realkreditpantebrev, Ejerpantebrev osv.)',
+      },
+      hovedstol_dkk: { type: 'numeric', description: 'Hovedstol i DKK' },
+      kreditor_navn: { type: 'text', description: 'Kreditor/långiver' },
+      kreditor_cvr: { type: 'text', description: 'Kreditor CVR-nummer' },
+      tinglyst_dato: { type: 'date', description: 'Tinglysningsdato' },
+      akt_navn: { type: 'text', description: 'Akt-reference' },
+      prioritet: { type: 'integer', description: 'Prioritetsrækkefølge' },
+      status: { type: 'text', description: 'gældende / historisk' },
+    },
+  },
+  {
+    table: 'public.bfe_adresse_cache',
+    description:
+      'BFE-nummer til adresse mapping — 1.8M rækker. Bruges som JOIN-tabel for at finde adresse, postnr, kommune for et BFE-nummer.',
+    columns: {
+      bfe_nummer: { type: 'bigint', description: 'BFE-nummer (primærnøgle)' },
+      adresse: { type: 'text', description: 'Vejnavn + husnummer' },
+      postnr: { type: 'text', description: 'Postnummer (4-cifret)' },
+      postnrnavn: { type: 'text', description: 'Bynavn' },
+      kommune: { type: 'text', description: 'Kommunenavn' },
+      kommune_kode: { type: 'text', description: 'Kommunekode (4-cifret)' },
+      ejendomstype: { type: 'text', description: 'Ejerlejlighed / Normal ejendom' },
+    },
+  },
 ];
 
 /**

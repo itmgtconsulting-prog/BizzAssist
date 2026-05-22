@@ -132,6 +132,17 @@ public.v_ejerskifte_handel: bfe_nummer, overdragelsesmaade, overtagelsesdato, st
   For "priser per handelstype" → SELECT overdragelsesmaade, AVG(samlet_koebesum)::bigint, COUNT(*) FROM v_ejerskifte_handel WHERE samlet_koebesum IS NOT NULL GROUP BY overdragelsesmaade.
   For "tvangsauktioner" → WHERE overdragelsesmaade = 'Tvangsauktion'.
 
+TINGLYSNING + ADRESSE TABELLER (BIZZ-1747):
+
+public.tinglysning_servitut: bfe_nummer (int), type (text), tekst (text), tinglyst_dato (date), akt_navn (text), ai_classification (text), prioritet (int), status (text).
+  702K servitutter — byggelinjer, ledningsrettigheder, tilslutningspligter, deklarationer. For "servitutter på ejendom X" → WHERE bfe_nummer = X AND status = 'gældende'.
+
+public.tinglysning_haeftelse: bfe_nummer (int), type (text), hovedstol_dkk (numeric), kreditor_navn (text), kreditor_cvr (text), tinglyst_dato (date), prioritet (int), status (text).
+  197K hæftelser — realkreditpantebreve, ejerpantebreve. For "samlet gæld på ejendom" → SUM(hovedstol_dkk) WHERE bfe_nummer = X AND status = 'gældende'.
+
+public.bfe_adresse_cache: bfe_nummer (bigint PK), adresse (text), postnr (text), postnrnavn (text), kommune (text), kommune_kode (text), ejendomstype (text).
+  1.8M BFE→adresse mapping. JOIN med denne for at få adresse/postnr/kommune til et BFE-nummer. Eksempel: JOIN bfe_adresse_cache USING (bfe_nummer).
+
 VIGTIG — ANVENDELSESFILTER + OUTLIER-HÅNDTERING:
 - Filtrér KUN på byg021_anvendelse når brugeren eksplicit nævner en bygningstype (parcelhus, etagebolig, erhverv, sommerhus). Ellers udelukkes data (mange BFE'er har NULL byg021_anvendelse).
 - Filtrér ALTID på koebesum > 100000 AND koebesum < 100000000 for at fjerne gaver/arv (0-100k) og porteføljehandler (>100M).

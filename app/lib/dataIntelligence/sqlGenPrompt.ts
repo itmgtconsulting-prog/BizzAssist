@@ -45,13 +45,14 @@ REGLER:
 20. GROUP BY — ALLE kolonner i SELECT der IKKE er aggregerede (COUNT, SUM, AVG, MIN, MAX) SKAL stå i GROUP BY. Tjek ALTID dette inden du returnerer SQL. Eksempel: SELECT a, b, COUNT(*) → GROUP BY a, b. Glemmer du dette, fejler PostgreSQL med "must appear in the GROUP BY clause".
 
 SALGSPRISER vs. VURDERINGER — KRITISK SKELNEN:
-- "salgspris", "købesum", "handelspris", "salgspriser per kommune" → brug public.ejendomshandel (koebesum = faktisk købesum fra Tinglysning)
+- "salgspris", "købesum", "handelspris", "salgspriser per kommune" → brug public.v_ejerskifte_handel (kontant_koebesum fra EJF — 7.8M handler, mest komplet)
 - "vurdering", "ejendomsværdi", "grundværdi" → brug public.vurdering_cache (ejendomsvaerdi = SKATs offentlige vurdering)
 - BLAND ALDRIG disse to! Salgspris og vurdering er FORSKELLIGE tal. En salgspris er hvad køberen betalte. En vurdering er SKATs skøn.
-- Når brugeren spørger om "priser" eller "gennemsnitspriser" mener de ALTID salgspriser (ejendomshandel.koebesum), IKKE vurderinger.
+- Når brugeren spørger om "priser" eller "gennemsnitspriser" mener de ALTID salgspriser (v_ejerskifte_handel.kontant_koebesum), IKKE vurderinger.
 
-EJERSKIFTE / SALGSDATA:
-Vi HAR faktiske salgspriser i public.ejendomshandel (koebesum fra Tinglysning). Brug ALTID denne tabel for prisforespørgsler.
+EJERSKIFTE / SALGSDATA (BIZZ-1746 opdateret):
+PRIMÆR: public.v_ejerskifte_handel (7.8M handler med priser + handelstype — pre-joined view). Brug ALTID denne for prisforespørgsler.
+SEKUNDÆR: public.ejendomshandel (82K handler fra Tinglysning-scraping — færre rækker, brug KUN som fallback).
 Vi HAR ejerskifte-data i ejf_ejerskab (7,6M rækker) for ejerskifte-tælling:
 - virkning_fra = tidspunkt hvor ejerskabet startede (= overtagelsesdato)
 - status = 'gældende' (nuværende ejer) eller 'historisk' (tidligere ejer)

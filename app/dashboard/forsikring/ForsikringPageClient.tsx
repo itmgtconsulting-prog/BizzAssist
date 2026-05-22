@@ -359,9 +359,17 @@ function UnifiedAnalyseView({
     if (seenAddresses.has(addrKey)) continue;
     seenAddresses.add(addrKey);
 
-    const aktivGaps = aktiv.matched_policy_id
+    // BIZZ-1792: Dedup gaps per check_id — identiske gaps vises kun 1 gang
+    const rawGaps = aktiv.matched_policy_id
       ? gaps.filter((g) => g.policy_id === aktiv.matched_policy_id)
       : [];
+    const seenCheckIds = new Set<string>();
+    const aktivGaps = rawGaps.filter((g) => {
+      const key = g.check_id ?? g.title;
+      if (seenCheckIds.has(key)) return false;
+      seenCheckIds.add(key);
+      return true;
+    });
     allGroups.push({
       aktiv,
       matchedPolicy: aktiv.matched_policy_id
@@ -1003,6 +1011,8 @@ function AnalyseSection({
                     navn: r.title,
                   };
                   setSelected(customer);
+                  // BIZZ-1791: Auto-vis doc picker ved kundevalg
+                  setShowDocPicker(true);
                   onCustomerSelect(customer);
                   setResults([]);
                   setQuery('');
@@ -1523,6 +1533,8 @@ function AnalyseSection({
                     navn: s.kunde_navn ?? s.kunde_id,
                   };
                   setSelected(customer);
+                  // BIZZ-1791: Auto-vis doc picker for eksisterende kunder
+                  setShowDocPicker(true);
                   onCustomerSelect(customer);
                 }}
                 className="flex-1 text-left px-3 py-2 bg-white/3 hover:bg-white/5 rounded-lg text-xs flex items-center justify-between"

@@ -786,6 +786,7 @@ Tilgængelige tabeller:
 - mv_ejendom_master: 2.6M master ejendomsview (bfe_nummer, kommune_kode, kommunenavn, boligareal_m2, ejendomsvaerdi, grundvaerdi)
 
 Brug data_intelligence til statistik og analyser. Vis ALDRIG SQL til brugeren — kun det formaterede resultat.
+VIGTIGT (BIZZ-1780): Sig ALDRIG "data ikke tilgængeligt" uden at prøve data_intelligence tool FØRST. Hvis tool returnerer fejl, forklar HVAD der gik galt og foreslå en alternativ formulering. Sig aldrig "vi har ikke data" — vi HAR data i 20+ tabeller.
 
 Når du modtager data_intelligence resultater:
 - Skriv en KORT opsummering (1-3 sætninger): hvad dataen viser, antal rækker, vigtigste indsigt

@@ -96,7 +96,7 @@ public.mv_ejendom_master: bfe_nummer, kommune_kode, kommunenavn, region, boligar
 TINGLYSNING TABELLER (backfilled fra e-TL SSL cert-auth):
 
 public.ejendomshandel: id (uuid PK), bfe_nummer (int), dato (date — overtagelsesdato), koebsaftale_dato (date), tinglyst_dato (date), koebesum (numeric — KontantKoebesum i DKK), samlet_koebesum (numeric — IAltKoebesum i DKK), andel_taeller (int), andel_naevner (int), koeber_navne (text[]), koeber_cvrs (text[]), saelger_navne (text[]), saelger_cvrs (text[]), kilde (text), sidst_opdateret (timestamptz).
-  BEMÆRK: Denne tabel har FAKTISKE SALGSPRISER fra Tinglysning. Den har IKKE kommune_kode — JOIN med bbr_ejendom_status via bfe_nummer for kommune. Brug WHERE koebesum IS NOT NULL for prisdata.
+  BEMÆRK: Denne tabel har FAKTISKE SALGSPRISER fra Tinglysning. Den har IKKE kommune_kode — for kommune-filter SKAL du JOINe: ... JOIN bfe_adresse_cache bac ON ejendomshandel.bfe_nummer = bac.bfe_nummer WHERE bac.kommune_kode = '0101' (eller bac.kommune = 'København'). ALDRIG JOIN direkte på kommune_kode — den kolonne eksisterer IKKE i ejendomshandel. Brug WHERE koebesum IS NOT NULL for prisdata.
 
 public.tinglysning_haeftelse: id (serial PK), bfe_nummer (int), prioritet (int), type (text — 'Pantebrev'/'Ejerpantebrev'), hovedstol_dkk (bigint), kreditor_navn (text), kreditor_cvr (text), tinglyst_dato (date), akt_navn (text), status (text — 'gældende'/'aflyst'), sidst_opdateret (timestamptz).
   BEMÆRK: Denne tabel har PANT/LÅN-data med beløb og prioritering.
@@ -134,6 +134,7 @@ public.ejf_handelsoplysninger: id_lokal_id (text PK), kontant_koebesum (bigint D
 public.v_ejerskifte_handel: bfe_nummer, overdragelsesmaade, overtagelsesdato, status, kontant_koebesum, samlet_koebesum, loesoeresum, entreprisesum, koebsaftale_dato, valutakode. Pre-joined view — brug denne for prisforespørgsler med handelstype.
   For "priser per handelstype" → SELECT overdragelsesmaade, AVG(samlet_koebesum)::bigint, COUNT(*) FROM v_ejerskifte_handel WHERE samlet_koebesum IS NOT NULL GROUP BY overdragelsesmaade.
   For "tvangsauktioner" → WHERE overdragelsesmaade = 'Tvangsauktion'.
+  VIGTIG (BIZZ-1781): v_ejerskifte_handel har IKKE kommune_kode. For kommune-filter: JOIN bfe_adresse_cache bac ON v_ejerskifte_handel.bfe_nummer = bac.bfe_nummer WHERE bac.kommune = 'København' (eller bac.kommune_kode = '0101').
 
 TINGLYSNING + ADRESSE TABELLER (BIZZ-1747):
 
@@ -145,6 +146,12 @@ public.tinglysning_haeftelse: bfe_nummer (int), type (text), hovedstol_dkk (nume
 
 public.bfe_adresse_cache: bfe_nummer (bigint PK), adresse (text), postnr (text), postnrnavn (text), kommune (text), kommune_kode (text), ejendomstype (text).
   1.8M BFE→adresse mapping. JOIN med denne for at få adresse/postnr/kommune til et BFE-nummer. Eksempel: JOIN bfe_adresse_cache USING (bfe_nummer).
+
+VIGTIG — KOMMUNE-FILTER PÅ HANDELSDATA (BIZZ-1781):
+- ejendomshandel, v_ejerskifte_handel og ejf_ejerskifte har IKKE kommune_kode.
+- For ALLE kommune-filtre på disse tabeller: JOIN bfe_adresse_cache bac ON tabel.bfe_nummer = bac.bfe_nummer WHERE bac.kommune = 'Kommunenavn' ELLER bac.kommune_kode = 'XXXX'.
+- bfe_adresse_cache har kolonner: kommune (text, fx 'København'), kommune_kode (text, fx '0101'), postnr (text, fx '1000').
+- ALDRIG brug WHERE kommune_kode = X direkte på handelsdata-tabeller — kolonnen eksisterer ikke.
 
 VIGTIG — ANVENDELSESFILTER + OUTLIER-HÅNDTERING:
 - Filtrér KUN på byg021_anvendelse når brugeren eksplicit nævner en bygningstype (parcelhus, etagebolig, erhverv, sommerhus). Ellers udelukkes data (mange BFE'er har NULL byg021_anvendelse).

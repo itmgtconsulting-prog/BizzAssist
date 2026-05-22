@@ -289,10 +289,10 @@ const RecentEntityTagBar = React.memo(function RecentEntityTagBar({
             e.stopPropagation();
             dismiss(tag.key);
           }}
-          className={`ml-0.5 ${cfg.text} opacity-40 hover:opacity-100 transition-opacity rounded-full p-px`}
+          className={`ml-0.5 ${cfg.text} opacity-60 hover:opacity-100 transition-opacity rounded-full p-0.5 min-w-[16px] min-h-[16px] flex items-center justify-center`}
           aria-label={`Fjern ${cfg.rowLabel ?? tag.type} tag`}
         >
-          <X size={7} />
+          <X size={10} />
         </button>
       </Link>
     );

@@ -1221,6 +1221,26 @@ export default function EjendomDetaljeClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, erDAWA, bbrData, dawaAdresse, wave2Ready, aktivTab]);
 
+  // BIZZ-1752: Re-fetch salgshistorik når AI akt-ekstraktion er fuldført
+  useEffect(() => {
+    const handler = () => {
+      const bfeNummer = bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
+      if (!bfeNummer) return;
+      setSalgshistorikLoader(true);
+      fetch(`/api/salgshistorik?bfeNummer=${bfeNummer}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data: SalgshistorikResponse | null) => {
+          startTransition(() => {
+            setSalgshistorik(data?.handler ?? []);
+          });
+        })
+        .catch(() => {})
+        .finally(() => setSalgshistorikLoader(false));
+    };
+    window.addEventListener('bizzassist:akt-extracted', handler);
+    return () => window.removeEventListener('bizzassist:akt-extracted', handler);
+  }, [bbrData]);
+
   /**
    * Henter matrikeldata (jordstykker, landbrugsnotering m.m.) fra Datafordeler MAT-registret.
    * Kører når BFE-nummer er tilgængeligt via BBR Ejendomsrelation.

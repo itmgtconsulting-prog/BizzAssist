@@ -63,6 +63,38 @@ export async function walkKoncern(
     await walkPerson(admin, kundeId, aktiver, seenBfes, seenCvrs);
   }
 
+  // BIZZ-1775: Berig ejendoms-labels med adresser fra bfe_adresse_cache
+  const bfeAktiver = aktiver.filter(
+    (a) => a.type === 'ejendom' && a.bfe && a.label.startsWith('BFE ')
+  );
+  if (bfeAktiver.length > 0) {
+    try {
+      const bfes = bfeAktiver.map((a) => a.bfe!);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: adresser } = await (admin as any)
+        .from('bfe_adresse_cache')
+        .select('bfe_nummer, adresse, etage, doer, postnr, postnrnavn')
+        .in('bfe_nummer', bfes.slice(0, 100));
+      if (adresser) {
+        const addrMap = new Map(
+          (adresser as Array<Record<string, unknown>>).map((a) => {
+            const parts = [a.adresse as string];
+            if (a.etage) parts.push(`${a.etage}.`);
+            if (a.doer) parts[parts.length - 1] += ` ${a.doer}`;
+            if (a.postnr) parts.push(`${a.postnr} ${a.postnrnavn ?? ''}`);
+            return [a.bfe_nummer as number, parts.join(', ').trim()];
+          })
+        );
+        for (const a of bfeAktiver) {
+          const addr = addrMap.get(a.bfe!);
+          if (addr) a.label = addr;
+        }
+      }
+    } catch {
+      /* address enrichment non-fatal */
+    }
+  }
+
   return aktiver.slice(0, MAX_AKTIVER);
 }
 

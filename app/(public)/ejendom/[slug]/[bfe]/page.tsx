@@ -164,7 +164,8 @@ async function hentDawaAdresse(bfe: string, slug: string): Promise<DawaAdresse |
           size: 10,
           query: { bool: { filter: [{ term: { bfeNumbers: String(bfe) } }] } },
         }),
-        cache: 'no-store',
+        // BIZZ-1782: Fjernet cache:'no-store' — ISR revalidate skal styre caching
+        next: { revalidate: 86400 },
         signal: AbortSignal.timeout(8000),
       }
     );

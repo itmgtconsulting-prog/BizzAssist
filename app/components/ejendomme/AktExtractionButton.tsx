@@ -11,6 +11,7 @@
 
 import { useState } from 'react';
 import { Sparkles } from 'lucide-react';
+import { useSubscription } from '@/app/context/SubscriptionContext';
 
 interface Props {
   /** BFE-nummer for ejendommen. */
@@ -19,6 +20,8 @@ interface Props {
   aktNavn: string;
   /** Sprogkode. */
   lang: string;
+  /** BIZZ-1752: Callback efter ekstraktion — re-fetcher salgshistorik uden page reload. */
+  onExtractComplete?: () => void;
 }
 
 /**
@@ -27,8 +30,9 @@ interface Props {
  * @param props - BFE, aktNavn, sprog
  * @returns Knap med loading-state og resultat-visning
  */
-export default function AktExtractionButton({ bfe, aktNavn, lang }: Props) {
+export default function AktExtractionButton({ bfe, aktNavn, lang, onExtractComplete }: Props) {
   const da = lang === 'da';
+  const { addTokenUsage } = useSubscription();
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{
     handler: number;
@@ -54,16 +58,23 @@ export default function AktExtractionButton({ bfe, aktNavn, lang }: Props) {
         return;
       }
       const data = await res.json();
+      const tokens = data.tokensUsed ?? 0;
       setResult({
         handler: data.handler?.length ?? 0,
         haeftelser: data.haeftelser?.length ?? 0,
         servitutter: data.servitutter?.length ?? 0,
-        tokensUsed: data.tokensUsed ?? 0,
+        tokensUsed: tokens,
         fromCache: data.fromCache ?? false,
       });
-      // Refresh salgshistorik efter 2 sek — ny data er nu i cache
+      // BIZZ-1751: Opdater TokenUsageBar live via SubscriptionContext
+      if (tokens > 0 && !data.fromCache) addTokenUsage(tokens);
+      // BIZZ-1752: Signal til parent for re-fetch af salgshistorik — ingen page reload
       if (!data.fromCache) {
-        setTimeout(() => window.location.reload(), 2000);
+        setTimeout(() => {
+          if (onExtractComplete) onExtractComplete();
+          // Fallback: custom event for components without callback prop
+          window.dispatchEvent(new CustomEvent('bizzassist:akt-extracted', { detail: { bfe } }));
+        }, 1000);
       }
     } catch {
       setError(da ? 'Netværksfejl' : 'Network error');
@@ -101,36 +112,29 @@ export default function AktExtractionButton({ bfe, aktNavn, lang }: Props) {
   }
 
   return (
-    <div className="mt-3">
+    <div className="mt-2 inline-flex flex-col">
       <button
         onClick={extract}
         disabled={loading}
-        className="flex items-center gap-2 px-3 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-300 text-sm rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-600/15 hover:bg-emerald-600/25 border border-emerald-500/20 text-emerald-300 text-xs rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        aria-label={da ? 'Berig med AI fra scannet akt' : 'Enrich with AI from scanned deed'}
       >
         {loading ? (
           <>
-            <div className="w-4 h-4 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
-            {da ? 'Analyserer scannet akt med AI...' : 'Analyzing scanned deed with AI...'}
+            <div className="w-3 h-3 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
+            <span>{da ? 'Analyserer...' : 'Analyzing...'}</span>
           </>
         ) : (
           <>
-            <Sparkles className="w-4 h-4" aria-hidden />
-            {da
-              ? 'Berig med historisk data fra scannet akt'
-              : 'Enrich with historical data from scanned deed'}
-            <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-emerald-500/20 text-emerald-300 leading-none">
+            <Sparkles className="w-3 h-3" aria-hidden />
+            <span>{da ? 'AI-berig akt' : 'AI enrich deed'}</span>
+            <span className="px-1 py-0.5 rounded text-[7px] font-bold bg-emerald-500/20 text-emerald-300 leading-none">
               AI
             </span>
-            <span className="text-[10px] text-slate-500 ml-1">(~50k tokens)</span>
           </>
         )}
       </button>
-      <p className="text-slate-600 text-[10px] mt-1">
-        {da
-          ? 'AI læser den scannede akt og udtrækker historiske handler, hæftelser og servitutter. Data deles med alle brugere.'
-          : 'AI reads the scanned deed and extracts historical transactions. Data is shared with all users.'}
-      </p>
-      {error && <p className="text-red-400 text-xs mt-2">{error}</p>}
+      {error && <p className="text-red-400 text-[10px] mt-1">{error}</p>}
     </div>
   );
 }

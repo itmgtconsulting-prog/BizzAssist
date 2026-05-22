@@ -88,6 +88,27 @@ async function _fetchPropertiesByCvr(
 }
 
 /**
+ * BIZZ-1743: Hent ejendomme administreret af et CVR fra ejf_administrator.
+ *
+ * @param admin - Supabase admin client
+ * @param cvr - CVR-nummer for administrator-virksomhed
+ * @returns Array af administrerede BFE-numre
+ */
+async function _fetchAdministeredByCvr(
+  admin: ReturnType<typeof createAdminClient>,
+  cvr: string
+): Promise<Array<{ bfe_nummer: number }>> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data } = await (admin as any)
+    .from('ejf_administrator')
+    .select('bfe_nummer')
+    .eq('virksomhed_cvr', cvr)
+    .eq('status', 'gældende')
+    .limit(50);
+  return data ?? [];
+}
+
+/**
  * Hent alle ejere af en ejendom fra ejf_ejerskab.
  *
  * @param admin - Supabase admin client
@@ -1725,6 +1746,9 @@ async function resolvePersonGraph(
     const rolleStr = roller.slice(0, 2).join(', ');
     const subParts = [company?.virksomhedsform, company?.branche_tekst].filter(Boolean);
 
+    // BIZZ-1757: layoutSection for hierarkisk person-diagram
+    // Top-level = direkte ejet af person. Datterselskaber (har parent) = deeper.
+    const isChild = parentOfCvr.has(cvrStr);
     nodes.push({
       id: companyId,
       label: company?.navn ?? `CVR ${cvrStr}`,
@@ -1735,6 +1759,7 @@ async function resolvePersonGraph(
       link: `/dashboard/companies/${cvrStr}`,
       isCeased: company?.ophoert != null,
       personRolle: rolleStr || undefined,
+      layoutSection: isChild ? 'subsidiary' : 'ownership',
     });
     nodeIds.add(companyId);
 
@@ -2071,6 +2096,8 @@ async function resolvePersonGraph(
           label: `BFE ${pp.bfe_nummer}`,
           type: 'property',
           bfeNummer: pp.bfe_nummer,
+          // BIZZ-1757: personlige ejendomme direkte under person
+          layoutSection: 'personal-property',
         });
         nodeIds.add(propId);
       }
@@ -2178,6 +2205,45 @@ async function resolvePersonGraph(
           edges.push({ from: compId, to: overflowId });
         }
       }
+    }
+  }
+
+  // ── BIZZ-1743: Administrerede ejendomme (ejerforeninger) ────────────────
+  // For virksomheder der administrerer ejendomme via ejf_administrator
+  // (typisk ejerforeninger), tilføj administrerede BFE'er med stiplet edge.
+  const mainCvr = nodes.find((n) => n.type === 'main')?.cvr;
+  if (mainCvr) {
+    const administered = await _fetchAdministeredByCvr(admin, String(mainCvr));
+    const adminBfes = administered
+      .map((a) => a.bfe_nummer)
+      .filter((bfe) => !nodeIds.has(`bfe-${bfe}`));
+
+    for (const bfe of adminBfes.slice(0, MAX_PROPS_PER_OWNER)) {
+      const propId = `bfe-admin-${bfe}`;
+      if (nodeIds.has(propId)) continue;
+      nodes.push({
+        id: propId,
+        label: `BFE ${bfe}`,
+        sublabel: 'Administreret',
+        type: 'property',
+        bfeNummer: bfe,
+      });
+      nodeIds.add(propId);
+      edges.push({ from: `cvr-${mainCvr}`, to: propId });
+    }
+    if (adminBfes.length > MAX_PROPS_PER_OWNER) {
+      const overflowId = `admin-overflow-${mainCvr}`;
+      nodes.push({
+        id: overflowId,
+        label: `+${adminBfes.length - MAX_PROPS_PER_OWNER} administrerede`,
+        type: 'property',
+        overflowItems: adminBfes.slice(MAX_PROPS_PER_OWNER).map((b) => ({
+          bfeNummer: b,
+          label: `BFE ${b}`,
+        })),
+      });
+      nodeIds.add(overflowId);
+      edges.push({ from: `cvr-${mainCvr}`, to: overflowId });
     }
   }
 

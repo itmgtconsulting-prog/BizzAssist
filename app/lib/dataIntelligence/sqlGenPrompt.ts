@@ -22,6 +22,7 @@ REGLER:
    FORKLARING: <kort dansk forklaring>
    FORSLAG: <forslag1> | <forslag2> | <forslag3>
    FORSLAG-linjen er OBLIGATORISK — du SKAL altid inkludere 2-3 relaterede spørgsmål du KAN besvare med SQL. Brug | som separator.
+   VIGTIGT (BIZZ-1769): Forslagene SKAL være unikke og kontekst-specifikke for brugerens spørgsmål. Gentag ALDRIG de samme 4 standard-forslag. Basér forslagene på det aktuelle datasæt og den specifikke query.
 3. Brug KUN whitelistede tabeller (se nedenfor).
 4. Brug ALTID schema-prefix (fx public.cvr_virksomhed).
 5. Inkluder ALTID LIMIT (default 1000, max 10000).
@@ -39,19 +40,21 @@ REGLER:
 14. For "find virksomheder der ejer flere end N ejendomme" → SELECT cvr, navn, antal_ejendomme FROM mv_analyse_virksomhed WHERE antal_ejendomme > N. IKKE ejer_cvr — kolonnen findes ikke i denne MV.
 15. For "ejendomme hvor ejer-virksomheden er ophørt" → SELECT * FROM mv_analyse_ejendom WHERE ejer_type='virksomhed' AND ejer_cvr IN (SELECT cvr FROM mv_analyse_virksomhed WHERE ophoert IS NOT NULL). IKKE ejf_ejerskab JOIN cvr_virksomhed.
 16. For "hvilke kommuner har flest unikke virksomhedsejere af ejendomme" → SELECT kommune_kode, kommunenavn, COUNT(DISTINCT ejer_cvr) AS antal FROM mv_analyse_ejendom WHERE ejer_type='virksomhed' AND ejer_cvr IS NOT NULL GROUP BY kommune_kode, kommunenavn ORDER BY antal DESC LIMIT 10.
-17. DATO-FUNKTIONER — brug ALDRIG MySQL-syntax: YEAR(), MONTH(), DAY(), DATE_FORMAT() EKSISTERER IKKE i PostgreSQL. Brug i stedet: EXTRACT(YEAR FROM col), EXTRACT(MONTH FROM col), to_char(col, 'YYYY-MM'), date_trunc('month', col). Eksempel: EXTRACT(YEAR FROM overtagelsesdato) AS aar.
+17. DATO-TOLKNINGER (BIZZ-1769): "seneste 12 måneder" = NOW() - INTERVAL '12 months' til NOW(), IKKE kalenderåret. "i 2024" = '2024-01-01' til '2024-12-31'. "sidste år" = forrige kalenderår. Brug ALTID CURRENT_DATE for "i dag".
+18. DATO-FUNKTIONER — brug ALDRIG MySQL-syntax: YEAR(), MONTH(), DAY(), DATE_FORMAT() EKSISTERER IKKE i PostgreSQL. Brug i stedet: EXTRACT(YEAR FROM col), EXTRACT(MONTH FROM col), to_char(col, 'YYYY-MM'), date_trunc('month', col). Eksempel: EXTRACT(YEAR FROM overtagelsesdato) AS aar.
 18. STRENG-FUNKTIONER — brug PostgreSQL-syntax: || til sammenføjning (IKKE CONCAT()), STRING_AGG(col, ', ' ORDER BY col) til grupperet streng (IKKE GROUP_CONCAT()), COALESCE(a, b) for null-fallback (IKKE IFNULL()), CASE WHEN ... THEN ... ELSE ... END for betingelser (IKKE IF()).
 19. TYPE CASTING — brug PostgreSQL :: operator: col::int, col::text, col::date. Brug ALDRIG MySQL-typer som SIGNED, UNSIGNED, CHAR. PostgreSQL-typer: integer, bigint, text, date, timestamptz, numeric, boolean.
 20. GROUP BY — ALLE kolonner i SELECT der IKKE er aggregerede (COUNT, SUM, AVG, MIN, MAX) SKAL stå i GROUP BY. Tjek ALTID dette inden du returnerer SQL. Eksempel: SELECT a, b, COUNT(*) → GROUP BY a, b. Glemmer du dette, fejler PostgreSQL med "must appear in the GROUP BY clause".
 
 SALGSPRISER vs. VURDERINGER — KRITISK SKELNEN:
-- "salgspris", "købesum", "handelspris", "salgspriser per kommune" → brug public.ejendomshandel (koebesum = faktisk købesum fra Tinglysning)
+- "salgspris", "købesum", "handelspris", "salgspriser per kommune" → brug public.v_ejerskifte_handel (kontant_koebesum fra EJF — 7.8M handler, mest komplet)
 - "vurdering", "ejendomsværdi", "grundværdi" → brug public.vurdering_cache (ejendomsvaerdi = SKATs offentlige vurdering)
 - BLAND ALDRIG disse to! Salgspris og vurdering er FORSKELLIGE tal. En salgspris er hvad køberen betalte. En vurdering er SKATs skøn.
-- Når brugeren spørger om "priser" eller "gennemsnitspriser" mener de ALTID salgspriser (ejendomshandel.koebesum), IKKE vurderinger.
+- Når brugeren spørger om "priser" eller "gennemsnitspriser" mener de ALTID salgspriser (v_ejerskifte_handel.kontant_koebesum), IKKE vurderinger.
 
-EJERSKIFTE / SALGSDATA:
-Vi HAR faktiske salgspriser i public.ejendomshandel (koebesum fra Tinglysning). Brug ALTID denne tabel for prisforespørgsler.
+EJERSKIFTE / SALGSDATA (BIZZ-1746 opdateret):
+PRIMÆR: public.v_ejerskifte_handel (7.8M handler med priser + handelstype — pre-joined view). Brug ALTID denne for prisforespørgsler.
+SEKUNDÆR: public.ejendomshandel (82K handler fra Tinglysning-scraping — færre rækker, brug KUN som fallback).
 Vi HAR ejerskifte-data i ejf_ejerskab (7,6M rækker) for ejerskifte-tælling:
 - virkning_fra = tidspunkt hvor ejerskabet startede (= overtagelsesdato)
 - status = 'gældende' (nuværende ejer) eller 'historisk' (tidligere ejer)
@@ -93,7 +96,7 @@ public.mv_ejendom_master: bfe_nummer, kommune_kode, kommunenavn, region, boligar
 TINGLYSNING TABELLER (backfilled fra e-TL SSL cert-auth):
 
 public.ejendomshandel: id (uuid PK), bfe_nummer (int), dato (date — overtagelsesdato), koebsaftale_dato (date), tinglyst_dato (date), koebesum (numeric — KontantKoebesum i DKK), samlet_koebesum (numeric — IAltKoebesum i DKK), andel_taeller (int), andel_naevner (int), koeber_navne (text[]), koeber_cvrs (text[]), saelger_navne (text[]), saelger_cvrs (text[]), kilde (text), sidst_opdateret (timestamptz).
-  BEMÆRK: Denne tabel har FAKTISKE SALGSPRISER fra Tinglysning. Den har IKKE kommune_kode — JOIN med bbr_ejendom_status via bfe_nummer for kommune. Brug WHERE koebesum IS NOT NULL for prisdata.
+  BEMÆRK: Denne tabel har FAKTISKE SALGSPRISER fra Tinglysning. Den har IKKE kommune_kode — for kommune-filter SKAL du JOINe: ... JOIN bfe_adresse_cache bac ON ejendomshandel.bfe_nummer = bac.bfe_nummer WHERE bac.kommune_kode = '0101' (eller bac.kommune = 'København'). ALDRIG JOIN direkte på kommune_kode — den kolonne eksisterer IKKE i ejendomshandel. Brug WHERE koebesum IS NOT NULL for prisdata.
 
 public.tinglysning_haeftelse: id (serial PK), bfe_nummer (int), prioritet (int), type (text — 'Pantebrev'/'Ejerpantebrev'), hovedstol_dkk (bigint), kreditor_navn (text), kreditor_cvr (text), tinglyst_dato (date), akt_navn (text), status (text — 'gældende'/'aflyst'), sidst_opdateret (timestamptz).
   BEMÆRK: Denne tabel har PANT/LÅN-data med beløb og prioritering.
@@ -131,6 +134,7 @@ public.ejf_handelsoplysninger: id_lokal_id (text PK), kontant_koebesum (bigint D
 public.v_ejerskifte_handel: bfe_nummer, overdragelsesmaade, overtagelsesdato, status, kontant_koebesum, samlet_koebesum, loesoeresum, entreprisesum, koebsaftale_dato, valutakode. Pre-joined view — brug denne for prisforespørgsler med handelstype.
   For "priser per handelstype" → SELECT overdragelsesmaade, AVG(samlet_koebesum)::bigint, COUNT(*) FROM v_ejerskifte_handel WHERE samlet_koebesum IS NOT NULL GROUP BY overdragelsesmaade.
   For "tvangsauktioner" → WHERE overdragelsesmaade = 'Tvangsauktion'.
+  VIGTIG (BIZZ-1781): v_ejerskifte_handel har IKKE kommune_kode. For kommune-filter: JOIN bfe_adresse_cache bac ON v_ejerskifte_handel.bfe_nummer = bac.bfe_nummer WHERE bac.kommune = 'København' (eller bac.kommune_kode = '0101').
 
 TINGLYSNING + ADRESSE TABELLER (BIZZ-1747):
 
@@ -142,6 +146,12 @@ public.tinglysning_haeftelse: bfe_nummer (int), type (text), hovedstol_dkk (nume
 
 public.bfe_adresse_cache: bfe_nummer (bigint PK), adresse (text), postnr (text), postnrnavn (text), kommune (text), kommune_kode (text), ejendomstype (text).
   1.8M BFE→adresse mapping. JOIN med denne for at få adresse/postnr/kommune til et BFE-nummer. Eksempel: JOIN bfe_adresse_cache USING (bfe_nummer).
+
+VIGTIG — KOMMUNE-FILTER PÅ HANDELSDATA (BIZZ-1781):
+- ejendomshandel, v_ejerskifte_handel og ejf_ejerskifte har IKKE kommune_kode.
+- For ALLE kommune-filtre på disse tabeller: JOIN bfe_adresse_cache bac ON tabel.bfe_nummer = bac.bfe_nummer WHERE bac.kommune = 'Kommunenavn' ELLER bac.kommune_kode = 'XXXX'.
+- bfe_adresse_cache har kolonner: kommune (text, fx 'København'), kommune_kode (text, fx '0101'), postnr (text, fx '1000').
+- ALDRIG brug WHERE kommune_kode = X direkte på handelsdata-tabeller — kolonnen eksisterer ikke.
 
 VIGTIG — ANVENDELSESFILTER + OUTLIER-HÅNDTERING:
 - Filtrér KUN på byg021_anvendelse når brugeren eksplicit nævner en bygningstype (parcelhus, etagebolig, erhverv, sommerhus). Ellers udelukkes data (mange BFE'er har NULL byg021_anvendelse).

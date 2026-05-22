@@ -868,6 +868,33 @@ export default function PersonDetailPageClient({
 
   /** Styrer om nyheder/sociale medier-panelet er synligt på desktop. */
   const [nyhedsPanelÅben, setNyhedsPanelÅben] = useState(true);
+  // BIZZ-1779: Resizable sidebar
+  const [sidebarWidth, setSidebarWidth] = useState(340);
+  const sidebarDragging = useRef(false);
+  const handleSidebarDividerDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      sidebarDragging.current = true;
+      const startX = e.clientX;
+      const startW = sidebarWidth;
+      const onMove = (ev: globalThis.MouseEvent) => {
+        const delta = startX - ev.clientX;
+        setSidebarWidth(Math.max(260, Math.min(600, startW + delta)));
+      };
+      const onUp = () => {
+        sidebarDragging.current = false;
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    },
+    [sidebarWidth]
+  );
 
   /** Styrer om mobil nyheder-overlay er åbent. */
   const [mobilNyhederAaben, setMobilNyhederAaben] = useState(false);
@@ -2588,12 +2615,13 @@ export default function PersonDetailPageClient({
                     const aktive = ejendommeData.filter((e) => e.aktiv !== false);
                     const solgte = ejendommeData.filter((e) => e.aktiv === false);
 
-                    // Group active by ownerCvr
+                    // Group active by ownerCvr — BIZZ-1764: brug 0 for personlige ejendomme (NaN CVR)
                     const groupedActive = new Map<number, typeof aktive>();
                     for (const e of aktive) {
                       const cvrNum = parseInt(e.ownerCvr, 10);
-                      if (!groupedActive.has(cvrNum)) groupedActive.set(cvrNum, []);
-                      groupedActive.get(cvrNum)!.push(e);
+                      const key = isNaN(cvrNum) ? 0 : cvrNum;
+                      if (!groupedActive.has(key)) groupedActive.set(key, []);
+                      groupedActive.get(key)!.push(e);
                     }
                     const cvrOrder = Array.from(groupedActive.keys());
 
@@ -2659,34 +2687,47 @@ export default function PersonDetailPageClient({
                         {cvrOrder.map((cvr) => {
                           const props = groupedActive.get(cvr);
                           if (!props || props.length === 0) return null;
-                          const name = nameByCvr.get(cvr) ?? `CVR ${cvr}`;
+                          // BIZZ-1764: cvr=0 er personlige ejendomme (ingen CVR)
+                          const isPersonal = cvr === 0;
+                          const name = isPersonal
+                            ? lang === 'da'
+                              ? 'Personlige ejendomme'
+                              : 'Personal properties'
+                            : (nameByCvr.get(cvr) ?? `CVR ${cvr}`);
                           return (
                             <div key={cvr} className="space-y-2">
-                              <Link
-                                href={`/dashboard/companies/${cvr}`}
-                                className="inline-flex items-center gap-2 group"
-                              >
-                                <Building2
-                                  size={14}
-                                  className="text-slate-500 group-hover:text-blue-400 transition-colors"
-                                />
-                                <h3 className="text-sm font-semibold text-slate-200 group-hover:text-blue-400 transition-colors">
-                                  {name}
-                                </h3>
-                                <span className="text-[10px] text-slate-500 font-mono">
-                                  CVR {cvr}
-                                </span>
-                                <span className="text-[10px] text-slate-500">
-                                  · {props.length}{' '}
-                                  {lang === 'da'
-                                    ? props.length === 1
-                                      ? 'ejendom'
-                                      : 'ejendomme'
-                                    : props.length === 1
-                                      ? 'property'
-                                      : 'properties'}
-                                </span>
-                              </Link>
+                              {isPersonal ? (
+                                <div className="inline-flex items-center gap-2">
+                                  <Home size={14} className="text-emerald-400" />
+                                  <h3 className="text-sm font-semibold text-slate-200">{name}</h3>
+                                </div>
+                              ) : (
+                                <Link
+                                  href={`/dashboard/companies/${cvr}`}
+                                  className="inline-flex items-center gap-2 group"
+                                >
+                                  <Building2
+                                    size={14}
+                                    className="text-slate-500 group-hover:text-blue-400 transition-colors"
+                                  />
+                                  <h3 className="text-sm font-semibold text-slate-200 group-hover:text-blue-400 transition-colors">
+                                    {name}
+                                  </h3>
+                                  <span className="text-[10px] text-slate-500 font-mono">
+                                    CVR {cvr}
+                                  </span>
+                                  <span className="text-[10px] text-slate-500">
+                                    · {props.length}{' '}
+                                    {lang === 'da'
+                                      ? props.length === 1
+                                        ? 'ejendom'
+                                        : 'ejendomme'
+                                      : props.length === 1
+                                        ? 'property'
+                                        : 'properties'}
+                                  </span>
+                                </Link>
+                              )}
                               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                                 {props.map((ej) => (
                                   <PropertyOwnerCard
@@ -2910,11 +2951,20 @@ export default function PersonDetailPageClient({
       </div>
       {/* END left: main content */}
 
+      {/* ─── BIZZ-1779: Resizable divider ─── */}
+      {isDesktop && nyhedsPanelÅben && (
+        <div
+          onMouseDown={handleSidebarDividerDown}
+          className="w-1.5 flex-shrink-0 cursor-col-resize bg-slate-800 hover:bg-blue-500/40 active:bg-blue-500/60 transition-colors"
+          role="separator"
+          aria-label="Justér panelbredde"
+        />
+      )}
       {/* ─── Nyheder/sociale medier panel (desktop) ─── */}
       {isDesktop && nyhedsPanelÅben && (
         <div
           className="flex-shrink-0 self-stretch flex flex-col overflow-hidden border-l border-slate-700/50"
-          style={{ width: 340 }}
+          style={{ width: sidebarWidth }}
         >
           {/* Panel-header */}
           <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-700/50 flex-shrink-0">

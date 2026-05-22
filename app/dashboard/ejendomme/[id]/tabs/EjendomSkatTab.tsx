@@ -142,9 +142,9 @@ export default function EjendomSkatTab({
                       new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt } })
                     );
                   }}
-                  className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 text-blue-300 text-sm transition-colors"
+                  className="inline-flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-blue-600/15 hover:bg-blue-600/25 border border-blue-500/20 text-blue-300 text-xs transition-colors"
                 >
-                  <Sparkles size={14} />
+                  <Sparkles size={12} />
                   {da ? 'Forklar ejendomsskat' : 'Explain property tax'}
                   <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-blue-500/20 text-blue-300 leading-none">
                     AI
@@ -160,9 +160,9 @@ export default function EjendomSkatTab({
                       new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt } })
                     );
                   }}
-                  className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/30 text-amber-300 text-sm transition-colors"
+                  className="inline-flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-amber-600/15 hover:bg-amber-600/25 border border-amber-500/20 text-amber-300 text-xs transition-colors"
                 >
-                  <Scale size={14} />
+                  <Scale size={12} />
                   {da ? 'Tjek klagegrundlag (skat)' : 'Check appeal grounds (tax)'}
                   <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-amber-500/20 text-amber-300 leading-none">
                     AI

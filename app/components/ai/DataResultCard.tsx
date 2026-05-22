@@ -30,16 +30,40 @@ interface DataResultCardProps {
 /**
  * Formatér en celle-værdi til visning.
  */
-function formatCell(val: unknown): string {
+/**
+ * BIZZ-1766: Formatér en celle-værdi med da-DK locale og enhed baseret på kolonnenavn.
+ */
+function formatCell(val: unknown, colName?: string): string {
   if (val == null) return '–';
   if (typeof val === 'number') {
-    if (Number.isInteger(val) && Math.abs(val) > 9999) {
-      return val.toLocaleString('da-DK');
-    }
-    if (!Number.isInteger(val)) {
-      return val.toLocaleString('da-DK', { maximumFractionDigits: 2 });
-    }
-    return String(val);
+    const col = (colName ?? '').toLowerCase();
+    // Detect currency columns
+    const isCurrency =
+      col.includes('koebesum') ||
+      col.includes('pris') ||
+      col.includes('vaerdi') ||
+      col.includes('grundskyld') ||
+      col.includes('omsaetning') ||
+      col.includes('dkk') ||
+      col.includes('hovedstol') ||
+      col.includes('beloeb');
+    // Detect percentage columns
+    const isPct =
+      col.includes('pct') ||
+      col.includes('rate') ||
+      col.includes('andel') ||
+      col.includes('procent');
+    // Detect area columns
+    const isArea = col.includes('areal') || col.includes('m2');
+
+    const formatted = val.toLocaleString('da-DK', {
+      maximumFractionDigits: Number.isInteger(val) ? 0 : 2,
+    });
+
+    if (isCurrency) return `${formatted} kr`;
+    if (isPct) return `${formatted}%`;
+    if (isArea) return `${formatted} m²`;
+    return formatted;
   }
   return String(val);
 }
@@ -103,7 +127,8 @@ export default function DataResultCard({
           : String(vb).localeCompare(String(va), 'da');
       });
     }
-    return showAll ? sorted : sorted.slice(0, 20);
+    // BIZZ-1768: Vis 50 rækker som default (var 20)
+    return showAll ? sorted : sorted.slice(0, 50);
   }, [rows, showAll, sortCol, sortAsc]);
 
   // Nøgletal-visning (enkelt tal)
@@ -149,7 +174,7 @@ export default function DataResultCard({
                 <tr key={ri} className="hover:bg-slate-700/20">
                   {row.map((cell, ci) => (
                     <td key={ci} className="px-2 py-1.5 text-slate-300">
-                      {formatCell(cell)}
+                      {formatCell(cell, columns[ci])}
                     </td>
                   ))}
                 </tr>

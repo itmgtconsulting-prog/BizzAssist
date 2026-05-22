@@ -397,9 +397,9 @@ export default function EjendomOekonomiTab(props: Props) {
               new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt } })
             );
           }}
-          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 text-blue-300 text-sm transition-colors"
+          className="inline-flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-blue-600/15 hover:bg-blue-600/25 border border-blue-500/20 text-blue-300 text-xs transition-colors"
         >
-          <Sparkles size={14} />
+          <Sparkles size={12} />
           {da ? 'Forklar vurdering' : 'Explain valuation'}
           <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-blue-500/20 text-blue-300 leading-none">
             AI
@@ -415,9 +415,9 @@ export default function EjendomOekonomiTab(props: Props) {
               new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt } })
             );
           }}
-          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-300 text-sm transition-colors"
+          className="inline-flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-emerald-600/15 hover:bg-emerald-600/25 border border-emerald-500/20 text-emerald-300 text-xs transition-colors"
         >
-          <Landmark size={14} />
+          <Landmark size={12} />
           {da ? 'Download vurderingsrapport' : 'Download valuation report'}
           <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-emerald-500/20 text-emerald-300 leading-none">
             AI
@@ -433,9 +433,9 @@ export default function EjendomOekonomiTab(props: Props) {
               new CustomEvent('bizz:ai-open-with-prompt', { detail: { prompt } })
             );
           }}
-          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/30 text-amber-300 text-sm transition-colors"
+          className="inline-flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-amber-600/15 hover:bg-amber-600/25 border border-amber-500/20 text-amber-300 text-xs transition-colors"
         >
-          <Scale size={14} />
+          <Scale size={12} />
           {da ? 'Tjek klagegrundlag' : 'Check appeal grounds'}
           <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-amber-500/20 text-amber-300 leading-none">
             AI

@@ -1530,8 +1530,8 @@ function AIChatPanel() {
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Input-felt (sidebar) */}
-          <div className="px-3 pb-3 pt-1 shrink-0 space-y-2">
+          {/* Input-felt (sidebar) — BIZZ-1765: pb-4 for touch-venlig bund-padding */}
+          <div className="px-3 pb-4 pt-1 shrink-0 space-y-2">
             {/* BIZZ-902: Domain-sag dokument-kontekst-chips. Info-only —
                 viser brugeren hvilke docs AI har adgang til som kontekst.
                 Fjernes via checkbox i workspace-panelet (ikke her — stammer

@@ -304,7 +304,8 @@ export const WHITELISTED_TABLES: WhitelistedTable[] = [
   },
   {
     table: 'public.tinglysning_adkomst',
-    description: 'Tinglysning adkomster — normaliserede skøder med salgspriser og ejerskifter.',
+    description:
+      'Tinglysning adkomster — BEMÆRK: kun 1 række i prod. Brug v_ejerskifte_handel eller ejf_ejerskifte i stedet for prisforespørgsler.',
     columns: {
       bfe_nummer: { type: 'bigint', description: 'BFE-nummer' },
       ejer_navn: { type: 'text', description: 'Ejer/køber-navn' },

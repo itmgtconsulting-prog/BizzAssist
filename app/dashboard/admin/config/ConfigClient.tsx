@@ -215,7 +215,7 @@ export default function ConfigClient() {
 
   return (
     <div className="min-h-screen bg-[#0a1020]">
-      <div className="max-w-6xl mx-auto px-6 py-6">
+      <div className="w-full px-6 py-6">
         <Link
           href="/dashboard"
           className="inline-flex items-center gap-1.5 text-slate-400 hover:text-white text-sm transition-colors mb-4"

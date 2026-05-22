@@ -1,4 +1,4 @@
-import { redirect } from 'next/navigation';
+// redirect moved to middleware.ts (BIZZ-1783)
 import JsonLd from '@/app/components/JsonLd';
 import Navbar from '@/app/components/Navbar';
 import Hero from '@/app/components/Hero';
@@ -27,30 +27,9 @@ const websiteJsonLd = {
  *
  * @param searchParams - Next.js page search params (code, type, token_hash, error)
  */
-export default async function HomePage({
-  searchParams,
-}: {
-  searchParams: Promise<{ code?: string; type?: string; token_hash?: string; error?: string }>;
-}) {
-  const params = await searchParams;
-
-  // Supabase PKCE code landed here instead of /auth/callback — forward it.
-  // When uri_allow_list doesn't include the callback URL, Supabase falls back
-  // to site_url and appends only `?code=` (no `type`). OAuth providers always
-  // redirect to /auth/callback directly, so a code here is always email signup.
-  if (params.code) {
-    const qs = new URLSearchParams({ code: params.code });
-    // Preserve type if present; default to 'signup' since OAuth codes never land here
-    qs.set('type', params.type ?? 'signup');
-    redirect(`/auth/callback?${qs.toString()}`);
-  }
-
-  // Supabase token_hash (OTP) landed here — forward it
-  if (params.token_hash && params.type) {
-    const qs = new URLSearchParams({ token_hash: params.token_hash, type: params.type });
-    redirect(`/auth/callback?${qs.toString()}`);
-  }
-
+export default function HomePage() {
+  // BIZZ-1783: PKCE callback detection moved to middleware.ts
+  // so this page can be statically cached for SEO.
   return (
     <main className="flex flex-col min-h-screen">
       {/* BIZZ-219: JSON-LD structured data via safe helper component */}

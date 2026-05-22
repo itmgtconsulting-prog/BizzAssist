@@ -107,7 +107,7 @@ Returner JSON med dette format:
   "select": "kommune_kode, count(*) as antal",
   "filters": { "is_udfaset": "eq.false" },
   "order": "antal.desc",
-  "limit": 50,
+  "limit": 200,
   "chartType": "bar",
   "summary": "Antal ejendomme per kommune"
 }
@@ -182,9 +182,9 @@ export async function POST(request: NextRequest) {
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
   if (!apiKey) return NextResponse.json({ error: 'AI utilgængelig' }, { status: 503 });
 
-  let body: { query: string };
+  let body: { query: string; history?: Array<{ role: 'user' | 'assistant'; content: string }> };
   try {
-    body = (await request.json()) as { query: string };
+    body = (await request.json()) as typeof body;
   } catch {
     return NextResponse.json({ error: 'Ugyldig JSON' }, { status: 400 });
   }
@@ -211,7 +211,14 @@ export async function POST(request: NextRequest) {
             model: 'claude-sonnet-4-6',
             max_tokens: 2048,
             system: await buildSystemPrompt(),
-            messages: [{ role: 'user', content: userQuery }],
+            // BIZZ-1767: Bevar kontekst fra tidligere spørgsmål i samtalen
+            messages: [
+              ...(body.history ?? []).slice(-6).map((m) => ({
+                role: m.role as 'user' | 'assistant',
+                content: m.content.slice(0, 500),
+              })),
+              { role: 'user' as const, content: userQuery },
+            ],
           },
           { signal: AbortSignal.timeout(15000) }
         );

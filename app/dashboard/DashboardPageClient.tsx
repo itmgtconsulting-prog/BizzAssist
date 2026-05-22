@@ -209,8 +209,8 @@ export default function DashboardPageClient() {
           <FlaskConical className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
           <p className="flex-1 leading-snug">
             <span className="font-semibold text-amber-200">BizzAssist Beta</span>
-            {' — '}Produktet er under aktiv udvikling. Der kan forekomme fejl og mangler. Del din
-            feedback via 💬 knappen.
+            {' — '}Produktet er under aktiv udvikling. Der kan forekomme fejl og mangler. Brug
+            Support i menuen til venstre for feedback og fejlrapporter.
           </p>
           <button
             onClick={dismissBetaBanner}

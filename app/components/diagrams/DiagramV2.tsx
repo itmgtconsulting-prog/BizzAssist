@@ -218,9 +218,16 @@ export default function DiagramV2({
     }
   }, []);
 
-  // Loading state — tom div, parent-sidens loading.tsx viser allerede spinner
+  // BIZZ-1786: Synlig loading-state i stedet for blank skærm
   if (loading) {
-    return <div className="w-full h-96" />;
+    return (
+      <div className="w-full h-96 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3 text-slate-500">
+          <div className="w-6 h-6 border-2 border-slate-600 border-t-blue-500 rounded-full animate-spin" />
+          <span className="text-xs">Henter relationer…</span>
+        </div>
+      </div>
+    );
   }
 
   // Error state

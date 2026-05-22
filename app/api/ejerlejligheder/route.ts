@@ -667,10 +667,13 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
       koebsdato: string | null;
     }
     const summariskMap = new Map<string, SummariskData>(); // uuid → data
-    const CONCURRENCY = 5; // Lav concurrency for at undgå rate limiting fra tinglysning
+    // BIZZ-1754: Reduceret concurrency fra 5→3 + cap på 15 for at undgå TL 429 rate-limiting
+    const CONCURRENCY = 3;
+    const MAX_TL_ENRICH = 15; // Max lejligheder at berige med TL
+    const itemsToEnrich = lejlighedItems.slice(0, MAX_TL_ENRICH);
 
-    for (let i = 0; i < lejlighedItems.length; i += CONCURRENCY) {
-      const batch = lejlighedItems.slice(i, i + CONCURRENCY);
+    for (let i = 0; i < itemsToEnrich.length; i += CONCURRENCY) {
+      const batch = itemsToEnrich.slice(i, i + CONCURRENCY);
       const results = await Promise.allSettled(
         batch.map(async (item) => {
           try {

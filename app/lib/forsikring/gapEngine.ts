@@ -1471,13 +1471,18 @@ const checkBranchekravPortfolio: PortfolioCheckFn = ({ branche, policer, coverag
  * GAP-070: Dobbelt-forsikring — samme ejendom (adresse) dækket af 2+ policer.
  */
 const checkDobbeltForsikring: PortfolioCheckFn = ({ policer }) => {
+  // BIZZ-1772: Brug BFE som unik nøgle (ikke adresse) for at undgå
+  // false positives på ejerlejligheder der deler adgangsadresse.
   const adresseMap = new Map<string, string[]>();
   for (const p of policer) {
-    const addr = (p.property_address ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
-    if (!addr || addr.length < 5) continue;
-    const existing = adresseMap.get(addr) ?? [];
+    // Prefer BFE (unique per unit), fallback to full address
+    const key = p.property_bfe
+      ? `bfe:${p.property_bfe}`
+      : (p.property_address ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+    if (!key || key.length < 3) continue;
+    const existing = adresseMap.get(key) ?? [];
     existing.push(p.policy_number);
-    adresseMap.set(addr, existing);
+    adresseMap.set(key, existing);
   }
   const doubles = [...adresseMap.entries()].filter(([, nums]) => nums.length >= 2);
   if (doubles.length === 0) return null;

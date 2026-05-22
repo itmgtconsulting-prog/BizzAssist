@@ -964,7 +964,7 @@ function AnalyseSection({
             }}
             className="text-slate-400 hover:text-white text-xs px-2 py-1 rounded hover:bg-white/5 transition-colors"
           >
-            {da ? '← Ny kunde' : '← New customer'}
+            {da ? '← Ny forsikringsejer' : '← New insurance owner'}
           </button>
         )}
       </div>
@@ -1287,12 +1287,30 @@ function AnalyseSection({
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') wizardFileRef.current?.click();
               }}
+              // BIZZ-1774: Drag-and-drop handlers
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                e.currentTarget.classList.add('border-blue-500/60', 'bg-blue-500/5');
+              }}
+              onDragLeave={(e) => {
+                e.preventDefault();
+                e.currentTarget.classList.remove('border-blue-500/60', 'bg-blue-500/5');
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                e.currentTarget.classList.remove('border-blue-500/60', 'bg-blue-500/5');
+                if (e.dataTransfer.files.length > 0) {
+                  onWizardUpload(e.dataTransfer.files);
+                }
+              }}
             >
               <Upload size={20} className="mx-auto text-blue-400 mb-1" />
               <div className="text-xs text-slate-300">
                 {da
-                  ? 'Klik for at uploade nye forsikringsdokumenter'
-                  : 'Click to upload new insurance documents'}
+                  ? 'Træk filer hertil eller klik for at uploade'
+                  : 'Drag files here or click to upload'}
               </div>
               <div className="text-[10px] text-slate-500 mt-0.5">
                 PDF, Word, Excel, billeder (max 20 MB)
@@ -1492,7 +1510,7 @@ function AnalyseSection({
       {sager.length > 0 && !selected && (
         <div className="mt-3 space-y-1">
           <div className="text-slate-500 text-[10px] uppercase tracking-wide">
-            {da ? 'Tidligere kunder' : 'Previous customers'}
+            {da ? 'Tidligere forsikringsejere' : 'Previous insurance owners'}
           </div>
           {sager.slice(0, 5).map((s) => (
             <div key={s.id} className="flex items-center gap-1">

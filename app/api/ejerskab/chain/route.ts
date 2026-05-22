@@ -540,11 +540,27 @@ export async function GET(req: NextRequest) {
   // BIZZ-329: Cross-reference with EJF to remove historical owners that Tinglysning
   // still reports. EJF uses virkningstid=nu so only has current owners.
   // BIZZ-1582: ejfPromise now returns EjfEjereResult directly (no HTTP overhead).
+  // BIZZ-1745: Skip cross-ref when EJF cache er stale (ældre end TL-adkomst).
+  // Tinglysning er autoritativ for nyere ejerskifter der ikke er synket til EJF endnu.
   if (harFaktiskeEjere) {
     try {
       const ejfResult = await ejfPromise;
       const ejfEjere = ejfResult?.ejere ?? [];
-      if (ejfEjere.length > 0) {
+
+      // BIZZ-1745: Freshness check — find nyeste TL-overtagelsesdato og nyeste EJF-virkningFra.
+      // Hvis TL har nyere ejere end EJF, skip cross-ref (EJF er stale).
+      const tlDatoer = ejerDetaljer
+        .filter((d) => d.overtagelsesdato)
+        .map((d) => new Date(d.overtagelsesdato!).getTime());
+      const nyesteTl = tlDatoer.length > 0 ? Math.max(...tlDatoer) : 0;
+      const ejfDatoer = ejfEjere
+        .filter((e) => e.virkningFra)
+        .map((e) => new Date(e.virkningFra!).getTime());
+      const nyesteEjf = ejfDatoer.length > 0 ? Math.max(...ejfDatoer) : 0;
+      // Hvis TL er > 30 dage nyere end EJF, skip cross-ref
+      const ejfErStale = nyesteTl > 0 && nyesteEjf > 0 && nyesteTl - nyesteEjf > 30 * 86400000;
+
+      if (ejfEjere.length > 0 && !ejfErStale) {
         const ejfCvrs = new Set(ejfEjere.filter((e) => e.cvr).map((e) => e.cvr!));
         const ejfNames = new Set(
           ejfEjere.filter((e) => e.personNavn).map((e) => e.personNavn!.toLowerCase())

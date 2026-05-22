@@ -355,49 +355,108 @@ export async function GET(request: NextRequest): Promise<NextResponse<CvrSalgshi
       'EJF_Ejerskifte',
       token
     );
-    if (ejerskifteResult?.authError) {
-      return NextResponse.json(
-        { cvr, handler: [], fejl: null, manglerNoegle: false, manglerAdgang: true },
-        { status: 200 }
-      );
-    }
-
-    const ejerskifter = ejerskifteResult?.nodes ?? [];
-
-    // ── Trin 3: Hent handelsoplysninger ──
-    const handelsIds = [
-      ...new Set(
-        ejerskifter
-          .map((e) => e.handelsoplysningerLokalId)
-          .filter((id): id is string => id != null && id.length > 0)
-      ),
-    ];
-
+    // BIZZ-1735: Fallback til cached ejf_ejerskifte + ejf_handelsoplysninger
+    // når live GraphQL fejler (authError/netværk)
+    let ejerskifter: RawEjerskifte[] = ejerskifteResult?.nodes ?? [];
     const handelsMap = new Map<string, RawHandelsoplysning>();
-    if (handelsIds.length > 0) {
-      const idsStr = handelsIds.map((id) => `"${id}"`).join(', ');
-      const handelsQuery = `{
-        EJF_Handelsoplysninger(
-          first: 1000
-          where: { id_lokalId: { in: [${idsStr}] } }
-        ) {
-          nodes {
-            id_lokalId
-            kontantKoebesum
-            samletKoebesum
-            koebsaftaleDato
-            valutakode
+
+    if (ejerskifteResult?.authError || (!ejerskifteResult && bfeList.length > 0)) {
+      // Live EJF query fejlede — prøv cached data
+      try {
+        const adminClient = (await import('@/lib/supabase/admin')).createAdminClient();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: cachedEjerskifter } = await (adminClient as any)
+          .from('ejf_ejerskifte')
+          .select(
+            'bfe_nummer, overtagelsesdato, overdragelsesmaade, handelsoplysninger_lokal_id, status'
+          )
+          .in('bfe_nummer', bfeList)
+          .eq('status', 'gældende')
+          .order('overtagelsesdato', { ascending: false })
+          .limit(200);
+
+        if (cachedEjerskifter && cachedEjerskifter.length > 0) {
+          ejerskifter = (cachedEjerskifter as Array<Record<string, unknown>>).map((e) => ({
+            bestemtFastEjendomBFENr: e.bfe_nummer as number,
+            overtagelsesdato: (e.overtagelsesdato as string) ?? null,
+            overdragelsesmaade: (e.overdragelsesmaade as string) ?? null,
+            handelsoplysningerLokalId: (e.handelsoplysninger_lokal_id as string) ?? null,
+            status: (e.status as string) ?? null,
+          }));
+
+          // Hent priser fra cached handelsoplysninger
+          const cachedHandelsIds = ejerskifter
+            .map((e) => e.handelsoplysningerLokalId)
+            .filter((id): id is string => id != null);
+          if (cachedHandelsIds.length > 0) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: cachedHandels } = await (adminClient as any)
+              .from('ejf_handelsoplysninger')
+              .select(
+                'id_lokal_id, kontant_koebesum, samlet_koebesum, koebsaftale_dato, valutakode'
+              )
+              .in('id_lokal_id', [...new Set(cachedHandelsIds)]);
+            if (cachedHandels) {
+              for (const h of cachedHandels as Array<Record<string, unknown>>) {
+                handelsMap.set(h.id_lokal_id as string, {
+                  id_lokalId: h.id_lokal_id as string,
+                  kontantKoebesum: (h.kontant_koebesum as number) ?? null,
+                  samletKoebesum: (h.samlet_koebesum as number) ?? null,
+                  koebsaftaleDato: (h.koebsaftale_dato as string) ?? null,
+                  valutakode: (h.valutakode as string) ?? null,
+                });
+              }
+            }
           }
         }
-      }`;
+      } catch {
+        // Cache lookup også fejlede — fortsæt med tom handler
+      }
 
-      const handelsResult = await queryEJF<RawHandelsoplysning>(
-        handelsQuery,
-        'EJF_Handelsoplysninger',
-        token
-      );
-      if (handelsResult?.nodes) {
-        for (const h of handelsResult.nodes) handelsMap.set(h.id_lokalId, h);
+      // Hvis stadig ingen data og det var en authError
+      if (ejerskifter.length === 0 && ejerskifteResult?.authError) {
+        return NextResponse.json(
+          { cvr, handler: [], fejl: null, manglerNoegle: false, manglerAdgang: true },
+          { status: 200 }
+        );
+      }
+    }
+
+    // ── Trin 3: Hent handelsoplysninger (live) ──
+    if (handelsMap.size === 0 && ejerskifter.length > 0) {
+      const handelsIds = [
+        ...new Set(
+          ejerskifter
+            .map((e) => e.handelsoplysningerLokalId)
+            .filter((id): id is string => id != null && id.length > 0)
+        ),
+      ];
+
+      if (handelsIds.length > 0) {
+        const idsStr = handelsIds.map((id) => `"${id}"`).join(', ');
+        const handelsQuery = `{
+          EJF_Handelsoplysninger(
+            first: 1000
+            where: { id_lokalId: { in: [${idsStr}] } }
+          ) {
+            nodes {
+              id_lokalId
+              kontantKoebesum
+              samletKoebesum
+              koebsaftaleDato
+              valutakode
+            }
+          }
+        }`;
+
+        const handelsResult = await queryEJF<RawHandelsoplysning>(
+          handelsQuery,
+          'EJF_Handelsoplysninger',
+          token
+        );
+        if (handelsResult?.nodes) {
+          for (const h of handelsResult.nodes) handelsMap.set(h.id_lokalId, h);
+        }
       }
     }
 

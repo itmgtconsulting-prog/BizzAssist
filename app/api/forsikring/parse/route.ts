@@ -74,8 +74,8 @@ function recordParseTokens(
   })();
 }
 
-/** Tag længere tid pga. Claude-kald (typisk 10-30 sek for en police-PDF) */
-export const maxDuration = 60;
+/** Øget fra 60 → 120s — nogle policer kræver lang Claude-processing */
+export const maxDuration = 120;
 
 interface ParseRequestBody {
   document_id?: unknown;
@@ -126,6 +126,30 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   const insurance = await getInsuranceApi(auth.tenantId);
+
+  // Cleanup stuck "parsing" docs (Vercel timeout dræber processen uden at
+  // catch-blokken kører → status forbliver "parsing" permanent).
+  // Reset docs der har været "parsing" i >3 min til "failed".
+  try {
+    const allDocs = await insurance.documents.list();
+    const now = Date.now();
+    for (const d of allDocs) {
+      if (d.parse_status === 'parsing' && d.created_at) {
+        const age = now - new Date(d.created_at).getTime();
+        if (age > 3 * 60 * 1000) {
+          await insurance.documents.updateParseStatus(d.id, 'failed', {
+            error: `Timeout: parsing brugte mere end 3 minutter (sandsynligvis Vercel serverless timeout)`,
+          });
+          logger.warn(
+            `[forsikring/parse] Reset stuck doc "${d.original_name}" (${d.id}) fra parsing → failed`
+          );
+        }
+      }
+    }
+  } catch {
+    // Cleanup er non-fatal
+  }
+
   const doc = await insurance.documents.get(documentId);
   if (!doc) {
     return NextResponse.json({ error: 'Dokument ikke fundet' }, { status: 404 });
@@ -138,28 +162,39 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   try {
     // Hent PDF fra Storage
+    logger.log(
+      `[forsikring/parse] Start: docId=${documentId} fil="${doc.original_name}" mime=${doc.mime_type} path=${doc.storage_path}`
+    );
     const admin = createAdminClient();
     const { data: blob, error: dlErr } = await admin.storage
       .from(BUCKET)
       .download(doc.storage_path);
     if (dlErr || !blob) {
       const msg = dlErr?.message ?? 'download returnerede null';
-      await insurance.documents.updateParseStatus(doc.id, 'failed', { error: msg });
-      logger.error('[forsikring/parse] download fejlede:', msg);
-      return NextResponse.json({ error: 'Kunne ikke hente fil' }, { status: 500 });
+      await insurance.documents.updateParseStatus(doc.id, 'failed', {
+        error: `Download fejl: ${msg}`,
+      });
+      logger.error(`[forsikring/parse] Download fejlede for "${doc.original_name}":`, msg);
+      return NextResponse.json({ error: 'Kunne ikke hente fil', detail: msg }, { status: 500 });
     }
     const buffer = Buffer.from(await blob.arrayBuffer());
+    logger.log(`[forsikring/parse] Downloaded "${doc.original_name}": ${buffer.length} bytes`);
 
     // Route til text-parser eller vision-parser baseret på filtype
     const fileType = resolveFileType(doc.mime_type, doc.original_name);
     if (!fileType) {
       const errMsg = `Filtype kunne ikke afgøres (mime=${doc.mime_type}, navn=${doc.original_name})`;
       await insurance.documents.updateParseStatus(doc.id, 'failed', { error: errMsg });
-      return NextResponse.json({ error: errMsg }, { status: 422 });
+      logger.error(`[forsikring/parse] Filtype ukendt for "${doc.original_name}": ${errMsg}`);
+      return NextResponse.json({ error: errMsg, detail: errMsg }, { status: 422 });
     }
+    logger.log(
+      `[forsikring/parse] Filtype="${fileType}" for "${doc.original_name}" (${buffer.length} bytes) — sender til Claude`
+    );
 
     // BIZZ-1392: 2-trins pipeline — detektér dokumenttype, derefter parse
     let result: MultiParseResult;
+    const parseStart = Date.now();
     if (fileType === 'image') {
       // Billeder kan ikke gennemgå trin 1 — parse direkte som police
       result = await parsePolicyImage(buffer, imageSubtypeFromMime(doc.mime_type), apiKey);
@@ -168,14 +203,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     } else {
       result = { ok: false, text: null, error: `Filtype ${fileType} understøttes ikke endnu` };
     }
+    const parseMs = Date.now() - parseStart;
 
     if (!result.ok) {
+      const detail = `Parse fejlede efter ${parseMs}ms: ${result.error}`;
       await insurance.documents.updateParseStatus(doc.id, 'failed', {
-        error: result.error,
+        error: detail,
         extractedText: result.text ?? undefined,
       });
-      return NextResponse.json({ error: result.error }, { status: 422 });
+      logger.error(
+        `[forsikring/parse] FEJL "${doc.original_name}" (${parseMs}ms): ${result.error}`
+      );
+      return NextResponse.json({ error: result.error, detail }, { status: 422 });
     }
+    logger.log(
+      `[forsikring/parse] OK "${doc.original_name}" parsed i ${parseMs}ms — type=${'oversigt' in result ? 'oversigt' : result.documentType}`
+    );
 
     // BIZZ-1392: Håndtér baseret på dokumenttype
     if ('oversigt' in result) {
@@ -439,9 +482,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       tokenUsage: result.tokenUsage ?? null,
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'unknown';
-    await insurance.documents.updateParseStatus(doc.id, 'failed', { error: msg });
-    logger.error('[forsikring/parse] uventet fejl:', err);
-    return NextResponse.json({ error: 'Parse fejlede' }, { status: 500 });
+    const msg = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error ? err.stack?.split('\n').slice(0, 3).join(' → ') : '';
+    const detail = `Uventet fejl: ${msg}${stack ? ` [${stack}]` : ''}`;
+    await insurance.documents.updateParseStatus(doc.id, 'failed', { error: detail });
+    logger.error(
+      `[forsikring/parse] CRASH "${doc.original_name}" (docId=${documentId}): ${msg}`,
+      stack
+    );
+    return NextResponse.json({ error: 'Parse fejlede', detail }, { status: 500 });
   }
 }

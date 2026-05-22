@@ -129,8 +129,8 @@ export default function EjendomOverblikTab({
   // bagudkompatibilitet — vises ikke længere i Oversigt-fanen.
   ejere: _ejere,
   senestHandel: _senestHandel,
-  grundskyld,
-  ejendomsvaerdiskat,
+  grundskyld: _grundskyld,
+  ejendomsvaerdiskat: _ejendomsvaerdiskat,
   zoneinfo: _zoneinfo,
 }: Props) {
   const da = lang === 'da';
@@ -487,30 +487,9 @@ export default function EjendomOverblikTab({
           />
         </div>
 
-        {/* ─── Økonomi summary ───
-           BIZZ-1547: Zone-kort fjernet — zone vises som badge i ejendomsheader.
-           BIZZ-1548: "Seneste handel"-kort fjernet — data findes i Økonomi/Salgshistorik-fanen.
-           BIZZ-1549: "Ejere"-kort fjernet — data findes i Ejerskab- og Tinglysnings-fanen. */}
-        {(grundskyld || ejendomsvaerdiskat) && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {/* Skat */}
-            <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
-              <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">
-                {da ? 'Årlig skat' : 'Annual tax'}
-              </p>
-              {grundskyld != null && grundskyld > 0 && (
-                <p className="text-slate-200 text-xs">
-                  {da ? 'Grundskyld' : 'Land tax'}: {grundskyld.toLocaleString('da-DK')} DKK
-                </p>
-              )}
-              {ejendomsvaerdiskat != null && ejendomsvaerdiskat > 0 && (
-                <p className="text-slate-200 text-xs">
-                  {da ? 'Ejd.skat' : 'Prop. tax'}: {ejendomsvaerdiskat.toLocaleString('da-DK')} DKK
-                </p>
-              )}
-            </div>
-          </div>
-        )}
+        {/* BIZZ-1668: Estimeret skat-boks fjernet — viste forkerte beløb
+           (estimereretGrundskyld ≠ faktisk grundskyld fra SKAT-tabben).
+           Korrekte skattebeløb findes på SKAT-fanen. */}
 
         {/* ─── Rad 2: Bygninger (v) + Enheder (h) ─── */}
 
@@ -648,6 +627,60 @@ export default function EjendomOverblikTab({
           );
         })()}
       </div>
+
+      {/* BIZZ-1637: Bygningsdetaljer — DLR-inspireret tabel med tekniske data */}
+      {!bbrLoader &&
+        bbrData?.bbr &&
+        bbrData.bbr.length > 0 &&
+        (() => {
+          const b = bbrData.bbr.filter((x) => isAktivStatusLabel(x.status))[0];
+          if (!b) return null;
+          const rows: Array<[string, string]> = [];
+          if (b.ydervaeg) rows.push([da ? 'Ydervæg' : 'Exterior wall', b.ydervaeg]);
+          if (b.tagmateriale) rows.push([da ? 'Tag' : 'Roof', b.tagmateriale]);
+          if (b.opfoerelsesaar)
+            rows.push([da ? 'Opførelsesår' : 'Year built', String(b.opfoerelsesaar)]);
+          if (b.ombygningsaar)
+            rows.push([da ? 'Ombygningsår' : 'Renovated', String(b.ombygningsaar)]);
+          if (b.bebyggetAreal)
+            rows.push([
+              da ? 'Bebygget areal' : 'Built area',
+              `${b.bebyggetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`,
+            ]);
+          if (b.antalEtager) rows.push([da ? 'Etager' : 'Floors', String(b.antalEtager)]);
+          if (b.kaelder && b.kaelder > 0)
+            rows.push([da ? 'Kælder' : 'Basement', `${b.kaelder} m²`]);
+          if (b.opvarmningsform) rows.push([da ? 'Opvarmning' : 'Heating', b.opvarmningsform]);
+          if (b.supplerendeVarme)
+            rows.push([da ? 'Supplerende varme' : 'Supplementary heating', b.supplerendeVarme]);
+          if (b.vandforsyning) rows.push([da ? 'Vandforsyning' : 'Water supply', b.vandforsyning]);
+          if (b.afloeb) rows.push([da ? 'Afløb' : 'Drainage', b.afloeb]);
+          if (b.fredning) rows.push([da ? 'Fredning' : 'Preservation', b.fredning]);
+          if (b.bevaringsvaerdighed)
+            rows.push([
+              da ? 'Bevaringsværdighed (SAVE)' : 'Conservation value',
+              b.bevaringsvaerdighed,
+            ]);
+          if (rows.length === 0) return null;
+          return (
+            <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3 mt-2">
+              <h3 className="text-white font-semibold text-xs mb-2">
+                {da ? 'Bygningsdetaljer' : 'Building details'}
+              </h3>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                {rows.map(([label, value]) => (
+                  <div
+                    key={label}
+                    className="flex justify-between py-0.5 border-b border-slate-700/30 last:border-b-0"
+                  >
+                    <span className="text-slate-500 text-xs">{label}</span>
+                    <span className="text-white text-xs font-medium">{value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
 
       {/*
         BIZZ-473 follow-up: "Virksomheder på adressen" deterministisk

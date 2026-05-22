@@ -1,0 +1,248 @@
+[
+  {
+    "id": 1,
+    "question": "Hvad er byggeåret og boligarealet for Vigerslevvej 146, 1. th, 2500 Valby?",
+    "expectAny": [
+      "1940",
+      "m²",
+      "bolig"
+    ],
+    "tab": "Oversigt/BBR",
+    "status": "PASS",
+    "responseLength": 855,
+    "matched": [
+      "1940",
+      "m²",
+      "bolig"
+    ]
+  },
+  {
+    "id": 2,
+    "question": "Hvad er den seneste ejendomsvurdering og grundværdi for Vigerslevvej 146, 1. th, 2500 Valby?",
+    "expectAny": [
+      "DKK",
+      "vurdering",
+      "grundværdi"
+    ],
+    "tab": "Økonomi",
+    "status": "PASS",
+    "responseLength": 975,
+    "matched": [
+      "vurdering",
+      "grundværdi"
+    ]
+  },
+  {
+    "id": 3,
+    "question": "Hvem ejer Vigerslevvej 146, 1. th, 2500 Valby, og hvornår overtog de?",
+    "expectAny": [
+      "Jakob",
+      "Rasmussen",
+      "2005"
+    ],
+    "tab": "Ejerskab",
+    "status": "KEYWORD_MISS",
+    "responseLength": 3753,
+    "preview": "AI Chat\nToken status\n∞\n\n⚠️ Svar genereret af AI er ikke nødvendigvis korrekte. Verificér altid vigtig information.\n\nHvad er byggeåret og boligarealet for Vigerslevvej 146, 1. th, 2500 Valby?\n\nHer er de BBR-registrerede oplysninger for Vigerslevvej 146, 1. th, 2500 Valby:\n\n---\n\n🏠 Byggeår & Boligarea"
+  },
+  {
+    "id": 4,
+    "question": "Er der hæftelser eller servitutter tinglyst på Vigerslevvej 146, 1. th, 2500 Valby?",
+    "expectAny": [
+      "tinglys",
+      "pant",
+      "hæftelse",
+      "servitut"
+    ],
+    "tab": "Tinglysning",
+    "status": "PASS",
+    "responseLength": 3888,
+    "matched": [
+      "tinglys",
+      "hæftelse",
+      "servitut"
+    ]
+  },
+  {
+    "id": 5,
+    "question": "Hvad er energimærket for Vigerslevvej 146, 1. th, 2500 Valby?",
+    "expectAny": [
+      "energi",
+      "klasse",
+      "mærke"
+    ],
+    "tab": "Dokumenter",
+    "status": "KEYWORD_MISS",
+    "responseLength": 3888,
+    "preview": "AI Chat\nHenter tinglysningsdata…\nToken status\n∞\n\n⚠️ Svar genereret af AI er ikke nødvendigvis korrekte. Verificér altid vigtig information.\n\nHvad er byggeåret og boligarealet for Vigerslevvej 146, 1. th, 2500 Valby?\n\nHer er de BBR-registrerede oplysninger for Vigerslevvej 146, 1. th, 2500 Valby:\n\n--"
+  },
+  {
+    "id": 6,
+    "question": "Er der jordforurening registreret på Vigerslevvej 146, 2500 Valby?",
+    "expectAny": [
+      "forurening",
+      "kortlagt",
+      "V1",
+      "V2",
+      "ikke"
+    ],
+    "tab": "Dokumenter",
+    "status": "PASS",
+    "responseLength": 8861,
+    "matched": [
+      "forurening",
+      "ikke"
+    ]
+  },
+  {
+    "id": 7,
+    "question": "Hvilken lokalplan gælder for Vigerslevvej 146, 2500 Valby?",
+    "expectAny": [
+      "lokalplan",
+      "plan",
+      "kommune"
+    ],
+    "tab": "Dokumenter",
+    "status": "PASS",
+    "responseLength": 8976,
+    "matched": [
+      "lokalplan",
+      "plan"
+    ]
+  },
+  {
+    "id": 8,
+    "question": "Hvad er matrikelnummeret og grundarealet for Vigerslevvej 146, 2500 Valby?",
+    "expectAny": [
+      "matrikel",
+      "m²",
+      "areal"
+    ],
+    "tab": "BBR",
+    "status": "PASS",
+    "responseLength": 10633,
+    "matched": [
+      "matrikel",
+      "m²",
+      "areal"
+    ]
+  },
+  {
+    "id": 9,
+    "question": "Hvad laver JaJR Holding ApS (CVR 41092807), og hvornår blev virksomheden stiftet?",
+    "expectAny": [
+      "41092807",
+      "stiftet",
+      "holding"
+    ],
+    "tab": "Virksomhed",
+    "status": "PASS",
+    "responseLength": 14681,
+    "matched": [
+      "41092807",
+      "stiftet",
+      "holding"
+    ]
+  },
+  {
+    "id": 10,
+    "question": "Hvad er egenkapitalen for JaJR Holding ApS (CVR 41092807) i det seneste regnskab?",
+    "expectAny": [
+      "egenkapital",
+      "DKK",
+      "kr"
+    ],
+    "tab": "Regnskab",
+    "status": "PASS",
+    "responseLength": 16114,
+    "matched": [
+      "egenkapital",
+      "kr"
+    ]
+  },
+  {
+    "id": 11,
+    "question": "Hvem er direktør for JaJR Holding ApS (CVR 41092807)?",
+    "expectAny": [
+      "Jakob",
+      "direktør"
+    ],
+    "tab": "Nøglepersoner",
+    "status": "PASS",
+    "responseLength": 17138,
+    "matched": [
+      "Jakob",
+      "direktør"
+    ]
+  },
+  {
+    "id": 12,
+    "question": "Hvilke ejendomme ejer JaJR Holding ApS (CVR 41092807)? Giv mig de første 5.",
+    "expectAny": [
+      "BFE",
+      "ejendom",
+      "adresse",
+      "boulevard"
+    ],
+    "tab": "Ejendomme",
+    "status": "PASS",
+    "responseLength": 17805,
+    "matched": [
+      "BFE",
+      "ejendom",
+      "adresse"
+    ]
+  },
+  {
+    "id": 13,
+    "question": "Hvilke virksomheder er Jakob Juul Rasmussen tilknyttet? Søg med enhedsnummer 4004514945.",
+    "expectAny": [
+      "JaJR",
+      "Holding",
+      "rolle",
+      "direktør"
+    ],
+    "tab": "Person",
+    "status": "PASS",
+    "responseLength": 18672,
+    "matched": [
+      "JaJR",
+      "Holding",
+      "rolle",
+      "direktør"
+    ]
+  },
+  {
+    "id": 14,
+    "question": "Hvad er den forventede årlige ejendomsskat for Vigerslevvej 146, 1. th, 2500 Valby under det nye vurderingssystem?",
+    "expectAny": [
+      "skat",
+      "DKK",
+      "grundskyld",
+      "kr"
+    ],
+    "tab": "SKAT",
+    "status": "PASS",
+    "responseLength": 18840,
+    "matched": [
+      "skat",
+      "grundskyld",
+      "kr"
+    ]
+  },
+  {
+    "id": 15,
+    "question": "Hvad er befolkningstallet og den gennemsnitlige indkomst i området omkring Vigerslevvej 146, 2500 Valby?",
+    "expectAny": [
+      "befolkning",
+      "indkomst",
+      "område"
+    ],
+    "tab": "Områdeprofil",
+    "status": "PASS",
+    "responseLength": 21048,
+    "matched": [
+      "område"
+    ]
+  }
+]

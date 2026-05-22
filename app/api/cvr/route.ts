@@ -19,6 +19,14 @@ import { z } from 'zod';
 import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+import { LruCache } from '@/app/lib/lruCache';
+
+/**
+ * BIZZ-1628: In-memory LRU cache for CVR adresse-lookups.
+ * Adresser ændrer sig sjældent — 1 time TTL, 150 entries.
+ * Key: vejnavn|husnr|postnr (lowercase, trimmed).
+ */
+const cvrAdresseCache = new LruCache<string, CVRVirksomhed[]>({ maxSize: 150, ttlMs: 3_600_000 });
 
 /** Zod schema for /api/cvr query params */
 const querySchema = z.object({
@@ -242,6 +250,16 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   // Returner tokenMangler-flag hvis credentials ikke er sat
   if (!CVR_ES_USER || !CVR_ES_PASS) {
     return NextResponse.json({ virksomheder: [], tokenMangler: true }, { status: 200 });
+  }
+
+  // BIZZ-1628: Cache-first — adresser ændrer sig sjældent
+  const cacheKey = `${vejnavn}|${husnr}|${postnr}`.toLowerCase().trim();
+  const cached = cvrAdresseCache.get(cacheKey);
+  if (cached) {
+    return NextResponse.json(
+      { virksomheder: cached, tokenMangler: false },
+      { headers: { 'Cache-Control': 'public, s-maxage=1800', 'X-Cache': 'HIT' } }
+    );
   }
 
   const { nr, bogstav } = parseHusnr(husnr);
@@ -474,6 +492,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       const bScore = b.aktiv && b.påAdressen ? 2 : b.aktiv ? 1 : 0;
       return bScore - aScore;
     });
+
+    // BIZZ-1628: Cache result for future lookups
+    cvrAdresseCache.set(cacheKey, virksomheder);
 
     return NextResponse.json(
       { virksomheder, tokenMangler: false },

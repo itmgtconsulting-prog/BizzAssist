@@ -14,6 +14,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { getTenantSchemaName } from '@/lib/db/tenant';
 import { logger } from '@/app/lib/logger';
 import { riskLabel } from '@/app/lib/forsikring/gapEngine';
+import { buildGapRapportDocx } from '@/app/lib/forsikring/rapportBuilder';
 
 export const maxDuration = 30;
 
@@ -46,21 +47,25 @@ export async function GET(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = (admin as any).schema(schemaName);
 
-    const [analyseResult, aktiverResult, gapsResult] = await Promise.all([
-      db
-        .from('forsikring_analyser')
-        .select('*')
-        .eq('id', id)
-        .eq('tenant_id', auth.tenantId)
-        .maybeSingle(),
-      db
-        .from('forsikring_aktiver')
-        .select('*')
-        .eq('analyse_id', id)
-        .eq('tenant_id', auth.tenantId)
-        .order('type'),
-      db.from('forsikring_gaps').select('*').eq('tenant_id', auth.tenantId),
-    ]);
+    const [analyseResult, aktiverResult, gapsResult, policiesResult, coveragesResult] =
+      await Promise.all([
+        db
+          .from('forsikring_analyser')
+          .select('*')
+          .eq('id', id)
+          .eq('tenant_id', auth.tenantId)
+          .maybeSingle(),
+        db
+          .from('forsikring_aktiver')
+          .select('*')
+          .eq('analyse_id', id)
+          .eq('tenant_id', auth.tenantId)
+          .order('type'),
+        db.from('forsikring_gaps').select('*').eq('tenant_id', auth.tenantId),
+        db.from('forsikring_policies').select('*').eq('tenant_id', auth.tenantId),
+        // BIZZ-1633: Hent dækninger for rapport
+        db.from('forsikring_coverages').select('*').eq('tenant_id', auth.tenantId),
+      ]);
 
     if (!analyseResult.data) {
       return NextResponse.json({ error: 'Analyse ikke fundet' }, { status: 404 });
@@ -69,12 +74,74 @@ export async function GET(
     const analyse = analyseResult.data;
     const aktiver = aktiverResult.data ?? [];
     const gaps = gapsResult.data ?? [];
+    const policies = policiesResult.data ?? [];
+    const coverages = coveragesResult.data ?? [];
 
     if (format === 'csv') {
       return generateCsv(analyse, aktiver, gaps);
     }
 
-    // Default: struktureret JSON (til fremtidig DOCX-generation via Claude)
+    // BIZZ-1618: Generér styled DOCX med farvede severity-cards, metrics-bar,
+    // ejendomsliste og police-oversigt — matcher dashboard-layoutet.
+    if (format === 'docx') {
+      const buf = await buildGapRapportDocx({
+        kundeNavn: (analyse.kunde_navn as string) ?? String(analyse.kunde_id),
+        analyse: {
+          total_aktiver: analyse.total_aktiver as number,
+          insured_count: analyse.insured_count as number,
+          uninsured_count: analyse.uninsured_count as number,
+          total_risk_score: analyse.total_risk_score as number,
+          created_at: analyse.created_at as string,
+        },
+        aktiver: aktiver.map((a: Record<string, unknown>) => ({
+          type: String(a.type ?? ''),
+          label: String(a.label ?? ''),
+          adresse: (a.adresse as string) ?? null,
+          matched_policy_id: (a.matched_policy_id as string) ?? null,
+          match_score: (a.match_score as number) ?? null,
+        })),
+        policies: policies.map((p: Record<string, unknown>) => ({
+          id: String(p.id ?? ''),
+          policy_number: String(p.policy_number ?? ''),
+          insurer_name: String(p.insurer_name ?? ''),
+          property_address: (p.property_address as string) ?? null,
+          annual_premium_dkk: (p.annual_premium_dkk as number) ?? null,
+          effective_to: (p.effective_to as string) ?? null,
+          sum_insured_dkk: (p.sum_insured_dkk as number) ?? null,
+        })),
+        gaps: gaps.map((g: Record<string, unknown>) => ({
+          policy_id: String(g.policy_id ?? ''),
+          severity: String(g.severity ?? 'info'),
+          title: String(g.title ?? ''),
+          description: String(g.description ?? ''),
+          recommendation: (g.recommendation as string) ?? null,
+        })),
+        // BIZZ-1633: Dækninger per police
+        coverages: coverages.map((c: Record<string, unknown>) => ({
+          policy_id: String(c.policy_id ?? ''),
+          coverage_code: String(c.coverage_code ?? ''),
+          coverage_label: String(c.label ?? c.coverage_code ?? ''),
+          is_covered: c.is_covered !== false,
+          sum_insured_dkk: (c.sum_insured_dkk as number) ?? null,
+          deductible_dkk: (c.deductible_dkk as number) ?? null,
+        })),
+      });
+
+      const kundeSlug = ((analyse.kunde_navn as string) ?? String(analyse.kunde_id))
+        .replace(/[^a-zA-Z0-9æøåÆØÅ ]/g, '')
+        .replace(/\s+/g, '-')
+        .toLowerCase()
+        .slice(0, 40);
+
+      return new NextResponse(new Uint8Array(buf), {
+        headers: {
+          'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'Content-Disposition': `attachment; filename="gap-rapport-${kundeSlug}.docx"`,
+        },
+      });
+    }
+
+    // Fallback: JSON
     return NextResponse.json({
       rapport: {
         title: `Forsikrings-gap-analyse: ${analyse.kunde_navn ?? analyse.kunde_id}`,

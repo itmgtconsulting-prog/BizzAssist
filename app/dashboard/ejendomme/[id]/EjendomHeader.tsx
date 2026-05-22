@@ -133,7 +133,7 @@ export default function EjendomHeader(props: EjendomHeaderProps) {
   const router = useRouter();
 
   return (
-    <div className="px-3 sm:px-6 pt-5 pb-0 border-b border-slate-700/50 bg-slate-900/30">
+    <div className="px-3 sm:px-6 pt-5 pb-0 border-b border-slate-700/50 bg-slate-900/30 relative z-20">
       <div className="flex items-center justify-between mb-3">
         <button
           onClick={() => router.push('/dashboard/ejendomme')}

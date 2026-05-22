@@ -237,7 +237,7 @@ REGLER:
 - Kig efter GENPART-overskrifter, nye stempelafgift-beløb, nye navne — det indikerer nyt ejerskifte
 - Dato i ISO format (YYYY-MM-DD). Brug dit bedste skøn for gamle datoer
 - Købesum som heltal i DKK (null hvis ikke angivet)
-- CPR-numre maskeres: kun de første 6 cifre + "****"
+- CPR-numre: UDELAD ALTID. Sæt cpr: null. Inkludér ALDRIG CPR-numre i output — hverken helt eller delvist maskeret.
 - Gamle håndskrevne/maskinskrevne dokumenter: gør dit bedste, marker usikre felter med null
 - INKLUDÉR også handler hvor du kun kan se dato + navn men ikke købesum
 - Returnér KUN valid JSON. Ingen forklaring, ingen markdown.`;
@@ -290,7 +290,16 @@ async function extractWithAI(
     .replace(/```/g, '')
     .trim();
   try {
-    const parsed = JSON.parse(jsonStr);
+    // BIZZ-1703: Redact CPR fra AI-output som sikkerhedsnet
+    const { redactCpr } = await import('@/app/lib/piiRedact');
+    const cleanJsonStr = redactCpr(jsonStr);
+    const parsed = JSON.parse(cleanJsonStr);
+    // Force cpr=null på alle koeber (per CPR-policy)
+    for (const h of parsed.handler ?? []) {
+      for (const k of h.koeber ?? []) {
+        k.cpr = null;
+      }
+    }
     return {
       handler: parsed.handler ?? [],
       haeftelser: parsed.haeftelser ?? [],

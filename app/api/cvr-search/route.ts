@@ -137,11 +137,18 @@ function mapHit(hit: Record<string, unknown>): CVRSearchResult | null {
   const livsforloeb = Array.isArray(src.livsforloeb)
     ? (src.livsforloeb as { periode?: { gyldigTil?: string | null } }[])
     : [];
-  const harSlutdato = livsforloeb.some((l) => l.periode?.gyldigTil != null);
-  const active =
-    (statusVal === 'NORMAL' || statusVal === 'AKTIV' || statusVal === '') &&
-    sammensatStatus !== 'Ophørt' &&
-    !harSlutdato;
+  // BIZZ-1648: Tjek kun den seneste livsforloeb-periode — virksomheder kan
+  // have historiske perioder med slutdato (f.eks. genregistreret efter ophør).
+  const senestePeriode = livsforloeb[livsforloeb.length - 1];
+  const harSlutdato = senestePeriode?.periode?.gyldigTil != null;
+  // sammensatStatus er den pålidelige kilde — ejerforeninger/foreninger
+  // har ofte atypiske statuskoder (hverken NORMAL/AKTIV/"").
+  const ceased =
+    sammensatStatus === 'Ophørt' ||
+    sammensatStatus === 'Slettet' ||
+    harSlutdato ||
+    statusVal === 'OPHOERT';
+  const active = !ceased;
 
   // Ophørsdato
   const slutdato =
@@ -228,41 +235,45 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       // virksomhedMetadata.sammensatStatus (status) + .stiftelsesDato (stiftetAar)
       'Vrvirksomhed.virksomhedMetadata',
     ],
-    query: {
-      nested: {
-        path: 'Vrvirksomhed.navne',
-        query: {
-          bool: {
-            should: [
-              // Eksakt phrase match — højest score
-              { match_phrase: { 'Vrvirksomhed.navne.navn': { query: q, boost: 5 } } },
-              // Prefix-match — fanger "cerami" → "Ceramica ApS"
-              { match_phrase_prefix: { 'Vrvirksomhed.navne.navn': { query: q, boost: 4 } } },
-              // Wildcard contains-match — fanger "cerami" midt i navnet
-              {
-                wildcard: {
-                  'Vrvirksomhed.navne.navn': { value: `*${q.toLowerCase()}*`, boost: 3 },
+    query: /^\d{8}$/.test(q)
+      ? // BIZZ-1643: Eksakt CVR-nummer match (8 cifre)
+        { term: { 'Vrvirksomhed.cvrNummer': parseInt(q, 10) } }
+      : // BIZZ-1643: Prefix CVR match (delvist nummer, 3-7 cifre)
+        /^\d{3,7}$/.test(q)
+        ? { prefix: { 'Vrvirksomhed.cvrNummer': q } }
+        : // Navne-søgning (tekst)
+          {
+            nested: {
+              path: 'Vrvirksomhed.navne',
+              query: {
+                bool: {
+                  should: [
+                    { match_phrase: { 'Vrvirksomhed.navne.navn': { query: q, boost: 5 } } },
+                    { match_phrase_prefix: { 'Vrvirksomhed.navne.navn': { query: q, boost: 4 } } },
+                    {
+                      wildcard: {
+                        'Vrvirksomhed.navne.navn': { value: `*${q.toLowerCase()}*`, boost: 3 },
+                      },
+                    },
+                    {
+                      match: { 'Vrvirksomhed.navne.navn': { query: q, operator: 'and', boost: 2 } },
+                    },
+                    {
+                      match: {
+                        'Vrvirksomhed.navne.navn': {
+                          query: q,
+                          fuzziness: 'AUTO',
+                          operator: 'or',
+                          boost: 1,
+                        },
+                      },
+                    },
+                  ],
+                  minimum_should_match: 1,
                 },
               },
-              // Standard match med alle ord
-              { match: { 'Vrvirksomhed.navne.navn': { query: q, operator: 'and', boost: 2 } } },
-              // Fuzzy match — fanger stavefejl
-              {
-                match: {
-                  'Vrvirksomhed.navne.navn': {
-                    query: q,
-                    fuzziness: 'AUTO',
-                    operator: 'or',
-                    boost: 1,
-                  },
-                },
-              },
-            ],
-            minimum_should_match: 1,
+            },
           },
-        },
-      },
-    },
     size: 20,
   };
 

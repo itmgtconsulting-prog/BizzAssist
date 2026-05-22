@@ -766,8 +766,8 @@ export default function VirksomhederListesideClient() {
       return;
     }
 
-    // Digits only but not 8 → still typing CVR or invalid
-    if (/^\d+$/.test(trimmed) && trimmed.length < 8) return;
+    // BIZZ-1643: Tillad CVR-prefix-søgning fra 3 cifre (prefix match i ES)
+    if (/^\d+$/.test(trimmed) && trimmed.length < 3) return;
     if (/^\d+$/.test(trimmed) && trimmed.length > 8) {
       setError(txt.invalidCvr);
       setSearchDone(true);

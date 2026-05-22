@@ -61,6 +61,44 @@ const empty = (): AdresseRow => ({
 async function resolveOne(bfe: string): Promise<AdresseRow> {
   const result = empty();
 
+  // BIZZ-1637: Cache-first fra bbr_ejendom_status → DAWA adgangsadresse
+  try {
+    const { createAdminClient } = await import('@/lib/supabase/admin');
+    const admin = createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: bbrRow } = await (admin as any)
+      .from('bbr_ejendom_status')
+      .select('adgangsadresse_id')
+      .eq('bfe_nummer', Number(bfe))
+      .not('adgangsadresse_id', 'is', null)
+      .maybeSingle();
+    if (bbrRow?.adgangsadresse_id) {
+      const dawaRes = await fetch(`${DAWA_BASE_URL}/adgangsadresser/${bbrRow.adgangsadresse_id}`, {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(3000),
+      });
+      if (dawaRes.ok) {
+        const adr = (await dawaRes.json()) as {
+          vejstykke?: { navn?: string };
+          husnr?: string;
+          postnummer?: { nr?: string; navn?: string };
+          kommune?: { navn?: string };
+          id?: string;
+        };
+        if (adr.vejstykke?.navn) {
+          result.adresse = `${adr.vejstykke.navn} ${adr.husnr ?? ''}`.trim();
+          result.postnr = adr.postnummer?.nr ?? null;
+          result.by = adr.postnummer?.navn ?? null;
+          result.kommune = adr.kommune?.navn ?? null;
+          result.dawaId = adr.id ?? bbrRow.adgangsadresse_id;
+          return result;
+        }
+      }
+    }
+  } catch {
+    // Cache miss — fall through
+  }
+
   // Trin 1: DAWA /bfe/{bfe} — virker for samlet fast ejendom
   try {
     const res = await fetch(`${DAWA_BASE_URL}/bfe/${bfe}`, {

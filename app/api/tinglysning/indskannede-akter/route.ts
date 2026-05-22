@@ -398,7 +398,12 @@ export async function GET(req: NextRequest) {
     }
 
     // Trin 2: Hent matrikel-info fra REST (kræves af S2S EjendomIdentifikator)
-    const sumRes = await tlFetchShared(`/ejdsummarisk/${ejendomId}`, { accept: 'application/xml' });
+    // BIZZ-1679: Retry ved 429 (TL rate-limit) — op til 2 forsøg med 2s pause.
+    let sumRes = await tlFetchShared(`/ejdsummarisk/${ejendomId}`, { accept: 'application/xml' });
+    if (sumRes.status === 429) {
+      await new Promise((r) => setTimeout(r, 2000));
+      sumRes = await tlFetchShared(`/ejdsummarisk/${ejendomId}`, { accept: 'application/xml' });
+    }
     if (sumRes.status !== 200) {
       return NextResponse.json(
         { ejendomId, akter: [], _debug: { step: 'rest', status: sumRes.status } },

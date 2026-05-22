@@ -38,6 +38,82 @@ const MAX_RECENTS: Record<string, number> = {
 const TABLE = 'recent_entities';
 
 /**
+ * BIZZ-1626: Dedup person-recents. Samme fysiske person kan have flere
+ * enhedsNummer i CVR ES — behold kun den seneste visit per person.
+ *
+ * Dedup-logik (kræver navnematch + mindst ét sekundært signal):
+ *   1. display_name matcher (case-insensitive)
+ *   2. PLUS mindst ét af:
+ *      a) Deler mindst ét CVR i entity_data.virksomheder
+ *      b) Samme adresse i entity_data.adresse
+ *      c) Ingen virksomheder/adresse at sammenligne (legacy data)
+ *
+ * To "Hans Hansen" med forskellige virksomheder OG forskellige adresser
+ * beholdes begge — undgår at slå to fysisk forskellige personer sammen.
+ *
+ * Rows er allerede sorteret visited_at DESC — første forekomst vinder.
+ */
+function dedupPersonRecents(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  interface PersonFingerprint {
+    cvrs: Set<string>;
+    adresse: string;
+  }
+  const seen = new Map<string, PersonFingerprint>();
+
+  return rows.filter((r) => {
+    if (r.entity_type !== 'person') return true;
+    const name = ((r.display_name as string) ?? '').toLowerCase().trim();
+    if (!name) return true;
+
+    const ed = r.entity_data as Record<string, unknown> | undefined;
+    // Virksomheder kan gemmes som JSON-streng (ny) eller array (fremtidig)
+    let virksomheder: string[] = [];
+    if (typeof ed?.virksomheder === 'string') {
+      try {
+        virksomheder = (JSON.parse(ed.virksomheder) as Array<{ cvr?: string }>)
+          .map((v) => v.cvr ?? '')
+          .filter(Boolean);
+      } catch {
+        /* ignore */
+      }
+    } else if (Array.isArray(ed?.virksomheder)) {
+      virksomheder = (ed!.virksomheder as Array<{ cvr?: string }>)
+        .map((v) => v.cvr ?? '')
+        .filter(Boolean);
+    }
+    const adresse = ((ed?.adresse as string) ?? '').toLowerCase().trim();
+
+    const existing = seen.get(name);
+    if (!existing) {
+      seen.set(name, { cvrs: new Set(virksomheder), adresse });
+      return true;
+    }
+
+    // BIZZ-1626 fix: entries uden virksomheder-array OG uden adresse
+    // dedupes på display_name alene — legacy entity_data har kun
+    // antalVirksomheder/erVirksomhed men ikke virksomheder[]/adresse.
+    const currentHasNoData = virksomheder.length === 0 && !adresse;
+    const existingHasNoData = existing.cvrs.size === 0 && !existing.adresse;
+    const noDataToCompare = currentHasNoData || existingHasNoData;
+
+    // Samme navn — tjek om det er samme fysiske person
+    const cvrOverlap = virksomheder.some((cvr) => existing.cvrs.has(cvr));
+    const adresseMatch =
+      adresse.length > 3 && existing.adresse.length > 3 && adresse === existing.adresse;
+
+    if (!cvrOverlap && !adresseMatch && !noDataToCompare) {
+      // Forskellige person — behold begge
+      return true;
+    }
+
+    // Samme person — merge data og skip denne (ældre) entry
+    for (const cvr of virksomheder) existing.cvrs.add(cvr);
+    if (!existing.adresse && adresse) existing.adresse = adresse;
+    return false;
+  });
+}
+
+/**
  * GET /api/recents?type=property
  *
  * Returns recent entities for the authenticated user, sorted by most recent.
@@ -53,8 +129,31 @@ export async function GET(request: NextRequest) {
       | 'company'
       | 'property'
       | 'person'
-      | 'search';
+      | 'search'
+      | 'all';
     const admin = createAdminClient();
+
+    // BIZZ-1582: type=all returns all types in a single query (saves 3 round-trips
+    // from RecentEntityTagBar which previously fired 4 parallel requests).
+    if (entityType === 'all') {
+      const { data, error } = await admin
+        .from(TABLE)
+        .select('*')
+        .eq('tenant_id', auth.tenantId)
+        .eq('user_id', auth.userId)
+        .in('entity_type', ['property', 'company', 'person', 'search'])
+        .order('visited_at', { ascending: false })
+        .limit(30);
+
+      if (error) {
+        logger.error('[recents GET] DB error:', error);
+        return NextResponse.json(
+          { error: 'Databasefejl ved hentning af seneste' },
+          { status: 500 }
+        );
+      }
+      return NextResponse.json({ recents: dedupPersonRecents(data ?? []) });
+    }
 
     const { data, error } = await admin
       .from(TABLE)
@@ -70,7 +169,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Databasefejl ved hentning af seneste' }, { status: 500 });
     }
 
-    return NextResponse.json({ recents: data ?? [] });
+    return NextResponse.json({ recents: dedupPersonRecents(data ?? []) });
   } catch (err) {
     logger.error('[recents GET] Unexpected error:', err);
     return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });

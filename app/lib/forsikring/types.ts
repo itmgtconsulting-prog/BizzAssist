@@ -111,6 +111,10 @@ export interface ForsikringDocument {
   parse_error: string | null;
   policy_id: string | null;
   uploaded_by: string | null;
+  /** BIZZ-1632: Kunde-ID for at isolere dokumenter per kunde */
+  kunde_id: string | null;
+  /** BIZZ-1399: Sag-ID (forsikringssag) */
+  sag_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -342,6 +346,12 @@ export interface GapEngineInput {
     hovedbranche_tekst: string | null;
     bibrancher: Array<{ kode: string; tekst: string | null }>;
   };
+  /** BIZZ-1672: Ejerforening/administrator-data fra ejf_administrator */
+  ejerforening?: {
+    cvr: string | null;
+    navn: string | null;
+    type: 'virksomhed' | 'person' | 'ukendt';
+  } | null;
   /** BIZZ-1364: Optionelt asset fra koncern-walk (til asset-level checks) */
   asset?: {
     type: 'ejendom' | 'virksomhed' | 'bil' | 'bestyrelsespost';

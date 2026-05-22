@@ -41,6 +41,15 @@ export const WHITELISTED_TABLES = new Set([
   'public.tinglysning_haeftelser',
   'public.tinglysning_servitutter',
   'public.tinglysning_dokumenter',
+  'public.ejendomshandel',
+  'public.tinglysning_haeftelse',
+  'public.tinglysning_servitut',
+  'public.ejf_ejerskifte',
+  'public.ejf_handelsoplysninger',
+  'public.v_ejerskifte_handel',
+  'public.bfe_adresse_cache',
+  'public.mv_kommune_statistik',
+  'public.mv_virksomhed_portefolje',
   'dataintel.data_catalog',
   'dataintel.analytics_knowledge',
 ]);
@@ -122,6 +131,21 @@ const FORBIDDEN_FUNCTIONS = [
   'pg_reload_conf',
 ];
 
+/**
+ * BIZZ-1624: MySQL-only dato-funktioner der ikke eksisterer i PostgreSQL.
+ * AI genererer til tider YEAR(), MONTH() etc. trods prompt-instruktion.
+ * Fanger fejlen tidligt med en brugervenlig fejlbesked + forslag.
+ */
+const MYSQL_DATE_FUNCTIONS = [
+  'year',
+  'month',
+  'day',
+  'dayofweek',
+  'dayofyear',
+  'weekday',
+  'date_format',
+];
+
 export interface ValidationResult {
   valid: boolean;
   /** SQL med eventuel LIMIT-injection; uændret hvis valid var false */
@@ -158,12 +182,22 @@ function extractWords(sql: string): string[] {
  */
 function extractTableReferences(sql: string): Set<string> {
   const refs = new Set<string>();
+  // PostgreSQL has several constructs where FROM appears inside an expression
+  // but does NOT reference a table:
+  //   EXTRACT(YEAR FROM col), TRIM(LEADING FROM col), SUBSTRING(col FROM n),
+  //   OVERLAY(s PLACING s FROM n), IS [NOT] DISTINCT FROM expr
+  // Strip these before scanning for table references.
+  let cleaned = sql;
+  // 1. Function calls that use FROM inside parentheses: EXTRACT, TRIM, SUBSTRING, OVERLAY
+  cleaned = cleaned.replace(/\b(?:EXTRACT|TRIM|SUBSTRING|OVERLAY)\s*\([^)]*\)/gi, ' ');
+  // 2. IS [NOT] DISTINCT FROM — comparison operator, not a table reference
+  cleaned = cleaned.replace(/\bIS\s+(?:NOT\s+)?DISTINCT\s+FROM\s+/gi, 'IS_DISTINCT_FROM ');
   // Match FROM/JOIN/INTO patterns med valgfri schema.table
   // Bruger \w fordi vi har validatet at sql ikke har kommentar-injection
   const fromRegex =
     /\b(?:from|join|update|into)\s+([a-zA-Z_][\w]*\.[a-zA-Z_][\w]*|[a-zA-Z_][\w]*)/gi;
   let match: RegExpExecArray | null;
-  while ((match = fromRegex.exec(sql)) !== null) {
+  while ((match = fromRegex.exec(cleaned)) !== null) {
     refs.add(match[1].toLowerCase());
   }
 
@@ -193,6 +227,13 @@ export function validateSql(rawSql: string): ValidationResult {
   if (!rawSql || typeof rawSql !== 'string' || rawSql.trim().length === 0) {
     return { valid: false, sanitized_sql: '', reason: 'SQL er tom' };
   }
+
+  // BIZZ-1624: Auto-rewrite MySQL date functions to PostgreSQL equivalents.
+  // Claude sometimes generates YEAR(col) despite prompt instructions.
+  // Silent fix avoids user-facing errors for a common AI mistake.
+  rawSql = rawSql.replace(/\bYEAR\s*\(\s*([^)]+)\)/gi, 'EXTRACT(YEAR FROM $1)');
+  rawSql = rawSql.replace(/\bMONTH\s*\(\s*([^)]+)\)/gi, 'EXTRACT(MONTH FROM $1)');
+  rawSql = rawSql.replace(/\bDAY\s*\(\s*([^)]+)\)/gi, 'EXTRACT(DAY FROM $1)');
 
   // Maximal længde — undgå DoS via stort input
   if (rawSql.length > 10_000) {
@@ -262,6 +303,20 @@ export function validateSql(rawSql: string): ValidationResult {
         valid: false,
         sanitized_sql: rawSql,
         reason: `Forbudt funktion: ${fn}()`,
+      };
+    }
+  }
+
+  // BIZZ-1624: Reject MySQL-only date functions with helpful error message
+  for (const fn of MYSQL_DATE_FUNCTIONS) {
+    const re = new RegExp(`\\b${fn}\\s*\\(`, 'i');
+    if (re.test(stripped)) {
+      const pgAlternative =
+        fn === 'date_format' ? 'to_char()' : `EXTRACT(${fn.toUpperCase()} FROM col)`;
+      return {
+        valid: false,
+        sanitized_sql: rawSql,
+        reason: `${fn.toUpperCase()}() er MySQL-syntax og findes ikke i PostgreSQL. Brug ${pgAlternative} i stedet.`,
       };
     }
   }

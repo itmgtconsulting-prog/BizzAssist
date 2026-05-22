@@ -233,6 +233,177 @@ export const WHITELISTED_TABLES: WhitelistedTable[] = [
       },
     },
   },
+  // BIZZ-1726+1727: EJF Ejerskifte + Handelsoplysninger fra Datafordeler
+  {
+    table: 'public.ejf_ejerskifte',
+    description:
+      'EJF ejerskifter — komplet ejerskifte-historik med BFE, handelstype og pris-kobling. JOIN ejf_handelsoplysninger via handelsoplysninger_lokal_id for priser.',
+    columns: {
+      id_lokal_id: { type: 'text', description: 'Ejerskifte ID (primærnøgle)' },
+      bfe_nummer: { type: 'bigint', description: 'BFE-nummer for ejendommen' },
+      overtagelsesdato: { type: 'timestamptz', description: 'Overtagelsesdato' },
+      overdragelsesmaade: {
+        type: 'text',
+        description:
+          'Handelstype: Almindelig fri handel, Familieoverdragelse, Arv, Gave, Tvangsauktion, Interessesammenfald. VIGTIGT: filtrer på "Almindelig fri handel" for reelle markedspriser.',
+      },
+      betinget: { type: 'boolean', description: 'Om skødet er betinget' },
+      forretningshaendelse: { type: 'text', description: 'Endeligt skøde, Skifteretsattest osv.' },
+      handelsoplysninger_lokal_id: {
+        type: 'text',
+        description: 'FK til ejf_handelsoplysninger.id_lokal_id (pris-data)',
+      },
+      status: { type: 'text', description: 'gældende / historisk' },
+    },
+  },
+  {
+    table: 'public.ejf_handelsoplysninger',
+    description:
+      'EJF salgspriser — kontant + samlet købesum fra Datafordeler. Kobles til ejf_ejerskifte via id_lokal_id = ejf_ejerskifte.handelsoplysninger_lokal_id.',
+    columns: {
+      id_lokal_id: { type: 'text', description: 'Handelsoplysning ID (primærnøgle)' },
+      samlet_koebesum: { type: 'bigint', description: 'Samlet købesum i DKK' },
+      kontant_koebesum: { type: 'bigint', description: 'Kontant købesum i DKK' },
+      loesoeressum: { type: 'bigint', description: 'Løsøresum i DKK' },
+      entreprisesum: { type: 'bigint', description: 'Entreprisesum i DKK' },
+      koebsaftale_dato: { type: 'date', description: 'Dato for købekontrakt' },
+      valutakode: { type: 'text', description: 'Valuta (typisk DKK)' },
+      forretningshaendelse: { type: 'text', description: 'Endeligt skøde, Skifteretsattest osv.' },
+      status: { type: 'text', description: 'gældende / historisk' },
+    },
+  },
+  // BIZZ-1725: Tilføjede tabeller for salgspriser, ejerskifter, personer, administratorer
+  {
+    table: 'public.ejendomshandel',
+    description:
+      'Ejendomshandler med faktiske salgspriser fra Tinglysning. 58K+ rækker med købesum. PRIMÆR tabel for salgspris-spørgsmål.',
+    columns: {
+      bfe_nummer: { type: 'integer', description: 'BFE-nummer for ejendommen' },
+      dato: { type: 'date', description: 'Handelsdato' },
+      koebsaftale_dato: { type: 'date', description: 'Dato for købekontrakt' },
+      type: { type: 'text', description: 'Handelstype (skøde, arv, gave osv.)' },
+      koebesum: { type: 'numeric', description: 'Faktisk købesum i DKK' },
+      samlet_koebesum: { type: 'numeric', description: 'Samlet købesum inkl. løsøre' },
+      koeber_navne: { type: 'text[]', description: 'Købernavne (array)' },
+      koeber_cvrs: { type: 'text[]', description: 'Køber-CVR numre (array)' },
+    },
+  },
+  {
+    table: 'public.ejerskifte_historik',
+    description:
+      'Ejerskifte-historik — 572K rækker. Alle ejerskifter med ejer, dato, pris. Brug ejendomshandel for bedre prisdata.',
+    columns: {
+      bfe_nummer: { type: 'bigint', description: 'BFE-nummer' },
+      overtagelsesdato: { type: 'date', description: 'Overtagelsesdato' },
+      ejer_navn: { type: 'text', description: 'Ejer-navn' },
+      ejer_cvr: { type: 'text', description: 'Ejer-CVR (null for personer)' },
+      ejer_type: { type: 'text', description: 'person / virksomhed' },
+      kontant_koebesum: { type: 'bigint', description: 'Kontant købesum i DKK' },
+      i_alt_koebesum: { type: 'bigint', description: 'Samlet købesum i DKK' },
+    },
+  },
+  {
+    table: 'public.tinglysning_adkomst',
+    description: 'Tinglysning adkomster — normaliserede skøder med salgspriser og ejerskifter.',
+    columns: {
+      bfe_nummer: { type: 'bigint', description: 'BFE-nummer' },
+      ejer_navn: { type: 'text', description: 'Ejer/køber-navn' },
+      ejer_cvr: { type: 'text', description: 'CVR-nummer' },
+      overtagelsesdato: { type: 'date', description: 'Overtagelsesdato' },
+      kontant_koebesum: { type: 'bigint', description: 'Kontant købesum DKK' },
+      i_alt_koebesum: { type: 'bigint', description: 'Samlet købesum DKK' },
+    },
+  },
+  {
+    table: 'public.cvr_deltager',
+    description:
+      'CVR personer/deltagere — navne, roller, aktive selskaber. Brug til person-søgning.',
+    columns: {
+      enhedsnummer: { type: 'bigint', description: 'Person enhedsNummer (primærnøgle)' },
+      navn: { type: 'text', description: 'Fuldt navn' },
+      is_aktiv: { type: 'boolean', description: 'Har aktive roller' },
+      antal_aktive_selskaber: { type: 'integer', description: 'Antal aktive virksomheder' },
+    },
+  },
+  {
+    table: 'public.cvr_deltagerrelation',
+    description: 'Person-virksomhed relationer — hvem har hvilke roller i hvilke virksomheder.',
+    columns: {
+      virksomhed_cvr: { type: 'text', description: 'CVR-nummer på virksomhed' },
+      deltager_enhedsnummer: { type: 'bigint', description: 'Person enhedsNummer' },
+      type: { type: 'text', description: 'Rolletype (register, direktør, bestyrelsesmedlem osv.)' },
+      gyldig_fra: { type: 'date', description: 'Rolle gyldig fra' },
+      gyldig_til: { type: 'date', description: 'Rolle gyldig til (null = aktiv)' },
+      ejerandel_pct: {
+        type: 'numeric',
+        description: 'Ejerandel i procent (kun for register-type)',
+      },
+    },
+  },
+  {
+    table: 'public.ejf_administrator',
+    description:
+      'Ejendomsadministratorer — ejerforeninger, udlejere, advokater der administrerer ejendomme.',
+    columns: {
+      bfe_nummer: { type: 'bigint', description: 'Den administrerede ejendoms BFE' },
+      administrator_type: { type: 'text', description: 'virksomhed / person / ukendt' },
+      virksomhed_cvr: { type: 'text', description: 'CVR for virksomheds-administratorer' },
+      person_navn: { type: 'text', description: 'Navn for person-administratorer' },
+      status: { type: 'text', description: 'gældende / historisk' },
+    },
+  },
+  // BIZZ-1747: Tinglysning + BFE adresse tabeller
+  {
+    table: 'public.tinglysning_servitut',
+    description:
+      'Tinglysning servitutter — 702K rækker. Deklarationer, byggelinjer, ledningsrettigheder, tilslutningspligter. Kobles til ejendomme via bfe_nummer.',
+    columns: {
+      bfe_nummer: { type: 'integer', description: 'BFE-nummer for ejendommen' },
+      type: {
+        type: 'text',
+        description: 'Servituttype (Byggelinje, Ledningsret, Tilslutningspligt osv.)',
+      },
+      tekst: { type: 'text', description: 'Servitut-beskrivelse' },
+      tinglyst_dato: { type: 'date', description: 'Dato for tinglysning' },
+      akt_navn: { type: 'text', description: 'Akt-reference' },
+      ai_classification: { type: 'text', description: 'AI-klassificering af servituttype' },
+      prioritet: { type: 'integer', description: 'Prioritetsrækkefølge' },
+      status: { type: 'text', description: 'gældende / historisk' },
+    },
+  },
+  {
+    table: 'public.tinglysning_haeftelse',
+    description:
+      'Tinglysning hæftelser — 197K rækker. Pantebreve, realkreditlån, ejerpantebreve. Kobles til ejendomme via bfe_nummer.',
+    columns: {
+      bfe_nummer: { type: 'integer', description: 'BFE-nummer for ejendommen' },
+      type: {
+        type: 'text',
+        description: 'Hæftelsestype (Realkreditpantebrev, Ejerpantebrev osv.)',
+      },
+      hovedstol_dkk: { type: 'numeric', description: 'Hovedstol i DKK' },
+      kreditor_navn: { type: 'text', description: 'Kreditor/långiver' },
+      kreditor_cvr: { type: 'text', description: 'Kreditor CVR-nummer' },
+      tinglyst_dato: { type: 'date', description: 'Tinglysningsdato' },
+      akt_navn: { type: 'text', description: 'Akt-reference' },
+      prioritet: { type: 'integer', description: 'Prioritetsrækkefølge' },
+      status: { type: 'text', description: 'gældende / historisk' },
+    },
+  },
+  {
+    table: 'public.bfe_adresse_cache',
+    description:
+      'BFE-nummer til adresse mapping — 1.8M rækker. Bruges som JOIN-tabel for at finde adresse, postnr, kommune for et BFE-nummer.',
+    columns: {
+      bfe_nummer: { type: 'bigint', description: 'BFE-nummer (primærnøgle)' },
+      adresse: { type: 'text', description: 'Vejnavn + husnummer' },
+      postnr: { type: 'text', description: 'Postnummer (4-cifret)' },
+      postnrnavn: { type: 'text', description: 'Bynavn' },
+      kommune: { type: 'text', description: 'Kommunenavn' },
+      kommune_kode: { type: 'text', description: 'Kommunekode (4-cifret)' },
+      ejendomstype: { type: 'text', description: 'Ejerlejlighed / Normal ejendom' },
+    },
+  },
 ];
 
 /**

@@ -29,6 +29,7 @@ import {
   energiforsyningTekst,
 } from '@/app/lib/bbrKoder';
 import { logger } from '@/app/lib/logger';
+import { tlFetch } from '@/app/lib/tlFetch';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -684,6 +685,52 @@ async function fetchBFENummer(dawaId: string): Promise<{
         }
       } catch {
         /* Vurderingsportalen er valgfri */
+      }
+    }
+
+    // BIZZ-1662: Tinglysning /ejendom/adresse fallback — når VP ikke finder
+    // en EL-BFE for adresser med etage, prøv TL. VP mangler data for mange
+    // ældre ejerlejligheder (fx Kampergade 11 st., Helsingør).
+    if (!ejerlejlighedBfe && harEtage && adresseTekst) {
+      try {
+        const addrPart = adresseTekst.split(',')[0].trim();
+        const addrMatch = addrPart.match(/^(.+?)\s+(\d+\w*)$/);
+        const postnrMatch = adresseTekst.match(/(\d{4})\s+\S/);
+        if (addrMatch && postnrMatch) {
+          const [, vej, nr] = addrMatch;
+          const params = new URLSearchParams({
+            vejnavn: vej,
+            husnummer: nr,
+            postnummer: postnrMatch[1],
+          });
+          const res = await tlFetch(`/ejendom/adresse?${params.toString()}`);
+          if (res.status === 200 && res.body) {
+            const parsed = JSON.parse(res.body) as {
+              items?: Array<{
+                uuid: string;
+                adresse: string;
+                vedroerende: string;
+                ejendomsnummer?: string;
+              }>;
+            };
+            // Find ejerlejlighed-item der matcher etage
+            for (const item of parsed.items ?? []) {
+              if (!item.vedroerende?.toLowerCase().includes('ejerlejlighed')) continue;
+              // Tjek at adressen indeholder korrekt etage
+              const itemLower = item.adresse.toLowerCase();
+              if (etage && !itemLower.includes(etage.toLowerCase())) continue;
+              if (doer && !itemLower.includes(doer.toLowerCase())) continue;
+              const bfe = item.ejendomsnummer ? parseInt(item.ejendomsnummer, 10) : 0;
+              if (bfe > 0 && bfe !== jordBfe) {
+                ejerlejlighedBfe = bfe;
+                logger.log(`[fetchBFENummer] TL fallback: EL-BFE ${bfe} for ${adresseTekst}`);
+                break;
+              }
+            }
+          }
+        }
+      } catch {
+        /* Tinglysning fallback er valgfri */
       }
     }
 

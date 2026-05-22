@@ -40,6 +40,8 @@ interface PlanConfigRow {
   sort_order: number;
   /** BIZZ-541: Hours of continued access after a failed payment (default 0) */
   payment_grace_hours: number;
+  /** BIZZ-1618: Analyse-modul IDs inkluderet i planen */
+  modules: string[] | null;
 }
 
 /**
@@ -87,6 +89,8 @@ export async function GET(): Promise<NextResponse> {
         stripePriceId: getStripePriceId(id, db?.stripe_price_id),
         // Default sort order mirrors VALID_PLAN_IDS position (1-based)
         sortOrder: db?.sort_order ?? VALID_PLAN_IDS.indexOf(id) + 1,
+        // BIZZ-1618: DB modules overskriver hardcoded; tom/null = brug default
+        modules: db?.modules && db.modules.length > 0 ? db.modules : d.modules,
       };
     });
 
@@ -115,6 +119,8 @@ export async function GET(): Promise<NextResponse> {
         // Custom plans have no env var fallback — only DB source
         stripePriceId: row.stripe_price_id ?? null,
         sortOrder: row.sort_order ?? 99,
+        // BIZZ-1618: Custom plans — modules from DB only
+        modules: row.modules ?? [],
       }));
 
     const plans = [...legacyPlans, ...customPlans]

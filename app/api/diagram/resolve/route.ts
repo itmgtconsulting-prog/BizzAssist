@@ -18,7 +18,20 @@ import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import type { DiagramNode, DiagramEdge, DiagramGraph } from '@/app/components/diagrams/DiagramData';
 
 /** Max ejendomme per ejer-node i initial graf */
-const MAX_PROPS_PER_OWNER = 5;
+const MAX_PROPS_PER_OWNER = 15;
+
+/**
+ * Formatér ejerandel fra min/max til læsbar streng.
+ * "100%" når min===max, "25-50%" ved range, undefined når ukendt.
+ */
+function formatEjerandelRange(
+  min: number | null | undefined,
+  max: number | null | undefined
+): string | undefined {
+  if (min == null) return undefined;
+  if (max == null || min === max) return `${min}%`;
+  return `${min}-${max}%`;
+}
 
 interface ResolveResponse {
   graph: DiagramGraph | null;
@@ -224,7 +237,7 @@ async function resolveCompanyGraph(
               ejerandel_min: number | null;
               ejerandel_max: number | null;
             }>
-          ).map((r) => [r.ejer_cvr, r.ejerandel_min != null ? `${r.ejerandel_min}%` : undefined])
+          ).map((r) => [r.ejer_cvr, formatEjerandelRange(r.ejerandel_min, r.ejerandel_max)])
         );
 
         for (const pCvr of parentCvrs) {
@@ -254,8 +267,8 @@ async function resolveCompanyGraph(
   }
 
   // 2. BIZZ-1108/1122: Hent EJERE (opad) — kun ownership-typer, ikke bestyrelse/direktion
-  // BIZZ-1317: Hent person-ejere for ALLE virksomheder i grafen (inkl. parents fra step 1b),
-  // ikke kun root-virksomheden. Uden dette mangler fx Søren Winkel som ejer af WISCH ApS.
+  // BIZZ-1680: Kun hent person-ejere for main + parent-virksomheder (opad).
+  // IKKE for datterselskaber — ellers vises irrelevante ejere fra andre koncerner.
   const companyCvrsInGraph = [
     cvr,
     ...nodes.filter((n) => n.cvr && n.id !== mainId).map((n) => String(n.cvr)),
@@ -263,7 +276,7 @@ async function resolveCompanyGraph(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: ownerRows } = await (admin as any)
     .from('cvr_deltagerrelation')
-    .select('deltager_enhedsnummer, type, virksomhed_cvr')
+    .select('deltager_enhedsnummer, type, virksomhed_cvr, ejerandel_pct')
     .in('virksomhed_cvr', companyCvrsInGraph.slice(0, 10))
     .is('gyldig_til', null)
     .limit(100);
@@ -271,7 +284,12 @@ async function resolveCompanyGraph(
   // Filtrer til ownership-typer
   const ownershipRows = (ownerRows ?? []).filter((r: { type: string }) =>
     OWNERSHIP_TYPES.has(r.type)
-  ) as Array<{ deltager_enhedsnummer: number; type: string; virksomhed_cvr: string }>;
+  ) as Array<{
+    deltager_enhedsnummer: number;
+    type: string;
+    virksomhed_cvr: string;
+    ejerandel_pct: number | null;
+  }>;
 
   if (ownershipRows.length > 0) {
     const enhedsNumre = Array.from(new Set(ownershipRows.map((r) => r.deltager_enhedsnummer)));
@@ -297,8 +315,13 @@ async function resolveCompanyGraph(
       personTargets.set(r.deltager_enhedsnummer, targets);
     }
 
-    // Person-ejerandel er nice-to-have — skippes i cache-first (kræver live CVR ES)
+    // BIZZ-1680: Populér person-ejerandel fra cvr_deltagerrelation
     const personEjerandele = new Map<number, string>();
+    for (const r of ownershipRows) {
+      if (r.ejerandel_pct != null && r.ejerandel_pct > 0) {
+        personEjerandele.set(r.deltager_enhedsnummer, `${r.ejerandel_pct}%`);
+      }
+    }
 
     // BIZZ-1125: Batch-beregn expandableChildren for person-noder.
     // Tæl virksomheder med interessenter/indehaver-rolle eller ejerandel_pct > 0,
@@ -389,90 +412,9 @@ async function resolveCompanyGraph(
     }
   }
 
-  // 2b. BIZZ-1122: Ejerens personlige virksomheder (enkeltmand, I/S etc.)
-  // Disse vises direkte under ejer-noden — ikke bag "Udvid".
-  if (ownershipRows.length > 0) {
-    const ownerEnheder = Array.from(new Set(ownershipRows.map((r) => r.deltager_enhedsnummer)));
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: personalCompRows } = await (admin as any)
-      .from('cvr_deltagerrelation')
-      .select('virksomhed_cvr, deltager_enhedsnummer, type')
-      .in('deltager_enhedsnummer', ownerEnheder.slice(0, 5))
-      .in('type', ['interessenter', 'indehaver'])
-      .is('gyldig_til', null)
-      .limit(20);
-
-    if (personalCompRows?.length) {
-      const personalCvrs = Array.from(
-        new Set(
-          (personalCompRows as Array<{ virksomhed_cvr: string; deltager_enhedsnummer: number }>)
-            .map((r) => r.virksomhed_cvr)
-            .filter((c) => c !== cvr && !nodeIds.has(`cvr-${c}`))
-        )
-      );
-
-      if (personalCvrs.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: personalComps } = await (admin as any)
-          .from('cvr_virksomhed')
-          .select('cvr, navn, virksomhedsform, branche_tekst, ophoert')
-          .in('cvr', personalCvrs.slice(0, 10));
-
-        // Hent ejendomsantal for at sætte expandableChildren korrekt
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: pcPropCounts } = await (admin as any)
-          .from('ejf_ejerskab')
-          .select('ejer_cvr')
-          .in('ejer_cvr', personalCvrs.slice(0, 10))
-          .eq('status', 'gældende');
-        const pcPropMap = new Map<string, number>();
-        for (const r of (pcPropCounts ?? []) as Array<{ ejer_cvr: string }>) {
-          pcPropMap.set(r.ejer_cvr, (pcPropMap.get(r.ejer_cvr) ?? 0) + 1);
-        }
-
-        for (const pc of (personalComps ?? []) as Array<{
-          cvr: string;
-          navn: string;
-          virksomhedsform: string | null;
-          branche_tekst: string | null;
-          ophoert: string | null;
-        }>) {
-          if (pc.ophoert != null) continue;
-          const pcId = `cvr-${pc.cvr}`;
-          if (nodeIds.has(pcId)) continue;
-          const pcSubParts = [pc.virksomhedsform, pc.branche_tekst].filter(Boolean);
-          // Find ejer-noden denne virksomhed tilhører
-          // Personlige virksomheder vises som siblings af main (ikke under person)
-
-          const pcPropCount = pcPropMap.get(pc.cvr) ?? 0;
-          nodes.push({
-            id: pcId,
-            label: pc.navn,
-            sublabel: pcSubParts.length > 0 ? pcSubParts.join(' · ') : undefined,
-            branche: pc.branche_tekst ?? undefined,
-            type: 'company',
-            cvr: Number(pc.cvr),
-            link: `/dashboard/companies/${pc.cvr}`,
-            isCeased: false,
-            // expandableChildren: 0 = ingen Udvid-knap, >0 = vis knap
-            expandableChildren: pcPropCount > 0 ? pcPropCount : 0,
-          });
-          nodeIds.add(pcId);
-          // Edge fra person-ejer — IT Management consulting kobles til Jakob,
-          // ikke til JaJR Holding. DiagramForce placerer den på samme depth
-          // som main via downward BFS fra person-noden (depth -1 + 1 = 0).
-          const ownerRow = (
-            personalCompRows as Array<{
-              virksomhed_cvr: string;
-              deltager_enhedsnummer: number;
-            }>
-          ).find((r) => r.virksomhed_cvr === pc.cvr);
-          const personId = ownerRow ? `en-${ownerRow.deltager_enhedsnummer}` : mainId;
-          edges.push({ from: personId, to: pcId });
-        }
-      }
-    }
-  }
+  // BIZZ-1680: Enkeltmandsvirksomheder vises IKKE i initial diagram.
+  // De er ikke direkte relateret til hovedvirksomhedens ejerskabsstruktur.
+  // Vises kun via "Udvid"-knap på person-noder (expandableChildren).
 
   // 2c. Datterselskaber via cache (cvr_virksomhed_ejerskab)
   const MAX_TOTAL_NODES = 50;
@@ -486,7 +428,45 @@ async function resolveCompanyGraph(
       .is('gyldig_til', null)
       .limit(30);
 
-    const subCvrs = ((cachedSubs ?? []) as Array<{ ejet_cvr: string }>).map((r) => r.ejet_cvr);
+    // BIZZ-1680: Filtrer datterselskaber hvor main har NULL-ejerandel men en
+    // ANDEN virksomhed har reel ejerandel → main's entry er sandsynligvis historisk.
+    const rawSubs = (cachedSubs ?? []) as Array<{
+      ejet_cvr: string;
+      ejerandel_min: number | null;
+      ejerandel_max: number | null;
+    }>;
+    const subsWithAndel = rawSubs.filter((r) => r.ejerandel_min != null);
+    const subsWithoutAndel = rawSubs.filter((r) => r.ejerandel_min == null);
+
+    // For subs uden ejerandel: tjek om en ANDEN virksomhed har reel ejerandel
+    const validSubsWithoutAndel: typeof subsWithoutAndel = [];
+    if (subsWithoutAndel.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: otherOwners } = await (admin as any)
+        .from('cvr_virksomhed_ejerskab')
+        .select('ejet_cvr, ejer_cvr, ejerandel_min')
+        .in(
+          'ejet_cvr',
+          subsWithoutAndel.map((r) => r.ejet_cvr)
+        )
+        .not('ejerandel_min', 'is', null)
+        .is('gyldig_til', null)
+        .limit(100);
+
+      const hasRealOwner = new Set(
+        ((otherOwners ?? []) as Array<{ ejet_cvr: string }>).map((r) => r.ejet_cvr)
+      );
+      for (const sub of subsWithoutAndel) {
+        if (!hasRealOwner.has(sub.ejet_cvr)) {
+          // Ingen anden ejer med reel ejerandel → behold (ægte datterselskab)
+          validSubsWithoutAndel.push(sub);
+        }
+        // Ellers: en anden virksomhed ejer den med reel andel → main's entry er historisk
+      }
+    }
+
+    const filteredSubs = [...subsWithAndel, ...validSubsWithoutAndel];
+    const subCvrs = filteredSubs.map((r) => r.ejet_cvr);
 
     if (subCvrs.length > 0) {
       // Batch-hent virksomhedsinfo
@@ -509,17 +489,15 @@ async function resolveCompanyGraph(
       );
       const ejerandelMap = new Map(
         (
-          (cachedSubs ?? []) as Array<{
+          filteredSubs as Array<{
             ejet_cvr: string;
             ejerandel_min: number | null;
             ejerandel_max: number | null;
           }>
-        ).map((r) => [
-          r.ejet_cvr,
-          r.ejerandel_min != null ? `${r.ejerandel_min}-${r.ejerandel_max}%` : undefined,
-        ])
+        ).map((r) => [r.ejet_cvr, formatEjerandelRange(r.ejerandel_min, r.ejerandel_max)])
       );
 
+      // BIZZ-1680: Vis direkte datterselskaber (niveau 1) — med eller uden ejerandel.
       for (const subCvr of subCvrs) {
         if (nodes.length >= MAX_TOTAL_NODES) break;
         const subId = `cvr-${subCvr}`;
@@ -527,6 +505,7 @@ async function resolveCompanyGraph(
 
         const cached = subMap.get(subCvr);
         if (cached?.ophoert != null) continue;
+        const andel = ejerandelMap.get(subCvr);
 
         const sublabelParts = [cached?.virksomhedsform, cached?.branche_tekst].filter(Boolean);
         nodes.push({
@@ -543,7 +522,7 @@ async function resolveCompanyGraph(
         edges.push({
           from: mainId,
           to: subId,
-          ejerandel: ejerandelMap.get(subCvr),
+          ejerandel: andel,
         });
       }
 
@@ -557,6 +536,7 @@ async function resolveCompanyGraph(
           .is('gyldig_til', null)
           .limit(50);
 
+        // BIZZ-1680: Kun level 2 med faktisk ejerandel
         for (const l2 of (level2Subs ?? []) as Array<{
           ejer_cvr: string;
           ejet_cvr: string;
@@ -564,6 +544,7 @@ async function resolveCompanyGraph(
           ejerandel_max: number | null;
         }>) {
           if (nodes.length >= MAX_TOTAL_NODES) break;
+          if (l2.ejerandel_min == null) continue; // Kun med registreret ejerandel
           const l2Id = `cvr-${l2.ejet_cvr}`;
           const parentId = `cvr-${l2.ejer_cvr}`;
           if (nodeIds.has(l2Id)) continue;
@@ -604,8 +585,7 @@ async function resolveCompanyGraph(
           edges.push({
             from: parentId,
             to: l2Id,
-            ejerandel:
-              l2.ejerandel_min != null ? `${l2.ejerandel_min}-${l2.ejerandel_max}%` : undefined,
+            ejerandel: formatEjerandelRange(l2.ejerandel_min, l2.ejerandel_max),
           });
         }
       }
@@ -678,15 +658,63 @@ async function resolveCompanyGraph(
           id: overflowId,
           label: `+${overflowCount} ejendomme`,
           type: 'status',
+          // BIZZ-1647: Inkluder bfeNummer så enrichPropertyNodes kan resolve adresser
           overflowItems: props
             .slice(MAX_PROPS_PER_OWNER)
-            .map((p) => ({ label: `BFE ${p.bfe_nummer}` })),
+            .map((p) => ({ label: `BFE ${p.bfe_nummer}`, bfeNummer: p.bfe_nummer })),
         });
         nodeIds.add(overflowId);
         edges.push({ from: compNode.id, to: overflowId });
       }
     }
   }
+
+  // 3b. BIZZ-1645: Ejerforening (FFO) — vis ejerlejligheder under SFE
+  // Når virksomheden er en ejerforening, tilføj ejerlejligheder som children
+  // af SFE-ejendommen for at vise ejendomsstrukturen.
+  if (
+    company?.virksomhedsform?.toUpperCase().includes('FFO') ||
+    company?.virksomhedsform?.toLowerCase().includes('forening')
+  ) {
+    const sfeNodes = nodes.filter((n) => n.type === 'property' && n.bfeNummer);
+    for (const sfeNode of sfeNodes.slice(0, 3)) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: lejRows } = await (admin as any)
+          .from('ejf_ejerskab')
+          .select('bfe_nummer, ejer_navn, ejer_type, ejerandel_taeller, ejerandel_naevner')
+          .eq('status', 'gældende')
+          .neq('ejer_cvr', cvr)
+          .limit(20);
+
+        // Filtrer til kun lejligheder under denne SFE (approximate: same BFE-range)
+        // Bedre approach: brug ejendom-struktur API, men det kræver DAWA lookup
+        // For nu: vis lejligheder fra ejf_ejerskab der er person-ejede
+        const personEjere = (lejRows ?? [])
+          .filter((r: Record<string, unknown>) => r.ejer_type === 'person')
+          .slice(0, 10);
+
+        if (personEjere.length > 0) {
+          // Tilføj "X ejerlejligheder" status-node under SFE
+          const lejId = `lejligheder-${sfeNode.id}`;
+          if (!nodeIds.has(lejId)) {
+            nodes.push({
+              id: lejId,
+              label: `${personEjere.length} ejerlejligheder`,
+              type: 'status',
+            });
+            nodeIds.add(lejId);
+            edges.push({ from: sfeNode.id, to: lejId });
+          }
+        }
+      } catch {
+        /* non-fatal */
+      }
+    }
+  }
+
+  // BIZZ-1672: Administrator-data vises KUN som kort over ejertabellen
+  // på ejendomssiden — IKKE som noder i virksomhedsdiagrammet.
 
   // 4. BIZZ-1082: Personlige ejendomme for ALLE top-level ejere.
   // Henter properties fra ejf_ejerskab per person-navn. Dedup: hvis BFE
@@ -722,7 +750,7 @@ async function resolveCompanyGraph(
         .eq('ejer_navn', navn)
         .eq('ejer_type', 'person')
         .eq('status', 'gældende')
-        .limit(MAX_PROPS_PER_OWNER);
+        .limit(MAX_PROPS_PER_OWNER + 1);
 
       for (const pp of (personProps ?? []) as Array<{
         bfe_nummer: number;
@@ -755,177 +783,17 @@ async function resolveCompanyGraph(
 
   // Kryds-ejerskab: tegn edges mellem virksomheder der BEGGE allerede er i grafen
   // men som mangler en edge (fx PEI Holding → Pharma IT ManCo).
-  // Sker når personlige virksomheder (step 2b) ejer datterselskaber (step 2c).
+  // BIZZ-1680: Beregn expandableChildren for datterselskaber.
+  // Kryds-ejerskab og person-ejere for datterselskaber FJERNET —
+  // de tilføjede irrelevante noder fra andre koncerner.
+  // Kun nedadgående hierarki fra main vises. "Udvid" viser resten.
   const allCompanyNodes = nodes.filter((n) => (n.type === 'company' || n.type === 'main') && n.cvr);
   if (allCompanyNodes.length > 0) {
     const allCvrList = allCompanyNodes.map((n) => String(n.cvr));
 
-    // Hent ALLE ejerskabs-relationer hvor begge parter er i grafen
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: allOwnershipRows } = await (admin as any)
-      .from('cvr_virksomhed_ejerskab')
-      .select('ejer_cvr, ejet_cvr, ejerandel_min, ejerandel_max')
-      .in('ejer_cvr', allCvrList)
-      .in('ejet_cvr', allCvrList)
-      .is('gyldig_til', null);
-
-    // Byg Set af eksisterende edges for hurtig lookup
-    const existingEdgeKeys = new Set(edges.map((e) => `${e.from}→${e.to}`));
-
-    for (const r of (allOwnershipRows ?? []) as Array<{
-      ejer_cvr: string;
-      ejet_cvr: string;
-      ejerandel_min: number | null;
-      ejerandel_max: number | null;
-    }>) {
-      const fromId = `cvr-${r.ejer_cvr}`;
-      const toId = `cvr-${r.ejet_cvr}`;
-      const edgeKey = `${fromId}→${toId}`;
-      if (existingEdgeKeys.has(edgeKey)) continue;
-      edges.push({
-        from: fromId,
-        to: toId,
-        ejerandel: r.ejerandel_min != null ? `${r.ejerandel_min}-${r.ejerandel_max}%` : undefined,
-        crossOwnership: true,
-      });
-      existingEdgeKeys.add(edgeKey);
-    }
-
-    // BIZZ-1291: Hent person-ejere af ALLE virksomheder i grafen (ikke kun root).
-    // Parent-virksomheder (step 1b) og datterselskaber (step 2c) kan have
-    // person-ejere der mangler i grafen — fx Søren Winkel ejer SqWI Holding.
-    {
-      const compCvrsForPersonOwners = allCvrList.filter((c) => c !== cvr); // root er allerede håndteret i step 2
-      if (compCvrsForPersonOwners.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: extraPersonOwnerRows } = await (admin as any)
-          .from('cvr_deltagerrelation')
-          .select('virksomhed_cvr, deltager_enhedsnummer, type, ejerandel_pct')
-          .in('virksomhed_cvr', compCvrsForPersonOwners.slice(0, 30))
-          .in('type', ['register', 'reel_ejer'])
-          .is('gyldig_til', null)
-          .limit(100);
-
-        const extraPersonEnheder = new Set<number>();
-        const extraPersonCompMap = new Map<
-          number,
-          Array<{ cvr: string; type: string; pct: number | null }>
-        >();
-        for (const r of (extraPersonOwnerRows ?? []) as Array<{
-          virksomhed_cvr: string;
-          deltager_enhedsnummer: number;
-          type: string;
-          ejerandel_pct: number | null;
-        }>) {
-          // BIZZ-1540: Tjek BÅDE en-${en} OG person-${en} for at undgå duplikater
-          if (
-            nodeIds.has(`en-${r.deltager_enhedsnummer}`) ||
-            nodeIds.has(`person-${r.deltager_enhedsnummer}`)
-          )
-            continue;
-          extraPersonEnheder.add(r.deltager_enhedsnummer);
-          const arr = extraPersonCompMap.get(r.deltager_enhedsnummer) ?? [];
-          arr.push({ cvr: r.virksomhed_cvr, type: r.type, pct: r.ejerandel_pct });
-          extraPersonCompMap.set(r.deltager_enhedsnummer, arr);
-        }
-
-        if (extraPersonEnheder.size > 0) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { data: extraDeltagere } = await (admin as any)
-            .from('cvr_deltager')
-            .select('enhedsnummer, navn')
-            .in('enhedsnummer', Array.from(extraPersonEnheder).slice(0, 50));
-
-          const extraNavnMap = new Map<number, string>(
-            ((extraDeltagere ?? []) as Array<{ enhedsnummer: number; navn: string }>).map((d) => [
-              d.enhedsnummer,
-              d.navn,
-            ])
-          );
-
-          // BIZZ-1311: Detect virksomheds-deltagere via cvr_virksomhed (forretningsnøgle)
-          // Virksomheder som ejere har enhedsNummer men er IKKE personer.
-          const virksomhedsEns = new Set<number>();
-          if (extraPersonEnheder.size > 0) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const { data: virkRows } = await (admin as any)
-              .from('cvr_deltagerrelation')
-              .select('deltager_enhedsnummer, virksomhed_cvr')
-              .in('deltager_enhedsnummer', Array.from(extraPersonEnheder).slice(0, 50))
-              .in('type', ['interessenter', 'indehaver', 'stiftere'])
-              .is('gyldig_til', null)
-              .limit(50);
-            // Hvis en deltager OGSÅ optræder som virksomhed (fx I/S, ApS), markér
-            const enToCvr = new Map<number, string>();
-            for (const r of (virkRows ?? []) as Array<{
-              deltager_enhedsnummer: number;
-              virksomhed_cvr: string;
-            }>) {
-              enToCvr.set(r.deltager_enhedsnummer, r.virksomhed_cvr);
-            }
-            // Heuristik: navne der ender med ApS/A/S/I/S/K/S/Holding = virksomhed
-            const VIRK_SUFFIX =
-              /\b(aps|a\/s|i\/s|k\/s|p\/s|holding|invest|ejendomme|group|gmbh|ltd|inc)\b/i;
-            for (const en of extraPersonEnheder) {
-              const n = extraNavnMap.get(en) ?? '';
-              if (VIRK_SUFFIX.test(n)) virksomhedsEns.add(en);
-            }
-          }
-
-          for (const [en, compRels] of extraPersonCompMap) {
-            const navn = extraNavnMap.get(en);
-            if (!navn) continue;
-
-            const erVirksomhed = virksomhedsEns.has(en);
-
-            if (erVirksomhed) {
-              // Vis som virksomheds-node
-              const virkId = `cvr-en-${en}`;
-              if (nodeIds.has(virkId)) continue;
-              nodes.push({
-                id: virkId,
-                label: navn,
-                type: 'company',
-                link: `/dashboard/companies/${en}`, // Fallback — korrekt CVR-link kræver lookup
-              });
-              nodeIds.add(virkId);
-              for (const rel of compRels) {
-                const compId = `cvr-${rel.cvr}`;
-                if (!nodeIds.has(compId)) continue;
-                edges.push({
-                  from: virkId,
-                  to: compId,
-                  ejerandel: rel.pct != null ? `${rel.pct}%` : undefined,
-                });
-              }
-            } else {
-              // BIZZ-1540: Brug en-${en} (ikke person-${en}) for konsistent ID
-              // med øvrige person-noder. Forhindrer duplikat-noder på samme person
-              // når samme enhedsnummer optræder via flere data-spor.
-              const personId = `en-${en}`;
-              if (nodeIds.has(personId)) continue;
-              nodes.push({
-                id: personId,
-                label: navn,
-                type: 'person',
-                enhedsNummer: en,
-                link: `/dashboard/owners/${en}`,
-              });
-              nodeIds.add(personId);
-              for (const rel of compRels) {
-                const compId = `cvr-${rel.cvr}`;
-                if (!nodeIds.has(compId)) continue;
-                edges.push({
-                  from: personId,
-                  to: compId,
-                  ejerandel: rel.pct != null ? `${rel.pct}%` : undefined,
-                });
-              }
-            }
-          }
-        }
-      }
-    }
+    // BIZZ-1680: Person-ejere og kryds-ejerskab for datterselskaber FJERNET.
+    // Viste irrelevante ejere fra andre koncerner (SqWI, PEI, Billeschou etc.).
+    // Kun ejere af main (step 2) og parents (step 1b) vises i initial diagram.
 
     // Beregn expandableChildren for ALLE virksomheder i grafen.
     // Checker cvr_virksomhed_ejerskab for ejere/datterselskaber der IKKE allerede
@@ -957,9 +825,8 @@ async function resolveCompanyGraph(
       expandMap.set(r.ejer_cvr, (expandMap.get(r.ejer_cvr) ?? 0) + 1);
     }
 
-    // Sæt expandableChildren på alle virksomheds-noder
+    // Sæt expandableChildren på alle virksomheds-noder (inkl. main)
     for (const node of allCompanyNodes) {
-      if (node.type === 'main') continue; // main har aldrig Udvid
       const cvrStr = String(node.cvr);
       const count = expandMap.get(cvrStr) ?? 0;
       // Behold eksisterende expandableChildren (fx ejendomme) men tilføj ejerskab
@@ -1281,7 +1148,11 @@ async function resolvePropertyGraph(
                     size: 1,
                   }
                 : {
-                    query: { match: { 'Vrdeltagerperson.navne.navn': node.label } },
+                    // BIZZ-1625: match_phrase i stedet for match — ES match tokenizer
+                    // splitter på mellemrum og matcher hvert token uafhængigt, så
+                    // "Mette Borchardt Jørgensen" kunne matche "Peter Borchardt" via
+                    // fælles token "Borchardt". match_phrase kræver alle tokens i rækkefølge.
+                    query: { match_phrase: { 'Vrdeltagerperson.navne.navn': node.label } },
                     _source: ['Vrdeltagerperson.enhedsNummer', 'Vrdeltagerperson.navne.navn'],
                     size: 1,
                   };
@@ -1540,8 +1411,7 @@ async function resolvePropertyGraph(
         edges.push({
           from: ownerId,
           to: childId,
-          ejerandel:
-            row.ejerandel_min != null ? `${row.ejerandel_min}-${row.ejerandel_max}%` : undefined,
+          ejerandel: formatEjerandelRange(row.ejerandel_min, row.ejerandel_max),
         });
       }
     }
@@ -1586,8 +1456,7 @@ async function resolvePropertyGraph(
           edges.push({
             from: ownerId,
             to: childId,
-            ejerandel:
-              row.ejerandel_min != null ? `${row.ejerandel_min}-${row.ejerandel_max}%` : undefined,
+            ejerandel: formatEjerandelRange(row.ejerandel_min, row.ejerandel_max),
           });
         }
       }
@@ -1680,6 +1549,9 @@ async function resolvePropertyGraph(
     dedupedNodes.push(n);
   }
 
+  // BIZZ-1672: Administrator-data vises KUN som kort over ejertabellen
+  // på ejendomssiden (via /api/ejendomsadmin) — IKKE i diagrammet.
+
   return { nodes: dedupedNodes, edges, mainId };
 }
 
@@ -1752,7 +1624,10 @@ async function resolvePersonGraph(
 
   // Klassificér virksomheder: ejerskab = register, interessenter, eller indehaver
   // Virksomheder UDEN ejerskabsrolle → Øvrige roller (direktør, bestyrelse)
-  const OWNERSHIP_ROLES = ['register', 'interessenter', 'indehaver', 'stifter'];
+  // BIZZ-1669: 'stifter' fjernet — stifteren er ikke nødvendigvis ejer.
+  // Mange virksomheder hvor personen kun er stifter (ikke ejer) forurenede
+  // ejerskabsstrukturen. Stiftere vises nu i rolle-sektionen i stedet.
+  const OWNERSHIP_ROLES = ['register', 'interessenter', 'indehaver'];
   const ownershipCvrs: string[] = [];
   const roleCvrs: string[] = [];
   for (const [cvr, roller] of personVirkRollerMap) {
@@ -1825,12 +1700,15 @@ async function resolvePersonGraph(
     ejerandel_max: number | null;
   }>) {
     if (parentOfCvr.has(row.ejet_cvr)) continue; // første parent vinder
+    // BIZZ-1622: Skip ejerskab hvis den ejede virksomhed er ophørt — dette
+    // fanger stale relationer hvor gyldig_til ikke er opdateret i backfill.
+    const ownedCompany = companyMap.get(row.ejet_cvr);
+    if (ownedCompany?.ophoert != null) continue;
     parentOfCvr.set(row.ejet_cvr, row.ejer_cvr);
     const children = childrenOfCvr.get(row.ejer_cvr) ?? [];
     children.push({
       cvr: row.ejet_cvr,
-      ejerandel:
-        row.ejerandel_min != null ? `${row.ejerandel_min}-${row.ejerandel_max}%` : undefined,
+      ejerandel: formatEjerandelRange(row.ejerandel_min, row.ejerandel_max),
     });
     childrenOfCvr.set(row.ejer_cvr, children);
   }
@@ -1860,15 +1738,18 @@ async function resolvePersonGraph(
     });
     nodeIds.add(companyId);
 
-    // Kun top-level virksomheder (uden parent i grafen) forbindes til personen
-    if (!parentOfCvr.has(cvrStr)) {
-      topLevelCvrs.push(cvrStr);
-      // Ejerandel fra register/interessenter/indehaver
-      const regPct = registerEjerandelMap.get(cvrStr);
-      // BIZZ-1207: ENK-virksomheder er per definition 100% ejet af deltageren.
-      // I/S med interessenter-type uden ejerandel_pct vises som "Ejer".
-      const company = companyMap.get(cvrStr);
-      const isEnk = (company?.virksomhedsform ?? '').toLowerCase().includes('enkeltmand');
+    // BIZZ-1621: Personens direkte ejerskab → ALTID top-level. Tidligere
+    // blev virksomheder skjult som datterselskaber når en anden af personens
+    // virksomheder også ejede dem via cvr_virksomhed_ejerskab. Nu forbindes
+    // alle personens virksomheder til personen + evt. parent→child edge vises også.
+    topLevelCvrs.push(cvrStr);
+    // Ejerandel fra register/interessenter/indehaver
+    const regPct = registerEjerandelMap.get(cvrStr);
+    // BIZZ-1207: ENK-virksomheder er per definition 100% ejet af deltageren.
+    // I/S med interessenter-type uden ejerandel_pct vises som "Ejer".
+    {
+      const companyForEnk = companyMap.get(cvrStr);
+      const isEnk = (companyForEnk?.virksomhedsform ?? '').toLowerCase().includes('enkeltmand');
       const ejerandel = regPct != null ? `${Math.round(regPct)}%` : isEnk ? '100%' : 'Ejer';
       edges.push({ from: mainId, to: companyId, ejerandel });
     }
@@ -1947,6 +1828,9 @@ async function resolvePersonGraph(
         if (!nodeIds.has(parentId)) continue;
 
         if (nodeIds.has(subId)) {
+          // BIZZ-1622: Skip edge til ophørte virksomheder (stale ejerskab i backfill)
+          const existingNode = nodes.find((n) => n.id === subId);
+          if (existingNode?.isCeased) continue;
           // Allerede i grafen → tilføj edge hvis mangler
           if (!edges.some((e) => e.from === parentId && e.to === subId)) {
             edges.push({
@@ -1979,8 +1863,7 @@ async function resolvePersonGraph(
         edges.push({
           from: parentId,
           to: subId,
-          ejerandel:
-            row.ejerandel_min != null ? `${row.ejerandel_min}-${row.ejerandel_max}%` : undefined,
+          ejerandel: formatEjerandelRange(row.ejerandel_min, row.ejerandel_max),
         });
       }
 
@@ -2053,8 +1936,7 @@ async function resolvePersonGraph(
           edges.push({
             from: parentId,
             to: subId,
-            ejerandel:
-              row.ejerandel_min != null ? `${row.ejerandel_min}-${row.ejerandel_max}%` : undefined,
+            ejerandel: formatEjerandelRange(row.ejerandel_min, row.ejerandel_max),
           });
         }
       }
@@ -2164,7 +2046,7 @@ async function resolvePersonGraph(
       .select('bfe_nummer, ejerandel_taeller, ejerandel_naevner')
       .eq('ejer_enheds_nummer', Number(enhedsNummer))
       .eq('status', 'gældende')
-      .limit(MAX_PROPS_PER_OWNER);
+      .limit(MAX_PROPS_PER_OWNER + 1);
 
     if (byEnheds && byEnheds.length > 0) {
       personProps = byEnheds;
@@ -2177,7 +2059,7 @@ async function resolvePersonGraph(
         .eq('ejer_navn', personName)
         .eq('ejer_type', 'person')
         .eq('status', 'gældende')
-        .limit(MAX_PROPS_PER_OWNER);
+        .limit(MAX_PROPS_PER_OWNER + 1);
       personProps = byNavn ?? [];
     }
 

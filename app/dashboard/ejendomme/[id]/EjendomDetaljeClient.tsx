@@ -274,6 +274,16 @@ export default function EjendomDetaljeClient({
   const [bbrData, setBbrData] = useState<EjendomApiResponse | null>(prefetched?.bbrData ?? null);
   /** True mens BBR-data hentes */
   const [bbrLoader, setBbrLoader] = useState(false);
+  /**
+   * BIZZ-1582: Wave-2 gate — sekundære fetches (ejerskab, tinglysning,
+   * energimærke, plandata, jord, CVR, salgshistorik, diagram) venter til
+   * BBR-data er loaded. Reducerer initial burst fra ~20 → ~5 samtidige
+   * requests, så Vercel serverless ikke queuer op (16s → <1s per kald).
+   */
+  const [wave2Ready, setWave2Ready] = useState(!!prefetched?.bbrData);
+  /** BIZZ-1650: Auto-retry tæller for BBR-fejl */
+  const [bbrRetryCount, setBbrRetryCount] = useState(0);
+  const bbrRetryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** BIZZ-919: Cache-metadata fra BBR API-response */
   const [bbrFromCache, setBbrFromCache] = useState(false);
   const [bbrSyncedAt, setBbrSyncedAt] = useState<string | null>(null);
@@ -381,6 +391,8 @@ export default function EjendomDetaljeClient({
 
   /** BIZZ-1143: Ejer-detaljer fra /api/ejerskab/chain (prefetched parallelt) */
   const [chainEjerDetaljer, setChainEjerDetaljer] = useState<EjerDetalje[]>([]);
+  /** BIZZ-1582: True when deeper ejerkæde levels are available (depth < 3) */
+  const [chainHasMore, setChainHasMore] = useState(false);
   /** BIZZ-1143: True mens chain-data hentes */
   const [chainLoader, setChainLoader] = useState(false);
   /** BIZZ-1143: Prefetched diagram-graf fra /api/diagram/resolve */
@@ -414,7 +426,9 @@ export default function EjendomDetaljeClient({
   const [expandedPlaner, setExpandedPlaner] = useState<Set<string>>(new Set());
 
   /** Salgshistorik fra EJF Datafordeler — handler med prisdata */
-  const [salgshistorik, setSalgshistorik] = useState<HandelData[] | null>(null);
+  const [salgshistorik, setSalgshistorik] = useState<HandelData[] | null>(
+    prefetched?.salgshistorikData ?? null
+  );
   /** True mens salgshistorik hentes */
   const [salgshistorikLoader, setSalgshistorikLoader] = useState(false);
   /** True hvis EJF-adgang mangler hos Geodatastyrelsen */
@@ -704,8 +718,11 @@ export default function EjendomDetaljeClient({
    */
   useEffect(() => {
     if (!erDAWA || dawaStatus !== 'ok') return;
-    // Skip BBR fetch hvis server-side prefetch allerede leverede data (undtagen ved refresh)
-    if (prefetched?.bbrData && bbrRefreshKey === 0) return;
+    // Skip BBR fetch hvis server-side prefetch allerede leverede REEL data (undtagen ved refresh).
+    // BIZZ-1650b: Tjek at bbr-arrayet faktisk har indhold — ellers timeouted serveren
+    // og vi sidder fast med "utilgængelig" uden client-side retry.
+    if (prefetched?.bbrData?.bbr && prefetched.bbrData.bbr.length > 0 && bbrRefreshKey === 0)
+      return;
     const controller = new AbortController();
     setBbrLoader(true);
     fetch(`/api/ejendom/${id}`, { signal: controller.signal })
@@ -715,7 +732,8 @@ export default function EjendomDetaljeClient({
         const synced = r.headers.get('X-Synced-At');
         setBbrFromCache(cacheHit === 'true');
         setBbrSyncedAt(synced);
-        return r.ok ? (r.json() as Promise<EjendomApiResponse>) : null;
+        if (!r.ok) throw new Error(`BBR API HTTP ${r.status}`);
+        return r.json() as Promise<EjendomApiResponse>;
       })
       .then((data) => {
         if (controller.signal.aborted) return;
@@ -725,14 +743,28 @@ export default function EjendomDetaljeClient({
         if (err.name === 'AbortError') return;
         logger.error('[ejendom] BBR fetch error:', err);
         setBbrData(null);
+        // BIZZ-1650: Auto-retry med exponential backoff (5s, 15s, 45s, 120s)
+        const RETRY_DELAYS = [5000, 15000, 45000, 120000];
+        if (bbrRetryCount < RETRY_DELAYS.length) {
+          const delay = RETRY_DELAYS[bbrRetryCount];
+          bbrRetryTimer.current = setTimeout(() => {
+            setBbrRetryCount((c) => c + 1);
+            setBbrRefreshKey((k) => k + 1);
+          }, delay);
+        }
       })
       .finally(() => {
         if (!controller.signal.aborted) {
           setBbrLoader(false);
           setBbrRefreshing(false);
+          // BIZZ-1582: Signal wave-2 fetches to start now that Oversigt has data
+          setWave2Ready(true);
         }
       });
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      if (bbrRetryTimer.current) clearTimeout(bbrRetryTimer.current);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, erDAWA, dawaStatus, bbrRefreshKey]);
 
@@ -749,6 +781,10 @@ export default function EjendomDetaljeClient({
    * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
+    // BIZZ-1748: Defer tinglysning til relevant tab er aktiv — sparer 2-4 API-kald ved initial load
+    if (aktivTab !== 'tinglysning' && aktivTab !== 'oekonomi' && aktivTab !== 'ejerforhold') return;
+    // BIZZ-1582: Defer until wave-2 (BBR loaded) to avoid Vercel concurrency overload
+    if (!wave2Ready) return;
     // BIZZ-1329: Brug ejendomsrelationer BFE som primær — ejerlejlighedBfe kan pege på forkert SFE
     const erModerTl = dawaAdresse && !dawaAdresse.etage && !!bbrData?.ejerlejlighedBfe;
     const bfe = erModerTl
@@ -842,7 +878,8 @@ export default function EjendomDetaljeClient({
         setTlSumLoader(false);
       });
     return () => controller.abort();
-  }, [bbrData, dawaAdresse]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bbrData, dawaAdresse, wave2Ready, aktivTab]);
 
   /**
    * Henter CVR-virksomheder på adressen via /api/cvr når DAWA-adressen er klar.
@@ -850,6 +887,8 @@ export default function EjendomDetaljeClient({
    * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
+    // BIZZ-1582: Defer until wave-2
+    if (!wave2Ready) return;
     if (!erDAWA || dawaStatus !== 'ok' || !dawaAdresse) return;
     const controller = new AbortController();
     const params = new URLSearchParams({
@@ -880,8 +919,17 @@ export default function EjendomDetaljeClient({
     // BIZZ-333: Use stable address components as deps instead of full dawaAdresse object
     // to avoid re-triggering (and aborting) the CVR fetch when BBR prefetch updates
     // dawaAdresse reference without changing the actual address values.
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, erDAWA, dawaStatus, dawaAdresse?.vejnavn, dawaAdresse?.husnr, dawaAdresse?.postnr]);
+  }, [
+    id,
+    erDAWA,
+    dawaStatus,
+    dawaAdresse?.vejnavn,
+    dawaAdresse?.husnr,
+    dawaAdresse?.postnr,
+    wave2Ready,
+  ]);
 
   /**
    * Henter alle ejerlejligheder for ejendommen fra /api/ejerlejligheder.
@@ -891,6 +939,8 @@ export default function EjendomDetaljeClient({
    * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
+    // BIZZ-1748: Defer ejerlejligheder til ejerforhold-tab er aktiv
+    if (aktivTab !== 'ejerforhold' && aktivTab !== 'overblik') return;
     // BIZZ-241: Hent lejligheder for hovedejendomme (ingen etage + har ejerlejlighedBfe)
     // BIZZ-832: Også hent for child-units (ejerlejligheder med etage) for søster-enheder
     // BIZZ-841: Prefetch så snart matrikelData ELLER bbrData har ejerlavkode+matrikelnr —
@@ -919,27 +969,37 @@ export default function EjendomDetaljeClient({
     });
     // BIZZ-695: Send ejerlejlighedBfe so DAWA fallback can look up owners via ejf_ejerskab
     if (bbrData?.ejerlejlighedBfe) params.set('moderBfe', String(bbrData.ejerlejlighedBfe));
-    fetch(`/api/ejerlejligheder?${params}`, { signal: controller.signal })
-      .then((r) => (r.ok ? r.json() : { lejligheder: [] }))
-      .then((data: { lejligheder: import('@/app/api/ejerlejligheder/route').Ejerlejlighed[] }) => {
-        if (controller.signal.aborted) return;
-        // BIZZ-1591: startTransition — ejerlejligheder er BBR-tab data
-        startTransition(() => {
-          setLejligheder(data.lejligheder);
+    // BIZZ-1675: Delay 1.5s — undgår TL 429 rate-limit ved at lade
+    // tinglysning/summarisk-kald køre færdigt før ejerlejligheder starter.
+    const delayMs = 1500;
+    const delayTimer = setTimeout(() => {
+      fetch(`/api/ejerlejligheder?${params}`, { signal: controller.signal })
+        .then((r) => (r.ok ? r.json() : { lejligheder: [] }))
+        .then(
+          (data: { lejligheder: import('@/app/api/ejerlejligheder/route').Ejerlejlighed[] }) => {
+            if (controller.signal.aborted) return;
+            // BIZZ-1591: startTransition — ejerlejligheder er BBR-tab data
+            startTransition(() => {
+              setLejligheder(data.lejligheder);
+            });
+          }
+        )
+        .catch((err) => {
+          if (err.name === 'AbortError') return;
+          logger.error('[ejendom] Ejerlejligheder fetch error:', err);
+          startTransition(() => {
+            setLejligheder([]);
+          });
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setLejlighederLoader(false);
         });
-      })
-      .catch((err) => {
-        if (err.name === 'AbortError') return;
-        logger.error('[ejendom] Ejerlejligheder fetch error:', err);
-        startTransition(() => {
-          setLejligheder([]);
-        });
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLejlighederLoader(false);
-      });
-    return () => controller.abort();
-  }, [id, erDAWA, dawaStatus, dawaAdresse, bbrData, matrikelData]);
+    }, delayMs);
+    return () => {
+      clearTimeout(delayTimer);
+      controller.abort();
+    };
+  }, [id, erDAWA, dawaStatus, dawaAdresse, bbrData, matrikelData, aktivTab]);
 
   /**
    * Henter ejendomsstruktur (SFE → Hovedejendom → Ejerlejlighed) for opdelte
@@ -947,6 +1007,8 @@ export default function EjendomDetaljeClient({
    * Bruger samme ejerlav+matrikelnr som ejerlejligheder-fetch.
    */
   useEffect(() => {
+    // BIZZ-1748: Defer struktur til ejerforhold-tab er aktiv
+    if (aktivTab !== 'ejerforhold' && aktivTab !== 'overblik') return;
     const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
     const erChild = !!dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
     const matOpdelt = matrikelData?.opdeltIEjerlejligheder === true;
@@ -986,7 +1048,7 @@ export default function EjendomDetaljeClient({
         if (!controller.signal.aborted) setStrukturLoader(false);
       });
     return () => controller.abort();
-  }, [id, erDAWA, dawaStatus, dawaAdresse, bbrData, matrikelData]);
+  }, [id, erDAWA, dawaStatus, dawaAdresse, bbrData, matrikelData, aktivTab]);
 
   /**
    * Henter ejendomsvurdering og ejerskabsdata fra Datafordeler når BFEnummer
@@ -1001,6 +1063,10 @@ export default function EjendomDetaljeClient({
    * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
+    // BIZZ-1748: Defer ejerskab+diagram til relevant tab er aktiv
+    if (aktivTab !== 'ejerforhold' && aktivTab !== 'overblik') return;
+    // BIZZ-1582: Defer until wave-2
+    if (!wave2Ready) return;
     if (!erDAWA || !bbrData?.ejendomsrelationer?.length) return;
     // BIZZ-1585: Vent på dawaAdresse for at skelne leaf-ejerlejlighed (har etage)
     // fra moderejandom (ingen etage). Tidligere BIZZ-1213 fjernede dawaAdresse-
@@ -1069,7 +1135,11 @@ export default function EjendomDetaljeClient({
 
     // BIZZ-1143: Fetch ejerskab/chain + diagram/resolve PARALLELT og gem resultatet.
     // EjerKort og DiagramV2 modtager data via props — ingen intern fetch i child.
-    const erEjerlej = !!bbrData.ejerlejlighedBfe;
+    // BIZZ-1585: erEjerlej kun for leaf-ejerlejligheder (har etage), IKKE
+    // for moderejendommen. Moder har også ejerlejlighedBfe sat, men at sende
+    // type=ejerlejlighed for moder skipper TL og EJF returnerer tomt (ejerskab
+    // er på child-BFE-niveau, ikke moderBFE-niveau).
+    const erEjerlej = !!bbrData.ejerlejlighedBfe && !erModer;
     // BIZZ-1586: Brug mellemrum (ikke komma) mellem husnr og etage så
     // diagram-renderen ikke splitter etage/dør ned på linje 2. Komma kun
     // mellem adresselinje og postnr/by. Matcher mønstret fra BIZZ-1543
@@ -1090,6 +1160,7 @@ export default function EjendomDetaljeClient({
         // BIZZ-1591: startTransition — ejerskab chain er Ejerskab-tab data
         startTransition(() => {
           setChainEjerDetaljer((data?.ejerDetaljer as EjerDetalje[]) ?? []);
+          setChainHasMore(!!data?.hasMore);
         });
       })
       .catch(() => {})
@@ -1114,34 +1185,41 @@ export default function EjendomDetaljeClient({
         if (!signal.aborted) setDiagramResolveLoader(false);
       });
 
-    setSalgshistorikLoader(true);
-    fetch(`/api/salgshistorik?bfeNummer=${bfeNummer}`, { signal })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data: SalgshistorikResponse | null) => {
-        if (signal.aborted) return;
-        // BIZZ-1591: startTransition — salgshistorik er Økonomi-tab data
-        startTransition(() => {
-          setSalgshistorikManglerAdgang(data?.manglerAdgang ?? false);
-          setSalgshistorik(data?.handler ?? []);
+    // BIZZ-1630: Skip klient-side fetch hvis server-side prefetch leverede data
+    if (prefetched?.salgshistorikData && prefetched.salgshistorikData.length > 0) {
+      // Allerede sat via useState init — ingen fetch nødvendig
+    } else {
+      setSalgshistorikLoader(true);
+    }
+    if (!prefetched?.salgshistorikData)
+      fetch(`/api/salgshistorik?bfeNummer=${bfeNummer}`, { signal })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data: SalgshistorikResponse | null) => {
+          if (signal.aborted) return;
+          // BIZZ-1591: startTransition — salgshistorik er Økonomi-tab data
+          startTransition(() => {
+            setSalgshistorikManglerAdgang(data?.manglerAdgang ?? false);
+            setSalgshistorik(data?.handler ?? []);
+          });
+        })
+        .catch((err) => {
+          if (err.name === 'AbortError') return;
+          logger.error('[ejendom] Salgshistorik fetch error:', err);
+          startTransition(() => {
+            setSalgshistorik([]);
+          });
+        })
+        .finally(() => {
+          if (!signal.aborted) setSalgshistorikLoader(false);
         });
-      })
-      .catch((err) => {
-        if (err.name === 'AbortError') return;
-        logger.error('[ejendom] Salgshistorik fetch error:', err);
-        startTransition(() => {
-          setSalgshistorik([]);
-        });
-      })
-      .finally(() => {
-        if (!signal.aborted) setSalgshistorikLoader(false);
-      });
 
     return () => controller.abort();
     // BIZZ-1585: dawaAdresse er nu obligatorisk for at skelne leaf-ejerlejlighed
     // fra moderejandom (etage-checket på linje ~989). Hvis adresse-fetch er
     // server-side prefetched (page.tsx) er der ingen reel latency-hit.
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, erDAWA, bbrData, dawaAdresse]);
+  }, [id, erDAWA, bbrData, dawaAdresse, wave2Ready, aktivTab]);
 
   /**
    * Henter matrikeldata (jordstykker, landbrugsnotering m.m.) fra Datafordeler MAT-registret.
@@ -1213,6 +1291,8 @@ export default function EjendomDetaljeClient({
    * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
+    // BIZZ-1582: Defer until wave-2
+    if (!wave2Ready) return;
     if (!erDAWA) return;
 
     const params = new URLSearchParams();
@@ -1251,7 +1331,7 @@ export default function EjendomDetaljeClient({
         if (!controller.signal.aborted) setForelobigLoader(false);
       });
     return () => controller.abort();
-  }, [id, erDAWA, dawaAdresse, bbrData]);
+  }, [id, erDAWA, dawaAdresse, bbrData, wave2Ready]);
 
   /**
    * BIZZ-332: Henter energimærkerapporter via /api/energimaerke når BFE-nummer er tilgængeligt.
@@ -1267,6 +1347,8 @@ export default function EjendomDetaljeClient({
    * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
+    // BIZZ-1582: Defer until wave-2
+    if (!wave2Ready) return;
     if (!erDAWA || !bbrData?.ejendomsrelationer?.length || !dawaAdresse) return;
 
     // Bestem det korrekte BFE til energimærke-opslag.
@@ -1306,8 +1388,9 @@ export default function EjendomDetaljeClient({
         if (!controller.signal.aborted) setEnergiLoader(false);
       });
     return () => controller.abort();
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, erDAWA, bbrData, dawaAdresse]);
+  }, [id, erDAWA, bbrData, dawaAdresse, wave2Ready]);
 
   /**
    * Henter jordforureningsstatus fra DkJord API når ejerlavKode + matrikelnr er tilgængelige.
@@ -1315,6 +1398,8 @@ export default function EjendomDetaljeClient({
    * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
+    // BIZZ-1582: Defer until wave-2
+    if (!wave2Ready) return;
     if (!erDAWA || !bbrData?.ejendomsrelationer?.length) return;
     const rel = bbrData.ejendomsrelationer[0];
     if (!rel?.ejerlavKode || !rel?.matrikelnr) return;
@@ -1352,8 +1437,9 @@ export default function EjendomDetaljeClient({
         if (!controller.signal.aborted) setJordLoader(false);
       });
     return () => controller.abort();
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, erDAWA, bbrData]);
+  }, [id, erDAWA, bbrData, wave2Ready]);
 
   /**
    * Henter lokalplaner og kommuneplanrammer via /api/plandata når DAWA-adressen er klar.
@@ -1361,6 +1447,8 @@ export default function EjendomDetaljeClient({
    * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
+    // BIZZ-1582: Defer until wave-2
+    if (!wave2Ready) return;
     if (!erDAWA || dawaStatus !== 'ok') return;
     const controller = new AbortController();
     setPlandataLoader(true);
@@ -1386,8 +1474,9 @@ export default function EjendomDetaljeClient({
         if (!controller.signal.aborted) setPlandataLoader(false);
       });
     return () => controller.abort();
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, erDAWA, dawaStatus]);
+  }, [id, erDAWA, dawaStatus, wave2Ready]);
 
   /**
    * Toggler et dokument i udvalgslisten.
@@ -1443,6 +1532,8 @@ export default function EjendomDetaljeClient({
 
   // BIZZ-1598: Hent AI-ekstraherede handler fra cache via dedikeret endpoint
   useEffect(() => {
+    // BIZZ-1582: Defer until wave-2
+    if (!wave2Ready) return;
     const bfeNum = bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
     if (!bfeNum) return;
     fetch(`/api/tinglysning/extract-akt?bfe=${bfeNum}`)
@@ -1455,7 +1546,7 @@ export default function EjendomDetaljeClient({
         }
       })
       .catch(() => {});
-  }, [bbrData?.ejendomsrelationer]);
+  }, [bbrData?.ejendomsrelationer, wave2Ready]);
 
   // ── DAWA: Loading ──
   if (erDAWA && dawaStatus === 'loader') {
@@ -1663,6 +1754,38 @@ export default function EjendomDetaljeClient({
                 }
                 chainEjerDetaljer={chainEjerDetaljer}
                 chainLoader={chainLoader}
+                chainHasMore={chainHasMore}
+                onExpandChain={() => {
+                  // BIZZ-1582: Re-fetch med depth=3 for at udvide ejerkæden
+                  // BIZZ-1585: Kun leaf-ejerlejligheder — ikke moderejendommen
+                  const erExpandModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+                  const erEjerlej = !!bbrData?.ejerlejlighedBfe && !erExpandModer;
+                  const expandAdresse = dawaAdresse
+                    ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? ` ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
+                    : '';
+                  const expandBfe =
+                    bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
+                    bbrData?.ejerlejlighedBfe ??
+                    bbrData?.moderBfe;
+                  if (!expandBfe) return;
+                  const p = new URLSearchParams({
+                    bfe: String(expandBfe),
+                    adresse: expandAdresse,
+                    depth: '3',
+                  });
+                  if (erEjerlej) p.set('type', 'ejerlejlighed');
+                  setChainLoader(true);
+                  fetch(`/api/ejerskab/chain?${p}`)
+                    .then((r) => (r.ok ? r.json() : null))
+                    .then((data) => {
+                      if (data) {
+                        setChainEjerDetaljer((data.ejerDetaljer as EjerDetalje[]) ?? []);
+                        setChainHasMore(!!data.hasMore);
+                      }
+                    })
+                    .catch(() => {})
+                    .finally(() => setChainLoader(false));
+                }}
                 prefetchedDiagramGraph={prefetchedDiagramGraph}
                 diagramResolveLoader={diagramResolveLoader}
               />
@@ -1718,7 +1841,19 @@ export default function EjendomDetaljeClient({
                     );
                   })()
                 }
-                lejlighederCount={lejligheder?.length ?? 0}
+                lejlighederCount={
+                  // BIZZ-1667: Brug bedste tilgængelige kilde for antal EL.
+                  // lejligheder (TL+DAWA) kan være 0 selvom ejendommen har mange.
+                  // Fallback: strukturTree children → BBR enheder.
+                  (lejligheder?.length || 0) > 0
+                    ? lejligheder!.length
+                    : strukturTree?.children?.reduce(
+                        (sum, c) => sum + (c.children?.length || 0),
+                        0
+                      ) ||
+                      bbrData?.enheder?.length ||
+                      0
+                }
                 postnr={dawaAdresse?.postnr ?? null}
                 kommunekode={
                   dawaJordstykke?.kommune?.kode ? String(dawaJordstykke.kommune.kode) : null

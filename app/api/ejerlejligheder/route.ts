@@ -232,7 +232,7 @@ function parseDoerSortValue(doer: string | null | undefined): number {
 async function resolveLejlighederViaDawa(
   ejerlavKode: string,
   matrikelnr: string,
-  moderBfe?: number
+  _moderBfe?: number
 ): Promise<Ejerlejlighed[]> {
   const DAWA_BASE = 'https://dawa.aws.dk';
 
@@ -246,53 +246,8 @@ async function resolveLejlighederViaDawa(
   const adgangsadresser = (await adgRes.json()) as Array<{ id: string; adressebetegnelse: string }>;
   if (adgangsadresser.length === 0) return [];
 
-  // Step 2: Pre-load owner from ejf_ejerskab using moderBfe (= ejerlejligheds-BFE)
-  // BIZZ-695: Klienten sender ejerlejlighedBfe som moderBfe parameter.
-  let cachedOwner: { navn: string; type: 'person' | 'selskab' | 'ukendt' } | null = null;
-  if (moderBfe) {
-    try {
-      // Look up ejerskab for the moderBfe itself — ejf_ejerskab might have it
-      const { createAdminClient } = await import('@/lib/supabase/admin');
-      const admin = createAdminClient();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: moderRows } = (await (admin as any)
-        .from('ejf_ejerskab')
-        .select('ejer_navn, ejer_type, ejer_cvr')
-        .eq('bfe_nummer', moderBfe)
-        .eq('status', 'gældende')
-        .limit(1)) as {
-        data: Array<{ ejer_navn: string; ejer_type: string; ejer_cvr: string | null }> | null;
-      };
-      if (moderRows && moderRows.length > 0) {
-        let navn = moderRows[0].ejer_navn;
-        const ejerType =
-          moderRows[0].ejer_type === 'virksomhed'
-            ? ('selskab' as const)
-            : moderRows[0].ejer_type === 'person'
-              ? ('person' as const)
-              : ('ukendt' as const);
-
-        // Enrich virksomhedsnavn fra cvr_virksomhed når ejer_navn bare er "CVR XXXXXXXX"
-        if (ejerType === 'selskab' && moderRows[0].ejer_cvr && navn.startsWith('CVR ')) {
-          try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const { data: cvrRow } = (await (admin as any)
-              .from('cvr_virksomhed')
-              .select('navn')
-              .eq('cvr', moderRows[0].ejer_cvr)
-              .maybeSingle()) as { data: { navn: string } | null };
-            if (cvrRow?.navn) navn = cvrRow.navn;
-          } catch {
-            /* CVR lookup non-fatal */
-          }
-        }
-
-        cachedOwner = { navn, type: ejerType };
-      }
-    } catch {
-      /* non-fatal */
-    }
-  }
+  // BIZZ-1677: cachedOwner FJERNET — kopierede moder-ejer til alle children-EL.
+  // TL-berigelsen (BIZZ-724 iter 3) populerer korrekt ejer pr. EL-BFE.
 
   // Step 3: For each adgangsadresse, find all adresser with etage/dør
   const lejligheder: Ejerlejlighed[] = [];
@@ -322,8 +277,11 @@ async function resolveLejlighederViaDawa(
         etage: unit.etage,
         doer: unit.dør,
         beskrivelse: unit.betegnelse,
-        ejer: cachedOwner?.navn ?? '–',
-        ejertype: cachedOwner?.type ?? 'ukendt',
+        // BIZZ-1677: Sæt IKKE moder-ejer på alle units — det giver forkert
+        // data (alle EL viser samme person). TL-berigelsen nedenfor populerer
+        // den korrekte ejer pr. BFE via /ejdsummarisk.
+        ejer: '–',
+        ejertype: 'ukendt',
         areal: null,
         koebspris: null,
         koebsdato: null,
@@ -445,6 +403,88 @@ async function resolveLejlighederViaDawa(
     })
   );
 
+  // BIZZ-1678: VP BFE-fallback for lejligheder med bfe===0 efter TL+DAWA.
+  // Vurderingsportalen ES har BFE for de fleste ejerlejligheder og er hurtigere
+  // end TL (single batch query vs. N serial TL-kald).
+  const missingBfe = lejligheder.filter((l) => l.bfe === 0 && l.adresse);
+  if (missingBfe.length > 0) {
+    try {
+      // Batch: hent alle adresser på denne matrikel fra VP i ét kald
+      const firstAddr = lejligheder[0]?.adresse ?? '';
+      const vejMatch = firstAddr
+        .split(',')[0]
+        .trim()
+        .match(/^(.+?)\s+\d/);
+      const postMatch = firstAddr.match(/(\d{4})\s+\S/);
+      if (vejMatch && postMatch) {
+        const vpRes = await fetch(
+          'https://api-fs.vurderingsportalen.dk/preliminaryproperties/_search',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0',
+            },
+            body: JSON.stringify({
+              query: {
+                bool: {
+                  must: [
+                    { prefix: { 'roadName.keyword': vejMatch[1] } },
+                    { term: { zipcode: postMatch[1] } },
+                  ],
+                },
+              },
+              size: 200,
+              _source: ['bfeNumbers', 'roadName', 'houseNumber', 'floor', 'door', 'address'],
+            }),
+            signal: AbortSignal.timeout(8000),
+          }
+        );
+        if (vpRes.ok) {
+          const vpData = (await vpRes.json()) as {
+            hits?: {
+              hits?: Array<{
+                _source?: {
+                  bfeNumbers?: number[];
+                  address?: string;
+                  floor?: string;
+                  door?: string;
+                  houseNumber?: string;
+                };
+              }>;
+            };
+          };
+          // Build address→BFE map from VP results
+          const vpBfeMap = new Map<string, number>();
+          for (const hit of vpData.hits?.hits ?? []) {
+            const src = hit._source;
+            if (!src?.bfeNumbers?.[0] || !src.address) continue;
+            // Normaliser: "Skyttegårdvej 1, st. th, 2500 Valby" → lowercase trimmed
+            vpBfeMap.set(src.address.toLowerCase().trim(), src.bfeNumbers[0]);
+          }
+          // Match missing lejligheder
+          let resolved = 0;
+          for (const lej of missingBfe) {
+            const normAddr = lej.adresse.toLowerCase().trim();
+            const bfe = vpBfeMap.get(normAddr);
+            if (bfe && bfe > 0) {
+              lej.bfe = bfe;
+              resolved++;
+            }
+          }
+          if (resolved > 0) {
+            logger.log(
+              `[ejerlejligheder] VP BFE fallback: ${resolved}/${missingBfe.length} resolved`
+            );
+          }
+        }
+      }
+    } catch {
+      /* VP fallback non-fatal */
+    }
+  }
+
   // Sidste skridt: for lejligheder med BFE men ingen koebspris/koebsdato fra
   // summarisk, prøv salgshistorik-API (BIZZ-685) som nu indeholder Tinglysning
   // /dokaktuel pris-enrichment + reverse-inference. Giver pris på rækker hvor
@@ -533,11 +573,32 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
     const tlResult = await tlFetch(searchPath);
 
     if (tlResult.status !== 200) {
-      logger.error(`[ejerlejligheder] Tinglysning svarede ${tlResult.status}`);
-      return NextResponse.json(
-        { lejligheder: [], fejl: `Tinglysning svarede ${tlResult.status}` },
-        { status: 200 }
+      logger.warn(
+        `[ejerlejligheder] Tinglysning svarede ${tlResult.status} — prøver DAWA fallback`
       );
+      // BIZZ-1585: Kør DAWA fallback når TL fejler (404/500) — TL mangler
+      // data for mange matrikler. DAWA finder adresser med etage/dør.
+      try {
+        const dawaFallback = await resolveLejlighederViaDawa(ejerlavKode, matrikelnr, moderBfe);
+        if (dawaFallback.length > 0) {
+          logger.log(
+            `[ejerlejligheder] DAWA fallback (TL ${tlResult.status}): ${dawaFallback.length} lejligheder for ejerlav ${ejerlavKode} matr. ${matrikelnr}`
+          );
+          return NextResponse.json(
+            { lejligheder: dawaFallback, fejl: null },
+            {
+              status: 200,
+              headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
+            }
+          );
+        }
+      } catch (dawaErr) {
+        logger.warn(
+          '[ejerlejligheder] DAWA fallback fejlede:',
+          dawaErr instanceof Error ? dawaErr.message : dawaErr
+        );
+      }
+      return NextResponse.json({ lejligheder: [], fejl: null }, { status: 200 });
     }
 
     let items: TLSearchItem[];
@@ -796,6 +857,47 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
         // Tertiært: dør
         return parseDoerSortValue(a.doer) - parseDoerSortValue(b.doer);
       });
+
+    // BIZZ-1656: Augmentér med DAWA — TL matrikelsøgning kan returnere
+    // delvise resultater (fx kun 1. sal men ikke stuen). DAWA finder ALLE
+    // adresser på matriklen. Tilføj units DAWA kender men TL ikke fandt.
+    try {
+      const dawaExtra = await resolveLejlighederViaDawa(ejerlavKode, matrikelnr, moderBfe);
+      if (dawaExtra.length > 0) {
+        const existingAddrs = new Set(
+          lejligheder.map((l) => l.adresse.toLowerCase().replace(/\s+/g, ' ').trim())
+        );
+        let added = 0;
+        for (const dLej of dawaExtra) {
+          const normAddr = dLej.adresse.toLowerCase().replace(/\s+/g, ' ').trim();
+          if (!existingAddrs.has(normAddr)) {
+            lejligheder.push(dLej);
+            existingAddrs.add(normAddr);
+            added++;
+          }
+        }
+        if (added > 0) {
+          logger.log(
+            `[ejerlejligheder] DAWA augment: ${added} ekstra lejligheder tilføjet for ejerlav ${ejerlavKode} matr. ${matrikelnr}`
+          );
+          // Re-sort after merge
+          lejligheder.sort((a, b) => {
+            const addrA = a.adresse.split(',')[0].trim();
+            const addrB = b.adresse.split(',')[0].trim();
+            if (addrA !== addrB) return addrA.localeCompare(addrB, 'da');
+            const etageA = parseEtageSortValue(a.etage);
+            const etageB = parseEtageSortValue(b.etage);
+            if (etageA !== etageB) return etageA - etageB;
+            return parseDoerSortValue(a.doer) - parseDoerSortValue(b.doer);
+          });
+        }
+      }
+    } catch (dawaErr) {
+      logger.warn(
+        '[ejerlejligheder] DAWA augment fejlede (non-fatal):',
+        dawaErr instanceof Error ? dawaErr.message : dawaErr
+      );
+    }
 
     // BIZZ-784: filter udfasede ejerlejligheder unless klienten eksplicit
     // beder om dem. `udfaset=null` (ukendt) tæller som aktiv så vi ikke

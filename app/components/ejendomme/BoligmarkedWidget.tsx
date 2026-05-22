@@ -13,18 +13,21 @@
 import { useEffect, useState } from 'react';
 import { TrendingUp, TrendingDown, Home } from 'lucide-react';
 import type { BoligmarkedData } from '@/app/api/boligmarked/route';
+import type { EjfKvmPrisData } from '@/app/api/boligmarked/ejf-kvmpris/route';
 
 interface Props {
   kommunekode: string | null;
+  postnr?: string | null;
   lang: 'da' | 'en';
 }
 
 /**
  * Boligmarked-widget med salgspriser og trend.
  */
-export default function BoligmarkedWidget({ kommunekode, lang }: Props) {
+export default function BoligmarkedWidget({ kommunekode, postnr, lang }: Props) {
   const da = lang === 'da';
   const [data, setData] = useState<BoligmarkedData | null>(null);
+  const [kvmData, setKvmData] = useState<EjfKvmPrisData | null>(null);
 
   useEffect(() => {
     if (!kommunekode) return;
@@ -39,6 +42,21 @@ export default function BoligmarkedWidget({ kommunekode, lang }: Props) {
       cancelled = true;
     };
   }, [kommunekode]);
+
+  // BIZZ-1733: EJF-baseret kvm-pris fra frie handler
+  useEffect(() => {
+    if (!postnr) return;
+    let cancelled = false;
+    fetch(`/api/boligmarked/ejf-kvmpris?postnr=${postnr}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!cancelled && d && d.antalHandler > 0) setKvmData(d as EjfKvmPrisData);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [postnr]);
 
   if (!data || data.priser.length === 0) return null;
 
@@ -85,6 +103,25 @@ export default function BoligmarkedWidget({ kommunekode, lang }: Props) {
           ? `Gennemsnitlig salgspris for ${data.type.toLowerCase()} i ${data.omraade} ved almindelig fri handel.${data.aendringYoY != null ? ` Ændring er ift. samme kvartal året før.` : ''}`
           : `Average sale price for ${data.type.toLowerCase()} in ${data.omraade} in arm's-length transactions.${data.aendringYoY != null ? ' Change is YoY same quarter.' : ''}`}
       </p>
+
+      {/* BIZZ-1733: Lokal kvm-pris fra EJF fri handel */}
+      {kvmData && kvmData.medianKvmPris && (
+        <div className="mt-3 pt-3 border-t border-slate-700/50">
+          <div className="flex items-baseline gap-2">
+            <span className="text-lg font-bold text-white">
+              {kvmData.medianKvmPris.toLocaleString('da-DK')} kr/m²
+            </span>
+            <span className="text-xs text-slate-500">
+              {da ? 'median kvm-pris (frie handler)' : "median sqm price (arm's length)"}
+            </span>
+          </div>
+          <p className="text-[9px] text-slate-600 mt-0.5">
+            {da
+              ? `Baseret på ${kvmData.antalHandler} frie handler i postnr ${kvmData.postnr} (${kvmData.periode})`
+              : `Based on ${kvmData.antalHandler} arm's-length transactions in zip ${kvmData.postnr} (${kvmData.periode})`}
+          </p>
+        </div>
+      )}
     </div>
   );
 }

@@ -88,10 +88,11 @@ function TreeNode({ node, depth, lang, currentBfe, currentDawaId, showOwnership 
   const isCurrent =
     (currentBfe != null && node.bfe > 0 && node.bfe === currentBfe) ||
     (currentDawaId != null && node.dawaId != null && node.dawaId === currentDawaId);
-  // BIZZ-1330: Tillad navigation via BFE-fallback når dawaId mangler (fx SFE-noder)
+  // BIZZ-1689: SFE-noder har flere adresser — BFE-link kan resolve til
+  // forkert adresse. SFE-noder er ikke klikbare; kun hovedejendom + EL.
   const nodeHref = node.dawaId
     ? `/dashboard/ejendomme/${node.dawaId}`
-    : node.bfe > 0
+    : node.niveau !== 'sfe' && node.bfe > 0
       ? `/dashboard/ejendomme/${node.bfe}`
       : null;
   const canNavigate = nodeHref != null && !isCurrent;

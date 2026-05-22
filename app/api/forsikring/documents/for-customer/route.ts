@@ -45,19 +45,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       });
     }
 
-    // Fallback: vis ALLE parsed docs for tenant (pre-BIZZ-1404 data)
-    const allDocs = await insurance.documents.list();
-    const parsedDocs = allDocs.filter((d) => d.parse_status === 'parsed');
-
-    return NextResponse.json({
-      documents: parsedDocs.map((d) => ({
-        id: d.id,
-        original_name: d.original_name,
-        parse_status: d.parse_status,
-        created_at: d.created_at,
-        from_analyse_id: null,
-      })),
-    });
+    // BIZZ-1631: Ingen fallback til ALLE tenant-docs — det viste forrige
+    // kundes dokumenter når ny kunde ikke havde eksisterende analyser.
+    // Returner tom array — brugeren uploader nye docs til denne kunde.
+    return NextResponse.json({ documents: [] });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'unknown';
     return NextResponse.json({ error: msg }, { status: 500 });

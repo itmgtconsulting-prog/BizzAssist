@@ -1243,8 +1243,11 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
       uniqueCvrs,
       ownerEnhedsNumre.length > 0 ? ownerEnhedsNumre : undefined
     );
+    // BIZZ-1664: ejerskabDatterCvrs tilføjet til dep-array — når ejerskabs-
+    // cache loader datterselskaber ind, re-triggers ejendomme-fetchen med
+    // det komplette CVR-sæt (inkl. datter-CVR'er som CVR ES missede).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aktivTab, cvr, relatedCompanies, fetchEjendommeProgressively]);
+  }, [aktivTab, cvr, relatedCompanies, ejerskabDatterCvrs, fetchEjendommeProgressively]);
 
   /** Lazy-load regnskabstal for alle relaterede virksomheder (parallelt) */
   useEffect(() => {
@@ -1529,7 +1532,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
       {/* ─── Left: Main Content ─── */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* ─── Sticky Header ─── */}
-        <div className="px-3 sm:px-6 pt-5 pb-0 border-b border-slate-700/50 bg-slate-900/30">
+        <div className="px-3 sm:px-6 pt-5 pb-0 border-b border-slate-700/50 bg-slate-900/30 relative z-20">
           {/* Top row: back button + actions */}
           <div className="flex items-center justify-between mb-3">
             <button

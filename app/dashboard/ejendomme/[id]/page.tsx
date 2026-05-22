@@ -12,6 +12,7 @@ import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
 import type { DawaAdresse } from '@/app/lib/dawa';
 import type { EjendomApiResponse } from '@/app/lib/fetchBbrData';
 import type { VurderingResponse } from '@/app/api/vurdering/route';
+import type { HandelData } from '@/app/api/salgshistorik/route';
 import EjendomDetaljeClient from './EjendomDetaljeClient';
 import { logger } from '@/app/lib/logger';
 
@@ -42,6 +43,8 @@ export interface PrefetchedPropertyData {
   vurderingData?: VurderingResponse | null;
   /** BIZZ-1323: Server-side prefetched ejerskab fra ejf_ejerskab — sparer 300-800ms */
   ejerskabData?: PrefetchedEjerskab | null;
+  /** BIZZ-1630: Server-side prefetched salgshistorik fra ejerskifte_historik — sparer 300-1500ms */
+  salgshistorikData?: HandelData[] | null;
 }
 
 export default async function EjendommeDetailPage({
@@ -186,20 +189,80 @@ export default async function EjendommeDetailPage({
 
       if (adresse) {
         // Step 2: Fetch BBR data server-side (uses DAWA UUID)
-        const bbrResult = await fetchBbrForAddress(id);
+        // BIZZ-1627: Race BBR live fetch vs timeout — fallback til bbr_ejendom_status
+        // cache når Datafordeler er langsom/nede. Giver <50ms response i stedet for 1-3s.
+        let bbrResult: Omit<EjendomApiResponse, 'dawaId'>;
+        let bbrFromCache = false;
+        try {
+          // BIZZ-1650: Øget timeout fra 4s til 8s — Datafordeler kan tage 5-7s
+          // ved belastning. 4s triggede fejl-banner før DF havde svaret.
+          bbrResult = await Promise.race([
+            fetchBbrForAddress(id),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('BBR_TIMEOUT')), 8000)
+            ),
+          ]);
+        } catch {
+          // Live BBR fejlede/timeouted — prøv cache fallback fra bbr_ejendom_status
+          bbrResult = {
+            bbr: null,
+            enheder: null,
+            bygningPunkter: null,
+            ejendomsrelationer: null,
+            ejerlejlighedBfe: null,
+            moderBfe: null,
+            parentAdgangsadresseId: null,
+            opgange: null,
+            etager: null,
+            tekniskeAnlaeg: null,
+            bbrFejl:
+              'BBR-data midlertidigt utilgængeligt — Datafordeler API svarer ikke. Prøv igen om lidt.',
+          };
+          try {
+            const { createAdminClient } = await import('@/lib/supabase/admin');
+            const admin = createAdminClient();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: cached } = await (admin as any)
+              .from('bbr_ejendom_status')
+              .select(
+                'bfe_nummer, kommune_kode, samlet_boligareal, samlet_erhvervsareal, grundareal, bebygget_areal, opfoerelsesaar, byg021_anvendelse, energimaerke, antal_etager, antal_boligenheder, bygninger, enheder, ejerforholdskode, bbr_fetched_at'
+              )
+              .eq('adgangsadresse_id', id)
+              .eq('is_udfaset', false)
+              .maybeSingle();
+            if (cached?.bfe_nummer) {
+              bbrResult.ejendomsrelationer = [
+                {
+                  bfeNummer: Number(cached.bfe_nummer),
+                  ejendomsnummer: null,
+                  ejendomstype: null,
+                  ejerlavKode: null,
+                  matrikelnr: null,
+                },
+              ];
+              bbrResult.bbrFejl = `Viser cached BBR-data fra ${new Date(cached.bbr_fetched_at).toLocaleDateString('da-DK')}. Live data utilgængelig.`;
+              bbrFromCache = true;
+            }
+          } catch {
+            // Cache lookup fejlede — beholder den tomme bbrResult med fejlbesked
+          }
+        }
         const bbrData: EjendomApiResponse = { dawaId: id, ...bbrResult };
+        // Marker cached BBR for klienten
+        if (bbrFromCache) (bbrData as unknown as Record<string, unknown>)['_bbrCached'] = true;
 
         // BIZZ-1287+1323+1327: Prefetch vurdering + ejerskab parallelt fra cache
         let vurderingData: VurderingResponse | null = null;
         let ejerskabData: PrefetchedEjerskab | null = null;
+        let salgshistorikData: HandelData[] | null = null;
         const bfeNummer = bbrResult.ejendomsrelationer?.[0]?.bfeNummer;
 
         if (bfeNummer) {
           const { createAdminClient } = await import('@/lib/supabase/admin');
           const admin = createAdminClient();
 
-          // Kør begge cache-lookups parallelt
-          const [vurResult, ejfResult] = await Promise.allSettled([
+          // Kør alle cache-lookups parallelt
+          const [vurResult, ejfResult, shResult] = await Promise.allSettled([
             // Vurdering fra cache
             (async () => {
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -246,13 +309,36 @@ export default async function EjendommeDetailPage({
               }
               return null;
             })(),
+            // BIZZ-1630: Salgshistorik fra ejerskifte_historik (537k rækker)
+            (async () => {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const { data: handler } = await (admin as any)
+                .from('ejerskifte_historik')
+                .select(
+                  'overtagelsesdato, ejer_navn, ejer_cvr, ejer_type, ejerandel_taeller, ejerandel_naevner, kontant_koebesum, i_alt_koebesum, koebsaftale_dato, dokument_id, historisk_kilde'
+                )
+                .eq('bfe_nummer', bfeNummer)
+                .order('overtagelsesdato', { ascending: false })
+                .limit(20);
+              if (handler && (handler as unknown[]).length > 0) {
+                return handler as HandelData[];
+              }
+              return null;
+            })(),
           ]);
 
           if (vurResult.status === 'fulfilled') vurderingData = vurResult.value;
           if (ejfResult.status === 'fulfilled') ejerskabData = ejfResult.value;
+          if (shResult.status === 'fulfilled') salgshistorikData = shResult.value;
         }
 
-        prefetched = { dawaAdresse: adresse, bbrData, vurderingData, ejerskabData };
+        prefetched = {
+          dawaAdresse: adresse,
+          bbrData,
+          vurderingData,
+          ejerskabData,
+          salgshistorikData,
+        };
       } else {
         prefetched = { dawaAdresse: null, bbrData: null };
       }

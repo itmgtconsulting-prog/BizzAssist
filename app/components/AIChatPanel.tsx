@@ -160,7 +160,7 @@ function AIChatPanel() {
   const [attachBusy, setAttachBusy] = useState(false);
   const [attachError, setAttachError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   /** AbortController for at kunne stoppe streaming */
   const abortRef = useRef<AbortController | null>(null);
   /** Refresh token info from subscription context (server-authoritative) */
@@ -220,10 +220,13 @@ function AIChatPanel() {
     }
   }, [chatCtx.messages, isLoading, messages.length]);
 
-  /** Scroll til bunden ved nye beskeder eller stream-opdatering */
+  /** Scroll til bunden ved nye beskeder eller stream-opdatering — kun inden for chat-containeren */
   useEffect(() => {
-    {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = messagesEndRef.current;
+    if (!el) return;
+    const container = el.closest('.overflow-y-auto');
+    if (container) {
+      container.scrollTop = container.scrollHeight;
     }
   }, [messages, streamText]);
 
@@ -902,6 +905,15 @@ function AIChatPanel() {
                   preview_rows?: string[][];
                   preview_html?: string;
                 };
+                /** BIZZ-1708: DI-resultat fra data_intelligence tool */
+                di_result?: {
+                  columns: string[];
+                  rows: unknown[][];
+                  rowCount: number;
+                  chartType: string;
+                  afkortet: boolean;
+                  query: string;
+                };
               };
               // Only update UI if user is still viewing this conversation
               const isActive = chatCtx.activeId === convId;
@@ -932,6 +944,26 @@ function AIChatPanel() {
                   setToolStatus(parsed.status);
                   chatCtx.setToolStatus(parsed.status);
                 }
+              } else if (parsed.di_result) {
+                // BIZZ-1708: Push DI-resultat til shared store for rendering
+                // i DI-hovedområdet (fuld bredde).
+                const dr = parsed.di_result!;
+                void import('@/app/lib/diResultStore').then(({ pushDiResult }) =>
+                  pushDiResult({
+                    columns: dr.columns,
+                    rows: dr.rows,
+                    rowCount: dr.rowCount,
+                    chartType: (dr.chartType ?? 'table') as
+                      | 'table'
+                      | 'bar'
+                      | 'line'
+                      | 'pie'
+                      | 'number',
+                    afkortet: dr.afkortet,
+                    query: dr.query,
+                    timestamp: Date.now(),
+                  })
+                );
               } else if (parsed.generated_file) {
                 // BIZZ-814: buffer til senere attach på final message.
                 // Vis status så brugeren ser progress mens Claude formulerer
@@ -1025,10 +1057,23 @@ function AIChatPanel() {
           setMessages(finalMsgs);
         }
       } else {
-        const finalMsgs = [
-          ...newMessages,
-          { role: 'assistant' as const, content: a.connectionError },
-        ];
+        // BIZZ-1695: Mere specifik fejlbesked baseret på fejltype
+        let errorMsg = a.connectionError;
+        if (
+          err instanceof TypeError &&
+          (err.message.includes('fetch') || err.message.includes('network'))
+        ) {
+          errorMsg =
+            lang === 'da'
+              ? 'Netværksfejl — tjek din internetforbindelse og prøv igen.'
+              : 'Network error — check your internet connection and try again.';
+        } else if (err instanceof Error && err.message.includes('timeout')) {
+          errorMsg =
+            lang === 'da'
+              ? 'Forespørgslen tog for lang tid. Prøv et kortere spørgsmål eller start en ny samtale.'
+              : 'Request timed out. Try a shorter question or start a new conversation.';
+        }
+        const finalMsgs = [...newMessages, { role: 'assistant' as const, content: errorMsg }];
         setMessages(finalMsgs);
         chatCtx.persistConversation(convId, finalMsgs);
       }
@@ -1061,10 +1106,10 @@ function AIChatPanel() {
     <div className="flex flex-col h-full overflow-hidden bg-[#0f172a]">
       {/* ── Drawer header ────────────────────────────────────────────────── */}
       <div className="shrink-0">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
-          <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 bg-blue-600/25 rounded-lg flex items-center justify-center shrink-0">
-              <Sparkles size={13} className="text-blue-400" />
+        <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 bg-blue-600/25 rounded-lg flex items-center justify-center shrink-0">
+              <Sparkles size={12} className="text-blue-400" />
             </div>
             <span className="text-slate-200 text-sm font-semibold">{a.title}</span>
             {isLoading && toolStatus && (
@@ -1128,7 +1173,7 @@ function AIChatPanel() {
             const Wrapper = isRed ? 'button' : 'div';
             return (
               <Wrapper
-                className={`flex items-center gap-2 px-4 pb-2 w-full ${isRed ? 'cursor-pointer hover:bg-white/5 rounded-lg transition-colors group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-inset' : ''}`}
+                className={`flex items-center gap-2 px-3 pb-1 w-full ${isRed ? 'cursor-pointer hover:bg-white/5 rounded-lg transition-colors group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-inset' : ''}`}
                 {...(isRed
                   ? {
                       onClick: () => router.push('/dashboard/tokens'),
@@ -1264,7 +1309,7 @@ function AIChatPanel() {
           )}
 
         {/* AI disclaimer */}
-        <p className="px-4 pb-2 text-xs text-slate-500">
+        <p className="px-3 pb-1 text-[11px] text-slate-500">
           ⚠️ Svar genereret af AI er ikke nødvendigvis korrekte. Verificér altid vigtig information.
         </p>
       </div>
@@ -1581,9 +1626,8 @@ function AIChatPanel() {
                   }}
                 />
               </label>
-              <input
+              <textarea
                 ref={inputRef}
-                type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
@@ -1593,7 +1637,8 @@ function AIChatPanel() {
                   }
                 }}
                 placeholder={a.inputPlaceholder}
-                className="flex-1 bg-transparent text-slate-300 text-xs placeholder-slate-600 focus:outline-none"
+                rows={4}
+                className="flex-1 bg-transparent text-slate-300 text-xs placeholder-slate-600 focus:outline-none resize-none"
               />
               {isLoading ? (
                 <button

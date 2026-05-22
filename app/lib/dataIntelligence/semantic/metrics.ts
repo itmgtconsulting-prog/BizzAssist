@@ -126,11 +126,20 @@ export const METRICS: MetricDefinition[] = [
   {
     name: 'avg_koebesum',
     displayName: 'Gennemsnitlig købesum',
-    description: 'Gennemsnit af kontante købesummer',
+    // BIZZ-1732: Filtrerer på fri handel via ejf_ejerskifte.overdragelsesmaade.
+    // Ekskluderer arv, gave, familieoverdragelser, tvangsauktioner + outliers.
+    description:
+      'Gennemsnit af kontante købesummer for frie handler (ekskluderer arv/gave/tvang). VIGTIGT: Brug median_koebesum i stedet — aritmetisk gennemsnit er misvisende for ejendomspriser pga. skæv fordeling.',
     type: 'avg',
     sql: 'AVG(kontant_koebesum)',
     table: 'ejerskifte_historik',
-    filters: ['kontant_koebesum IS NOT NULL'],
+    filters: [
+      'kontant_koebesum IS NOT NULL',
+      'kontant_koebesum > 100000',
+      'kontant_koebesum < 100000000',
+      // BIZZ-1732: kun fri handel — join mod ejf_ejerskifte
+      "EXISTS (SELECT 1 FROM ejf_ejerskifte es WHERE es.bfe_nummer = ejerskifte_historik.bfe_nummer AND es.overdragelsesmaade = 'Almindelig fri handel' AND es.overtagelsesdato::date = ejerskifte_historik.overtagelsesdato::date)",
+    ],
     format: 'currency_dkk',
     unit: 'DKK',
     examples: [
@@ -140,12 +149,20 @@ export const METRICS: MetricDefinition[] = [
   },
   {
     name: 'median_koebesum',
-    displayName: 'Median købesum',
-    description: 'Median af kontante købesummer (50. percentil)',
+    displayName: 'Median købesum (anbefalet)',
+    // BIZZ-1732: Filtrerer på fri handel via ejf_ejerskifte.overdragelsesmaade.
+    description:
+      'Median af kontante købesummer for frie handler (50. percentil) — den mest retvisende central-værdi for ejendomspriser. Foretrækkes over avg_koebesum.',
     type: 'median',
     sql: 'PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY kontant_koebesum)',
     table: 'ejerskifte_historik',
-    filters: ['kontant_koebesum IS NOT NULL'],
+    filters: [
+      'kontant_koebesum IS NOT NULL',
+      'kontant_koebesum > 100000',
+      'kontant_koebesum < 100000000',
+      // BIZZ-1732: kun fri handel
+      "EXISTS (SELECT 1 FROM ejf_ejerskifte es WHERE es.bfe_nummer = ejerskifte_historik.bfe_nummer AND es.overdragelsesmaade = 'Almindelig fri handel' AND es.overtagelsesdato::date = ejerskifte_historik.overtagelsesdato::date)",
+    ],
     format: 'currency_dkk',
     unit: 'DKK',
     examples: ['Medianpris for boliger i 2025', 'Median købesum per kommune'],
@@ -411,6 +428,114 @@ export const METRICS: MetricDefinition[] = [
     format: 'currency_dkk',
     unit: 'DKK',
     examples: ['Samlet omsætning i branche X', 'Total omsætning per kommune'],
+  },
+
+  // ─── BIZZ-1714: EJF Ejerskifte + Handelsoplysninger metrics ──────────
+
+  {
+    name: 'count_arms_length_handler',
+    displayName: 'Antal frie handler',
+    description:
+      'Antal ejerskifter med overdragelsesmaade = Almindelig fri handel. Ekskluderer arv, gave, familieoverdragelser og tvangsauktioner.',
+    type: 'count',
+    sql: 'COUNT(*)',
+    table: 'ejf_ejerskifte',
+    filters: ["overdragelsesmaade = 'Almindelig fri handel'", "status = 'gældende'"],
+    format: 'integer',
+    unit: 'antal',
+    examples: ['Hvor mange almindelige bolighandler i 2025?', 'Antal frie handler per kommune'],
+  },
+  {
+    name: 'median_koebesum_arms_length',
+    displayName: 'Median købesum (fri handel)',
+    description:
+      'Median købesum for handler med overdragelsesmaade = Almindelig fri handel. Joiner ejf_handelsoplysninger for pris.',
+    type: 'median',
+    sql: 'PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY h.kontant_koebesum)',
+    table: 'ejf_ejerskifte',
+    filters: [
+      "overdragelsesmaade = 'Almindelig fri handel'",
+      "status = 'gældende'",
+      'h.kontant_koebesum IS NOT NULL',
+      'h.kontant_koebesum > 100000',
+    ],
+    format: 'currency_dkk',
+    unit: 'DKK',
+    examples: [
+      'Median bolighandel i København 2025?',
+      'Hvad er den typiske salgspris for frie handler?',
+    ],
+  },
+  {
+    name: 'tvangsauktion_rate',
+    displayName: 'Tvangsauktionsandel',
+    description:
+      'Andel af ejerskifter der er tvangsauktioner (procent). Beregnet som count(tvangsauktion) / count(alle) * 100.',
+    type: 'ratio',
+    sql: "ROUND(COUNT(*) FILTER (WHERE overdragelsesmaade = 'Tvangsauktion') * 100.0 / NULLIF(COUNT(*), 0), 2)",
+    table: 'ejf_ejerskifte',
+    filters: ["status = 'gældende'"],
+    format: 'percent',
+    unit: '%',
+    examples: ['Hvilke kommuner har højest andel tvangsauktioner?', 'Tvangsauktionsrate i 2024?'],
+  },
+  {
+    name: 'familieoverdragelse_rate',
+    displayName: 'Familieoverdragelsesandel',
+    description: 'Andel af ejerskifter der er familieoverdragelser (procent).',
+    type: 'ratio',
+    sql: "ROUND(COUNT(*) FILTER (WHERE overdragelsesmaade = 'Familieoverdragelse') * 100.0 / NULLIF(COUNT(*), 0), 2)",
+    table: 'ejf_ejerskifte',
+    filters: ["status = 'gældende'"],
+    format: 'percent',
+    unit: '%',
+    examples: ['Hvor mange familieoverdragelser i 2024?', 'Familieoverdragelsesandel per region?'],
+  },
+  {
+    name: 'ejerskifte_velocity',
+    displayName: 'Ejerskifter per år',
+    description:
+      'Antal ejerskifter per år for en given BFE, kommune eller periode. Mål for markedsaktivitet.',
+    type: 'count',
+    sql: 'COUNT(*)',
+    table: 'ejf_ejerskifte',
+    filters: ["status = 'gældende'"],
+    format: 'integer',
+    unit: 'antal/år',
+    examples: [
+      'Hvilke kommuner har flest ejerskifter per år?',
+      'Ejerskifteaktivitet i 2025 vs 2024?',
+    ],
+  },
+  {
+    name: 'count_tvangsauktioner',
+    displayName: 'Antal tvangsauktioner',
+    description: 'Antal ejerskifter med overdragelsesmaade = Tvangsauktion.',
+    type: 'count',
+    sql: 'COUNT(*)',
+    table: 'ejf_ejerskifte',
+    filters: ["overdragelsesmaade = 'Tvangsauktion'", "status = 'gældende'"],
+    format: 'integer',
+    unit: 'antal',
+    examples: ['Hvor mange tvangsauktioner i 2024?', 'Antal tvangsauktioner per kommune?'],
+  },
+  {
+    name: 'avg_koebesum_per_m2',
+    displayName: 'Gennemsnitlig kvm-pris (fri handel)',
+    description:
+      'Gennemsnitlig pris per m² for frie handler. Kræver join mod bbr_ejendom_status for samlet_boligareal.',
+    type: 'avg',
+    sql: 'AVG(h.kontant_koebesum / NULLIF(bbr.samlet_boligareal, 0))',
+    table: 'ejf_ejerskifte',
+    filters: [
+      "overdragelsesmaade = 'Almindelig fri handel'",
+      "status = 'gældende'",
+      'h.kontant_koebesum > 100000',
+      'bbr.samlet_boligareal > 10',
+    ],
+    format: 'currency_dkk',
+    unit: 'DKK/m²',
+    examples: ['Hvad er kvm-prisen i København 2025?', 'Gennemsnitlig kvm-pris per postnummer?'],
   },
 ];
 

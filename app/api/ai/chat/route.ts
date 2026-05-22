@@ -678,6 +678,31 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['topic'],
     },
   },
+  {
+    name: 'data_intelligence',
+    description:
+      'Kør en data-forespørgsel mod BizzAssist databasen via Data Intelligence. ' +
+      'Genererer SQL automatisk, validerer og eksekverer. Brug dette til statistik, ' +
+      'aggregeringer og analyser der ikke er dækket af andre tools — fx ' +
+      '"Hvor mange handler over 10M i Hvidovre i 2025?", "Top 10 virksomheder med flest ejendomme", ' +
+      '"Gennemsnitlig grundværdi pr. kommune". Returnerer tabeldata med kolonner og rækker.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        prompt: {
+          type: 'string',
+          description:
+            'Struktureret prompt til DI-backend — beskriv præcist hvad der skal hentes, filtre, sortering, aggregering. Fx "Antal ejerskifter i 2025 grouperet pr. kommune, sorteret faldende"',
+        },
+        chart_type: {
+          type: 'string',
+          enum: ['table', 'bar', 'line', 'pie', 'number'],
+          description: 'Ønsket visualiseringstype for resultatet (default: table)',
+        },
+      },
+      required: ['prompt'],
+    },
+  },
 ];
 
 // ─── Tool labels (for status messages) ──────────────────────────────────────
@@ -720,6 +745,8 @@ const TOOL_STATUS: Record<string, string> = {
   hent_ejendomme_for_person: 'Henter personens ejendomme…',
   // BIZZ-813
   generate_document: 'Genererer fil…',
+  // BIZZ-1697
+  data_intelligence: 'Kører data-analyse…',
 };
 
 // ─── System prompt ──────────────────────────────────────────────────────────
@@ -727,6 +754,47 @@ const TOOL_STATUS: Record<string, string> = {
 const SYSTEM_PROMPT = `Du er AI Bizzness Assistent — en intelligent ejendoms- og virksomhedsrådgiver bygget ind i BizzAssist-platformen.
 
 Du har DIREKTE ADGANG til danske offentlige registre via dine tools. Brug dem aktivt!
+
+## Data Intelligence (data_intelligence tool)
+Du kan køre dataforespørgsler mod BizzAssist databasen. Beskriv hvad du vil hente i naturligt sprog — backenden genererer SQL automatisk.
+
+Tilgængelige tabeller:
+- bbr_ejendom_status: 2.5M ejendomme (bfe_nummer, kommune_kode, samlet_boligareal, opfoerelsesaar, energimaerke, byg021_anvendelse, is_udfaset)
+- cvr_virksomhed: 2.1M virksomheder (cvr, navn, branche_kode, branche_tekst, virksomhedsform, kommune, stiftet, ophoert)
+- cvr_virksomhed_ejerskab: koncern-relationer (ejer_cvr, ejet_cvr, ejerandel_min/max, gyldig_fra/til)
+- ejf_ejerskab: 7.6M ejerskabs-records (bfe_nummer, ejer_navn, ejer_cvr, ejer_type, ejerandel_taeller/naevner, status, virkning_fra/til)
+- vurdering_cache: ejendomsvurderinger (bfe_nummer, ejendomsvaerdi, grundvaerdi, vurderingsaar)
+- regnskab_cache: regnskabsnøgletal (cvr, omsaetning, egenkapital, aarsresultat, aar)
+- mv_analyse_ejendom: beriget ejendomsview (bfe, adresse, postnr, kommune, ejendomsvaerdi, grundvaerdi, boligareal, ejer_cvr, ejer_navn)
+- mv_analyse_virksomhed: beriget virksomhedsview (cvr, navn, branche, kommune, antal_ejendomme, samlet_ejendomsvaerdi)
+- kommune_ref: kommune-referencetabel (kode, navn, region)
+- ejendomshandel: 58K salgspriser (bfe_nummer, dato, koebesum, type, koeber_navne) — PRIMÆR for prisdata
+- ejerskifte_historik: 572K ejerskifter (bfe_nummer, overtagelsesdato, ejer_navn/cvr, kontant_koebesum)
+- tinglysning_adkomst: normaliserede skøder med priser
+- cvr_deltager: personer med roller (enhedsnummer, navn, antal_aktive_selskaber)
+- cvr_deltagerrelation: person→virksomhed relationer (type, gyldig_fra/til, ejerandel_pct)
+- ejf_administrator: ejendomsadministratorer (bfe_nummer, virksomhed_cvr, status)
+- ejf_ejerskifte: ejerskifter med handelstype (bfe_nummer, overtagelsesdato, overdragelsesmaade, handelsoplysninger_lokal_id). VIGTIGT: overdragelsesmaade = 'Almindelig fri handel' for reelle markedshandler
+- ejf_handelsoplysninger: salgspriser (id_lokal_id, samlet_koebesum, kontant_koebesum, koebsaftale_dato, valutakode). JOIN ejf_ejerskifte ON handelsoplysninger_lokal_id = id_lokal_id
+- v_ejerskifte_handel: pre-joined view af ejerskifte+handelsoplysninger (bfe_nummer, overdragelsesmaade, overtagelsesdato, samlet_koebesum, kontant_koebesum)
+- bfe_adresse_cache: 1.8M BFE→adresse mappings (bfe_nummer, adresse, postnr, postnrnavn, kommune, kommune_kode)
+- mv_virksomhed_portefolje: virksomheders ejendomsporteføljer (cvr, virksomhedsnavn, antal_ejendomme, samlet_ejendomsvaerdi, samlet_grundvaerdi)
+- mv_kommune_statistik: pre-aggregeret kommune-statistik (kommunekode, kommunenavn, antal_adresser)
+- mv_virksomhed_struktur: koncernstrukturer (ejer_cvr, ejet_cvr, ejerandel_pct)
+- mv_ejerskab_beriget: 6.9M beriget ejerskabs-view (bfe_nummer, ejer_navn, ejer_cvr, ejerandel_pct, virksomhed_navn, branche_tekst)
+- mv_deltager_beriget: 2.8M beriget person-view (deltager_enhedsnummer, deltager_navn, virksomhed_cvr, rolle_typer, ejerandel_pct)
+- mv_ejendom_master: 2.6M master ejendomsview (bfe_nummer, kommune_kode, kommunenavn, boligareal_m2, ejendomsvaerdi, grundvaerdi)
+
+Brug data_intelligence til statistik og analyser. Vis ALDRIG SQL til brugeren — kun det formaterede resultat.
+
+Når du modtager data_intelligence resultater:
+- Skriv en KORT opsummering (1-3 sætninger): hvad dataen viser, antal rækker, vigtigste indsigt
+- Vis IKKE tabellen som markdown — den renderes automatisk i Data Intelligence-panelet til venstre
+- For enkelt-tal (1 række, 1-2 kolonner): vis som **stort nøgletal** i fed tekst
+- Brug danske tal-formater (1.234.567 ikke 1,234,567)
+- Foreslå 2-3 opfølgninger: "Du kan f.eks. bede mig om at: filtrere på kommune, vise som graf, eller sammenligne med et andet år."
+
+Iterativ forbedring: Når brugeren beder om ændringer til et data-resultat ("vis kun København", "sortér faldende", "kun aktive"), modificér din seneste data_intelligence prompt — bevar filtre og aggregeringer og tilføj/ændr kun det brugeren beder om. Kald data_intelligence igen med den opdaterede prompt.
 
 ## Workflow ved ejendomsspørgsmål
 1. Søg adressen med dawa_adresse_soeg
@@ -783,6 +851,7 @@ VIGTIGT:
 
 ## Regler
 - BRUG ALTID dine tools til at hente rigtig data — gæt aldrig
+- CPR-POLICY: Inkludér ALDRIG CPR-numre i dine svar. Hvis du ser et CPR-nummer i data eller dokumenter, udelad det helt. Vis kun navne, CVR-numre og enhedsNumre som person-identifikation.
 - Svar ALTID på dansk medmindre brugeren skriver på engelsk
 - Præsenter data struktureret med overskrifter og tal
 - Hold svar fokuserede — vis de mest relevante data først
@@ -2410,6 +2479,66 @@ async function executeTool(
         break;
       }
 
+      case 'data_intelligence': {
+        // BIZZ-1697: Data Intelligence — kør SQL mod database via DI-backend
+        const diPrompt = (input as { prompt?: string; chart_type?: string }).prompt;
+        const chartType = (input as { chart_type?: string }).chart_type ?? 'table';
+        if (!diPrompt) {
+          result = { fejl: 'prompt er påkrævet' };
+          break;
+        }
+        try {
+          const diRes = await fetch(`${baseUrl}/api/analyse/sql`, {
+            method: 'POST',
+            headers: { ...internalFetchOpts.headers, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: diPrompt }),
+            // BIZZ-1719: Reduceret fra 25s til 15s — hurtigere feedback på mobil
+            signal: AbortSignal.timeout(15000),
+          });
+          if (!diRes.ok) {
+            const errBody = await diRes.json().catch(() => null);
+            result = {
+              fejl: errBody?.error ?? `Data Intelligence fejlede (HTTP ${diRes.status})`,
+            };
+          } else {
+            const diData = (await diRes.json()) as {
+              columns?: string[];
+              rows?: unknown[][];
+              sql?: string;
+              rowCount?: number;
+              error?: string;
+            };
+            if (diData.error) {
+              result = { fejl: diData.error };
+            } else {
+              // BIZZ-1717: Returner KUN opsummering til Claude — IKKE data.
+              // Data pusher via SSE di_result event til DI-panelet.
+              // Claude skal opsummere, IKKE gengive tabellen.
+              const rowCount = diData.rowCount ?? 0;
+              const cols = diData.columns ?? [];
+              result = {
+                status: 'ok',
+                rowCount,
+                columns: cols,
+                chartType,
+                besked: `Resultatet (${rowCount} rækker, ${cols.length} kolonner) vises nu i Data Intelligence-panelet til venstre. Giv brugeren en kort opsummering af hvad dataen viser — vis IKKE tabellen.`,
+              };
+              // Gem rå data for SSE push (sker i tool-result post-processing)
+              (result as Record<string, unknown>)._diRawRows = (diData.rows ?? []).slice(0, 50);
+              (result as Record<string, unknown>)._diAfkortet = (diData.rows?.length ?? 0) > 50;
+            }
+          }
+        } catch (diErr) {
+          result = {
+            fejl:
+              diErr instanceof Error && diErr.name === 'TimeoutError'
+                ? 'Forespørgslen tog for lang tid (>25s)'
+                : 'Data Intelligence netværksfejl',
+          };
+        }
+        break;
+      }
+
       default:
         return { fejl: `Ukendt tool: ${name}` };
     }
@@ -3109,7 +3238,9 @@ export async function POST(request: NextRequest): Promise<Response> {
         // Stream allerede lukket — stop heartbeat
         if (heartbeatInterval) clearInterval(heartbeatInterval);
       }
-    }, 15_000);
+      // BIZZ-1719: Reduceret fra 15s til 8s — mobil Safari lukker SSE
+      // hurtigere end desktop. 8s sikrer heartbeat under tool-kald.
+    }, 8_000);
   };
   const stopHeartbeat = () => {
     if (heartbeatInterval) {
@@ -3265,6 +3396,18 @@ export async function POST(request: NextRequest): Promise<Response> {
                 },
               })
               .catch(() => {}); // non-critical — best-effort tracking
+
+            // BIZZ-1687: Persist til ai_token_usage tabel for audit + rapportering
+            void import('@/app/lib/aiTracking').then(({ recordAiUsage }) =>
+              recordAiUsage({
+                userId,
+                tenantId: resolvedTenantId ?? null,
+                route: 'ai.chat',
+                inputTokens: totalInputTokens,
+                outputTokens: totalOutputTokens,
+                model: 'claude-sonnet-4-6',
+              })
+            );
 
             // Fire-and-forget: record in tenant.ai_token_usage for auditable per-tenant billing
             if (resolvedTenantId) {
@@ -3455,6 +3598,45 @@ export async function POST(request: NextRequest): Promise<Response> {
                     note: 'File generated. Give a short confirmation and tell the user to use the download chip in the chat.',
                   }),
                 };
+              }
+
+              // BIZZ-1717: Emit DI-result med RÅ data til frontend-store.
+              // Claude får kun opsummering — DI-panelet renderer data.
+              if (
+                toolBlock.name === 'data_intelligence' &&
+                typeof result === 'object' &&
+                result !== null &&
+                'columns' in result
+              ) {
+                const diResult = result as {
+                  columns: string[];
+                  rowCount: number;
+                  chartType?: string;
+                  _diRawRows?: unknown[];
+                  _diAfkortet?: boolean;
+                };
+                sse(
+                  controller,
+                  JSON.stringify({
+                    di_result: {
+                      columns: diResult.columns,
+                      rows: diResult._diRawRows ?? [],
+                      rowCount: diResult.rowCount,
+                      chartType: diResult.chartType ?? 'table',
+                      afkortet: diResult._diAfkortet ?? false,
+                      query: (toolBlock.input as { prompt?: string }).prompt ?? '',
+                    },
+                  })
+                );
+              }
+
+              // BIZZ-1717: Fjern rå data fra tool-result til Claude
+              // Claude får opsummering + kolonner + rowCount — nok til samtale
+              // men IKKE rå rows (de vises i DI-panelet)
+              if (typeof result === 'object' && result !== null) {
+                const r = result as Record<string, unknown>;
+                delete r._diRawRows;
+                delete r._diAfkortet;
               }
 
               return {

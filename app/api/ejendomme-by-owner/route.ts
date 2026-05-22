@@ -73,6 +73,8 @@ export interface EjendomSummary {
   doer: string | null;
   /** Ejer-andel (faktisk ejerandel fra EJF, f.eks. "100%") */
   ejerandel?: string | null;
+  /** BIZZ-1672: true hvis ejendommen administreres (ikke ejes) af denne CVR */
+  administreret?: boolean;
   /** BIZZ-455: false hvis ejendommen er solgt (CVR ikke længere aktuel ejer) */
   aktiv?: boolean;
   /** BIZZ-455: Dato hvor CVR ophørte som ejer (ISO-dato) — kun for solgte */
@@ -762,6 +764,108 @@ async function hentDawaBfeData(bfe: number): Promise<DawaBfeAdresse> {
       const vpResult = await _hentVPAdresseForBfe(bfe);
       if (vpResult.adresse) return { ...result, ...vpResult };
     }
+    // Fallback 3: bbr_ejendom_status cache → DAWA adgangsadresse resolve.
+    // Catches BFE'er where both DAWA /bfe and VP return nothing but we have
+    // a cached adgangsadresse_id from prior BBR enrichment (46k+ rows).
+    if (!result.adresse) {
+      try {
+        const admin = createAdminClient();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: row } = await (admin as any)
+          .from('bbr_ejendom_status')
+          .select('adgangsadresse_id, kommune_kode')
+          .eq('bfe_nummer', bfe)
+          .maybeSingle();
+        if (row?.adgangsadresse_id) {
+          const addrRes = await fetchDawa(
+            `${DAWA_BASE_URL}/adgangsadresser/${row.adgangsadresse_id}?struktur=mini`,
+            { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+            { caller: 'ejendomme-by-owner.bbr-cache-fallback' }
+          );
+          if (addrRes.ok) {
+            const addr = (await addrRes.json()) as {
+              id?: string;
+              vejnavn?: string;
+              husnr?: string;
+              postnr?: string;
+              postnrnavn?: string;
+              kommunekode?: string;
+              kommunenavn?: string;
+            };
+            if (addr.vejnavn) {
+              return {
+                ...result,
+                adresse: `${addr.vejnavn} ${addr.husnr ?? ''}`.trim(),
+                postnr: addr.postnr ?? null,
+                by: addr.postnrnavn ?? null,
+                kommune: addr.kommunenavn ?? null,
+                kommuneKode: addr.kommunekode ?? null,
+                dawaId: addr.id ?? row.adgangsadresse_id,
+              };
+            }
+          }
+        }
+      } catch {
+        /* bbr cache fallback is non-critical */
+      }
+    }
+    // BIZZ-1670: Fallback 4 — bfe_adresse_cache (manuelt/backfill-populeret)
+    // Fanger BFE'er som DAWA /bfe, VP og bbr_ejendom_status ikke kender.
+    if (!result.adresse) {
+      try {
+        const admin = createAdminClient();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: cached } = await (admin as any)
+          .from('bfe_adresse_cache')
+          .select(
+            'adresse, etage, doer, postnr, postnrnavn, kommune, kommune_kode, dawa_id, ejendomstype'
+          )
+          .eq('bfe_nummer', bfe)
+          .maybeSingle();
+        if (cached?.adresse) {
+          return {
+            adresse: cached.adresse,
+            postnr: cached.postnr ?? null,
+            by: cached.postnrnavn ?? null,
+            kommune: cached.kommune ?? null,
+            kommuneKode: cached.kommune_kode ?? null,
+            ejendomstype: cached.ejendomstype ?? null,
+            dawaId: cached.dawa_id ?? null,
+            etage: cached.etage ?? null,
+            doer: cached.doer ?? null,
+          };
+        }
+      } catch {
+        /* bfe_adresse_cache fallback non-critical */
+      }
+    }
+    // BIZZ-1670: Write-through — gem succesfuld resolve i bfe_adresse_cache
+    // så næste opslag er instant (fallback 1-3 kører ikke igen for denne BFE).
+    if (result.adresse) {
+      try {
+        const admin = createAdminClient();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        void (admin as any).from('bfe_adresse_cache').upsert(
+          {
+            bfe_nummer: bfe,
+            adresse: result.adresse,
+            etage: result.etage ?? null,
+            doer: result.doer ?? null,
+            postnr: result.postnr ?? null,
+            postnrnavn: result.by ?? null,
+            kommune: result.kommune ?? null,
+            kommune_kode: result.kommuneKode ?? null,
+            dawa_id: result.dawaId ?? null,
+            ejendomstype: result.ejendomstype ?? null,
+            kilde: 'auto',
+            sidst_opdateret: new Date().toISOString(),
+          },
+          { onConflict: 'bfe_nummer' }
+        );
+      } catch {
+        /* write-through non-critical */
+      }
+    }
     return result;
   });
   _bfeFetchInFlight.set(bfe, promise);
@@ -896,7 +1000,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
   const solgtDatoByBfe = new Map<number, string | null>();
   const ownerBuyDateByBfe = new Map<number, string | null>();
 
-  if (cvrNumre.length > 0 && enhedsNumre.length === 0) {
+  // BIZZ-1623: Fjernet `&& enhedsNumre.length === 0` — CVR-cache skal køre
+  // uanset om personen OGSÅ har enhedsNummer (personer med virksomheder).
+  if (cvrNumre.length > 0) {
     try {
       const admin = createAdminClient();
       const cvrStrings = cvrNumre.map((c) => String(c));
@@ -966,16 +1072,23 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
               .limit(10);
 
             if (allOwners && allOwners.length > 0) {
-              const newest = allOwners[0] as {
+              // Tjek om NOGEN gældende ejer matcher vores CVR-sæt — ikke kun
+              // den nyeste. Ejerlejligheder har ofte flere samtidige gældende
+              // ejere (virksomhed + ejerforening), og ejerforeningens nyere
+              // virkning_fra skal ikke markere virksomhedens ejerskab som "solgt".
+              const ownerRows = allOwners as Array<{
                 ejer_cvr: string | null;
                 virkning_fra: string | null;
-              };
-              if (newest.ejer_cvr && queriedCvrSet.has(newest.ejer_cvr)) {
+              }>;
+              const hasActiveOwnership = ownerRows.some(
+                (o) => o.ejer_cvr && queriedCvrSet.has(o.ejer_cvr)
+              );
+              if (hasActiveOwnership) {
                 aktivByBfe.set(bfe, true);
               } else {
-                // Ejendommen er solgt — den queried CVR er ikke længere nyeste ejer
+                // Ejendommen er solgt — ingen af de gældende ejere matcher vores CVR
                 aktivByBfe.set(bfe, false);
-                solgtDatoByBfe.set(bfe, newest.virkning_fra ?? null);
+                solgtDatoByBfe.set(bfe, ownerRows[0]?.virkning_fra ?? null);
               }
             } else {
               aktivByBfe.set(bfe, true);
@@ -999,7 +1112,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
   // ── BIZZ-1588: Cache-first for person-lookups via ejer_enheds_nummer ──
   // Primær path: direkte match på ejer_enheds_nummer kolonnen i ejf_ejerskab.
   // Mere pålideligt end navnematch (håndterer navneskift, dubletter, mellemnavne).
-  if (!cacheFullHit && enhedsNumre.length > 0 && cvrNumre.length === 0) {
+  // BIZZ-1623: Fjernet `&& cvrNumre.length === 0` — person-cache skal køre
+  // uanset om personen OGSÅ har CVR-virksomheder. Paths er additive.
+  if (!cacheFullHit && enhedsNumre.length > 0) {
     try {
       const admin = createAdminClient();
       const enhedsStrings = enhedsNumre.map((e) => String(e));
@@ -1065,7 +1180,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
   // ── BIZZ-1158: Fallback cache-first for person-lookups via ejer_navn ──
   // Hvis enhedsNummer-match returnerede 0 (gamle rækker uden ejer_enheds_nummer),
   // prøv navnematch som fallback. Resolver personnavn fra cvr_deltager.
-  if (!cacheFullHit && enhedsNumre.length > 0 && cvrNumre.length === 0) {
+  // BIZZ-1623: Fjernet `&& cvrNumre.length === 0` — person fallback skal også
+  // køre når personen har virksomheder (CVR + enhedsNummer sammen).
+  if (!cacheFullHit && enhedsNumre.length > 0) {
     try {
       const admin = createAdminClient();
       // Hent personnavne for enhedsNumre
@@ -1350,6 +1467,45 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     }
   } // end !cacheFullHit
 
+  // BIZZ-1672: Administrerede ejendomme fra ejf_administrator.
+  // For ejerforeninger (og andre virksomheder) — tilføj BFE'er de administrerer.
+  const administreretByBfe = new Set<number>();
+  if (cvrNumre.length > 0) {
+    try {
+      const admin = createAdminClient();
+      const cvrStrings = cvrNumre.map((c) => String(c));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: adminRows } = await (admin as any)
+        .from('ejf_administrator')
+        .select('bfe_nummer, virksomhed_cvr')
+        .in('virksomhed_cvr', cvrStrings)
+        .eq('status', 'gældende')
+        .limit(200);
+
+      if (adminRows && adminRows.length > 0) {
+        let addedCount = 0;
+        for (const row of adminRows as Array<{
+          bfe_nummer: number;
+          virksomhed_cvr: string;
+        }>) {
+          administreretByBfe.add(row.bfe_nummer);
+          if (!bfeTilCvr.has(row.bfe_nummer)) {
+            bfeTilCvr.set(row.bfe_nummer, row.virksomhed_cvr.padStart(8, '0'));
+            aktivByBfe.set(row.bfe_nummer, true);
+            addedCount++;
+          }
+        }
+        if (addedCount > 0) {
+          logger.log(
+            `[ejendomme-by-owner] ejf_administrator: ${addedCount} administrerede BFE tilføjet`
+          );
+        }
+      }
+    } catch {
+      /* ejf_administrator lookup non-fatal */
+    }
+  }
+
   try {
     const alleBfe = [...bfeTilCvr.keys()];
     const totalBfe = alleBfe.length;
@@ -1386,6 +1542,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       ownerCvr: bfeTilCvr.get(bfe) ?? '',
       ...adresseData[idx],
       ejerandel: bfeTilEjerandel.get(bfe) ?? null,
+      administreret: administreretByBfe.has(bfe),
       aktiv: aktivByBfe.get(bfe) ?? true,
       solgtDato: solgtDatoByBfe.get(bfe) ?? null,
       ownerBuyDate: ownerBuyDateByBfe.get(bfe) ?? null,

@@ -995,11 +995,22 @@ export default function PersonDetailPageClient({
           antalVirksomheder: person.virksomheder.length,
         });
         // Opdater recent tag-bar (virker også ved direkte URL-navigation)
+        // BIZZ-1626: Gem adresse + virksomheds-CVR'er i entity_data til dedup
+        const adr = person.beliggenhedsadresse;
+        const adresseStr = adr?.vejnavn
+          ? `${adr.vejnavn} ${adr.husnummerFra ?? ''}${adr.bogstavFra ?? ''}, ${adr.postnummer ?? ''} ${adr.postdistrikt ?? ''}`.trim()
+          : '';
         recordRecentVisit(
           'person',
           String(person.enhedsNummer),
           person.navn,
-          `/dashboard/owners/${person.enhedsNummer}`
+          `/dashboard/owners/${person.enhedsNummer}`,
+          {
+            adresse: adresseStr,
+            virksomheder: JSON.stringify(
+              person.virksomheder.slice(0, 5).map((v) => ({ cvr: String(v.cvr) }))
+            ),
+          }
         );
       })
       .catch((err) => setError(err.message))
@@ -1481,14 +1492,38 @@ export default function PersonDetailPageClient({
       String(v.cvr).padStart(8, '0')
     );
 
-    // BIZZ-1588: Datterselskaber tilføjes IKKE til initial fetch — de triggede
-    // abort af igangværende fetch når relatedCompanies opdateres. Ejendomme
-    // ejet via subsidiaries dukker op via ejf_ejerskab BFE-opslag (server-side)
-    // og behøver ikke klient-side CVR-parameter.
     const uniqueCvrs = [...new Set([...ejerCvrs, ...andreVirksomhedCvrs])].slice(0, 30);
 
     // BIZZ-264: Also fetch person's directly owned properties via enhedsNummer
     const personEnhedsNumre = data?.enhedsNummer ? [String(data.enhedsNummer)] : [];
+
+    // BIZZ-1690: Hent datterselskabs-CVR'er asynkront og re-fetch ejendomme
+    // når de er klar. Parallelt med initial ejendomme-fetch.
+    if (ejerCvrs.length > 0) {
+      void (async () => {
+        try {
+          const subResults = await Promise.all(
+            ejerCvrs.slice(0, 5).map(async (cvr) => {
+              const r = await fetch(`/api/diagram/subsidiaries?cvr=${cvr}`);
+              if (!r.ok) return [];
+              const d = await r.json();
+              return (d.cvrs ?? []) as string[];
+            })
+          );
+          const subCvrs = subResults.flat();
+          if (subCvrs.length > 0) {
+            const expanded = [...new Set([...uniqueCvrs, ...subCvrs])].slice(0, 50);
+            const expandedKey = [...expanded, ...personEnhedsNumre].sort().join(',');
+            if (ejendomFetchKeyRef.current !== expandedKey) {
+              ejendomFetchKeyRef.current = expandedKey;
+              void fetchEjendommeProgressively(expanded, personEnhedsNumre);
+            }
+          }
+        } catch {
+          /* non-fatal */
+        }
+      })();
+    }
 
     const fetchKey = [...uniqueCvrs, ...personEnhedsNumre].sort().join(',');
     if (ejendomFetchKeyRef.current === fetchKey) return;
@@ -1866,7 +1901,7 @@ export default function PersonDetailPageClient({
       {/* ─── Left: Main Content ─── */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* ─── Sticky Header ─── */}
-        <div className="px-3 sm:px-6 pt-5 pb-0 border-b border-slate-700/50 bg-slate-900/30">
+        <div className="px-3 sm:px-6 pt-5 pb-0 border-b border-slate-700/50 bg-slate-900/30 relative z-20">
           <div className="flex items-center justify-between mb-3">
             <button
               onClick={() => router.push('/dashboard/owners')}

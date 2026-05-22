@@ -159,6 +159,22 @@
     {
       "path": "/api/cron/backfill-ejerskifte-historik",
       "schedule": "30 4 * * *"
+    },
+    {
+      "path": "/api/cron/sync-tinglysning-detail",
+      "schedule": "45 3 * * *"
+    },
+    {
+      "path": "/api/cron/sync-ejf-ejerskifte",
+      "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/cron/sync-ejf-handelsoplysninger",
+      "schedule": "15 5 * * *"
+    },
+    {
+      "path": "/api/cron/sync-ejf-administrator",
+      "schedule": "30 5 * * *"
     }
   ]
 }

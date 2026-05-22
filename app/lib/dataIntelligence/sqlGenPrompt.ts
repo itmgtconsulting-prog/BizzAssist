@@ -39,17 +39,25 @@ REGLER:
 14. For "find virksomheder der ejer flere end N ejendomme" → SELECT cvr, navn, antal_ejendomme FROM mv_analyse_virksomhed WHERE antal_ejendomme > N. IKKE ejer_cvr — kolonnen findes ikke i denne MV.
 15. For "ejendomme hvor ejer-virksomheden er ophørt" → SELECT * FROM mv_analyse_ejendom WHERE ejer_type='virksomhed' AND ejer_cvr IN (SELECT cvr FROM mv_analyse_virksomhed WHERE ophoert IS NOT NULL). IKKE ejf_ejerskab JOIN cvr_virksomhed.
 16. For "hvilke kommuner har flest unikke virksomhedsejere af ejendomme" → SELECT kommune_kode, kommunenavn, COUNT(DISTINCT ejer_cvr) AS antal FROM mv_analyse_ejendom WHERE ejer_type='virksomhed' AND ejer_cvr IS NOT NULL GROUP BY kommune_kode, kommunenavn ORDER BY antal DESC LIMIT 10.
+17. DATO-FUNKTIONER — brug ALDRIG MySQL-syntax: YEAR(), MONTH(), DAY(), DATE_FORMAT() EKSISTERER IKKE i PostgreSQL. Brug i stedet: EXTRACT(YEAR FROM col), EXTRACT(MONTH FROM col), to_char(col, 'YYYY-MM'), date_trunc('month', col). Eksempel: EXTRACT(YEAR FROM overtagelsesdato) AS aar.
+18. STRENG-FUNKTIONER — brug PostgreSQL-syntax: || til sammenføjning (IKKE CONCAT()), STRING_AGG(col, ', ' ORDER BY col) til grupperet streng (IKKE GROUP_CONCAT()), COALESCE(a, b) for null-fallback (IKKE IFNULL()), CASE WHEN ... THEN ... ELSE ... END for betingelser (IKKE IF()).
+19. TYPE CASTING — brug PostgreSQL :: operator: col::int, col::text, col::date. Brug ALDRIG MySQL-typer som SIGNED, UNSIGNED, CHAR. PostgreSQL-typer: integer, bigint, text, date, timestamptz, numeric, boolean.
+20. GROUP BY — ALLE kolonner i SELECT der IKKE er aggregerede (COUNT, SUM, AVG, MIN, MAX) SKAL stå i GROUP BY. Tjek ALTID dette inden du returnerer SQL. Eksempel: SELECT a, b, COUNT(*) → GROUP BY a, b. Glemmer du dette, fejler PostgreSQL med "must appear in the GROUP BY clause".
 
-EJERSKIFTE / SALGSDATA — VIGTIGT:
-Vi har IKKE handelspriser. Men vi HAR ejerskifte-data i ejf_ejerskab (7,6M rækker):
-- virkning_fra = tidspunkt hvor ejerskabet startede (= overtagelsesdato / "salgsdato")
-- virkning_til = tidspunkt hvor ejerskabet ophørte (NULL = gældende ejer)
+SALGSPRISER vs. VURDERINGER — KRITISK SKELNEN:
+- "salgspris", "købesum", "handelspris", "salgspriser per kommune" → brug public.ejendomshandel (koebesum = faktisk købesum fra Tinglysning)
+- "vurdering", "ejendomsværdi", "grundværdi" → brug public.vurdering_cache (ejendomsvaerdi = SKATs offentlige vurdering)
+- BLAND ALDRIG disse to! Salgspris og vurdering er FORSKELLIGE tal. En salgspris er hvad køberen betalte. En vurdering er SKATs skøn.
+- Når brugeren spørger om "priser" eller "gennemsnitspriser" mener de ALTID salgspriser (ejendomshandel.koebesum), IKKE vurderinger.
+
+EJERSKIFTE / SALGSDATA:
+Vi HAR faktiske salgspriser i public.ejendomshandel (koebesum fra Tinglysning). Brug ALTID denne tabel for prisforespørgsler.
+Vi HAR ejerskifte-data i ejf_ejerskab (7,6M rækker) for ejerskifte-tælling:
+- virkning_fra = tidspunkt hvor ejerskabet startede (= overtagelsesdato)
 - status = 'gældende' (nuværende ejer) eller 'historisk' (tidligere ejer)
-- Ejerskifte = ny række med status='gældende' + gammel ejer ændres til 'historisk'
 - For "solgte ejendomme" → tæl ejerskifter: WHERE status = 'gældende' AND virkning_fra >= dato
 - For "ejerskifter i januar 2026" → WHERE virkning_fra >= '2026-01-01' AND virkning_fra < '2026-02-01'
-- Brug ALDRIG ordene "solgt"/"salg" i forklaringer — sig "ejerskifte" da vi ikke har prisdata.
-For salgspris-spørgsmål: BRUG ejerskifte_historik tabellen! Den har kontant_koebesum og i_alt_koebesum fra Tinglysning. Ikke alle rækker har priser endnu (berigelse pågår), men brug WHERE kontant_koebesum IS NOT NULL for prisdata.
+ejerskifte_historik har også kontant_koebesum, men ejendomshandel har FLEST priser — brug den som primær.
 
 TABEL-KOLONNER (brug KUN disse):
 
@@ -82,7 +90,16 @@ public.mv_deltager_beriget: virksomhed_cvr, deltager_enhedsnummer, deltager_navn
 
 public.mv_ejendom_master: bfe_nummer, kommune_kode, kommunenavn, region, boligareal_m2, erhvervsareal_m2, grundareal, opfoerelsesaar, anvendelse_kode, anvendelse_tekst, anvendelse_kategori, energimaerke, antal_etager, antal_boligenheder, tagmateriale, opvarmningsform, ejerforholdskode, ejendomsvaerdi, grundvaerdi, vurderingsaar. Brug denne for ejendomsanalyser med vurdering — den er hurtigere end bbr_ejendom_status JOIN vurdering_cache.
 
-TINGLYSNING TABELLER:
+TINGLYSNING TABELLER (backfilled fra e-TL SSL cert-auth):
+
+public.ejendomshandel: id (uuid PK), bfe_nummer (int), dato (date — overtagelsesdato), koebsaftale_dato (date), tinglyst_dato (date), koebesum (numeric — KontantKoebesum i DKK), samlet_koebesum (numeric — IAltKoebesum i DKK), andel_taeller (int), andel_naevner (int), koeber_navne (text[]), koeber_cvrs (text[]), saelger_navne (text[]), saelger_cvrs (text[]), kilde (text), sidst_opdateret (timestamptz).
+  BEMÆRK: Denne tabel har FAKTISKE SALGSPRISER fra Tinglysning. Den har IKKE kommune_kode — JOIN med bbr_ejendom_status via bfe_nummer for kommune. Brug WHERE koebesum IS NOT NULL for prisdata.
+
+public.tinglysning_haeftelse: id (serial PK), bfe_nummer (int), prioritet (int), type (text — 'Pantebrev'/'Ejerpantebrev'), hovedstol_dkk (bigint), kreditor_navn (text), kreditor_cvr (text), tinglyst_dato (date), akt_navn (text), status (text — 'gældende'/'aflyst'), sidst_opdateret (timestamptz).
+  BEMÆRK: Denne tabel har PANT/LÅN-data med beløb og prioritering.
+
+public.tinglysning_servitut: id (serial PK), bfe_nummer (int), prioritet (int), tekst (text — servitut-beskrivelse), type (text), tinglyst_dato (date), akt_navn (text), paataleberettiget (text), sidst_opdateret (timestamptz).
+  BEMÆRK: Denne tabel har servitutter/byrder/deklarationer.
 
 public.tinglysning_adkomst: id, bfe_nummer, ejer_navn, ejer_cvr, ejer_type, overtagelsesdato, tinglysningsdato, koebsaftale_dato, kontant_koebesum (DKK), i_alt_koebesum (DKK), dokument_id. Normaliserede skøder med salgspriser.
 
@@ -91,6 +108,55 @@ public.tinglysning_haeftelser: id, bfe_nummer, type, kreditor_navn, kreditor_cvr
 public.tinglysning_servitutter: id, bfe_nummer, type, beskrivelse, tinglysningsdato, paategning, dokument_id. Normaliserede servitutter/byrder.
 
 public.tinglysning_dokumenter: dokument_id (text PK), dokument_type (text — 'adkomst'/'haeftelse'/'servitut'), tinglysningsdato (date), bfe_nummer (bigint), parter (jsonb), beloeb (jsonb). Central reference for alle e-TL dokumenter.
+
+ADRESSE + STATISTIK TABELLER:
+
+public.bfe_adresse_cache: bfe_nummer (bigint PK), adresse (text), etage (text), doer (text), postnr (text), postnrnavn (text), kommune (text), kommune_kode (text), dawa_id (text), ejendomstype (text), kilde (text).
+  BEMÆRK: BFE→adresse mapping. 1.8M rækker. JOIN med andre tabeller via bfe_nummer for at få adresse.
+
+public.mv_kommune_statistik: kommunekode (text), kommunenavn (text), antal_adresser (bigint), dar_synced_at (timestamptz).
+  BEMÆRK: Pre-aggregeret kommune-statistik. Brug denne for hurtige kommune-opslag.
+
+public.mv_virksomhed_portefolje: cvr (text), virksomhedsnavn (text), branche (text), status (text), antal_ejendomme (bigint), samlet_ejendomsvaerdi (bigint DKK), samlet_grundvaerdi (bigint DKK).
+  BEMÆRK: Virksomheder med ejendomsporteføljer. For "virksomheder med flest ejendomme" eller "samlet ejendomsværdi per virksomhed".
+
+EJF TABELLER (officielle handelsdata fra Ejendomsfortegnelsen):
+
+public.ejf_ejerskifte: id_lokal_id (text PK), bfe_nummer (bigint), overdragelsesmaade (text — 'Almindelig fri handel'/'Familieoverdragelse'/'Anden overdragelse'/'Tvangsauktion'), overtagelsesdato (timestamptz), handelsoplysninger_lokal_id (text — FK til ejf_handelsoplysninger), virkning_fra (timestamptz), virkning_til (timestamptz), status (text).
+  BEMÆRK: Officielle ejerskifter med handelstype. JOIN med ejf_handelsoplysninger via handelsoplysninger_lokal_id for priser.
+
+public.ejf_handelsoplysninger: id_lokal_id (text PK), kontant_koebesum (bigint DKK), samlet_koebesum (bigint DKK), loesoeresum (bigint), entreprisesum (bigint), koebsaftale_dato (date), valutakode (text), virkning_fra (timestamptz), virkning_til (timestamptz), status (text).
+  BEMÆRK: Officielle handelspriser fra EJF — bedre datakvalitet end ejendomshandel (Tinglysning-scraping).
+
+public.v_ejerskifte_handel: bfe_nummer, overdragelsesmaade, overtagelsesdato, status, kontant_koebesum, samlet_koebesum, loesoeresum, entreprisesum, koebsaftale_dato, valutakode. Pre-joined view — brug denne for prisforespørgsler med handelstype.
+  For "priser per handelstype" → SELECT overdragelsesmaade, AVG(samlet_koebesum)::bigint, COUNT(*) FROM v_ejerskifte_handel WHERE samlet_koebesum IS NOT NULL GROUP BY overdragelsesmaade.
+  For "tvangsauktioner" → WHERE overdragelsesmaade = 'Tvangsauktion'.
+
+TINGLYSNING + ADRESSE TABELLER (BIZZ-1747):
+
+public.tinglysning_servitut: bfe_nummer (int), type (text), tekst (text), tinglyst_dato (date), akt_navn (text), ai_classification (text), prioritet (int), status (text).
+  702K servitutter — byggelinjer, ledningsrettigheder, tilslutningspligter, deklarationer. For "servitutter på ejendom X" → WHERE bfe_nummer = X AND status = 'gældende'.
+
+public.tinglysning_haeftelse: bfe_nummer (int), type (text), hovedstol_dkk (numeric), kreditor_navn (text), kreditor_cvr (text), tinglyst_dato (date), prioritet (int), status (text).
+  197K hæftelser — realkreditpantebreve, ejerpantebreve. For "samlet gæld på ejendom" → SUM(hovedstol_dkk) WHERE bfe_nummer = X AND status = 'gældende'.
+
+public.bfe_adresse_cache: bfe_nummer (bigint PK), adresse (text), postnr (text), postnrnavn (text), kommune (text), kommune_kode (text), ejendomstype (text).
+  1.8M BFE→adresse mapping. JOIN med denne for at få adresse/postnr/kommune til et BFE-nummer. Eksempel: JOIN bfe_adresse_cache USING (bfe_nummer).
+
+VIGTIG — ANVENDELSESFILTER + OUTLIER-HÅNDTERING:
+- Filtrér KUN på byg021_anvendelse når brugeren eksplicit nævner en bygningstype (parcelhus, etagebolig, erhverv, sommerhus). Ellers udelukkes data (mange BFE'er har NULL byg021_anvendelse).
+- Filtrér ALTID på koebesum > 100000 AND koebesum < 100000000 for at fjerne gaver/arv (0-100k) og porteføljehandler (>100M).
+
+VIGTIG — PRIS-STATISTIK KRÆVER FRI HANDEL FILTER (BIZZ-1714):
+- For ALLE pris-aggregeringer (AVG, MEDIAN, SUM af købesummer): brug ALTID v_ejerskifte_handel med WHERE overdragelsesmaade = 'Almindelig fri handel'
+- Arv, gave, familieoverdragelser og tvangsauktioner har ikke-markedskonforme priser og forurener statistik
+- Tvangsauktioner: separat metric — brug WHERE overdragelsesmaade = 'Tvangsauktion' KUN når brugeren spørger specifikt om tvangsauktioner
+- Brug MEDIAN (PERCENTILE_CONT(0.5)) i stedet for AVG for prisstatistik — ejendomspriser er skæve.
+
+VIGTIG — VALG AF SALGSPRIS-TABEL:
+- Brug public.ejendomshandel for salgspris-spørgsmål — den har flest priser (58K+ rækker med koebesum).
+- Brug public.ejerskifte_historik KUN for ejerskifte-spørgsmål UDEN pris (572K rækker, men kontant_koebesum er sjældent udfyldt).
+- For kommune-filtrering på ejendomshandel: JOIN public.bbr_ejendom_status b ON b.bfe_nummer = e.bfe_nummer og brug b.kommune_kode.
 
 WHITELISTEDE TABELLER:
 ${Array.from(WHITELISTED_TABLES).join(', ')}
@@ -161,10 +227,34 @@ Spørgsmål: Hvor mange boliger er solgt i 2025?
 SQL: SELECT COUNT(*) AS antal_ejerskifter, COUNT(kontant_koebesum) AS med_pris FROM public.ejerskifte_historik WHERE overtagelsesdato >= '2025-01-01' AND overtagelsesdato < '2026-01-01' LIMIT 1
 
 Spørgsmål: Top 10 kommuner med højest gennemsnitspris for ejendomme
-SQL: SELECT e.kommune_kode, k.kommunenavn, AVG(e.kontant_koebesum)::bigint AS gns_pris, COUNT(*) AS antal FROM public.ejerskifte_historik e JOIN public.kommune_ref k ON k.kommune_kode = e.kommune_kode WHERE e.kontant_koebesum IS NOT NULL AND e.kommune_kode IS NOT NULL GROUP BY e.kommune_kode, k.kommunenavn HAVING COUNT(*) >= 5 ORDER BY gns_pris DESC LIMIT 10
+SQL: SELECT e.kommune_kode, k.kommunenavn, AVG(e.kontant_koebesum)::bigint AS gns_pris, COUNT(*) AS antal FROM public.ejerskifte_historik e JOIN public.kommune_ref k ON k.kommune_kode = e.kommune_kode WHERE e.kontant_koebesum IS NOT NULL AND e.kommune_kode IS NOT NULL GROUP BY e.kommune_kode, k.kommunenavn ORDER BY gns_pris DESC LIMIT 10
 
 Spørgsmål: Dyreste ejendomshandler de seneste 12 måneder
 SQL: SELECT bfe_nummer, ejer_navn, kontant_koebesum, overtagelsesdato, kommune_kode FROM public.ejerskifte_historik WHERE kontant_koebesum IS NOT NULL AND overtagelsesdato >= CURRENT_DATE - INTERVAL '12 months' ORDER BY kontant_koebesum DESC LIMIT 20
+
+Spørgsmål: Hvilken kommune har flest virksomheder?
+SQL: WITH x AS (SELECT (adresse_json->'kommune'->>'kommuneKode')::int AS kk, COUNT(*) AS antal FROM public.cvr_virksomhed WHERE adresse_json->'kommune'->>'kommuneKode' IS NOT NULL GROUP BY kk) SELECT k.kommunenavn, x.antal FROM x JOIN public.kommune_ref k ON k.kommune_kode = x.kk ORDER BY x.antal DESC LIMIT 10
+
+Spørgsmål: Ejerskifter per år
+SQL: SELECT EXTRACT(YEAR FROM overtagelsesdato)::int AS aar, COUNT(*) AS antal FROM public.ejerskifte_historik WHERE overtagelsesdato IS NOT NULL GROUP BY aar ORDER BY aar DESC LIMIT 20
+
+Spørgsmål: Gennemsnitlig salgspris i Hvidovre pr år
+SQL: SELECT EXTRACT(YEAR FROM e.dato)::int AS aar, AVG(e.koebesum)::bigint AS gennemsnitspris, COUNT(*) AS antal_handler FROM public.ejendomshandel e JOIN public.bbr_ejendom_status b ON b.bfe_nummer = e.bfe_nummer WHERE b.kommune_kode = 167 AND e.koebesum IS NOT NULL GROUP BY aar ORDER BY aar DESC LIMIT 50
+
+Spørgsmål: Salgspriser pr kommune de seneste 5 år
+SQL: SELECT b.kommune_kode, k.kommunenavn, AVG(e.koebesum)::bigint AS gns_pris, COUNT(*) AS antal FROM public.ejendomshandel e JOIN public.bbr_ejendom_status b ON b.bfe_nummer = e.bfe_nummer JOIN public.kommune_ref k ON k.kommune_kode = b.kommune_kode WHERE e.koebesum IS NOT NULL AND e.dato >= CURRENT_DATE - INTERVAL '5 years' GROUP BY b.kommune_kode, k.kommunenavn ORDER BY gns_pris DESC LIMIT 30
+
+Spørgsmål: Samlet realkreditgæld per kommune
+SQL: SELECT b.kommune_kode, k.kommunenavn, SUM(h.hovedstol_dkk)::bigint AS samlet_gaeld, COUNT(*) AS antal_laan FROM public.tinglysning_haeftelse h JOIN public.bbr_ejendom_status b ON b.bfe_nummer = h.bfe_nummer JOIN public.kommune_ref k ON k.kommune_kode = b.kommune_kode WHERE h.hovedstol_dkk IS NOT NULL AND h.status = 'gældende' GROUP BY b.kommune_kode, k.kommunenavn ORDER BY samlet_gaeld DESC LIMIT 20
+
+Spørgsmål: Hvilke typer servitutter er mest udbredte?
+SQL: SELECT tekst, COUNT(*) AS antal FROM public.tinglysning_servitut WHERE tekst IS NOT NULL GROUP BY tekst ORDER BY antal DESC LIMIT 20
+
+Spørgsmål: Gennemsnitspriser for bolig per kommune
+SQL: SELECT b.kommune_kode, k.kommunenavn, AVG(e.koebesum)::bigint AS gennemsnitspris, COUNT(*) AS antal_handler FROM public.ejendomshandel e JOIN public.bbr_ejendom_status b ON b.bfe_nummer = e.bfe_nummer JOIN public.kommune_ref k ON k.kommune_kode = b.kommune_kode WHERE e.koebesum IS NOT NULL GROUP BY b.kommune_kode, k.kommunenavn ORDER BY gennemsnitspris DESC LIMIT 50
+
+Spørgsmål: Dyreste ejendomssalg i 2025
+SQL: SELECT e.bfe_nummer, e.dato, e.koebesum, e.koeber_navne, b.kommune_kode, k.kommunenavn FROM public.ejendomshandel e JOIN public.bbr_ejendom_status b ON b.bfe_nummer = e.bfe_nummer JOIN public.kommune_ref k ON k.kommune_kode = b.kommune_kode WHERE e.koebesum IS NOT NULL AND e.dato >= '2025-01-01' AND e.dato < '2026-01-01' ORDER BY e.koebesum DESC LIMIT 20
 
 Spørgsmål: Lav fusion mellem virksomheder
 FORKLARING: Det kan jeg ikke — det kræver skrive-adgang. Jeg kan kun læse data, ikke ændre.

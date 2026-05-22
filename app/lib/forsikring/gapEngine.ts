@@ -340,6 +340,175 @@ const checkBuildingUseMismatch: CheckFn = (input) => {
   };
 };
 
+// ─── BIZZ-1634: Udvidede BBR cross-checks ──────────────────────────
+
+/**
+ * GAP-002: Antal etager — police oplyser N etager, BBR har M.
+ * Relevant for forsikringssum-beregning og brandspredningsrisiko.
+ */
+const checkFloorMismatch: CheckFn = (input) => {
+  if (isNonEjendom(input)) return null;
+  const { policy, bbr } = input;
+  if (!bbr || !bbr.antal_etager || !policy.building_floors) return null;
+  if (policy.building_floors === bbr.antal_etager) return null;
+  return {
+    check_id: 'GAP-002',
+    category: 'bygning',
+    severity: 'warning',
+    title: `Etageantal afviger: police ${policy.building_floors}, BBR ${bbr.antal_etager}`,
+    description:
+      `Policen oplyser ${policy.building_floors} etager, men BBR registrerer ${bbr.antal_etager}. ` +
+      `Afvigende etageantal kan påvirke forsikringssummen og risiko-vurderingen.`,
+    recommendation: 'Verificér etageantal og opdater policen hvis nødvendigt.',
+    estimated_impact_dkk: null,
+    source_data: { policy_floors: policy.building_floors, bbr_floors: bbr.antal_etager },
+  };
+};
+
+/**
+ * GAP-003: Opførelsesår — bygning ældre end 50 år uden udvidet rørskade/svamp-dækning.
+ */
+const checkOldBuildingRisk: CheckFn = (input) => {
+  if (isNonEjendom(input)) return null;
+  const { bbr, coverages, asOfDate } = input;
+  if (!bbr || !bbr.opfoert_aar) return null;
+  const age = asOfDate.getFullYear() - bbr.opfoert_aar;
+  if (age < 50) return null;
+  const hasRoer = hasCoverage(coverages, 'udvidet_roerskade');
+  const hasSvamp = hasCoverage(coverages, 'insekt_svamp');
+  if (hasRoer && hasSvamp) return null;
+  const mangler = [];
+  if (!hasRoer) mangler.push('udvidet rørskade');
+  if (!hasSvamp) mangler.push('insekt og svamp');
+  return {
+    check_id: 'GAP-003',
+    category: 'bygning',
+    severity: 'warning',
+    title: `Bygning fra ${bbr.opfoert_aar} (${age} år) mangler ${mangler.join(' + ')}`,
+    description:
+      `Bygningen er ${age} år gammel. Ældre bygninger har forhøjet risiko for ` +
+      `rør-nedbrud og svampe-/insektangreb. Dækning for ${mangler.join(' og ')} anbefales.`,
+    recommendation: `Tilføj ${mangler.join(' og ')} til policen — standardpræmie stiger typisk 5-15%.`,
+    estimated_impact_dkk: null,
+    source_data: { opfoert_aar: bbr.opfoert_aar, age, missing: mangler },
+  };
+};
+
+/**
+ * GAP-004: Blødt tag (stråtag/rør) — kræver særlige brandforsikringsbetingelser.
+ * BBR tag_materiale_kode 6 = stråtag, 7 = rørtag.
+ */
+const checkSoftRoof: CheckFn = (input) => {
+  if (isNonEjendom(input)) return null;
+  const { bbr } = input;
+  if (!bbr || !bbr.tag_materiale_kode) return null;
+  const code = String(bbr.tag_materiale_kode).trim();
+  if (code !== '6' && code !== '7') return null;
+  const tagType = code === '6' ? 'stråtag' : 'rørtag';
+  return {
+    check_id: 'GAP-004',
+    category: 'bygning',
+    severity: 'critical',
+    title: `Bygning med ${tagType} — kræver særlige brandbetingelser`,
+    description:
+      `BBR registrerer at bygningen har ${tagType} (materiale-kode ${code}). ` +
+      `Stråtag og rørtag klassificeres som "blødt tag" med forhøjet brandrisiko. ` +
+      `Forsikringsselskaber kræver typisk specialbetingelser, højere præmie og ` +
+      `ekstra brandforebyggende foranstaltninger (røgalarm, branddør, afstandskrav).`,
+    recommendation:
+      'Verificér at policen eksplicit dækker blødt tag og at brandforebyggende krav er opfyldt.',
+    estimated_impact_dkk: null,
+    source_data: { tag_materiale_kode: code, tagType },
+  };
+};
+
+/**
+ * GAP-005: Kælder registreret i BBR men police mangler jordskade/stikledning-dækning.
+ */
+const checkBasementRisk: CheckFn = (input) => {
+  if (isNonEjendom(input)) return null;
+  const { bbr, coverages } = input;
+  if (!bbr || !bbr.has_kaelder) return null;
+  const hasJord = hasCoverage(coverages, 'jordskade');
+  const hasStik = hasCoverage(coverages, 'stikledning');
+  if (hasJord && hasStik) return null;
+  const mangler = [];
+  if (!hasJord) mangler.push('jordskade');
+  if (!hasStik) mangler.push('stikledning');
+  return {
+    check_id: 'GAP-005',
+    category: 'bygning',
+    severity: 'warning',
+    title: `Kælder uden ${mangler.join(' + ')}-dækning`,
+    description:
+      `BBR registrerer at bygningen har kælder. Kældre er udsatte for ` +
+      `jordskade og stiklednings-brud. Dækning for ${mangler.join(' og ')} anbefales.`,
+    recommendation: `Tilføj ${mangler.join(' og ')} til policen.`,
+    estimated_impact_dkk: null,
+    source_data: { has_kaelder: true, missing: mangler },
+  };
+};
+
+// ─── BIZZ-1672: Ejerforening cross-checks ──────────────────────
+
+/**
+ * GAP-006: Ejerforening administrerer ejendommen — verificér fællesforsikring.
+ *
+ * Når en ejendom administreres af en ejerforening, bør fællesforsikringen
+ * dække bygning+grund. Individuel police bør supplere med indbo/ansvar.
+ */
+const checkEjerforeningVerifikation: CheckFn = (input) => {
+  if (!input.ejerforening || input.ejerforening.type !== 'virksomhed') return null;
+  const ef = input.ejerforening;
+  const label = ef.navn ?? (ef.cvr ? `CVR ${ef.cvr}` : 'Ejerforening');
+  return {
+    check_id: 'GAP-006',
+    category: 'ejerforening',
+    severity: 'warning',
+    title: `${label} administrerer ejendommen — verificér fællesforsikring`,
+    description:
+      `Ejendommen administreres af ${label}. ` +
+      `Ejerforeningens fællesforsikring bør dække bygning, grund og fællesarealer. ` +
+      `Verificér at fællesforsikringen er aktiv og dækningen er tilstrækkelig.`,
+    recommendation: 'Indhent kopi af ejerforeningens fællesforsikringspolice og verificér dækning.',
+    estimated_impact_dkk: null,
+    source_data: { ejerforening_cvr: ef.cvr, ejerforening_navn: ef.navn },
+  };
+};
+
+/**
+ * GAP-007: Ejerlejlighed med ejerforening — individuel indbo/ansvar anbefales.
+ *
+ * Fællesforsikringen dækker typisk bygning men IKKE individuel indbo og ansvar.
+ */
+/**
+ * GAP-007: Ejerlejlighed med ejerforening — individuel hus/grundejeransvar anbefales.
+ *
+ * Fællesforsikringen dækker typisk bygning men individuel ansvarsdækning
+ * bør supplere.
+ */
+const checkEjerforeningIndboDaekning: CheckFn = (input) => {
+  if (!input.ejerforening || input.ejerforening.type !== 'virksomhed') return null;
+  const hasAnsvar = hasCoverage(input.coverages, 'hus_grundejer_ansvar');
+  const hasGlas = hasCoverage(input.coverages, 'glas');
+  if (hasAnsvar && hasGlas) return null;
+  const mangler = [];
+  if (!hasAnsvar) mangler.push('hus/grundejeransvar');
+  if (!hasGlas) mangler.push('glas');
+  return {
+    check_id: 'GAP-007',
+    category: 'daekning',
+    severity: 'info',
+    title: `Ejerlejlighed med ejerforening — ${mangler.join(' + ')} anbefales`,
+    description:
+      `Ejerforeningens fællesforsikring dækker typisk bygning og fællesarealer, ` +
+      `men individuel ${mangler.join(' og ')}-dækning bør tegnes separat.`,
+    recommendation: `Tegn individuel ${mangler.join(' og ')}-dækning.`,
+    estimated_impact_dkk: null,
+    source_data: { missing: mangler },
+  };
+};
+
 // ─── Registry ────────────────────────────────────────────────────
 
 /**
@@ -606,6 +775,14 @@ const CHECKS: readonly CheckFn[] = [
   // Police-level checks
   checkBbrAreaMismatch,
   checkBuildingUseMismatch,
+  // BIZZ-1634: Udvidede BBR cross-checks
+  checkFloorMismatch,
+  checkOldBuildingRisk,
+  checkSoftRoof,
+  checkBasementRisk,
+  // BIZZ-1672: Ejerforening cross-checks
+  checkEjerforeningVerifikation,
+  checkEjerforeningIndboDaekning,
   checkMissingInsektSvamp,
   checkMissingRestvaerdi,
   checkMissingStikledning,
@@ -660,6 +837,12 @@ const GAP_BASE_SCORES: Record<string, number> = {
   'GAP-103': 50, // D&O
   'GAP-001': 45, // areal-mismatch
   'GAP-040': 35, // anvendelse-mismatch
+  'GAP-002': 25, // etage-mismatch
+  'GAP-003': 35, // gammel bygning uden rør/svamp
+  'GAP-004': 55, // blødt tag (stråtag)
+  'GAP-005': 30, // kælder uden jordskade/stikledning
+  'GAP-006': 30, // ejerforening — verificér fællesforsikring
+  'GAP-007': 20, // ejerlejlighed indbo/ansvar anbefales
   'GAP-010': 20, // glas
   'GAP-011': 15, // sanitet
   'GAP-012': 30, // insekt/svamp
@@ -1285,6 +1468,77 @@ const checkBranchekravPortfolio: PortfolioCheckFn = ({ branche, policer, coverag
 };
 
 /**
+ * GAP-070: Dobbelt-forsikring — samme ejendom (adresse) dækket af 2+ policer.
+ */
+const checkDobbeltForsikring: PortfolioCheckFn = ({ policer }) => {
+  const adresseMap = new Map<string, string[]>();
+  for (const p of policer) {
+    const addr = (p.property_address ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+    if (!addr || addr.length < 5) continue;
+    const existing = adresseMap.get(addr) ?? [];
+    existing.push(p.policy_number);
+    adresseMap.set(addr, existing);
+  }
+  const doubles = [...adresseMap.entries()].filter(([, nums]) => nums.length >= 2);
+  if (doubles.length === 0) return null;
+  const first = doubles[0];
+  return {
+    check_id: 'GAP-070',
+    category: 'optimering',
+    severity: 'warning',
+    title: `Dobbelt-forsikring: ${doubles.length} adresse${doubles.length > 1 ? 'r' : ''} dækket af flere policer`,
+    description:
+      `${doubles.length} ejendom${doubles.length > 1 ? 'me' : ''} er forsikret af 2+ policer. ` +
+      `Eksempel: "${first[0]}" dækkes af police ${first[1].join(' + ')}. ` +
+      `Ved dobbelt-forsikring betaler kunden unødvendig præmie.`,
+    recommendation: 'Konsolidér dækningen til én police per ejendom.',
+    estimated_impact_dkk: null,
+    source_data: { doubles: doubles.map(([a, nums]) => ({ adresse: a, policer: nums })) },
+  };
+};
+
+/**
+ * GAP-071: Dæknings-overlap — samme coverage_code på 2+ policer for samme adresse.
+ */
+const checkDaekningsOverlap: PortfolioCheckFn = ({ policer, coveragesByPolicy }) => {
+  const adresseCoverages = new Map<string, Map<string, string[]>>();
+  for (const p of policer) {
+    const addr = (p.property_address ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+    if (!addr || addr.length < 5) continue;
+    const covs = coveragesByPolicy.get(p.id) ?? [];
+    for (const c of covs) {
+      if (!c.is_covered) continue;
+      const covMap = adresseCoverages.get(addr) ?? new Map<string, string[]>();
+      const existing = covMap.get(c.coverage_code) ?? [];
+      existing.push(p.policy_number);
+      covMap.set(c.coverage_code, existing);
+      adresseCoverages.set(addr, covMap);
+    }
+  }
+  const overlaps: Array<{ adresse: string; coverage: string; policer: string[] }> = [];
+  for (const [addr, covMap] of adresseCoverages) {
+    for (const [code, nums] of covMap) {
+      if (nums.length >= 2) overlaps.push({ adresse: addr, coverage: code, policer: nums });
+    }
+  }
+  if (overlaps.length === 0) return null;
+  const ex = overlaps[0];
+  return {
+    check_id: 'GAP-071',
+    category: 'optimering',
+    severity: 'info',
+    title: `Dæknings-overlap: ${overlaps.length} dækning${overlaps.length > 1 ? 'er' : ''} er dubleret`,
+    description:
+      `${overlaps.length} dækningstype${overlaps.length > 1 ? 'r' : ''} findes i flere policer ` +
+      `for samme ejendom. Eksempel: "${ex.coverage}" på "${ex.adresse}" ` +
+      `dækkes af police ${ex.policer.join(' + ')}.`,
+    recommendation: 'Fjern dubletter fra den mindst fordelagtige police.',
+    estimated_impact_dkk: null,
+    source_data: { overlaps },
+  };
+};
+
+/**
  * Alle portefølje-checks i præsentationsrækkefølge.
  */
 const PORTFOLIO_CHECKS: readonly PortfolioCheckFn[] = [
@@ -1299,6 +1553,9 @@ const PORTFOLIO_CHECKS: readonly PortfolioCheckFn[] = [
   // allerede af GAP-100 (uforsikret aktiv) på den enkelte ejendoms-række.
   checkPortfolioCyber,
   checkPortfolioRetshjaelp,
+  // BIZZ-1635: Dobbelt-forsikring og overlap-detektion
+  checkDobbeltForsikring,
+  checkDaekningsOverlap,
 ];
 
 /**

@@ -30,6 +30,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   // BIZZ-1399: Optionelt sag_id filter
   const sagId = request.nextUrl.searchParams.get('sag_id') || null;
+  // BIZZ-1631: Optionelt kunde_id filter — isolerer policer/dokumenter per kunde
+  const kundeId = request.nextUrl.searchParams.get('kunde_id') || null;
 
   try {
     const insurance = await getInsuranceApi(auth.tenantId);
@@ -43,6 +45,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       policies = policies.filter((p) => (p as unknown as Record<string, unknown>).sag_id === sagId);
       documents = documents.filter(
         (d) => (d as unknown as Record<string, unknown>).sag_id === sagId
+      );
+    }
+
+    // BIZZ-1631: Filtrér per kunde hvis kunde_id er angivet
+    if (kundeId) {
+      policies = policies.filter(
+        (p) => (p as unknown as Record<string, unknown>).kunde_id === kundeId
+      );
+      documents = documents.filter(
+        (d) => (d as unknown as Record<string, unknown>).kunde_id === kundeId
       );
     }
 

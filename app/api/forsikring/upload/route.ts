@@ -99,13 +99,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       upsert: false,
     });
     if (uploadErr) {
-      logger.error('[forsikring/upload] storage fejl:', uploadErr.message);
-      return NextResponse.json({ error: 'Upload fejlede' }, { status: 500 });
+      logger.error(
+        `[forsikring/upload] Storage fejl for "${file.name}" (${file.size}B, mime=${mime}): ${uploadErr.message}`
+      );
+      return NextResponse.json({ error: `Upload fejlede: ${uploadErr.message}` }, { status: 500 });
     }
+    logger.log(
+      `[forsikring/upload] OK "${file.name}" → ${storagePath} (${buffer.length}B, type=${fileType})`
+    );
 
     // BIZZ-1399: Optionelt sag_id fra FormData
     const sagId = formData.get('sag_id');
     const sagIdStr = typeof sagId === 'string' && sagId.length > 0 ? sagId : undefined;
+    // BIZZ-1632: kunde_id for at isolere dokumenter per kunde
+    const kundeId = formData.get('kunde_id');
+    const kundeIdStr = typeof kundeId === 'string' && kundeId.length > 0 ? kundeId : undefined;
 
     // Opret række i forsikring_documents
     const insurance = await getInsuranceApi(auth.tenantId);
@@ -116,6 +124,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       size_bytes: file.size,
       uploaded_by: auth.userId,
       sag_id: sagIdStr,
+      kunde_id: kundeIdStr,
     });
 
     // Audit log
@@ -137,7 +146,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       },
     });
   } catch (err) {
-    logger.error('[forsikring/upload] uventet fejl:', err);
-    return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error(`[forsikring/upload] CRASH "${file.name}": ${msg}`);
+    return NextResponse.json({ error: `Serverfejl: ${msg}` }, { status: 500 });
   }
 }

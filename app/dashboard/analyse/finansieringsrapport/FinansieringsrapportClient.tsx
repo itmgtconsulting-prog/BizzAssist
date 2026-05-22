@@ -10,7 +10,7 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { Search, Landmark, ArrowLeft, MapPin, Loader2, ChevronRight } from 'lucide-react';
+import { Search, Landmark, ArrowLeft, MapPin, Loader2, ChevronRight, FileText } from 'lucide-react';
 import Link from 'next/link';
 import type { UnifiedSearchResult } from '@/app/api/search/route';
 
@@ -28,6 +28,7 @@ interface SelectedProperty {
  */
 export default function FinansieringsrapportClient(): React.ReactElement {
   const [selected, setSelected] = useState<SelectedProperty | null>(null);
+  const [tone, setTone] = useState<'realkredit' | 'bankraadgiver' | 'memo'>('realkredit');
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<UnifiedSearchResult[]>([]);
@@ -206,43 +207,72 @@ export default function FinansieringsrapportClient(): React.ReactElement {
           )}
         </div>
 
-        {/* BIZZ-1617: Generer-knap sender prompt til AI Chat side-panel */}
+        {/* Tone-valg + Generer-knap */}
         {selected && (
           <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-6">
-            <p className="text-sm text-slate-300 mb-4">
-              Vælg en tone og klik Generer for at sende prompten til AI Chat:
-            </p>
-            <div className="flex flex-wrap gap-2 mb-4">
-              {(['realkredit', 'bankraadgiver', 'memo'] as const).map((t) => (
-                <button
-                  key={t}
-                  onClick={() => {
-                    const toneLabel =
-                      t === 'realkredit'
-                        ? 'Realkredit (formel)'
-                        : t === 'bankraadgiver'
-                          ? 'Bankrådgiver (key-points)'
-                          : 'Internt memo (kort)';
-                    const prompt = `Generér en teknisk ejendomsbeskrivelse for ${selected.adresse} (BFE ${selected.bfe}) i "${t}" tone. Inkluder: identifikation, BBR tekniske data, vurdering & skat, tinglyst belåning & ejerforhold, servitutter, plan- og lokalforhold, risiko-flag, og disclaimer med dato.`;
-                    window.dispatchEvent(
-                      new CustomEvent('bizz:ai-open-with-prompt', {
-                        detail: {
-                          prompt,
-                          displayText: `Teknisk ejendomsbeskrivelse — ${selected.adresse} (${toneLabel})`,
-                        },
-                      })
-                    );
-                  }}
-                  className="px-4 py-2.5 rounded-lg text-sm border bg-emerald-600/20 border-emerald-500/50 text-emerald-200 hover:bg-emerald-600/30 transition-colors"
-                >
-                  {t === 'realkredit'
-                    ? 'Realkredit'
-                    : t === 'bankraadgiver'
-                      ? 'Bankrådgiver'
-                      : 'Memo'}
-                </button>
-              ))}
+            <label className="block text-sm font-medium text-slate-300 mb-3">Vælg toneart</label>
+            <div className="flex flex-wrap gap-3 mb-6">
+              {(
+                [
+                  {
+                    key: 'realkredit',
+                    label: 'Realkredit',
+                    desc: 'Formel rapport til kreditinstitut',
+                  },
+                  {
+                    key: 'bankraadgiver',
+                    label: 'Bankrådgiver',
+                    desc: 'Key-points til rådgivermøde',
+                  },
+                  { key: 'memo', label: 'Internt memo', desc: 'Korte bullets til internt brug' },
+                ] as const
+              ).map((t) => {
+                const isActive = tone === t.key;
+                return (
+                  <button
+                    key={t.key}
+                    onClick={() => setTone(t.key)}
+                    className={`flex-1 min-w-[160px] px-4 py-3 rounded-xl text-left border-2 transition-all ${
+                      isActive
+                        ? 'border-emerald-500 bg-emerald-500/15 ring-2 ring-emerald-500/20'
+                        : 'border-slate-700 bg-slate-800/50 hover:border-slate-600'
+                    }`}
+                  >
+                    <p
+                      className={`text-sm font-semibold ${isActive ? 'text-emerald-300' : 'text-slate-200'}`}
+                    >
+                      {t.label}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-0.5">{t.desc}</p>
+                  </button>
+                );
+              })}
             </div>
+
+            <button
+              onClick={() => {
+                const toneLabel =
+                  tone === 'realkredit'
+                    ? 'Realkredit (formel)'
+                    : tone === 'bankraadgiver'
+                      ? 'Bankrådgiver (key-points)'
+                      : 'Internt memo (kort)';
+                const prompt = `Generér en teknisk ejendomsbeskrivelse for ${selected.adresse} (BFE ${selected.bfe}) i "${tone}" tone. Inkluder: identifikation, BBR tekniske data, vurdering & skat, tinglyst belåning & ejerforhold, servitutter, plan- og lokalforhold, risiko-flag, og disclaimer med dato.`;
+                window.dispatchEvent(
+                  new CustomEvent('bizz:ai-open-with-prompt', {
+                    detail: {
+                      prompt,
+                      displayText: `Teknisk ejendomsbeskrivelse — ${selected.adresse} (${toneLabel})`,
+                    },
+                  })
+                );
+              }}
+              className="w-full sm:w-auto px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl text-sm flex items-center justify-center gap-2 transition-colors"
+              aria-label="Generer teknisk ejendomsbeskrivelse"
+            >
+              <FileText size={16} />
+              Generér rapport
+            </button>
           </div>
         )}
 

@@ -78,8 +78,8 @@ export default function AnalyseLandingPage() {
             </div>
             <p className="text-slate-400 text-xs leading-relaxed">
               Stil ethvert spørgsmål på dansk — AI genererer sikker PostgreSQL mod vores fulde
-              datasæt (2,2M virksomheder, 7,6M ejerskaber). Auto-genereret + valideret +
-              audit-loggét.
+              datasæt (2,2M virksomheder, 7,6M ejerskaber). Auto-genereret visualisering + valideret
+              output.
             </p>
           </Link>
         </div>

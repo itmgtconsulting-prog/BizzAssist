@@ -34,7 +34,8 @@ const KOMMUNE = args.find((a) => a.startsWith('--kommune='))
   : null;
 const DRY_RUN = args.includes('--dry-run');
 
-const BATCH_SIZE = 500;
+const PAGE_SIZE = 500;
+const UPSERT_BATCH = 25; // Small upsert batches to avoid PROD statement timeout
 const DELAY_MS = 100;
 
 /**
@@ -43,7 +44,7 @@ const DELAY_MS = 100;
 async function fetchDawaPage(page) {
   const params = new URLSearchParams({
     side: String(page),
-    per_side: String(BATCH_SIZE),
+    per_side: String(PAGE_SIZE),
     format: 'json',
     struktur: 'mini',
   });
@@ -86,12 +87,16 @@ async function main() {
     if (DRY_RUN) {
       console.log(`  DRY page ${page}: ${batch.length} adresser (sample: ${batch[0]?.adresse_id})`);
     } else {
-      const { error } = await client.from('cache_dar').upsert(batch, { onConflict: 'adresse_id' });
-      if (error) {
-        console.error(`  Page ${page} upsert fejl:`, error.message);
-        errors += batch.length;
-      } else {
-        cached += batch.length;
+      // Sub-batch upserts to avoid PROD statement timeout
+      for (let i = 0; i < batch.length; i += UPSERT_BATCH) {
+        const chunk = batch.slice(i, i + UPSERT_BATCH);
+        const { error } = await client.from('cache_dar').upsert(chunk, { onConflict: 'adresse_id' });
+        if (error) {
+          console.error(`  ${KOMMUNE || '????'} page ${page} chunk ${i}/${batch.length} upsert fejl: ${error.message}`);
+          errors += chunk.length;
+        } else {
+          cached += chunk.length;
+        }
       }
     }
 

@@ -396,6 +396,18 @@ Afslør IKKE oplysningerne medmindre brugeren spørger direkte til dem.`;
           sse(controller, JSON.stringify({ t: text.slice(i, i + CHUNK) }));
         }
 
+        // BIZZ-1687: Track support chat tokens
+        void import('@/app/lib/aiTracking').then(({ recordAiUsage }) =>
+          recordAiUsage({
+            userId: user.id,
+            tenantId: null,
+            route: 'ai.support-chat',
+            inputTokens,
+            outputTokens,
+            model: 'claude-sonnet-4-6',
+          })
+        );
+
         sse(controller, '[DONE]');
         controller.close();
       } catch (err) {

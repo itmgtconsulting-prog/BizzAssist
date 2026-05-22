@@ -664,8 +664,11 @@ function AnalyseSection({
 
   /** BIZZ-1404: Hent tidligere dokumenter for genbrug-picker */
   useEffect(() => {
+    // BIZZ-1631: Nulstil state STRAKS ved kundeskift — forhindrer at forrige
+    // kundes docs/analyser vises mens ny data hentes.
+    setPreviousDocs([]);
+    setSelectedDocIds(new Set());
     if (!showDocPicker || !selected) {
-      setPreviousDocs([]);
       return;
     }
     fetch(`/api/forsikring/documents/for-customer?kunde_id=${encodeURIComponent(selected.id)}`)
@@ -674,9 +677,7 @@ function AnalyseSection({
         const docs = d.documents ?? [];
         setPreviousDocs(docs);
         // BIZZ-1442: Auto-check alle tidligere docs som default
-        setSelectedDocIds(
-          (prev) => new Set([...prev, ...docs.map((doc: { id: string }) => doc.id)])
-        );
+        setSelectedDocIds(new Set(docs.map((doc: { id: string }) => doc.id)));
       })
       .catch(() => setPreviousDocs([]));
   }, [showDocPicker, selected]);
@@ -728,6 +729,8 @@ function AnalyseSection({
             try {
               const formData = new FormData();
               formData.append('file', file);
+              // BIZZ-1632: Link dokument til valgt kunde
+              if (selected?.id) formData.append('kunde_id', selected.id);
               const upRes = await fetch('/api/forsikring/upload', {
                 method: 'POST',
                 body: formData,
@@ -1096,6 +1099,41 @@ function AnalyseSection({
               {da ? 'Luk' : 'Close'}
             </button>
           </div>
+
+          {/* BIZZ-1632: Slet alle dokumenter for denne kunde */}
+          {previousDocs.length > 0 && (
+            <button
+              type="button"
+              onClick={async () => {
+                if (
+                  !selected?.id ||
+                  !confirm(
+                    da
+                      ? `Slet alle ${previousDocs.length} dokumenter for ${selected.navn}?`
+                      : `Delete all ${previousDocs.length} documents for ${selected.navn}?`
+                  )
+                )
+                  return;
+                try {
+                  const r = await fetch(
+                    `/api/forsikring/documents/bulk?kunde_id=${encodeURIComponent(selected.id)}`,
+                    { method: 'DELETE' }
+                  );
+                  if (r.ok) {
+                    setPreviousDocs([]);
+                    setSelectedDocIds(new Set());
+                  }
+                } catch {
+                  /* non-fatal */
+                }
+              }}
+              className="text-xs text-red-400 hover:text-red-300 underline"
+            >
+              {da
+                ? `Slet alle ${previousDocs.length} dokumenter for ${selected.navn}`
+                : `Delete all ${previousDocs.length} documents for ${selected.navn}`}
+            </button>
+          )}
 
           {/* BIZZ-1442: Samlet doc-liste — alle docs med checkboxes */}
           {(() => {
@@ -1772,10 +1810,12 @@ export default function ForsikringPageClient(): React.ReactElement {
   const refresh = useCallback(async () => {
     setError(null);
     try {
-      // BIZZ-1399: Filtrer per sag hvis aktiv
-      const url = activeSagId
-        ? `/api/forsikring?sag_id=${encodeURIComponent(activeSagId)}`
-        : '/api/forsikring';
+      // BIZZ-1631: Filtrer per kunde + sag
+      const params = new URLSearchParams();
+      if (activeSagId) params.set('sag_id', activeSagId);
+      if (selectedCustomer?.id) params.set('kunde_id', selectedCustomer.id);
+      const qs = params.toString();
+      const url = qs ? `/api/forsikring?${qs}` : '/api/forsikring';
       const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string; detail?: string };
@@ -1790,7 +1830,7 @@ export default function ForsikringPageClient(): React.ReactElement {
     } finally {
       setLoading(false);
     }
-  }, [activeSagId]);
+  }, [activeSagId, selectedCustomer?.id]);
 
   useEffect(() => {
     void refresh();
@@ -1881,6 +1921,8 @@ export default function ForsikringPageClient(): React.ReactElement {
         formData.append('file', file);
         // BIZZ-1399: Link upload til aktiv sag
         if (activeSagId) formData.append('sag_id', activeSagId);
+        // BIZZ-1632: Link dokument til valgt kunde
+        if (selectedCustomer?.id) formData.append('kunde_id', selectedCustomer.id);
         const upRes = await fetch('/api/forsikring/upload', {
           method: 'POST',
           body: formData,
@@ -2165,7 +2207,11 @@ export default function ForsikringPageClient(): React.ReactElement {
                         : job.documentType === 'tillaeg'
                           ? '✓ Tillæg'
                           : '✓')}
-                    {job.status === 'failed' && (job.error ?? t.parseFailed)}
+                    {job.status === 'failed' && (
+                      <span className="text-red-400" title={job.error ?? t.parseFailed}>
+                        {job.error ?? t.parseFailed}
+                      </span>
+                    )}
                   </span>
                 </div>
               ))}
@@ -2184,7 +2230,14 @@ export default function ForsikringPageClient(): React.ReactElement {
                   <div key={doc.id} className="px-4 py-2 flex items-center gap-3">
                     <FileText size={14} className="text-slate-400" />
                     <span>{doc.original_name}</span>
-                    <span className="text-xs text-slate-500 ml-auto">
+                    <span
+                      className={`text-xs ml-auto max-w-[300px] truncate ${doc.parse_status === 'failed' ? 'text-red-400' : 'text-slate-500'}`}
+                      title={
+                        doc.parse_status === 'failed'
+                          ? (doc.parse_error ?? t.parseFailed)
+                          : doc.parse_status
+                      }
+                    >
                       {doc.parse_status === 'failed'
                         ? (doc.parse_error ?? t.parseFailed)
                         : doc.parse_status}

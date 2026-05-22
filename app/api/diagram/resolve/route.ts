@@ -1649,14 +1649,30 @@ async function resolvePersonGraph(
   // Mange virksomheder hvor personen kun er stifter (ikke ejer) forurenede
   // ejerskabsstrukturen. Stiftere vises nu i rolle-sektionen i stedet.
   const OWNERSHIP_ROLES = ['register', 'interessenter', 'indehaver'];
-  const ownershipCvrs: string[] = [];
-  const roleCvrs: string[] = [];
+  // BIZZ-1757: Stifter som fallback — bruges KUN når ingen register/interessenter/indehaver
+  const FALLBACK_OWNERSHIP_ROLES = ['stifter', 'stiftere'];
+  let ownershipCvrs: string[] = [];
+  let roleCvrs: string[] = [];
   for (const [cvr, roller] of personVirkRollerMap) {
     if (roller.some((r) => OWNERSHIP_ROLES.includes(r))) {
       ownershipCvrs.push(cvr);
     } else {
       roleCvrs.push(cvr);
     }
+  }
+  // BIZZ-1757: Fallback — hvis ingen ejerskabs-virksomheder, brug stifter-roller
+  if (ownershipCvrs.length === 0) {
+    const newOwnership: string[] = [];
+    const newRoles: string[] = [];
+    for (const [cvr, roller] of personVirkRollerMap) {
+      if (roller.some((r) => FALLBACK_OWNERSHIP_ROLES.includes(r))) {
+        newOwnership.push(cvr);
+      } else {
+        newRoles.push(cvr);
+      }
+    }
+    ownershipCvrs = newOwnership;
+    roleCvrs = newRoles;
   }
   // Gem ejerandel fra interessenter/indehaver som fallback for virksomheder
   // der ikke har register-type men har ejerandel via anden ejerskabsrolle

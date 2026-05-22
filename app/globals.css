@@ -33,12 +33,13 @@ body {
 ::-webkit-scrollbar-track {
   background: #1e293b;
 }
+/* BIZZ-1771: Øget scrollbar kontrast for dark theme */
 ::-webkit-scrollbar-thumb {
-  background: #334155;
+  background: #475569;
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+  background: #64748b;
 }
 
 /* Ensure visible focus indicators for keyboard navigation */

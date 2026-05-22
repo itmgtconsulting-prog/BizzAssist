@@ -2592,6 +2592,8 @@ export default function PersonDetailPageClient({
                     const groupedActive = new Map<number, typeof aktive>();
                     for (const e of aktive) {
                       const cvrNum = parseInt(e.ownerCvr, 10);
+                      // BIZZ-1764: Skip ejendomme uden gyldig CVR (undgår "CVR NaN" gruppe)
+                      if (isNaN(cvrNum)) continue;
                       if (!groupedActive.has(cvrNum)) groupedActive.set(cvrNum, []);
                       groupedActive.get(cvrNum)!.push(e);
                     }

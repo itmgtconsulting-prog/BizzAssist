@@ -325,19 +325,29 @@ async function searchAddresses(q: string, normQ: string): Promise<UnifiedSearchR
               };
             }>;
           };
-          // Kategori A = eksakt match, B = næsten-match (acceptable fuzzy)
-          if (dvData.kategori && ['A', 'B'].includes(dvData.kategori)) {
+          // Kategori A = eksakt match, B = næsten-match, C = usikker
+          // BIZZ-1665: Accepter også C — ejerlejligheder med etage/dør
+          // returnerer ofte C selv med korrekt input. Bedre at vise
+          // "usikker" match end ingen match.
+          if (dvData.kategori && ['A', 'B', 'C'].includes(dvData.kategori)) {
             for (const r of (dvData.resultater ?? []).slice(0, 5)) {
               const a = r.adresse;
               if (!a?.id || !a.vejnavn) continue;
               const etageDoer = [a.etage, a.dør].filter(Boolean).join('. ');
               const stedInfo = `${a.postnr ?? ''} ${a.postnrnavn ?? ''}`.trim();
+              // BIZZ-1665: Konstruer adressetitel fra felter når betegnelse mangler (kat C)
+              const etageStr = a.etage ? `, ${a.etage}.` : '';
+              const doerStr = a.dør ? ` ${a.dør}` : '';
+              const postnrStr = a.postnr ? `, ${a.postnr} ${a.postnrnavn ?? ''}` : '';
+              const konstrueretTitel =
+                a.adressebetegnelse ??
+                `${a.vejnavn} ${a.husnr ?? ''}${etageStr}${doerStr}${postnrStr}`.trim();
               mapped.push({
                 type: 'address',
                 id: a.id,
-                title: a.adressebetegnelse ?? `${a.vejnavn} ${a.husnr ?? ''}`,
+                title: konstrueretTitel,
                 subtitle: etageDoer ? `Lejlighed · ${etageDoer} · ${stedInfo}` : stedInfo,
-                score: dvData.kategori === 'A' ? 90 : 70,
+                score: dvData.kategori === 'A' ? 90 : dvData.kategori === 'B' ? 70 : 55,
                 href: `/dashboard/ejendomme/${a.id}`,
                 meta: {
                   dawaType: a.etage ? 'adresse' : 'adgangsadresse',

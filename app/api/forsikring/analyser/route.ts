@@ -145,8 +145,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // 2. Hent policer — BIZZ-1404: scope til valgte dokumenter hvis angivet
     const insurance = await getInsuranceApi(auth.tenantId);
     const scopeDocIds = [...(document_ids ?? []), ...(new_document_ids ?? [])];
-    let policer;
     const allPolicies = await insurance.policies.list();
+    let policer: typeof allPolicies;
     if (scopeDocIds.length > 0) {
       // Kun policer parsed fra de valgte dokumenter
       policer = allPolicies.filter((p) => p.document_id && scopeDocIds.includes(p.document_id));
@@ -167,9 +167,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           `[forsikring/analyser] Scoped til ${policer.length} policer fra ${scopeDocIds.length} dokumenter (af ${allPolicies.length} total)`
         );
       }
-    } else {
-      // Fallback: alle policer (backward compat + første analyse)
+    } else if (allPolicies.length > 0) {
+      // BIZZ-1776: Hvis ingen dokumenter er valgt OG der er policer fra
+      // tidligere analyser, brug dem som fallback (backward compat).
+      // Men log en warning — ideelt bør UI sende document_ids.
+      logger.warn(
+        `[forsikring/analyser] Ingen scopeDocIds — fallback til ${allPolicies.length} policer fra tidligere analyser`
+      );
       policer = allPolicies;
+    } else {
+      policer = [];
     }
 
     // 3. Match aktiver mod policer

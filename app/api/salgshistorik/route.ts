@@ -651,6 +651,48 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
       logger.warn('[salgshistorik] historisk adkomster enrichment failed:', err);
     }
 
+    // BIZZ-1753: Merge handler fra ejerskifte_historik (AI-extracted data)
+    // der ikke allerede er i handler-listen (dedup på dato±7 dage)
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: aiHandler } = await (createAdminClient() as any)
+        .from('ejerskifte_historik')
+        .select(
+          'overtagelsesdato, ejer_navn, kontant_koebesum, i_alt_koebesum, overdragelsesmaade, kilde'
+        )
+        .eq('bfe_nummer', bfeNummer)
+        .eq('kilde', 'ai_extraction')
+        .order('overtagelsesdato', { ascending: false })
+        .limit(20);
+      if (aiHandler?.length) {
+        const existingDates = new Set(
+          handler.map((h) => h.overtagelsesdato?.split('T')[0]).filter(Boolean)
+        );
+        for (const ai of aiHandler as Array<Record<string, unknown>>) {
+          const dato = (ai.overtagelsesdato as string)?.split('T')[0];
+          if (dato && !existingDates.has(dato)) {
+            handler.push({
+              kontantKoebesum: (ai.kontant_koebesum as number) ?? null,
+              samletKoebesum: (ai.i_alt_koebesum as number) ?? null,
+              loesoeresum: null,
+              entreprisesum: null,
+              koebsaftaleDato: null,
+              overtagelsesdato: ai.overtagelsesdato as string,
+              overdragelsesmaade: (ai.overdragelsesmaade as string) ?? null,
+              valutakode: null,
+              koeber: (ai.ejer_navn as string) ?? null,
+              koeberCvr: null,
+              koeberType: null,
+            } as (typeof handler)[number]);
+            existingDates.add(dato);
+          }
+        }
+        handler.sort((a, b) => (b.overtagelsesdato ?? '').localeCompare(a.overtagelsesdato ?? ''));
+      }
+    } catch {
+      /* AI-merge non-fatal */
+    }
+
     logger.log(
       `[salgshistorik] ${handler.length} ejerskab-events fundet for BFE ${bfeNummer} via EJFCustom`
     );

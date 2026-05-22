@@ -472,6 +472,10 @@ export async function POST(req: NextRequest) {
             .from('ejerskifte_historik')
             .upsert(rows, { onConflict: 'bfe_nummer,overtagelsesdato', ignoreDuplicates: true });
           logger.log(`[extract-akt] Backfilled ${rows.length} handler til ejerskifte_historik`);
+          // BIZZ-1753: Invalider salgshistorik_cache så næste fetch henter frisk data
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (admin as any).from('salgshistorik_cache').delete().eq('bfe_nummer', String(bfe));
+          logger.log(`[extract-akt] Invalidated salgshistorik_cache for BFE ${bfe}`);
         }
       } catch (backfillErr) {
         logger.warn('[extract-akt] Backfill fejlede:', backfillErr);

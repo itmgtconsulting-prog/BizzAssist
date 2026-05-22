@@ -776,6 +776,14 @@ Tilgængelige tabeller:
 - ejf_administrator: ejendomsadministratorer (bfe_nummer, virksomhed_cvr, status)
 - ejf_ejerskifte: ejerskifter med handelstype (bfe_nummer, overtagelsesdato, overdragelsesmaade, handelsoplysninger_lokal_id). VIGTIGT: overdragelsesmaade = 'Almindelig fri handel' for reelle markedshandler
 - ejf_handelsoplysninger: salgspriser (id_lokal_id, samlet_koebesum, kontant_koebesum, koebsaftale_dato, valutakode). JOIN ejf_ejerskifte ON handelsoplysninger_lokal_id = id_lokal_id
+- v_ejerskifte_handel: pre-joined view af ejerskifte+handelsoplysninger (bfe_nummer, overdragelsesmaade, overtagelsesdato, samlet_koebesum, kontant_koebesum)
+- bfe_adresse_cache: 1.8M BFE→adresse mappings (bfe_nummer, adresse, postnr, postnrnavn, kommune, kommune_kode)
+- mv_virksomhed_portefolje: virksomheders ejendomsporteføljer (cvr, virksomhedsnavn, antal_ejendomme, samlet_ejendomsvaerdi, samlet_grundvaerdi)
+- mv_kommune_statistik: pre-aggregeret kommune-statistik (kommunekode, kommunenavn, antal_adresser)
+- mv_virksomhed_struktur: koncernstrukturer (ejer_cvr, ejet_cvr, ejerandel_pct)
+- mv_ejerskab_beriget: 6.9M beriget ejerskabs-view (bfe_nummer, ejer_navn, ejer_cvr, ejerandel_pct, virksomhed_navn, branche_tekst)
+- mv_deltager_beriget: 2.8M beriget person-view (deltager_enhedsnummer, deltager_navn, virksomhed_cvr, rolle_typer, ejerandel_pct)
+- mv_ejendom_master: 2.6M master ejendomsview (bfe_nummer, kommune_kode, kommunenavn, boligareal_m2, ejendomsvaerdi, grundvaerdi)
 
 Brug data_intelligence til statistik og analyser. Vis ALDRIG SQL til brugeren — kun det formaterede resultat.
 

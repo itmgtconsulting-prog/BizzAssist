@@ -109,6 +109,17 @@ public.tinglysning_servitutter: id, bfe_nummer, type, beskrivelse, tinglysningsd
 
 public.tinglysning_dokumenter: dokument_id (text PK), dokument_type (text — 'adkomst'/'haeftelse'/'servitut'), tinglysningsdato (date), bfe_nummer (bigint), parter (jsonb), beloeb (jsonb). Central reference for alle e-TL dokumenter.
 
+ADRESSE + STATISTIK TABELLER:
+
+public.bfe_adresse_cache: bfe_nummer (bigint PK), adresse (text), etage (text), doer (text), postnr (text), postnrnavn (text), kommune (text), kommune_kode (text), dawa_id (text), ejendomstype (text), kilde (text).
+  BEMÆRK: BFE→adresse mapping. 1.8M rækker. JOIN med andre tabeller via bfe_nummer for at få adresse.
+
+public.mv_kommune_statistik: kommunekode (text), kommunenavn (text), antal_adresser (bigint), dar_synced_at (timestamptz).
+  BEMÆRK: Pre-aggregeret kommune-statistik. Brug denne for hurtige kommune-opslag.
+
+public.mv_virksomhed_portefolje: cvr (text), virksomhedsnavn (text), branche (text), status (text), antal_ejendomme (bigint), samlet_ejendomsvaerdi (bigint DKK), samlet_grundvaerdi (bigint DKK).
+  BEMÆRK: Virksomheder med ejendomsporteføljer. For "virksomheder med flest ejendomme" eller "samlet ejendomsværdi per virksomhed".
+
 EJF TABELLER (officielle handelsdata fra Ejendomsfortegnelsen):
 
 public.ejf_ejerskifte: id_lokal_id (text PK), bfe_nummer (bigint), overdragelsesmaade (text — 'Almindelig fri handel'/'Familieoverdragelse'/'Anden overdragelse'/'Tvangsauktion'), overtagelsesdato (timestamptz), handelsoplysninger_lokal_id (text — FK til ejf_handelsoplysninger), virkning_fra (timestamptz), virkning_til (timestamptz), status (text).

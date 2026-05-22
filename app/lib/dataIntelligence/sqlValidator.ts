@@ -47,6 +47,9 @@ export const WHITELISTED_TABLES = new Set([
   'public.ejf_ejerskifte',
   'public.ejf_handelsoplysninger',
   'public.v_ejerskifte_handel',
+  'public.bfe_adresse_cache',
+  'public.mv_kommune_statistik',
+  'public.mv_virksomhed_portefolje',
   'dataintel.data_catalog',
   'dataintel.analytics_knowledge',
 ]);

@@ -1532,7 +1532,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
       {/* ─── Left: Main Content ─── */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* ─── Sticky Header ─── */}
-        <div className="px-3 sm:px-6 pt-5 pb-0 border-b border-slate-700/50 bg-slate-900/30">
+        <div className="px-3 sm:px-6 pt-5 pb-0 border-b border-slate-700/50 bg-slate-900/30 relative z-20">
           {/* Top row: back button + actions */}
           <div className="flex items-center justify-between mb-3">
             <button

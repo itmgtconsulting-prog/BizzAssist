@@ -101,36 +101,29 @@ export default function AktExtractionButton({ bfe, aktNavn, lang }: Props) {
   }
 
   return (
-    <div className="mt-3">
+    <div className="mt-2 inline-flex flex-col">
       <button
         onClick={extract}
         disabled={loading}
-        className="flex items-center gap-2 px-3 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-300 text-sm rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-600/15 hover:bg-emerald-600/25 border border-emerald-500/20 text-emerald-300 text-xs rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        aria-label={da ? 'Berig med AI fra scannet akt' : 'Enrich with AI from scanned deed'}
       >
         {loading ? (
           <>
-            <div className="w-4 h-4 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
-            {da ? 'Analyserer scannet akt med AI...' : 'Analyzing scanned deed with AI...'}
+            <div className="w-3 h-3 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
+            <span>{da ? 'Analyserer...' : 'Analyzing...'}</span>
           </>
         ) : (
           <>
-            <Sparkles className="w-4 h-4" aria-hidden />
-            {da
-              ? 'Berig med historisk data fra scannet akt'
-              : 'Enrich with historical data from scanned deed'}
-            <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-emerald-500/20 text-emerald-300 leading-none">
+            <Sparkles className="w-3 h-3" aria-hidden />
+            <span>{da ? 'AI-berig akt' : 'AI enrich deed'}</span>
+            <span className="px-1 py-0.5 rounded text-[7px] font-bold bg-emerald-500/20 text-emerald-300 leading-none">
               AI
             </span>
-            <span className="text-[10px] text-slate-500 ml-1">(~50k tokens)</span>
           </>
         )}
       </button>
-      <p className="text-slate-600 text-[10px] mt-1">
-        {da
-          ? 'AI læser den scannede akt og udtrækker historiske handler, hæftelser og servitutter. Data deles med alle brugere.'
-          : 'AI reads the scanned deed and extracts historical transactions. Data is shared with all users.'}
-      </p>
-      {error && <p className="text-red-400 text-xs mt-2">{error}</p>}
+      {error && <p className="text-red-400 text-[10px] mt-1">{error}</p>}
     </div>
   );
 }

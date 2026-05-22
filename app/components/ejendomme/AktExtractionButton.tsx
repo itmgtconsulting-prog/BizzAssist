@@ -11,6 +11,7 @@
 
 import { useState } from 'react';
 import { Sparkles } from 'lucide-react';
+import { useSubscription } from '@/app/context/SubscriptionContext';
 
 interface Props {
   /** BFE-nummer for ejendommen. */
@@ -31,6 +32,7 @@ interface Props {
  */
 export default function AktExtractionButton({ bfe, aktNavn, lang, onExtractComplete }: Props) {
   const da = lang === 'da';
+  const { addTokenUsage } = useSubscription();
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{
     handler: number;
@@ -56,13 +58,16 @@ export default function AktExtractionButton({ bfe, aktNavn, lang, onExtractCompl
         return;
       }
       const data = await res.json();
+      const tokens = data.tokensUsed ?? 0;
       setResult({
         handler: data.handler?.length ?? 0,
         haeftelser: data.haeftelser?.length ?? 0,
         servitutter: data.servitutter?.length ?? 0,
-        tokensUsed: data.tokensUsed ?? 0,
+        tokensUsed: tokens,
         fromCache: data.fromCache ?? false,
       });
+      // BIZZ-1751: Opdater TokenUsageBar live via SubscriptionContext
+      if (tokens > 0 && !data.fromCache) addTokenUsage(tokens);
       // BIZZ-1752: Signal til parent for re-fetch af salgshistorik — ingen page reload
       if (!data.fromCache) {
         setTimeout(() => {

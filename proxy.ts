@@ -107,8 +107,20 @@ function isWithinRateLimit(ip: string): boolean {
  * @returns NextResponse to continue, redirect, or return 429
  */
 export async function proxy(req: NextRequest): Promise<NextResponse> {
-  const { pathname, protocol } = req.nextUrl;
+  const { pathname, protocol, searchParams } = req.nextUrl;
   const ip = getClientIp(req);
+
+  // ── BIZZ-1783: PKCE callback redirect — intercept before any other logic ──
+  // Supabase redirects PKCE codes to site_url (/) when uri_allow_list mismatches.
+  // Redirect to /auth/callback so the homepage can be statically cached.
+  if (pathname === '/' && (searchParams.has('code') || searchParams.has('token_hash'))) {
+    const url = req.nextUrl.clone();
+    url.pathname = '/auth/callback';
+    if (searchParams.has('code') && !searchParams.has('type')) {
+      url.searchParams.set('type', 'signup');
+    }
+    return NextResponse.redirect(url);
+  }
 
   // ── BIZZ-209: Generate per-request nonce for CSP ──────────────────────────
   const nonce = Buffer.from(crypto.randomUUID()).toString('base64');

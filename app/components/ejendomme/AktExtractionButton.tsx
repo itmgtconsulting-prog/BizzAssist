@@ -19,6 +19,8 @@ interface Props {
   aktNavn: string;
   /** Sprogkode. */
   lang: string;
+  /** BIZZ-1752: Callback efter ekstraktion — re-fetcher salgshistorik uden page reload. */
+  onExtractComplete?: () => void;
 }
 
 /**
@@ -27,7 +29,7 @@ interface Props {
  * @param props - BFE, aktNavn, sprog
  * @returns Knap med loading-state og resultat-visning
  */
-export default function AktExtractionButton({ bfe, aktNavn, lang }: Props) {
+export default function AktExtractionButton({ bfe, aktNavn, lang, onExtractComplete }: Props) {
   const da = lang === 'da';
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{
@@ -61,9 +63,13 @@ export default function AktExtractionButton({ bfe, aktNavn, lang }: Props) {
         tokensUsed: data.tokensUsed ?? 0,
         fromCache: data.fromCache ?? false,
       });
-      // Refresh salgshistorik efter 2 sek — ny data er nu i cache
+      // BIZZ-1752: Signal til parent for re-fetch af salgshistorik — ingen page reload
       if (!data.fromCache) {
-        setTimeout(() => window.location.reload(), 2000);
+        setTimeout(() => {
+          if (onExtractComplete) onExtractComplete();
+          // Fallback: custom event for components without callback prop
+          window.dispatchEvent(new CustomEvent('bizzassist:akt-extracted', { detail: { bfe } }));
+        }, 1000);
       }
     } catch {
       setError(da ? 'Netværksfejl' : 'Network error');

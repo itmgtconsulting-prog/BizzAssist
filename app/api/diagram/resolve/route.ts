@@ -1746,6 +1746,9 @@ async function resolvePersonGraph(
     const rolleStr = roller.slice(0, 2).join(', ');
     const subParts = [company?.virksomhedsform, company?.branche_tekst].filter(Boolean);
 
+    // BIZZ-1757: layoutSection for hierarkisk person-diagram
+    // Top-level = direkte ejet af person. Datterselskaber (har parent) = deeper.
+    const isChild = parentOfCvr.has(cvrStr);
     nodes.push({
       id: companyId,
       label: company?.navn ?? `CVR ${cvrStr}`,
@@ -1756,6 +1759,7 @@ async function resolvePersonGraph(
       link: `/dashboard/companies/${cvrStr}`,
       isCeased: company?.ophoert != null,
       personRolle: rolleStr || undefined,
+      layoutSection: isChild ? 'subsidiary' : 'ownership',
     });
     nodeIds.add(companyId);
 
@@ -2092,6 +2096,8 @@ async function resolvePersonGraph(
           label: `BFE ${pp.bfe_nummer}`,
           type: 'property',
           bfeNummer: pp.bfe_nummer,
+          // BIZZ-1757: personlige ejendomme direkte under person
+          layoutSection: 'personal-property',
         });
         nodeIds.add(propId);
       }

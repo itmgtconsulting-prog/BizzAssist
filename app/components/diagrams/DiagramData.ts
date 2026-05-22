@@ -108,7 +108,7 @@ export interface DiagramNode {
    * sections. Used on person pages to push role-only companies below the
    * ownership hierarchy.
    */
-  layoutSection?: 'role';
+  layoutSection?: 'role' | 'ownership' | 'subsidiary' | 'personal-property';
   /** Overflow items when a parent has >MAX children — shown as expandable list */
   overflowItems?: { label: string; cvr?: number; link?: string; bfeNummer?: number }[];
 }

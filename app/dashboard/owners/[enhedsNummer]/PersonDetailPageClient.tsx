@@ -2588,14 +2588,13 @@ export default function PersonDetailPageClient({
                     const aktive = ejendommeData.filter((e) => e.aktiv !== false);
                     const solgte = ejendommeData.filter((e) => e.aktiv === false);
 
-                    // Group active by ownerCvr
+                    // Group active by ownerCvr — BIZZ-1764: brug 0 for personlige ejendomme (NaN CVR)
                     const groupedActive = new Map<number, typeof aktive>();
                     for (const e of aktive) {
                       const cvrNum = parseInt(e.ownerCvr, 10);
-                      // BIZZ-1764: Skip ejendomme uden gyldig CVR (undgår "CVR NaN" gruppe)
-                      if (isNaN(cvrNum)) continue;
-                      if (!groupedActive.has(cvrNum)) groupedActive.set(cvrNum, []);
-                      groupedActive.get(cvrNum)!.push(e);
+                      const key = isNaN(cvrNum) ? 0 : cvrNum;
+                      if (!groupedActive.has(key)) groupedActive.set(key, []);
+                      groupedActive.get(key)!.push(e);
                     }
                     const cvrOrder = Array.from(groupedActive.keys());
 
@@ -2661,34 +2660,47 @@ export default function PersonDetailPageClient({
                         {cvrOrder.map((cvr) => {
                           const props = groupedActive.get(cvr);
                           if (!props || props.length === 0) return null;
-                          const name = nameByCvr.get(cvr) ?? `CVR ${cvr}`;
+                          // BIZZ-1764: cvr=0 er personlige ejendomme (ingen CVR)
+                          const isPersonal = cvr === 0;
+                          const name = isPersonal
+                            ? lang === 'da'
+                              ? 'Personlige ejendomme'
+                              : 'Personal properties'
+                            : (nameByCvr.get(cvr) ?? `CVR ${cvr}`);
                           return (
                             <div key={cvr} className="space-y-2">
-                              <Link
-                                href={`/dashboard/companies/${cvr}`}
-                                className="inline-flex items-center gap-2 group"
-                              >
-                                <Building2
-                                  size={14}
-                                  className="text-slate-500 group-hover:text-blue-400 transition-colors"
-                                />
-                                <h3 className="text-sm font-semibold text-slate-200 group-hover:text-blue-400 transition-colors">
-                                  {name}
-                                </h3>
-                                <span className="text-[10px] text-slate-500 font-mono">
-                                  CVR {cvr}
-                                </span>
-                                <span className="text-[10px] text-slate-500">
-                                  · {props.length}{' '}
-                                  {lang === 'da'
-                                    ? props.length === 1
-                                      ? 'ejendom'
-                                      : 'ejendomme'
-                                    : props.length === 1
-                                      ? 'property'
-                                      : 'properties'}
-                                </span>
-                              </Link>
+                              {isPersonal ? (
+                                <div className="inline-flex items-center gap-2">
+                                  <Home size={14} className="text-emerald-400" />
+                                  <h3 className="text-sm font-semibold text-slate-200">{name}</h3>
+                                </div>
+                              ) : (
+                                <Link
+                                  href={`/dashboard/companies/${cvr}`}
+                                  className="inline-flex items-center gap-2 group"
+                                >
+                                  <Building2
+                                    size={14}
+                                    className="text-slate-500 group-hover:text-blue-400 transition-colors"
+                                  />
+                                  <h3 className="text-sm font-semibold text-slate-200 group-hover:text-blue-400 transition-colors">
+                                    {name}
+                                  </h3>
+                                  <span className="text-[10px] text-slate-500 font-mono">
+                                    CVR {cvr}
+                                  </span>
+                                  <span className="text-[10px] text-slate-500">
+                                    · {props.length}{' '}
+                                    {lang === 'da'
+                                      ? props.length === 1
+                                        ? 'ejendom'
+                                        : 'ejendomme'
+                                      : props.length === 1
+                                        ? 'property'
+                                        : 'properties'}
+                                  </span>
+                                </Link>
+                              )}
                               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                                 {props.map((ej) => (
                                   <PropertyOwnerCard

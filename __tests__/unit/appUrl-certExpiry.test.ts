@@ -59,23 +59,23 @@ describe('checkCertExpiry — status-klassifikation', () => {
     // Isolér fra env så testen ikke afhænger af udvikler-lokale cert-stier
   });
 
-  it('returnerer unknown når hverken path eller base64 er sat', () => {
-    const result = checkCertExpiry('Test', '', '', '');
+  it('returnerer unknown når hverken path eller base64 er sat', async () => {
+    const result = await checkCertExpiry('Test', '', '', '');
     expect(result.status).toBe('unknown');
     expect(result.expiresAt).toBeNull();
     expect(result.daysRemaining).toBeNull();
     expect(result.error).toBe('No certificate configured');
   });
 
-  it('returnerer unknown (med parse-error) for invalid base64', () => {
+  it('returnerer unknown (med parse-error) for invalid base64', async () => {
     // Invalid base64-data — X509Certificate-konstruktøren kaster
-    const result = checkCertExpiry('Invalid', '', 'bm90LWEtdmFsaWQtcGZ4', '');
+    const result = await checkCertExpiry('Invalid', '', 'bm90LWEtdmFsaWQtcGZ4', '');
     expect(result.status).toBe('unknown');
     expect(result.error).toBeTruthy();
   });
 
-  it('returnerer unknown for ikke-eksisterende filsti', () => {
-    const result = checkCertExpiry(
+  it('returnerer unknown for ikke-eksisterende filsti', async () => {
+    const result = await checkCertExpiry(
       'NonExistent',
       '/tmp/definitely-not-a-real-path-bizz.p12',
       '',
@@ -85,8 +85,8 @@ describe('checkCertExpiry — status-klassifikation', () => {
     expect(result.status).toBe('unknown');
   });
 
-  it('bærer det angivne navn igennem uanset udfald', () => {
-    const result = checkCertExpiry('MyCert', '', '', '');
+  it('bærer det angivne navn igennem uanset udfald', async () => {
+    const result = await checkCertExpiry('MyCert', '', '', '');
     expect(result.name).toBe('MyCert');
   });
 });

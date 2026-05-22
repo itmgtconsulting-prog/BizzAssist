@@ -284,7 +284,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<HealthStat
       }
 
       // mTLS Certificates
-      healthStatus.checks.certificates = checkAllCertificates();
+      healthStatus.checks.certificates = await checkAllCertificates();
 
       // Update overall status based on deep checks
       if (healthStatus.checks.redis === 'error') {

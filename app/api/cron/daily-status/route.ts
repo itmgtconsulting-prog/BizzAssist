@@ -299,7 +299,7 @@ async function collectStats(since: Date): Promise<StatusStats> {
   ]);
 
   // BIZZ-304: Check mTLS certificate expiry dates
-  const certificates = checkAllCertificates();
+  const certificates = await checkAllCertificates();
 
   // BIZZ-307: AI token usage (last 24h across all tenants)
   let aiTokens24h: number | null = null;

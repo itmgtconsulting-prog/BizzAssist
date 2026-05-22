@@ -45,6 +45,7 @@ import { formatTokens, resolvePlan, type PlanId } from '@/app/lib/subscriptions'
 import type { UsageHistoryRow } from '@/app/api/ai/usage-history/route';
 import { scopeColor } from '@/app/lib/scopeColors';
 import type { ApiTokenRecord } from '@/app/api/tokens/route';
+import TokenLedger from '@/app/components/tokens/TokenLedger';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -1329,6 +1330,9 @@ export default function TokensPageClient() {
           creating={creating}
         />
       )}
+
+      {/* BIZZ-1770: Token transaktionshistorik (debit/credit ledger) */}
+      <TokenLedger lang={lang} />
 
       {revealToken && (
         <TokenRevealModal token={revealToken} lang={lang} onDone={() => setRevealToken(null)} />

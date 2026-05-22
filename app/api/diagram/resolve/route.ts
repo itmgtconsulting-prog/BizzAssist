@@ -18,7 +18,7 @@ import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import type { DiagramNode, DiagramEdge, DiagramGraph } from '@/app/components/diagrams/DiagramData';
 
 /** Max ejendomme per ejer-node i initial graf */
-const MAX_PROPS_PER_OWNER = 5;
+const MAX_PROPS_PER_OWNER = 15;
 
 /**
  * Formatér ejerandel fra min/max til læsbar streng.
@@ -750,7 +750,7 @@ async function resolveCompanyGraph(
         .eq('ejer_navn', navn)
         .eq('ejer_type', 'person')
         .eq('status', 'gældende')
-        .limit(MAX_PROPS_PER_OWNER);
+        .limit(MAX_PROPS_PER_OWNER + 1);
 
       for (const pp of (personProps ?? []) as Array<{
         bfe_nummer: number;
@@ -2046,7 +2046,7 @@ async function resolvePersonGraph(
       .select('bfe_nummer, ejerandel_taeller, ejerandel_naevner')
       .eq('ejer_enheds_nummer', Number(enhedsNummer))
       .eq('status', 'gældende')
-      .limit(MAX_PROPS_PER_OWNER);
+      .limit(MAX_PROPS_PER_OWNER + 1);
 
     if (byEnheds && byEnheds.length > 0) {
       personProps = byEnheds;
@@ -2059,7 +2059,7 @@ async function resolvePersonGraph(
         .eq('ejer_navn', personName)
         .eq('ejer_type', 'person')
         .eq('status', 'gældende')
-        .limit(MAX_PROPS_PER_OWNER);
+        .limit(MAX_PROPS_PER_OWNER + 1);
       personProps = byNavn ?? [];
     }
 

@@ -340,7 +340,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjerskabRe
   // ── BIZZ-1013: Cache-first — tjek ejf_ejerskab tabel (7.6M rows) ──
   try {
     const admin = createAdminClient();
-    const EJF_STALE_MS = 7 * 24 * 60 * 60 * 1000; // 7 dage
+    const EJF_STALE_MS = 30 * 24 * 60 * 60 * 1000; // 30 dage — ejerskab ændres sjældent
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: cached, error: cacheErr } = await (admin as any)
       .from('ejf_ejerskab')

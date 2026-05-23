@@ -158,7 +158,9 @@ async function fetchDetailForBfe(bfe: number): Promise<{
 
   // Parse ADKOMST (handler)
   const handler: ParsedHandler[] = [];
-  const adkomstEntries = [...xml.matchAll(/AdkomstSummarisk>([\s\S]*?)<\/[^:]*:?AdkomstSummarisk/g)];
+  const adkomstEntries = [
+    ...xml.matchAll(/AdkomstSummarisk>([\s\S]*?)<\/[^:]*:?AdkomstSummarisk/g),
+  ];
   for (const [, e] of adkomstEntries) {
     const dato = extractDate(e, 'SkoedeOvertagelsesDato');
     const kontantKoebesum = extractInt(e, 'KontantKoebesum');
@@ -183,7 +185,9 @@ async function fetchDetailForBfe(bfe: number): Promise<{
 
   // Parse HAEFTELSER
   const haeftelser: ParsedHaeftelse[] = [];
-  const haeftelseEntries = [...xml.matchAll(/HaeftelseSummarisk>([\s\S]*?)<\/[^:]*:?HaeftelseSummarisk/g)];
+  const haeftelseEntries = [
+    ...xml.matchAll(/HaeftelseSummarisk>([\s\S]*?)<\/[^:]*:?HaeftelseSummarisk/g),
+  ];
   let prioritet = 0;
   for (const [, e] of haeftelseEntries) {
     prioritet++;
@@ -202,7 +206,9 @@ async function fetchDetailForBfe(bfe: number): Promise<{
 
   // Parse SERVITUTTER
   const servitutter: ParsedServitut[] = [];
-  const servitutEntries = [...xml.matchAll(/ServitutSummarisk>([\s\S]*?)<\/[^:]*:?ServitutSummarisk/g)];
+  const servitutEntries = [
+    ...xml.matchAll(/ServitutSummarisk>([\s\S]*?)<\/[^:]*:?ServitutSummarisk/g),
+  ];
   let servPrioritet = 0;
   for (const [, e] of servitutEntries) {
     servPrioritet++;
@@ -295,7 +301,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
         try {
           const detail = await fetchDetailForBfe(bfe);
-          if (!detail) { bfesProcessed++; continue; }
+          if (!detail) {
+            bfesProcessed++;
+            continue;
+          }
 
           // Upsert handler -> ejendomshandel
           if (detail.handler.length > 0) {
@@ -308,24 +317,22 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
               .eq('kilde', 'tinglysning-summarisk');
 
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const { error: hErr } = await (admin as any)
-              .from('ejendomshandel')
-              .insert(
-                detail.handler.map((h) => ({
-                  bfe_nummer: h.bfe_nummer,
-                  dato: h.dato,
-                  tinglyst_dato: h.tinglyst_dato,
-                  koebsaftale_dato: h.koebsaftale_dato,
-                  koebesum: h.koebesum,
-                  samlet_koebesum: h.samlet_koebesum,
-                  andel_taeller: h.andel_taeller,
-                  andel_naevner: h.andel_naevner,
-                  koeber_navne: h.koeber_navne,
-                  koeber_cvrs: h.koeber_cvrs,
-                  kilde: 'tinglysning-summarisk',
-                  sidst_opdateret: new Date().toISOString(),
-                }))
-              );
+            const { error: hErr } = await (admin as any).from('ejendomshandel').insert(
+              detail.handler.map((h) => ({
+                bfe_nummer: h.bfe_nummer,
+                dato: h.dato,
+                tinglyst_dato: h.tinglyst_dato,
+                koebsaftale_dato: h.koebsaftale_dato,
+                koebesum: h.koebesum,
+                samlet_koebesum: h.samlet_koebesum,
+                andel_taeller: h.andel_taeller,
+                andel_naevner: h.andel_naevner,
+                koeber_navne: h.koeber_navne,
+                koeber_cvrs: h.koeber_cvrs,
+                kilde: 'tinglysning-summarisk',
+                sidst_opdateret: new Date().toISOString(),
+              }))
+            );
             if (!hErr) handlerUpserted += detail.handler.length;
           }
 
@@ -334,22 +341,21 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             await (admin as any).from('tinglysning_haeftelse').delete().eq('bfe_nummer', bfe);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const { error: haErr } = await (admin as any)
-              .from('tinglysning_haeftelse')
-              .insert(
-                detail.haeftelser.map((h) => ({
-                  bfe_nummer: h.bfe_nummer,
-                  prioritet: h.prioritet,
-                  type: h.type,
-                  hovedstol: h.hovedstol,
-                  kreditor: h.kreditor,
-                  kreditor_cvr: h.kreditor_cvr,
-                  tinglyst_dato: h.tinglyst_dato,
-                  akt_navn: h.akt_navn,
-                  status: h.status,
-                  sidst_opdateret: new Date().toISOString(),
-                }))
-              );
+            const { error: haErr } = await (admin as any).from('tinglysning_haeftelse').insert(
+              detail.haeftelser.map((h) => ({
+                bfe_nummer: h.bfe_nummer,
+                prioritet: h.prioritet,
+                type: h.type,
+                // BIZZ-1797: Korrekte kolonnenavne (var hovedstol/kreditor → nu hovedstol_dkk/kreditor_navn)
+                hovedstol_dkk: h.hovedstol,
+                kreditor_navn: h.kreditor,
+                kreditor_cvr: h.kreditor_cvr,
+                tinglyst_dato: h.tinglyst_dato,
+                akt_navn: h.akt_navn,
+                status: h.status,
+                sidst_opdateret: new Date().toISOString(),
+              }))
+            );
             if (!haErr) haeftelserUpserted += detail.haeftelser.length;
           }
 
@@ -358,20 +364,18 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             await (admin as any).from('tinglysning_servitut').delete().eq('bfe_nummer', bfe);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const { error: sErr } = await (admin as any)
-              .from('tinglysning_servitut')
-              .insert(
-                detail.servitutter.map((s) => ({
-                  bfe_nummer: s.bfe_nummer,
-                  prioritet: s.prioritet,
-                  tekst: s.tekst,
-                  type: s.type,
-                  tinglyst_dato: s.tinglyst_dato,
-                  akt_navn: s.akt_navn,
-                  paataleberettiget: s.paataleberettiget,
-                  sidst_opdateret: new Date().toISOString(),
-                }))
-              );
+            const { error: sErr } = await (admin as any).from('tinglysning_servitut').insert(
+              detail.servitutter.map((s) => ({
+                bfe_nummer: s.bfe_nummer,
+                prioritet: s.prioritet,
+                tekst: s.tekst,
+                type: s.type,
+                tinglyst_dato: s.tinglyst_dato,
+                akt_navn: s.akt_navn,
+                paataleberettiget: s.paataleberettiget,
+                sidst_opdateret: new Date().toISOString(),
+              }))
+            );
             if (!sErr) servitutterUpserted += detail.servitutter.length;
           }
 

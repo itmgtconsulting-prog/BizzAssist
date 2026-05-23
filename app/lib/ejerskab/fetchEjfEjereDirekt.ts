@@ -152,7 +152,7 @@ export async function fetchEjfEjereDirekt(bfeNummer: number): Promise<EjfEjereRe
   // ── Cache-first: ejf_ejerskab tabel ──
   try {
     const admin = createAdminClient();
-    const EJF_STALE_MS = 7 * 24 * 60 * 60 * 1000; // 7 dage
+    const EJF_STALE_MS = 30 * 24 * 60 * 60 * 1000; // 30 dage — ejerskab ændres sjældent
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: cached, error: cacheErr } = await (admin as any)
       .from('ejf_ejerskab')

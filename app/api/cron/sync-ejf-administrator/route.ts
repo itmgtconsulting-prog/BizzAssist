@@ -53,6 +53,7 @@ const RUN_ID_PREFIX = 'administrator-sync';
 interface RawAdministratorNode {
   id_lokalId: string | null;
   bestemtFastEjendomBFENr: number | null;
+  virksomhedCVRNr: number | null;
   virkningFra: string | null;
   virkningTil: string | null;
   status: string | null;
@@ -78,6 +79,8 @@ interface GqlResponse {
 interface AdministratorRow {
   id_lokal_id: string;
   bfe_nummer: number | null;
+  virksomhed_cvr: string | null;
+  administrator_type: string;
   virkning_fra: string | null;
   virkning_til: string | null;
   status: string | null;
@@ -131,6 +134,7 @@ function buildPageQuery(cursor: string | null): string {
       nodes {
         id_lokalId
         bestemtFastEjendomBFENr
+        virksomhedCVRNr
         virkningFra
         virkningTil
         status
@@ -157,6 +161,8 @@ function mapNodeToRow(node: RawAdministratorNode): AdministratorRow | null {
   return {
     id_lokal_id: node.id_lokalId,
     bfe_nummer: node.bestemtFastEjendomBFENr ?? null,
+    virksomhed_cvr: node.virksomhedCVRNr ? String(node.virksomhedCVRNr) : null,
+    administrator_type: node.virksomhedCVRNr ? 'virksomhed' : 'ukendt',
     virkning_fra: node.virkningFra ?? null,
     virkning_til: node.virkningTil ?? null,
     status: node.status ?? null,
@@ -188,10 +194,33 @@ async function flushBatch(
   }
   const deduped = Array.from(seen.values());
 
-  const { error } = await table.upsert(deduped, {
-    onConflict: 'id_lokal_id',
-    ignoreDuplicates: false,
-  });
+  // BIZZ-1801: Split into two groups to avoid overwriting CVR with NULL.
+  // Rows WITH CVR: full upsert (update all fields).
+  // Rows WITHOUT CVR: upsert but DON'T touch virksomhed_cvr or administrator_type.
+  const withCvr = deduped.filter((r) => r.virksomhed_cvr);
+  const withoutCvr = deduped.filter((r) => !r.virksomhed_cvr);
+
+  let error: { message: string } | null = null;
+
+  if (withCvr.length > 0) {
+    const result = await table.upsert(withCvr, {
+      onConflict: 'id_lokal_id',
+      ignoreDuplicates: false,
+    });
+    if (result.error) error = result.error;
+  }
+
+  if (withoutCvr.length > 0) {
+    // Insert new rows with type=ukendt, but DON'T overwrite existing CVR
+    const safeRows = withoutCvr.map(
+      ({ virksomhed_cvr: _cvr, administrator_type: _type, ...rest }) => rest
+    );
+    const result = await table.upsert(
+      safeRows.map((r) => ({ ...r, administrator_type: 'ukendt' })),
+      { onConflict: 'id_lokal_id', ignoreDuplicates: true }
+    );
+    if (result.error && !error) error = result.error;
+  }
   if (error) {
     logger.error('[sync-ejf-administrator] Batch upsert fejl:', error.message);
     return { upserted: 0, failed: batch.length };

@@ -21,6 +21,7 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { buildChainCacheKey, getCached, setCached } from '@/app/lib/ejerskab/cache';
 import { fetchEjfEjereDirekt } from '@/app/lib/ejerskab/fetchEjfEjereDirekt';
 import { fetchTlEjereDirekt } from '@/app/lib/tinglysning/fetchTlEjere';
+import { logger } from '@/app/lib/logger';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -389,27 +390,139 @@ export async function GET(req: NextRequest) {
   });
   seenIds.add(mainId);
 
-  // Hent ejere fra Tinglysning adkomst (primær kilde) og beriget via CVR API
+  // ── CACHE-FIRST: Byg chain fra ejf_ejerskab + cvr_deltager (< 200ms) ──
+  // Springer Tinglysning S2S + EJF GraphQL over. Kun fallback til live
+  // API hvis cache er tom (ny ejendom uden backfill).
   const companyOwnersToResolve: { nodeId: string; cvr: number; depth: number }[] = [];
   const ejerDetaljer: ChainEjerDetalje[] = [];
-
-  // BIZZ-386: Accumulators for batched parallel enhedsNummer lookups (Tinglysning + EJF paths)
   const tlPersonsToResolve: { navn: string | undefined; nodeIdx: number; detaljeIdx: number }[] =
     [];
   const ejfPersonsToResolve: { navn: string; nodeIdx: number; detaljeIdx: number }[] = [];
 
-  // BIZZ-1582: Direct lib calls replace HTTP self-calls (saves 200-600ms).
-  // Start EJF lookup in parallel with Tinglysning — used as fallback
-  // if Tinglysning doesn't return real owners (common for ejerlejligheder).
-  const ejfPromise = fetchEjfEjereDirekt(Number(bfe)).catch(() => null);
+  let usedCachePath = false;
+  try {
+    const admin = (await import('@/lib/supabase/admin')).createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: cachedEjere } = await (admin as any)
+      .from('ejf_ejerskab')
+      .select(
+        'ejer_navn, ejer_cvr, ejer_type, ejerandel_taeller, ejerandel_naevner, virkning_fra, ejer_enheds_nummer'
+      )
+      .eq('bfe_nummer', Number(bfe))
+      .eq('status', 'gældende')
+      .limit(20);
 
-  // Trin 1: Prøv Tinglysning API — har navne, adkomsttype, evt. CVR.
-  // BIZZ-470: For ejerlejligheder (identificeret via ?type=ejerlejlighed)
-  // springer vi helt over — Tinglysning returnerer ikke de reelle ejere
-  // alligevel, og EJF-fallbacken henter dem hurtigt via ejfPromise.
-  // BIZZ-1582: Direct lib call replaces two sequential HTTP self-calls
-  // (tinglysning search + summarisk parse), saving 200-600ms overhead.
-  if (!skipTinglysning)
+    if (cachedEjere && cachedEjere.length > 0) {
+      usedCachePath = true;
+
+      // Hent købesum fra ejf_ejerskifte + handelsoplysninger (parallel)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: ejerskifter } = await (admin as any)
+        .from('ejf_ejerskifte')
+        .select('overtagelsesdato, overdragelsesmaade, handelsoplysninger_lokal_id')
+        .eq('bfe_nummer', Number(bfe))
+        .eq('status', 'gældende')
+        .order('overtagelsesdato', { ascending: false })
+        .limit(5);
+
+      let koebesum: number | null = null;
+      let overtagelsesdato: string | null = null;
+      let adkomstType: string | null = null;
+      if (ejerskifter?.length > 0) {
+        const es = ejerskifter[0] as Record<string, unknown>;
+        overtagelsesdato = (es.overtagelsesdato as string) ?? null;
+        adkomstType = (es.overdragelsesmaade as string) ?? null;
+        const hId = es.handelsoplysninger_lokal_id as string | null;
+        if (hId) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: handel } = await (admin as any)
+            .from('ejf_handelsoplysninger')
+            .select('kontant_koebesum')
+            .eq('id_lokal_id', hId)
+            .maybeSingle();
+          koebesum = (handel?.kontant_koebesum as number) ?? null;
+        }
+      }
+
+      for (const row of cachedEjere as Array<Record<string, unknown>>) {
+        const cvr = row.ejer_cvr as string | null;
+        const navn = (row.ejer_navn as string) ?? 'Ukendt';
+        const type = (row.ejer_type as string) ?? 'ukendt';
+        const t = row.ejerandel_taeller as number | null;
+        const n = row.ejerandel_naevner as number | null;
+        const andel = t != null && n != null && n > 0 ? `${Math.round((t / n) * 100)}%` : null;
+        const enhNr = row.ejer_enheds_nummer as number | null;
+
+        if (cvr) {
+          const id = `cvr-${cvr}`;
+          if (!seenIds.has(id)) {
+            seenIds.add(id);
+            nodes.push({
+              id,
+              label: navn,
+              type: 'company',
+              cvr: parseInt(cvr, 10),
+              link: `/dashboard/companies/${cvr}`,
+            });
+            companyOwnersToResolve.push({ nodeId: id, cvr: parseInt(cvr, 10), depth: 0 });
+          }
+          edges.push({ from: id, to: mainId, ejerandel: andel ?? undefined });
+          ejerDetaljer.push({
+            navn,
+            cvr,
+            enhedsNummer: null,
+            type: 'selskab',
+            andel,
+            adresse: null,
+            overtagelsesdato,
+            adkomstType,
+            koebesum,
+          });
+        } else {
+          const id = enhNr ? `en-${enhNr}` : `person-${nodes.length}`;
+          if (!seenIds.has(id)) {
+            seenIds.add(id);
+            nodes.push({
+              id,
+              label: navn,
+              type: type === 'person' ? 'person' : 'status',
+              enhedsNummer: enhNr ?? undefined,
+              link: enhNr ? `/dashboard/owners/${enhNr}` : undefined,
+            });
+          }
+          edges.push({ from: id, to: mainId, ejerandel: andel ?? undefined });
+          ejerDetaljer.push({
+            navn,
+            cvr: null,
+            enhedsNummer: enhNr,
+            type: type === 'person' ? 'person' : 'status',
+            andel,
+            adresse: null,
+            overtagelsesdato,
+            adkomstType,
+            koebesum,
+          });
+        }
+      }
+      logger.log(
+        `[chain] CACHE-PATH: ${cachedEjere.length} ejere for BFE ${bfe} (skip TL+EJF live)`
+      );
+    }
+  } catch (err) {
+    logger.warn(
+      '[chain] Cache-path fejl, falder til live:',
+      err instanceof Error ? err.message : err
+    );
+  }
+
+  // Kun kald live API hvis cache-path ikke fandt data
+  const ejfPromise = usedCachePath
+    ? Promise.resolve(null)
+    : fetchEjfEjereDirekt(Number(bfe)).catch(() => null);
+
+  // Trin 1: Prøv Tinglysning API — SKIP hvis cache-path allerede fandt ejere.
+  // BIZZ-470: For ejerlejligheder springer vi også over.
+  if (!usedCachePath && !skipTinglysning)
     try {
       const tlResult = await fetchTlEjereDirekt(bfe);
       if (tlResult.ejere.length > 0) {

@@ -203,7 +203,7 @@ export async function buildGapRapportDocx(input: GapRapportInput): Promise<Buffe
   );
   body.push(spacer());
 
-  // ─── EJENDOMSOVERSIGT ──────────────────────────────────────
+  // ─── EJENDOMSOVERSIGT (BIZZ-1802/1806: hierarkisk layout) ──
   body.push(heading('2. Ejendomsoversigt', 1));
   body.push(
     p(
@@ -213,45 +213,123 @@ export async function buildGapRapportDocx(input: GapRapportInput): Promise<Buffe
   );
   body.push(spacer());
 
-  // Tabel header
-  const ejendomRows: string[] = [
-    tr(
-      tc('Status', { bg: TABLE_HEADER_BG, bold: true, color: 'ffffff', width: 1200 }),
-      tc('Adresse', { bg: TABLE_HEADER_BG, bold: true, color: 'ffffff', width: 4000 }),
-      tc('Police', { bg: TABLE_HEADER_BG, bold: true, color: 'ffffff', width: 1800 }),
-      tc('Selskab', { bg: TABLE_HEADER_BG, bold: true, color: 'ffffff', width: 2000 })
-    ),
-  ];
-
-  // Sortér: uforsikrede først
-  const sortedAktiver = [...aktiver].sort((a, b) => {
-    const aI = a.matched_policy_id ? 1 : 0;
-    const bI = b.matched_policy_id ? 1 : 0;
-    return aI - bI;
-  });
-
-  for (let i = 0; i < sortedAktiver.length; i++) {
-    const a = sortedAktiver[i];
-    const isInsured = !!a.matched_policy_id;
-    const policy = a.matched_policy_id ? policyById.get(a.matched_policy_id) : null;
-    const rowBg = isInsured ? (i % 2 === 0 ? LIGHT_GREEN_BG : 'ffffff') : LIGHT_RED_BG;
-    const statusText = isInsured ? '✓ Forsikret' : '✗ Uforsikret';
-    const statusColor = isInsured ? GREEN : RED;
-
-    ejendomRows.push(
-      tr(
-        tc(statusText, { bg: rowBg, bold: true, color: statusColor, width: 1200 }),
-        tc(a.adresse || a.label || '—', { bg: rowBg, width: 4000 }),
-        tc(policy?.policy_number ?? '—', { bg: rowBg, width: 1800 }),
-        tc(policy?.insurer_name ?? '—', { bg: rowBg, color: GRAY, width: 2000 })
+  // Gruppér ejendomme under virksomheder (matching on-screen UI)
+  const virkAktiver = aktiver.filter((a) => a.type === 'virksomhed');
+  const ejdAktiver = aktiver.filter((a) => a.type !== 'virksomhed');
+  const ejdByOwnerCvr = new Map<string, typeof ejdAktiver>();
+  const orphanEjd: typeof ejdAktiver = [];
+  for (const e of ejdAktiver) {
+    const ownerCvr = (e as unknown as { raw_data?: { ejer_cvr?: string } }).raw_data?.ejer_cvr;
+    if (
+      ownerCvr &&
+      virkAktiver.some(
+        (v) => v.label.includes(ownerCvr) || (v as unknown as { cvr?: string }).cvr === ownerCvr
       )
-    );
+    ) {
+      const list = ejdByOwnerCvr.get(ownerCvr) ?? [];
+      list.push(e);
+      ejdByOwnerCvr.set(ownerCvr, list);
+    } else {
+      orphanEjd.push(e);
+    }
   }
 
-  body.push(
-    `<w:tbl><w:tblPr><w:tblW w:w="9000" w:type="dxa"/><w:tblBorders><w:top w:val="single" w:sz="4" w:color="${LIGHT_BLUE}"/><w:bottom w:val="single" w:sz="4" w:color="${LIGHT_BLUE}"/><w:left w:val="single" w:sz="4" w:color="${LIGHT_BLUE}"/><w:right w:val="single" w:sz="4" w:color="${LIGHT_BLUE}"/><w:insideH w:val="single" w:sz="2" w:color="e2e8f0"/><w:insideV w:val="single" w:sz="2" w:color="e2e8f0"/></w:tblBorders></w:tblPr>${ejendomRows.join('')}</w:tbl>`
-  );
-  body.push(spacer());
+  // Sortér ejendomme: uforsikrede først, flest gaps først
+  const sortEjd = (list: typeof ejdAktiver) =>
+    [...list].sort((a, b) => {
+      const aI = a.matched_policy_id ? 1 : 0;
+      const bI = b.matched_policy_id ? 1 : 0;
+      if (aI !== bI) return aI - bI;
+      const aGaps = gaps.filter((g) => g.policy_id === a.matched_policy_id).length;
+      const bGaps = gaps.filter((g) => g.policy_id === b.matched_policy_id).length;
+      return bGaps - aGaps;
+    });
+
+  // Render virksomheder med ejendomme hierarkisk
+  for (const virk of virkAktiver) {
+    const virkCvr = (virk as unknown as { cvr?: string }).cvr ?? '';
+    const virkEjd = sortEjd(ejdByOwnerCvr.get(virkCvr) ?? []);
+    const virkInsured = virkEjd.filter((e) => !!e.matched_policy_id).length;
+    const virkGaps = virkEjd.reduce(
+      (sum, e) => sum + gaps.filter((g) => g.policy_id === e.matched_policy_id).length,
+      0
+    );
+
+    // Virksomheds-header med KPI'er
+    body.push(p(`▼ ${virk.label}`, { bold: true, color: DARK, size: 26 }));
+    body.push(
+      p(`  ${virkEjd.length} ejendomme · ${virkInsured} forsikrede · ${virkGaps} gaps`, {
+        color: GRAY,
+        size: 18,
+      })
+    );
+
+    // Ejendoms-tabel under virksomheden
+    if (virkEjd.length > 0) {
+      const rows: string[] = [
+        tr(
+          tc('Status', { bg: TABLE_HEADER_BG, bold: true, color: 'ffffff', width: 1200 }),
+          tc('Adresse', { bg: TABLE_HEADER_BG, bold: true, color: 'ffffff', width: 4000 }),
+          tc('Police', { bg: TABLE_HEADER_BG, bold: true, color: 'ffffff', width: 1800 }),
+          tc('Gaps', { bg: TABLE_HEADER_BG, bold: true, color: 'ffffff', width: 1000 })
+        ),
+      ];
+      for (const e of virkEjd) {
+        const isIns = !!e.matched_policy_id;
+        const pol = e.matched_policy_id ? policyById.get(e.matched_policy_id) : null;
+        const eGaps = gaps.filter((g) => g.policy_id === e.matched_policy_id).length;
+        const bg = isIns ? LIGHT_GREEN_BG : LIGHT_RED_BG;
+        rows.push(
+          tr(
+            tc(isIns ? '✓' : '✗', { bg, bold: true, color: isIns ? GREEN : RED, width: 1200 }),
+            tc(e.adresse || e.label || '—', { bg, width: 4000 }),
+            tc(pol?.policy_number ?? '—', { bg, width: 1800 }),
+            tc(eGaps > 0 ? String(eGaps) : '—', { bg, color: eGaps > 0 ? RED : GRAY, width: 1000 })
+          )
+        );
+      }
+      body.push(
+        `<w:tbl><w:tblPr><w:tblW w:w="8000" w:type="dxa"/><w:tblInd w:w="500" w:type="dxa"/><w:tblBorders><w:top w:val="single" w:sz="2" w:color="e2e8f0"/><w:bottom w:val="single" w:sz="2" w:color="e2e8f0"/><w:insideH w:val="single" w:sz="1" w:color="e2e8f0"/></w:tblBorders></w:tblPr>${rows.join('')}</w:tbl>`
+      );
+    }
+    body.push(spacer());
+  }
+
+  // Orphan-ejendomme (uden virksomheds-ejer)
+  if (orphanEjd.length > 0) {
+    body.push(p('Øvrige ejendomme', { bold: true, color: DARK, size: 24 }));
+    const rows: string[] = [
+      tr(
+        tc('Status', { bg: TABLE_HEADER_BG, bold: true, color: 'ffffff', width: 1200 }),
+        tc('Adresse', { bg: TABLE_HEADER_BG, bold: true, color: 'ffffff', width: 4800 }),
+        tc('Police', { bg: TABLE_HEADER_BG, bold: true, color: 'ffffff', width: 2000 })
+      ),
+    ];
+    for (const e of sortEjd(orphanEjd)) {
+      const isIns = !!e.matched_policy_id;
+      const pol = e.matched_policy_id ? policyById.get(e.matched_policy_id) : null;
+      const bg = isIns ? LIGHT_GREEN_BG : LIGHT_RED_BG;
+      rows.push(
+        tr(
+          tc(isIns ? '✓ Forsikret' : '✗ Uforsikret', {
+            bg,
+            bold: true,
+            color: isIns ? GREEN : RED,
+            width: 1200,
+          }),
+          tc(e.adresse || e.label || '—', { bg, width: 4800 }),
+          tc(pol?.policy_number ?? '—', { bg, width: 2000 })
+        )
+      );
+    }
+    body.push(
+      `<w:tbl><w:tblPr><w:tblW w:w="8000" w:type="dxa"/><w:tblBorders><w:top w:val="single" w:sz="2" w:color="e2e8f0"/><w:bottom w:val="single" w:sz="2" w:color="e2e8f0"/><w:insideH w:val="single" w:sz="1" w:color="e2e8f0"/></w:tblBorders></w:tblPr>${rows.join('')}</w:tbl>`
+    );
+    body.push(spacer());
+  }
+
+  // Sorteret aktiver til brug i gap-sektioner
+  const sortedAktiver = sortEjd(ejdAktiver);
 
   // ─── UFORSIKREDE EJENDOMME (detaljer) ─────────────────────
   const uforsikrede = sortedAktiver.filter((a) => !a.matched_policy_id);

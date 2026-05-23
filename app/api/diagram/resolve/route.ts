@@ -98,14 +98,19 @@ async function _fetchAdministeredByCvr(
   admin: ReturnType<typeof createAdminClient>,
   cvr: string
 ): Promise<Array<{ bfe_nummer: number }>> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data } = await (admin as any)
-    .from('ejf_administrator')
-    .select('bfe_nummer')
-    .eq('virksomhed_cvr', cvr)
-    .eq('status', 'gældende')
-    .limit(50);
-  return data ?? [];
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (admin as any)
+      .from('ejf_administrator')
+      .select('bfe_nummer')
+      .eq('virksomhed_cvr', cvr)
+      .eq('status', 'gældende')
+      .limit(50);
+    return data ?? [];
+  } catch {
+    // BIZZ-1807: Non-fatal — ejf_administrator kan mangle i nogle envs
+    return [];
+  }
 }
 
 /**
@@ -2626,8 +2631,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
 
     return NextResponse.json({ graph });
   } catch (err) {
+    // BIZZ-1807: Log fejl til Sentry + console for debugging
     const message = err instanceof Error ? err.message : 'Unknown error';
-    void message;
+    const stack = err instanceof Error ? err.stack?.split('\n').slice(0, 3).join(' → ') : '';
+    logger.error(`[diagram/resolve] CRASH type=${type} id=${id}: ${message}`, stack);
     return NextResponse.json({ graph: null, error: 'Ekstern API fejl' }, { status: 500 });
   }
 }

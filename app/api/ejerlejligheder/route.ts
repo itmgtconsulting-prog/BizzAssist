@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import https from 'https';
 import fs from 'fs';
+import { createAdminClient } from '@/lib/supabase/admin';
 import path from 'path';
 import { z } from 'zod';
 import { logger } from '@/app/lib/logger';
@@ -667,9 +668,41 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
       koebsdato: string | null;
     }
     const summariskMap = new Map<string, SummariskData>(); // uuid → data
-    // BIZZ-1754: Reduceret concurrency fra 5→3 + cap på 15 for at undgå TL 429 rate-limiting
+    // BIZZ-1820: EJF cache-first — hent ejere fra ejf_ejerskab for ALLE lejligheder
+    // i stedet for at kalde TL for hver enkelt. Meget hurtigere + ingen cap.
+    const ejfEjerMap = new Map<number, { navn: string; type: string }>();
+    try {
+      const bfes = lejlighedItems
+        .map((it) => parseInt(it.ejendomsnummer ?? '0', 10))
+        .filter((b) => b > 0);
+      if (bfes.length > 0) {
+        const admin = createAdminClient();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: ejfRows } = await (admin as any)
+          .from('ejf_ejerskab')
+          .select('bfe_nummer, ejer_navn, ejer_type')
+          .in('bfe_nummer', bfes)
+          .eq('status', 'gældende')
+          .limit(200);
+        for (const row of (ejfRows ?? []) as Array<{
+          bfe_nummer: number;
+          ejer_navn: string;
+          ejer_type: string;
+        }>) {
+          if (!ejfEjerMap.has(row.bfe_nummer)) {
+            ejfEjerMap.set(row.bfe_nummer, { navn: row.ejer_navn, type: row.ejer_type });
+          }
+        }
+        logger.log(
+          `[ejerlejligheder] EJF cache: ${ejfEjerMap.size} ejere for ${bfes.length} BFE'er`
+        );
+      }
+    } catch {
+      /* EJF cache non-fatal */
+    }
+
     const CONCURRENCY = 3;
-    const MAX_TL_ENRICH = 15; // Max lejligheder at berige med TL
+    const MAX_TL_ENRICH = 15;
     const itemsToEnrich = lejlighedItems.slice(0, MAX_TL_ENRICH);
 
     for (let i = 0; i < itemsToEnrich.length; i += CONCURRENCY) {
@@ -836,8 +869,15 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
           etage,
           doer,
           beskrivelse: 'Ejerlejlighed',
-          ejer: sum?.ejer ?? 'Ukendt',
-          ejertype: sum?.ejertype ?? 'ukendt',
+          // BIZZ-1820: EJF cache fallback for lejligheder uden TL-data
+          ejer: sum?.ejer ?? ejfEjerMap.get(bfe)?.navn ?? 'Ukendt',
+          ejertype:
+            sum?.ejertype ??
+            ((ejfEjerMap.get(bfe)?.type === 'person'
+              ? 'person'
+              : ejfEjerMap.get(bfe)?.type === 'selskab'
+                ? 'selskab'
+                : 'ukendt') as 'person' | 'selskab' | 'ukendt'),
           areal: sum?.areal ?? null,
           koebspris: sum?.koebspris ?? null,
           koebsdato: sum?.koebsdato ?? null,

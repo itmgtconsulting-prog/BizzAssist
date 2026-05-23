@@ -76,6 +76,8 @@ export default function EjendomAdministratorCard({ bfeNummer, lang = 'da' }: Pro
   const [loading, setLoading] = useState(true);
   const [admins, setAdmins] = useState<AdministratorInfo[]>([]);
   const [cvrNames, setCvrNames] = useState<Record<string, string>>({});
+  /** BIZZ-1815: Set when admin is inherited from parent SFE (ejerlejlighed fallback) */
+  const [arvFraSfeBfe, setArvFraSfeBfe] = useState<number | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -86,10 +88,14 @@ export default function EjendomAdministratorCard({ bfeNummer, lang = 'da' }: Pro
           credentials: 'include',
         });
         if (!res.ok || !active) return;
-        const data = (await res.json()) as { administratorer?: AdministratorInfo[] };
+        const data = (await res.json()) as {
+          administratorer?: AdministratorInfo[];
+          arvFraSfeBfe?: number | null;
+        };
         if (!active) return;
         const list = data.administratorer ?? [];
         setAdmins(list);
+        setArvFraSfeBfe(data.arvFraSfeBfe ?? null);
 
         // Slå CVR-navne op parallelt
         const cvrs = Array.from(
@@ -131,10 +137,19 @@ export default function EjendomAdministratorCard({ bfeNummer, lang = 'da' }: Pro
 
   return (
     <div className="rounded-xl bg-slate-900/60 border border-slate-700/50 p-5">
-      <div className="flex items-center gap-2 mb-3">
+      <div className="flex items-center gap-2 mb-1">
         <Building2 size={16} className="text-teal-400" />
         <h3 className="text-sm font-semibold text-slate-200 uppercase tracking-wide">{title}</h3>
       </div>
+      {/* BIZZ-1815: Note when admin is inherited from parent SFE */}
+      {arvFraSfeBfe && (
+        <p className="text-xs text-slate-500 mb-3">
+          {lang === 'da'
+            ? `Arvet fra moderejendom (SFE ${arvFraSfeBfe})`
+            : `Inherited from parent property (SFE ${arvFraSfeBfe})`}
+        </p>
+      )}
+      {!arvFraSfeBfe && <div className="mb-2" />}
       <div className="space-y-3">
         {aktive.map((admin) => {
           const isVirksomhed = admin.type === 'virksomhed' && admin.cvr;

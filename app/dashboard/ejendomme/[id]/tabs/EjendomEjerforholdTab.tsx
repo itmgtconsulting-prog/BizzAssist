@@ -394,20 +394,25 @@ export default function EjendomEjerforholdTab({
                         )}
                       </>
                     )}
-                    {diagramResolveLoader ? (
-                      <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />
-                    ) : (
-                      <DiagramV2
-                        rootType="property"
-                        rootId={String(bfeForDiagram)}
-                        rootLabel={
-                          dawaAdresse
-                            ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
-                            : `BFE ${bfeForDiagram}`
-                        }
-                        lang={lang}
-                        prefetchedGraph={prefetchedDiagramGraph}
-                      />
+                    {/* BIZZ-1808: Vis kun diagram når mindst én ejer er virksomhed */}
+                    {chainEjerDetaljer.some((e) => e.type === 'selskab') && (
+                      <>
+                        {diagramResolveLoader ? (
+                          <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />
+                        ) : (
+                          <DiagramV2
+                            rootType="property"
+                            rootId={String(bfeForDiagram)}
+                            rootLabel={
+                              dawaAdresse
+                                ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
+                                : `BFE ${bfeForDiagram}`
+                            }
+                            lang={lang}
+                            prefetchedGraph={prefetchedDiagramGraph}
+                          />
+                        )}
+                      </>
                     )}
                   </>
                 )}
@@ -416,6 +421,14 @@ export default function EjendomEjerforholdTab({
           }
 
           if (!bfeForDiagram) return null;
+
+          /**
+           * BIZZ-1808: Bestem om ejendommen har mindst én virksomheds-ejer.
+           * Diagrammet er kun relevant når der er selskaber i ejerkæden —
+           * for person-ejede ejendomme viser vi kun EjerKort (ejer-tabel).
+           */
+          const harVirksomhedsEjer = chainEjerDetaljer.some((e) => e.type === 'selskab');
+
           return (
             <div className="space-y-4">
               {/* BIZZ-1143: Ejerkort — ren præsentation, data leveret fra parent */}
@@ -442,21 +455,27 @@ export default function EjendomEjerforholdTab({
                   )}
                 </>
               )}
-              {/* BIZZ-1143: DiagramV2 med prefetched graf fra parent */}
-              {diagramResolveLoader ? (
-                <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />
-              ) : (
-                <DiagramV2
-                  rootType="property"
-                  rootId={String(bfeForDiagram)}
-                  rootLabel={
-                    dawaAdresse
-                      ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
-                      : `BFE ${bfeForDiagram}`
-                  }
-                  lang={lang}
-                  prefetchedGraph={prefetchedDiagramGraph}
-                />
+              {/* BIZZ-1808: Vis kun DiagramV2 når ejendommen har mindst én
+                  virksomheds-ejer. Person-ejede ejendomme viser kun EjerKort
+                  ovenfor — diagrammet tilføjer ingen værdi og kan fejle. */}
+              {harVirksomhedsEjer && (
+                <>
+                  {diagramResolveLoader ? (
+                    <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />
+                  ) : (
+                    <DiagramV2
+                      rootType="property"
+                      rootId={String(bfeForDiagram)}
+                      rootLabel={
+                        dawaAdresse
+                          ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
+                          : `BFE ${bfeForDiagram}`
+                      }
+                      lang={lang}
+                      prefetchedGraph={prefetchedDiagramGraph}
+                    />
+                  )}
+                </>
               )}
               {/* Loading-bar mens strukturtræ hentes */}
               {/* BIZZ-1289: Skeleton mens strukturtræ hentes */}

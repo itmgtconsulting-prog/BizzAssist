@@ -1741,10 +1741,21 @@ function AnalyseDetailSection({
             []) as PolicyRow[];
           const polById = new Map(pols.map((p) => [p.id, p]));
 
+          // BIZZ-1792: Dedup gaps per check_id
+          const dedupGaps = (rawGaps: typeof detail.gaps) => {
+            const seen = new Set<string>();
+            return rawGaps.filter((g) => {
+              const key = g.check_id ?? g.title;
+              if (seen.has(key)) return false;
+              seen.add(key);
+              return true;
+            });
+          };
+
           // Byg PropertyGroups
           const groups: PropertyGroup[] = uniqueAktiver.map((aktiv) => {
             const aktivGaps = aktiv.matched_policy_id
-              ? detail.gaps.filter((g) => g.policy_id === aktiv.matched_policy_id)
+              ? dedupGaps(detail.gaps.filter((g) => g.policy_id === aktiv.matched_policy_id))
               : [];
             return {
               aktiv,
@@ -1754,14 +1765,53 @@ function AnalyseDetailSection({
               gaps: aktivGaps,
             };
           });
-          groups.sort((a, b) => {
+
+          // BIZZ-1802: Hierarkisk layout — virksomheder → ejendomme → gaps
+          const virkGroups = groups.filter((g) => g.aktiv.type === 'virksomhed');
+          const ejdGroups = groups.filter((g) => g.aktiv.type === 'ejendom');
+          const ejdByCvr = new Map<string, PropertyGroup[]>();
+          const orphans: PropertyGroup[] = [];
+          for (const eg of ejdGroups) {
+            const cvr = (eg.aktiv.raw_data as { ejer_cvr?: string } | null)?.ejer_cvr;
+            if (cvr && virkGroups.some((v) => v.aktiv.cvr === cvr)) {
+              const list = ejdByCvr.get(cvr) ?? [];
+              list.push(eg);
+              ejdByCvr.set(cvr, list);
+            } else {
+              orphans.push(eg);
+            }
+          }
+          // Sortér: flest gaps/uforsikrede først
+          const sortGrp = (a: PropertyGroup, b: PropertyGroup) => {
             const aI = a.aktiv.matched_policy_id ? 1 : 0;
             const bI = b.aktiv.matched_policy_id ? 1 : 0;
             if (aI !== bI) return aI - bI;
             return b.gaps.length - a.gaps.length;
-          });
+          };
+          orphans.sort(sortGrp);
+          const trees = virkGroups
+            .map((v) => ({ v, ejd: (ejdByCvr.get(v.aktiv.cvr ?? '') ?? []).sort(sortGrp) }))
+            .sort((a, b) => b.ejd.length - a.ejd.length);
 
-          return groups.map((group) => <PropertyRow key={group.aktiv.id} group={group} da={da} />);
+          return (
+            <>
+              {trees.map((tree) => (
+                <div key={tree.v.aktiv.id} className="space-y-2">
+                  <PropertyRow group={tree.v} da={da} />
+                  {tree.ejd.length > 0 && (
+                    <div className="ml-6 pl-3 border-l border-white/8 space-y-2">
+                      {tree.ejd.map((eg) => (
+                        <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+              {orphans.map((g) => (
+                <PropertyRow key={g.aktiv.id} group={g} da={da} />
+              ))}
+            </>
+          );
         })()}
       </div>
 

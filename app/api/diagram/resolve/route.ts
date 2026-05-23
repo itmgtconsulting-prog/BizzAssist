@@ -962,7 +962,7 @@ async function resolvePropertyGraph(
               const isStatus = !cvr && !personNavn;
               return {
                 ejer_navn:
-                  personNavn ?? (cvr ? `CVR ${cvr}` : isStatus ? 'Opdelt ejerskab' : 'Ukendt ejer'),
+                  personNavn ?? (cvr ? `CVR ${cvr}` : isStatus ? 'Opdelt ejerskab' : 'Person'),
                 ejer_cvr: cvr ? String(cvr) : null,
                 ejer_type: cvr ? 'virksomhed' : isStatus ? 'status' : 'person',
                 ejerandel_taeller: n.faktiskEjerandel_taeller,
@@ -1051,7 +1051,7 @@ async function resolvePropertyGraph(
       d.enhedsnummer,
     ])
   );
-  // BIZZ-1350: enhedsNummer → faktisk navn map (for "Ukendt ejer" → rigtigt navn)
+  // BIZZ-1350: enhedsNummer → faktisk navn map (for placeholder → rigtigt navn)
   const enToNameMap = new Map(
     ((directDeltagerResult.data ?? []) as Array<{ enhedsnummer: number; navn: string }>).map(
       (d) => [d.enhedsnummer, d.navn]
@@ -1098,8 +1098,12 @@ async function resolvePropertyGraph(
         : `person-${owner.ejer_navn.replace(/\s+/g, '-').toLowerCase()}`;
       if (!nodeIds.has(ownerId)) {
         // Brug faktisk navn fra cvr_deltager når ejer_navn er generisk
-        const resolvedName =
+        let resolvedName =
           personEn && enToNameMap.has(personEn) ? enToNameMap.get(personEn)! : owner.ejer_navn;
+        // BIZZ-1777: Erstat "Ukendt ejer (en NNNN)" med "Person" — renere fallback
+        if (/^Ukendt ejer/.test(resolvedName)) {
+          resolvedName = personEn ? `Person ${personEn}` : 'Person';
+        }
         nodes.push({
           id: ownerId,
           label: resolvedName,
@@ -1139,11 +1143,12 @@ async function resolvePropertyGraph(
   // alle registrerede deltagere og giver højere hit-rate.
   //
   // BIZZ-1540: Udvidet til også at re-resolve nodes der HAR enhedsNummer men
-  // mangler navn (label er placeholder som "Person N" eller "Ukendt ejer").
+  // mangler navn (label er placeholder som "Person N" eller "Person").
   // Disse rammer typisk dødsboer, udenlandske ejere og personer der ikke er
   // i cvr_deltager-cachen endnu.
+  // BIZZ-1777: Ændret fra "Ukendt ejer" til "Person" som fallback-label.
   const isPlaceholderName = (label: string): boolean =>
-    /^Person\s+\d+$/.test(label) ||
+    /^Person\s*\d*$/.test(label) ||
     label === 'Ukendt ejer' ||
     /^Ukendt ejer\s*\(en\s*\d+\)$/.test(label);
 
@@ -2374,7 +2379,9 @@ async function enrichVirksomhedFejlcacheNodes(graph: DiagramGraph): Promise<void
   const CVR_ES_PASS = process.env.CVR_ES_PASS ?? '';
   if (!CVR_ES_USER || !CVR_ES_PASS) return;
 
-  const isPlaceholderLabel = (label: string): boolean => /^Ukendt ejer\s*\(en\s*\d+\)$/.test(label);
+  // BIZZ-1777: Matcher både legacy "Ukendt ejer (en NNNN)" og nye "Person" placeholders
+  const isPlaceholderLabel = (label: string): boolean =>
+    /^Ukendt ejer\s*\(en\s*\d+\)$/.test(label) || /^Person\s*\d*$/.test(label);
 
   const placeholders = graph.nodes.filter(
     (n) => n.type === 'person' && typeof n.enhedsNummer === 'number' && isPlaceholderLabel(n.label)

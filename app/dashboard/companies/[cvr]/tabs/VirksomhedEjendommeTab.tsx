@@ -11,7 +11,7 @@
 
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowRightLeft,
@@ -95,6 +95,98 @@ export default function VirksomhedEjendommeTab({
 }: Props) {
   const c = translations[lang].company;
 
+  // BIZZ-1834: SFE-expansion client-side — fold SFE ud til ejerlejligheder via DAWA
+  const [expandedEjendomme, setExpandedEjendomme] = useState<EjendomSummary[]>([]);
+
+  useEffect(() => {
+    if (ejendommeData.length === 0 || ejendommeLoading) return;
+
+    // Find SFE-ejendomme (har adresse, ingen etage, ikke ejerlejlighed)
+    const sfes = ejendommeData.filter(
+      (e) => e.adresse && !e.etage && e.ejendomstype !== 'Ejerlejlighed' && e.postnr
+    );
+    if (sfes.length === 0) {
+      setExpandedEjendomme(ejendommeData);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      const extra: EjendomSummary[] = [];
+
+      for (const sfe of sfes.slice(0, 5)) {
+        try {
+          // Step 1: Find ejerlav+matrikelnr via DAWA jordstykke
+          const jordRes = await fetch(
+            `https://api.dataforsyningen.dk/jordstykker?bfenummer=${sfe.bfeNummer}&format=json`,
+            { signal: AbortSignal.timeout(8000) }
+          );
+          if (!jordRes.ok) continue;
+          const jord = (await jordRes.json()) as Array<{
+            ejerlav?: { kode?: number };
+            matrikelnr?: string;
+          }>;
+          const ejerlav = jord[0]?.ejerlav?.kode;
+          const matr = jord[0]?.matrikelnr;
+          if (!ejerlav || !matr) continue;
+
+          // Step 2: Hent alle adresser på matriklen
+          const adrRes = await fetch(
+            `https://api.dataforsyningen.dk/adresser?ejerlavkode=${ejerlav}&matrikelnr=${encodeURIComponent(matr)}&format=json&struktur=mini&per_side=200`,
+            { signal: AbortSignal.timeout(8000) }
+          );
+          if (!adrRes.ok) continue;
+          const adresser = (await adrRes.json()) as Array<{
+            id: string;
+            vejnavn: string;
+            husnr: string;
+            etage: string | null;
+            dør: string | null;
+            postnr: string;
+            postnrnavn: string;
+          }>;
+
+          // Kun adresser med etage (= ejerlejligheder)
+          for (const a of adresser.filter((x) => x.etage)) {
+            if (cancelled) return;
+            extra.push({
+              bfeNummer: 0,
+              ownerCvr: sfe.ownerCvr,
+              adresse: `${a.vejnavn} ${a.husnr}`,
+              postnr: a.postnr,
+              by: a.postnrnavn,
+              kommune: sfe.kommune,
+              kommuneKode: sfe.kommuneKode,
+              ejendomstype: 'Ejerlejlighed',
+              dawaId: a.id,
+              etage: a.etage,
+              doer: a.dør,
+              ejerandel: sfe.ejerandel,
+              administreret: sfe.administreret,
+              aktiv: sfe.aktiv,
+            });
+          }
+        } catch {
+          /* DAWA fallback non-critical */
+        }
+      }
+
+      if (!cancelled) {
+        // Merge: original data + expanded children (dedup by dawaId)
+        const seenIds = new Set(ejendommeData.map((e) => e.dawaId).filter(Boolean));
+        const uniqueExtra = extra.filter((e) => e.dawaId && !seenIds.has(e.dawaId));
+        setExpandedEjendomme([...ejendommeData, ...uniqueExtra]);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [ejendommeData, ejendommeLoading]);
+
+  /** Bruge expandedEjendomme i stedet for ejendommeData for visning */
+  const displayEjendomme = expandedEjendomme.length > 0 ? expandedEjendomme : ejendommeData;
+
   // BIZZ-1828: AI-baseret ejendomsresolve for ejerforeninger (FFO)
   const isFFO =
     data.companydesc?.toUpperCase().includes('FFO') ||
@@ -168,21 +260,19 @@ export default function VirksomhedEjendommeTab({
           )}
 
           {/* Ejendomme grid */}
-          {ejendommeData.length > 0 && (
+          {displayEjendomme.length > 0 && (
             <>
               <div className="flex items-center justify-between">
                 <p className="text-slate-400 text-sm">
                   {ejendommeLoadingMore
                     ? lang === 'da'
-                      ? `Indlæser… (${ejendommeData.length} af ${ejendommeTotalBfe} ejendomme)`
-                      : `Loading… (${ejendommeData.length} of ${ejendommeTotalBfe} properties)`
+                      ? `Indlæser… (${displayEjendomme.length} af ${ejendommeTotalBfe} ejendomme)`
+                      : `Loading… (${displayEjendomme.length} of ${ejendommeTotalBfe} properties)`
                     : (() => {
-                        // BIZZ-639: Overskriften skal vise både aktive og
-                        // historiske (solgte) tal. Historisk-tallet
-                        // skjules helt når 0 så overskriften ikke ser
-                        // tom ud for nye/rene porteføljer.
-                        const aktiveCount = ejendommeData.filter((e) => e.aktiv !== false).length;
-                        const historiskeCount = ejendommeData.filter(
+                        const aktiveCount = displayEjendomme.filter(
+                          (e) => e.aktiv !== false
+                        ).length;
+                        const historiskeCount = displayEjendomme.filter(
                           (e) => e.aktiv === false
                         ).length;
                         if (lang === 'da') {
@@ -223,13 +313,13 @@ export default function VirksomhedEjendommeTab({
                 for (const rv of relatedCompanies) nameByCvr.set(rv.cvr, rv.navn);
 
                 // BIZZ-1672: Split into owned, administered and sold
-                const administrerede = ejendommeData.filter(
+                const administrerede = displayEjendomme.filter(
                   (e) => e.administreret === true && e.aktiv !== false
                 );
-                const aktive = ejendommeData.filter(
+                const aktive = displayEjendomme.filter(
                   (e) => e.aktiv !== false && e.administreret !== true
                 );
-                const solgte = ejendommeData.filter((e) => e.aktiv === false);
+                const solgte = displayEjendomme.filter((e) => e.aktiv === false);
 
                 // Group active by ownerCvr (normalized to number)
                 const groupedActive = new Map<number, typeof aktive>();
@@ -600,7 +690,7 @@ export default function VirksomhedEjendommeTab({
           {ejendommeFetchComplete &&
             !ejendommeManglerNoegle &&
             !ejendommeManglerAdgang &&
-            ejendommeData.length === 0 && (
+            displayEjendomme.length === 0 && (
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <Home size={36} className="text-slate-600 mb-3" />
                 <p className="text-slate-400 text-sm">

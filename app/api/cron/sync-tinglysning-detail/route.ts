@@ -252,6 +252,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       const bfesParam = request.nextUrl.searchParams.get('bfes');
       let bfes: number[];
 
+      let datoFra = '';
+      let datoTil = '';
+      let aendringerFound = 0;
+
       if (bfesParam) {
         // Explicit BFE list mode — skip aendringer feed
         bfes = bfesParam
@@ -259,10 +263,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           .map((s) => parseInt(s.trim(), 10))
           .filter((n) => Number.isFinite(n) && n > 0)
           .slice(0, MAX_BFES_PER_RUN);
+        aendringerFound = bfes.length;
         logger.log(`[tl-detail] BIZZ-1827: Explicit BFE list: ${bfes.length} BFE`);
       } else {
         // Standard mode — fetch from aendringer feed
-        const { datoFra, datoTil } = computeWindow(new Date(), windowDays);
+        ({ datoFra, datoTil } = computeWindow(new Date(), windowDays));
         logger.log(`[tl-detail] Starter: window ${datoFra}...${datoTil} (${windowDays}d)`);
 
         // 1. Fetch aendringer for window — reuse same pagination as pull-tinglysning-aendringer
@@ -299,6 +304,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         }
 
         bfes = extractUniqueBfes(allItems).slice(0, MAX_BFES_PER_RUN);
+        aendringerFound = allItems.length;
         logger.log(`[tl-detail] ${allItems.length} aendringer -> ${bfes.length} unique BFE`);
       }
 
@@ -409,9 +415,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       const summary = {
         ok: true,
         windowDays,
-        datoFra,
-        datoTil,
-        aendringerFound: allItems.length,
+        datoFra: datoFra || 'explicit-bfe-list',
+        datoTil: datoTil || 'explicit-bfe-list',
+        aendringerFound,
         bfesUnique: bfes.length,
         bfesProcessed,
         handlerUpserted,

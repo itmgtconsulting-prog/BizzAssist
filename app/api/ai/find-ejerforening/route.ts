@@ -42,13 +42,17 @@ export interface EjerforeningKandidat {
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Ekstrahér gadenavn fra adressestreng (fjern husnummer).
+ * Ekstrahér gadenavn fra adressestreng (fjern husnummer, interval, etage/kælder-suffix).
  *
- * @param adresse - f.eks. "Vigerslevvej 146"
+ * @param adresse - f.eks. "Vigerslevvej 144-148 (kælder)" eller "Skyttegårdsvej 3, kl."
  * @returns Gadenavn uden nr — f.eks. "Vigerslevvej"
  */
 function extractStreetName(adresse: string): string {
-  return adresse.replace(/\s+\d+\w*$/, '').trim();
+  return adresse
+    .replace(/\s*\(.*?\)\s*/g, '')
+    .replace(/,\s*\d*\.?\s*(?:kl|st|sal|th|tv|mf)\.?\s*$/i, '')
+    .replace(/\s+\d+[\w-]*.*$/, '')
+    .trim();
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {

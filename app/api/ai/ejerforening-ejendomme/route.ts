@@ -65,8 +65,14 @@ async function extractAddressClusters(
     postnrnavn: string | null;
   }>) {
     if (!row.adresse || !row.postnr) continue;
-    // Ekstrahér gadenavn (fjern husnummer)
-    const gadenavn = row.adresse.replace(/\s+\d+\w*$/, '').trim();
+    // Ekstrahér gadenavn (fjern husnummer, interval, etage/kælder-suffix)
+    // Eksempler: "Vigerslevvej 144-148 (kælder)" → "Vigerslevvej"
+    //            "Skyttegårdsvej 3, kl." → "Skyttegårdsvej"
+    const gadenavn = row.adresse
+      .replace(/\s*\(.*?\)\s*/g, '') // fjern parenteser: "(kælder)", "(st.)"
+      .replace(/,\s*\d*\.?\s*(?:kl|st|sal|th|tv|mf)\.?\s*$/i, '') // fjern etage-suffix
+      .replace(/\s+\d+[\w-]*.*$/, '') // fjern husnummer og alt efter (inkl. intervaller som 144-148)
+      .trim();
     if (!gadenavn) continue;
     const key = `${gadenavn}|${row.postnr}`;
     if (!clusterMap.has(key)) {

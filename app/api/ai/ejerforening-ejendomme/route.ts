@@ -215,8 +215,27 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       .maybeSingle();
     const virkNavn = virkRow?.navn ?? `CVR ${cvr}`;
 
-    // Ekstrahér adresse-clusters
+    // Ekstrahér adresse-clusters fra registrerede ejendomme
     const clusters = await extractAddressClusters([...adminBfes], admin);
+
+    // Udtræk gadenavne fra virksomhedsnavnet som ekstra clusters.
+    // Eksempel: "Ejerforeningen Skyttegårdsvej 1-11 Vigerslevvej 144-148"
+    // → ekstra clusters for "Skyttegårdsvej" og "Vigerslevvej" i samme postnr.
+    const existingStreets = new Set(clusters.map((c) => c.gadenavn.toLowerCase()));
+    const postnrFromClusters = clusters[0]?.postnr;
+    if (postnrFromClusters) {
+      const streetPattern =
+        /([A-ZÆØÅ][a-zæøåé]+(?:gade|vej|allé|stræde|plads|boulevard|vænge|park|have|gård|sti|torv|bro)\w*)/g;
+      let match: RegExpExecArray | null;
+      while ((match = streetPattern.exec(virkNavn)) !== null) {
+        const street = match[1];
+        if (!existingStreets.has(street.toLowerCase())) {
+          clusters.push({ gadenavn: street, postnr: postnrFromClusters, adresser: [] });
+          existingStreets.add(street.toLowerCase());
+        }
+      }
+    }
+
     if (clusters.length === 0) {
       return NextResponse.json({ candidates: [] });
     }

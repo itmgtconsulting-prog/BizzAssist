@@ -183,6 +183,12 @@ function PropertyRow({ group, da }: { group: PropertyGroup; da: boolean }) {
         <div className="flex items-center gap-2 min-w-0 flex-1">
           {typeIcon}
           <span className="text-white text-sm font-medium truncate">{group.aktiv.label}</span>
+          {/* BIZZ-1829: AI-foreslået badge */}
+          {!!(group.aktiv.raw_data as Record<string, unknown> | null)?.aiForeslaaet && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">
+              AI
+            </span>
+          )}
         </div>
 
         {/* Police-info hvis matchet */}

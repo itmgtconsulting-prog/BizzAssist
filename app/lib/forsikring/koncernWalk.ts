@@ -215,6 +215,42 @@ async function walkVirksomhed(
       } catch {
         /* ejf_administrator lookup non-fatal */
       }
+
+      // BIZZ-1829: AI-baseret resolve af yderligere ejendomme
+      // Finder kandidater på samme gader og filtrerer til høj confidence (>0.8)
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: aiCache } = await (admin as any)
+          .from('ai_ejf_ejendom_cache')
+          .select('candidates, created_at')
+          .eq('cvr', cvr)
+          .maybeSingle();
+
+        if (aiCache?.candidates && Array.isArray(aiCache.candidates)) {
+          const aiAge = Date.now() - new Date(aiCache.created_at).getTime();
+          // Kun brug cache < 24t gammel
+          if (aiAge < 24 * 60 * 60 * 1000) {
+            for (const c of aiCache.candidates as Array<{
+              bfeNummer: number;
+              adresse: string;
+              confidence: string;
+            }>) {
+              // Kun høj confidence i gap-analyse
+              if (c.confidence !== 'high') continue;
+              if (seenBfes.has(c.bfeNummer) || aktiver.length >= MAX_AKTIVER) continue;
+              seenBfes.add(c.bfeNummer);
+              aktiver.push({
+                type: 'ejendom',
+                label: c.adresse || `BFE ${c.bfeNummer}`,
+                bfe: c.bfeNummer,
+                rawData: { ejerforening: true, aiForeslaaet: true },
+              });
+            }
+          }
+        }
+      } catch {
+        /* AI cache lookup non-fatal */
+      }
     } catch {
       /* non-fatal — fallback til standard flow */
     }

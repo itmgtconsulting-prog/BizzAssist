@@ -246,45 +246,61 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
       const windowDaysRaw = request.nextUrl.searchParams.get('windowDays');
       const windowDays = windowDaysRaw ? parseInt(windowDaysRaw, 10) : DEFAULT_WINDOW_DAYS;
-      const { datoFra, datoTil } = computeWindow(new Date(), windowDays);
 
-      logger.log(`[tl-detail] Starter: window ${datoFra}...${datoTil} (${windowDays}d)`);
+      // BIZZ-1827: Accept explicit BFE list for re-sync of existing records.
+      // Usage: ?bfes=100000,100001,100002 (comma-separated, max 500)
+      const bfesParam = request.nextUrl.searchParams.get('bfes');
+      let bfes: number[];
 
-      // 1. Fetch aendringer for window — reuse same pagination as pull-tinglysning-aendringer
-      interface AendretTinglysningsobjekt {
-        EjendomIdentifikator?: { BestemtFastEjendomNummer?: string };
-      }
-      interface AendringerResponse {
-        AendredeTinglysningsobjekterHentResultat?: {
-          AendretTinglysningsobjektSamling?: AendretTinglysningsobjekt[];
-          SoegningResultatInterval?: { FlereResultater?: boolean };
-        };
-      }
+      if (bfesParam) {
+        // Explicit BFE list mode — skip aendringer feed
+        bfes = bfesParam
+          .split(',')
+          .map((s) => parseInt(s.trim(), 10))
+          .filter((n) => Number.isFinite(n) && n > 0)
+          .slice(0, MAX_BFES_PER_RUN);
+        logger.log(`[tl-detail] BIZZ-1827: Explicit BFE list: ${bfes.length} BFE`);
+      } else {
+        // Standard mode — fetch from aendringer feed
+        const { datoFra, datoTil } = computeWindow(new Date(), windowDays);
+        logger.log(`[tl-detail] Starter: window ${datoFra}...${datoTil} (${windowDays}d)`);
 
-      const allItems: AendretTinglysningsobjekt[] = [];
-      let fraSide = 1;
-      let pagesFetched = 0;
-      const maxPages = 50;
-
-      while (pagesFetched < maxPages) {
-        try {
-          const res = await tlPost('/tinglysningsobjekter/aendringer', {
-            AendredeTinglysningsobjekterHentType: { bog: 'EJENDOM', datoFra, datoTil, fraSide },
-          });
-          if (res.status !== 200) break;
-          const json = JSON.parse(res.body) as AendringerResponse;
-          const result = json.AendredeTinglysningsobjekterHentResultat;
-          allItems.push(...(result?.AendretTinglysningsobjektSamling ?? []));
-          pagesFetched++;
-          if (result?.SoegningResultatInterval?.FlereResultater !== true) break;
-          fraSide++;
-        } catch {
-          break;
+        // 1. Fetch aendringer for window — reuse same pagination as pull-tinglysning-aendringer
+        interface AendretTinglysningsobjekt {
+          EjendomIdentifikator?: { BestemtFastEjendomNummer?: string };
         }
-      }
+        interface AendringerResponse {
+          AendredeTinglysningsobjekterHentResultat?: {
+            AendretTinglysningsobjektSamling?: AendretTinglysningsobjekt[];
+            SoegningResultatInterval?: { FlereResultater?: boolean };
+          };
+        }
 
-      const bfes = extractUniqueBfes(allItems).slice(0, MAX_BFES_PER_RUN);
-      logger.log(`[tl-detail] ${allItems.length} aendringer -> ${bfes.length} unique BFE`);
+        const allItems: AendretTinglysningsobjekt[] = [];
+        let fraSide = 1;
+        let pagesFetched = 0;
+        const maxPages = 50;
+
+        while (pagesFetched < maxPages) {
+          try {
+            const res = await tlPost('/tinglysningsobjekter/aendringer', {
+              AendredeTinglysningsobjekterHentType: { bog: 'EJENDOM', datoFra, datoTil, fraSide },
+            });
+            if (res.status !== 200) break;
+            const json = JSON.parse(res.body) as AendringerResponse;
+            const result = json.AendredeTinglysningsobjekterHentResultat;
+            allItems.push(...(result?.AendretTinglysningsobjektSamling ?? []));
+            pagesFetched++;
+            if (result?.SoegningResultatInterval?.FlereResultater !== true) break;
+            fraSide++;
+          } catch {
+            break;
+          }
+        }
+
+        bfes = extractUniqueBfes(allItems).slice(0, MAX_BFES_PER_RUN);
+        logger.log(`[tl-detail] ${allItems.length} aendringer -> ${bfes.length} unique BFE`);
+      }
 
       // 2. Process each BFE
       let bfesProcessed = 0;

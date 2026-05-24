@@ -2676,6 +2676,55 @@ async function enrichPropertyNodes(
       await Promise.allSettled(dawaResolves);
     }
 
+    // BIZZ-1834: For BFE'er der stadig mangler adresse, prøv DAWA jordstykke-resolve.
+    // DAWA /bfe/ endpoint er ustabil, men /jordstykker?bfenummer=X virker.
+    const stillMissing = allBfes.filter((bfe) => !adresseMap.has(bfe));
+    if (stillMissing.length > 0) {
+      for (const bfe of stillMissing.slice(0, 5)) {
+        try {
+          const jRes = await fetch(
+            `https://api.dataforsyningen.dk/jordstykker?bfenummer=${bfe}&format=json`,
+            { signal: AbortSignal.timeout(5000), headers: { Accept: 'application/json' } }
+          );
+          if (!jRes.ok) continue;
+          const jord = (await jRes.json()) as Array<{
+            ejerlav?: { kode?: number };
+            matrikelnr?: string;
+          }>;
+          const ej = jord[0]?.ejerlav?.kode;
+          const matr = jord[0]?.matrikelnr;
+          if (!ej || !matr) continue;
+
+          // Hent adgangsadresser (1 per opgang, uden etage)
+          const aRes = await fetch(
+            `https://api.dataforsyningen.dk/adgangsadresser?ejerlavkode=${ej}&matrikelnr=${encodeURIComponent(matr)}&format=json&struktur=mini&per_side=5`,
+            { signal: AbortSignal.timeout(5000), headers: { Accept: 'application/json' } }
+          );
+          if (!aRes.ok) continue;
+          const addrs = (await aRes.json()) as Array<{
+            id?: string;
+            vejnavn?: string;
+            husnr?: string;
+            postnr?: string;
+            postnrnavn?: string;
+          }>;
+          if (addrs.length > 0) {
+            const a = addrs[0];
+            adresseMap.set(bfe, {
+              adresse: `${a.vejnavn ?? ''} ${a.husnr ?? ''}`.trim(),
+              postnr: a.postnr ?? null,
+              by: a.postnrnavn ?? null,
+              dawaId: a.id ?? null,
+              etage: null,
+              doer: null,
+            });
+          }
+        } catch {
+          /* jordstykke fallback non-critical */
+        }
+      }
+    }
+
     /**
      * Formatér adresse-label.
      * BIZZ-1543: Brug mellemrum mellem adresse og etage (ikke komma).

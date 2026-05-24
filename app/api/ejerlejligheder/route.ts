@@ -23,7 +23,7 @@ import { fetchDawa } from '@/app/lib/dawa';
 import { darResolveAdresseId } from '@/app/lib/dar';
 import { resolveEnhedByDawaId } from '@/app/lib/fetchBbrData';
 import { fetchTinglysningPriceRowsByBfe } from '@/app/lib/tinglysningPrices';
-// EJF/Datafordeler er ikke nødvendig — alt data hentes fra tinglysning summarisk XML
+import { fetchEjfEjereDirekt } from '@/app/lib/ejerskab/fetchEjfEjereDirekt';
 
 // ─── Query param validation ─────────────────────────────────────────────────
 
@@ -900,6 +900,60 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
         // Tertiært: dør
         return parseDoerSortValue(a.doer) - parseDoerSortValue(b.doer);
       });
+
+    // ── Trin 4b: EJF-fallback for lejligheder med "Ukendt" ejer ──
+    // Tinglysning summarisk XML mangler ofte adkomst for ejerlejligheder.
+    // Hent fra EJF Datafordeler (cache → live GraphQL) for de BFE'er der
+    // stadig er "Ukendt" efter TL-enrichment + ejf_ejerskab cache.
+    const ukendte = lejligheder.filter((l) => l.ejer === 'Ukendt' && l.bfe > 0);
+    if (ukendte.length > 0) {
+      const EJF_FALLBACK_MAX = 30;
+      const EJF_CONCURRENCY = 3;
+      const bfesToResolve = ukendte.slice(0, EJF_FALLBACK_MAX);
+      const ejfMap = new Map<number, { navn: string; type: 'person' | 'selskab' | 'ukendt' }>();
+
+      for (let i = 0; i < bfesToResolve.length; i += EJF_CONCURRENCY) {
+        const batch = bfesToResolve.slice(i, i + EJF_CONCURRENCY);
+        const results = await Promise.allSettled(
+          batch.map(async (l) => {
+            try {
+              const { ejere } = await fetchEjfEjereDirekt(l.bfe);
+              if (ejere.length > 0) {
+                const e = ejere[0];
+                const navn = e.personNavn ?? e.virksomhedsnavn ?? null;
+                if (navn) {
+                  ejfMap.set(l.bfe, {
+                    navn,
+                    type:
+                      e.ejertype === 'selskab'
+                        ? 'selskab'
+                        : e.ejertype === 'person'
+                          ? 'person'
+                          : 'ukendt',
+                  });
+                }
+              }
+            } catch {
+              /* non-fatal */
+            }
+          })
+        );
+        void results;
+      }
+
+      if (ejfMap.size > 0) {
+        for (const l of lejligheder) {
+          const hit = ejfMap.get(l.bfe);
+          if (hit && l.ejer === 'Ukendt') {
+            l.ejer = hit.navn;
+            l.ejertype = hit.type;
+          }
+        }
+        logger.log(
+          `[ejerlejligheder] EJF fallback: resolved ${ejfMap.size}/${ukendte.length} ukendte ejere`
+        );
+      }
+    }
 
     // BIZZ-1656: Augmentér med DAWA — TL matrikelsøgning kan returnere
     // delvise resultater (fx kun 1. sal men ikke stuen). DAWA finder ALLE

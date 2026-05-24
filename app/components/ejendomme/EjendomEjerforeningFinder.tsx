@@ -363,32 +363,53 @@ export default function EjendomEjerforeningFinder({ bfeNummer, lang, adresse, po
         <div className="space-y-3">
           <p className="text-[10px] text-slate-500">
             {da
-              ? 'Verificeret af andre brugere i ejendomsstrukturen'
-              : 'Verified by other users in the property structure'}
+              ? 'Foreslået af andre brugere i ejendomsstrukturen'
+              : 'Suggested by other users in the property structure'}
           </p>
 
           {communityResults.map((cv) => (
-            <Link
-              key={cv.cvr}
-              href={`/dashboard/companies/${cv.cvr}`}
-              className="block rounded-lg bg-emerald-900/20 border border-emerald-500/30 hover:border-emerald-400/50 p-3 transition-colors"
-            >
+            <div key={cv.cvr} className="rounded-lg bg-slate-800/40 border border-slate-700/40 p-3">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-start gap-3 min-w-0">
                   <Building2 size={18} className="text-emerald-400 shrink-0 mt-0.5" />
                   <div className="min-w-0">
-                    <span className="text-sm text-white font-medium truncate block">{cv.navn}</span>
+                    <Link
+                      href={`/dashboard/companies/${cv.cvr}`}
+                      className="text-sm text-white font-medium hover:text-blue-300 transition-colors truncate block"
+                    >
+                      {cv.navn}
+                    </Link>
                     <div className="flex items-center gap-2 mt-1 flex-wrap">
                       <span className="text-xs text-slate-500">CVR {cv.cvr}</span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400">
-                        {da ? 'Verificeret' : 'Verified'}
-                      </span>
-                      <span className="text-[10px] text-slate-500">👍 {cv.verified_count}</span>
                     </div>
                   </div>
                 </div>
+
+                {/* Verificerings-knapper */}
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleVote(cv.cvr, 'verified')}
+                    disabled={pendingCvr === cv.cvr}
+                    className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-slate-700/30 text-slate-400 hover:bg-emerald-500/10 hover:text-emerald-400 transition-colors"
+                    aria-label={da ? 'Bekræft' : 'Verify'}
+                  >
+                    <ThumbsUp size={12} />
+                    {cv.verified_count > 0 && <span>{cv.verified_count}</span>}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleVote(cv.cvr, 'rejected')}
+                    disabled={pendingCvr === cv.cvr}
+                    className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-slate-700/30 text-slate-400 hover:bg-red-500/10 hover:text-red-400 transition-colors"
+                    aria-label={da ? 'Afvis' : 'Reject'}
+                  >
+                    <ThumbsDown size={12} />
+                    {cv.rejected_count > 0 && <span>{cv.rejected_count}</span>}
+                  </button>
+                </div>
               </div>
-            </Link>
+            </div>
           ))}
 
           {/* Knap til at søge med AI alligevel */}

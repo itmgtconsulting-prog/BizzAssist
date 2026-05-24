@@ -47,11 +47,13 @@ export async function GET(req: NextRequest) {
     const gadenavn = req.nextUrl.searchParams.get('gadenavn');
     const postnr = req.nextUrl.searchParams.get('postnr');
     const husnrParam = req.nextUrl.searchParams.get('husnr');
+    const bfeParam = req.nextUrl.searchParams.get('bfeNummer');
 
     if (!gadenavn || !postnr) {
       return NextResponse.json({ error: 'gadenavn og postnr er påkrævet' }, { status: 400 });
     }
     const husnr = husnrParam ? Number(husnrParam) : null;
+    const currentBfe = bfeParam ? Number(bfeParam) : null;
 
     if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
       return NextResponse.json([], { status: 200 });
@@ -69,12 +71,19 @@ export async function GET(req: NextRequest) {
       .eq('postnr', postnr)
       .limit(200);
 
-    const naboBfes = ((naboRows ?? []) as Array<{ bfe_nummer: number }>).map((r) => r.bfe_nummer);
-    if (naboBfes.length === 0) {
+    const bfeSet = new Set(
+      ((naboRows ?? []) as Array<{ bfe_nummer: number }>).map((r) => r.bfe_nummer)
+    );
+    // Inkludér altid det aktuelle BFE — det kan mangle i adressecachen
+    if (currentBfe) bfeSet.add(currentBfe);
+
+    if (bfeSet.size === 0) {
       return NextResponse.json([]);
     }
 
-    // ── 2. Hent verificeringer for nabo-BFE'er ──────────────────
+    const naboBfes = [...bfeSet];
+
+    // ── 2. Hent verificeringer for nabo-BFE'er + eget BFE ───────
     const { data: verRows, error: verErr } = await serviceClient
       .from('ejerforening_verifications')
       .select('bfe_nummer, candidate_cvr, verdict')

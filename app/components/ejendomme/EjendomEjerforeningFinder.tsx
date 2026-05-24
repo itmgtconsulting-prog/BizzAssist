@@ -145,6 +145,7 @@ export default function EjendomEjerforeningFinder({ bfeNummer, lang, adresse, po
       try {
         const params = new URLSearchParams({ gadenavn, postnr });
         if (husnr) params.set('husnr', husnr);
+        params.set('bfeNummer', String(bfeNummer));
         const res = await fetch(`/api/ejerforening-verification/community?${params.toString()}`, {
           credentials: 'include',
         });
@@ -162,7 +163,7 @@ export default function EjendomEjerforeningFinder({ bfeNummer, lang, adresse, po
     return () => {
       active = false;
     };
-  }, [adresse, postnr]);
+  }, [adresse, postnr, bfeNummer]);
 
   /**
    * Hent verificeringer for alle kandidater.

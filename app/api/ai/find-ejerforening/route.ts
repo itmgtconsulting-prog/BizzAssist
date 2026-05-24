@@ -158,19 +158,25 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       .eq('status', 'gældende')
       .not('ejer_cvr', 'is', null);
 
-    // Grupper per CVR (administrator + ejer)
+    // Grupper per CVR (administrator + ejer) — track match-årsager for reasoning
     const cvrCounts = new Map<string, number>();
+    const cvrReasons = new Map<string, string[]>();
+    const adminCvrCount = new Map<string, number>();
+    const ejerCvrCount = new Map<string, number>();
+
     for (const row of (adminRows ?? []) as Array<{
       bfe_nummer: number;
       virksomhed_cvr: string;
     }>) {
       cvrCounts.set(row.virksomhed_cvr, (cvrCounts.get(row.virksomhed_cvr) ?? 0) + 1);
+      adminCvrCount.set(row.virksomhed_cvr, (adminCvrCount.get(row.virksomhed_cvr) ?? 0) + 1);
     }
     for (const row of (ejerRows ?? []) as Array<{
       bfe_nummer: number;
       ejer_cvr: string;
     }>) {
       cvrCounts.set(row.ejer_cvr, (cvrCounts.get(row.ejer_cvr) ?? 0) + 1);
+      ejerCvrCount.set(row.ejer_cvr, (ejerCvrCount.get(row.ejer_cvr) ?? 0) + 1);
     }
 
     // ── 4b. Søg ejerforeninger via navn der matcher gadenavn ────
@@ -221,6 +227,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       }
 
       cvrCounts.set(row.cvr, (cvrCounts.get(row.cvr) ?? 0) + score);
+      if (score >= 20) {
+        if (!cvrReasons.has(row.cvr)) cvrReasons.set(row.cvr, []);
+        cvrReasons.get(row.cvr)!.push(`Foreningens navn dækker adressen`);
+      } else {
+        if (!cvrReasons.has(row.cvr)) cvrReasons.set(row.cvr, []);
+        cvrReasons.get(row.cvr)!.push(`Foreningens navn nævner ${gadenavn}`);
+      }
     }
 
     if (cvrCounts.size === 0) {
@@ -294,6 +307,25 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       }
     }
 
+    /**
+     * Byg reasoning-streng baseret på match-kilder for et CVR.
+     *
+     * @param cvr - CVR-nummer
+     * @returns Reasoning-tekst på dansk
+     */
+    function buildReasoning(cvr: string): string {
+      const parts: string[] = [];
+      const ac = adminCvrCount.get(cvr);
+      const ec = ejerCvrCount.get(cvr);
+      if (ac && ac > 0) parts.push(`Administrator for ${ac} ejendomme i ejendomsstrukturen`);
+      if (ec && ec > 0) parts.push(`Registreret ejer af ${ec} ejendomme på ${gadenavn}`);
+      const extraReasons = cvrReasons.get(cvr) ?? [];
+      for (const r of extraReasons) {
+        if (!parts.includes(r)) parts.push(r);
+      }
+      return parts.length > 0 ? parts.join('. ') : `Fundet i nærområdet`;
+    }
+
     // ── 5. Entydigt match → returner direkte ────────────────────
     if (filteredCvrs.size === 1) {
       const [cvr, count] = [...filteredCvrs.entries()][0];
@@ -302,7 +334,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           cvr,
           navn: cvrNavne.get(cvr) ?? `CVR ${cvr}`,
           confidence: count >= 3 ? 'high' : 'medium',
-          reasoning: `Administrerer ${count} ejendomme på ${gadenavn}`,
+          reasoning: buildReasoning(cvr),
           administeredCount: count,
         },
       ];
@@ -392,7 +424,7 @@ ${kandidatListe}`;
       aiCandidates = cvrList.map((cvr) => ({
         cvr,
         confidence: 'medium',
-        reasoning: `Ejer/administrerer ${filteredCvrs.get(cvr) ?? 0} ejendomme i området`,
+        reasoning: buildReasoning(cvr),
       }));
     }
 

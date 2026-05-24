@@ -166,9 +166,15 @@ export default function EjendomEjerforholdTab({
         return (
           <>
             <EjendomAdministratorCard bfeNummer={adminBfe} lang={lang} />
-            {/* Vis AI-finder for ejerlejligheder — uanset om admin er arvet fra SFE */}
+            {/* Vis AI-finder for ejerlejligheder — uanset om admin er arvet fra SFE.
+                Sender adresse+postnr som fallback for BFE'er uden adresse i cache. */}
             {bbrData?.ejerlejlighedBfe && (
-              <EjendomEjerforeningFinder bfeNummer={adminBfe} lang={lang} />
+              <EjendomEjerforeningFinder
+                bfeNummer={adminBfe}
+                lang={lang}
+                adresse={dawaAdresse ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}` : undefined}
+                postnr={dawaAdresse?.postnr ?? undefined}
+              />
             )}
           </>
         );

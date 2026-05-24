@@ -1,19 +1,22 @@
 /**
- * GET /api/ai/find-ejerforening?bfeNummer=12345
+ * GET /api/ai/find-ejerforening?bfeNummer=12345&adresse=Vigerslevvej+146&postnr=2500
  *
  * AI-baseret reverse-lookup: givet en ejerlejligheds BFE, find den
  * sandsynlige ejerforening der administrerer bygningen.
  *
  * Algoritme:
  *   1. Cache-check (24h TTL)
- *   2. Opslag i bfe_adresse_cache for ejendommens adresse
+ *   2. Opslag i bfe_adresse_cache for ejendommens adresse (fallback: query params)
  *   3. Find nabo-ejendomme på samme gade+postnr
- *   4. Check ejf_administrator for nabo-BFE'er → grupper per CVR
- *   5. Entydigt match → returner direkte (sparer tokens)
- *   6. Ellers → Claude Sonnet 4.6 evaluerer kandidater
- *   7. recordAiUsage() + cache resultat
+ *   4. Check ejf_administrator + ejf_ejerskab for nabo-BFE'er → grupper per CVR
+ *   5. Filtrér til ejerforeninger (FFO/forening i cvr_virksomhed)
+ *   6. Entydigt match → returner direkte (sparer tokens)
+ *   7. Ellers → Claude Sonnet 4.6 evaluerer kandidater
+ *   8. recordAiUsage() + cache resultat
  *
  * @param bfeNummer - BFE-nummer for ejendommen
+ * @param adresse - Fallback-adresse (bruges når bfe_adresse_cache er tom)
+ * @param postnr - Fallback-postnr
  * @returns JSON med { candidates, cachedAt? }
  */
 
@@ -95,7 +98,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const rl = await checkRateLimit(request, aiRateLimit);
     if (rl) return rl;
 
-    // ── 2. Opslag i bfe_adresse_cache ───────────────────────────
+    // ── 2. Opslag i bfe_adresse_cache (med fallback til query params) ──
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: propertyRow } = await (admin as any)
       .from('bfe_adresse_cache')
@@ -103,11 +106,19 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       .eq('bfe_nummer', bfeNummer)
       .maybeSingle();
 
-    if (!propertyRow?.adresse || !propertyRow?.postnr) {
+    // Fallback: frontend sender adresse+postnr som query params
+    const fallbackAdresse = request.nextUrl.searchParams.get('adresse');
+    const fallbackPostnr = request.nextUrl.searchParams.get('postnr');
+
+    const adresse = propertyRow?.postnr ? propertyRow.adresse : (fallbackAdresse ?? null);
+    const postnr = propertyRow?.postnr ? propertyRow.postnr : (fallbackPostnr ?? null);
+    const postnrnavn = propertyRow?.postnrnavn ?? null;
+
+    if (!adresse || !postnr) {
       return NextResponse.json({ candidates: [] });
     }
 
-    const gadenavn = extractStreetName(propertyRow.adresse);
+    const gadenavn = extractStreetName(adresse);
     if (!gadenavn) {
       return NextResponse.json({ candidates: [] });
     }
@@ -118,7 +129,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       .from('bfe_adresse_cache')
       .select('bfe_nummer')
       .ilike('adresse', `${gadenavn}%`)
-      .eq('postnr', propertyRow.postnr)
+      .eq('postnr', postnr)
       .limit(200);
 
     const naboBfes = ((naboRows ?? []) as Array<{ bfe_nummer: number }>)
@@ -129,7 +140,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ candidates: [] });
     }
 
-    // ── 4. Check ejf_administrator for naboer ───────────────────
+    // ── 4. Check ejf_administrator + ejf_ejerskab for naboer ────
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: adminRows } = await (admin as any)
       .from('ejf_administrator')
@@ -138,7 +149,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       .eq('status', 'gældende')
       .not('virksomhed_cvr', 'is', null);
 
-    // Grupper per CVR
+    // Søg også i ejf_ejerskab — ejerforeninger er ofte registreret som ejere
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: ejerRows } = await (admin as any)
+      .from('ejf_ejerskab')
+      .select('bfe_nummer, ejer_cvr')
+      .in('bfe_nummer', naboBfes.slice(0, 200))
+      .eq('status', 'gældende')
+      .not('ejer_cvr', 'is', null);
+
+    // Grupper per CVR (administrator + ejer)
     const cvrCounts = new Map<string, number>();
     for (const row of (adminRows ?? []) as Array<{
       bfe_nummer: number;
@@ -146,9 +166,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }>) {
       cvrCounts.set(row.virksomhed_cvr, (cvrCounts.get(row.virksomhed_cvr) ?? 0) + 1);
     }
+    for (const row of (ejerRows ?? []) as Array<{
+      bfe_nummer: number;
+      ejer_cvr: string;
+    }>) {
+      cvrCounts.set(row.ejer_cvr, (cvrCounts.get(row.ejer_cvr) ?? 0) + 1);
+    }
 
     if (cvrCounts.size === 0) {
-      // Ingen administratorer fundet i nærområdet — cache tomt resultat
+      // Ingen administratorer/ejere fundet i nærområdet — cache tomt resultat
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       void (admin as any)
         .from('ai_find_ejerforening_cache')
@@ -160,22 +186,67 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ candidates: [] });
     }
 
-    // Hent virksomhedsnavne for kandidat-CVR'er
-    const cvrList = [...cvrCounts.keys()];
+    // ── 4b. Filtrér til ejerforeninger (FFO/forening) ───────────
+    // Ikke alle CVR'er er ejerforeninger — filtrér via cvr_virksomhed
+    const allCvrList = [...cvrCounts.keys()];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: virkRows } = await (admin as any)
+    const { data: allVirkRows } = await (admin as any)
       .from('cvr_virksomhed')
-      .select('cvr, navn')
-      .in('cvr', cvrList);
+      .select('cvr, navn, virksomhedsform')
+      .in('cvr', allCvrList);
 
+    // Behold kun foreninger (FFO, forening, ejerforening i navn/form)
+    const foreningCvrs = new Set<string>();
+    for (const row of (allVirkRows ?? []) as Array<{
+      cvr: string;
+      navn: string;
+      virksomhedsform: string | null;
+    }>) {
+      const navnLower = row.navn.toLowerCase();
+      const formLower = (row.virksomhedsform ?? '').toLowerCase();
+      if (
+        formLower.includes('ffo') ||
+        formLower.includes('forening') ||
+        navnLower.includes('ejerforening') ||
+        navnLower.includes('e/f') ||
+        navnLower.includes('a/b') ||
+        navnLower.includes('andelsbolig') ||
+        navnLower.includes('boligforening')
+      ) {
+        foreningCvrs.add(row.cvr);
+      }
+    }
+
+    // Hvis ingen foreninger fundet, prøv med alle CVR'er (fallback)
+    const filteredCvrs =
+      foreningCvrs.size > 0
+        ? new Map([...cvrCounts].filter(([cvr]) => foreningCvrs.has(cvr)))
+        : cvrCounts;
+
+    if (filteredCvrs.size === 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      void (admin as any)
+        .from('ai_find_ejerforening_cache')
+        .upsert(
+          { bfe_nummer: bfeNummer, candidates: [], created_at: new Date().toISOString() },
+          { onConflict: 'bfe_nummer' }
+        )
+        .then(() => {});
+      return NextResponse.json({ candidates: [] });
+    }
+
+    // Hent virksomhedsnavne for filtrerede CVR'er
+    const cvrList = [...filteredCvrs.keys()];
     const cvrNavne = new Map<string, string>();
-    for (const row of (virkRows ?? []) as Array<{ cvr: string; navn: string }>) {
-      cvrNavne.set(row.cvr, row.navn);
+    for (const row of (allVirkRows ?? []) as Array<{ cvr: string; navn: string }>) {
+      if (filteredCvrs.has(row.cvr)) {
+        cvrNavne.set(row.cvr, row.navn);
+      }
     }
 
     // ── 5. Entydigt match → returner direkte ────────────────────
-    if (cvrCounts.size === 1) {
-      const [cvr, count] = [...cvrCounts.entries()][0];
+    if (filteredCvrs.size === 1) {
+      const [cvr, count] = [...filteredCvrs.entries()][0];
       const result: EjerforeningKandidat[] = [
         {
           cvr,
@@ -203,8 +274,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const kandidatListe = cvrList
       .map((cvr) => {
         const navn = cvrNavne.get(cvr) ?? `CVR ${cvr}`;
-        const count = cvrCounts.get(cvr) ?? 0;
-        return `CVR ${cvr}: ${navn} (administrerer ${count} ejendomme i området)`;
+        const count = filteredCvrs.get(cvr) ?? 0;
+        return `CVR ${cvr}: ${navn} (ejer/administrerer ${count} ejendomme i området)`;
       })
       .join('\n');
 
@@ -232,7 +303,7 @@ Svar UDELUKKENDE med valid JSON array:
 
 Ingen markdown, ingen forklaring uden for arrayet.`;
 
-    const userPrompt = `Ejerlejlighed: ${propertyRow.adresse}, ${propertyRow.postnr} ${propertyRow.postnrnavn ?? ''}
+    const userPrompt = `Ejerlejlighed: ${adresse}, ${postnr} ${postnrnavn ?? ''}
 
 Kandidat-ejerforeninger:
 ${kandidatListe}`;
@@ -271,7 +342,7 @@ ${kandidatListe}`;
       aiCandidates = cvrList.map((cvr) => ({
         cvr,
         confidence: 'medium',
-        reasoning: `Administrerer ${cvrCounts.get(cvr) ?? 0} ejendomme i området`,
+        reasoning: `Ejer/administrerer ${filteredCvrs.get(cvr) ?? 0} ejendomme i området`,
       }));
     }
 
@@ -284,7 +355,7 @@ ${kandidatListe}`;
         navn: cvrNavne.get(c.cvr) ?? `CVR ${c.cvr}`,
         confidence: c.confidence as 'high' | 'medium' | 'low',
         reasoning: c.reasoning ?? '',
-        administeredCount: cvrCounts.get(c.cvr) ?? 0,
+        administeredCount: filteredCvrs.get(c.cvr) ?? 0,
       }));
 
     // Cache resultatet

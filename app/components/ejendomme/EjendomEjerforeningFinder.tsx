@@ -41,6 +41,10 @@ interface Props {
   bfeNummer: number;
   /** 'da' | 'en' — bilingual */
   lang: 'da' | 'en';
+  /** Fallback-adresse når bfe_adresse_cache er tom */
+  adresse?: string;
+  /** Fallback-postnr */
+  postnr?: string;
 }
 
 /**
@@ -86,7 +90,7 @@ function confidenceStyle(confidence: 'high' | 'medium' | 'low'): {
  * @param props - BFE-nummer og sprog
  * @returns React komponent
  */
-export default function EjendomEjerforeningFinder({ bfeNummer, lang }: Props) {
+export default function EjendomEjerforeningFinder({ bfeNummer, lang, adresse, postnr }: Props) {
   const da = lang === 'da';
 
   const [candidates, setCandidates] = useState<Kandidat[]>([]);
@@ -134,7 +138,10 @@ export default function EjendomEjerforeningFinder({ bfeNummer, lang }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/ai/find-ejerforening?bfeNummer=${bfeNummer}`, {
+      const params = new URLSearchParams({ bfeNummer: String(bfeNummer) });
+      if (adresse) params.set('adresse', adresse);
+      if (postnr) params.set('postnr', postnr);
+      const res = await fetch(`/api/ai/find-ejerforening?${params.toString()}`, {
         credentials: 'include',
       });
       if (!res.ok) {

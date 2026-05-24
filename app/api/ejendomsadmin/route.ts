@@ -134,11 +134,41 @@ async function resolveParentSfeBfe(bfeNummer: number): Promise<number | null> {
       .eq('bfe_nummer', bfeNummer)
       .maybeSingle();
 
-    if (!row?.adgangsadresse_id) return null;
+    let adgangsadresseId = row?.adgangsadresse_id ?? null;
+
+    // Fallback: bfe_adresse_cache → dawa_id (adgangsadresse UUID)
+    if (!adgangsadresseId) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: cacheRow } = await (admin as any)
+        .from('bfe_adresse_cache')
+        .select('dawa_id')
+        .eq('bfe_nummer', bfeNummer)
+        .maybeSingle();
+      adgangsadresseId = cacheRow?.dawa_id ?? null;
+    }
+
+    // Fallback 2: DAWA /bfe/{bfe} → beliggenhedsadresse
+    if (!adgangsadresseId) {
+      try {
+        const bfeRes = await fetchDawa(
+          `${DAWA_BASE_URL}/adresser?bfenummer=${bfeNummer}&struktur=mini&format=json`,
+          { signal: AbortSignal.timeout(5000) },
+          { caller: 'ejendomsadmin.sfe-bfe-dawa' }
+        );
+        if (bfeRes.ok) {
+          const bfeData = (await bfeRes.json()) as Array<{ adgangsadresseid?: string }>;
+          adgangsadresseId = bfeData?.[0]?.adgangsadresseid ?? null;
+        }
+      } catch {
+        /* DAWA fallback non-critical */
+      }
+    }
+
+    if (!adgangsadresseId) return null;
 
     // Resolve adgangsadresse → jordstykke → SFE BFE
     const adgRes = await fetchDawa(
-      `${DAWA_BASE_URL}/adgangsadresser/${row.adgangsadresse_id}`,
+      `${DAWA_BASE_URL}/adgangsadresser/${adgangsadresseId}`,
       { signal: AbortSignal.timeout(5000) },
       { caller: 'ejendomsadmin.sfe-resolve' }
     );

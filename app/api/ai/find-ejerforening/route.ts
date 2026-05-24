@@ -149,7 +149,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       .eq('status', 'gældende')
       .not('virksomhed_cvr', 'is', null);
 
-    // Søg også i ejf_ejerskab — ejerforeninger er ofte registreret som ejere
+    // Søg i ejf_ejerskab — gældende ejere
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: ejerRows } = await (admin as any)
       .from('ejf_ejerskab')
@@ -158,11 +158,22 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       .eq('status', 'gældende')
       .not('ejer_cvr', 'is', null);
 
-    // Grupper per CVR (administrator + ejer) — track match-årsager for reasoning
+    // Søg i ejf_ejerskab — historiske ejere (fanger ejendomme der tidligere
+    // tilhørte ejerforeningen, stærkt signal for ejerlejligheder i samme struktur)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: histEjerRows } = await (admin as any)
+      .from('ejf_ejerskab')
+      .select('bfe_nummer, ejer_cvr')
+      .in('bfe_nummer', naboBfes.slice(0, 200))
+      .eq('status', 'historisk')
+      .not('ejer_cvr', 'is', null);
+
+    // Grupper per CVR — track match-årsager for reasoning
     const cvrCounts = new Map<string, number>();
     const cvrReasons = new Map<string, string[]>();
     const adminCvrCount = new Map<string, number>();
     const ejerCvrCount = new Map<string, number>();
+    const histEjerCvrCount = new Map<string, number>();
 
     for (const row of (adminRows ?? []) as Array<{
       bfe_nummer: number;
@@ -177,6 +188,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }>) {
       cvrCounts.set(row.ejer_cvr, (cvrCounts.get(row.ejer_cvr) ?? 0) + 1);
       ejerCvrCount.set(row.ejer_cvr, (ejerCvrCount.get(row.ejer_cvr) ?? 0) + 1);
+    }
+    for (const row of (histEjerRows ?? []) as Array<{
+      bfe_nummer: number;
+      ejer_cvr: string;
+    }>) {
+      // Historiske ejerskaber giver lavere score men er stadig et signal
+      cvrCounts.set(row.ejer_cvr, (cvrCounts.get(row.ejer_cvr) ?? 0) + 1);
+      histEjerCvrCount.set(row.ejer_cvr, (histEjerCvrCount.get(row.ejer_cvr) ?? 0) + 1);
     }
 
     // ── 4b. Søg ejerforeninger via navn der matcher gadenavn ────
@@ -317,8 +336,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       const parts: string[] = [];
       const ac = adminCvrCount.get(cvr);
       const ec = ejerCvrCount.get(cvr);
+      const hc = histEjerCvrCount.get(cvr);
       if (ac && ac > 0) parts.push(`Administrator for ${ac} ejendomme i ejendomsstrukturen`);
       if (ec && ec > 0) parts.push(`Registreret ejer af ${ec} ejendomme på ${gadenavn}`);
+      if (hc && hc > 0) parts.push(`Historisk registreret på ${hc} ejendomme i ejendomsstrukturen`);
       const extraReasons = cvrReasons.get(cvr) ?? [];
       for (const r of extraReasons) {
         if (!parts.includes(r)) parts.push(r);

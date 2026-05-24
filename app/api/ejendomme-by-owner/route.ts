@@ -1602,6 +1602,79 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       ownerBuyDate: ownerBuyDateByBfe.get(bfe) ?? null,
     }));
 
+    /* ── BIZZ-1834: SFE-expansion — fold SFE ud til ejerlejligheder ──
+       For foreninger (FFO/forening) der ejer SFE-ejendomme (ingen etage,
+       ejendomstype != 'Ejerlejlighed'), søg bfe_adresse_cache for child-
+       ejerlejligheder på samme adresse-præfiks og tilføj dem som ekstra entries. */
+    try {
+      const sfeEjendomme = ejendomme.filter(
+        (e) => e.adresse && !e.etage && e.ejendomstype !== 'Ejerlejlighed' && e.postnr
+      );
+
+      if (sfeEjendomme.length > 0) {
+        const admin = createAdminClient();
+        for (const sfe of sfeEjendomme.slice(0, 5)) {
+          // Ekstrahér gadenavn fra SFE-adressen (fjern husnr)
+          const gadenavn = (sfe.adresse ?? '')
+            .replace(/\s*\(.*?\)\s*/g, '')
+            .replace(/\s+\d+[\w-]*.*$/, '')
+            .trim();
+          if (!gadenavn || !sfe.postnr) continue;
+
+          // Søg ejerlejligheder på samme gade+postnr med etage
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: childRows } = await (admin as any)
+            .from('bfe_adresse_cache')
+            .select(
+              'bfe_nummer, adresse, etage, doer, postnr, postnrnavn, kommune, kommune_kode, dawa_id, ejendomstype'
+            )
+            .ilike('adresse', `${gadenavn}%`)
+            .eq('postnr', sfe.postnr)
+            .not('etage', 'is', null)
+            .limit(100);
+
+          for (const child of (childRows ?? []) as Array<{
+            bfe_nummer: number;
+            adresse: string;
+            etage: string | null;
+            doer: string | null;
+            postnr: string | null;
+            postnrnavn: string | null;
+            kommune: string | null;
+            kommune_kode: string | null;
+            dawa_id: string | null;
+            ejendomstype: string | null;
+          }>) {
+            // Undgå duplikater
+            if (ejendomme.some((e) => e.bfeNummer === child.bfe_nummer)) continue;
+            ejendomme.push({
+              bfeNummer: child.bfe_nummer,
+              ownerCvr: sfe.ownerCvr,
+              adresse: child.adresse,
+              postnr: child.postnr,
+              by: child.postnrnavn,
+              kommune: child.kommune,
+              kommuneKode: child.kommune_kode,
+              ejendomstype: child.ejendomstype,
+              dawaId: child.dawa_id,
+              etage: child.etage,
+              doer: child.doer,
+              ejerandel: sfe.ejerandel,
+              administreret: sfe.administreret,
+              aktiv: sfe.aktiv,
+              solgtDato: sfe.solgtDato,
+              ownerBuyDate: sfe.ownerBuyDate,
+            });
+          }
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        '[ejendomme-by-owner] SFE-expansion fejl:',
+        err instanceof Error ? err.message : err
+      );
+    }
+
     /* Sortér: adresser først, derefter BFE-numre */
     ejendomme.sort((a, b) => {
       if (a.adresse && !b.adresse) return -1;

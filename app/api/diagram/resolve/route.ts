@@ -2258,9 +2258,9 @@ async function resolvePersonGraph(
     }
   }
 
-  // ── BIZZ-1743: Administrerede ejendomme (ejerforeninger) ────────────────
+  // ── BIZZ-1743 + BIZZ-1824: Administrerede ejendomme (ejerforeninger) ──
   // For virksomheder der administrerer ejendomme via ejf_administrator
-  // (typisk ejerforeninger), tilføj administrerede BFE'er med stiplet edge.
+  // tilføj administrerede SFE-BFE'er + deres ejerlejligheder som sub-noder.
   const mainCvr = nodes.find((n) => n.type === 'main')?.cvr;
   if (mainCvr) {
     const administered = await _fetchAdministeredByCvr(admin, String(mainCvr));
@@ -2274,7 +2274,7 @@ async function resolvePersonGraph(
       nodes.push({
         id: propId,
         label: `BFE ${bfe}`,
-        sublabel: 'Administreret',
+        sublabel: 'Administreret SFE',
         type: 'property',
         bfeNummer: bfe,
       });
@@ -2294,6 +2294,73 @@ async function resolvePersonGraph(
       });
       nodeIds.add(overflowId);
       edges.push({ from: `cvr-${mainCvr}`, to: overflowId });
+    }
+
+    // BIZZ-1824: Find ejerlejligheder under administrerede SFE'er
+    // Strategi: Hent adresser for SFE-BFE'er, find alle ejerlejligheder
+    // på samme gadenavn+postnr (med etage = ejerlejlighed).
+    if (adminBfes.length > 0 && nodes.length < 80) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: sfeAdresser } = await (admin as any)
+          .from('bfe_adresse_cache')
+          .select('bfe_nummer, adresse, postnr')
+          .in('bfe_nummer', adminBfes.slice(0, 10));
+
+        const streetPostnrPairs: Array<{ gadenavn: string; postnr: string; sfeBfe: number }> = [];
+        for (const row of (sfeAdresser ?? []) as Array<{
+          bfe_nummer: number;
+          adresse: string | null;
+          postnr: string | null;
+        }>) {
+          if (!row.adresse || !row.postnr) continue;
+          const gadenavn = row.adresse.replace(/\s+\d+\w*$/, '').trim();
+          if (gadenavn)
+            streetPostnrPairs.push({ gadenavn, postnr: row.postnr, sfeBfe: row.bfe_nummer });
+        }
+
+        for (const pair of streetPostnrPairs.slice(0, 5)) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: ejlRows } = await (admin as any)
+            .from('bfe_adresse_cache')
+            .select('bfe_nummer, adresse, etage, doer, postnr, postnrnavn')
+            .ilike('adresse', `${pair.gadenavn}%`)
+            .eq('postnr', pair.postnr)
+            .not('etage', 'is', null)
+            .limit(30);
+
+          const sfePropId = `bfe-admin-${pair.sfeBfe}`;
+          let addedCount = 0;
+          for (const ejl of (ejlRows ?? []) as Array<{
+            bfe_nummer: number;
+            adresse: string | null;
+            etage: string | null;
+            doer: string | null;
+            postnr: string | null;
+            postnrnavn: string | null;
+          }>) {
+            if (nodes.length >= 80 || addedCount >= 20) break;
+            const ejlId = `bfe-${ejl.bfe_nummer}`;
+            if (nodeIds.has(ejlId)) continue;
+            const etageLabel = ejl.etage ? ` ${ejl.etage}.` : '';
+            const doerLabel = ejl.doer ? ` ${ejl.doer}` : '';
+            nodes.push({
+              id: ejlId,
+              label: `${ejl.adresse ?? ''}${etageLabel}${doerLabel}`,
+              sublabel:
+                ejl.postnr && ejl.postnrnavn ? `${ejl.postnr} ${ejl.postnrnavn}` : undefined,
+              type: 'property',
+              bfeNummer: ejl.bfe_nummer,
+              link: `/dashboard/ejendomme/${ejl.bfe_nummer}`,
+            });
+            nodeIds.add(ejlId);
+            edges.push({ from: sfePropId, to: ejlId });
+            addedCount++;
+          }
+        }
+      } catch {
+        /* ejerlejlighed lookup non-fatal */
+      }
     }
   }
 

@@ -1484,17 +1484,61 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
 
       if (adminRows && adminRows.length > 0) {
         let addedCount = 0;
+        const sfeBfes: number[] = [];
         for (const row of adminRows as Array<{
           bfe_nummer: number;
           virksomhed_cvr: string;
         }>) {
           administreretByBfe.add(row.bfe_nummer);
+          sfeBfes.push(row.bfe_nummer);
           if (!bfeTilCvr.has(row.bfe_nummer)) {
             bfeTilCvr.set(row.bfe_nummer, row.virksomhed_cvr.padStart(8, '0'));
             aktivByBfe.set(row.bfe_nummer, true);
             addedCount++;
           }
         }
+
+        // BIZZ-1824: Find ejerlejligheder under administrerede SFE'er
+        // via bfe_adresse_cache (same-street med etage = ejerlejlighed)
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: sfeAdresser } = await (admin as any)
+            .from('bfe_adresse_cache')
+            .select('bfe_nummer, adresse, postnr')
+            .in('bfe_nummer', sfeBfes.slice(0, 20));
+
+          for (const sfe of (sfeAdresser ?? []) as Array<{
+            bfe_nummer: number;
+            adresse: string | null;
+            postnr: string | null;
+          }>) {
+            if (!sfe.adresse || !sfe.postnr) continue;
+            const gadenavn = sfe.adresse.replace(/\s+\d+\w*$/, '').trim();
+            if (!gadenavn) continue;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: ejlRows } = await (admin as any)
+              .from('bfe_adresse_cache')
+              .select('bfe_nummer')
+              .ilike('adresse', `${gadenavn}%`)
+              .eq('postnr', sfe.postnr)
+              .not('etage', 'is', null)
+              .limit(50);
+
+            const ownerCvr = adminRows.find(
+              (r: { bfe_nummer: number }) => r.bfe_nummer === sfe.bfe_nummer
+            )?.virksomhed_cvr;
+            for (const ejl of (ejlRows ?? []) as Array<{ bfe_nummer: number }>) {
+              if (bfeTilCvr.has(ejl.bfe_nummer)) continue;
+              administreretByBfe.add(ejl.bfe_nummer);
+              bfeTilCvr.set(ejl.bfe_nummer, (ownerCvr ?? '').padStart(8, '0'));
+              aktivByBfe.set(ejl.bfe_nummer, true);
+              addedCount++;
+            }
+          }
+        } catch {
+          /* ejerlejlighed lookup non-fatal */
+        }
+
         if (addedCount > 0) {
           logger.log(
             `[ejendomme-by-owner] ejf_administrator: ${addedCount} administrerede BFE tilføjet`

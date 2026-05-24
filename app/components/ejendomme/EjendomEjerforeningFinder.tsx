@@ -15,9 +15,17 @@
 
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import Link from 'next/link';
-import { Search, Loader2, Building2, ThumbsUp, ThumbsDown, AlertCircle } from 'lucide-react';
+import {
+  Search,
+  Loader2,
+  Building2,
+  ThumbsUp,
+  ThumbsDown,
+  AlertCircle,
+  CheckCircle2,
+} from 'lucide-react';
 import { logger } from '@/app/lib/logger';
 
 /** Kandidat fra /api/ai/find-ejerforening */
@@ -34,6 +42,16 @@ interface VerificationState {
   verified_count: number;
   rejected_count: number;
   user_verdict: 'verified' | 'rejected' | null;
+}
+
+/** Community-verificeret ejerforening fra nabo-BFE'er */
+interface CommunityVerified {
+  cvr: string;
+  navn: string;
+  verified_count: number;
+  rejected_count: number;
+  nameCoversAddress: boolean;
+  verifiedByBfes: number;
 }
 
 interface Props {
@@ -99,6 +117,52 @@ export default function EjendomEjerforeningFinder({ bfeNummer, lang, adresse, po
   const [error, setError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
   const [pendingCvr, setPendingCvr] = useState<string | null>(null);
+
+  /** Community-verificerede ejerforeninger fra nabo-BFE'er */
+  const [communityResults, setCommunityResults] = useState<CommunityVerified[]>([]);
+  const [communityLoading, setCommunityLoading] = useState(true);
+
+  /**
+   * Auto-check community-verificeringer ved mount.
+   * Finder ejerforeninger der er verificeret af andre brugere på nabo-ejendomme.
+   */
+  useEffect(() => {
+    if (!adresse || !postnr) {
+      setCommunityLoading(false);
+      return;
+    }
+    // Ekstrahér gadenavn (fjern husnummer) og husnr
+    const gadenavn = adresse.replace(/\s+\d+\w*$/, '').trim();
+    const husnrMatch = adresse.match(/\s+(\d+)/);
+    const husnr = husnrMatch ? husnrMatch[1] : '';
+    if (!gadenavn) {
+      setCommunityLoading(false);
+      return;
+    }
+
+    let active = true;
+    (async () => {
+      try {
+        const params = new URLSearchParams({ gadenavn, postnr });
+        if (husnr) params.set('husnr', husnr);
+        const res = await fetch(`/api/ejerforening-verification/community?${params.toString()}`, {
+          credentials: 'include',
+        });
+        if (!res.ok || !active) return;
+        const data = (await res.json()) as CommunityVerified[];
+        if (active && data.length > 0) {
+          setCommunityResults(data);
+        }
+      } catch {
+        // Fail-soft — community check er ikke kritisk
+      } finally {
+        if (active) setCommunityLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [adresse, postnr]);
 
   /**
    * Hent verificeringer for alle kandidater.
@@ -263,17 +327,85 @@ export default function EjendomEjerforeningFinder({ bfeNummer, lang, adresse, po
     [bfeNummer, pendingCvr, verifications, fetchVerifications]
   );
 
+  // Vis community-resultater som primær visning (ingen AI-knap nødvendig)
+  const showCommunity = communityResults.length > 0 && !hasSearched;
+
   return (
     <div className="rounded-xl bg-slate-900/60 border border-slate-700/50 p-5">
       <div className="flex items-center gap-2 mb-3">
-        <Search size={16} className="text-teal-400" />
+        {showCommunity ? (
+          <CheckCircle2 size={16} className="text-emerald-400" />
+        ) : (
+          <Search size={16} className="text-teal-400" />
+        )}
         <h3 className="text-sm font-semibold text-slate-200 uppercase tracking-wide">
-          {da ? 'Find ejerforening' : 'Find housing association'}
+          {showCommunity
+            ? da
+              ? 'Ejerforening'
+              : 'Housing association'
+            : da
+              ? 'Find ejerforening'
+              : 'Find housing association'}
         </h3>
       </div>
 
-      {/* Søge-knap (idle state) */}
-      {!hasSearched && !loading && (
+      {/* Community-loading state */}
+      {communityLoading && (
+        <div className="flex items-center gap-2 text-xs text-slate-500 py-1">
+          <Loader2 size={12} className="animate-spin" />
+          {da ? 'Checker verificeringer...' : 'Checking verifications...'}
+        </div>
+      )}
+
+      {/* Community-verificerede resultater — vises automatisk for alle brugere */}
+      {showCommunity && (
+        <div className="space-y-3">
+          <p className="text-[10px] text-slate-500">
+            {da
+              ? 'Verificeret af andre brugere i ejendomsstrukturen'
+              : 'Verified by other users in the property structure'}
+          </p>
+
+          {communityResults.map((cv) => (
+            <Link
+              key={cv.cvr}
+              href={`/dashboard/companies/${cv.cvr}`}
+              className="block rounded-lg bg-emerald-900/20 border border-emerald-500/30 hover:border-emerald-400/50 p-3 transition-colors"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3 min-w-0">
+                  <Building2 size={18} className="text-emerald-400 shrink-0 mt-0.5" />
+                  <div className="min-w-0">
+                    <span className="text-sm text-white font-medium truncate block">{cv.navn}</span>
+                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                      <span className="text-xs text-slate-500">CVR {cv.cvr}</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400">
+                        {da ? 'Verificeret' : 'Verified'}
+                      </span>
+                      <span className="text-[10px] text-slate-500">👍 {cv.verified_count}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </Link>
+          ))}
+
+          {/* Knap til at søge med AI alligevel */}
+          <button
+            type="button"
+            onClick={handleSearch}
+            disabled={loading}
+            className="flex items-center gap-1.5 text-[11px] text-slate-500 hover:text-teal-400 transition-colors mt-1"
+            aria-label={da ? 'Søg med AI alligevel' : 'Search with AI anyway'}
+          >
+            <Search size={11} />
+            {da ? 'Søg med AI alligevel' : 'Search with AI anyway'}
+          </button>
+        </div>
+      )}
+
+      {/* Søge-knap (idle state — kun når ingen community-resultater) */}
+      {!showCommunity && !communityLoading && !hasSearched && !loading && (
         <div>
           <p className="text-xs text-slate-400 mb-3">
             {da

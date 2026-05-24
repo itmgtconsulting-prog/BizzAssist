@@ -16,6 +16,7 @@ import { logger } from '@/app/lib/logger';
 import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import type { DiagramNode, DiagramEdge, DiagramGraph } from '@/app/components/diagrams/DiagramData';
+import { DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
 
 /** Max ejendomme per ejer-node i initial graf */
 const MAX_PROPS_PER_OWNER = 15;
@@ -2477,13 +2478,17 @@ async function enrichVirksomhedFejlcacheNodes(graph: DiagramGraph): Promise<void
   }
 }
 
+/**
+ * BIZZ-1826: Berig property-noder med adresser direkte via admin client +
+ * bfe_adresse_cache / DAWA. Erstatter den tidligere HTTP self-fetch til
+ * /api/bfe-addresses som fejlede på Vercel prod (cookie-forwarding til
+ * intern Lambda giver 401 → alle property-noder vises som "BFE XXXXX").
+ */
 async function enrichPropertyNodes(
   graph: DiagramGraph,
-  host: string,
-  cookie: string
+  admin: ReturnType<typeof createAdminClient>
 ): Promise<void> {
   const propNodes = graph.nodes.filter((n) => n.type === 'property' && n.bfeNummer != null);
-  // BIZZ-1349: Saml også BFE-numre fra overflow items
   const overflowNodes = graph.nodes.filter((n) => n.overflowItems && n.overflowItems.length > 0);
   const overflowBfes = overflowNodes.flatMap((n) =>
     (n.overflowItems ?? []).filter((i) => i.bfeNummer).map((i) => i.bfeNummer!)
@@ -2492,38 +2497,123 @@ async function enrichPropertyNodes(
   if (allBfes.length === 0) return;
 
   try {
-    const res = await fetch(`${host}/api/bfe-addresses?bfes=${allBfes.join(',')}`, {
-      headers: { cookie },
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!res.ok) return;
-    const data: Record<
-      string,
-      {
-        adresse: string | null;
-        postnr: string | null;
-        by: string | null;
-        dawaId: string | null;
-        etage: string | null;
-        doer: string | null;
-      }
-    > = await res.json();
+    // Step 1: Batch-hent fra bfe_adresse_cache (lokal DB — hurtigst)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: cacheRows } = await (admin as any)
+      .from('bfe_adresse_cache')
+      .select('bfe_nummer, adresse, postnr, postnrnavn, dawa_id, etage, doer')
+      .in('bfe_nummer', allBfes.slice(0, 50));
 
-    /**
-     * Formatér adresse-label fra bfe-addresses response.
-     * BIZZ-1543: Brug mellemrum mellem adresse og etage (ikke komma).
-     * DiagramForce splitter label på komma for at lave linje 1 / linje 2.
-     * Med komma havnede etage/dør på linje 2 sammen med postnr+by, så to
-     * ejerlejligheder i samme opgang så identiske ud. Med space holdes
-     * "vejnavn nr. etage. dør" samlet på linje 1.
-     */
-    const fmtLabel = (info: {
+    type AdresseInfo = {
       adresse: string | null;
       postnr: string | null;
       by: string | null;
+      dawaId: string | null;
       etage: string | null;
       doer: string | null;
-    }): string | null => {
+    };
+    const adresseMap = new Map<number, AdresseInfo>();
+
+    for (const row of (cacheRows ?? []) as Array<{
+      bfe_nummer: number;
+      adresse: string | null;
+      postnr: string | null;
+      postnrnavn: string | null;
+      dawa_id: string | null;
+      etage: string | null;
+      doer: string | null;
+    }>) {
+      if (row.adresse) {
+        adresseMap.set(row.bfe_nummer, {
+          adresse: row.adresse,
+          postnr: row.postnr,
+          by: row.postnrnavn,
+          dawaId: row.dawa_id,
+          etage: row.etage,
+          doer: row.doer,
+        });
+      }
+    }
+
+    // Step 2: For BFE'er uden cache-hit → prøv bbr_ejendom_status → DAWA
+    const missingBfes = allBfes.filter((bfe) => !adresseMap.has(bfe));
+    if (missingBfes.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: bbrRows } = await (admin as any)
+        .from('bbr_ejendom_status')
+        .select('bfe_nummer, adgangsadresse_id')
+        .in('bfe_nummer', missingBfes.slice(0, 30))
+        .not('adgangsadresse_id', 'is', null);
+
+      const bbrMap = new Map<number, string>(
+        ((bbrRows ?? []) as Array<{ bfe_nummer: number; adgangsadresse_id: string }>).map((r) => [
+          r.bfe_nummer,
+          r.adgangsadresse_id,
+        ])
+      );
+
+      // DAWA batch (parallel, max 10 concurrent)
+      const dawaResolves = missingBfes.slice(0, 20).map(async (bfe) => {
+        const dawaAdId = bbrMap.get(bfe);
+        try {
+          let url: string;
+          if (dawaAdId) {
+            url = `${DAWA_BASE_URL}/adgangsadresser/${dawaAdId}`;
+          } else {
+            url = `${DAWA_BASE_URL}/bfe/${bfe}`;
+          }
+          const res = await fetch(url, {
+            headers: { Accept: 'application/json' },
+            signal: AbortSignal.timeout(3000),
+          });
+          if (!res.ok) return;
+          const json = await res.json();
+
+          if (dawaAdId) {
+            // adgangsadresser response
+            const adr = json as {
+              vejstykke?: { navn?: string };
+              husnr?: string;
+              postnummer?: { nr?: string; navn?: string };
+              id?: string;
+            };
+            if (adr.vejstykke?.navn) {
+              adresseMap.set(bfe, {
+                adresse: `${adr.vejstykke.navn} ${adr.husnr ?? ''}`.trim(),
+                postnr: adr.postnummer?.nr ?? null,
+                by: adr.postnummer?.navn ?? null,
+                dawaId: adr.id ?? dawaAdId,
+                etage: null,
+                doer: null,
+              });
+            }
+          } else {
+            // /bfe response
+            const bel = (json as { beliggenhedsadresse?: Record<string, string> })
+              .beliggenhedsadresse;
+            if (bel?.vejnavn) {
+              adresseMap.set(bfe, {
+                adresse: `${bel.vejnavn} ${bel.husnr ?? ''}`.trim(),
+                postnr: bel.postnr ?? null,
+                by: bel.postnrnavn ?? null,
+                dawaId: bel.id ?? null,
+                etage: bel.etage ?? null,
+                doer: bel.dør ?? null,
+              });
+            }
+          }
+        } catch {
+          // DAWA timeout — skip
+        }
+      });
+      await Promise.allSettled(dawaResolves);
+    }
+
+    /**
+     * Formatér adresse-label.
+     * BIZZ-1543: Brug mellemrum mellem adresse og etage (ikke komma).
+     */
+    const fmtLabel = (info: AdresseInfo): string | null => {
       if (!info.adresse) return null;
       const etageStr = info.etage ? ` ${info.etage}.` : '';
       const doerStr = info.doer ? ` ${info.doer}` : '';
@@ -2531,13 +2621,7 @@ async function enrichPropertyNodes(
       return `${info.adresse}${etageStr}${doerStr}${postStr}`;
     };
 
-    /**
-     * BIZZ-1542: Byg property-link med BFE-fallback for ejerlejligheder.
-     * For ejerlejligheder (har etage) bruger vi BFE-URL fremfor DAWA UUID,
-     * fordi DAWA UUID'er for enhedsadresser ikke kan resolves via
-     * /adgangsadresser → "Adresse ikke fundet". page.tsx resolver BFE→DAWA
-     * via bbr_ejendom_status eller jordstykker-chain.
-     */
+    /** BIZZ-1542: Byg property-link med BFE-fallback for ejerlejligheder. */
     const buildLink = (
       info: { etage: string | null; dawaId: string | null },
       bfeNummer: number | null
@@ -2549,11 +2633,8 @@ async function enrichPropertyNodes(
     };
 
     for (const node of propNodes) {
-      // BIZZ-1114: Skip noder der allerede har et client-supplied label (rootLabel)
-      // — undgå at overskrive korrekt adresse med forkert BFE→DAWA mapping
       if (node.label && !node.label.startsWith('BFE ')) continue;
-
-      const info = data[String(node.bfeNummer)];
+      const info = adresseMap.get(node.bfeNummer!);
       if (!info?.adresse) continue;
       node.label = fmtLabel(info) ?? node.label;
       if (info.postnr && info.by) {
@@ -2567,7 +2648,7 @@ async function enrichPropertyNodes(
     for (const node of overflowNodes) {
       for (const item of node.overflowItems ?? []) {
         if (!item.bfeNummer) continue;
-        const info = data[String(item.bfeNummer)];
+        const info = adresseMap.get(item.bfeNummer);
         if (!info) continue;
         const label = fmtLabel(info);
         if (label) item.label = label;
@@ -2672,8 +2753,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
     // BIZZ-1587: Berig fejlcachede person-enhedsnumre der faktisk er virksomheder
     await enrichVirksomhedFejlcacheNodes(graph);
 
-    // Berig property-noder med adresser (best-effort)
-    await enrichPropertyNodes(graph, reqHost, reqCookie);
+    // Berig property-noder med adresser (best-effort, direkte via admin client)
+    await enrichPropertyNodes(graph, admin);
 
     return NextResponse.json({ graph });
   } catch (err) {

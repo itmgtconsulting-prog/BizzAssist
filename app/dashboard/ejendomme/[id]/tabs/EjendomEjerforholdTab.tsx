@@ -14,7 +14,6 @@
 
 'use client';
 
-import { useState } from 'react';
 import { Building2 } from 'lucide-react';
 import EjendomAdministratorCard from '@/app/components/ejendomme/EjendomAdministratorCard';
 import EjendomEjerforeningFinder from '@/app/components/ejendomme/EjendomEjerforeningFinder';
@@ -141,8 +140,6 @@ export default function EjendomEjerforholdTab({
   diagramResolveLoader = false,
 }: Props) {
   const da = lang === 'da';
-  /** Sporer om EjendomAdministratorCard fandt en administrator. null = stadig loading. */
-  const [hasAdmin, setHasAdmin] = useState<boolean | null>(null);
 
   const t = {
     ownershipStructure: da ? 'Ejerstruktur' : 'Ownership structure',
@@ -168,13 +165,11 @@ export default function EjendomEjerforholdTab({
         if (!adminBfe) return null;
         return (
           <>
-            <EjendomAdministratorCard
-              bfeNummer={adminBfe}
-              lang={lang}
-              onAdminResolved={setHasAdmin}
-            />
-            {/* Vis AI-finder når ingen registreret admin og ejendommen er en ejerlejlighed */}
-            {hasAdmin === false && <EjendomEjerforeningFinder bfeNummer={adminBfe} lang={lang} />}
+            <EjendomAdministratorCard bfeNummer={adminBfe} lang={lang} />
+            {/* Vis AI-finder for ejerlejligheder — uanset om admin er arvet fra SFE */}
+            {bbrData?.ejerlejlighedBfe && (
+              <EjendomEjerforeningFinder bfeNummer={adminBfe} lang={lang} />
+            )}
           </>
         );
       })()}

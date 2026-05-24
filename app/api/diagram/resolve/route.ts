@@ -695,47 +695,86 @@ async function resolveCompanyGraph(
     }
   }
 
-  // 3b. BIZZ-1645: Ejerforening (FFO) — vis ejerlejligheder under SFE
-  // Når virksomheden er en ejerforening, tilføj ejerlejligheder som children
-  // af SFE-ejendommen for at vise ejendomsstrukturen.
+  // 3b. BIZZ-1645+1820: Ejerforening — vis administrerede ejerlejligheder
+  // For ejerforeninger (FFO/forening): find alle BFE'er i samme
+  // adresseområde via bfe_adresse_cache og vis som administrerede noder.
   if (
     company?.virksomhedsform?.toUpperCase().includes('FFO') ||
     company?.virksomhedsform?.toLowerCase().includes('forening')
   ) {
-    const sfeNodes = nodes.filter((n) => n.type === 'property' && n.bfeNummer);
-    for (const sfeNode of sfeNodes.slice(0, 3)) {
-      try {
+    try {
+      // Find adresseprefix fra de ejede BFE'er (fx "Skyttegårdsvej" fra "Skyttegårdsvej 9 kl.")
+      const ownedBfes = nodes
+        .filter((n) => n.type === 'property' && n.bfeNummer)
+        .map((n) => n.bfeNummer!)
+        .slice(0, 10);
+
+      if (ownedBfes.length > 0) {
+        // Hent adresser for ejede BFE'er
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: lejRows } = await (admin as any)
-          .from('ejf_ejerskab')
-          .select('bfe_nummer, ejer_navn, ejer_type, ejerandel_taeller, ejerandel_naevner')
-          .eq('status', 'gældende')
-          .neq('ejer_cvr', cvr)
-          .limit(20);
+        const { data: ownedAddrs } = await (admin as any)
+          .from('bfe_adresse_cache')
+          .select('adresse, postnr')
+          .in('bfe_nummer', ownedBfes);
 
-        // Filtrer til kun lejligheder under denne SFE (approximate: same BFE-range)
-        // Bedre approach: brug ejendom-struktur API, men det kræver DAWA lookup
-        // For nu: vis lejligheder fra ejf_ejerskab der er person-ejede
-        const personEjere = (lejRows ?? [])
-          .filter((r: Record<string, unknown>) => r.ejer_type === 'person')
-          .slice(0, 10);
+        // Find unikke vejnavne + postnr
+        const vejnavne = new Set<string>();
+        let postnr: string | null = null;
+        for (const a of (ownedAddrs ?? []) as Array<{ adresse: string; postnr: string }>) {
+          postnr = a.postnr;
+          const vej = a.adresse?.match(/^([A-Za-zÆØÅæøå\s]+)/)?.[1]?.trim();
+          if (vej) vejnavne.add(vej);
+        }
 
-        if (personEjere.length > 0) {
-          // Tilføj "X ejerlejligheder" status-node under SFE
-          const lejId = `lejligheder-${sfeNode.id}`;
-          if (!nodeIds.has(lejId)) {
-            nodes.push({
-              id: lejId,
-              label: `${personEjere.length} ejerlejligheder`,
-              type: 'status',
-            });
-            nodeIds.add(lejId);
-            edges.push({ from: sfeNode.id, to: lejId });
+        // Hent alle BFE'er på samme vejnavne + postnr
+        if (vejnavne.size > 0 && postnr) {
+          const likeFilters = [...vejnavne].map((v) => `adresse.ilike.${v}%`).join(',');
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: allBfes } = await (admin as any)
+            .from('bfe_adresse_cache')
+            .select('bfe_nummer, adresse')
+            .eq('postnr', postnr)
+            .or(likeFilters)
+            .not('bfe_nummer', 'in', `(${ownedBfes.join(',')})`)
+            .limit(50);
+
+          const adminBfes = (allBfes ?? []) as Array<{ bfe_nummer: number; adresse: string }>;
+          if (adminBfes.length > 0) {
+            for (const ab of adminBfes.slice(0, MAX_PROPS_PER_OWNER)) {
+              const propId = `bfe-admin-${ab.bfe_nummer}`;
+              if (nodeIds.has(propId)) continue;
+              nodes.push({
+                id: propId,
+                label: ab.adresse || `BFE ${ab.bfe_nummer}`,
+                sublabel: 'Administreret',
+                type: 'property',
+                bfeNummer: ab.bfe_nummer,
+              });
+              nodeIds.add(propId);
+              edges.push({ from: mainId, to: propId });
+            }
+            if (adminBfes.length > MAX_PROPS_PER_OWNER) {
+              const overflowId = `admin-overflow-${cvr}`;
+              nodes.push({
+                id: overflowId,
+                label: `+${adminBfes.length - MAX_PROPS_PER_OWNER} administrerede`,
+                type: 'property',
+                overflowItems: adminBfes.slice(MAX_PROPS_PER_OWNER).map((b) => ({
+                  bfeNummer: b.bfe_nummer,
+                  label: b.adresse || `BFE ${b.bfe_nummer}`,
+                })),
+              });
+              nodeIds.add(overflowId);
+              edges.push({ from: mainId, to: overflowId });
+            }
+            logger.log(
+              `[diagram] Ejerforening ${cvr}: ${adminBfes.length} administrerede BFE'er via adresse-match`
+            );
           }
         }
-      } catch {
-        /* non-fatal */
       }
+    } catch {
+      /* ejerforening admin lookup non-fatal */
     }
   }
 

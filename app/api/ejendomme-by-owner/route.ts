@@ -1666,13 +1666,14 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
 
                 if (ejerlav && matr) {
                   // Hent alle adresser på matriklen — inkl. ejerlejligheder med etage
-                  const adrRes = await fetchDawa(
-                    `${DAWA_BASE_URL}/adresser?ejerlavkode=${ejerlav}&matrikelnr=${encodeURIComponent(matr)}&format=json&struktur=mini&per_side=200`,
+                  // Brug direkte fetch (ikke fetchDawa) for at undgå DAWA
+                  // gateway HTML-redirect issues i Vercel serverless.
+                  const adrRes = await fetch(
+                    `https://api.dataforsyningen.dk/adresser?ejerlavkode=${ejerlav}&matrikelnr=${encodeURIComponent(matr)}&format=json&struktur=mini&per_side=200`,
                     {
-                      signal: AbortSignal.timeout(8000),
+                      signal: AbortSignal.timeout(10000),
                       headers: { Accept: 'application/json' },
-                    },
-                    { caller: 'ejendomme-by-owner.sfe-adresser' }
+                    }
                   );
                   if (adrRes.ok) {
                     const contentType = adrRes.headers.get('content-type') ?? '';
@@ -1693,10 +1694,12 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
                       adgangsadresseid: string;
                     }>;
                     logger.log(
-                      `[ejendomme-by-owner] SFE ${sfe.bfeNummer}: DAWA returned ${adresser.length} adresser for matrikel ${ejerlav}/${matr}`
+                      `[ejendomme-by-owner] SFE ${sfe.bfeNummer}: DAWA returned ${Array.isArray(adresser) ? adresser.length : 'non-array'} adresser for matrikel ${ejerlav}/${matr}. First: ${JSON.stringify(adresser?.[0] ?? null).slice(0, 120)}`
                     );
                     // Filtrer til adresser med etage (= ejerlejligheder)
-                    const ejlAdresser = adresser.filter((a) => a.etage);
+                    const ejlAdresser = Array.isArray(adresser)
+                      ? adresser.filter((a) => a.etage)
+                      : [];
                     for (const a of ejlAdresser) {
                       childEjendomme.push({
                         bfe_nummer: 0, // Ukendt BFE — bruger dawaId til navigation

@@ -185,13 +185,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       .eq('status', 'gældende')
       .limit(200);
 
-    // Tilføj også ejede ejendomme fra ejf_ejerskab
+    // Tilføj også ejede ejendomme fra ejf_ejerskab (gældende + historisk)
+    // Historiske records fanger ejendomme der tidligere var registreret under foreningen
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: ejerRows } = await (admin as any)
       .from('ejf_ejerskab')
       .select('bfe_nummer')
       .eq('ejer_cvr', cvr)
-      .eq('status', 'gældende')
       .limit(200);
 
     const adminBfes = new Set<number>();
@@ -240,8 +240,51 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ candidates: [] });
     }
 
-    // Find kandidater
+    // Find kandidater via adresse-clusters
     const candidates = await findCandidates(clusters, adminBfes, admin);
+
+    // Fallback: parse husnummer-ranges fra foreningens navn og søg direkte.
+    // Eksempel: "Skyttegårdsvej 1-11 Vigerslevvej 144-148" → søg BFE'er
+    // på Skyttegårdsvej 1-11 og Vigerslevvej 144-148.
+    if (candidates.length === 0) {
+      const rangePattern =
+        /([A-ZÆØÅ][a-zæøåé]+(?:gade|vej|allé|stræde|plads|vænge|park|gård)\w*)\s+(\d+)(?:\s*-\s*(\d+))?/gi;
+      let rm: RegExpExecArray | null;
+      const seenBfes = new Set(candidates.map((c) => c.bfe_nummer));
+      while ((rm = rangePattern.exec(virkNavn)) !== null) {
+        const street = rm[1];
+        const lo = Number(rm[2]);
+        const hi = rm[3] ? Number(rm[3]) : lo;
+        // Søg alle BFE'er på denne gade i postnr
+        const pnr = postnrFromClusters ?? '0000';
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: rangeRows } = await (admin as any)
+          .from('bfe_adresse_cache')
+          .select('bfe_nummer, adresse, postnr, postnrnavn')
+          .ilike('adresse', `${street}%`)
+          .eq('postnr', pnr)
+          .limit(200);
+
+        for (const row of (rangeRows ?? []) as Array<{
+          bfe_nummer: number;
+          adresse: string;
+          postnr: string;
+          postnrnavn: string | null;
+        }>) {
+          if (adminBfes.has(row.bfe_nummer) || seenBfes.has(row.bfe_nummer)) continue;
+          // Check om husnr er i range
+          const hnrMatch = row.adresse.match(/\s+(\d+)/);
+          if (hnrMatch) {
+            const hnr = Number(hnrMatch[1]);
+            if (hnr >= lo && hnr <= hi) {
+              candidates.push(row);
+              seenBfes.add(row.bfe_nummer);
+            }
+          }
+        }
+      }
+    }
+
     if (candidates.length === 0) {
       return NextResponse.json({ candidates: [] });
     }

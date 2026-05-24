@@ -40,6 +40,8 @@ interface Props {
   bfeNummer: number | string;
   /** 'da' | 'en' — bilingual */
   lang?: 'da' | 'en';
+  /** Called when admin-lookup completes — true if admin found, false if none */
+  onAdminResolved?: (hasAdmin: boolean) => void;
 }
 
 /**
@@ -72,7 +74,11 @@ async function fetchCvrName(cvr: string): Promise<string | null> {
   }
 }
 
-export default function EjendomAdministratorCard({ bfeNummer, lang = 'da' }: Props) {
+export default function EjendomAdministratorCard({
+  bfeNummer,
+  lang = 'da',
+  onAdminResolved,
+}: Props) {
   const [loading, setLoading] = useState(true);
   const [admins, setAdmins] = useState<AdministratorInfo[]>([]);
   const [cvrNames, setCvrNames] = useState<Record<string, string>>({});
@@ -87,7 +93,10 @@ export default function EjendomAdministratorCard({ bfeNummer, lang = 'da' }: Pro
         const res = await fetch(`/api/ejendomsadmin?bfeNummer=${bfeNummer}`, {
           credentials: 'include',
         });
-        if (!res.ok || !active) return;
+        if (!res.ok || !active) {
+          if (active) onAdminResolved?.(false);
+          return;
+        }
         const data = (await res.json()) as {
           administratorer?: AdministratorInfo[];
           arvFraSfeBfe?: number | null;
@@ -96,6 +105,10 @@ export default function EjendomAdministratorCard({ bfeNummer, lang = 'da' }: Pro
         const list = data.administratorer ?? [];
         setAdmins(list);
         setArvFraSfeBfe(data.arvFraSfeBfe ?? null);
+
+        // Rapportér til parent om admin blev fundet
+        const aktiveList = list.filter((a: AdministratorInfo) => a.status !== 'historisk');
+        onAdminResolved?.(aktiveList.length > 0);
 
         // Slå CVR-navne op parallelt
         const cvrs = Array.from(
@@ -116,6 +129,7 @@ export default function EjendomAdministratorCard({ bfeNummer, lang = 'da' }: Pro
           '[EjendomAdministratorCard] fetch fejl:',
           err instanceof Error ? err.message : err
         );
+        onAdminResolved?.(false);
       } finally {
         if (active) setLoading(false);
       }

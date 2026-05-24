@@ -28,11 +28,15 @@ import { fetchDawa } from '@/app/lib/dawa';
 
 // ─── Query param validation ─────────────────────────────────────────────────
 
-const strukturQuerySchema = z.object({
-  ejerlavKode: z.string().regex(/^\d+$/, 'ejerlavKode skal være et heltal'),
-  matrikelnr: z.string().min(1, 'matrikelnr er påkrævet'),
-  sfeBfe: z.coerce.number().int().positive().optional(),
-});
+const strukturQuerySchema = z
+  .object({
+    ejerlavKode: z.string().regex(/^\d+$/).optional(),
+    matrikelnr: z.string().min(1).optional(),
+    sfeBfe: z.coerce.number().int().positive().optional(),
+  })
+  .refine((d) => (d.ejerlavKode && d.matrikelnr) || d.sfeBfe, {
+    message: 'Enten ejerlavKode+matrikelnr eller sfeBfe er påkrævet',
+  });
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -387,7 +391,38 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
 
   const parsed = parseQuery(request, strukturQuerySchema);
   if (!parsed.success) return parsed.response as NextResponse<EjendomStrukturResponse>;
-  const { ejerlavKode, matrikelnr, sfeBfe } = parsed.data;
+  let { ejerlavKode, matrikelnr } = parsed.data;
+  const { sfeBfe } = parsed.data;
+
+  // BIZZ-1834: BFE-only mode — resolve ejerlavKode+matrikelnr via DAWA jordstykke
+  if (!ejerlavKode && !matrikelnr && sfeBfe) {
+    try {
+      const bfeRes = await fetchDawa(
+        `https://api.dataforsyningen.dk/jordstykker?bfenummer=${sfeBfe}&format=json`,
+        { signal: AbortSignal.timeout(5000) },
+        { caller: 'ejendom-struktur.bfe-resolve' }
+      );
+      if (bfeRes.ok) {
+        const jordstykker = (await bfeRes.json()) as Array<{
+          ejerlav?: { kode?: number };
+          matrikelnr?: string;
+        }>;
+        if (jordstykker.length > 0) {
+          ejerlavKode = String(jordstykker[0].ejerlav?.kode ?? '');
+          matrikelnr = jordstykker[0].matrikelnr ?? '';
+        }
+      }
+    } catch {
+      /* DAWA jordstykke resolve is non-critical */
+    }
+
+    if (!ejerlavKode || !matrikelnr) {
+      return NextResponse.json(
+        { tree: null, fejl: 'Kunne ikke resolve ejerlavKode+matrikelnr fra BFE' },
+        { status: 200 }
+      );
+    }
+  }
 
   if ((!CERT_PATH && !CERT_B64) || !CERT_PASSWORD) {
     return NextResponse.json(
@@ -400,8 +435,12 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
     // ── Trin 1: Hent alle ejendomme via Tinglysning ──
     // BIZZ-1218: Søg BÅDE på matrikel OG SFE BFE for at fange ejendomme
     // på flere matrikler under samme SFE (fx 62A, 62B, 62C).
-    const matrikelPath = `/ejendom/landsejerlavmatrikel?landsejerlavid=${encodeURIComponent(ejerlavKode)}&matrikelnr=${encodeURIComponent(matrikelnr)}`;
-    const searches: Promise<{ status: number; body: string }>[] = [tlFetch(matrikelPath)];
+    const searches: Promise<{ status: number; body: string }>[] = [];
+    // Matrikel-søgning (kun hvis ejerlavKode + matrikelnr er tilgængelige)
+    if (ejerlavKode && matrikelnr) {
+      const matrikelPath = `/ejendom/landsejerlavmatrikel?landsejerlavid=${encodeURIComponent(ejerlavKode)}&matrikelnr=${encodeURIComponent(matrikelnr)}`;
+      searches.push(tlFetch(matrikelPath));
+    }
     // Hvis vi kender SFE BFE, søg også direkte på den for at fange alle underenheder
     if (sfeBfe) {
       searches.push(tlFetch(`/ejendom/hovednoteringsnummer?hovednoteringsnummer=${sfeBfe}`));
@@ -429,7 +468,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
     if (items.length === 0) {
       try {
         const dawaRes = await fetch(
-          `https://api.dataforsyningen.dk/adgangsadresser?ejerlavkode=${ejerlavKode}&matrikelnr=${encodeURIComponent(matrikelnr)}&per_side=5`,
+          `https://api.dataforsyningen.dk/adgangsadresser?ejerlavkode=${ejerlavKode ?? ''}&matrikelnr=${encodeURIComponent(matrikelnr ?? '')}&per_side=5`,
           { signal: AbortSignal.timeout(5000) }
         );
         if (dawaRes.ok) {

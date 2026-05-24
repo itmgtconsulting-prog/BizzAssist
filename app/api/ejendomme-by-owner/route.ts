@@ -1621,7 +1621,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
             .trim();
           if (!gadenavn || !sfe.postnr) continue;
 
-          // Søg ejerlejligheder på samme gade+postnr med etage
+          // Strategy 1: Søg ejerlejligheder i bfe_adresse_cache (hurtigst)
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const { data: childRows } = await (admin as any)
             .from('bfe_adresse_cache')
@@ -1633,7 +1633,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
             .not('etage', 'is', null)
             .limit(100);
 
-          for (const child of (childRows ?? []) as Array<{
+          const childEjendomme = (childRows ?? []) as Array<{
             bfe_nummer: number;
             adresse: string;
             etage: string | null;
@@ -1644,7 +1644,78 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
             kommune_kode: string | null;
             dawa_id: string | null;
             ejendomstype: string | null;
-          }>) {
+          }>;
+
+          // Strategy 2: Hvis cache er tom, hent via DAWA jordstykke → adresser
+          // Finder ejerlejligheder under SFE'en via matrikel-opslag
+          if (childEjendomme.length === 0 && sfe.bfeNummer > 0) {
+            try {
+              // Find jordstykke for SFE BFE → ejerlavKode + matrikelnr
+              const jordRes = await fetchDawa(
+                `${DAWA_BASE_URL}/jordstykker?bfenummer=${sfe.bfeNummer}&format=json`,
+                { signal: AbortSignal.timeout(5000) },
+                { caller: 'ejendomme-by-owner.sfe-jordstykke' }
+              );
+              if (jordRes.ok) {
+                const jordstykker = (await jordRes.json()) as Array<{
+                  ejerlav?: { kode?: number };
+                  matrikelnr?: string;
+                }>;
+                const ejerlav = jordstykker[0]?.ejerlav?.kode;
+                const matr = jordstykker[0]?.matrikelnr;
+
+                if (ejerlav && matr) {
+                  // Hent alle adresser på matriklen — inkl. ejerlejligheder med etage
+                  const adrRes = await fetchDawa(
+                    `${DAWA_BASE_URL}/adresser?ejerlavkode=${ejerlav}&matrikelnr=${encodeURIComponent(matr)}&format=json&struktur=mini`,
+                    { signal: AbortSignal.timeout(8000) },
+                    { caller: 'ejendomme-by-owner.sfe-adresser' }
+                  );
+                  if (adrRes.ok) {
+                    const adresser = (await adrRes.json()) as Array<{
+                      id: string;
+                      vejnavn: string;
+                      husnr: string;
+                      etage: string | null;
+                      dør: string | null;
+                      postnr: string;
+                      postnrnavn: string;
+                      kommunekode: string;
+                      adgangsadresseid: string;
+                    }>;
+                    // Filtrer til adresser med etage (= ejerlejligheder)
+                    const ejlAdresser = adresser.filter((a) => a.etage);
+                    for (const a of ejlAdresser) {
+                      childEjendomme.push({
+                        bfe_nummer: 0, // Ukendt BFE — bruger dawaId til navigation
+                        adresse: `${a.vejnavn} ${a.husnr}`,
+                        etage: a.etage,
+                        doer: a.dør,
+                        postnr: a.postnr,
+                        postnrnavn: a.postnrnavn,
+                        kommune: null,
+                        kommune_kode: a.kommunekode,
+                        dawa_id: a.id,
+                        ejendomstype: 'Ejerlejlighed',
+                      });
+                    }
+                    if (ejlAdresser.length > 0) {
+                      logger.log(
+                        `[ejendomme-by-owner] SFE ${sfe.bfeNummer}: DAWA found ${ejlAdresser.length} ejerlejligheder via matrikel ${ejerlav}/${matr}`
+                      );
+                    }
+                  }
+                }
+              }
+            } catch (err) {
+              logger.warn(
+                '[ejendomme-by-owner] SFE DAWA fallback fejl:',
+                err instanceof Error ? err.message : err
+              );
+            }
+          }
+
+          for (const child of childEjendomme) {
             // Undgå duplikater
             if (ejendomme.some((e) => e.bfeNummer === child.bfe_nummer)) continue;
             ejendomme.push({

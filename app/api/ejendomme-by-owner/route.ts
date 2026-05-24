@@ -1667,11 +1667,20 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
                 if (ejerlav && matr) {
                   // Hent alle adresser på matriklen — inkl. ejerlejligheder med etage
                   const adrRes = await fetchDawa(
-                    `${DAWA_BASE_URL}/adresser?ejerlavkode=${ejerlav}&matrikelnr=${encodeURIComponent(matr)}&format=json&struktur=mini`,
-                    { signal: AbortSignal.timeout(8000) },
+                    `${DAWA_BASE_URL}/adresser?ejerlavkode=${ejerlav}&matrikelnr=${encodeURIComponent(matr)}&format=json&struktur=mini&per_side=200`,
+                    {
+                      signal: AbortSignal.timeout(8000),
+                      headers: { Accept: 'application/json' },
+                    },
                     { caller: 'ejendomme-by-owner.sfe-adresser' }
                   );
                   if (adrRes.ok) {
+                    const contentType = adrRes.headers.get('content-type') ?? '';
+                    if (!contentType.includes('json')) {
+                      logger.warn(
+                        `[ejendomme-by-owner] SFE DAWA adresser returned non-JSON: ${contentType}`
+                      );
+                    }
                     const adresser = (await adrRes.json()) as Array<{
                       id: string;
                       vejnavn: string;
@@ -1683,6 +1692,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
                       kommunekode: string;
                       adgangsadresseid: string;
                     }>;
+                    logger.log(
+                      `[ejendomme-by-owner] SFE ${sfe.bfeNummer}: DAWA returned ${adresser.length} adresser for matrikel ${ejerlav}/${matr}`
+                    );
                     // Filtrer til adresser med etage (= ejerlejligheder)
                     const ejlAdresser = adresser.filter((a) => a.etage);
                     for (const a of ejlAdresser) {

@@ -482,12 +482,17 @@ export async function GET(req: NextRequest) {
           const id = enhNr ? `en-${enhNr}` : `person-${nodes.length}`;
           if (!seenIds.has(id)) {
             seenIds.add(id);
+            /* BIZZ-1826: Person-ejere uden enhedsNummer (fra ejf_ejerskab cache)
+               får et søge-link fallback så diagrammet også linker til personen. */
+            const personLink = enhNr
+              ? `/dashboard/owners/${enhNr}`
+              : `/dashboard?q=${encodeURIComponent(navn)}`;
             nodes.push({
               id,
               label: navn,
               type: type === 'person' ? 'person' : 'status',
               enhedsNummer: enhNr ?? undefined,
-              link: enhNr ? `/dashboard/owners/${enhNr}` : undefined,
+              link: type === 'person' ? personLink : undefined,
             });
           }
           edges.push({ from: id, to: mainId, ejerandel: andel ?? undefined });

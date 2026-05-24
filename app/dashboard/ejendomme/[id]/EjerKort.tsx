@@ -112,11 +112,16 @@ export default function EjerKort({
                     ejer.type === 'selskab'
                       ? 'text-blue-300 hover:text-blue-200'
                       : 'text-purple-300 hover:text-purple-200';
+                  /* BIZZ-1826: Person-ejere uden enhedsNummer (typisk fra
+                     ejf_ejerskab cache) får et søge-link som fallback, så
+                     navnet altid er klikbart. */
                   const href = ejer.cvr
                     ? `/dashboard/companies/${ejer.cvr}`
                     : ejer.enhedsNummer
                       ? `/dashboard/owners/${ejer.enhedsNummer}`
-                      : null;
+                      : ejer.type === 'person' && ejer.navn
+                        ? `/dashboard?q=${encodeURIComponent(ejer.navn)}`
+                        : null;
 
                   return (
                     <tr key={i} className="hover:bg-slate-700/10">

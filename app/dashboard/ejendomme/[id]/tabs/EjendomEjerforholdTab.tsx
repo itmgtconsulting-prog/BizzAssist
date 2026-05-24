@@ -394,8 +394,9 @@ export default function EjendomEjerforholdTab({
                         )}
                       </>
                     )}
-                    {/* BIZZ-1808: Vis kun diagram når mindst én ejer er virksomhed */}
-                    {chainEjerDetaljer.some((e) => e.type === 'selskab') && (
+                    {/* BIZZ-1826: Vis diagram for alle ejendomme med mindst én ejer
+                        (ikke kun virksomheds-ejere som BIZZ-1808 begrænsede til) */}
+                    {chainEjerDetaljer.some((e) => e.type !== 'status') && (
                       <>
                         {diagramResolveLoader ? (
                           <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />
@@ -423,11 +424,10 @@ export default function EjendomEjerforholdTab({
           if (!bfeForDiagram) return null;
 
           /**
-           * BIZZ-1808: Bestem om ejendommen har mindst én virksomheds-ejer.
-           * Diagrammet er kun relevant når der er selskaber i ejerkæden —
-           * for person-ejede ejendomme viser vi kun EjerKort (ejer-tabel).
+           * BIZZ-1826: Bestem om ejendommen har mindst én reel ejer (person eller selskab).
+           * Diagrammet vises for alle ejendomme med ejere — ikke kun virksomheds-ejede.
            */
-          const harVirksomhedsEjer = chainEjerDetaljer.some((e) => e.type === 'selskab');
+          const harReelEjer = chainEjerDetaljer.some((e) => e.type !== 'status');
 
           return (
             <div className="space-y-4">
@@ -455,10 +455,9 @@ export default function EjendomEjerforholdTab({
                   )}
                 </>
               )}
-              {/* BIZZ-1808: Vis kun DiagramV2 når ejendommen har mindst én
-                  virksomheds-ejer. Person-ejede ejendomme viser kun EjerKort
-                  ovenfor — diagrammet tilføjer ingen værdi og kan fejle. */}
-              {harVirksomhedsEjer && (
+              {/* BIZZ-1826: Vis DiagramV2 for alle ejendomme med mindst én
+                  reel ejer (person eller selskab). */}
+              {harReelEjer && (
                 <>
                   {diagramResolveLoader ? (
                     <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />

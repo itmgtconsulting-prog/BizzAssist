@@ -173,8 +173,34 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       cvrCounts.set(row.ejer_cvr, (cvrCounts.get(row.ejer_cvr) ?? 0) + 1);
     }
 
+    // ── 4b. Søg ejerforeninger via navn der matcher gadenavn ────
+    // Stærkeste signal: foreningens navn indeholder gadenavn+husnumre.
+    // Eksempel: "Ejerforeningen Skyttegårdsvej 1-11 Vigerslevvej 144-148"
+    // matcher for en ejendom på Vigerslevvej 146.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: navnMatchRows } = await (admin as any)
+      .from('cvr_virksomhed')
+      .select('cvr, navn')
+      .ilike('navn', `%${gadenavn}%`)
+      .limit(50);
+
+    for (const row of (navnMatchRows ?? []) as Array<{ cvr: string; navn: string }>) {
+      const navnLower = row.navn.toLowerCase();
+      // Skal være en forening (ejerforening, e/f, a/b, andelsbolig osv.)
+      if (
+        navnLower.includes('ejerforening') ||
+        navnLower.includes('e/f') ||
+        navnLower.includes('a/b') ||
+        navnLower.includes('andelsbolig') ||
+        navnLower.includes('boligforening')
+      ) {
+        // Høj score — navn matcher direkte
+        cvrCounts.set(row.cvr, (cvrCounts.get(row.cvr) ?? 0) + 10);
+      }
+    }
+
     if (cvrCounts.size === 0) {
-      // Ingen administratorer/ejere fundet i nærområdet — cache tomt resultat
+      // Ingen administratorer/ejere/navnematch fundet — cache tomt resultat
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       void (admin as any)
         .from('ai_find_ejerforening_cache')
@@ -186,7 +212,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ candidates: [] });
     }
 
-    // ── 4b. Filtrér til ejerforeninger (FFO/forening) ───────────
+    // ── 4c. Filtrér til ejerforeninger (FFO/forening) ───────────
     // Ikke alle CVR'er er ejerforeninger — filtrér via cvr_virksomhed
     const allCvrList = [...cvrCounts.keys()];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

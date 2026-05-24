@@ -1327,15 +1327,25 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       cvrResults.some((r) => r?.authError === true) ||
       personResults.some((r) => r?.authError === true);
     if (harAuthFejl) {
-      return NextResponse.json({
-        ejendomme: [],
-        totalBfe: 0,
-        offset,
-        limit,
-        manglerNoegle: false,
-        manglerAdgang: true,
-        fejl: null,
-      });
+      // BIZZ-1832: Hvis EJF returnerer 403 men vi har stale cache-data,
+      // brug den i stedet for at returnere tomt. Stale data er bedre end
+      // ingen data — brugeren ser ejendomme med lidt forældet info.
+      if (bfeTilCvr.size > 0) {
+        logger.log(
+          `[ejendomme-by-owner] EJF 403 but stale cache has ${bfeTilCvr.size} BFE — using stale cache`
+        );
+        // Fortsæt til trin 2 med stale cache-data (skip EJF results)
+      } else {
+        return NextResponse.json({
+          ejendomme: [],
+          totalBfe: 0,
+          offset,
+          limit,
+          manglerNoegle: false,
+          manglerAdgang: true,
+          fejl: null,
+        });
+      }
     }
 
     /* Saml unikke BFE-numre med tilhørende ejer-ID + ejer-andel */

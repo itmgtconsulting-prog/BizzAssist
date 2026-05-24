@@ -177,26 +177,50 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Stærkeste signal: foreningens navn indeholder gadenavn+husnumre.
     // Eksempel: "Ejerforeningen Skyttegårdsvej 1-11 Vigerslevvej 144-148"
     // matcher for en ejendom på Vigerslevvej 146.
+    // Filtrerer direkte i query til foreninger (ejerforening/e/f/a/b/andelsbolig)
+    // for at undgå at irrelevante virksomheder fylder limit op.
+    const foreningPatterns = [
+      `navn.ilike.%ejerforening%${gadenavn}%`,
+      `navn.ilike.%E/F %${gadenavn}%`,
+      `navn.ilike.%A/B %${gadenavn}%`,
+      `navn.ilike.%andelsbolig%${gadenavn}%`,
+      `navn.ilike.%boligforening%${gadenavn}%`,
+      // Omvendt rækkefølge: gade først, forening-ord efter
+      `navn.ilike.%${gadenavn}%ejerforening%`,
+      `navn.ilike.%${gadenavn}%forening%`,
+    ].join(',');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: navnMatchRows } = await (admin as any)
       .from('cvr_virksomhed')
       .select('cvr, navn')
-      .ilike('navn', `%${gadenavn}%`)
+      .or(foreningPatterns)
       .limit(50);
 
+    // Ekstrahér husnummer fra adressen for range-matching
+    const husnrMatch = adresse.match(/\s+(\d+)/);
+    const husnr = husnrMatch ? Number(husnrMatch[1]) : null;
+
     for (const row of (navnMatchRows ?? []) as Array<{ cvr: string; navn: string }>) {
-      const navnLower = row.navn.toLowerCase();
-      // Skal være en forening (ejerforening, e/f, a/b, andelsbolig osv.)
-      if (
-        navnLower.includes('ejerforening') ||
-        navnLower.includes('e/f') ||
-        navnLower.includes('a/b') ||
-        navnLower.includes('andelsbolig') ||
-        navnLower.includes('boligforening')
-      ) {
-        // Høj score — navn matcher direkte
-        cvrCounts.set(row.cvr, (cvrCounts.get(row.cvr) ?? 0) + 10);
+      let score = 5; // Base-score for navne-match
+
+      // Bonus: check om foreningens husnummer-range inkluderer vores husnr.
+      // Eksempel: "Vigerslevvej 144-148" og husnr=146 → match
+      if (husnr !== null) {
+        const rangePattern = new RegExp(
+          gadenavn.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s+(\\d+)(?:\\s*-\\s*(\\d+))?',
+          'i'
+        );
+        const rm = row.navn.match(rangePattern);
+        if (rm) {
+          const lo = Number(rm[1]);
+          const hi = rm[2] ? Number(rm[2]) : lo;
+          if (husnr >= lo && husnr <= hi) {
+            score = 20; // Stærkt match — husnummer er i range
+          }
+        }
       }
+
+      cvrCounts.set(row.cvr, (cvrCounts.get(row.cvr) ?? 0) + score);
     }
 
     if (cvrCounts.size === 0) {

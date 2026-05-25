@@ -32,6 +32,7 @@ import {
   ChevronDown,
   ChevronRight,
   Trash2,
+  Sparkles,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { useSubscription } from '@/app/context/SubscriptionContext';
@@ -1384,6 +1385,83 @@ function AnalyseSection({
                 ))}
               </div>
             )}
+          </div>
+
+          {/* BIZZ-1833: Standard forsikringsbetingelser sektion */}
+          <div className="pt-3 border-t border-white/5">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-slate-300 text-xs font-semibold uppercase tracking-wide">
+                {da ? 'Standard forsikringsbetingelser' : 'Standard insurance terms'}
+              </h4>
+            </div>
+            <p className="text-slate-500 text-[10px] mb-2">
+              {da
+                ? 'Tilføj generelle vilkår fra forsikringsselskabet til analysen. AI kan finde dem automatisk.'
+                : 'Add general terms from the insurance company to the analysis. AI can find them automatically.'}
+            </p>
+            <div className="flex gap-2 items-end">
+              <div className="flex-1">
+                <label className="text-slate-500 text-[10px] block mb-1">
+                  {da ? 'Forsikringsselskab' : 'Insurance company'}
+                </label>
+                <input
+                  type="text"
+                  placeholder={
+                    da ? 'Fx Topdanmark, Tryg, Codan...' : 'E.g. Topdanmark, Tryg, Codan...'
+                  }
+                  className="w-full bg-slate-900/60 border border-slate-700/50 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:border-teal-500/50 focus:outline-none"
+                  id="std-selskab-input"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  const input = document.getElementById('std-selskab-input') as HTMLInputElement;
+                  const selskab = input?.value?.trim();
+                  if (!selskab) {
+                    input?.focus();
+                    return;
+                  }
+                  input.disabled = true;
+                  try {
+                    const res = await fetch('/api/forsikring/standard-docs/discover', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ selskab, kategori: 'ejendom' }),
+                    });
+                    if (res.ok) {
+                      const data = (await res.json()) as {
+                        results: Array<{
+                          titel: string;
+                          source_url: string;
+                          confidence: string;
+                        }>;
+                      };
+                      if (data.results?.length > 0) {
+                        alert(
+                          `${da ? 'Fundet' : 'Found'} ${data.results.length} ${da ? 'standard betingelser' : 'standard terms'}:\n${data.results.map((r) => `• ${r.titel}\n  ${r.source_url}`).join('\n\n')}`
+                        );
+                      } else {
+                        alert(
+                          da
+                            ? 'Ingen standard betingelser fundet for ' + selskab
+                            : 'No standard terms found for ' + selskab
+                        );
+                      }
+                    }
+                  } catch {
+                    alert(da ? 'Fejl ved søgning.' : 'Search error.');
+                  } finally {
+                    input.disabled = false;
+                  }
+                }}
+                disabled={running}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-600/20 hover:bg-teal-600/30 border border-teal-500/30 text-teal-300 text-xs font-medium transition-colors disabled:opacity-40 shrink-0"
+              >
+                <Sparkles size={12} />
+                {da ? 'Find via AI' : 'Find via AI'}
+              </button>
+            </div>
           </div>
         </div>
       )}

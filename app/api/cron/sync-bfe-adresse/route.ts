@@ -41,19 +41,42 @@ export async function GET(request: NextRequest) {
   const BATCH_LIMIT = 50;
 
   try {
-    // Find BFE'er i ejf_ejerskab uden cached adresse
-    const { data: allEjf } = await admin
+    // Find BFE'er i ejf_ejerskab + ejf_administrator uden cached adresse.
+    // BIZZ-1841: Inkludér historisk ejerskab og administrator-records —
+    // SFE-BFE'er har ofte kun historisk ejerskab eller administrator-data.
+    const { data: ejfGaeldende } = await admin
       .from('ejf_ejerskab')
       .select('bfe_nummer')
       .eq('status', 'gældende')
       .limit(5000);
+    const { data: ejfHistorisk } = await admin
+      .from('ejf_ejerskab')
+      .select('bfe_nummer')
+      .eq('status', 'historisk')
+      .limit(5000);
+    const { data: adminGaeldende } = await admin
+      .from('ejf_administrator')
+      .select('bfe_nummer')
+      .not('virksomhed_cvr', 'is', null)
+      .limit(5000);
 
-    const { data: allCached } = await admin.from('bfe_adresse_cache').select('bfe_nummer');
+    const allBfeSet = new Set<number>();
+    for (const r of (ejfGaeldende ?? []) as Array<{ bfe_nummer: number }>)
+      allBfeSet.add(r.bfe_nummer);
+    for (const r of (ejfHistorisk ?? []) as Array<{ bfe_nummer: number }>)
+      allBfeSet.add(r.bfe_nummer);
+    for (const r of (adminGaeldende ?? []) as Array<{ bfe_nummer: number }>)
+      allBfeSet.add(r.bfe_nummer);
 
-    const cachedSet = new Set((allCached ?? []).map((r: { bfe_nummer: number }) => r.bfe_nummer));
-    const missing = [...new Set((allEjf ?? []).map((r: { bfe_nummer: number }) => r.bfe_nummer))]
-      .filter((b) => !cachedSet.has(b))
-      .slice(0, BATCH_LIMIT);
+    // Find cached BFEs — inkl. dem med postnr=null (korrupt data der skal re-resolves)
+    const { data: allCached } = await admin.from('bfe_adresse_cache').select('bfe_nummer, postnr');
+
+    const cachedOkSet = new Set(
+      ((allCached ?? []) as Array<{ bfe_nummer: number; postnr: string | null }>)
+        .filter((r) => r.postnr !== null)
+        .map((r) => r.bfe_nummer)
+    );
+    const missing = [...allBfeSet].filter((b) => !cachedOkSet.has(b)).slice(0, BATCH_LIMIT);
 
     if (missing.length === 0) {
       return NextResponse.json({ synced: 0, message: 'Alle BFE-adresser er cached' });
@@ -157,6 +180,56 @@ export async function GET(request: NextRequest) {
               { onConflict: 'bfe_nummer' }
             );
             resolved++;
+            continue;
+          }
+        }
+
+        // Fallback 3: DAWA jordstykke — for SFE-BFE'er der ikke har
+        // beliggenhedsadresse (DAWA /bfe/ returnerer fejl for SFE'er).
+        // Via jordstykke finder vi matrikel → adresser → bruger første adresse.
+        const jordRes = await fetchDawa(
+          `${DAWA_BASE_URL}/jordstykker?bfenummer=${bfe}&format=json`,
+          { signal: AbortSignal.timeout(8000) },
+          { caller: 'cron.sync-bfe-adresse.jordstykke' }
+        );
+        if (jordRes.ok) {
+          const jordstykker = (await jordRes.json()) as Array<{
+            ejerlav?: { kode?: number };
+            matrikelnr?: string;
+          }>;
+          const ejerlav = jordstykker[0]?.ejerlav?.kode;
+          const matr = jordstykker[0]?.matrikelnr;
+          if (ejerlav && matr) {
+            const adrRes = await fetchDawa(
+              `${DAWA_BASE_URL}/adresser?ejerlavkode=${ejerlav}&matrikelnr=${encodeURIComponent(matr)}&format=json&struktur=mini&per_side=1`,
+              { signal: AbortSignal.timeout(8000) },
+              { caller: 'cron.sync-bfe-adresse.matrikel-adr' }
+            );
+            if (adrRes.ok) {
+              const adresser = (await adrRes.json()) as Array<{
+                vejnavn?: string;
+                husnr?: string;
+                postnr?: string;
+                postnrnavn?: string;
+                id?: string;
+              }>;
+              const a = adresser[0];
+              if (a?.vejnavn && a?.postnr) {
+                await admin.from('bfe_adresse_cache').upsert(
+                  {
+                    bfe_nummer: bfe,
+                    adresse: a.vejnavn,
+                    postnr: a.postnr,
+                    postnrnavn: a.postnrnavn ?? null,
+                    dawa_id: a.id ?? null,
+                    kilde: 'cron_jordstykke',
+                    sidst_opdateret: new Date().toISOString(),
+                  },
+                  { onConflict: 'bfe_nummer' }
+                );
+                resolved++;
+              }
+            }
           }
         }
       } catch {

@@ -183,7 +183,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             for (const js of jordstykker) {
               if (js.bfenummer && !naboBfes.includes(js.bfenummer)) {
                 naboBfes.push(js.bfenummer);
-                logger.info('[ai/find-ejerforening] DAWA SFE parent found:', js.bfenummer);
+                logger.log('[ai/find-ejerforening] DAWA SFE parent found:', js.bfenummer);
               }
             }
           } else {

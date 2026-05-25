@@ -161,6 +161,37 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       naboBfes.push(bfeNummer);
     }
 
+    // BIZZ-1841: DAWA jordstykke-baseret SFE parent lookup.
+    // En ejerlejlighed deler matrikel med sin SFE. Via DAWA adgangsadresse →
+    // jordstykke finder vi SFE-BFE'en, som kan have ejf_ejerskab/administrator-
+    // records for en ejerforening der ellers ikke dukker op i gadenavn-søgningen
+    // (f.eks. "Ejerforeningen Carlsberg Byen 1218n" på Thorvald Bindesbølls Plads).
+    try {
+      const dawaAdrRes = await fetch(
+        `https://api.dataforsyningen.dk/adgangsadresser?q=${encodeURIComponent(adresse)}&postnr=${postnr}&format=json&struktur=mini&per_side=1`,
+        { signal: AbortSignal.timeout(5000) }
+      );
+      if (dawaAdrRes.ok) {
+        const dawaAdresser = (await dawaAdrRes.json()) as Array<{ id: string }>;
+        if (dawaAdresser[0]?.id) {
+          const jordRes = await fetch(
+            `https://api.dataforsyningen.dk/jordstykker?adgangsadresseid=${dawaAdresser[0].id}&format=json`,
+            { signal: AbortSignal.timeout(5000) }
+          );
+          if (jordRes.ok) {
+            const jordstykker = (await jordRes.json()) as Array<{ bfenummer?: number }>;
+            for (const js of jordstykker) {
+              if (js.bfenummer && !naboBfes.includes(js.bfenummer)) {
+                naboBfes.push(js.bfenummer);
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      /* DAWA fallback — non-critical */
+    }
+
     if (naboBfes.length === 0) {
       return NextResponse.json({ candidates: [] });
     }

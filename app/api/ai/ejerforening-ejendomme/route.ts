@@ -218,6 +218,60 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Ekstrahér adresse-clusters fra registrerede ejendomme
     const clusters = await extractAddressClusters([...adminBfes], admin);
 
+    // BIZZ-1841: Når BFE'er har "adresse ukendt" i bfe_adresse_cache (typisk
+    // SFE-ejendomme), brug DAWA jordstykke-opslag til at finde adresser på
+    // matriklen. Eksempel: BFE 100077625 (SFE Carlsberg Byen matrikel 1218n)
+    // har ingen adresse i cache, men DAWA kender matriklen og dens lejligheder.
+    if (clusters.length === 0 && adminBfes.size > 0) {
+      try {
+        for (const bfe of [...adminBfes].slice(0, 5)) {
+          const jordRes = await fetch(
+            `https://api.dataforsyningen.dk/jordstykker?bfenummer=${bfe}&format=json`,
+            { signal: AbortSignal.timeout(5000) }
+          );
+          if (!jordRes.ok) continue;
+          const jordstykker = (await jordRes.json()) as Array<{
+            ejerlav?: { kode?: number };
+            matrikelnr?: string;
+          }>;
+          const ejerlav = jordstykker[0]?.ejerlav?.kode;
+          const matr = jordstykker[0]?.matrikelnr;
+          if (!ejerlav || !matr) continue;
+
+          const adrRes = await fetch(
+            `https://api.dataforsyningen.dk/adresser?ejerlavkode=${ejerlav}&matrikelnr=${encodeURIComponent(matr)}&format=json&struktur=mini&per_side=10`,
+            { signal: AbortSignal.timeout(5000) }
+          );
+          if (!adrRes.ok) continue;
+          const adresser = (await adrRes.json()) as Array<{
+            vejnavn: string;
+            husnr: string;
+            postnr: string;
+            postnrnavn: string;
+          }>;
+
+          // Byg clusters fra fundne adresser
+          const clusterMap = new Map<
+            string,
+            { gadenavn: string; postnr: string; adresser: string[] }
+          >();
+          for (const a of adresser) {
+            const key = `${a.vejnavn}|${a.postnr}`;
+            if (!clusterMap.has(key)) {
+              clusterMap.set(key, { gadenavn: a.vejnavn, postnr: a.postnr, adresser: [] });
+            }
+            clusterMap.get(key)!.adresser.push(`${a.vejnavn} ${a.husnr}`);
+          }
+          for (const c of clusterMap.values()) {
+            clusters.push(c);
+          }
+          if (clusters.length > 0) break;
+        }
+      } catch {
+        /* DAWA fallback — non-critical */
+      }
+    }
+
     // Udtræk gadenavne fra virksomhedsnavnet som ekstra clusters.
     // Eksempel: "Ejerforeningen Skyttegårdsvej 1-11 Vigerslevvej 144-148"
     // → ekstra clusters for "Skyttegårdsvej" og "Vigerslevvej" i samme postnr.

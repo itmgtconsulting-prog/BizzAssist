@@ -931,8 +931,30 @@ async function resolvePropertyGraph(
   });
   nodeIds.add(mainId);
 
+  // BIZZ-1839: Check om BFE er en ejerlejlighed — bruges til at filtrere
+  // SFE-niveau relationer (status-entries, bygnings-ejerskab) fra diagrammet.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: bfeTypeRow } = await (admin as any)
+    .from('bfe_adresse_cache')
+    .select('ejendomstype, etage')
+    .eq('bfe_nummer', bfe)
+    .maybeSingle();
+  const isEjerlejlighed =
+    (bfeTypeRow as { ejendomstype?: string; etage?: string } | null)?.ejendomstype
+      ?.toLowerCase()
+      .includes('ejerlejlighed') ||
+    (bfeTypeRow as { ejendomstype?: string; etage?: string } | null)?.etage != null;
+
   // Ejere — cache-first via ejf_ejerskab, live EJF fallback ved tom liste
   let owners = await fetchOwnersByBfe(admin, bfe);
+
+  // BIZZ-1839: Filtrér irrelevante relationer for ejerlejligheder.
+  // Status-entries ("Opdelt i ejerlejligheder", "Opdelt i anpart") er
+  // SFE-niveau metadata der ikke hører til den specifikke lejlighed.
+  if (isEjerlejlighed && owners.length > 1) {
+    const filtered = owners.filter((o) => o.ejer_type !== 'status');
+    if (filtered.length > 0) owners = filtered;
+  }
 
   // BIZZ-1136: Fallback til live EJF GraphQL når ejf_ejerskab er tom
   // (typisk for "opdelt i anpart/ejerlejligheder" ejendomme hvor
@@ -1020,6 +1042,12 @@ async function resolvePropertyGraph(
     } catch (err) {
       logger.warn('[diagram/resolve] EJF live fallback fejl:', err);
     }
+  }
+
+  // BIZZ-1839: Filtrér status-entries fra EJF live fallback for ejerlejligheder
+  if (isEjerlejlighed && owners.length > 1) {
+    const filtered = owners.filter((o) => o.ejer_type !== 'status');
+    if (filtered.length > 0) owners = filtered;
   }
 
   // BIZZ-1210: Batch-hent virksomheder og person-navne i stedet for N+1 queries

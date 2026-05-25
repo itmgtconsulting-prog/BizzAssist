@@ -1532,7 +1532,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
               .ilike('adresse', `${gadenavn}%`)
               .eq('postnr', sfe.postnr)
               .not('etage', 'is', null)
-              .limit(50);
+              .limit(500);
 
             const ownerCvr = adminRows.find(
               (r: { bfe_nummer: number }) => r.bfe_nummer === sfe.bfe_nummer

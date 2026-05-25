@@ -2772,6 +2772,81 @@ async function enrichPropertyNodes(
         if (link) item.link = link;
       }
     }
+
+    // BIZZ-1832/1834: SFE-expansion — fold SFE-ejendomme ud til ejerlejligheder.
+    // For property-noder med adresse men uden etage (= SFE/moderejendom), hent
+    // child-ejerlejligheder via DAWA jordstykke og tilføj som child-noder i grafen.
+    const sfeNodes = propNodes.filter((n) => {
+      const info = adresseMap.get(n.bfeNummer!);
+      return info?.adresse && !info?.etage;
+    });
+    for (const sfeNode of sfeNodes.slice(0, 3)) {
+      try {
+        const jRes = await fetch(
+          `https://api.dataforsyningen.dk/jordstykker?bfenummer=${sfeNode.bfeNummer}&format=json`,
+          { signal: AbortSignal.timeout(5000), headers: { Accept: 'application/json' } }
+        );
+        if (!jRes.ok) continue;
+        const jord = (await jRes.json()) as Array<{
+          ejerlav?: { kode?: number };
+          matrikelnr?: string;
+        }>;
+        const ej = jord[0]?.ejerlav?.kode;
+        const matr = jord[0]?.matrikelnr;
+        if (!ej || !matr) continue;
+
+        const aRes = await fetch(
+          `https://api.dataforsyningen.dk/adresser?ejerlavkode=${ej}&matrikelnr=${encodeURIComponent(matr)}&format=json&struktur=mini&per_side=100`,
+          { signal: AbortSignal.timeout(8000), headers: { Accept: 'application/json' } }
+        );
+        if (!aRes.ok) continue;
+        const adresser = (await aRes.json()) as Array<{
+          id: string;
+          vejnavn: string;
+          husnr: string;
+          etage: string | null;
+          dør: string | null;
+          postnr: string;
+          postnrnavn: string;
+        }>;
+
+        // Kun adresser med etage (ejerlejligheder)
+        const lejligheder = Array.isArray(adresser) ? adresser.filter((a) => a.etage) : [];
+        if (lejligheder.length === 0) continue;
+
+        // Gruppér per opgang (husnr)
+        const opgange = new Map<string, typeof lejligheder>();
+        for (const l of lejligheder) {
+          const key = `${l.vejnavn} ${l.husnr}`;
+          if (!opgange.has(key)) opgange.set(key, []);
+          opgange.get(key)!.push(l);
+        }
+
+        // Tilføj opgangs-noder under SFE-noden
+        for (const [opgang, lejs] of opgange) {
+          const opgangId = `opgang-${sfeNode.bfeNummer}-${opgang.replace(/\s+/g, '-')}`;
+          if (graph.nodes.some((n) => n.id === opgangId)) continue;
+          graph.nodes.push({
+            id: opgangId,
+            label: opgang,
+            sublabel: `${lejs.length} lejligheder · ${lejs[0].postnr} ${lejs[0].postnrnavn}`,
+            type: 'status',
+          });
+          graph.edges.push({ from: sfeNode.id, to: opgangId });
+
+          // Tilføj individuelle lejligheder som overflow items
+          const items = lejs.slice(0, 20).map((l) => ({
+            label: `${l.etage}. ${l.dør ?? ''}`.trim(),
+            link: `/dashboard/ejendomme/${l.id}`,
+          }));
+          if (items.length > 0) {
+            graph.nodes[graph.nodes.length - 1].overflowItems = items;
+          }
+        }
+      } catch {
+        /* SFE expansion is best-effort */
+      }
+    }
   } catch {
     // Adresse-berigelse er best-effort — fejl ignoreres
   }

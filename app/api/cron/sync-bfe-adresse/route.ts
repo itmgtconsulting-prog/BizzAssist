@@ -69,20 +69,37 @@ export async function GET(request: NextRequest) {
       allBfeSet.add(r.bfe_nummer);
 
     // Find cached BFEs — inkl. dem med postnr=null (korrupt data der skal re-resolves)
-    const { data: allCached } = await admin.from('bfe_adresse_cache').select('bfe_nummer, postnr');
+    // BIZZ-1850: Ekskluder kilde='unresolvable' indtil next_retry_after — disse BFE'er
+    // fejlede alle 3 fallbacks og skal kun retry kvartalsvist.
+    const { data: allCached } = await admin
+      .from('bfe_adresse_cache')
+      .select('bfe_nummer, postnr, kilde, next_retry_after');
 
-    const cachedOkSet = new Set(
-      ((allCached ?? []) as Array<{ bfe_nummer: number; postnr: string | null }>)
-        .filter((r) => r.postnr !== null)
-        .map((r) => r.bfe_nummer)
-    );
-    const missing = [...allBfeSet].filter((b) => !cachedOkSet.has(b)).slice(0, BATCH_LIMIT);
+    const nowIso = new Date().toISOString();
+    const skipSet = new Set<number>();
+    for (const r of (allCached ?? []) as Array<{
+      bfe_nummer: number;
+      postnr: string | null;
+      kilde: string;
+      next_retry_after: string | null;
+    }>) {
+      // Skip BFE'er der enten er resolved (postnr!=null) ELLER er markeret unresolvable
+      // og endnu ikke er klar til retry.
+      const hasGoodAddress = r.postnr !== null;
+      const isUnresolvable =
+        r.kilde === 'unresolvable' && (!r.next_retry_after || r.next_retry_after > nowIso);
+      if (hasGoodAddress || isUnresolvable) skipSet.add(r.bfe_nummer);
+    }
+    const missing = [...allBfeSet].filter((b) => !skipSet.has(b)).slice(0, BATCH_LIMIT);
 
     if (missing.length === 0) {
       return NextResponse.json({ synced: 0, message: 'Alle BFE-adresser er cached' });
     }
 
     let resolved = 0;
+    let markedUnresolvable = 0;
+    // BIZZ-1850: Skub retry 90 dage frem for BFE'er der fejler alle 3 fallbacks
+    const RETRY_DELAY_DAYS = 90;
 
     for (const bfe of missing) {
       try {
@@ -228,17 +245,39 @@ export async function GET(request: NextRequest) {
                   { onConflict: 'bfe_nummer' }
                 );
                 resolved++;
+                continue;
               }
             }
           }
         }
+
+        // BIZZ-1850: Alle 3 fallbacks fejlede → marker som unresolvable så cron
+        // ikke retry hver dag. next_retry_after = nu + 90 dage så datakilder kan
+        // få nye data over tid.
+        const retryAfter = new Date(Date.now() + RETRY_DELAY_DAYS * 24 * 3600 * 1000).toISOString();
+        await admin.from('bfe_adresse_cache').upsert(
+          {
+            bfe_nummer: bfe,
+            kilde: 'unresolvable',
+            next_retry_after: retryAfter,
+            sidst_opdateret: new Date().toISOString(),
+          },
+          { onConflict: 'bfe_nummer' }
+        );
+        markedUnresolvable++;
       } catch {
         /* individual BFE failure non-fatal */
       }
     }
 
-    logger.log(`[sync-bfe-adresse] Synced ${resolved}/${missing.length} BFE addresses`);
-    return NextResponse.json({ synced: resolved, missing: missing.length });
+    logger.log(
+      `[sync-bfe-adresse] Synced ${resolved}/${missing.length} BFE addresses, marked ${markedUnresolvable} unresolvable`
+    );
+    return NextResponse.json({
+      synced: resolved,
+      unresolvable: markedUnresolvable,
+      missing: missing.length,
+    });
   } catch (err) {
     logger.error('[sync-bfe-adresse] Error:', err);
     return NextResponse.json({ error: 'Sync failed' }, { status: 500 });

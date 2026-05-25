@@ -432,12 +432,17 @@ async function walkVirksomhed(
             .from('bfe_adresse_cache')
             .select('bfe_nummer, etage')
             .in('bfe_nummer', [...bfesToCheck]);
-          const bfesWithoutEtage = new Set<number>();
+          // BFEs uden etage ELLER ikke i cache → SFE/hovedejendomme
+          const bfesWithEtage = new Set<number>();
           for (const row of (etageRows ?? []) as Array<{
             bfe_nummer: number;
             etage: string | null;
           }>) {
-            if (!row.etage) bfesWithoutEtage.add(row.bfe_nummer);
+            if (row.etage) bfesWithEtage.add(row.bfe_nummer);
+          }
+          const bfesWithoutEtage = new Set<number>();
+          for (const bfe of bfesToCheck) {
+            if (!bfesWithEtage.has(bfe)) bfesWithoutEtage.add(bfe);
           }
           // Fjern SFE/hovedejendom-aktiver (uden etage) der nu er dækket af lejligheder
           const beforeCount = aktiver.length;

@@ -223,11 +223,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // matriklen. Eksempel: BFE 100077625 (SFE Carlsberg Byen matrikel 1218n)
     // har ingen adresse i cache, men DAWA kender matriklen og dens lejligheder.
     if (clusters.length === 0 && adminBfes.size > 0) {
+      // Strategi 1: DAWA jordstykke → matrikel → adresser
       try {
         for (const bfe of [...adminBfes].slice(0, 5)) {
           const jordRes = await fetch(
             `https://api.dataforsyningen.dk/jordstykker?bfenummer=${bfe}&format=json`,
-            { signal: AbortSignal.timeout(5000) }
+            { signal: AbortSignal.timeout(8000) }
           );
           if (!jordRes.ok) continue;
           const jordstykker = (await jordRes.json()) as Array<{
@@ -240,7 +241,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
           const adrRes = await fetch(
             `https://api.dataforsyningen.dk/adresser?ejerlavkode=${ejerlav}&matrikelnr=${encodeURIComponent(matr)}&format=json&struktur=mini&per_side=10`,
-            { signal: AbortSignal.timeout(5000) }
+            { signal: AbortSignal.timeout(8000) }
           );
           if (!adrRes.ok) continue;
           const adresser = (await adrRes.json()) as Array<{
@@ -250,7 +251,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             postnrnavn: string;
           }>;
 
-          // Byg clusters fra fundne adresser
           const clusterMap = new Map<
             string,
             { gadenavn: string; postnr: string; adresser: string[] }
@@ -269,6 +269,38 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         }
       } catch {
         /* DAWA fallback — non-critical */
+      }
+
+      // Strategi 2 (fallback): Søg ejf_administrator for andre BFE'er med
+      // samme administrator-CVR og find deres adresser i bfe_adresse_cache.
+      // Fanger foreninger der administrerer ejendomme i andre postnumre.
+      if (clusters.length === 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: otherAdminRows } = await (admin as any)
+          .from('ejf_administrator')
+          .select('bfe_nummer')
+          .eq('virksomhed_cvr', cvr)
+          .limit(200);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: otherEjerRows } = await (admin as any)
+          .from('ejf_ejerskab')
+          .select('bfe_nummer')
+          .eq('ejer_cvr', cvr)
+          .limit(200);
+        const allRelatedBfes = new Set<number>();
+        for (const r of (otherAdminRows ?? []) as Array<{ bfe_nummer: number }>) {
+          allRelatedBfes.add(r.bfe_nummer);
+        }
+        for (const r of (otherEjerRows ?? []) as Array<{ bfe_nummer: number }>) {
+          allRelatedBfes.add(r.bfe_nummer);
+        }
+        // Hent adresser for relaterede BFE'er fra bfe_adresse_cache
+        if (allRelatedBfes.size > 0) {
+          const relClusters = await extractAddressClusters([...allRelatedBfes], admin);
+          for (const c of relClusters) {
+            clusters.push(c);
+          }
+        }
       }
     }
 

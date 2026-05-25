@@ -169,27 +169,62 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     try {
       const dawaAdrRes = await fetch(
         `https://api.dataforsyningen.dk/adgangsadresser?q=${encodeURIComponent(adresse)}&postnr=${postnr}&format=json&struktur=mini&per_side=1`,
-        { signal: AbortSignal.timeout(5000) }
+        { signal: AbortSignal.timeout(8000) }
       );
       if (dawaAdrRes.ok) {
         const dawaAdresser = (await dawaAdrRes.json()) as Array<{ id: string }>;
         if (dawaAdresser[0]?.id) {
           const jordRes = await fetch(
             `https://api.dataforsyningen.dk/jordstykker?adgangsadresseid=${dawaAdresser[0].id}&format=json`,
-            { signal: AbortSignal.timeout(5000) }
+            { signal: AbortSignal.timeout(8000) }
           );
           if (jordRes.ok) {
             const jordstykker = (await jordRes.json()) as Array<{ bfenummer?: number }>;
             for (const js of jordstykker) {
               if (js.bfenummer && !naboBfes.includes(js.bfenummer)) {
                 naboBfes.push(js.bfenummer);
+                logger.info('[ai/find-ejerforening] DAWA SFE parent found:', js.bfenummer);
               }
             }
+          } else {
+            logger.warn('[ai/find-ejerforening] DAWA jordstykke failed:', jordRes.status);
           }
         }
+      } else {
+        logger.warn('[ai/find-ejerforening] DAWA adgangsadresse failed:', dawaAdrRes.status);
       }
-    } catch {
-      /* DAWA fallback — non-critical */
+    } catch (dawaErr) {
+      logger.warn(
+        '[ai/find-ejerforening] DAWA fallback error:',
+        dawaErr instanceof Error ? dawaErr.message : 'unknown'
+      );
+    }
+
+    // BIZZ-1841: Direkte EJF-søgning for foreninger i samme postnr (fallback
+    // når DAWA er langsom eller gadenavn-søgning er tom). Find alle forenings-CVR'er
+    // der har ejf_administrator/ejf_ejerskab records for BFE'er i dette postnr.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: postnrBfes } = await (admin as any)
+      .from('bfe_adresse_cache')
+      .select('bfe_nummer')
+      .eq('postnr', postnr)
+      .limit(500);
+    const postnrBfeList = ((postnrBfes ?? []) as Array<{ bfe_nummer: number }>).map(
+      (r) => r.bfe_nummer
+    );
+    if (postnrBfeList.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: postnrAdminRows } = await (admin as any)
+        .from('ejf_administrator')
+        .select('bfe_nummer')
+        .in('bfe_nummer', postnrBfeList.slice(0, 200))
+        .eq('status', 'gældende')
+        .not('virksomhed_cvr', 'is', null);
+      for (const row of (postnrAdminRows ?? []) as Array<{ bfe_nummer: number }>) {
+        if (!naboBfes.includes(row.bfe_nummer)) {
+          naboBfes.push(row.bfe_nummer);
+        }
+      }
     }
 
     if (naboBfes.length === 0) {

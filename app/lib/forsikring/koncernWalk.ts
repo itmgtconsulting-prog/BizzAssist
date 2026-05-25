@@ -411,6 +411,51 @@ async function walkVirksomhed(
       } catch {
         /* AI cache lookup non-fatal */
       }
+      // BIZZ-1851: Fjern SFE/hovedejendom-BFEs der er erstattet af
+      // udfolded lejligheder. Når SFE-expansion fandt lejligheder,
+      // skal SFE-BFE'en selv og AI-kandidater uden etage ikke tælles
+      // med som separate aktiver — de er "containere", ikke enheder.
+      const hasExpandedLejligheder = aktiver.some(
+        (a) => a.type === 'ejendom' && a.rawData?.sfeExpanded
+      );
+      if (hasExpandedLejligheder) {
+        const bfesToCheck = new Set<number>();
+        for (const a of aktiver) {
+          if (a.type === 'ejendom' && a.bfe && a.bfe > 0 && !a.rawData?.sfeExpanded) {
+            bfesToCheck.add(a.bfe);
+          }
+        }
+        // Tjek om disse BFEs har etage i cache — hvis ikke, er de SFE/hovedejendomme
+        if (bfesToCheck.size > 0) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: etageRows } = await (admin as any)
+            .from('bfe_adresse_cache')
+            .select('bfe_nummer, etage')
+            .in('bfe_nummer', [...bfesToCheck]);
+          const bfesWithoutEtage = new Set<number>();
+          for (const row of (etageRows ?? []) as Array<{
+            bfe_nummer: number;
+            etage: string | null;
+          }>) {
+            if (!row.etage) bfesWithoutEtage.add(row.bfe_nummer);
+          }
+          // Fjern SFE/hovedejendom-aktiver (uden etage) der nu er dækket af lejligheder
+          const beforeCount = aktiver.length;
+          for (let i = aktiver.length - 1; i >= 0; i--) {
+            if (
+              aktiver[i].type === 'ejendom' &&
+              aktiver[i].bfe &&
+              bfesWithoutEtage.has(aktiver[i].bfe!)
+            ) {
+              aktiver.splice(i, 1);
+            }
+          }
+          if (aktiver.length < beforeCount) {
+            // Ryd op i seenBfes — de fjernede BFEs skal ikke blokere fremtidige lookups
+            for (const bfe of bfesWithoutEtage) seenBfes.delete(bfe);
+          }
+        }
+      }
     } catch {
       /* non-fatal — fallback til standard flow */
     }

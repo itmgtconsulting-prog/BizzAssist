@@ -26,6 +26,10 @@ const LIMIT = parseInt(args.limit || '0', 10) || 999999999;
 const OFFSET = parseInt(args.offset || '0', 10);
 const CONCURRENCY = parseInt(args.concurrency || '20', 10);
 const DRY_RUN = args['dry-run'] === 'true';
+// BIZZ-1850: --bfes=N,N,N for targeted backfill (test/verify mod kendte BFEer)
+const TARGET_BFES = (args.bfes && args.bfes !== 'true')
+  ? args.bfes.split(',').map(s => parseInt(s.trim(), 10)).filter(n => Number.isFinite(n) && n > 0)
+  : null;
 const DAWA_BASE = 'https://api.dataforsyningen.dk';
 
 // Read PROD_DB_URL from .env.local (avoid sourcing the whole file)
@@ -174,31 +178,43 @@ async function resolveBfe(bfe) {
 
 // ── Main ────────────────────────────────────────────────────────────
 async function main() {
-  console.log(`[1850] Start (limit=${LIMIT}, offset=${OFFSET}, concurrency=${CONCURRENCY}, dry-run=${DRY_RUN})`);
+  console.log(`[1850] Start (limit=${LIMIT}, offset=${OFFSET}, concurrency=${CONCURRENCY}, dry-run=${DRY_RUN}, target-bfes=${TARGET_BFES?.length ?? 'all-missing'})`);
   const pool = new pg.Pool({ connectionString: PROD_DB_URL, max: 5, statement_timeout: 600000 });
 
-  console.log('[1850] Henter missing BFEer …');
-  console.time('[1850] missing query');
-  // Union: ejf_ejerskab (gældende+historisk) + ejf_administrator, minus dem der findes i cache
-  const { rows } = await pool.query(
-    `
-    WITH targets AS (
-      SELECT DISTINCT bfe_nummer FROM ejf_ejerskab WHERE status IN ('gældende','historisk')
-      UNION
-      SELECT DISTINCT bfe_nummer FROM ejf_administrator WHERE virksomhed_cvr IS NOT NULL
-    )
-    SELECT t.bfe_nummer
-    FROM targets t
-    LEFT JOIN bfe_adresse_cache c ON c.bfe_nummer = t.bfe_nummer
-    WHERE c.bfe_nummer IS NULL
-    ORDER BY t.bfe_nummer
-    OFFSET $1 LIMIT $2
-    `,
-    [OFFSET, LIMIT]
-  );
-  console.timeEnd('[1850] missing query');
-  const bfes = rows.map(r => Number(r.bfe_nummer));
-  console.log(`[1850] ${bfes.length} BFEer skal processeres`);
+  let bfes;
+  if (TARGET_BFES) {
+    // Targeted mode: kun de angivne BFEer der mangler i cache eller har postnr=null
+    console.log('[1850] Targeted mode — filtrerer mod cache …');
+    const { rows: existing } = await pool.query(
+      'SELECT bfe_nummer FROM bfe_adresse_cache WHERE bfe_nummer = ANY($1) AND postnr IS NOT NULL AND kilde != \'unresolvable\'',
+      [TARGET_BFES]
+    );
+    const have = new Set(existing.map(r => Number(r.bfe_nummer)));
+    bfes = TARGET_BFES.filter(b => !have.has(b));
+    console.log(`[1850] ${bfes.length}/${TARGET_BFES.length} target-BFEer mangler/skal re-resolves`);
+  } else {
+    console.log('[1850] Henter missing BFEer …');
+    console.time('[1850] missing query');
+    const { rows } = await pool.query(
+      `
+      WITH targets AS (
+        SELECT DISTINCT bfe_nummer FROM ejf_ejerskab WHERE status IN ('gældende','historisk')
+        UNION
+        SELECT DISTINCT bfe_nummer FROM ejf_administrator WHERE virksomhed_cvr IS NOT NULL
+      )
+      SELECT t.bfe_nummer
+      FROM targets t
+      LEFT JOIN bfe_adresse_cache c ON c.bfe_nummer = t.bfe_nummer
+      WHERE c.bfe_nummer IS NULL
+      ORDER BY t.bfe_nummer
+      OFFSET $1 LIMIT $2
+      `,
+      [OFFSET, LIMIT]
+    );
+    console.timeEnd('[1850] missing query');
+    bfes = rows.map(r => Number(r.bfe_nummer));
+    console.log(`[1850] ${bfes.length} BFEer skal processeres`);
+  }
 
   let processed = 0;
   let resolved = 0;

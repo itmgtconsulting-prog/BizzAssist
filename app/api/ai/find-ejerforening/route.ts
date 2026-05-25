@@ -132,9 +132,34 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       .eq('postnr', postnr)
       .limit(200);
 
-    const naboBfes = ((naboRows ?? []) as Array<{ bfe_nummer: number }>)
-      .map((r) => r.bfe_nummer)
-      .filter((b) => b !== bfeNummer);
+    const naboBfes = ((naboRows ?? []) as Array<{ bfe_nummer: number }>).map((r) => r.bfe_nummer);
+    // BIZZ-1841: Inkludér target BFE — det kan selv have admin/ejer-registreringer
+
+    // BIZZ-1841: SFE-hierarki traversal — find BFE'er på præcis samme
+    // adresse (vejnavn+husnr) som er SFE/hovedejendom-niveauer der dækker
+    // target ejerlejligheden. Deres ejf_administrator/ejf_ejerskab rækker
+    // fanger ejerforeninger der er registreret på SFE-niveau.
+    const husnrMatch = adresse.match(/\s+(\d+)/);
+    const targetHusnr = husnrMatch ? husnrMatch[1] : null;
+    if (targetHusnr) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: siblingRows } = await (admin as any)
+        .from('bfe_adresse_cache')
+        .select('bfe_nummer')
+        .ilike('adresse', `${gadenavn} ${targetHusnr}%`)
+        .eq('postnr', postnr)
+        .limit(50);
+      for (const row of (siblingRows ?? []) as Array<{ bfe_nummer: number }>) {
+        if (!naboBfes.includes(row.bfe_nummer)) {
+          naboBfes.push(row.bfe_nummer);
+        }
+      }
+    }
+
+    // Sørg for at target BFE selv er med
+    if (!naboBfes.includes(bfeNummer)) {
+      naboBfes.push(bfeNummer);
+    }
 
     if (naboBfes.length === 0) {
       return NextResponse.json({ candidates: [] });
@@ -179,22 +204,35 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       bfe_nummer: number;
       virksomhed_cvr: string;
     }>) {
-      cvrCounts.set(row.virksomhed_cvr, (cvrCounts.get(row.virksomhed_cvr) ?? 0) + 1);
+      // BIZZ-1841: Direkte admin-registrering på target/sibling BFE giver
+      // højere score (10) end nabo-BFE (1)
+      const score = row.bfe_nummer === bfeNummer ? 10 : 1;
+      cvrCounts.set(row.virksomhed_cvr, (cvrCounts.get(row.virksomhed_cvr) ?? 0) + score);
       adminCvrCount.set(row.virksomhed_cvr, (adminCvrCount.get(row.virksomhed_cvr) ?? 0) + 1);
+      if (row.bfe_nummer === bfeNummer) {
+        if (!cvrReasons.has(row.virksomhed_cvr)) cvrReasons.set(row.virksomhed_cvr, []);
+        cvrReasons.get(row.virksomhed_cvr)!.push('Direkte administrator for ejendommen');
+      }
     }
     for (const row of (ejerRows ?? []) as Array<{
       bfe_nummer: number;
       ejer_cvr: string;
     }>) {
-      cvrCounts.set(row.ejer_cvr, (cvrCounts.get(row.ejer_cvr) ?? 0) + 1);
+      const score = row.bfe_nummer === bfeNummer ? 10 : 1;
+      cvrCounts.set(row.ejer_cvr, (cvrCounts.get(row.ejer_cvr) ?? 0) + score);
       ejerCvrCount.set(row.ejer_cvr, (ejerCvrCount.get(row.ejer_cvr) ?? 0) + 1);
+      if (row.bfe_nummer === bfeNummer) {
+        if (!cvrReasons.has(row.ejer_cvr)) cvrReasons.set(row.ejer_cvr, []);
+        cvrReasons.get(row.ejer_cvr)!.push('Direkte ejer af ejendommen');
+      }
     }
     for (const row of (histEjerRows ?? []) as Array<{
       bfe_nummer: number;
       ejer_cvr: string;
     }>) {
       // Historiske ejerskaber giver lavere score men er stadig et signal
-      cvrCounts.set(row.ejer_cvr, (cvrCounts.get(row.ejer_cvr) ?? 0) + 1);
+      const score = row.bfe_nummer === bfeNummer ? 5 : 1;
+      cvrCounts.set(row.ejer_cvr, (cvrCounts.get(row.ejer_cvr) ?? 0) + score);
       histEjerCvrCount.set(row.ejer_cvr, (histEjerCvrCount.get(row.ejer_cvr) ?? 0) + 1);
     }
 
@@ -222,8 +260,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       .limit(50);
 
     // Ekstrahér husnummer fra adressen for range-matching
-    const husnrMatch = adresse.match(/\s+(\d+)/);
-    const husnr = husnrMatch ? Number(husnrMatch[1]) : null;
+    const husnr = targetHusnr ? Number(targetHusnr) : null;
 
     for (const row of (navnMatchRows ?? []) as Array<{ cvr: string; navn: string }>) {
       let score = 5; // Base-score for navne-match

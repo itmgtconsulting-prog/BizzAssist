@@ -227,6 +227,97 @@ async function walkVirksomhed(
         /* ejf_administrator lookup non-fatal */
       }
 
+      // BIZZ-1851: SFE → lejligheder udfoldning via DAWA jordstykke.
+      // Ejerforeninger er typisk registreret på SFE-niveau i ejf_administrator,
+      // men forsikrings-gap-analysen skal matche mod individuelle lejligheder.
+      // Via DAWA jordstykke → matrikel → adresser finder vi alle lejligheder
+      // under foreningens SFE-ejendomme.
+      try {
+        const sfeBfes = [...seenBfes]; // BFEs fundet ovenfor
+        for (const sfeBfe of sfeBfes.slice(0, 5)) {
+          const jordRes = await fetch(
+            `https://api.dataforsyningen.dk/jordstykker?bfenummer=${sfeBfe}&format=json`,
+            { signal: AbortSignal.timeout(8000) }
+          );
+          if (!jordRes.ok) continue;
+          const jordstykker = (await jordRes.json()) as Array<{
+            ejerlav?: { kode?: number };
+            matrikelnr?: string;
+          }>;
+          const ejerlav = jordstykker[0]?.ejerlav?.kode;
+          const matr = jordstykker[0]?.matrikelnr;
+          if (!ejerlav || !matr) continue;
+
+          // Find alle BFEs på denne matrikel via bfe_adresse_cache
+          // (hurtigere end at kalde DAWA adresser-endpointet)
+          const adrRes = await fetch(
+            `https://api.dataforsyningen.dk/adresser?ejerlavkode=${ejerlav}&matrikelnr=${encodeURIComponent(matr)}&format=json&struktur=mini&per_side=200`,
+            { signal: AbortSignal.timeout(8000) }
+          );
+          if (!adrRes.ok) continue;
+          const adresser = (await adrRes.json()) as Array<{
+            vejnavn: string;
+            husnr: string;
+            etage: string | null;
+            postnr: string;
+            postnrnavn: string;
+          }>;
+
+          // Find BFEs for disse adresser i bfe_adresse_cache
+          const gadenavne = [...new Set(adresser.map((a) => a.vejnavn))];
+          const postnr = adresser[0]?.postnr;
+          if (!postnr || gadenavne.length === 0) continue;
+
+          for (const gade of gadenavne.slice(0, 5)) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: cacheRows } = await (admin as any)
+              .from('bfe_adresse_cache')
+              .select('bfe_nummer')
+              .ilike('adresse', `${gade}%`)
+              .eq('postnr', postnr)
+              .limit(200);
+
+            for (const row of (cacheRows ?? []) as Array<{ bfe_nummer: number }>) {
+              if (seenBfes.has(row.bfe_nummer) || aktiver.length >= MAX_AKTIVER) continue;
+              seenBfes.add(row.bfe_nummer);
+              aktiver.push({
+                type: 'ejendom',
+                label: `BFE ${row.bfe_nummer}`,
+                bfe: row.bfe_nummer,
+                rawData: { ejerforening: true, sfeExpanded: true },
+              });
+            }
+          }
+        }
+      } catch {
+        /* SFE expansion non-fatal */
+      }
+
+      // BIZZ-1851: Historisk ejerskab — foreninger der solgte SFE men stadig
+      // administrerer bygningen har kun historisk ejerskab.
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: histRows } = await (admin as any)
+          .from('ejf_ejerskab')
+          .select('bfe_nummer')
+          .eq('ejer_cvr', cvr)
+          .eq('status', 'historisk')
+          .limit(100);
+
+        for (const row of (histRows ?? []) as Array<{ bfe_nummer: number }>) {
+          if (seenBfes.has(row.bfe_nummer) || aktiver.length >= MAX_AKTIVER) continue;
+          seenBfes.add(row.bfe_nummer);
+          aktiver.push({
+            type: 'ejendom',
+            label: `BFE ${row.bfe_nummer}`,
+            bfe: row.bfe_nummer,
+            rawData: { ejerforening: true, historisk: true },
+          });
+        }
+      } catch {
+        /* historisk ejerskab lookup non-fatal */
+      }
+
       // BIZZ-1829: AI-baseret resolve af yderligere ejendomme
       // Finder kandidater på samme gader og filtrerer til høj confidence (>0.8)
       try {

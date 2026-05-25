@@ -122,9 +122,10 @@ async function walkVirksomhed(
   seenCvrs.add(cvr);
 
   // BIZZ-1443: Tilføj virksomheden selv som aktiv (for ansvarsforsikring-matching)
+  // BIZZ-1840: Hent også virksomhedsform for FFO/andelsbolig-detection
   const { data: virk } = await (admin as ReturnType<typeof createAdminClient>)
     .from('cvr_virksomhed')
-    .select('navn, branche_tekst')
+    .select('navn, branche_tekst, virksomhedsform')
     .eq('cvr', cvr)
     .maybeSingle();
   aktiver.push({
@@ -134,12 +135,22 @@ async function walkVirksomhed(
     rawData: { branche: (virk as { branche_tekst?: string } | null)?.branche_tekst ?? null },
   });
 
-  // BIZZ-1646: Detect ejerforening (FFO) — resolve via /api/ejerforening/ejendomme pattern
+  // BIZZ-1646 + BIZZ-1840: Detect ejer-/andelsforening
+  // Matcher FFO-form, "forening" i virksomhedsform, og A/B i virksomhedsform
+  // eller forenings-keywords i virksomhedsnavnet (fanger A/B, E/F, andelsbolig).
+  const virkForm = (virk as { virksomhedsform?: string } | null)?.virksomhedsform ?? '';
+  const virkNavn = (virk as { navn?: string } | null)?.navn ?? '';
+  const formLower = virkForm.toLowerCase();
+  const navnLower = virkNavn.toLowerCase();
   const isFFO =
-    (virk as { virksomhedsform?: string } | null)?.virksomhedsform?.toUpperCase().includes('FFO') ||
-    (virk as { virksomhedsform?: string } | null)?.virksomhedsform
-      ?.toLowerCase()
-      .includes('forening');
+    virkForm.toUpperCase().includes('FFO') ||
+    formLower.includes('forening') ||
+    formLower === 'a/b' ||
+    navnLower.includes('ejerforening') ||
+    navnLower.includes('andelsbolig') ||
+    navnLower.startsWith('a/b ') ||
+    navnLower.startsWith('e/f ') ||
+    navnLower.includes('boligforening');
 
   if (isFFO && depth === 0) {
     // E/F: Hent administrerede ejendomme via ejerforholdskode 30 i bbr_ejendom_status

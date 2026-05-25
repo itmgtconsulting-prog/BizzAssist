@@ -184,8 +184,17 @@ export default function VirksomhedEjendommeTab({
     };
   }, [ejendommeData, ejendommeLoading]);
 
-  /** Bruge expandedEjendomme i stedet for ejendommeData for visning */
-  const displayEjendomme = expandedEjendomme.length > 0 ? expandedEjendomme : ejendommeData;
+  /** Bruge expandedEjendomme i stedet for ejendommeData for visning.
+   * Skjul SFE/hovedejendomme når der er child-lejligheder — for foreninger
+   * er det lejlighederne der er relevante, ikke selve SFE-ejendommen. */
+  const displayEjendomme = (() => {
+    const src = expandedEjendomme.length > 0 ? expandedEjendomme : ejendommeData;
+    // Har vi expanded children (etage != null)?
+    const hasChildren = src.some((e) => e.etage);
+    if (!hasChildren) return src;
+    // Fjern SFE-ejendomme (ingen etage, ikke ejerlejlighed) der har children
+    return src.filter((e) => e.etage || e.ejendomstype === 'Ejerlejlighed');
+  })();
 
   // BIZZ-1828: AI-baseret ejendomsresolve for ejerforeninger (FFO)
   const isFFO =

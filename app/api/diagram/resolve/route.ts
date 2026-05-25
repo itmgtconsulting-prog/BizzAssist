@@ -2822,7 +2822,18 @@ async function enrichPropertyNodes(
           opgange.get(key)!.push(l);
         }
 
-        // Tilføj opgangs-noder under SFE-noden
+        // Erstat SFE-noden med opgangs-noder — link direkte til parent.
+        // For foreninger er det lejlighederne der er relevante, ikke SFE'en.
+        // Find parent-node (den virksomhed der ejer SFE'en)
+        const parentEdge = graph.edges.find((e) => e.to === sfeNode.id);
+        const parentId = parentEdge?.from ?? sfeNode.id;
+
+        // Fjern SFE-noden og dens edge fra grafen
+        const sfeIdx = graph.nodes.indexOf(sfeNode);
+        if (sfeIdx >= 0) graph.nodes.splice(sfeIdx, 1);
+        const edgeIdx = graph.edges.indexOf(parentEdge!);
+        if (edgeIdx >= 0) graph.edges.splice(edgeIdx, 1);
+
         for (const [opgang, lejs] of opgange) {
           const opgangId = `opgang-${sfeNode.bfeNummer}-${opgang.replace(/\s+/g, '-')}`;
           if (graph.nodes.some((n) => n.id === opgangId)) continue;
@@ -2830,9 +2841,14 @@ async function enrichPropertyNodes(
             id: opgangId,
             label: opgang,
             sublabel: `${lejs.length} lejligheder · ${lejs[0].postnr} ${lejs[0].postnrnavn}`,
-            type: 'status',
+            type: 'property',
           });
-          graph.edges.push({ from: sfeNode.id, to: opgangId });
+          // Link direkte til parent (virksomhed), ikke SFE
+          graph.edges.push({
+            from: parentId,
+            to: opgangId,
+            ejerandel: parentEdge?.ejerandel,
+          });
 
           // Tilføj individuelle lejligheder som overflow items
           const items = lejs.slice(0, 20).map((l) => ({

@@ -128,6 +128,25 @@ function extractText(xml: string, tag: string): string | null {
 }
 
 /**
+ * Extract kreditor name from KreditorInformationSamling block.
+ * Searches only within the kreditor section to avoid picking up debitor names.
+ *
+ * @param xml - HaeftelseSummarisk XML fragment
+ * @returns Kreditor name or null
+ */
+function extractKreditor(xml: string): { navn: string | null; cvr: string | null } {
+  const kreditorBlock = xml.match(
+    /KreditorInformationSamling[^>]*>([\s\S]*?)<\/[^:]*:?KreditorInformationSamling/
+  );
+  if (!kreditorBlock) return { navn: null, cvr: null };
+  const block = kreditorBlock[1];
+  return {
+    navn: extractText(block, 'LegalUnitName') || extractText(block, 'PersonName'),
+    cvr: extractText(block, 'CVRnumberIdentifier'),
+  };
+}
+
+/**
  * Hent og parse alle tinglysningsdata for et BFE via ejdsummarisk XML.
  *
  * @param bfe - BFE-nummer
@@ -191,15 +210,17 @@ async function fetchDetailForBfe(bfe: number): Promise<{
   let prioritet = 0;
   for (const [, e] of haeftelseEntries) {
     prioritet++;
+    const kreditor = extractKreditor(e);
     haeftelser.push({
       bfe_nummer: bfe,
       prioritet,
       type: extractText(e, 'DokumentType') || extractText(e, 'HaeftelseType') || 'Ukendt',
-      hovedstol: extractInt(e, 'Hovedstol'),
-      kreditor: extractText(e, 'KreditorNavn') || extractText(e, 'VirksomhedNavn'),
-      kreditor_cvr: extractText(e, 'VirksomhedCvrNummer'),
+      // e-TL XML: <HaeftelseBeloeb><BeloebValuta><BeloebVaerdi>50000</...>
+      hovedstol: extractInt(e, 'BeloebVaerdi'),
+      kreditor: kreditor.navn,
+      kreditor_cvr: kreditor.cvr,
       tinglyst_dato: extractDate(e, 'TinglysningsDato'),
-      akt_navn: extractText(e, 'AktNavn'),
+      akt_navn: extractText(e, 'DokumentAliasIdentifikator'),
       status: extractText(e, 'Status')?.toLowerCase() || 'gaeldende',
     });
   }

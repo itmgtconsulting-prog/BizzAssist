@@ -358,7 +358,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             postnrnavn: string;
           }>;
 
-          // Merge nye clusters uden duplikering
+          // Merge nye clusters uden duplikering.
+          // BIZZ-1885: adresser-arrayet sættes TOMT for DAWA-discovery-clusters.
+          // Disse clusters bruges kun til findCandidates-søgning — de må IKKE
+          // inkluderes i adminAdresser til Claude-prompten, da DAWA-adresserne
+          // repræsenterer potentielle enheder på matriklen, IKKE ejf-registrerede
+          // ejendomme. Ellers ser Claude kandidaterne som "allerede registrerede"
+          // og returnerer et tomt array.
           const existingKeys = new Set(clusters.map((c) => `${c.gadenavn}|${c.postnr}`));
           const clusterMap = new Map<
             string,
@@ -368,9 +374,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             const key = `${a.vejnavn}|${a.postnr}`;
             if (existingKeys.has(key)) continue;
             if (!clusterMap.has(key)) {
+              // adresser: [] — intentionally empty (see comment above)
               clusterMap.set(key, { gadenavn: a.vejnavn, postnr: a.postnr, adresser: [] });
             }
-            clusterMap.get(key)!.adresser.push(`${a.vejnavn} ${a.husnr}`);
           }
           for (const c of clusterMap.values()) {
             clusters.push(c);
@@ -485,14 +491,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ candidates: [] });
     }
 
-    // Byg Claude prompt
-    // BIZZ-1885: Øget fra 30 → 80 admin-adresser og 40 → 150 kandidater.
-    // Store ejerforeninger som Carlsberg Byen 20a har 29 opgange + 249 BFEer
-    // — tidligere cap forhindrede AI i at se hele billedet.
-    const adminAdresser = clusters
-      .flatMap((c) => c.adresser)
-      .slice(0, 80)
-      .join('\n- ');
+    // Byg Claude prompt.
+    // BIZZ-1885: adminAdresser bruger KUN adresser fra bfe_adresse_cache
+    // (clusters med udfyldte adresser-arrays). DAWA matrikel-discovery clusters
+    // har tomme adresser-arrays og bidrager dermed IKKE til adminAdresser.
+    // Ellers ville Claude se kandidaterne som "allerede registrerede" og returnere [].
+    const adminAdresserListe = clusters.flatMap((c) => c.adresser).slice(0, 80);
+    const adminAdresserTekst =
+      adminAdresserListe.length > 0
+        ? `- ${adminAdresserListe.join('\n- ')}`
+        : `(ingen registrerede ejendomme fundet i EJF — foreningen er identificeret via matrikeldata for ${virkNavn})`;
     const kandidatListe = candidates
       .slice(0, 150)
       .map((c) => `BFE ${c.bfe_nummer}: ${c.adresse}, ${c.postnr} ${c.postnrnavn ?? ''}`)
@@ -502,8 +510,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
 Du modtager:
 1. Ejerforeningens navn og CVR
-2. Liste af ejendomme der ALLEREDE er registreret under foreningen
-3. Liste af KANDIDAT-ejendomme på samme gader
+2. Kontekst om hvilke ejendomme/adresser der er knyttet til foreningen
+3. Liste af KANDIDAT-ejendomme der potentielt tilhører foreningen
 
 Din opgave: Vurdér for HVER kandidat-ejendom om den sandsynligvis tilhører ejerforeningen.
 
@@ -526,8 +534,8 @@ Ingen markdown, ingen forklaring uden for arrayet.`;
 
     const userPrompt = `Ejerforening: ${virkNavn} (CVR ${cvr})
 
-Allerede registrerede ejendomme:
-- ${adminAdresser}
+Registrerede ejendomme / kontekst:
+${adminAdresserTekst}
 
 Kandidat-ejendomme at vurdere:
 ${kandidatListe}`;

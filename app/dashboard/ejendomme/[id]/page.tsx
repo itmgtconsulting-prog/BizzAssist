@@ -196,10 +196,12 @@ export default async function EjendommeDetailPage({
         try {
           // BIZZ-1650: Øget timeout fra 4s til 8s — Datafordeler kan tage 5-7s
           // ved belastning. 4s triggede fejl-banner før DF havde svaret.
+          // BIZZ-1879: Øget igen fra 8s til 15s — store ejendomme som Carlsberg
+          // Byen (24-etagers bygning med mange enheder) tager 10-12s.
           bbrResult = await Promise.race([
             fetchBbrForAddress(id),
             new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error('BBR_TIMEOUT')), 8000)
+              setTimeout(() => reject(new Error('BBR_TIMEOUT')), 15000)
             ),
           ]);
         } catch {
@@ -221,13 +223,28 @@ export default async function EjendommeDetailPage({
           try {
             const { createAdminClient } = await import('@/lib/supabase/admin');
             const admin = createAdminClient();
+            // BIZZ-1879: Hvis id er en adresse-UUID (med etage/dør), resolve
+            // først adgangsadresseId via DAWA før cache-opslag. Tidligere blev
+            // adresse-UUID forsøgt som adgangsadresse_id i cachen → aldrig match.
+            let lookupId = id;
+            try {
+              const adrRes = await fetch(`https://dawa.aws.dk/adresser/${id}?struktur=mini`, {
+                signal: AbortSignal.timeout(3000),
+              });
+              if (adrRes.ok) {
+                const adr = (await adrRes.json()) as { adgangsadresseid?: string };
+                if (adr?.adgangsadresseid) lookupId = adr.adgangsadresseid;
+              }
+            } catch {
+              /* DAWA opslag non-kritisk — fortsæt med originalt id */
+            }
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const { data: cached } = await (admin as any)
               .from('bbr_ejendom_status')
               .select(
                 'bfe_nummer, kommune_kode, samlet_boligareal, samlet_erhvervsareal, grundareal, bebygget_areal, opfoerelsesaar, byg021_anvendelse, energimaerke, antal_etager, antal_boligenheder, bygninger, enheder, ejerforholdskode, bbr_fetched_at'
               )
-              .eq('adgangsadresse_id', id)
+              .eq('adgangsadresse_id', lookupId)
               .eq('is_udfaset', false)
               .maybeSingle();
             if (cached?.bfe_nummer) {

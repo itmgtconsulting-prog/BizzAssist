@@ -35,6 +35,8 @@ import {
   Sparkles,
   ExternalLink,
   Plus,
+  FilePlus,
+  ScanSearch,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { useSubscription } from '@/app/context/SubscriptionContext';
@@ -676,6 +678,11 @@ function AnalyseSection({
   const [stdManualTitel, setStdManualTitel] = useState('');
   const [stdAddingManual, setStdAddingManual] = useState(false);
   const stdSelskabRef = useRef<HTMLInputElement>(null);
+  /** BIZZ-1890: PDF-upload af standard betingelser */
+  const [stdPdfUploading, setStdPdfUploading] = useState(false);
+  const stdPdfRef = useRef<HTMLInputElement>(null);
+  /** BIZZ-1890: AI auto-detektion fra police-dokumenter */
+  const [stdDetecting, setStdDetecting] = useState(false);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** BIZZ-1384: Sagsliste */
@@ -1542,6 +1549,102 @@ function AnalyseSection({
               </button>
             </div>
 
+            {/* BIZZ-1890: Detect from uploaded police documents */}
+            {wizardUploads.filter((u) => u.status === 'done' && u.docId).length > 0 && (
+              <button
+                type="button"
+                aria-label={
+                  da
+                    ? 'Find standard betingelser baseret på uploadede police-dokumenter'
+                    : 'Find standard terms from uploaded policy documents'
+                }
+                onClick={async () => {
+                  const docIds = wizardUploads
+                    .filter((u) => u.status === 'done' && u.docId)
+                    .map((u) => u.docId!)
+                    .slice(0, 20);
+                  if (docIds.length === 0) return;
+                  setStdDetecting(true);
+                  try {
+                    const res = await fetch('/api/forsikring/standard-docs/detect', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ document_ids: docIds }),
+                    });
+                    if (res.ok) {
+                      const data = (await res.json()) as {
+                        results: Array<{
+                          titel: string;
+                          source_url: string;
+                          kategori: string;
+                          selskab: string;
+                          confidence: string;
+                          existing_id?: string;
+                        }>;
+                      };
+                      const newDocs = data.results ?? [];
+                      const existingUrls = new Set(stdDiscovered.map((d) => d.source_url));
+                      const merged = [
+                        ...stdDiscovered,
+                        ...newDocs.filter((d) => !existingUrls.has(d.source_url)),
+                      ];
+                      setStdDiscovered(merged);
+                      // Auto-vælg high-confidence og gem i DB
+                      if (newDocs.length > 0) {
+                        setStdSelectedIds((prev) => {
+                          const next = new Set(prev);
+                          for (const d of newDocs) {
+                            if (d.confidence === 'high') next.add(d.source_url);
+                          }
+                          return next;
+                        });
+                        for (const doc of newDocs.filter((d) => !d.existing_id)) {
+                          fetch('/api/forsikring/standard-docs', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              selskab: doc.selskab,
+                              kategori: doc.kategori ?? 'ejendom',
+                              titel: doc.titel,
+                              source_url: doc.source_url,
+                              added_via: 'auto_detected',
+                            }),
+                          })
+                            .then((r) => (r.ok ? r.json() : null))
+                            .then((d) => {
+                              if (d?.id)
+                                setStdSavedIds((prev) => new Map(prev).set(doc.source_url, d.id));
+                            })
+                            .catch(() => {});
+                        }
+                        // Registrer allerede-kendte docs i savedIds
+                        for (const doc of newDocs.filter((d) => d.existing_id)) {
+                          setStdSavedIds((prev) =>
+                            new Map(prev).set(doc.source_url, doc.existing_id!)
+                          );
+                        }
+                      }
+                    }
+                  } catch {
+                    /* non-fatal */
+                  } finally {
+                    setStdDetecting(false);
+                  }
+                }}
+                disabled={stdDetecting || running}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600/20 hover:bg-violet-600/30 border border-violet-500/30 text-violet-300 text-xs font-medium transition-colors disabled:opacity-40 w-full justify-center"
+              >
+                {stdDetecting ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <ScanSearch size={12} />
+                )}
+                {da
+                  ? `Find fra ${wizardUploads.filter((u) => u.status === 'done').length} uploadede dokumenter`
+                  : `Detect from ${wizardUploads.filter((u) => u.status === 'done').length} uploaded documents`}
+              </button>
+            )}
+
             {/* Discovered docs list */}
             {stdDiscovered.length > 0 && (
               <div className="space-y-1">
@@ -1680,6 +1783,94 @@ function AnalyseSection({
                   {da ? 'Tilføj' : 'Add'}
                 </button>
               </div>
+            </div>
+
+            {/* BIZZ-1890: PDF upload af standard betingelser */}
+            <div className="pt-1">
+              <div className="text-slate-500 text-[10px] mb-1.5">
+                {da
+                  ? 'Eller upload PDF med standard betingelser:'
+                  : 'Or upload a PDF with standard terms:'}
+              </div>
+              <button
+                type="button"
+                aria-label={
+                  da
+                    ? 'Upload PDF med standard forsikringsbetingelser'
+                    : 'Upload PDF with standard insurance terms'
+                }
+                onClick={() => stdPdfRef.current?.click()}
+                disabled={stdPdfUploading || running}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700/50 hover:bg-slate-600/50 border border-slate-600/50 text-slate-300 text-xs font-medium transition-colors disabled:opacity-40"
+              >
+                {stdPdfUploading ? (
+                  <Loader2 size={11} className="animate-spin" />
+                ) : (
+                  <FilePlus size={11} />
+                )}
+                {stdPdfUploading
+                  ? da
+                    ? 'Uploader…'
+                    : 'Uploading…'
+                  : da
+                    ? 'Upload PDF'
+                    : 'Upload PDF'}
+              </button>
+              <input
+                ref={stdPdfRef}
+                type="file"
+                accept=".pdf,application/pdf"
+                className="hidden"
+                aria-label={
+                  da
+                    ? 'Vælg PDF-fil til standard betingelser'
+                    : 'Select PDF file for standard terms'
+                }
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  e.target.value = '';
+                  setStdPdfUploading(true);
+                  try {
+                    const form = new FormData();
+                    form.append('file', file);
+                    const selskab = stdSelskabRef.current?.value?.trim();
+                    if (selskab) form.append('selskab', selskab);
+                    const res = await fetch('/api/forsikring/standard-docs/upload', {
+                      method: 'POST',
+                      body: form,
+                    });
+                    if (res.ok) {
+                      const data = (await res.json()) as {
+                        id?: string;
+                        titel?: string;
+                        source_url?: string;
+                        kategori?: string;
+                        selskab?: string;
+                      };
+                      if (data.id && data.source_url && data.titel) {
+                        const newDoc = {
+                          titel: data.titel,
+                          source_url: data.source_url,
+                          kategori: data.kategori ?? 'ejendom',
+                          confidence: 'high' as const,
+                        };
+                        setStdDiscovered((prev) =>
+                          prev.find((d) => d.source_url === data.source_url)
+                            ? prev
+                            : [...prev, newDoc]
+                        );
+                        setStdSelectedIds((prev) => new Set([...prev, data.source_url!]));
+                        setStdSavedIds((prev) => new Map(prev).set(data.source_url!, data.id!));
+                      }
+                    }
+                  } catch {
+                    /* non-fatal */
+                  } finally {
+                    setStdPdfUploading(false);
+                  }
+                }}
+              />
             </div>
           </div>
         </div>

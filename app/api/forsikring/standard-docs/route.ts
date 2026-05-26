@@ -29,7 +29,7 @@ const PostSchema = z.object({
   titel: z.string().min(1),
   source_url: z.string().url(),
   raw_content: z.string().optional(),
-  added_via: z.enum(['ai_discovery', 'manual_link']),
+  added_via: z.enum(['ai_discovery', 'manual_link', 'auto_detected']),
 });
 
 /** Standard-doc returneret til frontend */

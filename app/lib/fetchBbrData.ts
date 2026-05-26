@@ -30,7 +30,6 @@ import {
 } from '@/app/lib/bbrKoder';
 import { logger } from '@/app/lib/logger';
 import { tlFetch } from '@/app/lib/tlFetch';
-import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -805,82 +804,6 @@ async function fetchBFENummer(dawaId: string): Promise<{
         }
       } catch {
         /* Tinglysning fallback er valgfri */
-      }
-    }
-
-    // BIZZ-1876/1877: EJF GraphQL fallback når VP og TL begge fejler at finde
-    // ejerlejligheds-BFE (Carlsberg Byen + moderne udviklinger). MAT_Ejerlejlighed
-    // mapper adgangsadresseId + ejerlejlighedsnummer → specifik BFE.
-    if (!ejerlejlighedBfe && harEtage && adgangsadresseId) {
-      try {
-        const token = await getSharedOAuthToken();
-        if (token) {
-          const matVt = nowDafDateTime();
-          // Query EJF for ejerlejligheder under adgangsadressen
-          const ejfQuery = `query($vt: DafDateTime!, $adg: String!) {
-            EJFCustom_EjerskabBegraenset(
-              first: 200
-              virkningstid: $vt
-              where: { adgangsadresseidentifikator: { eq: $adg } }
-            ) {
-              nodes {
-                bestemtFastEjendomBFENr
-                bestemtFastEjendomEjerlejlighedsNr
-                ejendomsadresseEtage
-                ejendomsadresseDoer
-                status
-              }
-            }
-          }`;
-          const ejfRes = await fetch(
-            proxyUrl('https://graphql.datafordeler.dk/flexibleCurrent/v1/'),
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`,
-                ...proxyHeaders(),
-              },
-              body: JSON.stringify({
-                query: ejfQuery,
-                variables: { vt: matVt, adg: adgangsadresseId },
-              }),
-              signal: AbortSignal.timeout(8000),
-            }
-          );
-          if (ejfRes.ok) {
-            const ejfData = (await ejfRes.json()) as {
-              data?: {
-                EJFCustom_EjerskabBegraenset?: {
-                  nodes?: Array<{
-                    bestemtFastEjendomBFENr: number | null;
-                    ejendomsadresseEtage: string | null;
-                    ejendomsadresseDoer: string | null;
-                    status: string | null;
-                  }>;
-                };
-              };
-            };
-            const ejfNodes = ejfData.data?.EJFCustom_EjerskabBegraenset?.nodes ?? [];
-            // Match etage+dør
-            const matchEjf = ejfNodes.find((n) => {
-              if (n.status && n.status.toLowerCase() === 'historisk') return false;
-              if (etage && (n.ejendomsadresseEtage ?? '').toLowerCase() !== etage.toLowerCase())
-                return false;
-              if (doer && (n.ejendomsadresseDoer ?? '').toLowerCase() !== doer.toLowerCase())
-                return false;
-              return !!n.bestemtFastEjendomBFENr;
-            });
-            if (matchEjf?.bestemtFastEjendomBFENr) {
-              ejerlejlighedBfe = matchEjf.bestemtFastEjendomBFENr;
-              logger.log(
-                `[fetchBFENummer] EJF fallback: EL-BFE ${ejerlejlighedBfe} for ${adresseTekst} (etage=${etage}, dør=${doer})`
-              );
-            }
-          }
-        }
-      } catch {
-        /* EJF fallback non-kritisk */
       }
     }
 

@@ -560,17 +560,83 @@ export default function VirksomhedEjendommeTab({
                             ? 'Følgende ejendomme administreres af denne virksomhed/ejerforening.'
                             : 'The following properties are administered by this company/association.'}
                         </p>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                          {administrerede.map((ej) => (
-                            <PropertyOwnerCard
-                              key={ej.bfeNummer}
-                              ejendom={ej}
-                              showOwner={false}
-                              lang={lang}
-                              preEnriched={preEnrichedByBfe.get(ej.bfeNummer) ?? null}
-                            />
-                          ))}
-                        </div>
+                        {/* BIZZ-1861: Grupper administrerede ejendomme på opgang
+                          (vejnavn+husnr) med fold-ud — samme mønster som aktive. */}
+                        {(() => {
+                          type EjType = (typeof administrerede)[number];
+                          const groups = new Map<string, EjType[]>();
+                          const order: string[] = [];
+                          for (const ej of administrerede) {
+                            const key = ej.adresse
+                              ? `${ej.adresse.split(',')[0].trim()}|${ej.postnr ?? ''}`
+                              : `bfe-${ej.bfeNummer}`;
+                            if (!groups.has(key)) {
+                              groups.set(key, []);
+                              order.push(key);
+                            }
+                            groups.get(key)!.push(ej);
+                          }
+                          const singleEjendomme = order
+                            .filter((k) => groups.get(k)!.length === 1)
+                            .map((k) => groups.get(k)![0]);
+                          const komplekser = order.filter((k) => groups.get(k)!.length > 1);
+                          return (
+                            <div className="space-y-4">
+                              {singleEjendomme.length > 0 && (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                  {singleEjendomme.map((ej) => (
+                                    <PropertyOwnerCard
+                                      key={ej.bfeNummer}
+                                      ejendom={ej}
+                                      showOwner={false}
+                                      lang={lang}
+                                      preEnriched={preEnrichedByBfe.get(ej.bfeNummer) ?? null}
+                                    />
+                                  ))}
+                                </div>
+                              )}
+                              {komplekser.map((key) => {
+                                const grp = groups.get(key)!;
+                                const opgangAddr = grp[0].adresse?.split(',')[0].trim() ?? key;
+                                const opgangPostnr = grp[0].postnr;
+                                return (
+                                  <details
+                                    key={key}
+                                    className="border-l-2 border-teal-500/30 pl-3 group"
+                                  >
+                                    <summary className="flex items-center gap-2 mb-1.5 cursor-pointer list-none select-none hover:bg-slate-800/30 rounded px-1 py-1 -ml-1 transition-colors">
+                                      <ChevronRight
+                                        size={14}
+                                        className="text-teal-400/70 group-open:rotate-90 transition-transform shrink-0"
+                                      />
+                                      <Building2 size={12} className="text-teal-400/70 shrink-0" />
+                                      <span className="text-xs font-medium text-slate-300">
+                                        {opgangAddr}
+                                        {opgangPostnr ? `, ${opgangPostnr}` : ''}
+                                      </span>
+                                      <span className="text-[10px] text-teal-400/70 px-1.5 py-0.5 rounded bg-teal-500/10 border border-teal-500/20">
+                                        {grp.length} {lang === 'da' ? 'lejligheder' : 'units'}
+                                      </span>
+                                    </summary>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-2">
+                                      {grp.map((ej) => (
+                                        <PropertyOwnerCard
+                                          key={
+                                            ej.bfeNummer || `${ej.adresse}-${ej.etage}-${ej.doer}`
+                                          }
+                                          ejendom={ej}
+                                          showOwner={false}
+                                          lang={lang}
+                                          preEnriched={preEnrichedByBfe.get(ej.bfeNummer) ?? null}
+                                        />
+                                      ))}
+                                    </div>
+                                  </details>
+                                );
+                              })}
+                            </div>
+                          );
+                        })()}
                       </div>
                     )}
                     {/* Fold-out for sold properties — grouped by historical owner */}

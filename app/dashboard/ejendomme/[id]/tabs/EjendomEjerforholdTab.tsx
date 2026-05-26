@@ -193,11 +193,12 @@ export default function EjendomEjerforholdTab({
           const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
           // BIZZ-1308: Brug ejendomsrelationer BFE (altid korrekt for den aktuelle adresse).
           // ejerlejlighedBfe kan pege på en forkert lejlighed (fx Plads 10 i stedet for 18).
-          // BIZZ-1876: Fallback til jordBfe (SFE) når ejerlejlighedBfe ikke kan resolves
+          // BIZZ-1876: Fallback til bfeNummer (= primaryBfe = ejerlejlighedBfe ?? jordBfe)
+          // når ejendomsrelationer og ejerlejlighedBfe begge er null
           const bfeForDiagram =
             bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
             bbrData?.ejerlejlighedBfe ??
-            bbrData?.jordBfe ??
+            bbrData?.bfeNummer ??
             null;
 
           // Hovedejendom opdelt i EL — vis strukturtræ med ejer-data

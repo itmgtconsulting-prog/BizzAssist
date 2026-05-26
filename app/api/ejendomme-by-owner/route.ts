@@ -1477,6 +1477,22 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     }
   } // end !cacheFullHit
 
+  // BIZZ-1851: Pre-resolved adressedata for syntetiske BFEs (andelslejligheder + manglende cache)
+  const dawaResolvedMap = new Map<
+    number,
+    {
+      adresse: string;
+      etage: string | null;
+      doer: string | null;
+      postnr: string;
+      postnrnavn: string;
+      kommune: string | null;
+      kommuneKode: string | null;
+      ejendomstype: string | null;
+      dawaId: string | null;
+    }
+  >();
+
   // BIZZ-1672: Administrerede ejendomme fra ejf_administrator.
   // For ejerforeninger (og andre virksomheder) — tilføj BFE'er de administrerer.
   const administreretByBfe = new Set<number>();
@@ -1495,6 +1511,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       if (adminRows && adminRows.length > 0) {
         let addedCount = 0;
         const sfeBfes: number[] = [];
+        const cachedMatrikelAddrs = new Set<string>();
         for (const row of adminRows as Array<{
           bfe_nummer: number;
           virksomhed_cvr: string;
@@ -1569,12 +1586,44 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
                     row.adresse.startsWith(`${l.vejnavn} ${l.husnr}`)
                   );
                   if (!matchesMatrikel) continue;
+                  cachedMatrikelAddrs.add(`${row.adresse}`);
                   if (bfeTilCvr.has(row.bfe_nummer)) continue;
                   administreretByBfe.add(row.bfe_nummer);
                   bfeTilCvr.set(row.bfe_nummer, (ownerCvr ?? '').padStart(8, '0'));
                   aktivByBfe.set(row.bfe_nummer, true);
                   addedCount++;
                 }
+              }
+
+              // BIZZ-1860: Lejligheder på matriklen der IKKE er i cache
+              // (f.eks. kælder-lejligheder uden BFE) — tilføj som syntetiske
+              const postnrNavn = (adresser as Array<{ postnrnavn?: string }>)[0]?.postnrnavn ?? '';
+              for (const l of lejligheder as Array<{
+                vejnavn: string;
+                husnr: string;
+                etage: string | null;
+                dør: string | null;
+                postnr: string;
+              }>) {
+                const addr = `${l.vejnavn} ${l.husnr}`;
+                if (cachedMatrikelAddrs.has(addr)) continue;
+                const synBfe = -(Math.abs(sfeBfe) * 1000 + bfeTilCvr.size);
+                if (bfeTilCvr.has(synBfe)) continue;
+                administreretByBfe.add(synBfe);
+                bfeTilCvr.set(synBfe, (ownerCvr ?? '').padStart(8, '0'));
+                aktivByBfe.set(synBfe, true);
+                dawaResolvedMap.set(synBfe, {
+                  adresse: addr,
+                  etage: l.etage ?? null,
+                  doer: l.dør ?? null,
+                  postnr: l.postnr,
+                  postnrnavn: postnrNavn,
+                  kommune: null,
+                  kommuneKode: null,
+                  ejendomstype: 'Ejerlejlighed',
+                  dawaId: null,
+                });
+                addedCount++;
               }
             } catch {
               /* individual SFE expansion non-fatal */
@@ -1594,22 +1643,6 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       /* ejf_administrator lookup non-fatal */
     }
   }
-
-  // BIZZ-1851: Pre-resolved adressedata for syntetiske BFEs (andelslejligheder)
-  const dawaResolvedMap = new Map<
-    number,
-    {
-      adresse: string;
-      etage: string | null;
-      doer: string | null;
-      postnr: string;
-      postnrnavn: string;
-      kommune: string | null;
-      kommuneKode: string | null;
-      ejendomstype: string | null;
-      dawaId: string | null;
-    }
-  >();
 
   // BIZZ-1862: Tilføj historiske SFE-BFEs til bfeTilCvr FØR SFE-expansion
   // så matrikel-lookup kan finde lejligheder under dem.

@@ -415,13 +415,17 @@ async function walkVirksomhed(
       // udfolded lejligheder. Når SFE-expansion fandt lejligheder,
       // skal SFE-BFE'en selv og AI-kandidater uden etage ikke tælles
       // med som separate aktiver — de er "containere", ikke enheder.
-      const hasExpandedLejligheder = aktiver.some(
-        (a) => a.type === 'ejendom' && a.rawData?.sfeExpanded
-      );
+      // Detect SFE-expansion: enten BFE=0 (DAWA-resolved) eller
+      // adresser med etage-indikator i label (", st", ", 1 ", ", kl")
+      const ejendomAktiver = aktiver.filter((a) => a.type === 'ejendom');
+      const hasExpandedLejligheder =
+        ejendomAktiver.some((a) => a.bfe === 0) ||
+        ejendomAktiver.filter((a) => /,\s*(?:st|kl|\d)\s/.test(a.label)).length > 3;
       if (hasExpandedLejligheder) {
+        // BFEs med bfe > 0 der IKKE er lejligheder → kandidater for fjernelse
         const bfesToCheck = new Set<number>();
-        for (const a of aktiver) {
-          if (a.type === 'ejendom' && a.bfe && a.bfe > 0 && !a.rawData?.sfeExpanded) {
+        for (const a of ejendomAktiver) {
+          if (a.bfe && a.bfe > 0) {
             bfesToCheck.add(a.bfe);
           }
         }

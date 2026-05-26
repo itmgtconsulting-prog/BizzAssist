@@ -251,7 +251,59 @@ export async function GET(request: NextRequest) {
           }
         }
 
-        // BIZZ-1850: Alle 3 fallbacks fejlede → marker som unresolvable så cron
+        // Fallback 4: DAWA adgangsadresse via adresseId — for BFEs der har
+        // en adgangsadresse-id i ejf_ejerskab/ejf_administrator men ikke
+        // en beliggenhedsadresse via /bfe/ endpoint.
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: ejfRow } = await (admin as any)
+            .from('ejf_ejerskab')
+            .select('bfe_nummer')
+            .eq('bfe_nummer', bfe)
+            .maybeSingle();
+          if (ejfRow) {
+            // Prøv DAWA adresser med BFE som søgeparameter
+            const dawaAdrRes = await fetchDawa(
+              `${DAWA_BASE_URL}/adresser?bfenummer=${bfe}&format=json&struktur=mini&per_side=1`,
+              { signal: AbortSignal.timeout(5000) },
+              { caller: 'cron.sync-bfe-adresse.dawa-adr' }
+            );
+            if (dawaAdrRes.ok) {
+              const adrData = (await dawaAdrRes.json()) as Array<{
+                vejnavn?: string;
+                husnr?: string;
+                etage?: string;
+                dør?: string;
+                postnr?: string;
+                postnrnavn?: string;
+                id?: string;
+              }>;
+              const a = adrData[0];
+              if (a?.vejnavn && a?.postnr) {
+                await admin.from('bfe_adresse_cache').upsert(
+                  {
+                    bfe_nummer: bfe,
+                    adresse: `${a.vejnavn} ${a.husnr ?? ''}`.trim(),
+                    etage: a.etage ?? null,
+                    doer: a.dør ?? null,
+                    postnr: a.postnr,
+                    postnrnavn: a.postnrnavn ?? null,
+                    dawa_id: a.id ?? null,
+                    kilde: 'cron_dawa_adr',
+                    sidst_opdateret: new Date().toISOString(),
+                  },
+                  { onConflict: 'bfe_nummer' }
+                );
+                resolved++;
+                continue;
+              }
+            }
+          }
+        } catch {
+          /* Fallback 4 non-fatal */
+        }
+
+        // BIZZ-1850: Alle 4 fallbacks fejlede → marker som unresolvable så cron
         // ikke retry hver dag. next_retry_after = nu + 90 dage så datakilder kan
         // få nye data over tid.
         const retryAfter = new Date(Date.now() + RETRY_DELAY_DAYS * 24 * 3600 * 1000).toISOString();

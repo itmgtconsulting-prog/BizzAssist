@@ -953,20 +953,18 @@ export default function EjendomDetaljeClient({
     // BIZZ-1855 #1: Pure SFE/hovedejendom-BFE uden VP-resolved ejerlejlighedBfe
     // (fx Carlsberg Byen SFE 6025643 hvor matrikel-bredde forhindrer VP i at
     // returnere en specifik EL-BFE). Når vi er på adgangsadresse-niveau med
-    // BBR-data men ingen ejerlejlighedBfe, prøv at hente lejligheder via
-    // matrikel-søgning — hvis matriklen har lejligheder, vises de.
+    // ejerlavkode+matrikelnr (fra BBR ELLER MAT) men ingen ejerlejlighedBfe,
+    // prøv at hente lejligheder via matrikel-søgning.
     const bbrRel = bbrData?.ejendomsrelationer?.[0];
-    const erParentSfe =
-      !dawaAdresse?.etage &&
-      !!bbrData &&
-      !bbrData.ejerlejlighedBfe &&
-      !!bbrRel?.ejerlavKode &&
-      !!bbrRel?.matrikelnr;
+    const matJs = matrikelData?.jordstykker?.[0];
+    const hasEjerlavMatr =
+      (!!bbrRel?.ejerlavKode && !!bbrRel?.matrikelnr) ||
+      (!!matJs?.ejerlavskode && !!matJs?.matrikelnummer);
+    const erParentSfe = !dawaAdresse?.etage && hasEjerlavMatr && !bbrData?.ejerlejlighedBfe;
     if (!erModer && !erChild && !matOpdelt && !erParentSfe) return;
 
     // Find ejerlavkode + matrikelnr — foretræk BBR (konsistent med eksisterende
     // logic), fallback til MAT når BBR endnu ikke er loaded.
-    const matJs = matrikelData?.jordstykker?.[0];
     const ejerlavKode = bbrRel?.ejerlavKode ?? matJs?.ejerlavskode;
     const matrikelnr = bbrRel?.matrikelnr ?? matJs?.matrikelnummer;
     if (!ejerlavKode || !matrikelnr) return;

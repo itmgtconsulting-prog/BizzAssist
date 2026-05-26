@@ -283,6 +283,36 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       }
     }
 
+    // BIZZ-1888: Gadenavn-baseret discovery — foreningsnavne som "E/F Stjernegade 7"
+    // indeholder direkte gadenavn+husnr. Søg i bfe_adresse_cache.
+    if (adminBfes.size === 0) {
+      try {
+        const gadeMatch = virkNavn.match(
+          /(?:ejerforeningen|e\/f|a\/b)\s+([A-ZÆØÅa-zæøåé][A-ZÆØÅa-zæøåé.\s-]+?)\s+(\d+\w*)\s*$/i
+        );
+        if (gadeMatch) {
+          const gadenavn = gadeMatch[1].trim();
+          const husnr = gadeMatch[2];
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: addrRows } = await (admin as any)
+            .from('bfe_adresse_cache')
+            .select('bfe_nummer')
+            .ilike('adresse', `${gadenavn} ${husnr}%`)
+            .limit(20);
+          for (const row of (addrRows ?? []) as Array<{ bfe_nummer: number }>) {
+            adminBfes.add(row.bfe_nummer);
+          }
+          if (adminBfes.size > 0) {
+            logger.log(
+              `[ai/ejerforening-ejendomme] Gadenavn-match: ${virkNavn} → ${gadenavn} ${husnr} → ${adminBfes.size} BFEs`
+            );
+          }
+        }
+      } catch {
+        /* gadenavn discovery non-fatal */
+      }
+    }
+
     if (adminBfes.size === 0) {
       return NextResponse.json({ candidates: [] });
     }

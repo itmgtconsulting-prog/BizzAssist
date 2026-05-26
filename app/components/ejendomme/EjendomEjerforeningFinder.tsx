@@ -153,6 +153,29 @@ export default function EjendomEjerforeningFinder({ bfeNummer, lang, adresse, po
         const data = (await res.json()) as CommunityVerified[];
         if (active && data.length > 0) {
           setCommunityResults(data);
+          // BIZZ-1857: Hent også user_verdict for community-kandidater så
+          // brugerens egen stemme er synlig — uden dette ved bruger ikke
+          // om de selv har voteret eller om de kan vote
+          const verifRes = await fetch(`/api/ejerforening-verification?bfeNummer=${bfeNummer}`, {
+            credentials: 'include',
+          });
+          if (verifRes.ok && active) {
+            const verifData = (await verifRes.json()) as Array<{
+              candidate_cvr: string;
+              verified_count: number;
+              rejected_count: number;
+              user_verdict: 'verified' | 'rejected' | null;
+            }>;
+            const map = new Map<string, VerificationState>();
+            for (const row of verifData) {
+              map.set(row.candidate_cvr, {
+                verified_count: row.verified_count,
+                rejected_count: row.rejected_count,
+                user_verdict: row.user_verdict,
+              });
+            }
+            setVerifications(map);
+          }
         }
       } catch {
         // Fail-soft — community check er ikke kritisk
@@ -361,67 +384,111 @@ export default function EjendomEjerforeningFinder({ bfeNummer, lang, adresse, po
       {/* Community-verificerede resultater — vises automatisk for alle brugere */}
       {showCommunity && (
         <div className="space-y-3">
-          <p className="text-[10px] text-slate-500">
+          <p className="text-xs text-slate-400">
             {da
-              ? 'Foreslået af andre brugere i ejendomsstrukturen'
-              : 'Suggested by other users in the property structure'}
+              ? 'Foreslået af andre brugere. Du kan bekræfte, afvise eller starte en ny AI-søgning hvis du ikke er enig.'
+              : 'Suggested by other users. You can verify, reject or start a new AI search if you disagree.'}
           </p>
 
-          {communityResults.map((cv) => (
-            <div key={cv.cvr} className="rounded-lg bg-slate-800/40 border border-slate-700/40 p-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-start gap-3 min-w-0">
-                  <Building2 size={18} className="text-emerald-400 shrink-0 mt-0.5" />
-                  <div className="min-w-0">
-                    <Link
-                      href={`/dashboard/companies/${cv.cvr}`}
-                      className="text-sm text-white font-medium hover:text-blue-300 transition-colors truncate block"
-                    >
-                      {cv.navn}
-                    </Link>
-                    <div className="flex items-center gap-2 mt-1 flex-wrap">
-                      <span className="text-xs text-slate-500">CVR {cv.cvr}</span>
+          {communityResults.map((cv) => {
+            const userVerdict = verifications.get(cv.cvr)?.user_verdict ?? null;
+            return (
+              <div
+                key={cv.cvr}
+                className="rounded-lg bg-slate-800/40 border border-slate-700/40 p-3"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <Building2 size={18} className="text-emerald-400 shrink-0 mt-0.5" />
+                    <div className="min-w-0">
+                      <Link
+                        href={`/dashboard/companies/${cv.cvr}`}
+                        className="text-sm text-white font-medium hover:text-blue-300 transition-colors truncate block"
+                      >
+                        {cv.navn}
+                      </Link>
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        <span className="text-xs text-slate-500">CVR {cv.cvr}</span>
+                        {userVerdict && (
+                          <span
+                            className={`text-[10px] px-1.5 py-0.5 rounded ${
+                              userVerdict === 'verified'
+                                ? 'bg-emerald-500/10 text-emerald-400'
+                                : 'bg-red-500/10 text-red-400'
+                            }`}
+                          >
+                            {da ? 'Din stemme:' : 'Your vote:'}{' '}
+                            {userVerdict === 'verified' ? '👍' : '👎'}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                {/* Verificerings-knapper */}
-                <div className="flex items-center gap-1 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => handleVote(cv.cvr, 'verified')}
-                    disabled={pendingCvr === cv.cvr}
-                    className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-slate-700/30 text-slate-400 hover:bg-emerald-500/10 hover:text-emerald-400 transition-colors"
-                    aria-label={da ? 'Bekræft' : 'Verify'}
-                  >
-                    <ThumbsUp size={12} />
-                    {cv.verified_count > 0 && <span>{cv.verified_count}</span>}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleVote(cv.cvr, 'rejected')}
-                    disabled={pendingCvr === cv.cvr}
-                    className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-slate-700/30 text-slate-400 hover:bg-red-500/10 hover:text-red-400 transition-colors"
-                    aria-label={da ? 'Afvis' : 'Reject'}
-                  >
-                    <ThumbsDown size={12} />
-                    {cv.rejected_count > 0 && <span>{cv.rejected_count}</span>}
-                  </button>
+                  {/* BIZZ-1857: Verificerings-knapper med synlig label, aktiv-state og hover */}
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleVote(cv.cvr, 'verified')}
+                      disabled={pendingCvr === cv.cvr}
+                      title={
+                        da
+                          ? userVerdict === 'verified'
+                            ? 'Klik for at fjerne din stemme'
+                            : 'Bekræft at dette er den korrekte ejerforening'
+                          : userVerdict === 'verified'
+                            ? 'Click to remove your vote'
+                            : 'Confirm this is the correct association'
+                      }
+                      className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                        userVerdict === 'verified'
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                          : 'bg-slate-700/40 text-slate-300 hover:bg-emerald-500/15 hover:text-emerald-400 border border-slate-600/40'
+                      }`}
+                      aria-label={da ? 'Bekræft' : 'Verify'}
+                    >
+                      <ThumbsUp size={12} />
+                      <span>{cv.verified_count > 0 ? cv.verified_count : ''}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleVote(cv.cvr, 'rejected')}
+                      disabled={pendingCvr === cv.cvr}
+                      title={
+                        da
+                          ? userVerdict === 'rejected'
+                            ? 'Klik for at fjerne din stemme'
+                            : 'Afvis hvis dette ikke er den rigtige ejerforening'
+                          : userVerdict === 'rejected'
+                            ? 'Click to remove your vote'
+                            : 'Reject if this is not the correct association'
+                      }
+                      className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                        userVerdict === 'rejected'
+                          ? 'bg-red-500/20 text-red-300 border border-red-500/40'
+                          : 'bg-slate-700/40 text-slate-300 hover:bg-red-500/15 hover:text-red-400 border border-slate-600/40'
+                      }`}
+                      aria-label={da ? 'Afvis' : 'Reject'}
+                    >
+                      <ThumbsDown size={12} />
+                      <span>{cv.rejected_count > 0 ? cv.rejected_count : ''}</span>
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
 
-          {/* Knap til at søge med AI alligevel */}
+          {/* BIZZ-1857: "Søg med AI alligevel"-knap mere prominent */}
           <button
             type="button"
             onClick={handleSearch}
             disabled={loading}
-            className="flex items-center gap-1.5 text-[11px] text-slate-500 hover:text-teal-400 transition-colors mt-1"
-            aria-label={da ? 'Søg med AI alligevel' : 'Search with AI anyway'}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-teal-600/15 hover:bg-teal-600/25 border border-teal-500/30 text-teal-300 text-xs font-medium transition-colors mt-2 disabled:opacity-50"
+            aria-label={da ? 'Søg ny ejerforening via AI' : 'Search new association via AI'}
           >
-            <Search size={11} />
-            {da ? 'Søg med AI alligevel' : 'Search with AI anyway'}
+            {loading ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
+            {da ? 'Søg ny via AI' : 'Search new via AI'}
           </button>
         </div>
       )}

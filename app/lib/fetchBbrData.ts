@@ -691,6 +691,9 @@ async function fetchBFENummer(dawaId: string): Promise<{
     // BIZZ-1662: Tinglysning /ejendom/adresse fallback — når VP ikke finder
     // en EL-BFE for adresser med etage, prøv TL. VP mangler data for mange
     // ældre ejerlejligheder (fx Kampergade 11 st., Helsingør).
+    // BIZZ-1853: Relaxed vedroerende-check — Carlsberg Byen og lignende moderne
+    // udviklinger registrerer lejligheder uden "ejerlejlighed" prefix. Match
+    // i stedet på adresse-mønster (har etage+dør og BFE ≠ jordBfe).
     if (!ejerlejlighedBfe && harEtage && adresseTekst) {
       try {
         const addrPart = adresseTekst.split(',')[0].trim();
@@ -713,19 +716,66 @@ async function fetchBFENummer(dawaId: string): Promise<{
                 ejendomsnummer?: string;
               }>;
             };
-            // Find ejerlejlighed-item der matcher etage
+            // BIZZ-1853: Score-baseret matching. Foretrukne match først:
+            // 1. Eksakt etage+dør match + vedroerende=ejerlejlighed
+            // 2. Eksakt etage+dør match (uden vedroerende-krav)
+            // 3. Eksakt etage match (når dør mangler)
+            let bestMatch: { bfe: number; score: number; reason: string } | null = null;
             for (const item of parsed.items ?? []) {
-              if (!item.vedroerende?.toLowerCase().includes('ejerlejlighed')) continue;
-              // Tjek at adressen indeholder korrekt etage
-              const itemLower = item.adresse.toLowerCase();
-              if (etage && !itemLower.includes(etage.toLowerCase())) continue;
-              if (doer && !itemLower.includes(doer.toLowerCase())) continue;
               const bfe = item.ejendomsnummer ? parseInt(item.ejendomsnummer, 10) : 0;
-              if (bfe > 0 && bfe !== jordBfe) {
-                ejerlejlighedBfe = bfe;
-                logger.log(`[fetchBFENummer] TL fallback: EL-BFE ${bfe} for ${adresseTekst}`);
-                break;
+              if (bfe <= 0 || bfe === jordBfe) continue;
+              const itemLower = item.adresse.toLowerCase();
+              const ved = item.vedroerende?.toLowerCase() ?? '';
+              const isEjerlejlighedVedroerende = ved.includes('ejerlejlighed');
+
+              // Cross-kommune validering: afvis kandidater fra anden kommune
+              if (adgKommunekode) {
+                try {
+                  const altJsRes = await fetchDawa(
+                    `${DAWA_BASE_URL}/jordstykker?bfenummer=${bfe}&struktur=mini`,
+                    { signal: AbortSignal.timeout(3000) },
+                    { caller: 'fetchBbrData.tl-fallback.cross-kommune' }
+                  );
+                  if (altJsRes.ok) {
+                    const altJs = (await altJsRes.json()) as Array<{
+                      kommune?: { kode?: string };
+                    }>;
+                    const altKommune = altJs?.[0]?.kommune?.kode;
+                    if (altKommune && altKommune !== adgKommunekode) continue;
+                  }
+                } catch {
+                  /* non-fatal */
+                }
               }
+
+              let score = 0;
+              let reason = '';
+              // Match etage (præcis)
+              const etageMatches = etage ? itemLower.includes(etage.toLowerCase()) : false;
+              const doerMatches = doer ? itemLower.includes(doer.toLowerCase()) : false;
+
+              if (etage && doer && etageMatches && doerMatches) {
+                score = isEjerlejlighedVedroerende ? 30 : 20;
+                reason = isEjerlejlighedVedroerende
+                  ? 'etage+dør+vedroerende'
+                  : 'etage+dør (relaxed)';
+              } else if (etage && etageMatches && !doer) {
+                score = isEjerlejlighedVedroerende ? 15 : 10;
+                reason = isEjerlejlighedVedroerende ? 'etage+vedroerende' : 'etage (relaxed)';
+              } else {
+                continue;
+              }
+
+              if (!bestMatch || score > bestMatch.score) {
+                bestMatch = { bfe, score, reason };
+              }
+            }
+
+            if (bestMatch) {
+              ejerlejlighedBfe = bestMatch.bfe;
+              logger.log(
+                `[fetchBFENummer] TL fallback: EL-BFE ${bestMatch.bfe} for ${adresseTekst} (${bestMatch.reason})`
+              );
             }
           }
         }

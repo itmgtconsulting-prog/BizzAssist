@@ -400,9 +400,11 @@ export default function VirksomhedEjendommeTab({
                             const groups = new Map<string, EjType[]>();
                             const order: string[] = [];
                             for (const ej of props) {
-                              // Key = adresse + postnr; tom adresse = unikt fallback per BFE
+                              // BIZZ-1861: Grupper på vejnavn+husnr (opgang) i stedet
+                              // for fuld adresse. Lejligheder i samme opgang grupperes
+                              // under én fold-ud header (Plads 16: 11 lejligheder).
                               const key = ej.adresse
-                                ? `${ej.adresse}|${ej.postnr ?? ''}`
+                                ? `${ej.adresse.split(',')[0].trim()}|${ej.postnr ?? ''}`
                                 : `bfe-${ej.bfeNummer}`;
                               if (!groups.has(key)) {
                                 groups.set(key, []);
@@ -434,30 +436,39 @@ export default function VirksomhedEjendommeTab({
                                     ))}
                                   </div>
                                 )}
+                                {/* BIZZ-1861: Opgange med fold-ud */}
                                 {komplekser.map((key) => {
                                   const grp = groups.get(key)!;
-                                  // Kompleks: header + indented grid
+                                  const opgangAddr = grp[0].adresse?.split(',')[0].trim() ?? key;
+                                  const opgangPostnr = grp[0].postnr;
                                   return (
-                                    <div
+                                    <details
                                       key={key}
-                                      className="border-l-2 border-emerald-500/30 pl-3"
+                                      className="border-l-2 border-emerald-500/30 pl-3 group"
                                     >
-                                      <div className="flex items-center gap-2 mb-1.5">
-                                        <Building2 size={12} className="text-emerald-400/70" />
+                                      <summary className="flex items-center gap-2 mb-1.5 cursor-pointer list-none select-none hover:bg-slate-800/30 rounded px-1 py-1 -ml-1 transition-colors">
+                                        <ChevronRight
+                                          size={14}
+                                          className="text-emerald-400/70 group-open:rotate-90 transition-transform shrink-0"
+                                        />
+                                        <Building2
+                                          size={12}
+                                          className="text-emerald-400/70 shrink-0"
+                                        />
                                         <span className="text-xs font-medium text-slate-300">
-                                          {grp[0].adresse}
-                                          {grp[0].postnr ? `, ${grp[0].postnr}` : ''}
+                                          {opgangAddr}
+                                          {opgangPostnr ? `, ${opgangPostnr}` : ''}
                                         </span>
                                         <span className="text-[10px] text-emerald-400/70 px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20">
-                                          {lang === 'da'
-                                            ? `Kompleks · ${grp.length} ejerlejligheder`
-                                            : `Complex · ${grp.length} units`}
+                                          {grp.length} {lang === 'da' ? 'lejligheder' : 'units'}
                                         </span>
-                                      </div>
-                                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                      </summary>
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-2">
                                         {grp.map((ej) => (
                                           <PropertyOwnerCard
-                                            key={ej.bfeNummer}
+                                            key={
+                                              ej.bfeNummer || `${ej.adresse}-${ej.etage}-${ej.doer}`
+                                            }
                                             ejendom={ej}
                                             showOwner={false}
                                             lang={lang}
@@ -465,7 +476,7 @@ export default function VirksomhedEjendommeTab({
                                           />
                                         ))}
                                       </div>
-                                    </div>
+                                    </details>
                                   );
                                 })}
                               </div>

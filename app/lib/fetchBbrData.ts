@@ -434,7 +434,11 @@ async function fetchDatafordelerGraphQL(
       headers: { 'Content-Type': 'application/json', ...proxyHeaders() },
       body: JSON.stringify({ query, variables }),
       signal: AbortSignal.timeout(proxyTimeout()),
-      cache: 'no-store',
+      // BIZZ-1893: Fjernet cache:'no-store' — den forcede hele ejendomsrouten
+      // ind i dynamic-mode og sendte Cache-Control: no-store til Google, som
+      // dermed stoppede med at indeksere siderne. ISR (next.revalidate) er den
+      // korrekte cache-strategi; POST-fetches i Server Components caches som GET.
+      next: { revalidate: 3600 },
     });
 
     if (!res.ok) {

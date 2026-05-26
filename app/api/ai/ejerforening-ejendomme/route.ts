@@ -285,14 +285,36 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     // BIZZ-1888: Gadenavn-baseret discovery — foreningsnavne som "E/F Stjernegade 7"
     // indeholder direkte gadenavn+husnr. Søg i bfe_adresse_cache.
+    // BIZZ-1862: Udvidet til multi-gade-navne som "Ejerforeningen Skyttegårdsvej 1-11
+    // Vigerslevvej 144-148" — ekstrahér ALLE gade+husnr par fra foreningsnavnet.
     if (adminBfes.size === 0) {
       try {
-        const gadeMatch = virkNavn.match(
-          /(?:ejerforeningen|e\/f|a\/b)\s+([A-ZÆØÅa-zæøåé][A-ZÆØÅa-zæøåé.\s-]+?)\s+(\d+\w*)\s*$/i
-        );
-        if (gadeMatch) {
-          const gadenavn = gadeMatch[1].trim();
-          const husnr = gadeMatch[2];
+        // Strip foreningspræfix og find alle "GaddeNavn N[-M]" mønstre i det resterende.
+        // Eksempel: "Ejerforeningen Skyttegårdsvej 1-11 Vigerslevvej 144-148"
+        //   → ["Skyttegårdsvej 1", "Vigerslevvej 144"]
+        const navnUdenPrefix = virkNavn.replace(/^(?:ejerforeningen|e\/f|a\/b)\s+/i, '').trim();
+        // Match: ord(er) der starter med stor bogstav + mellemrum + husnummer
+        const gadeRegex =
+          /([A-ZÆØÅa-zæøåé][a-zæøåé][A-ZÆØÅa-zæøåéa-z\s]*?)\s+(\d+[A-Za-z]?(?:-\d+[A-Za-z]?)?)/g;
+        const gadeMatches: Array<{ gadenavn: string; husnr: string }> = [];
+        let m;
+        while ((m = gadeRegex.exec(navnUdenPrefix)) !== null) {
+          const gadenavn = m[1].trim();
+          const husnr = m[2].split('-')[0]; // Brug første nummer i interval "1-11" → "1"
+          if (gadenavn.length > 3) {
+            gadeMatches.push({ gadenavn, husnr });
+          }
+        }
+        // Fallback: single gade via gammel regex
+        if (gadeMatches.length === 0) {
+          const singleMatch = virkNavn.match(
+            /(?:ejerforeningen|e\/f|a\/b)\s+([A-ZÆØÅa-zæøåé][A-ZÆØÅa-zæøåé.\s-]+?)\s+(\d+\w*)\s*$/i
+          );
+          if (singleMatch) {
+            gadeMatches.push({ gadenavn: singleMatch[1].trim(), husnr: singleMatch[2] });
+          }
+        }
+        for (const { gadenavn, husnr } of gadeMatches) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const { data: addrRows } = await (admin as any)
             .from('bfe_adresse_cache')
@@ -302,11 +324,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           for (const row of (addrRows ?? []) as Array<{ bfe_nummer: number }>) {
             adminBfes.add(row.bfe_nummer);
           }
-          if (adminBfes.size > 0) {
-            logger.log(
-              `[ai/ejerforening-ejendomme] Gadenavn-match: ${virkNavn} → ${gadenavn} ${husnr} → ${adminBfes.size} BFEs`
-            );
-          }
+        }
+        if (adminBfes.size > 0) {
+          logger.log(
+            `[ai/ejerforening-ejendomme] Multi-gadenavn-match: ${virkNavn} → ${gadeMatches.map((g) => `${g.gadenavn} ${g.husnr}`).join(', ')} → ${adminBfes.size} BFEs`
+          );
         }
       } catch {
         /* gadenavn discovery non-fatal */

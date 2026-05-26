@@ -73,3 +73,48 @@ body {
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
 }
+
+/* BIZZ-1866: Print-venlige styles */
+@media print {
+  /* Skjul navigation, sidebars og interaktive elementer */
+  nav,
+  aside,
+  .print\\:hidden,
+  button:not([data-print-visible]),
+  [role='dialog'],
+  [role='alertdialog'] {
+    display: none !important;
+  }
+
+  /* Vis alt indhold (fjern lazy-load afskæring) */
+  main {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+
+  /* Fold-ud alle <details> elementer */
+  details {
+    open: true;
+  }
+  details > summary {
+    list-style: none;
+  }
+  details[open] > summary::before {
+    content: none;
+  }
+
+  /* Hvid baggrund for print */
+  body,
+  main,
+  [class*='bg-slate'],
+  [class*='bg-\\['] {
+    background: white !important;
+    color: black !important;
+  }
+
+  /* Kort/diagram: skjul (renderes ikke godt i print) */
+  .mapboxgl-map,
+  svg[class*='diagram'] {
+    display: none !important;
+  }
+}

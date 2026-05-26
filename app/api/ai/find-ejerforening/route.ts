@@ -260,6 +260,63 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       naboBfes.push(bfeNummer);
     }
 
+    // BIZZ-1855: adgangsAdresseID-baseret sibling traversal.
+    // For Carlsberg Byen-stil bygninger har mange lejligheder samme
+    // adgangsAdresseID. Find target BFE's dawa_id, derefter alle andre
+    // BFE'er der deler samme dawa_id. Fanger SFE-tilfælde hvor flere
+    // indgange deler en hovedejerforening men har forskellige vejnavne.
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: targetRow } = await (admin as any)
+        .from('bfe_adresse_cache')
+        .select('dawa_id')
+        .eq('bfe_nummer', bfeNummer)
+        .maybeSingle();
+      const targetDawaId = (targetRow as { dawa_id?: string } | null)?.dawa_id;
+      if (targetDawaId) {
+        // Find adgangsadresse fra DAWA adresse-UUID (etage-niveau har eget UUID,
+        // adgangsadresse er parent UUID for hele opgangen)
+        const dawaRes = await fetch(
+          `https://api.dataforsyningen.dk/adresser/${targetDawaId}?struktur=flad`,
+          { signal: AbortSignal.timeout(5000) }
+        );
+        let adgAddrId: string | null = null;
+        if (dawaRes.ok) {
+          const adrData = (await dawaRes.json()) as { adgangsadresseid?: string };
+          adgAddrId = adrData?.adgangsadresseid ?? null;
+        }
+        if (adgAddrId) {
+          // Find alle adresser med samme adgangsadresse (= samme opgang/bygning)
+          const siblingsRes = await fetch(
+            `https://api.dataforsyningen.dk/adresser?adgangsadresseid=${adgAddrId}&struktur=mini&per_side=200`,
+            { signal: AbortSignal.timeout(8000) }
+          );
+          if (siblingsRes.ok) {
+            const siblings = (await siblingsRes.json()) as Array<{ id: string }>;
+            const siblingDawaIds = siblings.map((s) => s.id);
+            if (siblingDawaIds.length > 0) {
+              // Map DAWA-UUIDs til BFE'er via bfe_adresse_cache.dawa_id
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const { data: siblingBfeRows } = await (admin as any)
+                .from('bfe_adresse_cache')
+                .select('bfe_nummer')
+                .in('dawa_id', siblingDawaIds);
+              for (const row of (siblingBfeRows ?? []) as Array<{ bfe_nummer: number }>) {
+                if (!naboBfes.includes(row.bfe_nummer)) {
+                  naboBfes.push(row.bfe_nummer);
+                }
+              }
+              logger.log(
+                `[ai/find-ejerforening] adgangsAdresseID traversal: ${siblingDawaIds.length} siblings`
+              );
+            }
+          }
+        }
+      }
+    } catch {
+      /* adgangsAdresseID traversal non-fatal */
+    }
+
     // BIZZ-1841: DAWA jordstykke-baseret SFE parent lookup.
     // En ejerlejlighed deler matrikel med sin SFE. Via DAWA adgangsadresse →
     // jordstykke finder vi SFE-BFE'en, som kan have ejf_ejerskab/administrator-

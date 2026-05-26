@@ -269,9 +269,76 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const list = bfes.split(',').filter(Boolean).slice(0, MAX_BATCH);
 
   try {
-    const results = await Promise.all(list.map((b) => resolveOne(b)));
+    // BIZZ-1871: Cache-first — hent fra bfe_adresse_cache før live resolve
+    const { createAdminClient } = await import('@/lib/supabase/admin');
+    const admin = createAdminClient();
+    const bfeNums = list.map((b) => parseInt(b, 10)).filter((n) => !isNaN(n));
+    const cachedMap = new Map<string, AdresseRow>();
+    if (bfeNums.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: cached } = await (admin as any)
+        .from('bfe_adresse_cache')
+        .select('bfe_nummer, adresse, postnr, postnrnavn, dawa_id, ejendomstype, etage, doer')
+        .in('bfe_nummer', bfeNums);
+      for (const row of (cached ?? []) as Array<{
+        bfe_nummer: number;
+        adresse: string | null;
+        postnr: string | null;
+        postnrnavn: string | null;
+        dawa_id: string | null;
+        ejendomstype: string | null;
+        etage: string | null;
+        doer: string | null;
+      }>) {
+        if (row.adresse) {
+          cachedMap.set(String(row.bfe_nummer), {
+            adresse: row.adresse,
+            postnr: row.postnr,
+            by: row.postnrnavn,
+            kommune: null,
+            dawaId: row.dawa_id,
+            ejendomstype: row.ejendomstype,
+            etage: row.etage,
+            doer: row.doer,
+          });
+        }
+      }
+    }
+    // Kun resolve BFE'er der IKKE er i cache
+    const uncached = list.filter((b) => !cachedMap.has(b));
+    const results = await Promise.all(uncached.map((b) => resolveOne(b)));
     const out: Record<string, AdresseRow> = {};
-    for (let i = 0; i < list.length; i++) out[list[i]] = results[i];
+    // Merge cached + freshly resolved results
+    for (const [bfe, row] of cachedMap) out[bfe] = row;
+    for (let i = 0; i < uncached.length; i++) out[uncached[i]] = results[i];
+
+    // BIZZ-1871: Cache resolved adresser i bfe_adresse_cache så
+    // ejendomme-by-owner og diagram-resolve kan bruge dem direkte.
+    try {
+      const { createAdminClient } = await import('@/lib/supabase/admin');
+      const admin = createAdminClient();
+      const toCache = Object.entries(out)
+        .filter(([, v]) => v.adresse)
+        .map(([bfe, v]) => ({
+          bfe_nummer: parseInt(bfe, 10),
+          adresse: v.adresse,
+          postnr: v.postnr,
+          postnrnavn: v.by,
+          etage: v.etage,
+          doer: v.doer,
+          dawa_id: v.dawaId,
+          ejendomstype: v.ejendomstype,
+          sidst_opdateret: new Date().toISOString(),
+        }));
+      if (toCache.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (admin as any)
+          .from('bfe_adresse_cache')
+          .upsert(toCache, { onConflict: 'bfe_nummer' });
+      }
+    } catch {
+      /* Cache-write er non-fatal — sker i baggrunden */
+    }
 
     return NextResponse.json(out, {
       headers: {

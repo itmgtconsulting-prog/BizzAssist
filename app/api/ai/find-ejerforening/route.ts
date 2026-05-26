@@ -77,25 +77,79 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // BIZZ-1847: Hvis brugere har verificeret en ejerforening for denne BFE,
     // returner den som high-confidence kandidat uden at køre AI. Spar tokens
     // + giver konsistent UX på tværs af ejendoms- og virksomhedsview.
+    // BIZZ-1848: Tjek også verifications på sibling/SFE-niveau — hvis
+    // foreningen er verificeret for hovedejendommen, gælder den for alle
+    // ejerlejligheder i samme bygning.
+    const verificationBfeSet = new Set<number>([bfeNummer]);
+
+    // Find sibling/SFE BFE'er via DAWA jordstykke for at udvide søgningen.
+    // Bruger samme pattern som BIZZ-1841 SFE-hierarki traversal.
+    try {
+      // Hent adresse for target BFE først
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: targetAdr } = await (admin as any)
+        .from('bfe_adresse_cache')
+        .select('adresse, postnr')
+        .eq('bfe_nummer', bfeNummer)
+        .maybeSingle();
+      if (targetAdr?.adresse && targetAdr?.postnr) {
+        // Hent BFE'er på samme adgangsadresse (samme vejnavn+husnr)
+        const husnrMatch = (targetAdr.adresse as string).match(/^(.+?)\s+(\d+\w*)/);
+        if (husnrMatch) {
+          const gade = husnrMatch[1];
+          const husnr = husnrMatch[2];
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: siblingRows } = await (admin as any)
+            .from('bfe_adresse_cache')
+            .select('bfe_nummer')
+            .ilike('adresse', `${gade} ${husnr}%`)
+            .eq('postnr', targetAdr.postnr)
+            .limit(50);
+          for (const row of (siblingRows ?? []) as Array<{ bfe_nummer: number }>) {
+            verificationBfeSet.add(row.bfe_nummer);
+          }
+        }
+      }
+    } catch {
+      /* sibling expansion non-critical for verification lookup */
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: verifiedRows } = await (admin as any)
       .from('ejerforening_verification_counts')
-      .select('candidate_cvr, verified_count, rejected_count')
-      .eq('bfe_nummer', bfeNummer);
+      .select('bfe_nummer, candidate_cvr, verified_count, rejected_count')
+      .in('bfe_nummer', [...verificationBfeSet]);
 
-    const verifiedCvrs = (
-      (verifiedRows ?? []) as Array<{
-        candidate_cvr: string;
-        verified_count: number;
-        rejected_count: number;
-      }>
-    )
-      .filter((r) => r.verified_count > r.rejected_count && r.verified_count > 0)
-      .sort((a, b) => b.verified_count - a.verified_count);
+    // Aggregér per CVR på tværs af alle relaterede BFE'er
+    const cvrAgg = new Map<string, { verified: number; rejected: number; bfes: Set<number> }>();
+    for (const r of (verifiedRows ?? []) as Array<{
+      bfe_nummer: number;
+      candidate_cvr: string;
+      verified_count: number;
+      rejected_count: number;
+    }>) {
+      if (!cvrAgg.has(r.candidate_cvr)) {
+        cvrAgg.set(r.candidate_cvr, { verified: 0, rejected: 0, bfes: new Set() });
+      }
+      const agg = cvrAgg.get(r.candidate_cvr)!;
+      agg.verified += r.verified_count;
+      agg.rejected += r.rejected_count;
+      if (r.verified_count > 0) agg.bfes.add(r.bfe_nummer);
+    }
+
+    const verifiedCvrs = [...cvrAgg.entries()]
+      .filter(([, v]) => v.verified > v.rejected && v.verified > 0)
+      .sort((a, b) => b[1].verified - a[1].verified)
+      .map(([cvr, v]) => ({
+        cvr,
+        verified: v.verified,
+        rejected: v.rejected,
+        directBfe: v.bfes.has(bfeNummer),
+      }));
 
     if (verifiedCvrs.length > 0) {
       // Hent navne for verificerede CVRs
-      const cvrList = verifiedCvrs.map((v) => v.candidate_cvr);
+      const cvrList = verifiedCvrs.map((v) => v.cvr);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: virkRows } = await (admin as any)
         .from('cvr_virksomhed')
@@ -105,13 +159,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         ((virkRows ?? []) as Array<{ cvr: string; navn: string }>).map((r) => [r.cvr, r.navn])
       );
       const verifiedResult: EjerforeningKandidat[] = verifiedCvrs.map((v) => ({
-        cvr: v.candidate_cvr,
-        navn: navnMap.get(v.candidate_cvr) ?? `CVR ${v.candidate_cvr}`,
+        cvr: v.cvr,
+        navn: navnMap.get(v.cvr) ?? `CVR ${v.cvr}`,
         confidence: 'high' as const,
-        reasoning: `Verificeret af ${v.verified_count} bruger${v.verified_count !== 1 ? 'e' : ''}${
-          v.rejected_count > 0 ? ` (${v.rejected_count} afviste)` : ''
-        }`,
-        administeredCount: v.verified_count,
+        reasoning: v.directBfe
+          ? `Verificeret af ${v.verified} bruger${v.verified !== 1 ? 'e' : ''}${
+              v.rejected > 0 ? ` (${v.rejected} afviste)` : ''
+            }`
+          : `Verificeret for hovedejendom (${v.verified} bruger${v.verified !== 1 ? 'e' : ''})`,
+        administeredCount: v.verified,
       }));
       return NextResponse.json({ candidates: verifiedResult, verifiedFromCommunity: true });
     }

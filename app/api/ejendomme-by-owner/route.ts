@@ -1059,43 +1059,52 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
             }
           }
 
-          // Verificér aktivt ejerskab fra cache: for hvert BFE, tjek om den
-          // queried CVR stadig er den seneste ejer (baseret på alle gældende
-          // ejerskaber for det BFE i ejf_ejerskab).
+          // BIZZ-1872/1869: Batch-verificér aktivt ejerskab i én query i stedet
+          // for N sekventielle. Med 41 BFEer for Familien Petersen ramte vi
+          // ofte transient timeout som fik hele cache-pathen til at fejle og
+          // falde til live EJF (som returnerede færre BFEer).
           const queriedCvrSet = new Set(cvrStrings);
           const bfeList = [...bfeTilCvr.keys()];
-          for (const bfe of bfeList) {
-            // Hent alle gældende ejere for dette BFE
+          if (bfeList.length > 0) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const { data: allOwners } = await (admin as any)
+            const { data: allOwnersRaw } = await (admin as any)
               .from('ejf_ejerskab')
-              .select('ejer_cvr, virkning_fra')
-              .eq('bfe_nummer', bfe)
+              .select('bfe_nummer, ejer_cvr, virkning_fra')
+              .in('bfe_nummer', bfeList.slice(0, 1000))
               .eq('status', 'gældende')
-              .order('virkning_fra', { ascending: false })
-              .limit(10);
+              .order('virkning_fra', { ascending: false });
 
-            if (allOwners && allOwners.length > 0) {
-              // Tjek om NOGEN gældende ejer matcher vores CVR-sæt — ikke kun
-              // den nyeste. Ejerlejligheder har ofte flere samtidige gældende
-              // ejere (virksomhed + ejerforening), og ejerforeningens nyere
-              // virkning_fra skal ikke markere virksomhedens ejerskab som "solgt".
-              const ownerRows = allOwners as Array<{
-                ejer_cvr: string | null;
-                virkning_fra: string | null;
-              }>;
-              const hasActiveOwnership = ownerRows.some(
-                (o) => o.ejer_cvr && queriedCvrSet.has(o.ejer_cvr)
-              );
-              if (hasActiveOwnership) {
-                aktivByBfe.set(bfe, true);
+            // Gruppér per BFE
+            const ownersByBfe = new Map<
+              number,
+              Array<{ ejer_cvr: string | null; virkning_fra: string | null }>
+            >();
+            for (const row of (allOwnersRaw ?? []) as Array<{
+              bfe_nummer: number;
+              ejer_cvr: string | null;
+              virkning_fra: string | null;
+            }>) {
+              if (!ownersByBfe.has(row.bfe_nummer)) ownersByBfe.set(row.bfe_nummer, []);
+              ownersByBfe
+                .get(row.bfe_nummer)!
+                .push({ ejer_cvr: row.ejer_cvr, virkning_fra: row.virkning_fra });
+            }
+
+            for (const bfe of bfeList) {
+              const ownerRows = ownersByBfe.get(bfe) ?? [];
+              if (ownerRows.length > 0) {
+                const hasActiveOwnership = ownerRows.some(
+                  (o) => o.ejer_cvr && queriedCvrSet.has(o.ejer_cvr)
+                );
+                if (hasActiveOwnership) {
+                  aktivByBfe.set(bfe, true);
+                } else {
+                  aktivByBfe.set(bfe, false);
+                  solgtDatoByBfe.set(bfe, ownerRows[0]?.virkning_fra ?? null);
+                }
               } else {
-                // Ejendommen er solgt — ingen af de gældende ejere matcher vores CVR
-                aktivByBfe.set(bfe, false);
-                solgtDatoByBfe.set(bfe, ownerRows[0]?.virkning_fra ?? null);
+                aktivByBfe.set(bfe, true);
               }
-            } else {
-              aktivByBfe.set(bfe, true);
             }
           }
 

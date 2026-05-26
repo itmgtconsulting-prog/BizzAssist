@@ -3592,10 +3592,12 @@ function DiagramForce({
         }
       }
     }
-    const hasMultiOwner = ownerMap.size > 1;
+    // BIZZ-1873: Vis legend for ENHVER person-ejer (ikke kun multi-ejer) —
+    // enkeltejer-farver er ligeså forvirrede for brugeren som multi-ejer.
+    const hasPersonOwners = ownerMap.size >= 1;
 
-    // Vis legend kun når der er noget at forklare
-    if (!hasCrossOwnership && !hasMultiOwner) return null;
+    // Vis legend når der er personligt ejerskab eller krydsejerskab at forklare
+    if (!hasCrossOwnership && !hasPersonOwners) return null;
 
     const da = lang === 'da';
     return (
@@ -3612,7 +3614,7 @@ function DiagramForce({
         {hasPropertyEdges && (
           <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
             <span className="inline-block w-3 h-0.5 rounded-full bg-emerald-400/65" />
-            {da ? 'Ejendom' : 'Property'}
+            {da ? 'Ejendom (via selskab)' : 'Property (via company)'}
           </div>
         )}
         {/* Cross-ownership (dashed amber) */}
@@ -3628,8 +3630,13 @@ function DiagramForce({
             {da ? 'Krydsejerskab' : 'Cross-ownership'}
           </div>
         )}
-        {/* Multi-person ownership */}
-        {hasMultiOwner &&
+        {/* Person-ejerskab — vises for alle ejere (enkelt- og multi-ejer) */}
+        {hasPersonOwners && (
+          <div className="text-[9px] text-slate-500 font-medium mt-1">
+            {da ? 'Personligt ejede ejendomme:' : 'Personally owned properties:'}
+          </div>
+        )}
+        {hasPersonOwners &&
           Array.from(ownerMap.entries()).map(([id, name]) => (
             <div key={id} className="flex items-center gap-1.5 text-[10px] text-slate-300">
               <span

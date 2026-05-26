@@ -75,6 +75,8 @@ export interface EjendomSummary {
   ejerandel?: string | null;
   /** BIZZ-1672: true hvis ejendommen administreres (ikke ejes) af denne CVR */
   administreret?: boolean;
+  /** BIZZ-1864: true hvis ejendommen er fundet af AI og bekræftet af brugeren */
+  aiVerified?: boolean;
   /** BIZZ-455: false hvis ejendommen er solgt (CVR ikke længere aktuel ejer) */
   aktiv?: boolean;
   /** BIZZ-455: Dato hvor CVR ophørte som ejer (ISO-dato) — kun for solgte */
@@ -1509,6 +1511,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
   // BIZZ-1672: Administrerede ejendomme fra ejf_administrator.
   // For ejerforeninger (og andre virksomheder) — tilføj BFE'er de administrerer.
   const administreretByBfe = new Set<number>();
+  /** BIZZ-1864: BFE'er bekræftet af bruger via ejerforening_verifications */
+  const aiVerifiedByBfe = new Set<number>();
   if (cvrNumre.length > 0) {
     try {
       const admin = createAdminClient();
@@ -1703,6 +1707,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         for (const row of verifRows as Array<{ bfe_nummer: number; candidate_cvr: string }>) {
           if (bfeTilCvr.has(row.bfe_nummer)) continue;
           administreretByBfe.add(row.bfe_nummer);
+          aiVerifiedByBfe.add(row.bfe_nummer);
           bfeTilCvr.set(row.bfe_nummer, row.candidate_cvr.padStart(8, '0'));
           aktivByBfe.set(row.bfe_nummer, true);
         }
@@ -1975,6 +1980,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         ...adresseData[idx],
         ejerandel: bfeTilEjerandel.get(bfe) ?? null,
         administreret: isAdmin,
+        aiVerified: aiVerifiedByBfe.has(bfe),
         aktiv: isAdmin ? true : (aktivByBfe.get(bfe) ?? true),
         solgtDato: isAdmin ? null : (solgtDatoByBfe.get(bfe) ?? null),
         ownerBuyDate: ownerBuyDateByBfe.get(bfe) ?? null,

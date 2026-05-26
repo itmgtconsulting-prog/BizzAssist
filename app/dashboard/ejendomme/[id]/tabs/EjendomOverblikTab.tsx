@@ -295,197 +295,215 @@ export default function EjendomOverblikTab({
           );
         })()}
 
-        {/* Ejendomsvurdering */}
-        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-2.5">
-          <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-1.5 flex items-center gap-2">
-            <span>{t.propertyValuation}</span>
-            {vurdering?.erNytSystem && (
-              <span className="px-1.5 py-0.5 bg-blue-500/10 border border-blue-500/20 rounded text-[10px] text-blue-400 font-medium normal-case tracking-normal">
-                NY
-              </span>
-            )}
-          </p>
-          {vurderingLoader ? (
-            <div className="space-y-2 animate-pulse">
-              <div className="grid grid-cols-2 gap-x-3">
-                <div>
-                  <div className="h-3 w-20 bg-slate-700/60 rounded mb-1.5" />
-                  <div className="h-5 w-28 bg-slate-700/40 rounded" />
-                </div>
-                <div>
-                  <div className="h-3 w-16 bg-slate-700/60 rounded mb-1.5" />
-                  <div className="h-5 w-24 bg-slate-700/40 rounded" />
-                </div>
-              </div>
-              <div className="h-3 w-32 bg-slate-700/40 rounded" />
-            </div>
-          ) : vurdering ? (
-            <div className="space-y-2">
-              {/* Ejendomsværdi + Grundværdi side om side */}
-              <div className="grid grid-cols-2 gap-x-3">
-                <div>
-                  <p className="text-slate-500 text-xs leading-none mb-0.5">
-                    {t.propertyValue}
-                    {vurdering.aar && (
-                      <span className="ml-1 text-slate-600">({vurdering.aar})</span>
-                    )}
-                  </p>
-                  <p className="text-white text-base font-bold">
-                    {vurdering.ejendomsvaerdi
-                      ? formatDKK(vurdering.ejendomsvaerdi)
-                      : bbrData?.ejerlejlighedBfe
-                        ? da
-                          ? 'Fordelt på enheder'
-                          : 'Distributed to units'
-                        : da
-                          ? 'Ikke vurderet'
-                          : 'Not assessed'}
-                  </p>
-                  {vurdering.afgiftspligtigEjendomsvaerdi !== null &&
-                    vurdering.afgiftspligtigEjendomsvaerdi !== vurdering.ejendomsvaerdi && (
-                      <p className="text-slate-500 text-xs mt-0.5">
-                        {t.taxable}: {formatDKK(vurdering.afgiftspligtigEjendomsvaerdi)}
-                      </p>
-                    )}
-                </div>
-                <div>
-                  <p className="text-slate-500 text-xs leading-none mb-0.5">
-                    {t.landValue}
-                    {vurdering.aar && (
-                      <span className="ml-1 text-slate-600">({vurdering.aar})</span>
-                    )}
-                  </p>
-                  <p className="text-white text-sm font-medium">
-                    {vurdering.grundvaerdi
-                      ? formatDKK(vurdering.grundvaerdi)
-                      : bbrData?.ejerlejlighedBfe
-                        ? da
-                          ? 'Fordelt på enheder'
-                          : 'Distributed to units'
-                        : da
-                          ? 'Ikke vurderet'
-                          : 'Not assessed'}
-                  </p>
-                  {vurdering.afgiftspligtigGrundvaerdi !== null &&
-                    vurdering.afgiftspligtigGrundvaerdi !== vurdering.grundvaerdi && (
-                      <p className="text-slate-500 text-xs mt-0.5">
-                        {t.taxable}: {formatDKK(vurdering.afgiftspligtigGrundvaerdi)}
-                      </p>
-                    )}
-                </div>
-              </div>
-              {/* Vurderet areal + Grundskyld side om side */}
-              <div className="grid grid-cols-2 gap-x-3 pt-1.5 border-t border-slate-700/30">
-                <div>
-                  <p className="text-slate-500 text-xs leading-none mb-0.5">{t.assessedArea}</p>
-                  <p className="text-white text-sm font-medium">
-                    {vurdering.vurderetAreal
-                      ? `${vurdering.vurderetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                      : '–'}
-                  </p>
-                </div>
-                {/* Grundskyld — foretrækker faktisk fra Vurderingsportalen */}
-                {(() => {
-                  const nyesteFrl = forelobige.length > 0 ? forelobige[0] : null;
-                  const faktiskGrundskyld = nyesteFrl?.grundskyld ?? null;
-                  if (faktiskGrundskyld !== null && faktiskGrundskyld > 0) {
-                    return (
-                      <div>
-                        <p className="text-slate-500 text-xs leading-none mb-0.5">
-                          {t.groundTax}
-                          <span className="text-slate-600 ml-1">({nyesteFrl!.vurderingsaar})</span>
-                        </p>
-                        <p className="text-white text-sm font-medium flex items-center gap-1">
-                          {formatDKK(faktiskGrundskyld)}
-                          <span className="text-slate-500 text-xs">{t.perYear}</span>
-                        </p>
-                      </div>
-                    );
-                  }
-                  // BIZZ-445: Removed estimated grundskyld fallback — only show actual values
-                  return null;
-                })()}
-              </div>
-            </div>
-          ) : forelobige.length === 0 ? (
-            <p className="text-slate-500 text-xs">
-              {bbrLoader || !bbrData
-                ? t.awaitingBBR
-                : !bbrData.ejendomsrelationer?.[0]?.bfeNummer
-                  ? t.bfeNotFound
-                  : 'Ingen vurderingsdata'}
-            </p>
-          ) : null}
-
-          {/* ── Forelobig vurdering — vises hvis nyere end nuvaerende vurdering ELLER ingen officiel ── */}
-          {(() => {
-            const nyesteForelobig = forelobige.length > 0 ? forelobige[0] : null;
-            if (!nyesteForelobig) return null;
-            // Vis foreløbig hvis den er nyere end officiel ELLER der slet ikke er officiel vurdering
-            const erRelevant = !vurdering?.aar || nyesteForelobig.vurderingsaar >= vurdering.aar;
-            if (!erRelevant) return null;
-            return (
-              <div className="mt-2 bg-amber-500/5 border border-amber-500/20 rounded-xl p-3">
-                <div className="flex items-center gap-2 mb-1.5">
-                  <span className="px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] text-amber-400 font-medium">
-                    {t.preliminary}
+        {/* BIZZ-1892: Suppress SFE-vurdering når brugeren er på en specifik
+            lejligheds-adresse (har etage/dør) men der ikke findes en separat
+            ejerlejligheds-BFE (typisk Carlsberg Byen-mønster: lejlighed findes
+            i BBR_Enhed men er ikke formelt opdelt i MAT_Ejerlejlighed).
+            I dette tilfælde ville vi vise hovedejendoms-vurdering (109M DKK
+            for 6.370 m² matrikel) som om det var lejlighedens — vildledende. */}
+        {(() => {
+          const erLejlighedUdenSeparatBfe = !!dawaAdresse?.etage && !bbrData?.ejerlejlighedBfe;
+          if (erLejlighedUdenSeparatBfe) return null;
+          return (
+            <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-2.5">
+              <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-1.5 flex items-center gap-2">
+                <span>{t.propertyValuation}</span>
+                {vurdering?.erNytSystem && (
+                  <span className="px-1.5 py-0.5 bg-blue-500/10 border border-blue-500/20 rounded text-[10px] text-blue-400 font-medium normal-case tracking-normal">
+                    NY
                   </span>
-                  <span className="text-slate-600 text-[10px]">
-                    {nyesteForelobig.vurderingsaar}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-x-2 gap-y-1">
-                  <div>
-                    <p className="text-slate-500 text-xs leading-none mb-0.5">{t.propertyValue}</p>
-                    <p className="text-amber-200 text-sm font-medium">
-                      {nyesteForelobig.ejendomsvaerdi
-                        ? formatDKK(nyesteForelobig.ejendomsvaerdi)
-                        : da
-                          ? 'Fastsættes ikke'
-                          : 'Not assessed'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-slate-500 text-xs leading-none mb-0.5">{t.landValue}</p>
-                    <p className="text-amber-200 text-sm font-medium">
-                      {nyesteForelobig.grundvaerdi
-                        ? formatDKK(nyesteForelobig.grundvaerdi)
-                        : da
-                          ? 'Fastsættes ikke'
-                          : 'Not assessed'}
-                    </p>
-                  </div>
-                  {nyesteForelobig.grundskyld != null && nyesteForelobig.grundskyld > 0 && (
+                )}
+              </p>
+              {vurderingLoader ? (
+                <div className="space-y-2 animate-pulse">
+                  <div className="grid grid-cols-2 gap-x-3">
                     <div>
-                      <p className="text-slate-500 text-xs leading-none mb-0.5">{t.groundTax}</p>
-                      <p className="text-amber-200 text-sm font-medium">
-                        {formatDKK(nyesteForelobig.grundskyld)}
-                      </p>
+                      <div className="h-3 w-20 bg-slate-700/60 rounded mb-1.5" />
+                      <div className="h-5 w-28 bg-slate-700/40 rounded" />
                     </div>
-                  )}
-                  {nyesteForelobig.totalSkat != null && nyesteForelobig.totalSkat > 0 && (
+                    <div>
+                      <div className="h-3 w-16 bg-slate-700/60 rounded mb-1.5" />
+                      <div className="h-5 w-24 bg-slate-700/40 rounded" />
+                    </div>
+                  </div>
+                  <div className="h-3 w-32 bg-slate-700/40 rounded" />
+                </div>
+              ) : vurdering ? (
+                <div className="space-y-2">
+                  {/* Ejendomsværdi + Grundværdi side om side */}
+                  <div className="grid grid-cols-2 gap-x-3">
                     <div>
                       <p className="text-slate-500 text-xs leading-none mb-0.5">
-                        {da ? 'Skat i alt' : 'Total tax'}
+                        {t.propertyValue}
+                        {vurdering.aar && (
+                          <span className="ml-1 text-slate-600">({vurdering.aar})</span>
+                        )}
                       </p>
-                      <p className="text-amber-200 text-sm font-medium">
-                        {formatDKK(nyesteForelobig.totalSkat)}
+                      <p className="text-white text-base font-bold">
+                        {vurdering.ejendomsvaerdi
+                          ? formatDKK(vurdering.ejendomsvaerdi)
+                          : bbrData?.ejerlejlighedBfe
+                            ? da
+                              ? 'Fordelt på enheder'
+                              : 'Distributed to units'
+                            : da
+                              ? 'Ikke vurderet'
+                              : 'Not assessed'}
+                      </p>
+                      {vurdering.afgiftspligtigEjendomsvaerdi !== null &&
+                        vurdering.afgiftspligtigEjendomsvaerdi !== vurdering.ejendomsvaerdi && (
+                          <p className="text-slate-500 text-xs mt-0.5">
+                            {t.taxable}: {formatDKK(vurdering.afgiftspligtigEjendomsvaerdi)}
+                          </p>
+                        )}
+                    </div>
+                    <div>
+                      <p className="text-slate-500 text-xs leading-none mb-0.5">
+                        {t.landValue}
+                        {vurdering.aar && (
+                          <span className="ml-1 text-slate-600">({vurdering.aar})</span>
+                        )}
+                      </p>
+                      <p className="text-white text-sm font-medium">
+                        {vurdering.grundvaerdi
+                          ? formatDKK(vurdering.grundvaerdi)
+                          : bbrData?.ejerlejlighedBfe
+                            ? da
+                              ? 'Fordelt på enheder'
+                              : 'Distributed to units'
+                            : da
+                              ? 'Ikke vurderet'
+                              : 'Not assessed'}
+                      </p>
+                      {vurdering.afgiftspligtigGrundvaerdi !== null &&
+                        vurdering.afgiftspligtigGrundvaerdi !== vurdering.grundvaerdi && (
+                          <p className="text-slate-500 text-xs mt-0.5">
+                            {t.taxable}: {formatDKK(vurdering.afgiftspligtigGrundvaerdi)}
+                          </p>
+                        )}
+                    </div>
+                  </div>
+                  {/* Vurderet areal + Grundskyld side om side */}
+                  <div className="grid grid-cols-2 gap-x-3 pt-1.5 border-t border-slate-700/30">
+                    <div>
+                      <p className="text-slate-500 text-xs leading-none mb-0.5">{t.assessedArea}</p>
+                      <p className="text-white text-sm font-medium">
+                        {vurdering.vurderetAreal
+                          ? `${vurdering.vurderetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                          : '–'}
                       </p>
                     </div>
-                  )}
+                    {/* Grundskyld — foretrækker faktisk fra Vurderingsportalen */}
+                    {(() => {
+                      const nyesteFrl = forelobige.length > 0 ? forelobige[0] : null;
+                      const faktiskGrundskyld = nyesteFrl?.grundskyld ?? null;
+                      if (faktiskGrundskyld !== null && faktiskGrundskyld > 0) {
+                        return (
+                          <div>
+                            <p className="text-slate-500 text-xs leading-none mb-0.5">
+                              {t.groundTax}
+                              <span className="text-slate-600 ml-1">
+                                ({nyesteFrl!.vurderingsaar})
+                              </span>
+                            </p>
+                            <p className="text-white text-sm font-medium flex items-center gap-1">
+                              {formatDKK(faktiskGrundskyld)}
+                              <span className="text-slate-500 text-xs">{t.perYear}</span>
+                            </p>
+                          </div>
+                        );
+                      }
+                      // BIZZ-445: Removed estimated grundskyld fallback — only show actual values
+                      return null;
+                    })()}
+                  </div>
                 </div>
-              </div>
-            );
-          })()}
+              ) : forelobige.length === 0 ? (
+                <p className="text-slate-500 text-xs">
+                  {bbrLoader || !bbrData
+                    ? t.awaitingBBR
+                    : !bbrData.ejendomsrelationer?.[0]?.bfeNummer
+                      ? t.bfeNotFound
+                      : 'Ingen vurderingsdata'}
+                </p>
+              ) : null}
 
-          {/* BIZZ-1030: Energimærke badge — viser nyeste gyldige klasse (A-G) */}
-          <EnergimaerkeBadge
-            energimaerker={energimaerker ?? null}
-            loading={energiLoader ?? false}
-            lang={lang}
-            onNavigate={onNavigerDokumenter}
-          />
-        </div>
+              {/* ── Forelobig vurdering — vises hvis nyere end nuvaerende vurdering ELLER ingen officiel ── */}
+              {(() => {
+                const nyesteForelobig = forelobige.length > 0 ? forelobige[0] : null;
+                if (!nyesteForelobig) return null;
+                // Vis foreløbig hvis den er nyere end officiel ELLER der slet ikke er officiel vurdering
+                const erRelevant =
+                  !vurdering?.aar || nyesteForelobig.vurderingsaar >= vurdering.aar;
+                if (!erRelevant) return null;
+                return (
+                  <div className="mt-2 bg-amber-500/5 border border-amber-500/20 rounded-xl p-3">
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className="px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] text-amber-400 font-medium">
+                        {t.preliminary}
+                      </span>
+                      <span className="text-slate-600 text-[10px]">
+                        {nyesteForelobig.vurderingsaar}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                      <div>
+                        <p className="text-slate-500 text-xs leading-none mb-0.5">
+                          {t.propertyValue}
+                        </p>
+                        <p className="text-amber-200 text-sm font-medium">
+                          {nyesteForelobig.ejendomsvaerdi
+                            ? formatDKK(nyesteForelobig.ejendomsvaerdi)
+                            : da
+                              ? 'Fastsættes ikke'
+                              : 'Not assessed'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-slate-500 text-xs leading-none mb-0.5">{t.landValue}</p>
+                        <p className="text-amber-200 text-sm font-medium">
+                          {nyesteForelobig.grundvaerdi
+                            ? formatDKK(nyesteForelobig.grundvaerdi)
+                            : da
+                              ? 'Fastsættes ikke'
+                              : 'Not assessed'}
+                        </p>
+                      </div>
+                      {nyesteForelobig.grundskyld != null && nyesteForelobig.grundskyld > 0 && (
+                        <div>
+                          <p className="text-slate-500 text-xs leading-none mb-0.5">
+                            {t.groundTax}
+                          </p>
+                          <p className="text-amber-200 text-sm font-medium">
+                            {formatDKK(nyesteForelobig.grundskyld)}
+                          </p>
+                        </div>
+                      )}
+                      {nyesteForelobig.totalSkat != null && nyesteForelobig.totalSkat > 0 && (
+                        <div>
+                          <p className="text-slate-500 text-xs leading-none mb-0.5">
+                            {da ? 'Skat i alt' : 'Total tax'}
+                          </p>
+                          <p className="text-amber-200 text-sm font-medium">
+                            {formatDKK(nyesteForelobig.totalSkat)}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* BIZZ-1030: Energimærke badge — viser nyeste gyldige klasse (A-G) */}
+              <EnergimaerkeBadge
+                energimaerker={energimaerker ?? null}
+                loading={energiLoader ?? false}
+                lang={lang}
+                onNavigate={onNavigerDokumenter}
+              />
+            </div>
+          );
+        })()}
 
         {/* BIZZ-1668: Estimeret skat-boks fjernet — viste forkerte beløb
            (estimereretGrundskyld ≠ faktisk grundskyld fra SKAT-tabben).

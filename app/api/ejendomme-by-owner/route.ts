@@ -1907,7 +1907,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     // BIZZ-1863: Administrerede ejendomme er altid aktive — historisk ejerskab
     // kan sætte aktiv=false men det skal ikke gælde for administrerede BFEs.
     const ejendomme: EjendomSummary[] = begransetBfe.map((bfe, idx) => {
-      const isAdmin = administreretByBfe.has(bfe);
+      // BIZZ-1891: En ejendom der er EJET (har ejerandel) skal ikke markeres
+      // som administreret — det giver dobbelt-listing i UI.
+      const hasEjerandel = bfeTilEjerandel.has(bfe);
+      const isAdmin = administreretByBfe.has(bfe) && !hasEjerandel;
       return {
         bfeNummer: bfe < 0 ? 0 : bfe, // Syntetiske BFEs → 0 i output
         ownerCvr: bfeTilCvr.get(bfe) ?? '',

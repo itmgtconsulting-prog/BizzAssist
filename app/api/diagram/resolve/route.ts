@@ -2595,11 +2595,12 @@ async function enrichPropertyNodes(
 
   try {
     // Step 1: Batch-hent fra bfe_adresse_cache (lokal DB — hurtigst)
+    // BIZZ-1889: Øget fra 200 → 500 for store virksomhedsdiagrammer
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: cacheRows } = await (admin as any)
       .from('bfe_adresse_cache')
       .select('bfe_nummer, adresse, postnr, postnrnavn, dawa_id, etage, doer')
-      .in('bfe_nummer', allBfes.slice(0, 200));
+      .in('bfe_nummer', allBfes.slice(0, 500));
 
     type AdresseInfo = {
       adresse: string | null;
@@ -2635,11 +2636,13 @@ async function enrichPropertyNodes(
     // Step 2: For BFE'er uden cache-hit → prøv bbr_ejendom_status → DAWA
     const missingBfes = allBfes.filter((bfe) => !adresseMap.has(bfe));
     if (missingBfes.length > 0) {
+      // BIZZ-1889: Øget caps fra 30/20 → 200/100 for store diagrammer
+      // (Familien Petersen havde 17/41 nodes uden cache-hit der ikke blev resolved).
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: bbrRows } = await (admin as any)
         .from('bbr_ejendom_status')
         .select('bfe_nummer, adgangsadresse_id')
-        .in('bfe_nummer', missingBfes.slice(0, 30))
+        .in('bfe_nummer', missingBfes.slice(0, 200))
         .not('adgangsadresse_id', 'is', null);
 
       const bbrMap = new Map<number, string>(
@@ -2649,8 +2652,8 @@ async function enrichPropertyNodes(
         ])
       );
 
-      // DAWA batch (parallel, max 10 concurrent)
-      const dawaResolves = missingBfes.slice(0, 20).map(async (bfe) => {
+      // DAWA batch (parallel, øget fra 20 → 100)
+      const dawaResolves = missingBfes.slice(0, 100).map(async (bfe) => {
         const dawaAdId = bbrMap.get(bfe);
         try {
           let url: string;
@@ -2710,7 +2713,8 @@ async function enrichPropertyNodes(
     // DAWA /bfe/ endpoint er ustabil, men /jordstykker?bfenummer=X virker.
     const stillMissing = allBfes.filter((bfe) => !adresseMap.has(bfe));
     if (stillMissing.length > 0) {
-      for (const bfe of stillMissing.slice(0, 5)) {
+      // BIZZ-1889: Øget fra 5 → 30 — Familien Petersen havde 17 stadig-manglende
+      for (const bfe of stillMissing.slice(0, 30)) {
         try {
           const jRes = await fetch(
             `https://api.dataforsyningen.dk/jordstykker?bfenummer=${bfe}&format=json`,

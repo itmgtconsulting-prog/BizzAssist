@@ -261,7 +261,7 @@ async function walkVirksomhed(
       try {
         const sfeBfes = [...seenBfes];
 
-        for (const sfeBfe of sfeBfes.slice(0, 5)) {
+        for (const sfeBfe of sfeBfes.slice(0, 20)) {
           try {
             // Find matrikel via DAWA jordstykke
             const jordRes = await fetch(

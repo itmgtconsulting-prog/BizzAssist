@@ -55,8 +55,10 @@ const empty = (): AdresseRow => ({
 });
 
 /**
- * Resolver én BFE → adresse via DAWA /bfe/{bfe} (samlet ejendom) eller
- * VP-fallback (ejerlejligheder hvor DAWA returnerer 404).
+ * Resolver én BFE → adresse via en 3-trins pipeline:
+ *   1. DAWA /bfe/{bfe} — virker for samlet fast ejendom
+ *   2. Tinglysning /ejendom/hovednoteringsnummer — for landzone-ejendomme uden DAWA-adresse
+ *   3. VP _search — for ejerlejligheder med etage/dør-info
  */
 async function resolveOne(bfe: string): Promise<AdresseRow> {
   const result = empty();
@@ -134,10 +136,50 @@ async function resolveOne(bfe: string): Promise<AdresseRow> {
       }
     }
   } catch {
+    // Fall through til Tinglysning
+  }
+
+  // Trin 2: Tinglysning /ejendom/hovednoteringsnummer — for BFE'er ikke fundet i DAWA/VP
+  // (fx landzone-ejendomme uden DAWA-adgangsadresse, som BFE 380046)
+  try {
+    const { tlFetch } = await import('@/app/lib/tlFetch');
+    const tlRes = await tlFetch(`/ejendom/hovednoteringsnummer?hovednoteringsnummer=${bfe}`, {
+      timeout: 10000,
+    });
+    if (tlRes.status === 200 && tlRes.body) {
+      const tlData = JSON.parse(tlRes.body) as {
+        items?: Array<{
+          adresse?: string;
+          ejendomsnummer?: string;
+          kommuneNummer?: string;
+        }>;
+      };
+      const item = tlData.items?.[0];
+      if (item?.adresse) {
+        // Format: "Vejnavn husnr, postnr by" — split på ', '
+        const commaIdx = item.adresse.lastIndexOf(', ');
+        if (commaIdx > 0) {
+          const streetPart = item.adresse.slice(0, commaIdx);
+          const postByPart = item.adresse.slice(commaIdx + 2);
+          const spaceIdx = postByPart.indexOf(' ');
+          result.adresse = streetPart;
+          if (spaceIdx > 0) {
+            result.postnr = postByPart.slice(0, spaceIdx);
+            result.by = postByPart.slice(spaceIdx + 1);
+          } else {
+            result.postnr = postByPart;
+          }
+        } else {
+          result.adresse = item.adresse;
+        }
+        return result;
+      }
+    }
+  } catch {
     // Fall through til VP
   }
 
-  // Trin 2: VP-fallback for ejerlejligheder (DAWA /bfe/{bfe} returnerer 404)
+  // Trin 3: VP-fallback for ejerlejligheder (DAWA /bfe/{bfe} returnerer 404)
   try {
     const vpRes = await fetch(
       'https://api-fs.vurderingsportalen.dk/preliminaryproperties/_search',

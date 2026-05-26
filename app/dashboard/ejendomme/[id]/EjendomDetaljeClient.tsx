@@ -961,7 +961,11 @@ export default function EjendomDetaljeClient({
       (!!bbrRel?.ejerlavKode && !!bbrRel?.matrikelnr) ||
       (!!matJs?.ejerlavskode && !!matJs?.matrikelnummer);
     const erParentSfe = !dawaAdresse?.etage && hasEjerlavMatr && !bbrData?.ejerlejlighedBfe;
-    if (!erModer && !erChild && !matOpdelt && !erParentSfe) return;
+    // BIZZ-1853: Lejlighed med etage men uden ejerlejlighedBfe (VP kan ikke
+    // resoleve, fx Carlsberg Byen). Hent lejligheder via matrikel for at finde
+    // ejer-data via dawaId-match.
+    const erChildUdenBfe = !!dawaAdresse?.etage && hasEjerlavMatr && !bbrData?.ejerlejlighedBfe;
+    if (!erModer && !erChild && !matOpdelt && !erParentSfe && !erChildUdenBfe) return;
 
     // Find ejerlavkode + matrikelnr — foretræk BBR (konsistent med eksisterende
     // logic), fallback til MAT når BBR endnu ikke er loaded.

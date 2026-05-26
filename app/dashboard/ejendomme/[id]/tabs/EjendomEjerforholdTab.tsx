@@ -455,24 +455,67 @@ export default function EjendomEjerforholdTab({
 
           return (
             <div className="space-y-4">
-              {/* BIZZ-1858: Info-boks for lejligheder med SFE-fallback */}
-              {usesSfeFallback && (
-                <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-4 py-3 flex items-start gap-3">
-                  <Building2 size={16} className="text-amber-400 mt-0.5 shrink-0" />
-                  <div>
-                    <p className="text-amber-200 text-sm font-medium">
-                      {da
-                        ? 'Ejerskabsdata vises for hele ejendommen'
-                        : 'Ownership data shown for the entire property'}
-                    </p>
-                    <p className="text-slate-400 text-xs mt-0.5">
-                      {da
-                        ? 'Den specifikke lejligheds-BFE kunne ikke resolves. Data herunder gælder hele matriklen.'
-                        : 'The specific apartment BFE could not be resolved. Data below applies to the entire cadastral unit.'}
-                    </p>
-                  </div>
-                </div>
-              )}
+              {/* BIZZ-1853: For lejligheder med SFE-fallback — vis ejer fra TL matrikel-data */}
+              {usesSfeFallback &&
+                (() => {
+                  // Match lejlighed via dawaId
+                  const tlMatch = lejligheder?.find((l) => l.dawaId === currentDawaId);
+                  if (tlMatch && tlMatch.ejer && tlMatch.ejer !== 'Ukendt') {
+                    return (
+                      <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-4 py-3">
+                        <p className="text-slate-300 text-sm">
+                          <span className="text-slate-500 text-xs mr-2">
+                            {da ? 'Ejer (via Tinglysning):' : 'Owner (via Land Registry):'}
+                          </span>
+                          <span className="font-medium">{tlMatch.ejer}</span>
+                        </p>
+                        {(tlMatch.koebspris || tlMatch.koebsdato) && (
+                          <p className="text-slate-400 text-xs mt-1">
+                            {tlMatch.koebspris && (
+                              <span className="mr-3">
+                                {da ? 'Købspris:' : 'Price:'}{' '}
+                                {tlMatch.koebspris.toLocaleString('da-DK')} DKK
+                              </span>
+                            )}
+                            {tlMatch.koebsdato && (
+                              <span>
+                                {da ? 'Overtagelse:' : 'Date:'}{' '}
+                                {new Date(tlMatch.koebsdato).toLocaleDateString('da-DK')}
+                              </span>
+                            )}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  }
+                  // Lejligheder loader stadig eller ingen match fundet
+                  if (lejlighederLoader) {
+                    return (
+                      <div className="bg-slate-800/40 border border-slate-700/40 rounded-lg px-4 py-3 text-slate-500 text-xs">
+                        {da
+                          ? 'Henter ejerskabsdata via Tinglysning...'
+                          : 'Loading ownership data via Land Registry...'}
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-4 py-3 flex items-start gap-3">
+                      <Building2 size={16} className="text-amber-400 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-amber-200 text-sm font-medium">
+                          {da
+                            ? 'Ejerskabsdata vises for hele ejendommen'
+                            : 'Ownership data shown for the entire property'}
+                        </p>
+                        <p className="text-slate-400 text-xs mt-0.5">
+                          {da
+                            ? 'Den specifikke lejligheds-BFE kunne ikke resolves. Data herunder gælder hele matriklen.'
+                            : 'The specific apartment BFE could not be resolved. Data below applies to the entire cadastral unit.'}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })()}
               {/* BIZZ-1143: Ejerkort — ren præsentation, data leveret fra parent */}
               {chainLoader ? (
                 <TabLoadingSpinner

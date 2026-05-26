@@ -565,6 +565,30 @@ export default function EjendomEjerforholdTab({
                   )}
                 </>
               )}
+              {/* BIZZ-1876: Vis eksplicit besked når ejerskabschain returnerer tomt
+                  og diagram ikke kan renderes. Fx SFE-BFEer (Carlsberg Byen) hvor
+                  ejerskabsdata kun ligger på individuelle ejerlejligheder, ikke SFE'en. */}
+              {!harReelEjer && !chainLoader && chainEjerDetaljer.length === 0 && (
+                <div className="bg-slate-800/40 border border-slate-700/30 rounded-xl p-4 flex items-start gap-3">
+                  <div className="w-7 h-7 bg-slate-700/50 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <Building2 size={14} className="text-slate-400" />
+                  </div>
+                  <div>
+                    <p className="text-slate-300 text-sm font-medium">
+                      {da ? 'Ingen ejerskabsdata tilgængelig' : 'No ownership data available'}
+                    </p>
+                    <p className="text-slate-500 text-xs mt-0.5">
+                      {da
+                        ? `Ejerskabsdiagram og ejerkæde kunne ikke hentes for BFE ${effectiveBfe}. ` +
+                          `Dette sker typisk for samlede faste ejendomme (SFE) hvor ejerskabsdata ` +
+                          `ligger på de individuelle ejerlejligheder.`
+                        : `Ownership diagram and chain could not be loaded for BFE ${effectiveBfe}. ` +
+                          `This typically occurs for parent cadastral units (SFE) where ownership ` +
+                          `data is held at the individual condominium level.`}
+                    </p>
+                  </div>
+                </div>
+              )}
               {/* Loading-bar mens strukturtræ hentes */}
               {/* BIZZ-1289: Skeleton mens strukturtræ hentes */}
               {(strukturLoader || lejlighederLoader) && !strukturTree && <StrukturSkeleton />}

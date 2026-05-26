@@ -3050,8 +3050,12 @@ function DiagramForce({
                           Non-property nodes: label (line 1), role/CVR (line 2) */}
                       {isProperty ? (
                         (() => {
-                          const parts = node.label.split(',').map((s) => s.trim());
-                          const street = parts[0] ?? node.label;
+                          // BIZZ-1867: Vis "Adresse ukendt" i stedet for rå BFE-numre
+                          const rawLabel = node.label.startsWith('BFE ')
+                            ? 'Adresse ukendt'
+                            : node.label;
+                          const parts = rawLabel.split(',').map((s) => s.trim());
+                          const street = parts[0] ?? rawLabel;
                           const postBy = parts.slice(1).join(', ');
                           // BIZZ-1543: maxStreet 32→36 så "vejnavn nr. etage. dør"
                           // ikke trunkeres unødigt nu hvor etage er flyttet til linje 1.

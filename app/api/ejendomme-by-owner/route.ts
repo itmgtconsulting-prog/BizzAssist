@@ -1755,6 +1755,34 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     }
   }
 
+  // BIZZ-1860: Fjern SFE/hovedejendom-BFEs når lejligheder er expanded.
+  // Hvis vi tilføjede syntetiske (DAWA-resolved) eller cache-baserede
+  // lejligheder, fjern den originale SFE-BFE der nu er dækket.
+  if (dawaResolvedMap.size > 0) {
+    // Vi har DAWA-expanded lejligheder — fjern BFEs uden etage
+    for (const bfe of [...bfeTilCvr.keys()]) {
+      if (bfe < 0) continue; // Syntetiske, behold
+      if (dawaResolvedMap.has(bfe)) continue; // Allerede DAWA-resolved
+      // Tjek om denne BFE har etage — hvis ikke, er det en SFE/hovedejendom
+      const preResolved = dawaResolvedMap.get(bfe);
+      if (preResolved?.etage) continue;
+      // Ikke i dawaResolvedMap og ikke syntetisk → tjek cache
+      const admin = createAdminClient();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: etRow } = await (admin as any)
+        .from('bfe_adresse_cache')
+        .select('etage')
+        .eq('bfe_nummer', bfe)
+        .maybeSingle();
+      if (!(etRow as { etage: string | null } | null)?.etage) {
+        // Ingen etage → SFE/hovedejendom, fjern
+        bfeTilCvr.delete(bfe);
+        administreretByBfe.delete(bfe);
+        aktivByBfe.delete(bfe);
+      }
+    }
+  }
+
   try {
     const alleBfe = [...bfeTilCvr.keys()];
     const totalBfe = alleBfe.length;

@@ -1657,6 +1657,35 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     }
   }
 
+  // BIZZ-1864: AI-verificerede ejendomme — tilføj BFEs fra ai_ejf_ejendom_cache
+  // der er community-verificeret (mere verified end rejected).
+  if (cvrNumre.length > 0) {
+    try {
+      const admin = createAdminClient();
+      for (const cvr of cvrNumre.map((c) => String(c))) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: aiCache } = await (admin as any)
+          .from('ai_ejf_ejendom_cache')
+          .select('candidates')
+          .eq('cvr', cvr)
+          .maybeSingle();
+        if (aiCache?.candidates && Array.isArray(aiCache.candidates)) {
+          for (const c of aiCache.candidates as Array<{
+            bfeNummer: number;
+            confidence: string;
+          }>) {
+            if (c.confidence !== 'high' || !c.bfeNummer || bfeTilCvr.has(c.bfeNummer)) continue;
+            administreretByBfe.add(c.bfeNummer);
+            bfeTilCvr.set(c.bfeNummer, cvr.padStart(8, '0'));
+            aktivByBfe.set(c.bfeNummer, true);
+          }
+        }
+      }
+    } catch {
+      /* AI cache lookup non-fatal */
+    }
+  }
+
   // BIZZ-1862: Tilføj historiske SFE-BFEs til bfeTilCvr FØR SFE-expansion
   // så matrikel-lookup kan finde lejligheder under dem.
   if (cvrNumre.length > 0) {

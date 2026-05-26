@@ -2759,6 +2759,81 @@ async function enrichPropertyNodes(
       }
     }
 
+    // BIZZ-1889: Step 4 — Vurderingsportalen (VP) ES bulk-fallback.
+    // Bruges til SFE-niveau BFEer (f.eks. 6-cifrede tal fra Helsingør/Resights)
+    // der ikke er i DAWA eller jordstykker men HAR VP-data. Batch-query
+    // mod VP ES undgår N+1 og returnerer bfeNumbers + address + zipcode.
+    const vpMissing = allBfes.filter((bfe) => !adresseMap.has(bfe));
+    if (vpMissing.length > 0) {
+      try {
+        const vpRes = await fetch(
+          'https://api-fs.vurderingsportalen.dk/preliminaryproperties/_search',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            },
+            body: JSON.stringify({
+              size: Math.min(vpMissing.length, 200),
+              _source: [
+                'bfeNumbers',
+                'roadName',
+                'houseNumber',
+                'floor',
+                'door',
+                'zipcode',
+                'postDistrict',
+                'adresseID',
+              ],
+              query: {
+                bool: { filter: [{ terms: { bfeNumbers: vpMissing.slice(0, 200) } }] },
+              },
+            }),
+            signal: AbortSignal.timeout(8000),
+          }
+        );
+        if (vpRes.ok) {
+          const vpJson = (await vpRes.json()) as {
+            hits?: {
+              hits?: Array<{
+                _source: {
+                  bfeNumbers?: number;
+                  roadName?: string;
+                  houseNumber?: string;
+                  floor?: string | null;
+                  door?: string | null;
+                  zipcode?: string;
+                  postDistrict?: string;
+                  adresseID?: string;
+                };
+              }>;
+            };
+          };
+          for (const hit of vpJson.hits?.hits ?? []) {
+            const src = hit._source;
+            const bfe = src.bfeNumbers;
+            if (!bfe || adresseMap.has(bfe)) continue;
+            const adresse =
+              src.roadName && src.houseNumber ? `${src.roadName} ${src.houseNumber}`.trim() : null;
+            if (adresse) {
+              adresseMap.set(bfe, {
+                adresse,
+                postnr: src.zipcode ?? null,
+                by: src.postDistrict ?? null,
+                dawaId: src.adresseID ?? null,
+                etage: src.floor ?? null,
+                doer: src.door ?? null,
+              });
+            }
+          }
+        }
+      } catch {
+        /* VP fallback non-critical */
+      }
+    }
+
     /**
      * Formatér adresse-label.
      * BIZZ-1543: Brug mellemrum mellem adresse og etage (ikke komma).

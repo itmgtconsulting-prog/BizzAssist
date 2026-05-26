@@ -950,11 +950,22 @@ export default function EjendomDetaljeClient({
     // Fallback: hvis matrikelData er klar før BBR, kan vi ikke vide om det er
     // opdelt. Prefetch kun hvis vi har bbr-signal eller matrikel-opdelt-flag.
     const matOpdelt = matrikelData?.opdeltIEjerlejligheder === true;
-    if (!erModer && !erChild && !matOpdelt) return;
+    // BIZZ-1855 #1: Pure SFE/hovedejendom-BFE uden VP-resolved ejerlejlighedBfe
+    // (fx Carlsberg Byen SFE 6025643 hvor matrikel-bredde forhindrer VP i at
+    // returnere en specifik EL-BFE). Når vi er på adgangsadresse-niveau med
+    // BBR-data men ingen ejerlejlighedBfe, prøv at hente lejligheder via
+    // matrikel-søgning — hvis matriklen har lejligheder, vises de.
+    const bbrRel = bbrData?.ejendomsrelationer?.[0];
+    const erParentSfe =
+      !dawaAdresse?.etage &&
+      !!bbrData &&
+      !bbrData.ejerlejlighedBfe &&
+      !!bbrRel?.ejerlavKode &&
+      !!bbrRel?.matrikelnr;
+    if (!erModer && !erChild && !matOpdelt && !erParentSfe) return;
 
     // Find ejerlavkode + matrikelnr — foretræk BBR (konsistent med eksisterende
     // logic), fallback til MAT når BBR endnu ikke er loaded.
-    const bbrRel = bbrData?.ejendomsrelationer?.[0];
     const matJs = matrikelData?.jordstykker?.[0];
     const ejerlavKode = bbrRel?.ejerlavKode ?? matJs?.ejerlavskode;
     const matrikelnr = bbrRel?.matrikelnr ?? matJs?.matrikelnummer;

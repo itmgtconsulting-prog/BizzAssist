@@ -1804,6 +1804,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
               if (!postnr) continue;
 
               const ownerCvr = bfeTilCvr.get(sfeBfe) ?? '';
+              // BIZZ-1891: Kun markér children som administreret hvis
+              // parent-SFE'en selv er administreret — ellers er de EJEDE.
+              const parentIsAdmin = administreretByBfe.has(sfeBfe);
 
               // Hent cached BFEs for matrikel-adresser
               const cachedOnMatrikel = new Set<string>();
@@ -1827,7 +1830,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
                   if (!matchesMatrikel) continue;
                   cachedOnMatrikel.add(`${row.adresse}`);
                   if (bfeTilCvr.has(row.bfe_nummer)) continue;
-                  administreretByBfe.add(row.bfe_nummer);
+                  // BIZZ-1891: Kun markér som administreret hvis parent-SFE
+                  // også er administreret — ellers er child ejet, ikke admin.
+                  if (parentIsAdmin) administreretByBfe.add(row.bfe_nummer);
                   bfeTilCvr.set(row.bfe_nummer, ownerCvr);
                   aktivByBfe.set(row.bfe_nummer, true);
                 }
@@ -1863,7 +1868,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
                 // Brug negative syntetisk BFE for at undgå konflikter
                 const syntheticBfe = -(Math.abs(sfeBfe) * 1000 + bfeTilCvr.size);
                 if (bfeTilCvr.has(syntheticBfe)) continue;
-                administreretByBfe.add(syntheticBfe);
+                // BIZZ-1891: Kun markér som administreret hvis parent-SFE
+                // også er administreret — ellers er child ejet, ikke admin.
+                if (parentIsAdmin) administreretByBfe.add(syntheticBfe);
                 bfeTilCvr.set(syntheticBfe, ownerCvr);
                 aktivByBfe.set(syntheticBfe, true);
                 // Pre-populate adresse data for disse syntetiske BFEs

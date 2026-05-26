@@ -290,18 +290,22 @@ export default function VirksomhedEjendommeTab({
             </div>
           )}
 
+          {/* BIZZ-1859: Loading-banner i toppen (vises uanset displayEjendomme.length
+            — ellers forsvinder den når SFE-filteret reducerer listen til 0 under load). */}
+          {ejendommeLoadingMore && ejendommeData.length > 0 && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800/40 border border-slate-700/30 text-slate-400 text-sm">
+              <Loader2 className="w-4 h-4 animate-spin shrink-0 text-emerald-400" />
+              <span>
+                {lang === 'da'
+                  ? `Indlæser ejendomme… ${ejendommeTotalBfe > 0 ? `(${ejendommeData.length} af ${ejendommeTotalBfe})` : ''}`
+                  : `Loading properties… ${ejendommeTotalBfe > 0 ? `(${ejendommeData.length} of ${ejendommeTotalBfe})` : ''}`}
+              </span>
+            </div>
+          )}
+
           {/* Ejendomme grid */}
           {displayEjendomme.length > 0 && (
             <>
-              {/* BIZZ-1859: Loading-indikator i toppen når listen er lang */}
-              {ejendommeLoadingMore && displayEjendomme.length >= 10 && (
-                <div className="flex items-center justify-center gap-2 py-2 text-slate-500 text-sm">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  {lang === 'da'
-                    ? `Indlæser flere ejendomme… (${displayEjendomme.length} af ${ejendommeTotalBfe})`
-                    : `Loading more properties… (${displayEjendomme.length} of ${ejendommeTotalBfe})`}
-                </div>
-              )}
               <div className="flex items-center justify-between">
                 <p className="text-slate-400 text-sm">
                   {ejendommeLoadingMore

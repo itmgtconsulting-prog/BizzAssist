@@ -616,6 +616,13 @@ async function fetchBFENummer(dawaId: string): Promise<{
       try {
         const esUrl = 'https://api-fs.vurderingsportalen.dk/preliminaryproperties/_search';
         const addrParts = adresseTekst.split(',')[0]; // "Vejnavn Nr" uden etage
+        // BIZZ-1855 #5: Ekstrahér roadName + postnr til strikt validering
+        // efter ES match_phrase (ES kan returnere fuzzy-match hits som J.C. La
+        // Cours Vej eller I.P. Jacobsens Gade når vi søger J.C. Jacobsens Gade).
+        const roadNameMatch = addrParts.trim().match(/^(.+?)\s+\d+/);
+        const targetRoadName = roadNameMatch ? roadNameMatch[1].trim().toLowerCase() : null;
+        const postnrMatch = adresseTekst.match(/(\d{4})\s+\S/);
+        const targetPostnr = postnrMatch ? postnrMatch[1] : null;
         const esQuery: Record<string, unknown> = {
           size: 20,
           query: { bool: { must: [{ match_phrase: { address: addrParts } }] } },
@@ -645,6 +652,22 @@ async function fetchBFENummer(dawaId: string): Promise<{
             if (!s.bfeNumbers) continue;
             const candidate = parseInt(String(s.bfeNumbers), 10);
             if (isNaN(candidate)) continue;
+
+            // BIZZ-1855 #5: Strikt roadName + postnr-validering før etage/dør-match.
+            // VP ES match_phrase kan returnere fuzzy hits hvor address indeholder
+            // lignende men forkert vejnavn (J.C. La Cours Vej for J.C. Jacobsens Gade).
+            const hitAddress = String(s.address ?? '').toLowerCase();
+            if (targetRoadName) {
+              // Hit-adressen skal starte med target roadName (case-insensitive)
+              // eller indeholde det som en hel ord-sekvens. Brug \b-grænse for
+              // at undgå at "Jacobsens" matcher "Bindesbølls Plads via Jacobsens".
+              const rePattern = new RegExp(
+                '^' + targetRoadName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b'
+              );
+              if (!rePattern.test(hitAddress)) continue;
+            }
+            if (targetPostnr && !hitAddress.includes(targetPostnr)) continue;
+
             if (harEtage) {
               // Præcis match på etage og dør
               const hitFloor = String(s.floor ?? '').toLowerCase();

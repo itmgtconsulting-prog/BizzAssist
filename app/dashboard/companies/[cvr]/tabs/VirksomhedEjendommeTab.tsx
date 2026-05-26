@@ -271,6 +271,15 @@ export default function VirksomhedEjendommeTab({
           {/* Ejendomme grid */}
           {displayEjendomme.length > 0 && (
             <>
+              {/* BIZZ-1859: Loading-indikator i toppen når listen er lang */}
+              {ejendommeLoadingMore && displayEjendomme.length >= 10 && (
+                <div className="flex items-center justify-center gap-2 py-2 text-slate-500 text-sm">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  {lang === 'da'
+                    ? `Indlæser flere ejendomme… (${displayEjendomme.length} af ${ejendommeTotalBfe})`
+                    : `Loading more properties… (${displayEjendomme.length} of ${ejendommeTotalBfe})`}
+                </div>
+              )}
               <div className="flex items-center justify-between">
                 <p className="text-slate-400 text-sm">
                   {ejendommeLoadingMore

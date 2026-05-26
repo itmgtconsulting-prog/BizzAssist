@@ -1092,7 +1092,10 @@ export default function EjendomDetaljeClient({
     setEjereLoader(true);
 
     // BIZZ-1287: Skip klient-side vurdering-fetch hvis server-side prefetch leverede data
-    if (!prefetched?.vurderingData) {
+    // BIZZ-1877: Skip vurdering når adressen har etage men vi bruger SFE-BFE
+    // (vurderingen ville være for hele matriklen, ikke den specifikke lejlighed)
+    const isSfeFallback = !!dawaAdresse?.etage && !bbrData?.ejerlejlighedBfe;
+    if (!prefetched?.vurderingData && !isSfeFallback) {
       setVurderingLoader(true);
       const kommunekode = dawaJordstykke?.kommune?.kode;
       const vurderingUrl = kommunekode

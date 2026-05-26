@@ -992,7 +992,11 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
   // CVR-lookups bruger ejer_cvr; person-lookups bruger ejer_enheds_nummer
   // (kolonnen er backfillet for 1.5M rækker — se reference_ejf_ingestion_hybrid).
   // Tidligere kommentar om manglende enhedsNummer-kolonne var forkert (BIZZ-1588).
-  const EJF_STALE_MS = 7 * 24 * 60 * 60 * 1000; // 7 dage
+  // BIZZ-1872 / BIZZ-1869: Øget fra 7 → 30 dage. Ejerskab ændres sjældent
+  // og 7-dages threshold betød at gode cached data blev forkastet, hvorefter
+  // live EJF GraphQL returnerede 0 for nogle CVR'er (Belvedere CVR 24301117
+  // — 13 dage gammel cache med 16 BFEer blev kasseret, live returnerede 0).
+  const EJF_STALE_MS = 30 * 24 * 60 * 60 * 1000; // 30 dage
   let cacheFullHit = false;
   const bfeTilCvr = new Map<number, string>();
   const bfeTilEjerandel = new Map<number, string>();

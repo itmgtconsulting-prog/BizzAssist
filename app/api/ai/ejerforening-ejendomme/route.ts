@@ -107,15 +107,16 @@ async function findCandidates(
     postnrnavn: string | null;
   }> = [];
 
-  // Søg pr. gadenavn+postnr via ILIKE
-  for (const cluster of clusters.slice(0, 10)) {
+  // BIZZ-1885: Øget fra 10 → 30 clusters og 50 → 500 BFEer per cluster.
+  // Store ejerforeninger som Carlsberg Byen 20a har 29 opgange + 249 BFEer.
+  for (const cluster of clusters.slice(0, 30)) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: rows } = await (admin as any)
       .from('bfe_adresse_cache')
       .select('bfe_nummer, adresse, postnr, postnrnavn')
       .ilike('adresse', `${cluster.gadenavn}%`)
       .eq('postnr', cluster.postnr)
-      .limit(50);
+      .limit(500);
 
     for (const row of (rows ?? []) as Array<{
       bfe_nummer: number;
@@ -449,12 +450,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
 
     // Byg Claude prompt
+    // BIZZ-1885: Øget fra 30 → 80 admin-adresser og 40 → 150 kandidater.
+    // Store ejerforeninger som Carlsberg Byen 20a har 29 opgange + 249 BFEer
+    // — tidligere cap forhindrede AI i at se hele billedet.
     const adminAdresser = clusters
       .flatMap((c) => c.adresser)
-      .slice(0, 30)
+      .slice(0, 80)
       .join('\n- ');
     const kandidatListe = candidates
-      .slice(0, 40)
+      .slice(0, 150)
       .map((c) => `BFE ${c.bfe_nummer}: ${c.adresse}, ${c.postnr} ${c.postnrnavn ?? ''}`)
       .join('\n');
 

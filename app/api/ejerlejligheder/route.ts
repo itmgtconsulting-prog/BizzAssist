@@ -493,44 +493,51 @@ async function resolveLejlighederViaDawa(
   try {
     const { createAdminClient } = await import('@/lib/supabase/admin');
     const admin = createAdminClient();
-    await Promise.all(
-      lejligheder.map(async (lej) => {
-        if (!lej.bfe || lej.bfe === 0) return;
-        if (lej.koebspris != null && lej.koebsdato) return;
-        try {
-          const priceRows = await fetchTinglysningPriceRowsByBfe(lej.bfe);
-          if (priceRows.length > 0) {
-            const latest = priceRows[priceRows.length - 1];
-            if (lej.koebspris == null) {
-              lej.koebspris = latest.kontantKoebesum ?? latest.iAltKoebesum ?? null;
-            }
-            if (!lej.koebsdato) {
-              lej.koebsdato =
-                latest.overtagelsesdato ??
-                latest.koebsaftaleDato ??
-                latest.tinglysningsdato ??
-                null;
-            }
-          }
-
-          // Ejf_ejerskab fallback for koebsdato når summarisk mangler
-          if (!lej.koebsdato) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const { data: rows } = (await (admin as any)
-              .from('ejf_ejerskab')
-              .select('virkning_fra')
-              .eq('bfe_nummer', lej.bfe)
-              .eq('status', 'gældende')
-              .order('virkning_fra', { ascending: false })
-              .limit(1)) as { data: Array<{ virkning_fra: string | null }> | null };
-            const virkningFra = rows?.[0]?.virkning_fra ?? null;
-            if (virkningFra) lej.koebsdato = virkningFra;
-          }
-        } catch {
-          /* non-fatal */
-        }
-      })
+    // BIZZ-1870: Batched pris-fallback med concurrency limit (var Promise.all ubegrænset)
+    const PRICE_CONCURRENCY = 5;
+    const needsPrice = lejligheder.filter(
+      (l) => l.bfe && l.bfe > 0 && (l.koebspris == null || !l.koebsdato)
     );
+    for (let pi = 0; pi < needsPrice.length; pi += PRICE_CONCURRENCY) {
+      const priceBatch = needsPrice.slice(pi, pi + PRICE_CONCURRENCY);
+      await Promise.all(
+        priceBatch.map(async (lej) => {
+          if (lej.koebspris != null && lej.koebsdato) return;
+          try {
+            const priceRows = await fetchTinglysningPriceRowsByBfe(lej.bfe);
+            if (priceRows.length > 0) {
+              const latest = priceRows[priceRows.length - 1];
+              if (lej.koebspris == null) {
+                lej.koebspris = latest.kontantKoebesum ?? latest.iAltKoebesum ?? null;
+              }
+              if (!lej.koebsdato) {
+                lej.koebsdato =
+                  latest.overtagelsesdato ??
+                  latest.koebsaftaleDato ??
+                  latest.tinglysningsdato ??
+                  null;
+              }
+            }
+
+            // Ejf_ejerskab fallback for koebsdato når summarisk mangler
+            if (!lej.koebsdato) {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const { data: rows } = (await (admin as any)
+                .from('ejf_ejerskab')
+                .select('virkning_fra')
+                .eq('bfe_nummer', lej.bfe)
+                .eq('status', 'gældende')
+                .order('virkning_fra', { ascending: false })
+                .limit(1)) as { data: Array<{ virkning_fra: string | null }> | null };
+              const virkningFra = rows?.[0]?.virkning_fra ?? null;
+              if (virkningFra) lej.koebsdato = virkningFra;
+            }
+          } catch {
+            /* non-fatal */
+          }
+        })
+      );
+    }
   } catch (err) {
     logger.warn('[ejerlejligheder] Salgshistorik-fallback fejlede:', err);
   }
@@ -702,7 +709,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
     }
 
     const CONCURRENCY = 3;
-    const MAX_TL_ENRICH = 15;
+    const MAX_TL_ENRICH = 60;
     const itemsToEnrich = lejlighedItems.slice(0, MAX_TL_ENRICH);
 
     for (let i = 0; i < itemsToEnrich.length; i += CONCURRENCY) {

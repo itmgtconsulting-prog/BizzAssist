@@ -2599,7 +2599,7 @@ async function enrichPropertyNodes(
     const { data: cacheRows } = await (admin as any)
       .from('bfe_adresse_cache')
       .select('bfe_nummer, adresse, postnr, postnrnavn, dawa_id, etage, doer')
-      .in('bfe_nummer', allBfes.slice(0, 50));
+      .in('bfe_nummer', allBfes.slice(0, 200));
 
     type AdresseInfo = {
       adresse: string | null;
@@ -2897,8 +2897,12 @@ async function enrichPropertyNodes(
         /* SFE expansion is best-effort */
       }
     }
-  } catch {
-    // Adresse-berigelse er best-effort — fejl ignoreres
+  } catch (err) {
+    // BIZZ-1889: Log enrichment fejl i stedet for at sluge dem
+    logger.warn(
+      '[diagram/resolve] enrichPropertyNodes fejlede:',
+      err instanceof Error ? err.message : 'unknown'
+    );
   }
 }
 

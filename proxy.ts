@@ -122,6 +122,28 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
     return NextResponse.redirect(url);
   }
 
+  // ── BIZZ-1783: Skip proxy for cacheable public SEO routes ─────────────────
+  // Homepage, marketing-sider, /ejendom/*, /virksomhed/*, /robots.txt, /sitemap*
+  // er public uden auth-krav. Hvis proxyen kører her, sætter den per-request
+  // headers (x-request-id, CSP nonce) og kalder supabase.auth.getUser() →
+  // forcer dynamic-mode → Cache-Control: no-store → Google indekserer ikke.
+  // Disse routes skal være statisk cachebare (ISR), så vi springer proxy over.
+  const PUBLIC_CACHEABLE_PATHS = [
+    '/',
+    '/ejendom',
+    '/virksomhed',
+    '/privacy',
+    '/terms',
+    '/robots.txt',
+    '/sitemap',
+  ];
+  const isPublicCacheable = PUBLIC_CACHEABLE_PATHS.some(
+    (p) => pathname === p || pathname.startsWith(`${p}/`) || pathname.startsWith(`${p}.xml`)
+  );
+  if (isPublicCacheable) {
+    return NextResponse.next();
+  }
+
   // ── BIZZ-209: Generate per-request nonce for CSP ──────────────────────────
   const nonce = Buffer.from(crypto.randomUUID()).toString('base64');
 

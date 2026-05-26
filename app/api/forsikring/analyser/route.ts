@@ -410,6 +410,54 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       `[forsikring/analyser] Portefølje-checks: ${portfolioGaps.length} gaps (${portfolioGaps.filter((g) => g.severity === 'critical').length} kritiske)`
     );
 
+    // 4a2. BIZZ-1890: Standard betingelser — hent metadata og tilføj INFO-gaps til analysen.
+    // Hvert linked standard-betingelses-dokument genererer ét INFO-gap der vejleder
+    // analytikeren om at sammenligne policens dækning med selskabets egne vilkår.
+    if (standard_doc_ids && standard_doc_ids.length > 0) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: stdDocs } = await (admin as any)
+          .from('forsikring_standard_doc')
+          .select('id, selskab, titel, source_url, kategori')
+          .in('id', standard_doc_ids);
+        for (const doc of (stdDocs ?? []) as Array<{
+          id: string;
+          selskab: string;
+          titel: string;
+          source_url: string;
+          kategori: string;
+        }>) {
+          allGaps.push({
+            policyId: portfolioPolicyId,
+            checkId: `GAP-STD-${doc.id.slice(0, 8).toUpperCase()}`,
+            category: 'standard_betingelser',
+            severity: 'info',
+            title: `Standard betingelse tilknyttet: ${doc.titel}`,
+            description:
+              `${doc.selskab}-vilkår (${doc.kategori}) er tilknyttet denne analyse. ` +
+              `Sammenlign policens aktuelle dækning med ${doc.selskab}s standard-betingelser ` +
+              `for at identificere eventuelle afvigelser og mangler.`,
+            recommendation: `Gennemgå ${doc.titel} og verificér at alle vilkår er opfyldt i policen.`,
+            estimatedImpactDkk: null,
+            sourceData: {
+              standard_doc_id: doc.id,
+              source_url: doc.source_url,
+              selskab: doc.selskab,
+            },
+            riskScore: 5,
+          });
+        }
+        logger.log(
+          `[forsikring/analyser] Standard-betingelser: ${(stdDocs ?? []).length} tilknyttet`
+        );
+      } catch (err) {
+        logger.warn(
+          '[forsikring/analyser] Standard betingelser lookup fejlede (best-effort):',
+          err
+        );
+      }
+    }
+
     // 4b. BIZZ-1356: Auto-trigger eksterne cross-checks (best-effort, parallel)
     try {
       const [bbrResult, tlResult, vurResult] = await Promise.allSettled([

@@ -443,6 +443,10 @@ export default function EjendomEjerforholdTab({
 
           if (!bfeForDiagram) return null;
 
+          // BIZZ-1858: For lejligheder der bruger SFE-fallback BFE,
+          // vis en note om at data vises for hele matriklen
+          const usesSfeFallback = !!dawaAdresse?.etage && !bbrData?.ejerlejlighedBfe;
+
           /**
            * BIZZ-1826: Bestem om ejendommen har mindst én reel ejer (person eller selskab).
            * Diagrammet vises for alle ejendomme med ejere — ikke kun virksomheds-ejede.
@@ -451,6 +455,24 @@ export default function EjendomEjerforholdTab({
 
           return (
             <div className="space-y-4">
+              {/* BIZZ-1858: Info-boks for lejligheder med SFE-fallback */}
+              {usesSfeFallback && (
+                <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-4 py-3 flex items-start gap-3">
+                  <Building2 size={16} className="text-amber-400 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-amber-200 text-sm font-medium">
+                      {da
+                        ? 'Ejerskabsdata vises for hele ejendommen'
+                        : 'Ownership data shown for the entire property'}
+                    </p>
+                    <p className="text-slate-400 text-xs mt-0.5">
+                      {da
+                        ? 'Den specifikke lejligheds-BFE kunne ikke resolves. Data herunder gælder hele matriklen.'
+                        : 'The specific apartment BFE could not be resolved. Data below applies to the entire cadastral unit.'}
+                    </p>
+                  </div>
+                </div>
+              )}
               {/* BIZZ-1143: Ejerkort — ren præsentation, data leveret fra parent */}
               {chainLoader ? (
                 <TabLoadingSpinner

@@ -227,6 +227,32 @@ async function walkVirksomhed(
         /* ejf_administrator lookup non-fatal */
       }
 
+      // BIZZ-1862: Historisk ejerskab FØRST — foreninger der solgte SFE men
+      // stadig administrerer bygningen har kun historisk ejerskab. Disse SFE-BFEs
+      // skal være i seenBfes FØR SFE-expansion så matrikel-lookup finder dem.
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: histRows } = await (admin as any)
+          .from('ejf_ejerskab')
+          .select('bfe_nummer')
+          .eq('ejer_cvr', cvr)
+          .eq('status', 'historisk')
+          .limit(100);
+
+        for (const row of (histRows ?? []) as Array<{ bfe_nummer: number }>) {
+          if (seenBfes.has(row.bfe_nummer) || aktiver.length >= MAX_AKTIVER) continue;
+          seenBfes.add(row.bfe_nummer);
+          aktiver.push({
+            type: 'ejendom',
+            label: `BFE ${row.bfe_nummer}`,
+            bfe: row.bfe_nummer,
+            rawData: { ejerforening: true, historisk: true },
+          });
+        }
+      } catch {
+        /* historisk ejerskab lookup non-fatal */
+      }
+
       // BIZZ-1851: SFE → ejerlejligheder udfoldning via matrikel.
       // Bruger DAWA jordstykke til at finde præcis matrikel for SFE-BFE,
       // derefter alle lejligheder (adresser med etage) på den matrikel.
@@ -349,31 +375,6 @@ async function walkVirksomhed(
         }
       } catch {
         /* SFE expansion non-fatal */
-      }
-
-      // BIZZ-1851: Historisk ejerskab — foreninger der solgte SFE men stadig
-      // administrerer bygningen har kun historisk ejerskab.
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: histRows } = await (admin as any)
-          .from('ejf_ejerskab')
-          .select('bfe_nummer')
-          .eq('ejer_cvr', cvr)
-          .eq('status', 'historisk')
-          .limit(100);
-
-        for (const row of (histRows ?? []) as Array<{ bfe_nummer: number }>) {
-          if (seenBfes.has(row.bfe_nummer) || aktiver.length >= MAX_AKTIVER) continue;
-          seenBfes.add(row.bfe_nummer);
-          aktiver.push({
-            type: 'ejendom',
-            label: `BFE ${row.bfe_nummer}`,
-            bfe: row.bfe_nummer,
-            rawData: { ejerforening: true, historisk: true },
-          });
-        }
-      } catch {
-        /* historisk ejerskab lookup non-fatal */
       }
 
       // BIZZ-1829: AI-baseret resolve af yderligere ejendomme

@@ -1611,6 +1611,32 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     }
   >();
 
+  // BIZZ-1862: Tilføj historiske SFE-BFEs til bfeTilCvr FØR SFE-expansion
+  // så matrikel-lookup kan finde lejligheder under dem.
+  if (cvrNumre.length > 0) {
+    try {
+      const admin = createAdminClient();
+      const cvrStrings = cvrNumre.map((c) => String(c));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: histEjf } = await (admin as any)
+        .from('ejf_ejerskab')
+        .select('bfe_nummer, ejer_cvr')
+        .in('ejer_cvr', cvrStrings)
+        .eq('status', 'historisk')
+        .limit(50);
+      for (const row of (histEjf ?? []) as Array<{
+        bfe_nummer: number;
+        ejer_cvr: string;
+      }>) {
+        if (bfeTilCvr.has(row.bfe_nummer)) continue;
+        bfeTilCvr.set(row.bfe_nummer, row.ejer_cvr.padStart(8, '0'));
+        aktivByBfe.set(row.bfe_nummer, true);
+      }
+    } catch {
+      /* historisk ejerskab pre-load non-fatal */
+    }
+  }
+
   // BIZZ-1851: SFE-expansion for ejf_ejerskab BFEs (andelsforeninger).
   // ejf_administrator kan være tom men foreningen ejer SFE-BFE'en via ejerskab.
   // Kør matrikel-baseret expansion for BFEs uden etage i cache.

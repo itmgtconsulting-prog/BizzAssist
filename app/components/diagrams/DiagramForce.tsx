@@ -2708,8 +2708,32 @@ function DiagramForce({
         // co-owner bruger (4 3). Ejendomme er solid (ingen dash).
         const dashArray = isCrossOwnership ? '6 4' : isCoOwnerEdge ? '4 3' : undefined;
 
+        // BIZZ-1873: Byg tooltip-tekst der forklarer linjetypen og ejerandel.
+        // SVG <title> leverer native browser-tooltip + skærmlæser-tekst (WCAG 1.4.1).
+        const fromLabel = fromNode?.label ?? edge.from;
+        const toLabel = toNode?.label ?? edge.to;
+        const edgeTooltip = isCrossOwnership
+          ? `Krydsejerskab: ${fromLabel} ↔ ${toLabel}`
+          : isCoOwnerEdge
+            ? `Medejer: ${fromLabel} → ${toLabel}${edge.ejerandel ? ` (${edge.ejerandel})` : ''}`
+            : edge.personallyOwned
+              ? `Personligt ejerskab: ${fromLabel} → ${toLabel}${edge.ejerandel ? ` (${edge.ejerandel})` : ''}`
+              : isPropertyEdge
+                ? `Ejendom: ${fromLabel} → ${toLabel}${edge.ejerandel ? ` (${edge.ejerandel})` : ''}`
+                : `Ejerskab: ${fromLabel} → ${toLabel}${edge.ejerandel ? ` (${edge.ejerandel})` : ''}`;
+
         return (
           <g key={`e-${i}`}>
+            {/* BIZZ-1873: Transparent wide hit-area for easier hover — native tooltip via <title> */}
+            <path
+              d={`M ${sx} ${sy} C ${cx1} ${midY}, ${cx2} ${midY}, ${ex} ${ey}`}
+              fill="none"
+              stroke="transparent"
+              strokeWidth={12}
+              aria-label={edgeTooltip}
+            >
+              <title>{edgeTooltip}</title>
+            </path>
             <path
               d={`M ${sx} ${sy} C ${cx1} ${midY}, ${cx2} ${midY}, ${ex} ${ey}`}
               fill="none"

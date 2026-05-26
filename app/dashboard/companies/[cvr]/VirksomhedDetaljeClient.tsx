@@ -1555,9 +1555,10 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   const sorteredeKategorier = rolleKategoriOrdning.filter((k) => personerByKategori[k]);
 
   return (
-    <div className="flex-1 flex overflow-hidden">
+    // BIZZ-1866: print:overflow-visible removes scroll-clipping during print
+    <div className="flex-1 flex overflow-hidden print:overflow-visible print:block">
       {/* ─── Left: Main Content ─── */}
-      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0 print:overflow-visible">
         {/* ─── Sticky Header ─── */}
         <div className="px-3 sm:px-6 pt-5 pb-0 border-b border-slate-700/50 bg-slate-900/30 relative z-20">
           {/* Top row: back button + actions */}
@@ -1728,7 +1729,11 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
         )}
 
         {/* ─── Scrollable Content Area ─── */}
-        <div ref={contentRef} className="flex-1 overflow-y-auto px-3 sm:px-6 py-5">
+        {/* BIZZ-1866: print:overflow-visible + print:h-auto removes scroll-clipping during print */}
+        <div
+          ref={contentRef}
+          className="flex-1 overflow-y-auto px-3 sm:px-6 py-5 print:overflow-visible print:h-auto"
+        >
           {/* ══ OVERBLIK ══ */}
           {/* ══ OVERBLIK ══ */}
           {aktivTab === 'overview' && (
@@ -1907,7 +1912,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
       {/* ─── Nyheder/sociale medier panel (desktop) ─── */}
       {isDesktop && nyhedsPanelÅben && data && (
         <div
-          className="flex-shrink-0 self-stretch flex flex-col overflow-hidden border-l border-slate-700/50"
+          className="flex-shrink-0 self-stretch flex flex-col overflow-hidden border-l border-slate-700/50 print:hidden"
           style={{ width: sidebarWidth }}
         >
           {/* Panel-header */}

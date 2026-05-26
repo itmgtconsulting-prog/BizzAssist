@@ -2789,7 +2789,12 @@ async function enrichPropertyNodes(
       }
       if (node.label && !node.label.startsWith('BFE ')) continue;
       const info = adresseMap.get(node.bfeNummer!);
-      if (!info?.adresse) continue;
+      // BIZZ-1867: Vis "Adresse ukendt" i stedet for rå BFE-nummer
+      if (!info?.adresse) {
+        node.label = 'Adresse ukendt';
+        node.sublabel = node.bfeNummer ? `BFE ${node.bfeNummer}` : undefined;
+        continue;
+      }
       node.label = fmtLabel(info) ?? node.label;
       if (info.postnr && info.by) {
         node.sublabel = `${info.postnr} ${info.by}`;
@@ -2803,7 +2808,11 @@ async function enrichPropertyNodes(
       for (const item of node.overflowItems ?? []) {
         if (!item.bfeNummer) continue;
         const info = adresseMap.get(item.bfeNummer);
-        if (!info) continue;
+        if (!info) {
+          // BIZZ-1867: Vis "Adresse ukendt" i stedet for rå BFE-nummer
+          if (item.label?.startsWith('BFE ')) item.label = `Adresse ukendt (BFE ${item.bfeNummer})`;
+          continue;
+        }
         const label = fmtLabel(info);
         if (label) item.label = label;
         const link = buildLink(info, item.bfeNummer ?? null);

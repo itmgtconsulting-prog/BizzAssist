@@ -296,8 +296,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // SFE-ejendomme), brug DAWA jordstykke-opslag til at finde adresser på
     // matriklen. Eksempel: BFE 100077625 (SFE Carlsberg Byen matrikel 1218n)
     // har ingen adresse i cache, men DAWA kender matriklen og dens lejligheder.
-    if (clusters.length === 0 && adminBfes.size > 0) {
-      // Strategi 1: DAWA jordstykke → matrikel → adresser
+    // BIZZ-1885: Trigger matrikel-discovery også når clusters.length er lav.
+    // Carlsberg Byen 20a SFE 6025643 har 1 cluster ("Bryggernes Plads") men
+    // matriklen omfatter 29 opgange på tværs af flere gader.
+    if (clusters.length < 5 && adminBfes.size > 0) {
       try {
         for (const bfe of [...adminBfes].slice(0, 5)) {
           const jordRes = await fetch(
@@ -313,9 +315,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           const matr = jordstykker[0]?.matrikelnr;
           if (!ejerlav || !matr) continue;
 
+          // BIZZ-1885: Øget per_side fra 10 → 500 for store matrikler
           const adrRes = await fetch(
-            `https://api.dataforsyningen.dk/adresser?ejerlavkode=${ejerlav}&matrikelnr=${encodeURIComponent(matr)}&format=json&struktur=mini&per_side=10`,
-            { signal: AbortSignal.timeout(8000) }
+            `https://api.dataforsyningen.dk/adresser?ejerlavkode=${ejerlav}&matrikelnr=${encodeURIComponent(matr)}&format=json&struktur=mini&per_side=500`,
+            { signal: AbortSignal.timeout(10000) }
           );
           if (!adrRes.ok) continue;
           const adresser = (await adrRes.json()) as Array<{
@@ -325,12 +328,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             postnrnavn: string;
           }>;
 
+          // Merge nye clusters uden duplikering
+          const existingKeys = new Set(clusters.map((c) => `${c.gadenavn}|${c.postnr}`));
           const clusterMap = new Map<
             string,
             { gadenavn: string; postnr: string; adresser: string[] }
           >();
           for (const a of adresser) {
             const key = `${a.vejnavn}|${a.postnr}`;
+            if (existingKeys.has(key)) continue;
             if (!clusterMap.has(key)) {
               clusterMap.set(key, { gadenavn: a.vejnavn, postnr: a.postnr, adresser: [] });
             }
@@ -339,7 +345,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           for (const c of clusterMap.values()) {
             clusters.push(c);
           }
-          if (clusters.length > 0) break;
+          if (clusters.length >= 5) break;
         }
       } catch {
         /* DAWA fallback — non-critical */

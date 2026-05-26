@@ -441,7 +441,11 @@ export default function EjendomEjerforholdTab({
             );
           }
 
-          if (!bfeForDiagram) return null;
+          // BIZZ-1876: Brug currentBfe som fallback når ejendomsrelationer og
+          // ejerlejlighedBfe begge mangler (typisk SFE-fallback fra BIZZ-1853).
+          // Uden dette returnerede komponenten null og brugeren så en blank side.
+          const effectiveBfe = bfeForDiagram ?? currentBfe;
+          if (!effectiveBfe) return null;
 
           // BIZZ-1858: For lejligheder der bruger SFE-fallback BFE,
           // vis en note om at data vises for hele matriklen
@@ -549,11 +553,11 @@ export default function EjendomEjerforholdTab({
                   ) : (
                     <DiagramV2
                       rootType="property"
-                      rootId={String(bfeForDiagram)}
+                      rootId={String(effectiveBfe)}
                       rootLabel={
                         dawaAdresse
                           ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
-                          : `BFE ${bfeForDiagram}`
+                          : `BFE ${effectiveBfe}`
                       }
                       lang={lang}
                       prefetchedGraph={prefetchedDiagramGraph}

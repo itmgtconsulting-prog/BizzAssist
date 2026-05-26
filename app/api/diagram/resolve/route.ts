@@ -668,6 +668,7 @@ async function resolveCompanyGraph(
             label: `BFE ${prop.bfe_nummer}`,
             type: 'property',
             bfeNummer: prop.bfe_nummer,
+            link: `/dashboard/ejendomme/${prop.bfe_nummer}`,
           });
           nodeIds.add(propId);
         }
@@ -2777,6 +2778,10 @@ async function enrichPropertyNodes(
     };
 
     for (const node of propNodes) {
+      // BIZZ-1865: Sæt link ALTID baseret på BFE — selv uden cache-hit
+      if (!node.link && node.bfeNummer) {
+        node.link = `/dashboard/ejendomme/${node.bfeNummer}`;
+      }
       if (node.label && !node.label.startsWith('BFE ')) continue;
       const info = adresseMap.get(node.bfeNummer!);
       if (!info?.adresse) continue;

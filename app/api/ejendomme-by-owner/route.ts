@@ -1595,6 +1595,22 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     }
   }
 
+  // BIZZ-1851: Pre-resolved adressedata for syntetiske BFEs (andelslejligheder)
+  const dawaResolvedMap = new Map<
+    number,
+    {
+      adresse: string;
+      etage: string | null;
+      doer: string | null;
+      postnr: string;
+      postnrnavn: string;
+      kommune: string | null;
+      kommuneKode: string | null;
+      ejendomstype: string | null;
+      dawaId: string | null;
+    }
+  >();
+
   // BIZZ-1851: SFE-expansion for ejf_ejerskab BFEs (andelsforeninger).
   // ejf_administrator kan være tom men foreningen ejer SFE-BFE'en via ejerskab.
   // Kør matrikel-baseret expansion for BFEs uden etage i cache.
@@ -1653,6 +1669,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
               if (!postnr) continue;
 
               const ownerCvr = bfeTilCvr.get(sfeBfe) ?? '';
+
+              // Hent cached BFEs for matrikel-adresser
+              const cachedOnMatrikel = new Set<string>();
               for (const gade of gadenavne.slice(0, 10)) {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const { data: cacheRows } = await (admin as any)
@@ -1671,11 +1690,59 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
                     row.adresse.startsWith(`${l.vejnavn} ${l.husnr}`)
                   );
                   if (!matchesMatrikel) continue;
+                  cachedOnMatrikel.add(`${row.adresse}`);
                   if (bfeTilCvr.has(row.bfe_nummer)) continue;
                   administreretByBfe.add(row.bfe_nummer);
                   bfeTilCvr.set(row.bfe_nummer, ownerCvr);
                   aktivByBfe.set(row.bfe_nummer, true);
                 }
+              }
+
+              // BIZZ-1851: Lejligheder IKKE i cache (typisk andelsboliger
+              // uden individuelle BFE-numre) — tilføj direkte fra DAWA.
+              // Bruges af koncernWalk med BFE=0, gør det samme her.
+              const postnrNavn = await (async () => {
+                try {
+                  const adrFull = adresser as Array<{
+                    vejnavn: string;
+                    husnr: string;
+                    etage: string | null;
+                    dør: string | null;
+                    postnr: string;
+                    postnrnavn: string;
+                  }>;
+                  return adrFull[0]?.postnrnavn ?? '';
+                } catch {
+                  return '';
+                }
+              })();
+              for (const l of lejligheder as Array<{
+                vejnavn: string;
+                husnr: string;
+                etage: string | null;
+                dør: string | null;
+                postnr: string;
+              }>) {
+                const addr = `${l.vejnavn} ${l.husnr}`;
+                if (cachedOnMatrikel.has(addr)) continue;
+                // Brug negative syntetisk BFE for at undgå konflikter
+                const syntheticBfe = -(Math.abs(sfeBfe) * 1000 + bfeTilCvr.size);
+                if (bfeTilCvr.has(syntheticBfe)) continue;
+                administreretByBfe.add(syntheticBfe);
+                bfeTilCvr.set(syntheticBfe, ownerCvr);
+                aktivByBfe.set(syntheticBfe, true);
+                // Pre-populate adresse data for disse syntetiske BFEs
+                dawaResolvedMap.set(syntheticBfe, {
+                  adresse: addr,
+                  etage: l.etage ?? null,
+                  doer: l.dør ?? null,
+                  postnr: l.postnr,
+                  postnrnavn: postnrNavn,
+                  kommune: null,
+                  kommuneKode: null,
+                  ejendomstype: 'Andelsbolig',
+                  dawaId: null,
+                });
               }
             } catch {
               /* individual SFE expansion non-fatal */
@@ -1716,11 +1783,28 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     const begransetBfe = alleBfe.slice(offset, offset + limit);
 
     /* ── Trin 2: Hent adressedata for hvert BFE (begrænset parallelisme) ── */
-    const adresseData = await pMap(begransetBfe, DAWA_CONCURRENCY, hentDawaBfeData);
+    // BIZZ-1851: Syntetiske BFEs (negative) har pre-resolved data fra DAWA
+    const adresseData = await pMap(begransetBfe, DAWA_CONCURRENCY, async (bfe) => {
+      const preResolved = dawaResolvedMap.get(bfe);
+      if (preResolved) {
+        return {
+          adresse: preResolved.adresse,
+          postnr: preResolved.postnr,
+          by: preResolved.postnrnavn,
+          kommune: preResolved.kommune,
+          kommuneKode: preResolved.kommuneKode,
+          ejendomstype: preResolved.ejendomstype,
+          dawaId: preResolved.dawaId,
+          etage: preResolved.etage,
+          doer: preResolved.doer,
+        };
+      }
+      return hentDawaBfeData(bfe);
+    });
 
     /* ── Trin 3: Saml resultater ── */
     const ejendomme: EjendomSummary[] = begransetBfe.map((bfe, idx) => ({
-      bfeNummer: bfe,
+      bfeNummer: bfe < 0 ? 0 : bfe, // Syntetiske BFEs → 0 i output
       ownerCvr: bfeTilCvr.get(bfe) ?? '',
       ...adresseData[idx],
       ejerandel: bfeTilEjerandel.get(bfe) ?? null,

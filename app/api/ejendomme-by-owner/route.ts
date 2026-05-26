@@ -1890,27 +1890,33 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     });
 
     /* ── Trin 3: Saml resultater ── */
-    const ejendomme: EjendomSummary[] = begransetBfe.map((bfe, idx) => ({
-      bfeNummer: bfe < 0 ? 0 : bfe, // Syntetiske BFEs → 0 i output
-      ownerCvr: bfeTilCvr.get(bfe) ?? '',
-      ...adresseData[idx],
-      ejerandel: bfeTilEjerandel.get(bfe) ?? null,
-      administreret: administreretByBfe.has(bfe),
-      aktiv: aktivByBfe.get(bfe) ?? true,
-      solgtDato: solgtDatoByBfe.get(bfe) ?? null,
-      ownerBuyDate: ownerBuyDateByBfe.get(bfe) ?? null,
-    }));
+    // BIZZ-1863: Administrerede ejendomme er altid aktive — historisk ejerskab
+    // kan sætte aktiv=false men det skal ikke gælde for administrerede BFEs.
+    const ejendomme: EjendomSummary[] = begransetBfe.map((bfe, idx) => {
+      const isAdmin = administreretByBfe.has(bfe);
+      return {
+        bfeNummer: bfe < 0 ? 0 : bfe, // Syntetiske BFEs → 0 i output
+        ownerCvr: bfeTilCvr.get(bfe) ?? '',
+        ...adresseData[idx],
+        ejerandel: bfeTilEjerandel.get(bfe) ?? null,
+        administreret: isAdmin,
+        aktiv: isAdmin ? true : (aktivByBfe.get(bfe) ?? true),
+        solgtDato: isAdmin ? null : (solgtDatoByBfe.get(bfe) ?? null),
+        ownerBuyDate: ownerBuyDateByBfe.get(bfe) ?? null,
+      };
+    });
 
-    /* ── BIZZ-1834: SFE-expansion — fold SFE ud til ejerlejligheder ──
-       For foreninger (FFO/forening) der ejer SFE-ejendomme (ingen etage,
-       ejendomstype != 'Ejerlejlighed'), søg bfe_adresse_cache for child-
-       ejerlejligheder på samme adresse-præfiks og tilføj dem som ekstra entries.
-       BIZZ-1852: Parallelisér SFE-iterationen og tilføj time-budget for at
-       undgå 504 timeout for store ejerforeninger (Carlsberg Byen, A/B Vigerslevvej). */
+    /* ── BIZZ-1834: SFE-expansion — DEAKTIVERET (BIZZ-1863) ──
+       Erstattet af BIZZ-1851 matrikel-baseret expansion (kører FØR pagination).
+       Den gamle gadenavn-baserede expansion var for bred og tilføjede
+       lejligheder fra andre bygninger på samme gade (94 vs 54 for Carlsberg). */
     try {
-      const sfeEjendomme = ejendomme.filter(
-        (e) => e.adresse && !e.etage && e.ejendomstype !== 'Ejerlejlighed' && e.postnr
-      );
+      const _sfeDisabled = true;
+      const sfeEjendomme = _sfeDisabled
+        ? []
+        : ejendomme.filter(
+            (e) => e.adresse && !e.etage && e.ejendomstype !== 'Ejerlejlighed' && e.postnr
+          );
 
       // BIZZ-1852: Time budget — stop SFE-expansion hvis vi har <10s tilbage
       // af maxDuration=60s. Bedre at returnere ufuldstændige data end 504.

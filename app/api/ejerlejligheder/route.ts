@@ -997,10 +997,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
     }
 
     // BIZZ-1842: Pris-fallback for TL-path lejligheder uden koebspris/koebsdato.
-    // Strategi: (1) batch-lookup ejerskifte_historik cache (millioner af rækker
-    // med priser fra TL backfill), (2) live TL-kald som sidste fallback for
-    // BFE'er der ikke er i cachen. Fanger lejligheder hvor MAX_TL_ENRICH cap
-    // (15) blev ramt, eller summarisk XML manglede pris (arv/gave).
+    // Strategi: (1) batch-lookup v_ejerskifte_handel (985k rækker med priser
+    // fra EJF backfill — primær kilde), (2) live TL-kald som sidste fallback
+    // for BFE'er der ikke er i cachen. Fanger lejligheder hvor MAX_TL_ENRICH
+    // cap (15) blev ramt, eller summarisk XML manglede pris (arv/gave).
     try {
       const { createAdminClient } = await import('@/lib/supabase/admin');
       const admin = createAdminClient();
@@ -1009,23 +1009,24 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
       );
 
       if (missingPrice.length > 0) {
-        // Trin 1: Batch-lookup i ejerskifte_historik for alle missing BFE'er
+        // Trin 1: Batch-lookup i v_ejerskifte_handel (EJF pre-joined view)
         const bfeList = missingPrice.map((l) => l.bfe);
 
         type HistRow = {
           bfe_nummer: number;
           overtagelsesdato: string | null;
           kontant_koebesum: number | null;
-          i_alt_koebesum: number | null;
+          samlet_koebesum: number | null;
           koebsaftale_dato: string | null;
         };
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: histRows } = (await (admin as any)
-          .from('ejerskifte_historik')
+          .from('v_ejerskifte_handel')
           .select(
-            'bfe_nummer, overtagelsesdato, kontant_koebesum, i_alt_koebesum, koebsaftale_dato'
+            'bfe_nummer, overtagelsesdato, kontant_koebesum, samlet_koebesum, koebsaftale_dato'
           )
           .in('bfe_nummer', bfeList)
+          .gt('kontant_koebesum', 0)
           .order('overtagelsesdato', { ascending: false })) as {
           data: HistRow[] | null;
         };
@@ -1043,16 +1044,19 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
           const hist = histMap.get(lej.bfe);
           if (!hist) continue;
           if (lej.koebspris == null) {
-            lej.koebspris = hist.kontant_koebesum ?? hist.i_alt_koebesum ?? null;
+            lej.koebspris = hist.kontant_koebesum ?? hist.samlet_koebesum ?? null;
           }
           if (!lej.koebsdato) {
-            lej.koebsdato = hist.overtagelsesdato ?? hist.koebsaftale_dato ?? null;
+            // overtagelsesdato er timestamptz — convertér til date-streng
+            lej.koebsdato = hist.overtagelsesdato
+              ? hist.overtagelsesdato.split('T')[0]
+              : (hist.koebsaftale_dato ?? null);
           }
           if (lej.koebspris != null || lej.koebsdato) enrichedFromCache++;
         }
         if (enrichedFromCache > 0) {
           logger.log(
-            `[ejerlejligheder] TL-path cache-fallback: ${enrichedFromCache}/${missingPrice.length} berigede fra ejerskifte_historik`
+            `[ejerlejligheder] TL-path cache-fallback: ${enrichedFromCache}/${missingPrice.length} berigede fra v_ejerskifte_handel`
           );
         }
 

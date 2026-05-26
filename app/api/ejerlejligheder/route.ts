@@ -1011,6 +1011,14 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
       if (missingPrice.length > 0) {
         // Trin 1: Batch-lookup i ejerskifte_historik for alle missing BFE'er
         const bfeList = missingPrice.map((l) => l.bfe);
+
+        type HistRow = {
+          bfe_nummer: number;
+          overtagelsesdato: string | null;
+          kontant_koebesum: number | null;
+          i_alt_koebesum: number | null;
+          koebsaftale_dato: string | null;
+        };
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: histRows } = (await (admin as any)
           .from('ejerskifte_historik')
@@ -1019,17 +1027,11 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
           )
           .in('bfe_nummer', bfeList)
           .order('overtagelsesdato', { ascending: false })) as {
-          data: Array<{
-            bfe_nummer: number;
-            overtagelsesdato: string | null;
-            kontant_koebesum: number | null;
-            i_alt_koebesum: number | null;
-            koebsaftale_dato: string | null;
-          }> | null;
+          data: HistRow[] | null;
         };
 
         // Gruppér per BFE — første række per BFE er nyeste (DESC sort)
-        const histMap = new Map<number, (typeof histRows)[number]>();
+        const histMap = new Map<number, HistRow>();
         for (const row of histRows ?? []) {
           if (!histMap.has(row.bfe_nummer)) {
             histMap.set(row.bfe_nummer, row);

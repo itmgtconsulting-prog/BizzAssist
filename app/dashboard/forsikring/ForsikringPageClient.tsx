@@ -858,6 +858,17 @@ function AnalyseSection({
       .catch(() => setLastAnalyse(null));
   }, [selected, policies, onAnalyseDetail, onSagChange]);
 
+  // BIZZ-1890: Kriterium 3 — auto-udfyld forsikringsselskab-feltet ud fra
+  // matchede policer, så AI kan finde relevante standard-betingelser automatisk.
+  // Sættes når kunden vælges og har policer med et forsikringsselskabsnavn.
+  useEffect(() => {
+    if (!stdSelskabRef.current) return;
+    const insurers = [...new Set(kundePolicer.map((p) => p.insurer_name).filter(Boolean))];
+    if (insurers.length > 0 && !stdSelskabRef.current.value) {
+      stdSelskabRef.current.value = insurers[0];
+    }
+  }, [kundePolicer]);
+
   /** Debounced søgning via /api/search */
   const handleSearch = useCallback((value: string) => {
     setQuery(value);

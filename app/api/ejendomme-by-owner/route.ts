@@ -1830,15 +1830,16 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
   // BIZZ-1860: Fjern SFE/hovedejendom-BFEs når lejligheder er expanded.
   // Hvis vi tilføjede syntetiske (DAWA-resolved) eller cache-baserede
   // lejligheder, fjern den originale SFE-BFE der nu er dækket.
+  // BIZZ-1869: Kun slet BFEer der er ADMINISTRERET (ikke direkte ejed).
+  // Tidligere blev alle non-etage BFEer slettet — det fjernede 39/41 af
+  // Familien Petersens direkte ejede BFEer (som var industri-/erhvervs-
+  // ejendomme uden etage). Nu kun expanded SFE-administrators-BFE'er fjernes.
   if (dawaResolvedMap.size > 0) {
-    // Vi har DAWA-expanded lejligheder — fjern BFEs uden etage
     for (const bfe of [...bfeTilCvr.keys()]) {
       if (bfe < 0) continue; // Syntetiske, behold
       if (dawaResolvedMap.has(bfe)) continue; // Allerede DAWA-resolved
-      // Tjek om denne BFE har etage — hvis ikke, er det en SFE/hovedejendom
-      const preResolved = dawaResolvedMap.get(bfe);
-      if (preResolved?.etage) continue;
-      // Ikke i dawaResolvedMap og ikke syntetisk → tjek cache
+      // KUN slet hvis BFE er administreret (ikke direkte ejed)
+      if (!administreretByBfe.has(bfe)) continue;
       const admin = createAdminClient();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: etRow } = await (admin as any)
@@ -1847,7 +1848,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         .eq('bfe_nummer', bfe)
         .maybeSingle();
       if (!(etRow as { etage: string | null } | null)?.etage) {
-        // Ingen etage → SFE/hovedejendom, fjern
+        // Administreret SFE uden etage — lejlighederne er nu udfoldet, fjern parent
         bfeTilCvr.delete(bfe);
         administreretByBfe.delete(bfe);
         aktivByBfe.delete(bfe);

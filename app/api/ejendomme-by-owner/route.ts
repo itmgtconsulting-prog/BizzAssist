@@ -1692,7 +1692,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         // BFEs without etage or not in cache → potential SFEs to expand
         const potentialSfes = allCurrentBfes.filter((b) => !bfesWithEtage.has(b));
 
-        if (potentialSfes.length > 0 && potentialSfes.length <= 5) {
+        if (potentialSfes.length > 0 && potentialSfes.length <= 20) {
           for (const sfeBfe of potentialSfes) {
             try {
               const jordRes = await fetch(

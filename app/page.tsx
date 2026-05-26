@@ -1,4 +1,9 @@
-// redirect moved to middleware.ts (BIZZ-1783)
+// redirect moved to proxy.ts (BIZZ-1783)
+// BIZZ-1783: Eksplicit ISR-cacheable — uden dette anbefaler Next.js 16
+// no-store default for Server Component-renders selv om siden er rent statisk.
+export const revalidate = 3600;
+export const dynamic = 'force-static';
+
 import JsonLd from '@/app/components/JsonLd';
 import Navbar from '@/app/components/Navbar';
 import Hero from '@/app/components/Hero';

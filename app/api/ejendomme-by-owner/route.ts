@@ -1595,6 +1595,99 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     }
   }
 
+  // BIZZ-1851: SFE-expansion for ejf_ejerskab BFEs (andelsforeninger).
+  // ejf_administrator kan være tom men foreningen ejer SFE-BFE'en via ejerskab.
+  // Kør matrikel-baseret expansion for BFEs uden etage i cache.
+  if (cvrNumre.length > 0) {
+    try {
+      const admin = createAdminClient();
+      const allCurrentBfes = [...bfeTilCvr.keys()];
+      if (allCurrentBfes.length > 0 && allCurrentBfes.length <= 20) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: etageCheck } = await (admin as any)
+          .from('bfe_adresse_cache')
+          .select('bfe_nummer, etage')
+          .in('bfe_nummer', allCurrentBfes);
+
+        const bfesWithEtage = new Set(
+          ((etageCheck ?? []) as Array<{ bfe_nummer: number; etage: string | null }>)
+            .filter((r) => r.etage)
+            .map((r) => r.bfe_nummer)
+        );
+        // BFEs without etage or not in cache → potential SFEs to expand
+        const potentialSfes = allCurrentBfes.filter((b) => !bfesWithEtage.has(b));
+
+        if (potentialSfes.length > 0 && potentialSfes.length <= 5) {
+          for (const sfeBfe of potentialSfes) {
+            try {
+              const jordRes = await fetch(
+                `https://api.dataforsyningen.dk/jordstykker?bfenummer=${sfeBfe}&format=json`,
+                { signal: AbortSignal.timeout(8000) }
+              );
+              if (!jordRes.ok) continue;
+              const jordstykker = (await jordRes.json()) as Array<{
+                ejerlav?: { kode?: number };
+                matrikelnr?: string;
+              }>;
+              const ejerlav = jordstykker[0]?.ejerlav?.kode;
+              const matr = jordstykker[0]?.matrikelnr;
+              if (!ejerlav || !matr) continue;
+
+              const adrRes = await fetch(
+                `https://api.dataforsyningen.dk/adresser?ejerlavkode=${ejerlav}&matrikelnr=${encodeURIComponent(matr)}&format=json&struktur=mini&per_side=500`,
+                { signal: AbortSignal.timeout(8000) }
+              );
+              if (!adrRes.ok) continue;
+              const adresser = (await adrRes.json()) as Array<{
+                vejnavn: string;
+                husnr: string;
+                etage: string | null;
+                postnr: string;
+              }>;
+
+              const lejligheder = adresser.filter((a) => a.etage);
+              if (lejligheder.length === 0) continue;
+
+              const gadenavne = [...new Set(lejligheder.map((a) => a.vejnavn))];
+              const postnr = lejligheder[0]?.postnr;
+              if (!postnr) continue;
+
+              const ownerCvr = bfeTilCvr.get(sfeBfe) ?? '';
+              for (const gade of gadenavne.slice(0, 10)) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const { data: cacheRows } = await (admin as any)
+                  .from('bfe_adresse_cache')
+                  .select('bfe_nummer, adresse')
+                  .ilike('adresse', `${gade}%`)
+                  .eq('postnr', postnr)
+                  .not('etage', 'is', null)
+                  .limit(500);
+
+                for (const row of (cacheRows ?? []) as Array<{
+                  bfe_nummer: number;
+                  adresse: string;
+                }>) {
+                  const matchesMatrikel = lejligheder.some((l) =>
+                    row.adresse.startsWith(`${l.vejnavn} ${l.husnr}`)
+                  );
+                  if (!matchesMatrikel) continue;
+                  if (bfeTilCvr.has(row.bfe_nummer)) continue;
+                  administreretByBfe.add(row.bfe_nummer);
+                  bfeTilCvr.set(row.bfe_nummer, ownerCvr);
+                  aktivByBfe.set(row.bfe_nummer, true);
+                }
+              }
+            } catch {
+              /* individual SFE expansion non-fatal */
+            }
+          }
+        }
+      }
+    } catch {
+      /* ejf_ejerskab SFE expansion non-fatal */
+    }
+  }
+
   try {
     const alleBfe = [...bfeTilCvr.keys()];
     const totalBfe = alleBfe.length;

@@ -996,6 +996,115 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
       );
     }
 
+    // BIZZ-1842: Pris-fallback for TL-path lejligheder uden koebspris/koebsdato.
+    // Strategi: (1) batch-lookup ejerskifte_historik cache (millioner af rækker
+    // med priser fra TL backfill), (2) live TL-kald som sidste fallback for
+    // BFE'er der ikke er i cachen. Fanger lejligheder hvor MAX_TL_ENRICH cap
+    // (15) blev ramt, eller summarisk XML manglede pris (arv/gave).
+    try {
+      const { createAdminClient } = await import('@/lib/supabase/admin');
+      const admin = createAdminClient();
+      const missingPrice = lejligheder.filter(
+        (l) => l.bfe > 0 && (l.koebspris == null || !l.koebsdato)
+      );
+
+      if (missingPrice.length > 0) {
+        // Trin 1: Batch-lookup i ejerskifte_historik for alle missing BFE'er
+        const bfeList = missingPrice.map((l) => l.bfe);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: histRows } = (await (admin as any)
+          .from('ejerskifte_historik')
+          .select(
+            'bfe_nummer, overtagelsesdato, kontant_koebesum, i_alt_koebesum, koebsaftale_dato'
+          )
+          .in('bfe_nummer', bfeList)
+          .order('overtagelsesdato', { ascending: false })) as {
+          data: Array<{
+            bfe_nummer: number;
+            overtagelsesdato: string | null;
+            kontant_koebesum: number | null;
+            i_alt_koebesum: number | null;
+            koebsaftale_dato: string | null;
+          }> | null;
+        };
+
+        // Gruppér per BFE — første række per BFE er nyeste (DESC sort)
+        const histMap = new Map<number, (typeof histRows)[number]>();
+        for (const row of histRows ?? []) {
+          if (!histMap.has(row.bfe_nummer)) {
+            histMap.set(row.bfe_nummer, row);
+          }
+        }
+
+        let enrichedFromCache = 0;
+        for (const lej of missingPrice) {
+          const hist = histMap.get(lej.bfe);
+          if (!hist) continue;
+          if (lej.koebspris == null) {
+            lej.koebspris = hist.kontant_koebesum ?? hist.i_alt_koebesum ?? null;
+          }
+          if (!lej.koebsdato) {
+            lej.koebsdato = hist.overtagelsesdato ?? hist.koebsaftale_dato ?? null;
+          }
+          if (lej.koebspris != null || lej.koebsdato) enrichedFromCache++;
+        }
+        if (enrichedFromCache > 0) {
+          logger.log(
+            `[ejerlejligheder] TL-path cache-fallback: ${enrichedFromCache}/${missingPrice.length} berigede fra ejerskifte_historik`
+          );
+        }
+
+        // Trin 2: Live TL fallback for BFE'er stadig uden pris (max 20 for perf)
+        const stillMissing = missingPrice.filter((l) => l.koebspris == null || !l.koebsdato);
+        const PRICE_LIVE_MAX = 20;
+        const PRICE_CONCURRENCY = 3;
+        const toResolveLive = stillMissing.slice(0, PRICE_LIVE_MAX);
+
+        for (let i = 0; i < toResolveLive.length; i += PRICE_CONCURRENCY) {
+          const batch = toResolveLive.slice(i, i + PRICE_CONCURRENCY);
+          await Promise.allSettled(
+            batch.map(async (lej) => {
+              try {
+                const priceRows = await fetchTinglysningPriceRowsByBfe(lej.bfe);
+                if (priceRows.length > 0) {
+                  const latest = priceRows[priceRows.length - 1];
+                  if (lej.koebspris == null) {
+                    lej.koebspris = latest.kontantKoebesum ?? latest.iAltKoebesum ?? null;
+                  }
+                  if (!lej.koebsdato) {
+                    lej.koebsdato =
+                      latest.overtagelsesdato ??
+                      latest.koebsaftaleDato ??
+                      latest.tinglysningsdato ??
+                      null;
+                  }
+                }
+
+                // ejf_ejerskab fallback for koebsdato når TL ikke har pris
+                if (!lej.koebsdato) {
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  const { data: rows } = (await (admin as any)
+                    .from('ejf_ejerskab')
+                    .select('virkning_fra')
+                    .eq('bfe_nummer', lej.bfe)
+                    .eq('status', 'gældende')
+                    .order('virkning_fra', { ascending: false })
+                    .limit(1)) as { data: Array<{ virkning_fra: string | null }> | null };
+                  if (rows && rows.length > 0 && rows[0].virkning_fra) {
+                    lej.koebsdato = rows[0].virkning_fra;
+                  }
+                }
+              } catch {
+                /* per-lejlighed live fallback non-fatal */
+              }
+            })
+          );
+        }
+      }
+    } catch {
+      /* pris-fallback non-fatal */
+    }
+
     // BIZZ-784: filter udfasede ejerlejligheder unless klienten eksplicit
     // beder om dem. `udfaset=null` (ukendt) tæller som aktiv så vi ikke
     // skjuler enheder på basis af en heuristic der ikke kunne afgøres.

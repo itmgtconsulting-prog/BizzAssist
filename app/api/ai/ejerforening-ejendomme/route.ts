@@ -233,11 +233,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       adminBfes.add(row.bfe_nummer);
     }
 
-    if (adminBfes.size === 0) {
-      return NextResponse.json({ candidates: [] });
-    }
-
-    // Hent virksomhedsnavn
+    // Hent virksomhedsnavn (bruges af flere steder nedenfor)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: virkRow } = await (admin as any)
       .from('cvr_virksomhed')
@@ -245,6 +241,52 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       .eq('cvr', cvr)
       .maybeSingle();
     const virkNavn = virkRow?.navn ?? `CVR ${cvr}`;
+
+    // BIZZ-1878: Matrikel-baseret discovery for foreninger HELT uden EJF-data.
+    // Foreningsnavne som "Carlsberg Byen 20a" matcher mønstret
+    // "<Område> <matrikelnr>" — slå matriklen op via DAWA jordstykker.
+    if (adminBfes.size === 0) {
+      try {
+        // Forsøg at parse matrikelnr fra foreningsnavn
+        // Typisk format: "Ejerforeningen <Område> <matrikelnr>"
+        // eller "E/F <Gade> <nr>"
+        const navnMatch = virkNavn.match(/(?:ejerforeningen|e\/f|a\/b)\s+(?:.*?\s+)?(\d+\w*)\s*$/i);
+        if (navnMatch) {
+          const matrikelnr = navnMatch[1].toLowerCase();
+          // Søg i kendte ejerlaug (København/Valby-området)
+          const EJERLAV_CANDIDATES = [
+            2000176, // Kongens Enghave (Carlsberg Byen)
+            2000174, // Udenbys Vester Kvarter
+            2000180, // Valby
+          ];
+          for (const ejerlav of EJERLAV_CANDIDATES) {
+            const jordRes = await fetch(
+              `https://api.dataforsyningen.dk/jordstykker?ejerlavkode=${ejerlav}&matrikelnr=${encodeURIComponent(matrikelnr)}&format=json`,
+              { signal: AbortSignal.timeout(5000) }
+            );
+            if (!jordRes.ok) continue;
+            const jordstykker = (await jordRes.json()) as Array<{
+              bfenummer?: number;
+            }>;
+            if (jordstykker[0]?.bfenummer) {
+              adminBfes.add(jordstykker[0].bfenummer);
+              logger.log(
+                `[ai/ejerforening-ejendomme] Matrikel-match: ${virkNavn} → ejerlav ${ejerlav} matrikel ${matrikelnr} → BFE ${jordstykker[0].bfenummer}`
+              );
+              break;
+            }
+          }
+        }
+      } catch {
+        /* matrikel discovery non-fatal */
+      }
+    }
+
+    if (adminBfes.size === 0) {
+      return NextResponse.json({ candidates: [] });
+    }
+
+    // virkRow + virkNavn allerede hentet ovenfor
 
     // Ekstrahér adresse-clusters fra registrerede ejendomme
     const clusters = await extractAddressClusters([...adminBfes], admin);

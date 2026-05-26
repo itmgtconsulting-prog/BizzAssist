@@ -29,6 +29,7 @@ import {
   Copy,
   Smartphone,
   Info,
+  Clock,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useLanguage } from '@/app/context/LanguageContext';
@@ -557,6 +558,148 @@ export default function SecuritySettingsPageClient() {
           </div>
         )}
       </div>
+
+      {/* ── BIZZ-1874: Session timeout ── */}
+      <SessionTimeoutSection lang={lang} />
+    </div>
+  );
+}
+
+/**
+ * SessionTimeoutSection — brugerkonfigurerbar idle-timeout.
+ *
+ * Loader nuværende præference fra /api/session-settings og lader
+ * brugeren vælge en ny idle-timeout fra 15 min til 8 timer.
+ * Gemmes i Supabase user_session_preferences via PUT /api/session-settings.
+ *
+ * @param lang - 'da' | 'en'
+ */
+function SessionTimeoutSection({ lang }: { lang: 'da' | 'en' }) {
+  const da = lang === 'da';
+  const [idleMinutes, setIdleMinutes] = useState<number>(60);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Options: 15, 30, 60, 120, 240, 480 minutes
+  const options = [
+    { value: 15, label: da ? '15 minutter' : '15 minutes' },
+    { value: 30, label: da ? '30 minutter' : '30 minutes' },
+    { value: 60, label: da ? '1 time (anbefalet)' : '1 hour (recommended)' },
+    { value: 120, label: da ? '2 timer' : '2 hours' },
+    { value: 240, label: da ? '4 timer' : '4 hours' },
+    { value: 480, label: da ? '8 timer (max)' : '8 hours (max)' },
+  ];
+
+  // Load current preference on mount
+  useEffect(() => {
+    fetch('/api/session-settings', { credentials: 'include' })
+      .then((r) => r.json())
+      .then((d: { idle_timeout_minutes?: number }) => {
+        if (d.idle_timeout_minutes) setIdleMinutes(d.idle_timeout_minutes);
+      })
+      .catch(() => {});
+  }, []);
+
+  /**
+   * Gemmer den valgte timeout via PUT /api/session-settings.
+   * Logger ændringen til audit_log (håndteres af API).
+   */
+  const handleSave = async () => {
+    setSaving(true);
+    setSaved(false);
+    setSaveError(null);
+    try {
+      const res = await fetch('/api/session-settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idle_timeout_minutes: idleMinutes }),
+        credentials: 'include',
+      });
+      if (res.ok) {
+        setSaved(true);
+        setTimeout(() => setSaved(false), 3000);
+      } else {
+        const d = await res.json();
+        setSaveError(d.error ?? (da ? 'Gem fejlede' : 'Save failed'));
+      }
+    } catch {
+      setSaveError(da ? 'Netværksfejl' : 'Network error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      className="bg-slate-800/50 border border-slate-700/50 rounded-2xl p-6 space-y-4"
+      role="region"
+      aria-labelledby="session-timeout-heading"
+    >
+      <div className="flex items-start gap-4">
+        <div className="w-10 h-10 bg-blue-500/10 rounded-xl flex items-center justify-center flex-shrink-0">
+          <Clock size={20} className="text-blue-400" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <h3 id="session-timeout-heading" className="text-white font-semibold text-base">
+            {da ? 'Session timeout' : 'Session timeout'}
+          </h3>
+          <p className="text-slate-400 text-sm mt-0.5">
+            {da
+              ? 'Vælg hvor lang tid der går ved inaktivitet inden du bliver logget ud automatisk.'
+              : 'Choose how long you can be inactive before being automatically signed out.'}
+          </p>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <label htmlFor="session-timeout-select" className="text-slate-400 text-sm shrink-0">
+          {da ? 'Log ud efter:' : 'Sign out after:'}
+        </label>
+        <select
+          id="session-timeout-select"
+          value={idleMinutes}
+          onChange={(e) => setIdleMinutes(Number(e.target.value))}
+          className="bg-slate-900/60 border border-slate-700/50 rounded-lg px-3 py-2 text-white text-sm focus:border-blue-500/50 focus:outline-none"
+        >
+          {options.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving}
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 text-white text-sm font-medium rounded-lg transition-colors"
+          aria-label={da ? 'Gem session timeout indstilling' : 'Save session timeout setting'}
+        >
+          {saving && <Loader2 size={14} className="animate-spin" />}
+          {saved && <CheckCircle2 size={14} className="text-emerald-300" />}
+          {da ? 'Gem' : 'Save'}
+        </button>
+      </div>
+
+      {saved && (
+        <p className="text-emerald-400 text-xs flex items-center gap-1.5" role="status">
+          <CheckCircle2 size={12} />
+          {da ? 'Gemt — gælder ved næste sideindlæsning' : 'Saved — takes effect on next page load'}
+        </p>
+      )}
+      {saveError && (
+        <p className="text-red-400 text-xs flex items-center gap-1.5" role="alert">
+          <AlertCircle size={12} />
+          {saveError}
+        </p>
+      )}
+
+      <p className="text-slate-500 text-xs">
+        {da
+          ? 'Inaktivitet = ingen klik, scroll eller tastaturinput. Åbner du systemet aktivt, nulstilles timeren.'
+          : 'Inactivity = no clicks, scrolling, or keyboard input. Actively using the system resets the timer.'}
+      </p>
     </div>
   );
 }

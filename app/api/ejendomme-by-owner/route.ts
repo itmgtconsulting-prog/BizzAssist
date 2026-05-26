@@ -1686,6 +1686,35 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     }
   }
 
+  // BIZZ-1864: Bruger-verificerede ejendomme fra ejerforening_verifications.
+  // Brugere der har trykket "Bekræft" på en AI-fundet ejendom gemmes her med
+  // verdict='verified'. Disse ejendomme vises permanent som administrerede.
+  if (cvrNumre.length > 0) {
+    try {
+      const admin = createAdminClient();
+      const cvrStrings = cvrNumre.map((c) => String(c));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: verifRows } = await (admin as any)
+        .from('ejerforening_verifications')
+        .select('bfe_nummer, candidate_cvr')
+        .in('candidate_cvr', cvrStrings)
+        .eq('verdict', 'verified');
+      if (verifRows && verifRows.length > 0) {
+        for (const row of verifRows as Array<{ bfe_nummer: number; candidate_cvr: string }>) {
+          if (bfeTilCvr.has(row.bfe_nummer)) continue;
+          administreretByBfe.add(row.bfe_nummer);
+          bfeTilCvr.set(row.bfe_nummer, row.candidate_cvr.padStart(8, '0'));
+          aktivByBfe.set(row.bfe_nummer, true);
+        }
+        logger.log(
+          `[ejendomme-by-owner] ejerforening_verifications: ${verifRows.length} verificerede BFE'er tilføjet`
+        );
+      }
+    } catch {
+      /* ejerforening_verifications lookup non-fatal */
+    }
+  }
+
   // BIZZ-1862: Tilføj historiske SFE-BFEs til bfeTilCvr FØR SFE-expansion
   // så matrikel-lookup kan finde lejligheder under dem.
   if (cvrNumre.length > 0) {

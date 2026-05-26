@@ -53,6 +53,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     new_document_ids?: string[];
     /** BIZZ-1404: Link til kundesag */
     sag_id?: string;
+    /** BIZZ-1833: Standard forsikringsbetingelser valgt til analysen */
+    standard_doc_ids?: string[];
   };
   try {
     body = await request.json();
@@ -60,8 +62,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  const { kunde_type, kunde_id, kunde_navn, as_of_date, document_ids, new_document_ids, sag_id } =
-    body;
+  const {
+    kunde_type,
+    kunde_id,
+    kunde_navn,
+    as_of_date,
+    document_ids,
+    new_document_ids,
+    sag_id,
+    standard_doc_ids,
+  } = body;
   if (!kunde_type || !kunde_id || !['virksomhed', 'person'].includes(kunde_type)) {
     return NextResponse.json({ error: 'Missing or invalid kunde_type/kunde_id' }, { status: 400 });
   }
@@ -572,6 +582,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       const { error: linkErr } = await db.from('forsikring_analyse_documents').insert(docLinks);
       if (linkErr) {
         logger.warn('[forsikring/analyser] Link docs fejl:', linkErr.message);
+      }
+    }
+
+    // BIZZ-1833: Link standard betingelser til analysen (delt tabel, public schema)
+    if (standard_doc_ids && standard_doc_ids.length > 0) {
+      const stdLinks = standard_doc_ids.map((stdId) => ({
+        analyse_id: analyse.id,
+        standard_doc_id: stdId,
+      }));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: stdLinkErr } = await (admin as any)
+        .from('forsikring_analyse_standard_docs')
+        .insert(stdLinks);
+      if (stdLinkErr) {
+        logger.warn('[forsikring/analyser] Link standard docs fejl:', stdLinkErr.message);
+      } else {
+        logger.log(
+          `[forsikring/analyser] Linked ${stdLinks.length} standard docs til analyse ${analyse.id}`
+        );
       }
     }
 

@@ -33,6 +33,8 @@ import {
   ChevronRight,
   Trash2,
   Sparkles,
+  ExternalLink,
+  Plus,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { useSubscription } from '@/app/context/SubscriptionContext';
@@ -662,6 +664,19 @@ function AnalyseSection({
     total_risk_score: number;
     created_at: string;
   } | null>(null);
+  /** BIZZ-1833: Standard forsikringsbetingelser — AI-fundne + manuelt tilføjede */
+  const [stdDiscovering, setStdDiscovering] = useState(false);
+  const [stdDiscovered, setStdDiscovered] = useState<
+    Array<{ titel: string; source_url: string; kategori: string; confidence: string }>
+  >([]);
+  const [stdSelectedIds, setStdSelectedIds] = useState<Set<string>>(new Set());
+  /** Kort (source_url → DB id) efter POST /api/forsikring/standard-docs */
+  const [stdSavedIds, setStdSavedIds] = useState<Map<string, string>>(new Map());
+  const [stdManualUrl, setStdManualUrl] = useState('');
+  const [stdManualTitel, setStdManualTitel] = useState('');
+  const [stdAddingManual, setStdAddingManual] = useState(false);
+  const stdSelskabRef = useRef<HTMLInputElement>(null);
+
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** BIZZ-1384: Sagsliste */
   const [sager, setSager] = useState<
@@ -905,6 +920,11 @@ function AnalyseSection({
       );
       // Hvis wizard er åben, send altid scoped doc IDs — aldrig fald tilbage til alle policer
       const hasAnyDocs = allDocIds.length > 0;
+      // BIZZ-1833: Saml standard doc DB-IDs for valgte standard-betingelser
+      const stdDocIds = [...stdSelectedIds]
+        .map((url) => stdSavedIds.get(url))
+        .filter((id): id is string => !!id);
+
       const res = await fetch('/api/forsikring/analyser', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -916,6 +936,8 @@ function AnalyseSection({
           // BIZZ-1443: Send alle valgte doc IDs samlet — reused + nye, dedupet
           // Hvis ingen er valgt, send IKKE document_ids → backend bruger alle policer
           ...(hasAnyDocs ? { document_ids: allDocIds } : {}),
+          // BIZZ-1833: Standard betingelser
+          ...(stdDocIds.length > 0 ? { standard_doc_ids: stdDocIds } : {}),
         }),
       });
       if (res.ok) {
@@ -953,6 +975,8 @@ function AnalyseSection({
     newDocumentIds,
     selectedDocIds,
     wizardUploads,
+    stdSelectedIds,
+    stdSavedIds,
   ]);
 
   return (
@@ -1388,41 +1412,51 @@ function AnalyseSection({
           </div>
 
           {/* BIZZ-1833: Standard forsikringsbetingelser sektion */}
-          <div className="pt-3 border-t border-white/5">
-            <div className="flex items-center justify-between mb-2">
+          <div className="pt-3 border-t border-white/5 space-y-2">
+            <div className="flex items-center justify-between">
               <h4 className="text-slate-300 text-xs font-semibold uppercase tracking-wide">
                 {da ? 'Standard forsikringsbetingelser' : 'Standard insurance terms'}
+                {stdSelectedIds.size > 0 && (
+                  <span className="ml-2 text-teal-400 normal-case font-normal">
+                    ({stdSelectedIds.size} {da ? 'valgt' : 'selected'})
+                  </span>
+                )}
               </h4>
             </div>
-            <p className="text-slate-500 text-[10px] mb-2">
+            <p className="text-slate-500 text-[10px]">
               {da
                 ? 'Tilføj generelle vilkår fra forsikringsselskabet til analysen. AI kan finde dem automatisk.'
                 : 'Add general terms from the insurance company to the analysis. AI can find them automatically.'}
             </p>
+
+            {/* AI discovery row */}
             <div className="flex gap-2 items-end">
               <div className="flex-1">
-                <label className="text-slate-500 text-[10px] block mb-1">
+                <label
+                  htmlFor="std-selskab-input"
+                  className="text-slate-500 text-[10px] block mb-1"
+                >
                   {da ? 'Forsikringsselskab' : 'Insurance company'}
                 </label>
                 <input
+                  ref={stdSelskabRef}
+                  id="std-selskab-input"
                   type="text"
                   placeholder={
                     da ? 'Fx Topdanmark, Tryg, Codan...' : 'E.g. Topdanmark, Tryg, Codan...'
                   }
                   className="w-full bg-slate-900/60 border border-slate-700/50 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:border-teal-500/50 focus:outline-none"
-                  id="std-selskab-input"
                 />
               </div>
               <button
                 type="button"
                 onClick={async () => {
-                  const input = document.getElementById('std-selskab-input') as HTMLInputElement;
-                  const selskab = input?.value?.trim();
+                  const selskab = stdSelskabRef.current?.value?.trim();
                   if (!selskab) {
-                    input?.focus();
+                    stdSelskabRef.current?.focus();
                     return;
                   }
-                  input.disabled = true;
+                  setStdDiscovering(true);
                   try {
                     const res = await fetch('/api/forsikring/standard-docs/discover', {
                       method: 'POST',
@@ -1434,33 +1468,207 @@ function AnalyseSection({
                         results: Array<{
                           titel: string;
                           source_url: string;
+                          kategori: string;
                           confidence: string;
                         }>;
                       };
-                      if (data.results?.length > 0) {
-                        alert(
-                          `${da ? 'Fundet' : 'Found'} ${data.results.length} ${da ? 'standard betingelser' : 'standard terms'}:\n${data.results.map((r) => `• ${r.titel}\n  ${r.source_url}`).join('\n\n')}`
-                        );
-                      } else {
-                        alert(
-                          da
-                            ? 'Ingen standard betingelser fundet for ' + selskab
-                            : 'No standard terms found for ' + selskab
-                        );
+                      const newDocs = data.results ?? [];
+                      // Dedup mod allerede viste docs
+                      const existingUrls = new Set(stdDiscovered.map((d) => d.source_url));
+                      const merged = [
+                        ...stdDiscovered,
+                        ...newDocs.filter((d) => !existingUrls.has(d.source_url)),
+                      ];
+                      setStdDiscovered(merged);
+                      // Auto-vælg high-confidence fundne
+                      if (newDocs.length > 0) {
+                        setStdSelectedIds((prev) => {
+                          const next = new Set(prev);
+                          for (const d of newDocs) {
+                            if (d.confidence === 'high') next.add(d.source_url);
+                          }
+                          return next;
+                        });
+                        // Gem i DB
+                        for (const doc of newDocs) {
+                          fetch('/api/forsikring/standard-docs', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              selskab,
+                              kategori: doc.kategori ?? 'ejendom',
+                              titel: doc.titel,
+                              source_url: doc.source_url,
+                              added_via: 'ai_discovery',
+                            }),
+                          })
+                            .then((r) => (r.ok ? r.json() : null))
+                            .then((d) => {
+                              if (d?.id) {
+                                setStdSavedIds((prev) => new Map(prev).set(doc.source_url, d.id));
+                              }
+                            })
+                            .catch(() => {});
+                        }
                       }
                     }
                   } catch {
-                    alert(da ? 'Fejl ved søgning.' : 'Search error.');
+                    /* non-fatal */
                   } finally {
-                    input.disabled = false;
+                    setStdDiscovering(false);
                   }
                 }}
-                disabled={running}
+                disabled={stdDiscovering || running}
+                aria-label={da ? 'Find standard betingelser via AI' : 'Find standard terms via AI'}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-600/20 hover:bg-teal-600/30 border border-teal-500/30 text-teal-300 text-xs font-medium transition-colors disabled:opacity-40 shrink-0"
               >
-                <Sparkles size={12} />
+                {stdDiscovering ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <Sparkles size={12} />
+                )}
                 {da ? 'Find via AI' : 'Find via AI'}
               </button>
+            </div>
+
+            {/* Discovered docs list */}
+            {stdDiscovered.length > 0 && (
+              <div className="space-y-1">
+                {stdDiscovered.map((doc) => {
+                  const isSelected = stdSelectedIds.has(doc.source_url);
+                  return (
+                    <label
+                      key={doc.source_url}
+                      className={`flex items-start gap-2 px-2.5 py-2 rounded-lg cursor-pointer transition-colors ${
+                        isSelected
+                          ? 'bg-teal-600/15 border border-teal-500/30'
+                          : 'bg-white/3 border border-white/5 hover:bg-white/5'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={(e) => {
+                          setStdSelectedIds((prev) => {
+                            const next = new Set(prev);
+                            if (e.target.checked) next.add(doc.source_url);
+                            else next.delete(doc.source_url);
+                            return next;
+                          });
+                        }}
+                        className="mt-0.5 accent-teal-500 shrink-0"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-white text-[11px] font-medium truncate">
+                          {doc.titel}
+                        </div>
+                        <div className="flex items-center gap-1 mt-0.5">
+                          <a
+                            href={doc.source_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-blue-400 text-[10px] hover:underline truncate flex items-center gap-0.5"
+                          >
+                            <ExternalLink size={9} />
+                            {doc.source_url.length > 50
+                              ? doc.source_url.slice(0, 50) + '…'
+                              : doc.source_url}
+                          </a>
+                          <span
+                            className={`shrink-0 text-[9px] px-1 py-0.5 rounded-full ${
+                              doc.confidence === 'high'
+                                ? 'bg-emerald-500/20 text-emerald-300'
+                                : doc.confidence === 'medium'
+                                  ? 'bg-amber-500/20 text-amber-300'
+                                  : 'bg-slate-600/30 text-slate-400'
+                            }`}
+                          >
+                            {doc.confidence}
+                          </span>
+                        </div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Manuel URL tilføjelse */}
+            <div className="pt-1">
+              <div className="text-slate-500 text-[10px] mb-1.5">
+                {da ? 'Eller tilføj manuelt med URL:' : 'Or add manually by URL:'}
+              </div>
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  value={stdManualTitel}
+                  onChange={(e) => setStdManualTitel(e.target.value)}
+                  placeholder={da ? 'Titel' : 'Title'}
+                  className="w-28 bg-slate-900/60 border border-slate-700/50 rounded-lg px-2 py-1.5 text-xs text-white placeholder-slate-600 focus:border-teal-500/50 focus:outline-none"
+                />
+                <input
+                  type="url"
+                  value={stdManualUrl}
+                  onChange={(e) => setStdManualUrl(e.target.value)}
+                  placeholder="https://..."
+                  className="flex-1 bg-slate-900/60 border border-slate-700/50 rounded-lg px-2 py-1.5 text-xs text-white placeholder-slate-600 focus:border-teal-500/50 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  disabled={!stdManualUrl.trim() || !stdManualTitel.trim() || stdAddingManual}
+                  aria-label={da ? 'Tilføj manuel standard betingelse' : 'Add manual standard term'}
+                  onClick={async () => {
+                    const url = stdManualUrl.trim();
+                    const titel = stdManualTitel.trim();
+                    if (!url || !titel) return;
+                    setStdAddingManual(true);
+                    try {
+                      const res = await fetch('/api/forsikring/standard-docs', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          selskab: stdSelskabRef.current?.value?.trim() ?? 'Ukendt',
+                          kategori: 'ejendom',
+                          titel,
+                          source_url: url,
+                          added_via: 'manual_link',
+                        }),
+                      });
+                      if (res.ok) {
+                        const data = (await res.json()) as { id?: string };
+                        const newDoc = {
+                          titel,
+                          source_url: url,
+                          kategori: 'ejendom',
+                          confidence: 'medium' as const,
+                        };
+                        setStdDiscovered((prev) =>
+                          prev.find((d) => d.source_url === url) ? prev : [...prev, newDoc]
+                        );
+                        setStdSelectedIds((prev) => new Set(prev).add(url));
+                        if (data.id) {
+                          setStdSavedIds((prev) => new Map(prev).set(url, data.id!));
+                        }
+                        setStdManualUrl('');
+                        setStdManualTitel('');
+                      }
+                    } catch {
+                      /* non-fatal */
+                    } finally {
+                      setStdAddingManual(false);
+                    }
+                  }}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-700/50 hover:bg-slate-600/50 border border-slate-600/50 text-slate-300 text-xs font-medium transition-colors disabled:opacity-40 shrink-0"
+                >
+                  {stdAddingManual ? (
+                    <Loader2 size={11} className="animate-spin" />
+                  ) : (
+                    <Plus size={11} />
+                  )}
+                  {da ? 'Tilføj' : 'Add'}
+                </button>
+              </div>
             </div>
           </div>
         </div>

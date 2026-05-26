@@ -11,7 +11,7 @@
 
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowRightLeft,
@@ -20,6 +20,7 @@ import {
   ChevronRight,
   Home,
   Loader2,
+  Printer,
   Shield,
   Sparkles,
 } from 'lucide-react';
@@ -205,6 +206,27 @@ export default function VirksomhedEjendommeTab({
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiExpanded, setAiExpanded] = useState(false);
+  /** BIZZ-1866: Print-anmodning afventer fuld load */
+  const [printPending, setPrintPending] = useState(false);
+  const printPendingRef = useRef(false);
+
+  /**
+   * BIZZ-1866: Udløs browser-print når alle ejendomme er loaded.
+   * printPendingRef bruges til at undgå dobbelt-trigger ved re-render.
+   */
+  useEffect(() => {
+    if (printPending && ejendommeFetchComplete && !ejendommeLoadingMore) {
+      if (!printPendingRef.current) {
+        printPendingRef.current = true;
+        // Lad React genrendre én gang (alle ejendomme er nu i DOM)
+        requestAnimationFrame(() => {
+          window.print();
+          setPrintPending(false);
+          printPendingRef.current = false;
+        });
+      }
+    }
+  }, [printPending, ejendommeFetchComplete, ejendommeLoadingMore]);
 
   /**
    * Kald AI-endpoint for at finde potentielle ejendomme under ejerforeningen.
@@ -305,13 +327,50 @@ export default function VirksomhedEjendommeTab({
                           : aktivLabel;
                       })()}
                 </p>
-                {relatedCompanies.length > 0 && (
-                  <span className="text-slate-500 text-xs">
-                    {lang === 'da'
-                      ? `Inkl. ${relatedCompanies.filter((v) => v.aktiv).length} datterselskab${relatedCompanies.filter((v) => v.aktiv).length !== 1 ? 'er' : ''}`
-                      : `Incl. ${relatedCompanies.filter((v) => v.aktiv).length} subsidiar${relatedCompanies.filter((v) => v.aktiv).length !== 1 ? 'ies' : 'y'}`}
-                  </span>
-                )}
+                <div className="flex items-center gap-2">
+                  {relatedCompanies.length > 0 && (
+                    <span className="text-slate-500 text-xs">
+                      {lang === 'da'
+                        ? `Inkl. ${relatedCompanies.filter((v) => v.aktiv).length} datterselskab${relatedCompanies.filter((v) => v.aktiv).length !== 1 ? 'er' : ''}`
+                        : `Incl. ${relatedCompanies.filter((v) => v.aktiv).length} subsidiar${relatedCompanies.filter((v) => v.aktiv).length !== 1 ? 'ies' : 'y'}`}
+                    </span>
+                  )}
+                  {/* BIZZ-1866: Print-knap — afventer fuld load hvis data stadig indlæses */}
+                  <button
+                    type="button"
+                    aria-label={lang === 'da' ? 'Print ejendomsliste' : 'Print property list'}
+                    title={
+                      ejendommeLoadingMore
+                        ? lang === 'da'
+                          ? 'Afventer fuld indlæsning...'
+                          : 'Waiting for full load...'
+                        : lang === 'da'
+                          ? 'Print ejendomsliste'
+                          : 'Print property list'
+                    }
+                    onClick={() => {
+                      if (ejendommeFetchComplete && !ejendommeLoadingMore) {
+                        window.print();
+                      } else {
+                        setPrintPending(true);
+                      }
+                    }}
+                    className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-colors text-xs"
+                  >
+                    {printPending ? (
+                      <Loader2 size={13} className="animate-spin" />
+                    ) : (
+                      <Printer size={13} />
+                    )}
+                    {printPending
+                      ? lang === 'da'
+                        ? 'Venter...'
+                        : 'Waiting...'
+                      : lang === 'da'
+                        ? 'Print'
+                        : 'Print'}
+                  </button>
+                </div>
               </div>
 
               {/* BIZZ-456: Gruppér ejendomme efter ejer-CVR i koncernhierarki.

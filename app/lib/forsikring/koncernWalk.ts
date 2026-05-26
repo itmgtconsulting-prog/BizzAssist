@@ -449,7 +449,6 @@ async function walkVirksomhed(
             if (!bfesWithEtage.has(bfe)) bfesWithoutEtage.add(bfe);
           }
           // Fjern SFE/hovedejendom-aktiver (uden etage) der nu er dækket af lejligheder
-          const beforeCount = aktiver.length;
           for (let i = aktiver.length - 1; i >= 0; i--) {
             if (
               aktiver[i].type === 'ejendom' &&
@@ -459,10 +458,8 @@ async function walkVirksomhed(
               aktiver.splice(i, 1);
             }
           }
-          if (aktiver.length < beforeCount) {
-            // Ryd op i seenBfes — de fjernede BFEs skal ikke blokere fremtidige lookups
-            for (const bfe of bfesWithoutEtage) seenBfes.delete(bfe);
-          }
+          // Behold fjernede BFEs i seenBfes så de ikke re-tilføjes
+          // af efterfølgende ejf_ejerskab query
         }
       }
     } catch {

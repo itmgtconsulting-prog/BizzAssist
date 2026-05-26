@@ -158,6 +158,26 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const admin = createAdminClient();
 
   try {
+    // ── 0. Cross-pollination: tjek verificerede records FØRST ──
+    // BIZZ-1847: Hvis brugere har verificeret denne CVR som administrator/ejer
+    // for specifikke BFE'er fra ejendomsview, brug dem som high-confidence
+    // kandidater. Sparer AI-tokens + giver konsistent UX på tværs af views.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: verifiedRows } = await (admin as any)
+      .from('ejerforening_verification_counts')
+      .select('bfe_nummer, verified_count, rejected_count')
+      .eq('candidate_cvr', cvr);
+
+    const verifiedBfes = (
+      (verifiedRows ?? []) as Array<{
+        bfe_nummer: number;
+        verified_count: number;
+        rejected_count: number;
+      }>
+    ).filter((r) => r.verified_count > r.rejected_count && r.verified_count > 0);
+
+    const communityVerifiedBfeSet = new Set(verifiedBfes.map((v) => v.bfe_nummer));
+
     // Check cache
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: cached } = await (admin as any)
@@ -169,8 +189,19 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (cached?.candidates) {
       const age = Date.now() - new Date(cached.created_at).getTime();
       if (age < CACHE_TTL_MS) {
+        // BIZZ-1847: Boost confidence på cachede kandidater der er
+        // community-verificerede fra ejendomsview siden cache blev gemt.
+        const candidates = (cached.candidates as AiEjendomKandidat[]).map((c) =>
+          communityVerifiedBfeSet.has(c.bfeNummer)
+            ? {
+                ...c,
+                confidence: 'high' as const,
+                reasoning: `${c.reasoning} (verificeret fra ejendomsview)`,
+              }
+            : c
+        );
         return NextResponse.json({
-          candidates: cached.candidates as AiEjendomKandidat[],
+          candidates,
           cachedAt: cached.created_at,
         });
       }
@@ -463,15 +494,45 @@ ${kandidatListe}`;
       .filter((c) => c.bfeNummer && validConfidences.has(c.confidence))
       .map((c) => {
         const candidateRow = candidates.find((cr) => cr.bfe_nummer === c.bfeNummer);
+        const isCommunityVerified = communityVerifiedBfeSet.has(c.bfeNummer);
         return {
           bfeNummer: c.bfeNummer,
           adresse: candidateRow?.adresse ?? `BFE ${c.bfeNummer}`,
           postnr: candidateRow?.postnr ?? null,
           by: candidateRow?.postnrnavn ?? null,
-          confidence: c.confidence as 'high' | 'medium' | 'low',
-          reasoning: c.reasoning ?? '',
+          // BIZZ-1847: Community-verificerede BFE'er får automatisk high confidence
+          confidence: isCommunityVerified
+            ? ('high' as const)
+            : (c.confidence as 'high' | 'medium' | 'low'),
+          reasoning: isCommunityVerified
+            ? `${c.reasoning ?? ''} (verificeret fra ejendomsview)`.trim()
+            : (c.reasoning ?? ''),
         };
       });
+
+    // BIZZ-1847: Inkludér community-verificerede BFE'er som ikke er i AI-output
+    // (de er verificeret af brugere fra ejendomsview men har måske ikke
+    // adresse i bfe_adresse_cache eller blev ikke fanget af AI).
+    const aiBfeSet = new Set(result.map((r) => r.bfeNummer));
+    for (const vBfe of verifiedBfes) {
+      if (aiBfeSet.has(vBfe.bfe_nummer)) continue;
+      if (adminBfes.has(vBfe.bfe_nummer)) continue; // Allerede direkte registreret
+      // Hent adresse fra bfe_adresse_cache hvis muligt
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: addr } = await (admin as any)
+        .from('bfe_adresse_cache')
+        .select('adresse, postnr, postnrnavn')
+        .eq('bfe_nummer', vBfe.bfe_nummer)
+        .maybeSingle();
+      result.push({
+        bfeNummer: vBfe.bfe_nummer,
+        adresse: addr?.adresse ?? `BFE ${vBfe.bfe_nummer}`,
+        postnr: addr?.postnr ?? null,
+        by: addr?.postnrnavn ?? null,
+        confidence: 'high' as const,
+        reasoning: `Verificeret af ${vBfe.verified_count} bruger${vBfe.verified_count !== 1 ? 'e' : ''} fra ejendomsview`,
+      });
+    }
 
     // Cache resultatet
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

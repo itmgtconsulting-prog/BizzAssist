@@ -73,6 +73,49 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const admin = createAdminClient();
 
   try {
+    // ── 0. Cross-pollination: tjek verificerede records FØRST ──
+    // BIZZ-1847: Hvis brugere har verificeret en ejerforening for denne BFE,
+    // returner den som high-confidence kandidat uden at køre AI. Spar tokens
+    // + giver konsistent UX på tværs af ejendoms- og virksomhedsview.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: verifiedRows } = await (admin as any)
+      .from('ejerforening_verification_counts')
+      .select('candidate_cvr, verified_count, rejected_count')
+      .eq('bfe_nummer', bfeNummer);
+
+    const verifiedCvrs = (
+      (verifiedRows ?? []) as Array<{
+        candidate_cvr: string;
+        verified_count: number;
+        rejected_count: number;
+      }>
+    )
+      .filter((r) => r.verified_count > r.rejected_count && r.verified_count > 0)
+      .sort((a, b) => b.verified_count - a.verified_count);
+
+    if (verifiedCvrs.length > 0) {
+      // Hent navne for verificerede CVRs
+      const cvrList = verifiedCvrs.map((v) => v.candidate_cvr);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: virkRows } = await (admin as any)
+        .from('cvr_virksomhed')
+        .select('cvr, navn')
+        .in('cvr', cvrList);
+      const navnMap = new Map(
+        ((virkRows ?? []) as Array<{ cvr: string; navn: string }>).map((r) => [r.cvr, r.navn])
+      );
+      const verifiedResult: EjerforeningKandidat[] = verifiedCvrs.map((v) => ({
+        cvr: v.candidate_cvr,
+        navn: navnMap.get(v.candidate_cvr) ?? `CVR ${v.candidate_cvr}`,
+        confidence: 'high' as const,
+        reasoning: `Verificeret af ${v.verified_count} bruger${v.verified_count !== 1 ? 'e' : ''}${
+          v.rejected_count > 0 ? ` (${v.rejected_count} afviste)` : ''
+        }`,
+        administeredCount: v.verified_count,
+      }));
+      return NextResponse.json({ candidates: verifiedResult, verifiedFromCommunity: true });
+    }
+
     // ── 1. Cache-check ──────────────────────────────────────────
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: cached } = await (admin as any)

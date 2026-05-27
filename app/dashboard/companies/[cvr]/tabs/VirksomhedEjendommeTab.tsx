@@ -105,6 +105,13 @@ export default function VirksomhedEjendommeTab({
   useEffect(() => {
     if (ejendommeData.length === 0 || ejendommeLoading) return;
 
+    // BIZZ-1891: SFE-expansion DEAKTIVERET — vis de ejede BFE'er direkte.
+    // Expansion tilføjede syntetiske lejligheder under SFE'er og inflated
+    // totalen (53 vs facit 16 for BELVEDERE). Ejendomme skal vises som de
+    // er i ejf_ejerskab — SFE'er er det korekte ejerskabs-niveau.
+    setExpandedEjendomme(ejendommeData);
+    return;
+
     // Find SFE-ejendomme (har adresse, ingen etage, ikke ejerlejlighed)
     const sfes = ejendommeData.filter(
       (e) => e.adresse && !e.etage && e.ejendomstype !== 'Ejerlejlighed' && e.postnr
@@ -188,17 +195,9 @@ export default function VirksomhedEjendommeTab({
     };
   }, [ejendommeData, ejendommeLoading]);
 
-  /** Bruge expandedEjendomme i stedet for ejendommeData for visning.
-   * Skjul SFE/hovedejendomme når der er child-lejligheder — for foreninger
-   * er det lejlighederne der er relevante, ikke selve SFE-ejendommen. */
-  const displayEjendomme = (() => {
-    const src = expandedEjendomme.length > 0 ? expandedEjendomme : ejendommeData;
-    // Har vi expanded children (etage != null)?
-    const hasChildren = src.some((e) => e.etage);
-    if (!hasChildren) return src;
-    // Fjern SFE-ejendomme (ingen etage, ikke ejerlejlighed) der har children
-    return src.filter((e) => e.etage || e.ejendomstype === 'Ejerlejlighed');
-  })();
+  /** Vis alle ejendomme direkte — SFE-expansion er deaktiveret (BIZZ-1891).
+   * Ejede BFE'er vises som de er i ejf_ejerskab. */
+  const displayEjendomme = expandedEjendomme.length > 0 ? expandedEjendomme : ejendommeData;
 
   // BIZZ-1828: AI-baseret ejendomsresolve for ejerforeninger (FFO)
   const isFFO =

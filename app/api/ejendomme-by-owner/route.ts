@@ -1746,10 +1746,12 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     }
   }
 
-  // BIZZ-1851: SFE-expansion for ejf_ejerskab BFEs (andelsforeninger).
-  // ejf_administrator kan være tom men foreningen ejer SFE-BFE'en via ejerskab.
-  // Kør matrikel-baseret expansion for BFEs uden etage i cache.
-  if (cvrNumre.length > 0) {
+  // BIZZ-1851: SFE-expansion for ejf_ejerskab BFEs — DEAKTIVERET.
+  // Expansion tilføjede 37 syntetiske BFE=0 children for ejede SFE'er,
+  // hvilket inflated totalen fra 16 → 53. Virksomheder ejer SFE-BFE'er —
+  // vis dem direkte i stedet for at udfolde lejligheder under dem.
+  const _ejfSfeExpansionDisabled = true;
+  if (!_ejfSfeExpansionDisabled && cvrNumre.length > 0) {
     try {
       const admin = createAdminClient();
       const allCurrentBfes = [...bfeTilCvr.keys()];

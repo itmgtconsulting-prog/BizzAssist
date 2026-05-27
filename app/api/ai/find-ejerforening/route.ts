@@ -196,16 +196,20 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // ── 0c. Direkte matrikel-navne-match (hurtigste path) ────────
     // Hvis vi har matrikelnr, søg STRAKS efter ejerforening med matrikel i navn.
     // Undgår alle de tunge lookups + Claude-kald. ~200ms total.
+    logger.log(`[ai/find-ejerforening] 0c: ejendommensMatrikel="${ejendommensMatrikel}"`);
     if (ejendommensMatrikel) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: directRows } = await (admin as any)
+        const { data: directRows, error: directErr } = await (admin as any)
           .from('cvr_virksomhed')
           .select('cvr, navn')
           .or(
             `navn.ilike.%ejerforening%${ejendommensMatrikel}%,navn.ilike.%E/F %${ejendommensMatrikel}%`
           )
           .limit(5);
+        logger.log(
+          `[ai/find-ejerforening] 0c: directRows=${directRows?.length ?? 'null'} err=${directErr?.message ?? 'none'}`
+        );
         const directMatches = ((directRows ?? []) as Array<{ cvr: string; navn: string }>).filter(
           (row) => {
             const matrInName = row.navn.match(/\b(\d{1,5}[a-zæøå]{0,3})\b/gi) ?? [];

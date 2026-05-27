@@ -203,9 +203,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         const { data: directRows, error: directErr } = await (admin as any)
           .from('cvr_virksomhed')
           .select('cvr, navn')
-          .or(
-            `navn.ilike.%ejerforening%${ejendommensMatrikel}%,navn.ilike.%E/F %${ejendommensMatrikel}%`
-          )
+          .textSearch('navn', `ejerforening ${ejendommensMatrikel}`, {
+            type: 'plain',
+            config: 'danish',
+          })
           .limit(5);
         logger.log(
           `[ai/find-ejerforening] 0c: directRows=${directRows?.length ?? 'null'} err=${directErr?.message ?? 'none'}`
@@ -588,9 +589,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       const { data: matrNavnRows } = await (admin as any)
         .from('cvr_virksomhed')
         .select('cvr, navn')
-        .or(
-          `navn.ilike.%ejerforening%${ejendommensMatrikel}%,navn.ilike.%E/F %${ejendommensMatrikel}%,navn.ilike.%andelsbolig%${ejendommensMatrikel}%`
-        )
+        .textSearch('navn', `ejerforening ${ejendommensMatrikel}`, {
+          type: 'plain',
+          config: 'danish',
+        })
         .limit(10);
       const matrMatches: Array<{ cvr: string; navn: string }> = [];
       for (const row of (matrNavnRows ?? []) as Array<{ cvr: string; navn: string }>) {
@@ -798,9 +800,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           const { data: correctRows } = await (admin as any)
             .from('cvr_virksomhed')
             .select('cvr, navn')
-            .or(
-              `navn.ilike.%ejerforening%${ejendommensMatrikel}%,navn.ilike.%E/F %${ejendommensMatrikel}%`
-            )
+            .textSearch('navn', `ejerforening ${ejendommensMatrikel}`, {
+              type: 'plain',
+              config: 'danish',
+            })
             .limit(3);
           const correctMatch = ((correctRows ?? []) as Array<{ cvr: string; navn: string }>).find(
             (r) => {

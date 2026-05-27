@@ -205,7 +205,7 @@ export async function GET(req: NextRequest) {
     // Matrikel-filtrering: hvis foreningens navn indeholder et matrikelnummer
     // der IKKE matcher ejendommens matrikel → fjern. Forhindrer at en
     // ejerforening verificeret for matrikel 1218n foreslås for matrikel 1218e.
-    const matrikelParam = req.nextUrl.searchParams.get('matrikelnr');
+    // matrikelParam allerede defineret ovenfor (linje 82)
     if (matrikelParam) {
       const matrLower = matrikelParam.toLowerCase();
       const beforeLen = result.length;

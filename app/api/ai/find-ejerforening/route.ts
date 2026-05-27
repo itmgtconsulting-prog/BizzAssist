@@ -194,6 +194,56 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       }
     }
 
+    // ── 0c. Direkte matrikel-navne-match (hurtigste path) ────────
+    // Hvis vi har matrikelnr, søg STRAKS efter ejerforening med matrikel i navn.
+    // Undgår alle de tunge lookups + Claude-kald. ~200ms total.
+    if (ejendommensMatrikel) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: directRows } = await (admin as any)
+          .from('cvr_virksomhed')
+          .select('cvr, navn')
+          .or(
+            `navn.ilike.%ejerforening%${ejendommensMatrikel}%,navn.ilike.%E/F %${ejendommensMatrikel}%`
+          )
+          .limit(5);
+        const directMatches = ((directRows ?? []) as Array<{ cvr: string; navn: string }>).filter(
+          (row) => {
+            const matrInName = row.navn.match(/\b(\d{1,5}[a-zæøå]{0,3})\b/gi) ?? [];
+            return matrInName.some((m) => m.toLowerCase() === ejendommensMatrikel!.toLowerCase());
+          }
+        );
+        if (directMatches.length === 1) {
+          const m = directMatches[0];
+          const directResult: EjerforeningKandidat[] = [
+            {
+              cvr: m.cvr,
+              navn: m.navn,
+              confidence: 'high',
+              reasoning: `Foreningens navn matcher ejendommens matrikelnr ${ejendommensMatrikel}`,
+              administeredCount: 0,
+            },
+          ];
+          logger.log(`[ai/find-ejerforening] Direkte matrikel-match: ${m.navn} (CVR ${m.cvr})`);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          void (admin as any)
+            .from('ai_find_ejerforening_cache')
+            .upsert(
+              {
+                bfe_nummer: bfeNummer,
+                candidates: directResult,
+                created_at: new Date().toISOString(),
+              },
+              { onConflict: 'bfe_nummer' }
+            )
+            .then(() => {});
+          return NextResponse.json({ candidates: directResult });
+        }
+      } catch {
+        /* direct matrikel match non-fatal — fall through to full search */
+      }
+    }
+
     // ── 1. Cache-check ──────────────────────────────────────────
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: cached } = await (admin as any)

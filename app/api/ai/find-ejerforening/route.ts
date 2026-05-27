@@ -320,22 +320,33 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // BIZZ-1841: DAWA jordstykke-baseret SFE parent lookup.
     // En ejerlejlighed deler matrikel med sin SFE. Via DAWA adgangsadresse →
     // jordstykke finder vi SFE-BFE'en, som kan have ejf_ejerskab/administrator-
-    // records for en ejerforening der ellers ikke dukker op i gadenavn-søgningen
-    // (f.eks. "Ejerforeningen Carlsberg Byen 1218n" på Thorvald Bindesbølls Plads).
+    // records for en ejerforening der ellers ikke dukker op i gadenavn-søgningen.
+    // Gem matrikelnr for filtrering af kandidater (BIZZ-1906 fix).
+    let ejendommensMatrikel: string | null = null;
     try {
       const dawaAdrRes = await fetch(
-        `https://api.dataforsyningen.dk/adgangsadresser?q=${encodeURIComponent(adresse)}&postnr=${postnr}&format=json&struktur=mini&per_side=1`,
+        `https://api.dataforsyningen.dk/adgangsadresser?q=${encodeURIComponent(adresse)}&postnr=${postnr}&format=json&per_side=1`,
         { signal: AbortSignal.timeout(8000) }
       );
       if (dawaAdrRes.ok) {
-        const dawaAdresser = (await dawaAdrRes.json()) as Array<{ id: string }>;
+        const dawaAdresser = (await dawaAdrRes.json()) as Array<{
+          id: string;
+          jordstykke?: { matrikelnr?: string };
+        }>;
+        // Gem matrikelnr fra adgangsadresse-response
+        ejendommensMatrikel = dawaAdresser[0]?.jordstykke?.matrikelnr ?? null;
         if (dawaAdresser[0]?.id) {
           const jordRes = await fetch(
             `https://api.dataforsyningen.dk/jordstykker?adgangsadresseid=${dawaAdresser[0].id}&format=json`,
             { signal: AbortSignal.timeout(8000) }
           );
           if (jordRes.ok) {
-            const jordstykker = (await jordRes.json()) as Array<{ bfenummer?: number }>;
+            const jordstykker = (await jordRes.json()) as Array<{
+              bfenummer?: number;
+              matrikelnr?: string;
+            }>;
+            // Gem matrikelnr fra jordstykke (mere præcis)
+            if (jordstykker[0]?.matrikelnr) ejendommensMatrikel = jordstykker[0].matrikelnr;
             for (const js of jordstykker) {
               if (js.bfenummer && !naboBfes.includes(js.bfenummer)) {
                 naboBfes.push(js.bfenummer);
@@ -719,6 +730,28 @@ ${kandidatListe}`;
         reasoning: c.reasoning ?? '',
         administeredCount: filteredCvrs.get(c.cvr) ?? 0,
       }));
+
+    // Matrikel-filtrering: hvis en kandidats navn indeholder et matrikelnummer
+    // (fx "1218n"), og ejendommens matrikel er FORSKELLIG (fx "1218e"),
+    // fjern kandidaten. Undgår false positives på tværs af matrikler.
+    if (ejendommensMatrikel) {
+      const matrLower = ejendommensMatrikel.toLowerCase();
+      const beforeFilter = result.length;
+      const filtered = result.filter((c) => {
+        // Ekstraher matrikelnumre fra foreningens navn (fx "1218n" fra "Carlsberg Byen 1218n")
+        const matrInName = c.navn.match(/\b(\d{1,5}[a-zæøå]{0,3})\b/gi) ?? [];
+        // Hvis ingen matrikel i navnet → behold (kan ikke filtrere)
+        if (matrInName.length === 0) return true;
+        // Behold kun hvis mindst ét matrikelnr i navnet matcher ejendommens
+        return matrInName.some((m) => m.toLowerCase() === matrLower);
+      });
+      if (filtered.length < beforeFilter) {
+        logger.log(
+          `[ai/find-ejerforening] Matrikel-filter: ${beforeFilter} → ${filtered.length} (ejendom matr=${ejendommensMatrikel})`
+        );
+      }
+      result.splice(0, result.length, ...filtered);
+    }
 
     // Cache resultatet
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

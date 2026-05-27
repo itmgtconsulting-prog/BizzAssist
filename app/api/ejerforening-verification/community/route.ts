@@ -161,6 +161,26 @@ export async function GET(req: NextRequest) {
       };
     });
 
+    // Matrikel-filtrering: hvis foreningens navn indeholder et matrikelnummer
+    // der IKKE matcher ejendommens matrikel → fjern. Forhindrer at en
+    // ejerforening verificeret for matrikel 1218n foreslås for matrikel 1218e.
+    const matrikelParam = req.nextUrl.searchParams.get('matrikelnr');
+    if (matrikelParam) {
+      const matrLower = matrikelParam.toLowerCase();
+      const beforeLen = result.length;
+      const filtered = result.filter((c) => {
+        const matrInName = c.navn.match(/\b(\d{1,5}[a-zæøå]{0,3})\b/gi) ?? [];
+        if (matrInName.length === 0) return true;
+        return matrInName.some((m) => m.toLowerCase() === matrLower);
+      });
+      result.splice(0, result.length, ...filtered);
+      if (filtered.length < beforeLen) {
+        logger.log(
+          `[community-verification] Matrikel-filter: ${beforeLen} → ${filtered.length} (matr=${matrikelParam})`
+        );
+      }
+    }
+
     // Sortér: name-match først, derefter flest verificeringer
     result.sort((a, b) => {
       if (a.nameCoversAddress !== b.nameCoversAddress) return a.nameCoversAddress ? -1 : 1;

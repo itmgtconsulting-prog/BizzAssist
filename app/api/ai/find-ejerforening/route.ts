@@ -172,6 +172,23 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ candidates: verifiedResult, verifiedFromCommunity: true });
     }
 
+    // ── 0b. Hent matrikelnr for matrikel-filtrering (bruges i cache + results) ──
+    let ejendommensMatrikel: string | null = null;
+    try {
+      const matrRes = await fetch(
+        `https://api.dataforsyningen.dk/adgangsadresser?q=${encodeURIComponent(adresse)}&postnr=${postnr}&format=json&per_side=1`,
+        { signal: AbortSignal.timeout(3000) }
+      );
+      if (matrRes.ok) {
+        const matrData = (await matrRes.json()) as Array<{
+          jordstykke?: { matrikelnr?: string };
+        }>;
+        ejendommensMatrikel = matrData[0]?.jordstykke?.matrikelnr ?? null;
+      }
+    } catch {
+      /* matrikel lookup non-fatal */
+    }
+
     // ── 1. Cache-check ──────────────────────────────────────────
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: cached } = await (admin as any)
@@ -183,8 +200,19 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (cached?.candidates) {
       const age = Date.now() - new Date(cached.created_at).getTime();
       if (age < CACHE_TTL_MS) {
+        // Matrikel-filter på cached resultater — forhindrer stale false positives
+        // (fx "Carlsberg Byen 1218n" cached for en 1218e-ejendom)
+        let cachedCandidates = cached.candidates as EjerforeningKandidat[];
+        if (ejendommensMatrikel) {
+          const matrLower = ejendommensMatrikel.toLowerCase();
+          cachedCandidates = cachedCandidates.filter((c) => {
+            const matrInName = c.navn.match(/\b(\d{1,5}[a-zæøå]{0,3})\b/gi) ?? [];
+            if (matrInName.length === 0) return true;
+            return matrInName.some((m) => m.toLowerCase() === matrLower);
+          });
+        }
         return NextResponse.json({
-          candidates: cached.candidates as EjerforeningKandidat[],
+          candidates: cachedCandidates,
           cachedAt: cached.created_at,
         });
       }
@@ -321,8 +349,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // En ejerlejlighed deler matrikel med sin SFE. Via DAWA adgangsadresse →
     // jordstykke finder vi SFE-BFE'en, som kan have ejf_ejerskab/administrator-
     // records for en ejerforening der ellers ikke dukker op i gadenavn-søgningen.
-    // Gem matrikelnr for filtrering af kandidater (BIZZ-1906 fix).
-    let ejendommensMatrikel: string | null = null;
+    // Opdater matrikelnr med mere præcis jordstykke-data
     try {
       const dawaAdrRes = await fetch(
         `https://api.dataforsyningen.dk/adgangsadresser?q=${encodeURIComponent(adresse)}&postnr=${postnr}&format=json&per_side=1`,

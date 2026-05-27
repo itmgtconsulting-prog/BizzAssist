@@ -798,7 +798,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           const { data: correctRows } = await (admin as any)
             .from('cvr_virksomhed')
             .select('cvr, navn')
-            .ilike('navn', `%ejerforening%${ejendommensMatrikel}%`)
+            .or(
+              `navn.ilike.%ejerforening%${ejendommensMatrikel}%,navn.ilike.%E/F %${ejendommensMatrikel}%`
+            )
             .limit(3);
           const correctMatch = ((correctRows ?? []) as Array<{ cvr: string; navn: string }>).find(
             (r) => {

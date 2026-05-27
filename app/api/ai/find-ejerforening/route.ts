@@ -216,6 +216,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             return matrInName.some((m) => m.toLowerCase() === ejendommensMatrikel!.toLowerCase());
           }
         );
+        logger.log(
+          `[ai/find-ejerforening] 0c: directMatches=${directMatches.length} names=${directMatches.map((m) => m.navn).join(',')}`
+        );
         if (directMatches.length === 1) {
           const m = directMatches[0];
           const directResult: EjerforeningKandidat[] = [
@@ -782,7 +785,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         )
         .then(() => {});
 
-      return NextResponse.json({ candidates: result });
+      return NextResponse.json({ candidates: result, _debug: { ejendommensMatrikel } });
     }
 
     // ── 6. Flere kandidater → Claude evaluerer ──────────────────
@@ -908,7 +911,7 @@ ${kandidatListe}`;
       )
       .then(() => {});
 
-    return NextResponse.json({ candidates: result });
+    return NextResponse.json({ candidates: result, _debug: { ejendommensMatrikel } });
   } catch (err) {
     logger.error('[ai/find-ejerforening] Error:', err instanceof Error ? err.message : 'unknown');
     return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });

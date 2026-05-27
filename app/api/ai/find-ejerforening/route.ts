@@ -173,6 +173,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
 
     // ── 0b. Hent matrikelnr for matrikel-filtrering (bruges i cache + results) ──
+    // Brug DAWA med kort timeout — matrikel-info er kritisk for korrekt filtering
     const adresseParam = request.nextUrl.searchParams.get('adresse');
     const postnrParam = request.nextUrl.searchParams.get('postnr');
     let ejendommensMatrikel: string | null = null;
@@ -180,7 +181,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       try {
         const matrRes = await fetch(
           `https://api.dataforsyningen.dk/adgangsadresser?q=${encodeURIComponent(adresseParam)}&postnr=${postnrParam}&format=json&per_side=1`,
-          { signal: AbortSignal.timeout(8000) }
+          { signal: AbortSignal.timeout(3000) }
         );
         if (matrRes.ok) {
           const matrData = (await matrRes.json()) as Array<{

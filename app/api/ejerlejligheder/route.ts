@@ -1204,7 +1204,11 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
       (l) => l.ejer && l.ejer !== 'Ukendt' && l.ejer !== '–'
     ).length;
     return NextResponse.json(
-      { lejligheder: filtered, fejl: null },
+      {
+        lejligheder: filtered,
+        fejl: null,
+        _debug: { cacheApplied, withEjer: withEjerCount, total: filtered.length },
+      },
       {
         status: 200,
         headers: {

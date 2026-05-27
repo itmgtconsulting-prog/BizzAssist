@@ -19,7 +19,7 @@ import type { DiagramNode, DiagramEdge, DiagramGraph } from '@/app/components/di
 import { DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
 
 /** Max ejendomme per ejer-node i initial graf */
-const MAX_PROPS_PER_OWNER = 15;
+const MAX_PROPS_PER_OWNER = 20;
 
 /**
  * Formatér ejerandel fra min/max til læsbar streng.
@@ -2895,13 +2895,16 @@ async function enrichPropertyNodes(
       }
     }
 
-    // BIZZ-1832/1834: SFE-expansion — fold SFE-ejendomme ud til ejerlejligheder.
-    // For property-noder med adresse men uden etage (= SFE/moderejendom), hent
-    // child-ejerlejligheder via DAWA jordstykke og tilføj som child-noder i grafen.
-    const sfeNodes = propNodes.filter((n) => {
-      const info = adresseMap.get(n.bfeNummer!);
-      return info?.adresse && !info?.etage;
-    });
+    // BIZZ-1832/1834: SFE-expansion — DEAKTIVERET (BIZZ-1891/1899).
+    // Lejligheds-udfoldning erstattede ejede SFE-ejendomme med opgangs-grupper
+    // (fold-ud bokse). Brugeren forventer de 16 ejede ejendomme — ikke lejligheder.
+    const _sfeExpansionDisabled = true;
+    const sfeNodes = _sfeExpansionDisabled
+      ? []
+      : propNodes.filter((n) => {
+          const info = adresseMap.get(n.bfeNummer!);
+          return info?.adresse && !info?.etage;
+        });
     for (const sfeNode of sfeNodes.slice(0, 3)) {
       try {
         const jRes = await fetch(

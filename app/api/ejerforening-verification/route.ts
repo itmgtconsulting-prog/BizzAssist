@@ -174,6 +174,58 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
 
+    // Matrikel-propagering: når en ejerforening verificeres, propager til
+    // ALLE lejligheder på samme matrikel (fire-and-forget). Ejerforeningen
+    // dækker hele matriklen, så alle lejligheder bør se den.
+    const matrikelnr = req.nextUrl.searchParams.get('matrikelnr');
+    const postnr = req.nextUrl.searchParams.get('postnr');
+    if (verdict === 'verified' && matrikelnr && postnr) {
+      void (async () => {
+        try {
+          const { createAdminClient } = await import('@/lib/supabase/admin');
+          const admin = createAdminClient();
+          // Find alle BFE'er på samme matrikel via bfe_adresse_cache
+          // (fanger alle husnumre på matriklen)
+          const dawaRes = await fetch(
+            `https://api.dataforsyningen.dk/adresser?ejerlavkode=2000174&matrikelnr=${encodeURIComponent(matrikelnr)}&format=json&struktur=mini&per_side=500`,
+            { signal: AbortSignal.timeout(5000) }
+          );
+          if (!dawaRes.ok) return;
+          const adresser = (await dawaRes.json()) as Array<{ id: string }>;
+          // Hent BFE'er for disse adresser
+          const dawaIds = adresser.map((a) => a.id).slice(0, 200);
+          if (dawaIds.length === 0) return;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: bfeRows } = await (admin as any)
+            .from('bfe_adresse_cache')
+            .select('bfe_nummer')
+            .in('dawa_id', dawaIds);
+          const siblingBfes = ((bfeRows ?? []) as Array<{ bfe_nummer: number }>)
+            .map((r) => r.bfe_nummer)
+            .filter((b) => b !== bfe_nummer);
+          if (siblingBfes.length === 0) return;
+          // Propager: upsert verification for alle siblings
+          const rows = siblingBfes.map((b) => ({
+            user_id: user.id,
+            bfe_nummer: b,
+            candidate_cvr,
+            verdict: 'verified',
+          }));
+          await serviceClient
+            .from('ejerforening_verifications')
+            .upsert(rows, { onConflict: 'user_id,bfe_nummer,candidate_cvr' });
+          logger.log(
+            `[ejerforening-verification] Propageret til ${siblingBfes.length} siblings på matrikel ${matrikelnr}`
+          );
+        } catch (propErr) {
+          logger.warn(
+            '[ejerforening-verification] Propagering fejl:',
+            propErr instanceof Error ? propErr.message : propErr
+          );
+        }
+      })();
+    }
+
     return NextResponse.json({ success: true });
   } catch (err) {
     logger.error('[ejerforening-verification POST] uventet fejl:', err);

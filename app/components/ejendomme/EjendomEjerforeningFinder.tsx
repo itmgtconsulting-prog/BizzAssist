@@ -339,7 +339,11 @@ export default function EjendomEjerforeningFinder({
             { method: 'DELETE', credentials: 'include' }
           );
         } else {
-          await fetch('/api/ejerforening-verification', {
+          const verifyParams = new URLSearchParams();
+          if (matrikelnr) verifyParams.set('matrikelnr', matrikelnr);
+          if (postnr) verifyParams.set('postnr', postnr);
+          const verifyUrl = `/api/ejerforening-verification${verifyParams.toString() ? `?${verifyParams}` : ''}`;
+          await fetch(verifyUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
@@ -358,7 +362,7 @@ export default function EjendomEjerforeningFinder({
         setPendingCvr(null);
       }
     },
-    [bfeNummer, pendingCvr, verifications, fetchVerifications]
+    [bfeNummer, pendingCvr, verifications, fetchVerifications, matrikelnr, postnr]
   );
 
   // Vis community-resultater som primær visning (ingen AI-knap nødvendig)

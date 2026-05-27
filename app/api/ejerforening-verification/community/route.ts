@@ -62,7 +62,7 @@ export async function GET(req: NextRequest) {
     const admin = createAdminClient();
     const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-    // ── 1. Find BFE'er på samme gade+postnr ─────────────────────
+    // ── 1. Find BFE'er på samme gade+postnr + matrikel ────────────
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: naboRows } = await (admin as any)
       .from('bfe_adresse_cache')
@@ -76,6 +76,47 @@ export async function GET(req: NextRequest) {
     );
     // Inkludér altid det aktuelle BFE — det kan mangle i adressecachen
     if (currentBfe) bfeSet.add(currentBfe);
+
+    // Matrikel-expansion: find ALLE BFE'er på samme matrikel.
+    // Ejerforeninger dækker hele matriklen, ikke kun ét husnr.
+    const matrikelParam = req.nextUrl.searchParams.get('matrikelnr');
+    if (matrikelParam && postnr) {
+      try {
+        // Find alle adresser på matriklen via DAWA
+        // Hent ejerlavkode fra den aktuelle adresse
+        const ejlRes = await fetch(
+          `https://api.dataforsyningen.dk/adgangsadresser?q=${encodeURIComponent(gadenavn + ' ' + (husnr ?? ''))}&postnr=${postnr}&per_side=1&format=json`,
+          { signal: AbortSignal.timeout(3000) }
+        );
+        const ejlData = ejlRes.ok
+          ? ((await ejlRes.json()) as Array<{ jordstykke?: { ejerlav?: { kode?: number } } }>)
+          : [];
+        const ejerlavKode = ejlData[0]?.jordstykke?.ejerlav?.kode;
+        if (!ejerlavKode) throw new Error('no ejerlav');
+        const matrRes = await fetch(
+          `https://api.dataforsyningen.dk/adgangsadresser?ejerlavkode=${ejerlavKode}&matrikelnr=${encodeURIComponent(matrikelParam)}&per_side=20&format=json&struktur=mini`,
+          { signal: AbortSignal.timeout(3000) }
+        );
+        if (matrRes.ok) {
+          const matrAdresser = (await matrRes.json()) as Array<{ vejnavn: string; husnr: string }>;
+          // Find BFE'er for alle adgangsadresser på matriklen
+          for (const a of matrAdresser) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: matrBfes } = await (admin as any)
+              .from('bfe_adresse_cache')
+              .select('bfe_nummer')
+              .ilike('adresse', `${a.vejnavn} ${a.husnr}%`)
+              .eq('postnr', postnr)
+              .limit(50);
+            for (const r of (matrBfes ?? []) as Array<{ bfe_nummer: number }>) {
+              bfeSet.add(r.bfe_nummer);
+            }
+          }
+        }
+      } catch {
+        /* matrikel expansion non-fatal */
+      }
+    }
 
     if (bfeSet.size === 0) {
       return NextResponse.json([]);

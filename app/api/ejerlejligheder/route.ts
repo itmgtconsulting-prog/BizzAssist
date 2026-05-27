@@ -522,12 +522,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
   if (!parsed.success) return parsed.response as NextResponse<EjerlejlighederResponse>;
   const { ejerlavKode, matrikelnr, moderBfe, includeUdfasede } = parsed.data;
 
-  if ((!CERT_PATH && !CERT_B64) || !CERT_PASSWORD) {
-    return NextResponse.json(
-      { lejligheder: [], fejl: 'Tinglysning certifikat ikke konfigureret' },
-      { status: 200 }
-    );
-  }
+  // Cert-check er nu i den delte tlFetch (app/lib/tlFetch.ts) — den
+  // bruger proxy-first og falder kun tilbage til cert hvis proxy mangler.
 
   try {
     // ── Trin 1: Søg alle ejendomme på matriklen via Tinglysningsrettens HTTP API ──

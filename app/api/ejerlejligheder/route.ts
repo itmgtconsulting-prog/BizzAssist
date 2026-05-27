@@ -541,6 +541,56 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
       try {
         const dawaFallback = await resolveLejlighederViaDawa(ejerlavKode, matrikelnr, moderBfe);
         if (dawaFallback.length > 0) {
+          // Enrich DAWA-lejligheder med ejer fra ejf_ejerskab (lokal DB — ingen rate-limit)
+          try {
+            const bfes = dawaFallback.map((l) => l.bfe).filter((b) => b > 0);
+            if (bfes.length > 0) {
+              const cacheAdmin = createAdminClient();
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const { data: ejfRows } = await (cacheAdmin as any)
+                .from('ejf_ejerskab')
+                .select('bfe_nummer, ejer_navn, ejer_cvr, ejer_type, virkning_fra')
+                .in('bfe_nummer', bfes)
+                .eq('status', 'gældende')
+                .order('virkning_fra', { ascending: false });
+              // Grupper per BFE — tag seneste
+              const ejfByBfe = new Map<
+                number,
+                { navn: string; type: string; cvr: string | null; dato: string | null }
+              >();
+              for (const row of (ejfRows ?? []) as Array<{
+                bfe_nummer: number;
+                ejer_navn: string | null;
+                ejer_cvr: string | null;
+                ejer_type: string | null;
+                virkning_fra: string | null;
+              }>) {
+                if (!ejfByBfe.has(row.bfe_nummer) && row.ejer_navn) {
+                  ejfByBfe.set(row.bfe_nummer, {
+                    navn: row.ejer_navn,
+                    type: row.ejer_type ?? 'ukendt',
+                    cvr: row.ejer_cvr,
+                    dato: row.virkning_fra,
+                  });
+                }
+              }
+              // Enrich: tilføj ejer + koebsdato fra EJF
+              for (const lej of dawaFallback) {
+                const ejf = ejfByBfe.get(lej.bfe);
+                if (ejf) {
+                  lej.ejer = ejf.navn;
+                  lej.ejertype = ejf.cvr ? 'selskab' : ejf.type === 'person' ? 'person' : 'ukendt';
+                  if (ejf.dato) lej.koebsdato = ejf.dato.split('T')[0];
+                }
+              }
+              const enriched = dawaFallback.filter(
+                (l) => l.ejer !== '–' && l.ejer !== 'Ukendt'
+              ).length;
+              logger.log(`[ejerlejligheder] DAWA+EJF enriched: ${enriched}/${dawaFallback.length}`);
+            }
+          } catch {
+            /* EJF enrichment non-fatal */
+          }
           logger.log(
             `[ejerlejligheder] DAWA fallback (TL ${tlResult.status}): ${dawaFallback.length} lejligheder for ejerlav ${ejerlavKode} matr. ${matrikelnr}`
           );

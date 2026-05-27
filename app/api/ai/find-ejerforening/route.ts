@@ -30,7 +30,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
 
 export const runtime = 'nodejs';
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 /** AI-fundet ejerforenings-kandidat */
 export interface EjerforeningKandidat {

@@ -173,12 +173,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
 
     // ── 0b. Hent matrikelnr for matrikel-filtrering (bruges i cache + results) ──
-    // Bruger fallbackAdresse (query param) da `adresse` endnu ikke er resolved
+    const adresseParam = request.nextUrl.searchParams.get('adresse');
+    const postnrParam = request.nextUrl.searchParams.get('postnr');
     let ejendommensMatrikel: string | null = null;
-    if (fallbackAdresse && postnr) {
+    if (adresseParam && postnrParam) {
       try {
         const matrRes = await fetch(
-          `https://api.dataforsyningen.dk/adgangsadresser?q=${encodeURIComponent(fallbackAdresse)}&postnr=${postnr}&format=json&per_side=1`,
+          `https://api.dataforsyningen.dk/adgangsadresser?q=${encodeURIComponent(adresseParam)}&postnr=${postnrParam}&format=json&per_side=1`,
           { signal: AbortSignal.timeout(3000) }
         );
         if (matrRes.ok) {

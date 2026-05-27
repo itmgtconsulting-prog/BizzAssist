@@ -217,8 +217,7 @@ export async function POST(req: NextRequest) {
     // Matrikel-propagering: når en ejerforening verificeres, propager til
     // ALLE lejligheder på samme matrikel (fire-and-forget). Ejerforeningen
     // dækker hele matriklen, så alle lejligheder bør se den.
-    const matrikelnr = req.nextUrl.searchParams.get('matrikelnr');
-    const postnr = req.nextUrl.searchParams.get('postnr');
+    // matrikelnr og postnr allerede defineret ovenfor (linje 179-180)
     if (verdict === 'verified' && matrikelnr && postnr) {
       void (async () => {
         try {

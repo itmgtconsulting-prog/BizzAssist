@@ -792,6 +792,36 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           const m = c.navn.match(/\b(\d{1,5}[a-zæøå]{0,3})\b/gi) ?? [];
           return m.length === 0 || m.some((x) => x.toLowerCase() === matrLower);
         });
+        // Alle filtreret væk — søg efter den RIGTIGE forening via matrikel-navn
+        if (filtered.length === 0) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: correctRows } = await (admin as any)
+            .from('cvr_virksomhed')
+            .select('cvr, navn')
+            .ilike('navn', `%ejerforening%${ejendommensMatrikel}%`)
+            .limit(3);
+          const correctMatch = ((correctRows ?? []) as Array<{ cvr: string; navn: string }>).find(
+            (r) => {
+              const m = r.navn.match(/\b(\d{1,5}[a-zæøå]{0,3})\b/gi) ?? [];
+              return m.some((x) => x.toLowerCase() === matrLower);
+            }
+          );
+          if (correctMatch) {
+            const correctResult: EjerforeningKandidat[] = [
+              {
+                cvr: correctMatch.cvr,
+                navn: correctMatch.navn,
+                confidence: 'high',
+                reasoning: `Foreningens navn matcher ejendommens matrikelnr ${ejendommensMatrikel}`,
+                administeredCount: 0,
+              },
+            ];
+            return NextResponse.json({
+              candidates: correctResult,
+              _debug: { ejendommensMatrikel, path: 'matrikel-corrected' },
+            });
+          }
+        }
         return NextResponse.json({
           candidates: filtered,
           _debug: { ejendommensMatrikel, path: 'unique-filtered' },

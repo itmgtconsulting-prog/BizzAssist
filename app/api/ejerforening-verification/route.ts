@@ -174,6 +174,46 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
 
+    // Matrikel-stempel: gem matrikelnr som verificeret for denne CVR.
+    // Bruges af ejendomme-by-owner til at hente ALLE lejligheder fra DAWA.
+    const matrikelnr = req.nextUrl.searchParams.get('matrikelnr');
+    const postnr = req.nextUrl.searchParams.get('postnr');
+    if (verdict === 'verified' && matrikelnr) {
+      void (async () => {
+        try {
+          // Hent ejerlavkode
+          const ejlRes = await fetch(
+            `https://api.dataforsyningen.dk/adgangsadresser?matrikelnr=${encodeURIComponent(matrikelnr)}&postnr=${postnr ?? ''}&per_side=1&format=json`,
+            { signal: AbortSignal.timeout(3000) }
+          );
+          if (ejlRes.ok) {
+            const ejlData = (await ejlRes.json()) as Array<{
+              jordstykke?: { ejerlav?: { kode?: number } };
+            }>;
+            const ejerlavKode = ejlData[0]?.jordstykke?.ejerlav?.kode;
+            if (ejerlavKode) {
+              const { createAdminClient } = await import('@/lib/supabase/admin');
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              await (createAdminClient() as any).from('ejerforening_matrikel_verified').upsert(
+                {
+                  candidate_cvr: candidate_cvr,
+                  matrikelnr,
+                  ejerlav_kode: ejerlavKode,
+                  verified_at: new Date().toISOString(),
+                },
+                { onConflict: 'candidate_cvr,matrikelnr,ejerlav_kode' }
+              );
+              logger.log(
+                `[ejerforening-verification] Matrikel stemplet: CVR ${candidate_cvr} → matrikel ${matrikelnr} ejerlav ${ejerlavKode}`
+              );
+            }
+          }
+        } catch {
+          /* matrikel stempel non-fatal */
+        }
+      })();
+    }
+
     // Matrikel-propagering: når en ejerforening verificeres, propager til
     // ALLE lejligheder på samme matrikel (fire-and-forget). Ejerforeningen
     // dækker hele matriklen, så alle lejligheder bør se den.

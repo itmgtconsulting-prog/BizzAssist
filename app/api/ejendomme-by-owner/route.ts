@@ -1715,93 +1715,66 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
           `[ejendomme-by-owner] ejerforening_verifications: ${verifRows.length} verificerede BFE'er tilføjet`
         );
 
-        // Matrikel-expansion: hvis ejerforeningens navn indeholder et matrikelnr,
-        // udvid til ALLE lejligheder på den matrikel. Ejerforeningen dækker hele
-        // matriklen, ikke kun de individuelt verificerede BFE'er.
+        // Matrikel-expansion via ejerforening_matrikel_verified.
+        // Hent verificerede matrikler for denne CVR og tilføj ALLE adresser
+        // fra DAWA direkte — uafhængig af bfe_adresse_cache.
         const expandedCvrs = new Set<string>(
           verifRows.map((r: { candidate_cvr: string }) => r.candidate_cvr)
         );
         for (const cvr of expandedCvrs) {
           try {
-            // Hent foreningens navn for at finde matrikelnr
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const { data: virkRow } = await (admin as any)
-              .from('cvr_virksomhed')
-              .select('navn')
-              .eq('cvr', cvr)
-              .maybeSingle();
-            if (!virkRow?.navn) continue;
-            const matrMatch = (virkRow.navn as string).match(/\b(\d{1,5}[a-zæøå]{0,3})\b/gi);
-            if (!matrMatch || matrMatch.length === 0) continue;
-            const matrikelnr = matrMatch[matrMatch.length - 1]; // Sidste match er typisk matriklen
-
-            // Find alle adresser på matriklen via bfe_adresse_cache
-            // (søg på alle husnumre der hører til matriklen via DAWA)
-            // Hent ejerlavkode fra en af de verificerede BFE'er (prøv alle)
-            const verifiedBfes = verifRows
-              .filter((r: { candidate_cvr: string }) => r.candidate_cvr === cvr)
-              .map((r: { bfe_nummer: number }) => r.bfe_nummer);
-            let postnrForMatrikel: string | null = null;
-            let bfeAddrValue: string | null = null;
-            for (const vbfe of verifiedBfes) {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const { data: bfeAddr } = await (admin as any)
-                .from('bfe_adresse_cache')
-                .select('adresse, postnr')
-                .eq('bfe_nummer', vbfe)
-                .maybeSingle();
-              if ((bfeAddr as { postnr: string } | null)?.postnr) {
-                postnrForMatrikel = (bfeAddr as { postnr: string }).postnr;
-                bfeAddrValue = (bfeAddr as { adresse: string }).adresse;
-                break;
-              }
-            }
-            if (!postnrForMatrikel || !bfeAddrValue) continue;
-            // Hent ejerlavkode via DAWA
-            const ejlRes = await fetch(
-              `https://api.dataforsyningen.dk/adgangsadresser?q=${encodeURIComponent(bfeAddrValue)}&postnr=${postnrForMatrikel}&per_side=1&format=json`,
-              { signal: AbortSignal.timeout(3000) }
-            );
-            if (!ejlRes.ok) continue;
-            const ejlData = (await ejlRes.json()) as Array<{
-              jordstykke?: { ejerlav?: { kode?: number } };
-            }>;
-            const ejerlavKode = ejlData[0]?.jordstykke?.ejerlav?.kode;
-            if (!ejerlavKode) continue;
-
-            const dawaRes = await fetch(
-              `https://api.dataforsyningen.dk/adgangsadresser?ejerlavkode=${ejerlavKode}&matrikelnr=${encodeURIComponent(matrikelnr)}&per_side=20&format=json&struktur=mini`,
-              { signal: AbortSignal.timeout(3000) }
-            );
-            if (!dawaRes.ok) continue;
-            const adgangsadresser = (await dawaRes.json()) as Array<{
-              vejnavn: string;
-              husnr: string;
-              postnr: string;
-            }>;
-            // For hver adgangsadresse: find BFE'er i cache
-            let matrikelExpanded = 0;
-            for (const a of adgangsadresser) {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const { data: bfeRows } = await (admin as any)
-                .from('bfe_adresse_cache')
-                .select('bfe_nummer')
-                .ilike('adresse', `${a.vejnavn} ${a.husnr}%`)
-                .eq('postnr', a.postnr)
-                .limit(50);
-              for (const bfeRow of (bfeRows ?? []) as Array<{ bfe_nummer: number }>) {
-                if (bfeTilCvr.has(bfeRow.bfe_nummer)) continue;
-                administreretByBfe.add(bfeRow.bfe_nummer);
-                aiVerifiedByBfe.add(bfeRow.bfe_nummer);
-                bfeTilCvr.set(bfeRow.bfe_nummer, cvr.padStart(8, '0'));
-                aktivByBfe.set(bfeRow.bfe_nummer, true);
+            const { data: matrRows } = await (admin as any)
+              .from('ejerforening_matrikel_verified')
+              .select('matrikelnr, ejerlav_kode')
+              .eq('candidate_cvr', cvr);
+            for (const matr of (matrRows ?? []) as Array<{
+              matrikelnr: string;
+              ejerlav_kode: number;
+            }>) {
+              // Hent ALLE individuelle adresser (lejligheder) på matriklen fra DAWA
+              const dawaRes = await fetch(
+                `https://api.dataforsyningen.dk/adresser?ejerlavkode=${matr.ejerlav_kode}&matrikelnr=${encodeURIComponent(matr.matrikelnr)}&format=json&struktur=mini&per_side=200`,
+                { signal: AbortSignal.timeout(5000) }
+              );
+              if (!dawaRes.ok) continue;
+              const adresser = (await dawaRes.json()) as Array<{
+                id: string;
+                vejnavn: string;
+                husnr: string;
+                etage: string | null;
+                dør: string | null;
+                postnr: string;
+                postnrnavn: string;
+              }>;
+              let matrikelExpanded = 0;
+              for (const a of adresser) {
+                // Brug syntetisk BFE (negativ) for adresser uden BFE i cache
+                const synBfe = -(Math.abs(matr.ejerlav_kode) * 10000 + bfeTilCvr.size);
+                if (bfeTilCvr.has(synBfe)) continue;
+                administreretByBfe.add(synBfe);
+                aiVerifiedByBfe.add(synBfe);
+                bfeTilCvr.set(synBfe, cvr.padStart(8, '0'));
+                aktivByBfe.set(synBfe, true);
+                // Pre-populate adressedata for syntetiske BFE'er
+                dawaResolvedMap.set(synBfe, {
+                  adresse: `${a.vejnavn} ${a.husnr}`,
+                  etage: a.etage ?? null,
+                  doer: a.dør ?? null,
+                  postnr: a.postnr,
+                  postnrnavn: a.postnrnavn,
+                  kommune: null,
+                  kommuneKode: null,
+                  ejendomstype: 'Ejerlejlighed',
+                  dawaId: a.id,
+                });
                 matrikelExpanded++;
               }
-            }
-            if (matrikelExpanded > 0) {
-              logger.log(
-                `[ejendomme-by-owner] Matrikel-expansion for ${virkRow.navn}: ${matrikelExpanded} BFE'er tilføjet`
-              );
+              if (matrikelExpanded > 0) {
+                logger.log(
+                  `[ejendomme-by-owner] Matrikel-verified expansion: ${matrikelExpanded} adresser fra matrikel ${matr.matrikelnr}`
+                );
+              }
             }
           } catch {
             /* matrikel expansion non-fatal */

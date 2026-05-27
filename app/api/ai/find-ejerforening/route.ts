@@ -523,6 +523,35 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       .or(foreningPatterns)
       .limit(50);
 
+    // Matrikel-baseret navne-søgning: find foreninger hvis navn indeholder
+    // ejendommens matrikelnummer (fx "Carlsberg Byen 1218E" for matrikel 1218e).
+    // Fanger ejerforeninger der ikke har gadenavn i navnet.
+    if (ejendommensMatrikel) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: matrNavnRows } = await (admin as any)
+        .from('cvr_virksomhed')
+        .select('cvr, navn')
+        .or(
+          `navn.ilike.%ejerforening%${ejendommensMatrikel}%,navn.ilike.%E/F %${ejendommensMatrikel}%,navn.ilike.%andelsbolig%${ejendommensMatrikel}%`
+        )
+        .limit(10);
+      for (const row of (matrNavnRows ?? []) as Array<{ cvr: string; navn: string }>) {
+        // Verificer at matriklen i navnet faktisk matcher (case-insensitive)
+        const matrInName = row.navn.match(/\b(\d{1,5}[a-zæøå]{0,3})\b/gi) ?? [];
+        const matches = matrInName.some(
+          (m) => m.toLowerCase() === ejendommensMatrikel!.toLowerCase()
+        );
+        if (matches) {
+          cvrCounts.set(row.cvr, (cvrCounts.get(row.cvr) ?? 0) + 15); // Høj score
+          if (!cvrReasons.has(row.cvr)) cvrReasons.set(row.cvr, []);
+          cvrReasons
+            .get(row.cvr)!
+            .push(`Foreningens navn matcher matrikelnr ${ejendommensMatrikel}`);
+          logger.log(`[ai/find-ejerforening] Matrikel-navnematch: ${row.navn} (CVR ${row.cvr})`);
+        }
+      }
+    }
+
     // Ekstrahér husnummer fra adressen for range-matching
     const husnr = targetHusnr ? Number(targetHusnr) : null;
 

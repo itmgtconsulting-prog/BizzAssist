@@ -1718,7 +1718,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         // Matrikel-expansion: hvis ejerforeningens navn indeholder et matrikelnr,
         // udvid til ALLE lejligheder på den matrikel. Ejerforeningen dækker hele
         // matriklen, ikke kun de individuelt verificerede BFE'er.
-        const expandedCvrs = new Set(
+        const expandedCvrs = new Set<string>(
           verifRows.map((r: { candidate_cvr: string }) => r.candidate_cvr)
         );
         for (const cvr of expandedCvrs) {

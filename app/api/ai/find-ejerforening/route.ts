@@ -173,20 +173,23 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
 
     // ── 0b. Hent matrikelnr for matrikel-filtrering (bruges i cache + results) ──
+    // Bruger fallbackAdresse (query param) da `adresse` endnu ikke er resolved
     let ejendommensMatrikel: string | null = null;
-    try {
-      const matrRes = await fetch(
-        `https://api.dataforsyningen.dk/adgangsadresser?q=${encodeURIComponent(adresse)}&postnr=${postnr}&format=json&per_side=1`,
-        { signal: AbortSignal.timeout(3000) }
-      );
-      if (matrRes.ok) {
-        const matrData = (await matrRes.json()) as Array<{
-          jordstykke?: { matrikelnr?: string };
-        }>;
-        ejendommensMatrikel = matrData[0]?.jordstykke?.matrikelnr ?? null;
+    if (fallbackAdresse && postnr) {
+      try {
+        const matrRes = await fetch(
+          `https://api.dataforsyningen.dk/adgangsadresser?q=${encodeURIComponent(fallbackAdresse)}&postnr=${postnr}&format=json&per_side=1`,
+          { signal: AbortSignal.timeout(3000) }
+        );
+        if (matrRes.ok) {
+          const matrData = (await matrRes.json()) as Array<{
+            jordstykke?: { matrikelnr?: string };
+          }>;
+          ejendommensMatrikel = matrData[0]?.jordstykke?.matrikelnr ?? null;
+        }
+      } catch {
+        /* matrikel lookup non-fatal */
       }
-    } catch {
-      /* matrikel lookup non-fatal */
     }
 
     // ── 1. Cache-check ──────────────────────────────────────────

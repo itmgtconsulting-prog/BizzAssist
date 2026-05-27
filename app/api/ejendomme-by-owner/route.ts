@@ -1737,21 +1737,29 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
 
             // Find alle adresser på matriklen via bfe_adresse_cache
             // (søg på alle husnumre der hører til matriklen via DAWA)
-            // Hent ejerlavkode fra en af de verificerede BFE'er
-            const verifiedBfe = verifRows.find(
-              (r: { candidate_cvr: string }) => r.candidate_cvr === cvr
-            );
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const { data: bfeAddr } = await (admin as any)
-              .from('bfe_adresse_cache')
-              .select('adresse, postnr')
-              .eq('bfe_nummer', verifiedBfe?.bfe_nummer)
-              .maybeSingle();
-            const postnrForMatrikel = (bfeAddr as { postnr: string } | null)?.postnr;
-            if (!postnrForMatrikel) continue;
+            // Hent ejerlavkode fra en af de verificerede BFE'er (prøv alle)
+            const verifiedBfes = verifRows
+              .filter((r: { candidate_cvr: string }) => r.candidate_cvr === cvr)
+              .map((r: { bfe_nummer: number }) => r.bfe_nummer);
+            let postnrForMatrikel: string | null = null;
+            let bfeAddrValue: string | null = null;
+            for (const vbfe of verifiedBfes) {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const { data: bfeAddr } = await (admin as any)
+                .from('bfe_adresse_cache')
+                .select('adresse, postnr')
+                .eq('bfe_nummer', vbfe)
+                .maybeSingle();
+              if ((bfeAddr as { postnr: string } | null)?.postnr) {
+                postnrForMatrikel = (bfeAddr as { postnr: string }).postnr;
+                bfeAddrValue = (bfeAddr as { adresse: string }).adresse;
+                break;
+              }
+            }
+            if (!postnrForMatrikel || !bfeAddrValue) continue;
             // Hent ejerlavkode via DAWA
             const ejlRes = await fetch(
-              `https://api.dataforsyningen.dk/adgangsadresser?q=${encodeURIComponent((bfeAddr as { adresse: string }).adresse)}&postnr=${postnrForMatrikel}&per_side=1&format=json`,
+              `https://api.dataforsyningen.dk/adgangsadresser?q=${encodeURIComponent(bfeAddrValue)}&postnr=${postnrForMatrikel}&per_side=1&format=json`,
               { signal: AbortSignal.timeout(3000) }
             );
             if (!ejlRes.ok) continue;

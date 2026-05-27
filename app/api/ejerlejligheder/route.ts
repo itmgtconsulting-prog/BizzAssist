@@ -774,7 +774,15 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
           }
 
           try {
-            const sumResult = await tlFetch(`/ejdsummarisk/${item.uuid}`);
+            // Retry med backoff ved 429 (rate limit) — op til 3 forsøg
+            let sumResult = await tlFetch(`/ejdsummarisk/${item.uuid}`);
+            if (sumResult.status === 429) {
+              for (const delayMs of [2000, 5000, 10000]) {
+                await new Promise((r) => setTimeout(r, delayMs));
+                sumResult = await tlFetch(`/ejdsummarisk/${item.uuid}`);
+                if (sumResult.status !== 429) break;
+              }
+            }
             if (sumResult.status !== 200 || !sumResult.body) return;
             const xml = sumResult.body;
 

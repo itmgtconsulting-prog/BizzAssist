@@ -33,6 +33,7 @@ import EnergiWidget from '@/app/components/ejendomme/EnergiWidget';
 import ByggeomkostningBadge from '@/app/components/ejendomme/ByggeomkostningBadge';
 import { formatDKK } from '@/app/lib/mock/ejendomme';
 import { getHandelstypeInfo, handelstypeBadgeClasses } from '@/app/lib/ejfKoder';
+import { logger } from '@/app/lib/logger';
 import type { VurderingData, VurderingResponse } from '@/app/api/vurdering/route';
 import type { ForelobigVurdering } from '@/app/api/vurdering-forelobig/route';
 import type { TLHaeftelse } from '@/app/api/tinglysning/summarisk/route';
@@ -270,7 +271,23 @@ function RegnskabSektion({ bfe, lang }: { bfe: number; lang: string }) {
 }
 
 /**
- * BIZZ-1597: Loader der henter indskannede akter og viser AI-ekstraktion-knap.
+ * BIZZ-1597 + BIZZ-1909: Tri-state status for AI-akt-berigelse.
+ *
+ * Erstatter tidligere silent-null-return med eksplicit status der altid
+ * fortæller brugeren om berig er udført, mulig, ikke mulig eller broken.
+ */
+type AktStatus =
+  | { kind: 'loading' }
+  | { kind: 'available'; aktNavn: string }
+  | { kind: 'no-akter' }
+  | { kind: 'tl-unavailable'; reason: string }
+  | { kind: 'no-access' };
+
+/**
+ * BIZZ-1909: Loader der henter indskannede akter og viser status + AI-knap.
+ *
+ * Tri-state: loading / available / no-akter / tl-unavailable / no-access.
+ * Status er ALTID synlig — også når data allerede er beriget (hasAiData=true).
  */
 function AktExtractionLoader({
   bfeNummer,
@@ -281,30 +298,139 @@ function AktExtractionLoader({
   lang: string;
   hasAiData?: boolean;
 }) {
-  const [aktNavn, setAktNavn] = useState<string | null>(null);
+  const da = lang === 'da';
+  const [status, setStatus] = useState<AktStatus>({ kind: 'loading' });
 
   useEffect(() => {
     if (!bfeNummer) return;
-    // Hent tinglysning UUID → indskannede akter
-    fetch(`/api/tinglysning?bfe=${bfeNummer}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((tl) => {
-        if (!tl?.uuid) return;
-        return fetch(`/api/tinglysning/indskannede-akter?ejendomId=${tl.uuid}`);
-      })
-      .then((r) => (r?.ok ? r.json() : null))
-      .then((data) => {
-        if (data?.akter?.length > 0) setAktNavn(data.akter[0].aktNavn);
-      })
-      .catch(() => {});
+    let cancelled = false;
+
+    (async () => {
+      try {
+        // 1. Hent tinglysning UUID
+        const tlRes = await fetch(`/api/tinglysning?bfe=${bfeNummer}`);
+        if (cancelled) return;
+        if (tlRes.status === 401 || tlRes.status === 403) {
+          setStatus({ kind: 'no-access' });
+          return;
+        }
+        if (tlRes.status === 503) {
+          setStatus({ kind: 'tl-unavailable', reason: 'tinglysning-503' });
+          return;
+        }
+        if (!tlRes.ok) {
+          logger.warn(
+            `[AktExtractionLoader] /api/tinglysning HTTP ${tlRes.status} for BFE ${bfeNummer}`
+          );
+          setStatus({ kind: 'tl-unavailable', reason: `http-${tlRes.status}` });
+          return;
+        }
+        const tl = (await tlRes.json()) as { uuid?: string };
+        if (!tl?.uuid) {
+          setStatus({ kind: 'tl-unavailable', reason: 'no-uuid' });
+          return;
+        }
+
+        // 2. Hent indskannede akter
+        const akterRes = await fetch(`/api/tinglysning/indskannede-akter?ejendomId=${tl.uuid}`);
+        if (cancelled) return;
+        if (akterRes.status === 401 || akterRes.status === 403) {
+          setStatus({ kind: 'no-access' });
+          return;
+        }
+        if (!akterRes.ok) {
+          logger.warn(
+            `[AktExtractionLoader] /indskannede-akter HTTP ${akterRes.status} for UUID ${tl.uuid}`
+          );
+          setStatus({ kind: 'tl-unavailable', reason: `akter-http-${akterRes.status}` });
+          return;
+        }
+        const data = (await akterRes.json()) as { akter?: Array<{ aktNavn: string }> };
+        if (data?.akter && data.akter.length > 0) {
+          setStatus({ kind: 'available', aktNavn: data.akter[0].aktNavn });
+        } else {
+          setStatus({ kind: 'no-akter' });
+        }
+      } catch (err) {
+        if (cancelled) return;
+        logger.warn('[AktExtractionLoader] network/parse error:', err);
+        setStatus({ kind: 'tl-unavailable', reason: 'network-error' });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [bfeNummer]);
 
-  if (!aktNavn || !bfeNummer) return null;
+  if (!bfeNummer) return null;
 
-  // Skjul knappen hvis AI-data allerede er cached og vist i tabellen
-  if (hasAiData) return null;
+  // Loading — diskret placeholder så brugeren ved at noget loader
+  if (status.kind === 'loading') {
+    return (
+      <div className="mt-2 text-[11px] text-slate-500 inline-flex items-center gap-1.5">
+        <div className="w-2.5 h-2.5 border-2 border-slate-600 border-t-transparent rounded-full animate-spin" />
+        <span>{da ? 'Tjekker indskannede akter…' : 'Checking scanned deeds…'}</span>
+      </div>
+    );
+  }
 
-  return <AktExtractionButton bfe={bfeNummer} aktNavn={aktNavn} lang={lang} />;
+  // Akter findes
+  if (status.kind === 'available') {
+    // Allerede beriget → vis "Beriget"-badge
+    if (hasAiData) {
+      return (
+        <div className="mt-2 inline-flex items-center gap-1.5 px-2 py-1 bg-emerald-500/10 border border-emerald-500/20 rounded-md text-[11px] text-emerald-300">
+          <span aria-hidden>✓</span>
+          <span>{da ? 'Beriget med scannet akt' : 'Enriched with scanned deed'}</span>
+        </div>
+      );
+    }
+    // Ikke beriget endnu → vis berig-knappen
+    return <AktExtractionButton bfe={bfeNummer} aktNavn={status.aktNavn} lang={lang} />;
+  }
+
+  // Ingen akter findes
+  if (status.kind === 'no-akter') {
+    return (
+      <div className="mt-2 inline-flex items-center gap-1.5 px-2 py-1 bg-slate-700/30 border border-slate-600/40 rounded-md text-[11px] text-slate-400">
+        <span aria-hidden>ℹ️</span>
+        <span>
+          {da
+            ? 'Berig ikke mulig — ingen indskannede akter findes for denne ejendom'
+            : 'Enrichment not available — no scanned deeds found for this property'}
+        </span>
+      </div>
+    );
+  }
+
+  // Tinglysning kunne ikke nås
+  if (status.kind === 'tl-unavailable') {
+    return (
+      <div className="mt-2 inline-flex items-center gap-1.5 px-2 py-1 bg-amber-500/10 border border-amber-500/20 rounded-md text-[11px] text-amber-300">
+        <span aria-hidden>⚠️</span>
+        <span>
+          {da
+            ? 'Berig midlertidigt utilgængelig — Tinglysning kunne ikke nås'
+            : 'Enrichment temporarily unavailable — Tinglysning could not be reached'}
+        </span>
+      </div>
+    );
+  }
+
+  // Manglende adgang
+  if (status.kind === 'no-access') {
+    return (
+      <div className="mt-2 inline-flex items-center gap-1.5 px-2 py-1 bg-slate-700/30 border border-slate-600/40 rounded-md text-[11px] text-slate-400">
+        <span aria-hidden>🔒</span>
+        <span>
+          {da ? 'Berig kræver Tinglysning-adgang' : 'Enrichment requires Tinglysning access'}
+        </span>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 export default function EjendomOekonomiTab(props: Props) {

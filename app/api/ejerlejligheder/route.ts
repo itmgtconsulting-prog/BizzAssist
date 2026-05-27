@@ -11,10 +11,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import https from 'https';
-import fs from 'fs';
 import { createAdminClient } from '@/lib/supabase/admin';
-import path from 'path';
 import { z } from 'zod';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
@@ -24,6 +21,7 @@ import { darResolveAdresseId } from '@/app/lib/dar';
 import { resolveEnhedByDawaId } from '@/app/lib/fetchBbrData';
 import { fetchTinglysningPriceRowsByBfe } from '@/app/lib/tinglysningPrices';
 import { fetchEjfEjereDirekt } from '@/app/lib/ejerskab/fetchEjfEjereDirekt';
+import { tlFetch as sharedTlFetch } from '@/app/lib/tlFetch';
 
 // ─── Query param validation ─────────────────────────────────────────────────
 
@@ -86,13 +84,7 @@ export interface EjerlejlighederResponse {
 
 // ─── Tinglysning mTLS ───────────────────────────────────────────────────────
 
-const CERT_PATH =
-  process.env.TINGLYSNING_CERT_PATH ?? process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
-const CERT_PASSWORD =
-  process.env.TINGLYSNING_CERT_PASSWORD ?? process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
-const CERT_B64 = process.env.TINGLYSNING_CERT_B64 ?? process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';
-const TL_BASE = process.env.TINGLYSNING_BASE_URL ?? 'https://test.tinglysning.dk';
-const TL_API_PATH = '/tinglysning/ssl';
+// Cert-konfiguration er nu i den delte tlFetch (app/lib/tlFetch.ts)
 
 /** Tinglysning adressesøgning JSON-svar */
 interface TLSearchItem {
@@ -111,52 +103,16 @@ interface TLSearchResponse {
 }
 
 /**
- * HTTPS request med client-certifikat (mTLS) til Tinglysningsretten.
+ * Wrapper der bruger den delte tlFetch (med proxy-first + mTLS fallback).
+ * Erstatter den tidligere lokale mTLS-only implementation der fejlede
+ * i Vercel serverless (ingen cert tilgængelig → 302 redirect → DAWA fallback
+ * uden ejer/pris-data).
  *
- * @param urlPath - URL-sti efter /tinglysning/ssl/
+ * @param urlPath - URL-sti under /tinglysning/ssl/ (f.eks. "/ejendom/...")
  * @returns HTTP status + body
  */
 function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
-  return new Promise((resolve, reject) => {
-    let pfx: Buffer;
-    if (CERT_B64) {
-      pfx = Buffer.from(CERT_B64, 'base64');
-    } else {
-      const certAbsPath = path.resolve(CERT_PATH);
-      if (!fs.existsSync(certAbsPath)) {
-        reject(new Error('Certifikat ikke fundet: ' + certAbsPath));
-        return;
-      }
-      pfx = fs.readFileSync(certAbsPath);
-    }
-    const url = new URL(TL_BASE + TL_API_PATH + urlPath);
-
-    const req = https.request(
-      {
-        hostname: url.hostname,
-        port: 443,
-        path: url.pathname + url.search,
-        method: 'GET',
-        pfx,
-        passphrase: CERT_PASSWORD,
-        rejectUnauthorized: false,
-        timeout: 15000,
-        headers: { Accept: 'application/json, application/xml, */*' },
-      },
-      (res) => {
-        let body = '';
-        res.on('data', (d: Buffer) => (body += d));
-        res.on('end', () => resolve({ status: res.statusCode ?? 500, body }));
-      }
-    );
-
-    req.on('error', reject);
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error('Timeout'));
-    });
-    req.end();
-  });
+  return sharedTlFetch(urlPath, { timeout: 15000 });
 }
 
 // ─── Etage/dør parsing ──────────────────────────────────────────────────────

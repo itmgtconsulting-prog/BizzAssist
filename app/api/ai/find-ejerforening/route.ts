@@ -791,6 +791,9 @@ ${kandidatListe}`;
         administeredCount: filteredCvrs.get(c.cvr) ?? 0,
       }));
 
+    logger.log(
+      `[ai/find-ejerforening] Pre-filter: ${result.length} candidates, ejendommensMatrikel=${ejendommensMatrikel}`
+    );
     // Matrikel-filtrering: hvis en kandidats navn indeholder et matrikelnummer
     // (fx "1218n"), og ejendommens matrikel er FORSKELLIG (fx "1218e"),
     // fjern kandidaten. Undgår false positives på tværs af matrikler.

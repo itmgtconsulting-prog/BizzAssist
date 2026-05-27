@@ -749,14 +749,19 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
           `[ejerlejligheder] Cache hit: ${cachedSummarisk.size}/${uuids.length} summarisk`
         );
       }
-    } catch {
-      /* cache lookup non-fatal */
+    } catch (cacheErr) {
+      logger.warn(
+        '[ejerlejligheder] Cache lookup fejl:',
+        cacheErr instanceof Error ? cacheErr.message : cacheErr
+      );
     }
 
     // Fase 1: Anvend cache-data STRAKS (instant — ingen TL-kald)
+    let cacheApplied = 0;
     for (const item of itemsToEnrich) {
       const cached = cachedSummarisk.get(item.uuid);
       if (cached?.ejere && cached.ejere.length > 0) {
+        cacheApplied++;
         const lastEjer = cached.ejere[cached.ejere.length - 1];
         summariskMap.set(item.uuid, {
           areal: null,
@@ -771,6 +776,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
         });
       }
     }
+    logger.log(`[ejerlejligheder] Fase 1: ${cacheApplied}/${itemsToEnrich.length} fra cache`);
 
     // Fase 2: TL-kald for items UDEN cache — kører som fire-and-forget
     // (gemmer i cache så næste request har data). Blokerer IKKE response.

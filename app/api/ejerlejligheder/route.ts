@@ -849,7 +849,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
                 .upsert(
                   {
                     uuid: item.uuid,
-                    bfe_nummer: item.bfe ?? null,
+                    bfe_nummer: null,
                     payload: {
                       ejere: [
                         {

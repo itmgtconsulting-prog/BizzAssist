@@ -539,6 +539,7 @@ export default function VirksomhedEjendommeTab({
                                   return (
                                     <details
                                       key={key}
+                                      open
                                       className="border-l-2 border-emerald-500/30 pl-3 group"
                                     >
                                       <summary className="flex items-center gap-2 mb-1.5 cursor-pointer list-none select-none hover:bg-slate-800/30 rounded px-1 py-1 -ml-1 transition-colors">
@@ -646,6 +647,7 @@ export default function VirksomhedEjendommeTab({
                                 return (
                                   <details
                                     key={key}
+                                    open
                                     className="border-l-2 border-teal-500/30 pl-3 group"
                                   >
                                     <summary className="flex items-center gap-2 mb-1.5 cursor-pointer list-none select-none hover:bg-slate-800/30 rounded px-1 py-1 -ml-1 transition-colors">

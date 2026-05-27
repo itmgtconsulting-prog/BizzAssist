@@ -785,7 +785,22 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         )
         .then(() => {});
 
-      return NextResponse.json({ candidates: result, _debug: { ejendommensMatrikel } });
+      // Matrikel-filter på entydigt match
+      if (ejendommensMatrikel) {
+        const matrLower = ejendommensMatrikel.toLowerCase();
+        const filtered = result.filter((c) => {
+          const m = c.navn.match(/\b(\d{1,5}[a-zæøå]{0,3})\b/gi) ?? [];
+          return m.length === 0 || m.some((x) => x.toLowerCase() === matrLower);
+        });
+        return NextResponse.json({
+          candidates: filtered,
+          _debug: { ejendommensMatrikel, path: 'unique-filtered' },
+        });
+      }
+      return NextResponse.json({
+        candidates: result,
+        _debug: { ejendommensMatrikel, path: 'unique' },
+      });
     }
 
     // ── 6. Flere kandidater → Claude evaluerer ──────────────────

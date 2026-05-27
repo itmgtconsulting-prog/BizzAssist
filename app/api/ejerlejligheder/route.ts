@@ -753,141 +753,162 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
       /* cache lookup non-fatal */
     }
 
-    for (let i = 0; i < itemsToEnrich.length; i += CONCURRENCY) {
-      const batch = itemsToEnrich.slice(i, i + CONCURRENCY);
-      const results = await Promise.allSettled(
-        batch.map(async (item) => {
-          // Cache-first: brug cached payload hvis tilgængeligt
-          const cached = cachedSummarisk.get(item.uuid);
-          if (cached?.ejere && cached.ejere.length > 0) {
-            const lastEjer = cached.ejere[cached.ejere.length - 1];
-            const ejer = lastEjer.navn ?? 'Ukendt';
-            const ejertype = lastEjer.cvr
+    // Fase 1: Anvend cache-data STRAKS (instant — ingen TL-kald)
+    for (const item of itemsToEnrich) {
+      const cached = cachedSummarisk.get(item.uuid);
+      if (cached?.ejere && cached.ejere.length > 0) {
+        const lastEjer = cached.ejere[cached.ejere.length - 1];
+        summariskMap.set(item.uuid, {
+          areal: null,
+          ejer: lastEjer.navn ?? 'Ukendt',
+          ejertype: lastEjer.cvr
+            ? ('selskab' as const)
+            : lastEjer.type === 'selskab'
               ? ('selskab' as const)
-              : lastEjer.type === 'selskab'
-                ? ('selskab' as const)
-                : ('person' as const);
-            const koebspris = lastEjer.kontantKoebesum ?? lastEjer.iAltKoebesum ?? null;
-            const koebsdato = lastEjer.overtagelsesdato ?? null;
-            summariskMap.set(item.uuid, { areal: null, ejer, ejertype, koebspris, koebsdato });
-            return;
-          }
+              : ('person' as const),
+          koebspris: lastEjer.kontantKoebesum ?? lastEjer.iAltKoebesum ?? null,
+          koebsdato: lastEjer.overtagelsesdato ?? null,
+        });
+      }
+    }
 
-          try {
-            // Retry med backoff ved 429 (rate limit) — op til 3 forsøg
-            let sumResult = await tlFetch(`/ejdsummarisk/${item.uuid}`);
-            if (sumResult.status === 429) {
-              for (const delayMs of [2000, 5000, 10000]) {
-                await new Promise((r) => setTimeout(r, delayMs));
-                sumResult = await tlFetch(`/ejdsummarisk/${item.uuid}`);
-                if (sumResult.status !== 429) break;
-              }
-            }
-            if (sumResult.status !== 200 || !sumResult.body) return;
-            const xml = sumResult.body;
-
-            // ── Areal ──
-            // Prioritér "Ejerlejlighedens tinglyste areal" over generisk "tinglyste areal"
-            // (generisk kan være bygningens samlede areal)
-            let areal: number | null = null;
-            const ejlArealMatch = xml.match(
-              /[Ee]jerlejlighedens\s+tinglyste?\s+areal[^<]*<[^>]*>[^<]*<[^>]*>(\d+)\s*kvm/i
-            );
-            if (ejlArealMatch) {
-              areal = parseInt(ejlArealMatch[1], 10);
-            }
-            if (!areal) {
-              const altAreal = xml.match(/<(?:ns\d+:)?Areal>(\d+)<\/(?:ns\d+:)?Areal>/);
-              if (altAreal) areal = parseInt(altAreal[1], 10);
-            }
-
-            // ── Ejer (seneste adkomsthaver) ──
-            let ejer = 'Ukendt';
-            let ejertype: 'person' | 'selskab' | 'ukendt' = 'ukendt';
-            const adkomstSection =
-              xml.match(/AdkomstSummariskSamling[\s\S]*?<\/[^:]*:?AdkomstSummariskSamling/)?.[0] ??
-              '';
-            const havere = [
-              ...adkomstSection.matchAll(/Adkomsthaver>([\s\S]*?)<\/[^:]*:?Adkomsthaver/g),
-            ];
-            if (havere.length > 0) {
-              // Tag seneste (sidste) adkomsthaver
-              const lastHaver = havere[havere.length - 1][1];
-              const allNames = [...lastHaver.matchAll(/<[^\/][^>]*(?:Name|Navn)[^>]*>([^<]+)<\//g)];
-              const nameStr = allNames
-                .map((m) => m[1])
-                .filter((n) => n.length > 1)
-                .join(' ')
-                .trim();
-              const cvr = lastHaver.match(/CVRnumberIdentifier[^>]*>([^<]+)/)?.[1] ?? null;
-              if (nameStr) ejer = nameStr;
-              ejertype = cvr ? 'selskab' : 'person';
-            }
-
-            // ── Købesum + dato (seneste adkomst) ──
-            let koebspris: number | null = null;
-            let koebsdato: string | null = null;
-            const adkomstEntries = [
-              ...adkomstSection.matchAll(/AdkomstSummarisk>([\s\S]*?)<\/[^:]*:?AdkomstSummarisk/g),
-            ];
-            if (adkomstEntries.length > 0) {
-              const lastEntry = adkomstEntries[adkomstEntries.length - 1][1];
-              const kontantStr = lastEntry.match(/KontantKoebesum[^>]*>([^<]+)/)?.[1];
-              const iAltStr = lastEntry.match(/IAltKoebesum[^>]*>([^<]+)/)?.[1];
-              koebspris = kontantStr
-                ? parseInt(kontantStr, 10)
-                : iAltStr
-                  ? parseInt(iAltStr, 10)
-                  : null;
-              if (isNaN(koebspris ?? 0)) koebspris = null;
-              koebsdato =
-                lastEntry.match(/KoebsaftaleDato[^>]*>([^<]+)/)?.[1]?.split('+')[0] ??
-                lastEntry.match(/SkoedeOvertagelsesDato[^>]*>([^<]+)/)?.[1]?.split('+')[0] ??
-                lastEntry.match(/TinglysningsDato[^>]*>([^<]+)/)?.[1]?.split('T')[0] ??
-                null;
-            }
-
-            summariskMap.set(item.uuid, { areal, ejer, ejertype, koebspris, koebsdato });
-
-            // Cache-write: gem parsed data så næste kald er instant
-            try {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              void (createAdminClient() as any)
-                .from('tinglysning_summarisk_cache')
-                .upsert(
-                  {
-                    uuid: item.uuid,
-                    bfe_nummer: null,
-                    payload: {
-                      ejere: [
-                        {
-                          navn: ejer,
-                          type: ejertype,
-                          kontantKoebesum: koebspris,
-                          overtagelsesdato: koebsdato,
-                        },
-                      ],
-                      haeftelser: [],
-                      servitutter: [],
-                      fejl: null,
-                    },
-                    fetched_at: new Date().toISOString(),
-                  },
-                  { onConflict: 'uuid' }
-                )
-                .then(() => {});
-            } catch {
-              /* cache write non-fatal */
-            }
-          } catch (err) {
-            logger.warn(
-              `[ejerlejligheder] Summarisk fejl for ${item.uuid}:`,
-              err instanceof Error ? err.message : err
-            );
-          }
-        })
+    // Fase 2: TL-kald for items UDEN cache — kører som fire-and-forget
+    // (gemmer i cache så næste request har data). Blokerer IKKE response.
+    const uncachedItems = itemsToEnrich.filter((it) => !cachedSummarisk.has(it.uuid));
+    if (uncachedItems.length > 0) {
+      logger.log(
+        `[ejerlejligheder] ${uncachedItems.length} items uden cache — starter baggrunds-enrichment`
       );
-      void results;
+      // Fire-and-forget: kører efter response er sendt
+      void (async () => {
+        for (let i = 0; i < uncachedItems.length; i += CONCURRENCY) {
+          const batch = uncachedItems.slice(i, i + CONCURRENCY);
+          await Promise.allSettled(
+            batch.map(async (item) => {
+              try {
+                let sumResult = await tlFetch(`/ejdsummarisk/${item.uuid}`);
+                if (sumResult.status === 429) {
+                  for (const delayMs of [2000, 5000, 10000]) {
+                    await new Promise((r) => setTimeout(r, delayMs));
+                    sumResult = await tlFetch(`/ejdsummarisk/${item.uuid}`);
+                    if (sumResult.status !== 429) break;
+                  }
+                }
+                if (sumResult.status !== 200 || !sumResult.body) return;
+                const xml = sumResult.body;
+
+                // ── Areal ──
+                // Prioritér "Ejerlejlighedens tinglyste areal" over generisk "tinglyste areal"
+                // (generisk kan være bygningens samlede areal)
+                let areal: number | null = null;
+                const ejlArealMatch = xml.match(
+                  /[Ee]jerlejlighedens\s+tinglyste?\s+areal[^<]*<[^>]*>[^<]*<[^>]*>(\d+)\s*kvm/i
+                );
+                if (ejlArealMatch) {
+                  areal = parseInt(ejlArealMatch[1], 10);
+                }
+                if (!areal) {
+                  const altAreal = xml.match(/<(?:ns\d+:)?Areal>(\d+)<\/(?:ns\d+:)?Areal>/);
+                  if (altAreal) areal = parseInt(altAreal[1], 10);
+                }
+
+                // ── Ejer (seneste adkomsthaver) ──
+                let ejer = 'Ukendt';
+                let ejertype: 'person' | 'selskab' | 'ukendt' = 'ukendt';
+                const adkomstSection =
+                  xml.match(
+                    /AdkomstSummariskSamling[\s\S]*?<\/[^:]*:?AdkomstSummariskSamling/
+                  )?.[0] ?? '';
+                const havere = [
+                  ...adkomstSection.matchAll(/Adkomsthaver>([\s\S]*?)<\/[^:]*:?Adkomsthaver/g),
+                ];
+                if (havere.length > 0) {
+                  // Tag seneste (sidste) adkomsthaver
+                  const lastHaver = havere[havere.length - 1][1];
+                  const allNames = [
+                    ...lastHaver.matchAll(/<[^\/][^>]*(?:Name|Navn)[^>]*>([^<]+)<\//g),
+                  ];
+                  const nameStr = allNames
+                    .map((m) => m[1])
+                    .filter((n) => n.length > 1)
+                    .join(' ')
+                    .trim();
+                  const cvr = lastHaver.match(/CVRnumberIdentifier[^>]*>([^<]+)/)?.[1] ?? null;
+                  if (nameStr) ejer = nameStr;
+                  ejertype = cvr ? 'selskab' : 'person';
+                }
+
+                // ── Købesum + dato (seneste adkomst) ──
+                let koebspris: number | null = null;
+                let koebsdato: string | null = null;
+                const adkomstEntries = [
+                  ...adkomstSection.matchAll(
+                    /AdkomstSummarisk>([\s\S]*?)<\/[^:]*:?AdkomstSummarisk/g
+                  ),
+                ];
+                if (adkomstEntries.length > 0) {
+                  const lastEntry = adkomstEntries[adkomstEntries.length - 1][1];
+                  const kontantStr = lastEntry.match(/KontantKoebesum[^>]*>([^<]+)/)?.[1];
+                  const iAltStr = lastEntry.match(/IAltKoebesum[^>]*>([^<]+)/)?.[1];
+                  koebspris = kontantStr
+                    ? parseInt(kontantStr, 10)
+                    : iAltStr
+                      ? parseInt(iAltStr, 10)
+                      : null;
+                  if (isNaN(koebspris ?? 0)) koebspris = null;
+                  koebsdato =
+                    lastEntry.match(/KoebsaftaleDato[^>]*>([^<]+)/)?.[1]?.split('+')[0] ??
+                    lastEntry.match(/SkoedeOvertagelsesDato[^>]*>([^<]+)/)?.[1]?.split('+')[0] ??
+                    lastEntry.match(/TinglysningsDato[^>]*>([^<]+)/)?.[1]?.split('T')[0] ??
+                    null;
+                }
+
+                // Baggrunds-enrichment: gem KUN i cache (response er allerede sendt)
+                // Næste request vil finde data i cache via fase 1.
+                try {
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  void (createAdminClient() as any)
+                    .from('tinglysning_summarisk_cache')
+                    .upsert(
+                      {
+                        uuid: item.uuid,
+                        bfe_nummer: null,
+                        payload: {
+                          ejere: [
+                            {
+                              navn: ejer,
+                              type: ejertype,
+                              kontantKoebesum: koebspris,
+                              overtagelsesdato: koebsdato,
+                            },
+                          ],
+                          haeftelser: [],
+                          servitutter: [],
+                          fejl: null,
+                        },
+                        fetched_at: new Date().toISOString(),
+                      },
+                      { onConflict: 'uuid' }
+                    )
+                    .then(() => {});
+                } catch {
+                  /* cache write non-fatal */
+                }
+              } catch (err) {
+                logger.warn(
+                  `[ejerlejligheder] Summarisk fejl for ${item.uuid}:`,
+                  err instanceof Error ? err.message : err
+                );
+              }
+            })
+          );
+        }
+      })().catch((err) =>
+        logger.warn(
+          '[ejerlejligheder] Baggrunds-enrichment fejl:',
+          err instanceof Error ? err.message : err
+        )
+      );
     }
 
     // ── Trin 3: Hent adresse-UUID'er for navigation (BIZZ-506) ──

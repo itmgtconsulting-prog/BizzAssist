@@ -100,6 +100,8 @@ interface Props {
   strukturLoader?: boolean;
   /** Aktuel BFE for denne ejendom */
   currentBfe?: number;
+  /** Matrikelnr for ejerforening-filtrering */
+  matrikelnr?: string;
   /** BIZZ-1288: DAWA-ID for den aktuelle ejendom — fallback for "(denne)" match */
   currentDawaId?: string | null;
   /** BBR enheder — bruges til at berige med værelser */
@@ -130,6 +132,7 @@ export default function EjendomEjerforholdTab({
   strukturTree,
   strukturLoader,
   currentBfe,
+  matrikelnr,
   currentDawaId,
   bbrEnheder,
   chainEjerDetaljer = [],
@@ -174,6 +177,7 @@ export default function EjendomEjerforholdTab({
                 lang={lang}
                 adresse={dawaAdresse ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}` : undefined}
                 postnr={dawaAdresse?.postnr ?? undefined}
+                matrikelnr={matrikelnr}
               />
             )}
           </>

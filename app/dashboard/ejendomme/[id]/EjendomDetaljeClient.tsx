@@ -1769,6 +1769,9 @@ export default function EjendomDetaljeClient({
                 lejligheder={lejligheder}
                 strukturTree={strukturTree}
                 strukturLoader={strukturLoader}
+                matrikelnr={
+                  dawaJordstykke?.matrikelnr ? String(dawaJordstykke.matrikelnr) : undefined
+                }
                 currentBfe={
                   bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
                   bbrData?.ejerlejlighedBfe ??

@@ -172,12 +172,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ candidates: verifiedResult, verifiedFromCommunity: true });
     }
 
-    // ── 0b. Hent matrikelnr for matrikel-filtrering (bruges i cache + results) ──
-    // Brug DAWA med kort timeout — matrikel-info er kritisk for korrekt filtering
+    // ── 0b. Matrikelnr for filtrering — fra klient-param (hurtigst) eller DAWA ──
+    let ejendommensMatrikel: string | null = request.nextUrl.searchParams.get('matrikelnr') ?? null;
     const adresseParam = request.nextUrl.searchParams.get('adresse');
     const postnrParam = request.nextUrl.searchParams.get('postnr');
-    let ejendommensMatrikel: string | null = null;
-    if (adresseParam && postnrParam) {
+    if (!ejendommensMatrikel && adresseParam && postnrParam) {
       try {
         const matrRes = await fetch(
           `https://api.dataforsyningen.dk/adgangsadresser?q=${encodeURIComponent(adresseParam)}&postnr=${postnrParam}&format=json&per_side=1`,

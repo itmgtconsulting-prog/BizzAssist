@@ -63,6 +63,8 @@ interface Props {
   adresse?: string;
   /** Fallback-postnr */
   postnr?: string;
+  /** Matrikelnr for filtrering af ejerforenings-kandidater */
+  matrikelnr?: string;
 }
 
 /**
@@ -108,7 +110,13 @@ function confidenceStyle(confidence: 'high' | 'medium' | 'low'): {
  * @param props - BFE-nummer og sprog
  * @returns React komponent
  */
-export default function EjendomEjerforeningFinder({ bfeNummer, lang, adresse, postnr }: Props) {
+export default function EjendomEjerforeningFinder({
+  bfeNummer,
+  lang,
+  adresse,
+  postnr,
+  matrikelnr,
+}: Props) {
   const da = lang === 'da';
 
   const [candidates, setCandidates] = useState<Kandidat[]>([]);
@@ -146,6 +154,7 @@ export default function EjendomEjerforeningFinder({ bfeNummer, lang, adresse, po
         const params = new URLSearchParams({ gadenavn, postnr });
         if (husnr) params.set('husnr', husnr);
         params.set('bfeNummer', String(bfeNummer));
+        if (matrikelnr) params.set('matrikelnr', matrikelnr);
         const res = await fetch(`/api/ejerforening-verification/community?${params.toString()}`, {
           credentials: 'include',
         });
@@ -186,7 +195,7 @@ export default function EjendomEjerforeningFinder({ bfeNummer, lang, adresse, po
     return () => {
       active = false;
     };
-  }, [adresse, postnr, bfeNummer]);
+  }, [adresse, postnr, bfeNummer, matrikelnr]);
 
   /**
    * Hent verificeringer for alle kandidater.
@@ -229,6 +238,7 @@ export default function EjendomEjerforeningFinder({ bfeNummer, lang, adresse, po
       const params = new URLSearchParams({ bfeNummer: String(bfeNummer) });
       if (adresse) params.set('adresse', adresse);
       if (postnr) params.set('postnr', postnr);
+      if (matrikelnr) params.set('matrikelnr', matrikelnr);
       const res = await fetch(`/api/ai/find-ejerforening?${params.toString()}`, {
         credentials: 'include',
       });
@@ -262,7 +272,7 @@ export default function EjendomEjerforeningFinder({ bfeNummer, lang, adresse, po
     } finally {
       setLoading(false);
     }
-  }, [bfeNummer, da, fetchVerifications]);
+  }, [bfeNummer, da, fetchVerifications, adresse, postnr, matrikelnr]);
 
   /**
    * Stem på en kandidat-ejerforening (verificer/afvis).

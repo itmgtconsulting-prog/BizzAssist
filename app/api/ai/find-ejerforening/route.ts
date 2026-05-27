@@ -180,7 +180,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       try {
         const matrRes = await fetch(
           `https://api.dataforsyningen.dk/adgangsadresser?q=${encodeURIComponent(adresseParam)}&postnr=${postnrParam}&format=json&per_side=1`,
-          { signal: AbortSignal.timeout(3000) }
+          { signal: AbortSignal.timeout(8000) }
         );
         if (matrRes.ok) {
           const matrData = (await matrRes.json()) as Array<{
@@ -535,20 +535,48 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           `navn.ilike.%ejerforening%${ejendommensMatrikel}%,navn.ilike.%E/F %${ejendommensMatrikel}%,navn.ilike.%andelsbolig%${ejendommensMatrikel}%`
         )
         .limit(10);
+      const matrMatches: Array<{ cvr: string; navn: string }> = [];
       for (const row of (matrNavnRows ?? []) as Array<{ cvr: string; navn: string }>) {
-        // Verificer at matriklen i navnet faktisk matcher (case-insensitive)
         const matrInName = row.navn.match(/\b(\d{1,5}[a-zæøå]{0,3})\b/gi) ?? [];
         const matches = matrInName.some(
           (m) => m.toLowerCase() === ejendommensMatrikel!.toLowerCase()
         );
         if (matches) {
-          cvrCounts.set(row.cvr, (cvrCounts.get(row.cvr) ?? 0) + 15); // Høj score
+          matrMatches.push(row);
+          cvrCounts.set(row.cvr, (cvrCounts.get(row.cvr) ?? 0) + 15);
           if (!cvrReasons.has(row.cvr)) cvrReasons.set(row.cvr, []);
           cvrReasons
             .get(row.cvr)!
             .push(`Foreningens navn matcher matrikelnr ${ejendommensMatrikel}`);
           logger.log(`[ai/find-ejerforening] Matrikel-navnematch: ${row.navn} (CVR ${row.cvr})`);
         }
+      }
+      // Direkte return ved eksakt matrikel-match — ingen Claude nødvendig
+      if (matrMatches.length === 1) {
+        const m = matrMatches[0];
+        const directResult: EjerforeningKandidat[] = [
+          {
+            cvr: m.cvr,
+            navn: m.navn,
+            confidence: 'high',
+            reasoning: `Foreningens navn matcher ejendommens matrikelnr ${ejendommensMatrikel}`,
+            administeredCount: 0,
+          },
+        ];
+        // Cache
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        void (admin as any)
+          .from('ai_find_ejerforening_cache')
+          .upsert(
+            {
+              bfe_nummer: bfeNummer,
+              candidates: directResult,
+              created_at: new Date().toISOString(),
+            },
+            { onConflict: 'bfe_nummer' }
+          )
+          .then(() => {});
+        return NextResponse.json({ candidates: directResult });
       }
     }
 

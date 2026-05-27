@@ -1704,23 +1704,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         .in('candidate_cvr', cvrStrings)
         .eq('verdict', 'verified');
       if (verifRows && verifRows.length > 0) {
-        // Check om der er matrikel-verifikationer — i så fald skip individuelle
-        // BFE'er (de dækkes alle af matrikel-expansion nedenfor)
-        const expandedCvrsCheck = new Set<string>(
-          verifRows.map((r: { candidate_cvr: string }) => r.candidate_cvr)
-        );
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: matrCheck } = await (admin as any)
-          .from('ejerforening_matrikel_verified')
-          .select('candidate_cvr')
-          .in('candidate_cvr', [...expandedCvrsCheck]);
-        const cvrsWithMatrikel = new Set(
-          ((matrCheck ?? []) as Array<{ candidate_cvr: string }>).map((r) => r.candidate_cvr)
-        );
-
-        // Tilføj individuelle BFE'er KUN for CVR'er UDEN matrikel-verifikation
+        // Tilføj individuelle verificerede BFE'er
+        // (matrikel-expansion nedenfor tilføjer resten — syntetiske BFE'er
+        // dedupes via bfeTilCvr.has() check i expansion-loopet)
         for (const row of verifRows as Array<{ bfe_nummer: number; candidate_cvr: string }>) {
-          if (cvrsWithMatrikel.has(row.candidate_cvr)) continue; // Dækkes af matrikel-expansion
           if (bfeTilCvr.has(row.bfe_nummer)) continue;
           administreretByBfe.add(row.bfe_nummer);
           aiVerifiedByBfe.add(row.bfe_nummer);

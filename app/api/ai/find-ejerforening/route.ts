@@ -911,6 +911,26 @@ ${kandidatListe}`;
       )
       .then(() => {});
 
+    // FINAL matrikel-filter — sidste chance at fjerne forkerte foreninger
+    if (ejendommensMatrikel) {
+      const matrLower = ejendommensMatrikel.toLowerCase();
+      const before = result.length;
+      const finalFiltered = result.filter((c) => {
+        const matrInName = c.navn.match(/\b(\d{1,5}[a-zæøå]{0,3})\b/gi) ?? [];
+        if (matrInName.length === 0) return true;
+        return matrInName.some((m) => m.toLowerCase() === matrLower);
+      });
+      if (finalFiltered.length < before) {
+        logger.log(
+          `[ai/find-ejerforening] FINAL matrikel-filter: ${before} → ${finalFiltered.length}`
+        );
+      }
+      return NextResponse.json({
+        candidates: finalFiltered,
+        _debug: { ejendommensMatrikel, filtered: before - finalFiltered.length },
+      });
+    }
+
     return NextResponse.json({ candidates: result, _debug: { ejendommensMatrikel } });
   } catch (err) {
     logger.error('[ai/find-ejerforening] Error:', err instanceof Error ? err.message : 'unknown');

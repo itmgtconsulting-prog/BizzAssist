@@ -776,7 +776,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
         });
       }
     }
-    logger.log(`[ejerlejligheder] Fase 1: ${cacheApplied}/${itemsToEnrich.length} fra cache`);
+    logger.log(
+      `[ejerlejligheder] Fase 1: ${cacheApplied}/${itemsToEnrich.length} fra cache (cachedSummarisk.size=${cachedSummarisk.size}, first UUID=${itemsToEnrich[0]?.uuid?.slice(0, 8) ?? 'none'})`
+    );
 
     // Fase 2: TL-kald for items UDEN cache — kører som fire-and-forget
     // (gemmer i cache så næste request har data). Blokerer IKKE response.
@@ -1246,11 +1248,19 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
     // skjuler enheder på basis af en heuristic der ikke kunne afgøres.
     const filtered = includeUdfasede ? lejligheder : lejligheder.filter((l) => l.udfaset !== true);
 
+    const withEjerCount = filtered.filter(
+      (l) => l.ejer && l.ejer !== 'Ukendt' && l.ejer !== '–'
+    ).length;
     return NextResponse.json(
       { lejligheder: filtered, fejl: null },
       {
         status: 200,
-        headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
+        headers: {
+          'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600',
+          'X-Cache-Applied': String(cacheApplied),
+          'X-With-Ejer': String(withEjerCount),
+          'X-Total': String(filtered.length),
+        },
       }
     );
   } catch (err) {

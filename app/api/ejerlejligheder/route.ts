@@ -712,10 +712,67 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
     const MAX_TL_ENRICH = 60;
     const itemsToEnrich = lejlighedItems.slice(0, MAX_TL_ENRICH);
 
+    // Cache-first: hent allerede-parsed data fra tinglysning_summarisk_cache
+    // i stedet for at kalde TL S2S for hver lejlighed (undgår 429 rate-limit).
+    const cachedSummarisk = new Map<
+      string,
+      {
+        ejere?: Array<{
+          navn?: string;
+          cvr?: string | null;
+          type?: string;
+          kontantKoebesum?: number | null;
+          iAltKoebesum?: number | null;
+          overtagelsesdato?: string | null;
+        }>;
+      }
+    >();
+    try {
+      const cacheAdmin = createAdminClient();
+      const uuids = itemsToEnrich.map((it) => it.uuid);
+      if (uuids.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: cacheRows } = await (cacheAdmin as any)
+          .from('tinglysning_summarisk_cache')
+          .select('uuid, payload')
+          .in('uuid', uuids);
+        for (const row of (cacheRows ?? []) as Array<{
+          uuid: string;
+          payload: Record<string, unknown> | null;
+        }>) {
+          if (row.payload) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            cachedSummarisk.set(row.uuid, row.payload as any);
+          }
+        }
+        logger.log(
+          `[ejerlejligheder] Cache hit: ${cachedSummarisk.size}/${uuids.length} summarisk`
+        );
+      }
+    } catch {
+      /* cache lookup non-fatal */
+    }
+
     for (let i = 0; i < itemsToEnrich.length; i += CONCURRENCY) {
       const batch = itemsToEnrich.slice(i, i + CONCURRENCY);
       const results = await Promise.allSettled(
         batch.map(async (item) => {
+          // Cache-first: brug cached payload hvis tilgængeligt
+          const cached = cachedSummarisk.get(item.uuid);
+          if (cached?.ejere && cached.ejere.length > 0) {
+            const lastEjer = cached.ejere[cached.ejere.length - 1];
+            const ejer = lastEjer.navn ?? 'Ukendt';
+            const ejertype = lastEjer.cvr
+              ? ('selskab' as const)
+              : lastEjer.type === 'selskab'
+                ? ('selskab' as const)
+                : ('person' as const);
+            const koebspris = lastEjer.kontantKoebesum ?? lastEjer.iAltKoebesum ?? null;
+            const koebsdato = lastEjer.overtagelsesdato ?? null;
+            summariskMap.set(item.uuid, { areal: null, ejer, ejertype, koebspris, koebsdato });
+            return;
+          }
+
           try {
             const sumResult = await tlFetch(`/ejdsummarisk/${item.uuid}`);
             if (sumResult.status !== 200 || !sumResult.body) return;
@@ -783,6 +840,37 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
             }
 
             summariskMap.set(item.uuid, { areal, ejer, ejertype, koebspris, koebsdato });
+
+            // Cache-write: gem parsed data så næste kald er instant
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              void (createAdminClient() as any)
+                .from('tinglysning_summarisk_cache')
+                .upsert(
+                  {
+                    uuid: item.uuid,
+                    bfe_nummer: item.bfe ?? null,
+                    payload: {
+                      ejere: [
+                        {
+                          navn: ejer,
+                          type: ejertype,
+                          kontantKoebesum: koebspris,
+                          overtagelsesdato: koebsdato,
+                        },
+                      ],
+                      haeftelser: [],
+                      servitutter: [],
+                      fejl: null,
+                    },
+                    fetched_at: new Date().toISOString(),
+                  },
+                  { onConflict: 'uuid' }
+                )
+                .then(() => {});
+            } catch {
+              /* cache write non-fatal */
+            }
           } catch (err) {
             logger.warn(
               `[ejerlejligheder] Summarisk fejl for ${item.uuid}:`,

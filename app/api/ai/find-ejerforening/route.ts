@@ -564,21 +564,20 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // matcher for en ejendom på Vigerslevvej 146.
     // Filtrerer direkte i query til foreninger (ejerforening/e/f/a/b/andelsbolig)
     // for at undgå at irrelevante virksomheder fylder limit op.
-    const foreningPatterns = [
-      `navn.ilike.%ejerforening%${gadenavn}%`,
-      `navn.ilike.%E/F %${gadenavn}%`,
-      `navn.ilike.%A/B %${gadenavn}%`,
-      `navn.ilike.%andelsbolig%${gadenavn}%`,
-      `navn.ilike.%boligforening%${gadenavn}%`,
-      // Omvendt rækkefølge: gade først, forening-ord efter
-      `navn.ilike.%${gadenavn}%ejerforening%`,
-      `navn.ilike.%${gadenavn}%forening%`,
-    ].join(',');
+    // FTS i stedet for ILIKE (ILIKE timeouter på 2.1M rows).
+    // Søger ejerforeninger hvis navn indeholder gadenavn via GIN tsv-index.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: navnMatchRows } = await (admin as any)
       .from('cvr_virksomhed')
       .select('cvr, navn')
-      .or(foreningPatterns)
+      .textSearch(
+        'navn',
+        `${gadenavn} ejerforening | ${gadenavn} forening | ${gadenavn} andelsbolig`,
+        {
+          type: 'plain',
+          config: 'danish',
+        }
+      )
       .limit(50);
 
     // Matrikel-baseret navne-søgning: find foreninger hvis navn indeholder

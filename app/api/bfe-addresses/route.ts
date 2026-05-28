@@ -290,7 +290,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         etage: string | null;
         doer: string | null;
       }>) {
-        if (row.adresse) {
+        // Skip placeholder-adresser ("BFE 12345") — de er uløste
+        if (row.adresse && !/^BFE \d+$/.test(row.adresse)) {
           cachedMap.set(String(row.bfe_nummer), {
             adresse: row.adresse,
             postnr: row.postnr,

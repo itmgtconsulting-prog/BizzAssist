@@ -2684,7 +2684,8 @@ async function enrichPropertyNodes(
       etage: string | null;
       doer: string | null;
     }>) {
-      if (row.adresse) {
+      // Skip placeholder-adresser ("BFE 12345") — de er uløste og skal re-resolves
+      if (row.adresse && !/^BFE \d+$/.test(row.adresse)) {
         adresseMap.set(row.bfe_nummer, {
           adresse: row.adresse,
           postnr: row.postnr,

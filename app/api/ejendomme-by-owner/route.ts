@@ -824,7 +824,8 @@ async function hentDawaBfeData(bfe: number): Promise<DawaBfeAdresse> {
           )
           .eq('bfe_nummer', bfe)
           .maybeSingle();
-        if (cached?.adresse) {
+        // Skip placeholder-adresser ("BFE 12345") — de er uløste
+        if (cached?.adresse && !/^BFE \d+$/.test(cached.adresse)) {
           return {
             adresse: cached.adresse,
             postnr: cached.postnr ?? null,

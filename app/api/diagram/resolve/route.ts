@@ -3114,6 +3114,32 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
     // Berig property-noder med adresser (best-effort, direkte via admin client)
     await enrichPropertyNodes(graph, admin);
 
+    // Post-processing: fjern person-noder der er duplikater af company-noder.
+    // EJF registrerer nogle virksomheder som person-ejere via enhedsNummer.
+    const companyLabels = new Map(
+      graph.nodes
+        .filter((n) => n.type === 'company' || n.type === 'main')
+        .map((n) => [n.label?.toLowerCase() ?? '', n.id])
+    );
+    const personDupes = graph.nodes.filter(
+      (n) => n.type === 'person' && companyLabels.has(n.label?.toLowerCase() ?? '')
+    );
+    for (const dupe of personDupes) {
+      const companyId = companyLabels.get(dupe.label?.toLowerCase() ?? '');
+      if (!companyId) continue;
+      // Redirect alle edges fra person til company
+      for (const edge of graph.edges) {
+        if (edge.from === dupe.id) edge.from = companyId;
+        if (edge.to === dupe.id) edge.to = companyId;
+      }
+      // Fjern person-noden
+      const idx = graph.nodes.indexOf(dupe);
+      if (idx >= 0) graph.nodes.splice(idx, 1);
+    }
+    if (personDupes.length > 0) {
+      logger.log(`[diagram/resolve] Dedup: ${personDupes.length} person→company redirects`);
+    }
+
     return NextResponse.json({ graph });
   } catch (err) {
     // BIZZ-1807: Log fejl til Sentry + console for debugging

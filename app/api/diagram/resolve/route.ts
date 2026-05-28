@@ -1174,20 +1174,42 @@ async function resolvePropertyGraph(
         if (/^Ukendt ejer/.test(resolvedName)) {
           resolvedName = personEn ? `Person ${personEn}` : 'Person';
         }
-        nodes.push({
-          id: ownerId,
-          label: resolvedName,
-          type: 'person',
-          enhedsNummer: personEn,
-          link: personEn ? `/dashboard/owners/${personEn}` : undefined,
+        // Tjek om denne "person" faktisk er en virksomhed der allerede er i grafen.
+        // EJF kan registrere virksomheder som person-ejere via enhedsNummer.
+        const existingCompany = nodes.find(
+          (n) =>
+            (n.type === 'company' || n.type === 'main') &&
+            n.label?.toLowerCase() === resolvedName.toLowerCase()
+        );
+        if (existingCompany) {
+          // Brug eksisterende company-node i stedet for at oprette person-duplikat
+          edges.push({
+            from: existingCompany.id,
+            to: mainId,
+            ejerandel: formatEjerandel(owner.ejerandel_taeller, owner.ejerandel_naevner),
+          });
+        } else {
+          nodes.push({
+            id: ownerId,
+            label: resolvedName,
+            type: 'person',
+            enhedsNummer: personEn,
+            link: personEn ? `/dashboard/owners/${personEn}` : undefined,
+          });
+          nodeIds.add(ownerId);
+          edges.push({
+            from: ownerId,
+            to: mainId,
+            ejerandel: formatEjerandel(owner.ejerandel_taeller, owner.ejerandel_naevner),
+          });
+        }
+      } else {
+        edges.push({
+          from: ownerId,
+          to: mainId,
+          ejerandel: formatEjerandel(owner.ejerandel_taeller, owner.ejerandel_naevner),
         });
-        nodeIds.add(ownerId);
       }
-      edges.push({
-        from: ownerId,
-        to: mainId,
-        ejerandel: formatEjerandel(owner.ejerandel_taeller, owner.ejerandel_naevner),
-      });
     } else if (owner.ejer_type === 'status') {
       // Status-tekst: "Opdelt i anpart", "Opdelt i ejerlejligheder" etc.
       // Vises som status-node (grå) i stedet for person-node

@@ -3140,11 +3140,27 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
       logger.log(`[diagram/resolve] Dedup: ${personDupes.length} person→company redirects`);
     }
 
-    // Fjern ophørte virksomheder (isCeased) der ikke er hovedvirksomheden.
-    // Ophørte selskaber i koncernstrukturen er historiske og forvirrer diagrammet.
+    // Fjern ophørte virksomheder — tjek BÅDE isCeased flag OG cvr_virksomhed.ophoert
+    // (noder fra enhedsNummer-path mangler isCeased flag).
     const mainCvr = graph.nodes.find((n) => n.type === 'main')?.cvr;
+    const companyCvrs = graph.nodes
+      .filter((n) => n.type === 'company' && n.cvr && n.cvr !== mainCvr)
+      .map((n) => String(n.cvr));
+    const ceasedCvrs = new Set<string>();
+    if (companyCvrs.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: cvrRows } = await (admin as any)
+        .from('cvr_virksomhed')
+        .select('cvr')
+        .in('cvr', companyCvrs)
+        .not('ophoert', 'is', null);
+      for (const r of (cvrRows ?? []) as Array<{ cvr: string }>) {
+        ceasedCvrs.add(r.cvr);
+      }
+    }
     const ceasedNodes = graph.nodes.filter(
-      (n) => n.type === 'company' && n.isCeased && n.cvr !== mainCvr
+      (n) =>
+        n.type === 'company' && n.cvr !== mainCvr && (n.isCeased || ceasedCvrs.has(String(n.cvr)))
     );
     for (const ceased of ceasedNodes) {
       // Redirect edges til parent (fjern children-forbindelser)

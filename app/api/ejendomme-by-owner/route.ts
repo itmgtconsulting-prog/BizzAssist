@@ -1291,28 +1291,23 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       token = await getCertOAuthToken();
     }
 
+    // IKKE early return ved OAuth-fejl — cache-baserede lookups (ejf_ejerskab,
+    // ai_ejf_ejendom_cache, ejerforening_verifications) kører uden OAuth.
     if (!token) {
-      return NextResponse.json({
-        ejendomme: [],
-        totalBfe: 0,
-        offset,
-        limit,
-        manglerNoegle: false,
-        manglerAdgang: false,
-        fejl: 'Kunne ikke hente OAuth token',
-      });
+      logger.warn('[ejendomme-by-owner] OAuth token fejlede — fortsætter med cache-only');
     }
 
     /* ── Trin 1: Find alle BFE-numre (CVR + person lookups parallelt) ── */
+    // Skip live EJF-kald hvis OAuth fejlede (cache-only mode)
     const cvrSettled =
-      cvrNumre.length > 0
-        ? await Promise.allSettled(cvrNumre.map((cvr) => hentBfeByCvr(cvr, token!)))
+      cvrNumre.length > 0 && token
+        ? await Promise.allSettled(cvrNumre.map((cvr) => hentBfeByCvr(cvr, token)))
         : [];
 
     // BIZZ-264: Person lookups via enhedsNummer
     const personSettled =
-      enhedsNumre.length > 0
-        ? await Promise.allSettled(enhedsNumre.map((en) => hentBfeByPerson(en, token!)))
+      enhedsNumre.length > 0 && token
+        ? await Promise.allSettled(enhedsNumre.map((en) => hentBfeByPerson(en, token)))
         : [];
 
     const cvrResults = cvrSettled.map((settled, i) => {

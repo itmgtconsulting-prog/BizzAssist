@@ -1773,9 +1773,15 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         // dedupes via bfeTilCvr.has() check i expansion-loopet)
         for (const row of verifRows as Array<{ bfe_nummer: number; candidate_cvr: string }>) {
           if (bfeTilCvr.has(row.bfe_nummer)) continue;
+          // Skip hvis CVR allerede har syntetiske entries fra matrikel-expansion
+          const cvrPadded = row.candidate_cvr.padStart(8, '0');
+          const hasSynthetic = [...bfeTilCvr.entries()].some(
+            ([bfe, owner]) => bfe < 0 && owner === cvrPadded
+          );
+          if (hasSynthetic) continue;
           administreretByBfe.add(row.bfe_nummer);
           aiVerifiedByBfe.add(row.bfe_nummer);
-          bfeTilCvr.set(row.bfe_nummer, row.candidate_cvr.padStart(8, '0'));
+          bfeTilCvr.set(row.bfe_nummer, cvrPadded);
           aktivByBfe.set(row.bfe_nummer, true);
         }
         logger.log(

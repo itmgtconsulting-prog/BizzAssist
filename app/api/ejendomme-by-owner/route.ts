@@ -1674,14 +1674,66 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
           .eq('cvr', cvr)
           .maybeSingle();
         if (aiCache?.candidates && Array.isArray(aiCache.candidates)) {
+          // Standard BFE-baserede kandidater
           for (const c of aiCache.candidates as Array<{
-            bfeNummer: number;
-            confidence: string;
+            bfeNummer?: number;
+            confidence?: string;
           }>) {
             if (c.confidence !== 'high' || !c.bfeNummer || bfeTilCvr.has(c.bfeNummer)) continue;
             administreretByBfe.add(c.bfeNummer);
             bfeTilCvr.set(c.bfeNummer, cvr.padStart(8, '0'));
             aktivByBfe.set(c.bfeNummer, true);
+          }
+          // Matrikel-baserede kandidater (verificeret via AI)
+          for (const c of aiCache.candidates as Array<{
+            matrikelnr?: string;
+            ejerlavKode?: number;
+            verified?: boolean;
+          }>) {
+            if (!c.verified || !c.matrikelnr || !c.ejerlavKode) continue;
+            try {
+              const dawaRes = await fetch(
+                `https://api.dataforsyningen.dk/adresser?ejerlavkode=${c.ejerlavKode}&matrikelnr=${encodeURIComponent(c.matrikelnr)}&format=json&struktur=mini&per_side=200`,
+                { signal: AbortSignal.timeout(5000) }
+              );
+              if (!dawaRes.ok) continue;
+              const adresser = (await dawaRes.json()) as Array<{
+                id: string;
+                vejnavn: string;
+                husnr: string;
+                etage: string | null;
+                dør: string | null;
+                postnr: string;
+                postnrnavn: string;
+              }>;
+              let expanded = 0;
+              for (const a of adresser) {
+                const synBfe = -(Math.abs(c.ejerlavKode) * 10000 + bfeTilCvr.size);
+                administreretByBfe.add(synBfe);
+                aiVerifiedByBfe.add(synBfe);
+                bfeTilCvr.set(synBfe, cvr.padStart(8, '0'));
+                aktivByBfe.set(synBfe, true);
+                dawaResolvedMap.set(synBfe, {
+                  adresse: `${a.vejnavn} ${a.husnr}`,
+                  etage: a.etage ?? null,
+                  doer: a.dør ?? null,
+                  postnr: a.postnr,
+                  postnrnavn: a.postnrnavn,
+                  kommune: null,
+                  kommuneKode: null,
+                  ejendomstype: 'Ejerlejlighed',
+                  dawaId: a.id,
+                });
+                expanded++;
+              }
+              if (expanded > 0) {
+                logger.log(
+                  `[ejendomme-by-owner] Matrikel-expansion: ${expanded} adresser for ${c.matrikelnr}`
+                );
+              }
+            } catch {
+              /* matrikel expansion non-fatal */
+            }
           }
         }
       }

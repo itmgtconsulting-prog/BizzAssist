@@ -245,9 +245,21 @@ async function resolveCompanyGraph(
 
       if (!parentOwners?.length) return [];
 
-      const newCvrs = (parentOwners as Array<{ ejer_cvr: string }>)
-        .map((r) => r.ejer_cvr)
-        .filter((c) => !nodeIds.has(`cvr-${c}`));
+      // Filtrer null-ejerandel entries når andre ejere har reel ejerandel
+      const typed = parentOwners as Array<{
+        ejer_cvr: string;
+        ejet_cvr: string;
+        ejerandel_min: number | null;
+        ejerandel_max: number | null;
+      }>;
+      const targetsWithReal = new Set(
+        typed.filter((r) => r.ejerandel_min != null).map((r) => r.ejet_cvr)
+      );
+      const filtered = typed.filter(
+        (r) => r.ejerandel_min != null || !targetsWithReal.has(r.ejet_cvr)
+      );
+
+      const newCvrs = filtered.map((r) => r.ejer_cvr).filter((c) => !nodeIds.has(`cvr-${c}`));
       const uniqueNewCvrs = [...new Set(newCvrs)];
       if (uniqueNewCvrs.length === 0) return [];
 
@@ -271,14 +283,7 @@ async function resolveCompanyGraph(
 
       // Byg ejerandel-map: ejer_cvr+ejet_cvr → andel
       const ejerandelMap = new Map(
-        (
-          (parentOwners ?? []) as Array<{
-            ejer_cvr: string;
-            ejet_cvr: string;
-            ejerandel_min: number | null;
-            ejerandel_max: number | null;
-          }>
-        ).map((r) => [
+        filtered.map((r) => [
           `${r.ejer_cvr}->${r.ejet_cvr}`,
           formatEjerandelRange(r.ejerandel_min, r.ejerandel_max),
         ])
@@ -304,8 +309,8 @@ async function resolveCompanyGraph(
         addedCvrs.push(pCvr);
       }
 
-      // Tilføj edges fra ejere til deres børn
-      for (const row of (parentOwners ?? []) as Array<{
+      // Tilføj edges fra ejere til deres børn (kun filtrerede med reel ejerandel)
+      for (const row of filtered as Array<{
         ejer_cvr: string;
         ejet_cvr: string;
       }>) {
@@ -2937,8 +2942,270 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
     // BIZZ-1587: Berig fejlcachede person-enhedsnumre der faktisk er virksomheder
     await enrichVirksomhedFejlcacheNodes(graph);
 
-    // Berig property-noder med adresser (best-effort)
-    await enrichPropertyNodes(graph, reqHost, reqCookie);
+    // Berig property-noder med adresser (best-effort, direkte via admin client)
+    await enrichPropertyNodes(graph, admin);
+
+    // Tilføj manglende company→company edges fra cvr_virksomhed_ejerskab.
+    // EJF viser kun BFE-ejerskab (flad) — CVR-ejerskab viser koncernhierarki.
+    const companyCvrsInGraph = graph.nodes
+      .filter((n) => (n.type === 'company' || n.type === 'main') && n.cvr)
+      .map((n) => ({ id: n.id, cvr: String(n.cvr) }));
+    if (companyCvrsInGraph.length > 1) {
+      try {
+        const cvrList = companyCvrsInGraph.map((c) => c.cvr);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: ownershipRows } = await (admin as any)
+          .from('cvr_virksomhed_ejerskab')
+          .select('ejer_cvr, ejet_cvr, ejerandel_pct, ejerandel_min')
+          .in('ejet_cvr', cvrList)
+          .in('ejer_cvr', cvrList)
+          .is('gyldig_til', null);
+
+        // Filtrer null-ejerandel entries når andre ejere har reel ejerandel.
+        // Entries med null ejerandel_pct + null ejerandel_min er typisk
+        // historiske/administrative (fx Pharma IT ManCo → ProductLife).
+        const targetsWithRealOwner = new Set(
+          (
+            (ownershipRows ?? []) as Array<{
+              ejet_cvr: string;
+              ejerandel_pct: number | null;
+              ejerandel_min: number | null;
+            }>
+          )
+            .filter((r) => r.ejerandel_pct != null || r.ejerandel_min != null)
+            .map((r) => r.ejet_cvr)
+        );
+
+        for (const row of (ownershipRows ?? []) as Array<{
+          ejer_cvr: string;
+          ejet_cvr: string;
+          ejerandel_pct: number | null;
+          ejerandel_min: number | null;
+        }>) {
+          // Skip null-ejerandel entries hvis target har andre ejere med reel andel
+          if (
+            row.ejerandel_pct == null &&
+            row.ejerandel_min == null &&
+            targetsWithRealOwner.has(row.ejet_cvr)
+          ) {
+            continue;
+          }
+          const fromNode = companyCvrsInGraph.find((c) => c.cvr === row.ejer_cvr);
+          const toNode = companyCvrsInGraph.find((c) => c.cvr === row.ejet_cvr);
+          if (!fromNode || !toNode) continue;
+          // Tjek om denne edge allerede eksisterer
+          const exists = graph.edges.some((e) => e.from === fromNode.id && e.to === toNode.id);
+          if (!exists) {
+            graph.edges.push({
+              from: fromNode.id,
+              to: toNode.id,
+              ejerandel: row.ejerandel_pct ? `${row.ejerandel_pct}%` : undefined,
+            });
+          }
+        }
+      } catch {
+        /* CVR ownership lookup non-fatal */
+      }
+    }
+
+    // Post-processing: fjern person-noder der er duplikater af company-noder.
+    // EJF registrerer nogle virksomheder som person-ejere via enhedsNummer.
+    const companyLabels = new Map(
+      graph.nodes
+        .filter((n) => n.type === 'company' || n.type === 'main')
+        .map((n) => [n.label?.toLowerCase() ?? '', n.id])
+    );
+    const personDupes = graph.nodes.filter(
+      (n) => n.type === 'person' && companyLabels.has(n.label?.toLowerCase() ?? '')
+    );
+    for (const dupe of personDupes) {
+      const companyId = companyLabels.get(dupe.label?.toLowerCase() ?? '');
+      if (!companyId) continue;
+      // Redirect alle edges fra person til company
+      for (const edge of graph.edges) {
+        if (edge.from === dupe.id) edge.from = companyId;
+        if (edge.to === dupe.id) edge.to = companyId;
+      }
+      // Fjern person-noden
+      const idx = graph.nodes.indexOf(dupe);
+      if (idx >= 0) graph.nodes.splice(idx, 1);
+    }
+    if (personDupes.length > 0) {
+      logger.log(`[diagram/resolve] Dedup: ${personDupes.length} person→company redirects`);
+    }
+
+    // Fjern ophørte virksomheder — tjek BÅDE isCeased flag OG cvr_virksomhed.ophoert
+    // (noder fra enhedsNummer-path mangler isCeased flag).
+    const mainCvr = graph.nodes.find((n) => n.type === 'main')?.cvr;
+    const companyCvrs = graph.nodes
+      .filter((n) => n.type === 'company' && n.cvr && n.cvr !== mainCvr)
+      .map((n) => String(n.cvr));
+    const ceasedCvrs = new Set<string>();
+    if (companyCvrs.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: cvrRows } = await (admin as any)
+        .from('cvr_virksomhed')
+        .select('cvr')
+        .in('cvr', companyCvrs)
+        .not('ophoert', 'is', null);
+      for (const r of (cvrRows ?? []) as Array<{ cvr: string }>) {
+        ceasedCvrs.add(r.cvr);
+      }
+    }
+    const ceasedNodes = graph.nodes.filter(
+      (n) =>
+        n.type === 'company' && n.cvr !== mainCvr && (n.isCeased || ceasedCvrs.has(String(n.cvr)))
+    );
+    for (const ceased of ceasedNodes) {
+      // Redirect edges til parent (fjern children-forbindelser)
+      const outgoing = graph.edges.filter((e) => e.from === ceased.id);
+      const _incoming = graph.edges.filter((e) => e.to === ceased.id);
+      // Fjern alle edges til/fra ophørt virksomhed
+      graph.edges = graph.edges.filter((e) => e.from !== ceased.id && e.to !== ceased.id);
+      // Fjern noden
+      const idx = graph.nodes.indexOf(ceased);
+      if (idx >= 0) graph.nodes.splice(idx, 1);
+      // Fjern også ejendomme der KUN var forbundet til den ophørte virksomhed
+      for (const edge of outgoing) {
+        const targetNode = graph.nodes.find((n) => n.id === edge.to);
+        if (targetNode?.type === 'property') {
+          const otherEdges = graph.edges.filter((e) => e.to === edge.to);
+          if (otherEdges.length === 0) {
+            const propIdx = graph.nodes.indexOf(targetNode);
+            if (propIdx >= 0) graph.nodes.splice(propIdx, 1);
+          }
+        }
+      }
+    }
+    if (ceasedNodes.length > 0) {
+      logger.log(`[diagram/resolve] Removed ${ceasedNodes.length} ceased companies`);
+    }
+
+    // Dedup: fjern duplikat company-noder (samme CVR, forskellige IDs)
+    const seenCvrs = new Map<number, string>();
+    const cvrDupes: typeof graph.nodes = [];
+    for (const node of graph.nodes) {
+      if ((node.type === 'company' || node.type === 'main') && node.cvr) {
+        if (seenCvrs.has(node.cvr)) {
+          cvrDupes.push(node);
+        } else {
+          seenCvrs.set(node.cvr, node.id);
+        }
+      }
+    }
+    for (const dupe of cvrDupes) {
+      const keepId = seenCvrs.get(dupe.cvr!);
+      if (!keepId) continue;
+      for (const edge of graph.edges) {
+        if (edge.from === dupe.id) edge.from = keepId;
+        if (edge.to === dupe.id) edge.to = keepId;
+      }
+      const idx = graph.nodes.indexOf(dupe);
+      if (idx >= 0) graph.nodes.splice(idx, 1);
+    }
+    if (cvrDupes.length > 0) {
+      logger.log(`[diagram/resolve] CVR dedup: ${cvrDupes.length} duplicate companies removed`);
+    }
+
+    // Fjern redundante edges: hvis A→B og B→C, fjern A→C (indirekte).
+    // EJF registrerer alle ejere (direkte+indirekte) på en ejendom,
+    // men diagrammet skal vise hierarkiet, ikke den flade liste.
+    // Byg adjacency: for hvert node-id, hvilke children har den?
+    const children = new Map<string, Set<string>>();
+    for (const edge of graph.edges) {
+      if (!children.has(edge.from)) children.set(edge.from, new Set());
+      children.get(edge.from)!.add(edge.to);
+    }
+    // For hvert par (from, to): er der en mellemliggende sti from→X→...→to?
+    function hasIndirectPath(from: string, to: string, maxDepth = 4): boolean {
+      const directChildren = children.get(from);
+      if (!directChildren) return false;
+      for (const mid of directChildren) {
+        if (mid === to) continue; // Det er den direkte edge vi tester
+        // Tjek om mid→...→to (BFS)
+        const visited = new Set<string>([from, mid]);
+        const queue = [mid];
+        let depth = 0;
+        while (queue.length > 0 && depth < maxDepth) {
+          const size = queue.length;
+          for (let i = 0; i < size; i++) {
+            const current = queue.shift()!;
+            const next = children.get(current);
+            if (!next) continue;
+            for (const n of next) {
+              if (n === to) return true; // Fandt indirekte sti
+              if (!visited.has(n)) {
+                visited.add(n);
+                queue.push(n);
+              }
+            }
+          }
+          depth++;
+        }
+      }
+      return false;
+    }
+    const redundantEdges: number[] = [];
+    for (let i = 0; i < graph.edges.length; i++) {
+      const edge = graph.edges[i];
+      if (hasIndirectPath(edge.from, edge.to)) {
+        redundantEdges.push(i);
+      }
+    }
+    // Fjern bagfra for at bevare indices
+    for (let i = redundantEdges.length - 1; i >= 0; i--) {
+      graph.edges.splice(redundantEdges[i], 1);
+    }
+    if (redundantEdges.length > 0) {
+      logger.log(
+        `[diagram/resolve] Removed ${redundantEdges.length} redundant edges (indirect paths)`
+      );
+    }
+
+    // Fjern duplikat-edges (samme from+to)
+    const edgeKeys = new Set<string>();
+    graph.edges = graph.edges.filter((e) => {
+      const key = `${e.from}→${e.to}`;
+      if (edgeKeys.has(key)) return false;
+      edgeKeys.add(key);
+      return true;
+    });
+
+    // Fjern person→company edges når personen ejer VIA et mellemliggende selskab.
+    // EJF registrerer beneficial owner direkte, men hierarkiet bør vises.
+    // Gælder også person→property: hvis personen ejer via company→property.
+    const personNodes2 = new Set(graph.nodes.filter((n) => n.type === 'person').map((n) => n.id));
+    const companyNodes2 = new Set(
+      graph.nodes.filter((n) => n.type === 'company' || n.type === 'main').map((n) => n.id)
+    );
+    // Byg children-map for hurtig opslag
+    const childrenMap = new Map<string, Set<string>>();
+    for (const e of graph.edges) {
+      if (!childrenMap.has(e.from)) childrenMap.set(e.from, new Set());
+      childrenMap.get(e.from)!.add(e.to);
+    }
+    // Fjern person→company/main edges når target allerede ejes af selskaber.
+    // EJF registrerer beneficial owner direkte, men personen ejer typisk
+    // via holdingselskaber. Fjern kun edges til company/main targets —
+    // behold person→property edges (personligt ejede ejendomme).
+    for (const targetId of companyNodes2) {
+      const companyEdges = graph.edges.filter(
+        (e) => e.to === targetId && companyNodes2.has(e.from) && e.from !== targetId
+      );
+      if (companyEdges.length > 0) {
+        const before = graph.edges.length;
+        graph.edges = graph.edges.filter((e) => {
+          if (e.to !== targetId) return true;
+          if (!personNodes2.has(e.from)) return true;
+          return false; // Fjern person→company/main
+        });
+        if (graph.edges.length < before) {
+          logger.log(
+            `[diagram/resolve] Removed ${before - graph.edges.length} person→company edges (company ownership exists)`
+          );
+        }
+      }
+    }
 
     return NextResponse.json({ graph });
   } catch (err) {

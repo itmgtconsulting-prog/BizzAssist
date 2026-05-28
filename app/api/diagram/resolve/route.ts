@@ -3114,6 +3114,44 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
     // Berig property-noder med adresser (best-effort, direkte via admin client)
     await enrichPropertyNodes(graph, admin);
 
+    // Tilføj manglende company→company edges fra cvr_virksomhed_ejerskab.
+    // EJF viser kun BFE-ejerskab (flad) — CVR-ejerskab viser koncernhierarki.
+    const companyCvrsInGraph = graph.nodes
+      .filter((n) => (n.type === 'company' || n.type === 'main') && n.cvr)
+      .map((n) => ({ id: n.id, cvr: String(n.cvr) }));
+    if (companyCvrsInGraph.length > 1) {
+      try {
+        const cvrList = companyCvrsInGraph.map((c) => c.cvr);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: ownershipRows } = await (admin as any)
+          .from('cvr_virksomhed_ejerskab')
+          .select('ejer_cvr, ejet_cvr, ejerandel_pct')
+          .in('ejet_cvr', cvrList)
+          .in('ejer_cvr', cvrList)
+          .is('gyldig_til', null);
+        for (const row of (ownershipRows ?? []) as Array<{
+          ejer_cvr: string;
+          ejet_cvr: string;
+          ejerandel_pct: number | null;
+        }>) {
+          const fromNode = companyCvrsInGraph.find((c) => c.cvr === row.ejer_cvr);
+          const toNode = companyCvrsInGraph.find((c) => c.cvr === row.ejet_cvr);
+          if (!fromNode || !toNode) continue;
+          // Tjek om denne edge allerede eksisterer
+          const exists = graph.edges.some((e) => e.from === fromNode.id && e.to === toNode.id);
+          if (!exists) {
+            graph.edges.push({
+              from: fromNode.id,
+              to: toNode.id,
+              ejerandel: row.ejerandel_pct ? `${row.ejerandel_pct}%` : undefined,
+            });
+          }
+        }
+      } catch {
+        /* CVR ownership lookup non-fatal */
+      }
+    }
+
     // Post-processing: fjern person-noder der er duplikater af company-noder.
     // EJF registrerer nogle virksomheder som person-ejere via enhedsNummer.
     const companyLabels = new Map(

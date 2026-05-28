@@ -227,9 +227,50 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const list = bfes.split(',').filter(Boolean).slice(0, MAX_BATCH);
 
   try {
-    const results = await Promise.all(list.map((b) => resolveOne(b)));
+    // BIZZ-1871: Cache-first — hent fra bfe_adresse_cache før live resolve
+    const { createAdminClient } = await import('@/lib/supabase/admin');
+    const admin = createAdminClient();
+    const bfeNums = list.map((b) => parseInt(b, 10)).filter((n) => !isNaN(n));
+    const cachedMap = new Map<string, AdresseRow>();
+    if (bfeNums.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: cached } = await (admin as any)
+        .from('bfe_adresse_cache')
+        .select('bfe_nummer, adresse, postnr, postnrnavn, dawa_id, ejendomstype, etage, doer')
+        .in('bfe_nummer', bfeNums);
+      for (const row of (cached ?? []) as Array<{
+        bfe_nummer: number;
+        adresse: string | null;
+        postnr: string | null;
+        postnrnavn: string | null;
+        dawa_id: string | null;
+        ejendomstype: string | null;
+        etage: string | null;
+        doer: string | null;
+      }>) {
+        // Skip placeholder-adresser ("BFE 12345") — de er uløste
+        if (row.adresse && !/^BFE \d+$/.test(row.adresse)) {
+          cachedMap.set(String(row.bfe_nummer), {
+            adresse: row.adresse,
+            postnr: row.postnr,
+            by: row.postnrnavn,
+            kommune: null,
+            dawaId: row.dawa_id,
+            ejendomstype: row.ejendomstype,
+            etage: row.etage,
+            doer: row.doer,
+          });
+        }
+      }
+    }
+    // Kun resolve BFE'er der IKKE er i cache
+    const uncached = list.filter((b) => !cachedMap.has(b));
+    const results = await Promise.all(uncached.map((b) => resolveOne(b)));
     const out: Record<string, AdresseRow> = {};
-    for (let i = 0; i < list.length; i++) out[list[i]] = results[i];
+    // Merge cache + live results
+    for (const b of list) {
+      out[b] = cachedMap.get(b) ?? results[uncached.indexOf(b)] ?? empty();
+    }
 
     return NextResponse.json(out, {
       headers: {

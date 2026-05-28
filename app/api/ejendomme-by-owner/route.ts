@@ -1714,8 +1714,24 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
           bfeTilCvr.set(row.bfe_nummer, row.candidate_cvr.padStart(8, '0'));
           aktivByBfe.set(row.bfe_nummer, true);
         }
+        // Saml dawaId'er fra individuelle BFE'er for dedup mod expansion
+        const existingDawaIds = new Set<string>();
+        for (const row of verifRows as Array<{ bfe_nummer: number }>) {
+          const resolved = dawaResolvedMap.get(row.bfe_nummer);
+          if (resolved?.dawaId) existingDawaIds.add(resolved.dawaId);
+          // Også tjek bfe_adresse_cache
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: cacheRow } = await (admin as any)
+            .from('bfe_adresse_cache')
+            .select('dawa_id')
+            .eq('bfe_nummer', row.bfe_nummer)
+            .maybeSingle();
+          if ((cacheRow as { dawa_id: string } | null)?.dawa_id) {
+            existingDawaIds.add((cacheRow as { dawa_id: string }).dawa_id);
+          }
+        }
         logger.log(
-          `[ejendomme-by-owner] ejerforening_verifications: ${verifRows.length} BFE'er (${cvrsWithMatrikel.size} CVR dækket af matrikel)`
+          `[ejendomme-by-owner] ejerforening_verifications: ${verifRows.length} BFE'er tilføjet, ${existingDawaIds.size} dawaIds for dedup`
         );
 
         // Matrikel-expansion via ejerforening_matrikel_verified.
@@ -1752,7 +1768,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
               }>;
               let matrikelExpanded = 0;
               for (const a of adresser) {
-                // Brug syntetisk BFE (negativ) for adresser uden BFE i cache
+                // Skip adresser der allerede har en individuel BFE (dedup)
+                if (a.id && existingDawaIds.has(a.id)) continue;
                 const synBfe = -(Math.abs(matr.ejerlav_kode) * 10000 + bfeTilCvr.size);
                 if (bfeTilCvr.has(synBfe)) continue;
                 administreretByBfe.add(synBfe);

@@ -3140,6 +3140,63 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
       logger.log(`[diagram/resolve] Dedup: ${personDupes.length} person→company redirects`);
     }
 
+    // Fjern ophørte virksomheder (isCeased) der ikke er hovedvirksomheden.
+    // Ophørte selskaber i koncernstrukturen er historiske og forvirrer diagrammet.
+    const mainCvr = graph.nodes.find((n) => n.type === 'main')?.cvr;
+    const ceasedNodes = graph.nodes.filter(
+      (n) => n.type === 'company' && n.isCeased && n.cvr !== mainCvr
+    );
+    for (const ceased of ceasedNodes) {
+      // Redirect edges til parent (fjern children-forbindelser)
+      const outgoing = graph.edges.filter((e) => e.from === ceased.id);
+      const _incoming = graph.edges.filter((e) => e.to === ceased.id);
+      // Fjern alle edges til/fra ophørt virksomhed
+      graph.edges = graph.edges.filter((e) => e.from !== ceased.id && e.to !== ceased.id);
+      // Fjern noden
+      const idx = graph.nodes.indexOf(ceased);
+      if (idx >= 0) graph.nodes.splice(idx, 1);
+      // Fjern også ejendomme der KUN var forbundet til den ophørte virksomhed
+      for (const edge of outgoing) {
+        const targetNode = graph.nodes.find((n) => n.id === edge.to);
+        if (targetNode?.type === 'property') {
+          const otherEdges = graph.edges.filter((e) => e.to === edge.to);
+          if (otherEdges.length === 0) {
+            const propIdx = graph.nodes.indexOf(targetNode);
+            if (propIdx >= 0) graph.nodes.splice(propIdx, 1);
+          }
+        }
+      }
+    }
+    if (ceasedNodes.length > 0) {
+      logger.log(`[diagram/resolve] Removed ${ceasedNodes.length} ceased companies`);
+    }
+
+    // Dedup: fjern duplikat company-noder (samme CVR, forskellige IDs)
+    const seenCvrs = new Map<number, string>();
+    const cvrDupes: typeof graph.nodes = [];
+    for (const node of graph.nodes) {
+      if ((node.type === 'company' || node.type === 'main') && node.cvr) {
+        if (seenCvrs.has(node.cvr)) {
+          cvrDupes.push(node);
+        } else {
+          seenCvrs.set(node.cvr, node.id);
+        }
+      }
+    }
+    for (const dupe of cvrDupes) {
+      const keepId = seenCvrs.get(dupe.cvr!);
+      if (!keepId) continue;
+      for (const edge of graph.edges) {
+        if (edge.from === dupe.id) edge.from = keepId;
+        if (edge.to === dupe.id) edge.to = keepId;
+      }
+      const idx = graph.nodes.indexOf(dupe);
+      if (idx >= 0) graph.nodes.splice(idx, 1);
+    }
+    if (cvrDupes.length > 0) {
+      logger.log(`[diagram/resolve] CVR dedup: ${cvrDupes.length} duplicate companies removed`);
+    }
+
     return NextResponse.json({ graph });
   } catch (err) {
     // BIZZ-1807: Log fejl til Sentry + console for debugging

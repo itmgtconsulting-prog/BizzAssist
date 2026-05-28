@@ -1725,16 +1725,26 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         );
         for (const cvr of expandedCvrs) {
           try {
+            logger.log(`[ejendomme-by-owner] Matrikel-expansion: starting for CVR ${cvr}`);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const { data: virkRow } = await (admin as any)
               .from('cvr_virksomhed')
               .select('navn')
               .eq('cvr', cvr)
               .maybeSingle();
-            if (!virkRow?.navn) continue;
+            if (!virkRow?.navn) {
+              logger.log(`[ejendomme-by-owner] No virk navn for ${cvr}`);
+              continue;
+            }
             const matrMatch = (virkRow.navn as string).match(/\b(\d{1,5}[a-zæøå]{0,3})\b/gi);
-            if (!matrMatch || matrMatch.length === 0) continue;
+            if (!matrMatch || matrMatch.length === 0) {
+              logger.log(`[ejendomme-by-owner] No matrikel in name: ${virkRow.navn}`);
+              continue;
+            }
             const matrikelnr = matrMatch[matrMatch.length - 1];
+            logger.log(
+              `[ejendomme-by-owner] Matrikel-expansion: navn=${virkRow.navn} matr=${matrikelnr}`
+            );
 
             // Hent ejerlavkode direkte fra DAWA jordstykker
             const jsRes = await fetch(

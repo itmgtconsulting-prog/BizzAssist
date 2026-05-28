@@ -1714,8 +1714,22 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
           bfeTilCvr.set(row.bfe_nummer, row.candidate_cvr.padStart(8, '0'));
           aktivByBfe.set(row.bfe_nummer, true);
         }
+        // Saml adresse-keys for dedup mod DAWA-expansion
+        const existingAddrKeys = new Set<string>();
+        for (const row of verifRows as Array<{ bfe_nummer: number }>) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: ca } = await (admin as any)
+            .from('bfe_adresse_cache')
+            .select('adresse, etage, doer')
+            .eq('bfe_nummer', row.bfe_nummer)
+            .maybeSingle();
+          if (ca?.adresse) {
+            const key = `${(ca.adresse as string).toLowerCase()}|${((ca.etage as string) || '').toLowerCase()}|${((ca.doer as string) || '').toLowerCase()}`;
+            existingAddrKeys.add(key);
+          }
+        }
         logger.log(
-          `[ejendomme-by-owner] ejerforening_verifications: ${verifRows.length} BFE'er tilføjet`
+          `[ejendomme-by-owner] ejerforening_verifications: ${verifRows.length} BFE'er tilføjet (${existingAddrKeys.size} addr-keys for dedup)`
         );
 
         // Matrikel-expansion via ejerforening_matrikel_verified.
@@ -1752,6 +1766,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
               }>;
               let matrikelExpanded = 0;
               for (const a of adresser) {
+                // Dedup: skip adresser der allerede har individuel BFE
+                const addrKey = `${a.vejnavn.toLowerCase()} ${a.husnr.toLowerCase()}|${(a.etage || '').toLowerCase()}|${(a.dør || '').toLowerCase()}`;
+                if (existingAddrKeys.has(addrKey)) continue;
                 const synBfe = -(Math.abs(matr.ejerlav_kode) * 10000 + bfeTilCvr.size);
                 if (bfeTilCvr.has(synBfe)) continue;
                 administreretByBfe.add(synBfe);

@@ -1801,8 +1801,27 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
                 postnr: string;
                 postnrnavn: string;
               }>;
+              // Saml dawaId'er fra allerede-tilføjede individuelle BFE'er
+              const existingDawaIds = new Set<string>();
+              const individualBfes = verifRows
+                .filter((r: { candidate_cvr: string }) => r.candidate_cvr === cvr)
+                .map((r: { bfe_nummer: number }) => r.bfe_nummer);
+              if (individualBfes.length > 0) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const { data: dawaIdRows } = await (admin as any)
+                  .from('bfe_adresse_cache')
+                  .select('dawa_id')
+                  .in('bfe_nummer', individualBfes)
+                  .not('dawa_id', 'is', null);
+                for (const r of (dawaIdRows ?? []) as Array<{ dawa_id: string }>) {
+                  existingDawaIds.add(r.dawa_id);
+                }
+              }
+
               let matrikelExpanded = 0;
               for (const a of adresser) {
+                // Skip adresser der allerede har en individuel BFE
+                if (a.id && existingDawaIds.has(a.id)) continue;
                 const synBfe = -(Math.abs(matr.ejerlav_kode) * 10000 + bfeTilCvr.size);
                 if (bfeTilCvr.has(synBfe)) continue;
                 administreretByBfe.add(synBfe);

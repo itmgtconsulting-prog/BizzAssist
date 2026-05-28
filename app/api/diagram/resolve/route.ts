@@ -225,71 +225,112 @@ async function resolveCompanyGraph(
 
   // 1b. BIZZ-1202: Virksomheds-ejere opad (fra cvr_virksomhed_ejerskab).
   // Viser moderselskaber der ejer main-virksomheden — supplerer person-ejere.
+  // Tracer 2 niveauer op: fx Holding → Holding 2 → Ejendomme.
   {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: parentOwners } = await (admin as any)
-      .from('cvr_virksomhed_ejerskab')
-      .select('ejer_cvr, ejerandel_min, ejerandel_max')
-      .eq('ejet_cvr', cvr)
-      .is('gyldig_til', null)
-      .limit(10);
+    /**
+     * Tilføj parent-ejere for et sæt CVR'er fra cvr_virksomhed_ejerskab.
+     * Returnerer nyligt tilføjede CVR'er (til videre opadrettet trace).
+     */
+    const addParentOwners = async (
+      childCvrs: string[],
+      childIdFn: (cvr: string) => string
+    ): Promise<string[]> => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: parentOwners } = await (admin as any)
+        .from('cvr_virksomhed_ejerskab')
+        .select('ejer_cvr, ejet_cvr, ejerandel_min, ejerandel_max')
+        .in('ejet_cvr', childCvrs.slice(0, 20))
+        .is('gyldig_til', null)
+        .limit(30);
 
-    if (parentOwners?.length) {
-      const parentCvrs = (parentOwners as Array<{ ejer_cvr: string }>)
+      if (!parentOwners?.length) return [];
+
+      const newCvrs = (parentOwners as Array<{ ejer_cvr: string }>)
         .map((r) => r.ejer_cvr)
         .filter((c) => !nodeIds.has(`cvr-${c}`));
+      const uniqueNewCvrs = [...new Set(newCvrs)];
+      if (uniqueNewCvrs.length === 0) return [];
 
-      if (parentCvrs.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: parentComps } = await (admin as any)
-          .from('cvr_virksomhed')
-          .select('cvr, navn, virksomhedsform, branche_tekst, ophoert')
-          .in('cvr', parentCvrs.slice(0, 10));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: parentComps } = await (admin as any)
+        .from('cvr_virksomhed')
+        .select('cvr, navn, virksomhedsform, branche_tekst, ophoert')
+        .in('cvr', uniqueNewCvrs.slice(0, 20));
 
-        const parentMap = new Map(
-          (
-            (parentComps ?? []) as Array<{
-              cvr: string;
-              navn: string;
-              virksomhedsform: string | null;
-              branche_tekst: string | null;
-              ophoert: string | null;
-            }>
-          ).map((c) => [c.cvr, c])
-        );
-        const ejerandelMap = new Map(
-          (
-            (parentOwners ?? []) as Array<{
-              ejer_cvr: string;
-              ejerandel_min: number | null;
-              ejerandel_max: number | null;
-            }>
-          ).map((r) => [r.ejer_cvr, formatEjerandelRange(r.ejerandel_min, r.ejerandel_max)])
-        );
+      const parentMap = new Map(
+        (
+          (parentComps ?? []) as Array<{
+            cvr: string;
+            navn: string;
+            virksomhedsform: string | null;
+            branche_tekst: string | null;
+            ophoert: string | null;
+          }>
+        ).map((c) => [c.cvr, c])
+      );
 
-        for (const pCvr of parentCvrs) {
-          const pId = `cvr-${pCvr}`;
-          if (nodeIds.has(pId)) continue;
-          const pc = parentMap.get(pCvr);
-          const sublabelParts = [pc?.virksomhedsform, `CVR ${pCvr}`].filter(Boolean);
-          nodes.push({
-            id: pId,
-            label: pc?.navn ?? `CVR ${pCvr}`,
-            sublabel: sublabelParts.join(' · '),
-            branche: pc?.branche_tekst ?? undefined,
-            type: 'company',
-            cvr: Number(pCvr),
-            link: `/dashboard/companies/${pCvr}`,
-            isCeased: pc?.ophoert != null,
-          });
-          nodeIds.add(pId);
+      // Byg ejerandel-map: ejer_cvr+ejet_cvr → andel
+      const ejerandelMap = new Map(
+        (
+          (parentOwners ?? []) as Array<{
+            ejer_cvr: string;
+            ejet_cvr: string;
+            ejerandel_min: number | null;
+            ejerandel_max: number | null;
+          }>
+        ).map((r) => [
+          `${r.ejer_cvr}->${r.ejet_cvr}`,
+          formatEjerandelRange(r.ejerandel_min, r.ejerandel_max),
+        ])
+      );
+
+      const addedCvrs: string[] = [];
+      for (const pCvr of uniqueNewCvrs) {
+        const pId = `cvr-${pCvr}`;
+        if (nodeIds.has(pId)) continue;
+        const pc = parentMap.get(pCvr);
+        const sublabelParts = [pc?.virksomhedsform, `CVR ${pCvr}`].filter(Boolean);
+        nodes.push({
+          id: pId,
+          label: pc?.navn ?? `CVR ${pCvr}`,
+          sublabel: sublabelParts.join(' · '),
+          branche: pc?.branche_tekst ?? undefined,
+          type: 'company',
+          cvr: Number(pCvr),
+          link: `/dashboard/companies/${pCvr}`,
+          isCeased: pc?.ophoert != null,
+        });
+        nodeIds.add(pId);
+        addedCvrs.push(pCvr);
+      }
+
+      // Tilføj edges fra ejere til deres børn
+      for (const row of (parentOwners ?? []) as Array<{
+        ejer_cvr: string;
+        ejet_cvr: string;
+      }>) {
+        const fromId = `cvr-${row.ejer_cvr}`;
+        const toId = childIdFn(row.ejet_cvr);
+        if (!nodeIds.has(fromId) || !nodeIds.has(toId)) continue;
+        const alreadyExists = edges.some((e) => e.from === fromId && e.to === toId);
+        if (!alreadyExists) {
           edges.push({
-            from: pId,
-            to: mainId,
-            ejerandel: ejerandelMap.get(pCvr),
+            from: fromId,
+            to: toId,
+            ejerandel: ejerandelMap.get(`${row.ejer_cvr}->${row.ejet_cvr}`),
           });
         }
       }
+
+      return addedCvrs;
+    };
+
+    // Niveau 1: direkte ejere af main-virksomheden
+    const level1Cvrs = await addParentOwners([cvr], () => mainId);
+
+    // Niveau 2: ejere af niveau 1-virksomheder (bedstefar-selskaber)
+    if (level1Cvrs.length > 0) {
+      await addParentOwners(level1Cvrs, (childCvr) => `cvr-${childCvr}`);
     }
   }
 

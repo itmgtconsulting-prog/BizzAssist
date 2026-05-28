@@ -246,9 +246,21 @@ async function resolveCompanyGraph(
 
       if (!parentOwners?.length) return [];
 
-      const newCvrs = (parentOwners as Array<{ ejer_cvr: string }>)
-        .map((r) => r.ejer_cvr)
-        .filter((c) => !nodeIds.has(`cvr-${c}`));
+      // Filtrer null-ejerandel entries når andre ejere har reel ejerandel
+      const typed = parentOwners as Array<{
+        ejer_cvr: string;
+        ejet_cvr: string;
+        ejerandel_min: number | null;
+        ejerandel_max: number | null;
+      }>;
+      const targetsWithReal = new Set(
+        typed.filter((r) => r.ejerandel_min != null).map((r) => r.ejet_cvr)
+      );
+      const filtered = typed.filter(
+        (r) => r.ejerandel_min != null || !targetsWithReal.has(r.ejet_cvr)
+      );
+
+      const newCvrs = filtered.map((r) => r.ejer_cvr).filter((c) => !nodeIds.has(`cvr-${c}`));
       const uniqueNewCvrs = [...new Set(newCvrs)];
       if (uniqueNewCvrs.length === 0) return [];
 
@@ -272,14 +284,7 @@ async function resolveCompanyGraph(
 
       // Byg ejerandel-map: ejer_cvr+ejet_cvr → andel
       const ejerandelMap = new Map(
-        (
-          (parentOwners ?? []) as Array<{
-            ejer_cvr: string;
-            ejet_cvr: string;
-            ejerandel_min: number | null;
-            ejerandel_max: number | null;
-          }>
-        ).map((r) => [
+        filtered.map((r) => [
           `${r.ejer_cvr}->${r.ejet_cvr}`,
           formatEjerandelRange(r.ejerandel_min, r.ejerandel_max),
         ])
@@ -305,8 +310,8 @@ async function resolveCompanyGraph(
         addedCvrs.push(pCvr);
       }
 
-      // Tilføj edges fra ejere til deres børn
-      for (const row of (parentOwners ?? []) as Array<{
+      // Tilføj edges fra ejere til deres børn (kun filtrerede med reel ejerandel)
+      for (const row of filtered as Array<{
         ejer_cvr: string;
         ejet_cvr: string;
       }>) {
@@ -3167,15 +3172,40 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: ownershipRows } = await (admin as any)
           .from('cvr_virksomhed_ejerskab')
-          .select('ejer_cvr, ejet_cvr, ejerandel_pct')
+          .select('ejer_cvr, ejet_cvr, ejerandel_pct, ejerandel_min')
           .in('ejet_cvr', cvrList)
           .in('ejer_cvr', cvrList)
           .is('gyldig_til', null);
+
+        // Filtrer null-ejerandel entries når andre ejere har reel ejerandel.
+        // Entries med null ejerandel_pct + null ejerandel_min er typisk
+        // historiske/administrative (fx Pharma IT ManCo → ProductLife).
+        const targetsWithRealOwner = new Set(
+          (
+            (ownershipRows ?? []) as Array<{
+              ejet_cvr: string;
+              ejerandel_pct: number | null;
+              ejerandel_min: number | null;
+            }>
+          )
+            .filter((r) => r.ejerandel_pct != null || r.ejerandel_min != null)
+            .map((r) => r.ejet_cvr)
+        );
+
         for (const row of (ownershipRows ?? []) as Array<{
           ejer_cvr: string;
           ejet_cvr: string;
           ejerandel_pct: number | null;
+          ejerandel_min: number | null;
         }>) {
+          // Skip null-ejerandel entries hvis target har andre ejere med reel andel
+          if (
+            row.ejerandel_pct == null &&
+            row.ejerandel_min == null &&
+            targetsWithRealOwner.has(row.ejet_cvr)
+          ) {
+            continue;
+          }
           const fromNode = companyCvrsInGraph.find((c) => c.cvr === row.ejer_cvr);
           const toNode = companyCvrsInGraph.find((c) => c.cvr === row.ejet_cvr);
           if (!fromNode || !toNode) continue;

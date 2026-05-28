@@ -1714,32 +1714,17 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
           bfeTilCvr.set(row.bfe_nummer, row.candidate_cvr.padStart(8, '0'));
           aktivByBfe.set(row.bfe_nummer, true);
         }
-        // Saml adresse-keys for dedup mod DAWA-expansion
-        const existingAddrKeys = new Set<string>();
-        for (const row of verifRows as Array<{ bfe_nummer: number }>) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { data: ca } = await (admin as any)
-            .from('bfe_adresse_cache')
-            .select('adresse, etage, doer')
-            .eq('bfe_nummer', row.bfe_nummer)
-            .maybeSingle();
-          if (ca?.adresse) {
-            const key = `${(ca.adresse as string).toLowerCase()}|${((ca.etage as string) || '').toLowerCase()}|${((ca.doer as string) || '').toLowerCase()}`;
-            existingAddrKeys.add(key);
-          }
-        }
         logger.log(
-          `[ejendomme-by-owner] ejerforening_verifications: ${verifRows.length} BFE'er tilføjet (${existingAddrKeys.size} addr-keys for dedup)`
+          `[ejendomme-by-owner] ejerforening_verifications: ${verifRows.length} BFE'er tilføjet`
         );
 
-        // Matrikel-expansion: hent foreningens navn → ekstraher matrikelnr →
-        // hent ALLE adresser fra DAWA direkte.
+        // Matrikel-expansion: foreningsnavn → matrikelnr → DAWA jordstykker →
+        // ejerlavkode → ALLE adresser. Ingen DB-lookup (undgår PostgREST-cache).
         const expandedCvrs = new Set<string>(
           verifRows.map((r: { candidate_cvr: string }) => r.candidate_cvr)
         );
         for (const cvr of expandedCvrs) {
           try {
-            // Hent foreningens navn og ekstraher matrikelnr
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const { data: virkRow } = await (admin as any)
               .from('cvr_virksomhed')
@@ -1751,34 +1736,22 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
             if (!matrMatch || matrMatch.length === 0) continue;
             const matrikelnr = matrMatch[matrMatch.length - 1];
 
-            // Hent ejerlavkode fra en verificeret BFE's adresse
-            let ejerlavKode: number | null = null;
-            for (const row of verifRows as Array<{ bfe_nummer: number; candidate_cvr: string }>) {
-              if (row.candidate_cvr !== cvr) continue;
-              const addrInfo = existingAddrKeys.size > 0 ? true : false; // Vi har addr-data
-              if (!addrInfo) continue;
-              // Hent ejerlavkode via DAWA fra cachet adresse
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const { data: ca } = await (admin as any)
-                .from('bfe_adresse_cache')
-                .select('adresse, postnr')
-                .eq('bfe_nummer', row.bfe_nummer)
-                .maybeSingle();
-              if (!ca?.adresse || !ca?.postnr) continue;
-              const ejlRes = await fetch(
-                `https://api.dataforsyningen.dk/adgangsadresser?q=${encodeURIComponent(ca.adresse as string)}&postnr=${ca.postnr}&per_side=1&format=json`,
-                { signal: AbortSignal.timeout(3000) }
-              );
-              if (!ejlRes.ok) continue;
-              const ejlData = (await ejlRes.json()) as Array<{
-                jordstykke?: { ejerlav?: { kode?: number } };
-              }>;
-              ejerlavKode = ejlData[0]?.jordstykke?.ejerlav?.kode ?? null;
-              if (ejerlavKode) break;
-            }
-            if (!ejerlavKode) continue;
+            // Hent ejerlavkode direkte fra DAWA jordstykker
+            const jsRes = await fetch(
+              `https://api.dataforsyningen.dk/jordstykker?matrikelnr=${encodeURIComponent(matrikelnr)}&format=json&per_side=5`,
+              { signal: AbortSignal.timeout(3000) }
+            );
+            if (!jsRes.ok) continue;
+            const jordstykker = (await jsRes.json()) as Array<{
+              ejerlav?: { kode?: number };
+              matrikelnr?: string;
+            }>;
+            const js = jordstykker.find(
+              (j) => j.matrikelnr?.toLowerCase() === matrikelnr.toLowerCase()
+            );
+            if (!js?.ejerlav?.kode) continue;
 
-            const matrRows = [{ matrikelnr, ejerlav_kode: ejerlavKode }];
+            const matrRows = [{ matrikelnr, ejerlav_kode: js.ejerlav.kode }];
             for (const matr of (matrRows ?? []) as Array<{
               matrikelnr: string;
               ejerlav_kode: number;
@@ -1800,9 +1773,6 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
               }>;
               let matrikelExpanded = 0;
               for (const a of adresser) {
-                // Dedup: skip adresser der allerede har individuel BFE
-                const addrKey = `${a.vejnavn.toLowerCase()} ${a.husnr.toLowerCase()}|${(a.etage || '').toLowerCase()}|${(a.dør || '').toLowerCase()}`;
-                if (existingAddrKeys.has(addrKey)) continue;
                 const synBfe = -(Math.abs(matr.ejerlav_kode) * 10000 + bfeTilCvr.size);
                 if (bfeTilCvr.has(synBfe)) continue;
                 administreretByBfe.add(synBfe);

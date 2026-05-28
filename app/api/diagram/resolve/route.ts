@@ -3277,6 +3277,44 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
       return true;
     });
 
+    // Fjern person→company edges når personen ejer VIA et mellemliggende selskab.
+    // EJF registrerer beneficial owner direkte, men hierarkiet bør vises.
+    // Gælder også person→property: hvis personen ejer via company→property.
+    const personNodes2 = new Set(graph.nodes.filter((n) => n.type === 'person').map((n) => n.id));
+    const companyNodes2 = new Set(
+      graph.nodes.filter((n) => n.type === 'company' || n.type === 'main').map((n) => n.id)
+    );
+    // Byg children-map for hurtig opslag
+    const childrenMap = new Map<string, Set<string>>();
+    for (const e of graph.edges) {
+      if (!childrenMap.has(e.from)) childrenMap.set(e.from, new Set());
+      childrenMap.get(e.from)!.add(e.to);
+    }
+    // For hver person: find targets de ejer DIREKTE
+    // Hvis personen også ejer et selskab der (transitvt) ejer target → fjern direkte edge
+    graph.edges = graph.edges.filter((e) => {
+      if (!personNodes2.has(e.from)) return true; // Ikke person → behold
+      // Personen ejer target direkte. Ejer de også et selskab der ejer target?
+      const personChildren = childrenMap.get(e.from);
+      if (!personChildren || personChildren.size <= 1) return true;
+      // Find selskaber personen ejer
+      const ownedCompanies = [...personChildren].filter((c) => c !== e.to && companyNodes2.has(c));
+      // Tjek om nogen af disse selskaber (transitvt) når target
+      for (const comp of ownedCompanies) {
+        const visited = new Set<string>([e.from]);
+        const queue = [comp];
+        while (queue.length > 0) {
+          const current = queue.shift()!;
+          if (current === e.to) return false; // Indirekte sti fundet → fjern direkte
+          if (visited.has(current)) continue;
+          visited.add(current);
+          const next = childrenMap.get(current);
+          if (next) queue.push(...next);
+        }
+      }
+      return true; // Ingen indirekte sti → behold
+    });
+
     return NextResponse.json({ graph });
   } catch (err) {
     // BIZZ-1807: Log fejl til Sentry + console for debugging

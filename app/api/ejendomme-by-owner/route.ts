@@ -1718,51 +1718,71 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
           `[ejendomme-by-owner] ejerforening_verifications: ${verifRows.length} BFE'er tilføjet`
         );
 
-        // Matrikel-expansion: foreningsnavn → matrikelnr → DAWA jordstykker →
-        // ejerlavkode → ALLE adresser. Ingen DB-lookup (undgår PostgREST-cache).
+        // Matrikel-expansion: hent matrikel-data fra ai_ejf_ejendom_cache →
+        // DAWA adresser for hele matriklen. Fallback: foreningsnavn → DAWA.
         const expandedCvrs = new Set<string>(
           verifRows.map((r: { candidate_cvr: string }) => r.candidate_cvr)
         );
         for (const cvr of expandedCvrs) {
           try {
-            logger.log(`[ejendomme-by-owner] Matrikel-expansion: starting for CVR ${cvr}`);
+            // Primær: ai_ejf_ejendom_cache (gemt ved verifikation)
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const { data: virkRow } = await (admin as any)
-              .from('cvr_virksomhed')
-              .select('navn')
+            const { data: aiCache } = await (admin as any)
+              .from('ai_ejf_ejendom_cache')
+              .select('candidates')
               .eq('cvr', cvr)
               .maybeSingle();
-            if (!virkRow?.navn) {
-              logger.log(`[ejendomme-by-owner] No virk navn for ${cvr}`);
-              continue;
-            }
-            const matrMatch = (virkRow.navn as string).match(/\b(\d{1,5}[a-zæøå]{0,3})\b/gi);
-            if (!matrMatch || matrMatch.length === 0) {
-              logger.log(`[ejendomme-by-owner] No matrikel in name: ${virkRow.navn}`);
-              continue;
-            }
-            const matrikelnr = matrMatch[matrMatch.length - 1];
-            logger.log(
-              `[ejendomme-by-owner] Matrikel-expansion: navn=${virkRow.navn} matr=${matrikelnr}`
-            );
-
-            // Hent ejerlavkode direkte fra DAWA jordstykker
-            const jsRes = await fetch(
-              `https://api.dataforsyningen.dk/jordstykker?matrikelnr=${encodeURIComponent(matrikelnr)}&format=json&per_side=5`,
-              { signal: AbortSignal.timeout(3000) }
-            );
-            if (!jsRes.ok) continue;
-            const jordstykker = (await jsRes.json()) as Array<{
-              ejerlav?: { kode?: number };
+            const candidates = (aiCache?.candidates ?? []) as Array<{
               matrikelnr?: string;
+              ejerlavKode?: number;
+              verified?: boolean;
             }>;
-            const js = jordstykker.find(
-              (j) => j.matrikelnr?.toLowerCase() === matrikelnr.toLowerCase()
+            const verifiedFromCache = candidates.filter(
+              (c) => c.verified && c.matrikelnr && c.ejerlavKode
             );
-            if (!js?.ejerlav?.kode) continue;
 
-            const matrRows = [{ matrikelnr, ejerlav_kode: js.ejerlav.kode }];
-            for (const matr of (matrRows ?? []) as Array<{
+            let matrRows: Array<{ matrikelnr: string; ejerlav_kode: number }> = [];
+            if (verifiedFromCache.length > 0) {
+              matrRows = verifiedFromCache.map((c) => ({
+                matrikelnr: c.matrikelnr!,
+                ejerlav_kode: c.ejerlavKode!,
+              }));
+              logger.log(
+                `[ejendomme-by-owner] Matrikel from ai_ejf_ejendom_cache: ${matrRows.length} matrikler for CVR ${cvr}`
+              );
+            } else {
+              // Fallback: foreningsnavn → DAWA jordstykker
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const { data: virkRow } = await (admin as any)
+                .from('cvr_virksomhed')
+                .select('navn')
+                .eq('cvr', cvr)
+                .maybeSingle();
+              if (!virkRow?.navn) continue;
+              const matrMatch = (virkRow.navn as string).match(/\b(\d{1,5}[a-zæøå]{0,3})\b/gi);
+              if (!matrMatch || matrMatch.length === 0) continue;
+              const matrikelnr = matrMatch[matrMatch.length - 1];
+
+              const jsRes = await fetch(
+                `https://api.dataforsyningen.dk/jordstykker?matrikelnr=${encodeURIComponent(matrikelnr)}&format=json&per_side=5`,
+                { signal: AbortSignal.timeout(3000) }
+              );
+              if (!jsRes.ok) continue;
+              const jordstykker = (await jsRes.json()) as Array<{
+                ejerlav?: { kode?: number };
+                matrikelnr?: string;
+              }>;
+              const js = jordstykker.find(
+                (j) => j.matrikelnr?.toLowerCase() === matrikelnr.toLowerCase()
+              );
+              if (!js?.ejerlav?.kode) continue;
+              matrRows = [{ matrikelnr, ejerlav_kode: js.ejerlav.kode }];
+              logger.log(
+                `[ejendomme-by-owner] Matrikel from DAWA fallback: ${matrikelnr} ejerlav=${js.ejerlav.kode}`
+              );
+            }
+
+            for (const matr of matrRows as Array<{
               matrikelnr: string;
               ejerlav_kode: number;
             }>) {

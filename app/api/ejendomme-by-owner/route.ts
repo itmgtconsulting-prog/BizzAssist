@@ -1790,8 +1790,21 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
                 matrikelExpanded++;
               }
               if (matrikelExpanded > 0) {
+                // Fjern individuelle BFE'er der nu dækkes af expansion
+                // (de har rigtige BFE-numre men er dubletter af syntetiske)
+                for (const row of verifRows as Array<{
+                  bfe_nummer: number;
+                  candidate_cvr: string;
+                }>) {
+                  if (row.candidate_cvr !== cvr) continue;
+                  if (!bfeTilCvr.has(row.bfe_nummer)) continue;
+                  bfeTilCvr.delete(row.bfe_nummer);
+                  administreretByBfe.delete(row.bfe_nummer);
+                  aiVerifiedByBfe.delete(row.bfe_nummer);
+                  aktivByBfe.delete(row.bfe_nummer);
+                }
                 logger.log(
-                  `[ejendomme-by-owner] Matrikel-verified expansion: ${matrikelExpanded} adresser fra matrikel ${matr.matrikelnr}`
+                  `[ejendomme-by-owner] Matrikel-verified expansion: ${matrikelExpanded} adresser fra matrikel ${matr.matrikelnr} (individuelle fjernet)`
                 );
               }
             }

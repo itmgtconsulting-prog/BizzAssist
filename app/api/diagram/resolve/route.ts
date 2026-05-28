@@ -188,8 +188,9 @@ const OWNERSHIP_TYPES = new Set([
   'register', // Registreret ejer (Det Offentlige Ejerregister)
   'reel_ejer', // Reel ejer (beneficial owner)
   'interessenter', // Interessent (partner i I/S)
-  'stifter', // Stifter
   'hovedselskab', // Moderselskab
+  // NB: 'stifter' bevidst UDELADT — stiftere uden ejerandel er ikke ejere.
+  // Hvis stifter også ejer, har de en separat 'register'-entry med ejerandel_pct.
 ]);
 
 /**
@@ -2488,7 +2489,6 @@ async function enrichNoeglePersoner(
     'interessenter',
     'hovedselskab',
     'indehaver',
-    'stiftere',
   ]);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

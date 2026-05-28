@@ -3213,6 +3213,70 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
       logger.log(`[diagram/resolve] CVR dedup: ${cvrDupes.length} duplicate companies removed`);
     }
 
+    // Fjern redundante edges: hvis A→B og B→C, fjern A→C (indirekte).
+    // EJF registrerer alle ejere (direkte+indirekte) på en ejendom,
+    // men diagrammet skal vise hierarkiet, ikke den flade liste.
+    // Byg adjacency: for hvert node-id, hvilke children har den?
+    const children = new Map<string, Set<string>>();
+    for (const edge of graph.edges) {
+      if (!children.has(edge.from)) children.set(edge.from, new Set());
+      children.get(edge.from)!.add(edge.to);
+    }
+    // For hvert par (from, to): er der en mellemliggende sti from→X→...→to?
+    function hasIndirectPath(from: string, to: string, maxDepth = 4): boolean {
+      const directChildren = children.get(from);
+      if (!directChildren) return false;
+      for (const mid of directChildren) {
+        if (mid === to) continue; // Det er den direkte edge vi tester
+        // Tjek om mid→...→to (BFS)
+        const visited = new Set<string>([from, mid]);
+        const queue = [mid];
+        let depth = 0;
+        while (queue.length > 0 && depth < maxDepth) {
+          const size = queue.length;
+          for (let i = 0; i < size; i++) {
+            const current = queue.shift()!;
+            const next = children.get(current);
+            if (!next) continue;
+            for (const n of next) {
+              if (n === to) return true; // Fandt indirekte sti
+              if (!visited.has(n)) {
+                visited.add(n);
+                queue.push(n);
+              }
+            }
+          }
+          depth++;
+        }
+      }
+      return false;
+    }
+    const redundantEdges: number[] = [];
+    for (let i = 0; i < graph.edges.length; i++) {
+      const edge = graph.edges[i];
+      if (hasIndirectPath(edge.from, edge.to)) {
+        redundantEdges.push(i);
+      }
+    }
+    // Fjern bagfra for at bevare indices
+    for (let i = redundantEdges.length - 1; i >= 0; i--) {
+      graph.edges.splice(redundantEdges[i], 1);
+    }
+    if (redundantEdges.length > 0) {
+      logger.log(
+        `[diagram/resolve] Removed ${redundantEdges.length} redundant edges (indirect paths)`
+      );
+    }
+
+    // Fjern duplikat-edges (samme from+to)
+    const edgeKeys = new Set<string>();
+    graph.edges = graph.edges.filter((e) => {
+      const key = `${e.from}→${e.to}`;
+      if (edgeKeys.has(key)) return false;
+      edgeKeys.add(key);
+      return true;
+    });
+
     return NextResponse.json({ graph });
   } catch (err) {
     // BIZZ-1807: Log fejl til Sentry + console for debugging

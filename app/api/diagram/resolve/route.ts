@@ -3290,30 +3290,28 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
       if (!childrenMap.has(e.from)) childrenMap.set(e.from, new Set());
       childrenMap.get(e.from)!.add(e.to);
     }
-    // For hver person: find targets de ejer DIREKTE
-    // Hvis personen også ejer et selskab der (transitvt) ejer target → fjern direkte edge
-    graph.edges = graph.edges.filter((e) => {
-      if (!personNodes2.has(e.from)) return true; // Ikke person → behold
-      // Personen ejer target direkte. Ejer de også et selskab der ejer target?
-      const personChildren = childrenMap.get(e.from);
-      if (!personChildren || personChildren.size <= 1) return true;
-      // Find selskaber personen ejer
-      const ownedCompanies = [...personChildren].filter((c) => c !== e.to && companyNodes2.has(c));
-      // Tjek om nogen af disse selskaber (transitvt) når target
-      for (const comp of ownedCompanies) {
-        const visited = new Set<string>([e.from]);
-        const queue = [comp];
-        while (queue.length > 0) {
-          const current = queue.shift()!;
-          if (current === e.to) return false; // Indirekte sti fundet → fjern direkte
-          if (visited.has(current)) continue;
-          visited.add(current);
-          const next = childrenMap.get(current);
-          if (next) queue.push(...next);
+    // Fjern person→company/main edges når target allerede ejes af selskaber.
+    // EJF registrerer beneficial owner direkte, men personen ejer typisk
+    // via holdingselskaber. Fjern kun edges til company/main targets —
+    // behold person→property edges (personligt ejede ejendomme).
+    for (const targetId of companyNodes2) {
+      const companyEdges = graph.edges.filter(
+        (e) => e.to === targetId && companyNodes2.has(e.from) && e.from !== targetId
+      );
+      if (companyEdges.length > 0) {
+        const before = graph.edges.length;
+        graph.edges = graph.edges.filter((e) => {
+          if (e.to !== targetId) return true;
+          if (!personNodes2.has(e.from)) return true;
+          return false; // Fjern person→company/main
+        });
+        if (graph.edges.length < before) {
+          logger.log(
+            `[diagram/resolve] Removed ${before - graph.edges.length} person→company edges (company ownership exists)`
+          );
         }
       }
-      return true; // Ingen indirekte sti → behold
-    });
+    }
 
     return NextResponse.json({ graph });
   } catch (err) {

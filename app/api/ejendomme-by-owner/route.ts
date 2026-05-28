@@ -1701,8 +1701,14 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
                 postnr: string;
                 postnrnavn: string;
               }>;
+              // Saml dawaId'er allerede i bfeTilCvr for dedup
+              const usedDawaIds = new Set<string>();
+              for (const [, v] of dawaResolvedMap) {
+                if (v.dawaId) usedDawaIds.add(v.dawaId);
+              }
               let expanded = 0;
               for (const a of adresser) {
+                if (a.id && usedDawaIds.has(a.id)) continue;
                 const synBfe = -(Math.abs(c.ejerlavKode) * 10000 + bfeTilCvr.size);
                 administreretByBfe.add(synBfe);
                 aiVerifiedByBfe.add(synBfe);
@@ -1722,6 +1728,17 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
                 expanded++;
               }
               if (expanded > 0) {
+                // Fjern alle positive (individuelle) BFE'er for denne CVR
+                // — de dækkes nu af syntetiske DAWA-entries
+                const cvrPadded = cvr.padStart(8, '0');
+                for (const [bfe, owner] of bfeTilCvr) {
+                  if (bfe > 0 && owner === cvrPadded) {
+                    bfeTilCvr.delete(bfe);
+                    administreretByBfe.delete(bfe);
+                    aiVerifiedByBfe.delete(bfe);
+                    aktivByBfe.delete(bfe);
+                  }
+                }
                 logger.log(
                   `[ejendomme-by-owner] Matrikel-expansion: ${expanded} adresser for ${c.matrikelnr}`
                 );

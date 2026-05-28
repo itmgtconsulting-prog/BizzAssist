@@ -1732,19 +1732,53 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
           `[ejendomme-by-owner] ejerforening_verifications: ${verifRows.length} BFE'er tilføjet (${existingAddrKeys.size} addr-keys for dedup)`
         );
 
-        // Matrikel-expansion via ejerforening_matrikel_verified.
-        // Hent verificerede matrikler for denne CVR og tilføj ALLE adresser
-        // fra DAWA direkte — uafhængig af bfe_adresse_cache.
+        // Matrikel-expansion: hent foreningens navn → ekstraher matrikelnr →
+        // hent ALLE adresser fra DAWA direkte.
         const expandedCvrs = new Set<string>(
           verifRows.map((r: { candidate_cvr: string }) => r.candidate_cvr)
         );
         for (const cvr of expandedCvrs) {
           try {
+            // Hent foreningens navn og ekstraher matrikelnr
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const { data: matrRows } = await (admin as any)
-              .from('ejerforening_matrikel_verified')
-              .select('matrikelnr, ejerlav_kode')
-              .eq('candidate_cvr', cvr);
+            const { data: virkRow } = await (admin as any)
+              .from('cvr_virksomhed')
+              .select('navn')
+              .eq('cvr', cvr)
+              .maybeSingle();
+            if (!virkRow?.navn) continue;
+            const matrMatch = (virkRow.navn as string).match(/\b(\d{1,5}[a-zæøå]{0,3})\b/gi);
+            if (!matrMatch || matrMatch.length === 0) continue;
+            const matrikelnr = matrMatch[matrMatch.length - 1];
+
+            // Hent ejerlavkode fra en verificeret BFE's adresse
+            let ejerlavKode: number | null = null;
+            for (const row of verifRows as Array<{ bfe_nummer: number; candidate_cvr: string }>) {
+              if (row.candidate_cvr !== cvr) continue;
+              const addrInfo = existingAddrKeys.size > 0 ? true : false; // Vi har addr-data
+              if (!addrInfo) continue;
+              // Hent ejerlavkode via DAWA fra cachet adresse
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const { data: ca } = await (admin as any)
+                .from('bfe_adresse_cache')
+                .select('adresse, postnr')
+                .eq('bfe_nummer', row.bfe_nummer)
+                .maybeSingle();
+              if (!ca?.adresse || !ca?.postnr) continue;
+              const ejlRes = await fetch(
+                `https://api.dataforsyningen.dk/adgangsadresser?q=${encodeURIComponent(ca.adresse as string)}&postnr=${ca.postnr}&per_side=1&format=json`,
+                { signal: AbortSignal.timeout(3000) }
+              );
+              if (!ejlRes.ok) continue;
+              const ejlData = (await ejlRes.json()) as Array<{
+                jordstykke?: { ejerlav?: { kode?: number } };
+              }>;
+              ejerlavKode = ejlData[0]?.jordstykke?.ejerlav?.kode ?? null;
+              if (ejerlavKode) break;
+            }
+            if (!ejerlavKode) continue;
+
+            const matrRows = [{ matrikelnr, ejerlav_kode: ejerlavKode }];
             for (const matr of (matrRows ?? []) as Array<{
               matrikelnr: string;
               ejerlav_kode: number;

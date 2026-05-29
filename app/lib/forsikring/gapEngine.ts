@@ -824,6 +824,41 @@ export function runGapEngine(input: GapEngineInput): DetectedGap[] {
       continue;
     }
   }
+
+  // BIZZ-1902: Standard betingelser baseline-gaps
+  // Sammenlign policens dækninger med krav fra standard betingelser
+  if (input.standardBetingelser && input.standardBetingelser.length > 0) {
+    const coveredCodes = new Set(
+      input.coverages.filter((c) => c.is_covered).map((c) => c.coverage_code)
+    );
+
+    for (const std of input.standardBetingelser) {
+      const missingKrav = (std.krav ?? []).filter(
+        (k) => k.paakraevet && !coveredCodes.has(k.omraade)
+      );
+
+      if (missingKrav.length > 0) {
+        results.push({
+          check_id: `GAP-STD-BASELINE`,
+          category: 'standard_betingelser',
+          severity: 'warning',
+          title: `${missingKrav.length} dækningskrav fra ${std.selskab} standard-vilkår ikke opfyldt`,
+          description:
+            `Ifølge ${std.titel} kræver ${std.selskab}s standard-betingelser følgende dækninger ` +
+            `som IKKE findes i policen: ${missingKrav.map((k) => k.beskrivelse).join(', ')}. ` +
+            `Verificér om disse dækninger er relevante for ejendommen.`,
+          recommendation: `Gennemgå ${std.titel} og vurdér om de manglende dækninger bør tilføjes.`,
+          estimated_impact_dkk: null,
+          source_data: {
+            standard_doc_titel: std.titel,
+            standard_doc_selskab: std.selskab,
+            missing_krav: missingKrav,
+          },
+        });
+      }
+    }
+  }
+
   return results;
 }
 

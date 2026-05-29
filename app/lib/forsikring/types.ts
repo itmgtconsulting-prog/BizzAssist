@@ -364,6 +364,17 @@ export interface GapEngineInput {
     navn: string | null;
     type: 'virksomhed' | 'person' | 'ukendt';
   } | null;
+  /** BIZZ-1902: Standard betingelser baseline — dækningskrav fra selskabets vilkår */
+  standardBetingelser?: Array<{
+    titel: string;
+    selskab: string;
+    /** Nøgle-vilkår ekstraheret af AI fra standard betingelserne */
+    krav: Array<{
+      omraade: string;
+      beskrivelse: string;
+      paakraevet: boolean;
+    }>;
+  }>;
   /** BIZZ-1364: Optionelt asset fra koncern-walk (til asset-level checks) */
   asset?: {
     type: 'ejendom' | 'virksomhed' | 'bil' | 'bestyrelsespost';

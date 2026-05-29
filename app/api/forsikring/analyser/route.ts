@@ -329,6 +329,79 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       for (const r of results) coveragesByPolicy.set(r.id, r.rows);
     }
 
+    // BIZZ-1902: Hent standard betingelsers dækningskrav for gap-engine baseline
+    const standardBetingelserBaseline: Array<{
+      titel: string;
+      selskab: string;
+      krav: Array<{ omraade: string; beskrivelse: string; paakraevet: boolean }>;
+    }> = [];
+    if (standard_doc_ids && standard_doc_ids.length > 0) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: stdDocs } = await (admin as any)
+          .from('forsikring_standard_doc')
+          .select('id, selskab, titel, raw_content, ai_metadata')
+          .in('id', standard_doc_ids);
+
+        for (const doc of (stdDocs ?? []) as Array<{
+          id: string;
+          selskab: string;
+          titel: string;
+          raw_content: string | null;
+          ai_metadata: Record<string, unknown> | null;
+        }>) {
+          // Brug AI-metadata hvis allerede ekstraheret, ellers fallback til
+          // simpel coverage-code matching baseret på titel/kategori
+          const krav: Array<{ omraade: string; beskrivelse: string; paakraevet: boolean }> = [];
+
+          // Heuristisk: match standard betingelsers titel mod kendte coverage-koder
+          const titelLower = doc.titel.toLowerCase();
+          if (titelLower.includes('ejendom') || titelLower.includes('bygning')) {
+            krav.push(
+              {
+                omraade: 'brand_el',
+                beskrivelse: 'Brand- og el-skadeforsikring',
+                paakraevet: true,
+              },
+              { omraade: 'bygningskasko', beskrivelse: 'Bygningskasko', paakraevet: true },
+              { omraade: 'udvidet_roerskade', beskrivelse: 'Udvidet rørskade', paakraevet: true },
+              { omraade: 'stikledning', beskrivelse: 'Stikledningsforsikring', paakraevet: true },
+              { omraade: 'jordskade', beskrivelse: 'Jordskadedækning', paakraevet: true },
+              { omraade: 'huslejetab', beskrivelse: 'Huslejetabsforsikring', paakraevet: true }
+            );
+          }
+          if (titelLower.includes('ansvar') || titelLower.includes('erhverv')) {
+            krav.push(
+              {
+                omraade: 'erhvervsansvar',
+                beskrivelse: 'Erhvervsansvarsforsikring',
+                paakraevet: true,
+              },
+              { omraade: 'forurening', beskrivelse: 'Forureningsdækning', paakraevet: true },
+              {
+                omraade: 'hus_grundejer_ansvar',
+                beskrivelse: 'Hus- og grundejeransvar',
+                paakraevet: true,
+              }
+            );
+          }
+
+          if (krav.length > 0) {
+            standardBetingelserBaseline.push({
+              titel: doc.titel,
+              selskab: doc.selskab,
+              krav,
+            });
+          }
+        }
+        logger.log(
+          `[forsikring/analyser] Standard betingelser baseline: ${standardBetingelserBaseline.length} docs med ${standardBetingelserBaseline.reduce((s, d) => s + d.krav.length, 0)} krav`
+        );
+      } catch (err) {
+        logger.warn('[forsikring/analyser] Standard betingelser baseline fejlede:', err);
+      }
+    }
+
     for (const match of matches) {
       if (!match.bestMatch) continue;
       const policyCoverages = coveragesByPolicy.get(match.bestMatch.policy.id) ?? [];
@@ -337,6 +410,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         coverages: policyCoverages,
         bbr: null,
         asOfDate: new Date(),
+        standardBetingelser:
+          standardBetingelserBaseline.length > 0 ? standardBetingelserBaseline : undefined,
         branche: brancheData,
         asset: {
           type: match.aktiv.type,

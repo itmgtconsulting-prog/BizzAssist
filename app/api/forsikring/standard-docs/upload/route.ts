@@ -104,11 +104,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const sourceUrl = signedData.signedUrl;
 
-    // ── 2. Ekstraher metadata med AI (kun hvis selskab/titel mangler) ────────
+    // ── 2. AI-klassificering: selskab, område, gyldig_fra, validering ────────
     let resolvedSelskab = selskabInput;
     let resolvedTitel = titelInput || file.name.replace(/\.pdf$/i, '');
+    let resolvedOmraade: string | null = null;
+    let resolvedGyldigFra: string | null = null;
+    let resolvedSelskabNorm: string | null = null;
+    let isValidStandard = true;
+    let aiMetadata: Record<string, unknown> = {};
 
-    if (!resolvedSelskab) {
+    {
       const aiBlocked = await assertAiAllowed(auth.userId);
       if (!aiBlocked) {
         try {
@@ -116,7 +121,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           const pdfBase64 = Buffer.from(fileBytes).toString('base64');
           const resp = await anthropic.messages.create({
             model: 'claude-haiku-4-5-20251001',
-            max_tokens: 256,
+            max_tokens: 512,
             messages: [
               {
                 role: 'user',
@@ -127,7 +132,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
                   },
                   {
                     type: 'text',
-                    text: 'Ekstraher fra dette forsikringsdokument: forsikringsselskabets navn (selskab) og dokumentets titel. Svar KUN med JSON: {"selskab": "...", "titel": "..."}. Ingen forklaring.',
+                    text: `Analysér dette dokument og returnér KUN JSON:
+{
+  "selskab": "Forsikringsselskabets fulde navn",
+  "selskab_normaliseret": "Kort standardnavn (fx 'Topdanmark', 'Tryg', 'Codan', 'Alm. Brand', 'IF', 'GF')",
+  "titel": "Dokumentets titel/betingelsesnummer",
+  "omraade": "ejendom|erhverv|ansvar|brand|motor|cyber|rejse|ulykke|sundhed|liv|andet",
+  "gyldig_fra": "YYYY-MM-DD eller null hvis ukendt",
+  "er_standard_betingelser": true/false,
+  "begrundelse": "Kort forklaring af klassificeringen"
+}
+
+VIGTIGT:
+- "er_standard_betingelser" = true HVIS dokumentet er generelle forsikringsbetingelser/vilkår der gælder for en forsikringstype (IKKE en individuel police, faktura, følgebrev eller kundespecifikt dokument)
+- "omraade" skal matche den forsikringstype betingelserne dækker
+- "gyldig_fra" er typisk på forsiden eller i en ikrafttrædelsesdato
+- Svar KUN med JSON — ingen markdown, ingen forklaring.`,
                   },
                 ],
               },
@@ -136,11 +156,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
           const textContent = resp.content.find((b) => b.type === 'text');
           if (textContent?.type === 'text') {
-            const jsonMatch = textContent.text.match(/\{[^}]+\}/);
+            const jsonMatch = textContent.text.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
-              const parsed = JSON.parse(jsonMatch[0]) as { selskab?: string; titel?: string };
-              if (parsed.selskab) resolvedSelskab = parsed.selskab;
+              const parsed = JSON.parse(jsonMatch[0]) as {
+                selskab?: string;
+                selskab_normaliseret?: string;
+                titel?: string;
+                omraade?: string;
+                gyldig_fra?: string | null;
+                er_standard_betingelser?: boolean;
+                begrundelse?: string;
+              };
+              if (parsed.selskab && !selskabInput) resolvedSelskab = parsed.selskab;
+              if (parsed.selskab_normaliseret) resolvedSelskabNorm = parsed.selskab_normaliseret;
               if (parsed.titel && !titelInput) resolvedTitel = parsed.titel;
+              if (parsed.omraade) resolvedOmraade = parsed.omraade;
+              if (parsed.gyldig_fra) resolvedGyldigFra = parsed.gyldig_fra;
+              if (parsed.er_standard_betingelser === false) isValidStandard = false;
+              aiMetadata = parsed;
             }
           }
 
@@ -152,32 +185,59 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             outputTokens: resp.usage.output_tokens,
           });
         } catch {
-          /* AI-ekstraktion er best-effort — continue uden */
+          /* AI-klassificering er best-effort — continue uden */
         }
       }
     }
 
     if (!resolvedSelskab) resolvedSelskab = 'Ukendt';
 
-    // ── 3. Opret forsikring_standard_doc post ────────────────────────────────
+    // ── 2b. Content-hash for dedup (baseret på filnavn + størrelse + første bytes) ──
+    const crypto = await import('node:crypto');
+    const hashSource = `${file.name}|${file.size}|${Buffer.from(fileBytes.slice(0, 4096)).toString('base64')}`;
+    const contentHash = crypto.createHash('sha256').update(hashSource).digest('hex');
+
+    // ── 3. Dedup-check: hvis content_hash allerede eksisterer, returner eksisterende ──
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const svc = serviceClient as any;
-    const contentHash = randomUUID(); // Simpel unik hash for PDF-uploads
 
+    const { data: existing } = await svc
+      .from('forsikring_standard_doc')
+      .select('id, selskab, kategori, titel, source_url, added_via, created_at, is_valid_standard')
+      .eq('content_hash', contentHash)
+      .maybeSingle();
+
+    if (existing) {
+      // Duplikat fundet — returner eksisterende med flag
+      return NextResponse.json({
+        ...existing,
+        duplicate: true,
+        message: 'Dokumentet eksisterer allerede i biblioteket',
+      });
+    }
+
+    // ── 4. Opret forsikring_standard_doc post ────────────────────────────────
     const { data: insertData, error: insertErr } = await svc
       .from('forsikring_standard_doc')
       .insert({
         selskab: resolvedSelskab,
-        kategori: kategoriInput,
+        selskab_normaliseret: resolvedSelskabNorm,
+        kategori: resolvedOmraade ?? kategoriInput,
+        omraade: resolvedOmraade,
         titel: resolvedTitel,
         source_url: sourceUrl,
         content_hash: contentHash,
+        gyldig_fra: resolvedGyldigFra,
+        is_valid_standard: isValidStandard,
+        ai_metadata: aiMetadata,
         added_via: 'pdf_upload',
         added_by_user: auth.userId,
         added_by_domain: auth.tenantId,
         verified: false,
       })
-      .select('id, selskab, kategori, titel, source_url, added_via, created_at')
+      .select(
+        'id, selskab, kategori, titel, source_url, added_via, created_at, omraade, gyldig_fra, is_valid_standard'
+      )
       .single();
 
     if (insertErr) {
@@ -185,7 +245,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
     }
 
-    return NextResponse.json(insertData);
+    return NextResponse.json({
+      ...insertData,
+      duplicate: false,
+      is_valid_standard: isValidStandard,
+    });
   } catch (err) {
     logger.error('std-doc upload unexpected error', { message: String(err) });
     return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });

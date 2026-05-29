@@ -1819,7 +1819,10 @@ function DiagramForce({
       const z = Math.max(fit, 0.5);
       const scaledW = viewBox.w * z + 32;
       const scaledH = viewBox.h * z + 32;
-      const panX = Math.round((cW - scaledW) / 2);
+      // Center horisontalt når indhold passer i canvas. Brede diagrammer
+      // (scaledW > cW) venstre-alignes med 8px — ellers klippes venstre
+      // kant af overflow:hidden og noder er usynlige ved initial load.
+      const panX = scaledW < cW ? Math.round((cW - scaledW) / 2) : 8;
       // BIZZ-552: Center vertikalt når indhold passer ind i canvas. Store
       // diagrammer (scaledH > cH) top-alignes med 8px så scrolling/panning
       // afslører resten — undgår at brugeren mister starten af træet.

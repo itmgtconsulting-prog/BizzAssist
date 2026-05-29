@@ -229,9 +229,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       for (const entry of oversigt.policies) {
         // BIZZ-1395: Normalisér policenummer og skip duplikater
+        // BIZZ-1908 FIX: Dedup på policenr + adresse — same policenr kan have
+        // flere entries med forskellige forsikringstyper/adresser (fx ansvar +
+        // ejendom under same aftalenr). Kun skip hvis BÅDE nummer OG adresse matcher.
         const normalizedNum = normalizePolicyNumber(entry.policy_number);
         const existing = await insurance.policies.findByNumber(normalizedNum);
-        if (existing) {
+        if (existing && existing.property_address === (entry.property_address ?? null)) {
           createdPolicies.push({ id: existing.id, policy_number: existing.policy_number });
           continue;
         }

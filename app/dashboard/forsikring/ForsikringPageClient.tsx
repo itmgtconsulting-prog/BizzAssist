@@ -1848,55 +1848,59 @@ function AnalyseSection({
                       ? 'Uploader…'
                       : 'Uploading…'
                     : da
-                      ? 'Upload PDF'
-                      : 'Upload PDF'}
+                      ? 'Upload PDF(er)'
+                      : 'Upload PDF(s)'}
                 </button>
                 <input
                   ref={stdPdfRef}
                   type="file"
                   accept=".pdf,application/pdf"
+                  multiple
                   className="hidden"
                   aria-label={
                     da
-                      ? 'Vælg PDF-fil til standard betingelser'
-                      : 'Select PDF file for standard terms'
+                      ? 'Vælg PDF-filer til standard betingelser'
+                      : 'Select PDF files for standard terms'
                   }
                   onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
+                    const files = Array.from(e.target.files ?? []);
+                    if (files.length === 0) return;
                     e.target.value = '';
                     setStdPdfUploading(true);
                     try {
-                      const form = new FormData();
-                      form.append('file', file);
                       const selskab = stdSelskabRef.current?.value?.trim();
-                      if (selskab) form.append('selskab', selskab);
-                      const res = await fetch('/api/forsikring/standard-docs/upload', {
-                        method: 'POST',
-                        body: form,
-                      });
-                      if (res.ok) {
-                        const data = (await res.json()) as {
-                          id?: string;
-                          titel?: string;
-                          source_url?: string;
-                          kategori?: string;
-                          selskab?: string;
-                        };
-                        if (data.id && data.source_url && data.titel) {
-                          const newDoc = {
-                            titel: data.titel,
-                            source_url: data.source_url,
-                            kategori: data.kategori ?? 'ejendom',
-                            confidence: 'high' as const,
+                      // Upload filer sekventielt for at undgå rate-limit
+                      for (const file of files) {
+                        const form = new FormData();
+                        form.append('file', file);
+                        if (selskab) form.append('selskab', selskab);
+                        const res = await fetch('/api/forsikring/standard-docs/upload', {
+                          method: 'POST',
+                          body: form,
+                        });
+                        if (res.ok) {
+                          const data = (await res.json()) as {
+                            id?: string;
+                            titel?: string;
+                            source_url?: string;
+                            kategori?: string;
+                            selskab?: string;
                           };
-                          setStdDiscovered((prev) =>
-                            prev.find((d) => d.source_url === data.source_url)
-                              ? prev
-                              : [...prev, newDoc]
-                          );
-                          setStdSelectedIds((prev) => new Set([...prev, data.source_url!]));
-                          setStdSavedIds((prev) => new Map(prev).set(data.source_url!, data.id!));
+                          if (data.id && data.source_url && data.titel) {
+                            const newDoc = {
+                              titel: data.titel,
+                              source_url: data.source_url,
+                              kategori: data.kategori ?? 'ejendom',
+                              confidence: 'high' as const,
+                            };
+                            setStdDiscovered((prev) =>
+                              prev.find((d) => d.source_url === data.source_url)
+                                ? prev
+                                : [...prev, newDoc]
+                            );
+                            setStdSelectedIds((prev) => new Set([...prev, data.source_url!]));
+                            setStdSavedIds((prev) => new Map(prev).set(data.source_url!, data.id!));
+                          }
                         }
                       }
                     } catch {

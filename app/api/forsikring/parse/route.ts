@@ -38,6 +38,7 @@ import { runGapEngine } from '@/app/lib/forsikring/gapEngine';
 import {
   COVERAGE_LABELS_DA,
   type CoverageCode,
+  type ForsikringCoverage,
   type ParsedPolicy,
 } from '@/app/lib/forsikring/types';
 import { resolveFileType } from '@/app/lib/domainFileTypes';
@@ -306,7 +307,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         await insurance.gaps.deleteForPolicy(policy.id);
         const detectedGaps = runGapEngine({
           policy,
-          coverages: coverageInputs,
+          coverages: coverageInputs as unknown as ForsikringCoverage[],
           bbr: null,
           asOfDate: new Date(),
         });
@@ -410,7 +411,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         await insurance.gaps.deleteForPolicy(existingPolicy.id);
         const detectedGaps = runGapEngine({
           policy: existingPolicy,
-          coverages: coverageInputs,
+          coverages: coverageInputs as unknown as ForsikringCoverage[],
           bbr: null,
           asOfDate: new Date(),
         });

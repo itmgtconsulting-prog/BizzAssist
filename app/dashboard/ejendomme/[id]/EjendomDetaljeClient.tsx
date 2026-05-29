@@ -950,14 +950,30 @@ export default function EjendomDetaljeClient({
     // Fallback: hvis matrikelData er klar før BBR, kan vi ikke vide om det er
     // opdelt. Prefetch kun hvis vi har bbr-signal eller matrikel-opdelt-flag.
     const matOpdelt = matrikelData?.opdeltIEjerlejligheder === true;
-    if (!erModer && !erChild && !matOpdelt) return;
-
-    // Find ejerlavkode + matrikelnr — foretræk BBR (konsistent med eksisterende
-    // logic), fallback til MAT når BBR endnu ikke er loaded.
+    // BIZZ-1855 #1: Pure SFE/hovedejendom-BFE uden VP-resolved ejerlejlighedBfe
+    // (fx Carlsberg Byen SFE 6025643 hvor matrikel-bredde forhindrer VP i at
+    // returnere en specifik EL-BFE). Når vi er på adgangsadresse-niveau med
+    // ejerlavkode+matrikelnr (fra BBR ELLER MAT) men ingen ejerlejlighedBfe,
+    // prøv at hente lejligheder via matrikel-søgning.
     const bbrRel = bbrData?.ejendomsrelationer?.[0];
     const matJs = matrikelData?.jordstykker?.[0];
-    const ejerlavKode = bbrRel?.ejerlavKode ?? matJs?.ejerlavskode;
-    const matrikelnr = bbrRel?.matrikelnr ?? matJs?.matrikelnummer;
+    // Tertiær kilde: DAWA jordstykke (hentes via koordinat-lookup, uafhængig af BBR)
+    const dawaEjerlav = dawaJordstykke?.ejerlav?.kode;
+    const dawaMatr = dawaJordstykke?.matrikelnr;
+    const hasEjerlavMatr =
+      (!!bbrRel?.ejerlavKode && !!bbrRel?.matrikelnr) ||
+      (!!matJs?.ejerlavskode && !!matJs?.matrikelnummer) ||
+      (!!dawaEjerlav && !!dawaMatr);
+    const erParentSfe = !dawaAdresse?.etage && hasEjerlavMatr && !bbrData?.ejerlejlighedBfe;
+    // BIZZ-1853: Lejlighed med etage men uden ejerlejlighedBfe (VP kan ikke
+    // resoleve, fx Carlsberg Byen). Hent lejligheder via matrikel for at finde
+    // ejer-data via dawaId-match.
+    const erChildUdenBfe = !!dawaAdresse?.etage && hasEjerlavMatr && !bbrData?.ejerlejlighedBfe;
+    if (!erModer && !erChild && !matOpdelt && !erParentSfe && !erChildUdenBfe) return;
+
+    // Find ejerlavkode + matrikelnr — foretræk BBR, fallback MAT, tertiær DAWA jordstykke
+    const ejerlavKode = bbrRel?.ejerlavKode ?? matJs?.ejerlavskode ?? dawaEjerlav;
+    const matrikelnr = bbrRel?.matrikelnr ?? matJs?.matrikelnummer ?? dawaMatr;
     if (!ejerlavKode || !matrikelnr) return;
     const controller = new AbortController();
     setLejlighederLoader(true);
@@ -997,7 +1013,7 @@ export default function EjendomDetaljeClient({
       clearTimeout(delayTimer);
       controller.abort();
     };
-  }, [id, erDAWA, dawaStatus, dawaAdresse, bbrData, matrikelData]);
+  }, [id, erDAWA, dawaStatus, dawaAdresse, bbrData, matrikelData, dawaJordstykke]);
 
   /**
    * Henter ejendomsstruktur (SFE → Hovedejendom → Ejerlejlighed) for opdelte
@@ -1009,14 +1025,22 @@ export default function EjendomDetaljeClient({
     const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
     const erChild = !!dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
     const matOpdelt = matrikelData?.opdeltIEjerlejligheder === true;
-    // Vis struktur for hele hierarkiet: moderejendommen, children (ejerlejligheder),
-    // og ejendomme der er opdelt ifølge matrikeldata.
-    if (!erModer && !erChild && !matOpdelt) return;
-
+    // Tertiær kilde: DAWA jordstykke (hentes via koordinat-lookup, uafhængig af BBR)
     const bbrRel = bbrData?.ejendomsrelationer?.[0];
     const matJs = matrikelData?.jordstykker?.[0];
-    const ejerlavKode = bbrRel?.ejerlavKode ?? matJs?.ejerlavskode;
-    const matrikelnr = bbrRel?.matrikelnr ?? matJs?.matrikelnummer;
+    const dawaEjerlav2 = dawaJordstykke?.ejerlav?.kode;
+    const dawaMatr2 = dawaJordstykke?.matrikelnr;
+    const hasEjerlavMatr2 =
+      (!!bbrRel?.ejerlavKode && !!bbrRel?.matrikelnr) ||
+      (!!matJs?.ejerlavskode && !!matJs?.matrikelnummer) ||
+      (!!dawaEjerlav2 && !!dawaMatr2);
+    // Vis struktur for hele hierarkiet: moderejendommen, children (ejerlejligheder),
+    // ejendomme der er opdelt ifølge matrikeldata, og SFE'er uden ejerlejlighedBfe.
+    const erParentSfe2 = !dawaAdresse?.etage && hasEjerlavMatr2 && !bbrData?.ejerlejlighedBfe;
+    if (!erModer && !erChild && !matOpdelt && !erParentSfe2) return;
+
+    const ejerlavKode = bbrRel?.ejerlavKode ?? matJs?.ejerlavskode ?? dawaEjerlav2;
+    const matrikelnr = bbrRel?.matrikelnr ?? matJs?.matrikelnummer ?? dawaMatr2;
     if (!ejerlavKode || !matrikelnr) return;
 
     const controller = new AbortController();
@@ -1045,7 +1069,7 @@ export default function EjendomDetaljeClient({
         if (!controller.signal.aborted) setStrukturLoader(false);
       });
     return () => controller.abort();
-  }, [id, erDAWA, dawaStatus, dawaAdresse, bbrData, matrikelData]);
+  }, [id, erDAWA, dawaStatus, dawaAdresse, bbrData, matrikelData, dawaJordstykke]);
 
   /**
    * Henter ejendomsvurdering og ejerskabsdata fra Datafordeler når BFEnummer

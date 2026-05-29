@@ -2726,7 +2726,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
     await enrichVirksomhedFejlcacheNodes(graph);
 
     // Berig property-noder med adresser (best-effort, direkte via admin client)
-    await enrichPropertyNodes(graph, admin);
+    await enrichPropertyNodes(graph, reqHost, reqCookie);
 
     // Tilføj manglende company→company edges fra cvr_virksomhed_ejerskab.
     // EJF viser kun BFE-ejerskab (flad) — CVR-ejerskab viser koncernhierarki.

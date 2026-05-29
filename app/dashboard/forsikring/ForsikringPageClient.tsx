@@ -37,6 +37,7 @@ import {
   Plus,
   FilePlus,
   ScanSearch,
+  BookOpen,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { useSubscription } from '@/app/context/SubscriptionContext';
@@ -709,8 +710,16 @@ function AnalyseSection({
       selskab: string;
       kategori: string;
       added_via: string;
+      added_by_user: string | null;
+      is_valid_standard?: boolean;
+      omraade?: string | null;
+      gyldig_fra?: string | null;
     }>
   >([]);
+  /** BIZZ-1921: Bibliotek-modal åben/lukket */
+  const [stdLibraryOpen, setStdLibraryOpen] = useState(false);
+  /** BIZZ-1921: Filter i bibliotek */
+  const [stdLibraryFilter, setStdLibraryFilter] = useState('');
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1914,97 +1923,276 @@ function AnalyseSection({
                 </div>
               </div>
 
-              {/* BIZZ-1890: PDF upload af standard betingelser */}
-              <div className="pt-1">
-                <div className="text-slate-400 text-[10px] mb-1.5">
-                  {da
-                    ? 'Eller upload PDF med standard betingelser:'
-                    : 'Or upload a PDF with standard terms:'}
-                </div>
-                <button
-                  type="button"
-                  aria-label={
-                    da
-                      ? 'Upload PDF med standard forsikringsbetingelser'
-                      : 'Upload PDF with standard insurance terms'
-                  }
-                  onClick={() => stdPdfRef.current?.click()}
-                  disabled={stdPdfUploading || running}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700/50 hover:bg-slate-600/50 border border-slate-600/50 text-slate-300 text-xs font-medium transition-colors disabled:opacity-40"
-                >
-                  {stdPdfUploading ? (
-                    <Loader2 size={11} className="animate-spin" />
-                  ) : (
-                    <FilePlus size={11} />
-                  )}
-                  {stdPdfUploading
-                    ? da
-                      ? 'Uploader…'
-                      : 'Uploading…'
-                    : da
-                      ? 'Upload PDF(er)'
-                      : 'Upload PDF(s)'}
-                </button>
-                <input
-                  ref={stdPdfRef}
-                  type="file"
-                  accept=".pdf,application/pdf"
-                  multiple
-                  className="hidden"
-                  aria-label={
-                    da
-                      ? 'Vælg PDF-filer til standard betingelser'
-                      : 'Select PDF files for standard terms'
-                  }
-                  onChange={async (e) => {
-                    const files = Array.from(e.target.files ?? []);
-                    if (files.length === 0) return;
-                    e.target.value = '';
-                    setStdPdfUploading(true);
-                    try {
-                      const selskab = stdSelskabRef.current?.value?.trim();
-                      // Upload filer sekventielt for at undgå rate-limit
-                      for (const file of files) {
-                        const form = new FormData();
-                        form.append('file', file);
-                        if (selskab) form.append('selskab', selskab);
-                        const res = await fetch('/api/forsikring/standard-docs/upload', {
-                          method: 'POST',
-                          body: form,
-                        });
-                        if (res.ok) {
-                          const data = (await res.json()) as {
-                            id?: string;
-                            titel?: string;
-                            source_url?: string;
-                            kategori?: string;
-                            selskab?: string;
-                          };
-                          if (data.id && data.source_url && data.titel) {
-                            const newDoc = {
-                              titel: data.titel,
-                              source_url: data.source_url,
-                              kategori: data.kategori ?? 'ejendom',
-                              confidence: 'high' as const,
+              {/* BIZZ-1921: Åbn bibliotek + BIZZ-1890: PDF upload */}
+              <div className="pt-1 flex items-end gap-2">
+                <div className="flex-1">
+                  <div className="text-slate-400 text-[10px] mb-1.5">
+                    {da
+                      ? 'Eller upload PDF med standard betingelser:'
+                      : 'Or upload a PDF with standard terms:'}
+                  </div>
+                  <button
+                    type="button"
+                    aria-label={
+                      da
+                        ? 'Upload PDF med standard forsikringsbetingelser'
+                        : 'Upload PDF with standard insurance terms'
+                    }
+                    onClick={() => stdPdfRef.current?.click()}
+                    disabled={stdPdfUploading || running}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700/50 hover:bg-slate-600/50 border border-slate-600/50 text-slate-300 text-xs font-medium transition-colors disabled:opacity-40"
+                  >
+                    {stdPdfUploading ? (
+                      <Loader2 size={11} className="animate-spin" />
+                    ) : (
+                      <FilePlus size={11} />
+                    )}
+                    {stdPdfUploading
+                      ? da
+                        ? 'Uploader…'
+                        : 'Uploading…'
+                      : da
+                        ? 'Upload PDF(er)'
+                        : 'Upload PDF(s)'}
+                  </button>
+                  <input
+                    ref={stdPdfRef}
+                    type="file"
+                    accept=".pdf,application/pdf"
+                    multiple
+                    className="hidden"
+                    aria-label={
+                      da
+                        ? 'Vælg PDF-filer til standard betingelser'
+                        : 'Select PDF files for standard terms'
+                    }
+                    onChange={async (e) => {
+                      const files = Array.from(e.target.files ?? []);
+                      if (files.length === 0) return;
+                      e.target.value = '';
+                      setStdPdfUploading(true);
+                      try {
+                        const selskab = stdSelskabRef.current?.value?.trim();
+                        // Upload filer sekventielt for at undgå rate-limit
+                        for (const file of files) {
+                          const form = new FormData();
+                          form.append('file', file);
+                          if (selskab) form.append('selskab', selskab);
+                          const res = await fetch('/api/forsikring/standard-docs/upload', {
+                            method: 'POST',
+                            body: form,
+                          });
+                          if (res.ok) {
+                            const data = (await res.json()) as {
+                              id?: string;
+                              titel?: string;
+                              source_url?: string;
+                              kategori?: string;
+                              selskab?: string;
                             };
-                            setStdDiscovered((prev) =>
-                              prev.find((d) => d.source_url === data.source_url)
-                                ? prev
-                                : [...prev, newDoc]
-                            );
-                            setStdSelectedIds((prev) => new Set([...prev, data.source_url!]));
-                            setStdSavedIds((prev) => new Map(prev).set(data.source_url!, data.id!));
+                            if (data.id && data.source_url && data.titel) {
+                              const newDoc = {
+                                titel: data.titel,
+                                source_url: data.source_url,
+                                kategori: data.kategori ?? 'ejendom',
+                                confidence: 'high' as const,
+                              };
+                              setStdDiscovered((prev) =>
+                                prev.find((d) => d.source_url === data.source_url)
+                                  ? prev
+                                  : [...prev, newDoc]
+                              );
+                              setStdSelectedIds((prev) => new Set([...prev, data.source_url!]));
+                              setStdSavedIds((prev) =>
+                                new Map(prev).set(data.source_url!, data.id!)
+                              );
+                            }
                           }
                         }
+                      } catch {
+                        /* non-fatal */
+                      } finally {
+                        setStdPdfUploading(false);
                       }
-                    } catch {
-                      /* non-fatal */
-                    } finally {
-                      setStdPdfUploading(false);
-                    }
-                  }}
-                />
+                    }}
+                  />
+                </div>
+                {/* BIZZ-1921: Åbn bibliotek-knap */}
+                <button
+                  type="button"
+                  onClick={() => setStdLibraryOpen(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 text-xs font-medium transition-colors whitespace-nowrap"
+                  aria-label={da ? 'Åbn betingelsesbibliotek' : 'Open terms library'}
+                >
+                  <BookOpen size={11} />
+                  {da ? 'Bibliotek' : 'Library'}
+                  {stdSavedLibrary.length > 0 && (
+                    <span className="text-indigo-400/70 text-[9px]">
+                      ({stdSavedLibrary.length})
+                    </span>
+                  )}
+                </button>
               </div>
+
+              {/* BIZZ-1921: Bibliotek-modal */}
+              {stdLibraryOpen && (
+                <div
+                  className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+                  onClick={() => setStdLibraryOpen(false)}
+                >
+                  <div
+                    className="bg-slate-900 border border-slate-700/50 rounded-2xl w-full max-w-2xl max-h-[80vh] overflow-hidden shadow-2xl"
+                    onClick={(e) => e.stopPropagation()}
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="std-library-title"
+                  >
+                    {/* Header */}
+                    <div className="flex items-center justify-between px-5 py-3 border-b border-slate-700/50">
+                      <h3 id="std-library-title" className="text-white font-semibold text-sm">
+                        {da ? 'Standard forsikringsbetingelser' : 'Standard insurance terms'}
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={() => setStdLibraryOpen(false)}
+                        className="text-slate-500 hover:text-white text-lg"
+                        aria-label={da ? 'Luk' : 'Close'}
+                      >
+                        ×
+                      </button>
+                    </div>
+
+                    {/* Filter */}
+                    <div className="px-5 py-2 border-b border-slate-800/50">
+                      <input
+                        type="text"
+                        value={stdLibraryFilter}
+                        onChange={(e) => setStdLibraryFilter(e.target.value)}
+                        placeholder={
+                          da
+                            ? 'Filtrer på titel, selskab eller område...'
+                            : 'Filter by title, company or area...'
+                        }
+                        className="w-full bg-slate-800/60 border border-slate-700/40 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:border-indigo-500/50 focus:outline-none"
+                      />
+                    </div>
+
+                    {/* Liste */}
+                    <div className="overflow-y-auto max-h-[55vh] px-5 py-2 space-y-1">
+                      {stdSavedLibrary.length === 0 ? (
+                        <p className="text-slate-500 text-xs py-4 text-center">
+                          {da
+                            ? 'Ingen gemte betingelser endnu. Upload PDF eller find via AI.'
+                            : 'No saved terms yet. Upload PDF or find via AI.'}
+                        </p>
+                      ) : (
+                        stdSavedLibrary
+                          .filter((doc) => {
+                            if (!stdLibraryFilter) return true;
+                            const q = stdLibraryFilter.toLowerCase();
+                            return (
+                              doc.titel.toLowerCase().includes(q) ||
+                              doc.selskab.toLowerCase().includes(q) ||
+                              (doc.omraade ?? '').toLowerCase().includes(q)
+                            );
+                          })
+                          .map((doc) => {
+                            const isSelected = stdSelectedIds.has(doc.source_url);
+                            return (
+                              <label
+                                key={doc.id}
+                                className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors ${
+                                  isSelected
+                                    ? 'bg-teal-900/30 border border-teal-500/30'
+                                    : 'bg-slate-800/30 border border-slate-700/20 hover:border-slate-600/40'
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => {
+                                    const alreadyInDiscovered = stdDiscovered.some(
+                                      (d) => d.source_url === doc.source_url
+                                    );
+                                    if (!alreadyInDiscovered) {
+                                      setStdDiscovered((prev) => [
+                                        ...prev,
+                                        {
+                                          titel: doc.titel,
+                                          source_url: doc.source_url,
+                                          kategori: doc.kategori,
+                                          confidence: 'high',
+                                        },
+                                      ]);
+                                      setStdSavedIds((prev) =>
+                                        new Map(prev).set(doc.source_url, doc.id)
+                                      );
+                                    }
+                                    setStdSelectedIds((prev) => {
+                                      const next = new Set(prev);
+                                      if (isSelected) next.delete(doc.source_url);
+                                      else next.add(doc.source_url);
+                                      return next;
+                                    });
+                                  }}
+                                  className="accent-teal-500 w-3.5 h-3.5 shrink-0"
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-white text-xs font-medium truncate">
+                                    {doc.titel}
+                                  </div>
+                                  <div className="flex items-center gap-2 mt-0.5">
+                                    <span className="text-slate-400 text-[10px]">
+                                      {doc.selskab}
+                                    </span>
+                                    {doc.omraade && (
+                                      <span className="text-indigo-400/70 text-[9px] px-1.5 py-0.5 bg-indigo-500/10 rounded">
+                                        {doc.omraade}
+                                      </span>
+                                    )}
+                                    {doc.gyldig_fra && (
+                                      <span className="text-slate-500 text-[9px]">
+                                        {da ? 'Fra' : 'From'} {doc.gyldig_fra}
+                                      </span>
+                                    )}
+                                    {doc.is_valid_standard === false && (
+                                      <span className="text-amber-400 text-[9px]">
+                                        ⚠ {da ? 'Ikke standard' : 'Not standard'}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                                <a
+                                  href={doc.source_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-slate-500 hover:text-blue-400 text-[10px] shrink-0"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  ↗
+                                </a>
+                              </label>
+                            );
+                          })
+                      )}
+                    </div>
+
+                    {/* Footer */}
+                    <div className="flex items-center justify-between px-5 py-3 border-t border-slate-700/50">
+                      <span className="text-slate-500 text-[10px]">
+                        {stdSelectedIds.size} {da ? 'valgt' : 'selected'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setStdLibraryOpen(false)}
+                        className="px-4 py-1.5 bg-teal-600 hover:bg-teal-500 text-white text-xs font-medium rounded-lg transition-colors"
+                      >
+                        {da ? 'Anvend' : 'Apply'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
             {/* end højre kolonne */}
           </div>

@@ -119,9 +119,31 @@ Find standard forsikringsbetingelser (generelle vilkår) for denne type forsikri
       return NextResponse.json({ results: [] });
     }
 
-    // Validér
+    // Validér format
     const validConfidences = new Set(['high', 'medium', 'low']);
     results = results.filter((r) => r.titel && r.source_url && validConfidences.has(r.confidence));
+
+    // BIZZ-1920: Validér at URLs er tilgængelige (HEAD request)
+    // Parallel med 3s timeout — døde links filtreres fra eller nedgraderes
+    const validated = await Promise.all(
+      results.map(async (doc) => {
+        try {
+          const res = await fetch(doc.source_url, {
+            method: 'HEAD',
+            signal: AbortSignal.timeout(3000),
+            redirect: 'follow',
+          });
+          if (res.ok) return doc;
+          // 404/403/5xx → nedgrader til low og markér
+          logger.warn(`[standard-docs/discover] URL ${res.status}: ${doc.source_url.slice(0, 80)}`);
+          return null; // Filtrer døde links helt fra
+        } catch {
+          // Timeout/network error → behold med nedgraderet confidence
+          return { ...doc, confidence: 'low' as const };
+        }
+      })
+    );
+    results = validated.filter((r): r is DiscoveredStandardDoc => r !== null);
 
     return NextResponse.json({ results });
   } catch (err) {

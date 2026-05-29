@@ -736,6 +736,10 @@ function AnalyseSection({
             selskab: string;
             kategori: string;
             added_via: string;
+            added_by_user: string | null;
+            is_valid_standard?: boolean;
+            omraade?: string | null;
+            gyldig_fra?: string | null;
           }>
         ) => {
           setStdSavedLibrary(data);

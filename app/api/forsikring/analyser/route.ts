@@ -161,17 +161,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // Kun policer parsed fra de valgte dokumenter
       policer = allPolicies.filter((p) => p.document_id && scopeDocIds.includes(p.document_id));
 
-      // BIZZ-1592 FIX: hvis scopeDocIds filtrerer ALLE policer væk (typisk
-      // når UI har stale document_ids fra slettede/re-uploadede docs), fald
-      // tilbage til "alle policer for kunden" så vi ikke producerer 0/N
-      // forsikrede pga. UI-state-mismatch. Match-pipeline'n filtrerer alligevel
-      // policer der ikke kan matches mod aktiver — så vi inkluderer hellere
-      // for mange policer end for få.
+      // BIZZ-1592 REVERTED: Fallback til alle policer fjernet — det gav
+      // forkerte resultater fordi policer fra TIDLIGERE uploads (andre
+      // dokumenter) blev inkluderet i analysen. Bedre med 0 forsikrede
+      // end forkerte matches fra irrelevante policer.
       if (policer.length === 0 && allPolicies.length > 0) {
         logger.warn(
-          `[forsikring/analyser] scopeDocIds filtrerede ALLE ${allPolicies.length} policer væk — fallback til alle policer (UI-state-mismatch?)`
+          `[forsikring/analyser] scopeDocIds filtrerede ALLE ${allPolicies.length} policer væk — 0 policer brugt (ingen fallback)`
         );
-        policer = allPolicies;
       } else {
         logger.log(
           `[forsikring/analyser] Scoped til ${policer.length} policer fra ${scopeDocIds.length} dokumenter (af ${allPolicies.length} total)`

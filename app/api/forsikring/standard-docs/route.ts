@@ -43,6 +43,8 @@ export interface StandardDocSummary {
   verified: boolean;
   created_at: string;
   has_content: boolean;
+  /** UUID af brugeren der tilføjede — til slet-kontrol */
+  added_by_user: string | null;
 }
 
 /**
@@ -78,13 +80,25 @@ export async function GET(req: NextRequest) {
 
     const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
+    // Domain-scoped: vis kun betingelser fra brugerens tenant/domain
+    // Globale docs (added_by_domain = null) vises altid (system-level)
+    const domainId = auth.tenantId;
+
+    // ?all=true → vis ALLE docs uanset domain (til admin/debugging)
+    const showAll = req.nextUrl.searchParams.get('all') === 'true';
+
     let query = serviceClient
       .from('forsikring_standard_doc')
       .select(
-        'id, selskab, kategori, titel, source_url, added_via, verified, created_at, raw_content'
+        'id, selskab, kategori, titel, source_url, added_via, verified, created_at, raw_content, added_by_user'
       )
       .order('created_at', { ascending: false })
       .limit(100);
+
+    // Filter til brugerens domain + globale docs (uden domain)
+    if (!showAll && domainId) {
+      query = query.or(`added_by_domain.eq.${domainId},added_by_domain.is.null`);
+    }
 
     if (selskab) query = query.ilike('selskab', `%${selskab}%`);
     if (kategori) query = query.eq('kategori', kategori);
@@ -107,6 +121,7 @@ export async function GET(req: NextRequest) {
         verified: boolean;
         created_at: string;
         raw_content: string | null;
+        added_by_user: string | null;
       }>
     ).map((d) => ({
       id: d.id,
@@ -118,6 +133,7 @@ export async function GET(req: NextRequest) {
       verified: d.verified,
       created_at: d.created_at,
       has_content: !!d.raw_content,
+      added_by_user: d.added_by_user,
     }));
 
     return NextResponse.json(result);
@@ -190,6 +206,55 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ id: data?.id, success: true });
   } catch (err) {
     logger.error('[standard-docs POST] uventet fejl:', err);
+    return NextResponse.json({ error: 'Intern serverfejl' }, { status: 500 });
+  }
+}
+
+// ─── DELETE ──────────────────────────────────────────────────────────────────
+
+/**
+ * DELETE /api/forsikring/standard-docs?id=UUID
+ * Sletter et standard-dokument. Brugere kan kun slette egne docs.
+ */
+export async function DELETE(req: NextRequest) {
+  try {
+    const auth = await resolveTenantId();
+    if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    const docId = req.nextUrl.searchParams.get('id');
+    if (!docId) {
+      return NextResponse.json({ error: 'id parameter påkrævet' }, { status: 400 });
+    }
+
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+      return NextResponse.json({ error: 'Supabase ikke konfigureret' }, { status: 503 });
+    }
+
+    const sessionClient = await getSessionClient();
+    const {
+      data: { user },
+    } = await sessionClient.auth.getUser();
+    if (!user) {
+      return NextResponse.json({ error: 'Ikke autoriseret' }, { status: 401 });
+    }
+
+    const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+
+    // Kun slet egne docs (added_by_user match) eller docs i eget domain
+    const { error } = await serviceClient
+      .from('forsikring_standard_doc')
+      .delete()
+      .eq('id', docId)
+      .eq('added_by_domain', auth.tenantId);
+
+    if (error) {
+      logger.error('[standard-docs DELETE] error:', error.message);
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (err) {
+    logger.error('[standard-docs DELETE] uventet fejl:', err);
     return NextResponse.json({ error: 'Intern serverfejl' }, { status: 500 });
   }
 }

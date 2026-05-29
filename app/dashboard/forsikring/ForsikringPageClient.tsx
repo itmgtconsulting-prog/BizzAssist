@@ -700,8 +700,42 @@ function AnalyseSection({
   const stdPdfRef = useRef<HTMLInputElement>(null);
   /** BIZZ-1890: AI auto-detektion fra police-dokumenter */
   const [stdDetecting, setStdDetecting] = useState(false);
+  /** BIZZ-1919: Tidligere gemte standard betingelser (delt i domain) */
+  const [stdSavedLibrary, setStdSavedLibrary] = useState<
+    Array<{
+      id: string;
+      titel: string;
+      source_url: string;
+      selskab: string;
+      kategori: string;
+      added_via: string;
+    }>
+  >([]);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // BIZZ-1919: Hent eksisterende delte standard betingelser ved page-load
+  useEffect(() => {
+    fetch('/api/forsikring/standard-docs')
+      .then((r) => (r.ok ? r.json() : []))
+      .then(
+        (
+          data: Array<{
+            id: string;
+            titel: string;
+            source_url: string;
+            selskab: string;
+            kategori: string;
+            added_via: string;
+          }>
+        ) => {
+          setStdSavedLibrary(data);
+        }
+      )
+      .catch(() => {
+        /* non-fatal */
+      });
+  }, []);
   /** BIZZ-1384: Sagsliste */
   const [sager, setSager] = useState<
     Array<{
@@ -1477,6 +1511,66 @@ function AnalyseSection({
                   ? 'Tilføj generelle vilkår fra forsikringsselskabet til analysen. AI kan finde dem automatisk.'
                   : 'Add general terms from the insurance company to the analysis. AI can find them automatically.'}
               </p>
+
+              {/* BIZZ-1919: Gemte betingelser fra domain-biblioteket */}
+              {stdSavedLibrary.length > 0 && (
+                <div className="space-y-1">
+                  <div className="text-slate-500 text-[10px] mb-1">
+                    {da
+                      ? `${stdSavedLibrary.length} tidligere gemte betingelser:`
+                      : `${stdSavedLibrary.length} previously saved terms:`}
+                  </div>
+                  <div className="max-h-32 overflow-y-auto space-y-0.5">
+                    {stdSavedLibrary.map((doc) => {
+                      const isSelected = stdSelectedIds.has(doc.source_url);
+                      const alreadyInDiscovered = stdDiscovered.some(
+                        (d) => d.source_url === doc.source_url
+                      );
+                      return (
+                        <label
+                          key={doc.id}
+                          className={`flex items-center gap-2 px-2 py-1 rounded-lg cursor-pointer transition-colors text-[11px] ${
+                            isSelected
+                              ? 'bg-teal-900/30 border border-teal-500/30'
+                              : 'bg-slate-800/40 border border-slate-700/20 hover:border-slate-600/40'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {
+                              // Tilføj til discovered-listen hvis ikke allerede der
+                              if (!alreadyInDiscovered) {
+                                setStdDiscovered((prev) => [
+                                  ...prev,
+                                  {
+                                    titel: doc.titel,
+                                    source_url: doc.source_url,
+                                    kategori: doc.kategori,
+                                    confidence: 'high',
+                                  },
+                                ]);
+                                setStdSavedIds((prev) => new Map(prev).set(doc.source_url, doc.id));
+                              }
+                              setStdSelectedIds((prev) => {
+                                const next = new Set(prev);
+                                if (isSelected) next.delete(doc.source_url);
+                                else next.add(doc.source_url);
+                                return next;
+                              });
+                            }}
+                            className="accent-teal-500 w-3 h-3"
+                          />
+                          <span className="text-slate-300 truncate flex-1">{doc.titel}</span>
+                          <span className="text-slate-600 text-[9px] shrink-0">
+                            {doc.selskab.length > 20 ? doc.selskab.slice(0, 20) + '…' : doc.selskab}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* AI discovery row */}
               <div className="flex gap-2 items-end">

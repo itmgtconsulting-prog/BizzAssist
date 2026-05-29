@@ -347,7 +347,63 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const normalizedPolicyNum = normalizePolicyNumber(parsed.policy_number);
     const existingPolicy = await insurance.policies.findByNumber(normalizedPolicyNum);
     if (existingPolicy) {
-      // Police eksisterer allerede — link dokumentet og skip oprettelse
+      // Police eksisterer allerede — link dokumentet og TILFØJ coverages
+      // hvis det nye dokument har dækningsdata (typisk detaljeret police vs oversigt)
+      let addedCoverages = 0;
+      if (parsed.coverages && parsed.coverages.length > 0) {
+        // Slet gamle (tomme) coverages og indsæt nye fra det detaljerede dokument
+        await insurance.coverages.deleteForPolicy(existingPolicy.id);
+        const coverageInputs = parsed.coverages.map(
+          (c: {
+            coverage_code: string;
+            coverage_label?: string;
+            is_covered: boolean;
+            sum_dkk?: number | null;
+            deductible_dkk?: number | null;
+            conditions_ref?: string | null;
+            notes?: string | null;
+          }) => ({
+            policy_id: existingPolicy.id,
+            coverage_code: c.coverage_code,
+            coverage_label:
+              c.coverage_label ||
+              COVERAGE_LABELS_DA[c.coverage_code as CoverageCode] ||
+              c.coverage_code,
+            is_covered: c.is_covered,
+            sum_dkk: c.sum_dkk ?? null,
+            deductible_dkk: c.deductible_dkk ?? null,
+            conditions_ref: c.conditions_ref ?? null,
+            notes: c.notes ?? null,
+          })
+        );
+        await insurance.coverages.bulkCreate(coverageInputs);
+        addedCoverages = coverageInputs.length;
+
+        // Re-kør gap-engine med dækningsdata
+        await insurance.gaps.deleteForPolicy(existingPolicy.id);
+        const detectedGaps = runGapEngine({
+          policy: existingPolicy,
+          coverages: coverageInputs,
+          bbr: null,
+          asOfDate: new Date(),
+        });
+        if (detectedGaps.length > 0) {
+          await insurance.gaps.bulkCreate(
+            detectedGaps.map((g) => ({
+              policy_id: existingPolicy.id,
+              check_id: g.check_id,
+              category: g.category,
+              severity: g.severity,
+              title: g.title,
+              description: g.description,
+              recommendation: g.recommendation,
+              estimated_impact_dkk: g.estimated_impact_dkk,
+              source_data: g.source_data,
+            }))
+          );
+        }
+      }
+
       await insurance.documents.updateParseStatus(doc.id, 'parsed', {
         extractedText: result.text,
         policyId: existingPolicy.id,
@@ -362,7 +418,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           property_address: existingPolicy.property_address,
         },
         deduplicated: true,
-        coverages_count: 0,
+        coverages_count: addedCoverages,
         gaps_count: 0,
       });
     }

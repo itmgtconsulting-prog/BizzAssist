@@ -492,19 +492,19 @@ function UnifiedAnalyseView({
         <div className="grid grid-cols-5 gap-2">
           <div className="text-center">
             <div className="text-purple-300 text-xl font-bold">{virksomhedGroups.length}</div>
-            <div className="text-slate-500 text-[10px]">{da ? 'Virksomheder' : 'Companies'}</div>
+            <div className="text-slate-400 text-[10px]">{da ? 'Virksomheder' : 'Companies'}</div>
           </div>
           <div className="text-center">
             <div className="text-blue-300 text-xl font-bold">{total}</div>
-            <div className="text-slate-500 text-[10px]">{da ? 'Ejendomme' : 'Properties'}</div>
+            <div className="text-slate-400 text-[10px]">{da ? 'Ejendomme' : 'Properties'}</div>
           </div>
           <div className="text-center">
             <div className="text-emerald-300 text-xl font-bold">{insured}</div>
-            <div className="text-slate-500 text-[10px]">{da ? 'Forsikrede' : 'Insured'}</div>
+            <div className="text-slate-400 text-[10px]">{da ? 'Forsikrede' : 'Insured'}</div>
           </div>
           <div className="text-center">
             <div className="text-red-300 text-xl font-bold">{total - insured}</div>
-            <div className="text-slate-500 text-[10px]">{da ? 'Uforsikrede' : 'Uninsured'}</div>
+            <div className="text-slate-400 text-[10px]">{da ? 'Uforsikrede' : 'Uninsured'}</div>
           </div>
           <div className="text-center">
             <div
@@ -518,7 +518,7 @@ function UnifiedAnalyseView({
             >
               {healthScore}
             </div>
-            <div className="text-slate-500 text-[10px]">
+            <div className="text-slate-400 text-[10px]">
               {da ? 'Sundhedsscore' : 'Health score'}
             </div>
           </div>
@@ -1305,7 +1305,7 @@ function AnalyseSection({
                               ? `${sel} / ${total} dokumenter valgt`
                               : `${sel} / ${total} documents selected`}
                           </span>
-                          <span className="text-slate-500 text-[10px]">
+                          <span className="text-slate-400 text-[10px]">
                             {da
                               ? 'Klik for at vælge/fravælge alle'
                               : 'Click to select/deselect all'}
@@ -1506,7 +1506,7 @@ function AnalyseSection({
                   )}
                 </h4>
               </div>
-              <p className="text-slate-500 text-[10px]">
+              <p className="text-slate-400 text-[10px]">
                 {da
                   ? 'Tilføj generelle vilkår fra forsikringsselskabet til analysen. AI kan finde dem automatisk.'
                   : 'Add general terms from the insurance company to the analysis. AI can find them automatically.'}
@@ -1515,7 +1515,7 @@ function AnalyseSection({
               {/* BIZZ-1919: Gemte betingelser fra domain-biblioteket */}
               {stdSavedLibrary.length > 0 && (
                 <div className="space-y-1">
-                  <div className="text-slate-500 text-[10px] mb-1">
+                  <div className="text-slate-400 text-[10px] mb-1">
                     {da
                       ? `${stdSavedLibrary.length} tidligere gemte betingelser:`
                       : `${stdSavedLibrary.length} previously saved terms:`}
@@ -1577,7 +1577,7 @@ function AnalyseSection({
                 <div className="flex-1">
                   <label
                     htmlFor="std-selskab-input"
-                    className="text-slate-500 text-[10px] block mb-1"
+                    className="text-slate-400 text-[10px] block mb-1"
                   >
                     {da ? 'Forsikringsselskab' : 'Insurance company'}
                   </label>
@@ -1837,7 +1837,7 @@ function AnalyseSection({
 
               {/* Manuel URL tilføjelse */}
               <div className="pt-1">
-                <div className="text-slate-500 text-[10px] mb-1.5">
+                <div className="text-slate-400 text-[10px] mb-1.5">
                   {da ? 'Eller tilføj manuelt med URL:' : 'Or add manually by URL:'}
                 </div>
                 <div className="flex gap-1.5">
@@ -1916,7 +1916,7 @@ function AnalyseSection({
 
               {/* BIZZ-1890: PDF upload af standard betingelser */}
               <div className="pt-1">
-                <div className="text-slate-500 text-[10px] mb-1.5">
+                <div className="text-slate-400 text-[10px] mb-1.5">
                   {da
                     ? 'Eller upload PDF med standard betingelser:'
                     : 'Or upload a PDF with standard terms:'}
@@ -2149,7 +2149,7 @@ function AnalyseSection({
       {/* BIZZ-1384: Sagsliste — tidligere kunder */}
       {sager.length > 0 && !selected && (
         <div className="mt-3 space-y-1">
-          <div className="text-slate-500 text-[10px] uppercase tracking-wide">
+          <div className="text-slate-400 text-[10px] uppercase tracking-wide">
             {da ? 'Tidligere forsikringsejere' : 'Previous insurance owners'}
           </div>
           {sager.slice(0, 5).map((s) => (

@@ -405,6 +405,38 @@ async function _hentDawaBfeDataImpl(bfe: number): Promise<DawaBfeAdresse> {
     doer: null,
   };
 
+  // BIZZ-1895: Cache-first — bfe_adresse_cache er mere pålidelig end DAWA
+  // for BFE'er hvor DAWA returnerer forkerte adresser (fx Hospitalsringen
+  // 68, Odense for Helsingør-ejendomme). Cache er backfill-populeret med
+  // korrekte adresser fra Tinglysning/matrikel.
+  try {
+    const admin = createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: cached } = await (admin as any)
+      .from('bfe_adresse_cache')
+      .select(
+        'adresse, etage, doer, postnr, postnrnavn, kommune, kommune_kode, dawa_id, ejendomstype'
+      )
+      .eq('bfe_nummer', bfe)
+      .maybeSingle();
+    // Skip placeholder-adresser ("BFE 12345") — de er uløste
+    if (cached?.adresse && !/^BFE \d+$/.test(cached.adresse)) {
+      return {
+        adresse: cached.adresse,
+        postnr: cached.postnr ?? null,
+        by: cached.postnrnavn ?? null,
+        kommune: cached.kommune ?? null,
+        kommuneKode: cached.kommune_kode ?? null,
+        ejendomstype: cached.ejendomstype ?? null,
+        dawaId: cached.dawa_id ?? null,
+        etage: cached.etage ?? null,
+        doer: cached.doer ?? null,
+      };
+    }
+  } catch {
+    /* cache lookup non-fatal — fall through to DAWA */
+  }
+
   try {
     const res = await fetchDawa(
       `${DAWA_BASE_URL}/bfe/${bfe}`,
@@ -811,9 +843,9 @@ async function hentDawaBfeData(bfe: number): Promise<DawaBfeAdresse> {
         /* bbr cache fallback is non-critical */
       }
     }
-    // BIZZ-1670: Fallback 4 — bfe_adresse_cache (manuelt/backfill-populeret)
-    // Fanger BFE'er som DAWA /bfe, VP og bbr_ejendom_status ikke kender.
-    if (!result.adresse) {
+    // BIZZ-1895: Fjernet — cache tjekkes nu FØRST i funktionen (cache-first).
+    // Fallback 4 er redundant.
+    if (false && !result.adresse) {
       try {
         const admin = createAdminClient();
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -824,7 +856,6 @@ async function hentDawaBfeData(bfe: number): Promise<DawaBfeAdresse> {
           )
           .eq('bfe_nummer', bfe)
           .maybeSingle();
-        // Skip placeholder-adresser ("BFE 12345") — de er uløste
         if (cached?.adresse && !/^BFE \d+$/.test(cached.adresse)) {
           return {
             adresse: cached.adresse,

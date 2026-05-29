@@ -275,11 +275,38 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           sag_id: docSagId,
         });
 
-        // Kør gap-engine (minimal — ingen dækninger fra oversigt)
+        // Gem coverages fra oversigt (hvis AI returnerede dem)
+        const entryCoverages = (entry as Record<string, unknown>).coverages as
+          | Array<{
+              coverage_code: string;
+              coverage_label?: string;
+              is_covered: boolean;
+              sum_dkk?: number | null;
+              deductible_dkk?: number | null;
+            }>
+          | undefined;
+        const coverageInputs = (entryCoverages ?? []).map((c) => ({
+          policy_id: policy.id,
+          coverage_code: c.coverage_code,
+          coverage_label:
+            c.coverage_label ||
+            COVERAGE_LABELS_DA[c.coverage_code as CoverageCode] ||
+            c.coverage_code,
+          is_covered: c.is_covered,
+          sum_dkk: c.sum_dkk ?? null,
+          deductible_dkk: c.deductible_dkk ?? null,
+          conditions_ref: null,
+          notes: null,
+        }));
+        if (coverageInputs.length > 0) {
+          await insurance.coverages.bulkCreate(coverageInputs);
+        }
+
+        // Kør gap-engine med dækningsdata fra oversigt
         await insurance.gaps.deleteForPolicy(policy.id);
         const detectedGaps = runGapEngine({
           policy,
-          coverages: [],
+          coverages: coverageInputs,
           bbr: null,
           asOfDate: new Date(),
         });

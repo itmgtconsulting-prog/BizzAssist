@@ -2320,7 +2320,7 @@ function DiagramForce({
   /** Toolbar with zoom controls + fullscreen toggle */
   const toolbar = (
     <div
-      className={`flex items-center justify-between py-2 -mt-2 ${isFullscreen ? 'z-10 bg-[#0a1020]' : 'sticky top-0 z-10 bg-[#0a1020]/95 backdrop-blur-sm'}`}
+      className={`flex items-center justify-between py-2 -mt-2 ${isFullscreen ? 'z-10 bg-[#0a1020]' : 'sticky top-0 z-10 bg-[#0a1020]'}`}
     >
       <h2 className="text-white font-semibold text-base flex items-center gap-2">
         <Briefcase size={16} className="text-blue-400" />

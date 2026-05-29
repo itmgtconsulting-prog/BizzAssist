@@ -258,3 +258,58 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: 'Intern serverfejl' }, { status: 500 });
   }
 }
+
+// ─── PATCH ──────────────────────────────────────────────────────────────────
+
+/**
+ * PATCH /api/forsikring/standard-docs?id=UUID
+ * Opdaterer titel, selskab og/eller gyldig_fra.
+ */
+export async function PATCH(req: NextRequest) {
+  try {
+    const auth = await resolveTenantId();
+    if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    const docId = req.nextUrl.searchParams.get('id');
+    if (!docId) {
+      return NextResponse.json({ error: 'id parameter påkrævet' }, { status: 400 });
+    }
+
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+      return NextResponse.json({ error: 'Supabase ikke konfigureret' }, { status: 503 });
+    }
+
+    const body = (await req.json()) as {
+      titel?: string;
+      selskab?: string;
+      gyldig_fra?: string | null;
+    };
+
+    const updates: Record<string, unknown> = {};
+    if (body.titel) updates.titel = body.titel;
+    if (body.selskab) updates.selskab = body.selskab;
+    if ('gyldig_fra' in body) updates.gyldig_fra = body.gyldig_fra || null;
+
+    if (Object.keys(updates).length === 0) {
+      return NextResponse.json({ error: 'Ingen felter at opdatere' }, { status: 400 });
+    }
+
+    const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+
+    const { error } = await serviceClient
+      .from('forsikring_standard_doc')
+      .update(updates)
+      .eq('id', docId)
+      .eq('added_by_domain', auth.tenantId);
+
+    if (error) {
+      logger.error('[standard-docs PATCH] error:', error.message);
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (err) {
+    logger.error('[standard-docs PATCH] uventet fejl:', err);
+    return NextResponse.json({ error: 'Intern serverfejl' }, { status: 500 });
+  }
+}

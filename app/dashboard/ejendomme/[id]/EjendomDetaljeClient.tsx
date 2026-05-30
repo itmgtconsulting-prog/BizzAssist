@@ -1193,7 +1193,7 @@ export default function EjendomDetaljeClient({
     // for moderejendommen. Moder har også ejerlejlighedBfe sat, men at sende
     // type=ejerlejlighed for moder skipper TL og EJF returnerer tomt (ejerskab
     // er på child-BFE-niveau, ikke moderBFE-niveau).
-    const erEjerlej = !!bbrData.ejerlejlighedBfe && !erModer;
+    const erEjerlej = !!bbrData?.ejerlejlighedBfe && !erModer;
     // BIZZ-1586: Brug mellemrum (ikke komma) mellem husnr og etage så
     // diagram-renderen ikke splitter etage/dør ned på linje 2. Komma kun
     // mellem adresselinje og postnr/by. Matcher mønstret fra BIZZ-1543

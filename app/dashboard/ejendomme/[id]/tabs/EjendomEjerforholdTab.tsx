@@ -204,9 +204,12 @@ export default function EjendomEjerforholdTab({
             bbrData?.moderBfe ??
             (currentBfe && currentBfe > 0 ? currentBfe : null);
 
-          // Hovedejendom ELLER child-ejerlejlighed opdelt i EL — vis strukturtræ
+          // Hovedejendom opdelt i EL — vis strukturtræ med ejer-data
           // BIZZ-1901: Også vis for children der har strukturTree via DAWA fallback
-          if (erModer || strukturTree) {
+          // NB: For erModer renderes strukturtræet som primært indhold (early return).
+          // For children vises strukturtræet som en SEKTION (ikke early return) —
+          // EjerKort + diagram skal stadig renderes nedenfor.
+          if (erModer) {
             // BIZZ-1289: Skeleton mens strukturtræ/lejligheder hentes
             if (strukturLoader || lejlighederLoader) {
               return <StrukturSkeleton />;
@@ -525,6 +528,58 @@ export default function EjendomEjerforholdTab({
                     </div>
                   );
                 })()}
+              {/* BIZZ-1901: Ejendomsstruktur for child-ejerlejligheder (ikke erModer) */}
+              {!erModer && strukturTree && lejligheder && lejligheder.length > 0 && (
+                <div className="space-y-2">
+                  <h3 className="text-slate-300 text-sm font-semibold">
+                    {da ? 'Ejerstruktur' : 'Ownership structure'}
+                  </h3>
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                    <div className="px-4 py-2 border-b border-slate-700/30">
+                      <p className="text-slate-400 text-xs">
+                        {lejligheder.length}{' '}
+                        {da ? 'ejerlejligheder på matriklen' : 'condominiums on the cadastral'}
+                      </p>
+                    </div>
+                    <div className="divide-y divide-slate-700/20 max-h-64 overflow-y-auto">
+                      {lejligheder.slice(0, 30).map((l, i) => (
+                        <div
+                          key={i}
+                          className="px-4 py-1.5 flex items-center justify-between text-xs"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-emerald-400 text-[10px]">EL</span>
+                            {l.dawaId ? (
+                              <a
+                                href={`/dashboard/ejendomme/${l.dawaId}`}
+                                className="text-slate-200 hover:text-blue-300 truncate"
+                              >
+                                {l.adresse}
+                              </a>
+                            ) : (
+                              <span className="text-slate-200 truncate">{l.adresse}</span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3 flex-shrink-0 text-slate-500">
+                            {l.ejer && l.ejer !== '–' && (
+                              <span className="text-slate-400 truncate max-w-[150px]">
+                                {l.ejer}
+                              </span>
+                            )}
+                            {l.areal != null && <span>{l.areal} m²</span>}
+                          </div>
+                        </div>
+                      ))}
+                      {lejligheder.length > 30 && (
+                        <div className="px-4 py-2 text-slate-500 text-xs">
+                          +{lejligheder.length - 30} {da ? 'mere' : 'more'}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* BIZZ-1143: Ejerkort — ren præsentation, data leveret fra parent */}
               {chainLoader ? (
                 <TabLoadingSpinner

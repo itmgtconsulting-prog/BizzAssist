@@ -1117,7 +1117,8 @@ export default function EjendomDetaljeClient({
   useEffect(() => {
     // BIZZ-1582: Defer until wave-2
     if (!wave2Ready) return;
-    if (!erDAWA || !bbrData?.ejendomsrelationer?.length) return;
+    // BIZZ-1894: Tillad også når cachedBfe er sat (BBR 404 men cache har BFE)
+    if (!erDAWA || (!bbrData?.ejendomsrelationer?.length && !cachedBfe)) return;
     // BIZZ-1585: Vent på dawaAdresse for at skelne leaf-ejerlejlighed (har etage)
     // fra moderejandom (ingen etage). Tidligere BIZZ-1213 fjernede dawaAdresse-
     // dep for at parallelisere — men det gjorde erModer=true for BÅDE leaf og
@@ -1126,10 +1127,10 @@ export default function EjendomDetaljeClient({
     // dawaAdresse er typisk allerede prefetched server-side, så latency-hit er
     // få 100ms — bedre end at vise forkerte ejer-data eller "Opdelt ejerskab".
     if (!dawaAdresse) return;
-    const erModer = !dawaAdresse.etage && !!bbrData.ejerlejlighedBfe;
+    const erModer = !dawaAdresse.etage && !!bbrData?.ejerlejlighedBfe;
     const bfeNummer = erModer
-      ? (bbrData.moderBfe ?? bbrData.ejendomsrelationer[0]?.bfeNummer)
-      : (bbrData.ejendomsrelationer[0]?.bfeNummer ?? bbrData.ejerlejlighedBfe ?? cachedBfe);
+      ? (bbrData?.moderBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer)
+      : (bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? bbrData?.ejerlejlighedBfe ?? cachedBfe);
     if (!bfeNummer) return;
 
     const controller = new AbortController();

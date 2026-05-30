@@ -11,7 +11,10 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import https from 'https';
+import fs from 'fs';
 import { createAdminClient } from '@/lib/supabase/admin';
+import path from 'path';
 import { z } from 'zod';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
@@ -20,8 +23,7 @@ import { fetchDawa } from '@/app/lib/dawa';
 import { darResolveAdresseId } from '@/app/lib/dar';
 import { resolveEnhedByDawaId } from '@/app/lib/fetchBbrData';
 import { fetchTinglysningPriceRowsByBfe } from '@/app/lib/tinglysningPrices';
-import { fetchEjfEjereDirekt } from '@/app/lib/ejerskab/fetchEjfEjereDirekt';
-import { tlFetch as sharedTlFetch } from '@/app/lib/tlFetch';
+// EJF/Datafordeler er ikke nødvendig — alt data hentes fra tinglysning summarisk XML
 
 // ─── Query param validation ─────────────────────────────────────────────────
 
@@ -84,7 +86,13 @@ export interface EjerlejlighederResponse {
 
 // ─── Tinglysning mTLS ───────────────────────────────────────────────────────
 
-// Cert-konfiguration er nu i den delte tlFetch (app/lib/tlFetch.ts)
+const CERT_PATH =
+  process.env.TINGLYSNING_CERT_PATH ?? process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
+const CERT_PASSWORD =
+  process.env.TINGLYSNING_CERT_PASSWORD ?? process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
+const CERT_B64 = process.env.TINGLYSNING_CERT_B64 ?? process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';
+const TL_BASE = process.env.TINGLYSNING_BASE_URL ?? 'https://test.tinglysning.dk';
+const TL_API_PATH = '/tinglysning/ssl';
 
 /** Tinglysning adressesøgning JSON-svar */
 interface TLSearchItem {
@@ -103,16 +111,52 @@ interface TLSearchResponse {
 }
 
 /**
- * Wrapper der bruger den delte tlFetch (med proxy-first + mTLS fallback).
- * Erstatter den tidligere lokale mTLS-only implementation der fejlede
- * i Vercel serverless (ingen cert tilgængelig → 302 redirect → DAWA fallback
- * uden ejer/pris-data).
+ * HTTPS request med client-certifikat (mTLS) til Tinglysningsretten.
  *
- * @param urlPath - URL-sti under /tinglysning/ssl/ (f.eks. "/ejendom/...")
+ * @param urlPath - URL-sti efter /tinglysning/ssl/
  * @returns HTTP status + body
  */
 function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
-  return sharedTlFetch(urlPath, { timeout: 15000 });
+  return new Promise((resolve, reject) => {
+    let pfx: Buffer;
+    if (CERT_B64) {
+      pfx = Buffer.from(CERT_B64, 'base64');
+    } else {
+      const certAbsPath = path.resolve(CERT_PATH);
+      if (!fs.existsSync(certAbsPath)) {
+        reject(new Error('Certifikat ikke fundet: ' + certAbsPath));
+        return;
+      }
+      pfx = fs.readFileSync(certAbsPath);
+    }
+    const url = new URL(TL_BASE + TL_API_PATH + urlPath);
+
+    const req = https.request(
+      {
+        hostname: url.hostname,
+        port: 443,
+        path: url.pathname + url.search,
+        method: 'GET',
+        pfx,
+        passphrase: CERT_PASSWORD,
+        rejectUnauthorized: false,
+        timeout: 15000,
+        headers: { Accept: 'application/json, application/xml, */*' },
+      },
+      (res) => {
+        let body = '';
+        res.on('data', (d: Buffer) => (body += d));
+        res.on('end', () => resolve({ status: res.statusCode ?? 500, body }));
+      }
+    );
+
+    req.on('error', reject);
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error('Timeout'));
+    });
+    req.end();
+  });
 }
 
 // ─── Etage/dør parsing ──────────────────────────────────────────────────────
@@ -449,51 +493,44 @@ async function resolveLejlighederViaDawa(
   try {
     const { createAdminClient } = await import('@/lib/supabase/admin');
     const admin = createAdminClient();
-    // BIZZ-1870: Batched pris-fallback med concurrency limit (var Promise.all ubegrænset)
-    const PRICE_CONCURRENCY = 5;
-    const needsPrice = lejligheder.filter(
-      (l) => l.bfe && l.bfe > 0 && (l.koebspris == null || !l.koebsdato)
-    );
-    for (let pi = 0; pi < needsPrice.length; pi += PRICE_CONCURRENCY) {
-      const priceBatch = needsPrice.slice(pi, pi + PRICE_CONCURRENCY);
-      await Promise.all(
-        priceBatch.map(async (lej) => {
-          if (lej.koebspris != null && lej.koebsdato) return;
-          try {
-            const priceRows = await fetchTinglysningPriceRowsByBfe(lej.bfe);
-            if (priceRows.length > 0) {
-              const latest = priceRows[priceRows.length - 1];
-              if (lej.koebspris == null) {
-                lej.koebspris = latest.kontantKoebesum ?? latest.iAltKoebesum ?? null;
-              }
-              if (!lej.koebsdato) {
-                lej.koebsdato =
-                  latest.overtagelsesdato ??
-                  latest.koebsaftaleDato ??
-                  latest.tinglysningsdato ??
-                  null;
-              }
+    await Promise.all(
+      lejligheder.map(async (lej) => {
+        if (!lej.bfe || lej.bfe === 0) return;
+        if (lej.koebspris != null && lej.koebsdato) return;
+        try {
+          const priceRows = await fetchTinglysningPriceRowsByBfe(lej.bfe);
+          if (priceRows.length > 0) {
+            const latest = priceRows[priceRows.length - 1];
+            if (lej.koebspris == null) {
+              lej.koebspris = latest.kontantKoebesum ?? latest.iAltKoebesum ?? null;
             }
-
-            // Ejf_ejerskab fallback for koebsdato når summarisk mangler
             if (!lej.koebsdato) {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const { data: rows } = (await (admin as any)
-                .from('ejf_ejerskab')
-                .select('virkning_fra')
-                .eq('bfe_nummer', lej.bfe)
-                .eq('status', 'gældende')
-                .order('virkning_fra', { ascending: false })
-                .limit(1)) as { data: Array<{ virkning_fra: string | null }> | null };
-              const virkningFra = rows?.[0]?.virkning_fra ?? null;
-              if (virkningFra) lej.koebsdato = virkningFra;
+              lej.koebsdato =
+                latest.overtagelsesdato ??
+                latest.koebsaftaleDato ??
+                latest.tinglysningsdato ??
+                null;
             }
-          } catch {
-            /* non-fatal */
           }
-        })
-      );
-    }
+
+          // Ejf_ejerskab fallback for koebsdato når summarisk mangler
+          if (!lej.koebsdato) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: rows } = (await (admin as any)
+              .from('ejf_ejerskab')
+              .select('virkning_fra')
+              .eq('bfe_nummer', lej.bfe)
+              .eq('status', 'gældende')
+              .order('virkning_fra', { ascending: false })
+              .limit(1)) as { data: Array<{ virkning_fra: string | null }> | null };
+            const virkningFra = rows?.[0]?.virkning_fra ?? null;
+            if (virkningFra) lej.koebsdato = virkningFra;
+          }
+        } catch {
+          /* non-fatal */
+        }
+      })
+    );
   } catch (err) {
     logger.warn('[ejerlejligheder] Salgshistorik-fallback fejlede:', err);
   }
@@ -522,8 +559,12 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
   if (!parsed.success) return parsed.response as NextResponse<EjerlejlighederResponse>;
   const { ejerlavKode, matrikelnr, moderBfe, includeUdfasede } = parsed.data;
 
-  // Cert-check er nu i den delte tlFetch (app/lib/tlFetch.ts) — den
-  // bruger proxy-first og falder kun tilbage til cert hvis proxy mangler.
+  if ((!CERT_PATH && !CERT_B64) || !CERT_PASSWORD) {
+    return NextResponse.json(
+      { lejligheder: [], fejl: 'Tinglysning certifikat ikke konfigureret' },
+      { status: 200 }
+    );
+  }
 
   try {
     // ── Trin 1: Søg alle ejendomme på matriklen via Tinglysningsrettens HTTP API ──
@@ -541,56 +582,6 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
       try {
         const dawaFallback = await resolveLejlighederViaDawa(ejerlavKode, matrikelnr, moderBfe);
         if (dawaFallback.length > 0) {
-          // Enrich DAWA-lejligheder med ejer fra ejf_ejerskab (lokal DB — ingen rate-limit)
-          try {
-            const bfes = dawaFallback.map((l) => l.bfe).filter((b) => b > 0);
-            if (bfes.length > 0) {
-              const cacheAdmin = createAdminClient();
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const { data: ejfRows } = await (cacheAdmin as any)
-                .from('ejf_ejerskab')
-                .select('bfe_nummer, ejer_navn, ejer_cvr, ejer_type, virkning_fra')
-                .in('bfe_nummer', bfes)
-                .eq('status', 'gældende')
-                .order('virkning_fra', { ascending: false });
-              // Grupper per BFE — tag seneste
-              const ejfByBfe = new Map<
-                number,
-                { navn: string; type: string; cvr: string | null; dato: string | null }
-              >();
-              for (const row of (ejfRows ?? []) as Array<{
-                bfe_nummer: number;
-                ejer_navn: string | null;
-                ejer_cvr: string | null;
-                ejer_type: string | null;
-                virkning_fra: string | null;
-              }>) {
-                if (!ejfByBfe.has(row.bfe_nummer) && row.ejer_navn) {
-                  ejfByBfe.set(row.bfe_nummer, {
-                    navn: row.ejer_navn,
-                    type: row.ejer_type ?? 'ukendt',
-                    cvr: row.ejer_cvr,
-                    dato: row.virkning_fra,
-                  });
-                }
-              }
-              // Enrich: tilføj ejer + koebsdato fra EJF
-              for (const lej of dawaFallback) {
-                const ejf = ejfByBfe.get(lej.bfe);
-                if (ejf) {
-                  lej.ejer = ejf.navn;
-                  lej.ejertype = ejf.cvr ? 'selskab' : ejf.type === 'person' ? 'person' : 'ukendt';
-                  if (ejf.dato) lej.koebsdato = ejf.dato.split('T')[0];
-                }
-              }
-              const enriched = dawaFallback.filter(
-                (l) => l.ejer !== '–' && l.ejer !== 'Ukendt'
-              ).length;
-              logger.log(`[ejerlejligheder] DAWA+EJF enriched: ${enriched}/${dawaFallback.length}`);
-            }
-          } catch {
-            /* EJF enrichment non-fatal */
-          }
           logger.log(
             `[ejerlejligheder] DAWA fallback (TL ${tlResult.status}): ${dawaFallback.length} lejligheder for ejerlav ${ejerlavKode} matr. ${matrikelnr}`
           );
@@ -711,214 +702,89 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
     }
 
     const CONCURRENCY = 3;
-    const MAX_TL_ENRICH = 60;
+    const MAX_TL_ENRICH = 15;
     const itemsToEnrich = lejlighedItems.slice(0, MAX_TL_ENRICH);
 
-    // Cache-first: hent allerede-parsed data fra tinglysning_summarisk_cache
-    // i stedet for at kalde TL S2S for hver lejlighed (undgår 429 rate-limit).
-    const cachedSummarisk = new Map<
-      string,
-      {
-        ejere?: Array<{
-          navn?: string;
-          cvr?: string | null;
-          type?: string;
-          kontantKoebesum?: number | null;
-          iAltKoebesum?: number | null;
-          overtagelsesdato?: string | null;
-        }>;
-      }
-    >();
-    try {
-      const cacheAdmin = createAdminClient();
-      const uuids = itemsToEnrich.map((it) => it.uuid);
-      if (uuids.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: cacheRows } = await (cacheAdmin as any)
-          .from('tinglysning_summarisk_cache')
-          .select('uuid, payload')
-          .in('uuid', uuids);
-        for (const row of (cacheRows ?? []) as Array<{
-          uuid: string;
-          payload: Record<string, unknown> | null;
-        }>) {
-          if (row.payload) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            cachedSummarisk.set(row.uuid, row.payload as any);
+    for (let i = 0; i < itemsToEnrich.length; i += CONCURRENCY) {
+      const batch = itemsToEnrich.slice(i, i + CONCURRENCY);
+      const results = await Promise.allSettled(
+        batch.map(async (item) => {
+          try {
+            const sumResult = await tlFetch(`/ejdsummarisk/${item.uuid}`);
+            if (sumResult.status !== 200 || !sumResult.body) return;
+            const xml = sumResult.body;
+
+            // ── Areal ──
+            // Prioritér "Ejerlejlighedens tinglyste areal" over generisk "tinglyste areal"
+            // (generisk kan være bygningens samlede areal)
+            let areal: number | null = null;
+            const ejlArealMatch = xml.match(
+              /[Ee]jerlejlighedens\s+tinglyste?\s+areal[^<]*<[^>]*>[^<]*<[^>]*>(\d+)\s*kvm/i
+            );
+            if (ejlArealMatch) {
+              areal = parseInt(ejlArealMatch[1], 10);
+            }
+            if (!areal) {
+              const altAreal = xml.match(/<(?:ns\d+:)?Areal>(\d+)<\/(?:ns\d+:)?Areal>/);
+              if (altAreal) areal = parseInt(altAreal[1], 10);
+            }
+
+            // ── Ejer (seneste adkomsthaver) ──
+            let ejer = 'Ukendt';
+            let ejertype: 'person' | 'selskab' | 'ukendt' = 'ukendt';
+            const adkomstSection =
+              xml.match(/AdkomstSummariskSamling[\s\S]*?<\/[^:]*:?AdkomstSummariskSamling/)?.[0] ??
+              '';
+            const havere = [
+              ...adkomstSection.matchAll(/Adkomsthaver>([\s\S]*?)<\/[^:]*:?Adkomsthaver/g),
+            ];
+            if (havere.length > 0) {
+              // Tag seneste (sidste) adkomsthaver
+              const lastHaver = havere[havere.length - 1][1];
+              const allNames = [...lastHaver.matchAll(/<[^\/][^>]*(?:Name|Navn)[^>]*>([^<]+)<\//g)];
+              const nameStr = allNames
+                .map((m) => m[1])
+                .filter((n) => n.length > 1)
+                .join(' ')
+                .trim();
+              const cvr = lastHaver.match(/CVRnumberIdentifier[^>]*>([^<]+)/)?.[1] ?? null;
+              if (nameStr) ejer = nameStr;
+              ejertype = cvr ? 'selskab' : 'person';
+            }
+
+            // ── Købesum + dato (seneste adkomst) ──
+            let koebspris: number | null = null;
+            let koebsdato: string | null = null;
+            const adkomstEntries = [
+              ...adkomstSection.matchAll(/AdkomstSummarisk>([\s\S]*?)<\/[^:]*:?AdkomstSummarisk/g),
+            ];
+            if (adkomstEntries.length > 0) {
+              const lastEntry = adkomstEntries[adkomstEntries.length - 1][1];
+              const kontantStr = lastEntry.match(/KontantKoebesum[^>]*>([^<]+)/)?.[1];
+              const iAltStr = lastEntry.match(/IAltKoebesum[^>]*>([^<]+)/)?.[1];
+              koebspris = kontantStr
+                ? parseInt(kontantStr, 10)
+                : iAltStr
+                  ? parseInt(iAltStr, 10)
+                  : null;
+              if (isNaN(koebspris ?? 0)) koebspris = null;
+              koebsdato =
+                lastEntry.match(/KoebsaftaleDato[^>]*>([^<]+)/)?.[1]?.split('+')[0] ??
+                lastEntry.match(/SkoedeOvertagelsesDato[^>]*>([^<]+)/)?.[1]?.split('+')[0] ??
+                lastEntry.match(/TinglysningsDato[^>]*>([^<]+)/)?.[1]?.split('T')[0] ??
+                null;
+            }
+
+            summariskMap.set(item.uuid, { areal, ejer, ejertype, koebspris, koebsdato });
+          } catch (err) {
+            logger.warn(
+              `[ejerlejligheder] Summarisk fejl for ${item.uuid}:`,
+              err instanceof Error ? err.message : err
+            );
           }
-        }
-        logger.log(
-          `[ejerlejligheder] Cache hit: ${cachedSummarisk.size}/${uuids.length} summarisk`
-        );
-      }
-    } catch (cacheErr) {
-      logger.warn(
-        '[ejerlejligheder] Cache lookup fejl:',
-        cacheErr instanceof Error ? cacheErr.message : cacheErr
+        })
       );
-    }
-
-    // Fase 1: Anvend cache-data STRAKS (instant — ingen TL-kald)
-    let cacheApplied = 0;
-    for (const item of itemsToEnrich) {
-      const cached = cachedSummarisk.get(item.uuid);
-      if (cached?.ejere && cached.ejere.length > 0) {
-        cacheApplied++;
-        const lastEjer = cached.ejere[cached.ejere.length - 1];
-        summariskMap.set(item.uuid, {
-          areal: null,
-          ejer: lastEjer.navn ?? 'Ukendt',
-          ejertype: lastEjer.cvr
-            ? ('selskab' as const)
-            : lastEjer.type === 'selskab'
-              ? ('selskab' as const)
-              : ('person' as const),
-          koebspris: lastEjer.kontantKoebesum ?? lastEjer.iAltKoebesum ?? null,
-          koebsdato: lastEjer.overtagelsesdato ?? null,
-        });
-      }
-    }
-    logger.log(
-      `[ejerlejligheder] Fase 1: ${cacheApplied}/${itemsToEnrich.length} fra cache (cachedSummarisk.size=${cachedSummarisk.size}, first UUID=${itemsToEnrich[0]?.uuid?.slice(0, 8) ?? 'none'})`
-    );
-
-    // Fase 2: TL-kald for items UDEN cache — kører som fire-and-forget
-    // (gemmer i cache så næste request har data). Blokerer IKKE response.
-    const uncachedItems = itemsToEnrich.filter((it) => !cachedSummarisk.has(it.uuid));
-    if (uncachedItems.length > 0) {
-      logger.log(
-        `[ejerlejligheder] ${uncachedItems.length} items uden cache — starter baggrunds-enrichment`
-      );
-      // Fire-and-forget: kører efter response er sendt
-      void (async () => {
-        for (let i = 0; i < uncachedItems.length; i += CONCURRENCY) {
-          const batch = uncachedItems.slice(i, i + CONCURRENCY);
-          await Promise.allSettled(
-            batch.map(async (item) => {
-              try {
-                let sumResult = await tlFetch(`/ejdsummarisk/${item.uuid}`);
-                if (sumResult.status === 429) {
-                  for (const delayMs of [2000, 5000, 10000]) {
-                    await new Promise((r) => setTimeout(r, delayMs));
-                    sumResult = await tlFetch(`/ejdsummarisk/${item.uuid}`);
-                    if (sumResult.status !== 429) break;
-                  }
-                }
-                if (sumResult.status !== 200 || !sumResult.body) return;
-                const xml = sumResult.body;
-
-                // ── Areal ──
-                // Prioritér "Ejerlejlighedens tinglyste areal" over generisk "tinglyste areal"
-                // (generisk kan være bygningens samlede areal)
-                let areal: number | null = null;
-                const ejlArealMatch = xml.match(
-                  /[Ee]jerlejlighedens\s+tinglyste?\s+areal[^<]*<[^>]*>[^<]*<[^>]*>(\d+)\s*kvm/i
-                );
-                if (ejlArealMatch) {
-                  areal = parseInt(ejlArealMatch[1], 10);
-                }
-                if (!areal) {
-                  const altAreal = xml.match(/<(?:ns\d+:)?Areal>(\d+)<\/(?:ns\d+:)?Areal>/);
-                  if (altAreal) areal = parseInt(altAreal[1], 10);
-                }
-
-                // ── Ejer (seneste adkomsthaver) ──
-                let ejer = 'Ukendt';
-                let ejertype: 'person' | 'selskab' | 'ukendt' = 'ukendt';
-                const adkomstSection =
-                  xml.match(
-                    /AdkomstSummariskSamling[\s\S]*?<\/[^:]*:?AdkomstSummariskSamling/
-                  )?.[0] ?? '';
-                const havere = [
-                  ...adkomstSection.matchAll(/Adkomsthaver>([\s\S]*?)<\/[^:]*:?Adkomsthaver/g),
-                ];
-                if (havere.length > 0) {
-                  // Tag seneste (sidste) adkomsthaver
-                  const lastHaver = havere[havere.length - 1][1];
-                  const allNames = [
-                    ...lastHaver.matchAll(/<[^\/][^>]*(?:Name|Navn)[^>]*>([^<]+)<\//g),
-                  ];
-                  const nameStr = allNames
-                    .map((m) => m[1])
-                    .filter((n) => n.length > 1)
-                    .join(' ')
-                    .trim();
-                  const cvr = lastHaver.match(/CVRnumberIdentifier[^>]*>([^<]+)/)?.[1] ?? null;
-                  if (nameStr) ejer = nameStr;
-                  ejertype = cvr ? 'selskab' : 'person';
-                }
-
-                // ── Købesum + dato (seneste adkomst) ──
-                let koebspris: number | null = null;
-                let koebsdato: string | null = null;
-                const adkomstEntries = [
-                  ...adkomstSection.matchAll(
-                    /AdkomstSummarisk>([\s\S]*?)<\/[^:]*:?AdkomstSummarisk/g
-                  ),
-                ];
-                if (adkomstEntries.length > 0) {
-                  const lastEntry = adkomstEntries[adkomstEntries.length - 1][1];
-                  const kontantStr = lastEntry.match(/KontantKoebesum[^>]*>([^<]+)/)?.[1];
-                  const iAltStr = lastEntry.match(/IAltKoebesum[^>]*>([^<]+)/)?.[1];
-                  koebspris = kontantStr
-                    ? parseInt(kontantStr, 10)
-                    : iAltStr
-                      ? parseInt(iAltStr, 10)
-                      : null;
-                  if (isNaN(koebspris ?? 0)) koebspris = null;
-                  koebsdato =
-                    lastEntry.match(/KoebsaftaleDato[^>]*>([^<]+)/)?.[1]?.split('+')[0] ??
-                    lastEntry.match(/SkoedeOvertagelsesDato[^>]*>([^<]+)/)?.[1]?.split('+')[0] ??
-                    lastEntry.match(/TinglysningsDato[^>]*>([^<]+)/)?.[1]?.split('T')[0] ??
-                    null;
-                }
-
-                // Baggrunds-enrichment: gem KUN i cache (response er allerede sendt)
-                // Næste request vil finde data i cache via fase 1.
-                try {
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  void (createAdminClient() as any)
-                    .from('tinglysning_summarisk_cache')
-                    .upsert(
-                      {
-                        uuid: item.uuid,
-                        bfe_nummer: null,
-                        payload: {
-                          ejere: [
-                            {
-                              navn: ejer,
-                              type: ejertype,
-                              kontantKoebesum: koebspris,
-                              overtagelsesdato: koebsdato,
-                            },
-                          ],
-                          haeftelser: [],
-                          servitutter: [],
-                          fejl: null,
-                        },
-                        fetched_at: new Date().toISOString(),
-                      },
-                      { onConflict: 'uuid' }
-                    )
-                    .then(() => {});
-                } catch {
-                  /* cache write non-fatal */
-                }
-              } catch (err) {
-                logger.warn(
-                  `[ejerlejligheder] Summarisk fejl for ${item.uuid}:`,
-                  err instanceof Error ? err.message : err
-                );
-              }
-            })
-          );
-        }
-      })().catch((err) =>
-        logger.warn(
-          '[ejerlejligheder] Baggrunds-enrichment fejl:',
-          err instanceof Error ? err.message : err
-        )
-      );
+      void results;
     }
 
     // ── Trin 3: Hent adresse-UUID'er for navigation (BIZZ-506) ──
@@ -1035,60 +901,6 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
         return parseDoerSortValue(a.doer) - parseDoerSortValue(b.doer);
       });
 
-    // ── Trin 4b: EJF-fallback for lejligheder med "Ukendt" ejer ──
-    // Tinglysning summarisk XML mangler ofte adkomst for ejerlejligheder.
-    // Hent fra EJF Datafordeler (cache → live GraphQL) for de BFE'er der
-    // stadig er "Ukendt" efter TL-enrichment + ejf_ejerskab cache.
-    const ukendte = lejligheder.filter((l) => l.ejer === 'Ukendt' && l.bfe > 0);
-    if (ukendte.length > 0) {
-      const EJF_FALLBACK_MAX = 30;
-      const EJF_CONCURRENCY = 3;
-      const bfesToResolve = ukendte.slice(0, EJF_FALLBACK_MAX);
-      const ejfMap = new Map<number, { navn: string; type: 'person' | 'selskab' | 'ukendt' }>();
-
-      for (let i = 0; i < bfesToResolve.length; i += EJF_CONCURRENCY) {
-        const batch = bfesToResolve.slice(i, i + EJF_CONCURRENCY);
-        const results = await Promise.allSettled(
-          batch.map(async (l) => {
-            try {
-              const { ejere } = await fetchEjfEjereDirekt(l.bfe);
-              if (ejere.length > 0) {
-                const e = ejere[0];
-                const navn = e.personNavn ?? e.virksomhedsnavn ?? null;
-                if (navn) {
-                  ejfMap.set(l.bfe, {
-                    navn,
-                    type:
-                      e.ejertype === 'selskab'
-                        ? 'selskab'
-                        : e.ejertype === 'person'
-                          ? 'person'
-                          : 'ukendt',
-                  });
-                }
-              }
-            } catch {
-              /* non-fatal */
-            }
-          })
-        );
-        void results;
-      }
-
-      if (ejfMap.size > 0) {
-        for (const l of lejligheder) {
-          const hit = ejfMap.get(l.bfe);
-          if (hit && l.ejer === 'Ukendt') {
-            l.ejer = hit.navn;
-            l.ejertype = hit.type;
-          }
-        }
-        logger.log(
-          `[ejerlejligheder] EJF fallback: resolved ${ejfMap.size}/${ukendte.length} ukendte ejere`
-        );
-      }
-    }
-
     // BIZZ-1656: Augmentér med DAWA — TL matrikelsøgning kan returnere
     // delvise resultater (fx kun 1. sal men ikke stuen). DAWA finder ALLE
     // adresser på matriklen. Tilføj units DAWA kender men TL ikke fandt.
@@ -1130,143 +942,16 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
       );
     }
 
-    // BIZZ-1842: Pris-fallback for TL-path lejligheder uden koebspris/koebsdato.
-    // Strategi: (1) batch-lookup v_ejerskifte_handel (985k rækker med priser
-    // fra EJF backfill — primær kilde), (2) live TL-kald som sidste fallback
-    // for BFE'er der ikke er i cachen. Fanger lejligheder hvor MAX_TL_ENRICH
-    // cap (15) blev ramt, eller summarisk XML manglede pris (arv/gave).
-    try {
-      const { createAdminClient } = await import('@/lib/supabase/admin');
-      const admin = createAdminClient();
-      const missingPrice = lejligheder.filter(
-        (l) => l.bfe > 0 && (l.koebspris == null || !l.koebsdato)
-      );
-
-      if (missingPrice.length > 0) {
-        // Trin 1: Batch-lookup i v_ejerskifte_handel (EJF pre-joined view)
-        const bfeList = missingPrice.map((l) => l.bfe);
-
-        type HistRow = {
-          bfe_nummer: number;
-          overtagelsesdato: string | null;
-          kontant_koebesum: number | null;
-          samlet_koebesum: number | null;
-          koebsaftale_dato: string | null;
-        };
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: histRows } = (await (admin as any)
-          .from('v_ejerskifte_handel')
-          .select(
-            'bfe_nummer, overtagelsesdato, kontant_koebesum, samlet_koebesum, koebsaftale_dato'
-          )
-          .in('bfe_nummer', bfeList)
-          .gt('kontant_koebesum', 0)
-          .order('overtagelsesdato', { ascending: false })) as {
-          data: HistRow[] | null;
-        };
-
-        // Gruppér per BFE — første række per BFE er nyeste (DESC sort)
-        const histMap = new Map<number, HistRow>();
-        for (const row of histRows ?? []) {
-          if (!histMap.has(row.bfe_nummer)) {
-            histMap.set(row.bfe_nummer, row);
-          }
-        }
-
-        let enrichedFromCache = 0;
-        for (const lej of missingPrice) {
-          const hist = histMap.get(lej.bfe);
-          if (!hist) continue;
-          if (lej.koebspris == null) {
-            lej.koebspris = hist.kontant_koebesum ?? hist.samlet_koebesum ?? null;
-          }
-          if (!lej.koebsdato) {
-            // overtagelsesdato er timestamptz — convertér til date-streng
-            lej.koebsdato = hist.overtagelsesdato
-              ? hist.overtagelsesdato.split('T')[0]
-              : (hist.koebsaftale_dato ?? null);
-          }
-          if (lej.koebspris != null || lej.koebsdato) enrichedFromCache++;
-        }
-        if (enrichedFromCache > 0) {
-          logger.log(
-            `[ejerlejligheder] TL-path cache-fallback: ${enrichedFromCache}/${missingPrice.length} berigede fra v_ejerskifte_handel`
-          );
-        }
-
-        // Trin 2: Live TL fallback for BFE'er stadig uden pris (max 20 for perf)
-        const stillMissing = missingPrice.filter((l) => l.koebspris == null || !l.koebsdato);
-        const PRICE_LIVE_MAX = 20;
-        const PRICE_CONCURRENCY = 3;
-        const toResolveLive = stillMissing.slice(0, PRICE_LIVE_MAX);
-
-        for (let i = 0; i < toResolveLive.length; i += PRICE_CONCURRENCY) {
-          const batch = toResolveLive.slice(i, i + PRICE_CONCURRENCY);
-          await Promise.allSettled(
-            batch.map(async (lej) => {
-              try {
-                const priceRows = await fetchTinglysningPriceRowsByBfe(lej.bfe);
-                if (priceRows.length > 0) {
-                  const latest = priceRows[priceRows.length - 1];
-                  if (lej.koebspris == null) {
-                    lej.koebspris = latest.kontantKoebesum ?? latest.iAltKoebesum ?? null;
-                  }
-                  if (!lej.koebsdato) {
-                    lej.koebsdato =
-                      latest.overtagelsesdato ??
-                      latest.koebsaftaleDato ??
-                      latest.tinglysningsdato ??
-                      null;
-                  }
-                }
-
-                // ejf_ejerskab fallback for koebsdato når TL ikke har pris
-                if (!lej.koebsdato) {
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  const { data: rows } = (await (admin as any)
-                    .from('ejf_ejerskab')
-                    .select('virkning_fra')
-                    .eq('bfe_nummer', lej.bfe)
-                    .eq('status', 'gældende')
-                    .order('virkning_fra', { ascending: false })
-                    .limit(1)) as { data: Array<{ virkning_fra: string | null }> | null };
-                  if (rows && rows.length > 0 && rows[0].virkning_fra) {
-                    lej.koebsdato = rows[0].virkning_fra;
-                  }
-                }
-              } catch {
-                /* per-lejlighed live fallback non-fatal */
-              }
-            })
-          );
-        }
-      }
-    } catch {
-      /* pris-fallback non-fatal */
-    }
-
     // BIZZ-784: filter udfasede ejerlejligheder unless klienten eksplicit
     // beder om dem. `udfaset=null` (ukendt) tæller som aktiv så vi ikke
     // skjuler enheder på basis af en heuristic der ikke kunne afgøres.
     const filtered = includeUdfasede ? lejligheder : lejligheder.filter((l) => l.udfaset !== true);
 
-    const withEjerCount = filtered.filter(
-      (l) => l.ejer && l.ejer !== 'Ukendt' && l.ejer !== '–'
-    ).length;
     return NextResponse.json(
-      {
-        lejligheder: filtered,
-        fejl: null,
-        _debug: { cacheApplied, withEjer: withEjerCount, total: filtered.length },
-      },
+      { lejligheder: filtered, fejl: null },
       {
         status: 200,
-        headers: {
-          'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600',
-          'X-Cache-Applied': String(cacheApplied),
-          'X-With-Ejer': String(withEjerCount),
-          'X-Total': String(filtered.length),
-        },
+        headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
       }
     );
   } catch (err) {

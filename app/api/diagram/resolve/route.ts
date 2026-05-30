@@ -16,10 +16,9 @@ import { logger } from '@/app/lib/logger';
 import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import type { DiagramNode, DiagramEdge, DiagramGraph } from '@/app/components/diagrams/DiagramData';
-import { DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
 
 /** Max ejendomme per ejer-node i initial graf */
-const MAX_PROPS_PER_OWNER = 20;
+const MAX_PROPS_PER_OWNER = 15;
 
 /**
  * Formatér ejerandel fra min/max til læsbar streng.
@@ -715,7 +714,6 @@ async function resolveCompanyGraph(
             label: `BFE ${prop.bfe_nummer}`,
             type: 'property',
             bfeNummer: prop.bfe_nummer,
-            link: `/dashboard/ejendomme/${prop.bfe_nummer}`,
           });
           nodeIds.add(propId);
         }
@@ -836,12 +834,11 @@ async function resolveCompanyGraph(
   // Farve-koder edges per person for visuel distinktion af fælles ejerskab.
   // BIZZ-1285: Reduceret opacity fra 0.75 til 0.65 så personlige ejendomme
   // matcher normale ejendomslinjer i stedet for at skille sig visuelt ud.
-  // BIZZ-1873: Rød erstattet med rose (mindre alarm-agtig) — rød ligner fejl
   const OWNER_COLORS = [
     'rgba(52,211,153,0.65)', // emerald — person 1
     'rgba(167,139,250,0.65)', // violet  — person 2
     'rgba(251,191,36,0.65)', // amber   — person 3
-    'rgba(244,114,182,0.65)', // pink    — person 4
+    'rgba(248,113,113,0.65)', // red     — person 4
     'rgba(34,211,238,0.65)', // cyan    — person 5
   ];
   const personNodes = nodes.filter((n) => n.type === 'person' && n.enhedsNummer);
@@ -980,30 +977,8 @@ async function resolvePropertyGraph(
   });
   nodeIds.add(mainId);
 
-  // BIZZ-1839: Check om BFE er en ejerlejlighed — bruges til at filtrere
-  // SFE-niveau relationer (status-entries, bygnings-ejerskab) fra diagrammet.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: bfeTypeRow } = await (admin as any)
-    .from('bfe_adresse_cache')
-    .select('ejendomstype, etage')
-    .eq('bfe_nummer', bfe)
-    .maybeSingle();
-  const isEjerlejlighed =
-    (bfeTypeRow as { ejendomstype?: string; etage?: string } | null)?.ejendomstype
-      ?.toLowerCase()
-      .includes('ejerlejlighed') ||
-    (bfeTypeRow as { ejendomstype?: string; etage?: string } | null)?.etage != null;
-
   // Ejere — cache-first via ejf_ejerskab, live EJF fallback ved tom liste
   let owners = await fetchOwnersByBfe(admin, bfe);
-
-  // BIZZ-1839: Filtrér irrelevante relationer for ejerlejligheder.
-  // Status-entries ("Opdelt i ejerlejligheder", "Opdelt i anpart") er
-  // SFE-niveau metadata der ikke hører til den specifikke lejlighed.
-  if (isEjerlejlighed && owners.length > 1) {
-    const filtered = owners.filter((o) => o.ejer_type !== 'status');
-    if (filtered.length > 0) owners = filtered;
-  }
 
   // BIZZ-1136: Fallback til live EJF GraphQL når ejf_ejerskab er tom
   // (typisk for "opdelt i anpart/ejerlejligheder" ejendomme hvor
@@ -1073,7 +1048,7 @@ async function resolvePropertyGraph(
               const isStatus = !cvr && !personNavn;
               return {
                 ejer_navn:
-                  personNavn ?? (cvr ? `CVR ${cvr}` : isStatus ? 'Opdelt ejerskab' : 'Person'),
+                  personNavn ?? (cvr ? `CVR ${cvr}` : isStatus ? 'Opdelt ejerskab' : 'Ukendt ejer'),
                 ejer_cvr: cvr ? String(cvr) : null,
                 ejer_type: cvr ? 'virksomhed' : isStatus ? 'status' : 'person',
                 ejerandel_taeller: n.faktiskEjerandel_taeller,
@@ -1091,12 +1066,6 @@ async function resolvePropertyGraph(
     } catch (err) {
       logger.warn('[diagram/resolve] EJF live fallback fejl:', err);
     }
-  }
-
-  // BIZZ-1839: Filtrér status-entries fra EJF live fallback for ejerlejligheder
-  if (isEjerlejlighed && owners.length > 1) {
-    const filtered = owners.filter((o) => o.ejer_type !== 'status');
-    if (filtered.length > 0) owners = filtered;
   }
 
   // BIZZ-1210: Batch-hent virksomheder og person-navne i stedet for N+1 queries
@@ -1168,7 +1137,7 @@ async function resolvePropertyGraph(
       d.enhedsnummer,
     ])
   );
-  // BIZZ-1350: enhedsNummer → faktisk navn map (for placeholder → rigtigt navn)
+  // BIZZ-1350: enhedsNummer → faktisk navn map (for "Ukendt ejer" → rigtigt navn)
   const enToNameMap = new Map(
     ((directDeltagerResult.data ?? []) as Array<{ enhedsnummer: number; navn: string }>).map(
       (d) => [d.enhedsnummer, d.navn]
@@ -1215,48 +1184,22 @@ async function resolvePropertyGraph(
         : `person-${owner.ejer_navn.replace(/\s+/g, '-').toLowerCase()}`;
       if (!nodeIds.has(ownerId)) {
         // Brug faktisk navn fra cvr_deltager når ejer_navn er generisk
-        let resolvedName =
+        const resolvedName =
           personEn && enToNameMap.has(personEn) ? enToNameMap.get(personEn)! : owner.ejer_navn;
-        // BIZZ-1777: Erstat "Ukendt ejer (en NNNN)" med "Person" — renere fallback
-        if (/^Ukendt ejer/.test(resolvedName)) {
-          resolvedName = personEn ? `Person ${personEn}` : 'Person';
-        }
-        // Tjek om denne "person" faktisk er en virksomhed der allerede er i grafen.
-        // EJF kan registrere virksomheder som person-ejere via enhedsNummer.
-        const existingCompany = nodes.find(
-          (n) =>
-            (n.type === 'company' || n.type === 'main') &&
-            n.label?.toLowerCase() === resolvedName.toLowerCase()
-        );
-        if (existingCompany) {
-          // Brug eksisterende company-node i stedet for at oprette person-duplikat
-          edges.push({
-            from: existingCompany.id,
-            to: mainId,
-            ejerandel: formatEjerandel(owner.ejerandel_taeller, owner.ejerandel_naevner),
-          });
-        } else {
-          nodes.push({
-            id: ownerId,
-            label: resolvedName,
-            type: 'person',
-            enhedsNummer: personEn,
-            link: personEn ? `/dashboard/owners/${personEn}` : undefined,
-          });
-          nodeIds.add(ownerId);
-          edges.push({
-            from: ownerId,
-            to: mainId,
-            ejerandel: formatEjerandel(owner.ejerandel_taeller, owner.ejerandel_naevner),
-          });
-        }
-      } else {
-        edges.push({
-          from: ownerId,
-          to: mainId,
-          ejerandel: formatEjerandel(owner.ejerandel_taeller, owner.ejerandel_naevner),
+        nodes.push({
+          id: ownerId,
+          label: resolvedName,
+          type: 'person',
+          enhedsNummer: personEn,
+          link: personEn ? `/dashboard/owners/${personEn}` : undefined,
         });
+        nodeIds.add(ownerId);
       }
+      edges.push({
+        from: ownerId,
+        to: mainId,
+        ejerandel: formatEjerandel(owner.ejerandel_taeller, owner.ejerandel_naevner),
+      });
     } else if (owner.ejer_type === 'status') {
       // Status-tekst: "Opdelt i anpart", "Opdelt i ejerlejligheder" etc.
       // Vises som status-node (grå) i stedet for person-node
@@ -1282,12 +1225,11 @@ async function resolvePropertyGraph(
   // alle registrerede deltagere og giver højere hit-rate.
   //
   // BIZZ-1540: Udvidet til også at re-resolve nodes der HAR enhedsNummer men
-  // mangler navn (label er placeholder som "Person N" eller "Person").
+  // mangler navn (label er placeholder som "Person N" eller "Ukendt ejer").
   // Disse rammer typisk dødsboer, udenlandske ejere og personer der ikke er
   // i cvr_deltager-cachen endnu.
-  // BIZZ-1777: Ændret fra "Ukendt ejer" til "Person" som fallback-label.
   const isPlaceholderName = (label: string): boolean =>
-    /^Person\s*\d*$/.test(label) ||
+    /^Person\s+\d+$/.test(label) ||
     label === 'Ukendt ejer' ||
     /^Ukendt ejer\s*\(en\s*\d+\)$/.test(label);
 
@@ -2357,9 +2299,9 @@ async function resolvePersonGraph(
     }
   }
 
-  // ── BIZZ-1743 + BIZZ-1824: Administrerede ejendomme (ejerforeninger) ──
+  // ── BIZZ-1743: Administrerede ejendomme (ejerforeninger) ────────────────
   // For virksomheder der administrerer ejendomme via ejf_administrator
-  // tilføj administrerede SFE-BFE'er + deres ejerlejligheder som sub-noder.
+  // (typisk ejerforeninger), tilføj administrerede BFE'er med stiplet edge.
   const mainCvr = nodes.find((n) => n.type === 'main')?.cvr;
   if (mainCvr) {
     const administered = await _fetchAdministeredByCvr(admin, String(mainCvr));
@@ -2373,7 +2315,7 @@ async function resolvePersonGraph(
       nodes.push({
         id: propId,
         label: `BFE ${bfe}`,
-        sublabel: 'Administreret SFE',
+        sublabel: 'Administreret',
         type: 'property',
         bfeNummer: bfe,
       });
@@ -2393,73 +2335,6 @@ async function resolvePersonGraph(
       });
       nodeIds.add(overflowId);
       edges.push({ from: `cvr-${mainCvr}`, to: overflowId });
-    }
-
-    // BIZZ-1824: Find ejerlejligheder under administrerede SFE'er
-    // Strategi: Hent adresser for SFE-BFE'er, find alle ejerlejligheder
-    // på samme gadenavn+postnr (med etage = ejerlejlighed).
-    if (adminBfes.length > 0 && nodes.length < 80) {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: sfeAdresser } = await (admin as any)
-          .from('bfe_adresse_cache')
-          .select('bfe_nummer, adresse, postnr')
-          .in('bfe_nummer', adminBfes.slice(0, 10));
-
-        const streetPostnrPairs: Array<{ gadenavn: string; postnr: string; sfeBfe: number }> = [];
-        for (const row of (sfeAdresser ?? []) as Array<{
-          bfe_nummer: number;
-          adresse: string | null;
-          postnr: string | null;
-        }>) {
-          if (!row.adresse || !row.postnr) continue;
-          const gadenavn = row.adresse.replace(/\s+\d+\w*$/, '').trim();
-          if (gadenavn)
-            streetPostnrPairs.push({ gadenavn, postnr: row.postnr, sfeBfe: row.bfe_nummer });
-        }
-
-        for (const pair of streetPostnrPairs.slice(0, 5)) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { data: ejlRows } = await (admin as any)
-            .from('bfe_adresse_cache')
-            .select('bfe_nummer, adresse, etage, doer, postnr, postnrnavn')
-            .ilike('adresse', `${pair.gadenavn}%`)
-            .eq('postnr', pair.postnr)
-            .not('etage', 'is', null)
-            .limit(30);
-
-          const sfePropId = `bfe-admin-${pair.sfeBfe}`;
-          let addedCount = 0;
-          for (const ejl of (ejlRows ?? []) as Array<{
-            bfe_nummer: number;
-            adresse: string | null;
-            etage: string | null;
-            doer: string | null;
-            postnr: string | null;
-            postnrnavn: string | null;
-          }>) {
-            if (nodes.length >= 80 || addedCount >= 20) break;
-            const ejlId = `bfe-${ejl.bfe_nummer}`;
-            if (nodeIds.has(ejlId)) continue;
-            const etageLabel = ejl.etage ? ` ${ejl.etage}.` : '';
-            const doerLabel = ejl.doer ? ` ${ejl.doer}` : '';
-            nodes.push({
-              id: ejlId,
-              label: `${ejl.adresse ?? ''}${etageLabel}${doerLabel}`,
-              sublabel:
-                ejl.postnr && ejl.postnrnavn ? `${ejl.postnr} ${ejl.postnrnavn}` : undefined,
-              type: 'property',
-              bfeNummer: ejl.bfe_nummer,
-              link: `/dashboard/ejendomme/${ejl.bfe_nummer}`,
-            });
-            nodeIds.add(ejlId);
-            edges.push({ from: sfePropId, to: ejlId });
-            addedCount++;
-          }
-        }
-      } catch {
-        /* ejerlejlighed lookup non-fatal */
-      }
     }
   }
 
@@ -2584,9 +2459,7 @@ async function enrichVirksomhedFejlcacheNodes(graph: DiagramGraph): Promise<void
   const CVR_ES_PASS = process.env.CVR_ES_PASS ?? '';
   if (!CVR_ES_USER || !CVR_ES_PASS) return;
 
-  // BIZZ-1777: Matcher både legacy "Ukendt ejer (en NNNN)" og nye "Person" placeholders
-  const isPlaceholderLabel = (label: string): boolean =>
-    /^Ukendt ejer\s*\(en\s*\d+\)$/.test(label) || /^Person\s*\d*$/.test(label);
+  const isPlaceholderLabel = (label: string): boolean => /^Ukendt ejer\s*\(en\s*\d+\)$/.test(label);
 
   const placeholders = graph.nodes.filter(
     (n) => n.type === 'person' && typeof n.enhedsNummer === 'number' && isPlaceholderLabel(n.label)
@@ -2643,17 +2516,13 @@ async function enrichVirksomhedFejlcacheNodes(graph: DiagramGraph): Promise<void
   }
 }
 
-/**
- * BIZZ-1826: Berig property-noder med adresser direkte via admin client +
- * bfe_adresse_cache / DAWA. Erstatter den tidligere HTTP self-fetch til
- * /api/bfe-addresses som fejlede på Vercel prod (cookie-forwarding til
- * intern Lambda giver 401 → alle property-noder vises som "BFE XXXXX").
- */
 async function enrichPropertyNodes(
   graph: DiagramGraph,
-  admin: ReturnType<typeof createAdminClient>
+  host: string,
+  cookie: string
 ): Promise<void> {
   const propNodes = graph.nodes.filter((n) => n.type === 'property' && n.bfeNummer != null);
+  // BIZZ-1349: Saml også BFE-numre fra overflow items
   const overflowNodes = graph.nodes.filter((n) => n.overflowItems && n.overflowItems.length > 0);
   const overflowBfes = overflowNodes.flatMap((n) =>
     (n.overflowItems ?? []).filter((i) => i.bfeNummer).map((i) => i.bfeNummer!)
@@ -2662,14 +2531,31 @@ async function enrichPropertyNodes(
   if (allBfes.length === 0) return;
 
   try {
-    // Step 1: Batch-hent fra bfe_adresse_cache (lokal DB — hurtigst)
-    // BIZZ-1889: Øget fra 200 → 500 for store virksomhedsdiagrammer
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: cacheRows } = await (admin as any)
-      .from('bfe_adresse_cache')
-      .select('bfe_nummer, adresse, postnr, postnrnavn, dawa_id, etage, doer')
-      .in('bfe_nummer', allBfes.slice(0, 500));
+    const res = await fetch(`${host}/api/bfe-addresses?bfes=${allBfes.join(',')}`, {
+      headers: { cookie },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) return;
+    const data: Record<
+      string,
+      {
+        adresse: string | null;
+        postnr: string | null;
+        by: string | null;
+        dawaId: string | null;
+        etage: string | null;
+        doer: string | null;
+      }
+    > = await res.json();
 
+    /**
+     * Formatér adresse-label fra bfe-addresses response.
+     * BIZZ-1543: Brug mellemrum mellem adresse og etage (ikke komma).
+     * DiagramForce splitter label på komma for at lave linje 1 / linje 2.
+     * Med komma havnede etage/dør på linje 2 sammen med postnr+by, så to
+     * ejerlejligheder i samme opgang så identiske ud. Med space holdes
+     * "vejnavn nr. etage. dør" samlet på linje 1.
+     */
     type AdresseInfo = {
       adresse: string | null;
       postnr: string | null;
@@ -2678,228 +2564,11 @@ async function enrichPropertyNodes(
       etage: string | null;
       doer: string | null;
     };
-    const adresseMap = new Map<number, AdresseInfo>();
 
-    for (const row of (cacheRows ?? []) as Array<{
-      bfe_nummer: number;
-      adresse: string | null;
-      postnr: string | null;
-      postnrnavn: string | null;
-      dawa_id: string | null;
-      etage: string | null;
-      doer: string | null;
-    }>) {
-      // Skip placeholder-adresser ("BFE 12345") — de er uløste og skal re-resolves
-      if (row.adresse && !/^BFE \d+$/.test(row.adresse)) {
-        adresseMap.set(row.bfe_nummer, {
-          adresse: row.adresse,
-          postnr: row.postnr,
-          by: row.postnrnavn,
-          dawaId: row.dawa_id,
-          etage: row.etage,
-          doer: row.doer,
-        });
-      }
-    }
-
-    // Step 2: For BFE'er uden cache-hit → prøv bbr_ejendom_status → DAWA
-    const missingBfes = allBfes.filter((bfe) => !adresseMap.has(bfe));
-    if (missingBfes.length > 0) {
-      // BIZZ-1889: Øget caps fra 30/20 → 200/100 for store diagrammer
-      // (Familien Petersen havde 17/41 nodes uden cache-hit der ikke blev resolved).
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: bbrRows } = await (admin as any)
-        .from('bbr_ejendom_status')
-        .select('bfe_nummer, adgangsadresse_id')
-        .in('bfe_nummer', missingBfes.slice(0, 200))
-        .not('adgangsadresse_id', 'is', null);
-
-      const bbrMap = new Map<number, string>(
-        ((bbrRows ?? []) as Array<{ bfe_nummer: number; adgangsadresse_id: string }>).map((r) => [
-          r.bfe_nummer,
-          r.adgangsadresse_id,
-        ])
-      );
-
-      // DAWA batch (parallel, øget fra 20 → 100)
-      const dawaResolves = missingBfes.slice(0, 100).map(async (bfe) => {
-        const dawaAdId = bbrMap.get(bfe);
-        try {
-          let url: string;
-          if (dawaAdId) {
-            url = `${DAWA_BASE_URL}/adgangsadresser/${dawaAdId}`;
-          } else {
-            url = `${DAWA_BASE_URL}/bfe/${bfe}`;
-          }
-          const res = await fetch(url, {
-            headers: { Accept: 'application/json' },
-            signal: AbortSignal.timeout(3000),
-          });
-          if (!res.ok) return;
-          const json = await res.json();
-
-          if (dawaAdId) {
-            // adgangsadresser response
-            const adr = json as {
-              vejstykke?: { navn?: string };
-              husnr?: string;
-              postnummer?: { nr?: string; navn?: string };
-              id?: string;
-            };
-            if (adr.vejstykke?.navn) {
-              adresseMap.set(bfe, {
-                adresse: `${adr.vejstykke.navn} ${adr.husnr ?? ''}`.trim(),
-                postnr: adr.postnummer?.nr ?? null,
-                by: adr.postnummer?.navn ?? null,
-                dawaId: adr.id ?? dawaAdId,
-                etage: null,
-                doer: null,
-              });
-            }
-          } else {
-            // /bfe response
-            const bel = (json as { beliggenhedsadresse?: Record<string, string> })
-              .beliggenhedsadresse;
-            if (bel?.vejnavn) {
-              adresseMap.set(bfe, {
-                adresse: `${bel.vejnavn} ${bel.husnr ?? ''}`.trim(),
-                postnr: bel.postnr ?? null,
-                by: bel.postnrnavn ?? null,
-                dawaId: bel.id ?? null,
-                etage: bel.etage ?? null,
-                doer: bel.dør ?? null,
-              });
-            }
-          }
-        } catch {
-          // DAWA timeout — skip
-        }
-      });
-      await Promise.allSettled(dawaResolves);
-    }
-
-    // BIZZ-1834: For BFE'er der stadig mangler adresse, prøv DAWA jordstykke-resolve.
-    // DAWA /bfe/ endpoint er ustabil, men /jordstykker?bfenummer=X virker.
-    const stillMissing = allBfes.filter((bfe) => !adresseMap.has(bfe));
-    if (stillMissing.length > 0) {
-      // BIZZ-1889: Øget fra 5 → 30 — Familien Petersen havde 17 stadig-manglende
-      for (const bfe of stillMissing.slice(0, 30)) {
-        try {
-          const jRes = await fetch(
-            `https://api.dataforsyningen.dk/jordstykker?bfenummer=${bfe}&format=json`,
-            { signal: AbortSignal.timeout(5000), headers: { Accept: 'application/json' } }
-          );
-          if (!jRes.ok) continue;
-          const jord = (await jRes.json()) as Array<{
-            ejerlav?: { kode?: number };
-            matrikelnr?: string;
-          }>;
-          const ej = jord[0]?.ejerlav?.kode;
-          const matr = jord[0]?.matrikelnr;
-          if (!ej || !matr) continue;
-
-          // Hent adgangsadresser (1 per opgang, uden etage)
-          const aRes = await fetch(
-            `https://api.dataforsyningen.dk/adgangsadresser?ejerlavkode=${ej}&matrikelnr=${encodeURIComponent(matr)}&format=json&struktur=mini&per_side=5`,
-            { signal: AbortSignal.timeout(5000), headers: { Accept: 'application/json' } }
-          );
-          if (!aRes.ok) continue;
-          const addrs = (await aRes.json()) as Array<{
-            id?: string;
-            vejnavn?: string;
-            husnr?: string;
-            postnr?: string;
-            postnrnavn?: string;
-          }>;
-          if (addrs.length > 0) {
-            const a = addrs[0];
-            adresseMap.set(bfe, {
-              adresse: `${a.vejnavn ?? ''} ${a.husnr ?? ''}`.trim(),
-              postnr: a.postnr ?? null,
-              by: a.postnrnavn ?? null,
-              dawaId: a.id ?? null,
-              etage: null,
-              doer: null,
-            });
-          }
-        } catch {
-          /* jordstykke fallback non-critical */
-        }
-      }
-    }
-
-    // BIZZ-1889: Step 4 — Vurderingsportalen (VP) ES bulk-fallback.
-    // Bruges til SFE-niveau BFEer (f.eks. 6-cifrede tal fra Helsingør/Resights)
-    // der ikke er i DAWA eller jordstykker men HAR VP-data. Batch-query
-    // mod VP ES undgår N+1 og returnerer bfeNumbers + address + zipcode.
-    const vpMissing = allBfes.filter((bfe) => !adresseMap.has(bfe));
-    if (vpMissing.length > 0) {
-      try {
-        const vpRes = await fetch(
-          'https://api-fs.vurderingsportalen.dk/preliminaryproperties/_search',
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'User-Agent':
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            },
-            body: JSON.stringify({
-              size: Math.min(vpMissing.length, 200),
-              _source: [
-                'bfeNumbers',
-                'roadName',
-                'houseNumber',
-                'floor',
-                'door',
-                'zipcode',
-                'postDistrict',
-                'adresseID',
-              ],
-              query: {
-                bool: { filter: [{ terms: { bfeNumbers: vpMissing.slice(0, 200) } }] },
-              },
-            }),
-            signal: AbortSignal.timeout(8000),
-          }
-        );
-        if (vpRes.ok) {
-          const vpJson = (await vpRes.json()) as {
-            hits?: {
-              hits?: Array<{
-                _source: {
-                  bfeNumbers?: number;
-                  roadName?: string;
-                  houseNumber?: string;
-                  floor?: string | null;
-                  door?: string | null;
-                  zipcode?: string;
-                  postDistrict?: string;
-                  adresseID?: string;
-                };
-              }>;
-            };
-          };
-          for (const hit of vpJson.hits?.hits ?? []) {
-            const src = hit._source;
-            const bfe = src.bfeNumbers;
-            if (!bfe || adresseMap.has(bfe)) continue;
-            const adresse =
-              src.roadName && src.houseNumber ? `${src.roadName} ${src.houseNumber}`.trim() : null;
-            if (adresse) {
-              adresseMap.set(bfe, {
-                adresse,
-                postnr: src.zipcode ?? null,
-                by: src.postDistrict ?? null,
-                dawaId: src.adresseID ?? null,
-                etage: src.floor ?? null,
-                doer: src.door ?? null,
-              });
-            }
-          }
-        }
-      } catch {
-        /* VP fallback non-critical */
+    // Skip placeholder-adresser ("BFE 12345") — bfe-addresses API kan returnere dem fra cache
+    for (const [_bfe, info] of Object.entries(data)) {
+      if (info.adresse && /^BFE \d+$/.test(info.adresse)) {
+        info.adresse = null;
       }
     }
 
@@ -2915,7 +2584,13 @@ async function enrichPropertyNodes(
       return `${info.adresse}${etageStr}${doerStr}${postStr}`;
     };
 
-    /** BIZZ-1542: Byg property-link med BFE-fallback for ejerlejligheder. */
+    /**
+     * BIZZ-1542: Byg property-link med BFE-fallback for ejerlejligheder.
+     * For ejerlejligheder (har etage) bruger vi BFE-URL fremfor DAWA UUID,
+     * fordi DAWA UUID'er for enhedsadresser ikke kan resolves via
+     * /adgangsadresser → "Adresse ikke fundet". page.tsx resolver BFE→DAWA
+     * via bbr_ejendom_status eller jordstykker-chain.
+     */
     const buildLink = (
       info: { etage: string | null; dawaId: string | null },
       bfeNummer: number | null
@@ -2927,18 +2602,12 @@ async function enrichPropertyNodes(
     };
 
     for (const node of propNodes) {
-      // BIZZ-1865: Sæt link ALTID baseret på BFE — selv uden cache-hit
-      if (!node.link && node.bfeNummer) {
-        node.link = `/dashboard/ejendomme/${node.bfeNummer}`;
-      }
+      // BIZZ-1114: Skip noder der allerede har et client-supplied label (rootLabel)
+      // — undgå at overskrive korrekt adresse med forkert BFE→DAWA mapping
       if (node.label && !node.label.startsWith('BFE ')) continue;
-      const info = adresseMap.get(node.bfeNummer!);
-      // BIZZ-1867: Vis "Adresse ukendt" i stedet for rå BFE-nummer
-      if (!info?.adresse) {
-        node.label = 'Adresse ukendt';
-        node.sublabel = node.bfeNummer ? `BFE ${node.bfeNummer}` : undefined;
-        continue;
-      }
+
+      const info = data[String(node.bfeNummer)];
+      if (!info?.adresse) continue;
       node.label = fmtLabel(info) ?? node.label;
       if (info.postnr && info.by) {
         node.sublabel = `${info.postnr} ${info.by}`;
@@ -2951,118 +2620,16 @@ async function enrichPropertyNodes(
     for (const node of overflowNodes) {
       for (const item of node.overflowItems ?? []) {
         if (!item.bfeNummer) continue;
-        const info = adresseMap.get(item.bfeNummer);
-        if (!info) {
-          // BIZZ-1867: Vis "Adresse ukendt" i stedet for rå BFE-nummer
-          if (item.label?.startsWith('BFE ')) item.label = `Adresse ukendt (BFE ${item.bfeNummer})`;
-          continue;
-        }
+        const info = data[String(item.bfeNummer)];
+        if (!info) continue;
         const label = fmtLabel(info);
         if (label) item.label = label;
         const link = buildLink(info, item.bfeNummer ?? null);
         if (link) item.link = link;
       }
     }
-
-    // BIZZ-1832/1834: SFE-expansion — DEAKTIVERET (BIZZ-1891/1899).
-    // Lejligheds-udfoldning erstattede ejede SFE-ejendomme med opgangs-grupper
-    // (fold-ud bokse). Brugeren forventer de 16 ejede ejendomme — ikke lejligheder.
-    const _sfeExpansionDisabled = true;
-    const sfeNodes = _sfeExpansionDisabled
-      ? []
-      : propNodes.filter((n) => {
-          const info = adresseMap.get(n.bfeNummer!);
-          return info?.adresse && !info?.etage;
-        });
-    for (const sfeNode of sfeNodes.slice(0, 3)) {
-      try {
-        const jRes = await fetch(
-          `https://api.dataforsyningen.dk/jordstykker?bfenummer=${sfeNode.bfeNummer}&format=json`,
-          { signal: AbortSignal.timeout(5000), headers: { Accept: 'application/json' } }
-        );
-        if (!jRes.ok) continue;
-        const jord = (await jRes.json()) as Array<{
-          ejerlav?: { kode?: number };
-          matrikelnr?: string;
-        }>;
-        const ej = jord[0]?.ejerlav?.kode;
-        const matr = jord[0]?.matrikelnr;
-        if (!ej || !matr) continue;
-
-        const aRes = await fetch(
-          `https://api.dataforsyningen.dk/adresser?ejerlavkode=${ej}&matrikelnr=${encodeURIComponent(matr)}&format=json&struktur=mini&per_side=100`,
-          { signal: AbortSignal.timeout(8000), headers: { Accept: 'application/json' } }
-        );
-        if (!aRes.ok) continue;
-        const adresser = (await aRes.json()) as Array<{
-          id: string;
-          vejnavn: string;
-          husnr: string;
-          etage: string | null;
-          dør: string | null;
-          postnr: string;
-          postnrnavn: string;
-        }>;
-
-        // Kun adresser med etage (ejerlejligheder)
-        const lejligheder = Array.isArray(adresser) ? adresser.filter((a) => a.etage) : [];
-        if (lejligheder.length === 0) continue;
-
-        // Gruppér per opgang (husnr)
-        const opgange = new Map<string, typeof lejligheder>();
-        for (const l of lejligheder) {
-          const key = `${l.vejnavn} ${l.husnr}`;
-          if (!opgange.has(key)) opgange.set(key, []);
-          opgange.get(key)!.push(l);
-        }
-
-        // Erstat SFE-noden med opgangs-noder — link direkte til parent.
-        // For foreninger er det lejlighederne der er relevante, ikke SFE'en.
-        // Find parent-node (den virksomhed der ejer SFE'en)
-        const parentEdge = graph.edges.find((e) => e.to === sfeNode.id);
-        const parentId = parentEdge?.from ?? sfeNode.id;
-
-        // Fjern SFE-noden og dens edge fra grafen
-        const sfeIdx = graph.nodes.indexOf(sfeNode);
-        if (sfeIdx >= 0) graph.nodes.splice(sfeIdx, 1);
-        const edgeIdx = graph.edges.indexOf(parentEdge!);
-        if (edgeIdx >= 0) graph.edges.splice(edgeIdx, 1);
-
-        for (const [opgang, lejs] of opgange) {
-          const opgangId = `opgang-${sfeNode.bfeNummer}-${opgang.replace(/\s+/g, '-')}`;
-          if (graph.nodes.some((n) => n.id === opgangId)) continue;
-          graph.nodes.push({
-            id: opgangId,
-            label: opgang,
-            sublabel: `${lejs.length} lejligheder · ${lejs[0].postnr} ${lejs[0].postnrnavn}`,
-            type: 'property',
-          });
-          // Link direkte til parent (virksomhed), ikke SFE
-          graph.edges.push({
-            from: parentId,
-            to: opgangId,
-            ejerandel: parentEdge?.ejerandel,
-          });
-
-          // Tilføj individuelle lejligheder som overflow items
-          const items = lejs.slice(0, 20).map((l) => ({
-            label: `${l.etage}. ${l.dør ?? ''}`.trim(),
-            link: `/dashboard/ejendomme/${l.id}`,
-          }));
-          if (items.length > 0) {
-            graph.nodes[graph.nodes.length - 1].overflowItems = items;
-          }
-        }
-      } catch {
-        /* SFE expansion is best-effort */
-      }
-    }
-  } catch (err) {
-    // BIZZ-1889: Log enrichment fejl i stedet for at sluge dem
-    logger.warn(
-      '[diagram/resolve] enrichPropertyNodes fejlede:',
-      err instanceof Error ? err.message : 'unknown'
-    );
+  } catch {
+    // Adresse-berigelse er best-effort — fejl ignoreres
   }
 }
 
@@ -3159,7 +2726,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
     await enrichVirksomhedFejlcacheNodes(graph);
 
     // Berig property-noder med adresser (best-effort, direkte via admin client)
-    await enrichPropertyNodes(graph, admin);
+    await enrichPropertyNodes(graph, reqHost, reqCookie);
 
     // Tilføj manglende company→company edges fra cvr_virksomhed_ejerskab.
     // EJF viser kun BFE-ejerskab (flad) — CVR-ejerskab viser koncernhierarki.

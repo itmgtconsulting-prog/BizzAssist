@@ -55,10 +55,8 @@ const empty = (): AdresseRow => ({
 });
 
 /**
- * Resolver én BFE → adresse via en 3-trins pipeline:
- *   1. DAWA /bfe/{bfe} — virker for samlet fast ejendom
- *   2. Tinglysning /ejendom/hovednoteringsnummer — for landzone-ejendomme uden DAWA-adresse
- *   3. VP _search — for ejerlejligheder med etage/dør-info
+ * Resolver én BFE → adresse via DAWA /bfe/{bfe} (samlet ejendom) eller
+ * VP-fallback (ejerlejligheder hvor DAWA returnerer 404).
  */
 async function resolveOne(bfe: string): Promise<AdresseRow> {
   const result = empty();
@@ -136,50 +134,10 @@ async function resolveOne(bfe: string): Promise<AdresseRow> {
       }
     }
   } catch {
-    // Fall through til Tinglysning
-  }
-
-  // Trin 2: Tinglysning /ejendom/hovednoteringsnummer — for BFE'er ikke fundet i DAWA/VP
-  // (fx landzone-ejendomme uden DAWA-adgangsadresse, som BFE 380046)
-  try {
-    const { tlFetch } = await import('@/app/lib/tlFetch');
-    const tlRes = await tlFetch(`/ejendom/hovednoteringsnummer?hovednoteringsnummer=${bfe}`, {
-      timeout: 10000,
-    });
-    if (tlRes.status === 200 && tlRes.body) {
-      const tlData = JSON.parse(tlRes.body) as {
-        items?: Array<{
-          adresse?: string;
-          ejendomsnummer?: string;
-          kommuneNummer?: string;
-        }>;
-      };
-      const item = tlData.items?.[0];
-      if (item?.adresse) {
-        // Format: "Vejnavn husnr, postnr by" — split på ', '
-        const commaIdx = item.adresse.lastIndexOf(', ');
-        if (commaIdx > 0) {
-          const streetPart = item.adresse.slice(0, commaIdx);
-          const postByPart = item.adresse.slice(commaIdx + 2);
-          const spaceIdx = postByPart.indexOf(' ');
-          result.adresse = streetPart;
-          if (spaceIdx > 0) {
-            result.postnr = postByPart.slice(0, spaceIdx);
-            result.by = postByPart.slice(spaceIdx + 1);
-          } else {
-            result.postnr = postByPart;
-          }
-        } else {
-          result.adresse = item.adresse;
-        }
-        return result;
-      }
-    }
-  } catch {
     // Fall through til VP
   }
 
-  // Trin 3: VP-fallback for ejerlejligheder (DAWA /bfe/{bfe} returnerer 404)
+  // Trin 2: VP-fallback for ejerlejligheder (DAWA /bfe/{bfe} returnerer 404)
   try {
     const vpRes = await fetch(
       'https://api-fs.vurderingsportalen.dk/preliminaryproperties/_search',
@@ -309,36 +267,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const uncached = list.filter((b) => !cachedMap.has(b));
     const results = await Promise.all(uncached.map((b) => resolveOne(b)));
     const out: Record<string, AdresseRow> = {};
-    // Merge cached + freshly resolved results
-    for (const [bfe, row] of cachedMap) out[bfe] = row;
-    for (let i = 0; i < uncached.length; i++) out[uncached[i]] = results[i];
-
-    // BIZZ-1871: Cache resolved adresser i bfe_adresse_cache så
-    // ejendomme-by-owner og diagram-resolve kan bruge dem direkte.
-    try {
-      const { createAdminClient } = await import('@/lib/supabase/admin');
-      const admin = createAdminClient();
-      const toCache = Object.entries(out)
-        .filter(([, v]) => v.adresse)
-        .map(([bfe, v]) => ({
-          bfe_nummer: parseInt(bfe, 10),
-          adresse: v.adresse,
-          postnr: v.postnr,
-          postnrnavn: v.by,
-          etage: v.etage,
-          doer: v.doer,
-          dawa_id: v.dawaId,
-          ejendomstype: v.ejendomstype,
-          sidst_opdateret: new Date().toISOString(),
-        }));
-      if (toCache.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (admin as any)
-          .from('bfe_adresse_cache')
-          .upsert(toCache, { onConflict: 'bfe_nummer' });
-      }
-    } catch {
-      /* Cache-write er non-fatal — sker i baggrunden */
+    // Merge cache + live results
+    for (const b of list) {
+      out[b] = cachedMap.get(b) ?? results[uncached.indexOf(b)] ?? empty();
     }
 
     return NextResponse.json(out, {

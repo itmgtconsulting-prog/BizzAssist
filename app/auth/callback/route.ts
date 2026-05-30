@@ -155,34 +155,24 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         request.headers.get('x-real-ip') ??
         'unknown';
       const admin = createAdminClient();
-      // Hent alle aktive sessioner for brugeren
-      const { data: sessions } = await admin.rpc('get_user_sessions', {
-        p_user_id: sessionData.user.id,
-      });
-      // Fallback: direkte query mod auth.sessions
-      if (!sessions) {
-        const { data: authSessions } = await admin
-          .schema('auth' as 'public')
-          .from('sessions')
-          .select('id, ip')
-          .eq('user_id', sessionData.user.id);
-        if (authSessions && authSessions.length > 1) {
-          const otherSessions = (authSessions as Array<{ id: string; ip: string }>).filter(
-            (s) => s.ip !== currentIp && s.id !== sessionData.session?.access_token
-          );
-          if (otherSessions.length > 0) {
-            // Slet sessioner fra andre IP'er
-            for (const s of otherSessions) {
-              await admin
-                .schema('auth' as 'public')
-                .from('sessions')
-                .delete()
-                .eq('id', s.id);
-            }
-            logger.log(
-              `[auth/callback] BIZZ-1875: Termineret ${otherSessions.length} sessioner fra andre IP'er for bruger ${sessionData.user.id} (current IP: ${currentIp})`
-            );
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: authSessions } = await (admin as any)
+        .schema('auth')
+        .from('sessions')
+        .select('id, ip')
+        .eq('user_id', sessionData.user.id);
+      if (authSessions && authSessions.length > 1) {
+        const otherSessions = (authSessions as Array<{ id: string; ip: string }>).filter(
+          (s) => s.ip !== currentIp && s.id !== sessionData.session?.access_token
+        );
+        if (otherSessions.length > 0) {
+          for (const s of otherSessions) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            await (admin as any).schema('auth').from('sessions').delete().eq('id', s.id);
           }
+          logger.log(
+            `[auth/callback] BIZZ-1875: Termineret ${otherSessions.length} sessioner fra andre IP'er for bruger ${sessionData.user.id} (current IP: ${currentIp})`
+          );
         }
       }
     } catch (err) {

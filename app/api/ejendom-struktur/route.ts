@@ -903,10 +903,15 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
             }
           }
         }
-      } catch {
-        /* DAWA supplement non-fatal */
+      } catch (supplementErr) {
+        logger.warn(
+          '[ejendom-struktur] DAWA supplement fejlede:',
+          supplementErr instanceof Error ? supplementErr.message : String(supplementErr)
+        );
       }
     }
+
+    logger.log(`[ejendom-struktur] Final tree: ${root.children.length} children`);
 
     return NextResponse.json(
       { tree: root, fejl: null },

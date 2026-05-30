@@ -889,7 +889,14 @@ export default function EjendomDetaljeClient({
     // Kun kør fallback hvis BBR ikke har et BFE
     if (bbrData?.ejendomsrelationer?.[0]?.bfeNummer || bbrData?.ejerlejlighedBfe) return;
     const controller = new AbortController();
-    fetch(`/api/bfe-lookup?dawaId=${encodeURIComponent(id)}`, {
+    const lookupParams = new URLSearchParams({ dawaId: id });
+    if (dawaAdresse) {
+      lookupParams.set('adresse', `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}`);
+      lookupParams.set('postnr', dawaAdresse.postnr);
+      if (dawaAdresse.etage) lookupParams.set('etage', dawaAdresse.etage);
+      if (dawaAdresse.dør) lookupParams.set('doer', dawaAdresse.dør);
+    }
+    fetch(`/api/bfe-lookup?${lookupParams}`, {
       signal: controller.signal,
     })
       .then((r) => (r.ok ? r.json() : null))

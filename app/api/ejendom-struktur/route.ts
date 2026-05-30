@@ -847,6 +847,63 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
       }
     }
 
+    // BIZZ-1901: Supplér med DAWA-adgangsadresser der ikke er i TL-resultatet.
+    // Carlsberg Byen har hovedejendomme (fx J.C. Jacobsens Gade) der ikke
+    // returneres fra TL matrikel-søgning men har adgangsadresser i DAWA.
+    if (ejerlavKode && matrikelnr && root.children.length > 0) {
+      try {
+        const dawaRes = await fetchDawa(
+          `https://api.dataforsyningen.dk/adgangsadresser?ejerlavkode=${ejerlavKode}&matrikelnr=${encodeURIComponent(matrikelnr)}&per_side=20&format=json&struktur=mini`,
+          { signal: AbortSignal.timeout(5000), next: { revalidate: 3600 } },
+          { caller: 'ejendom-struktur.dawa-supplement' }
+        );
+        if (dawaRes.ok) {
+          const dawaAdresser = (await dawaRes.json()) as Array<{
+            id: string;
+            vejnavn: string;
+            husnr: string;
+            postnr: string;
+            postnrnavn: string;
+          }>;
+          // Find adresser der ikke matcher eksisterende hovedejendomme
+          const existingHusnrs = new Set(
+            root.children.map((c) => {
+              const parts = c.adresse.split(',')[0].trim().toLowerCase();
+              return parts;
+            })
+          );
+          for (const adg of dawaAdresser) {
+            const adgKey = `${adg.vejnavn} ${adg.husnr}`.toLowerCase();
+            const alreadyExists = [...existingHusnrs].some(
+              (h) => h.includes(adgKey) || adgKey.includes(h)
+            );
+            if (!alreadyExists) {
+              root.children.push({
+                bfe: 0,
+                adresse: `${adg.vejnavn} ${adg.husnr}, ${adg.postnr} ${adg.postnrnavn}`,
+                niveau: 'hovedejendom',
+                dawaId: adg.id,
+                ejendomsvaerdi: null,
+                grundvaerdi: null,
+                vurderingsaar: null,
+                tlVurdering: null,
+                areal: null,
+                vaerelser: null,
+                ejer: null,
+                ejertype: null,
+                koebspris: null,
+                koebsdato: null,
+                children: [],
+              });
+              existingHusnrs.add(adgKey);
+            }
+          }
+        }
+      } catch {
+        /* DAWA supplement non-fatal */
+      }
+    }
+
     return NextResponse.json(
       { tree: root, fejl: null },
       {

@@ -145,6 +145,55 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   logger.error('[auth/callback] Code exchange succeeded, type:', type);
 
+  // ── BIZZ-1875: Single session per device ─────────────────────────────────
+  // Terminér sessioner fra ANDRE IP'er. Behold sessioner fra samme IP
+  // (tillader flere tabs/browsere på samme device).
+  if (sessionData?.user && type !== 'signup' && type !== 'email') {
+    try {
+      const currentIp =
+        request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
+        request.headers.get('x-real-ip') ??
+        'unknown';
+      const admin = createAdminClient();
+      // Hent alle aktive sessioner for brugeren
+      const { data: sessions } = await admin.rpc('get_user_sessions', {
+        p_user_id: sessionData.user.id,
+      });
+      // Fallback: direkte query mod auth.sessions
+      if (!sessions) {
+        const { data: authSessions } = await admin
+          .schema('auth' as 'public')
+          .from('sessions')
+          .select('id, ip')
+          .eq('user_id', sessionData.user.id);
+        if (authSessions && authSessions.length > 1) {
+          const otherSessions = (authSessions as Array<{ id: string; ip: string }>).filter(
+            (s) => s.ip !== currentIp && s.id !== sessionData.session?.access_token
+          );
+          if (otherSessions.length > 0) {
+            // Slet sessioner fra andre IP'er
+            for (const s of otherSessions) {
+              await admin
+                .schema('auth' as 'public')
+                .from('sessions')
+                .delete()
+                .eq('id', s.id);
+            }
+            logger.log(
+              `[auth/callback] BIZZ-1875: Termineret ${otherSessions.length} sessioner fra andre IP'er for bruger ${sessionData.user.id} (current IP: ${currentIp})`
+            );
+          }
+        }
+      }
+    } catch (err) {
+      // Session enforcement er non-fatal — login skal stadig virke
+      logger.warn(
+        '[auth/callback] BIZZ-1875: Session enforcement fejlede:',
+        err instanceof Error ? err.message : String(err)
+      );
+    }
+  }
+
   // ── Email verification success ────────────────────────────────────────────
   // When the user clicks the verification link from their signup email,
   // emailRedirectTo was tagged with ?type=signup.

@@ -32,6 +32,12 @@ import {
   ChevronDown,
   ChevronRight,
   Trash2,
+  Sparkles,
+  ExternalLink,
+  Plus,
+  FilePlus,
+  ScanSearch,
+  BookOpen,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { useSubscription } from '@/app/context/SubscriptionContext';
@@ -107,9 +113,13 @@ interface AnalyseGap {
   policy_id: string;
   check_id: string;
   severity: string;
+  /** BIZZ-1833 Fase 6: gap-kategori — 'standard_betingelser' for baseline-gaps */
+  category?: string | null;
   title: string;
   description: string;
   recommendation: string | null;
+  /** BIZZ-1833 Fase 6: kildedata — standard_betingelser-gaps indeholder source_url + selskab */
+  source_data?: Record<string, string> | null;
 }
 
 /** Full analyse-detail response */
@@ -183,6 +193,12 @@ function PropertyRow({ group, da }: { group: PropertyGroup; da: boolean }) {
         <div className="flex items-center gap-2 min-w-0 flex-1">
           {typeIcon}
           <span className="text-white text-sm font-medium truncate">{group.aktiv.label}</span>
+          {/* BIZZ-1829: AI-foreslået badge */}
+          {!!(group.aktiv.raw_data as Record<string, unknown> | null)?.aiForeslaaet && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">
+              AI
+            </span>
+          )}
         </div>
 
         {/* Police-info hvis matchet */}
@@ -295,6 +311,19 @@ function PropertyRow({ group, da }: { group: PropertyGroup; da: boolean }) {
                   <p className="text-slate-400 ml-4">{g.description}</p>
                   {g.recommendation && (
                     <p className="text-slate-500 ml-4 mt-0.5 italic">{g.recommendation}</p>
+                  )}
+                  {/* BIZZ-1833 Fase 6: vis baseline-kilde for standard_betingelser-gaps */}
+                  {g.category === 'standard_betingelser' && g.source_data?.source_url && (
+                    <a
+                      href={g.source_data.source_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-teal-400 hover:text-teal-300 text-[10px] ml-4 mt-0.5 flex items-center gap-1 underline-offset-2 hover:underline"
+                      aria-label={`Åbn standard betingelse: ${g.source_data.source_url}`}
+                    >
+                      <ExternalLink size={9} />
+                      {da ? 'Se standard betingelse' : 'View standard terms'}
+                    </a>
                   )}
                 </div>
               ))}
@@ -464,19 +493,19 @@ function UnifiedAnalyseView({
         <div className="grid grid-cols-5 gap-2">
           <div className="text-center">
             <div className="text-purple-300 text-xl font-bold">{virksomhedGroups.length}</div>
-            <div className="text-slate-500 text-[10px]">{da ? 'Virksomheder' : 'Companies'}</div>
+            <div className="text-slate-400 text-[10px]">{da ? 'Virksomheder' : 'Companies'}</div>
           </div>
           <div className="text-center">
             <div className="text-blue-300 text-xl font-bold">{total}</div>
-            <div className="text-slate-500 text-[10px]">{da ? 'Ejendomme' : 'Properties'}</div>
+            <div className="text-slate-400 text-[10px]">{da ? 'Ejendomme' : 'Properties'}</div>
           </div>
           <div className="text-center">
             <div className="text-emerald-300 text-xl font-bold">{insured}</div>
-            <div className="text-slate-500 text-[10px]">{da ? 'Forsikrede' : 'Insured'}</div>
+            <div className="text-slate-400 text-[10px]">{da ? 'Forsikrede' : 'Insured'}</div>
           </div>
           <div className="text-center">
             <div className="text-red-300 text-xl font-bold">{total - insured}</div>
-            <div className="text-slate-500 text-[10px]">{da ? 'Uforsikrede' : 'Uninsured'}</div>
+            <div className="text-slate-400 text-[10px]">{da ? 'Uforsikrede' : 'Uninsured'}</div>
           </div>
           <div className="text-center">
             <div
@@ -490,7 +519,7 @@ function UnifiedAnalyseView({
             >
               {healthScore}
             </div>
-            <div className="text-slate-500 text-[10px]">
+            <div className="text-slate-400 text-[10px]">
               {da ? 'Sundhedsscore' : 'Health score'}
             </div>
           </div>
@@ -655,7 +684,71 @@ function AnalyseSection({
     total_risk_score: number;
     created_at: string;
   } | null>(null);
+  /** BIZZ-1833: Standard forsikringsbetingelser — AI-fundne + manuelt tilføjede */
+  const [stdDiscovering, setStdDiscovering] = useState(false);
+  const [stdDiscovered, setStdDiscovered] = useState<
+    Array<{ titel: string; source_url: string; kategori: string; confidence: string }>
+  >([]);
+  const [stdSelectedIds, setStdSelectedIds] = useState<Set<string>>(new Set());
+  /** Kort (source_url → DB id) efter POST /api/forsikring/standard-docs */
+  const [stdSavedIds, setStdSavedIds] = useState<Map<string, string>>(new Map());
+  const [stdManualUrl, setStdManualUrl] = useState('');
+  const [stdManualTitel, setStdManualTitel] = useState('');
+  const [stdAddingManual, setStdAddingManual] = useState(false);
+  const stdSelskabRef = useRef<HTMLInputElement>(null);
+  /** BIZZ-1890: PDF-upload af standard betingelser */
+  const [stdPdfUploading, setStdPdfUploading] = useState(false);
+  const stdPdfRef = useRef<HTMLInputElement>(null);
+  /** BIZZ-1890: AI auto-detektion fra police-dokumenter */
+  const [stdDetecting, setStdDetecting] = useState(false);
+  /** BIZZ-1919: Tidligere gemte standard betingelser (delt i domain) */
+  const [stdSavedLibrary, setStdSavedLibrary] = useState<
+    Array<{
+      id: string;
+      titel: string;
+      source_url: string;
+      selskab: string;
+      kategori: string;
+      added_via: string;
+      added_by_user: string | null;
+      is_valid_standard?: boolean;
+      omraade?: string | null;
+      gyldig_fra?: string | null;
+    }>
+  >([]);
+  /** BIZZ-1921: Bibliotek-modal åben/lukket */
+  const [stdLibraryOpen, setStdLibraryOpen] = useState(false);
+  /** BIZZ-1921: Filter i bibliotek */
+  const [stdLibraryFilter, setStdLibraryFilter] = useState('');
+
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // BIZZ-1919: Hent eksisterende delte standard betingelser ved page-load
+  useEffect(() => {
+    fetch('/api/forsikring/standard-docs')
+      .then((r) => (r.ok ? r.json() : []))
+      .then(
+        (
+          data: Array<{
+            id: string;
+            titel: string;
+            source_url: string;
+            selskab: string;
+            kategori: string;
+            added_via: string;
+            added_by_user: string | null;
+            is_valid_standard?: boolean;
+            omraade?: string | null;
+            gyldig_fra?: string | null;
+          }>
+        ) => {
+          setStdSavedLibrary(data);
+        }
+      )
+      .catch(() => {
+        /* non-fatal */
+      });
+  }, []);
   /** BIZZ-1384: Sagsliste */
   const [sager, setSager] = useState<
     Array<{
@@ -836,6 +929,17 @@ function AnalyseSection({
       .catch(() => setLastAnalyse(null));
   }, [selected, policies, onAnalyseDetail, onSagChange]);
 
+  // BIZZ-1890: Kriterium 3 — auto-udfyld forsikringsselskab-feltet ud fra
+  // matchede policer, så AI kan finde relevante standard-betingelser automatisk.
+  // Sættes når kunden vælges og har policer med et forsikringsselskabsnavn.
+  useEffect(() => {
+    if (!stdSelskabRef.current) return;
+    const insurers = [...new Set(kundePolicer.map((p) => p.insurer_name).filter(Boolean))];
+    if (insurers.length > 0 && !stdSelskabRef.current.value) {
+      stdSelskabRef.current.value = insurers[0];
+    }
+  }, [kundePolicer]);
+
   /** Debounced søgning via /api/search */
   const handleSearch = useCallback((value: string) => {
     setQuery(value);
@@ -898,6 +1002,11 @@ function AnalyseSection({
       );
       // Hvis wizard er åben, send altid scoped doc IDs — aldrig fald tilbage til alle policer
       const hasAnyDocs = allDocIds.length > 0;
+      // BIZZ-1833: Saml standard doc DB-IDs for valgte standard-betingelser
+      const stdDocIds = [...stdSelectedIds]
+        .map((url) => stdSavedIds.get(url))
+        .filter((id): id is string => !!id);
+
       const res = await fetch('/api/forsikring/analyser', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -909,6 +1018,8 @@ function AnalyseSection({
           // BIZZ-1443: Send alle valgte doc IDs samlet — reused + nye, dedupet
           // Hvis ingen er valgt, send IKKE document_ids → backend bruger alle policer
           ...(hasAnyDocs ? { document_ids: allDocIds } : {}),
+          // BIZZ-1833: Standard betingelser
+          ...(stdDocIds.length > 0 ? { standard_doc_ids: stdDocIds } : {}),
         }),
       });
       if (res.ok) {
@@ -946,6 +1057,8 @@ function AnalyseSection({
     newDocumentIds,
     selectedDocIds,
     wizardUploads,
+    stdSelectedIds,
+    stdSavedIds,
   ]);
 
   return (
@@ -1110,275 +1223,984 @@ function AnalyseSection({
             </button>
           </div>
 
-          {/* BIZZ-1632: Slet alle dokumenter for denne kunde */}
-          {previousDocs.length > 0 && (
-            <button
-              type="button"
-              onClick={async () => {
-                if (
-                  !selected?.id ||
-                  !confirm(
-                    da
-                      ? `Slet alle ${previousDocs.length} dokumenter for ${selected.navn}?`
-                      : `Delete all ${previousDocs.length} documents for ${selected.navn}?`
-                  )
-                )
-                  return;
-                try {
-                  const r = await fetch(
-                    `/api/forsikring/documents/bulk?kunde_id=${encodeURIComponent(selected.id)}`,
-                    { method: 'DELETE' }
-                  );
-                  if (r.ok) {
-                    setPreviousDocs([]);
-                    setSelectedDocIds(new Set());
-                  }
-                } catch {
-                  /* non-fatal */
-                }
-              }}
-              className="text-xs text-red-400 hover:text-red-300 underline"
-            >
-              {da
-                ? `Slet alle ${previousDocs.length} dokumenter for ${selected.navn}`
-                : `Delete all ${previousDocs.length} documents for ${selected.navn}`}
-            </button>
-          )}
+          {/* BIZZ-1833: 2-kolonne grid — dokumenter (venstre) + standard betingelser (højre) */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="space-y-3">
+              {/* BIZZ-1632: Slet alle dokumenter for denne kunde */}
+              {previousDocs.length > 0 && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (
+                      !selected?.id ||
+                      !confirm(
+                        da
+                          ? `Slet alle ${previousDocs.length} dokumenter for ${selected.navn}?`
+                          : `Delete all ${previousDocs.length} documents for ${selected.navn}?`
+                      )
+                    )
+                      return;
+                    try {
+                      const r = await fetch(
+                        `/api/forsikring/documents/bulk?kunde_id=${encodeURIComponent(selected.id)}`,
+                        { method: 'DELETE' }
+                      );
+                      if (r.ok) {
+                        setPreviousDocs([]);
+                        setSelectedDocIds(new Set());
+                      }
+                    } catch {
+                      /* non-fatal */
+                    }
+                  }}
+                  className="text-xs text-red-400 hover:text-red-300 underline"
+                >
+                  {da
+                    ? `Slet alle ${previousDocs.length} dokumenter for ${selected.navn}`
+                    : `Delete all ${previousDocs.length} documents for ${selected.navn}`}
+                </button>
+              )}
 
-          {/* BIZZ-1442: Samlet doc-liste — alle docs med checkboxes */}
-          {(() => {
-            // Merge previous docs + wizard uploads til én liste
-            const allDocs = [
-              ...previousDocs.map((d) => ({
-                id: d.id,
-                name: d.original_name,
-                source: 'previous' as const,
-                done: true,
-              })),
-              ...wizardUploads
-                .filter((u) => u.status === 'done' && u.docId)
-                .map((u) => ({
-                  id: u.docId!,
-                  name: u.fileName,
-                  source: 'new' as const,
-                  done: true,
-                })),
-            ];
-            // Dedup by id
-            const seen = new Set<string>();
-            const unique = allDocs.filter((d) => {
-              if (seen.has(d.id)) return false;
-              seen.add(d.id);
-              return true;
-            });
+              {/* BIZZ-1442: Samlet doc-liste — alle docs med checkboxes */}
+              {(() => {
+                // Merge previous docs + wizard uploads til én liste
+                const allDocs = [
+                  ...previousDocs.map((d) => ({
+                    id: d.id,
+                    name: d.original_name,
+                    source: 'previous' as const,
+                    done: true,
+                  })),
+                  ...wizardUploads
+                    .filter((u) => u.status === 'done' && u.docId)
+                    .map((u) => ({
+                      id: u.docId!,
+                      name: u.fileName,
+                      source: 'new' as const,
+                      done: true,
+                    })),
+                ];
+                // Dedup by id
+                const seen = new Set<string>();
+                const unique = allDocs.filter((d) => {
+                  if (seen.has(d.id)) return false;
+                  seen.add(d.id);
+                  return true;
+                });
 
-            return unique.length > 0 ? (
-              <>
-                {/* BIZZ-1551: Master-checkbox header — erstatter separate
+                return unique.length > 0 ? (
+                  <>
+                    {/* BIZZ-1551: Master-checkbox header — erstatter separate
                     Vælg-alle/Fravælg-alle knapper. Stater: alle valgt → checked,
                     ingen valgt → unchecked, blandet → indeterminate (visuel mellem-state). */}
-                {(() => {
-                  const total = unique.length;
-                  const sel = unique.filter((d) => selectedDocIds.has(d.id)).length;
-                  const allChecked = sel === total;
-                  const noneChecked = sel === 0;
-                  return (
-                    <label className="flex items-center gap-3 px-3 py-2 bg-blue-500/5 border border-blue-500/20 rounded-lg cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={allChecked}
-                        ref={(el) => {
-                          if (el) el.indeterminate = !allChecked && !noneChecked;
-                        }}
-                        onChange={(e) => {
-                          if (e.target.checked) setSelectedDocIds(new Set(unique.map((d) => d.id)));
-                          else setSelectedDocIds(new Set());
-                        }}
-                        className="rounded border-slate-600 bg-slate-700 text-blue-500 focus:ring-blue-500"
-                      />
-                      <span className="text-blue-300 text-xs font-medium flex-1">
-                        {da
-                          ? `${sel} / ${total} dokumenter valgt`
-                          : `${sel} / ${total} documents selected`}
-                      </span>
-                      <span className="text-slate-500 text-[10px]">
-                        {da ? 'Klik for at vælge/fravælge alle' : 'Click to select/deselect all'}
-                      </span>
-                    </label>
-                  );
-                })()}
-                <p className="text-slate-400 text-xs">
+                    {(() => {
+                      const total = unique.length;
+                      const sel = unique.filter((d) => selectedDocIds.has(d.id)).length;
+                      const allChecked = sel === total;
+                      const noneChecked = sel === 0;
+                      return (
+                        <label className="flex items-center gap-3 px-3 py-2 bg-blue-500/5 border border-blue-500/20 rounded-lg cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={allChecked}
+                            ref={(el) => {
+                              if (el) el.indeterminate = !allChecked && !noneChecked;
+                            }}
+                            onChange={(e) => {
+                              if (e.target.checked)
+                                setSelectedDocIds(new Set(unique.map((d) => d.id)));
+                              else setSelectedDocIds(new Set());
+                            }}
+                            className="rounded border-slate-600 bg-slate-700 text-blue-500 focus:ring-blue-500"
+                          />
+                          <span className="text-blue-300 text-xs font-medium flex-1">
+                            {da
+                              ? `${sel} / ${total} dokumenter valgt`
+                              : `${sel} / ${total} documents selected`}
+                          </span>
+                          <span className="text-slate-400 text-[10px]">
+                            {da
+                              ? 'Klik for at vælge/fravælge alle'
+                              : 'Click to select/deselect all'}
+                          </span>
+                        </label>
+                      );
+                    })()}
+                    <p className="text-slate-400 text-xs">
+                      {da
+                        ? 'Dokumenter inkluderet i analysen (uncheck for at ekskludere):'
+                        : 'Documents included in analysis (uncheck to exclude):'}
+                    </p>
+                    <div className="space-y-1.5">
+                      {unique.map((doc) => (
+                        <label
+                          key={doc.id}
+                          className="flex items-center gap-3 px-3 py-2 bg-white/3 hover:bg-white/5 rounded-lg cursor-pointer transition-colors"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedDocIds.has(doc.id)}
+                            onChange={(e) => {
+                              setSelectedDocIds((prev) => {
+                                const next = new Set(prev);
+                                if (e.target.checked) next.add(doc.id);
+                                else next.delete(doc.id);
+                                return next;
+                              });
+                            }}
+                            className="rounded border-slate-600 bg-slate-700 text-blue-500 focus:ring-blue-500"
+                          />
+                          <FileText size={14} className="text-slate-400 shrink-0" />
+                          <span className="text-white text-xs flex-1 truncate">{doc.name}</span>
+                          <span
+                            className={`text-[10px] shrink-0 ${doc.source === 'new' ? 'text-emerald-400' : 'text-slate-500'}`}
+                          >
+                            {doc.source === 'new'
+                              ? da
+                                ? 'ny'
+                                : 'new'
+                              : da
+                                ? 'tidligere'
+                                : 'previous'}
+                          </span>
+                          {/* Slet permanent fra system */}
+                          <button
+                            type="button"
+                            aria-label={da ? `Slet ${doc.name}` : `Delete ${doc.name}`}
+                            onClick={async (e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              if (!window.confirm(da ? `Slet ${doc.name}?` : `Delete ${doc.name}?`))
+                                return;
+                              try {
+                                await fetch(`/api/forsikring/documents/${doc.id}`, {
+                                  method: 'DELETE',
+                                });
+                                setPreviousDocs((prev) => prev.filter((d) => d.id !== doc.id));
+                                setWizardUploads((prev) => prev.filter((u) => u.docId !== doc.id));
+                                setSelectedDocIds((prev) => {
+                                  const n = new Set(prev);
+                                  n.delete(doc.id);
+                                  return n;
+                                });
+                                onRefresh();
+                              } catch {
+                                /* silent */
+                              }
+                            }}
+                            className="p-1 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors shrink-0"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </label>
+                      ))}
+                    </div>
+                    {/* BIZZ-1551: Vælg-alle/Fravælg-alle knapper fjernet — master-checkbox
+                    øverst håndterer det nu i standard UX-mønster. */}
+                  </>
+                ) : (
+                  <p className="text-slate-500 text-xs">
+                    {da
+                      ? 'Upload dokumenter nedenfor for at starte.'
+                      : 'Upload documents below to begin.'}
+                  </p>
+                );
+              })()}
+
+              {/* BIZZ-1439: Upload-zone INDE I wizard */}
+              <div className="pt-2 border-t border-white/5">
+                <p className="text-slate-400 text-xs mb-2">
                   {da
-                    ? 'Dokumenter inkluderet i analysen (uncheck for at ekskludere):'
-                    : 'Documents included in analysis (uncheck to exclude):'}
+                    ? 'Upload nye dokumenter til denne analyse:'
+                    : 'Upload new documents for this analysis:'}
                 </p>
-                <div className="space-y-1.5">
-                  {unique.map((doc) => (
-                    <label
-                      key={doc.id}
-                      className="flex items-center gap-3 px-3 py-2 bg-white/3 hover:bg-white/5 rounded-lg cursor-pointer transition-colors"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedDocIds.has(doc.id)}
-                        onChange={(e) => {
-                          setSelectedDocIds((prev) => {
+                <div
+                  className="rounded-xl border-2 border-dashed border-white/10 hover:border-blue-500/40 p-4 text-center cursor-pointer transition-colors"
+                  onClick={() => wizardFileRef.current?.click()}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') wizardFileRef.current?.click();
+                  }}
+                  // BIZZ-1774: Drag-and-drop handlers
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.currentTarget.classList.add('border-blue-500/60', 'bg-blue-500/5');
+                  }}
+                  onDragLeave={(e) => {
+                    e.preventDefault();
+                    e.currentTarget.classList.remove('border-blue-500/60', 'bg-blue-500/5');
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.currentTarget.classList.remove('border-blue-500/60', 'bg-blue-500/5');
+                    if (e.dataTransfer.files.length > 0) {
+                      onWizardUpload(e.dataTransfer.files);
+                    }
+                  }}
+                >
+                  <Upload size={20} className="mx-auto text-blue-400 mb-1" />
+                  <div className="text-xs text-slate-300">
+                    {da
+                      ? 'Træk filer hertil eller klik for at uploade'
+                      : 'Drag files here or click to upload'}
+                  </div>
+                  <div className="text-[10px] text-slate-500 mt-0.5">
+                    PDF, Word, Excel, billeder (max 20 MB)
+                  </div>
+                  <input
+                    ref={wizardFileRef}
+                    type="file"
+                    accept=".pdf,.docx,.xlsx,.xls,.pptx,.rtf,.txt,.png,.jpg,.jpeg,.gif,.webp,application/pdf,image/*"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      if (e.target.files) {
+                        onWizardUpload(e.target.files);
+                        e.target.value = '';
+                      }
+                    }}
+                  />
+                </div>
+                {/* Vis wizard upload-jobs */}
+                {wizardUploads.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {wizardUploads.map((job) => (
+                      <div
+                        key={job.id}
+                        className={`flex items-center gap-2 text-xs px-2 py-1 rounded ${
+                          job.status === 'skipped_duplicate'
+                            ? 'bg-amber-500/10 border border-amber-500/20'
+                            : 'bg-white/3'
+                        }`}
+                      >
+                        {job.status === 'done' ? (
+                          <CheckCircle2 size={12} className="text-emerald-400" />
+                        ) : job.status === 'skipped_duplicate' ? (
+                          <AlertCircle size={12} className="text-amber-400" />
+                        ) : job.status === 'failed' ? (
+                          <XCircle size={12} className="text-red-400" />
+                        ) : (
+                          <Loader2 size={12} className="animate-spin text-blue-400" />
+                        )}
+                        <span className="text-white truncate">{job.fileName}</span>
+                        <span
+                          className={`ml-auto ${
+                            job.status === 'skipped_duplicate' ? 'text-amber-300' : 'text-slate-500'
+                          }`}
+                        >
+                          {job.status === 'done'
+                            ? '✓'
+                            : job.status === 'skipped_duplicate'
+                              ? da
+                                ? 'Findes allerede — bruger eksisterende'
+                                : 'Already exists — using existing'
+                              : job.status}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            {/* end venstre kolonne */}
+
+            {/* Højre kolonne: standard forsikringsbetingelser */}
+            <div className="space-y-2 border-t border-white/5 pt-3 lg:border-t-0 lg:pt-0 lg:border-l lg:border-l-white/5 lg:pl-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-slate-300 text-xs font-semibold uppercase tracking-wide">
+                  {da ? 'Standard forsikringsbetingelser' : 'Standard insurance terms'}
+                  {stdSelectedIds.size > 0 && (
+                    <span className="ml-2 text-teal-400 normal-case font-normal">
+                      ({stdSelectedIds.size} {da ? 'valgt' : 'selected'})
+                    </span>
+                  )}
+                </h4>
+              </div>
+              <p className="text-slate-400 text-[10px]">
+                {da
+                  ? 'Tilføj generelle vilkår fra forsikringsselskabet til analysen. AI kan finde dem automatisk.'
+                  : 'Add general terms from the insurance company to the analysis. AI can find them automatically.'}
+              </p>
+
+              {/* BIZZ-1919: Gemte betingelser fra domain-biblioteket */}
+              {stdSavedLibrary.length > 0 && (
+                <div className="space-y-1">
+                  <div className="text-slate-400 text-[10px] mb-1">
+                    {da
+                      ? `${stdSavedLibrary.length} tidligere gemte betingelser:`
+                      : `${stdSavedLibrary.length} previously saved terms:`}
+                  </div>
+                  <div className="max-h-32 overflow-y-auto space-y-0.5">
+                    {stdSavedLibrary.map((doc) => {
+                      const isSelected = stdSelectedIds.has(doc.source_url);
+                      const alreadyInDiscovered = stdDiscovered.some(
+                        (d) => d.source_url === doc.source_url
+                      );
+                      return (
+                        <label
+                          key={doc.id}
+                          className={`flex items-center gap-2 px-2 py-1 rounded-lg cursor-pointer transition-colors text-[11px] ${
+                            isSelected
+                              ? 'bg-teal-900/30 border border-teal-500/30'
+                              : 'bg-slate-800/40 border border-slate-700/20 hover:border-slate-600/40'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {
+                              // Tilføj til discovered-listen hvis ikke allerede der
+                              if (!alreadyInDiscovered) {
+                                setStdDiscovered((prev) => [
+                                  ...prev,
+                                  {
+                                    titel: doc.titel,
+                                    source_url: doc.source_url,
+                                    kategori: doc.kategori,
+                                    confidence: 'high',
+                                  },
+                                ]);
+                                setStdSavedIds((prev) => new Map(prev).set(doc.source_url, doc.id));
+                              }
+                              setStdSelectedIds((prev) => {
+                                const next = new Set(prev);
+                                if (isSelected) next.delete(doc.source_url);
+                                else next.add(doc.source_url);
+                                return next;
+                              });
+                            }}
+                            className="accent-teal-500 w-3 h-3"
+                          />
+                          <span className="text-slate-300 truncate flex-1">{doc.titel}</span>
+                          <span className="text-slate-600 text-[9px] shrink-0">
+                            {doc.selskab.length > 20 ? doc.selskab.slice(0, 20) + '…' : doc.selskab}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* AI discovery row */}
+              <div className="flex gap-2 items-end">
+                <div className="flex-1">
+                  <label
+                    htmlFor="std-selskab-input"
+                    className="text-slate-400 text-[10px] block mb-1"
+                  >
+                    {da ? 'Forsikringsselskab' : 'Insurance company'}
+                  </label>
+                  <input
+                    ref={stdSelskabRef}
+                    id="std-selskab-input"
+                    type="text"
+                    placeholder={
+                      da ? 'Fx Topdanmark, Tryg, Codan...' : 'E.g. Topdanmark, Tryg, Codan...'
+                    }
+                    className="w-full bg-slate-900/60 border border-slate-700/50 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:border-teal-500/50 focus:outline-none"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const selskab = stdSelskabRef.current?.value?.trim();
+                    if (!selskab) {
+                      stdSelskabRef.current?.focus();
+                      return;
+                    }
+                    setStdDiscovering(true);
+                    try {
+                      const res = await fetch('/api/forsikring/standard-docs/discover', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ selskab, kategori: 'ejendom' }),
+                      });
+                      if (res.ok) {
+                        const data = (await res.json()) as {
+                          results: Array<{
+                            titel: string;
+                            source_url: string;
+                            kategori: string;
+                            confidence: string;
+                          }>;
+                        };
+                        const newDocs = data.results ?? [];
+                        // Dedup mod allerede viste docs
+                        const existingUrls = new Set(stdDiscovered.map((d) => d.source_url));
+                        const merged = [
+                          ...stdDiscovered,
+                          ...newDocs.filter((d) => !existingUrls.has(d.source_url)),
+                        ];
+                        setStdDiscovered(merged);
+                        // Auto-vælg high-confidence fundne
+                        if (newDocs.length > 0) {
+                          setStdSelectedIds((prev) => {
                             const next = new Set(prev);
-                            if (e.target.checked) next.add(doc.id);
-                            else next.delete(doc.id);
+                            for (const d of newDocs) {
+                              if (d.confidence === 'high') next.add(d.source_url);
+                            }
                             return next;
                           });
-                        }}
-                        className="rounded border-slate-600 bg-slate-700 text-blue-500 focus:ring-blue-500"
-                      />
-                      <FileText size={14} className="text-slate-400 shrink-0" />
-                      <span className="text-white text-xs flex-1 truncate">{doc.name}</span>
-                      <span
-                        className={`text-[10px] shrink-0 ${doc.source === 'new' ? 'text-emerald-400' : 'text-slate-500'}`}
+                          // Gem i DB
+                          for (const doc of newDocs) {
+                            fetch('/api/forsikring/standard-docs', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                selskab,
+                                kategori: doc.kategori ?? 'ejendom',
+                                titel: doc.titel,
+                                source_url: doc.source_url,
+                                added_via: 'ai_discovery',
+                              }),
+                            })
+                              .then((r) => (r.ok ? r.json() : null))
+                              .then((d) => {
+                                if (d?.id) {
+                                  setStdSavedIds((prev) => new Map(prev).set(doc.source_url, d.id));
+                                }
+                              })
+                              .catch(() => {});
+                          }
+                        }
+                      }
+                    } catch {
+                      /* non-fatal */
+                    } finally {
+                      setStdDiscovering(false);
+                    }
+                  }}
+                  disabled={stdDiscovering || running}
+                  aria-label={
+                    da ? 'Find standard betingelser via AI' : 'Find standard terms via AI'
+                  }
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-600/20 hover:bg-teal-600/30 border border-teal-500/30 text-teal-300 text-xs font-medium transition-colors disabled:opacity-40 shrink-0"
+                >
+                  {stdDiscovering ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <Sparkles size={12} />
+                  )}
+                  {da ? 'Find via AI' : 'Find via AI'}
+                </button>
+              </div>
+
+              {/* BIZZ-1890: Detect from uploaded police documents */}
+              {wizardUploads.filter((u) => u.status === 'done' && u.docId).length > 0 && (
+                <button
+                  type="button"
+                  aria-label={
+                    da
+                      ? 'Find standard betingelser baseret på uploadede police-dokumenter'
+                      : 'Find standard terms from uploaded policy documents'
+                  }
+                  onClick={async () => {
+                    const docIds = wizardUploads
+                      .filter((u) => u.status === 'done' && u.docId)
+                      .map((u) => u.docId!)
+                      .slice(0, 20);
+                    if (docIds.length === 0) return;
+                    setStdDetecting(true);
+                    try {
+                      const res = await fetch('/api/forsikring/standard-docs/detect', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ document_ids: docIds }),
+                      });
+                      if (res.ok) {
+                        const data = (await res.json()) as {
+                          results: Array<{
+                            titel: string;
+                            source_url: string;
+                            kategori: string;
+                            selskab: string;
+                            confidence: string;
+                            existing_id?: string;
+                          }>;
+                        };
+                        const newDocs = data.results ?? [];
+                        const existingUrls = new Set(stdDiscovered.map((d) => d.source_url));
+                        const merged = [
+                          ...stdDiscovered,
+                          ...newDocs.filter((d) => !existingUrls.has(d.source_url)),
+                        ];
+                        setStdDiscovered(merged);
+                        // Auto-vælg high-confidence og gem i DB
+                        if (newDocs.length > 0) {
+                          setStdSelectedIds((prev) => {
+                            const next = new Set(prev);
+                            for (const d of newDocs) {
+                              if (d.confidence === 'high') next.add(d.source_url);
+                            }
+                            return next;
+                          });
+                          for (const doc of newDocs.filter((d) => !d.existing_id)) {
+                            fetch('/api/forsikring/standard-docs', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                selskab: doc.selskab,
+                                kategori: doc.kategori ?? 'ejendom',
+                                titel: doc.titel,
+                                source_url: doc.source_url,
+                                added_via: 'auto_detected',
+                              }),
+                            })
+                              .then((r) => (r.ok ? r.json() : null))
+                              .then((d) => {
+                                if (d?.id)
+                                  setStdSavedIds((prev) => new Map(prev).set(doc.source_url, d.id));
+                              })
+                              .catch(() => {});
+                          }
+                          // Registrer allerede-kendte docs i savedIds
+                          for (const doc of newDocs.filter((d) => d.existing_id)) {
+                            setStdSavedIds((prev) =>
+                              new Map(prev).set(doc.source_url, doc.existing_id!)
+                            );
+                          }
+                        }
+                      }
+                    } catch {
+                      /* non-fatal */
+                    } finally {
+                      setStdDetecting(false);
+                    }
+                  }}
+                  disabled={stdDetecting || running}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600/20 hover:bg-violet-600/30 border border-violet-500/30 text-violet-300 text-xs font-medium transition-colors disabled:opacity-40 w-full justify-center"
+                >
+                  {stdDetecting ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <ScanSearch size={12} />
+                  )}
+                  {da
+                    ? `Find fra ${wizardUploads.filter((u) => u.status === 'done').length} uploadede dokumenter`
+                    : `Detect from ${wizardUploads.filter((u) => u.status === 'done').length} uploaded documents`}
+                </button>
+              )}
+
+              {/* Discovered docs list */}
+              {stdDiscovered.length > 0 && (
+                <div className="space-y-1">
+                  {stdDiscovered.map((doc) => {
+                    const isSelected = stdSelectedIds.has(doc.source_url);
+                    return (
+                      <label
+                        key={doc.source_url}
+                        className={`flex items-start gap-2 px-2.5 py-2 rounded-lg cursor-pointer transition-colors ${
+                          isSelected
+                            ? 'bg-teal-600/15 border border-teal-500/30'
+                            : 'bg-white/3 border border-white/5 hover:bg-white/5'
+                        }`}
                       >
-                        {doc.source === 'new' ? (da ? 'ny' : 'new') : da ? 'tidligere' : 'previous'}
-                      </span>
-                      {/* Slet permanent fra system */}
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={(e) => {
+                            setStdSelectedIds((prev) => {
+                              const next = new Set(prev);
+                              if (e.target.checked) next.add(doc.source_url);
+                              else next.delete(doc.source_url);
+                              return next;
+                            });
+                          }}
+                          className="mt-0.5 accent-teal-500 shrink-0"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-white text-[11px] font-medium truncate">
+                            {doc.titel}
+                          </div>
+                          <div className="flex items-center gap-1 mt-0.5">
+                            <a
+                              href={doc.source_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-blue-400 text-[10px] hover:underline truncate flex items-center gap-0.5"
+                            >
+                              <ExternalLink size={9} />
+                              {doc.source_url.length > 50
+                                ? doc.source_url.slice(0, 50) + '…'
+                                : doc.source_url}
+                            </a>
+                            <span
+                              className={`shrink-0 text-[9px] px-1 py-0.5 rounded-full ${
+                                doc.confidence === 'high'
+                                  ? 'bg-emerald-500/20 text-emerald-300'
+                                  : doc.confidence === 'medium'
+                                    ? 'bg-amber-500/20 text-amber-300'
+                                    : 'bg-slate-600/30 text-slate-400'
+                              }`}
+                            >
+                              {doc.confidence}
+                            </span>
+                          </div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Manuel URL tilføjelse */}
+              <div className="pt-1">
+                <div className="text-slate-400 text-[10px] mb-1.5">
+                  {da ? 'Eller tilføj manuelt med URL:' : 'Or add manually by URL:'}
+                </div>
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    value={stdManualTitel}
+                    onChange={(e) => setStdManualTitel(e.target.value)}
+                    placeholder={da ? 'Titel' : 'Title'}
+                    className="w-28 bg-slate-900/60 border border-slate-700/50 rounded-lg px-2 py-1.5 text-xs text-white placeholder-slate-600 focus:border-teal-500/50 focus:outline-none"
+                  />
+                  <input
+                    type="url"
+                    value={stdManualUrl}
+                    onChange={(e) => setStdManualUrl(e.target.value)}
+                    placeholder="https://..."
+                    className="flex-1 bg-slate-900/60 border border-slate-700/50 rounded-lg px-2 py-1.5 text-xs text-white placeholder-slate-600 focus:border-teal-500/50 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    disabled={!stdManualUrl.trim() || !stdManualTitel.trim() || stdAddingManual}
+                    aria-label={
+                      da ? 'Tilføj manuel standard betingelse' : 'Add manual standard term'
+                    }
+                    onClick={async () => {
+                      const url = stdManualUrl.trim();
+                      const titel = stdManualTitel.trim();
+                      if (!url || !titel) return;
+                      setStdAddingManual(true);
+                      try {
+                        const res = await fetch('/api/forsikring/standard-docs', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            selskab: stdSelskabRef.current?.value?.trim() ?? 'Ukendt',
+                            kategori: 'ejendom',
+                            titel,
+                            source_url: url,
+                            added_via: 'manual_link',
+                          }),
+                        });
+                        if (res.ok) {
+                          const data = (await res.json()) as { id?: string };
+                          const newDoc = {
+                            titel,
+                            source_url: url,
+                            kategori: 'ejendom',
+                            confidence: 'medium' as const,
+                          };
+                          setStdDiscovered((prev) =>
+                            prev.find((d) => d.source_url === url) ? prev : [...prev, newDoc]
+                          );
+                          setStdSelectedIds((prev) => new Set(prev).add(url));
+                          if (data.id) {
+                            setStdSavedIds((prev) => new Map(prev).set(url, data.id!));
+                          }
+                          setStdManualUrl('');
+                          setStdManualTitel('');
+                        }
+                      } catch {
+                        /* non-fatal */
+                      } finally {
+                        setStdAddingManual(false);
+                      }
+                    }}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-700/50 hover:bg-slate-600/50 border border-slate-600/50 text-slate-300 text-xs font-medium transition-colors disabled:opacity-40 shrink-0"
+                  >
+                    {stdAddingManual ? (
+                      <Loader2 size={11} className="animate-spin" />
+                    ) : (
+                      <Plus size={11} />
+                    )}
+                    {da ? 'Tilføj' : 'Add'}
+                  </button>
+                </div>
+              </div>
+
+              {/* BIZZ-1921: Åbn bibliotek + BIZZ-1890: PDF upload */}
+              <div className="pt-1 flex items-end gap-2">
+                <div className="flex-1">
+                  <div className="text-slate-400 text-[10px] mb-1.5">
+                    {da
+                      ? 'Eller upload PDF med standard betingelser:'
+                      : 'Or upload a PDF with standard terms:'}
+                  </div>
+                  <button
+                    type="button"
+                    aria-label={
+                      da
+                        ? 'Upload PDF med standard forsikringsbetingelser'
+                        : 'Upload PDF with standard insurance terms'
+                    }
+                    onClick={() => stdPdfRef.current?.click()}
+                    disabled={stdPdfUploading || running}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700/50 hover:bg-slate-600/50 border border-slate-600/50 text-slate-300 text-xs font-medium transition-colors disabled:opacity-40"
+                  >
+                    {stdPdfUploading ? (
+                      <Loader2 size={11} className="animate-spin" />
+                    ) : (
+                      <FilePlus size={11} />
+                    )}
+                    {stdPdfUploading
+                      ? da
+                        ? 'Uploader…'
+                        : 'Uploading…'
+                      : da
+                        ? 'Upload PDF(er)'
+                        : 'Upload PDF(s)'}
+                  </button>
+                  <input
+                    ref={stdPdfRef}
+                    type="file"
+                    accept=".pdf,application/pdf"
+                    multiple
+                    className="hidden"
+                    aria-label={
+                      da
+                        ? 'Vælg PDF-filer til standard betingelser'
+                        : 'Select PDF files for standard terms'
+                    }
+                    onChange={async (e) => {
+                      const files = Array.from(e.target.files ?? []);
+                      if (files.length === 0) return;
+                      e.target.value = '';
+                      setStdPdfUploading(true);
+                      try {
+                        const selskab = stdSelskabRef.current?.value?.trim();
+                        // Upload filer sekventielt for at undgå rate-limit
+                        for (const file of files) {
+                          const form = new FormData();
+                          form.append('file', file);
+                          if (selskab) form.append('selskab', selskab);
+                          const res = await fetch('/api/forsikring/standard-docs/upload', {
+                            method: 'POST',
+                            body: form,
+                          });
+                          if (res.ok) {
+                            const data = (await res.json()) as {
+                              id?: string;
+                              titel?: string;
+                              source_url?: string;
+                              kategori?: string;
+                              selskab?: string;
+                            };
+                            if (data.id && data.source_url && data.titel) {
+                              const newDoc = {
+                                titel: data.titel,
+                                source_url: data.source_url,
+                                kategori: data.kategori ?? 'ejendom',
+                                confidence: 'high' as const,
+                              };
+                              setStdDiscovered((prev) =>
+                                prev.find((d) => d.source_url === data.source_url)
+                                  ? prev
+                                  : [...prev, newDoc]
+                              );
+                              setStdSelectedIds((prev) => new Set([...prev, data.source_url!]));
+                              setStdSavedIds((prev) =>
+                                new Map(prev).set(data.source_url!, data.id!)
+                              );
+                            }
+                          }
+                        }
+                      } catch {
+                        /* non-fatal */
+                      } finally {
+                        setStdPdfUploading(false);
+                      }
+                    }}
+                  />
+                </div>
+                {/* BIZZ-1921: Åbn bibliotek-knap */}
+                <button
+                  type="button"
+                  onClick={() => setStdLibraryOpen(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 text-xs font-medium transition-colors whitespace-nowrap"
+                  aria-label={da ? 'Åbn betingelsesbibliotek' : 'Open terms library'}
+                >
+                  <BookOpen size={11} />
+                  {da ? 'Bibliotek' : 'Library'}
+                  {stdSavedLibrary.length > 0 && (
+                    <span className="text-indigo-400/70 text-[9px]">
+                      ({stdSavedLibrary.length})
+                    </span>
+                  )}
+                </button>
+              </div>
+
+              {/* BIZZ-1921: Bibliotek-modal */}
+              {stdLibraryOpen && (
+                <div
+                  className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+                  onClick={() => setStdLibraryOpen(false)}
+                >
+                  <div
+                    className="bg-slate-900 border border-slate-700/50 rounded-2xl w-full max-w-2xl max-h-[80vh] overflow-hidden shadow-2xl"
+                    onClick={(e) => e.stopPropagation()}
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="std-library-title"
+                  >
+                    {/* Header */}
+                    <div className="flex items-center justify-between px-5 py-3 border-b border-slate-700/50">
+                      <h3 id="std-library-title" className="text-white font-semibold text-sm">
+                        {da ? 'Standard forsikringsbetingelser' : 'Standard insurance terms'}
+                      </h3>
                       <button
                         type="button"
-                        aria-label={da ? `Slet ${doc.name}` : `Delete ${doc.name}`}
-                        onClick={async (e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          if (!window.confirm(da ? `Slet ${doc.name}?` : `Delete ${doc.name}?`))
-                            return;
-                          try {
-                            await fetch(`/api/forsikring/documents/${doc.id}`, {
-                              method: 'DELETE',
-                            });
-                            setPreviousDocs((prev) => prev.filter((d) => d.id !== doc.id));
-                            setWizardUploads((prev) => prev.filter((u) => u.docId !== doc.id));
-                            setSelectedDocIds((prev) => {
-                              const n = new Set(prev);
-                              n.delete(doc.id);
-                              return n;
-                            });
-                            onRefresh();
-                          } catch {
-                            /* silent */
-                          }
-                        }}
-                        className="p-1 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors shrink-0"
+                        onClick={() => setStdLibraryOpen(false)}
+                        className="text-slate-500 hover:text-white text-lg"
+                        aria-label={da ? 'Luk' : 'Close'}
                       >
-                        <Trash2 size={12} />
+                        ×
                       </button>
-                    </label>
-                  ))}
-                </div>
-                {/* BIZZ-1551: Vælg-alle/Fravælg-alle knapper fjernet — master-checkbox
-                    øverst håndterer det nu i standard UX-mønster. */}
-              </>
-            ) : (
-              <p className="text-slate-500 text-xs">
-                {da
-                  ? 'Upload dokumenter nedenfor for at starte.'
-                  : 'Upload documents below to begin.'}
-              </p>
-            );
-          })()}
+                    </div>
 
-          {/* BIZZ-1439: Upload-zone INDE I wizard */}
-          <div className="pt-2 border-t border-white/5">
-            <p className="text-slate-400 text-xs mb-2">
-              {da
-                ? 'Upload nye dokumenter til denne analyse:'
-                : 'Upload new documents for this analysis:'}
-            </p>
-            <div
-              className="rounded-xl border-2 border-dashed border-white/10 hover:border-blue-500/40 p-4 text-center cursor-pointer transition-colors"
-              onClick={() => wizardFileRef.current?.click()}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') wizardFileRef.current?.click();
-              }}
-              // BIZZ-1774: Drag-and-drop handlers
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                e.currentTarget.classList.add('border-blue-500/60', 'bg-blue-500/5');
-              }}
-              onDragLeave={(e) => {
-                e.preventDefault();
-                e.currentTarget.classList.remove('border-blue-500/60', 'bg-blue-500/5');
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                e.currentTarget.classList.remove('border-blue-500/60', 'bg-blue-500/5');
-                if (e.dataTransfer.files.length > 0) {
-                  onWizardUpload(e.dataTransfer.files);
-                }
-              }}
-            >
-              <Upload size={20} className="mx-auto text-blue-400 mb-1" />
-              <div className="text-xs text-slate-300">
-                {da
-                  ? 'Træk filer hertil eller klik for at uploade'
-                  : 'Drag files here or click to upload'}
-              </div>
-              <div className="text-[10px] text-slate-500 mt-0.5">
-                PDF, Word, Excel, billeder (max 20 MB)
-              </div>
-              <input
-                ref={wizardFileRef}
-                type="file"
-                accept=".pdf,.docx,.xlsx,.xls,.pptx,.rtf,.txt,.png,.jpg,.jpeg,.gif,.webp,application/pdf,image/*"
-                multiple
-                className="hidden"
-                onChange={(e) => {
-                  if (e.target.files) {
-                    onWizardUpload(e.target.files);
-                    e.target.value = '';
-                  }
-                }}
-              />
-            </div>
-            {/* Vis wizard upload-jobs */}
-            {wizardUploads.length > 0 && (
-              <div className="mt-2 space-y-1">
-                {wizardUploads.map((job) => (
-                  <div
-                    key={job.id}
-                    className={`flex items-center gap-2 text-xs px-2 py-1 rounded ${
-                      job.status === 'skipped_duplicate'
-                        ? 'bg-amber-500/10 border border-amber-500/20'
-                        : 'bg-white/3'
-                    }`}
-                  >
-                    {job.status === 'done' ? (
-                      <CheckCircle2 size={12} className="text-emerald-400" />
-                    ) : job.status === 'skipped_duplicate' ? (
-                      <AlertCircle size={12} className="text-amber-400" />
-                    ) : job.status === 'failed' ? (
-                      <XCircle size={12} className="text-red-400" />
-                    ) : (
-                      <Loader2 size={12} className="animate-spin text-blue-400" />
-                    )}
-                    <span className="text-white truncate">{job.fileName}</span>
-                    <span
-                      className={`ml-auto ${
-                        job.status === 'skipped_duplicate' ? 'text-amber-300' : 'text-slate-500'
-                      }`}
-                    >
-                      {job.status === 'done'
-                        ? '✓'
-                        : job.status === 'skipped_duplicate'
-                          ? da
-                            ? 'Findes allerede — bruger eksisterende'
-                            : 'Already exists — using existing'
-                          : job.status}
-                    </span>
+                    {/* Filter */}
+                    <div className="px-5 py-2 border-b border-slate-800/50">
+                      <input
+                        type="text"
+                        value={stdLibraryFilter}
+                        onChange={(e) => setStdLibraryFilter(e.target.value)}
+                        placeholder={
+                          da
+                            ? 'Filtrer på titel, selskab eller område...'
+                            : 'Filter by title, company or area...'
+                        }
+                        className="w-full bg-slate-800/60 border border-slate-700/40 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:border-indigo-500/50 focus:outline-none"
+                      />
+                    </div>
+
+                    {/* Liste */}
+                    <div className="overflow-y-auto max-h-[55vh] px-5 py-2 space-y-1">
+                      {stdSavedLibrary.length === 0 ? (
+                        <p className="text-slate-500 text-xs py-4 text-center">
+                          {da
+                            ? 'Ingen gemte betingelser endnu. Upload PDF eller find via AI.'
+                            : 'No saved terms yet. Upload PDF or find via AI.'}
+                        </p>
+                      ) : (
+                        stdSavedLibrary
+                          .filter((doc) => {
+                            if (!stdLibraryFilter) return true;
+                            const q = stdLibraryFilter.toLowerCase();
+                            return (
+                              doc.titel.toLowerCase().includes(q) ||
+                              doc.selskab.toLowerCase().includes(q) ||
+                              (doc.omraade ?? '').toLowerCase().includes(q)
+                            );
+                          })
+                          .map((doc) => {
+                            const isSelected = stdSelectedIds.has(doc.source_url);
+                            return (
+                              <label
+                                key={doc.id}
+                                className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors ${
+                                  isSelected
+                                    ? 'bg-teal-900/30 border border-teal-500/30'
+                                    : 'bg-slate-800/30 border border-slate-700/20 hover:border-slate-600/40'
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => {
+                                    const alreadyInDiscovered = stdDiscovered.some(
+                                      (d) => d.source_url === doc.source_url
+                                    );
+                                    if (!alreadyInDiscovered) {
+                                      setStdDiscovered((prev) => [
+                                        ...prev,
+                                        {
+                                          titel: doc.titel,
+                                          source_url: doc.source_url,
+                                          kategori: doc.kategori,
+                                          confidence: 'high',
+                                        },
+                                      ]);
+                                      setStdSavedIds((prev) =>
+                                        new Map(prev).set(doc.source_url, doc.id)
+                                      );
+                                    }
+                                    setStdSelectedIds((prev) => {
+                                      const next = new Set(prev);
+                                      if (isSelected) next.delete(doc.source_url);
+                                      else next.add(doc.source_url);
+                                      return next;
+                                    });
+                                  }}
+                                  className="accent-teal-500 w-3.5 h-3.5 shrink-0"
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-white text-xs font-medium truncate">
+                                    {doc.titel}
+                                  </div>
+                                  <div className="flex items-center gap-2 mt-0.5">
+                                    <span className="text-slate-400 text-[10px]">
+                                      {doc.selskab}
+                                    </span>
+                                    {doc.omraade && (
+                                      <span className="text-indigo-400/70 text-[9px] px-1.5 py-0.5 bg-indigo-500/10 rounded">
+                                        {doc.omraade}
+                                      </span>
+                                    )}
+                                    {doc.gyldig_fra && (
+                                      <span className="text-slate-500 text-[9px]">
+                                        {da ? 'Fra' : 'From'} {doc.gyldig_fra}
+                                      </span>
+                                    )}
+                                    {doc.is_valid_standard === false && (
+                                      <span className="text-amber-400 text-[9px]">
+                                        ⚠ {da ? 'Ikke standard' : 'Not standard'}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                                <a
+                                  href={doc.source_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-slate-500 hover:text-blue-400 text-[10px] shrink-0"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  ↗
+                                </a>
+                              </label>
+                            );
+                          })
+                      )}
+                    </div>
+
+                    {/* Footer */}
+                    <div className="flex items-center justify-between px-5 py-3 border-t border-slate-700/50">
+                      <span className="text-slate-500 text-[10px]">
+                        {stdSelectedIds.size} {da ? 'valgt' : 'selected'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setStdLibraryOpen(false)}
+                        className="px-4 py-1.5 bg-teal-600 hover:bg-teal-500 text-white text-xs font-medium rounded-lg transition-colors"
+                      >
+                        {da ? 'Anvend' : 'Apply'}
+                      </button>
+                    </div>
                   </div>
-                ))}
-              </div>
-            )}
+                </div>
+              )}
+            </div>
+            {/* end højre kolonne */}
           </div>
+          {/* end grid */}
         </div>
       )}
 
@@ -1519,7 +2341,7 @@ function AnalyseSection({
       {/* BIZZ-1384: Sagsliste — tidligere kunder */}
       {sager.length > 0 && !selected && (
         <div className="mt-3 space-y-1">
-          <div className="text-slate-500 text-[10px] uppercase tracking-wide">
+          <div className="text-slate-400 text-[10px] uppercase tracking-wide">
             {da ? 'Tidligere forsikringsejere' : 'Previous insurance owners'}
           </div>
           {sager.slice(0, 5).map((s) => (

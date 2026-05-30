@@ -122,6 +122,28 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
     return NextResponse.redirect(url);
   }
 
+  // ── BIZZ-1783: Skip proxy for cacheable public SEO routes ─────────────────
+  // Homepage, marketing-sider, /ejendom/*, /virksomhed/*, /robots.txt, /sitemap*
+  // er public uden auth-krav. Hvis proxyen kører her, sætter den per-request
+  // headers (x-request-id, CSP nonce) og kalder supabase.auth.getUser() →
+  // forcer dynamic-mode → Cache-Control: no-store → Google indekserer ikke.
+  // Disse routes skal være statisk cachebare (ISR), så vi springer proxy over.
+  const PUBLIC_CACHEABLE_PATHS = [
+    '/',
+    '/ejendom',
+    '/virksomhed',
+    '/privacy',
+    '/terms',
+    '/robots.txt',
+    '/sitemap',
+  ];
+  const isPublicCacheable = PUBLIC_CACHEABLE_PATHS.some(
+    (p) => pathname === p || pathname.startsWith(`${p}/`) || pathname.startsWith(`${p}.xml`)
+  );
+  if (isPublicCacheable) {
+    return NextResponse.next();
+  }
+
   // ── BIZZ-209: Generate per-request nonce for CSP ──────────────────────────
   const nonce = Buffer.from(crypto.randomUUID()).toString('base64');
 
@@ -293,8 +315,29 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
 
 /**
  * Route matcher — determines which paths this middleware runs on.
- * Excludes Next.js internals and static assets for performance.
+ * Excludes Next.js internals, static assets, AND public SEO routes
+ * (homepage, /ejendom/*, /virksomhed/*, /privacy, /terms, /robots.txt,
+ * /sitemap*) so they remain ISR-cacheable for Google indexing (BIZZ-1783).
+ *
+ * Match-pattern bruger negative lookahead: ekskluderer paths der starter
+ * med navne fra listen. Negative lookahead på "/" alene ville matche alt
+ * efter /, så vi bruger "ejendom" og "virksomhed" som path-prefix-ekskl.
+ * Homepage "/" eksluderes via explicit "$".
  */
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|icons/|manifest.json|sw.js).*)'],
+  matcher: [
+    // Auth-beskyttede + interne routes der KRÆVER proxy (supabase auth, csp, rate limit)
+    '/dashboard/:path*',
+    '/login/:path*',
+    '/api/:path*',
+    '/domain/:path*',
+    '/onboarding/:path*',
+    '/team/:path*',
+    '/auth/:path*',
+    '/admin/:path*',
+    '/tokens/:path*',
+    '/settings/:path*',
+    // PUBLIC SEO-routes ekskluderes EXPLICIT — homepage, /ejendom/*, /virksomhed/*,
+    // /privacy, /terms, /robots.txt, /sitemap* skal være ISR-cacheable.
+  ],
 };

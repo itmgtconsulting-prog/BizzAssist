@@ -28,6 +28,7 @@ import {
   Settings,
   Shield,
   History,
+  BookOpen,
   type LucideIcon,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
@@ -55,6 +56,13 @@ const TABS: TabDef[] = [
   // en selvstændig top-level tab. Dokumenter lever nu i kontekst af den
   // skabelon de er tilknyttet (training-docs route forbliver tilgængelig
   // via deep-link som fallback).
+  {
+    id: 'betingelser',
+    suffix: '/betingelser',
+    icon: BookOpen,
+    labelDa: 'Betingelser',
+    labelEn: 'Terms',
+  },
   { id: 'audit', suffix: '/audit', icon: History, labelDa: 'Historik', labelEn: 'Audit log' },
   {
     id: 'settings',

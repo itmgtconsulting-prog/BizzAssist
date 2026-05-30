@@ -16,6 +16,7 @@
 
 import { Building2 } from 'lucide-react';
 import EjendomAdministratorCard from '@/app/components/ejendomme/EjendomAdministratorCard';
+import EjendomEjerforeningFinder from '@/app/components/ejendomme/EjendomEjerforeningFinder';
 import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
 import dynamic from 'next/dynamic';
 import EjerKort from '../EjerKort';
@@ -99,6 +100,8 @@ interface Props {
   strukturLoader?: boolean;
   /** Aktuel BFE for denne ejendom */
   currentBfe?: number;
+  /** Matrikelnr for ejerforening-filtrering */
+  matrikelnr?: string;
   /** BIZZ-1288: DAWA-ID for den aktuelle ejendom — fallback for "(denne)" match */
   currentDawaId?: string | null;
   /** BBR enheder — bruges til at berige med værelser */
@@ -129,6 +132,7 @@ export default function EjendomEjerforholdTab({
   strukturTree,
   strukturLoader,
   currentBfe,
+  matrikelnr,
   currentDawaId,
   bbrEnheder,
   chainEjerDetaljer = [],
@@ -161,7 +165,23 @@ export default function EjendomEjerforholdTab({
           bbrData?.ejerlejlighedBfe ??
           bbrData?.moderBfe ??
           currentBfe;
-        return adminBfe ? <EjendomAdministratorCard bfeNummer={adminBfe} lang={lang} /> : null;
+        if (!adminBfe) return null;
+        return (
+          <>
+            <EjendomAdministratorCard bfeNummer={adminBfe} lang={lang} />
+            {/* Vis AI-finder for ejerlejligheder — uanset om admin er arvet fra SFE.
+                Sender adresse+postnr som fallback for BFE'er uden adresse i cache. */}
+            {bbrData?.ejerlejlighedBfe && (
+              <EjendomEjerforeningFinder
+                bfeNummer={adminBfe}
+                lang={lang}
+                adresse={dawaAdresse ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}` : undefined}
+                postnr={dawaAdresse?.postnr ?? undefined}
+                matrikelnr={matrikelnr}
+              />
+            )}
+          </>
+        );
       })()}
       {/* Loading state — blå progress bar kun mens BBR-data hentes */}
       {(bbrLoader || !bbrData) && (
@@ -177,8 +197,12 @@ export default function EjendomEjerforholdTab({
           const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
           // BIZZ-1308: Brug ejendomsrelationer BFE (altid korrekt for den aktuelle adresse).
           // ejerlejlighedBfe kan pege på en forkert lejlighed (fx Plads 10 i stedet for 18).
+          // BIZZ-1876: Fallback til moderBfe (SFE) når ejerlejlighedBfe ikke kan resolves
           const bfeForDiagram =
-            bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? bbrData?.ejerlejlighedBfe;
+            bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
+            bbrData?.ejerlejlighedBfe ??
+            bbrData?.moderBfe ??
+            (currentBfe && currentBfe > 0 ? currentBfe : null);
 
           // Hovedejendom opdelt i EL — vis strukturtræ med ejer-data
           if (erModer) {
@@ -394,20 +418,26 @@ export default function EjendomEjerforholdTab({
                         )}
                       </>
                     )}
-                    {diagramResolveLoader ? (
-                      <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />
-                    ) : (
-                      <DiagramV2
-                        rootType="property"
-                        rootId={String(bfeForDiagram)}
-                        rootLabel={
-                          dawaAdresse
-                            ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
-                            : `BFE ${bfeForDiagram}`
-                        }
-                        lang={lang}
-                        prefetchedGraph={prefetchedDiagramGraph}
-                      />
+                    {/* BIZZ-1826: Vis diagram for alle ejendomme med mindst én ejer
+                        (ikke kun virksomheds-ejere som BIZZ-1808 begrænsede til) */}
+                    {chainEjerDetaljer.some((e) => e.type !== 'status') && (
+                      <>
+                        {diagramResolveLoader ? (
+                          <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />
+                        ) : (
+                          <DiagramV2
+                            rootType="property"
+                            rootId={String(bfeForDiagram)}
+                            rootLabel={
+                              dawaAdresse
+                                ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
+                                : `BFE ${bfeForDiagram}`
+                            }
+                            lang={lang}
+                            prefetchedGraph={prefetchedDiagramGraph}
+                          />
+                        )}
+                      </>
                     )}
                   </>
                 )}
@@ -415,9 +445,85 @@ export default function EjendomEjerforholdTab({
             );
           }
 
-          if (!bfeForDiagram) return null;
+          // BIZZ-1876: Brug currentBfe som fallback når ejendomsrelationer og
+          // ejerlejlighedBfe begge mangler (typisk SFE-fallback fra BIZZ-1853).
+          // Uden dette returnerede komponenten null og brugeren så en blank side.
+          const effectiveBfe = bfeForDiagram ?? currentBfe;
+          if (!effectiveBfe) return null;
+
+          // BIZZ-1858: For lejligheder der bruger SFE-fallback BFE,
+          // vis en note om at data vises for hele matriklen
+          const usesSfeFallback = !!dawaAdresse?.etage && !bbrData?.ejerlejlighedBfe;
+
+          /**
+           * BIZZ-1826: Bestem om ejendommen har mindst én reel ejer (person eller selskab).
+           * Diagrammet vises for alle ejendomme med ejere — ikke kun virksomheds-ejede.
+           */
+          const harReelEjer = chainEjerDetaljer.some((e) => e.type !== 'status');
+
           return (
             <div className="space-y-4">
+              {/* BIZZ-1853: For lejligheder med SFE-fallback — vis ejer fra TL matrikel-data */}
+              {usesSfeFallback &&
+                (() => {
+                  // Match lejlighed via dawaId
+                  const tlMatch = lejligheder?.find((l) => l.dawaId === currentDawaId);
+                  if (tlMatch && tlMatch.ejer && tlMatch.ejer !== 'Ukendt') {
+                    return (
+                      <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-4 py-3">
+                        <p className="text-slate-300 text-sm">
+                          <span className="text-slate-500 text-xs mr-2">
+                            {da ? 'Ejer (via Tinglysning):' : 'Owner (via Land Registry):'}
+                          </span>
+                          <span className="font-medium">{tlMatch.ejer}</span>
+                        </p>
+                        {(tlMatch.koebspris || tlMatch.koebsdato) && (
+                          <p className="text-slate-400 text-xs mt-1">
+                            {tlMatch.koebspris && (
+                              <span className="mr-3">
+                                {da ? 'Købspris:' : 'Price:'}{' '}
+                                {tlMatch.koebspris.toLocaleString('da-DK')} DKK
+                              </span>
+                            )}
+                            {tlMatch.koebsdato && (
+                              <span>
+                                {da ? 'Overtagelse:' : 'Date:'}{' '}
+                                {new Date(tlMatch.koebsdato).toLocaleDateString('da-DK')}
+                              </span>
+                            )}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  }
+                  // Lejligheder loader stadig eller ingen match fundet
+                  if (lejlighederLoader) {
+                    return (
+                      <div className="bg-slate-800/40 border border-slate-700/40 rounded-lg px-4 py-3 text-slate-500 text-xs">
+                        {da
+                          ? 'Henter ejerskabsdata via Tinglysning...'
+                          : 'Loading ownership data via Land Registry...'}
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-4 py-3 flex items-start gap-3">
+                      <Building2 size={16} className="text-amber-400 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-amber-200 text-sm font-medium">
+                          {da
+                            ? 'Ejerskabsdata vises for hele ejendommen'
+                            : 'Ownership data shown for the entire property'}
+                        </p>
+                        <p className="text-slate-400 text-xs mt-0.5">
+                          {da
+                            ? 'Den specifikke lejligheds-BFE kunne ikke resolves. Data herunder gælder hele matriklen.'
+                            : 'The specific apartment BFE could not be resolved. Data below applies to the entire cadastral unit.'}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })()}
               {/* BIZZ-1143: Ejerkort — ren præsentation, data leveret fra parent */}
               {chainLoader ? (
                 <TabLoadingSpinner
@@ -442,21 +548,50 @@ export default function EjendomEjerforholdTab({
                   )}
                 </>
               )}
-              {/* BIZZ-1143: DiagramV2 med prefetched graf fra parent */}
-              {diagramResolveLoader ? (
-                <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />
-              ) : (
-                <DiagramV2
-                  rootType="property"
-                  rootId={String(bfeForDiagram)}
-                  rootLabel={
-                    dawaAdresse
-                      ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
-                      : `BFE ${bfeForDiagram}`
-                  }
-                  lang={lang}
-                  prefetchedGraph={prefetchedDiagramGraph}
-                />
+              {/* BIZZ-1826: Vis DiagramV2 for alle ejendomme med mindst én
+                  reel ejer (person eller selskab). */}
+              {harReelEjer && (
+                <>
+                  {diagramResolveLoader ? (
+                    <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />
+                  ) : (
+                    <DiagramV2
+                      rootType="property"
+                      rootId={String(effectiveBfe)}
+                      rootLabel={
+                        dawaAdresse
+                          ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
+                          : `BFE ${effectiveBfe}`
+                      }
+                      lang={lang}
+                      prefetchedGraph={prefetchedDiagramGraph}
+                    />
+                  )}
+                </>
+              )}
+              {/* BIZZ-1876: Vis eksplicit besked når ejerskabschain returnerer tomt
+                  og diagram ikke kan renderes. Fx SFE-BFEer (Carlsberg Byen) hvor
+                  ejerskabsdata kun ligger på individuelle ejerlejligheder, ikke SFE'en. */}
+              {!harReelEjer && !chainLoader && chainEjerDetaljer.length === 0 && (
+                <div className="bg-slate-800/40 border border-slate-700/30 rounded-xl p-4 flex items-start gap-3">
+                  <div className="w-7 h-7 bg-slate-700/50 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <Building2 size={14} className="text-slate-400" />
+                  </div>
+                  <div>
+                    <p className="text-slate-300 text-sm font-medium">
+                      {da ? 'Ingen ejerskabsdata tilgængelig' : 'No ownership data available'}
+                    </p>
+                    <p className="text-slate-500 text-xs mt-0.5">
+                      {da
+                        ? `Ejerskabsdiagram og ejerkæde kunne ikke hentes for BFE ${effectiveBfe}. ` +
+                          `Dette sker typisk for samlede faste ejendomme (SFE) hvor ejerskabsdata ` +
+                          `ligger på de individuelle ejerlejligheder.`
+                        : `Ownership diagram and chain could not be loaded for BFE ${effectiveBfe}. ` +
+                          `This typically occurs for parent cadastral units (SFE) where ownership ` +
+                          `data is held at the individual condominium level.`}
+                    </p>
+                  </div>
+                </div>
               )}
               {/* Loading-bar mens strukturtræ hentes */}
               {/* BIZZ-1289: Skeleton mens strukturtræ hentes */}

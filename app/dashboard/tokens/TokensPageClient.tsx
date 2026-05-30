@@ -253,6 +253,9 @@ const ROUTE_LABELS: Record<string, string> = {
   'ai.person-article-search': 'Person-artikelsøgning',
   'ai.forklar-vurdering': 'Forklar vurdering',
   'ai.analysis': 'Analyse',
+  'ai.ejerforening-ejendomme': 'Ejerforenings-ejendomme (AI)',
+  'ai.find-ejerforening': 'Find ejerforening (AI)',
+  'ai.forsikring-discover': 'Forsikringsbetingelser (AI)',
 };
 
 /**

@@ -650,7 +650,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex h-screen bg-[#0a1020] overflow-hidden">
+    <div className="flex h-screen bg-[#0a1020] overflow-hidden print:h-auto print:overflow-visible print:block">
       {/* Top progress bar — shown during route transitions */}
       <TopProgressBar />
 
@@ -671,8 +671,9 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
       )}
 
       {/* Sidebar + resize-bjælke */}
+      {/* BIZZ-1866: print:hidden — sidebar er ikke relevant i print-kontekst */}
       <div
-        className={`fixed lg:static inset-y-0 left-0 z-30 flex flex-row transition-all duration-300 ${
+        className={`fixed lg:static inset-y-0 left-0 z-30 flex flex-row transition-all duration-300 print:hidden ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}
         style={{ width: sidebarCollapsed ? SIDEBAR_COLLAPSED : sidebarBredde }}
@@ -821,9 +822,9 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
       </div>
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-        {/* Top bar */}
-        <header className="relative z-10 bg-[#0f172a] border-b border-white/8 px-3 sm:px-6 py-4 flex items-center gap-4 shrink-0">
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0 print:block print:overflow-visible">
+        {/* Top bar — BIZZ-1866: print:hidden så print-output er rent */}
+        <header className="relative z-10 bg-[#0f172a] border-b border-white/8 px-3 sm:px-6 py-4 flex items-center gap-4 shrink-0 print:hidden">
           <div className="flex items-center gap-4">
             <button
               className="lg:hidden text-slate-400 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-lg"
@@ -1293,7 +1294,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
             åbent — CSS-variablen sættes af panelet selv og er 0 ellers. */}
         <main
           id="main-content"
-          className="relative z-0 flex-1 flex overflow-hidden transition-[padding-right] duration-150"
+          className="relative z-0 flex-1 flex overflow-hidden transition-[padding-right] duration-150 print:block print:overflow-visible print:h-auto"
           style={{ paddingRight: 'var(--bizz-docpreview-w, 0px)' }}
         >
           {pathname === '/dashboard' ||

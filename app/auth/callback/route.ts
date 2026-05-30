@@ -145,6 +145,45 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   logger.error('[auth/callback] Code exchange succeeded, type:', type);
 
+  // ── BIZZ-1875: Single session per device ─────────────────────────────────
+  // Terminér sessioner fra ANDRE IP'er. Behold sessioner fra samme IP
+  // (tillader flere tabs/browsere på samme device).
+  if (sessionData?.user && type !== 'signup' && type !== 'email') {
+    try {
+      const currentIp =
+        request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
+        request.headers.get('x-real-ip') ??
+        'unknown';
+      const admin = createAdminClient();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: authSessions } = await (admin as any)
+        .schema('auth')
+        .from('sessions')
+        .select('id, ip')
+        .eq('user_id', sessionData.user.id);
+      if (authSessions && authSessions.length > 1) {
+        const otherSessions = (authSessions as Array<{ id: string; ip: string }>).filter(
+          (s) => s.ip !== currentIp && s.id !== sessionData.session?.access_token
+        );
+        if (otherSessions.length > 0) {
+          for (const s of otherSessions) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            await (admin as any).schema('auth').from('sessions').delete().eq('id', s.id);
+          }
+          logger.log(
+            `[auth/callback] BIZZ-1875: Termineret ${otherSessions.length} sessioner fra andre IP'er for bruger ${sessionData.user.id} (current IP: ${currentIp})`
+          );
+        }
+      }
+    } catch (err) {
+      // Session enforcement er non-fatal — login skal stadig virke
+      logger.warn(
+        '[auth/callback] BIZZ-1875: Session enforcement fejlede:',
+        err instanceof Error ? err.message : String(err)
+      );
+    }
+  }
+
   // ── Email verification success ────────────────────────────────────────────
   // When the user clicks the verification link from their signup email,
   // emailRedirectTo was tagged with ?type=signup.

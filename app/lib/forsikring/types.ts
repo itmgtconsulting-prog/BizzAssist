@@ -58,6 +58,7 @@ export const ParsedOversigtsEntrySchema = z.object({
   insurance_type: z.string().max(200).nullable().optional(),
   annual_premium_dkk: z.number().int().nonnegative().nullable().optional(),
   sum_insured_dkk: z.number().int().nonnegative().nullable().optional(),
+  general_deductible_dkk: z.number().int().nonnegative().nullable().optional(),
   effective_from: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD')
@@ -67,6 +68,17 @@ export const ParsedOversigtsEntrySchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD')
     .nullable()
+    .optional(),
+  coverages: z
+    .array(
+      z.object({
+        coverage_code: z.string().min(1),
+        coverage_label: z.string().optional(),
+        is_covered: z.boolean(),
+        sum_dkk: z.number().nullable().optional(),
+        deductible_dkk: z.number().nullable().optional(),
+      })
+    )
     .optional(),
   notes: z.string().max(2000).nullable().optional(),
 });
@@ -352,6 +364,17 @@ export interface GapEngineInput {
     navn: string | null;
     type: 'virksomhed' | 'person' | 'ukendt';
   } | null;
+  /** BIZZ-1902: Standard betingelser baseline — dækningskrav fra selskabets vilkår */
+  standardBetingelser?: Array<{
+    titel: string;
+    selskab: string;
+    /** Nøgle-vilkår ekstraheret af AI fra standard betingelserne */
+    krav: Array<{
+      omraade: string;
+      beskrivelse: string;
+      paakraevet: boolean;
+    }>;
+  }>;
   /** BIZZ-1364: Optionelt asset fra koncern-walk (til asset-level checks) */
   asset?: {
     type: 'ejendom' | 'virksomhed' | 'bil' | 'bestyrelsespost';

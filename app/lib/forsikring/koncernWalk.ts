@@ -122,9 +122,10 @@ async function walkVirksomhed(
   seenCvrs.add(cvr);
 
   // BIZZ-1443: Tilføj virksomheden selv som aktiv (for ansvarsforsikring-matching)
+  // BIZZ-1840: Hent også virksomhedsform for FFO/andelsbolig-detection
   const { data: virk } = await (admin as ReturnType<typeof createAdminClient>)
     .from('cvr_virksomhed')
-    .select('navn, branche_tekst')
+    .select('navn, branche_tekst, virksomhedsform')
     .eq('cvr', cvr)
     .maybeSingle();
   aktiver.push({
@@ -134,12 +135,22 @@ async function walkVirksomhed(
     rawData: { branche: (virk as { branche_tekst?: string } | null)?.branche_tekst ?? null },
   });
 
-  // BIZZ-1646: Detect ejerforening (FFO) — resolve via /api/ejerforening/ejendomme pattern
+  // BIZZ-1646 + BIZZ-1840: Detect ejer-/andelsforening
+  // Matcher FFO-form, "forening" i virksomhedsform, og A/B i virksomhedsform
+  // eller forenings-keywords i virksomhedsnavnet (fanger A/B, E/F, andelsbolig).
+  const virkForm = (virk as { virksomhedsform?: string } | null)?.virksomhedsform ?? '';
+  const virkNavn = (virk as { navn?: string } | null)?.navn ?? '';
+  const formLower = virkForm.toLowerCase();
+  const navnLower = virkNavn.toLowerCase();
   const isFFO =
-    (virk as { virksomhedsform?: string } | null)?.virksomhedsform?.toUpperCase().includes('FFO') ||
-    (virk as { virksomhedsform?: string } | null)?.virksomhedsform
-      ?.toLowerCase()
-      .includes('forening');
+    virkForm.toUpperCase().includes('FFO') ||
+    formLower.includes('forening') ||
+    formLower === 'a/b' ||
+    navnLower.includes('ejerforening') ||
+    navnLower.includes('andelsbolig') ||
+    navnLower.startsWith('a/b ') ||
+    navnLower.startsWith('e/f ') ||
+    navnLower.includes('boligforening');
 
   if (isFFO && depth === 0) {
     // E/F: Hent administrerede ejendomme via ejerforholdskode 30 i bbr_ejendom_status
@@ -214,6 +225,243 @@ async function walkVirksomhed(
         }
       } catch {
         /* ejf_administrator lookup non-fatal */
+      }
+
+      // BIZZ-1862: Historisk ejerskab FØRST — foreninger der solgte SFE men
+      // stadig administrerer bygningen har kun historisk ejerskab. Disse SFE-BFEs
+      // skal være i seenBfes FØR SFE-expansion så matrikel-lookup finder dem.
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: histRows } = await (admin as any)
+          .from('ejf_ejerskab')
+          .select('bfe_nummer')
+          .eq('ejer_cvr', cvr)
+          .eq('status', 'historisk')
+          .limit(100);
+
+        for (const row of (histRows ?? []) as Array<{ bfe_nummer: number }>) {
+          if (seenBfes.has(row.bfe_nummer) || aktiver.length >= MAX_AKTIVER) continue;
+          seenBfes.add(row.bfe_nummer);
+          aktiver.push({
+            type: 'ejendom',
+            label: `BFE ${row.bfe_nummer}`,
+            bfe: row.bfe_nummer,
+            rawData: { ejerforening: true, historisk: true },
+          });
+        }
+      } catch {
+        /* historisk ejerskab lookup non-fatal */
+      }
+
+      // BIZZ-1851: SFE → ejerlejligheder udfoldning via matrikel.
+      // Bruger DAWA jordstykke til at finde præcis matrikel for SFE-BFE,
+      // derefter alle lejligheder (adresser med etage) på den matrikel.
+      // Matrikel-afgrænsning sikrer at kun foreningens egne lejligheder
+      // inkluderes — gadenavn-søgning er for bred (fanger andre bygninger).
+      try {
+        const sfeBfes = [...seenBfes];
+
+        for (const sfeBfe of sfeBfes.slice(0, 20)) {
+          try {
+            // Find matrikel via DAWA jordstykke
+            const jordRes = await fetch(
+              `https://api.dataforsyningen.dk/jordstykker?bfenummer=${sfeBfe}&format=json`,
+              { signal: AbortSignal.timeout(8000) }
+            );
+            if (!jordRes.ok) continue;
+            const jordstykker = (await jordRes.json()) as Array<{
+              ejerlav?: { kode?: number };
+              matrikelnr?: string;
+            }>;
+            const ejerlav = jordstykker[0]?.ejerlav?.kode;
+            const matr = jordstykker[0]?.matrikelnr;
+            if (!ejerlav || !matr) continue;
+
+            // Find alle adresser på matriklen — kun lejligheder (med etage)
+            const adrRes = await fetch(
+              `https://api.dataforsyningen.dk/adresser?ejerlavkode=${ejerlav}&matrikelnr=${encodeURIComponent(matr)}&format=json&struktur=mini&per_side=500`,
+              { signal: AbortSignal.timeout(8000) }
+            );
+            if (!adrRes.ok) continue;
+            const adresser = (await adrRes.json()) as Array<{
+              vejnavn: string;
+              husnr: string;
+              etage: string | null;
+              dør: string | null;
+              postnr: string;
+              postnrnavn: string;
+            }>;
+
+            const lejligheder = adresser.filter((a) => a.etage);
+
+            // Match mod bfe_adresse_cache for BFE-numre
+            const gadenavne = [...new Set(lejligheder.map((a) => a.vejnavn))];
+            const postnr = lejligheder[0]?.postnr;
+            if (!postnr || gadenavne.length === 0) {
+              // Ingen lejligheder fundet på matrikel — intet at udfolde
+              continue;
+            }
+
+            // Hent alle cached BFEs på samme gader+postnr med etage
+            const cachedBfeSet = new Set<number>();
+            for (const gade of gadenavne.slice(0, 10)) {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const { data: cacheRows } = await (admin as any)
+                .from('bfe_adresse_cache')
+                .select('bfe_nummer, adresse')
+                .ilike('adresse', `${gade}%`)
+                .eq('postnr', postnr)
+                .not('etage', 'is', null)
+                .limit(500);
+
+              for (const row of (cacheRows ?? []) as Array<{
+                bfe_nummer: number;
+                adresse: string;
+              }>) {
+                // Verificér at adressen faktisk er på denne matrikel
+                // ved at matche mod DAWA-adresserne (vejnavn + husnr)
+                const matchesMatrikel = lejligheder.some((l) =>
+                  row.adresse.startsWith(`${l.vejnavn} ${l.husnr}`)
+                );
+                if (matchesMatrikel) cachedBfeSet.add(row.bfe_nummer);
+              }
+            }
+
+            for (const bfe of cachedBfeSet) {
+              if (seenBfes.has(bfe) || aktiver.length >= MAX_AKTIVER) continue;
+              seenBfes.add(bfe);
+              aktiver.push({
+                type: 'ejendom',
+                label: `BFE ${bfe}`,
+                bfe,
+                rawData: { ejerforening: true, sfeExpanded: true },
+              });
+            }
+
+            // For lejligheder IKKE i cache: tilføj direkte fra DAWA-data
+            // (bfe=0 men med adresse — forsikrings-match kan stadig ske på adresse)
+            if (cachedBfeSet.size < lejligheder.length) {
+              const cachedAddresses = new Set<string>();
+              for (const bfe of cachedBfeSet) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const { data: row } = await (admin as any)
+                  .from('bfe_adresse_cache')
+                  .select('adresse, etage, doer')
+                  .eq('bfe_nummer', bfe)
+                  .maybeSingle();
+                if (row) {
+                  cachedAddresses.add(
+                    `${(row as { adresse: string }).adresse}|${(row as { etage: string | null }).etage ?? ''}|${(row as { doer: string | null }).doer ?? ''}`
+                  );
+                }
+              }
+
+              for (const l of lejligheder) {
+                const key = `${l.vejnavn} ${l.husnr}|${l.etage ?? ''}|${l.dør ?? ''}`;
+                if (cachedAddresses.has(key)) continue;
+                if (aktiver.length >= MAX_AKTIVER) break;
+                aktiver.push({
+                  type: 'ejendom',
+                  label: `${l.vejnavn} ${l.husnr}, ${l.etage}.${l.dør ?? ''}, ${l.postnr} ${l.postnrnavn}`,
+                  bfe: 0,
+                  adresse: `${l.vejnavn} ${l.husnr}, ${l.etage}.${l.dør ?? ''}, ${l.postnr} ${l.postnrnavn}`,
+                  rawData: { ejerforening: true, sfeExpanded: true, dawaResolved: true },
+                });
+              }
+            }
+          } catch {
+            /* individual SFE expansion non-fatal */
+          }
+        }
+      } catch {
+        /* SFE expansion non-fatal */
+      }
+
+      // BIZZ-1829: AI-baseret resolve af yderligere ejendomme
+      // Finder kandidater på samme gader og filtrerer til høj confidence (>0.8)
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: aiCache } = await (admin as any)
+          .from('ai_ejf_ejendom_cache')
+          .select('candidates, created_at')
+          .eq('cvr', cvr)
+          .maybeSingle();
+
+        if (aiCache?.candidates && Array.isArray(aiCache.candidates)) {
+          const aiAge = Date.now() - new Date(aiCache.created_at).getTime();
+          // Kun brug cache < 24t gammel
+          if (aiAge < 24 * 60 * 60 * 1000) {
+            for (const c of aiCache.candidates as Array<{
+              bfeNummer: number;
+              adresse: string;
+              confidence: string;
+            }>) {
+              // Kun høj confidence i gap-analyse
+              if (c.confidence !== 'high') continue;
+              if (seenBfes.has(c.bfeNummer) || aktiver.length >= MAX_AKTIVER) continue;
+              seenBfes.add(c.bfeNummer);
+              aktiver.push({
+                type: 'ejendom',
+                label: c.adresse || `BFE ${c.bfeNummer}`,
+                bfe: c.bfeNummer,
+                rawData: { ejerforening: true, aiForeslaaet: true },
+              });
+            }
+          }
+        }
+      } catch {
+        /* AI cache lookup non-fatal */
+      }
+      // BIZZ-1851: Fjern SFE/hovedejendom-BFEs der er erstattet af
+      // udfolded lejligheder. Når SFE-expansion fandt lejligheder,
+      // skal SFE-BFE'en selv og AI-kandidater uden etage ikke tælles
+      // med som separate aktiver — de er "containere", ikke enheder.
+      // Detect SFE-expansion: enten BFE=0 (DAWA-resolved) eller
+      // adresser med etage-indikator i label (", st", ", 1 ", ", kl")
+      const ejendomAktiver = aktiver.filter((a) => a.type === 'ejendom');
+      const hasExpandedLejligheder =
+        ejendomAktiver.some((a) => a.bfe === 0) ||
+        ejendomAktiver.filter((a) => /,\s*(?:st|kl|\d)\s/.test(a.label)).length > 3;
+      if (hasExpandedLejligheder) {
+        // BFEs med bfe > 0 der IKKE er lejligheder → kandidater for fjernelse
+        const bfesToCheck = new Set<number>();
+        for (const a of ejendomAktiver) {
+          if (a.bfe && a.bfe > 0) {
+            bfesToCheck.add(a.bfe);
+          }
+        }
+        // Tjek om disse BFEs har etage i cache — hvis ikke, er de SFE/hovedejendomme
+        if (bfesToCheck.size > 0) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: etageRows } = await (admin as any)
+            .from('bfe_adresse_cache')
+            .select('bfe_nummer, etage')
+            .in('bfe_nummer', [...bfesToCheck]);
+          // BFEs uden etage ELLER ikke i cache → SFE/hovedejendomme
+          const bfesWithEtage = new Set<number>();
+          for (const row of (etageRows ?? []) as Array<{
+            bfe_nummer: number;
+            etage: string | null;
+          }>) {
+            if (row.etage) bfesWithEtage.add(row.bfe_nummer);
+          }
+          const bfesWithoutEtage = new Set<number>();
+          for (const bfe of bfesToCheck) {
+            if (!bfesWithEtage.has(bfe)) bfesWithoutEtage.add(bfe);
+          }
+          // Fjern SFE/hovedejendom-aktiver (uden etage) der nu er dækket af lejligheder
+          for (let i = aktiver.length - 1; i >= 0; i--) {
+            if (
+              aktiver[i].type === 'ejendom' &&
+              aktiver[i].bfe &&
+              bfesWithoutEtage.has(aktiver[i].bfe!)
+            ) {
+              aktiver.splice(i, 1);
+            }
+          }
+          // Behold fjernede BFEs i seenBfes så de ikke re-tilføjes
+          // af efterfølgende ejf_ejerskab query
+        }
       }
     } catch {
       /* non-fatal — fallback til standard flow */

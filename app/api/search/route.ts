@@ -264,7 +264,24 @@ async function searchAddresses(q: string, normQ: string): Promise<UnifiedSearchR
     // Merge extras into results — cap at 12 so the dropdown doesn't overflow
     // (was 8). Hovedejendomme + alle under-adresser + andre ejerlejligheder.
     const merged = [...results, ...extraAdresseResults];
-    const mapped = merged.slice(0, 12).map((r) => {
+
+    // BIZZ-1905: Filtrér enheder baseret på etage/dør i søge-query.
+    // Hvis brugeren skriver "st", "1", "kl" etc. vis kun matchende enheder.
+    const queryFloor = (() => {
+      const m = q.match(/\b(st|kl|\d{1,2})\.?\s*(tv|th|mf|\d{1,3})?\s*$/i);
+      return m ? { etage: m[1].toLowerCase(), door: m[2]?.toLowerCase() ?? null } : null;
+    })();
+    const filtered = queryFloor
+      ? merged.filter((r) => {
+          // Behold vejnavne og adgangsadresser (ingen etage)
+          if (r.type !== 'adresse') return true;
+          // Behold enheder hvor etage matcher query
+          const rEtage = (r.adresse.etage ?? '').toLowerCase();
+          return rEtage === queryFloor.etage || rEtage.startsWith(queryFloor.etage);
+        })
+      : merged;
+
+    const mapped = filtered.slice(0, 12).map((r) => {
       const normText = normalize(r.tekst);
       // BIZZ-608: Distinguish mellem hovedejendom (adgangsadresse) og
       // ejerlejlighed (adresse med etage/dør) i subtitle så brugeren

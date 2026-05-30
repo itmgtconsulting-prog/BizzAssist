@@ -203,6 +203,16 @@ Din opgave er at udtrække ALLE policer fra oversigten og returnere dem som JSON
       "sum_insured_dkk": number | null,
       "effective_from": string | null,
       "effective_to": string | null,
+      "general_deductible_dkk": number | null,
+      "coverages": [
+        {
+          "coverage_code": "brand_el" | "bygningskasko" | "udvidet_roerskade" | "glas" | "sanitet" | "insekt_svamp" | "restvaerdi" | "stikledning" | "jordskade" | "lovliggoerelse" | "huslejetab" | "haerverk" | "omstilling_laase" | "hus_grundejer_ansvar" | "forurening" | "driftstab" | "erhvervsansvar",
+          "coverage_label": string,
+          "is_covered": boolean,
+          "sum_dkk": number | null,
+          "deductible_dkk": number | null
+        }
+      ],
       "notes": string | null
     }
   ],
@@ -219,6 +229,8 @@ REGLER:
 5. Hvis en police har flere adresser, opret én entry per adresse med samme policenummer.
 6. insurance_type: fx "Bygningsforsikring", "Erhvervsansvar", "Løsøre", etc.
 7. Hvis policyholder er den samme for alle policer, gentag navnet i hver entry.
+8. VIGTIGT: Scan ALLE sider for dækninger. Hvis dokumentet indeholder "Sådan er bygningen dækket", "Dækninger og dækningssummer" eller lignende sektioner, ekstraher ALLE dækninger som coverages[]. Typiske dækninger: Brand, Storm og nedbør, Udstrømning af vand, Pludselig skade, Indbrud, Svamp, Insekt, Rørskade, Glas, Sanitet, Stikledning, Jordskade, Huslejetab, Hærværk, Omstilling af låse.
+9. coverage_code skal matche én af de 17 kanoniske koder. Hvis en dækning ikke passer, brug den nærmeste.
 
 Returnér nu JSON for følgende forsikringsoversigt:`;
 

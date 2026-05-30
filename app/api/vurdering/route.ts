@@ -26,6 +26,13 @@ import { logger } from '@/app/lib/logger';
 import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
+import { LruCache } from '@/app/lib/lruCache';
+
+/** BIZZ-1868: LRU cache for vurderingsdata — undgår 31s Datafordeler roundtrip */
+const vurderingCache = new LruCache<string, VurderingResponse>({
+  maxSize: 100,
+  ttlMs: 3_600_000, // 1 time
+});
 
 /** Zod schema for /api/vurdering query parameters */
 const vurderingQuerySchema = z.object({
@@ -644,6 +651,13 @@ export async function GET(request: NextRequest): Promise<NextResponse<VurderingR
   const parsed = parseQuery(request, vurderingQuerySchema);
   if (!parsed.success) return parsed.response as NextResponse<VurderingResponse>;
 
+  // BIZZ-1868: LRU cache check — sparer 31s Datafordeler roundtrip
+  const cacheKey = `${parsed.data.bfeNummer}-${parsed.data.kommunekode ?? ''}`;
+  const cached = vurderingCache.get(cacheKey);
+  if (cached) {
+    return NextResponse.json(cached);
+  }
+
   /* BIZZ-1094: Cache-first — tjek vurdering_cache før live API-kald */
   const bfeParam = parsed.data.bfeNummer;
   if (bfeParam) {
@@ -874,19 +888,21 @@ export async function GET(request: NextRequest): Promise<NextResponse<VurderingR
       /* Cache-write fejl er ikke kritisk — log men returner data */
     }
 
-    return NextResponse.json(
-      {
-        vurdering,
-        alle,
-        ...udvidede,
-        fejl: null,
-        manglerNoegle: false,
-      },
-      {
-        status: 200,
-        headers: { 'Cache-Control': 'public, s-maxage=86400, stale-while-revalidate=3600' },
-      }
-    );
+    const response: VurderingResponse = {
+      vurdering,
+      alle,
+      ...udvidede,
+      fejl: null,
+      manglerNoegle: false,
+    };
+
+    // BIZZ-1868: Cache succesfulde resultater i LRU
+    vurderingCache.set(cacheKey, response);
+
+    return NextResponse.json(response, {
+      status: 200,
+      headers: { 'Cache-Control': 'public, s-maxage=86400, stale-while-revalidate=3600' },
+    });
   } catch (err) {
     Sentry.captureException(err);
     logger.error('[vurdering] Fejl:', err);

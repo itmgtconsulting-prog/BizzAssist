@@ -11,16 +11,23 @@
 
 'use client';
 
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowRightLeft,
+  Bot,
   Building2,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
   Home,
   Loader2,
+  Printer,
   Shield,
+  Sparkles,
+  XCircle,
 } from 'lucide-react';
+import type { AiEjendomKandidat } from '@/app/api/ai/ejerforening-ejendomme/route';
 import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
 import PropertyOwnerCard from '@/app/components/ejendomme/PropertyOwnerCard';
 import { translations } from '@/app/lib/translations';
@@ -92,6 +99,190 @@ export default function VirksomhedEjendommeTab({
 }: Props) {
   const c = translations[lang].company;
 
+  // BIZZ-1834: SFE-expansion client-side — fold SFE ud til ejerlejligheder via DAWA
+  const [expandedEjendomme, setExpandedEjendomme] = useState<EjendomSummary[]>([]);
+
+  useEffect(() => {
+    if (ejendommeData.length === 0 || ejendommeLoading) return;
+
+    // BIZZ-1891: SFE-expansion DEAKTIVERET — vis de ejede BFE'er direkte.
+    // Expansion tilføjede syntetiske lejligheder under SFE'er og inflated
+    // totalen (53 vs facit 16 for BELVEDERE). Ejendomme skal vises som de
+    // er i ejf_ejerskab — SFE'er er det korekte ejerskabs-niveau.
+    setExpandedEjendomme(ejendommeData);
+    return;
+
+    // Find SFE-ejendomme (har adresse, ingen etage, ikke ejerlejlighed)
+    const sfes = ejendommeData.filter(
+      (e) => e.adresse && !e.etage && e.ejendomstype !== 'Ejerlejlighed' && e.postnr
+    );
+    if (sfes.length === 0) {
+      setExpandedEjendomme(ejendommeData);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      const extra: EjendomSummary[] = [];
+
+      for (const sfe of sfes.slice(0, 5)) {
+        try {
+          // Step 1: Find ejerlav+matrikelnr via DAWA jordstykke
+          const jordRes = await fetch(
+            `https://api.dataforsyningen.dk/jordstykker?bfenummer=${sfe.bfeNummer}&format=json`,
+            { signal: AbortSignal.timeout(8000) }
+          );
+          if (!jordRes.ok) continue;
+          const jord = (await jordRes.json()) as Array<{
+            ejerlav?: { kode?: number };
+            matrikelnr?: string;
+          }>;
+          const ejerlav = jord[0]?.ejerlav?.kode;
+          const matr = jord[0]?.matrikelnr;
+          if (!ejerlav || !matr) continue;
+
+          // Step 2: Hent alle adresser på matriklen
+          const adrRes = await fetch(
+            `https://api.dataforsyningen.dk/adresser?ejerlavkode=${ejerlav}&matrikelnr=${encodeURIComponent(matr)}&format=json&struktur=mini&per_side=200`,
+            { signal: AbortSignal.timeout(8000) }
+          );
+          if (!adrRes.ok) continue;
+          const adresser = (await adrRes.json()) as Array<{
+            id: string;
+            vejnavn: string;
+            husnr: string;
+            etage: string | null;
+            dør: string | null;
+            postnr: string;
+            postnrnavn: string;
+          }>;
+
+          // Kun adresser med etage (= ejerlejligheder)
+          for (const a of adresser.filter((x) => x.etage)) {
+            if (cancelled) return;
+            extra.push({
+              bfeNummer: 0,
+              ownerCvr: sfe.ownerCvr,
+              adresse: `${a.vejnavn} ${a.husnr}`,
+              postnr: a.postnr,
+              by: a.postnrnavn,
+              kommune: sfe.kommune,
+              kommuneKode: sfe.kommuneKode,
+              ejendomstype: 'Ejerlejlighed',
+              dawaId: a.id,
+              etage: a.etage,
+              doer: a.dør,
+              ejerandel: sfe.ejerandel,
+              administreret: sfe.administreret,
+              aktiv: sfe.aktiv,
+            });
+          }
+        } catch {
+          /* DAWA fallback non-critical */
+        }
+      }
+
+      if (!cancelled) {
+        // Merge: original data + expanded children (dedup by dawaId)
+        const seenIds = new Set(ejendommeData.map((e) => e.dawaId).filter(Boolean));
+        const uniqueExtra = extra.filter((e) => e.dawaId && !seenIds.has(e.dawaId));
+        setExpandedEjendomme([...ejendommeData, ...uniqueExtra]);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [ejendommeData, ejendommeLoading]);
+
+  /** Vis alle ejendomme direkte — SFE-expansion er deaktiveret (BIZZ-1891).
+   * Ejede BFE'er vises som de er i ejf_ejerskab. */
+  const displayEjendomme = expandedEjendomme.length > 0 ? expandedEjendomme : ejendommeData;
+
+  // BIZZ-1828: AI-baseret ejendomsresolve for ejerforeninger (FFO)
+  const isFFO =
+    data.companydesc?.toUpperCase().includes('FFO') ||
+    data.companydesc?.toLowerCase().includes('forening') ||
+    false;
+  const [aiCandidates, setAiCandidates] = useState<AiEjendomKandidat[]>([]);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiExpanded, setAiExpanded] = useState(false);
+  /** BIZZ-1864: Optimistisk verdict-state for AI-kandidater (bfeNummer → verdict) */
+  const [aiVerdicts, setAiVerdicts] = useState<Map<number, 'verified' | 'rejected'>>(new Map());
+  /** BIZZ-1866: Print-anmodning afventer fuld load */
+  const [printPending, setPrintPending] = useState(false);
+  const printPendingRef = useRef(false);
+
+  /**
+   * BIZZ-1866: Udløs browser-print når alle ejendomme er loaded.
+   * printPendingRef bruges til at undgå dobbelt-trigger ved re-render.
+   */
+  useEffect(() => {
+    if (printPending && ejendommeFetchComplete && !ejendommeLoadingMore) {
+      if (!printPendingRef.current) {
+        printPendingRef.current = true;
+        // Lad React genrendre én gang (alle ejendomme er nu i DOM)
+        requestAnimationFrame(() => {
+          window.print();
+          setPrintPending(false);
+          printPendingRef.current = false;
+        });
+      }
+    }
+  }, [printPending, ejendommeFetchComplete, ejendommeLoadingMore]);
+
+  /**
+   * Kald AI-endpoint for at finde potentielle ejendomme under ejerforeningen.
+   */
+  const handleAiResolve = useCallback(async () => {
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      const res = await fetch(`/api/ai/ejerforening-ejendomme?cvr=${data.vat}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setAiError(err.error ?? 'Ukendt fejl');
+        return;
+      }
+      const json = await res.json();
+      setAiCandidates(json.candidates ?? []);
+      setAiExpanded(true);
+    } catch {
+      setAiError('Netværksfejl');
+    } finally {
+      setAiLoading(false);
+    }
+  }, [data.vat]);
+
+  /**
+   * BIZZ-1864: Verificer eller afvis en AI-kandidat-ejendom.
+   * Sender verdict til /api/ejerforening-verification og opdaterer lokal state.
+   *
+   * @param bfeNummer - BFE-nummeret der skal verificeres
+   * @param verdict - 'verified' (bekræft) eller 'rejected' (afvis)
+   */
+  const handleAiVerify = useCallback(
+    async (bfeNummer: number, verdict: 'verified' | 'rejected') => {
+      // Optimistisk update
+      setAiVerdicts((prev) => new Map(prev).set(bfeNummer, verdict));
+      try {
+        await fetch('/api/ejerforening-verification', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            bfe_nummer: bfeNummer,
+            candidate_cvr: String(data.vat),
+            verdict,
+          }),
+        });
+      } catch {
+        /* non-fatal — optimistisk state bevares */
+      }
+    },
+    [data.vat]
+  );
+
   return (
     <div className="space-y-4">
       {/* BIZZ-617 + BIZZ-635: ÉN tab-level loading spinner. Tidligere
@@ -131,22 +322,33 @@ export default function VirksomhedEjendommeTab({
             </div>
           )}
 
+          {/* BIZZ-1859: Loading-banner i toppen (vises uanset displayEjendomme.length
+            — ellers forsvinder den når SFE-filteret reducerer listen til 0 under load). */}
+          {ejendommeLoadingMore && ejendommeData.length > 0 && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800/40 border border-slate-700/30 text-slate-400 text-sm">
+              <Loader2 className="w-4 h-4 animate-spin shrink-0 text-emerald-400" />
+              <span>
+                {lang === 'da'
+                  ? `Indlæser ejendomme… ${ejendommeTotalBfe > 0 ? `(${ejendommeData.length} af ${ejendommeTotalBfe})` : ''}`
+                  : `Loading properties… ${ejendommeTotalBfe > 0 ? `(${ejendommeData.length} of ${ejendommeTotalBfe})` : ''}`}
+              </span>
+            </div>
+          )}
+
           {/* Ejendomme grid */}
-          {ejendommeData.length > 0 && (
+          {displayEjendomme.length > 0 && (
             <>
               <div className="flex items-center justify-between">
                 <p className="text-slate-400 text-sm">
                   {ejendommeLoadingMore
                     ? lang === 'da'
-                      ? `Indlæser… (${ejendommeData.length} af ${ejendommeTotalBfe} ejendomme)`
-                      : `Loading… (${ejendommeData.length} of ${ejendommeTotalBfe} properties)`
+                      ? `Indlæser… (${displayEjendomme.length} af ${ejendommeTotalBfe} ejendomme)`
+                      : `Loading… (${displayEjendomme.length} of ${ejendommeTotalBfe} properties)`
                     : (() => {
-                        // BIZZ-639: Overskriften skal vise både aktive og
-                        // historiske (solgte) tal. Historisk-tallet
-                        // skjules helt når 0 så overskriften ikke ser
-                        // tom ud for nye/rene porteføljer.
-                        const aktiveCount = ejendommeData.filter((e) => e.aktiv !== false).length;
-                        const historiskeCount = ejendommeData.filter(
+                        const aktiveCount = displayEjendomme.filter(
+                          (e) => e.aktiv !== false
+                        ).length;
+                        const historiskeCount = displayEjendomme.filter(
                           (e) => e.aktiv === false
                         ).length;
                         if (lang === 'da') {
@@ -161,13 +363,50 @@ export default function VirksomhedEjendommeTab({
                           : aktivLabel;
                       })()}
                 </p>
-                {relatedCompanies.length > 0 && (
-                  <span className="text-slate-500 text-xs">
-                    {lang === 'da'
-                      ? `Inkl. ${relatedCompanies.filter((v) => v.aktiv).length} datterselskab${relatedCompanies.filter((v) => v.aktiv).length !== 1 ? 'er' : ''}`
-                      : `Incl. ${relatedCompanies.filter((v) => v.aktiv).length} subsidiar${relatedCompanies.filter((v) => v.aktiv).length !== 1 ? 'ies' : 'y'}`}
-                  </span>
-                )}
+                <div className="flex items-center gap-2">
+                  {relatedCompanies.length > 0 && (
+                    <span className="text-slate-500 text-xs">
+                      {lang === 'da'
+                        ? `Inkl. ${relatedCompanies.filter((v) => v.aktiv).length} datterselskab${relatedCompanies.filter((v) => v.aktiv).length !== 1 ? 'er' : ''}`
+                        : `Incl. ${relatedCompanies.filter((v) => v.aktiv).length} subsidiar${relatedCompanies.filter((v) => v.aktiv).length !== 1 ? 'ies' : 'y'}`}
+                    </span>
+                  )}
+                  {/* BIZZ-1866: Print-knap — afventer fuld load hvis data stadig indlæses */}
+                  <button
+                    type="button"
+                    aria-label={lang === 'da' ? 'Print ejendomsliste' : 'Print property list'}
+                    title={
+                      ejendommeLoadingMore
+                        ? lang === 'da'
+                          ? 'Afventer fuld indlæsning...'
+                          : 'Waiting for full load...'
+                        : lang === 'da'
+                          ? 'Print ejendomsliste'
+                          : 'Print property list'
+                    }
+                    onClick={() => {
+                      if (ejendommeFetchComplete && !ejendommeLoadingMore) {
+                        window.print();
+                      } else {
+                        setPrintPending(true);
+                      }
+                    }}
+                    className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-colors text-xs"
+                  >
+                    {printPending ? (
+                      <Loader2 size={13} className="animate-spin" />
+                    ) : (
+                      <Printer size={13} />
+                    )}
+                    {printPending
+                      ? lang === 'da'
+                        ? 'Venter...'
+                        : 'Waiting...'
+                      : lang === 'da'
+                        ? 'Print'
+                        : 'Print'}
+                  </button>
+                </div>
               </div>
 
               {/* BIZZ-456: Gruppér ejendomme efter ejer-CVR i koncernhierarki.
@@ -187,13 +426,13 @@ export default function VirksomhedEjendommeTab({
                 for (const rv of relatedCompanies) nameByCvr.set(rv.cvr, rv.navn);
 
                 // BIZZ-1672: Split into owned, administered and sold
-                const administrerede = ejendommeData.filter(
+                const administrerede = displayEjendomme.filter(
                   (e) => e.administreret === true && e.aktiv !== false
                 );
-                const aktive = ejendommeData.filter(
+                const aktive = displayEjendomme.filter(
                   (e) => e.aktiv !== false && e.administreret !== true
                 );
-                const solgte = ejendommeData.filter((e) => e.aktiv === false);
+                const solgte = displayEjendomme.filter((e) => e.aktiv === false);
 
                 // Group active by ownerCvr (normalized to number)
                 const groupedActive = new Map<number, typeof aktive>();
@@ -256,9 +495,11 @@ export default function VirksomhedEjendommeTab({
                             const groups = new Map<string, EjType[]>();
                             const order: string[] = [];
                             for (const ej of props) {
-                              // Key = adresse + postnr; tom adresse = unikt fallback per BFE
+                              // BIZZ-1861: Grupper på vejnavn+husnr (opgang) i stedet
+                              // for fuld adresse. Lejligheder i samme opgang grupperes
+                              // under én fold-ud header (Plads 16: 11 lejligheder).
                               const key = ej.adresse
-                                ? `${ej.adresse}|${ej.postnr ?? ''}`
+                                ? `${ej.adresse.split(',')[0].trim()}|${ej.postnr ?? ''}`
                                 : `bfe-${ej.bfeNummer}`;
                               if (!groups.has(key)) {
                                 groups.set(key, []);
@@ -290,30 +531,40 @@ export default function VirksomhedEjendommeTab({
                                     ))}
                                   </div>
                                 )}
+                                {/* BIZZ-1861: Opgange med fold-ud */}
                                 {komplekser.map((key) => {
                                   const grp = groups.get(key)!;
-                                  // Kompleks: header + indented grid
+                                  const opgangAddr = grp[0].adresse?.split(',')[0].trim() ?? key;
+                                  const opgangPostnr = grp[0].postnr;
                                   return (
-                                    <div
+                                    <details
                                       key={key}
-                                      className="border-l-2 border-emerald-500/30 pl-3"
+                                      open
+                                      className="border-l-2 border-emerald-500/30 pl-3 group"
                                     >
-                                      <div className="flex items-center gap-2 mb-1.5">
-                                        <Building2 size={12} className="text-emerald-400/70" />
+                                      <summary className="flex items-center gap-2 mb-1.5 cursor-pointer list-none select-none hover:bg-slate-800/30 rounded px-1 py-1 -ml-1 transition-colors">
+                                        <ChevronRight
+                                          size={14}
+                                          className="text-emerald-400/70 group-open:rotate-90 transition-transform shrink-0"
+                                        />
+                                        <Building2
+                                          size={12}
+                                          className="text-emerald-400/70 shrink-0"
+                                        />
                                         <span className="text-xs font-medium text-slate-300">
-                                          {grp[0].adresse}
-                                          {grp[0].postnr ? `, ${grp[0].postnr}` : ''}
+                                          {opgangAddr}
+                                          {opgangPostnr ? `, ${opgangPostnr}` : ''}
                                         </span>
                                         <span className="text-[10px] text-emerald-400/70 px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20">
-                                          {lang === 'da'
-                                            ? `Kompleks · ${grp.length} ejerlejligheder`
-                                            : `Complex · ${grp.length} units`}
+                                          {grp.length} {lang === 'da' ? 'lejligheder' : 'units'}
                                         </span>
-                                      </div>
-                                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                      </summary>
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-2">
                                         {grp.map((ej) => (
                                           <PropertyOwnerCard
-                                            key={ej.bfeNummer}
+                                            key={
+                                              ej.bfeNummer || `${ej.adresse}-${ej.etage}-${ej.doer}`
+                                            }
                                             ejendom={ej}
                                             showOwner={false}
                                             lang={lang}
@@ -321,7 +572,7 @@ export default function VirksomhedEjendommeTab({
                                           />
                                         ))}
                                       </div>
-                                    </div>
+                                    </details>
                                   );
                                 })}
                               </div>
@@ -346,17 +597,92 @@ export default function VirksomhedEjendommeTab({
                             ? 'Følgende ejendomme administreres af denne virksomhed/ejerforening.'
                             : 'The following properties are administered by this company/association.'}
                         </p>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                          {administrerede.map((ej) => (
-                            <PropertyOwnerCard
-                              key={ej.bfeNummer}
-                              ejendom={ej}
-                              showOwner={false}
-                              lang={lang}
-                              preEnriched={preEnrichedByBfe.get(ej.bfeNummer) ?? null}
-                            />
-                          ))}
-                        </div>
+                        {/* BIZZ-1861: Grupper administrerede ejendomme på opgang
+                          (vejnavn+husnr) med fold-ud — samme mønster som aktive. */}
+                        {(() => {
+                          type EjType = (typeof administrerede)[number];
+                          const groups = new Map<string, EjType[]>();
+                          const order: string[] = [];
+                          for (const ej of administrerede) {
+                            const key = ej.adresse
+                              ? `${ej.adresse.split(',')[0].trim()}|${ej.postnr ?? ''}`
+                              : `bfe-${ej.bfeNummer}`;
+                            if (!groups.has(key)) {
+                              groups.set(key, []);
+                              order.push(key);
+                            }
+                            groups.get(key)!.push(ej);
+                          }
+                          const singleEjendomme = order
+                            .filter((k) => groups.get(k)!.length === 1)
+                            .map((k) => groups.get(k)![0]);
+                          const komplekser = order.filter((k) => groups.get(k)!.length > 1);
+                          return (
+                            <div className="space-y-4">
+                              {singleEjendomme.length > 0 && (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                  {singleEjendomme.map((ej) => (
+                                    <div key={ej.bfeNummer} className="relative">
+                                      {/* BIZZ-1864: AI-verificeret badge */}
+                                      {ej.aiVerified && (
+                                        <div className="absolute top-1.5 right-1.5 z-10 flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-purple-500/20 border border-purple-500/30 text-purple-400 text-[9px] pointer-events-none">
+                                          <Bot size={8} />
+                                          {lang === 'da' ? 'AI verificeret' : 'AI verified'}
+                                        </div>
+                                      )}
+                                      <PropertyOwnerCard
+                                        ejendom={ej}
+                                        showOwner={false}
+                                        lang={lang}
+                                        preEnriched={preEnrichedByBfe.get(ej.bfeNummer) ?? null}
+                                      />
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              {komplekser.map((key) => {
+                                const grp = groups.get(key)!;
+                                const opgangAddr = grp[0].adresse?.split(',')[0].trim() ?? key;
+                                const opgangPostnr = grp[0].postnr;
+                                return (
+                                  <details
+                                    key={key}
+                                    open
+                                    className="border-l-2 border-teal-500/30 pl-3 group"
+                                  >
+                                    <summary className="flex items-center gap-2 mb-1.5 cursor-pointer list-none select-none hover:bg-slate-800/30 rounded px-1 py-1 -ml-1 transition-colors">
+                                      <ChevronRight
+                                        size={14}
+                                        className="text-teal-400/70 group-open:rotate-90 transition-transform shrink-0"
+                                      />
+                                      <Building2 size={12} className="text-teal-400/70 shrink-0" />
+                                      <span className="text-xs font-medium text-slate-300">
+                                        {opgangAddr}
+                                        {opgangPostnr ? `, ${opgangPostnr}` : ''}
+                                      </span>
+                                      <span className="text-[10px] text-teal-400/70 px-1.5 py-0.5 rounded bg-teal-500/10 border border-teal-500/20">
+                                        {grp.length} {lang === 'da' ? 'lejligheder' : 'units'}
+                                      </span>
+                                    </summary>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-2">
+                                      {grp.map((ej) => (
+                                        <PropertyOwnerCard
+                                          key={
+                                            ej.bfeNummer || `${ej.adresse}-${ej.etage}-${ej.doer}`
+                                          }
+                                          ejendom={ej}
+                                          showOwner={false}
+                                          lang={lang}
+                                          preEnriched={preEnrichedByBfe.get(ej.bfeNummer) ?? null}
+                                        />
+                                      ))}
+                                    </div>
+                                  </details>
+                                );
+                              })}
+                            </div>
+                          );
+                        })()}
                       </div>
                     )}
                     {/* Fold-out for sold properties — grouped by historical owner */}
@@ -455,7 +781,7 @@ export default function VirksomhedEjendommeTab({
           {ejendommeFetchComplete &&
             !ejendommeManglerNoegle &&
             !ejendommeManglerAdgang &&
-            ejendommeData.length === 0 && (
+            displayEjendomme.length === 0 && (
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <Home size={36} className="text-slate-600 mb-3" />
                 <p className="text-slate-400 text-sm">
@@ -465,6 +791,178 @@ export default function VirksomhedEjendommeTab({
                 </p>
               </div>
             )}
+
+          {/* BIZZ-1843: AI-foreslåede ejendomme for ejerforeninger — vises uanset displayEjendomme count */}
+          {isFFO && ejendommeFetchComplete && (
+            <div className="pt-4 border-t border-purple-500/20">
+              <div className="flex items-center gap-2 mb-3">
+                <Sparkles size={14} className="text-purple-400" />
+                <h3 className="text-sm font-semibold text-purple-300">
+                  {lang === 'da' ? 'Find flere ejendomme (AI)' : 'Find more properties (AI)'}
+                </h3>
+                {aiCandidates.length === 0 && !aiLoading && (
+                  <button
+                    type="button"
+                    onClick={handleAiResolve}
+                    disabled={aiLoading}
+                    className="ml-auto text-xs px-3 py-1 rounded-lg bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 transition-colors border border-purple-500/30"
+                    aria-label={
+                      lang === 'da'
+                        ? 'Analysér adressemønstre med AI'
+                        : 'Analyze address patterns with AI'
+                    }
+                  >
+                    {aiLoading ? (
+                      <Loader2 size={12} className="animate-spin inline mr-1" />
+                    ) : (
+                      <Sparkles size={12} className="inline mr-1" />
+                    )}
+                    {lang === 'da' ? 'Analysér' : 'Analyze'}
+                  </button>
+                )}
+              </div>
+              {aiLoading && (
+                <div className="flex items-center gap-2 py-4 text-slate-400 text-xs">
+                  <Loader2 size={14} className="animate-spin" />
+                  {lang === 'da' ? 'Analyserer adressemønstre...' : 'Analyzing address patterns...'}
+                </div>
+              )}
+              {aiError && <p className="text-red-400 text-xs py-2">{aiError}</p>}
+              {aiCandidates.length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setAiExpanded((v) => !v)}
+                    className="flex items-center gap-2 text-xs text-purple-400 hover:text-purple-300 transition-colors mb-2"
+                  >
+                    {aiExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    {lang === 'da'
+                      ? `${aiCandidates.length} AI-foreslåede ejendomme`
+                      : `${aiCandidates.length} AI-suggested properties`}
+                  </button>
+                  {aiExpanded && (
+                    <div className="space-y-2">
+                      <p className="text-slate-500 text-[10px] italic mb-2">
+                        {lang === 'da'
+                          ? 'Genereret af AI — kan indeholde fejl. Bør verificeres manuelt.'
+                          : 'Generated by AI — may contain errors. Should be verified manually.'}
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                        {aiCandidates.map((c) => {
+                          const verdict = aiVerdicts.get(c.bfeNummer);
+                          return (
+                            <div
+                              key={c.bfeNummer}
+                              className={`bg-slate-800/30 border rounded-lg px-3 py-2 transition-colors ${
+                                verdict === 'verified'
+                                  ? 'border-emerald-500/40 bg-emerald-500/5'
+                                  : verdict === 'rejected'
+                                    ? 'border-red-500/30 bg-red-500/5 opacity-60'
+                                    : 'border-purple-500/20'
+                              }`}
+                            >
+                              <Link href={`/dashboard/ejendomme/${c.bfeNummer}`} className="block">
+                                <div className="flex items-center gap-2">
+                                  <Home size={12} className="text-purple-400 shrink-0" />
+                                  <span className="text-xs text-slate-200 truncate">
+                                    {c.adresse}
+                                    {c.postnr ? `, ${c.postnr}` : ''}
+                                    {c.by ? ` ${c.by}` : ''}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <span
+                                    className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${
+                                      c.confidence === 'high'
+                                        ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                                        : c.confidence === 'medium'
+                                          ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
+                                          : 'bg-slate-500/20 text-slate-400 border border-slate-500/30'
+                                    }`}
+                                  >
+                                    {c.confidence === 'high'
+                                      ? lang === 'da'
+                                        ? 'Høj'
+                                        : 'High'
+                                      : c.confidence === 'medium'
+                                        ? lang === 'da'
+                                          ? 'Medium'
+                                          : 'Medium'
+                                        : lang === 'da'
+                                          ? 'Lav'
+                                          : 'Low'}
+                                  </span>
+                                  <span className="text-[10px] text-slate-500 truncate">
+                                    {c.reasoning}
+                                  </span>
+                                </div>
+                              </Link>
+                              {/* BIZZ-1864: Bekræft / Afvis knapper */}
+                              {verdict ? (
+                                <div
+                                  className={`flex items-center gap-1 mt-1.5 text-[10px] ${
+                                    verdict === 'verified' ? 'text-emerald-400' : 'text-red-400'
+                                  }`}
+                                >
+                                  {verdict === 'verified' ? (
+                                    <CheckCircle2 size={10} />
+                                  ) : (
+                                    <XCircle size={10} />
+                                  )}
+                                  {verdict === 'verified'
+                                    ? lang === 'da'
+                                      ? 'Bekræftet'
+                                      : 'Confirmed'
+                                    : lang === 'da'
+                                      ? 'Afvist'
+                                      : 'Rejected'}
+                                </div>
+                              ) : (
+                                <div className="flex gap-1.5 mt-1.5">
+                                  <button
+                                    type="button"
+                                    aria-label={
+                                      lang === 'da'
+                                        ? `Bekræft ejendom BFE ${c.bfeNummer}`
+                                        : `Confirm property BFE ${c.bfeNummer}`
+                                    }
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      void handleAiVerify(c.bfeNummer, 'verified');
+                                    }}
+                                    className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-400 text-[10px] transition-colors"
+                                  >
+                                    <CheckCircle2 size={9} />
+                                    {lang === 'da' ? 'Bekræft' : 'Confirm'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    aria-label={
+                                      lang === 'da'
+                                        ? `Afvis ejendom BFE ${c.bfeNummer}`
+                                        : `Reject property BFE ${c.bfeNummer}`
+                                    }
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      void handleAiVerify(c.bfeNummer, 'rejected');
+                                    }}
+                                    className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 text-[10px] transition-colors"
+                                  >
+                                    <XCircle size={9} />
+                                    {lang === 'da' ? 'Afvis' : 'Reject'}
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
         </div>
       }
 

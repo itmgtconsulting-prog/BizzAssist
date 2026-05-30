@@ -1819,7 +1819,10 @@ function DiagramForce({
       const z = Math.max(fit, 0.5);
       const scaledW = viewBox.w * z + 32;
       const scaledH = viewBox.h * z + 32;
-      const panX = Math.round((cW - scaledW) / 2);
+      // Center horisontalt når indhold passer i canvas. Brede diagrammer
+      // (scaledW > cW) venstre-alignes med 8px — ellers klippes venstre
+      // kant af overflow:hidden og noder er usynlige ved initial load.
+      const panX = scaledW < cW ? Math.round((cW - scaledW) / 2) : 8;
       // BIZZ-552: Center vertikalt når indhold passer ind i canvas. Store
       // diagrammer (scaledH > cH) top-alignes med 8px så scrolling/panning
       // afslører resten — undgår at brugeren mister starten af træet.
@@ -2317,7 +2320,7 @@ function DiagramForce({
   /** Toolbar with zoom controls + fullscreen toggle */
   const toolbar = (
     <div
-      className={`flex items-center justify-between py-2 -mt-2 ${isFullscreen ? 'z-10 bg-[#0a1020]' : 'sticky top-0 z-10 bg-[#0a1020]/95 backdrop-blur-sm'}`}
+      className={`flex items-center justify-between py-2 -mt-2 ${isFullscreen ? 'z-10 bg-[#0a1020]' : 'sticky top-0 z-10 bg-[#0a1020]'}`}
     >
       <h2 className="text-white font-semibold text-base flex items-center gap-2">
         <Briefcase size={16} className="text-blue-400" />
@@ -2708,8 +2711,32 @@ function DiagramForce({
         // co-owner bruger (4 3). Ejendomme er solid (ingen dash).
         const dashArray = isCrossOwnership ? '6 4' : isCoOwnerEdge ? '4 3' : undefined;
 
+        // BIZZ-1873: Byg tooltip-tekst der forklarer linjetypen og ejerandel.
+        // SVG <title> leverer native browser-tooltip + skærmlæser-tekst (WCAG 1.4.1).
+        const fromLabel = fromNode?.label ?? edge.from;
+        const toLabel = toNode?.label ?? edge.to;
+        const edgeTooltip = isCrossOwnership
+          ? `Krydsejerskab: ${fromLabel} ↔ ${toLabel}`
+          : isCoOwnerEdge
+            ? `Medejer: ${fromLabel} → ${toLabel}${edge.ejerandel ? ` (${edge.ejerandel})` : ''}`
+            : edge.personallyOwned
+              ? `Personligt ejerskab: ${fromLabel} → ${toLabel}${edge.ejerandel ? ` (${edge.ejerandel})` : ''}`
+              : isPropertyEdge
+                ? `Ejendom: ${fromLabel} → ${toLabel}${edge.ejerandel ? ` (${edge.ejerandel})` : ''}`
+                : `Ejerskab: ${fromLabel} → ${toLabel}${edge.ejerandel ? ` (${edge.ejerandel})` : ''}`;
+
         return (
           <g key={`e-${i}`}>
+            {/* BIZZ-1873: Transparent wide hit-area for easier hover — native tooltip via <title> */}
+            <path
+              d={`M ${sx} ${sy} C ${cx1} ${midY}, ${cx2} ${midY}, ${ex} ${ey}`}
+              fill="none"
+              stroke="transparent"
+              strokeWidth={12}
+              aria-label={edgeTooltip}
+            >
+              <title>{edgeTooltip}</title>
+            </path>
             <path
               d={`M ${sx} ${sy} C ${cx1} ${midY}, ${cx2} ${midY}, ${ex} ${ey}`}
               fill="none"
@@ -3050,8 +3077,12 @@ function DiagramForce({
                           Non-property nodes: label (line 1), role/CVR (line 2) */}
                       {isProperty ? (
                         (() => {
-                          const parts = node.label.split(',').map((s) => s.trim());
-                          const street = parts[0] ?? node.label;
+                          // BIZZ-1867: Vis "Adresse ukendt" i stedet for rå BFE-numre
+                          const rawLabel = node.label.startsWith('BFE ')
+                            ? 'Adresse ukendt'
+                            : node.label;
+                          const parts = rawLabel.split(',').map((s) => s.trim());
+                          const street = parts[0] ?? rawLabel;
                           const postBy = parts.slice(1).join(', ');
                           // BIZZ-1543: maxStreet 32→36 så "vejnavn nr. etage. dør"
                           // ikke trunkeres unødigt nu hvor etage er flyttet til linje 1.
@@ -3588,10 +3619,12 @@ function DiagramForce({
         }
       }
     }
-    const hasMultiOwner = ownerMap.size > 1;
+    // BIZZ-1873: Vis legend for ENHVER person-ejer (ikke kun multi-ejer) —
+    // enkeltejer-farver er ligeså forvirrede for brugeren som multi-ejer.
+    const hasPersonOwners = ownerMap.size >= 1;
 
-    // Vis legend kun når der er noget at forklare
-    if (!hasCrossOwnership && !hasMultiOwner) return null;
+    // Vis legend når der er personligt ejerskab eller krydsejerskab at forklare
+    if (!hasCrossOwnership && !hasPersonOwners) return null;
 
     const da = lang === 'da';
     return (
@@ -3608,7 +3641,7 @@ function DiagramForce({
         {hasPropertyEdges && (
           <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
             <span className="inline-block w-3 h-0.5 rounded-full bg-emerald-400/65" />
-            {da ? 'Ejendom' : 'Property'}
+            {da ? 'Ejendom (via selskab)' : 'Property (via company)'}
           </div>
         )}
         {/* Cross-ownership (dashed amber) */}
@@ -3624,8 +3657,13 @@ function DiagramForce({
             {da ? 'Krydsejerskab' : 'Cross-ownership'}
           </div>
         )}
-        {/* Multi-person ownership */}
-        {hasMultiOwner &&
+        {/* Person-ejerskab — vises for alle ejere (enkelt- og multi-ejer) */}
+        {hasPersonOwners && (
+          <div className="text-[9px] text-slate-500 font-medium mt-1">
+            {da ? 'Personligt ejede ejendomme:' : 'Personally owned properties:'}
+          </div>
+        )}
+        {hasPersonOwners &&
           Array.from(ownerMap.entries()).map(([id, name]) => (
             <div key={id} className="flex items-center gap-1.5 text-[10px] text-slate-300">
               <span

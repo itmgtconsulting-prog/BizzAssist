@@ -128,6 +128,25 @@ function extractText(xml: string, tag: string): string | null {
 }
 
 /**
+ * Extract kreditor name from KreditorInformationSamling block.
+ * Searches only within the kreditor section to avoid picking up debitor names.
+ *
+ * @param xml - HaeftelseSummarisk XML fragment
+ * @returns Kreditor name or null
+ */
+function extractKreditor(xml: string): { navn: string | null; cvr: string | null } {
+  const kreditorBlock = xml.match(
+    /KreditorInformationSamling[^>]*>([\s\S]*?)<\/[^:]*:?KreditorInformationSamling/
+  );
+  if (!kreditorBlock) return { navn: null, cvr: null };
+  const block = kreditorBlock[1];
+  return {
+    navn: extractText(block, 'LegalUnitName') || extractText(block, 'PersonName'),
+    cvr: extractText(block, 'CVRnumberIdentifier'),
+  };
+}
+
+/**
  * Hent og parse alle tinglysningsdata for et BFE via ejdsummarisk XML.
  *
  * @param bfe - BFE-nummer
@@ -191,15 +210,17 @@ async function fetchDetailForBfe(bfe: number): Promise<{
   let prioritet = 0;
   for (const [, e] of haeftelseEntries) {
     prioritet++;
+    const kreditor = extractKreditor(e);
     haeftelser.push({
       bfe_nummer: bfe,
       prioritet,
       type: extractText(e, 'DokumentType') || extractText(e, 'HaeftelseType') || 'Ukendt',
-      hovedstol: extractInt(e, 'Hovedstol'),
-      kreditor: extractText(e, 'KreditorNavn') || extractText(e, 'VirksomhedNavn'),
-      kreditor_cvr: extractText(e, 'VirksomhedCvrNummer'),
+      // e-TL XML: <HaeftelseBeloeb><BeloebValuta><BeloebVaerdi>50000</...>
+      hovedstol: extractInt(e, 'BeloebVaerdi'),
+      kreditor: kreditor.navn,
+      kreditor_cvr: kreditor.cvr,
       tinglyst_dato: extractDate(e, 'TinglysningsDato'),
-      akt_navn: extractText(e, 'AktNavn'),
+      akt_navn: extractText(e, 'DokumentAliasIdentifikator'),
       status: extractText(e, 'Status')?.toLowerCase() || 'gaeldende',
     });
   }
@@ -246,45 +267,67 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
       const windowDaysRaw = request.nextUrl.searchParams.get('windowDays');
       const windowDays = windowDaysRaw ? parseInt(windowDaysRaw, 10) : DEFAULT_WINDOW_DAYS;
-      const { datoFra, datoTil } = computeWindow(new Date(), windowDays);
 
-      logger.log(`[tl-detail] Starter: window ${datoFra}...${datoTil} (${windowDays}d)`);
+      // BIZZ-1827: Accept explicit BFE list for re-sync of existing records.
+      // Usage: ?bfes=100000,100001,100002 (comma-separated, max 500)
+      const bfesParam = request.nextUrl.searchParams.get('bfes');
+      let bfes: number[];
 
-      // 1. Fetch aendringer for window — reuse same pagination as pull-tinglysning-aendringer
-      interface AendretTinglysningsobjekt {
-        EjendomIdentifikator?: { BestemtFastEjendomNummer?: string };
-      }
-      interface AendringerResponse {
-        AendredeTinglysningsobjekterHentResultat?: {
-          AendretTinglysningsobjektSamling?: AendretTinglysningsobjekt[];
-          SoegningResultatInterval?: { FlereResultater?: boolean };
-        };
-      }
+      let datoFra = '';
+      let datoTil = '';
+      let aendringerFound = 0;
 
-      const allItems: AendretTinglysningsobjekt[] = [];
-      let fraSide = 1;
-      let pagesFetched = 0;
-      const maxPages = 50;
+      if (bfesParam) {
+        // Explicit BFE list mode — skip aendringer feed
+        bfes = bfesParam
+          .split(',')
+          .map((s) => parseInt(s.trim(), 10))
+          .filter((n) => Number.isFinite(n) && n > 0)
+          .slice(0, MAX_BFES_PER_RUN);
+        aendringerFound = bfes.length;
+        logger.log(`[tl-detail] BIZZ-1827: Explicit BFE list: ${bfes.length} BFE`);
+      } else {
+        // Standard mode — fetch from aendringer feed
+        ({ datoFra, datoTil } = computeWindow(new Date(), windowDays));
+        logger.log(`[tl-detail] Starter: window ${datoFra}...${datoTil} (${windowDays}d)`);
 
-      while (pagesFetched < maxPages) {
-        try {
-          const res = await tlPost('/tinglysningsobjekter/aendringer', {
-            AendredeTinglysningsobjekterHentType: { bog: 'EJENDOM', datoFra, datoTil, fraSide },
-          });
-          if (res.status !== 200) break;
-          const json = JSON.parse(res.body) as AendringerResponse;
-          const result = json.AendredeTinglysningsobjekterHentResultat;
-          allItems.push(...(result?.AendretTinglysningsobjektSamling ?? []));
-          pagesFetched++;
-          if (result?.SoegningResultatInterval?.FlereResultater !== true) break;
-          fraSide++;
-        } catch {
-          break;
+        // 1. Fetch aendringer for window — reuse same pagination as pull-tinglysning-aendringer
+        interface AendretTinglysningsobjekt {
+          EjendomIdentifikator?: { BestemtFastEjendomNummer?: string };
         }
-      }
+        interface AendringerResponse {
+          AendredeTinglysningsobjekterHentResultat?: {
+            AendretTinglysningsobjektSamling?: AendretTinglysningsobjekt[];
+            SoegningResultatInterval?: { FlereResultater?: boolean };
+          };
+        }
 
-      const bfes = extractUniqueBfes(allItems).slice(0, MAX_BFES_PER_RUN);
-      logger.log(`[tl-detail] ${allItems.length} aendringer -> ${bfes.length} unique BFE`);
+        const allItems: AendretTinglysningsobjekt[] = [];
+        let fraSide = 1;
+        let pagesFetched = 0;
+        const maxPages = 50;
+
+        while (pagesFetched < maxPages) {
+          try {
+            const res = await tlPost('/tinglysningsobjekter/aendringer', {
+              AendredeTinglysningsobjekterHentType: { bog: 'EJENDOM', datoFra, datoTil, fraSide },
+            });
+            if (res.status !== 200) break;
+            const json = JSON.parse(res.body) as AendringerResponse;
+            const result = json.AendredeTinglysningsobjekterHentResultat;
+            allItems.push(...(result?.AendretTinglysningsobjektSamling ?? []));
+            pagesFetched++;
+            if (result?.SoegningResultatInterval?.FlereResultater !== true) break;
+            fraSide++;
+          } catch {
+            break;
+          }
+        }
+
+        bfes = extractUniqueBfes(allItems).slice(0, MAX_BFES_PER_RUN);
+        aendringerFound = allItems.length;
+        logger.log(`[tl-detail] ${allItems.length} aendringer -> ${bfes.length} unique BFE`);
+      }
 
       // 2. Process each BFE
       let bfesProcessed = 0;
@@ -393,9 +436,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       const summary = {
         ok: true,
         windowDays,
-        datoFra,
-        datoTil,
-        aendringerFound: allItems.length,
+        datoFra: datoFra || 'explicit-bfe-list',
+        datoTil: datoTil || 'explicit-bfe-list',
+        aendringerFound,
         bfesUnique: bfes.length,
         bfesProcessed,
         handlerUpserted,

@@ -218,6 +218,40 @@ export async function GET(req: NextRequest) {
   }
   const { uuid, section, hovedBfe } = parsed.data;
 
+  // BIZZ-1910: summarisk_cache fallback — tjek FØRST om vi har cached payload.
+  // Virker for ALLE kald (med og uden section). Cache er populeret ved succes
+  // (linje ~1354) og undgår at vi rammer TL S2S ved rate-limit.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: summariskCached } = await (createAdminClient() as any)
+      .from('tinglysning_summarisk_cache')
+      .select('payload, fetched_at')
+      .eq('uuid', uuid)
+      .maybeSingle();
+    if (summariskCached?.payload) {
+      const cacheAge = Date.now() - new Date(summariskCached.fetched_at).getTime();
+      const SUMMARISK_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 timer
+      if (cacheAge < SUMMARISK_CACHE_TTL_MS) {
+        // Increment hit counter (fire-and-forget)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        void (createAdminClient() as any)
+          .from('tinglysning_summarisk_cache')
+          .update({ hit_count: (summariskCached.hit_count ?? 0) + 1 })
+          .eq('uuid', uuid)
+          .then(() => {});
+        return NextResponse.json(summariskCached.payload, {
+          headers: {
+            'Cache-Control': 'public, s-maxage=3600',
+            'X-Cache-Hit': 'summarisk-cache',
+            'X-Data-Age': String(Math.round(cacheAge / 1000)),
+          },
+        });
+      }
+    }
+  } catch {
+    /* summarisk cache lookup non-fatal */
+  }
+
   // ── BIZZ-1462: Cache-first read path — serve from local tables if fresh ──
   if (hovedBfe && !section) {
     const bfe = Number(hovedBfe);

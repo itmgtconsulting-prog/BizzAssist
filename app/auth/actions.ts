@@ -356,6 +356,43 @@ export async function signIn(
     };
   }
 
+  // ── BIZZ-1875: Single session per device ─────────────────────────────────
+  // Terminér sessioner fra ANDRE IP'er efter succesfuld login.
+  try {
+    const { headers: getHeaders } = await import('next/headers');
+    const hdrs = await getHeaders();
+    const currentIp =
+      hdrs.get('x-forwarded-for')?.split(',')[0]?.trim() ?? hdrs.get('x-real-ip') ?? 'unknown';
+    const admin = createAdminClient();
+    const {
+      data: { user: sessionUser },
+    } = await supabase.auth.getUser();
+    if (sessionUser) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: authSessions } = await (admin as any)
+        .schema('auth')
+        .from('sessions')
+        .select('id, ip')
+        .eq('user_id', sessionUser.id);
+      if (authSessions && authSessions.length > 1) {
+        const otherSessions = (authSessions as Array<{ id: string; ip: string }>).filter(
+          (s) => s.ip !== currentIp
+        );
+        for (const s of otherSessions) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (admin as any).schema('auth').from('sessions').delete().eq('id', s.id);
+        }
+        if (otherSessions.length > 0) {
+          logger.log(
+            `[signIn] BIZZ-1875: Termineret ${otherSessions.length} sessioner fra andre IP'er (current: ${currentIp})`
+          );
+        }
+      }
+    }
+  } catch {
+    // Non-fatal — login skal stadig virke
+  }
+
   // Check if MFA challenge is required.
   // OAuth users (azure, google, linkedin_oidc) already authenticate with 2FA at
   // their identity provider — do NOT add a second TOTP step for them.

@@ -167,7 +167,7 @@ async function expandCompany(
         if (co.ejer_enheds_nummer) {
           personEnMap.set(co.ejer_navn, co.ejer_enheds_nummer);
         } else {
-          // BIZZ-1445: Parse enhedsnummer fra "Ukendt ejer (en XXXXXXXXXX)" format
+          // BIZZ-1445: Parse enhedsnummer fra "Ukendt ejer (en XXXXXXXXXX)" / "Person NNNN" format
           const enMatch = co.ejer_navn.match(/\(en\s*(\d+)\)/);
           if (enMatch) {
             const parsedEn = Number(enMatch[1]);
@@ -191,7 +191,7 @@ async function expandCompany(
     }
 
     // BIZZ-1350: Hent faktiske navne for person-ejere via cvr_deltager
-    // når ejer_navn er generisk ("Ukendt ejer" etc.)
+    // når ejer_navn er generisk ("Ukendt ejer" / "Person" etc.)
     const personNameMap = new Map<number, string>();
     const enNumre = [...personEnMap.values()];
     if (enNumre.length > 0) {
@@ -262,9 +262,13 @@ async function expandCompany(
           });
         } else {
           // BIZZ-1350: Brug det faktiske navn fra cvr_deltager når
-          // ejer_navn er generisk ("Ukendt ejer" etc.)
-          const resolvedName =
+          // ejer_navn er generisk ("Ukendt ejer" / "Person" etc.)
+          let resolvedName =
             personEn && personNameMap.has(personEn) ? personNameMap.get(personEn)! : co.ejer_navn;
+          // BIZZ-1777: Erstat "Ukendt ejer (en NNNN)" med "Person" — renere fallback
+          if (/^Ukendt ejer/.test(resolvedName)) {
+            resolvedName = personEn ? `Person ${personEn}` : 'Person';
+          }
           newNodes.push({
             id: coId,
             label: resolvedName,

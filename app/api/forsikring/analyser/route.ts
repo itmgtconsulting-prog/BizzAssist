@@ -53,6 +53,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     new_document_ids?: string[];
     /** BIZZ-1404: Link til kundesag */
     sag_id?: string;
+    /** BIZZ-1833: Standard forsikringsbetingelser valgt til analysen */
+    standard_doc_ids?: string[];
   };
   try {
     body = await request.json();
@@ -60,8 +62,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  const { kunde_type, kunde_id, kunde_navn, as_of_date, document_ids, new_document_ids, sag_id } =
-    body;
+  const {
+    kunde_type,
+    kunde_id,
+    kunde_navn,
+    as_of_date,
+    document_ids,
+    new_document_ids,
+    sag_id,
+    standard_doc_ids,
+  } = body;
   if (!kunde_type || !kunde_id || !['virksomhed', 'person'].includes(kunde_type)) {
     return NextResponse.json({ error: 'Missing or invalid kunde_type/kunde_id' }, { status: 400 });
   }
@@ -151,17 +161,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // Kun policer parsed fra de valgte dokumenter
       policer = allPolicies.filter((p) => p.document_id && scopeDocIds.includes(p.document_id));
 
-      // BIZZ-1592 FIX: hvis scopeDocIds filtrerer ALLE policer væk (typisk
-      // når UI har stale document_ids fra slettede/re-uploadede docs), fald
-      // tilbage til "alle policer for kunden" så vi ikke producerer 0/N
-      // forsikrede pga. UI-state-mismatch. Match-pipeline'n filtrerer alligevel
-      // policer der ikke kan matches mod aktiver — så vi inkluderer hellere
-      // for mange policer end for få.
+      // BIZZ-1592 REVERTED: Fallback til alle policer fjernet — det gav
+      // forkerte resultater fordi policer fra TIDLIGERE uploads (andre
+      // dokumenter) blev inkluderet i analysen. Bedre med 0 forsikrede
+      // end forkerte matches fra irrelevante policer.
       if (policer.length === 0 && allPolicies.length > 0) {
         logger.warn(
-          `[forsikring/analyser] scopeDocIds filtrerede ALLE ${allPolicies.length} policer væk — fallback til alle policer (UI-state-mismatch?)`
+          `[forsikring/analyser] scopeDocIds filtrerede ALLE ${allPolicies.length} policer væk — 0 policer brugt (ingen fallback)`
         );
-        policer = allPolicies;
       } else {
         logger.log(
           `[forsikring/analyser] Scoped til ${policer.length} policer fra ${scopeDocIds.length} dokumenter (af ${allPolicies.length} total)`
@@ -322,6 +329,79 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       for (const r of results) coveragesByPolicy.set(r.id, r.rows);
     }
 
+    // BIZZ-1902: Hent standard betingelsers dækningskrav for gap-engine baseline
+    const standardBetingelserBaseline: Array<{
+      titel: string;
+      selskab: string;
+      krav: Array<{ omraade: string; beskrivelse: string; paakraevet: boolean }>;
+    }> = [];
+    if (standard_doc_ids && standard_doc_ids.length > 0) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: stdDocs } = await (admin as any)
+          .from('forsikring_standard_doc')
+          .select('id, selskab, titel, raw_content, ai_metadata')
+          .in('id', standard_doc_ids);
+
+        for (const doc of (stdDocs ?? []) as Array<{
+          id: string;
+          selskab: string;
+          titel: string;
+          raw_content: string | null;
+          ai_metadata: Record<string, unknown> | null;
+        }>) {
+          // Brug AI-metadata hvis allerede ekstraheret, ellers fallback til
+          // simpel coverage-code matching baseret på titel/kategori
+          const krav: Array<{ omraade: string; beskrivelse: string; paakraevet: boolean }> = [];
+
+          // Heuristisk: match standard betingelsers titel mod kendte coverage-koder
+          const titelLower = doc.titel.toLowerCase();
+          if (titelLower.includes('ejendom') || titelLower.includes('bygning')) {
+            krav.push(
+              {
+                omraade: 'brand_el',
+                beskrivelse: 'Brand- og el-skadeforsikring',
+                paakraevet: true,
+              },
+              { omraade: 'bygningskasko', beskrivelse: 'Bygningskasko', paakraevet: true },
+              { omraade: 'udvidet_roerskade', beskrivelse: 'Udvidet rørskade', paakraevet: true },
+              { omraade: 'stikledning', beskrivelse: 'Stikledningsforsikring', paakraevet: true },
+              { omraade: 'jordskade', beskrivelse: 'Jordskadedækning', paakraevet: true },
+              { omraade: 'huslejetab', beskrivelse: 'Huslejetabsforsikring', paakraevet: true }
+            );
+          }
+          if (titelLower.includes('ansvar') || titelLower.includes('erhverv')) {
+            krav.push(
+              {
+                omraade: 'erhvervsansvar',
+                beskrivelse: 'Erhvervsansvarsforsikring',
+                paakraevet: true,
+              },
+              { omraade: 'forurening', beskrivelse: 'Forureningsdækning', paakraevet: true },
+              {
+                omraade: 'hus_grundejer_ansvar',
+                beskrivelse: 'Hus- og grundejeransvar',
+                paakraevet: true,
+              }
+            );
+          }
+
+          if (krav.length > 0) {
+            standardBetingelserBaseline.push({
+              titel: doc.titel,
+              selskab: doc.selskab,
+              krav,
+            });
+          }
+        }
+        logger.log(
+          `[forsikring/analyser] Standard betingelser baseline: ${standardBetingelserBaseline.length} docs med ${standardBetingelserBaseline.reduce((s, d) => s + d.krav.length, 0)} krav`
+        );
+      } catch (err) {
+        logger.warn('[forsikring/analyser] Standard betingelser baseline fejlede:', err);
+      }
+    }
+
     for (const match of matches) {
       if (!match.bestMatch) continue;
       const policyCoverages = coveragesByPolicy.get(match.bestMatch.policy.id) ?? [];
@@ -330,6 +410,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         coverages: policyCoverages,
         bbr: null,
         asOfDate: new Date(),
+        standardBetingelser:
+          standardBetingelserBaseline.length > 0 ? standardBetingelserBaseline : undefined,
         branche: brancheData,
         asset: {
           type: match.aktiv.type,
@@ -399,6 +481,54 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     logger.log(
       `[forsikring/analyser] Portefølje-checks: ${portfolioGaps.length} gaps (${portfolioGaps.filter((g) => g.severity === 'critical').length} kritiske)`
     );
+
+    // 4a2. BIZZ-1890: Standard betingelser — hent metadata og tilføj INFO-gaps til analysen.
+    // Hvert linked standard-betingelses-dokument genererer ét INFO-gap der vejleder
+    // analytikeren om at sammenligne policens dækning med selskabets egne vilkår.
+    if (standard_doc_ids && standard_doc_ids.length > 0) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: stdDocs } = await (admin as any)
+          .from('forsikring_standard_doc')
+          .select('id, selskab, titel, source_url, kategori')
+          .in('id', standard_doc_ids);
+        for (const doc of (stdDocs ?? []) as Array<{
+          id: string;
+          selskab: string;
+          titel: string;
+          source_url: string;
+          kategori: string;
+        }>) {
+          allGaps.push({
+            policyId: portfolioPolicyId,
+            checkId: `GAP-STD-${doc.id.slice(0, 8).toUpperCase()}`,
+            category: 'standard_betingelser',
+            severity: 'info',
+            title: `Standard betingelse tilknyttet: ${doc.titel}`,
+            description:
+              `${doc.selskab}-vilkår (${doc.kategori}) er tilknyttet denne analyse. ` +
+              `Sammenlign policens aktuelle dækning med ${doc.selskab}s standard-betingelser ` +
+              `for at identificere eventuelle afvigelser og mangler.`,
+            recommendation: `Gennemgå ${doc.titel} og verificér at alle vilkår er opfyldt i policen.`,
+            estimatedImpactDkk: null,
+            sourceData: {
+              standard_doc_id: doc.id,
+              source_url: doc.source_url,
+              selskab: doc.selskab,
+            },
+            riskScore: 5,
+          });
+        }
+        logger.log(
+          `[forsikring/analyser] Standard-betingelser: ${(stdDocs ?? []).length} tilknyttet`
+        );
+      } catch (err) {
+        logger.warn(
+          '[forsikring/analyser] Standard betingelser lookup fejlede (best-effort):',
+          err
+        );
+      }
+    }
 
     // 4b. BIZZ-1356: Auto-trigger eksterne cross-checks (best-effort, parallel)
     try {
@@ -572,6 +702,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       const { error: linkErr } = await db.from('forsikring_analyse_documents').insert(docLinks);
       if (linkErr) {
         logger.warn('[forsikring/analyser] Link docs fejl:', linkErr.message);
+      }
+    }
+
+    // BIZZ-1833: Link standard betingelser til analysen (delt tabel, public schema)
+    if (standard_doc_ids && standard_doc_ids.length > 0) {
+      const stdLinks = standard_doc_ids.map((stdId) => ({
+        analyse_id: analyse.id,
+        standard_doc_id: stdId,
+      }));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: stdLinkErr } = await (admin as any)
+        .from('forsikring_analyse_standard_docs')
+        .insert(stdLinks);
+      if (stdLinkErr) {
+        logger.warn('[forsikring/analyser] Link standard docs fejl:', stdLinkErr.message);
+      } else {
+        logger.log(
+          `[forsikring/analyser] Linked ${stdLinks.length} standard docs til analyse ${analyse.id}`
+        );
       }
     }
 

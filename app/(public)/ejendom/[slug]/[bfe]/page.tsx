@@ -77,10 +77,6 @@ interface VPEsResponse {
 // ─── ISR cache-periode ───────────────────────────────────────────────────────
 // 3600 sekunder (1 time) — BBR-data bekræftet fungerende.
 export const revalidate = 3600;
-// BIZZ-1923: Force ISR — Next.js 16 default'er fetch til no-store som
-// trigger dynamic mode og overskriver revalidate. fetchCache = 'default-cache'
-// sikrer at alle fetches default'er til cache med revalidation.
-export const fetchCache = 'default-cache';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

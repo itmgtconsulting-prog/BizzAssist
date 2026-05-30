@@ -90,7 +90,7 @@ export async function GET(req: NextRequest) {
     let query = serviceClient
       .from('forsikring_standard_doc')
       .select(
-        'id, selskab, kategori, titel, source_url, added_via, verified, created_at, raw_content, added_by_user'
+        'id, selskab, kategori, titel, source_url, added_via, verified, created_at, raw_content, added_by_user, omraade, gyldig_fra, is_valid_standard'
       )
       .order('created_at', { ascending: false })
       .limit(100);
@@ -110,7 +110,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
 
-    const result: StandardDocSummary[] = (
+    const result = (
       (data ?? []) as Array<{
         id: string;
         selskab: string;
@@ -122,6 +122,9 @@ export async function GET(req: NextRequest) {
         created_at: string;
         raw_content: string | null;
         added_by_user: string | null;
+        omraade: string | null;
+        gyldig_fra: string | null;
+        is_valid_standard: boolean;
       }>
     ).map((d) => ({
       id: d.id,
@@ -134,6 +137,9 @@ export async function GET(req: NextRequest) {
       created_at: d.created_at,
       has_content: !!d.raw_content,
       added_by_user: d.added_by_user,
+      omraade: d.omraade,
+      gyldig_fra: d.gyldig_fra,
+      is_valid_standard: d.is_valid_standard,
     }));
 
     return NextResponse.json(result);

@@ -49,7 +49,13 @@ export async function fetchDawa(
 
   logger.log(`[DAWA deprecated] call from ${caller} → ${endpoint} (deadline 2026-07-01)`);
 
-  return fetch(url, options);
+  // BIZZ-1923: Default ISR revalidate — forhindrer at bare fetchDawa()-kald
+  // trigger no-store i Next.js 16 og ødelægger ISR for SEO-routes
+  const mergedOptions = {
+    ...options,
+    next: { revalidate: 3600, ...(options?.next ?? {}) },
+  };
+  return fetch(url, mergedOptions);
 }
 
 /**

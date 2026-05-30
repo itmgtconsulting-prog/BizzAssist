@@ -1587,6 +1587,8 @@ export async function resolveEnhedByDawaId(dawaId: string): Promise<{
               query: { bool: { must: [{ match_phrase: { address: betegnelse } }] } },
             }),
             signal: AbortSignal.timeout(5000),
+            // BIZZ-1923: ISR-fix
+            next: { revalidate: 3600 },
           }
         );
         if (esRes.ok) {
@@ -2098,6 +2100,8 @@ async function resolveHierarkiChain(
             variables: { vt: nowDafDateTime(), bfe: currentBfe },
           }),
           signal: AbortSignal.timeout(8_000),
+          // BIZZ-1923: ISR-fix
+          next: { revalidate: 3600 },
         }
       );
       if (!resp.ok) {

@@ -199,7 +199,10 @@ export default async function EjendommeDetailPage({
           // BIZZ-1879: Øget igen fra 8s til 15s — store ejendomme som Carlsberg
           // Byen (24-etagers bygning med mange enheder) tager 10-12s.
           bbrResult = await Promise.race([
-            fetchBbrForAddress(id),
+            fetchBbrForAddress(id, {
+              etage: adresse.etage ?? undefined,
+              doer: adresse.dør ?? undefined,
+            }),
             new Promise<never>((_, reject) =>
               setTimeout(() => reject(new Error('BBR_TIMEOUT')), 15000)
             ),

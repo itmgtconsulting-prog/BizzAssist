@@ -311,6 +311,69 @@ export default function EjendomEjerforholdTab({
                 return { ...node, children: node.children.map(enrichWithOwnership) };
               }
               const enriched = enrichWithOwnership(strukturTree);
+
+              // BIZZ-1901: Tilføj uplacerede lejligheder som ekstra hovedejendomme.
+              // Lejligheder fra gader der ikke matcher eksisterende hovedejendomme
+              // (fx J.C. Jacobsens Gade i Carlsberg Byen) grupperes per vejnavn.
+              const placedHusnrs = new Set(
+                enriched.children
+                  .filter((c) => c.niveau === 'hovedejendom' && c.children.length > 0)
+                  .map((c) => extractHusnr(c.adresse))
+              );
+              const unplaced = lejligheder!.filter(
+                (l) => !placedHusnrs.has(extractHusnr(l.adresse))
+              );
+              if (unplaced.length > 0) {
+                // Gruppér per vejnavn+husnr
+                const groups = new Map<string, typeof unplaced>();
+                for (const l of unplaced) {
+                  const key =
+                    l.adresse
+                      .split(',')[0]
+                      ?.replace(/\s+\d+\..*/, '')
+                      .trim() ?? 'Ukendt';
+                  const husnr = extractHusnr(l.adresse);
+                  const groupKey = `${key} ${husnr}`;
+                  if (!groups.has(groupKey)) groups.set(groupKey, []);
+                  groups.get(groupKey)!.push(l);
+                }
+                for (const [groupAddr, groupLej] of groups) {
+                  enriched.children.push({
+                    bfe: 0,
+                    adresse: `${groupAddr}, ${groupLej[0]?.adresse.split(',').pop()?.trim() ?? ''}`,
+                    niveau: 'hovedejendom',
+                    dawaId: null,
+                    ejendomsvaerdi: null,
+                    grundvaerdi: null,
+                    vurderingsaar: null,
+                    tlVurdering: null,
+                    areal: null,
+                    vaerelser: null,
+                    ejer: null,
+                    ejertype: null,
+                    koebspris: null,
+                    koebsdato: null,
+                    children: groupLej.map((l) => ({
+                      bfe: l.bfe,
+                      adresse: l.adresse,
+                      niveau: 'ejerlejlighed' as const,
+                      dawaId: l.dawaId,
+                      ejendomsvaerdi: null,
+                      grundvaerdi: null,
+                      vurderingsaar: null,
+                      tlVurdering: null,
+                      areal: l.areal,
+                      vaerelser: null,
+                      ejer: l.ejer,
+                      ejertype: l.ejertype,
+                      koebspris: l.koebspris,
+                      koebsdato: l.koebsdato,
+                      children: [],
+                    })),
+                  });
+                }
+              }
+
               return (
                 <div className="space-y-4">
                   <SectionTitle title={t.ownershipStructure} />

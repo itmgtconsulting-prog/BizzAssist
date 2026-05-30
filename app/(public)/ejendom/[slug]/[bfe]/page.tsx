@@ -77,6 +77,13 @@ interface VPEsResponse {
 // ─── ISR cache-periode ───────────────────────────────────────────────────────
 // 3600 sekunder (1 time) — BBR-data bekræftet fungerende.
 export const revalidate = 3600;
+// BIZZ-1923: Tom generateStaticParams + dynamicParams = true enabler on-demand ISR.
+// Uden dette behandler Next.js 16 dynamic routes som fully dynamic (no-store).
+// Tom array = ingen pre-rendering, men pages caches on-demand med revalidate.
+export const dynamicParams = true;
+export async function generateStaticParams() {
+  return [];
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

@@ -814,7 +814,36 @@ async function fetchBFENummer(dawaId: string): Promise<{
     }
 
     // Bestem primær BFE: ejerlejlighed hvis fundet, ellers jordstykke
-    const primaryBfe = ejerlejlighedBfe ?? jordBfe;
+    let primaryBfe = ejerlejlighedBfe ?? jordBfe;
+
+    // BIZZ-1894/1901: Cache-fallback for ejerlejligheder hvor VP/BBR
+    // returnerer SFE-BFE i stedet for individuel lejligheds-BFE.
+    // bfe_adresse_cache er backfill-populeret med korrekte BFE'er.
+    if (harEtage && (!ejerlejlighedBfe || ejerlejlighedBfe === jordBfe) && adresseTekst) {
+      try {
+        const admin = (await import('@/lib/supabase/admin')).createAdminClient();
+        // Brug adresse + etage + dør til præcis match
+        const vejHusnr = adresseTekst.split(',')[0]?.trim();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let cacheQuery = (admin as any)
+          .from('bfe_adresse_cache')
+          .select('bfe_nummer')
+          .ilike('adresse', `${vejHusnr}%`);
+        if (etage) cacheQuery = cacheQuery.eq('etage', etage);
+        if (doer) cacheQuery = cacheQuery.eq('doer', doer);
+        const { data: cacheRow } = await cacheQuery.maybeSingle();
+        if (cacheRow?.bfe_nummer && cacheRow.bfe_nummer !== jordBfe) {
+          logger.log(
+            `[fetchBFENummer] Cache-fallback: BFE ${cacheRow.bfe_nummer} for ${adresseTekst} (VP/BBR gav ${primaryBfe})`
+          );
+          primaryBfe = cacheRow.bfe_nummer;
+          // Opdater ejerlejlighedBfe så resten af pipelinen bruger det korrekte BFE
+          ejerlejlighedBfe = cacheRow.bfe_nummer;
+        }
+      } catch {
+        /* cache fallback non-fatal */
+      }
+    }
 
     return {
       bfeNummer: primaryBfe,

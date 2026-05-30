@@ -850,6 +850,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
     // BIZZ-1901: Supplér med DAWA-adgangsadresser der ikke er i TL-resultatet.
     // Carlsberg Byen har hovedejendomme (fx J.C. Jacobsens Gade) der ikke
     // returneres fra TL matrikel-søgning men har adgangsadresser i DAWA.
+    logger.log(
+      `[ejendom-struktur] DAWA supplement check: ejerlav=${ejerlavKode} matr=${matrikelnr} children=${root.children.length}`
+    );
     if (ejerlavKode && matrikelnr && root.children.length > 0) {
       try {
         const dawaRes = await fetchDawa(
@@ -857,6 +860,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
           { signal: AbortSignal.timeout(5000), next: { revalidate: 3600 } },
           { caller: 'ejendom-struktur.dawa-supplement' }
         );
+        logger.log(`[ejendom-struktur] DAWA supplement: ${dawaRes.status}`);
         if (dawaRes.ok) {
           const dawaAdresser = (await dawaRes.json()) as Array<{
             id: string;

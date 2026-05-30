@@ -855,10 +855,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
     );
     if (ejerlavKode && matrikelnr && root.children.length > 0) {
       try {
-        const dawaRes = await fetchDawa(
-          `https://api.dataforsyningen.dk/adgangsadresser?ejerlavkode=${ejerlavKode}&matrikelnr=${encodeURIComponent(matrikelnr)}&per_side=20&format=json&struktur=mini`,
-          { signal: AbortSignal.timeout(5000), next: { revalidate: 3600 } },
-          { caller: 'ejendom-struktur.dawa-supplement' }
+        // BIZZ-1901: Plain fetch — fetchDawa wrapper kan have ISR-issues
+        const dawaRes = await fetch(
+          `https://api.dataforsyningen.dk/adgangsadresser?ejerlavkode=${ejerlavKode}&matrikelnr=${encodeURIComponent(matrikelnr)}&per_side=30&format=json&struktur=mini`,
+          { signal: AbortSignal.timeout(5000), next: { revalidate: 3600 } }
         );
         logger.log(`[ejendom-struktur] DAWA supplement: ${dawaRes.status}`);
         if (dawaRes.ok) {

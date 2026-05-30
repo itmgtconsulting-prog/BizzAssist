@@ -1037,7 +1037,9 @@ export default function EjendomDetaljeClient({
     // Vis struktur for hele hierarkiet: moderejendommen, children (ejerlejligheder),
     // ejendomme der er opdelt ifølge matrikeldata, og SFE'er uden ejerlejlighedBfe.
     const erParentSfe2 = !dawaAdresse?.etage && hasEjerlavMatr2 && !bbrData?.ejerlejlighedBfe;
-    if (!erModer && !erChild && !matOpdelt && !erParentSfe2) return;
+    // BIZZ-1901: Child-ejerlejlighed uden BFE (BBR 404) — vis struktur via DAWA jordstykke
+    const erChildUdenBfe2 = !!dawaAdresse?.etage && hasEjerlavMatr2 && !bbrData?.ejerlejlighedBfe;
+    if (!erModer && !erChild && !matOpdelt && !erParentSfe2 && !erChildUdenBfe2) return;
 
     const ejerlavKode = bbrRel?.ejerlavKode ?? matJs?.ejerlavskode ?? dawaEjerlav2;
     const matrikelnr = bbrRel?.matrikelnr ?? matJs?.matrikelnummer ?? dawaMatr2;

@@ -1270,9 +1270,10 @@ export default function EjendomDetaljeClient({
     // BIZZ-1585: dawaAdresse er nu obligatorisk for at skelne leaf-ejerlejlighed
     // fra moderejandom (etage-checket på linje ~989). Hvis adresse-fetch er
     // server-side prefetched (page.tsx) er der ingen reel latency-hit.
+    // BIZZ-1894: cachedBfe tilføjet — re-kør når BFE resolves fra cache
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, erDAWA, bbrData, dawaAdresse, wave2Ready]);
+  }, [id, erDAWA, bbrData, dawaAdresse, wave2Ready, cachedBfe]);
 
   // BIZZ-1752: Re-fetch salgshistorik når AI akt-ekstraktion er fuldført
   useEffect(() => {

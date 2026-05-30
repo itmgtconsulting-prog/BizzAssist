@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import { Suspense } from 'react';
-import { headers } from 'next/headers';
+// BIZZ-1923: headers() fjernet — tvang alle pages til dynamic mode
 import { Geist } from 'next/font/google';
 import './globals.css';
 import 'mapbox-gl/dist/mapbox-gl.css';
@@ -8,8 +8,8 @@ import { LanguageProvider } from '@/app/context/LanguageContext';
 import ServiceWorkerRegistration from '@/app/components/ServiceWorkerRegistration';
 import HideNextDevIndicator from '@/app/components/HideNextDevIndicator';
 import CookieBanner from '@/app/components/CookieBanner';
-import { Analytics } from '@vercel/analytics/next';
-import { getConsentFromCookieHeader } from '@/app/lib/cookieConsent';
+import AnalyticsWithConsent from '@/app/components/AnalyticsWithConsent';
+// BIZZ-1923: getConsentFromCookieHeader fjernet — erstattet af client-side check
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -83,12 +83,10 @@ export const viewport: Viewport = {
  * include Vercel Analytics. Analytics are only rendered when the user has
  * explicitly accepted cookies via the GDPR banner.
  */
-export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const headerStore = await headers();
-  const cookieHeader = headerStore.get('cookie');
-  const consent = getConsentFromCookieHeader(cookieHeader);
-  const analyticsAllowed = consent === 'accepted';
-
+// BIZZ-1923: Root layout må IKKE kalde headers()/cookies() — det tvinger
+// alle pages (inkl. public SEO routes) til dynamic mode og ødelægger ISR.
+// Analytics consent tjekkes nu client-side via AnalyticsWithConsent.
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="da" className={`${geistSans.variable} h-full`}>
       <head>
@@ -105,7 +103,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 tilføj separat mount her hvis behov opstår. */}
             <HideNextDevIndicator />
             <ServiceWorkerRegistration />
-            {analyticsAllowed && <Analytics />}
+            <AnalyticsWithConsent />
           </LanguageProvider>
         </Suspense>
       </body>

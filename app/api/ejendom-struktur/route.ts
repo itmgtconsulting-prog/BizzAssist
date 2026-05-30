@@ -914,14 +914,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
     logger.log(`[ejendom-struktur] Final tree: ${root.children.length} children`);
 
     return NextResponse.json(
-      {
-        tree: root,
-        fejl: null,
-        _debug: {
-          supplementRan: !!(ejerlavKode && matrikelnr),
-          childrenBefore: root.children.length,
-        },
-      },
+      { tree: root, fejl: null },
       {
         status: 200,
         headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },

@@ -55,7 +55,11 @@ describe('fetchDawa (BIZZ-537)', () => {
     await fetchDawa('https://api.dataforsyningen.dk/bfe/12345', init, { caller: 'test.bfe' });
 
     expect(mockFetch).toHaveBeenCalledOnce();
-    expect(mockFetch).toHaveBeenCalledWith('https://api.dataforsyningen.dk/bfe/12345', init);
+    // BIZZ-1923: fetchDawa adds default next.revalidate for ISR compatibility
+    expect(mockFetch).toHaveBeenCalledWith('https://api.dataforsyningen.dk/bfe/12345', {
+      ...init,
+      next: { revalidate: 3600 },
+    });
   });
 
   it('emits a Sentry breadcrumb with caller + path-only endpoint', async () => {

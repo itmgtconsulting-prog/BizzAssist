@@ -117,6 +117,9 @@ async function darQuery<T = Record<string, unknown>>(query: string): Promise<T |
         headers,
         body: JSON.stringify({ query }),
         signal: AbortSignal.timeout(isProxy ? proxyTimeout() : 8000),
+        // BIZZ-1923: ISR-fix — uden next.revalidate trigger POST-fetch no-store
+        // i Next.js 16 og ødelægger ISR for hele SEO-route'en
+        next: { revalidate: 3600 },
       });
       if (!res.ok) {
         logger.error(

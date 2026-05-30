@@ -265,6 +265,8 @@ export default function EjendomDetaljeClient({
     prefetched?.dawaAdresse ?? null
   );
   const [dawaJordstykke, setDawaJordstykke] = useState<DawaJordstykke | null>(null);
+  /** BIZZ-1894: Cached BFE fra bfe_adresse_cache — fallback når BBR fejler */
+  const [cachedBfe, setCachedBfe] = useState<number | undefined>(undefined);
   // true = loader, false = fejl, null = idle/done
   const [dawaStatus, setDawaStatus] = useState<'loader' | 'fejl' | 'ok' | 'idle'>(
     prefetched?.dawaAdresse ? 'ok' : 'idle'
@@ -880,6 +882,33 @@ export default function EjendomDetaljeClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bbrData, dawaAdresse, wave2Ready]);
 
+  // BIZZ-1894: Hent BFE fra bfe_adresse_cache når BBR fejler (404).
+  // Uden dette kan child-ejerlejligheder ikke hente ejerskab/chain data.
+  useEffect(() => {
+    if (!erDAWA || !dawaAdresse?.etage) return;
+    // Kun kør fallback hvis BBR ikke har et BFE
+    if (bbrData?.ejendomsrelationer?.[0]?.bfeNummer || bbrData?.ejerlejlighedBfe) return;
+    const controller = new AbortController();
+    const lookupParams = new URLSearchParams({ dawaId: id });
+    if (dawaAdresse) {
+      lookupParams.set('adresse', `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}`);
+      lookupParams.set('postnr', dawaAdresse.postnr);
+      if (dawaAdresse.etage) lookupParams.set('etage', dawaAdresse.etage);
+      if (dawaAdresse.dør) lookupParams.set('doer', dawaAdresse.dør);
+    }
+    fetch(`/api/bfe-lookup?${lookupParams}`, {
+      signal: controller.signal,
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { bfe?: number } | null) => {
+        if (data?.bfe && data.bfe > 0 && !controller.signal.aborted) {
+          setCachedBfe(data.bfe);
+        }
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [id, erDAWA, dawaAdresse, bbrData]);
+
   /**
    * Henter CVR-virksomheder på adressen via /api/cvr når DAWA-adressen er klar.
    * Fejler stille — viser tom liste hvis ingen resultater eller fejl.
@@ -1037,7 +1066,9 @@ export default function EjendomDetaljeClient({
     // Vis struktur for hele hierarkiet: moderejendommen, children (ejerlejligheder),
     // ejendomme der er opdelt ifølge matrikeldata, og SFE'er uden ejerlejlighedBfe.
     const erParentSfe2 = !dawaAdresse?.etage && hasEjerlavMatr2 && !bbrData?.ejerlejlighedBfe;
-    if (!erModer && !erChild && !matOpdelt && !erParentSfe2) return;
+    // BIZZ-1901: Child-ejerlejlighed uden BFE (BBR 404) — vis struktur via DAWA jordstykke
+    const erChildUdenBfe2 = !!dawaAdresse?.etage && hasEjerlavMatr2 && !bbrData?.ejerlejlighedBfe;
+    if (!erModer && !erChild && !matOpdelt && !erParentSfe2 && !erChildUdenBfe2) return;
 
     const ejerlavKode = bbrRel?.ejerlavKode ?? matJs?.ejerlavskode ?? dawaEjerlav2;
     const matrikelnr = bbrRel?.matrikelnr ?? matJs?.matrikelnummer ?? dawaMatr2;
@@ -1086,7 +1117,8 @@ export default function EjendomDetaljeClient({
   useEffect(() => {
     // BIZZ-1582: Defer until wave-2
     if (!wave2Ready) return;
-    if (!erDAWA || !bbrData?.ejendomsrelationer?.length) return;
+    // BIZZ-1894: Tillad også når cachedBfe er sat (BBR 404 men cache har BFE)
+    if (!erDAWA || (!bbrData?.ejendomsrelationer?.length && !cachedBfe)) return;
     // BIZZ-1585: Vent på dawaAdresse for at skelne leaf-ejerlejlighed (har etage)
     // fra moderejandom (ingen etage). Tidligere BIZZ-1213 fjernede dawaAdresse-
     // dep for at parallelisere — men det gjorde erModer=true for BÅDE leaf og
@@ -1095,10 +1127,10 @@ export default function EjendomDetaljeClient({
     // dawaAdresse er typisk allerede prefetched server-side, så latency-hit er
     // få 100ms — bedre end at vise forkerte ejer-data eller "Opdelt ejerskab".
     if (!dawaAdresse) return;
-    const erModer = !dawaAdresse.etage && !!bbrData.ejerlejlighedBfe;
+    const erModer = !dawaAdresse.etage && !!bbrData?.ejerlejlighedBfe;
     const bfeNummer = erModer
-      ? (bbrData.moderBfe ?? bbrData.ejendomsrelationer[0]?.bfeNummer)
-      : bbrData.ejendomsrelationer[0]?.bfeNummer;
+      ? (bbrData?.moderBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer)
+      : (bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? bbrData?.ejerlejlighedBfe ?? cachedBfe);
     if (!bfeNummer) return;
 
     const controller = new AbortController();
@@ -1161,7 +1193,7 @@ export default function EjendomDetaljeClient({
     // for moderejendommen. Moder har også ejerlejlighedBfe sat, men at sende
     // type=ejerlejlighed for moder skipper TL og EJF returnerer tomt (ejerskab
     // er på child-BFE-niveau, ikke moderBFE-niveau).
-    const erEjerlej = !!bbrData.ejerlejlighedBfe && !erModer;
+    const erEjerlej = !!bbrData?.ejerlejlighedBfe && !erModer;
     // BIZZ-1586: Brug mellemrum (ikke komma) mellem husnr og etage så
     // diagram-renderen ikke splitter etage/dør ned på linje 2. Komma kun
     // mellem adresselinje og postnr/by. Matcher mønstret fra BIZZ-1543
@@ -1239,9 +1271,10 @@ export default function EjendomDetaljeClient({
     // BIZZ-1585: dawaAdresse er nu obligatorisk for at skelne leaf-ejerlejlighed
     // fra moderejandom (etage-checket på linje ~989). Hvis adresse-fetch er
     // server-side prefetched (page.tsx) er der ingen reel latency-hit.
+    // BIZZ-1894: cachedBfe tilføjet — re-kør når BFE resolves fra cache
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, erDAWA, bbrData, dawaAdresse, wave2Ready]);
+  }, [id, erDAWA, bbrData, dawaAdresse, wave2Ready, cachedBfe]);
 
   // BIZZ-1752: Re-fetch salgshistorik når AI akt-ekstraktion er fuldført
   useEffect(() => {
@@ -1787,6 +1820,7 @@ export default function EjendomDetaljeClient({
                   bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
                   bbrData?.ejerlejlighedBfe ??
                   bbrData?.moderBfe ??
+                  cachedBfe ??
                   undefined
                 }
                 currentDawaId={erDAWA ? id : undefined}

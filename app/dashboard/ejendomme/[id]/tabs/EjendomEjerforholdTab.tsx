@@ -205,6 +205,10 @@ export default function EjendomEjerforholdTab({
             (currentBfe && currentBfe > 0 ? currentBfe : null);
 
           // Hovedejendom opdelt i EL — vis strukturtræ med ejer-data
+          // BIZZ-1901: Også vis for children der har strukturTree via DAWA fallback
+          // NB: For erModer renderes strukturtræet som primært indhold (early return).
+          // For children vises strukturtræet som en SEKTION (ikke early return) —
+          // EjerKort + diagram skal stadig renderes nedenfor.
           if (erModer) {
             // BIZZ-1289: Skeleton mens strukturtræ/lejligheder hentes
             if (strukturLoader || lejlighederLoader) {

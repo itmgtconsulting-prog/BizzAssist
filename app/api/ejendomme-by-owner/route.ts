@@ -104,6 +104,8 @@ export interface EjendomSummary {
   erhvervsAreal?: number | null;
   /** BIZZ-569: Matrikel m² fra DAWA jordstykker (registreret_areal) */
   matrikelAreal?: number | null;
+  /** BIZZ-1864: AI-verificeret ejerforening */
+  aiVerified?: boolean;
 }
 
 /** API-svaret fra denne route */

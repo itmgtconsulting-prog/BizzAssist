@@ -639,6 +639,8 @@ async function fetchBFENummer(dawaId: string): Promise<{
           },
           body: JSON.stringify(esQuery),
           signal: AbortSignal.timeout(8000),
+          // BIZZ-1923: ISR-fix — uden revalidate trigger no-store i Next.js 16
+          next: { revalidate: 3600 },
         });
         if (esRes.ok) {
           const esData = (await esRes.json()) as {
@@ -760,7 +762,7 @@ async function fetchBFENummer(dawaId: string): Promise<{
                 try {
                   const altJsRes = await fetchDawa(
                     `${DAWA_BASE_URL}/jordstykker?bfenummer=${bfe}&struktur=mini`,
-                    { signal: AbortSignal.timeout(3000) },
+                    { signal: AbortSignal.timeout(3000), next: { revalidate: 3600 } },
                     { caller: 'fetchBbrData.tl-fallback.cross-kommune' }
                   );
                   if (altJsRes.ok) {
@@ -934,6 +936,8 @@ async function lookupAdgangsadresseByBfeViaVurderingsportalen(bfe: number): Prom
           query: { match_phrase: { bfeNumbers: String(bfe) } },
         }),
         signal: AbortSignal.timeout(5000),
+        // BIZZ-1923: ISR-fix
+        next: { revalidate: 3600 },
       }
     );
     if (!esRes.ok) return null;

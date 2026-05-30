@@ -265,6 +265,8 @@ export default function EjendomDetaljeClient({
     prefetched?.dawaAdresse ?? null
   );
   const [dawaJordstykke, setDawaJordstykke] = useState<DawaJordstykke | null>(null);
+  /** BIZZ-1894: Cached BFE fra bfe_adresse_cache — fallback når BBR fejler */
+  const [cachedBfe, setCachedBfe] = useState<number | undefined>(undefined);
   // true = loader, false = fejl, null = idle/done
   const [dawaStatus, setDawaStatus] = useState<'loader' | 'fejl' | 'ok' | 'idle'>(
     prefetched?.dawaAdresse ? 'ok' : 'idle'
@@ -880,6 +882,26 @@ export default function EjendomDetaljeClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bbrData, dawaAdresse, wave2Ready]);
 
+  // BIZZ-1894: Hent BFE fra bfe_adresse_cache når BBR fejler (404).
+  // Uden dette kan child-ejerlejligheder ikke hente ejerskab/chain data.
+  useEffect(() => {
+    if (!erDAWA || !dawaAdresse?.etage) return;
+    // Kun kør fallback hvis BBR ikke har et BFE
+    if (bbrData?.ejendomsrelationer?.[0]?.bfeNummer || bbrData?.ejerlejlighedBfe) return;
+    const controller = new AbortController();
+    fetch(`/api/bfe-lookup?dawaId=${encodeURIComponent(id)}`, {
+      signal: controller.signal,
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { bfe?: number } | null) => {
+        if (data?.bfe && data.bfe > 0 && !controller.signal.aborted) {
+          setCachedBfe(data.bfe);
+        }
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [id, erDAWA, dawaAdresse, bbrData]);
+
   /**
    * Henter CVR-virksomheder på adressen via /api/cvr når DAWA-adressen er klar.
    * Fejler stille — viser tom liste hvis ingen resultater eller fejl.
@@ -1100,7 +1122,7 @@ export default function EjendomDetaljeClient({
     const erModer = !dawaAdresse.etage && !!bbrData.ejerlejlighedBfe;
     const bfeNummer = erModer
       ? (bbrData.moderBfe ?? bbrData.ejendomsrelationer[0]?.bfeNummer)
-      : bbrData.ejendomsrelationer[0]?.bfeNummer;
+      : (bbrData.ejendomsrelationer[0]?.bfeNummer ?? bbrData.ejerlejlighedBfe ?? cachedBfe);
     if (!bfeNummer) return;
 
     const controller = new AbortController();
@@ -1789,6 +1811,7 @@ export default function EjendomDetaljeClient({
                   bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
                   bbrData?.ejerlejlighedBfe ??
                   bbrData?.moderBfe ??
+                  cachedBfe ??
                   undefined
                 }
                 currentDawaId={erDAWA ? id : undefined}

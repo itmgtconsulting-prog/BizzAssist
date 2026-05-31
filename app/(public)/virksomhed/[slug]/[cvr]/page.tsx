@@ -33,8 +33,17 @@ import {
 import { generateVirksomhedSlug } from '@/app/lib/slug';
 import PublicPricingSection from '@/app/(public)/components/PublicPricingSection';
 
-// ─── ISR cache-periode: 7 dage ─────────────────────────────────────────────
+// ─── ISR config ────────────────────────────────────────────────────────────
 export const revalidate = 604800;
+export const dynamicParams = true;
+
+/**
+ * Return empty array so Next.js enables ISR for dynamic routes.
+ * Pages are generated on-demand and cached for 7 days.
+ */
+export async function generateStaticParams() {
+  return [];
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

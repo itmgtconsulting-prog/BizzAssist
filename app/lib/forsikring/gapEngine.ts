@@ -151,6 +151,12 @@ function makeMissingCoverageCheck(
   return (input) => {
     // BIZZ-1609: Bygningsdæknings-checks kun relevante for ejendomme
     if (isNonEjendom(input)) return null;
+    // BIZZ-1933: Hvis den matchede police ikke har NOGEN parsede dækninger,
+    // stammer den fra et resumé-/oversigtsdokument uden dækningsdetaljer
+    // (fx mægler-forsikringsoversigt). Manglende dækningsdata ≠ manglende
+    // dækning — undlad at flage hver enkelt bygningsdækning som "manglende",
+    // ellers opstår falske positiver for hver police vi ikke kan læse i detaljer.
+    if (input.coverages.length === 0) return null;
     if (hasCoverage(input.coverages, code)) return null;
     return {
       check_id: checkId,
@@ -186,6 +192,8 @@ const checkMissingSanitet = makeMissingCoverageCheck(
 /** GAP-012: Mangler insekt/svamp-dækning (kritisk for ældre bygninger) */
 const checkMissingInsektSvamp: CheckFn = (input) => {
   if (isNonEjendom(input)) return null;
+  // BIZZ-1933: Spring over hvis policen ikke har parsede dækninger (resumé-dokument).
+  if (input.coverages.length === 0) return null;
   if (hasCoverage(input.coverages, 'insekt_svamp')) return null;
   const buildYear = input.policy.building_year_built;
   // Skærp severity for bygninger >50 år

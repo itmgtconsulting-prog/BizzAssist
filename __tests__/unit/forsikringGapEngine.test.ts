@@ -226,6 +226,41 @@ describe('runGapEngine — manglende dækninger', () => {
     expect(gaps.find((g) => g.check_id === 'GAP-013')).toBeDefined();
     expect(gaps.find((g) => g.check_id === 'GAP-014')).toBeDefined();
   });
+
+  // BIZZ-1933: En police parset fra et resumé-/oversigtsdokument (fx mægler-
+  // forsikringsoversigt som "RTM Forsikringsoversigt.pdf") har INGEN parsede
+  // dækninger. Gap-engine må ikke flage hver bygningsdækning som "manglende" —
+  // manglende dækningsdata betyder ikke at dækningen mangler. Tidligere gav det
+  // 7 falske "Manglende dækning"-gaps pr. ejendom matchet til en resumé-police.
+  it('BIZZ-1933: flagger INGEN manglende-dækning når policen ingen parsede dækninger har', () => {
+    const gaps = runGapEngine(
+      makeInput({
+        coverages: [],
+        asset: { type: 'ejendom', vaerdiDkk: 2_000_000, matchScore: 70 },
+      })
+    );
+    const daekningGaps = gaps.filter((g) => g.category === 'daekning');
+    expect(daekningGaps).toHaveLength(0);
+    for (const id of [
+      'GAP-010',
+      'GAP-011',
+      'GAP-012',
+      'GAP-013',
+      'GAP-014',
+      'GAP-015',
+      'GAP-016',
+    ]) {
+      expect(gaps.find((g) => g.check_id === id)).toBeUndefined();
+    }
+  });
+
+  // BIZZ-1933: Modsat — en police MED dækningsdata skal stadig flage de
+  // dækninger der faktisk mangler (sikrer at guarden ikke slår alle checks fra).
+  it('BIZZ-1933: flager stadig manglende dækning når policen har delvise dækninger', () => {
+    const coverages = [makeCoverage('brand_el'), makeCoverage('bygningskasko')];
+    const gaps = runGapEngine(makeInput({ coverages }));
+    expect(gaps.find((g) => g.check_id === 'GAP-010')).toBeDefined();
+  });
 });
 
 // ─── Aftale-tjeks ─────────────────────────────────────────────────

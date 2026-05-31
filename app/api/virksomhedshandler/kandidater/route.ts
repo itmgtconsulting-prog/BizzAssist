@@ -19,7 +19,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
-import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
 
 export const runtime = 'nodejs';
@@ -45,45 +44,54 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const offset = Number(searchParams.get('offset')) || 0;
 
   try {
-    const admin = createAdminClient();
+    // admin client unused — using Management API to bypass PostgREST schema-cache
 
-    let query = admin
-      .from('mv_virksomhedshandel_kandidater')
-      .select('*', { count: 'exact' })
-      .neq('signal_type', 'unchanged')
-      .order('sidst_opdateret', { ascending: false })
-      .range(offset, offset + limit - 1);
-
+    // BIZZ-1935: Supabase Management API for SQL — bypasser PostgREST schema-cache
+    // som ikke ser sidst_opdateret kolonnen på nye MV'er.
+    const conditions: string[] = ["signal_type != 'unchanged'"];
     if (signalTypes) {
-      const types = signalTypes.split(',').filter(Boolean);
-      if (types.length > 0) {
-        query = query.in('signal_type', types);
-      }
+      const types = signalTypes
+        .split(',')
+        .filter(Boolean)
+        .map((t) => t.replace(/[^a-z_]/g, ''));
+      if (types.length > 0)
+        conditions.push(`signal_type IN (${types.map((t) => `'${t}'`).join(',')})`);
     } else if (signalType) {
-      query = query.eq('signal_type', signalType);
+      conditions.push(`signal_type = '${signalType.replace(/[^a-z_]/g, '')}'`);
     }
-    // Filtrer på sidst_opdateret (indrapporteringsdato) — gyldig_fra er 1900-01-01 for alle rows
-    if (fromDate) {
-      query = query.gte('sidst_opdateret', fromDate);
-    }
-    if (toDate) {
-      query = query.lte('sidst_opdateret', toDate);
+    if (fromDate) conditions.push(`sidst_opdateret >= '${fromDate.replace(/[^0-9-]/g, '')}'`);
+    if (toDate) conditions.push(`sidst_opdateret <= '${toDate.replace(/[^0-9-]/g, '')}'`);
+
+    const where = conditions.join(' AND ');
+    const accessToken = process.env.SUPABASE_ACCESS_TOKEN;
+    const projectRef = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').match(/\/\/([^.]+)/)?.[1];
+
+    if (!accessToken || !projectRef) {
+      return NextResponse.json({ error: 'Mangler SUPABASE_ACCESS_TOKEN' }, { status: 503 });
     }
 
-    const { data, count, error } = await query;
+    const countSql = `SELECT COUNT(*)::int AS total FROM mv_virksomhedshandel_kandidater WHERE ${where}`;
+    const dataSql = `SELECT * FROM mv_virksomhedshandel_kandidater WHERE ${where} ORDER BY sidst_opdateret DESC NULLS LAST LIMIT ${limit} OFFSET ${offset}`;
 
-    if (error) {
-      logger.error('[virksomhedshandler/kandidater] query error', {
-        message: error.message,
-        code: error.code,
-      });
-      return NextResponse.json(
-        { error: 'Ekstern API fejl', detail: error.message },
-        { status: 502 }
-      );
-    }
+    const [countRes, dataRes] = await Promise.all([
+      fetch(`https://api.supabase.com/v1/projects/${projectRef}/database/query`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: countSql }),
+        signal: AbortSignal.timeout(15000),
+      }).then((r) => r.json()),
+      fetch(`https://api.supabase.com/v1/projects/${projectRef}/database/query`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: dataSql }),
+        signal: AbortSignal.timeout(15000),
+      }).then((r) => r.json()),
+    ]);
 
-    return NextResponse.json({ kandidater: data ?? [], total: count ?? 0 });
+    const total = Array.isArray(countRes) && countRes[0]?.total != null ? countRes[0].total : 0;
+    const data = Array.isArray(dataRes) ? dataRes : [];
+
+    return NextResponse.json({ kandidater: data, total });
   } catch (err) {
     logger.error('[virksomhedshandler/kandidater] catch', { error: err });
     return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 502 });

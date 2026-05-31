@@ -226,6 +226,26 @@ const checkMissingStikledning = makeMissingCoverageCheck(
     'bygning og hovedledning er kostbare at udbedre — ofte 50.000-200.000 kr.'
 );
 
+/** GAP-015: Mangler udvidet vandskade-dækning (beboelse) */
+const checkMissingUdvidetVandskade = makeMissingCoverageCheck(
+  'udvidet_vandskade',
+  'GAP-015',
+  'warning',
+  'Udvidet vandskade-dækning mangler. Beboelsesejendomme er udsat for ' +
+    'skader fra indtrængende regnvand, oversvømmelse fra toiletter/afløb og ' +
+    'vandskader fra naboejendomme. Uden dækning bæres omkostningen fuldt.'
+);
+
+/** GAP-016: Mangler jordskade-dækning */
+const checkMissingJordskade = makeMissingCoverageCheck(
+  'jordskade',
+  'GAP-016',
+  'warning',
+  'Jordskade-dækning mangler. Sætningsskader, jordskred og erosion under ' +
+    'fundamentet kan koste 100.000-500.000 kr. at udbedre. Uden dækning ' +
+    'bæres alle udgifter af forsikringstager.'
+);
+
 /** GAP-020: Forsikringstager-CVR matcher ikke ejer på adressen */
 const checkPolicyholderCvrMatch: CheckFn = ({ policy }) => {
   // Denne check er en placeholder — kræver tinglysning-data der hentes
@@ -788,6 +808,8 @@ const CHECKS: readonly CheckFn[] = [
   checkMissingStikledning,
   checkMissingGlas,
   checkMissingSanitet,
+  checkMissingUdvidetVandskade,
+  checkMissingJordskade,
   checkExpiry,
   checkRenewalUpcoming,
   checkPolicyholderCvrMatch,
@@ -883,6 +905,8 @@ const GAP_BASE_SCORES: Record<string, number> = {
   'GAP-012': 30, // insekt/svamp
   'GAP-013': 25, // restværdi
   'GAP-014': 25, // stikledning
+  'GAP-015': 25, // udvidet vandskade
+  'GAP-016': 25, // jordskade
   'GAP-020': 20, // CVR-match
   'GAP-030': 35, // udløbet
   'GAP-031': 20, // udløber snart

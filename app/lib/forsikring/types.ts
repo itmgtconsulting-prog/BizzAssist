@@ -225,6 +225,7 @@ export const COVERAGE_CODES = [
   'forurening',
   'driftstab',
   'erhvervsansvar',
+  'udvidet_vandskade',
 ] as const;
 
 export type CoverageCode = (typeof COVERAGE_CODES)[number];
@@ -248,6 +249,7 @@ export const COVERAGE_LABELS_DA: Record<CoverageCode, string> = {
   forurening: 'Forurening',
   driftstab: 'Driftstab',
   erhvervsansvar: 'Erhvervsansvar',
+  udvidet_vandskade: 'Udvidet vandskade',
 };
 
 // ─── Parser output schema (Claude → JSON) ────────────────────────

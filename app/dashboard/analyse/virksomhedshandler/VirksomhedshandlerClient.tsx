@@ -76,14 +76,11 @@ export default function VirksomhedshandlerClient() {
   const [kandidater, setKandidater] = useState<Kandidat[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [signalFilters, setSignalFilters] = useState<Set<SignalType>>(new Set());
+  const [signalFilters, setSignalFilters] = useState<Set<SignalType>>(
+    new Set(['entry', 'exit', 'increase'])
+  );
   const [signalDropdownOpen, setSignalDropdownOpen] = useState(false);
-  // Default: seneste måned
-  const [fromDate, setFromDate] = useState(() => {
-    const d = new Date();
-    d.setMonth(d.getMonth() - 1);
-    return d.toISOString().slice(0, 10);
-  });
+  const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [offset, setOffset] = useState(0);
   const [berigResults, setBerigResults] = useState<Record<string, BerigResult>>({});

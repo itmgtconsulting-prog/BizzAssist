@@ -114,6 +114,30 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       /* sibling expansion non-critical for verification lookup */
     }
 
+    // BIZZ-1911: Udvid med SFE-children — hvis target er en hovedejendom/SFE,
+    // inkludér alle ejerlejligheder i strukturen (og omvendt: fra lejlighed
+    // til SFE + andre lejligheder). Bruger ejendom-struktur API internt.
+    try {
+      const strukturRes = await fetch(
+        `${process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'}/api/ejendom-struktur?bfe=${bfeNummer}`,
+        { signal: AbortSignal.timeout(8000), headers: { Cookie: '' } }
+      );
+      if (strukturRes.ok) {
+        const struktur = (await strukturRes.json()) as {
+          children?: Array<{ bfeNummer?: number }>;
+          parent?: { bfeNummer?: number };
+        };
+        if (struktur.parent?.bfeNummer) {
+          verificationBfeSet.add(struktur.parent.bfeNummer);
+        }
+        for (const child of struktur.children ?? []) {
+          if (child.bfeNummer) verificationBfeSet.add(child.bfeNummer);
+        }
+      }
+    } catch {
+      /* SFE-children expansion non-critical */
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: verifiedRows } = await (admin as any)
       .from('ejerforening_verification_counts')

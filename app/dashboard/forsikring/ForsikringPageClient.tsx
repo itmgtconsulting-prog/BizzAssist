@@ -720,6 +720,8 @@ function AnalyseSection({
   const [stdLibraryOpen, setStdLibraryOpen] = useState(false);
   /** BIZZ-1921: Filter i bibliotek */
   const [stdLibraryFilter, setStdLibraryFilter] = useState('');
+  const [stdLibrarySelskabFilter, setStdLibrarySelskabFilter] = useState('');
+  const [stdLibraryKategoriFilter, setStdLibraryKategoriFilter] = useState('');
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -2067,18 +2069,57 @@ function AnalyseSection({
                     </div>
 
                     {/* Filter */}
-                    <div className="px-5 py-2 border-b border-slate-800/50">
+                    <div className="px-5 py-2 border-b border-slate-800/50 space-y-2">
                       <input
                         type="text"
                         value={stdLibraryFilter}
                         onChange={(e) => setStdLibraryFilter(e.target.value)}
                         placeholder={
                           da
-                            ? 'Filtrer på titel, selskab eller område...'
-                            : 'Filter by title, company or area...'
+                            ? 'Søg i titel, selskab eller område...'
+                            : 'Search title, company or area...'
                         }
                         className="w-full bg-slate-800/60 border border-slate-700/40 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:border-indigo-500/50 focus:outline-none"
                       />
+                      <div className="flex gap-2">
+                        <select
+                          value={stdLibrarySelskabFilter}
+                          onChange={(e) => setStdLibrarySelskabFilter(e.target.value)}
+                          aria-label={da ? 'Filtrer på selskab' : 'Filter by company'}
+                          className="flex-1 bg-slate-800/60 border border-slate-700/40 rounded-lg px-2 py-1 text-[10px] text-slate-300"
+                        >
+                          <option value="">{da ? 'Alle selskaber' : 'All companies'}</option>
+                          {[...new Set(stdSavedLibrary.map((d) => d.selskab).filter(Boolean))]
+                            .sort()
+                            .map((s) => (
+                              <option key={s} value={s}>
+                                {s}
+                              </option>
+                            ))}
+                        </select>
+                        <select
+                          value={stdLibraryKategoriFilter}
+                          onChange={(e) => setStdLibraryKategoriFilter(e.target.value)}
+                          aria-label={da ? 'Filtrer på kategori' : 'Filter by category'}
+                          className="flex-1 bg-slate-800/60 border border-slate-700/40 rounded-lg px-2 py-1 text-[10px] text-slate-300"
+                        >
+                          <option value="">{da ? 'Alle typer' : 'All types'}</option>
+                          {[...new Set(stdSavedLibrary.map((d) => d.kategori).filter(Boolean))]
+                            .sort()
+                            .map((k) => (
+                              <option key={k} value={k}>
+                                {k}
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+                      {stdSavedLibrary.length > 0 && (
+                        <p className="text-slate-600 text-[9px]">
+                          {da
+                            ? `${stdSavedLibrary.length} betingelser i biblioteket`
+                            : `${stdSavedLibrary.length} terms in library`}
+                        </p>
+                      )}
                     </div>
 
                     {/* Liste */}
@@ -2092,6 +2133,13 @@ function AnalyseSection({
                       ) : (
                         stdSavedLibrary
                           .filter((doc) => {
+                            if (stdLibrarySelskabFilter && doc.selskab !== stdLibrarySelskabFilter)
+                              return false;
+                            if (
+                              stdLibraryKategoriFilter &&
+                              doc.kategori !== stdLibraryKategoriFilter
+                            )
+                              return false;
                             if (!stdLibraryFilter) return true;
                             const q = stdLibraryFilter.toLowerCase();
                             return (
@@ -2145,9 +2193,13 @@ function AnalyseSection({
                                   <div className="text-white text-xs font-medium truncate">
                                     {doc.titel}
                                   </div>
-                                  <div className="flex items-center gap-2 mt-0.5">
-                                    <span className="text-slate-400 text-[10px]">
+                                  <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                    <span className="text-blue-400 text-[10px] font-medium">
                                       {doc.selskab}
+                                    </span>
+                                    <span className="text-slate-600 text-[9px]">·</span>
+                                    <span className="text-slate-400 text-[9px] px-1.5 py-0.5 bg-slate-700/40 rounded">
+                                      {doc.kategori}
                                     </span>
                                     {doc.omraade && (
                                       <span className="text-indigo-400/70 text-[9px] px-1.5 py-0.5 bg-indigo-500/10 rounded">

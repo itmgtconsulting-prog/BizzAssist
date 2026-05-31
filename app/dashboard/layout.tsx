@@ -35,7 +35,7 @@ import {
   LifeBuoy,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
-import { isDomainFeatureEnabled, isVirksomhedshandlerEnabled } from '@/app/lib/featureFlags';
+import { isDomainFeatureEnabled } from '@/app/lib/featureFlags';
 import { translations } from '@/app/lib/translations';
 import { erDawaId } from '@/app/lib/dawa';
 import { gemRecentEjendom } from '@/app/lib/recentEjendomme';
@@ -82,17 +82,6 @@ const navItems = [
   { icon: Map, key: 'map' as const, href: '/dashboard/kort', adminOnly: false },
   // BIZZ-1037: Analyse-sektion (erstatter /dashboard/analysis)
   { icon: BarChart2, key: 'analysis' as const, href: '/dashboard/analyse', adminOnly: false },
-  // BIZZ-1925: Virksomhedshandler (M&A-radar) — kun synlig bag feature-flag
-  ...(isVirksomhedshandlerEnabled()
-    ? [
-        {
-          icon: BarChart2,
-          key: 'deals' as const,
-          href: '/dashboard/analyse/virksomhedshandler',
-          adminOnly: false,
-        },
-      ]
-    : []),
   { icon: MessageSquare, key: 'chat' as const, href: '/dashboard/chat', adminOnly: false },
   // BIZZ-656: Synligt entry-point til token-køb for almindelige brugere —
   // tidligere kunne man kun nå /dashboard/tokens via trial-blocked-banneret

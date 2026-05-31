@@ -78,27 +78,17 @@ export async function GET(req: NextRequest) {
       return NextResponse.json([], { status: 200 });
     }
 
-    const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+    // BIZZ-1907: Brug session-client der respekterer RLS visibility-scoping.
+    // Kun egne (private) + domain-delte + curated docs returneres.
+    const sessionClient = await getSessionClient();
 
-    // Domain-scoped: vis kun betingelser fra brugerens tenant/domain
-    // Globale docs (added_by_domain = null) vises altid (system-level)
-    const domainId = auth.tenantId;
-
-    // ?all=true → vis ALLE docs uanset domain (til admin/debugging)
-    const showAll = req.nextUrl.searchParams.get('all') === 'true';
-
-    let query = serviceClient
+    let query = sessionClient
       .from('forsikring_standard_doc')
       .select(
-        'id, selskab, kategori, titel, source_url, added_via, verified, created_at, raw_content, added_by_user, omraade, gyldig_fra, is_valid_standard'
+        'id, selskab, kategori, titel, source_url, added_via, verified, created_at, raw_content, added_by_user, omraade, gyldig_fra, is_valid_standard, visibility'
       )
       .order('created_at', { ascending: false })
       .limit(100);
-
-    // Filter til brugerens domain + globale docs (uden domain)
-    if (!showAll && domainId) {
-      query = query.or(`added_by_domain.eq.${domainId},added_by_domain.is.null`);
-    }
 
     if (selskab) query = query.ilike('selskab', `%${selskab}%`);
     if (kategori) query = query.eq('kategori', kategori);
@@ -183,6 +173,25 @@ export async function POST(req: NextRequest) {
 
     const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
+    // BIZZ-1907: Sæt visibility baseret på domain-membership.
+    // Domain-members deler automatisk; standalone-users er private.
+    let visibility: 'private' | 'domain' = 'private';
+    if (auth.tenantId) {
+      // Check domain membership via raw SQL to avoid eslint domain_ restriction
+      const { createAdminClient: makeAdmin } = await import('@/lib/supabase/admin');
+      const adminC = makeAdmin();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, no-restricted-syntax
+      const { data: dmRow } = await (adminC as any)
+        .from('domain_member')
+        .select('domain_id')
+        .eq('user_id', user.id)
+        .limit(1)
+        .maybeSingle();
+      if (dmRow?.domain_id) {
+        visibility = 'domain';
+      }
+    }
+
     // Upsert — dedup via content_hash
     const { data, error } = await serviceClient
       .from('forsikring_standard_doc')
@@ -198,6 +207,7 @@ export async function POST(req: NextRequest) {
           added_via,
           added_by_user: user.id,
           added_by_domain: auth.tenantId,
+          visibility,
         },
         { onConflict: 'content_hash' }
       )

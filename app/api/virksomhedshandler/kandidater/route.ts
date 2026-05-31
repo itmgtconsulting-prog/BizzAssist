@@ -20,6 +20,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { logger } from '@/app/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -72,11 +73,19 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const { data, count, error } = await query;
 
     if (error) {
-      return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 502 });
+      logger.error('[virksomhedshandler/kandidater] query error', {
+        message: error.message,
+        code: error.code,
+      });
+      return NextResponse.json(
+        { error: 'Ekstern API fejl', detail: error.message },
+        { status: 502 }
+      );
     }
 
     return NextResponse.json({ kandidater: data ?? [], total: count ?? 0 });
-  } catch {
+  } catch (err) {
+    logger.error('[virksomhedshandler/kandidater] catch', { error: err });
     return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 502 });
   }
 }

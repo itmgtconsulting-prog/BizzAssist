@@ -78,12 +78,20 @@ export default function VirksomhedshandlerClient() {
   const [loading, setLoading] = useState(true);
   const [signalFilters, setSignalFilters] = useState<Set<SignalType>>(new Set());
   const [signalDropdownOpen, setSignalDropdownOpen] = useState(false);
-  const [fromDate, setFromDate] = useState('');
+  // Default: seneste måned
+  const [fromDate, setFromDate] = useState(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 1);
+    return d.toISOString().slice(0, 10);
+  });
   const [toDate, setToDate] = useState('');
   const [offset, setOffset] = useState(0);
   const [berigResults, setBerigResults] = useState<Record<string, BerigResult>>({});
   const [berigLoading, setBerigLoading] = useState<Set<string>>(new Set());
   const [bulkLoading, setBulkLoading] = useState(false);
+  // Kolonne-filtre
+  const [deltagerFilter, setDeltagerFilter] = useState('');
+  const [cvrFilter, setCvrFilter] = useState('');
 
   const LIMIT = 50;
 
@@ -336,14 +344,42 @@ export default function VirksomhedshandlerClient() {
         <table className="w-full text-sm">
           <thead className="bg-slate-800/60">
             <tr className="text-left text-slate-400 text-xs uppercase tracking-wider">
-              <th className="px-4 py-3">{t('Signal', 'Signal')}</th>
-              <th className="px-4 py-3">{t('Deltager', 'Participant')}</th>
-              <th className="px-4 py-3">{t('Virksomhed (CVR)', 'Company (CVR)')}</th>
-              <th className="px-4 py-3">{t('Ændring', 'Change')}</th>
-              <th className="px-4 py-3">{t('Dato', 'Date')}</th>
-              <th className="px-4 py-3">{t('Est. værdi', 'Est. value')}</th>
-              <th className="px-4 py-3">{t('Confidence', 'Confidence')}</th>
-              <th className="px-4 py-3" />
+              <th className="px-4 py-2">{t('Signal', 'Signal')}</th>
+              <th className="px-4 py-2">{t('Deltager', 'Participant')}</th>
+              <th className="px-4 py-2">{t('Virksomhed (CVR)', 'Company (CVR)')}</th>
+              <th className="px-4 py-2">{t('Ændring', 'Change')}</th>
+              <th className="px-4 py-2">{t('Dato', 'Date')}</th>
+              <th className="px-4 py-2">{t('Est. værdi', 'Est. value')}</th>
+              <th className="px-4 py-2">{t('Confidence', 'Confidence')}</th>
+              <th className="px-4 py-2" />
+            </tr>
+            <tr className="bg-slate-800/30">
+              <th className="px-4 py-1" />
+              <th className="px-4 py-1">
+                <input
+                  type="text"
+                  value={deltagerFilter}
+                  onChange={(e) => setDeltagerFilter(e.target.value)}
+                  placeholder={t('Filtrer...', 'Filter...')}
+                  aria-label={t('Filtrer deltager', 'Filter participant')}
+                  className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                />
+              </th>
+              <th className="px-4 py-1">
+                <input
+                  type="text"
+                  value={cvrFilter}
+                  onChange={(e) => setCvrFilter(e.target.value)}
+                  placeholder={t('Filtrer CVR...', 'Filter CVR...')}
+                  aria-label={t('Filtrer CVR', 'Filter CVR')}
+                  className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                />
+              </th>
+              <th className="px-4 py-1" />
+              <th className="px-4 py-1" />
+              <th className="px-4 py-1" />
+              <th className="px-4 py-1" />
+              <th className="px-4 py-1" />
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-700/30">
@@ -386,78 +422,88 @@ export default function VirksomhedshandlerClient() {
                 </td>
               </tr>
             ) : (
-              kandidater.map((k) => {
-                const key = `${k.deltager_enhedsnummer}-${k.virksomhed_cvr}-${k.gyldig_fra}`;
-                const berig = berigResults[key];
-                const isBerigLoading = berigLoading.has(key);
-                const signal = SIGNAL_LABELS[k.signal_type];
-                const delta = Math.abs(k.current_ejerandel_pct - k.prev_ejerandel_pct);
+              kandidater
+                .filter((k) => {
+                  if (
+                    deltagerFilter &&
+                    !k.deltager_navn.toLowerCase().includes(deltagerFilter.toLowerCase())
+                  )
+                    return false;
+                  if (cvrFilter && !k.virksomhed_cvr.includes(cvrFilter)) return false;
+                  return true;
+                })
+                .map((k) => {
+                  const key = `${k.deltager_enhedsnummer}-${k.virksomhed_cvr}-${k.gyldig_fra}`;
+                  const berig = berigResults[key];
+                  const isBerigLoading = berigLoading.has(key);
+                  const signal = SIGNAL_LABELS[k.signal_type];
+                  const delta = Math.abs(k.current_ejerandel_pct - k.prev_ejerandel_pct);
 
-                return (
-                  <tr key={key} className="hover:bg-slate-800/30 transition-colors">
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${signal?.color ?? 'text-slate-400'}`}
-                      >
-                        {signal?.da ?? k.signal_type}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-white text-xs">{k.deltager_navn}</td>
-                    <td className="px-4 py-3 text-slate-300 text-xs font-mono">
-                      {k.virksomhed_cvr}
-                    </td>
-                    <td className="px-4 py-3 text-slate-300 text-xs">
-                      {k.prev_ejerandel_pct}% → {k.current_ejerandel_pct}%
-                      <span className="text-slate-500 ml-1">(Δ{delta} pp)</span>
-                    </td>
-                    <td className="px-4 py-3 text-slate-400 text-xs">
-                      {k.gyldig_fra?.slice(0, 10)}
-                    </td>
-                    <td className="px-4 py-3 text-xs">
-                      {berig?.estimeret_vaerdi ? (
-                        <span className="text-emerald-400">
-                          {formatDKK(berig.estimeret_vaerdi.mid)}
+                  return (
+                    <tr key={key} className="hover:bg-slate-800/30 transition-colors">
+                      <td className="px-4 py-3">
+                        <span
+                          className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${signal?.color ?? 'text-slate-400'}`}
+                        >
+                          {signal?.da ?? k.signal_type}
                         </span>
-                      ) : (
-                        <span className="text-slate-600">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-xs">
-                      {berig ? (
-                        <ConfidenceBadge level={berig.confidence} />
-                      ) : (
-                        <span className="text-slate-600">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      {!berig && (
-                        <button
-                          onClick={() => berigRow(k)}
-                          disabled={isBerigLoading}
-                          aria-label={t(
-                            `Berig ${k.virksomhed_cvr} med AI`,
-                            `Enrich ${k.virksomhed_cvr} with AI`
-                          )}
-                          className="text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50 transition-colors"
-                        >
-                          {isBerigLoading ? '...' : t('Berig', 'Enrich')}
-                        </button>
-                      )}
-                      {berig && berig.medie_links.length > 0 && (
-                        <a
-                          href={berig.medie_links[0].url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-blue-400 hover:text-blue-300"
-                          aria-label={t('Åbn medielink', 'Open media link')}
-                        >
-                          {t('Artikel', 'Article')}
-                        </a>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })
+                      </td>
+                      <td className="px-4 py-3 text-white text-xs">{k.deltager_navn}</td>
+                      <td className="px-4 py-3 text-slate-300 text-xs font-mono">
+                        {k.virksomhed_cvr}
+                      </td>
+                      <td className="px-4 py-3 text-slate-300 text-xs">
+                        {k.prev_ejerandel_pct}% → {k.current_ejerandel_pct}%
+                        <span className="text-slate-500 ml-1">(Δ{delta} pp)</span>
+                      </td>
+                      <td className="px-4 py-3 text-slate-400 text-xs">
+                        {k.gyldig_fra?.slice(0, 10)}
+                      </td>
+                      <td className="px-4 py-3 text-xs">
+                        {berig?.estimeret_vaerdi ? (
+                          <span className="text-emerald-400">
+                            {formatDKK(berig.estimeret_vaerdi.mid)}
+                          </span>
+                        ) : (
+                          <span className="text-slate-600">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-xs">
+                        {berig ? (
+                          <ConfidenceBadge level={berig.confidence} />
+                        ) : (
+                          <span className="text-slate-600">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {!berig && (
+                          <button
+                            onClick={() => berigRow(k)}
+                            disabled={isBerigLoading}
+                            aria-label={t(
+                              `Berig ${k.virksomhed_cvr} med AI`,
+                              `Enrich ${k.virksomhed_cvr} with AI`
+                            )}
+                            className="text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50 transition-colors"
+                          >
+                            {isBerigLoading ? '...' : t('Berig', 'Enrich')}
+                          </button>
+                        )}
+                        {berig && berig.medie_links.length > 0 && (
+                          <a
+                            href={berig.medie_links[0].url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-blue-400 hover:text-blue-300"
+                            aria-label={t('Åbn medielink', 'Open media link')}
+                          >
+                            {t('Artikel', 'Article')}
+                          </a>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
             )}
           </tbody>
         </table>

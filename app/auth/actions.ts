@@ -357,17 +357,27 @@ export async function signIn(
   }
 
   // ── BIZZ-1875: Single session per device ─────────────────────────────────
-  // Terminér sessioner fra ANDRE IP'er efter succesfuld login.
+  // Register session in user_sessions table + terminate other device sessions.
+  // Also clean up auth.sessions from other IPs as a secondary safety net.
   try {
     const { headers: getHeaders } = await import('next/headers');
     const hdrs = await getHeaders();
     const currentIp =
       hdrs.get('x-forwarded-for')?.split(',')[0]?.trim() ?? hdrs.get('x-real-ip') ?? 'unknown';
+    const userAgent = hdrs.get('user-agent') ?? 'unknown';
     const admin = createAdminClient();
     const {
       data: { user: sessionUser },
     } = await supabase.auth.getUser();
     if (sessionUser) {
+      // Register in user_sessions + revoke other devices
+      const { registerSession } = await import('@/app/lib/auth/sessionTracker');
+      const { revokedCount } = await registerSession(sessionUser.id, null, userAgent, currentIp);
+      if (revokedCount > 0) {
+        logger.log(`[signIn] BIZZ-1875: Revoked ${revokedCount} sessions from other devices`);
+      }
+
+      // Secondary: also clean auth.sessions from other IPs
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: authSessions } = await (admin as any)
         .schema('auth')
@@ -381,11 +391,6 @@ export async function signIn(
         for (const s of otherSessions) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           await (admin as any).schema('auth').from('sessions').delete().eq('id', s.id);
-        }
-        if (otherSessions.length > 0) {
-          logger.log(
-            `[signIn] BIZZ-1875: Termineret ${otherSessions.length} sessioner fra andre IP'er (current: ${currentIp})`
-          );
         }
       }
     }

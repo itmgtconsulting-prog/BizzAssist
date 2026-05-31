@@ -2093,7 +2093,7 @@ function AnalyseSection({
                   onClick={() => setStdLibraryOpen(false)}
                 >
                   <div
-                    className="bg-slate-900 border border-slate-700/50 rounded-2xl w-full max-w-2xl max-h-[80vh] overflow-hidden shadow-2xl"
+                    className="bg-slate-900 border border-slate-700/50 rounded-2xl w-full max-w-5xl max-h-[85vh] overflow-hidden shadow-2xl"
                     onClick={(e) => e.stopPropagation()}
                     role="dialog"
                     aria-modal="true"
@@ -2168,114 +2168,129 @@ function AnalyseSection({
                       )}
                     </div>
 
-                    {/* Liste */}
-                    <div className="overflow-y-auto max-h-[55vh] px-5 py-2 space-y-1">
+                    {/* Tabel */}
+                    <div className="overflow-auto max-h-[60vh]">
                       {stdSavedLibrary.length === 0 ? (
-                        <p className="text-slate-500 text-xs py-4 text-center">
+                        <p className="text-slate-500 text-xs py-8 text-center">
                           {da
                             ? 'Ingen gemte betingelser endnu. Upload PDF eller find via AI.'
                             : 'No saved terms yet. Upload PDF or find via AI.'}
                         </p>
                       ) : (
-                        stdSavedLibrary
-                          .filter((doc) => {
-                            if (stdLibrarySelskabFilter && doc.selskab !== stdLibrarySelskabFilter)
-                              return false;
-                            if (
-                              stdLibraryKategoriFilter &&
-                              doc.kategori !== stdLibraryKategoriFilter
-                            )
-                              return false;
-                            if (!stdLibraryFilter) return true;
-                            const q = stdLibraryFilter.toLowerCase();
-                            return (
-                              doc.titel.toLowerCase().includes(q) ||
-                              doc.selskab.toLowerCase().includes(q) ||
-                              (doc.omraade ?? '').toLowerCase().includes(q)
-                            );
-                          })
-                          .map((doc) => {
-                            const isSelected = stdSelectedIds.has(doc.source_url);
-                            return (
-                              <label
-                                key={doc.id}
-                                className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors ${
-                                  isSelected
-                                    ? 'bg-teal-900/30 border border-teal-500/30'
-                                    : 'bg-slate-800/30 border border-slate-700/20 hover:border-slate-600/40'
-                                }`}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={isSelected}
-                                  onChange={() => {
-                                    const alreadyInDiscovered = stdDiscovered.some(
-                                      (d) => d.source_url === doc.source_url
-                                    );
-                                    if (!alreadyInDiscovered) {
-                                      setStdDiscovered((prev) => [
-                                        ...prev,
-                                        {
-                                          titel: doc.titel,
-                                          source_url: doc.source_url,
-                                          kategori: doc.kategori,
-                                          confidence: 'high',
-                                        },
-                                      ]);
-                                      setStdSavedIds((prev) =>
-                                        new Map(prev).set(doc.source_url, doc.id)
+                        <table className="w-full text-xs">
+                          <thead className="bg-slate-800/60 sticky top-0">
+                            <tr className="text-left text-slate-400 uppercase tracking-wider text-[10px]">
+                              <th className="px-4 py-2 w-8" />
+                              <th className="px-4 py-2">{da ? 'Selskab' : 'Company'}</th>
+                              <th className="px-4 py-2">{da ? 'Betingelser' : 'Terms'}</th>
+                              <th className="px-4 py-2">{da ? 'Type' : 'Type'}</th>
+                              <th className="px-4 py-2">{da ? 'Gyldig fra' : 'Valid from'}</th>
+                              <th className="px-4 py-2 w-8" />
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-700/20">
+                            {stdSavedLibrary
+                              .filter((doc) => {
+                                if (
+                                  stdLibrarySelskabFilter &&
+                                  doc.selskab !== stdLibrarySelskabFilter
+                                )
+                                  return false;
+                                if (
+                                  stdLibraryKategoriFilter &&
+                                  doc.kategori !== stdLibraryKategoriFilter
+                                )
+                                  return false;
+                                if (!stdLibraryFilter) return true;
+                                const q = stdLibraryFilter.toLowerCase();
+                                return (
+                                  doc.titel.toLowerCase().includes(q) ||
+                                  doc.selskab.toLowerCase().includes(q) ||
+                                  (doc.omraade ?? '').toLowerCase().includes(q)
+                                );
+                              })
+                              .map((doc) => {
+                                const isSelected = stdSelectedIds.has(doc.source_url);
+                                return (
+                                  <tr
+                                    key={doc.id}
+                                    onClick={() => {
+                                      const alreadyInDiscovered = stdDiscovered.some(
+                                        (d) => d.source_url === doc.source_url
                                       );
-                                    }
-                                    setStdSelectedIds((prev) => {
-                                      const next = new Set(prev);
-                                      if (isSelected) next.delete(doc.source_url);
-                                      else next.add(doc.source_url);
-                                      return next;
-                                    });
-                                  }}
-                                  className="accent-teal-500 w-3.5 h-3.5 shrink-0"
-                                />
-                                <div className="flex-1 min-w-0">
-                                  <div className="text-white text-xs font-medium truncate">
-                                    {doc.titel}
-                                  </div>
-                                  <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                                    <span className="text-blue-400 text-[10px] font-medium">
+                                      if (!alreadyInDiscovered) {
+                                        setStdDiscovered((prev) => [
+                                          ...prev,
+                                          {
+                                            titel: doc.titel,
+                                            source_url: doc.source_url,
+                                            kategori: doc.kategori,
+                                            confidence: 'high',
+                                          },
+                                        ]);
+                                        setStdSavedIds((prev) =>
+                                          new Map(prev).set(doc.source_url, doc.id)
+                                        );
+                                      }
+                                      setStdSelectedIds((prev) => {
+                                        const next = new Set(prev);
+                                        if (isSelected) next.delete(doc.source_url);
+                                        else next.add(doc.source_url);
+                                        return next;
+                                      });
+                                    }}
+                                    className={`cursor-pointer transition-colors ${
+                                      isSelected ? 'bg-teal-900/20' : 'hover:bg-slate-800/30'
+                                    }`}
+                                  >
+                                    <td className="px-4 py-2.5">
+                                      <input
+                                        type="checkbox"
+                                        checked={isSelected}
+                                        readOnly
+                                        className="accent-teal-500 w-3.5 h-3.5"
+                                      />
+                                    </td>
+                                    <td className="px-4 py-2.5 text-blue-400 font-medium whitespace-nowrap">
                                       {doc.selskab}
-                                    </span>
-                                    <span className="text-slate-600 text-[9px]">·</span>
-                                    <span className="text-slate-400 text-[9px] px-1.5 py-0.5 bg-slate-700/40 rounded">
-                                      {doc.kategori}
-                                    </span>
-                                    {doc.omraade && (
-                                      <span className="text-indigo-400/70 text-[9px] px-1.5 py-0.5 bg-indigo-500/10 rounded">
-                                        {doc.omraade}
+                                    </td>
+                                    <td className="px-4 py-2.5">
+                                      <div className="text-white font-medium">{doc.titel}</div>
+                                      {doc.is_valid_standard === false && (
+                                        <span className="text-amber-400 text-[9px]">
+                                          ⚠ {da ? 'Ikke standard' : 'Not standard'}
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td className="px-4 py-2.5">
+                                      <span className="text-slate-400 px-1.5 py-0.5 bg-slate-700/40 rounded text-[10px]">
+                                        {doc.kategori}
                                       </span>
-                                    )}
-                                    {doc.gyldig_fra && (
-                                      <span className="text-slate-500 text-[9px]">
-                                        {da ? 'Fra' : 'From'} {doc.gyldig_fra}
-                                      </span>
-                                    )}
-                                    {doc.is_valid_standard === false && (
-                                      <span className="text-amber-400 text-[9px]">
-                                        ⚠ {da ? 'Ikke standard' : 'Not standard'}
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-                                <a
-                                  href={doc.source_url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-slate-500 hover:text-blue-400 text-[10px] shrink-0"
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  ↗
-                                </a>
-                              </label>
-                            );
-                          })
+                                      {doc.omraade && (
+                                        <span className="text-indigo-400/70 px-1.5 py-0.5 bg-indigo-500/10 rounded text-[10px] ml-1">
+                                          {doc.omraade}
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td className="px-4 py-2.5 text-slate-500 whitespace-nowrap">
+                                      {doc.gyldig_fra ?? '—'}
+                                    </td>
+                                    <td className="px-4 py-2.5">
+                                      <a
+                                        href={doc.source_url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-slate-500 hover:text-blue-400"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        ↗
+                                      </a>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                          </tbody>
+                        </table>
                       )}
                     </div>
 

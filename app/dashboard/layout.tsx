@@ -88,7 +88,7 @@ const navItems = [
         {
           icon: BarChart2,
           key: 'deals' as const,
-          href: '/dashboard/virksomhedshandler',
+          href: '/dashboard/analyse/virksomhedshandler',
           adminOnly: false,
         },
       ]

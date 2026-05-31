@@ -24,6 +24,7 @@ interface Kandidat {
   prev_ejerandel_pct: number;
   gyldig_fra: string;
   gyldig_til: string | null;
+  sidst_opdateret: string | null;
   signal_type: 'entry' | 'exit' | 'increase' | 'decrease';
 }
 
@@ -80,7 +81,12 @@ export default function VirksomhedshandlerClient() {
     new Set(['entry', 'exit', 'increase'])
   );
   const [signalDropdownOpen, setSignalDropdownOpen] = useState(false);
-  const [fromDate, setFromDate] = useState('');
+  // Default: seneste 3 måneder (baseret på sidst_opdateret/indrapporteringsdato)
+  const [fromDate, setFromDate] = useState(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 3);
+    return d.toISOString().slice(0, 10);
+  });
   const [toDate, setToDate] = useState('');
   const [offset, setOffset] = useState(0);
   const [berigResults, setBerigResults] = useState<Record<string, BerigResult>>({});
@@ -284,7 +290,7 @@ export default function VirksomhedshandlerClient() {
 
         <div>
           <label htmlFor="from-date" className="block text-xs text-slate-400 mb-1">
-            {t('Fra dato', 'From date')}
+            {t('Indrapporteret fra', 'Reported from')}
           </label>
           <input
             id="from-date"
@@ -301,7 +307,7 @@ export default function VirksomhedshandlerClient() {
 
         <div>
           <label htmlFor="to-date" className="block text-xs text-slate-400 mb-1">
-            {t('Til dato', 'To date')}
+            {t('Indrapporteret til', 'Reported to')}
           </label>
           <input
             id="to-date"
@@ -345,7 +351,7 @@ export default function VirksomhedshandlerClient() {
               <th className="px-4 py-2">{t('Deltager', 'Participant')}</th>
               <th className="px-4 py-2">{t('Virksomhed (CVR)', 'Company (CVR)')}</th>
               <th className="px-4 py-2">{t('Ændring', 'Change')}</th>
-              <th className="px-4 py-2">{t('Dato', 'Date')}</th>
+              <th className="px-4 py-2">{t('Indrapporteret', 'Reported')}</th>
               <th className="px-4 py-2">{t('Est. værdi', 'Est. value')}</th>
               <th className="px-4 py-2">{t('Confidence', 'Confidence')}</th>
               <th className="px-4 py-2" />
@@ -454,7 +460,7 @@ export default function VirksomhedshandlerClient() {
                         <span className="text-slate-500 ml-1">(Δ{delta} pp)</span>
                       </td>
                       <td className="px-4 py-3 text-slate-400 text-xs">
-                        {k.gyldig_fra?.slice(0, 10)}
+                        {(k.sidst_opdateret ?? k.gyldig_fra)?.slice(0, 10)}
                       </td>
                       <td className="px-4 py-3 text-xs">
                         {berig?.estimeret_vaerdi ? (

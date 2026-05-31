@@ -50,7 +50,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       .from('mv_virksomhedshandel_kandidater')
       .select('*', { count: 'exact' })
       .neq('signal_type', 'unchanged')
-      .order('gyldig_fra', { ascending: false })
+      .order('sidst_opdateret', { ascending: false })
       .range(offset, offset + limit - 1);
 
     if (signalTypes) {
@@ -61,11 +61,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     } else if (signalType) {
       query = query.eq('signal_type', signalType);
     }
+    // Filtrer på sidst_opdateret (indrapporteringsdato) — gyldig_fra er 1900-01-01 for alle rows
     if (fromDate) {
-      query = query.gte('gyldig_fra', fromDate);
+      query = query.gte('sidst_opdateret', fromDate);
     }
     if (toDate) {
-      query = query.lte('gyldig_fra', toDate);
+      query = query.lte('sidst_opdateret', toDate);
     }
 
     const { data, count, error } = await query;

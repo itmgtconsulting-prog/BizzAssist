@@ -698,6 +698,10 @@ function AnalyseSection({
   const stdSelskabRef = useRef<HTMLInputElement>(null);
   /** BIZZ-1890: PDF-upload af standard betingelser */
   const [stdPdfUploading, setStdPdfUploading] = useState(false);
+  /** BIZZ-1932: Upload-progress (filnavn + status) */
+  const [stdUploadProgress, setStdUploadProgress] = useState<string | null>(null);
+  /** BIZZ-1932: Senest uploaded standard betingelse (til bekræftelse) */
+  const [stdUploadDone, setStdUploadDone] = useState<string | null>(null);
   const stdPdfRef = useRef<HTMLInputElement>(null);
   /** BIZZ-1890: AI auto-detektion fra police-dokumenter */
   const [stdDetecting, setStdDetecting] = useState(false);
@@ -1977,10 +1981,15 @@ function AnalyseSection({
                       if (files.length === 0) return;
                       e.target.value = '';
                       setStdPdfUploading(true);
+                      setStdUploadDone(null);
                       try {
                         const selskab = stdSelskabRef.current?.value?.trim();
+                        let lastTitle = '';
                         // Upload filer sekventielt for at undgå rate-limit
                         for (const file of files) {
+                          setStdUploadProgress(
+                            da ? `Analyserer ${file.name}...` : `Analyzing ${file.name}...`
+                          );
                           const form = new FormData();
                           form.append('file', file);
                           if (selskab) form.append('selskab', selskab);
@@ -2012,17 +2021,54 @@ function AnalyseSection({
                               setStdSavedIds((prev) =>
                                 new Map(prev).set(data.source_url!, data.id!)
                               );
+                              // Tilføj til bibliotek-listen
+                              setStdSavedLibrary((prev) => [
+                                {
+                                  id: data.id!,
+                                  titel: data.titel!,
+                                  source_url: data.source_url!,
+                                  selskab: data.selskab ?? selskab ?? 'Ukendt',
+                                  kategori: data.kategori ?? 'ejendom',
+                                  added_via: 'manual_upload',
+                                  added_by_user: null,
+                                },
+                                ...prev,
+                              ]);
+                              lastTitle = data.titel!;
                             }
                           }
+                        }
+                        if (lastTitle) {
+                          setStdUploadDone(
+                            da
+                              ? `Tilføjet til bibliotek: ${lastTitle}`
+                              : `Added to library: ${lastTitle}`
+                          );
+                          setTimeout(() => setStdUploadDone(null), 5000);
                         }
                       } catch {
                         /* non-fatal */
                       } finally {
                         setStdPdfUploading(false);
+                        setStdUploadProgress(null);
                       }
                     }}
                   />
                 </div>
+                {/* BIZZ-1932: Upload progress + bekræftelse */}
+                {stdUploadProgress && (
+                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-indigo-900/20 border border-indigo-500/20 text-xs text-indigo-300">
+                    <Loader2 size={11} className="animate-spin shrink-0" />
+                    {stdUploadProgress}
+                  </div>
+                )}
+                {stdUploadDone && (
+                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-900/20 border border-emerald-500/20 text-xs text-emerald-300">
+                    <CheckCircle2 size={11} className="shrink-0" />
+                    {stdUploadDone}
+                  </div>
+                )}
+
                 {/* BIZZ-1921: Åbn bibliotek-knap */}
                 <button
                   type="button"

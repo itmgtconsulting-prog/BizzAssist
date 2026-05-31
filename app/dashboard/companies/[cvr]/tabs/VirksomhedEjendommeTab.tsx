@@ -539,7 +539,7 @@ export default function VirksomhedEjendommeTab({
                                   return (
                                     <details
                                       key={key}
-                                      open
+                                      open={grp.length <= 3}
                                       className="border-l-2 border-emerald-500/30 pl-3 group"
                                     >
                                       <summary className="flex items-center gap-2 mb-1.5 cursor-pointer list-none select-none hover:bg-slate-800/30 rounded px-1 py-1 -ml-1 transition-colors">
@@ -556,7 +556,7 @@ export default function VirksomhedEjendommeTab({
                                           {opgangPostnr ? `, ${opgangPostnr}` : ''}
                                         </span>
                                         <span className="text-[10px] text-emerald-400/70 px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20">
-                                          {grp.length} {lang === 'da' ? 'lejligheder' : 'units'}
+                                          {grp.length} {lang === 'da' ? 'enheder' : 'units'}
                                         </span>
                                       </summary>
                                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-2">
@@ -647,7 +647,7 @@ export default function VirksomhedEjendommeTab({
                                 return (
                                   <details
                                     key={key}
-                                    open
+                                    open={grp.length <= 3}
                                     className="border-l-2 border-teal-500/30 pl-3 group"
                                   >
                                     <summary className="flex items-center gap-2 mb-1.5 cursor-pointer list-none select-none hover:bg-slate-800/30 rounded px-1 py-1 -ml-1 transition-colors">
@@ -661,7 +661,7 @@ export default function VirksomhedEjendommeTab({
                                         {opgangPostnr ? `, ${opgangPostnr}` : ''}
                                       </span>
                                       <span className="text-[10px] text-teal-400/70 px-1.5 py-0.5 rounded bg-teal-500/10 border border-teal-500/20">
-                                        {grp.length} {lang === 'da' ? 'lejligheder' : 'units'}
+                                        {grp.length} {lang === 'da' ? 'enheder' : 'units'}
                                       </span>
                                     </summary>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-2">

@@ -456,14 +456,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // BIZZ-1841: Direkte EJF-søgning for foreninger i samme postnr (fallback
+    // BIZZ-1841: Direkte EJF-søgning for foreninger i samme gade+postnr (fallback
     // når DAWA er langsom eller gadenavn-søgning er tom). Find alle forenings-CVR'er
-    // der har ejf_administrator/ejf_ejerskab records for BFE'er i dette postnr.
+    // der har ejf_administrator/ejf_ejerskab records for BFE'er i denne gade.
+    // BIZZ-1917: Strammet fra postnr-only til gade+postnr for at undgå falske
+    // positives i tætbebyggede kvarterer (Carlsberg Byen, Frederiksberg, indre by).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: postnrBfes } = await (admin as any)
       .from('bfe_adresse_cache')
       .select('bfe_nummer')
       .eq('postnr', postnr)
+      .ilike('adresse', `${gadenavn}%`)
       .limit(500);
     const postnrBfeList = ((postnrBfes ?? []) as Array<{ bfe_nummer: number }>).map(
       (r) => r.bfe_nummer

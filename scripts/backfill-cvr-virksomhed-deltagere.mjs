@@ -130,8 +130,11 @@ function extractRelations(targetCvr, deltagerRels) {
     for (const org of orgs) {
       const medlemsData = Array.isArray(org.medlemsData) ? org.medlemsData : [];
 
-      // Først: saml ejerandel fra EJERANDEL-attribut (bruges på register-rækken)
+      // Først: saml ejerandel + gyldigFra fra EJERANDEL-attribut (bruges på register-rækken)
+      // BIZZ-1935: gem gyldigFra fra EJERANDEL — bruges i fallback nedenfor
       let orgEjerandelPct = null;
+      let orgEjerandelGyldigFra = null;
+      let orgEjerandelGyldigTil = null;
       for (const md of medlemsData) {
         const attrs = Array.isArray(md.attributter) ? md.attributter : [];
         const ejerAttr = attrs.find(a => a.type === 'EJERANDEL' || a.type === 'EJERANDEL_PROCENT');
@@ -142,6 +145,9 @@ function extractRelations(targetCvr, deltagerRels) {
             const raw = parseFloat(gyldig.vaerdi);
             // CVR ES returnerer 0-1 skala (1.0 = 100%) — konvertér til procent
             orgEjerandelPct = raw <= 1 ? raw * 100 : raw;
+            // BIZZ-1935: gem datoer fra periode-objektet for fallback brug
+            orgEjerandelGyldigFra = gyldig.periode?.gyldigFra?.slice(0, 10) ?? null;
+            orgEjerandelGyldigTil = gyldig.periode?.gyldigTil?.slice(0, 10) ?? null;
           }
         }
       }
@@ -177,14 +183,16 @@ function extractRelations(targetCvr, deltagerRels) {
       }
 
       // Fallback: brug hovedtype som rolle (inkl. ejerandel for register)
+      // BIZZ-1935: brug EJERANDEL.periode.gyldigFra hvis tilgængelig — undgå
+      // hardkodet 1900-01-01 der gjorde 269K rows udatérbare for M&A-radar.
       if (!foundRolle && org.hovedtype) {
         const fallbackType = org.hovedtype.toLowerCase().slice(0, 60);
         rows.push({
           virksomhed_cvr: String(targetCvr),
           deltager_enhedsnummer: enhedsNummer,
           type: fallbackType,
-          gyldig_fra: '1900-01-01',
-          gyldig_til: null,
+          gyldig_fra: orgEjerandelGyldigFra ?? '1900-01-01',
+          gyldig_til: orgEjerandelGyldigTil,
           ejerandel_pct: fallbackType === 'register' ? orgEjerandelPct : null,
           sidst_opdateret: new Date().toISOString(),
           sidst_hentet_fra_cvr: new Date().toISOString(),

@@ -37,6 +37,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   const { searchParams } = new URL(req.url);
   const signalType = searchParams.get('signal_type');
+  const signalTypes = searchParams.get('signal_types');
   const fromDate = searchParams.get('from_date');
   const toDate = searchParams.get('to_date');
   const limit = Math.min(Number(searchParams.get('limit')) || 50, 200);
@@ -52,7 +53,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       .order('gyldig_fra', { ascending: false })
       .range(offset, offset + limit - 1);
 
-    if (signalType) {
+    if (signalTypes) {
+      const types = signalTypes.split(',').filter(Boolean);
+      if (types.length > 0) {
+        query = query.in('signal_type', types);
+      }
+    } else if (signalType) {
       query = query.eq('signal_type', signalType);
     }
     if (fromDate) {

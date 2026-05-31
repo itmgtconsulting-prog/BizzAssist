@@ -10,6 +10,7 @@
 'use client';
 
 import { useState, useCallback, useEffect } from 'react';
+import { ChevronDown } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -40,7 +41,7 @@ interface BerigResult {
   confidence_reason: string;
 }
 
-type SignalFilter = '' | 'entry' | 'exit' | 'increase' | 'decrease';
+type SignalType = 'entry' | 'exit' | 'increase' | 'decrease';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -75,7 +76,8 @@ export default function VirksomhedshandlerClient() {
   const [kandidater, setKandidater] = useState<Kandidat[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [signalFilter, setSignalFilter] = useState<SignalFilter>('');
+  const [signalFilters, setSignalFilters] = useState<Set<SignalType>>(new Set());
+  const [signalDropdownOpen, setSignalDropdownOpen] = useState(false);
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [offset, setOffset] = useState(0);
@@ -90,7 +92,9 @@ export default function VirksomhedshandlerClient() {
   const fetchKandidater = useCallback(async () => {
     setLoading(true);
     const params = new URLSearchParams();
-    if (signalFilter) params.set('signal_type', signalFilter);
+    if (signalFilters.size > 0) {
+      params.set('signal_types', [...signalFilters].join(','));
+    }
     if (fromDate) params.set('from_date', fromDate);
     if (toDate) params.set('to_date', toDate);
     params.set('limit', String(LIMIT));
@@ -106,7 +110,7 @@ export default function VirksomhedshandlerClient() {
     } finally {
       setLoading(false);
     }
-  }, [signalFilter, fromDate, toDate, offset]);
+  }, [signalFilters, fromDate, toDate, offset]);
 
   useEffect(() => {
     void fetchKandidater();
@@ -208,26 +212,69 @@ export default function VirksomhedshandlerClient() {
 
       {/* Filter bar */}
       <div className="flex flex-wrap gap-3 items-end">
-        <div>
-          <label htmlFor="signal-filter" className="block text-xs text-slate-400 mb-1">
-            {t('Signal', 'Signal')}
-          </label>
-          <select
-            id="signal-filter"
+        <div className="relative">
+          <label className="block text-xs text-slate-400 mb-1">{t('Signal', 'Signal')}</label>
+          <button
+            type="button"
+            onClick={() => setSignalDropdownOpen((v) => !v)}
             aria-label={t('Filtrer på signaltype', 'Filter by signal type')}
-            value={signalFilter}
-            onChange={(e) => {
-              setSignalFilter(e.target.value as SignalFilter);
-              setOffset(0);
-            }}
-            className="bg-slate-800 text-white text-sm rounded-lg px-3 py-2 border border-slate-700"
+            className="bg-slate-800 text-white text-sm rounded-lg px-3 py-2 border border-slate-700 min-w-[160px] text-left flex items-center justify-between gap-2"
           >
-            <option value="">{t('Alle signaler', 'All signals')}</option>
-            <option value="entry">{t('Ny ejer', 'New owner')}</option>
-            <option value="exit">{t('Fratrådt', 'Exited')}</option>
-            <option value="increase">{t('Øget andel', 'Increased')}</option>
-            <option value="decrease">{t('Reduceret', 'Decreased')}</option>
-          </select>
+            <span className="truncate">
+              {signalFilters.size === 0
+                ? t('Alle signaler', 'All signals')
+                : signalFilters.size === 1
+                  ? (SIGNAL_LABELS[[...signalFilters][0]]?.[lang === 'da' ? 'da' : 'en'] ??
+                    [...signalFilters][0])
+                  : `${signalFilters.size} ${t('signaler', 'signals')}`}
+            </span>
+            <ChevronDown
+              size={14}
+              className={`text-slate-500 transition-transform ${signalDropdownOpen ? 'rotate-180' : ''}`}
+            />
+          </button>
+          {signalDropdownOpen && (
+            <div className="absolute top-full left-0 mt-1 z-20 bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-1 min-w-[180px]">
+              {(['entry', 'exit', 'increase', 'decrease'] as SignalType[]).map((sig) => (
+                <label
+                  key={sig}
+                  className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-700/50 cursor-pointer text-sm text-white"
+                >
+                  <input
+                    type="checkbox"
+                    checked={signalFilters.has(sig)}
+                    onChange={() => {
+                      setSignalFilters((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(sig)) next.delete(sig);
+                        else next.add(sig);
+                        return next;
+                      });
+                      setOffset(0);
+                    }}
+                    className="accent-indigo-500 w-3.5 h-3.5"
+                  />
+                  <span
+                    className={`inline-flex px-1.5 py-0.5 rounded text-xs font-medium ${SIGNAL_LABELS[sig]?.color ?? ''}`}
+                  >
+                    {SIGNAL_LABELS[sig]?.[lang === 'da' ? 'da' : 'en'] ?? sig}
+                  </span>
+                </label>
+              ))}
+              {signalFilters.size > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSignalFilters(new Set());
+                    setOffset(0);
+                  }}
+                  className="w-full text-left px-3 py-1.5 text-xs text-slate-500 hover:text-white border-t border-slate-700/50 mt-1"
+                >
+                  {t('Nulstil', 'Reset')}
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         <div>

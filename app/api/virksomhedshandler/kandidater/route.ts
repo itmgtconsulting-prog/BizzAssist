@@ -48,19 +48,19 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     // BIZZ-1935: Supabase Management API for SQL — bypasser PostgREST schema-cache
     // som ikke ser sidst_opdateret kolonnen på nye MV'er.
-    const conditions: string[] = ["signal_type != 'unchanged'"];
+    const conditions: string[] = ["k.signal_type != 'unchanged'"];
     if (signalTypes) {
       const types = signalTypes
         .split(',')
         .filter(Boolean)
         .map((t) => t.replace(/[^a-z_]/g, ''));
       if (types.length > 0)
-        conditions.push(`signal_type IN (${types.map((t) => `'${t}'`).join(',')})`);
+        conditions.push(`k.signal_type IN (${types.map((t) => `'${t}'`).join(',')})`);
     } else if (signalType) {
-      conditions.push(`signal_type = '${signalType.replace(/[^a-z_]/g, '')}'`);
+      conditions.push(`k.signal_type = '${signalType.replace(/[^a-z_]/g, '')}'`);
     }
-    if (fromDate) conditions.push(`sidst_opdateret >= '${fromDate.replace(/[^0-9-]/g, '')}'`);
-    if (toDate) conditions.push(`sidst_opdateret <= '${toDate.replace(/[^0-9-]/g, '')}'`);
+    if (fromDate) conditions.push(`k.sidst_opdateret >= '${fromDate.replace(/[^0-9-]/g, '')}'`);
+    if (toDate) conditions.push(`k.sidst_opdateret <= '${toDate.replace(/[^0-9-]/g, '')}'`);
 
     const where = conditions.join(' AND ');
     const accessToken = process.env.SUPABASE_ACCESS_TOKEN;
@@ -70,8 +70,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Mangler SUPABASE_ACCESS_TOKEN' }, { status: 503 });
     }
 
-    const countSql = `SELECT COUNT(*)::int AS total FROM mv_virksomhedshandel_kandidater WHERE ${where}`;
-    const dataSql = `SELECT * FROM mv_virksomhedshandel_kandidater WHERE ${where} ORDER BY sidst_opdateret DESC NULLS LAST LIMIT ${limit} OFFSET ${offset}`;
+    const countSql = `SELECT COUNT(*)::int AS total FROM mv_virksomhedshandel_kandidater k WHERE ${where}`;
+    const dataSql = `SELECT k.*, v.navn AS virksomhed_navn, v.branche_tekst FROM mv_virksomhedshandel_kandidater k LEFT JOIN cvr_virksomhed v ON v.cvr = k.virksomhed_cvr WHERE ${where} ORDER BY k.sidst_opdateret DESC NULLS LAST LIMIT ${limit} OFFSET ${offset}`;
 
     const [countRes, dataRes] = await Promise.all([
       fetch(`https://api.supabase.com/v1/projects/${projectRef}/database/query`, {

@@ -26,6 +26,8 @@ interface Kandidat {
   gyldig_til: string | null;
   sidst_opdateret: string | null;
   signal_type: 'entry' | 'exit' | 'increase' | 'decrease';
+  virksomhed_navn: string | null;
+  branche_tekst: string | null;
 }
 
 interface BerigResult {
@@ -343,13 +345,14 @@ export default function VirksomhedshandlerClient() {
       </p>
 
       {/* Table */}
-      <div className="overflow-x-auto rounded-xl border border-slate-700/30">
+      <div className="overflow-auto rounded-xl border border-slate-700/30 max-h-[70vh]">
         <table className="w-full text-sm">
           <thead className="bg-slate-800/60">
             <tr className="text-left text-slate-400 text-xs uppercase tracking-wider">
               <th className="px-4 py-2">{t('Signal', 'Signal')}</th>
               <th className="px-4 py-2">{t('Deltager', 'Participant')}</th>
-              <th className="px-4 py-2">{t('Virksomhed (CVR)', 'Company (CVR)')}</th>
+              <th className="px-4 py-2">{t('Virksomhed', 'Company')}</th>
+              <th className="px-4 py-2">{t('Branche', 'Industry')}</th>
               <th className="px-4 py-2">{t('Ændring', 'Change')}</th>
               <th className="px-4 py-2">{t('Indrapporteret', 'Reported')}</th>
               <th className="px-4 py-2">{t('Est. værdi', 'Est. value')}</th>
@@ -373,11 +376,12 @@ export default function VirksomhedshandlerClient() {
                   type="text"
                   value={cvrFilter}
                   onChange={(e) => setCvrFilter(e.target.value)}
-                  placeholder={t('Filtrer CVR...', 'Filter CVR...')}
-                  aria-label={t('Filtrer CVR', 'Filter CVR')}
+                  placeholder={t('Filtrer virksomhed...', 'Filter company...')}
+                  aria-label={t('Filtrer virksomhed', 'Filter company')}
                   className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
                 />
               </th>
+              <th className="px-4 py-1" />
               <th className="px-4 py-1" />
               <th className="px-4 py-1" />
               <th className="px-4 py-1" />
@@ -417,7 +421,7 @@ export default function VirksomhedshandlerClient() {
               ))
             ) : kandidater.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-12 text-center text-slate-500">
+                <td colSpan={9} className="px-4 py-12 text-center text-slate-500">
                   {t(
                     'Ingen kandidater fundet med de valgte filtre',
                     'No candidates found with selected filters'
@@ -432,7 +436,14 @@ export default function VirksomhedshandlerClient() {
                     !k.deltager_navn.toLowerCase().includes(deltagerFilter.toLowerCase())
                   )
                     return false;
-                  if (cvrFilter && !k.virksomhed_cvr.includes(cvrFilter)) return false;
+                  if (cvrFilter) {
+                    const q = cvrFilter.toLowerCase();
+                    if (
+                      !k.virksomhed_cvr.includes(q) &&
+                      !(k.virksomhed_navn ?? '').toLowerCase().includes(q)
+                    )
+                      return false;
+                  }
                   return true;
                 })
                 .map((k) => {
@@ -452,8 +463,16 @@ export default function VirksomhedshandlerClient() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-white text-xs">{k.deltager_navn}</td>
-                      <td className="px-4 py-3 text-slate-300 text-xs font-mono">
-                        {k.virksomhed_cvr}
+                      <td className="px-4 py-3 text-xs">
+                        <div className="text-white font-medium truncate max-w-[200px]">
+                          {k.virksomhed_navn ?? k.virksomhed_cvr}
+                        </div>
+                        <span className="text-slate-500 text-[10px] font-mono">
+                          CVR {k.virksomhed_cvr}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-slate-400 text-[10px] truncate max-w-[150px]">
+                        {k.branche_tekst ?? '—'}
                       </td>
                       <td className="px-4 py-3 text-slate-300 text-xs">
                         {k.prev_ejerandel_pct}% → {k.current_ejerandel_pct}%

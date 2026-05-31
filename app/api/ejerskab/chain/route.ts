@@ -444,9 +444,27 @@ export async function GET(req: NextRequest) {
         }
       }
 
+      // BIZZ-1906: Resolve CVR→name from cvr_virksomhed cache for company owners.
+      // ejf_ejerskab.ejer_navn can be raw 'CVR 33058446' instead of company name.
+      const companyCvrs = (cachedEjere as Array<Record<string, unknown>>)
+        .map((r) => r.ejer_cvr as string | null)
+        .filter((c): c is string => !!c);
+      const cvrNameMap = new Map<string, string>();
+      if (companyCvrs.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: cvrRows } = await (admin as any)
+          .from('cvr_virksomhed')
+          .select('cvr, navn')
+          .in('cvr', companyCvrs);
+        for (const r of (cvrRows ?? []) as Array<{ cvr: string; navn: string }>) {
+          cvrNameMap.set(r.cvr, r.navn);
+        }
+      }
+
       for (const row of cachedEjere as Array<Record<string, unknown>>) {
         const cvr = row.ejer_cvr as string | null;
-        const navn = (row.ejer_navn as string) ?? 'Ukendt';
+        const rawNavn = (row.ejer_navn as string) ?? 'Ukendt';
+        const navn = cvr ? (cvrNameMap.get(cvr) ?? rawNavn) : rawNavn;
         const type = (row.ejer_type as string) ?? 'ukendt';
         const t = row.ejerandel_taeller as number | null;
         const n = row.ejerandel_naevner as number | null;

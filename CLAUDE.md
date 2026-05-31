@@ -159,6 +159,14 @@ Full process: `docs/agents/RELEASE_PROCESS.md`
 - New Stripe webhook event types MUST have integration tests
 - Run `npm run test:coverage` to verify before committing
 
+### Visual Verification Before Done (non-negotiable)
+
+1. Before transitioning a ticket to In Review, the code agent MUST run a Playwright test against `test.bizzassist.dk` that confirms the specific acceptance criteria visually
+2. Visual verification = screenshot + assertion: navigate to the specific URL in the ticket test-case, take a screenshot, assert that the expected change is visible
+3. If the fix cannot be verified visually (e.g., infrastructure fix), explicitly document the reason in a JIRA comment with curl output, SQL result, or similar artifact
+4. If the fix requires a prod deploy to take effect (code merged to main + Vercel deploy complete), the agent must explicitly wait for deploy status and verify prod AFTER deploy, not before
+5. The visual verification artifact (screenshot path + Playwright test output) must be included in the JIRA comment when transitioning the ticket to In Review
+
 ## Agent Roles
 
 - ARCHITECT: approves structural changes

@@ -621,6 +621,39 @@ export const regnskabSummary: TopicBuilder = async (rpc) => {
 };
 
 // ============================================================
+// Virksomhedshandel M&A-radar (BIZZ-1930)
+// ============================================================
+
+/**
+ * Topic: virksomhedshandel-kandidater per kommune.
+ * Aggregerer signal_type counts per kommune for hurtige M&A-radar opslag.
+ */
+export const virksomhedshandelByMunicipality: TopicBuilder = async (rpc) => {
+  const sql = `
+    SELECT
+      (v.adresse_json->'kommune'->>'kommuneKode')::int AS kommune_kode,
+      k.signal_type,
+      COUNT(*)::bigint AS antal
+    FROM public.mv_virksomhedshandel_kandidater k
+    JOIN public.cvr_virksomhed v ON v.cvr = k.virksomhed_cvr
+    WHERE k.signal_type != 'unchanged'
+      AND k.gyldig_fra >= CURRENT_DATE - INTERVAL '365 days'
+      AND v.adresse_json->'kommune'->>'kommuneKode' IS NOT NULL
+    GROUP BY kommune_kode, k.signal_type
+    ORDER BY antal DESC
+    LIMIT 500
+  `;
+  const rows = await rpc(sql);
+  return rows.map((r) => ({
+    topic: 'virksomhedshandel_by_municipality',
+    topic_label_da: 'Virksomhedshandler per kommune',
+    key: { kommune_kode: Number(r.kommune_kode), signal_type: r.signal_type },
+    value: { antal: Number(r.antal) },
+    source_query: sql.trim(),
+  }));
+};
+
+// ============================================================
 // Topic registry
 // ============================================================
 
@@ -645,4 +678,5 @@ export const ALL_TOPICS: Array<{ name: string; build: TopicBuilder }> = [
   { name: 'm2_price_by_municipality', build: m2PriceByMunicipality },
   { name: 'top_vurdering_by_municipality', build: topVurderingByMunicipality },
   { name: 'regnskab_summary', build: regnskabSummary },
+  { name: 'virksomhedshandel_by_municipality', build: virksomhedshandelByMunicipality },
 ];

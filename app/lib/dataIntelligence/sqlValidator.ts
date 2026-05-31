@@ -50,6 +50,7 @@ export const WHITELISTED_TABLES = new Set([
   'public.bfe_adresse_cache',
   'public.mv_kommune_statistik',
   'public.mv_virksomhed_portefolje',
+  'public.mv_virksomhedshandel_kandidater',
   'dataintel.data_catalog',
   'dataintel.analytics_knowledge',
 ]);

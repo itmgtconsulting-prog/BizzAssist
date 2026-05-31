@@ -582,6 +582,94 @@ export const SCHEMA_CATALOG: TableMeta[] = [
     ],
     commonJoins: [],
   },
+
+  // ── Virksomhedshandel M&A-radar (BIZZ-1930) ──
+  {
+    name: 'mv_virksomhedshandel_kandidater',
+    schema: 'public',
+    description:
+      'Materialized view over ejerskabsændringer (entry/exit/increase/decrease) detekteret via window-functions på mv_deltager_beriget. Bruges til M&A-radar.',
+    rowCountApprox: 609000,
+    primaryKey: ['deltager_enhedsnummer', 'virksomhed_cvr', 'gyldig_fra'],
+    columns: [
+      {
+        name: 'deltager_enhedsnummer',
+        type: 'bigint',
+        nullable: false,
+        description: 'Enhedsnummer for deltager (person/virksomhed)',
+        sampleValues: [4009876543, 4001234567],
+      },
+      {
+        name: 'deltager_navn',
+        type: 'text',
+        nullable: true,
+        description: 'Navn på deltager',
+        sampleValues: ['Anders Jensen', 'Holding ApS'],
+        isPii: true,
+      },
+      {
+        name: 'virksomhed_cvr',
+        type: 'text',
+        nullable: false,
+        description: 'CVR-nummer på target-virksomheden',
+        sampleValues: ['12345678', '87654321'],
+      },
+      {
+        name: 'relation_type',
+        type: 'text',
+        nullable: false,
+        description: 'Relationstype: register, reel_ejer, eller interessenter',
+        sampleValues: ['register', 'reel_ejer'],
+      },
+      {
+        name: 'current_ejerandel_pct',
+        type: 'numeric',
+        nullable: true,
+        description: 'Nuværende ejerandel i procent',
+        sampleValues: [100, 50, 25],
+      },
+      {
+        name: 'prev_ejerandel_pct',
+        type: 'numeric',
+        nullable: true,
+        description: 'Tidligere ejerandel i procent (0 hvis ny ejer)',
+        sampleValues: [0, 50, 75],
+      },
+      {
+        name: 'gyldig_fra',
+        type: 'timestamptz',
+        nullable: true,
+        description: 'Start-dato for ejerskabet',
+        sampleValues: ['2025-03-15', '2024-01-01'],
+      },
+      {
+        name: 'gyldig_til',
+        type: 'timestamptz',
+        nullable: true,
+        description: 'Slut-dato (sat ved exit/fratræden)',
+        sampleValues: [null, '2025-06-30'],
+      },
+      {
+        name: 'signal_type',
+        type: 'text',
+        nullable: false,
+        description: 'Type af ejerskabsændring: entry, exit, increase, decrease, unchanged',
+        sampleValues: ['entry', 'exit', 'increase'],
+      },
+    ],
+    commonJoins: [
+      {
+        targetTable: 'cvr_virksomhed',
+        on: 'cvr_virksomhed.cvr = mv_virksomhedshandel_kandidater.virksomhed_cvr',
+        purpose: 'Hent virksomhedsnavn, branche, status for target-virksomheden',
+      },
+      {
+        targetTable: 'regnskab_cache',
+        on: 'regnskab_cache.cvr = mv_virksomhedshandel_kandidater.virksomhed_cvr',
+        purpose: 'Hent omsætning/årsresultat for værdiansættelse',
+      },
+    ],
+  },
 ];
 
 /**

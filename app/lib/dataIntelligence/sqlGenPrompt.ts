@@ -168,6 +168,21 @@ VIGTIG — VALG AF SALGSPRIS-TABEL:
 - Brug public.ejerskifte_historik KUN for ejerskifte-spørgsmål UDEN pris (572K rækker, men kontant_koebesum er sjældent udfyldt).
 - For kommune-filtrering på ejendomshandel: JOIN public.bbr_ejendom_status b ON b.bfe_nummer = e.bfe_nummer og brug b.kommune_kode.
 
+VIRKSOMHEDSHANDEL / M&A KANDIDATER (BIZZ-1930):
+
+public.mv_virksomhedshandel_kandidater: deltager_enhedsnummer (bigint), deltager_navn (text), virksomhed_cvr (text), relation_type (text — 'register'/'reel_ejer'/'interessenter'), current_ejerandel_pct (numeric), prev_ejerandel_pct (numeric), gyldig_fra (timestamptz), gyldig_til (timestamptz), signal_type (text — 'entry'/'exit'/'increase'/'decrease'/'unchanged').
+  BEMÆRK: Materialized view der detekterer ejerskabsændringer via window-functions på mv_deltager_beriget. ~609K kandidater. Brug ALTID denne for virksomhedshandel-queries — IKKE rå cvr_deltagerrelation!
+  - signal_type 'entry' = ny ejer (gyldig_fra > 2020-01-01, ingen forrige ejerandel)
+  - signal_type 'exit' = fratrådt (gyldig_til er sat)
+  - signal_type 'increase' = øget ejerandel
+  - signal_type 'decrease' = reduceret ejerandel
+  - FILTRER ALTID signal_type != 'unchanged' — unchanged er noise
+  - For "virksomhedshandler sidste 30/90/365 dage" → WHERE gyldig_fra >= CURRENT_DATE - INTERVAL 'X days' AND signal_type != 'unchanged'
+  - For "hvem har solgt/fratrådt" → WHERE signal_type = 'exit'
+  - For "nye ejere i branche X" → JOIN cvr_virksomhed v ON v.cvr = k.virksomhed_cvr WHERE k.signal_type = 'entry' AND v.branche_kode LIKE 'XX%'
+  - For kommune-filter → JOIN regnskab_cache r ON r.cvr = k.virksomhed_cvr JOIN cvr_virksomhed v ON v.cvr = k.virksomhed_cvr ... (adresse_json->'kommune'->>'kommuneKode')
+  - Ejerandels-ændring = current_ejerandel_pct - prev_ejerandel_pct (allerede beregnet som kolonner)
+
 WHITELISTEDE TABELLER:
 ${Array.from(WHITELISTED_TABLES).join(', ')}
 
@@ -265,6 +280,18 @@ SQL: SELECT b.kommune_kode, k.kommunenavn, AVG(e.koebesum)::bigint AS gennemsnit
 
 Spørgsmål: Dyreste ejendomssalg i 2025
 SQL: SELECT e.bfe_nummer, e.dato, e.koebesum, e.koeber_navne, b.kommune_kode, k.kommunenavn FROM public.ejendomshandel e JOIN public.bbr_ejendom_status b ON b.bfe_nummer = e.bfe_nummer JOIN public.kommune_ref k ON k.kommune_kode = b.kommune_kode WHERE e.koebesum IS NOT NULL AND e.dato >= '2025-01-01' AND e.dato < '2026-01-01' ORDER BY e.koebesum DESC LIMIT 20
+
+Spørgsmål: Virksomhedshandler de seneste 30 dage
+SQL: SELECT k.deltager_navn, k.virksomhed_cvr, v.navn AS virksomhed_navn, k.signal_type, k.current_ejerandel_pct, k.prev_ejerandel_pct, k.gyldig_fra FROM public.mv_virksomhedshandel_kandidater k JOIN public.cvr_virksomhed v ON v.cvr = k.virksomhed_cvr WHERE k.gyldig_fra >= CURRENT_DATE - INTERVAL '30 days' AND k.signal_type != 'unchanged' ORDER BY k.gyldig_fra DESC LIMIT 50
+
+Spørgsmål: Top 10 største virksomhedshandler sidste år sorteret efter omsætning
+SQL: SELECT k.deltager_navn, k.virksomhed_cvr, v.navn AS virksomhed_navn, k.signal_type, k.current_ejerandel_pct - k.prev_ejerandel_pct AS delta_pct, r.omsaetning FROM public.mv_virksomhedshandel_kandidater k JOIN public.cvr_virksomhed v ON v.cvr = k.virksomhed_cvr JOIN public.regnskab_cache r ON r.cvr = k.virksomhed_cvr WHERE k.gyldig_fra >= CURRENT_DATE - INTERVAL '365 days' AND k.signal_type IN ('entry', 'exit') AND r.omsaetning IS NOT NULL ORDER BY r.omsaetning DESC LIMIT 10
+
+Spørgsmål: Hvem solgte deres andel i tech-virksomheder i 2026?
+SQL: SELECT k.deltager_navn, k.virksomhed_cvr, v.navn AS virksomhed_navn, v.branche_tekst, k.prev_ejerandel_pct, k.current_ejerandel_pct, k.gyldig_fra FROM public.mv_virksomhedshandel_kandidater k JOIN public.cvr_virksomhed v ON v.cvr = k.virksomhed_cvr WHERE k.signal_type IN ('exit', 'decrease') AND k.gyldig_fra >= '2026-01-01' AND v.branche_kode LIKE '62%' ORDER BY k.gyldig_fra DESC LIMIT 50
+
+Spørgsmål: Fordeling af virksomhedshandel-signaler per branche
+SQL: SELECT v.branche_tekst, k.signal_type, COUNT(*) AS antal FROM public.mv_virksomhedshandel_kandidater k JOIN public.cvr_virksomhed v ON v.cvr = k.virksomhed_cvr WHERE k.signal_type != 'unchanged' AND v.branche_tekst IS NOT NULL GROUP BY v.branche_tekst, k.signal_type ORDER BY antal DESC LIMIT 30
 
 Spørgsmål: Lav fusion mellem virksomheder
 FORKLARING: Det kan jeg ikke — det kræver skrive-adgang. Jeg kan kun læse data, ikke ændre.

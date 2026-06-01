@@ -2,13 +2,13 @@
  * BIZZ-1936: Direct-port af app/api/regnskab/xbrl/route.ts parser-logik
  * til pure JS .mjs så vi kan backfille regnskab_cache uden HTTP roundtrip.
  *
- * Holder samme PARSER_VERSION som route.ts ('v8') så cache er kompatibel.
+ * Holder samme PARSER_VERSION som route.ts ('v9') så cache er kompatibel.
  * Skema for years[i] er identisk med RegnskabsAar interface i route.ts.
  *
  * Vedligehold: hvis route.ts parseren ændres, opdater også denne fil.
  */
 
-export const PARSER_VERSION = 'v8';
+export const PARSER_VERSION = 'v9';
 
 // ─── Tag mappings (identisk med route.ts) ─────────────────────────────────────
 
@@ -135,16 +135,14 @@ function extractValue(xml, tagNames, validCtxIds) {
           const isNeg = /\bsign="-"/i.test(attrs);
           const unitRef = attrs.match(/unitRef="([^"]*)"/i)?.[1] ?? '';
           const erIkkeMonetaer = /pure|shares|antal|decimal/i.test(unitRef);
-          const decimalsMatch = attrs.match(/decimals="(-?\d+|INF)"/i);
           let dkkValue;
           if (erIkkeMonetaer) {
             dkkValue = num;
           } else if (hasScale) {
             dkkValue = num * Math.pow(10, parseInt(scaleMatch[1], 10));
-          } else if (decimalsMatch && decimalsMatch[1] !== 'INF') {
-            const d = parseInt(decimalsMatch[1], 10);
-            dkkValue = d < 0 ? num * Math.pow(10, -d) : num;
           } else {
+            // BIZZ-1956: decimals skaleres ALDRIG (kun præcision, ikke enhed).
+            // Elementets indhold er hele DKK; kun iXBRL scale skalerer.
             dkkValue = num;
           }
           const rounded = Math.round(dkkValue);

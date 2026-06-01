@@ -116,7 +116,8 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
         // Errors are non-fatal: the auth deletion below is the definitive erasure.
         // BIZZ-128/BIZZ-288: all tables must be covered to satisfy GDPR Art. 17.
         await db.from('recent_entities').delete().eq('user_id', user.id);
-        await db.from('saved_entities').delete().eq('user_id', user.id);
+        // saved_entities tracks the creating user in created_by (not user_id).
+        await db.from('saved_entities').delete().eq('created_by', user.id);
         await db.from('notifications').delete().eq('user_id', user.id);
         await db.from('recent_searches').delete().eq('user_id', user.id);
         await db.from('activity_log').delete().eq('user_id', user.id);
@@ -125,11 +126,11 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
         const { data: convos } = await db
           .from('ai_conversations')
           .select('id')
-          .eq('user_id', user.id);
+          .eq('created_by', user.id);
         if (convos && convos.length > 0) {
           const convoIds = convos.map((c: { id: string }) => c.id);
           await db.from('ai_messages').delete().in('conversation_id', convoIds);
-          await db.from('ai_conversations').delete().eq('user_id', user.id);
+          await db.from('ai_conversations').delete().eq('created_by', user.id);
         }
 
         // BIZZ-288: Delete user-uploaded knowledge embeddings

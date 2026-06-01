@@ -14,6 +14,12 @@ import Link from 'next/link';
 import { ChevronDown, X, Download, Building2, User } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import VirksomhedshandelDetailModal from './VirksomhedshandelDetailModal';
+import {
+  deriveCvrStatusKode,
+  CVR_STATUS_INFO,
+  CVR_STATUS_KODER,
+  type CvrStatusKode,
+} from '@/app/lib/cvrStatusMapping';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -42,6 +48,32 @@ interface Kandidat {
   omsaetning: number | string | null;
   bruttofortjeneste: number | string | null;
   overskud: number | string | null; // resultat før skat
+  // BIZZ-1962: rå CVR-status-JSON + server-udledt kategori for virksomheden.
+  // deltager_status_raw er kun sat når deltageren er en virksomhed med entydigt CVR.
+  virksomhed_status_raw?: string | null;
+  virksomhed_status_kode?: CvrStatusKode | null;
+  deltager_status_raw?: string | null;
+}
+
+/**
+ * Kompakt status-badge: lille farvet prik + label med hover-tooltip (BIZZ-1962).
+ *
+ * @param kode - Status-kategori at vise.
+ * @param lang - Aktivt sprog (da/en) til label.
+ * @returns Inline badge-element.
+ */
+function StatusBadge({ kode, lang }: { kode: CvrStatusKode; lang: 'da' | 'en' }) {
+  const info = CVR_STATUS_INFO[kode];
+  const label = lang === 'da' ? info.label : info.labelEn;
+  return (
+    <span
+      title={label}
+      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${info.badgeClass}`}
+    >
+      <span className={`w-1.5 h-1.5 rounded-full ${info.dotClass}`} aria-hidden="true" />
+      {label}
+    </span>
+  );
 }
 
 interface BrancheOption {
@@ -151,6 +183,19 @@ export default function VirksomhedshandlerClient() {
   // Kolonne-filtre
   const [deltagerFilter, setDeltagerFilter] = useState('');
   const [cvrFilter, setCvrFilter] = useState('');
+
+  // BIZZ-1962: status-filtre. Virksomheds-status filtreres server-side (påvirker
+  // total + pagination korrekt); deltager-status filtreres klient-side på den
+  // hentede side (konsistent med de øvrige tekst-filtre i denne kolonne-række).
+  // Default for begge = kun 'aktiv' → ophørte selskaber skjules som udgangspunkt.
+  const [virksomhedStatusFilters, setVirksomhedStatusFilters] = useState<Set<CvrStatusKode>>(
+    () => new Set<CvrStatusKode>(['aktiv'])
+  );
+  const [virksomhedStatusDropdownOpen, setVirksomhedStatusDropdownOpen] = useState(false);
+  const [deltagerStatusFilters, setDeltagerStatusFilters] = useState<Set<CvrStatusKode>>(
+    () => new Set<CvrStatusKode>(['aktiv'])
+  );
+  const [deltagerStatusDropdownOpen, setDeltagerStatusDropdownOpen] = useState(false);
   // Branche-filter (server-side, multiselect på branche_kode)
   const [brancheOptions, setBrancheOptions] = useState<BrancheOption[]>([]);
   const [selectedBrancher, setSelectedBrancher] = useState<Set<string>>(new Set());
@@ -191,7 +236,11 @@ export default function VirksomhedshandlerClient() {
   const signalsAreDefault =
     signalFilters.size === DEFAULT_SIGNALS.length &&
     DEFAULT_SIGNALS.every((s) => signalFilters.has(s));
+  // Status-default = præcis {aktiv}; alt andet tæller som aktivt filter.
+  const statusIsDefault = (s: Set<CvrStatusKode>) => s.size === 1 && s.has('aktiv');
   const anyFilterActive =
+    !statusIsDefault(virksomhedStatusFilters) ||
+    !statusIsDefault(deltagerStatusFilters) ||
     !signalsAreDefault ||
     selectedBrancher.size > 0 ||
     !!minOmsaetning ||
@@ -233,6 +282,8 @@ export default function VirksomhedshandlerClient() {
     setConfidenceFilter(new Set());
     setDeltagerFilter('');
     setCvrFilter('');
+    setVirksomhedStatusFilters(new Set<CvrStatusKode>(['aktiv']));
+    setDeltagerStatusFilters(new Set<CvrStatusKode>(['aktiv']));
     setSortKey('aendringsdato');
     setSortDir('desc');
     setOffset(0);
@@ -303,6 +354,9 @@ export default function VirksomhedshandlerClient() {
     if (indrapFra) params.set('indrapporteret_fra', indrapFra);
     if (indrapTil) params.set('indrapporteret_til', indrapTil);
     if (selectedBrancher.size > 0) params.set('brancher', [...selectedBrancher].join(','));
+    // Virksomheds-status filtreres server-side. Tom = server-default (kun aktiv).
+    if (virksomhedStatusFilters.size > 0)
+      params.set('virksomhed_status', [...virksomhedStatusFilters].join(','));
     if (minOmsaetning) params.set('min_omsaetning', minOmsaetning);
     if (maxOmsaetning) params.set('max_omsaetning', maxOmsaetning);
     if (minBruttofortjeneste) params.set('min_bruttofortjeneste', minBruttofortjeneste);
@@ -334,6 +388,7 @@ export default function VirksomhedshandlerClient() {
     indrapFra,
     indrapTil,
     selectedBrancher,
+    virksomhedStatusFilters,
     minOmsaetning,
     maxOmsaetning,
     minBruttofortjeneste,
@@ -363,6 +418,10 @@ export default function VirksomhedshandlerClient() {
             if (typeof f.indrapFra === 'string') setIndrapFra(f.indrapFra);
             if (typeof f.indrapTil === 'string') setIndrapTil(f.indrapTil);
             if (Array.isArray(f.brancher)) setSelectedBrancher(new Set(f.brancher as string[]));
+            if (Array.isArray(f.virksomhedStatus))
+              setVirksomhedStatusFilters(new Set(f.virksomhedStatus as CvrStatusKode[]));
+            if (Array.isArray(f.deltagerStatus))
+              setDeltagerStatusFilters(new Set(f.deltagerStatus as CvrStatusKode[]));
             if (typeof f.minOmsaetning === 'string') setMinOmsaetning(f.minOmsaetning);
             if (typeof f.maxOmsaetning === 'string') setMaxOmsaetning(f.maxOmsaetning);
             if (typeof f.minBruttofortjeneste === 'string')
@@ -417,6 +476,8 @@ export default function VirksomhedshandlerClient() {
               indrapFra,
               indrapTil,
               brancher: [...selectedBrancher],
+              virksomhedStatus: [...virksomhedStatusFilters],
+              deltagerStatus: [...deltagerStatusFilters],
               minOmsaetning,
               maxOmsaetning,
               minBruttofortjeneste,
@@ -446,6 +507,8 @@ export default function VirksomhedshandlerClient() {
     indrapFra,
     indrapTil,
     selectedBrancher,
+    virksomhedStatusFilters,
+    deltagerStatusFilters,
     minOmsaetning,
     maxOmsaetning,
     minBruttofortjeneste,
@@ -575,6 +638,16 @@ export default function VirksomhedshandlerClient() {
     if (confidenceFilter.size > 0) {
       if (!berig || !confidenceFilter.has(berig.confidence)) return false;
     }
+    // BIZZ-1962: deltager-status filtreres kun for virksomheds-deltagere med
+    // entydigt CVR (de eneste der har en kendt status). Person-deltagere og
+    // flertydige virksomheds-navne passerer altid (ingen status at filtrere på).
+    if (
+      deltagerStatusFilters.size > 0 &&
+      k.deltager_er_virksomhed &&
+      k.deltager_status_raw != null
+    ) {
+      if (!deltagerStatusFilters.has(deriveCvrStatusKode(k.deltager_status_raw))) return false;
+    }
     return true;
   });
 
@@ -597,8 +670,10 @@ export default function VirksomhedshandlerClient() {
     const headers = [
       t('Signal', 'Signal'),
       t('Deltager', 'Participant'),
+      t('Deltager-status', 'Participant status'),
       t('Virksomhed', 'Company'),
       'CVR',
+      t('Virksomheds-status', 'Company status'),
       t('Branche', 'Industry'),
       t('Omsætning (DKK)', 'Revenue (DKK)'),
       t('Bruttofortjeneste (DKK)', 'Gross profit (DKK)'),
@@ -622,11 +697,24 @@ export default function VirksomhedshandlerClient() {
       const delta = Math.abs(k.current_ejerandel_pct - k.prev_ejerandel_pct);
       const fraPct = k.signal_type === 'exit' ? k.current_ejerandel_pct : k.prev_ejerandel_pct;
       const tilPct = k.signal_type === 'exit' ? 0 : k.current_ejerandel_pct;
+      // Status-label til eksport: deltager kun hvis virksomhed med kendt status.
+      const deltagerStatusLabel =
+        k.deltager_er_virksomhed && k.deltager_status_raw != null
+          ? CVR_STATUS_INFO[deriveCvrStatusKode(k.deltager_status_raw)][
+              lang === 'da' ? 'label' : 'labelEn'
+            ]
+          : '';
+      const virksomhedStatusLabel =
+        CVR_STATUS_INFO[k.virksomhed_status_kode ?? deriveCvrStatusKode(k.virksomhed_status_raw)][
+          lang === 'da' ? 'label' : 'labelEn'
+        ];
       return [
         SIGNAL_LABELS[k.signal_type]?.[lang === 'da' ? 'da' : 'en'] ?? k.signal_type,
         k.deltager_navn,
+        deltagerStatusLabel,
         k.virksomhed_navn ?? k.virksomhed_cvr,
         k.virksomhed_cvr,
+        virksomhedStatusLabel,
         k.branche_tekst ?? '',
         num(k.omsaetning),
         num(k.bruttofortjeneste),
@@ -653,6 +741,84 @@ export default function VirksomhedshandlerClient() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }, [filteredKandidater, berigResults, lang, t]);
+
+  /**
+   * Renderer en kompakt multi-select status-dropdown til en kolonne-filterrække
+   * (BIZZ-1962). Genbruges af både Deltager- og Virksomheds-kolonnen.
+   *
+   * @param filters - Aktuelt valgte status-kategorier.
+   * @param setFilters - State-setter for kategorierne.
+   * @param open - Er dropdownen åben?
+   * @param setOpen - State-setter for åben/lukket.
+   * @param ariaLabel - Tilgængeligheds-label for knappen.
+   */
+  const renderStatusDropdown = (
+    filters: Set<CvrStatusKode>,
+    setFilters: React.Dispatch<React.SetStateAction<Set<CvrStatusKode>>>,
+    open: boolean,
+    setOpen: React.Dispatch<React.SetStateAction<boolean>>,
+    ariaLabel: string
+  ) => (
+    <div className="relative mt-1">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-label={ariaLabel}
+        className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white flex items-center justify-between gap-1"
+      >
+        <span className="truncate">
+          {filters.size === 0
+            ? t('Alle', 'All')
+            : filters.size === 1
+              ? lang === 'da'
+                ? CVR_STATUS_INFO[[...filters][0]].label
+                : CVR_STATUS_INFO[[...filters][0]].labelEn
+              : `${filters.size} ${t('valgt', 'selected')}`}
+        </span>
+        <ChevronDown
+          size={11}
+          className={`text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+      {open && (
+        <div className="absolute top-full left-0 mt-1 z-30 bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-1 min-w-[190px]">
+          {CVR_STATUS_KODER.map((kode) => {
+            const info = CVR_STATUS_INFO[kode];
+            return (
+              <label
+                key={kode}
+                className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-700/50 cursor-pointer text-sm text-white"
+              >
+                <input
+                  type="checkbox"
+                  checked={filters.has(kode)}
+                  onChange={() => {
+                    setFilters((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(kode)) next.delete(kode);
+                      else next.add(kode);
+                      return next;
+                    });
+                    setOffset(0);
+                  }}
+                  className="accent-indigo-500 w-3.5 h-3.5"
+                />
+                <span
+                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium ${info.badgeClass}`}
+                >
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${info.dotClass}`}
+                    aria-hidden="true"
+                  />
+                  {lang === 'da' ? info.label : info.labelEn}
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 
   // ─── Render ───────────────────────────────────────────────────────
 
@@ -718,6 +884,23 @@ export default function VirksomhedshandlerClient() {
               {t('Nulstil filtre', 'Reset filters')}
             </button>
           )}
+          {/* BIZZ-1962: hurtig-toggle — sætter begge status-filtre til kun Aktiv. */}
+          <button
+            type="button"
+            onClick={() => {
+              setVirksomhedStatusFilters(new Set<CvrStatusKode>(['aktiv']));
+              setDeltagerStatusFilters(new Set<CvrStatusKode>(['aktiv']));
+              setOffset(0);
+            }}
+            aria-label={t('Skjul alle ophørte selskaber', 'Hide all ceased companies')}
+            title={t(
+              'Skjuler konkursramte, opløste og fusionerede selskaber (både deltager og virksomhed).',
+              'Hides bankrupt, dissolved and merged companies (both participant and company).'
+            )}
+            className="inline-flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 text-white text-xs px-3 py-1.5 rounded-lg transition-colors"
+          >
+            {t('Skjul alle ophørte', 'Hide all ceased')}
+          </button>
           <button
             onClick={exportCsv}
             disabled={filteredKandidater.length === 0}
@@ -842,8 +1025,8 @@ export default function VirksomhedshandlerClient() {
                   </div>
                 )}
               </th>
-              {/* Deltager-tekstfilter */}
-              <th className="px-2 py-1 font-normal">
+              {/* Deltager-tekstfilter + status-multiselect (BIZZ-1962) */}
+              <th className="px-2 py-1 relative font-normal">
                 <input
                   type="text"
                   value={deltagerFilter}
@@ -852,9 +1035,16 @@ export default function VirksomhedshandlerClient() {
                   aria-label={t('Filtrer deltager', 'Filter participant')}
                   className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[11px] text-white placeholder-slate-400 focus:border-indigo-500/50 focus:outline-none"
                 />
+                {renderStatusDropdown(
+                  deltagerStatusFilters,
+                  setDeltagerStatusFilters,
+                  deltagerStatusDropdownOpen,
+                  setDeltagerStatusDropdownOpen,
+                  t('Filtrer på deltager-status', 'Filter by participant status')
+                )}
               </th>
-              {/* Virksomhed-tekstfilter */}
-              <th className="px-2 py-1 font-normal">
+              {/* Virksomhed-tekstfilter + status-multiselect (BIZZ-1962) */}
+              <th className="px-2 py-1 relative font-normal">
                 <input
                   type="text"
                   value={cvrFilter}
@@ -863,6 +1053,13 @@ export default function VirksomhedshandlerClient() {
                   aria-label={t('Filtrer virksomhed', 'Filter company')}
                   className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[11px] text-white placeholder-slate-400 focus:border-indigo-500/50 focus:outline-none"
                 />
+                {renderStatusDropdown(
+                  virksomhedStatusFilters,
+                  setVirksomhedStatusFilters,
+                  virksomhedStatusDropdownOpen,
+                  setVirksomhedStatusDropdownOpen,
+                  t('Filtrer på virksomheds-status', 'Filter by company status')
+                )}
               </th>
               {/* Branche-multiselect */}
               <th className="px-2 py-1 relative font-normal">
@@ -1378,6 +1575,16 @@ export default function VirksomhedshandlerClient() {
                           {k.deltager_navn}
                         </Link>
                       )}
+                      {/* BIZZ-1962: status-badge KUN for virksomheds-deltagere med
+                          kendt status — person-deltagere har User-ikon som indikator. */}
+                      {k.deltager_er_virksomhed && k.deltager_status_raw != null && (
+                        <div className="mt-1">
+                          <StatusBadge
+                            kode={deriveCvrStatusKode(k.deltager_status_raw)}
+                            lang={lang === 'da' ? 'da' : 'en'}
+                          />
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-xs">
                       <Link
@@ -1395,6 +1602,15 @@ export default function VirksomhedshandlerClient() {
                           CVR {k.virksomhed_cvr}
                         </span>
                       </Link>
+                      {/* BIZZ-1962: virksomheds-status vises altid (det er altid en virksomhed). */}
+                      <div className="mt-1">
+                        <StatusBadge
+                          kode={
+                            k.virksomhed_status_kode ?? deriveCvrStatusKode(k.virksomhed_status_raw)
+                          }
+                          lang={lang === 'da' ? 'da' : 'en'}
+                        />
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-slate-400 text-[10px] truncate max-w-[150px]">
                       {k.branche_tekst ?? '—'}

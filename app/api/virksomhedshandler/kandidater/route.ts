@@ -13,6 +13,10 @@
  * - to_date       - Ændringsdato til (YYYY-MM-DD, inklusiv). Da kolonnerne er date-typede
  *                   er begge grænser hele-dags-inklusive → samme dato i begge = 1 dag.
  * - brancher      - Komma-separeret liste af branche_kode (DB07) at filtrere på
+ * - virksomhed_status - Komma-separeret liste af status-kategorier (aktiv|
+ *                   under_konkurs|oploest_konkurs|fusioneret|tvangsoploest).
+ *                   Fraværende = default kun 'aktiv' (skjuler ophørte selskaber).
+ *                   Udledes fra cvr_virksomhed.status via cvrStatusMapping (BIZZ-1962).
  * - min_omsaetning / max_omsaetning - Filter på seneste regnskabs omsætning (DKK)
  * - min_bruttofortjeneste / max_bruttofortjeneste - Filter på seneste regnskabs bruttofortjeneste (DKK)
  * - min_overskud / max_overskud     - Filter på seneste regnskabs resultat før skat (DKK)
@@ -31,7 +35,9 @@
  * virksomheds-deltagere til /dashboard/companies i stedet for person-siden.
  *
  * @returns { kandidater: [...], total: number } — hver kandidat har desuden
- *   deltager_er_virksomhed (boolean) og deltager_cvr (string|null, kun ved unikt match)
+ *   deltager_er_virksomhed (boolean), deltager_cvr (string|null, kun ved unikt match),
+ *   virksomhed_status_raw (rå CVR-status-JSON), virksomhed_status_kode (udledt kategori)
+ *   og deltager_status_raw (rå status, kun ved entydigt virksomheds-match) — BIZZ-1962
  *
  * @module app/api/virksomhedshandler/kandidater/route
  */
@@ -69,6 +75,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const indrapFra = searchParams.get('indrapporteret_fra');
   const indrapTil = searchParams.get('indrapporteret_til');
   const brancherParam = searchParams.get('brancher');
+  // BIZZ-1962: virksomheds-status-filter (kategorier fra cvrStatusMapping).
+  // Default (param fraværende) = kun aktive selskaber (skjuler ophørte/konkursramte).
+  const virksomhedStatusParam = searchParams.get('virksomhed_status');
   const limit = Math.min(Number(searchParams.get('limit')) || 50, 200);
   const offset = Number(searchParams.get('offset')) || 0;
 
@@ -77,6 +86,36 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   // COALESCE(gyldig_til, gyldig_fra) giver én samlet, date-typet ændringsdato. Adskilt
   // fra sidst_opdateret (per-række indrapporterings-dato — egen filter-akse).
   const AENDRINGSDATO = 'COALESCE(k.gyldig_til, k.gyldig_fra)';
+
+  // BIZZ-1962: SQL-CASE der udleder status-kategori fra cvr_virksomhed.status
+  // (JSON-blob). MATCHER 1:1 deriveCvrStatusKode() i app/lib/cvrStatusMapping.ts
+  // så server-filter og klient-badge altid er enige. left()='{' guard undgår at
+  // caste ikke-JSON tekst til jsonb (ville kaste og vælte hele queryen).
+  const statusKategoriSql = (alias: string): string =>
+    `CASE
+       WHEN ${alias}.status IS NULL THEN 'aktiv'
+       WHEN left(${alias}.status, 1) <> '{' THEN 'aktiv'
+       WHEN (${alias}.status::jsonb->>'statustekst') = 'Ophævelse af dekret' THEN 'aktiv'
+       WHEN (${alias}.status::jsonb->>'statustekst') = 'Regnskab og boafslutning' THEN 'oploest_konkurs'
+       WHEN (${alias}.status::jsonb->>'kreditoplysningtekst') IS NOT NULL THEN 'under_konkurs'
+       ELSE 'aktiv'
+     END`;
+
+  // Whitelist af gyldige status-kategorier (mod SQL-injektion i IN-listen).
+  const GYLDIGE_STATUS = new Set([
+    'aktiv',
+    'under_konkurs',
+    'oploest_konkurs',
+    'fusioneret',
+    'tvangsoploest',
+  ]);
+  // Default = kun 'aktiv' når param mangler. Tom param ⟹ også default-aktiv
+  // (undgå tomt resultat ved fx ?virksomhed_status=).
+  const valgteStatus = (virksomhedStatusParam ?? 'aktiv')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => GYLDIGE_STATUS.has(s));
+  const statusFilterKategorier = valgteStatus.length > 0 ? valgteStatus : ['aktiv'];
 
   // Sortering — whitelist af sorterbare kolonner (mod SQL-injektion). Default er
   // seneste ændringsdato. 'aendring' sorterer på absolut ejerandels-delta.
@@ -139,9 +178,17 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       .split(',')
       .map((b) => b.replace(/[^0-9]/g, ''))
       .filter(Boolean);
-    const needCompanyJoin = brancheKoder.length > 0;
-    if (needCompanyJoin) {
+    // BIZZ-1962: status-filter aktivt når ikke alle 5 kategorier er valgt
+    // (alle valgt ⟹ ingen effektiv filtrering, spring join over for fart).
+    const statusFilterAktiv = statusFilterKategorier.length < GYLDIGE_STATUS.size;
+    const needCompanyJoin = brancheKoder.length > 0 || statusFilterAktiv;
+    if (brancheKoder.length > 0) {
       conditions.push(`v.branche_kode IN (${brancheKoder.map((b) => `'${b}'`).join(',')})`);
+    }
+    if (statusFilterAktiv) {
+      conditions.push(
+        `${statusKategoriSql('v')} IN (${statusFilterKategorier.map((s) => `'${s}'`).join(',')})`
+      );
     }
 
     // Regnskabs-range-filter — kræver regnskab_cache-join (ekskluderer ucachede rækker).
@@ -177,7 +224,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const countSql = `SELECT COUNT(*)::int AS total FROM ${countFrom} WHERE ${where}`;
 
     // Data-query joiner altid regnskab_cache + cvr_virksomhed for kolonne-berigelse.
-    const dataSql = `SELECT k.*, ${AENDRINGSDATO} AS aendringsdato, v.navn AS virksomhed_navn, v.branche_tekst, v.branche_kode, rc.seneste_aar AS regnskab_aar, rc.omsaetning, rc.bruttofortjeneste, rc.resultat_foer_skat AS overskud FROM mv_virksomhedshandel_kandidater k LEFT JOIN cvr_virksomhed v ON v.cvr = k.virksomhed_cvr LEFT JOIN regnskab_cache rc ON rc.cvr = k.virksomhed_cvr WHERE ${where} ORDER BY ${sortCol} ${sortDir} NULLS LAST, ${AENDRINGSDATO} DESC NULLS LAST LIMIT ${limit} OFFSET ${offset}`;
+    // BIZZ-1962: virksomhed_status_raw (rå JSON) + virksomhed_status_kode (udledt
+    // kategori) leveres så frontend kan rendere status-badge uden selv at JSON-parse.
+    const dataSql = `SELECT k.*, ${AENDRINGSDATO} AS aendringsdato, v.navn AS virksomhed_navn, v.branche_tekst, v.branche_kode, v.status AS virksomhed_status_raw, ${statusKategoriSql('v')} AS virksomhed_status_kode, rc.seneste_aar AS regnskab_aar, rc.omsaetning, rc.bruttofortjeneste, rc.resultat_foer_skat AS overskud FROM mv_virksomhedshandel_kandidater k LEFT JOIN cvr_virksomhed v ON v.cvr = k.virksomhed_cvr LEFT JOIN regnskab_cache rc ON rc.cvr = k.virksomhed_cvr WHERE ${where} ORDER BY ${sortCol} ${sortDir} NULLS LAST, ${AENDRINGSDATO} DESC NULLS LAST LIMIT ${limit} OFFSET ${offset}`;
 
     const [countRes, dataRes] = await Promise.all([
       fetch(`https://api.supabase.com/v1/projects/${projectRef}/database/query`, {
@@ -211,7 +260,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     );
     if (deltagerNavne.length > 0) {
       const navnArray = deltagerNavne.map((n) => `'${n.replace(/'/g, "''")}'`).join(',');
-      const resolveSql = `SELECT navn, MIN(cvr) AS cvr, COUNT(*) AS cnt FROM cvr_virksomhed WHERE navn = ANY(ARRAY[${navnArray}]::text[]) GROUP BY navn`;
+      // BIZZ-1962: ved unikt navne-match (cnt=1) er status entydig → MAX(status)
+      // returnerer den ene rækkes status, så deltager-virksomheder også kan
+      // status-markeres. Ved flertydigt navn ignoreres status (vises ikke).
+      const resolveSql = `SELECT navn, MIN(cvr) AS cvr, COUNT(*) AS cnt, MAX(status) AS status FROM cvr_virksomhed WHERE navn = ANY(ARRAY[${navnArray}]::text[]) GROUP BY navn`;
       try {
         const resolveRes = await fetch(
           `https://api.supabase.com/v1/projects/${projectRef}/database/query`,
@@ -222,12 +274,16 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
             signal: AbortSignal.timeout(15000),
           }
         ).then((r) => r.json());
-        const byNavn = new Map<string, { cvr: string | null; cnt: number }>();
+        const byNavn = new Map<
+          string,
+          { cvr: string | null; cnt: number; status: string | null }
+        >();
         if (Array.isArray(resolveRes)) {
           for (const row of resolveRes) {
             byNavn.set(row.navn as string, {
               cvr: row.cvr != null ? String(row.cvr) : null,
               cnt: Number(row.cnt),
+              status: row.status != null ? String(row.status) : null,
             });
           }
         }
@@ -236,6 +292,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           const match = navn ? byNavn.get(navn) : undefined;
           r.deltager_er_virksomhed = !!match;
           r.deltager_cvr = match && match.cnt === 1 ? match.cvr : null;
+          // BIZZ-1962: status kun ved entydigt match (ellers er det uvist hvilket
+          // selskabs status der gælder). Rå JSON — frontend udleder kategori.
+          r.deltager_status_raw = match && match.cnt === 1 ? match.status : null;
         }
       } catch (e) {
         // Best-effort berigelse — ved fejl falder klienten tilbage til person-link.

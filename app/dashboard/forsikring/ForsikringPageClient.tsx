@@ -425,11 +425,17 @@ function UnifiedAnalyseView({
     // BIZZ-1941: Ejendomsrækker viser KUN ejendomsspecifikke gaps (scope='property').
     // Forsikringsejer-/virksomheds-gaps løftes op i dedikerede sektioner (se nedenfor),
     // så de ikke gentages under hver ejendom.
-    const rawGaps = aktiv.matched_policy_id
-      ? gaps.filter(
-          (g) => g.policy_id === aktiv.matched_policy_id && gapScope(g.check_id) === 'property'
-        )
-      : [];
+    // BIZZ-1957: Bygnings-/ejendomsspecifikke gaps (scope='property', fx 'Udvidet
+    // vandskade') hører KUN til under ejendoms-rækker. Samme police kan være matchet
+    // til BÅDE virksomheds-aktivet og selve ejendommen; uden type-guarden lækkede
+    // bygnings-gaps op på virksomheds-niveau. Virksomheds-/ejer-scopede gaps vises
+    // alene i de dedikerede company-/owner-sektioner.
+    const rawGaps =
+      aktiv.matched_policy_id && aktiv.type === 'ejendom'
+        ? gaps.filter(
+            (g) => g.policy_id === aktiv.matched_policy_id && gapScope(g.check_id) === 'property'
+          )
+        : [];
     const aktivGaps = dedupGaps(rawGaps);
     allGroups.push({
       aktiv,
@@ -2778,15 +2784,21 @@ function AnalyseDetailSection({
           );
 
           // Byg PropertyGroups
+          // BIZZ-1957: Bygnings-/ejendomsspecifikke gaps (scope='property') må kun
+          // hænge under ejendoms-aktiver — ikke under virksomheds-aktivet, selv om
+          // policen tilfældigvis også er matchet dertil. Ellers lækker fx 'Udvidet
+          // vandskade' op på virksomheds-niveau.
           const groups: PropertyGroup[] = uniqueAktiver.map((aktiv) => {
-            const aktivGaps = aktiv.matched_policy_id
-              ? dedupGaps(
-                  detail.gaps.filter(
-                    (g) =>
-                      g.policy_id === aktiv.matched_policy_id && gapScope(g.check_id) === 'property'
+            const aktivGaps =
+              aktiv.matched_policy_id && aktiv.type === 'ejendom'
+                ? dedupGaps(
+                    detail.gaps.filter(
+                      (g) =>
+                        g.policy_id === aktiv.matched_policy_id &&
+                        gapScope(g.check_id) === 'property'
+                    )
                   )
-                )
-              : [];
+                : [];
             return {
               aktiv,
               matchedPolicy: aktiv.matched_policy_id

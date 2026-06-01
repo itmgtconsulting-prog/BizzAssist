@@ -28,6 +28,18 @@ interface Kandidat {
   signal_type: 'entry' | 'exit' | 'increase' | 'decrease';
   virksomhed_navn: string | null;
   branche_tekst: string | null;
+  branche_kode: string | null;
+  // Seneste regnskabstal fra regnskab_cache (null = ikke cachet endnu)
+  regnskab_aar: number | null;
+  omsaetning: number | string | null;
+  bruttofortjeneste: number | string | null;
+  overskud: number | string | null; // resultat før skat
+}
+
+interface BrancheOption {
+  branche_kode: string;
+  branche_tekst: string;
+  antal: number;
 }
 
 interface BerigResult {
@@ -66,6 +78,23 @@ function formatDKK(amount: number): string {
   return `${amount} DKK`;
 }
 
+/**
+ * Formaterer et (muligt negativt eller manglende) regnskabsbeløb kompakt.
+ *
+ * @param amount - Beløb i DKK (number, string fra bigint, eller null)
+ * @returns Kompakt streng ("12,3 mio.", "-450 t.", "—" ved manglende data)
+ */
+function formatRegnskab(amount: number | string | null | undefined): string {
+  if (amount == null || amount === '') return '—';
+  const n = typeof amount === 'string' ? Number(amount) : amount;
+  if (!Number.isFinite(n)) return '—';
+  const abs = Math.abs(n);
+  const sign = n < 0 ? '-' : '';
+  if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(1)} mio.`;
+  if (abs >= 1_000) return `${sign}${(abs / 1_000).toFixed(0)} t.`;
+  return `${sign}${abs}`;
+}
+
 // ─── Component ──────────────────────────────────────────────────────────────
 
 /**
@@ -97,6 +126,16 @@ export default function VirksomhedshandlerClient() {
   // Kolonne-filtre
   const [deltagerFilter, setDeltagerFilter] = useState('');
   const [cvrFilter, setCvrFilter] = useState('');
+  // Branche-filter (server-side, multiselect på branche_kode)
+  const [brancheOptions, setBrancheOptions] = useState<BrancheOption[]>([]);
+  const [selectedBrancher, setSelectedBrancher] = useState<Set<string>>(new Set());
+  const [brancheDropdownOpen, setBrancheDropdownOpen] = useState(false);
+  const [brancheSearch, setBrancheSearch] = useState('');
+  // Regnskabs-range-filtre (server-side, DKK)
+  const [minOmsaetning, setMinOmsaetning] = useState('');
+  const [maxOmsaetning, setMaxOmsaetning] = useState('');
+  const [minOverskud, setMinOverskud] = useState('');
+  const [maxOverskud, setMaxOverskud] = useState('');
 
   const LIMIT = 50;
 
@@ -110,6 +149,11 @@ export default function VirksomhedshandlerClient() {
     }
     if (fromDate) params.set('from_date', fromDate);
     if (toDate) params.set('to_date', toDate);
+    if (selectedBrancher.size > 0) params.set('brancher', [...selectedBrancher].join(','));
+    if (minOmsaetning) params.set('min_omsaetning', minOmsaetning);
+    if (maxOmsaetning) params.set('max_omsaetning', maxOmsaetning);
+    if (minOverskud) params.set('min_overskud', minOverskud);
+    if (maxOverskud) params.set('max_overskud', maxOverskud);
     params.set('limit', String(LIMIT));
     params.set('offset', String(offset));
 
@@ -123,11 +167,40 @@ export default function VirksomhedshandlerClient() {
     } finally {
       setLoading(false);
     }
-  }, [signalFilters, fromDate, toDate, offset]);
+  }, [
+    signalFilters,
+    fromDate,
+    toDate,
+    selectedBrancher,
+    minOmsaetning,
+    maxOmsaetning,
+    minOverskud,
+    maxOverskud,
+    offset,
+  ]);
 
   useEffect(() => {
     void fetchKandidater();
   }, [fetchKandidater]);
+
+  // Hent branche-optioner til multiselect-filteret (én gang, cachet server-side)
+  useEffect(() => {
+    let aktiv = true;
+    void (async () => {
+      try {
+        const res = await fetch('/api/virksomhedshandler/brancher');
+        if (res.ok && aktiv) {
+          const data = await res.json();
+          setBrancheOptions(Array.isArray(data.brancher) ? data.brancher : []);
+        }
+      } catch {
+        // Filter-panelet fungerer uden options — ignorér netværksfejl
+      }
+    })();
+    return () => {
+      aktiv = false;
+    };
+  }, []);
 
   // ─── Berig single row ─────────────────────────────────────────────
 
@@ -139,6 +212,15 @@ export default function VirksomhedshandlerClient() {
       setBerigLoading((prev) => new Set(prev).add(key));
       try {
         const delta = Math.abs(k.current_ejerandel_pct - k.prev_ejerandel_pct);
+        // Brug reelle regnskabstal: overskud (resultat før skat) som EBITDA-proxy
+        // og virksomhedens DB07-branchekode. Falder tilbage til 0/'70' når
+        // regnskab endnu ikke er cachet (giver lavere confidence i berig-routen).
+        const overskudNum =
+          k.overskud == null || k.overskud === ''
+            ? 0
+            : typeof k.overskud === 'string'
+              ? Number(k.overskud)
+              : k.overskud;
         const res = await fetch('/api/virksomhedshandler/berig', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -147,9 +229,10 @@ export default function VirksomhedshandlerClient() {
             virksomhed_cvr: k.virksomhed_cvr,
             person_enhedsnummer: k.deltager_enhedsnummer,
             deltager_navn: k.deltager_navn,
+            virksomhed_navn: k.virksomhed_navn ?? undefined,
             ejerandel_delta_pp: delta,
-            aarsresultat_dkk: 0, // Placeholder — real data from CVR regnskab
-            branchekode: '70', // Default — real data from CVR branche
+            aarsresultat_dkk: Number.isFinite(overskudNum) ? overskudNum : 0,
+            branchekode: k.branche_kode || '70',
             gyldig_fra: k.gyldig_fra,
           }),
         });
@@ -324,6 +407,158 @@ export default function VirksomhedshandlerClient() {
           />
         </div>
 
+        {/* Branche-multiselect */}
+        <div className="relative">
+          <label className="block text-xs text-slate-400 mb-1">{t('Branche', 'Industry')}</label>
+          <button
+            type="button"
+            onClick={() => setBrancheDropdownOpen((v) => !v)}
+            aria-label={t('Filtrer på branche', 'Filter by industry')}
+            className="bg-slate-800 text-white text-sm rounded-lg px-3 py-2 border border-slate-700 min-w-[200px] text-left flex items-center justify-between gap-2"
+          >
+            <span className="truncate">
+              {selectedBrancher.size === 0
+                ? t('Alle brancher', 'All industries')
+                : `${selectedBrancher.size} ${t('valgt', 'selected')}`}
+            </span>
+            <ChevronDown
+              size={14}
+              className={`text-slate-500 transition-transform ${brancheDropdownOpen ? 'rotate-180' : ''}`}
+            />
+          </button>
+          {brancheDropdownOpen && (
+            <div className="absolute top-full left-0 mt-1 z-20 bg-slate-800 border border-slate-700 rounded-lg shadow-xl w-[340px] max-h-[360px] flex flex-col">
+              <div className="p-2 border-b border-slate-700/60">
+                <input
+                  type="text"
+                  value={brancheSearch}
+                  onChange={(e) => setBrancheSearch(e.target.value)}
+                  placeholder={t('Søg branche...', 'Search industry...')}
+                  aria-label={t('Søg branche', 'Search industry')}
+                  className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-1 text-xs text-white placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                />
+              </div>
+              <div className="overflow-auto py-1">
+                {brancheOptions.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-slate-500">
+                    {t('Indlæser brancher...', 'Loading industries...')}
+                  </p>
+                ) : (
+                  brancheOptions
+                    .filter(
+                      (b) =>
+                        !brancheSearch ||
+                        b.branche_tekst.toLowerCase().includes(brancheSearch.toLowerCase()) ||
+                        b.branche_kode.includes(brancheSearch)
+                    )
+                    .slice(0, 200)
+                    .map((b) => (
+                      <label
+                        key={b.branche_kode}
+                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-700/50 cursor-pointer text-xs text-white"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedBrancher.has(b.branche_kode)}
+                          onChange={() => {
+                            setSelectedBrancher((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(b.branche_kode)) next.delete(b.branche_kode);
+                              else next.add(b.branche_kode);
+                              return next;
+                            });
+                            setOffset(0);
+                          }}
+                          className="accent-indigo-500 w-3.5 h-3.5 shrink-0"
+                        />
+                        <span className="truncate flex-1">{b.branche_tekst}</span>
+                        <span className="text-slate-500 tabular-nums">
+                          {b.antal.toLocaleString('da-DK')}
+                        </span>
+                      </label>
+                    ))
+                )}
+              </div>
+              {selectedBrancher.size > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedBrancher(new Set());
+                    setOffset(0);
+                  }}
+                  className="text-left px-3 py-1.5 text-xs text-slate-500 hover:text-white border-t border-slate-700/50"
+                >
+                  {t('Nulstil branchevalg', 'Reset industry selection')}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Omsætnings-range */}
+        <div>
+          <label className="block text-xs text-slate-400 mb-1">
+            {t('Omsætning (DKK)', 'Revenue (DKK)')}
+          </label>
+          <div className="flex items-center gap-1">
+            <input
+              type="number"
+              value={minOmsaetning}
+              onChange={(e) => {
+                setMinOmsaetning(e.target.value);
+                setOffset(0);
+              }}
+              placeholder={t('Min', 'Min')}
+              aria-label={t('Minimum omsætning', 'Minimum revenue')}
+              className="bg-slate-800 text-white text-sm rounded-lg px-2 py-2 border border-slate-700 w-28"
+            />
+            <span className="text-slate-600 text-xs">–</span>
+            <input
+              type="number"
+              value={maxOmsaetning}
+              onChange={(e) => {
+                setMaxOmsaetning(e.target.value);
+                setOffset(0);
+              }}
+              placeholder={t('Max', 'Max')}
+              aria-label={t('Maksimum omsætning', 'Maximum revenue')}
+              className="bg-slate-800 text-white text-sm rounded-lg px-2 py-2 border border-slate-700 w-28"
+            />
+          </div>
+        </div>
+
+        {/* Overskuds-range */}
+        <div>
+          <label className="block text-xs text-slate-400 mb-1">
+            {t('Overskud (DKK)', 'Profit (DKK)')}
+          </label>
+          <div className="flex items-center gap-1">
+            <input
+              type="number"
+              value={minOverskud}
+              onChange={(e) => {
+                setMinOverskud(e.target.value);
+                setOffset(0);
+              }}
+              placeholder={t('Min', 'Min')}
+              aria-label={t('Minimum overskud', 'Minimum profit')}
+              className="bg-slate-800 text-white text-sm rounded-lg px-2 py-2 border border-slate-700 w-28"
+            />
+            <span className="text-slate-600 text-xs">–</span>
+            <input
+              type="number"
+              value={maxOverskud}
+              onChange={(e) => {
+                setMaxOverskud(e.target.value);
+                setOffset(0);
+              }}
+              placeholder={t('Max', 'Max')}
+              aria-label={t('Maksimum overskud', 'Maximum profit')}
+              className="bg-slate-800 text-white text-sm rounded-lg px-2 py-2 border border-slate-700 w-28"
+            />
+          </div>
+        </div>
+
         <button
           onClick={bulkBerig}
           disabled={bulkLoading || kandidater.length === 0}
@@ -336,13 +571,38 @@ export default function VirksomhedshandlerClient() {
         </button>
       </div>
 
-      {/* Results count */}
-      <p className="text-slate-500 text-xs">
-        {t(
-          `${total.toLocaleString('da-DK')} kandidater fundet`,
-          `${total.toLocaleString('en')} candidates found`
+      {/* Results count + top pagination (altid synlig — nem navigation) */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <p className="text-slate-500 text-xs">
+          {t(
+            `${total.toLocaleString('da-DK')} kandidater fundet`,
+            `${total.toLocaleString('en')} candidates found`
+          )}
+        </p>
+        {total > LIMIT && (
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setOffset(Math.max(0, offset - LIMIT))}
+              disabled={offset === 0}
+              aria-label={t('Forrige side', 'Previous page')}
+              className="text-sm text-slate-400 hover:text-white disabled:opacity-30 transition-colors"
+            >
+              ← {t('Forrige', 'Previous')}
+            </button>
+            <span className="text-xs text-slate-500 tabular-nums">
+              {offset + 1}–{Math.min(offset + LIMIT, total)} / {total.toLocaleString('da-DK')}
+            </span>
+            <button
+              onClick={() => setOffset(offset + LIMIT)}
+              disabled={offset + LIMIT >= total}
+              aria-label={t('Næste side', 'Next page')}
+              className="text-sm text-slate-400 hover:text-white disabled:opacity-30 transition-colors"
+            >
+              {t('Næste', 'Next')} →
+            </button>
+          </div>
         )}
-      </p>
+      </div>
 
       {/* Table */}
       <div className="overflow-auto rounded-xl border border-slate-700/30 max-h-[70vh]">
@@ -353,6 +613,9 @@ export default function VirksomhedshandlerClient() {
               <th className="px-4 py-2">{t('Deltager', 'Participant')}</th>
               <th className="px-4 py-2">{t('Virksomhed', 'Company')}</th>
               <th className="px-4 py-2">{t('Branche', 'Industry')}</th>
+              <th className="px-4 py-2 text-right">{t('Omsætning', 'Revenue')}</th>
+              <th className="px-4 py-2 text-right">{t('Bruttofortjeneste', 'Gross profit')}</th>
+              <th className="px-4 py-2 text-right">{t('Overskud', 'Profit')}</th>
               <th className="px-4 py-2">{t('Ændring', 'Change')}</th>
               <th className="px-4 py-2">{t('Indrapporteret', 'Reported')}</th>
               <th className="px-4 py-2">{t('Est. værdi', 'Est. value')}</th>
@@ -387,6 +650,8 @@ export default function VirksomhedshandlerClient() {
               <th className="px-4 py-1" />
               <th className="px-4 py-1" />
               <th className="px-4 py-1" />
+              <th className="px-4 py-1" />
+              <th className="px-4 py-1" />
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-700/30">
@@ -406,6 +671,15 @@ export default function VirksomhedshandlerClient() {
                     <div className="h-4 bg-slate-700/40 rounded w-20" />
                   </td>
                   <td className="px-4 py-3">
+                    <div className="h-4 bg-slate-700/40 rounded w-20 ml-auto" />
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="h-4 bg-slate-700/40 rounded w-20 ml-auto" />
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="h-4 bg-slate-700/40 rounded w-20 ml-auto" />
+                  </td>
+                  <td className="px-4 py-3">
                     <div className="h-4 bg-slate-700/40 rounded w-20" />
                   </td>
                   <td className="px-4 py-3">
@@ -421,7 +695,7 @@ export default function VirksomhedshandlerClient() {
               ))
             ) : kandidater.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-4 py-12 text-center text-slate-500">
+                <td colSpan={12} className="px-4 py-12 text-center text-slate-500">
                   {t(
                     'Ingen kandidater fundet med de valgte filtre',
                     'No candidates found with selected filters'
@@ -473,6 +747,21 @@ export default function VirksomhedshandlerClient() {
                       </td>
                       <td className="px-4 py-3 text-slate-400 text-[10px] truncate max-w-[150px]">
                         {k.branche_tekst ?? '—'}
+                      </td>
+                      <td className="px-4 py-3 text-right text-slate-300 text-xs tabular-nums">
+                        {formatRegnskab(k.omsaetning)}
+                      </td>
+                      <td className="px-4 py-3 text-right text-slate-300 text-xs tabular-nums">
+                        {formatRegnskab(k.bruttofortjeneste)}
+                      </td>
+                      <td
+                        className={`px-4 py-3 text-right text-xs tabular-nums ${
+                          k.overskud != null && Number(k.overskud) < 0
+                            ? 'text-red-400'
+                            : 'text-slate-300'
+                        }`}
+                      >
+                        {formatRegnskab(k.overskud)}
                       </td>
                       <td className="px-4 py-3 text-slate-300 text-xs">
                         {k.prev_ejerandel_pct}% → {k.current_ejerandel_pct}%

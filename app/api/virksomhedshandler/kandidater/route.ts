@@ -7,8 +7,9 @@
  * Query params:
  * - signal_type   - Filter på signal (entry|exit|increase|decrease)
  * - from_date     - Ændringsdato fra (YYYY-MM-DD, inklusiv). Filtrerer på den
- *                   reelle ejerskabs-ændringsdato = COALESCE(gyldig_til, gyldig_fra),
- *                   IKKE sidst_opdateret (som er MV-refresh-tidsstempel, ens for alle rækker).
+ *                   reelle ejerskabs-ændringsdato = COALESCE(gyldig_til, gyldig_fra).
+ *                   sidst_opdateret = per-række indrapporterings-/ingestion-dato (varierer
+ *                   pr. række) og kan derfor også range-filtreres (indrapporteret_fra/til).
  * - to_date       - Ændringsdato til (YYYY-MM-DD, inklusiv). Da kolonnerne er date-typede
  *                   er begge grænser hele-dags-inklusive → samme dato i begge = 1 dag.
  * - brancher      - Komma-separeret liste af branche_kode (DB07) at filtrere på
@@ -58,14 +59,18 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const signalTypes = searchParams.get('signal_types');
   const fromDate = searchParams.get('from_date');
   const toDate = searchParams.get('to_date');
+  // Indrapporterings-dato = k.sidst_opdateret (per-række ingestion-tidsstempel,
+  // varierer pr. række — IKKE et MV-refresh-tidsstempel). Date-range-filter.
+  const indrapFra = searchParams.get('indrapporteret_fra');
+  const indrapTil = searchParams.get('indrapporteret_til');
   const brancherParam = searchParams.get('brancher');
   const limit = Math.min(Number(searchParams.get('limit')) || 50, 200);
   const offset = Number(searchParams.get('offset')) || 0;
 
   // Reel ejerskabs-ændringsdato. For entry/increase er det gyldig_fra (tiltrædelse/
   // forøgelse); for exit/decrease ligger den meningsfulde dato i gyldig_til (fratrædelse).
-  // COALESCE(gyldig_til, gyldig_fra) giver én samlet, date-typet ændringsdato — modsat
-  // sidst_opdateret, som er MV-refresh-tidsstemplet (ens for alle rækker, ubrugeligt til filter).
+  // COALESCE(gyldig_til, gyldig_fra) giver én samlet, date-typet ændringsdato. Adskilt
+  // fra sidst_opdateret (per-række indrapporterings-dato — egen filter-akse).
   const AENDRINGSDATO = 'COALESCE(k.gyldig_til, k.gyldig_fra)';
 
   // Sortering — whitelist af sorterbare kolonner (mod SQL-injektion). Default er
@@ -118,6 +123,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // Date-typede grænser → hele-dags-inklusive (samme dato i begge = 1 dag).
     if (fromDate) conditions.push(`${AENDRINGSDATO} >= '${fromDate.replace(/[^0-9-]/g, '')}'`);
     if (toDate) conditions.push(`${AENDRINGSDATO} <= '${toDate.replace(/[^0-9-]/g, '')}'`);
+    // Indrapporterings-dato: cast timestamp → date for hele-dags-inklusivt range.
+    if (indrapFra)
+      conditions.push(`k.sidst_opdateret::date >= '${indrapFra.replace(/[^0-9-]/g, '')}'`);
+    if (indrapTil)
+      conditions.push(`k.sidst_opdateret::date <= '${indrapTil.replace(/[^0-9-]/g, '')}'`);
 
     // Branche-filter (DB07-koder) — sanitér til cifre, kræver company-join.
     const brancheKoder = (brancherParam ?? '')

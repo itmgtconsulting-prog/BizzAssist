@@ -11,7 +11,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, X, Download } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -126,6 +126,10 @@ export default function VirksomhedshandlerClient() {
   // Default: seneste 3 måneder (baseret på ændringsdato = COALESCE(gyldig_til, gyldig_fra))
   const [fromDate, setFromDate] = useState(defaultFromDate);
   const [toDate, setToDate] = useState('');
+  // Indrapporterings-dato (server-side range på sidst_opdateret = per-række
+  // ingestion-dato). Ingen default — kun aktiv når brugeren sætter en grænse.
+  const [indrapFra, setIndrapFra] = useState('');
+  const [indrapTil, setIndrapTil] = useState('');
   const [offset, setOffset] = useState(0);
   const [berigResults, setBerigResults] = useState<Record<string, BerigResult>>({});
   const [berigLoading, setBerigLoading] = useState<Set<string>>(new Set());
@@ -156,8 +160,7 @@ export default function VirksomhedshandlerClient() {
   );
   const [confidenceDropdownOpen, setConfidenceDropdownOpen] = useState(false);
   // Server-side sortering: kolonne-nøgle + retning (klik på overskrift toggler).
-  // Default = ændringsdato (nyeste ejerskabsændringer først); indrapporteret er
-  // MV-refresh-dato og dermed ens for alle rækker — ubrugelig som default-sort.
+  // Default = ændringsdato (nyeste ejerskabsændringer først).
   const [sortKey, setSortKey] = useState('aendringsdato');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
@@ -191,6 +194,8 @@ export default function VirksomhedshandlerClient() {
     !!deltagerFilter ||
     !!cvrFilter ||
     !!toDate ||
+    !!indrapFra ||
+    !!indrapTil ||
     fromDate !== defaultFromDate();
 
   /** Nulstiller alle filtre til default-tilstand (auto-gem persisterer det bagefter). */
@@ -198,6 +203,8 @@ export default function VirksomhedshandlerClient() {
     setSignalFilters(new Set(DEFAULT_SIGNALS));
     setFromDate(defaultFromDate());
     setToDate('');
+    setIndrapFra('');
+    setIndrapTil('');
     setSelectedBrancher(new Set());
     setMinOmsaetning('');
     setMaxOmsaetning('');
@@ -279,6 +286,8 @@ export default function VirksomhedshandlerClient() {
     }
     if (fromDate) params.set('from_date', fromDate);
     if (toDate) params.set('to_date', toDate);
+    if (indrapFra) params.set('indrapporteret_fra', indrapFra);
+    if (indrapTil) params.set('indrapporteret_til', indrapTil);
     if (selectedBrancher.size > 0) params.set('brancher', [...selectedBrancher].join(','));
     if (minOmsaetning) params.set('min_omsaetning', minOmsaetning);
     if (maxOmsaetning) params.set('max_omsaetning', maxOmsaetning);
@@ -308,6 +317,8 @@ export default function VirksomhedshandlerClient() {
     signalFilters,
     fromDate,
     toDate,
+    indrapFra,
+    indrapTil,
     selectedBrancher,
     minOmsaetning,
     maxOmsaetning,
@@ -335,6 +346,8 @@ export default function VirksomhedshandlerClient() {
               setSignalFilters(new Set(f.signalFilters as SignalType[]));
             if (typeof f.fromDate === 'string') setFromDate(f.fromDate);
             if (typeof f.toDate === 'string') setToDate(f.toDate);
+            if (typeof f.indrapFra === 'string') setIndrapFra(f.indrapFra);
+            if (typeof f.indrapTil === 'string') setIndrapTil(f.indrapTil);
             if (Array.isArray(f.brancher)) setSelectedBrancher(new Set(f.brancher as string[]));
             if (typeof f.minOmsaetning === 'string') setMinOmsaetning(f.minOmsaetning);
             if (typeof f.maxOmsaetning === 'string') setMaxOmsaetning(f.maxOmsaetning);
@@ -387,6 +400,8 @@ export default function VirksomhedshandlerClient() {
               signalFilters: [...signalFilters],
               fromDate,
               toDate,
+              indrapFra,
+              indrapTil,
               brancher: [...selectedBrancher],
               minOmsaetning,
               maxOmsaetning,
@@ -414,6 +429,8 @@ export default function VirksomhedshandlerClient() {
     signalFilters,
     fromDate,
     toDate,
+    indrapFra,
+    indrapTil,
     selectedBrancher,
     minOmsaetning,
     maxOmsaetning,
@@ -509,6 +526,110 @@ export default function VirksomhedshandlerClient() {
     setBulkLoading(false);
   }, [kandidater, berigRow]);
 
+  // ─── Klient-side filtrering ───────────────────────────────────────
+  // Anvendes både af tabellen og Excel-eksporten, så de altid viser
+  // præcis det samme udsnit (ingen divergens mellem skærm og fil).
+  const filteredKandidater = kandidater.filter((k) => {
+    if (deltagerFilter && !k.deltager_navn.toLowerCase().includes(deltagerFilter.toLowerCase()))
+      return false;
+    if (cvrFilter) {
+      const q = cvrFilter.toLowerCase();
+      if (!k.virksomhed_cvr.includes(q) && !(k.virksomhed_navn ?? '').toLowerCase().includes(q))
+        return false;
+    }
+    const delta = Math.abs(k.current_ejerandel_pct - k.prev_ejerandel_pct);
+    if (minAendring && delta < Number(minAendring)) return false;
+    if (maxAendring && delta > Number(maxAendring)) return false;
+    const key = `${k.deltager_enhedsnummer}-${k.virksomhed_cvr}-${k.gyldig_fra}`;
+    const berig = berigResults[key];
+    if (minEstVaerdi || maxEstVaerdi) {
+      const mid = berig?.estimeret_vaerdi?.mid;
+      if (mid == null) return false;
+      if (minEstVaerdi && mid < Number(minEstVaerdi)) return false;
+      if (maxEstVaerdi && mid > Number(maxEstVaerdi)) return false;
+    }
+    if (confidenceFilter.size > 0) {
+      if (!berig || !confidenceFilter.has(berig.confidence)) return false;
+    }
+    return true;
+  });
+
+  // ─── Excel-eksport ────────────────────────────────────────────────
+
+  /**
+   * Eksporterer den aktuelt filtrerede liste til en CSV-fil som dansk
+   * Excel åbner direkte (UTF-8 BOM + semikolon-separator). Eksporterer
+   * præcis de rækker der vises (server-side side + klient-side filtre).
+   */
+  const exportCsv = useCallback(() => {
+    // Semikolon-separator: dansk Excel bruger ';' som standard-delimiter.
+    const SEP = ';';
+    // Escape: ombrydes i dobbelt-citationstegn hvis værdien indeholder
+    // separator, citationstegn eller linjeskift (RFC 4180).
+    const esc = (v: string | number | null | undefined): string => {
+      const s = v == null ? '' : String(v);
+      return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const headers = [
+      t('Signal', 'Signal'),
+      t('Deltager', 'Participant'),
+      t('Virksomhed', 'Company'),
+      'CVR',
+      t('Branche', 'Industry'),
+      t('Omsætning (DKK)', 'Revenue (DKK)'),
+      t('Bruttofortjeneste (DKK)', 'Gross profit (DKK)'),
+      t('Overskud (DKK)', 'Profit (DKK)'),
+      t('Ændring fra (%)', 'Change from (%)'),
+      t('Ændring til (%)', 'Change to (%)'),
+      t('Delta (pp)', 'Delta (pp)'),
+      t('Ændringsdato', 'Change date'),
+      t('Indrapporteret', 'Reported'),
+      t('Est. værdi (DKK)', 'Est. value (DKK)'),
+      'Confidence',
+    ];
+    const num = (v: number | string | null | undefined): string => {
+      if (v == null || v === '') return '';
+      const n = typeof v === 'string' ? Number(v) : v;
+      return Number.isFinite(n) ? String(n) : '';
+    };
+    const rows = filteredKandidater.map((k) => {
+      const key = `${k.deltager_enhedsnummer}-${k.virksomhed_cvr}-${k.gyldig_fra}`;
+      const berig = berigResults[key];
+      const delta = Math.abs(k.current_ejerandel_pct - k.prev_ejerandel_pct);
+      const fraPct = k.signal_type === 'exit' ? k.current_ejerandel_pct : k.prev_ejerandel_pct;
+      const tilPct = k.signal_type === 'exit' ? 0 : k.current_ejerandel_pct;
+      return [
+        SIGNAL_LABELS[k.signal_type]?.[lang === 'da' ? 'da' : 'en'] ?? k.signal_type,
+        k.deltager_navn,
+        k.virksomhed_navn ?? k.virksomhed_cvr,
+        k.virksomhed_cvr,
+        k.branche_tekst ?? '',
+        num(k.omsaetning),
+        num(k.bruttofortjeneste),
+        num(k.overskud),
+        num(fraPct),
+        num(tilPct),
+        num(delta),
+        (k.aendringsdato ?? k.gyldig_til ?? k.gyldig_fra)?.slice(0, 10) ?? '',
+        k.sidst_opdateret?.slice(0, 10) ?? '',
+        num(berig?.estimeret_vaerdi?.mid),
+        berig?.confidence ?? '',
+      ]
+        .map(esc)
+        .join(SEP);
+    });
+    const csv = '\uFEFF' + [headers.map(esc).join(SEP), ...rows].join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ma-radar-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [filteredKandidater, berigResults, lang, t]);
+
   // ─── Render ───────────────────────────────────────────────────────
 
   return (
@@ -574,6 +695,15 @@ export default function VirksomhedshandlerClient() {
             </button>
           )}
           <button
+            onClick={exportCsv}
+            disabled={filteredKandidater.length === 0}
+            aria-label={t('Eksporter til Excel', 'Export to Excel')}
+            className="inline-flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-xs px-3 py-1.5 rounded-lg transition-colors"
+          >
+            <Download size={13} />
+            {t('Eksporter til Excel', 'Export to Excel')}
+          </button>
+          <button
             onClick={bulkBerig}
             disabled={bulkLoading || kandidater.length === 0}
             aria-label={t('Berig top 10 med AI', 'Enrich top 10 with AI')}
@@ -611,7 +741,7 @@ export default function VirksomhedshandlerClient() {
 
       {/* Table — flex-1 så den udfylder resten af højden og er det ENESTE
           vertikale scroll-område (ingen dobbelt-scrollbar, bund altid nåelig) */}
-      <div className="flex-1 min-h-0 overflow-auto rounded-xl border border-slate-700/30">
+      <div className="thick-scroll flex-1 min-h-0 overflow-auto rounded-xl border border-slate-700/30">
         <table className="w-full text-sm">
           <thead className="bg-slate-800 sticky top-0 z-10 shadow-[0_1px_0_0_rgba(148,163,184,0.2)]">
             <tr className="text-left text-slate-400 text-xs uppercase tracking-wider">
@@ -692,7 +822,7 @@ export default function VirksomhedshandlerClient() {
                   onChange={(e) => setDeltagerFilter(e.target.value)}
                   placeholder={t('Filtrer...', 'Filter...')}
                   aria-label={t('Filtrer deltager', 'Filter participant')}
-                  className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                  className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[11px] text-white placeholder-slate-400 focus:border-indigo-500/50 focus:outline-none"
                 />
               </th>
               {/* Virksomhed-tekstfilter */}
@@ -703,7 +833,7 @@ export default function VirksomhedshandlerClient() {
                   onChange={(e) => setCvrFilter(e.target.value)}
                   placeholder={t('Filtrer...', 'Filter...')}
                   aria-label={t('Filtrer virksomhed', 'Filter company')}
-                  className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                  className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[11px] text-white placeholder-slate-400 focus:border-indigo-500/50 focus:outline-none"
                 />
               </th>
               {/* Branche-multiselect */}
@@ -733,7 +863,7 @@ export default function VirksomhedshandlerClient() {
                         onChange={(e) => setBrancheSearch(e.target.value)}
                         placeholder={t('Søg branche...', 'Search industry...')}
                         aria-label={t('Søg branche', 'Search industry')}
-                        className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-1 text-xs text-white placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                        className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-1 text-xs text-white placeholder-slate-400 focus:border-indigo-500/50 focus:outline-none"
                       />
                     </div>
                     <div className="overflow-auto py-1">
@@ -804,7 +934,7 @@ export default function VirksomhedshandlerClient() {
                     }}
                     placeholder={t('Min', 'Min')}
                     aria-label={t('Minimum omsætning', 'Minimum revenue')}
-                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white text-right tabular-nums placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[11px] text-white text-right tabular-nums placeholder-slate-400 focus:border-indigo-500/50 focus:outline-none"
                   />
                   <input
                     type="number"
@@ -815,7 +945,7 @@ export default function VirksomhedshandlerClient() {
                     }}
                     placeholder={t('Max', 'Max')}
                     aria-label={t('Maksimum omsætning', 'Maximum revenue')}
-                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white text-right tabular-nums placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[11px] text-white text-right tabular-nums placeholder-slate-400 focus:border-indigo-500/50 focus:outline-none"
                   />
                 </div>
               </th>
@@ -831,7 +961,7 @@ export default function VirksomhedshandlerClient() {
                     }}
                     placeholder={t('Min', 'Min')}
                     aria-label={t('Minimum bruttofortjeneste', 'Minimum gross profit')}
-                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white text-right tabular-nums placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[11px] text-white text-right tabular-nums placeholder-slate-400 focus:border-indigo-500/50 focus:outline-none"
                   />
                   <input
                     type="number"
@@ -842,7 +972,7 @@ export default function VirksomhedshandlerClient() {
                     }}
                     placeholder={t('Max', 'Max')}
                     aria-label={t('Maksimum bruttofortjeneste', 'Maximum gross profit')}
-                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white text-right tabular-nums placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[11px] text-white text-right tabular-nums placeholder-slate-400 focus:border-indigo-500/50 focus:outline-none"
                   />
                 </div>
               </th>
@@ -858,7 +988,7 @@ export default function VirksomhedshandlerClient() {
                     }}
                     placeholder={t('Min', 'Min')}
                     aria-label={t('Minimum overskud', 'Minimum profit')}
-                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white text-right tabular-nums placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[11px] text-white text-right tabular-nums placeholder-slate-400 focus:border-indigo-500/50 focus:outline-none"
                   />
                   <input
                     type="number"
@@ -869,7 +999,7 @@ export default function VirksomhedshandlerClient() {
                     }}
                     placeholder={t('Max', 'Max')}
                     aria-label={t('Maksimum overskud', 'Maximum profit')}
-                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white text-right tabular-nums placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[11px] text-white text-right tabular-nums placeholder-slate-400 focus:border-indigo-500/50 focus:outline-none"
                   />
                 </div>
               </th>
@@ -885,7 +1015,7 @@ export default function VirksomhedshandlerClient() {
                       'Minimum ændring i procentpoint',
                       'Minimum change in percentage points'
                     )}
-                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white text-right tabular-nums placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[11px] text-white text-right tabular-nums placeholder-slate-400 focus:border-indigo-500/50 focus:outline-none"
                   />
                   <input
                     type="number"
@@ -896,41 +1026,132 @@ export default function VirksomhedshandlerClient() {
                       'Maksimum ændring i procentpoint',
                       'Maximum change in percentage points'
                     )}
-                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white text-right tabular-nums placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[11px] text-white text-right tabular-nums placeholder-slate-400 focus:border-indigo-500/50 focus:outline-none"
                   />
                 </div>
               </th>
-              {/* Ændringsdato fra/til */}
+              {/* Ændringsdato fra/til. Den native kalender-knap er skjult (ma-date)
+                  fordi klik på feltet allerede åbner kalenderen via showPicker — den
+                  frigjorte plads bruges til en ×-knap der rydder den enkelte dato. */}
               <th className="px-2 py-1 font-normal">
                 <div className="flex flex-col gap-0.5">
-                  <input
-                    id="from-date"
-                    type="date"
-                    value={fromDate}
-                    aria-label={t('Ændringsdato fra', 'Change date from')}
-                    onClick={(e) => e.currentTarget.showPicker?.()}
-                    onChange={(e) => {
-                      setFromDate(e.target.value);
-                      setOffset(0);
-                    }}
-                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white cursor-pointer focus:border-indigo-500/50 focus:outline-none"
-                  />
-                  <input
-                    id="to-date"
-                    type="date"
-                    value={toDate}
-                    aria-label={t('Ændringsdato til', 'Change date to')}
-                    onClick={(e) => e.currentTarget.showPicker?.()}
-                    onChange={(e) => {
-                      setToDate(e.target.value);
-                      setOffset(0);
-                    }}
-                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white cursor-pointer focus:border-indigo-500/50 focus:outline-none"
-                  />
+                  <div className="relative">
+                    <input
+                      id="from-date"
+                      type="date"
+                      value={fromDate}
+                      aria-label={t('Ændringsdato fra', 'Change date from')}
+                      onClick={(e) => e.currentTarget.showPicker?.()}
+                      onChange={(e) => {
+                        setFromDate(e.target.value);
+                        setOffset(0);
+                      }}
+                      className="ma-date w-full bg-slate-900/60 border border-slate-700/40 rounded pl-2 pr-5 py-0.5 text-[11px] text-white cursor-pointer focus:border-indigo-500/50 focus:outline-none"
+                    />
+                    {fromDate && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFromDate('');
+                          setOffset(0);
+                        }}
+                        aria-label={t('Ryd fra-dato', 'Clear from date')}
+                        className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <input
+                      id="to-date"
+                      type="date"
+                      value={toDate}
+                      aria-label={t('Ændringsdato til', 'Change date to')}
+                      onClick={(e) => e.currentTarget.showPicker?.()}
+                      onChange={(e) => {
+                        setToDate(e.target.value);
+                        setOffset(0);
+                      }}
+                      className="ma-date w-full bg-slate-900/60 border border-slate-700/40 rounded pl-2 pr-5 py-0.5 text-[11px] text-white cursor-pointer focus:border-indigo-500/50 focus:outline-none"
+                    />
+                    {toDate && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setToDate('');
+                          setOffset(0);
+                        }}
+                        aria-label={t('Ryd til-dato', 'Clear to date')}
+                        className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                  </div>
                 </div>
               </th>
-              {/* Indrapporteret — MV-refresh-dato (ens for alle rækker), intet filter */}
-              <th className="px-2 py-1" />
+              {/* Indrapporteret fra/til — server-side range på sidst_opdateret
+                  (per-række ingestion-dato). Samme ma-date + ×-ryd-mønster som
+                  ændringsdato-kolonnen. */}
+              <th className="px-2 py-1 font-normal">
+                <div className="flex flex-col gap-0.5">
+                  <div className="relative">
+                    <input
+                      id="indrap-from-date"
+                      type="date"
+                      value={indrapFra}
+                      aria-label={t('Indrapporteret fra', 'Reported from')}
+                      onClick={(e) => e.currentTarget.showPicker?.()}
+                      onChange={(e) => {
+                        setIndrapFra(e.target.value);
+                        setOffset(0);
+                      }}
+                      className="ma-date w-full bg-slate-900/60 border border-slate-700/40 rounded pl-2 pr-5 py-0.5 text-[11px] text-white cursor-pointer focus:border-indigo-500/50 focus:outline-none"
+                    />
+                    {indrapFra && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIndrapFra('');
+                          setOffset(0);
+                        }}
+                        aria-label={t('Ryd indrapporteret fra', 'Clear reported from')}
+                        className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <input
+                      id="indrap-to-date"
+                      type="date"
+                      value={indrapTil}
+                      aria-label={t('Indrapporteret til', 'Reported to')}
+                      onClick={(e) => e.currentTarget.showPicker?.()}
+                      onChange={(e) => {
+                        setIndrapTil(e.target.value);
+                        setOffset(0);
+                      }}
+                      className="ma-date w-full bg-slate-900/60 border border-slate-700/40 rounded pl-2 pr-5 py-0.5 text-[11px] text-white cursor-pointer focus:border-indigo-500/50 focus:outline-none"
+                    />
+                    {indrapTil && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIndrapTil('');
+                          setOffset(0);
+                        }}
+                        aria-label={t('Ryd indrapporteret til', 'Clear reported to')}
+                        className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </th>
               {/* Est. værdi min/max (kun AI-berigede rækker, klient-side) */}
               <th className="px-2 py-1 font-normal">
                 <div className="flex flex-col gap-0.5">
@@ -940,7 +1161,7 @@ export default function VirksomhedshandlerClient() {
                     onChange={(e) => setMinEstVaerdi(e.target.value)}
                     placeholder={t('Min', 'Min')}
                     aria-label={t('Minimum estimeret værdi', 'Minimum estimated value')}
-                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white text-right tabular-nums placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[11px] text-white text-right tabular-nums placeholder-slate-400 focus:border-indigo-500/50 focus:outline-none"
                   />
                   <input
                     type="number"
@@ -948,7 +1169,7 @@ export default function VirksomhedshandlerClient() {
                     onChange={(e) => setMaxEstVaerdi(e.target.value)}
                     placeholder={t('Max', 'Max')}
                     aria-label={t('Maksimum estimeret værdi', 'Maximum estimated value')}
-                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white text-right tabular-nums placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[11px] text-white text-right tabular-nums placeholder-slate-400 focus:border-indigo-500/50 focus:outline-none"
                   />
                 </div>
               </th>
@@ -1052,164 +1273,130 @@ export default function VirksomhedshandlerClient() {
                 </td>
               </tr>
             ) : (
-              kandidater
-                .filter((k) => {
-                  if (
-                    deltagerFilter &&
-                    !k.deltager_navn.toLowerCase().includes(deltagerFilter.toLowerCase())
-                  )
-                    return false;
-                  if (cvrFilter) {
-                    const q = cvrFilter.toLowerCase();
-                    if (
-                      !k.virksomhed_cvr.includes(q) &&
-                      !(k.virksomhed_navn ?? '').toLowerCase().includes(q)
-                    )
-                      return false;
-                  }
-                  // Ændring (ejerandels-delta i procentpoint) — klient-side range.
-                  const delta = Math.abs(k.current_ejerandel_pct - k.prev_ejerandel_pct);
-                  if (minAendring && delta < Number(minAendring)) return false;
-                  if (maxAendring && delta > Number(maxAendring)) return false;
-                  // Est. værdi + Confidence findes kun på AI-berigede rækker. Når et
-                  // af disse filtre er aktivt, skjules ikke-berigede rækker.
-                  const key = `${k.deltager_enhedsnummer}-${k.virksomhed_cvr}-${k.gyldig_fra}`;
-                  const berig = berigResults[key];
-                  if (minEstVaerdi || maxEstVaerdi) {
-                    const mid = berig?.estimeret_vaerdi?.mid;
-                    if (mid == null) return false;
-                    if (minEstVaerdi && mid < Number(minEstVaerdi)) return false;
-                    if (maxEstVaerdi && mid > Number(maxEstVaerdi)) return false;
-                  }
-                  if (confidenceFilter.size > 0) {
-                    if (!berig || !confidenceFilter.has(berig.confidence)) return false;
-                  }
-                  return true;
-                })
-                .map((k) => {
-                  const key = `${k.deltager_enhedsnummer}-${k.virksomhed_cvr}-${k.gyldig_fra}`;
-                  const berig = berigResults[key];
-                  const isBerigLoading = berigLoading.has(key);
-                  const signal = SIGNAL_LABELS[k.signal_type];
-                  const delta = Math.abs(k.current_ejerandel_pct - k.prev_ejerandel_pct);
-                  // For 'exit' holder current_ejerandel_pct den andel deltageren HAVDE
-                  // (prev er en COALESCE(0)-artefakt fordi der ingen forudgående LAG-række er).
-                  // Vis derfor "havde% → 0%" så pilen peger rigtig vej (de er fratrådt).
-                  const fraPct =
-                    k.signal_type === 'exit' ? k.current_ejerandel_pct : k.prev_ejerandel_pct;
-                  const tilPct = k.signal_type === 'exit' ? 0 : k.current_ejerandel_pct;
+              filteredKandidater.map((k) => {
+                const key = `${k.deltager_enhedsnummer}-${k.virksomhed_cvr}-${k.gyldig_fra}`;
+                const berig = berigResults[key];
+                const isBerigLoading = berigLoading.has(key);
+                const signal = SIGNAL_LABELS[k.signal_type];
+                const delta = Math.abs(k.current_ejerandel_pct - k.prev_ejerandel_pct);
+                // For 'exit' holder current_ejerandel_pct den andel deltageren HAVDE
+                // (prev er en COALESCE(0)-artefakt fordi der ingen forudgående LAG-række er).
+                // Vis derfor "havde% → 0%" så pilen peger rigtig vej (de er fratrådt).
+                const fraPct =
+                  k.signal_type === 'exit' ? k.current_ejerandel_pct : k.prev_ejerandel_pct;
+                const tilPct = k.signal_type === 'exit' ? 0 : k.current_ejerandel_pct;
 
-                  return (
-                    <tr key={key} className="hover:bg-slate-800/30 transition-colors">
-                      <td className="px-4 py-3">
-                        <span
-                          className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${signal?.color ?? 'text-slate-400'}`}
-                        >
-                          {signal?.da ?? k.signal_type}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-xs">
-                        <Link
-                          href={`/dashboard/owners/${k.deltager_enhedsnummer}`}
-                          className="text-white hover:text-indigo-300 hover:underline transition-colors"
-                          aria-label={t(
-                            `Åbn person ${k.deltager_navn}`,
-                            `Open person ${k.deltager_navn}`
-                          )}
-                        >
-                          {k.deltager_navn}
-                        </Link>
-                      </td>
-                      <td className="px-4 py-3 text-xs">
-                        <Link
-                          href={`/dashboard/companies/${k.virksomhed_cvr}`}
-                          className="group block"
-                          aria-label={t(
-                            `Åbn virksomhed ${k.virksomhed_navn ?? k.virksomhed_cvr}`,
-                            `Open company ${k.virksomhed_navn ?? k.virksomhed_cvr}`
-                          )}
-                        >
-                          <div className="text-white font-medium truncate max-w-[200px] group-hover:text-indigo-300 group-hover:underline transition-colors">
-                            {k.virksomhed_navn ?? k.virksomhed_cvr}
-                          </div>
-                          <span className="text-slate-500 text-[10px] font-mono">
-                            CVR {k.virksomhed_cvr}
-                          </span>
-                        </Link>
-                      </td>
-                      <td className="px-4 py-3 text-slate-400 text-[10px] truncate max-w-[150px]">
-                        {k.branche_tekst ?? '—'}
-                      </td>
-                      <td className="px-4 py-3 text-right text-slate-300 text-xs tabular-nums">
-                        {formatRegnskab(k.omsaetning)}
-                      </td>
-                      <td className="px-4 py-3 text-right text-slate-300 text-xs tabular-nums">
-                        {formatRegnskab(k.bruttofortjeneste)}
-                      </td>
-                      <td
-                        className={`px-4 py-3 text-right text-xs tabular-nums ${
-                          k.overskud != null && Number(k.overskud) < 0
-                            ? 'text-red-400'
-                            : 'text-slate-300'
-                        }`}
+                return (
+                  <tr key={key} className="hover:bg-slate-800/30 transition-colors">
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${signal?.color ?? 'text-slate-400'}`}
                       >
-                        {formatRegnskab(k.overskud)}
-                      </td>
-                      <td className="px-4 py-3 text-slate-300 text-xs">
-                        {fraPct}% → {tilPct}%
-                        <span className="text-slate-500 ml-1">(Δ{delta} pp)</span>
-                      </td>
-                      <td className="px-4 py-3 text-slate-300 text-xs tabular-nums">
-                        {(k.aendringsdato ?? k.gyldig_til ?? k.gyldig_fra)?.slice(0, 10) ?? '—'}
-                      </td>
-                      <td className="px-4 py-3 text-slate-500 text-xs">
-                        {k.sidst_opdateret?.slice(0, 10) ?? '—'}
-                      </td>
-                      <td className="px-4 py-3 text-xs">
-                        {berig?.estimeret_vaerdi ? (
-                          <span className="text-emerald-400">
-                            {formatDKK(berig.estimeret_vaerdi.mid)}
-                          </span>
-                        ) : (
-                          <span className="text-slate-600">—</span>
+                        {signal?.da ?? k.signal_type}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-xs">
+                      <Link
+                        href={`/dashboard/owners/${k.deltager_enhedsnummer}`}
+                        className="text-white hover:text-indigo-300 hover:underline transition-colors"
+                        aria-label={t(
+                          `Åbn person ${k.deltager_navn}`,
+                          `Open person ${k.deltager_navn}`
                         )}
-                      </td>
-                      <td className="px-4 py-3 text-xs">
-                        {berig ? (
-                          <ConfidenceBadge level={berig.confidence} />
-                        ) : (
-                          <span className="text-slate-600">—</span>
+                      >
+                        {k.deltager_navn}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-3 text-xs">
+                      <Link
+                        href={`/dashboard/companies/${k.virksomhed_cvr}`}
+                        className="group block"
+                        aria-label={t(
+                          `Åbn virksomhed ${k.virksomhed_navn ?? k.virksomhed_cvr}`,
+                          `Open company ${k.virksomhed_navn ?? k.virksomhed_cvr}`
                         )}
-                      </td>
-                      <td className="px-4 py-3">
-                        {!berig && (
-                          <button
-                            onClick={() => berigRow(k)}
-                            disabled={isBerigLoading}
-                            aria-label={t(
-                              `Berig ${k.virksomhed_cvr} med AI`,
-                              `Enrich ${k.virksomhed_cvr} with AI`
-                            )}
-                            className="text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50 transition-colors"
-                          >
-                            {isBerigLoading ? '...' : t('Berig', 'Enrich')}
-                          </button>
-                        )}
-                        {berig && berig.medie_links.length > 0 && (
-                          <a
-                            href={berig.medie_links[0].url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-blue-400 hover:text-blue-300"
-                            aria-label={t('Åbn medielink', 'Open media link')}
-                          >
-                            {t('Artikel', 'Article')}
-                          </a>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })
+                      >
+                        <div className="text-white font-medium truncate max-w-[200px] group-hover:text-indigo-300 group-hover:underline transition-colors">
+                          {k.virksomhed_navn ?? k.virksomhed_cvr}
+                        </div>
+                        <span className="text-slate-500 text-[10px] font-mono">
+                          CVR {k.virksomhed_cvr}
+                        </span>
+                      </Link>
+                    </td>
+                    <td className="px-4 py-3 text-slate-400 text-[10px] truncate max-w-[150px]">
+                      {k.branche_tekst ?? '—'}
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-300 text-xs tabular-nums">
+                      {formatRegnskab(k.omsaetning)}
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-300 text-xs tabular-nums">
+                      {formatRegnskab(k.bruttofortjeneste)}
+                    </td>
+                    <td
+                      className={`px-4 py-3 text-right text-xs tabular-nums ${
+                        k.overskud != null && Number(k.overskud) < 0
+                          ? 'text-red-400'
+                          : 'text-slate-300'
+                      }`}
+                    >
+                      {formatRegnskab(k.overskud)}
+                    </td>
+                    <td className="px-4 py-3 text-slate-300 text-xs">
+                      {fraPct}% → {tilPct}%
+                      <span className="text-slate-500 ml-1">(Δ{delta} pp)</span>
+                    </td>
+                    <td className="px-4 py-3 text-slate-300 text-xs tabular-nums">
+                      {(k.aendringsdato ?? k.gyldig_til ?? k.gyldig_fra)?.slice(0, 10) ?? '—'}
+                    </td>
+                    <td className="px-4 py-3 text-slate-500 text-xs">
+                      {k.sidst_opdateret?.slice(0, 10) ?? '—'}
+                    </td>
+                    <td className="px-4 py-3 text-xs">
+                      {berig?.estimeret_vaerdi ? (
+                        <span className="text-emerald-400">
+                          {formatDKK(berig.estimeret_vaerdi.mid)}
+                        </span>
+                      ) : (
+                        <span className="text-slate-600">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-xs">
+                      {berig ? (
+                        <ConfidenceBadge level={berig.confidence} />
+                      ) : (
+                        <span className="text-slate-600">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {!berig && (
+                        <button
+                          onClick={() => berigRow(k)}
+                          disabled={isBerigLoading}
+                          aria-label={t(
+                            `Berig ${k.virksomhed_cvr} med AI`,
+                            `Enrich ${k.virksomhed_cvr} with AI`
+                          )}
+                          className="text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50 transition-colors"
+                        >
+                          {isBerigLoading ? '...' : t('Berig', 'Enrich')}
+                        </button>
+                      )}
+                      {berig && berig.medie_links.length > 0 && (
+                        <a
+                          href={berig.medie_links[0].url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-blue-400 hover:text-blue-300"
+                          aria-label={t('Åbn medielink', 'Open media link')}
+                        >
+                          {t('Artikel', 'Article')}
+                        </a>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })
             )}
             {!loading && kandidater.length > 0 && (
               <tr>

@@ -6,13 +6,16 @@
  *
  * Query params:
  * - signal_type   - Filter på signal (entry|exit|increase|decrease)
- * - from_date     - Gyldig fra dato (YYYY-MM-DD)
- * - to_date       - Gyldig til dato (YYYY-MM-DD)
+ * - from_date     - Ændringsdato fra (YYYY-MM-DD, inklusiv). Filtrerer på den
+ *                   reelle ejerskabs-ændringsdato = COALESCE(gyldig_til, gyldig_fra),
+ *                   IKKE sidst_opdateret (som er MV-refresh-tidsstempel, ens for alle rækker).
+ * - to_date       - Ændringsdato til (YYYY-MM-DD, inklusiv). Da kolonnerne er date-typede
+ *                   er begge grænser hele-dags-inklusive → samme dato i begge = 1 dag.
  * - brancher      - Komma-separeret liste af branche_kode (DB07) at filtrere på
  * - min_omsaetning / max_omsaetning - Filter på seneste regnskabs omsætning (DKK)
  * - min_overskud / max_overskud     - Filter på seneste regnskabs resultat før skat (DKK)
  * - sort          - Sorteringskolonne (deltager|virksomhed|branche|omsaetning|
- *                   bruttofortjeneste|overskud|aendring|indrapporteret)
+ *                   bruttofortjeneste|overskud|aendring|aendringsdato|indrapporteret)
  * - dir           - Sorteringsretning (asc|desc, default desc)
  * - limit         - Max antal resultater (default 50, max 200)
  * - offset        - Offset for pagination
@@ -58,8 +61,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const limit = Math.min(Number(searchParams.get('limit')) || 50, 200);
   const offset = Number(searchParams.get('offset')) || 0;
 
+  // Reel ejerskabs-ændringsdato. For entry/increase er det gyldig_fra (tiltrædelse/
+  // forøgelse); for exit/decrease ligger den meningsfulde dato i gyldig_til (fratrædelse).
+  // COALESCE(gyldig_til, gyldig_fra) giver én samlet, date-typet ændringsdato — modsat
+  // sidst_opdateret, som er MV-refresh-tidsstemplet (ens for alle rækker, ubrugeligt til filter).
+  const AENDRINGSDATO = 'COALESCE(k.gyldig_til, k.gyldig_fra)';
+
   // Sortering — whitelist af sorterbare kolonner (mod SQL-injektion). Default er
-  // seneste indrapportering. 'aendring' sorterer på absolut ejerandels-delta.
+  // seneste ændringsdato. 'aendring' sorterer på absolut ejerandels-delta.
   const SORT_COLUMNS: Record<string, string> = {
     deltager: 'k.deltager_navn',
     virksomhed: 'v.navn',
@@ -68,10 +77,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     bruttofortjeneste: 'rc.bruttofortjeneste',
     overskud: 'rc.resultat_foer_skat',
     aendring: 'ABS(k.current_ejerandel_pct - k.prev_ejerandel_pct)',
+    aendringsdato: AENDRINGSDATO,
     indrapporteret: 'k.sidst_opdateret',
   };
   const sortKey = searchParams.get('sort') ?? '';
-  const sortCol = SORT_COLUMNS[sortKey] ?? 'k.sidst_opdateret';
+  const sortCol = SORT_COLUMNS[sortKey] ?? AENDRINGSDATO;
   const sortDir = searchParams.get('dir') === 'asc' ? 'ASC' : 'DESC';
 
   // Numerisk range-filter på regnskabstal — kun finite tal accepteres
@@ -102,8 +112,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     } else if (signalType) {
       conditions.push(`k.signal_type = '${signalType.replace(/[^a-z_]/g, '')}'`);
     }
-    if (fromDate) conditions.push(`k.sidst_opdateret >= '${fromDate.replace(/[^0-9-]/g, '')}'`);
-    if (toDate) conditions.push(`k.sidst_opdateret <= '${toDate.replace(/[^0-9-]/g, '')}'`);
+    // Date-typede grænser → hele-dags-inklusive (samme dato i begge = 1 dag).
+    if (fromDate) conditions.push(`${AENDRINGSDATO} >= '${fromDate.replace(/[^0-9-]/g, '')}'`);
+    if (toDate) conditions.push(`${AENDRINGSDATO} <= '${toDate.replace(/[^0-9-]/g, '')}'`);
 
     // Branche-filter (DB07-koder) — sanitér til cifre, kræver company-join.
     const brancheKoder = (brancherParam ?? '')
@@ -139,7 +150,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const countSql = `SELECT COUNT(*)::int AS total FROM ${countFrom} WHERE ${where}`;
 
     // Data-query joiner altid regnskab_cache + cvr_virksomhed for kolonne-berigelse.
-    const dataSql = `SELECT k.*, v.navn AS virksomhed_navn, v.branche_tekst, v.branche_kode, rc.seneste_aar AS regnskab_aar, rc.omsaetning, rc.bruttofortjeneste, rc.resultat_foer_skat AS overskud FROM mv_virksomhedshandel_kandidater k LEFT JOIN cvr_virksomhed v ON v.cvr = k.virksomhed_cvr LEFT JOIN regnskab_cache rc ON rc.cvr = k.virksomhed_cvr WHERE ${where} ORDER BY ${sortCol} ${sortDir} NULLS LAST, k.sidst_opdateret DESC NULLS LAST LIMIT ${limit} OFFSET ${offset}`;
+    const dataSql = `SELECT k.*, ${AENDRINGSDATO} AS aendringsdato, v.navn AS virksomhed_navn, v.branche_tekst, v.branche_kode, rc.seneste_aar AS regnskab_aar, rc.omsaetning, rc.bruttofortjeneste, rc.resultat_foer_skat AS overskud FROM mv_virksomhedshandel_kandidater k LEFT JOIN cvr_virksomhed v ON v.cvr = k.virksomhed_cvr LEFT JOIN regnskab_cache rc ON rc.cvr = k.virksomhed_cvr WHERE ${where} ORDER BY ${sortCol} ${sortDir} NULLS LAST, ${AENDRINGSDATO} DESC NULLS LAST LIMIT ${limit} OFFSET ${offset}`;
 
     const [countRes, dataRes] = await Promise.all([
       fetch(`https://api.supabase.com/v1/projects/${projectRef}/database/query`, {

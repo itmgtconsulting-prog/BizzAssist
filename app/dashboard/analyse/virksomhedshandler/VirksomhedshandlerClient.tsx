@@ -25,6 +25,8 @@ interface Kandidat {
   prev_ejerandel_pct: number;
   gyldig_fra: string;
   gyldig_til: string | null;
+  // Reel ejerskabs-ændringsdato = COALESCE(gyldig_til, gyldig_fra), beregnet server-side.
+  aendringsdato: string | null;
   sidst_opdateret: string | null;
   signal_type: 'entry' | 'exit' | 'increase' | 'decrease';
   virksomhed_navn: string | null;
@@ -113,7 +115,7 @@ export default function VirksomhedshandlerClient() {
     new Set(['entry', 'exit', 'increase'])
   );
   const [signalDropdownOpen, setSignalDropdownOpen] = useState(false);
-  // Default: seneste 3 måneder (baseret på sidst_opdateret/indrapporteringsdato)
+  // Default: seneste 3 måneder (baseret på ændringsdato = COALESCE(gyldig_til, gyldig_fra))
   const [fromDate, setFromDate] = useState(() => {
     const d = new Date();
     d.setMonth(d.getMonth() - 3);
@@ -137,8 +139,10 @@ export default function VirksomhedshandlerClient() {
   const [maxOmsaetning, setMaxOmsaetning] = useState('');
   const [minOverskud, setMinOverskud] = useState('');
   const [maxOverskud, setMaxOverskud] = useState('');
-  // Server-side sortering: kolonne-nøgle + retning (klik på overskrift toggler)
-  const [sortKey, setSortKey] = useState('indrapporteret');
+  // Server-side sortering: kolonne-nøgle + retning (klik på overskrift toggler).
+  // Default = ændringsdato (nyeste ejerskabsændringer først); indrapporteret er
+  // MV-refresh-dato og dermed ens for alle rækker — ubrugelig som default-sort.
+  const [sortKey, setSortKey] = useState('aendringsdato');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   const LIMIT = 50;
@@ -438,35 +442,39 @@ export default function VirksomhedshandlerClient() {
 
         <div>
           <label htmlFor="from-date" className="block text-xs text-slate-400 mb-1">
-            {t('Indrapporteret fra', 'Reported from')}
+            {t('Ændringsdato fra', 'Change date from')}
           </label>
           <input
             id="from-date"
             type="date"
-            aria-label={t('Filtrer fra dato', 'Filter from date')}
+            aria-label={t('Filtrer fra ændringsdato', 'Filter from change date')}
             value={fromDate}
+            // Åbn dato-vælgeren ved klik hvor som helst i feltet (ikke kun på det
+            // lille kalender-ikon) — showPicker() er supporteret i moderne browsere.
+            onClick={(e) => e.currentTarget.showPicker?.()}
             onChange={(e) => {
               setFromDate(e.target.value);
               setOffset(0);
             }}
-            className="bg-slate-800 text-white text-sm rounded-lg px-3 py-2 border border-slate-700"
+            className="bg-slate-800 text-white text-sm rounded-lg px-3 py-2 border border-slate-700 cursor-pointer"
           />
         </div>
 
         <div>
           <label htmlFor="to-date" className="block text-xs text-slate-400 mb-1">
-            {t('Indrapporteret til', 'Reported to')}
+            {t('Ændringsdato til', 'Change date to')}
           </label>
           <input
             id="to-date"
             type="date"
-            aria-label={t('Filtrer til dato', 'Filter to date')}
+            aria-label={t('Filtrer til ændringsdato', 'Filter to change date')}
             value={toDate}
+            onClick={(e) => e.currentTarget.showPicker?.()}
             onChange={(e) => {
               setToDate(e.target.value);
               setOffset(0);
             }}
-            className="bg-slate-800 text-white text-sm rounded-lg px-3 py-2 border border-slate-700"
+            className="bg-slate-800 text-white text-sm rounded-lg px-3 py-2 border border-slate-700 cursor-pointer"
           />
         </div>
 
@@ -681,6 +689,7 @@ export default function VirksomhedshandlerClient() {
               {renderSortTh('bruttofortjeneste', t('Bruttofortjeneste', 'Gross profit'), 'right')}
               {renderSortTh('overskud', t('Overskud', 'Profit'), 'right')}
               {renderSortTh('aendring', t('Ændring', 'Change'))}
+              {renderSortTh('aendringsdato', t('Ændringsdato', 'Change date'))}
               {renderSortTh('indrapporteret', t('Indrapporteret', 'Reported'))}
               <th className="px-4 py-2">{t('Est. værdi', 'Est. value')}</th>
               <th className="px-4 py-2">{t('Confidence', 'Confidence')}</th>
@@ -708,6 +717,7 @@ export default function VirksomhedshandlerClient() {
                   className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
                 />
               </th>
+              <th className="px-4 py-1" />
               <th className="px-4 py-1" />
               <th className="px-4 py-1" />
               <th className="px-4 py-1" />
@@ -747,6 +757,9 @@ export default function VirksomhedshandlerClient() {
                     <div className="h-4 bg-slate-700/40 rounded w-20" />
                   </td>
                   <td className="px-4 py-3">
+                    <div className="h-4 bg-slate-700/40 rounded w-20" />
+                  </td>
+                  <td className="px-4 py-3">
                     <div className="h-4 bg-slate-700/40 rounded w-24" />
                   </td>
                   <td className="px-4 py-3">
@@ -759,7 +772,7 @@ export default function VirksomhedshandlerClient() {
               ))
             ) : kandidater.length === 0 ? (
               <tr>
-                <td colSpan={12} className="px-4 py-12 text-center text-slate-500">
+                <td colSpan={13} className="px-4 py-12 text-center text-slate-500">
                   {t(
                     'Ingen kandidater fundet med de valgte filtre',
                     'No candidates found with selected filters'
@@ -857,8 +870,11 @@ export default function VirksomhedshandlerClient() {
                         {fraPct}% → {tilPct}%
                         <span className="text-slate-500 ml-1">(Δ{delta} pp)</span>
                       </td>
-                      <td className="px-4 py-3 text-slate-400 text-xs">
-                        {(k.sidst_opdateret ?? k.gyldig_fra)?.slice(0, 10)}
+                      <td className="px-4 py-3 text-slate-300 text-xs tabular-nums">
+                        {(k.aendringsdato ?? k.gyldig_til ?? k.gyldig_fra)?.slice(0, 10) ?? '—'}
+                      </td>
+                      <td className="px-4 py-3 text-slate-500 text-xs">
+                        {k.sidst_opdateret?.slice(0, 10) ?? '—'}
                       </td>
                       <td className="px-4 py-3 text-xs">
                         {berig?.estimeret_vaerdi ? (
@@ -909,7 +925,7 @@ export default function VirksomhedshandlerClient() {
             {!loading && kandidater.length > 0 && (
               <tr>
                 <td
-                  colSpan={12}
+                  colSpan={13}
                   className="px-4 py-3 text-center text-[11px] text-slate-500 bg-slate-800/20"
                 >
                   {offset + LIMIT >= total

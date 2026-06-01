@@ -242,7 +242,7 @@ export default function AnalyseDetailClient({ analyseId }: { analyseId: string }
                   </div>
                   <p className="text-slate-400 text-xs">{g.description}</p>
                   {g.recommendation && (
-                    <p className="text-slate-500 text-xs mt-1 italic">{g.recommendation}</p>
+                    <p className="text-slate-400 text-xs mt-1 italic">{g.recommendation}</p>
                   )}
                 </div>
               ))}
@@ -277,7 +277,7 @@ export default function AnalyseDetailClient({ analyseId }: { analyseId: string }
                     <ShieldCheck size={14} className="text-slate-400" />
                     <span className="text-slate-300 text-sm font-medium">{g.title}</span>
                   </div>
-                  <p className="text-slate-500 text-xs">{g.description}</p>
+                  <p className="text-slate-400 text-xs">{g.description}</p>
                 </div>
               ))}
             </div>
@@ -301,7 +301,7 @@ export default function AnalyseDetailClient({ analyseId }: { analyseId: string }
                   <div className="flex items-center gap-2 mb-2">
                     {typeIcon(type)}
                     <span className="text-slate-300 text-xs font-medium capitalize">{type}</span>
-                    <span className="text-slate-500 text-xs">
+                    <span className="text-slate-400 text-xs">
                       ({matched}/{items.length} {da ? 'forsikrede' : 'insured'})
                     </span>
                   </div>

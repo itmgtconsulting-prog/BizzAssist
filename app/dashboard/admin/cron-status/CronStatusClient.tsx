@@ -114,7 +114,7 @@ function statusConfig(s: CronStatus, da: boolean) {
     case 'missing':
       return {
         Icon: HelpCircle,
-        color: 'text-slate-500',
+        color: 'text-slate-400',
         bg: 'bg-slate-700/20 border-slate-600/30',
         label: da ? 'Ingen data' : 'No data',
       };
@@ -233,7 +233,7 @@ export default function CronStatusClient() {
               </div>
               <p className="text-2xl font-bold text-white">
                 {data.summary.ok}
-                <span className="text-slate-500 text-sm font-normal ml-1">
+                <span className="text-slate-400 text-sm font-normal ml-1">
                   / {data.summary.total}
                 </span>
               </p>
@@ -254,7 +254,7 @@ export default function CronStatusClient() {
             </div>
             <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
               <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
-                <HelpCircle size={14} className="text-slate-500" />
+                <HelpCircle size={14} className="text-slate-400" />
                 {da ? 'Ingen data' : 'No data'}
               </div>
               <p className="text-2xl font-bold text-white">{data.summary.missing}</p>
@@ -268,7 +268,7 @@ export default function CronStatusClient() {
             <div className="relative flex-1 max-w-xs">
               <Search
                 size={14}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
               />
               <input
                 type="text"
@@ -360,8 +360,8 @@ export default function CronStatusClient() {
                         <td className="px-4 py-3">
                           <div className="flex flex-col gap-0.5">
                             <span className="text-white font-mono text-xs">{c.jobName}</span>
-                            <span className="text-slate-500 text-[10px]">{c.description}</span>
-                            <span className="text-slate-600 text-[10px] font-mono">
+                            <span className="text-slate-400 text-[10px]">{c.description}</span>
+                            <span className="text-slate-400 text-[10px] font-mono">
                               {c.schedule}
                             </span>
                           </div>
@@ -373,7 +373,7 @@ export default function CronStatusClient() {
                           <div className="flex flex-col gap-0.5">
                             <span className="text-xs">{formatAgo(c.lastRunAt, da)}</span>
                             {c.lastRunAt && (
-                              <span className="text-slate-600 text-[10px] font-mono">
+                              <span className="text-slate-400 text-[10px] font-mono">
                                 {new Date(c.lastRunAt).toLocaleString(da ? 'da-DK' : 'en-GB', {
                                   month: 'short',
                                   day: '2-digit',
@@ -414,7 +414,7 @@ export default function CronStatusClient() {
         )}
 
         {/* Legend */}
-        <div className="flex flex-wrap gap-4 mt-6 text-xs text-slate-500">
+        <div className="flex flex-wrap gap-4 mt-6 text-xs text-slate-400">
           <span className="flex items-center gap-1.5">
             <CheckCircle2 size={12} className="text-emerald-400" /> {da ? 'OK' : 'OK'}
           </span>
@@ -426,7 +426,7 @@ export default function CronStatusClient() {
             {da ? 'Forsinket (> 2× forventet interval)' : 'Overdue (> 2× expected interval)'}
           </span>
           <span className="flex items-center gap-1.5">
-            <HelpCircle size={12} className="text-slate-500" />{' '}
+            <HelpCircle size={12} className="text-slate-400" />{' '}
             {da ? 'Ingen heartbeat endnu' : 'No heartbeat yet'}
           </span>
           <span className="flex items-center gap-1.5">

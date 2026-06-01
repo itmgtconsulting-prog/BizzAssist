@@ -186,7 +186,7 @@ export default function FilterPanel({
             <button
               type="button"
               onClick={() => onFiltersChange(DEFAULT_FILTERS)}
-              className="text-slate-500 hover:text-slate-300 transition-colors"
+              className="text-slate-400 hover:text-slate-300 transition-colors"
               aria-label={l.nulstil}
               title={l.nulstil}
             >
@@ -196,7 +196,7 @@ export default function FilterPanel({
           <button
             type="button"
             onClick={onClose}
-            className="text-slate-500 hover:text-slate-300 transition-colors"
+            className="text-slate-400 hover:text-slate-300 transition-colors"
             aria-label={lang === 'da' ? 'Luk filtre' : 'Close filters'}
           >
             <X className="w-4 h-4" />
@@ -426,7 +426,7 @@ export default function FilterPanel({
 
       {/* Footer med resultattæller */}
       <div className="px-4 py-3 border-t border-slate-700/50 text-center">
-        <span className="text-xs text-slate-500">{l.resultater(resultCount)}</span>
+        <span className="text-xs text-slate-400">{l.resultater(resultCount)}</span>
       </div>
     </div>
   );

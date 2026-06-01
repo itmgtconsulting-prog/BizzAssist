@@ -94,7 +94,7 @@ export default function PopularEntities() {
                 <p className="text-white font-semibold text-sm mb-1 group-hover:text-blue-300 transition-colors">
                   {c.name}
                 </p>
-                <p className="text-slate-500 text-xs">
+                <p className="text-slate-400 text-xs">
                   CVR {c.cvr} &middot; {c.industry}
                 </p>
               </Link>
@@ -118,7 +118,7 @@ export default function PopularEntities() {
                 <p className="text-white font-semibold text-sm mb-1 group-hover:text-emerald-300 transition-colors">
                   {p.name}
                 </p>
-                <p className="text-slate-500 text-xs">BFE {p.bfe}</p>
+                <p className="text-slate-400 text-xs">BFE {p.bfe}</p>
               </Link>
             ))}
           </div>

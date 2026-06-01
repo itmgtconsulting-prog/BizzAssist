@@ -259,7 +259,7 @@ export default function SelectPlanClient() {
 
             {/* Plan cards */}
             {plansLoading ? (
-              <div className="flex items-center justify-center gap-2 text-slate-500 py-8">
+              <div className="flex items-center justify-center gap-2 text-slate-400 py-8">
                 <Loader2 size={14} className="animate-spin" />
                 <span className="text-xs">{da ? 'Henter planer…' : 'Loading plans…'}</span>
               </div>
@@ -307,13 +307,13 @@ export default function SelectPlanClient() {
                                   : 'Free'
                                 : `${plan.priceDkk} kr`}
                               {plan.priceDkk > 0 && (
-                                <span className="text-slate-500 text-xs font-normal">/md</span>
+                                <span className="text-slate-400 text-xs font-normal">/md</span>
                               )}
                             </span>
                           </div>
 
                           {/* Description */}
-                          <p className="text-xs text-slate-500 mb-2">
+                          <p className="text-xs text-slate-400 mb-2">
                             {da ? plan.descDa : plan.descEn}
                           </p>
 
@@ -348,7 +348,7 @@ export default function SelectPlanClient() {
                             </div>
                           )}
                           {plan.requiresApproval && (
-                            <div className="inline-flex items-center gap-1 text-[10px] text-slate-500">
+                            <div className="inline-flex items-center gap-1 text-[10px] text-slate-400">
                               <Clock size={9} />
                               {da ? 'Godkendelse' : 'Approval'}
                             </div>
@@ -389,7 +389,7 @@ export default function SelectPlanClient() {
               </button>
             )}
 
-            <p className="text-center text-slate-600 text-xs mt-4">
+            <p className="text-center text-slate-400 text-xs mt-4">
               {da
                 ? 'Du kan opgradere eller annullere dit abonnement til enhver tid.'
                 : 'You can upgrade or cancel your subscription at any time.'}

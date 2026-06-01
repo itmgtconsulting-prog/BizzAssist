@@ -105,7 +105,7 @@ export default function AuditLogClient({ domainId }: { domainId: string }) {
             <ScrollText size={22} className="text-indigo-400" />
             {da ? 'Audit log' : 'Audit log'}
           </h1>
-          <p className="text-slate-500 text-sm mt-1">
+          <p className="text-slate-400 text-sm mt-1">
             {rows.length} {da ? 'handlinger vist (seneste 500)' : 'events shown (most recent 500)'}
           </p>
         </div>
@@ -177,7 +177,7 @@ export default function AuditLogClient({ domainId }: { domainId: string }) {
             <Loader2 className="w-6 h-6 text-blue-400 animate-spin" />
           </div>
         ) : rows.length === 0 ? (
-          <div className="text-center py-10 text-slate-500 text-sm">
+          <div className="text-center py-10 text-slate-400 text-sm">
             {da ? 'Ingen handlinger fundet' : 'No events found'}
           </div>
         ) : (
@@ -194,10 +194,10 @@ export default function AuditLogClient({ domainId }: { domainId: string }) {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id} className="border-b border-slate-700/20 text-slate-300">
-                  <td className="px-3 py-2 whitespace-nowrap text-slate-500">
+                  <td className="px-3 py-2 whitespace-nowrap text-slate-400">
                     {new Date(r.created_at).toLocaleString(da ? 'da-DK' : 'en-GB')}
                   </td>
-                  <td className="px-3 py-2 font-mono text-slate-500">
+                  <td className="px-3 py-2 font-mono text-slate-400">
                     {r.actor_user_id.slice(0, 8)}…
                   </td>
                   <td className="px-3 py-2">
@@ -208,14 +208,14 @@ export default function AuditLogClient({ domainId }: { domainId: string }) {
                       <>
                         {r.target_type}
                         {r.target_id && (
-                          <span className="text-slate-600 ml-1">({r.target_id.slice(0, 8)}…)</span>
+                          <span className="text-slate-400 ml-1">({r.target_id.slice(0, 8)}…)</span>
                         )}
                       </>
                     ) : (
                       '—'
                     )}
                   </td>
-                  <td className="px-3 py-2 text-slate-500 font-mono text-[10px] truncate max-w-xs">
+                  <td className="px-3 py-2 text-slate-400 font-mono text-[10px] truncate max-w-xs">
                     {r.metadata ? JSON.stringify(r.metadata) : '—'}
                   </td>
                 </tr>

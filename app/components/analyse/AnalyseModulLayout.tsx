@@ -236,7 +236,7 @@ export default function AnalyseModulLayout({ modul, children, ekstraKontekst }: 
         </p>
         {/* BIZZ-1249: Hjælpetekst der forklarer hvad brugeren skal gøre */}
         {modulConfig?.hint && (
-          <p className="text-slate-500 text-xs mt-2 italic">{modulConfig.hint}</p>
+          <p className="text-slate-400 text-xs mt-2 italic">{modulConfig.hint}</p>
         )}
       </div>
 
@@ -247,7 +247,7 @@ export default function AnalyseModulLayout({ modul, children, ekstraKontekst }: 
         {/* Autocomplete søgefelt */}
         <div className="relative" ref={dropdownRef}>
           <div className="relative">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
               value={searchQuery}
@@ -283,7 +283,7 @@ export default function AnalyseModulLayout({ modul, children, ekstraKontekst }: 
                     <div className="text-sm text-white truncate">{result.title}</div>
                     <div className="text-xs text-slate-400 truncate">{result.subtitle}</div>
                   </div>
-                  <span className="text-[10px] text-slate-500 shrink-0 mt-0.5">
+                  <span className="text-[10px] text-slate-400 shrink-0 mt-0.5">
                     {result.type === 'company'
                       ? 'Virksomhed'
                       : result.type === 'address'
@@ -298,7 +298,7 @@ export default function AnalyseModulLayout({ modul, children, ekstraKontekst }: 
 
         {/* Type toggle + manuelt ID input (fallback) */}
         <div className="flex items-center gap-2">
-          <span className="text-slate-500 text-xs">eller angiv manuelt:</span>
+          <span className="text-slate-400 text-xs">eller angiv manuelt:</span>
           {(['person', 'virksomhed', 'ejendom'] as const).map((t) => (
             <button
               key={t}
@@ -350,14 +350,14 @@ export default function AnalyseModulLayout({ modul, children, ekstraKontekst }: 
           <ChevronRight size={14} />
         </button>
 
-        <p className="text-slate-600 text-[10px]">
+        <p className="text-slate-400 text-[10px]">
           Analysen kører i AI Chat og bruger dine eksisterende tokens.
         </p>
       </div>
 
       {/* Tools info */}
       <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-4">
-        <p className="text-slate-500 text-xs font-medium mb-2">
+        <p className="text-slate-400 text-xs font-medium mb-2">
           Data-kilder brugt i denne analyse:
         </p>
         <div className="flex flex-wrap gap-1.5">

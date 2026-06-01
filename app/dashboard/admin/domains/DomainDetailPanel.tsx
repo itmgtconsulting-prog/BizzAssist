@@ -33,7 +33,7 @@ import {
 import { useLanguage } from '@/app/context/LanguageContext';
 
 const Loading = () => (
-  <div className="flex items-center justify-center py-12 text-slate-500">
+  <div className="flex items-center justify-center py-12 text-slate-400">
     <Loader2 className="w-5 h-5 animate-spin" />
   </div>
 );

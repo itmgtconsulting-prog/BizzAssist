@@ -152,7 +152,7 @@ export default function DataResultCard({
           <span className="text-xs text-slate-400">{rowCount} rækker</span>
           <button
             onClick={() => downloadCSV(columns, rows)}
-            className="ml-auto text-[10px] text-slate-500 hover:text-slate-300 flex items-center gap-1"
+            className="ml-auto text-[10px] text-slate-400 hover:text-slate-300 flex items-center gap-1"
           >
             <Download size={10} /> CSV
           </button>
@@ -161,7 +161,7 @@ export default function DataResultCard({
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
-              <tr className="text-slate-500 border-b border-slate-700/40">
+              <tr className="text-slate-400 border-b border-slate-700/40">
                 {columns.map((col, i) => (
                   <th key={i} className="px-2 py-1.5 text-left font-medium">
                     {humanizeCol(col)}
@@ -191,13 +191,13 @@ export default function DataResultCard({
     <div className="bg-slate-800/60 border border-slate-700/40 rounded-xl p-3 my-2">
       <div className="flex items-center gap-2 mb-2">
         <Table2 size={13} className="text-emerald-400" />
-        <span className="text-[10px] text-slate-500">
+        <span className="text-[10px] text-slate-400">
           {rowCount} {rowCount === 1 ? 'række' : 'rækker'}
           {afkortet ? ' (afkortet)' : ''}
         </span>
         <button
           onClick={() => downloadCSV(columns, rows)}
-          className="ml-auto text-[10px] text-slate-500 hover:text-slate-300 flex items-center gap-1"
+          className="ml-auto text-[10px] text-slate-400 hover:text-slate-300 flex items-center gap-1"
           aria-label="Download som CSV"
         >
           <Download size={10} /> CSV
@@ -206,7 +206,7 @@ export default function DataResultCard({
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
-            <tr className="text-slate-500 border-b border-slate-700/40">
+            <tr className="text-slate-400 border-b border-slate-700/40">
               {columns.map((col, i) => (
                 <th
                   key={i}

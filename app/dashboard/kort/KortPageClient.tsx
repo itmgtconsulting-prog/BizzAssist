@@ -1594,7 +1594,7 @@ function KortInner() {
                   setForslag([]);
                   setSøgtMarkør(null);
                 }}
-                className="text-slate-500 hover:text-slate-300 transition-colors"
+                className="text-slate-400 hover:text-slate-300 transition-colors"
               >
                 <X size={14} />
               </button>
@@ -1633,7 +1633,7 @@ function KortInner() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium truncate">{r.tekst}</p>
-                    <p className="text-slate-500 text-xs">
+                    <p className="text-slate-400 text-xs">
                       {r.type === 'vejnavn'
                         ? mt.roadAddNumber
                         : `${r.adresse.postnr} ${r.adresse.postnrnavn}`}
@@ -1641,7 +1641,7 @@ function KortInner() {
                   </div>
                   <ArrowRight
                     size={12}
-                    className={i === markeret ? 'text-blue-400' : 'text-slate-600'}
+                    className={i === markeret ? 'text-blue-400' : 'text-slate-400'}
                   />
                 </button>
               ))}
@@ -1693,7 +1693,7 @@ function KortInner() {
             <span className="text-white text-xs font-semibold">{mt.mapLayers}</span>
             <button
               onClick={() => setLagPanel(false)}
-              className="text-slate-500 hover:text-slate-300 transition-colors p-0.5 rounded hover:bg-white/5"
+              className="text-slate-400 hover:text-slate-300 transition-colors p-0.5 rounded hover:bg-white/5"
             >
               <X size={12} />
             </button>
@@ -1774,7 +1774,7 @@ function KortInner() {
       {/* ── Status-badges (bottom-left) ───────────────────────────────────── */}
       <div className="absolute bottom-4 left-4 z-10 flex items-center gap-2">
         <div className="flex items-center gap-1.5 bg-[#0f172a]/90 border border-white/10 rounded-lg px-2.5 py-1.5 shadow">
-          <span className="text-slate-500 text-[11px]">Zoom</span>
+          <span className="text-slate-400 text-[11px]">Zoom</span>
           <span className="text-white text-xs font-semibold tabular-nums w-8 text-right">
             {zoom.toFixed(1)}
           </span>
@@ -1787,9 +1787,9 @@ function KortInner() {
           {henterMatrikel ? (
             <Loader2 size={11} className="text-blue-400 animate-spin" />
           ) : (
-            <Layers size={11} className={matrikelAktiv ? 'text-blue-400' : 'text-slate-600'} />
+            <Layers size={11} className={matrikelAktiv ? 'text-blue-400' : 'text-slate-400'} />
           )}
-          <span className={`text-xs ${matrikelAktiv ? 'text-slate-300' : 'text-slate-600'}`}>
+          <span className={`text-xs ${matrikelAktiv ? 'text-slate-300' : 'text-slate-400'}`}>
             {henterMatrikel
               ? mt.fetching
               : matrikelAktiv
@@ -1805,9 +1805,9 @@ function KortInner() {
           {henterHusnr ? (
             <Loader2 size={11} className="text-emerald-400 animate-spin" />
           ) : (
-            <MapPin size={11} className={husnrAktiv ? 'text-emerald-400' : 'text-slate-600'} />
+            <MapPin size={11} className={husnrAktiv ? 'text-emerald-400' : 'text-slate-400'} />
           )}
-          <span className={`text-xs ${husnrAktiv ? 'text-slate-300' : 'text-slate-600'}`}>
+          <span className={`text-xs ${husnrAktiv ? 'text-slate-300' : 'text-slate-400'}`}>
             {henterHusnr
               ? mt.fetching
               : husnrAktiv
@@ -1864,7 +1864,7 @@ function KortInner() {
               </div>
               <button
                 onClick={() => setPopup(null)}
-                className="text-slate-500 hover:text-slate-300 transition-colors shrink-0 mt-0.5 p-1 rounded-lg hover:bg-white/5"
+                className="text-slate-400 hover:text-slate-300 transition-colors shrink-0 mt-0.5 p-1 rounded-lg hover:bg-white/5"
               >
                 <X size={15} />
               </button>
@@ -1873,13 +1873,13 @@ function KortInner() {
             {/* Detaljer — matrikelnr, ejerlav, grundareal */}
             <div className="px-5 pb-4 grid grid-cols-3 gap-4 border-t border-white/5 pt-3">
               <div>
-                <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">
+                <p className="text-slate-400 text-[10px] uppercase tracking-wider mb-1">
                   {mt.parcelNo}
                 </p>
                 <p className="text-white text-sm font-semibold">{popup.matrikelnr}</p>
               </div>
               <div>
-                <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">
+                <p className="text-slate-400 text-[10px] uppercase tracking-wider mb-1">
                   {mt.cadastre}
                 </p>
                 <p className="text-white text-sm font-semibold truncate">
@@ -1887,7 +1887,7 @@ function KortInner() {
                 </p>
               </div>
               <div>
-                <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">
+                <p className="text-slate-400 text-[10px] uppercase tracking-wider mb-1">
                   {mt.landArea}
                 </p>
                 <p className="text-white text-sm font-semibold">
@@ -1939,7 +1939,7 @@ function KortInner() {
               </div>
               <button
                 onClick={() => setVirksomhedPopup(null)}
-                className="text-slate-500 hover:text-slate-300 transition-colors shrink-0 mt-0.5 p-1 rounded-lg hover:bg-white/5"
+                className="text-slate-400 hover:text-slate-300 transition-colors shrink-0 mt-0.5 p-1 rounded-lg hover:bg-white/5"
               >
                 <X size={15} />
               </button>
@@ -1948,7 +1948,7 @@ function KortInner() {
             {/* Detaljer — CVR-nummer */}
             <div className="px-5 pb-4 border-t border-white/5 pt-3">
               <div>
-                <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">{mt.cvr}</p>
+                <p className="text-slate-400 text-[10px] uppercase tracking-wider mb-1">{mt.cvr}</p>
                 <p className="text-white text-sm font-semibold tabular-nums">
                   {virksomhedPopup.cvr.toString().padStart(8, '0')}
                 </p>

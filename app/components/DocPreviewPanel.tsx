@@ -121,7 +121,7 @@ export function DocPreviewPanel() {
       >
         <GripVertical
           size={12}
-          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-600 group-hover:text-blue-300"
+          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-400 group-hover:text-blue-300"
         />
       </div>
 
@@ -130,7 +130,7 @@ export function DocPreviewPanel() {
         <FileText size={14} className="text-blue-400 shrink-0" />
         <div className="min-w-0 flex-1">
           <p className="text-sm text-white truncate">{content.name}</p>
-          <p className="text-[10px] text-slate-500 uppercase">
+          <p className="text-[10px] text-slate-400 uppercase">
             {content.fileType}
             {typeof content.sizeBytes === 'number' &&
               ` · ${Math.round(content.sizeBytes / 1024)} KB`}
@@ -206,7 +206,7 @@ function TablePreview({ columns, rows }: { columns: string[]; rows: string[][] }
 
   return (
     <div className="space-y-3">
-      <div className="text-[10px] text-slate-500 uppercase tracking-wide flex items-center justify-between">
+      <div className="text-[10px] text-slate-400 uppercase tracking-wide flex items-center justify-between">
         <span>
           {columns.length} {columns.length === 1 ? 'kolonne' : 'kolonner'} · {rows.length}{' '}
           {rows.length === 1 ? 'række' : 'rækker'}
@@ -253,7 +253,7 @@ function TablePreview({ columns, rows }: { columns: string[]; rows: string[][] }
         </table>
       </div>
       {hasMore && !showAll && (
-        <p className="text-[10px] text-slate-500 italic">
+        <p className="text-[10px] text-slate-400 italic">
           Viser første {INITIAL_ROWS} af {rows.length} rækker. Download for komplet data.
         </p>
       )}

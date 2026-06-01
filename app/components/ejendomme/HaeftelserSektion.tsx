@@ -74,7 +74,7 @@ export default function HaeftelserSektion({ bfe, lang }: Props): React.ReactElem
           <h3 className="text-white font-semibold text-sm">
             {da ? 'Hæftelser / Pantbreve' : 'Mortgages / Liens'}
           </h3>
-          <span className="text-xs text-slate-500">({rows.length})</span>
+          <span className="text-xs text-slate-400">({rows.length})</span>
         </div>
         <div className="flex items-center gap-3">
           <span className="text-xs text-amber-400 font-medium">
@@ -91,7 +91,7 @@ export default function HaeftelserSektion({ bfe, lang }: Props): React.ReactElem
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
-              <tr className="border-b border-slate-700/30 text-slate-500 uppercase tracking-wider">
+              <tr className="border-b border-slate-700/30 text-slate-400 uppercase tracking-wider">
                 <th className="text-left py-2 px-2">{da ? 'Type' : 'Type'}</th>
                 <th className="text-left py-2 px-2">{da ? 'Kreditor' : 'Creditor'}</th>
                 <th className="text-right py-2 px-2">{da ? 'Hovedstol' : 'Principal'}</th>
@@ -112,7 +112,7 @@ export default function HaeftelserSektion({ bfe, lang }: Props): React.ReactElem
                   <td className="py-1.5 px-2 text-right text-slate-400">
                     {h.rente_pct != null ? `${h.rente_pct}%` : '—'}
                   </td>
-                  <td className="py-1.5 px-2 text-right text-slate-500">
+                  <td className="py-1.5 px-2 text-right text-slate-400">
                     {h.tinglysningsdato
                       ? new Date(h.tinglysningsdato).toLocaleDateString('da-DK')
                       : '—'}
@@ -131,7 +131,7 @@ export default function HaeftelserSektion({ bfe, lang }: Props): React.ReactElem
                         <Download className="w-3.5 h-3.5" />
                       </a>
                     ) : (
-                      <span className="text-slate-700">—</span>
+                      <span className="text-slate-400">—</span>
                     )}
                   </td>
                 </tr>

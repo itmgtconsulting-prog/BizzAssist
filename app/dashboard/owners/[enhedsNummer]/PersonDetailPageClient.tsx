@@ -148,7 +148,7 @@ function EmptyState({ ikon, tekst }: { ikon: React.ReactNode; tekst: string }) {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
       {ikon}
-      <p className="mt-3 text-sm text-slate-500">{tekst}</p>
+      <p className="mt-3 text-sm text-slate-400">{tekst}</p>
     </div>
   );
 }
@@ -306,13 +306,13 @@ function PersonTinglysningTab({
       {/* BIZZ-339: Personen har ingen tilknyttede virksomheder — søgning ikke mulig via e-TL API */}
       {!loading && !fejl && ingenVirksomheder && (
         <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl flex items-start gap-3 px-4 py-3">
-          <AlertTriangle size={14} className="text-slate-500 flex-shrink-0 mt-0.5" />
-          <p className="text-slate-500 text-xs">{c.tinglysningIngenVirksomheder}</p>
+          <AlertTriangle size={14} className="text-slate-400 flex-shrink-0 mt-0.5" />
+          <p className="text-slate-400 text-xs">{c.tinglysningIngenVirksomheder}</p>
         </div>
       )}
       {!loading && !fejl && !ingenVirksomheder && allHaeftelser.length === 0 && (
         <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl px-4 py-3">
-          <p className="text-slate-500 text-xs italic">{c.tinglysningEmpty}</p>
+          <p className="text-slate-400 text-xs italic">{c.tinglysningEmpty}</p>
         </div>
       )}
 
@@ -341,8 +341,8 @@ function PersonTinglysningTab({
                 >
                   {navn}
                 </Link>
-                <span className="text-slate-600 text-xs">CVR {cvr}</span>
-                <span className="text-slate-600 text-xs">({haeftelser.length})</span>
+                <span className="text-slate-400 text-xs">CVR {cvr}</span>
+                <span className="text-slate-400 text-xs">({haeftelser.length})</span>
                 <button
                   onClick={async () => {
                     const docs = haeftelser.filter(
@@ -367,18 +367,18 @@ function PersonTinglysningTab({
               {/* Kolonneoverskrifter */}
               <div className="grid grid-cols-[24px_36px_90px_1fr_100px_100px_50px_28px] gap-x-2 px-4 py-1.5 border-b border-slate-700/20">
                 <span />
-                <span className="text-[10px] font-medium text-slate-500 uppercase">Pri.</span>
-                <span className="text-[10px] font-medium text-slate-500 uppercase">
+                <span className="text-[10px] font-medium text-slate-400 uppercase">Pri.</span>
+                <span className="text-[10px] font-medium text-slate-400 uppercase">
                   {da ? 'Dato' : 'Date'}
                 </span>
-                <span className="text-[10px] font-medium text-slate-500 uppercase">
+                <span className="text-[10px] font-medium text-slate-400 uppercase">
                   {da ? 'Dokument' : 'Document'}
                 </span>
-                <span className="text-[10px] font-medium text-slate-500 uppercase">
+                <span className="text-[10px] font-medium text-slate-400 uppercase">
                   {da ? 'Beløb' : 'Amount'}
                 </span>
-                <span className="text-[10px] font-medium text-slate-500 uppercase">Type</span>
-                <span className="text-[10px] font-medium text-slate-500 uppercase">
+                <span className="text-[10px] font-medium text-slate-400 uppercase">Type</span>
+                <span className="text-[10px] font-medium text-slate-400 uppercase">
                   {da ? 'Dok.' : 'Doc.'}
                 </span>
                 <span />
@@ -409,9 +409,9 @@ function PersonTinglysningTab({
                             onClick={() => toggleExpand(rowKey)}
                           >
                             {isExpanded ? (
-                              <ChevronDown size={12} className="text-slate-500" />
+                              <ChevronDown size={12} className="text-slate-400" />
                             ) : (
-                              <ChevronRight size={12} className="text-slate-500" />
+                              <ChevronRight size={12} className="text-slate-400" />
                             )}
                             <span className="text-xs text-slate-400 tabular-nums">
                               {String(h.prioritet ?? '')}
@@ -424,7 +424,7 @@ function PersonTinglysningTab({
                                 {pbTypeLabel(h.type, da)}
                               </span>
                               {h.debitorer.length > 0 && (
-                                <span className="text-[10px] text-slate-500 truncate block">
+                                <span className="text-[10px] text-slate-400 truncate block">
                                   {h.debitorer.join(', ')}
                                 </span>
                               )}
@@ -499,7 +499,7 @@ function PersonTinglysningTab({
                               <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-xs mt-1">
                                 {h.kreditor && (
                                   <div>
-                                    <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                    <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                                       {da ? 'Kreditor' : 'Creditor'}
                                     </p>
                                     <p className="text-white">
@@ -518,7 +518,7 @@ function PersonTinglysningTab({
                                 )}
                                 {h.debitorer.length > 0 && (
                                   <div>
-                                    <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                    <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                                       {da ? 'Debitor' : 'Debtor'}
                                     </p>
                                     {h.debitorer.map((d, di) => (
@@ -539,7 +539,7 @@ function PersonTinglysningTab({
                                 )}
                                 {h.hovedstol != null && (
                                   <div>
-                                    <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                    <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                                       {da ? 'Hovedstol' : 'Principal'}
                                     </p>
                                     <p className="text-white">
@@ -549,7 +549,7 @@ function PersonTinglysningTab({
                                 )}
                                 {h.rente != null && (
                                   <div>
-                                    <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                    <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                                       {da ? 'Rente' : 'Interest rate'}
                                     </p>
                                     <p className="text-white">
@@ -559,7 +559,7 @@ function PersonTinglysningTab({
                                 )}
                                 {h.tinglysningsdato && (
                                   <div>
-                                    <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                    <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                                       {da ? 'Tinglysningsdato' : 'Registration date'}
                                     </p>
                                     <p className="text-white">
@@ -569,7 +569,7 @@ function PersonTinglysningTab({
                                 )}
                                 {h.tinglysningsafgift != null && (
                                   <div>
-                                    <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                    <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                                       {da ? 'Tinglysningsafgift' : 'Registration fee'}
                                     </p>
                                     <p className="text-white">
@@ -579,7 +579,7 @@ function PersonTinglysningTab({
                                 )}
                                 {h.dokumentAlias && (
                                   <div>
-                                    <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                    <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                                       {da ? 'Dokument' : 'Document'}
                                     </p>
                                     <p className="text-white text-[11px]">{h.dokumentAlias}</p>
@@ -588,7 +588,7 @@ function PersonTinglysningTab({
                               </div>
                               {h.vilkaar && (
                                 <div className="mt-2 pt-2 border-t border-slate-700/20">
-                                  <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                  <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                                     {da ? 'Vilkår' : 'Terms'}
                                   </p>
                                   <p className="text-slate-300 text-xs whitespace-pre-line">
@@ -598,7 +598,7 @@ function PersonTinglysningTab({
                               )}
                               {h.anmelderNavn && (
                                 <div className="mt-2 pt-2 border-t border-slate-700/20">
-                                  <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                  <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                                     {da ? 'Anmelder' : 'Notifier'}
                                   </p>
                                   <p className="text-white text-xs">
@@ -646,9 +646,9 @@ function PersonTinglysningTab({
                             onClick={() => toggleExpand(rowKey)}
                           >
                             {isExpanded ? (
-                              <ChevronDown size={12} className="text-slate-500" />
+                              <ChevronDown size={12} className="text-slate-400" />
                             ) : (
-                              <ChevronRight size={12} className="text-slate-500" />
+                              <ChevronRight size={12} className="text-slate-400" />
                             )}
                             <span className="text-xs text-slate-400 tabular-nums">
                               {String(h.prioritet ?? '')}
@@ -706,7 +706,7 @@ function CollapsibleSection({
       >
         {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         {title}
-        {count != null && <span className="text-slate-600">({count})</span>}
+        {count != null && <span className="text-slate-400">({count})</span>}
       </button>
       {open && <div className="mt-1.5">{children}</div>}
     </div>
@@ -732,7 +732,7 @@ function CompanyRowCompact({
       onClick={() => router.push(`/dashboard/companies/${v.cvr}`)}
       className="group w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-slate-900/40 hover:bg-slate-800/60 transition text-left"
     >
-      <Building2 size={12} className="text-slate-500 group-hover:text-blue-400 flex-shrink-0" />
+      <Building2 size={12} className="text-slate-400 group-hover:text-blue-400 flex-shrink-0" />
       <span className="text-white text-xs font-medium truncate group-hover:text-blue-300 transition-colors">
         {v.navn}
       </span>
@@ -756,7 +756,7 @@ function CompanyRowCompact({
       </span>
       <ExternalLink
         size={9}
-        className="text-slate-600 group-hover:text-blue-400 flex-shrink-0 ml-auto"
+        className="text-slate-400 group-hover:text-blue-400 flex-shrink-0 ml-auto"
       />
     </button>
   );
@@ -2087,7 +2087,7 @@ export default function PersonDetailPageClient({
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400 mb-2">
                           {lang === 'da' ? 'Ejerandele' : 'Ownership'}
                           {topEjerandele.length > 0 && (
-                            <span className="text-slate-600 ml-1">({topEjerandele.length})</span>
+                            <span className="text-slate-400 ml-1">({topEjerandele.length})</span>
                           )}
                         </p>
                         {topEjerandele.length > 0 ? (
@@ -2100,7 +2100,7 @@ export default function PersonDetailPageClient({
                               >
                                 <Building2
                                   size={10}
-                                  className="text-slate-500 group-hover:text-blue-400 flex-shrink-0"
+                                  className="text-slate-400 group-hover:text-blue-400 flex-shrink-0"
                                 />
                                 <span className="text-slate-300 text-[11px] truncate group-hover:text-blue-300">
                                   {v.navn}
@@ -2114,7 +2114,7 @@ export default function PersonDetailPageClient({
                             ))}
                           </div>
                         ) : (
-                          <p className="text-slate-600 text-[10px]">
+                          <p className="text-slate-400 text-[10px]">
                             {lang === 'da' ? 'Ingen' : 'None'}
                           </p>
                         )}
@@ -2142,7 +2142,7 @@ export default function PersonDetailPageClient({
                               const totalAktive = aktive + privat;
                               if (totalAktive + historiske === 0) {
                                 return (
-                                  <p className="text-slate-600 text-[10px]">
+                                  <p className="text-slate-400 text-[10px]">
                                     {lang === 'da' ? 'Ingen' : 'None'}
                                   </p>
                                 );
@@ -2154,7 +2154,7 @@ export default function PersonDetailPageClient({
                                       ? `${totalAktive} aktiv${totalAktive !== 1 ? 'e' : ''}`
                                       : `${totalAktive} active`}
                                     {historiske > 0 && (
-                                      <span className="text-slate-600">
+                                      <span className="text-slate-400">
                                         {' · '}
                                         {lang === 'da'
                                           ? `${historiske} historisk${historiske !== 1 ? 'e' : ''}`
@@ -2163,7 +2163,7 @@ export default function PersonDetailPageClient({
                                     )}
                                   </p>
                                   {privat > 0 && (
-                                    <p className="text-slate-500 text-[9px]">
+                                    <p className="text-slate-400 text-[9px]">
                                       {lang === 'da'
                                         ? `Heraf ${privat} personligt ejet`
                                         : `Incl. ${privat} personally owned`}
@@ -2182,7 +2182,7 @@ export default function PersonDetailPageClient({
                     <p className="text-[10px] font-semibold uppercase tracking-wider text-blue-400 mb-2">
                       {lang === 'da' ? 'Bestyrelse' : 'Board'}
                       {rollerPerKategori.bestyrelse.length > 0 && (
-                        <span className="text-slate-600 ml-1">
+                        <span className="text-slate-400 ml-1">
                           ({rollerPerKategori.bestyrelse.length})
                         </span>
                       )}
@@ -2197,19 +2197,19 @@ export default function PersonDetailPageClient({
                           >
                             <Building2
                               size={10}
-                              className="text-slate-500 group-hover:text-blue-400 flex-shrink-0"
+                              className="text-slate-400 group-hover:text-blue-400 flex-shrink-0"
                             />
                             <span className="text-slate-300 text-[11px] truncate group-hover:text-blue-300">
                               {v.navn}
                             </span>
-                            <span className="text-[8px] text-slate-500 flex-shrink-0 ml-auto">
+                            <span className="text-[8px] text-slate-400 flex-shrink-0 ml-auto">
                               {roller[0]}
                             </span>
                           </button>
                         ))}
                       </div>
                     ) : (
-                      <p className="text-slate-600 text-[10px]">
+                      <p className="text-slate-400 text-[10px]">
                         {lang === 'da' ? 'Ingen' : 'None'}
                       </p>
                     )}
@@ -2219,7 +2219,7 @@ export default function PersonDetailPageClient({
                     <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-400 mb-2">
                       {lang === 'da' ? 'Direktion' : 'Management'}
                       {rollerPerKategori.direktion.length > 0 && (
-                        <span className="text-slate-600 ml-1">
+                        <span className="text-slate-400 ml-1">
                           ({rollerPerKategori.direktion.length})
                         </span>
                       )}
@@ -2234,19 +2234,19 @@ export default function PersonDetailPageClient({
                           >
                             <Building2
                               size={10}
-                              className="text-slate-500 group-hover:text-blue-400 flex-shrink-0"
+                              className="text-slate-400 group-hover:text-blue-400 flex-shrink-0"
                             />
                             <span className="text-slate-300 text-[11px] truncate group-hover:text-blue-300">
                               {v.navn}
                             </span>
-                            <span className="text-[8px] text-slate-500 flex-shrink-0 ml-auto">
+                            <span className="text-[8px] text-slate-400 flex-shrink-0 ml-auto">
                               {roller[0]}
                             </span>
                           </button>
                         ))}
                       </div>
                     ) : (
-                      <p className="text-slate-600 text-[10px]">
+                      <p className="text-slate-400 text-[10px]">
                         {lang === 'da' ? 'Ingen' : 'None'}
                       </p>
                     )}
@@ -2256,7 +2256,7 @@ export default function PersonDetailPageClient({
                     <p className="text-[10px] font-semibold uppercase tracking-wider text-purple-400 mb-2">
                       {lang === 'da' ? 'Stifter / Andre' : 'Founder / Other'}
                       {rollerPerKategori.andre.length > 0 && (
-                        <span className="text-slate-600 ml-1">
+                        <span className="text-slate-400 ml-1">
                           ({rollerPerKategori.andre.length})
                         </span>
                       )}
@@ -2271,19 +2271,19 @@ export default function PersonDetailPageClient({
                           >
                             <Building2
                               size={10}
-                              className="text-slate-500 group-hover:text-blue-400 flex-shrink-0"
+                              className="text-slate-400 group-hover:text-blue-400 flex-shrink-0"
                             />
                             <span className="text-slate-300 text-[11px] truncate group-hover:text-blue-300">
                               {v.navn}
                             </span>
-                            <span className="text-[8px] text-slate-500 flex-shrink-0 ml-auto">
+                            <span className="text-[8px] text-slate-400 flex-shrink-0 ml-auto">
                               {roller[0]}
                             </span>
                           </button>
                         ))}
                       </div>
                     ) : (
-                      <p className="text-slate-600 text-[10px]">
+                      <p className="text-slate-400 text-[10px]">
                         {lang === 'da' ? 'Ingen' : 'None'}
                       </p>
                     )}
@@ -2303,7 +2303,7 @@ export default function PersonDetailPageClient({
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400/60 mb-2">
                           {lang === 'da' ? 'Ejerandele' : 'Ownership'}
                           {rollerPerKategoriHistorisk.ejerandel.length > 0 && (
-                            <span className="text-slate-700 ml-1">
+                            <span className="text-slate-400 ml-1">
                               ({rollerPerKategoriHistorisk.ejerandel.length})
                             </span>
                           )}
@@ -2318,9 +2318,9 @@ export default function PersonDetailPageClient({
                               >
                                 <Building2
                                   size={10}
-                                  className="text-slate-600 group-hover:text-blue-400 flex-shrink-0"
+                                  className="text-slate-400 group-hover:text-blue-400 flex-shrink-0"
                                 />
-                                <span className="text-slate-500 text-[11px] truncate group-hover:text-blue-300">
+                                <span className="text-slate-400 text-[11px] truncate group-hover:text-blue-300">
                                   {v.navn}
                                 </span>
                                 {andel && (
@@ -2332,7 +2332,7 @@ export default function PersonDetailPageClient({
                             ))}
                           </div>
                         ) : (
-                          <p className="text-slate-700 text-[10px]">
+                          <p className="text-slate-400 text-[10px]">
                             {lang === 'da' ? 'Ingen' : 'None'}
                           </p>
                         )}
@@ -2342,7 +2342,7 @@ export default function PersonDetailPageClient({
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-blue-400/60 mb-2">
                           {lang === 'da' ? 'Bestyrelse' : 'Board'}
                           {rollerPerKategoriHistorisk.bestyrelse.length > 0 && (
-                            <span className="text-slate-700 ml-1">
+                            <span className="text-slate-400 ml-1">
                               ({rollerPerKategoriHistorisk.bestyrelse.length})
                             </span>
                           )}
@@ -2357,19 +2357,19 @@ export default function PersonDetailPageClient({
                               >
                                 <Building2
                                   size={10}
-                                  className="text-slate-600 group-hover:text-blue-400 flex-shrink-0"
+                                  className="text-slate-400 group-hover:text-blue-400 flex-shrink-0"
                                 />
-                                <span className="text-slate-500 text-[11px] truncate group-hover:text-blue-300">
+                                <span className="text-slate-400 text-[11px] truncate group-hover:text-blue-300">
                                   {v.navn}
                                 </span>
-                                <span className="text-[8px] text-slate-600 flex-shrink-0 ml-auto">
+                                <span className="text-[8px] text-slate-400 flex-shrink-0 ml-auto">
                                   {roller[0]}
                                 </span>
                               </button>
                             ))}
                           </div>
                         ) : (
-                          <p className="text-slate-700 text-[10px]">
+                          <p className="text-slate-400 text-[10px]">
                             {lang === 'da' ? 'Ingen' : 'None'}
                           </p>
                         )}
@@ -2379,7 +2379,7 @@ export default function PersonDetailPageClient({
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-400/60 mb-2">
                           {lang === 'da' ? 'Direktion' : 'Management'}
                           {rollerPerKategoriHistorisk.direktion.length > 0 && (
-                            <span className="text-slate-700 ml-1">
+                            <span className="text-slate-400 ml-1">
                               ({rollerPerKategoriHistorisk.direktion.length})
                             </span>
                           )}
@@ -2394,19 +2394,19 @@ export default function PersonDetailPageClient({
                               >
                                 <Building2
                                   size={10}
-                                  className="text-slate-600 group-hover:text-blue-400 flex-shrink-0"
+                                  className="text-slate-400 group-hover:text-blue-400 flex-shrink-0"
                                 />
-                                <span className="text-slate-500 text-[11px] truncate group-hover:text-blue-300">
+                                <span className="text-slate-400 text-[11px] truncate group-hover:text-blue-300">
                                   {v.navn}
                                 </span>
-                                <span className="text-[8px] text-slate-600 flex-shrink-0 ml-auto">
+                                <span className="text-[8px] text-slate-400 flex-shrink-0 ml-auto">
                                   {roller[0]}
                                 </span>
                               </button>
                             ))}
                           </div>
                         ) : (
-                          <p className="text-slate-700 text-[10px]">
+                          <p className="text-slate-400 text-[10px]">
                             {lang === 'da' ? 'Ingen' : 'None'}
                           </p>
                         )}
@@ -2416,7 +2416,7 @@ export default function PersonDetailPageClient({
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-purple-400/60 mb-2">
                           {lang === 'da' ? 'Stifter / Andre' : 'Founder / Other'}
                           {rollerPerKategoriHistorisk.andre.length > 0 && (
-                            <span className="text-slate-700 ml-1">
+                            <span className="text-slate-400 ml-1">
                               ({rollerPerKategoriHistorisk.andre.length})
                             </span>
                           )}
@@ -2431,19 +2431,19 @@ export default function PersonDetailPageClient({
                               >
                                 <Building2
                                   size={10}
-                                  className="text-slate-600 group-hover:text-blue-400 flex-shrink-0"
+                                  className="text-slate-400 group-hover:text-blue-400 flex-shrink-0"
                                 />
-                                <span className="text-slate-500 text-[11px] truncate group-hover:text-blue-300">
+                                <span className="text-slate-400 text-[11px] truncate group-hover:text-blue-300">
                                   {v.navn}
                                 </span>
-                                <span className="text-[8px] text-slate-600 flex-shrink-0 ml-auto">
+                                <span className="text-[8px] text-slate-400 flex-shrink-0 ml-auto">
                                   {roller[0]}
                                 </span>
                               </button>
                             ))}
                           </div>
                         ) : (
-                          <p className="text-slate-700 text-[10px]">
+                          <p className="text-slate-400 text-[10px]">
                             {lang === 'da' ? 'Ingen' : 'None'}
                           </p>
                         )}
@@ -2500,7 +2500,7 @@ export default function PersonDetailPageClient({
                 (derived?.ejerVirksomheder.length ?? 0) === 0 &&
                 (derived?.andreVirksomheder.length ?? 0) === 0 && (
                   <div className="flex flex-col items-center justify-center py-12 text-center">
-                    <Home size={36} className="text-slate-600 mb-3" />
+                    <Home size={36} className="text-slate-400 mb-3" />
                     <p className="text-slate-400 text-sm">
                       {lang === 'da'
                         ? 'Ingen registrerede tilknytninger fundet — personen har ingen aktive virksomheder.'
@@ -2522,7 +2522,7 @@ export default function PersonDetailPageClient({
               {/* Mangler nøgle / adgang — vises når hentning er fuldført */}
               {ejendommeFetchComplete && ejendommeManglerNoegle && (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <Home size={36} className="text-slate-600 mb-3" />
+                  <Home size={36} className="text-slate-400 mb-3" />
                   <p className="text-slate-400 text-sm max-w-sm">
                     {lang === 'da'
                       ? 'Ejendomsopslag kræver Datafordeler OAuth-nøgler (DATAFORDELER_OAUTH_CLIENT_ID / CLIENT_SECRET).'
@@ -2532,7 +2532,7 @@ export default function PersonDetailPageClient({
               )}
               {ejendommeFetchComplete && ejendommeManglerAdgang && (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <Home size={36} className="text-slate-600 mb-3" />
+                  <Home size={36} className="text-slate-400 mb-3" />
                   <p className="text-slate-400 text-sm max-w-sm">
                     {lang === 'da'
                       ? 'Adgang til Ejerfortegnelsen (EJF) er ikke godkendt endnu. Ansøg om Dataadgang på datafordeler.dk.'
@@ -2585,7 +2585,7 @@ export default function PersonDetailPageClient({
                           })()}
                     </p>
                     {/* BIZZ-338: tæller inkluderer nu også andreVirksomheder */}
-                    <span className="text-slate-500 text-xs">
+                    <span className="text-slate-400 text-xs">
                       {(() => {
                         const total =
                           (derived?.ejerVirksomheder.length ?? 0) +
@@ -2644,7 +2644,7 @@ export default function PersonDetailPageClient({
                               <h3 className="text-sm font-semibold text-slate-200">
                                 {lang === 'da' ? 'Personligt ejet' : 'Personally owned'}
                               </h3>
-                              <span className="text-[10px] text-slate-500">
+                              <span className="text-[10px] text-slate-400">
                                 · {privatEjendomme.length}{' '}
                                 {lang === 'da'
                                   ? privatEjendomme.length === 1
@@ -2708,15 +2708,15 @@ export default function PersonDetailPageClient({
                                 >
                                   <Building2
                                     size={14}
-                                    className="text-slate-500 group-hover:text-blue-400 transition-colors"
+                                    className="text-slate-400 group-hover:text-blue-400 transition-colors"
                                   />
                                   <h3 className="text-sm font-semibold text-slate-200 group-hover:text-blue-400 transition-colors">
                                     {name}
                                   </h3>
-                                  <span className="text-[10px] text-slate-500 font-mono">
+                                  <span className="text-[10px] text-slate-400 font-mono">
                                     CVR {cvr}
                                   </span>
-                                  <span className="text-[10px] text-slate-500">
+                                  <span className="text-[10px] text-slate-400">
                                     · {props.length}{' '}
                                     {lang === 'da'
                                       ? props.length === 1
@@ -2780,12 +2780,12 @@ export default function PersonDetailPageClient({
                                           >
                                             <Building2
                                               size={14}
-                                              className="text-slate-500 group-hover:text-blue-400 transition-colors"
+                                              className="text-slate-400 group-hover:text-blue-400 transition-colors"
                                             />
                                             <h3 className="text-sm font-semibold text-slate-400 group-hover:text-blue-400 transition-colors">
                                               {n}
                                             </h3>
-                                            <span className="text-[10px] text-slate-500 font-mono">
+                                            <span className="text-[10px] text-slate-400 font-mono">
                                               CVR {c}
                                             </span>
                                           </Link>
@@ -2816,7 +2816,7 @@ export default function PersonDetailPageClient({
 
                   {/* Progressiv loading-indikator i bunden */}
                   {ejendommeLoadingMore && (
-                    <div className="flex items-center justify-center gap-2 py-4 text-slate-500 text-sm">
+                    <div className="flex items-center justify-center gap-2 py-4 text-slate-400 text-sm">
                       <Loader2 className="w-4 h-4 animate-spin" />
                       {lang === 'da' ? 'Indlæser flere ejendomme…' : 'Loading more properties…'}
                     </div>
@@ -2831,7 +2831,7 @@ export default function PersonDetailPageClient({
                 ejendommeData.length === 0 &&
                 (derived?.ejerVirksomheder.length ?? 0) > 0 && (
                   <div className="flex flex-col items-center justify-center py-12 text-center">
-                    <Home size={36} className="text-slate-600 mb-3" />
+                    <Home size={36} className="text-slate-400 mb-3" />
                     <p className="text-slate-400 text-sm">
                       {lang === 'da'
                         ? 'Ingen registrerede ejendomme fundet for de tilknyttede virksomheder.'
@@ -2858,12 +2858,12 @@ export default function PersonDetailPageClient({
                       <div className="px-3 py-2.5 border-b border-slate-700/40">
                         <p className="text-slate-200 text-xs font-semibold">
                           {lang === 'da' ? 'Ejendomshandler' : 'Property Trades'}
-                          <span className="text-slate-500 font-normal ml-2">
+                          <span className="text-slate-400 font-normal ml-2">
                             ({ejendomshandler.length})
                           </span>
                         </p>
                       </div>
-                      <div className="min-w-[600px] grid grid-cols-[80px_60px_1fr_100px] px-3 py-1.5 text-slate-500 text-[10px] font-medium border-b border-slate-700/30">
+                      <div className="min-w-[600px] grid grid-cols-[80px_60px_1fr_100px] px-3 py-1.5 text-slate-400 text-[10px] font-medium border-b border-slate-700/30">
                         <span>{lang === 'da' ? 'Dato' : 'Date'}</span>
                         <span>{lang === 'da' ? 'Rolle' : 'Role'}</span>
                         <span>{lang === 'da' ? 'Adresse' : 'Address'}</span>
@@ -3004,7 +3004,7 @@ export default function PersonDetailPageClient({
             {/* Sociale medier & links */}
             <div>
               <div className="flex items-center gap-2 mb-3">
-                <Globe size={12} className="text-slate-500" />
+                <Globe size={12} className="text-slate-400" />
                 <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
                   {lang === 'da' ? 'Sociale medier' : 'Social media'}
                 </p>
@@ -3023,7 +3023,7 @@ export default function PersonDetailPageClient({
             {aiContacts.length > 0 && (
               <div>
                 <div className="flex items-center gap-2 mb-3">
-                  <User size={12} className="text-slate-500" />
+                  <User size={12} className="text-slate-400" />
                   <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
                     {lang === 'da' ? 'Kontaktoplysninger' : 'Contact info'}
                   </p>
@@ -3076,7 +3076,7 @@ export default function PersonDetailPageClient({
             {/* Sociale medier & links */}
             <div>
               <div className="flex items-center gap-2 mb-3">
-                <Globe size={12} className="text-slate-500" />
+                <Globe size={12} className="text-slate-400" />
                 <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
                   {lang === 'da' ? 'Sociale medier' : 'Social media'}
                 </p>
@@ -3095,7 +3095,7 @@ export default function PersonDetailPageClient({
             {aiContacts.length > 0 && (
               <div>
                 <div className="flex items-center gap-2 mb-3">
-                  <User size={12} className="text-slate-500" />
+                  <User size={12} className="text-slate-400" />
                   <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
                     {lang === 'da' ? 'Kontaktoplysninger' : 'Contact info'}
                   </p>
@@ -3106,7 +3106,7 @@ export default function PersonDetailPageClient({
           </div>
           {/* Build-nummer */}
           <div className="px-4 py-2 border-t border-slate-700/30 flex-shrink-0">
-            <p className="text-slate-600 text-xs">
+            <p className="text-slate-400 text-xs">
               Build: {process.env.NEXT_PUBLIC_BUILD_ID ?? 'dev'}
             </p>
           </div>
@@ -3190,7 +3190,7 @@ function ContactList({ contacts }: { contacts: ContactResult[] }) {
               </a>
             )}
             {/* Begrundelse */}
-            {c.reason && <p className="text-slate-600 text-[10px] leading-snug">{c.reason}</p>}
+            {c.reason && <p className="text-slate-400 text-[10px] leading-snug">{c.reason}</p>}
           </div>
         );
       })}
@@ -3542,7 +3542,7 @@ function PersonArticleSearchPanel({
         <div className="w-8 h-8 bg-amber-500/10 rounded-lg flex items-center justify-center">
           <Lock size={14} className="text-amber-400" />
         </div>
-        <p className="text-slate-500 text-xs leading-relaxed">
+        <p className="text-slate-400 text-xs leading-relaxed">
           {da
             ? 'AI-søgning kræver et aktivt abonnement.'
             : 'AI search requires an active subscription.'}
@@ -3555,7 +3555,7 @@ function PersonArticleSearchPanel({
   const tokenBar =
     tokenInfo && (tokenInfo.limit > 0 || tokenInfo.limit === -1) ? (
       <div className="flex items-center gap-2 mb-3">
-        <span className="text-[10px] text-slate-600 whitespace-nowrap">Tokens</span>
+        <span className="text-[10px] text-slate-400 whitespace-nowrap">Tokens</span>
         {tokenInfo.limit === -1 ? (
           <>
             <div className="flex-1 h-1 bg-slate-800 rounded-full overflow-hidden">
@@ -3583,7 +3583,7 @@ function PersonArticleSearchPanel({
                   ? 'text-red-400'
                   : tokenInfo.used / tokenInfo.limit > 0.7
                     ? 'text-amber-400'
-                    : 'text-slate-500'
+                    : 'text-slate-400'
               }`}
             >
               {formatTokens(tokenInfo.used)}/{formatTokens(tokenInfo.limit)}
@@ -3595,7 +3595,7 @@ function PersonArticleSearchPanel({
 
   /** AI disclaimer — vises altid under token-bar */
   const aiDisclaimer = (
-    <p className="text-xs text-slate-500 mb-3">
+    <p className="text-xs text-slate-400 mb-3">
       ⚠️ Svar genereret af AI er ikke nødvendigvis korrekte. Verificér altid vigtig information.
     </p>
   );
@@ -3662,7 +3662,7 @@ function PersonArticleSearchPanel({
 
       {/* Token-forbrug (vises når alle er færdige) */}
       {!anyLoading && tokensUsedThisSearch > 0 && (
-        <p className="text-[10px] text-slate-600 mb-3">
+        <p className="text-[10px] text-slate-400 mb-3">
           {da
             ? `Brugte ${formatTokens(tokensUsedThisSearch)} tokens`
             : `Used ${formatTokens(tokensUsedThisSearch)} tokens`}
@@ -3681,7 +3681,7 @@ function PersonArticleSearchPanel({
       {/* Artikler — fade-in når de ankommer */}
       {articlesLoading && articles.length === 0 ? null : articles.length === 0 &&
         !articlesLoading ? (
-        <p className="text-slate-600 text-xs">
+        <p className="text-slate-400 text-xs">
           {da
             ? 'Ingen danske medieartikler fundet for denne person.'
             : 'No Danish media articles found for this person.'}
@@ -3701,18 +3701,18 @@ function PersonArticleSearchPanel({
             >
               <ExternalLink
                 size={10}
-                className="text-slate-600 group-hover:text-blue-400 flex-shrink-0 mt-0.5"
+                className="text-slate-400 group-hover:text-blue-400 flex-shrink-0 mt-0.5"
               />
               <div className="min-w-0">
                 <p className="text-slate-300 text-xs font-medium group-hover:text-blue-300 transition-colors leading-snug">
                   {a.title}
                 </p>
-                <p className="text-slate-600 text-[10px] mt-0.5">
+                <p className="text-slate-400 text-[10px] mt-0.5">
                   {a.source}
                   {a.date ? ` · ${a.date}` : ''}
                 </p>
                 {a.description && (
-                  <p className="text-slate-600 text-[10px] mt-0.5 line-clamp-2">{a.description}</p>
+                  <p className="text-slate-400 text-[10px] mt-0.5 line-clamp-2">{a.description}</p>
                 )}
               </div>
             </a>
@@ -3720,7 +3720,7 @@ function PersonArticleSearchPanel({
           {visibleCount < articles.length && (
             <button
               onClick={() => setVisibleCount((c) => Math.min(c + 5, articles.length))}
-              className="mt-1 flex items-center gap-1 text-[10px] text-slate-500 hover:text-blue-400 transition-colors"
+              className="mt-1 flex items-center gap-1 text-[10px] text-slate-400 hover:text-blue-400 transition-colors"
             >
               <ChevronDown size={10} />
               {da
@@ -3735,7 +3735,7 @@ function PersonArticleSearchPanel({
       {!anyLoading && (
         <button
           onClick={handleSearch}
-          className="mt-3 flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-blue-400 transition-colors"
+          className="mt-3 flex items-center gap-1.5 text-[10px] text-slate-400 hover:text-blue-400 transition-colors"
         >
           <Zap size={9} />
           {da ? 'Søg igen' : 'Search again'}
@@ -3866,7 +3866,7 @@ function GroupTab({
         <div className="flex items-center gap-2 mb-3">
           <Building2
             size={15}
-            className="text-slate-500 group-hover:text-blue-400 shrink-0 transition-colors"
+            className="text-slate-400 group-hover:text-blue-400 shrink-0 transition-colors"
           />
           <span className="text-white text-sm font-semibold truncate group-hover:text-blue-300 transition-colors">
             {rel.navn}
@@ -3887,7 +3887,7 @@ function GroupTab({
           )}
           <ExternalLink
             size={12}
-            className="ml-auto text-slate-600 group-hover:text-blue-400 shrink-0 transition-colors"
+            className="ml-auto text-slate-400 group-hover:text-blue-400 shrink-0 transition-colors"
           />
         </div>
 
@@ -3895,7 +3895,7 @@ function GroupTab({
         <div className="flex items-stretch gap-0 rounded-lg bg-[#0a1020]/60 border border-slate-700/30">
           {/* Stamdata */}
           <div className="flex-[3] min-w-0 px-3.5 py-2.5">
-            <div className="text-[10px] text-slate-500/80 font-medium uppercase tracking-wider mb-1.5">
+            <div className="text-[10px] text-slate-400/80 font-medium uppercase tracking-wider mb-1.5">
               Stamdata
             </div>
             <div className="text-xs text-slate-300">
@@ -3905,7 +3905,7 @@ function GroupTab({
               <div className="text-[11px] text-slate-400 truncate mt-0.5">{rel.branche}</div>
             )}
             {rel.adresse && (
-              <div className="text-[11px] text-slate-500 truncate mt-0.5">
+              <div className="text-[11px] text-slate-400 truncate mt-0.5">
                 {rel.adresse}
                 {rel.postnr ? `, ${rel.postnr}` : ''}
                 {rel.by ? ` ${rel.by}` : ''}
@@ -3918,7 +3918,7 @@ function GroupTab({
           <div className="w-px bg-slate-700/40 self-stretch my-2" />
           {/* Bestyrelse */}
           <div className="flex-[2] min-w-0 px-3.5 py-2.5">
-            <div className="text-[10px] text-slate-500/80 font-medium uppercase tracking-wider mb-1.5">
+            <div className="text-[10px] text-slate-400/80 font-medium uppercase tracking-wider mb-1.5">
               {lang === 'da' ? 'Bestyrelse' : 'Board'}
             </div>
             <div className="space-y-1">
@@ -3934,7 +3934,7 @@ function GroupTab({
                   >
                     <User
                       size={9}
-                      className="text-slate-600 group-hover/p:text-purple-400 flex-shrink-0"
+                      className="text-slate-400 group-hover/p:text-purple-400 flex-shrink-0"
                     />
                     <span className="text-slate-300 text-[11px] truncate group-hover/p:text-purple-300 transition-colors">
                       {p.navn}
@@ -3942,14 +3942,14 @@ function GroupTab({
                   </button>
                 ))
               ) : (
-                <p className="text-slate-600 text-[10px]">–</p>
+                <p className="text-slate-400 text-[10px]">–</p>
               )}
             </div>
           </div>
           <div className="w-px bg-slate-700/40 self-stretch my-2" />
           {/* Direktion */}
           <div className="flex-[2] min-w-0 px-3.5 py-2.5">
-            <div className="text-[10px] text-slate-500/80 font-medium uppercase tracking-wider mb-1.5">
+            <div className="text-[10px] text-slate-400/80 font-medium uppercase tracking-wider mb-1.5">
               {lang === 'da' ? 'Direktion' : 'Management'}
             </div>
             <div className="space-y-1">
@@ -3965,7 +3965,7 @@ function GroupTab({
                   >
                     <User
                       size={9}
-                      className="text-slate-600 group-hover/p:text-amber-400 flex-shrink-0"
+                      className="text-slate-400 group-hover/p:text-amber-400 flex-shrink-0"
                     />
                     <span className="text-slate-300 text-[11px] truncate group-hover/p:text-amber-300 transition-colors">
                       {p.navn}
@@ -3973,29 +3973,29 @@ function GroupTab({
                   </button>
                 ))
               ) : (
-                <p className="text-slate-600 text-[10px]">–</p>
+                <p className="text-slate-400 text-[10px]">–</p>
               )}
             </div>
           </div>
           <div className="w-px bg-slate-700/40 self-stretch my-2" />
           {/* Organisation */}
           <div className="flex-[2] min-w-0 px-3.5 py-2.5">
-            <div className="text-[10px] text-slate-500/80 font-medium uppercase tracking-wider mb-1.5">
+            <div className="text-[10px] text-slate-400/80 font-medium uppercase tracking-wider mb-1.5">
               Organisation
             </div>
             <div className="space-y-1">
               <div className="flex justify-between text-[11px]">
-                <span className="text-slate-500">Ansatte</span>
+                <span className="text-slate-400">Ansatte</span>
                 <span className="text-slate-300 font-medium tabular-nums">
                   {rel.ansatte ?? '–'}
                 </span>
               </div>
               <div className="flex justify-between text-[11px]">
-                <span className="text-slate-500">P-enheder</span>
+                <span className="text-slate-400">P-enheder</span>
                 <span className="text-slate-300 font-medium tabular-nums">{rel.antalPenheder}</span>
               </div>
               <div className="flex justify-between text-[11px]">
-                <span className="text-slate-500">Datterselskaber</span>
+                <span className="text-slate-400">Datterselskaber</span>
                 <span className="text-slate-300 font-medium tabular-nums">
                   {rel.antalDatterselskaber}
                 </span>
@@ -4005,7 +4005,7 @@ function GroupTab({
           <div className="w-px bg-slate-700/40 self-stretch my-2" />
           {/* Regnskab */}
           <div className="flex-[2] min-w-0 px-3.5 py-2.5">
-            <div className="text-[10px] text-slate-500/80 font-medium uppercase tracking-wider mb-1.5">
+            <div className="text-[10px] text-slate-400/80 font-medium uppercase tracking-wider mb-1.5">
               Regnskab
               {gruppeFinansLoading && !fin && (
                 <Loader2 size={8} className="inline ml-1 animate-spin" />
@@ -4013,23 +4013,23 @@ function GroupTab({
             </div>
             <div className="space-y-1">
               <div className="flex justify-between text-[11px]">
-                <span className="text-slate-500">Brutto</span>
+                <span className="text-slate-400">Brutto</span>
                 <span
-                  className={`font-medium tabular-nums ${fin?.brutto != null ? (fin.brutto >= 0 ? 'text-emerald-400' : 'text-red-400') : 'text-slate-500'}`}
+                  className={`font-medium tabular-nums ${fin?.brutto != null ? (fin.brutto >= 0 ? 'text-emerald-400' : 'text-red-400') : 'text-slate-400'}`}
                 >
                   {fin ? fmtKr(fin.brutto) : '–'}
                 </span>
               </div>
               <div className="flex justify-between text-[11px]">
-                <span className="text-slate-500">Balance</span>
+                <span className="text-slate-400">Balance</span>
                 <span className="font-medium tabular-nums text-slate-300">
                   {fin ? fmtKr(fin.balance) : '–'}
                 </span>
               </div>
               <div className="flex justify-between text-[11px]">
-                <span className="text-slate-500">Egenkapital</span>
+                <span className="text-slate-400">Egenkapital</span>
                 <span
-                  className={`font-medium tabular-nums ${fin?.egenkapital != null ? (fin.egenkapital >= 0 ? 'text-emerald-400' : 'text-red-400') : 'text-slate-500'}`}
+                  className={`font-medium tabular-nums ${fin?.egenkapital != null ? (fin.egenkapital >= 0 ? 'text-emerald-400' : 'text-red-400') : 'text-slate-400'}`}
                 >
                   {fin ? fmtKr(fin.egenkapital) : '–'}
                 </span>
@@ -4055,7 +4055,7 @@ function GroupTab({
         <div className="flex items-center gap-2 mb-3">
           <Building2
             size={15}
-            className="text-slate-500 group-hover:text-blue-400 shrink-0 transition-colors"
+            className="text-slate-400 group-hover:text-blue-400 shrink-0 transition-colors"
           />
           <span className="text-white text-sm font-semibold truncate group-hover:text-blue-300 transition-colors">
             {v.navn}
@@ -4078,12 +4078,12 @@ function GroupTab({
           </span>
           <ExternalLink
             size={12}
-            className="ml-auto text-slate-600 group-hover:text-blue-400 shrink-0 transition-colors"
+            className="ml-auto text-slate-400 group-hover:text-blue-400 shrink-0 transition-colors"
           />
         </div>
         <div className="flex items-stretch gap-0 rounded-lg bg-[#0a1020]/60 border border-slate-700/30">
           <div className="flex-[3] min-w-0 px-3.5 py-2.5">
-            <div className="text-[10px] text-slate-500/80 font-medium uppercase tracking-wider mb-1.5">
+            <div className="text-[10px] text-slate-400/80 font-medium uppercase tracking-wider mb-1.5">
               Stamdata
             </div>
             <div className="text-xs text-slate-300">
@@ -4093,7 +4093,7 @@ function GroupTab({
               <div className="text-[11px] text-slate-400 truncate mt-0.5">{v.branche}</div>
             )}
             {v.adresse && (
-              <div className="text-[11px] text-slate-500 truncate mt-0.5">
+              <div className="text-[11px] text-slate-400 truncate mt-0.5">
                 {v.adresse}
                 {v.postnr ? `, ${v.postnr}` : ''}
                 {v.by ? ` ${v.by}` : ''}
@@ -4103,7 +4103,7 @@ function GroupTab({
           <div className="w-px bg-slate-700/40 self-stretch my-2" />
           {/* Bestyrelse */}
           <div className="flex-[2] min-w-0 px-3.5 py-2.5">
-            <div className="text-[10px] text-slate-500/80 font-medium uppercase tracking-wider mb-1.5">
+            <div className="text-[10px] text-slate-400/80 font-medium uppercase tracking-wider mb-1.5">
               {lang === 'da' ? 'Bestyrelse' : 'Board'}
             </div>
             <div className="space-y-1">
@@ -4119,7 +4119,7 @@ function GroupTab({
                   >
                     <User
                       size={9}
-                      className="text-slate-600 group-hover/p:text-purple-400 flex-shrink-0"
+                      className="text-slate-400 group-hover/p:text-purple-400 flex-shrink-0"
                     />
                     <span className="text-slate-300 text-[11px] truncate group-hover/p:text-purple-300 transition-colors">
                       {p.navn}
@@ -4127,14 +4127,14 @@ function GroupTab({
                   </button>
                 ))
               ) : (
-                <p className="text-slate-600 text-[10px]">–</p>
+                <p className="text-slate-400 text-[10px]">–</p>
               )}
             </div>
           </div>
           <div className="w-px bg-slate-700/40 self-stretch my-2" />
           {/* Direktion */}
           <div className="flex-[2] min-w-0 px-3.5 py-2.5">
-            <div className="text-[10px] text-slate-500/80 font-medium uppercase tracking-wider mb-1.5">
+            <div className="text-[10px] text-slate-400/80 font-medium uppercase tracking-wider mb-1.5">
               {lang === 'da' ? 'Direktion' : 'Management'}
             </div>
             <div className="space-y-1">
@@ -4150,7 +4150,7 @@ function GroupTab({
                   >
                     <User
                       size={9}
-                      className="text-slate-600 group-hover/p:text-amber-400 flex-shrink-0"
+                      className="text-slate-400 group-hover/p:text-amber-400 flex-shrink-0"
                     />
                     <span className="text-slate-300 text-[11px] truncate group-hover/p:text-amber-300 transition-colors">
                       {p.navn}
@@ -4158,26 +4158,26 @@ function GroupTab({
                   </button>
                 ))
               ) : (
-                <p className="text-slate-600 text-[10px]">–</p>
+                <p className="text-slate-400 text-[10px]">–</p>
               )}
             </div>
           </div>
           <div className="w-px bg-slate-700/40 self-stretch my-2" />
           {/* Organisation */}
           <div className="flex-[2] min-w-0 px-3.5 py-2.5">
-            <div className="text-[10px] text-slate-500/80 font-medium uppercase tracking-wider mb-1.5">
+            <div className="text-[10px] text-slate-400/80 font-medium uppercase tracking-wider mb-1.5">
               Organisation
             </div>
             <div className="space-y-1">
               <div className="flex justify-between text-[11px]">
-                <span className="text-slate-500">Ansatte</span>
+                <span className="text-slate-400">Ansatte</span>
                 <span className="text-slate-300 font-medium tabular-nums">{v.ansatte ?? '–'}</span>
               </div>
             </div>
           </div>
           <div className="w-px bg-slate-700/40 self-stretch my-2" />
           <div className="flex-[2] min-w-0 px-3.5 py-2.5">
-            <div className="text-[10px] text-slate-500/80 font-medium uppercase tracking-wider mb-1.5">
+            <div className="text-[10px] text-slate-400/80 font-medium uppercase tracking-wider mb-1.5">
               Regnskab
               {gruppeFinansLoading && !fin && (
                 <Loader2 size={8} className="inline ml-1 animate-spin" />
@@ -4185,23 +4185,23 @@ function GroupTab({
             </div>
             <div className="space-y-1">
               <div className="flex justify-between text-[11px]">
-                <span className="text-slate-500">Brutto</span>
+                <span className="text-slate-400">Brutto</span>
                 <span
-                  className={`font-medium tabular-nums ${fin?.brutto != null ? (fin.brutto >= 0 ? 'text-emerald-400' : 'text-red-400') : 'text-slate-500'}`}
+                  className={`font-medium tabular-nums ${fin?.brutto != null ? (fin.brutto >= 0 ? 'text-emerald-400' : 'text-red-400') : 'text-slate-400'}`}
                 >
                   {fin ? fmtKr(fin.brutto) : '–'}
                 </span>
               </div>
               <div className="flex justify-between text-[11px]">
-                <span className="text-slate-500">Balance</span>
+                <span className="text-slate-400">Balance</span>
                 <span className="font-medium tabular-nums text-slate-300">
                   {fin ? fmtKr(fin.balance) : '–'}
                 </span>
               </div>
               <div className="flex justify-between text-[11px]">
-                <span className="text-slate-500">Egenkapital</span>
+                <span className="text-slate-400">Egenkapital</span>
                 <span
-                  className={`font-medium tabular-nums ${fin?.egenkapital != null ? (fin.egenkapital >= 0 ? 'text-emerald-400' : 'text-red-400') : 'text-slate-500'}`}
+                  className={`font-medium tabular-nums ${fin?.egenkapital != null ? (fin.egenkapital >= 0 ? 'text-emerald-400' : 'text-red-400') : 'text-slate-400'}`}
                 >
                   {fin ? fmtKr(fin.egenkapital) : '–'}
                 </span>
@@ -4283,7 +4283,7 @@ function GroupTab({
             </div>
           ) : (
             <EmptyState
-              ikon={<Building2 size={32} className="text-slate-600" />}
+              ikon={<Building2 size={32} className="text-slate-400" />}
               tekst={lang === 'da' ? 'Ingen ejede virksomheder' : 'No owned companies'}
             />
           )}
@@ -4325,7 +4325,7 @@ function ChronologyTab({ data, lang }: { data: PersonPublicData; lang: 'da' | 'e
       <h2 className="text-white font-semibold text-base flex items-center gap-2">
         <Clock size={16} className="text-blue-400" />
         {lang === 'da' ? 'Kronologi' : 'Chronology'}
-        <span className="text-slate-500 text-sm font-normal">({alleRoller.length})</span>
+        <span className="text-slate-400 text-sm font-normal">({alleRoller.length})</span>
       </h2>
 
       {/* Filter chips */}
@@ -4403,14 +4403,14 @@ function ChronologyTab({ data, lang }: { data: PersonPublicData; lang: 'da' | 'e
                 >
                   <Building2
                     size={11}
-                    className="text-slate-500 group-hover:text-blue-400 flex-shrink-0"
+                    className="text-slate-400 group-hover:text-blue-400 flex-shrink-0"
                   />
                   <span className="text-slate-300 text-xs font-medium truncate group-hover:text-blue-300 transition-colors">
                     {r.virksomhed.navn}
                   </span>
                   <ExternalLink
                     size={9}
-                    className="text-slate-600 group-hover:text-blue-400 flex-shrink-0"
+                    className="text-slate-400 group-hover:text-blue-400 flex-shrink-0"
                   />
                 </button>
 
@@ -4444,7 +4444,7 @@ function ChronologyTab({ data, lang }: { data: PersonPublicData; lang: 'da' | 'e
 
         {filtered.length === 0 && (
           <EmptyState
-            ikon={<Clock size={24} className="text-slate-600" />}
+            ikon={<Clock size={24} className="text-slate-400" />}
             tekst={lang === 'da' ? 'Ingen roller fundet' : 'No roles found'}
           />
         )}

@@ -179,7 +179,7 @@ function PropertyCard({ result, lang }: { result: DawaAutocompleteResult; lang: 
             </span>
           )}
         </div>
-        <p className="text-slate-500 text-xs mt-0.5 truncate">
+        <p className="text-slate-400 text-xs mt-0.5 truncate">
           {subtitle}
           {adresse.id && adresse.id.length < 20 ? ` · ${t.bfe}: ${adresse.id}` : ''}
         </p>
@@ -228,7 +228,7 @@ function CompanyCard({ result, lang }: { result: CVRSearchResult; lang: 'da' | '
             )}
           </span>
         </div>
-        <p className="text-slate-500 text-xs mt-0.5 truncate">CVR {meta}</p>
+        <p className="text-slate-400 text-xs mt-0.5 truncate">CVR {meta}</p>
       </div>
     </Link>
   );
@@ -262,7 +262,7 @@ function PersonCard({ result, lang }: { result: PersonSearchResult; lang: 'da' |
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-white font-medium text-sm truncate leading-snug">{result.name}</p>
-        {subtitle && <p className="text-slate-500 text-xs mt-0.5 truncate">{subtitle}</p>}
+        {subtitle && <p className="text-slate-400 text-xs mt-0.5 truncate">{subtitle}</p>}
       </div>
     </Link>
   );
@@ -322,16 +322,16 @@ function TabButton({
       className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-all whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
         active
           ? `${c.text} ${c.border}`
-          : 'text-slate-500 border-transparent hover:text-slate-300 hover:border-slate-600'
+          : 'text-slate-400 border-transparent hover:text-slate-300 hover:border-slate-600'
       }`}
     >
       {label}
       {loading ? (
-        <Loader2 size={12} className="animate-spin text-slate-500" />
+        <Loader2 size={12} className="animate-spin text-slate-400" />
       ) : (
         <span
           className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${
-            active ? c.badge : 'bg-slate-700/60 text-slate-500'
+            active ? c.badge : 'bg-slate-700/60 text-slate-400'
           }`}
         >
           {count}
@@ -361,10 +361,10 @@ function EmptyState({
 }) {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
-      <div className="p-4 bg-slate-800/40 rounded-2xl text-slate-600">{icon}</div>
+      <div className="p-4 bg-slate-800/40 rounded-2xl text-slate-400">{icon}</div>
       <p className="text-slate-400 text-sm font-medium">{message}</p>
       {query.trim().length > 0 && (
-        <p className="text-slate-600 text-xs">&ldquo;{query.trim()}&rdquo;</p>
+        <p className="text-slate-400 text-xs">&ldquo;{query.trim()}&rdquo;</p>
       )}
     </div>
   );
@@ -667,7 +667,7 @@ export default function UniversalSearchPageClient() {
             </div>
           ) : matLejligheder.length === 0 ? (
             <div className="text-center py-16 bg-slate-800/40 border border-slate-700/40 rounded-xl">
-              <Home size={32} className="mx-auto text-slate-600 mb-3" />
+              <Home size={32} className="mx-auto text-slate-400 mb-3" />
               <p className="text-slate-400 text-sm">
                 {da
                   ? 'Ingen ejerlejligheder fundet på matriklen.'
@@ -749,7 +749,7 @@ export default function UniversalSearchPageClient() {
                 type="button"
                 onClick={handleClear}
                 aria-label="Ryd søgning"
-                className="text-slate-500 hover:text-slate-300 transition-colors"
+                className="text-slate-400 hover:text-slate-300 transition-colors"
               >
                 <X size={18} />
               </button>
@@ -902,7 +902,7 @@ export default function UniversalSearchPageClient() {
           {/* Initial state — nothing typed yet */}
           {!hasQuery && (
             <div className="flex flex-col items-center justify-center py-20 text-center gap-3">
-              <div className="p-5 bg-slate-800/40 rounded-2xl text-slate-600">
+              <div className="p-5 bg-slate-800/40 rounded-2xl text-slate-400">
                 <Search size={32} />
               </div>
               <p className="text-slate-400 text-sm font-medium">{t.startTyping}</p>

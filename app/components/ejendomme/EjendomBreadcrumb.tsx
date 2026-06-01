@@ -47,7 +47,7 @@ export default function EjendomBreadcrumb({
           const isLast = i === levels.length - 1;
           return (
             <li key={`${lvl.label}-${i}`} className="flex items-center gap-1">
-              {i > 0 && <ChevronRight size={12} className="text-slate-600 shrink-0" />}
+              {i > 0 && <ChevronRight size={12} className="text-slate-400 shrink-0" />}
               {isLast || !lvl.href ? (
                 <span
                   aria-current={isLast ? 'page' : undefined}

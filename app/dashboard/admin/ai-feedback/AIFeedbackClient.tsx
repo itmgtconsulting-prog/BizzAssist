@@ -188,11 +188,11 @@ export default function AIFeedbackClient() {
 
       {/* Feedback entries table */}
       {loading ? (
-        <div className="text-center py-12 text-slate-500 text-sm">
+        <div className="text-center py-12 text-slate-400 text-sm">
           {da ? 'Indl\u00e6ser...' : 'Loading...'}
         </div>
       ) : entries.length === 0 ? (
-        <div className="text-center py-12 text-slate-500 text-sm">
+        <div className="text-center py-12 text-slate-400 text-sm">
           {da ? 'Ingen feedback-entries endnu' : 'No feedback entries yet'}
         </div>
       ) : (
@@ -206,7 +206,7 @@ export default function AIFeedbackClient() {
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-slate-200 leading-relaxed">{entry.question_text}</p>
                   {entry.ai_response_snippet && (
-                    <p className="text-xs text-slate-500 mt-1 italic truncate">
+                    <p className="text-xs text-slate-400 mt-1 italic truncate">
                       AI: {entry.ai_response_snippet}
                     </p>
                   )}
@@ -217,11 +217,11 @@ export default function AIFeedbackClient() {
                   >
                     {entry.feedback_type.replace('_', ' ')}
                   </span>
-                  <span className="text-[10px] text-slate-500">{timeAgo(entry.created_at)}</span>
+                  <span className="text-[10px] text-slate-400">{timeAgo(entry.created_at)}</span>
                 </div>
               </div>
               {entry.page_context && (
-                <p className="text-[10px] text-slate-600 flex items-center gap-1">
+                <p className="text-[10px] text-slate-400 flex items-center gap-1">
                   <ExternalLink size={10} />
                   {entry.page_context}
                 </p>

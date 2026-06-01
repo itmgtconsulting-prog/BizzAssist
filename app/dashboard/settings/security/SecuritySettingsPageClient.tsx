@@ -437,7 +437,7 @@ export default function SecuritySettingsPageClient() {
                 </code>
                 <button
                   onClick={handleCopySecret}
-                  className="text-slate-500 hover:text-slate-300 transition-colors shrink-0"
+                  className="text-slate-400 hover:text-slate-300 transition-colors shrink-0"
                   title="Copy"
                 >
                   {copied ? (
@@ -698,7 +698,7 @@ function SessionTimeoutSection({ lang }: { lang: 'da' | 'en' }) {
         </p>
       )}
 
-      <p className="text-slate-500 text-xs">
+      <p className="text-slate-400 text-xs">
         {da
           ? 'Inaktivitet = ingen klik, scroll eller tastaturinput. Åbner du systemet aktivt, nulstilles timeren.'
           : 'Inactivity = no clicks, scrolling, or keyboard input. Actively using the system resets the timer.'}
@@ -797,7 +797,7 @@ function ActiveSessionsSection({ lang }: { lang: 'da' | 'en' }) {
           <h3 className="text-white font-semibold text-sm">
             {da ? 'Aktive sessioner' : 'Active sessions'}
           </h3>
-          <p className="text-slate-500 text-xs">
+          <p className="text-slate-400 text-xs">
             {da
               ? 'Enheder der er logget ind med din konto. Nyt login fra anden enhed logger automatisk de andre ud.'
               : 'Devices logged in with your account. New login from another device automatically logs out the others.'}
@@ -811,7 +811,7 @@ function ActiveSessionsSection({ lang }: { lang: 'da' | 'en' }) {
           {da ? 'Henter sessioner...' : 'Loading sessions...'}
         </div>
       ) : sessions.length === 0 ? (
-        <p className="text-slate-500 text-sm py-2">
+        <p className="text-slate-400 text-sm py-2">
           {da ? 'Ingen aktive sessioner fundet.' : 'No active sessions found.'}
         </p>
       ) : (
@@ -822,10 +822,10 @@ function ActiveSessionsSection({ lang }: { lang: 'da' | 'en' }) {
               className="flex items-center justify-between bg-slate-900/40 border border-slate-700/30 rounded-xl px-4 py-3"
             >
               <div className="flex items-center gap-3">
-                <Smartphone size={16} className={i === 0 ? 'text-emerald-400' : 'text-slate-500'} />
+                <Smartphone size={16} className={i === 0 ? 'text-emerald-400' : 'text-slate-400'} />
                 <div>
                   <p className="text-sm text-white">{s.device_label}</p>
-                  <p className="text-[10px] text-slate-500">
+                  <p className="text-[10px] text-slate-400">
                     {s.ip_address ? `IP: ${s.ip_address} · ` : ''}
                     {da ? 'Sidst aktiv:' : 'Last active:'} {formatTime(s.last_active)}
                   </p>

@@ -199,7 +199,7 @@ export default function MfaEnrollClient() {
                   </code>
                   <button
                     onClick={handleCopySecret}
-                    className="text-slate-500 hover:text-slate-300 transition-colors shrink-0"
+                    className="text-slate-400 hover:text-slate-300 transition-colors shrink-0"
                     title={lang === 'da' ? 'Kopiér' : 'Copy'}
                   >
                     {copied ? (
@@ -265,7 +265,7 @@ export default function MfaEnrollClient() {
               onClick={async () => {
                 await signOut();
               }}
-              className="text-slate-500 hover:text-slate-300 text-sm transition-colors"
+              className="text-slate-400 hover:text-slate-300 text-sm transition-colors"
             >
               {lang === 'da' ? 'Brug en anden konto' : 'Use a different account'}
             </button>

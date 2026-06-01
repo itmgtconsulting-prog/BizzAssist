@@ -344,7 +344,7 @@ function _BreakdownCard({
     >
       <p className="text-slate-400 text-xs mb-1">{label}</p>
       <p className={`text-lg font-bold ${color}`}>{value}</p>
-      {sub && <p className="text-slate-500 text-[11px] mt-0.5">{sub}</p>}
+      {sub && <p className="text-slate-400 text-[11px] mt-0.5">{sub}</p>}
     </div>
   );
 }
@@ -487,7 +487,7 @@ function CreateKeyModal({
                   />
                   <span className="text-sm text-slate-200 group-hover:text-slate-100 transition-colors">
                     {lang === 'da' ? scope.labelDa : scope.labelEn}
-                    <span className="ml-2 text-slate-500 font-mono text-xs">{scope.value}</span>
+                    <span className="ml-2 text-slate-400 font-mono text-xs">{scope.value}</span>
                   </span>
                 </label>
               ))}
@@ -1005,7 +1005,7 @@ export default function TokensPageClient() {
                     </h2>
                     <button
                       onClick={fetchAiData}
-                      className="flex items-center gap-1 text-slate-500 hover:text-slate-300 transition-colors text-[10px]"
+                      className="flex items-center gap-1 text-slate-400 hover:text-slate-300 transition-colors text-[10px]"
                     >
                       <RefreshCw className="w-3 h-3" />
                       {t.refresh}
@@ -1015,7 +1015,7 @@ export default function TokensPageClient() {
                   {isUnlimited ? (
                     <div className="flex items-center gap-3">
                       <span className="text-xl font-bold text-emerald-400">{t.unlimited}</span>
-                      <span className="text-xs text-slate-500">
+                      <span className="text-xs text-slate-400">
                         {plan ? (lang === 'da' ? plan.nameDa : plan.nameEn) : ''}
                       </span>
                     </div>
@@ -1025,7 +1025,7 @@ export default function TokensPageClient() {
                         <span className={`text-xl font-bold ${textColor(usagePct)}`}>
                           {formatTokens(remaining)}
                         </span>
-                        <span className="text-slate-500 text-xs">
+                        <span className="text-slate-400 text-xs">
                           {t.of} {formatTokens(totalAvailable)} — {formatTokens(used)} {t.used}
                         </span>
                       </div>
@@ -1040,17 +1040,17 @@ export default function TokensPageClient() {
                           <p className="text-xs font-medium text-blue-400">
                             {formatTokens(planMonthly + bonus)}
                           </p>
-                          <p className="text-[9px] text-slate-600">{t.planAllocation}</p>
+                          <p className="text-[9px] text-slate-400">{t.planAllocation}</p>
                         </div>
                         <div>
                           <p className="text-xs font-medium text-red-400">{formatTokens(used)}</p>
-                          <p className="text-[9px] text-slate-600">{t.usedThisPeriod}</p>
+                          <p className="text-[9px] text-slate-400">{t.usedThisPeriod}</p>
                         </div>
                         <div>
                           <p className={`text-xs font-medium ${textColor(usagePct)}`}>
                             {formatTokens(remaining)}
                           </p>
-                          <p className="text-[9px] text-slate-600">{t.available}</p>
+                          <p className="text-[9px] text-slate-400">{t.available}</p>
                         </div>
                       </div>
                     </>
@@ -1069,7 +1069,7 @@ export default function TokensPageClient() {
                 </div>
 
                 {usageRows.length === 0 && !usageLoading ? (
-                  <p className="text-center py-6 text-slate-500 text-sm">{t.historyEmpty}</p>
+                  <p className="text-center py-6 text-slate-400 text-sm">{t.historyEmpty}</p>
                 ) : (
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
@@ -1131,7 +1131,7 @@ export default function TokensPageClient() {
                 </div>
 
                 {packs.length === 0 ? (
-                  <div className="text-center py-8 text-slate-500 text-sm">{t.noPacks}</div>
+                  <div className="text-center py-8 text-slate-400 text-sm">{t.noPacks}</div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     {packs.map((pack) => {
@@ -1221,7 +1221,7 @@ export default function TokensPageClient() {
               ) : apiKeys.length === 0 ? (
                 <div className="rounded-xl bg-slate-800/40 border border-slate-700/40 p-12 text-center">
                   <Key className="w-10 h-10 text-white/20 mx-auto mb-3" />
-                  <p className="text-slate-500 text-sm">{t.apiNoKeys}</p>
+                  <p className="text-slate-400 text-sm">{t.apiNoKeys}</p>
                 </div>
               ) : (
                 <div className="rounded-xl bg-slate-800/40 border border-slate-700/40 overflow-hidden">

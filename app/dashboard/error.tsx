@@ -31,7 +31,7 @@ export default function DashboardError({
         <p className="text-slate-400 text-sm mb-6">
           Der opstod en uventet fejl. Prøv at genindlæse siden.
           {error.digest && (
-            <span className="block mt-2 font-mono text-xs text-slate-600">
+            <span className="block mt-2 font-mono text-xs text-slate-400">
               Fejlkode: {error.digest}
             </span>
           )}

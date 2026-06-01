@@ -123,7 +123,7 @@ export default function SkabelonPickerPanel({
         )}
         {error && <p className="text-rose-300 text-xs py-4 text-center">{error}</p>}
         {templates && templates.length === 0 && !loading && (
-          <p className="text-slate-500 text-xs py-8 text-center">
+          <p className="text-slate-400 text-xs py-8 text-center">
             {da ? 'Ingen skabeloner oprettet endnu.' : 'No templates created yet.'}
           </p>
         )}
@@ -148,7 +148,7 @@ export default function SkabelonPickerPanel({
                       {checked ? (
                         <CheckCircle2 size={12} className="text-blue-400" />
                       ) : (
-                        <Circle size={12} className="text-slate-600" />
+                        <Circle size={12} className="text-slate-400" />
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
@@ -158,7 +158,7 @@ export default function SkabelonPickerPanel({
                           {t.description}
                         </p>
                       )}
-                      <div className="flex items-center gap-1.5 mt-1 text-[9px] text-slate-500 uppercase tracking-wide">
+                      <div className="flex items-center gap-1.5 mt-1 text-[9px] text-slate-400 uppercase tracking-wide">
                         <span>{t.file_type}</span>
                         <span>v{t.version}</span>
                         <span>
@@ -183,7 +183,7 @@ export default function SkabelonPickerPanel({
 
       {/* Footer: selection count */}
       <div className="px-3 py-2 border-t border-slate-700/40 shrink-0">
-        <p className="text-[10px] text-slate-500 text-center">
+        <p className="text-[10px] text-slate-400 text-center">
           {selectedIds.size > 0
             ? da
               ? `${selectedIds.size} ${selectedIds.size === 1 ? 'skabelon' : 'skabeloner'} valgt`

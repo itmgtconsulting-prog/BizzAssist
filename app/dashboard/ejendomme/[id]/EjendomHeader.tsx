@@ -672,7 +672,7 @@ function SoesterEnheder({
           </Link>
         )}
         {siblings.length > 20 && !bbrData?.parentAdgangsadresseId && (
-          <span className="text-slate-500 text-xs self-center">
+          <span className="text-slate-400 text-xs self-center">
             +{siblings.length - 20} {da ? 'mere' : 'more'}
           </span>
         )}

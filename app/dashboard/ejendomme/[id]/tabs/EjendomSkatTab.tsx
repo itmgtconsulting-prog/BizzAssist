@@ -117,7 +117,7 @@ export default function EjendomSkatTab({
           if (!nyeste && !vurdering?.estimereretGrundskyld) {
             return (
               <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-5 text-center">
-                <p className="text-slate-500 text-xs">{t.noTaxData}</p>
+                <p className="text-slate-400 text-xs">{t.noTaxData}</p>
               </div>
             );
           }
@@ -190,7 +190,7 @@ export default function EjendomSkatTab({
                     BIZZ-469: Forklar eksplicit år-mappingen i
                     selve Nuværende beskatning-sektion.
                   */}
-                  <p className="text-slate-500 text-[11px] mb-2 leading-relaxed">
+                  <p className="text-slate-400 text-[11px] mb-2 leading-relaxed">
                     {da
                       ? `Skat betalt i ${nyeste.vurderingsaar + 1}, beregnet ud fra vurderingen for ${nyeste.vurderingsaar}.`
                       : `Tax paid in ${nyeste.vurderingsaar + 1}, calculated from the ${nyeste.vurderingsaar} assessment.`}
@@ -200,25 +200,25 @@ export default function EjendomSkatTab({
                     <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
                       <p className="text-white text-lg font-bold flex items-center gap-1.5">
                         {effektivGrundskyld > 0 ? formatDKK(effektivGrundskyld) : formatDKK(0)}
-                        <span className="text-slate-500 text-xs font-normal">DKK</span>
+                        <span className="text-slate-400 text-xs font-normal">DKK</span>
                       </p>
-                      <p className="text-slate-500 text-xs mt-0.5">{t.groundTaxToMunicipality}</p>
+                      <p className="text-slate-400 text-xs mt-0.5">{t.groundTaxToMunicipality}</p>
                     </div>
                     {/* Ejendomsværdiskat */}
                     {visEjendomsskat && (
                       <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
                         <p className="text-white text-lg font-bold">
                           {formatDKK(nyeste.ejendomsskat!)}
-                          <span className="text-slate-500 text-xs font-normal ml-1">DKK</span>
+                          <span className="text-slate-400 text-xs font-normal ml-1">DKK</span>
                         </p>
-                        <p className="text-slate-500 text-xs mt-0.5">{t.propertyValueTax}</p>
+                        <p className="text-slate-400 text-xs mt-0.5">{t.propertyValueTax}</p>
                       </div>
                     )}
                     {/* Kolonihave: vis 0 kr med (i)-ikon tooltip */}
                     {erKolonihave && (
                       <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 relative group/info">
                         <p className="text-white text-lg font-bold flex items-center gap-1.5">
-                          0<span className="text-slate-500 text-xs font-normal">DKK</span>
+                          0<span className="text-slate-400 text-xs font-normal">DKK</span>
                           <span className="relative">
                             <Info className="w-3.5 h-3.5 text-blue-400/70 cursor-help" />
                             <span className="absolute left-full top-1/2 -translate-y-1/2 ml-2 w-64 px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-300 leading-relaxed opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all z-50 pointer-events-none shadow-xl">
@@ -227,7 +227,7 @@ export default function EjendomSkatTab({
                             </span>
                           </span>
                         </p>
-                        <p className="text-slate-500 text-xs mt-0.5">{t.propertyValueTaxExempt}</p>
+                        <p className="text-slate-400 text-xs mt-0.5">{t.propertyValueTaxExempt}</p>
                       </div>
                     )}
                   </div>
@@ -237,9 +237,9 @@ export default function EjendomSkatTab({
                     <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 mt-3">
                       <p className="text-white text-lg font-bold">
                         {formatDKK(effektivGrundskyld + effektivEjendomsskat)}
-                        <span className="text-slate-500 text-xs font-normal ml-1">DKK</span>
+                        <span className="text-slate-400 text-xs font-normal ml-1">DKK</span>
                       </p>
-                      <p className="text-slate-500 text-xs mt-0.5">
+                      <p className="text-slate-400 text-xs mt-0.5">
                         {t.totalTax} {erKolonihave ? t.taxBreakdownKoloni : t.taxBreakdownNormal}
                       </p>
                     </div>
@@ -284,13 +284,13 @@ export default function EjendomSkatTab({
                   <div className="grid grid-cols-2 gap-x-6 gap-y-1 mt-3 text-xs">
                     {aktivLoft.basisaar != null && (
                       <div className="flex justify-between gap-2">
-                        <span className="text-slate-500">{da ? 'Basisår' : 'Base year'}</span>
+                        <span className="text-slate-400">{da ? 'Basisår' : 'Base year'}</span>
                         <span className="text-slate-300 tabular-nums">{aktivLoft.basisaar}</span>
                       </div>
                     )}
                     {aktivLoft.grundvaerdi != null && (
                       <div className="flex justify-between gap-2">
-                        <span className="text-slate-500">{da ? 'Loftværdi' : 'Capped value'}</span>
+                        <span className="text-slate-400">{da ? 'Loftværdi' : 'Capped value'}</span>
                         <span className="text-slate-300 tabular-nums">
                           {formatDKK(aktivLoft.grundvaerdi)}
                         </span>
@@ -298,7 +298,7 @@ export default function EjendomSkatTab({
                     )}
                     {aktivLoft.pgf11 && (
                       <div className="flex justify-between gap-2 col-span-2">
-                        <span className="text-slate-500">
+                        <span className="text-slate-400">
                           {da ? 'Beregningsgrundlag' : 'Calculation basis'}
                         </span>
                         <span className="text-slate-300">{aktivLoft.pgf11}</span>
@@ -337,7 +337,7 @@ export default function EjendomSkatTab({
           return (
             <div>
               <SectionTitle title={da ? 'Skattehistorik' : 'Tax history'} />
-              <p className="text-slate-500 text-xs mb-2 leading-relaxed">
+              <p className="text-slate-400 text-xs mb-2 leading-relaxed">
                 {da
                   ? 'Årstal refererer til vurderingsåret. Skatten baseret på vurderingen opkræves typisk det følgende år — fx bygger betalinger i 2025 på vurderingen for 2024.'
                   : 'Year refers to the assessment year. The tax based on that assessment is usually collected the following year — e.g. payments in 2025 are based on the 2024 assessment.'}
@@ -346,19 +346,19 @@ export default function EjendomSkatTab({
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b border-slate-700/40">
-                      <th className="px-4 py-2.5 text-left text-slate-500 font-medium">
+                      <th className="px-4 py-2.5 text-left text-slate-400 font-medium">
                         {da ? 'Vurderingsår' : 'Assessment year'}
                       </th>
-                      <th className="px-4 py-2.5 text-right text-slate-500 font-medium">
+                      <th className="px-4 py-2.5 text-right text-slate-400 font-medium">
                         {da ? 'Ejendomsværdi' : 'Property value'}
                       </th>
-                      <th className="px-4 py-2.5 text-right text-slate-500 font-medium">
+                      <th className="px-4 py-2.5 text-right text-slate-400 font-medium">
                         {da ? 'Grundværdi' : 'Land value'}
                       </th>
-                      <th className="px-4 py-2.5 text-right text-slate-500 font-medium">
+                      <th className="px-4 py-2.5 text-right text-slate-400 font-medium">
                         {da ? 'Grundskyld' : 'Land tax'}
                       </th>
-                      <th className="px-4 py-2.5 text-right text-slate-500 font-medium">
+                      <th className="px-4 py-2.5 text-right text-slate-400 font-medium">
                         {da ? 'Ejendomsværdiskat' : 'Property value tax'}
                       </th>
                     </tr>
@@ -371,7 +371,7 @@ export default function EjendomSkatTab({
                       >
                         <td className="px-4 py-2 text-slate-300 font-medium">
                           {r.aar}
-                          <span className="ml-1.5 text-slate-600 text-[10px] font-normal">
+                          <span className="ml-1.5 text-slate-400 text-[10px] font-normal">
                             {da ? `(betales ${r.aar + 1})` : `(paid ${r.aar + 1})`}
                           </span>
                         </td>
@@ -396,7 +396,7 @@ export default function EjendomSkatTab({
                               {formatDKK(r.ejendomsskatAktuel)} kr/år
                             </span>
                           ) : (
-                            <span className="text-slate-600 text-[10px]">
+                            <span className="text-slate-400 text-[10px]">
                               {da ? 'ikke opkrævet' : 'not charged'}
                             </span>
                           )}
@@ -423,7 +423,7 @@ export default function EjendomSkatTab({
                 <div>
                   <p className="text-slate-300 text-sm">{f.artKode ?? `#${f.loebenummer}`}</p>
                   {f.omfangKode && (
-                    <p className="text-slate-500 text-xs">
+                    <p className="text-slate-400 text-xs">
                       {da ? 'Omfang' : 'Scope'}: {f.omfangKode}
                     </p>
                   )}

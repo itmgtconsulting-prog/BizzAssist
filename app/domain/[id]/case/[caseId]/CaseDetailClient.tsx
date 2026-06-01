@@ -303,11 +303,11 @@ export default function CaseDetailClient({
           <ArrowLeft size={14} />
           {da ? 'Domain' : 'Domain'}
         </Link>
-        <span className="text-slate-600">/</span>
+        <span className="text-slate-400">/</span>
         <Link href={`/domain/${domainId}`} className="hover:text-white transition-colors">
           {da ? 'Sager' : 'Cases'}
         </Link>
-        <span className="text-slate-600">/</span>
+        <span className="text-slate-400">/</span>
         <span className="text-slate-200 truncate max-w-xs" title={data.name}>
           {data.name}
         </span>
@@ -519,7 +519,7 @@ export default function CaseDetailClient({
                 className="mt-1 w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-md text-white text-sm"
               />
             </label>
-            <p className="text-slate-500 text-xs">
+            <p className="text-slate-400 text-xs">
               {da
                 ? `Genererer baseret på ${data.docs.length} dokument${data.docs.length === 1 ? '' : 'er'} i sagen.`
                 : `Generates using ${data.docs.length} case document${data.docs.length === 1 ? '' : 's'}.`}
@@ -564,13 +564,13 @@ export default function CaseDetailClient({
                 : 'border-slate-700 hover:border-slate-600 hover:bg-slate-800/40'
             }`}
           >
-            <Upload size={24} className="mx-auto text-slate-500 mb-2" />
+            <Upload size={24} className="mx-auto text-slate-400 mb-2" />
             <p className="text-slate-300 text-sm font-medium">
               {da
                 ? 'Træk filer herhen eller klik for at vælge'
                 : 'Drop files here or click to select'}
             </p>
-            <p className="text-slate-500 text-xs mt-1">
+            <p className="text-slate-400 text-xs mt-1">
               {da
                 ? `docx, xlsx, pptx, pdf, txt, md, eml, billeder m.fl. · max ${MAX_FILE_SIZE_MB} MB pr. fil`
                 : `docx, xlsx, pptx, pdf, txt, md, eml, images et al. · max ${MAX_FILE_SIZE_MB} MB per file`}
@@ -603,7 +603,7 @@ export default function CaseDetailClient({
               </h2>
             </div>
             {data.docs.length === 0 ? (
-              <div className="py-8 text-center text-slate-500 text-sm">
+              <div className="py-8 text-center text-slate-400 text-sm">
                 {da ? 'Ingen dokumenter endnu' : 'No documents yet'}
               </div>
             ) : (
@@ -635,7 +635,7 @@ export default function CaseDetailClient({
                           </span>
                         )}
                       </div>
-                      <p className="text-slate-500 text-xs">
+                      <p className="text-slate-400 text-xs">
                         {formatSize(doc.size_bytes)} ·{' '}
                         {new Date(doc.created_at).toLocaleDateString(da ? 'da-DK' : 'en-GB')}
                       </p>
@@ -687,7 +687,7 @@ export default function CaseDetailClient({
               <Sparkles size={14} />
               {da ? 'Generér dokument (nuværende flow)' : 'Generate document (current flow)'}
             </button>
-            <p className="text-slate-500 text-xs mt-2">
+            <p className="text-slate-400 text-xs mt-2">
               {da
                 ? 'Den eksisterende generation-modal tager allerede skabelon + instruktioner.'
                 : 'The existing generation modal already takes template + instructions.'}

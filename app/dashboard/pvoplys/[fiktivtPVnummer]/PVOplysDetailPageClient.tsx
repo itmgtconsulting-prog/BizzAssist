@@ -121,9 +121,9 @@ export default function PVOplysDetailPageClient(props: PageProps) {
 
         {landekode && (
           <div className="flex items-baseline gap-3">
-            <Globe size={14} className="text-slate-500 flex-shrink-0" />
+            <Globe size={14} className="text-slate-400 flex-shrink-0" />
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-slate-500">
+              <p className="text-[10px] uppercase tracking-wider text-slate-400">
                 {da ? 'Landekode' : 'Country code'}
               </p>
               <p className="text-sm text-slate-200">{landekode}</p>
@@ -133,9 +133,9 @@ export default function PVOplysDetailPageClient(props: PageProps) {
 
         {udlandsadresse && (
           <div className="flex items-baseline gap-3">
-            <MapPin size={14} className="text-slate-500 flex-shrink-0" />
+            <MapPin size={14} className="text-slate-400 flex-shrink-0" />
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-slate-500">
+              <p className="text-[10px] uppercase tracking-wider text-slate-400">
                 {da ? 'Udenlandsk adresse' : 'Foreign address'}
               </p>
               <p className="text-sm text-slate-200 whitespace-pre-line">{udlandsadresse}</p>
@@ -145,9 +145,9 @@ export default function PVOplysDetailPageClient(props: PageProps) {
 
         {administrator && (
           <div className="flex items-baseline gap-3">
-            <User size={14} className="text-slate-500 flex-shrink-0" />
+            <User size={14} className="text-slate-400 flex-shrink-0" />
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-slate-500">
+              <p className="text-[10px] uppercase tracking-wider text-slate-400">
                 {da ? 'Administrator' : 'Administrator'}
               </p>
               <p className="text-sm text-slate-200">{administrator}</p>

@@ -92,7 +92,7 @@ export default function AktExtractionButton({ bfe, aktNavn, lang, onExtractCompl
             {da ? 'AI-ekstraktion fuldført' : 'AI extraction complete'}
           </span>
           {result.fromCache && (
-            <span className="text-[10px] text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded">
+            <span className="text-[10px] text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded">
               cached
             </span>
           )}
@@ -102,7 +102,7 @@ export default function AktExtractionButton({ bfe, aktNavn, lang, onExtractCompl
             ? `Fandt ${result.handler} handler, ${result.haeftelser} hæftelser og ${result.servitutter} servitutter fra scannet akt.`
             : `Found ${result.handler} transactions, ${result.haeftelser} mortgages and ${result.servitutter} easements.`}
           {result.tokensUsed > 0 && !result.fromCache && (
-            <span className="text-slate-500 ml-1">
+            <span className="text-slate-400 ml-1">
               ({result.tokensUsed.toLocaleString()} tokens)
             </span>
           )}

@@ -146,7 +146,7 @@ export default function VirksomhedHistorikTab({
                           />
                           <div className="bg-slate-900/50 rounded-lg p-3 border border-slate-700/30">
                             <p className="text-white text-sm font-medium">{entry.vaerdi}</p>
-                            <p className="text-slate-500 text-xs mt-1">
+                            <p className="text-slate-400 text-xs mt-1">
                               {c.period}: {entry.fra}
                               {entry.til
                                 ? ` — ${entry.til}`
@@ -163,7 +163,7 @@ export default function VirksomhedHistorikTab({
                                 >
                                   <ExternalLink size={10} />
                                   {lang === 'da' ? 'Se modpart' : 'View counterparty'}{' '}
-                                  <span className="font-mono text-slate-500">
+                                  <span className="font-mono text-slate-400">
                                     (#{entry.modpartEnhedsNummer})
                                   </span>
                                 </Link>
@@ -178,7 +178,7 @@ export default function VirksomhedHistorikTab({
             })}
         </>
       ) : (
-        <EmptyState ikon={<Clock size={32} className="text-slate-600" />} tekst={c.noHistory} />
+        <EmptyState ikon={<Clock size={32} className="text-slate-400" />} tekst={c.noHistory} />
       )}
     </div>
   );

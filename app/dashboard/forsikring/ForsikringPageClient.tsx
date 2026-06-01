@@ -233,9 +233,9 @@ function PropertyRow({ group, da }: { group: PropertyGroup; da: boolean }) {
 
         {/* Chevron */}
         {expanded ? (
-          <ChevronDown size={14} className="text-slate-500 shrink-0" />
+          <ChevronDown size={14} className="text-slate-400 shrink-0" />
         ) : (
-          <ChevronRight size={14} className="text-slate-500 shrink-0" />
+          <ChevronRight size={14} className="text-slate-400 shrink-0" />
         )}
       </button>
 
@@ -246,7 +246,7 @@ function PropertyRow({ group, da }: { group: PropertyGroup; da: boolean }) {
           {group.matchedPolicy && (
             <div className="text-xs text-slate-400 space-y-0.5">
               <div>
-                <span className="text-slate-500">{da ? 'Police:' : 'Policy:'}</span>{' '}
+                <span className="text-slate-400">{da ? 'Police:' : 'Policy:'}</span>{' '}
                 <Link
                   href={`/dashboard/forsikring/${group.matchedPolicy.id}`}
                   className="text-blue-300 hover:text-blue-200"
@@ -257,13 +257,13 @@ function PropertyRow({ group, da }: { group: PropertyGroup; da: boolean }) {
               </div>
               {group.matchedPolicy.annual_premium_dkk && (
                 <div>
-                  <span className="text-slate-500">{da ? 'Præmie:' : 'Premium:'}</span>{' '}
+                  <span className="text-slate-400">{da ? 'Præmie:' : 'Premium:'}</span>{' '}
                   {group.matchedPolicy.annual_premium_dkk.toLocaleString('da-DK')} kr
                 </div>
               )}
               {group.matchedPolicy.effective_to && (
                 <div>
-                  <span className="text-slate-500">{da ? 'Udløber:' : 'Expires:'}</span>{' '}
+                  <span className="text-slate-400">{da ? 'Udløber:' : 'Expires:'}</span>{' '}
                   {new Date(group.matchedPolicy.effective_to).toLocaleDateString('da-DK', {
                     day: 'numeric',
                     month: 'short',
@@ -310,7 +310,7 @@ function PropertyRow({ group, da }: { group: PropertyGroup; da: boolean }) {
                   </div>
                   <p className="text-slate-400 ml-4">{g.description}</p>
                   {g.recommendation && (
-                    <p className="text-slate-500 ml-4 mt-0.5 italic">{g.recommendation}</p>
+                    <p className="text-slate-400 ml-4 mt-0.5 italic">{g.recommendation}</p>
                   )}
                   {/* BIZZ-1833 Fase 6: vis baseline-kilde for standard_betingelser-gaps */}
                   {g.category === 'standard_betingelser' && g.source_data?.source_url && (
@@ -549,7 +549,7 @@ function UnifiedAnalyseView({
             {/* Ejendomme under denne virksomhed — indrykket */}
             {tree.ejendomme.length > 0 && (
               <div className="ml-6 pl-3 border-l border-white/8 space-y-2">
-                <div className="text-slate-500 text-[11px] uppercase tracking-wide py-1">
+                <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
                   {da
                     ? `${tree.ejendomme.length} ${tree.ejendomme.length === 1 ? 'ejendom' : 'ejendomme'} ejet af ${tree.virksomhed.aktiv.label}`
                     : `${tree.ejendomme.length} ${tree.ejendomme.length === 1 ? 'property' : 'properties'} owned by ${tree.virksomhed.aktiv.label}`}
@@ -565,7 +565,7 @@ function UnifiedAnalyseView({
         {/* Ejendomme uden ejer-virksomhed (orphans) — personligt ejede eller manglende kæde */}
         {orphanEjendomme.length > 0 && (
           <div className="space-y-2">
-            <div className="text-slate-500 text-[11px] uppercase tracking-wide py-1">
+            <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
               {da
                 ? `${orphanEjendomme.length} ${orphanEjendomme.length === 1 ? 'ejendom' : 'ejendomme'} uden virksomheds-tilknytning`
                 : `${orphanEjendomme.length} ${orphanEjendomme.length === 1 ? 'property' : 'properties'} without company link`}
@@ -579,7 +579,7 @@ function UnifiedAnalyseView({
         {/* Øvrige aktiver (bestyrelsesposter, biler) */}
         {otherGroups.length > 0 && (
           <div className="space-y-2">
-            <div className="text-slate-500 text-[11px] uppercase tracking-wide py-1">
+            <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
               {da ? 'Øvrige aktiver' : 'Other assets'}
             </div>
             {otherGroups.map((eg) => (
@@ -1164,14 +1164,14 @@ function AnalyseSection({
             <button
               type="button"
               onClick={() => setAsOfDate('')}
-              className="text-slate-500 hover:text-slate-300 text-[10px]"
+              className="text-slate-400 hover:text-slate-300 text-[10px]"
               aria-label={da ? 'Ryd dato' : 'Clear date'}
             >
               {da ? 'ryd' : 'clear'}
             </button>
           )}
           {!asOfDate && (
-            <span className="text-slate-500">
+            <span className="text-slate-400">
               {da ? '(tom = aktuel dato)' : '(empty = current date)'}
             </span>
           )}
@@ -1223,7 +1223,7 @@ function AnalyseSection({
                 setShowDocPicker(false);
                 setSelectedDocIds(new Set());
               }}
-              className="text-slate-500 hover:text-white text-xs"
+              className="text-slate-400 hover:text-white text-xs"
             >
               {da ? 'Luk' : 'Close'}
             </button>
@@ -1359,7 +1359,7 @@ function AnalyseSection({
                           <FileText size={14} className="text-slate-400 shrink-0" />
                           <span className="text-white text-xs flex-1 truncate">{doc.name}</span>
                           <span
-                            className={`text-[10px] shrink-0 ${doc.source === 'new' ? 'text-emerald-400' : 'text-slate-500'}`}
+                            className={`text-[10px] shrink-0 ${doc.source === 'new' ? 'text-emerald-400' : 'text-slate-400'}`}
                           >
                             {doc.source === 'new'
                               ? da
@@ -1394,7 +1394,7 @@ function AnalyseSection({
                                 /* silent */
                               }
                             }}
-                            className="p-1 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors shrink-0"
+                            className="p-1 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors shrink-0"
                           >
                             <Trash2 size={12} />
                           </button>
@@ -1405,7 +1405,7 @@ function AnalyseSection({
                     øverst håndterer det nu i standard UX-mønster. */}
                   </>
                 ) : (
-                  <p className="text-slate-500 text-xs">
+                  <p className="text-slate-400 text-xs">
                     {da
                       ? 'Upload dokumenter nedenfor for at starte.'
                       : 'Upload documents below to begin.'}
@@ -1453,7 +1453,7 @@ function AnalyseSection({
                       ? 'Træk filer hertil eller klik for at uploade'
                       : 'Drag files here or click to upload'}
                   </div>
-                  <div className="text-[10px] text-slate-500 mt-0.5">
+                  <div className="text-[10px] text-slate-400 mt-0.5">
                     PDF, Word, Excel, billeder (max 20 MB)
                   </div>
                   <input
@@ -1494,7 +1494,7 @@ function AnalyseSection({
                         <span className="text-white truncate">{job.fileName}</span>
                         <span
                           className={`ml-auto ${
-                            job.status === 'skipped_duplicate' ? 'text-amber-300' : 'text-slate-500'
+                            job.status === 'skipped_duplicate' ? 'text-amber-300' : 'text-slate-400'
                           }`}
                         >
                           {job.status === 'done'
@@ -1581,7 +1581,7 @@ function AnalyseSection({
                             className="accent-teal-500 w-3 h-3"
                           />
                           <span className="text-slate-300 truncate flex-1">{doc.titel}</span>
-                          <span className="text-slate-600 text-[9px] shrink-0">
+                          <span className="text-slate-400 text-[9px] shrink-0">
                             {doc.selskab.length > 20 ? doc.selskab.slice(0, 20) + '…' : doc.selskab}
                           </span>
                         </label>
@@ -2107,7 +2107,7 @@ function AnalyseSection({
                       <button
                         type="button"
                         onClick={() => setStdLibraryOpen(false)}
-                        className="text-slate-500 hover:text-white text-lg"
+                        className="text-slate-400 hover:text-white text-lg"
                         aria-label={da ? 'Luk' : 'Close'}
                       >
                         ×
@@ -2160,7 +2160,7 @@ function AnalyseSection({
                         </select>
                       </div>
                       {stdSavedLibrary.length > 0 && (
-                        <p className="text-slate-600 text-[9px]">
+                        <p className="text-slate-400 text-[9px]">
                           {da
                             ? `${stdSavedLibrary.length} betingelser i biblioteket`
                             : `${stdSavedLibrary.length} terms in library`}
@@ -2171,7 +2171,7 @@ function AnalyseSection({
                     {/* Tabel */}
                     <div className="overflow-auto max-h-[60vh]">
                       {stdSavedLibrary.length === 0 ? (
-                        <p className="text-slate-500 text-xs py-8 text-center">
+                        <p className="text-slate-400 text-xs py-8 text-center">
                           {da
                             ? 'Ingen gemte betingelser endnu. Upload PDF eller find via AI.'
                             : 'No saved terms yet. Upload PDF or find via AI.'}
@@ -2272,7 +2272,7 @@ function AnalyseSection({
                                         </span>
                                       )}
                                     </td>
-                                    <td className="px-4 py-2.5 text-slate-500 whitespace-nowrap">
+                                    <td className="px-4 py-2.5 text-slate-400 whitespace-nowrap">
                                       {doc.gyldig_fra ?? '—'}
                                     </td>
                                     <td className="px-4 py-2.5">
@@ -2280,7 +2280,7 @@ function AnalyseSection({
                                         href={doc.source_url}
                                         target="_blank"
                                         rel="noopener noreferrer"
-                                        className="text-slate-500 hover:text-blue-400"
+                                        className="text-slate-400 hover:text-blue-400"
                                         onClick={(e) => e.stopPropagation()}
                                       >
                                         ↗
@@ -2296,7 +2296,7 @@ function AnalyseSection({
 
                     {/* Footer */}
                     <div className="flex items-center justify-between px-5 py-3 border-t border-slate-700/50">
-                      <span className="text-slate-500 text-[10px]">
+                      <span className="text-slate-400 text-[10px]">
                         {stdSelectedIds.size} {da ? 'valgt' : 'selected'}
                       </span>
                       <button
@@ -2370,7 +2370,7 @@ function AnalyseSection({
           </div>
           <div className="grid grid-cols-3 gap-3 text-xs">
             <div>
-              <div className="text-slate-500 mb-0.5">{da ? 'Aktiver' : 'Assets'}</div>
+              <div className="text-slate-400 mb-0.5">{da ? 'Aktiver' : 'Assets'}</div>
               <div className="text-white font-medium">
                 {lastAnalyse.total_aktiver} → {analyseResult.total_aktiver}
                 {analyseResult.total_aktiver !== lastAnalyse.total_aktiver && (
@@ -2384,7 +2384,7 @@ function AnalyseSection({
               </div>
             </div>
             <div>
-              <div className="text-slate-500 mb-0.5">{da ? 'Forsikrede' : 'Insured'}</div>
+              <div className="text-slate-400 mb-0.5">{da ? 'Forsikrede' : 'Insured'}</div>
               <div className="text-white font-medium">
                 {lastAnalyse.insured_count} → {analyseResult.insured_count}
                 {analyseResult.insured_count !== lastAnalyse.insured_count && (
@@ -2398,7 +2398,7 @@ function AnalyseSection({
               </div>
             </div>
             <div>
-              <div className="text-slate-500 mb-0.5">Gaps</div>
+              <div className="text-slate-400 mb-0.5">Gaps</div>
               <div className="text-white font-medium">
                 → {analyseResult.gaps_count}
                 {analyseResult.gaps_count > 0 && (
@@ -2475,7 +2475,7 @@ function AnalyseSection({
                 className="flex-1 text-left px-3 py-2 bg-white/3 hover:bg-white/5 rounded-lg text-xs flex items-center justify-between"
               >
                 <span className="text-white font-medium">{s.kunde_navn ?? s.kunde_id}</span>
-                <span className="text-slate-500">
+                <span className="text-slate-400">
                   {s.police_count} {da ? 'policer' : 'policies'} · {s.analyse_count}{' '}
                   {da ? 'analyser' : 'analyses'}
                 </span>
@@ -2508,7 +2508,7 @@ function AnalyseSection({
                     // Handled silently
                   }
                 }}
-                className="p-2 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors shrink-0"
+                className="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors shrink-0"
               >
                 <XCircle size={14} />
               </button>
@@ -2655,15 +2655,15 @@ function AnalyseDetailSection({
         <div className="grid grid-cols-3 gap-3 text-xs text-center">
           <div>
             <div className="text-blue-300 text-xl font-bold">{total}</div>
-            <div className="text-slate-500">{da ? 'Ejendomme' : 'Properties'}</div>
+            <div className="text-slate-400">{da ? 'Ejendomme' : 'Properties'}</div>
           </div>
           <div>
             <div className="text-emerald-300 text-xl font-bold">{insured}</div>
-            <div className="text-slate-500">{da ? 'Forsikrede' : 'Insured'}</div>
+            <div className="text-slate-400">{da ? 'Forsikrede' : 'Insured'}</div>
           </div>
           <div>
             <div className="text-red-300 text-xl font-bold">{total - insured}</div>
-            <div className="text-slate-500">{da ? 'Uforsikrede' : 'Uninsured'}</div>
+            <div className="text-slate-400">{da ? 'Uforsikrede' : 'Uninsured'}</div>
           </div>
         </div>
       </div>
@@ -3132,7 +3132,7 @@ export default function ForsikringPageClient(): React.ReactElement {
                     >
                       {pct}%
                     </span>
-                    <ChevronRight size={16} className="text-slate-500" />
+                    <ChevronRight size={16} className="text-slate-400" />
                   </div>
                 </button>
               );
@@ -3246,7 +3246,7 @@ export default function ForsikringPageClient(): React.ReactElement {
                     <FileText size={14} className="text-slate-400" />
                     <span>{doc.original_name}</span>
                     <span
-                      className={`text-xs ml-auto max-w-[300px] truncate ${doc.parse_status === 'failed' ? 'text-red-400' : 'text-slate-500'}`}
+                      className={`text-xs ml-auto max-w-[300px] truncate ${doc.parse_status === 'failed' ? 'text-red-400' : 'text-slate-400'}`}
                       title={
                         doc.parse_status === 'failed'
                           ? (doc.parse_error ?? t.parseFailed)
@@ -3273,7 +3273,7 @@ export default function ForsikringPageClient(): React.ReactElement {
                           // Handled silently
                         }
                       }}
-                      className="p-1 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors shrink-0"
+                      className="p-1 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors shrink-0"
                     >
                       <XCircle size={14} />
                     </button>
@@ -3316,7 +3316,7 @@ export default function ForsikringPageClient(): React.ReactElement {
             documents.length === 0 &&
             uploadJobs.length === 0 && (
               <div className="bg-white/5 border border-white/8 rounded-2xl p-10 text-center">
-                <Building2 className="mx-auto text-slate-600 mb-3" size={36} />
+                <Building2 className="mx-auto text-slate-400 mb-3" size={36} />
                 <h2 className="text-lg font-medium mb-1">{t.noPolicies}</h2>
                 <p className="text-sm text-slate-400">{t.noPoliciesDesc}</p>
               </div>

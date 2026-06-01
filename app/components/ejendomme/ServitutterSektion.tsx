@@ -99,7 +99,7 @@ export default function ServitutterSektion({ bfe, lang }: Props): React.ReactEle
           <h3 className="text-white font-semibold text-sm">
             {da ? 'Servitutter / Byrder' : 'Easements / Encumbrances'}
           </h3>
-          <span className="text-xs text-slate-500">({rows.length})</span>
+          <span className="text-xs text-slate-400">({rows.length})</span>
         </div>
         {expanded ? (
           <ChevronDown className="w-4 h-4 text-slate-400" aria-hidden />
@@ -115,12 +115,12 @@ export default function ServitutterSektion({ bfe, lang }: Props): React.ReactEle
                 className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-xs font-medium mb-1 ${getTypeColor(type)}`}
               >
                 {type}
-                <span className="text-slate-500">({items.length})</span>
+                <span className="text-slate-400">({items.length})</span>
               </div>
               <div className="space-y-1 ml-2">
                 {items.map((s, i) => (
                   <div key={i} className="flex items-start gap-2 text-xs">
-                    <span className="text-slate-500 whitespace-nowrap">
+                    <span className="text-slate-400 whitespace-nowrap">
                       {s.tinglysningsdato
                         ? new Date(s.tinglysningsdato).toLocaleDateString('da-DK')
                         : '—'}
@@ -134,7 +134,7 @@ export default function ServitutterSektion({ bfe, lang }: Props): React.ReactEle
                         href={`/api/tinglysning/dokument?uuid=${encodeURIComponent(s.dokument_id)}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center justify-center p-0.5 rounded text-slate-500 hover:text-blue-400 hover:bg-blue-500/10 transition-colors shrink-0"
+                        className="inline-flex items-center justify-center p-0.5 rounded text-slate-400 hover:text-blue-400 hover:bg-blue-500/10 transition-colors shrink-0"
                         title={da ? 'Download tinglyst PDF' : 'Download registered PDF'}
                         aria-label={da ? 'Download tinglyst PDF' : 'Download registered PDF'}
                       >

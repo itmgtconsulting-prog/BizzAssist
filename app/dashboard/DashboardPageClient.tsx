@@ -314,7 +314,7 @@ export default function DashboardPageClient() {
         >
           {recentEjendomme.length === 0 ? (
             <EmptyState
-              icon={<Building2 size={24} className="mx-auto mb-2 text-slate-600" />}
+              icon={<Building2 size={24} className="mx-auto mb-2 text-slate-400" />}
               text={d.emptyProperties}
             />
           ) : (
@@ -329,14 +329,14 @@ export default function DashboardPageClient() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="font-medium text-slate-200 text-sm truncate">{ej.adresse}</div>
-                  <div className="text-xs text-slate-500 mt-0.5">
+                  <div className="text-xs text-slate-400 mt-0.5">
                     {ej.postnr} {ej.by}
                     {ej.kommune ? ` · ${ej.kommune}` : ''}
                   </div>
                 </div>
                 <ChevronRight
                   size={14}
-                  className="text-slate-600 group-hover:text-slate-400 shrink-0"
+                  className="text-slate-400 group-hover:text-slate-400 shrink-0"
                 />
               </Link>
             ))
@@ -355,7 +355,7 @@ export default function DashboardPageClient() {
         >
           {recentCompanies.length === 0 ? (
             <EmptyState
-              icon={<Briefcase size={24} className="mx-auto mb-2 text-slate-600" />}
+              icon={<Briefcase size={24} className="mx-auto mb-2 text-slate-400" />}
               text={d.emptyCompanies}
             />
           ) : (
@@ -370,7 +370,7 @@ export default function DashboardPageClient() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="font-medium text-slate-200 text-sm truncate">{c.name}</div>
-                  <div className="text-xs text-slate-500 mt-0.5">
+                  <div className="text-xs text-slate-400 mt-0.5">
                     CVR {c.cvr}
                     {c.industry ? ` · ${c.industry}` : ''}
                     {c.city ? ` · ${c.city}` : ''}
@@ -378,7 +378,7 @@ export default function DashboardPageClient() {
                 </div>
                 <ChevronRight
                   size={14}
-                  className="text-slate-600 group-hover:text-slate-400 shrink-0"
+                  className="text-slate-400 group-hover:text-slate-400 shrink-0"
                 />
               </Link>
             ))
@@ -397,7 +397,7 @@ export default function DashboardPageClient() {
         >
           {recentPersons.length === 0 ? (
             <EmptyState
-              icon={<Users size={24} className="mx-auto mb-2 text-slate-600" />}
+              icon={<Users size={24} className="mx-auto mb-2 text-slate-400" />}
               text={d.emptyOwners}
             />
           ) : (
@@ -415,13 +415,13 @@ export default function DashboardPageClient() {
                   <p className="text-sm text-slate-200 group-hover:text-white truncate font-medium">
                     {p.name}
                   </p>
-                  <p className="text-xs text-slate-500 truncate">
+                  <p className="text-xs text-slate-400 truncate">
                     {p.antalVirksomheder} {lang === 'da' ? 'virksomheder' : 'companies'}
                   </p>
                 </div>
                 <ChevronRight
                   size={14}
-                  className="text-slate-600 group-hover:text-slate-400 shrink-0"
+                  className="text-slate-400 group-hover:text-slate-400 shrink-0"
                 />
               </Link>
             ))
@@ -441,7 +441,7 @@ export default function DashboardPageClient() {
         >
           {trackedEjendomme.length === 0 && trackedCompanies.length === 0 ? (
             <EmptyState
-              icon={<Eye size={24} className="mx-auto mb-2 text-slate-600" />}
+              icon={<Eye size={24} className="mx-auto mb-2 text-slate-400" />}
               text={d.emptyTracked}
             />
           ) : (
@@ -467,14 +467,14 @@ export default function DashboardPageClient() {
                         <div className="font-medium text-slate-200 text-sm truncate">
                           {ej.adresse}
                         </div>
-                        <div className="text-xs text-slate-500 mt-0.5">
+                        <div className="text-xs text-slate-400 mt-0.5">
                           {ej.postnr} {ej.by}
                           {ej.kommune ? ` · ${ej.kommune}` : ''}
                         </div>
                       </div>
                       <ChevronRight
                         size={14}
-                        className="text-slate-600 group-hover:text-slate-400 shrink-0"
+                        className="text-slate-400 group-hover:text-slate-400 shrink-0"
                       />
                     </Link>
                   ))}
@@ -500,11 +500,11 @@ export default function DashboardPageClient() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="font-medium text-slate-200 text-sm truncate">{c.navn}</div>
-                        <div className="text-xs text-slate-500 mt-0.5">CVR {c.cvr}</div>
+                        <div className="text-xs text-slate-400 mt-0.5">CVR {c.cvr}</div>
                       </div>
                       <ChevronRight
                         size={14}
-                        className="text-slate-600 group-hover:text-slate-400 shrink-0"
+                        className="text-slate-400 group-hover:text-slate-400 shrink-0"
                       />
                     </Link>
                   ))}
@@ -605,7 +605,7 @@ function EmptyState({ icon, text }: EmptyStateProps) {
   return (
     <div className="px-6 py-8 text-center">
       {icon}
-      <p className="text-slate-500 text-sm">{text}</p>
+      <p className="text-slate-400 text-sm">{text}</p>
     </div>
   );
 }

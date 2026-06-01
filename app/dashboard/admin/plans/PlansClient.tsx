@@ -772,7 +772,7 @@ export default function PlansClient() {
               <h2 className="text-white font-semibold text-base flex items-center gap-2">
                 <Settings size={16} className="text-blue-400" />
                 {t.planSectionTitle}
-                <span className="text-slate-500 text-sm font-normal ml-2">{t.planSectionDesc}</span>
+                <span className="text-slate-400 text-sm font-normal ml-2">{t.planSectionDesc}</span>
               </h2>
               <div className="flex items-center gap-2">
                 <button
@@ -838,7 +838,7 @@ export default function PlansClient() {
 
                     {/* Plan ID */}
                     <div>
-                      <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                      <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
                         {t.planId}
                       </label>
                       <input
@@ -855,7 +855,7 @@ export default function PlansClient() {
                     {/* Names */}
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                        <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
                           {t.nameDa}
                         </label>
                         <input
@@ -868,7 +868,7 @@ export default function PlansClient() {
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                        <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
                           {t.nameEn}
                         </label>
                         <input
@@ -885,7 +885,7 @@ export default function PlansClient() {
                     {/* Descriptions */}
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                        <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
                           {t.descDa}
                         </label>
                         <textarea
@@ -898,7 +898,7 @@ export default function PlansClient() {
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                        <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
                           {t.descEn}
                         </label>
                         <textarea
@@ -914,7 +914,7 @@ export default function PlansClient() {
 
                     {/* Color */}
                     <div>
-                      <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1.5">
+                      <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1.5">
                         {t.color}
                       </label>
                       {renderColorPicker(newPlanData.color, (c) =>
@@ -925,7 +925,7 @@ export default function PlansClient() {
                     {/* Numeric fields */}
                     <div className="grid grid-cols-4 gap-3">
                       <div>
-                        <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                        <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
                           {t.price}
                         </label>
                         <input
@@ -940,7 +940,7 @@ export default function PlansClient() {
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                        <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
                           {t.aiTokens}
                         </label>
                         <input
@@ -958,7 +958,7 @@ export default function PlansClient() {
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                        <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
                           {t.durationMonths}
                         </label>
                         <input
@@ -976,7 +976,7 @@ export default function PlansClient() {
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                        <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
                           {t.durationDays}
                         </label>
                         <input
@@ -997,7 +997,7 @@ export default function PlansClient() {
 
                     <div className="grid grid-cols-4 gap-3">
                       <div>
-                        <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                        <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
                           {t.capMultiplier}
                         </label>
                         <input
@@ -1016,7 +1016,7 @@ export default function PlansClient() {
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                        <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
                           {t.freeTrialDays}
                         </label>
                         <input
@@ -1035,7 +1035,7 @@ export default function PlansClient() {
                       </div>
                       <div>
                         <label
-                          className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1"
+                          className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1"
                           title={t.paymentGraceHoursHint}
                         >
                           {t.paymentGraceHours}
@@ -1056,7 +1056,7 @@ export default function PlansClient() {
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                        <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
                           {t.maxSales}
                         </label>
                         <input
@@ -1073,7 +1073,7 @@ export default function PlansClient() {
                           placeholder={t.unlimited}
                           className="bg-slate-900/50 border border-slate-700/40 rounded-lg px-2.5 py-1.5 text-white text-sm w-full focus:outline-none focus:border-blue-500/50 transition-colors placeholder-slate-600"
                         />
-                        <p className="text-[10px] text-slate-600 mt-0.5">{t.maxSalesHint}</p>
+                        <p className="text-[10px] text-slate-400 mt-0.5">{t.maxSalesHint}</p>
                       </div>
                     </div>
 
@@ -1168,7 +1168,7 @@ export default function PlansClient() {
                           <span className="text-slate-400 text-xs">
                             {getPlanValue(plan, 'priceDkk')} DKK
                           </span>
-                          <span className="text-slate-600 text-xs">|</span>
+                          <span className="text-slate-400 text-xs">|</span>
                           <span className="text-slate-400 text-xs">
                             {getPlanValue(plan, 'aiTokensPerMonth') === -1
                               ? da
@@ -1176,7 +1176,7 @@ export default function PlansClient() {
                                 : 'Unlimited AI'
                               : `${Number(getPlanValue(plan, 'aiTokensPerMonth')).toLocaleString()} tokens`}
                           </span>
-                          <span className="text-slate-600 text-xs">|</span>
+                          <span className="text-slate-400 text-xs">|</span>
                           <span className="text-slate-400 text-xs">
                             {Number(getPlanValue(plan, 'durationDays')) > 0
                               ? `${getPlanValue(plan, 'durationDays')} ${da ? 'dage' : 'days'}`
@@ -1201,9 +1201,9 @@ export default function PlansClient() {
                               </span>
                             )}
                             {isExpanded ? (
-                              <ChevronUp size={14} className="text-slate-500" />
+                              <ChevronUp size={14} className="text-slate-400" />
                             ) : (
-                              <ChevronDown size={14} className="text-slate-500" />
+                              <ChevronDown size={14} className="text-slate-400" />
                             )}
                           </div>
                         </div>
@@ -1214,7 +1214,7 @@ export default function PlansClient() {
                             {/* Names */}
                             <div className="grid grid-cols-2 gap-3">
                               <div>
-                                <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                                <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
                                   {t.nameDa}
                                 </label>
                                 <input
@@ -1227,7 +1227,7 @@ export default function PlansClient() {
                                 />
                               </div>
                               <div>
-                                <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                                <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
                                   {t.nameEn}
                                 </label>
                                 <input
@@ -1244,7 +1244,7 @@ export default function PlansClient() {
                             {/* Descriptions */}
                             <div className="grid grid-cols-2 gap-3">
                               <div>
-                                <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                                <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
                                   {t.descDa}
                                 </label>
                                 <textarea
@@ -1257,7 +1257,7 @@ export default function PlansClient() {
                                 />
                               </div>
                               <div>
-                                <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                                <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
                                   {t.descEn}
                                 </label>
                                 <textarea
@@ -1273,7 +1273,7 @@ export default function PlansClient() {
 
                             {/* Color */}
                             <div>
-                              <label className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-1 mb-1.5">
+                              <label className="text-[10px] text-slate-400 uppercase tracking-wider flex items-center gap-1 mb-1.5">
                                 <Palette size={10} /> {t.color}
                               </label>
                               {renderColorPicker(getPlanValue(plan, 'color') as string, (c) =>
@@ -1284,31 +1284,31 @@ export default function PlansClient() {
                             {/* Numeric fields row 1 */}
                             <div className="grid grid-cols-5 gap-3">
                               <div>
-                                <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                                <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
                                   {t.price}
                                 </label>
                                 {renderNumInput(plan, 'priceDkk')}
                               </div>
                               <div>
-                                <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                                <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
                                   {t.aiTokens}
                                 </label>
                                 {renderNumInput(plan, 'aiTokensPerMonth', { allowNeg: true })}
                               </div>
                               <div>
-                                <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                                <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
                                   {t.durationMonths}
                                 </label>
                                 {renderNumInput(plan, 'durationMonths', { min: 0 })}
                               </div>
                               <div>
-                                <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                                <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
                                   {t.durationDays}
                                 </label>
                                 {renderNumInput(plan, 'durationDays', { min: 0 })}
                               </div>
                               <div>
-                                <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                                <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
                                   {t.capMultiplier}
                                 </label>
                                 {renderNumInput(plan, 'tokenAccumulationCapMultiplier', {
@@ -1319,19 +1319,19 @@ export default function PlansClient() {
                             </div>
 
                             {/* Duration hint */}
-                            <p className="text-[10px] text-slate-600 -mt-2">{t.durationHint}</p>
+                            <p className="text-[10px] text-slate-400 -mt-2">{t.durationHint}</p>
 
                             {/* Free trial + grace + toggles */}
                             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 items-end">
                               <div>
-                                <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                                <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
                                   {t.freeTrialDays}
                                 </label>
                                 {renderNumInput(plan, 'freeTrialDays', { min: 0 })}
                               </div>
                               <div>
                                 <label
-                                  className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1"
+                                  className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1"
                                   title={t.paymentGraceHoursHint}
                                 >
                                   {t.paymentGraceHours}
@@ -1378,7 +1378,7 @@ export default function PlansClient() {
 
                             {/* Sort order */}
                             <div>
-                              <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                              <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
                                 {t.sortOrder}
                               </label>
                               <input
@@ -1391,13 +1391,13 @@ export default function PlansClient() {
                                 }}
                                 className="w-24 px-2.5 py-1.5 rounded-lg bg-slate-900/50 border border-slate-700/40 text-white text-sm focus:outline-none focus:border-blue-500/50 transition-colors"
                               />
-                              <p className="text-[10px] text-slate-600 mt-0.5">{t.sortOrderHint}</p>
+                              <p className="text-[10px] text-slate-400 mt-0.5">{t.sortOrderHint}</p>
                             </div>
 
                             {/* Max sales + sales count */}
                             <div className="grid grid-cols-2 gap-3">
                               <div>
-                                <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                                <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
                                   {t.maxSales}
                                 </label>
                                 <input
@@ -1419,12 +1419,12 @@ export default function PlansClient() {
                                   placeholder={t.unlimited}
                                   className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900/50 border border-slate-700/40 text-white text-sm placeholder-slate-600 focus:outline-none focus:border-blue-500/50 transition-colors"
                                 />
-                                <p className="text-[10px] text-slate-600 mt-0.5">
+                                <p className="text-[10px] text-slate-400 mt-0.5">
                                   {t.maxSalesHint}
                                 </p>
                               </div>
                               <div>
-                                <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                                <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
                                   {t.salesCount}
                                 </label>
                                 <div className="flex items-center gap-2 h-[34px]">
@@ -1432,7 +1432,7 @@ export default function PlansClient() {
                                     {getPlanValue(plan, 'salesCount') ?? 0}
                                   </span>
                                   {(getPlanValue(plan, 'maxSales') as number | null) != null && (
-                                    <span className="text-slate-500 text-xs">
+                                    <span className="text-slate-400 text-xs">
                                       / {getPlanValue(plan, 'maxSales')}
                                     </span>
                                   )}
@@ -1442,7 +1442,7 @@ export default function PlansClient() {
 
                             {/* Stripe Price ID */}
                             <div>
-                              <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                              <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">
                                 Stripe Price ID
                               </label>
                               <input
@@ -1454,7 +1454,7 @@ export default function PlansClient() {
                                 placeholder="price_..."
                                 className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900/50 border border-slate-700/40 text-white text-sm placeholder-slate-600 focus:outline-none focus:border-blue-500/50 transition-colors"
                               />
-                              <p className="text-[10px] text-slate-600 mt-0.5">
+                              <p className="text-[10px] text-slate-400 mt-0.5">
                                 {da
                                   ? 'Fra Stripe Dashboard → Products → Price ID'
                                   : 'From Stripe Dashboard → Products → Price ID'}
@@ -1463,7 +1463,7 @@ export default function PlansClient() {
 
                             {/* BIZZ-1618: Analyse-moduler — checkboxes */}
                             <div>
-                              <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-2">
+                              <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-2">
                                 {da ? 'Analyse-moduler' : 'Analysis modules'}
                               </label>
                               <div className="grid grid-cols-2 gap-1.5">
@@ -1550,7 +1550,7 @@ export default function PlansClient() {
               <h2 className="text-white font-semibold text-base flex items-center gap-2">
                 <Package size={16} className="text-blue-400" />
                 {t.packSectionTitle}
-                <span className="text-slate-500 text-sm font-normal ml-2">{t.packSectionDesc}</span>
+                <span className="text-slate-400 text-sm font-normal ml-2">{t.packSectionDesc}</span>
               </h2>
               <button
                 onClick={openCreatePackForm}
@@ -1585,7 +1585,7 @@ export default function PlansClient() {
             {!packLoading && !packError && (
               <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl overflow-hidden">
                 {/* Table header */}
-                <div className="grid grid-cols-[1fr_1fr_0.7fr_0.7fr_1.2fr_0.5fr_0.5fr_auto] gap-2 px-4 py-2.5 border-b border-slate-700/40 text-slate-500 text-xs uppercase tracking-wide">
+                <div className="grid grid-cols-[1fr_1fr_0.7fr_0.7fr_1.2fr_0.5fr_0.5fr_auto] gap-2 px-4 py-2.5 border-b border-slate-700/40 text-slate-400 text-xs uppercase tracking-wide">
                   <span>{t.packNameDa}</span>
                   <span>{t.packNameEn}</span>
                   <span>{t.packTokens}</span>
@@ -1598,7 +1598,7 @@ export default function PlansClient() {
 
                 {/* Pack rows */}
                 {packs.length === 0 && !showPackForm && (
-                  <div className="text-slate-500 text-sm text-center py-8">{t.noPacks}</div>
+                  <div className="text-slate-400 text-sm text-center py-8">{t.noPacks}</div>
                 )}
 
                 {packs.map((pack) => (
@@ -1619,7 +1619,7 @@ export default function PlansClient() {
                           On
                         </span>
                       ) : (
-                        <span className="text-xs text-slate-500 bg-slate-600/20 px-1.5 py-0.5 rounded-md border border-slate-600/30">
+                        <span className="text-xs text-slate-400 bg-slate-600/20 px-1.5 py-0.5 rounded-md border border-slate-600/30">
                           Off
                         </span>
                       )}
@@ -1702,7 +1702,7 @@ export default function PlansClient() {
                       className={`text-xs px-2 py-1 rounded-md border transition-colors ${
                         packForm.active
                           ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
-                          : 'bg-slate-600/20 text-slate-500 border-slate-600/30'
+                          : 'bg-slate-600/20 text-slate-400 border-slate-600/30'
                       }`}
                     >
                       {packForm.active ? 'On' : 'Off'}

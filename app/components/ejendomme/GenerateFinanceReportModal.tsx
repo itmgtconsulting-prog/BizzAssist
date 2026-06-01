@@ -267,8 +267,8 @@ export default function GenerateFinanceReportModal(props: Props): React.ReactEle
           </div>
         )}
         {!output && !error && !loading && (
-          <div className="text-center text-slate-500 py-12">
-            <Landmark className="w-12 h-12 mx-auto mb-3 text-slate-700" aria-hidden />
+          <div className="text-center text-slate-400 py-12">
+            <Landmark className="w-12 h-12 mx-auto mb-3 text-slate-400" aria-hidden />
             <p className="text-sm">
               {da
                 ? 'Vælg en tone og klik "Generer rapport" for at få en AI-genereret finansieringsbeskrivelse baseret på BBR, vurdering og tinglysning.'
@@ -286,7 +286,7 @@ export default function GenerateFinanceReportModal(props: Props): React.ReactEle
 
       {/* Disclaimer */}
       <div className="p-3 border-t border-slate-700 bg-slate-950/50">
-        <p className="text-[10px] text-slate-500 text-center">
+        <p className="text-[10px] text-slate-400 text-center">
           {da
             ? 'AI-genereret indhold. Verificér altid mod kildedata. Erstatter ikke en valuar-vurdering.'
             : 'AI-generated content. Always verify against source data. Does not replace a professional valuation.'}

@@ -231,7 +231,7 @@ export default function OnboardingModal() {
         <button
           onClick={complete}
           aria-label="Luk"
-          className="absolute top-4 right-4 text-slate-500 hover:text-white transition-colors z-10"
+          className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors z-10"
         >
           <X size={18} />
         </button>
@@ -350,7 +350,7 @@ export default function OnboardingModal() {
         <div className="px-6 pb-6 flex items-center justify-between">
           <button
             onClick={complete}
-            className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+            className="text-xs text-slate-400 hover:text-slate-300 transition-colors"
           >
             {da ? 'Spring over' : 'Skip'}
           </button>

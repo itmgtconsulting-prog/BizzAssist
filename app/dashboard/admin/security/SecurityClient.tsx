@@ -250,7 +250,7 @@ export default function SecurityClient() {
                 </div>
                 <p className="text-2xl font-bold text-white">
                   {idleMinutes}
-                  <span className="text-slate-500 text-sm font-normal ml-1">
+                  <span className="text-slate-400 text-sm font-normal ml-1">
                     {da ? 'min' : 'min'}
                   </span>
                 </p>
@@ -262,7 +262,7 @@ export default function SecurityClient() {
                 </div>
                 <p className="text-2xl font-bold text-white">
                   {absoluteHours}
-                  <span className="text-slate-500 text-sm font-normal ml-1">
+                  <span className="text-slate-400 text-sm font-normal ml-1">
                     {da ? 'timer' : 'h'}
                   </span>
                 </p>
@@ -274,7 +274,7 @@ export default function SecurityClient() {
                 </div>
                 <p className="text-2xl font-bold text-white">
                   {refreshDays}
-                  <span className="text-slate-500 text-sm font-normal ml-1">
+                  <span className="text-slate-400 text-sm font-normal ml-1">
                     {da ? 'dage' : 'd'}
                   </span>
                 </p>
@@ -326,7 +326,7 @@ export default function SecurityClient() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-slate-200 text-sm font-medium">{t.idleLabel}</p>
-                    <p className="text-slate-500 text-xs mt-0.5">{t.idleDesc}</p>
+                    <p className="text-slate-400 text-xs mt-0.5">{t.idleDesc}</p>
                   </div>
                   <FeedbackBanner settingKey="idle_timeout_minutes" />
                 </div>
@@ -343,7 +343,7 @@ export default function SecurityClient() {
                     }
                     className="w-28 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500 transition-colors"
                   />
-                  <span className="text-slate-500 text-sm">{da ? 'minutter' : 'minutes'}</span>
+                  <span className="text-slate-400 text-sm">{da ? 'minutter' : 'minutes'}</span>
                   <SaveBtn
                     settingKey="idle_timeout_minutes"
                     onClick={() => saveSetting('idle_timeout_minutes', idleMinutes)}
@@ -358,7 +358,7 @@ export default function SecurityClient() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-slate-200 text-sm font-medium">{t.absoluteLabel}</p>
-                    <p className="text-slate-500 text-xs mt-0.5">{t.absoluteDesc}</p>
+                    <p className="text-slate-400 text-xs mt-0.5">{t.absoluteDesc}</p>
                   </div>
                   <FeedbackBanner settingKey="absolute_timeout_hours" />
                 </div>
@@ -375,7 +375,7 @@ export default function SecurityClient() {
                     }
                     className="w-28 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500 transition-colors"
                   />
-                  <span className="text-slate-500 text-sm">{da ? 'timer' : 'hours'}</span>
+                  <span className="text-slate-400 text-sm">{da ? 'timer' : 'hours'}</span>
                   <SaveBtn
                     settingKey="absolute_timeout_hours"
                     onClick={() => saveSetting('absolute_timeout_hours', absoluteHours)}
@@ -390,7 +390,7 @@ export default function SecurityClient() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-slate-200 text-sm font-medium">{t.refreshLabel}</p>
-                    <p className="text-slate-500 text-xs mt-0.5">{t.refreshDesc}</p>
+                    <p className="text-slate-400 text-xs mt-0.5">{t.refreshDesc}</p>
                   </div>
                   <FeedbackBanner settingKey="refresh_token_days" />
                 </div>
@@ -407,7 +407,7 @@ export default function SecurityClient() {
                     }
                     className="w-28 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500 transition-colors"
                   />
-                  <span className="text-slate-500 text-sm">{da ? 'dage' : 'days'}</span>
+                  <span className="text-slate-400 text-sm">{da ? 'dage' : 'days'}</span>
                   <SaveBtn
                     settingKey="refresh_token_days"
                     onClick={() => saveSetting('refresh_token_days', refreshDays)}

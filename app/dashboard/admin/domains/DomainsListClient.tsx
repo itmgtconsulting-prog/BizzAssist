@@ -332,7 +332,7 @@ export default function DomainsListClient() {
             <div className="relative flex-1 max-w-xs min-w-[200px]">
               <Search
                 size={14}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
               />
               <input
                 type="text"
@@ -362,14 +362,14 @@ export default function DomainsListClient() {
         <div className="text-center py-20 text-red-400">{error}</div>
       ) : domains.length === 0 ? (
         <div className="text-center py-20">
-          <Building2 size={40} className="text-slate-600 mx-auto mb-3" />
+          <Building2 size={40} className="text-slate-400 mx-auto mb-3" />
           <p className="text-slate-400 text-sm">
             {da ? 'Ingen domains oprettet endnu.' : 'No domains created yet.'}
           </p>
         </div>
       ) : filteredDomains.length === 0 ? (
         <div className="text-center py-20">
-          <Search size={32} className="text-slate-600 mx-auto mb-3" />
+          <Search size={32} className="text-slate-400 mx-auto mb-3" />
           <p className="text-slate-400 text-sm">
             {da ? 'Ingen domains matcher filteret.' : 'No domains match the filter.'}
           </p>
@@ -430,7 +430,7 @@ export default function DomainsListClient() {
                     >
                       {d.name}
                     </button>
-                    <p className="text-slate-500 text-xs">{d.slug}</p>
+                    <p className="text-slate-400 text-xs">{d.slug}</p>
                   </td>
                   <td className="px-4 py-3">{statusBadge(d.status)}</td>
                   <td className="px-4 py-3 text-center text-slate-300">{d.memberCount}</td>
@@ -503,7 +503,7 @@ export default function DomainsListClient() {
       >
         <GripVertical
           size={14}
-          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-600 group-hover:text-blue-300"
+          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-400 group-hover:text-blue-300"
         />
       </div>
 

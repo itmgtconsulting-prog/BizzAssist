@@ -223,7 +223,7 @@ export default function PricingSection() {
                       {t.cta}
                     </Link>
                     {plan.requiresApproval && (
-                      <p className="text-center text-[11px] text-slate-500">{t.requiresApproval}</p>
+                      <p className="text-center text-[11px] text-slate-400">{t.requiresApproval}</p>
                     )}
                   </div>
                 </div>
@@ -234,13 +234,13 @@ export default function PricingSection() {
 
         {/* Empty state */}
         {!loading && plans.length === 0 && (
-          <p className="text-center text-slate-500">
+          <p className="text-center text-slate-400">
             {da ? 'Ingen aktive abonnementer fundet.' : 'No active plans found.'}
           </p>
         )}
 
         {/* Fine print */}
-        <p className="text-center text-slate-600 text-sm mt-10">
+        <p className="text-center text-slate-400 text-sm mt-10">
           {da
             ? 'Alle priser er inkl. moms. Ingen bindingsperiode — opsig når som helst.'
             : 'All prices include VAT. No lock-in — cancel anytime.'}

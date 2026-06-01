@@ -67,8 +67,8 @@ export default function EjerforeningSektion({ vejnavn, husnr, postnr, lang }: Pr
     return (
       <div className="bg-slate-800/40 rounded-xl p-4 mt-4 animate-pulse">
         <div className="flex items-center gap-2">
-          <Users className="w-4 h-4 text-slate-500" />
-          <span className="text-slate-500 text-sm">
+          <Users className="w-4 h-4 text-slate-400" />
+          <span className="text-slate-400 text-sm">
             {da ? 'Søger ejerforening...' : 'Searching HOA...'}
           </span>
         </div>
@@ -99,14 +99,14 @@ export default function EjerforeningSektion({ vejnavn, husnr, postnr, lang }: Pr
                 >
                   {f.navn}
                 </Link>
-                <p className="text-xs text-slate-500 mt-0.5">
+                <p className="text-xs text-slate-400 mt-0.5">
                   CVR {String(f.cvr).padStart(8, '0')}
                   {f.stiftet && ` · ${da ? 'Stiftet' : 'Founded'} ${f.stiftet.slice(0, 4)}`}
                 </p>
               </div>
               <Link
                 href={`/dashboard/companies/${String(f.cvr).padStart(8, '0')}`}
-                className="text-slate-500 hover:text-blue-400 transition-colors shrink-0"
+                className="text-slate-400 hover:text-blue-400 transition-colors shrink-0"
                 aria-label={da ? 'Åbn virksomhedsside' : 'Open company page'}
               >
                 <ExternalLink className="w-3.5 h-3.5" />
@@ -116,14 +116,14 @@ export default function EjerforeningSektion({ vejnavn, husnr, postnr, lang }: Pr
             {/* Formand */}
             {f.formand && (
               <p className="text-xs text-slate-400">
-                <span className="text-slate-500">{da ? 'Formand:' : 'Chairman:'}</span> {f.formand}
+                <span className="text-slate-400">{da ? 'Formand:' : 'Chairman:'}</span> {f.formand}
               </p>
             )}
 
             {/* Bestyrelse */}
             {f.bestyrelse.length > 0 && (
               <div className="mt-2">
-                <p className="text-xs text-slate-500 mb-1">
+                <p className="text-xs text-slate-400 mb-1">
                   {da ? 'Bestyrelse' : 'Board'} ({f.bestyrelse.length})
                 </p>
                 <div className="flex flex-wrap gap-1.5">

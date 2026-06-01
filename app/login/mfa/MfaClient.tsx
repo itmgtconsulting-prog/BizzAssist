@@ -167,7 +167,7 @@ export default function MfaClient() {
               onClick={async () => {
                 await signOut();
               }}
-              className="text-slate-500 hover:text-slate-300 text-sm transition-colors"
+              className="text-slate-400 hover:text-slate-300 text-sm transition-colors"
             >
               {lang === 'da' ? 'Brug en anden konto' : 'Use a different account'}
             </button>

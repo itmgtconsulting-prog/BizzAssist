@@ -129,7 +129,7 @@ export default function NewCaseClient({ domainId }: { domainId: string }) {
           <div className="mt-1">
             <CustomerSearchPicker value={customer} onChange={setCustomer} />
           </div>
-          <p className="text-[11px] text-slate-500 mt-1">
+          <p className="text-[11px] text-slate-400 mt-1">
             {da
               ? 'Søg efter en virksomhed (CVR) eller person allerede i BizzAssist.'
               : 'Search for a company (CVR) or person already in BizzAssist.'}

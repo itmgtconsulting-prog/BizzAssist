@@ -283,7 +283,7 @@ export default function DiagramSimple({ graph, lang }: DiagramVariantProps) {
   if (graph.nodes.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
-        <Building2 size={32} className="text-slate-600 mb-3" />
+        <Building2 size={32} className="text-slate-400 mb-3" />
         <p className="text-slate-400 text-sm">
           {da ? 'Ingen relationer fundet' : 'No relations found'}
         </p>
@@ -306,7 +306,7 @@ export default function DiagramSimple({ graph, lang }: DiagramVariantProps) {
       >
         <ZoomIn size={14} />
       </button>
-      <span className="text-[10px] text-slate-500 tabular-nums w-8 text-center">
+      <span className="text-[10px] text-slate-400 tabular-nums w-8 text-center">
         {Math.round(zoom * 100)}%
       </span>
       <button
@@ -552,7 +552,7 @@ export default function DiagramSimple({ graph, lang }: DiagramVariantProps) {
             >
               <Minimize2 size={12} />
               {da ? 'Luk' : 'Close'}
-              <kbd className="ml-1 text-[10px] text-slate-600 bg-slate-800 px-1 rounded">ESC</kbd>
+              <kbd className="ml-1 text-[10px] text-slate-400 bg-slate-800 px-1 rounded">ESC</kbd>
             </button>
           </div>
         </div>

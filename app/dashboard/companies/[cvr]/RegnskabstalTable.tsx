@@ -454,7 +454,7 @@ export default function RegnskabstalTable({
           )}
           <BarChart3 size={15} className="text-slate-400" />
           <span className="text-sm font-semibold text-slate-200">{title}</span>
-          {!rows[0]?.isPercent && <span className="text-xs text-slate-500 ml-1">(T DKK)</span>}
+          {!rows[0]?.isPercent && <span className="text-xs text-slate-400 ml-1">(T DKK)</span>}
         </button>
 
         {/* Tabel — skjult hvis sammenklappet */}
@@ -479,7 +479,7 @@ export default function RegnskabstalTable({
                           href={pdfUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-slate-500 hover:text-blue-400 transition-colors"
+                          className="text-slate-400 hover:text-blue-400 transition-colors"
                           title={
                             da
                               ? `Download ${y.aar} regnskab (PDF)`
@@ -640,7 +640,7 @@ export default function RegnskabstalTable({
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4">
               <div>
-                <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">
+                <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">
                   {da ? 'Revisionsfirma' : 'Audit firm'}
                 </p>
                 <p className="text-sm text-slate-200">
@@ -657,19 +657,19 @@ export default function RegnskabstalTable({
                 </p>
               </div>
               <div>
-                <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">
+                <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">
                   {da ? 'Revisor' : 'Auditor'}
                 </p>
                 <p className="text-sm text-slate-200">{senesteRevisor.revisorNavn ?? '—'}</p>
               </div>
               <div>
-                <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">
+                <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">
                   {da ? 'Underskriftssted' : 'Signed at'}
                 </p>
                 <p className="text-sm text-slate-200">{senesteRevisor.signaturSted ?? '—'}</p>
               </div>
               <div>
-                <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">
+                <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">
                   {da ? 'Underskriftsdato' : 'Signed date'}
                 </p>
                 <p className="text-sm text-slate-200">{senesteRevisor.signaturDato ?? '—'}</p>
@@ -714,7 +714,7 @@ export default function RegnskabstalTable({
             <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-700/30">
               <FileText size={15} className="text-slate-400" />
               <span className="text-sm font-semibold text-slate-200">{da ? 'Noter' : 'Notes'}</span>
-              <span className="text-[10px] text-slate-500">({aktive.length})</span>
+              <span className="text-[10px] text-slate-400">({aktive.length})</span>
             </div>
             <div className="divide-y divide-slate-700/20">
               {aktive.map((n) => {
@@ -738,11 +738,11 @@ export default function RegnskabstalTable({
                     >
                       {erLang &&
                         (isExpanded ? (
-                          <ChevronDown size={13} className="text-slate-500 flex-shrink-0" />
+                          <ChevronDown size={13} className="text-slate-400 flex-shrink-0" />
                         ) : (
-                          <ChevronRight size={13} className="text-slate-500 flex-shrink-0" />
+                          <ChevronRight size={13} className="text-slate-400 flex-shrink-0" />
                         ))}
-                      <span className="text-[10px] uppercase tracking-wider text-slate-500 font-medium">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-400 font-medium">
                         {n.label}
                       </span>
                     </button>
@@ -785,7 +785,7 @@ export default function RegnskabstalTable({
                     style={{ backgroundColor: color }}
                   />
                   {row.label}
-                  <XCircle size={11} className="text-slate-500 hover:text-red-400" />
+                  <XCircle size={11} className="text-slate-400 hover:text-red-400" />
                 </button>
               );
             })}

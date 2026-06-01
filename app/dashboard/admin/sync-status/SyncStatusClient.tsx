@@ -114,7 +114,7 @@ export default function SyncStatusClient() {
         </h1>
         <div className="flex items-center gap-3">
           {lastRefresh && (
-            <span className="text-[10px] text-slate-500">
+            <span className="text-[10px] text-slate-400">
               {da ? 'Opdateret' : 'Updated'} {lastRefresh.toLocaleTimeString('da-DK')}
             </span>
           )}
@@ -156,7 +156,7 @@ export default function SyncStatusClient() {
               {/* Stats */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-slate-500 text-xs">
+                  <span className="text-slate-400 text-xs">
                     {da ? 'Seneste sync' : 'Last sync'}
                   </span>
                   <span className="text-slate-300 text-xs font-medium">
@@ -172,7 +172,7 @@ export default function SyncStatusClient() {
                 </div>
 
                 <div className="flex items-center justify-between">
-                  <span className="text-slate-500 text-xs flex items-center gap-1">
+                  <span className="text-slate-400 text-xs flex items-center gap-1">
                     <Clock size={10} />
                     {da ? 'Alder' : 'Age'}
                   </span>
@@ -187,7 +187,7 @@ export default function SyncStatusClient() {
 
                 {src.rows_synced != null && (
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-500 text-xs">
+                    <span className="text-slate-400 text-xs">
                       {da ? 'Rows synced' : 'Rows synced'}
                     </span>
                     <span className="text-slate-300 text-xs font-medium">
@@ -198,7 +198,7 @@ export default function SyncStatusClient() {
 
                 {src.duration_ms != null && (
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-500 text-xs">{da ? 'Varighed' : 'Duration'}</span>
+                    <span className="text-slate-400 text-xs">{da ? 'Varighed' : 'Duration'}</span>
                     <span className="text-slate-300 text-xs font-medium">
                       {src.duration_ms < 1000
                         ? `${src.duration_ms} ms`
@@ -208,7 +208,7 @@ export default function SyncStatusClient() {
                 )}
 
                 <div className="flex items-center justify-between">
-                  <span className="text-slate-500 text-xs">{da ? 'Threshold' : 'Threshold'}</span>
+                  <span className="text-slate-400 text-xs">{da ? 'Threshold' : 'Threshold'}</span>
                   <span className="text-slate-400 text-xs">
                     {threshold} {da ? 'dage' : 'days'}
                   </span>
@@ -230,7 +230,7 @@ export default function SyncStatusClient() {
         })}
 
         {sources.length === 0 && !loading && (
-          <div className="col-span-full text-center py-12 text-slate-500 text-sm">
+          <div className="col-span-full text-center py-12 text-slate-400 text-sm">
             {da
               ? 'Ingen datakilder konfigureret i data_sync_status.'
               : 'No data sources configured in data_sync_status.'}
@@ -238,7 +238,7 @@ export default function SyncStatusClient() {
         )}
 
         {loading && sources.length === 0 && (
-          <div className="col-span-full flex items-center justify-center gap-2 py-12 text-slate-500 text-sm">
+          <div className="col-span-full flex items-center justify-center gap-2 py-12 text-slate-400 text-sm">
             <RefreshCw size={14} className="animate-spin" />
             {da ? 'Henter sync-status...' : 'Loading sync status...'}
           </div>

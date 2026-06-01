@@ -2355,7 +2355,7 @@ function DiagramForce({
         >
           +
         </button>
-        <span className="text-slate-500 text-[10px] w-8 text-center">
+        <span className="text-slate-400 text-[10px] w-8 text-center">
           {Math.round(zoom * 100)}%
         </span>
         <button
@@ -2410,7 +2410,7 @@ function DiagramForce({
         {/* BIZZ-1132: Expand / Collapse med niveau-indikator */}
         <span className="w-px h-5 bg-slate-700/50 mx-1" />
         {currentMaxLevel > 0 && (
-          <span className="text-slate-500 text-[9px] tabular-nums mr-1">
+          <span className="text-slate-400 text-[9px] tabular-nums mr-1">
             {lang === 'da' ? `Niv. ${currentMaxLevel}` : `Lv. ${currentMaxLevel}`}
           </span>
         )}
@@ -2448,7 +2448,7 @@ function DiagramForce({
           <ChevronsDownUp size={12} />
           {lang === 'da' ? 'Skjul' : 'Collapse'}
         </button>
-        <span className="text-slate-500 text-[10px] ml-2 hidden sm:inline">
+        <span className="text-slate-400 text-[10px] ml-2 hidden sm:inline">
           {lang === 'da'
             ? 'Træk noder · Hold og træk for panorering · Dobbeltklik for zoom'
             : 'Drag nodes · Hold & drag to pan · Double-click to zoom'}
@@ -3629,7 +3629,7 @@ function DiagramForce({
     const da = lang === 'da';
     return (
       <div className="absolute bottom-3 left-3 z-10 px-2.5 py-2 rounded-lg bg-slate-900/80 border border-slate-700/40 backdrop-blur-sm space-y-0.5">
-        <div className="text-[9px] text-slate-500 font-medium mb-1">
+        <div className="text-[9px] text-slate-400 font-medium mb-1">
           {da ? 'Linjetyper' : 'Line types'}
         </div>
         {/* Ejerskab (solid blue) */}
@@ -3659,7 +3659,7 @@ function DiagramForce({
         )}
         {/* Person-ejerskab — vises for alle ejere (enkelt- og multi-ejer) */}
         {hasPersonOwners && (
-          <div className="text-[9px] text-slate-500 font-medium mt-1">
+          <div className="text-[9px] text-slate-400 font-medium mt-1">
             {da ? 'Personligt ejede ejendomme:' : 'Personally owned properties:'}
           </div>
         )}
@@ -3717,7 +3717,7 @@ function DiagramForce({
                 item.link ? 'cursor-pointer' : 'cursor-default text-slate-400'
               }`}
             >
-              <span className="text-slate-500 mr-2">•</span>
+              <span className="text-slate-400 mr-2">•</span>
               {item.label?.startsWith('BFE ')
                 ? lang === 'da'
                   ? 'Ejendom'
@@ -3726,7 +3726,7 @@ function DiagramForce({
             </a>
           ))}
         </div>
-        <div className="px-5 py-2 border-t border-slate-700/40 text-[10px] text-slate-500">
+        <div className="px-5 py-2 border-t border-slate-700/40 text-[10px] text-slate-400">
           {overflowModalNode.overflowItems?.length ?? 0} {lang === 'da' ? 'enheder' : 'items'}
         </div>
       </div>
@@ -3753,7 +3753,7 @@ function DiagramForce({
           >
             <Minimize2 size={12} />
             {lang === 'da' ? 'Luk' : 'Close'}
-            <kbd className="ml-1 text-[10px] text-slate-600 bg-slate-800 px-1 rounded">ESC</kbd>
+            <kbd className="ml-1 text-[10px] text-slate-400 bg-slate-800 px-1 rounded">ESC</kbd>
           </button>
         </div>
         <div className="p-4 gap-3 flex flex-col flex-1 min-h-0">

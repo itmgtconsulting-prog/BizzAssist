@@ -84,7 +84,7 @@ export default function PaategningTimeline({ dokumentId, label, lang }: Props) {
         <div className="mt-2 ml-4 border-l border-slate-700/40 pl-3">
           {fejl && <div className="text-[10px] text-red-400">{fejl}</div>}
           {!fejl && revisioner !== null && revisioner.length === 0 && (
-            <div className="text-[10px] text-slate-500 italic">
+            <div className="text-[10px] text-slate-400 italic">
               {da ? 'Ingen registrerede påtegninger' : 'No registered amendments'}
             </div>
           )}
@@ -95,11 +95,11 @@ export default function PaategningTimeline({ dokumentId, label, lang }: Props) {
                   key={`${dokumentId}-rev-${r.nummer ?? i}`}
                   className="flex flex-wrap items-baseline gap-x-2 text-[10px] text-slate-400"
                 >
-                  {r.dato && <span className="text-slate-500 font-mono">{r.dato}</span>}
+                  {r.dato && <span className="text-slate-400 font-mono">{r.dato}</span>}
                   <span className="text-slate-200">{r.type}</span>
-                  {r.nummer != null && <span className="text-slate-600">#{r.nummer}</span>}
+                  {r.nummer != null && <span className="text-slate-400">#{r.nummer}</span>}
                   {r.beskrivelse && <span className="text-slate-400">— {r.beskrivelse}</span>}
-                  {r.anmelderNavn && <span className="text-slate-600">({r.anmelderNavn})</span>}
+                  {r.anmelderNavn && <span className="text-slate-400">({r.anmelderNavn})</span>}
                   {r.dokumentId && (
                     <a
                       href={`/api/tinglysning/dokument?uuid=${r.dokumentId}`}

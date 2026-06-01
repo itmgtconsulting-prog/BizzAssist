@@ -146,7 +146,7 @@ export default function UsersClient() {
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center">
-          <Shield size={32} className="mx-auto mb-3 text-slate-600" />
+          <Shield size={32} className="mx-auto mb-3 text-slate-400" />
           <p className="text-slate-400 text-sm">
             {da ? 'Kontrollerer adgang...' : 'Checking access...'}
           </p>
@@ -251,7 +251,7 @@ export default function UsersClient() {
               <div className="relative">
                 <Search
                   size={14}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
                 />
                 <input
                   type="text"
@@ -284,19 +284,19 @@ export default function UsersClient() {
         {/* Quick stats + add user button */}
         <div className="flex gap-3 mt-3">
           <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl px-3 py-2.5 flex-1">
-            <p className="text-slate-500 text-xs uppercase tracking-wide">
+            <p className="text-slate-400 text-xs uppercase tracking-wide">
               {da ? 'Aktive' : 'Active'}
             </p>
             <p className="text-emerald-400 text-sm font-bold">{activeCount}</p>
           </div>
           <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl px-3 py-2.5 flex-1">
-            <p className="text-slate-500 text-xs uppercase tracking-wide">
+            <p className="text-slate-400 text-xs uppercase tracking-wide">
               {da ? 'Afventer' : 'Pending'}
             </p>
             <p className="text-amber-400 text-sm font-bold">{pending.length}</p>
           </div>
           <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl px-3 py-2.5 flex-1">
-            <p className="text-slate-500 text-xs uppercase tracking-wide">
+            <p className="text-slate-400 text-xs uppercase tracking-wide">
               {da ? 'Tokens brugt' : 'Tokens used'}
             </p>
             <p className="text-blue-400 text-sm font-bold">{formatTokens(totalTokensUsed)}</p>
@@ -501,7 +501,7 @@ export default function UsersClient() {
                       <div className="flex items-center gap-2 text-xs text-slate-400">
                         <PlanIcon planId={u.subscription!.planId} />
                         <span>{da ? plan.nameDa : plan.nameEn}</span>
-                        <span className="text-slate-600">·</span>
+                        <span className="text-slate-400">·</span>
                         <span>
                           {da ? 'Oprettet' : 'Created'}{' '}
                           {new Date(u.createdAt).toLocaleDateString(da ? 'da-DK' : 'en-GB')}
@@ -586,7 +586,7 @@ export default function UsersClient() {
           </div>
           {others.length === 0 && pending.length === 0 ? (
             <div className="text-center py-16">
-              <Users size={32} className="mx-auto mb-3 text-slate-600" />
+              <Users size={32} className="mx-auto mb-3 text-slate-400" />
               <p className="text-slate-400 text-sm">
                 {da ? 'Ingen registrerede brugere endnu.' : 'No registered users yet.'}
               </p>
@@ -624,16 +624,16 @@ export default function UsersClient() {
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5">
+                      <div className="flex items-center gap-2 text-xs text-slate-400 mt-0.5">
                         <PlanIcon planId={sub.planId} />
                         <span>{da ? plan.nameDa : plan.nameEn}</span>
                         {plan.priceDkk > 0 && (
                           <>
-                            <span className="text-slate-600">·</span>
+                            <span className="text-slate-400">·</span>
                             <span>{plan.priceDkk} kr/md</span>
                           </>
                         )}
-                        <span className="text-slate-600">·</span>
+                        <span className="text-slate-400">·</span>
                         <span>
                           {da ? 'Siden' : 'Since'}{' '}
                           {new Date(u.createdAt).toLocaleDateString(da ? 'da-DK' : 'en-GB')}
@@ -644,7 +644,7 @@ export default function UsersClient() {
                     {/* Token mini-bar (if AI plan) */}
                     {plan.aiEnabled && (
                       <div className="w-32 shrink-0">
-                        <p className="text-slate-500 text-[10px] text-right mb-1">
+                        <p className="text-slate-400 text-[10px] text-right mb-1">
                           {isUnlim
                             ? `${formatTokens(sub.tokensUsedThisMonth)} / ∞`
                             : `${formatTokens(sub.tokensUsedThisMonth)} / ${formatTokens(totalT)}`}
@@ -695,7 +695,7 @@ export default function UsersClient() {
                     <div className="flex items-center gap-2 mb-0.5">
                       <p className="text-white font-semibold text-sm truncate">{u.email}</p>
                       {u.fullName && (
-                        <span className="text-slate-500 text-xs truncate">({u.fullName})</span>
+                        <span className="text-slate-400 text-xs truncate">({u.fullName})</span>
                       )}
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border bg-red-500/20 text-red-400 border-red-500/30">
                         <XCircle size={12} /> {da ? 'Intet abonnement' : 'No subscription'}
@@ -707,14 +707,14 @@ export default function UsersClient() {
                         </span>
                       )}
                     </div>
-                    <div className="flex items-center gap-2 text-xs text-slate-500">
+                    <div className="flex items-center gap-2 text-xs text-slate-400">
                       <span>
                         {da ? 'Oprettet' : 'Created'}{' '}
                         {new Date(u.createdAt).toLocaleDateString(da ? 'da-DK' : 'en-GB')}
                       </span>
                       {u.lastSignIn && (
                         <>
-                          <span className="text-slate-600">·</span>
+                          <span className="text-slate-400">·</span>
                           <span>
                             {da ? 'Sidst logget ind' : 'Last sign in'}{' '}
                             {new Date(u.lastSignIn).toLocaleDateString(da ? 'da-DK' : 'en-GB')}

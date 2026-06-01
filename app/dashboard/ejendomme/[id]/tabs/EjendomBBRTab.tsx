@@ -201,23 +201,23 @@ export default function EjendomBBRTab({
           return (
             <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
               <div className="flex items-center gap-3 px-3 py-2 text-xs">
-                <MapIcon size={12} className="text-slate-500 flex-shrink-0" />
+                <MapIcon size={12} className="text-slate-400 flex-shrink-0" />
                 <span className="text-slate-200 font-medium flex-shrink-0">
                   {dawaJordstykke?.matrikelnr ?? dawaAdresse.matrikelnr ?? '–'}
                 </span>
-                <span className="text-slate-500">·</span>
+                <span className="text-slate-400">·</span>
                 <span className="text-slate-400 truncate flex-1">
                   {dawaJordstykke?.ejerlav.navn ?? '–'}
                 </span>
                 {kommunenavn && (
                   <>
-                    <span className="text-slate-500">·</span>
+                    <span className="text-slate-400">·</span>
                     <span className="text-slate-400 flex-shrink-0">{kommunenavn}</span>
                   </>
                 )}
                 {grundareal && (
                   <>
-                    <span className="text-slate-500">·</span>
+                    <span className="text-slate-400">·</span>
                     <span className="text-slate-300 flex-shrink-0 font-medium">
                       {grundareal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²
                     </span>
@@ -292,11 +292,11 @@ export default function EjendomBBRTab({
                 ))}
               </div>
             ) : bygninger.length === 0 ? (
-              <div className="text-slate-500 text-sm text-center py-3">{t.noActiveBuildings}</div>
+              <div className="text-slate-400 text-sm text-center py-3">{t.noActiveBuildings}</div>
             ) : (
               <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
                 {/* Kolonneheader: ▶ | Byg# | Anvendelse | Opf.år | Bebygget | Samlet | Geo | Status */}
-                <div className="min-w-[700px] grid grid-cols-[28px_40px_1fr_68px_96px_96px_52px_90px] px-3 py-2 text-slate-500 text-xs font-medium border-b border-slate-700/30">
+                <div className="min-w-[700px] grid grid-cols-[28px_40px_1fr_68px_96px_96px_52px_90px] px-3 py-2 text-slate-400 text-xs font-medium border-b border-slate-700/30">
                   <span />
                   <span className="text-center">{t.nr}</span>
                   <span>{t.usage}</span>
@@ -409,10 +409,10 @@ export default function EjendomBBRTab({
                         {/* Chevron til venstre */}
                         <ChevronRight
                           size={14}
-                          className={`text-slate-500 transition-transform flex-shrink-0 ${aaben ? 'rotate-90' : ''}`}
+                          className={`text-slate-400 transition-transform flex-shrink-0 ${aaben ? 'rotate-90' : ''}`}
                         />
                         {/* Bygningsnummer */}
-                        <span className="text-slate-500 text-xs text-center font-mono">
+                        <span className="text-slate-400 text-xs text-center font-mono">
                           {b.bygningsnr ?? '–'}
                         </span>
                         <span className="text-slate-200 truncate pr-2 flex items-center gap-1.5">
@@ -536,7 +536,7 @@ export default function EjendomBBRTab({
                           <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs pt-2">
                             {detaljer.map(([lbl, val]) => (
                               <div key={lbl} className="flex justify-between gap-2">
-                                <span className="text-slate-500">{lbl}</span>
+                                <span className="text-slate-400">{lbl}</span>
                                 <span className="text-slate-300 text-right">{val}</span>
                               </div>
                             ))}
@@ -613,11 +613,11 @@ export default function EjendomBBRTab({
                 ))}
               </div>
             ) : enheder.length === 0 ? (
-              <div className="text-slate-500 text-sm text-center py-3">{t.noUnitsAvailable}</div>
+              <div className="text-slate-400 text-sm text-center py-3">{t.noUnitsAvailable}</div>
             ) : (
               <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
                 {/* Kolonneheader: ▶ | Byg.nr | Anvendelse | Areal | Værelser */}
-                <div className="min-w-[500px] grid grid-cols-[28px_44px_1fr_96px_72px] px-3 py-2 text-slate-500 text-xs font-medium border-b border-slate-700/30">
+                <div className="min-w-[500px] grid grid-cols-[28px_44px_1fr_96px_72px] px-3 py-2 text-slate-400 text-xs font-medium border-b border-slate-700/30">
                   <span />
                   <span className="text-center">{t.bldg}</span>
                   <span>{t.usage}</span>
@@ -675,9 +675,9 @@ export default function EjendomBBRTab({
                       >
                         <ChevronRight
                           size={14}
-                          className={`text-slate-500 transition-transform flex-shrink-0 ${aaben ? 'rotate-90' : ''}`}
+                          className={`text-slate-400 transition-transform flex-shrink-0 ${aaben ? 'rotate-90' : ''}`}
                         />
-                        <span className="text-slate-500 text-xs text-center font-mono">
+                        <span className="text-slate-400 text-xs text-center font-mono">
                           {bygningsnr ?? '–'}
                         </span>
                         <span className="min-w-0 pr-2">
@@ -685,7 +685,7 @@ export default function EjendomBBRTab({
                             {e.anvendelse || '–'}
                           </span>
                           {(e.etage || e.doer) && (
-                            <span className="block text-slate-500 text-xs truncate">
+                            <span className="block text-slate-400 text-xs truncate">
                               {[e.etage && `${e.etage}.`, e.doer].filter(Boolean).join(' ')}
                             </span>
                           )}
@@ -702,7 +702,7 @@ export default function EjendomBBRTab({
                           <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs pt-2">
                             {detaljer.map(([lbl, val]) => (
                               <div key={lbl} className="flex justify-between gap-2">
-                                <span className="text-slate-500">{lbl}</span>
+                                <span className="text-slate-400">{lbl}</span>
                                 <span className="text-slate-300 text-right">{val}</span>
                               </div>
                             ))}
@@ -825,17 +825,17 @@ export default function EjendomBBRTab({
                         <p className="text-white text-sm font-medium">
                           {da ? 'Matr.nr.' : 'Cad. no.'} {js.matrikelnummer}
                           {js.ejerlavskode && (
-                            <span className="text-slate-500 text-xs ml-2">
+                            <span className="text-slate-400 text-xs ml-2">
                               {da ? 'Ejerlav' : 'District'} {js.ejerlavskode}
                             </span>
                           )}
                         </p>
                         {js.ejerlavsnavn && (
-                          <p className="text-slate-500 text-xs">{js.ejerlavsnavn}</p>
+                          <p className="text-slate-400 text-xs">{js.ejerlavsnavn}</p>
                         )}
                         {/* BIZZ-499: Vis arealtype fra MAT */}
                         {js.arealtype && (
-                          <p className="text-slate-500 text-[10px]">
+                          <p className="text-slate-400 text-[10px]">
                             {da ? 'Arealtype' : 'Area type'}: {js.arealtype}
                           </p>
                         )}
@@ -845,7 +845,7 @@ export default function EjendomBBRTab({
                           ? `${js.registreretAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
                           : formatDKK(0)}
                       </p>
-                      <p className="text-slate-500 text-xs text-right">
+                      <p className="text-slate-400 text-xs text-right">
                         {js.vejareal != null && js.vejareal > 0
                           ? `${t.road}: ${js.vejareal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
                           : ''}
@@ -887,13 +887,13 @@ export default function EjendomBBRTab({
                 aria-expanded={historikOpen}
               >
                 <span className="text-slate-300 text-xs font-semibold uppercase tracking-wider flex items-center gap-1.5">
-                  <Clock size={12} className="text-slate-500" />
+                  <Clock size={12} className="text-slate-400" />
                   {da ? 'Matrikel-historik' : 'Cadastre history'}
                 </span>
                 {historikOpen ? (
-                  <ChevronDown size={14} className="text-slate-500" />
+                  <ChevronDown size={14} className="text-slate-400" />
                 ) : (
-                  <ChevronRight size={14} className="text-slate-500" />
+                  <ChevronRight size={14} className="text-slate-400" />
                 )}
               </button>
               {historikOpen && (
@@ -901,7 +901,7 @@ export default function EjendomBBRTab({
                   {historikLoader ? (
                     <div className="py-4 text-center">
                       <div className="inline-block w-4 h-4 border-2 border-slate-600 border-t-blue-400 rounded-full animate-spin" />
-                      <p className="text-slate-500 text-xs mt-2">
+                      <p className="text-slate-400 text-xs mt-2">
                         {da ? 'Henter historik…' : 'Loading history…'}
                       </p>
                     </div>
@@ -962,7 +962,7 @@ export default function EjendomBBRTab({
                                 </div>
                                 <p className="text-slate-300 text-xs">{evt.beskrivelse}</p>
                                 {evt.detaljer && (
-                                  <div className="mt-1 text-[10px] text-slate-500 space-y-0.5">
+                                  <div className="mt-1 text-[10px] text-slate-400 space-y-0.5">
                                     {evt.detaljer.arealFoer != null &&
                                       evt.detaljer.arealEfter != null && (
                                         <p>
@@ -997,7 +997,7 @@ export default function EjendomBBRTab({
                       </div>
                     </div>
                   ) : (
-                    <p className="py-3 text-slate-500 text-xs text-center">
+                    <p className="py-3 text-slate-400 text-xs text-center">
                       {da
                         ? 'Ingen historik fundet for denne ejendom'
                         : 'No history found for this property'}
@@ -1009,7 +1009,7 @@ export default function EjendomBBRTab({
           </div>
         ) : (
           <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl p-4 text-center">
-            <p className="text-slate-500 text-xs">{t.noCadastreData}</p>
+            <p className="text-slate-400 text-xs">{t.noCadastreData}</p>
           </div>
         )}
       </div>

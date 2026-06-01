@@ -226,7 +226,7 @@ function VirksomhedSection({ da, isAdmin }: { da: boolean; isAdmin: boolean }) {
           </p>
         )}
         {!isAdmin && (
-          <p className="text-slate-500 text-xs mt-1">
+          <p className="text-slate-400 text-xs mt-1">
             {da
               ? 'Kun administratorer kan ændre virksomhedsnavnet.'
               : 'Only administrators can change the company name.'}
@@ -241,7 +241,7 @@ function VirksomhedSection({ da, isAdmin }: { da: boolean; isAdmin: boolean }) {
         </label>
         <p className="text-white text-sm">
           {cvrNumber ?? (
-            <span className="text-slate-500 italic">{da ? 'Ikke angivet' : 'Not provided'}</span>
+            <span className="text-slate-400 italic">{da ? 'Ikke angivet' : 'Not provided'}</span>
           )}
         </p>
       </div>
@@ -476,7 +476,7 @@ function TeamSection({ da, isAdmin: _isAdminProp }: { da: boolean; isAdmin: bool
         <div className="flex items-center gap-2">
           <Users size={16} className="text-purple-400" />
           <h3 className="text-white font-semibold text-sm">{da ? 'Team' : 'Team'}</h3>
-          {members.length > 0 && <span className="text-xs text-slate-500">({members.length})</span>}
+          {members.length > 0 && <span className="text-xs text-slate-400">({members.length})</span>}
         </div>
         <div className="flex items-center gap-2">
           {canAdmin && (
@@ -590,7 +590,7 @@ function TeamSection({ da, isAdmin: _isAdminProp }: { da: boolean; isAdmin: bool
           ))}
         </div>
       ) : members.length === 0 ? (
-        <p className="text-slate-500 text-sm">
+        <p className="text-slate-400 text-sm">
           {da ? 'Ingen teammedlemmer fundet.' : 'No team members found.'}
         </p>
       ) : (
@@ -606,12 +606,12 @@ function TeamSection({ da, isAdmin: _isAdminProp }: { da: boolean; isAdmin: bool
                   <p className="text-white text-sm font-medium truncate">
                     {m.full_name || m.email}
                     {m.is_self && (
-                      <span className="ml-1.5 text-[10px] text-slate-500">
+                      <span className="ml-1.5 text-[10px] text-slate-400">
                         ({da ? 'dig' : 'you'})
                       </span>
                     )}
                   </p>
-                  {m.full_name && <p className="text-slate-500 text-xs truncate">{m.email}</p>}
+                  {m.full_name && <p className="text-slate-400 text-xs truncate">{m.email}</p>}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   {canAdmin && !m.is_self ? (
@@ -667,7 +667,7 @@ function TeamSection({ da, isAdmin: _isAdminProp }: { da: boolean; isAdmin: bool
               >
                 <div className="min-w-0">
                   <p className="text-white text-sm truncate">{inv.email}</p>
-                  <p className="text-slate-500 text-xs">
+                  <p className="text-slate-400 text-xs">
                     {roleLabel(inv.role)} · {da ? 'Udløber' : 'Expires'}{' '}
                     {new Date(inv.expires_at).toLocaleDateString(da ? 'da-DK' : 'en-GB')}
                   </p>
@@ -774,7 +774,7 @@ function AbonnementSection({ da }: { da: boolean }) {
           <p className="text-slate-400 text-xs font-medium mb-1">
             {da ? 'AI-assistent' : 'AI assistant'}
           </p>
-          <span className={`text-sm ${plan?.aiEnabled ? 'text-emerald-400' : 'text-slate-500'}`}>
+          <span className={`text-sm ${plan?.aiEnabled ? 'text-emerald-400' : 'text-slate-400'}`}>
             {plan?.aiEnabled
               ? da
                 ? 'Inkluderet'

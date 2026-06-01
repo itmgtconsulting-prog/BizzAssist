@@ -37,6 +37,7 @@ Incident response: `docs/security/INCIDENT_RESPONSE.md`
 - Bilingual: all strings in `app/lib/translations.ts`
 - Components must be mobile-ready (future React Native port)
 - No hardcoded tenant references in UI components
+- **Minimum text contrast (WCAG AA — non-negotiable, BIZZ-1943):** On the dark theme, informative text MUST be at least `text-slate-400` (#94a3b8 → 4.6:1). Never use `text-slate-500`/`600`/`700` for text meant to be read — they fail AA (3.0:1 / 2.1:1 / 1.5:1). `text-slate-500` is allowed ONLY via `placeholder:`/`disabled:` variants or on `cursor-not-allowed` (disabled) elements. Primary text: `text-white`/`text-slate-100`; secondary: `text-slate-300`; tertiary/muted: `text-slate-400` (absolute floor).
 
 ### Code Quality
 

@@ -420,7 +420,7 @@ export default function EjendomEjerforholdTab({
                               <span className="text-slate-200 truncate">{l.adresse}</span>
                             )}
                           </div>
-                          <div className="flex items-center gap-3 flex-shrink-0 text-slate-500">
+                          <div className="flex items-center gap-3 flex-shrink-0 text-slate-400">
                             {l.ejer && l.ejer !== '–' && (
                               <span className="text-slate-400">{l.ejer}</span>
                             )}
@@ -453,7 +453,7 @@ export default function EjendomEjerforholdTab({
                         ? 'Ejendommen er opdelt i ejerlejligheder'
                         : 'Property is divided into condominiums'}
                     </p>
-                    <p className="text-slate-500 text-xs mt-0.5">
+                    <p className="text-slate-400 text-xs mt-0.5">
                       {da
                         ? 'Lejlighedslisten kunne ikke hentes — ejerskabsdata vises for hovedejendommen.'
                         : 'Apartment list unavailable — showing ownership data for the parent property.'}
@@ -539,7 +539,7 @@ export default function EjendomEjerforholdTab({
                     return (
                       <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-4 py-3">
                         <p className="text-slate-300 text-sm">
-                          <span className="text-slate-500 text-xs mr-2">
+                          <span className="text-slate-400 text-xs mr-2">
                             {da ? 'Ejer (via Tinglysning):' : 'Owner (via Land Registry):'}
                           </span>
                           <span className="font-medium">{tlMatch.ejer}</span>
@@ -566,7 +566,7 @@ export default function EjendomEjerforholdTab({
                   // Lejligheder loader stadig eller ingen match fundet
                   if (lejlighederLoader) {
                     return (
-                      <div className="bg-slate-800/40 border border-slate-700/40 rounded-lg px-4 py-3 text-slate-500 text-xs">
+                      <div className="bg-slate-800/40 border border-slate-700/40 rounded-lg px-4 py-3 text-slate-400 text-xs">
                         {da
                           ? 'Henter ejerskabsdata via Tinglysning...'
                           : 'Loading ownership data via Land Registry...'}
@@ -648,7 +648,7 @@ export default function EjendomEjerforholdTab({
                     <p className="text-slate-300 text-sm font-medium">
                       {da ? 'Ingen ejerskabsdata tilgængelig' : 'No ownership data available'}
                     </p>
-                    <p className="text-slate-500 text-xs mt-0.5">
+                    <p className="text-slate-400 text-xs mt-0.5">
                       {da
                         ? `Ejerskabsdiagram og ejerkæde kunne ikke hentes for BFE ${effectiveBfe}. ` +
                           `Dette sker typisk for samlede faste ejendomme (SFE) hvor ejerskabsdata ` +

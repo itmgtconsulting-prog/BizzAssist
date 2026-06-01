@@ -704,7 +704,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
             <div className="flex items-center gap-1 shrink-0">
               {/* Collapse-toggle — kun desktop */}
               <button
-                className="hidden lg:flex text-slate-500 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                className="hidden lg:flex text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                 onClick={() => setSidebarCollapsed((c) => !c)}
                 aria-label={sidebarCollapsed ? 'Udvid sidebar' : 'Fold sidebar sammen'}
                 title={sidebarCollapsed ? 'Udvid' : 'Fold sammen'}
@@ -766,7 +766,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                     <Icon size={18} className={locked ? 'opacity-40' : ''} />
                     {!sidebarCollapsed && <span className="truncate">{label}</span>}
                     {!sidebarCollapsed && locked && (
-                      <Lock size={12} className="ml-auto text-slate-600" />
+                      <Lock size={12} className="ml-auto text-slate-400" />
                     )}
                   </Link>
                 );
@@ -836,7 +836,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
             {/* Global adressesøgning med DAWA autocomplete — disabled without active subscription */}
             <div className="relative hidden sm:block">
               <Search
-                className={`absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none ${isFunctional ? 'text-slate-500' : 'text-slate-700'}`}
+                className={`absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none ${isFunctional ? 'text-slate-400' : 'text-slate-400'}`}
                 size={16}
               />
               <input
@@ -908,7 +908,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                       setSøgÅben(false);
                     }}
                     aria-label="Ryd søgning"
-                    className="text-slate-600 hover:text-slate-300"
+                    className="text-slate-400 hover:text-slate-300"
                   >
                     <X size={14} />
                   </button>
@@ -1009,10 +1009,10 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                                   : 'bg-emerald-600/30';
                             const arrowIdle =
                               r.type === 'company'
-                                ? 'text-slate-600 group-hover:text-blue-400'
+                                ? 'text-slate-400 group-hover:text-blue-400'
                                 : r.type === 'person'
-                                  ? 'text-slate-600 group-hover:text-purple-400'
-                                  : 'text-slate-600 group-hover:text-emerald-400';
+                                  ? 'text-slate-400 group-hover:text-purple-400'
+                                  : 'text-slate-400 group-hover:text-emerald-400';
 
                             /** Icon per type */
                             const ResultIcon =
@@ -1142,7 +1142,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                         }}
                         className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-slate-800/80 transition-colors"
                       >
-                        <Search size={12} className="text-slate-600 shrink-0" />
+                        <Search size={12} className="text-slate-400 shrink-0" />
                         <div className="flex-1 min-w-0">
                           <p className="text-sm text-slate-300 truncate">
                             {rs.resultTitle ?? rs.query}
@@ -1816,7 +1816,7 @@ function PlanSelectionOverlay({
             </button>
           )}
 
-          <p className="text-center text-slate-600 text-xs mt-4">
+          <p className="text-center text-slate-400 text-xs mt-4">
             {da
               ? 'Du kan opgradere eller annullere dit abonnement til enhver tid.'
               : 'You can upgrade or cancel your subscription at any time.'}

@@ -134,7 +134,7 @@ export default function DomainCreateClient() {
             pattern="[a-z0-9\-]+"
             className="w-full bg-slate-900/60 border border-slate-700/50 rounded-lg px-3 py-2 text-white placeholder:text-slate-500 focus:border-blue-500 focus:outline-none font-mono text-sm"
           />
-          <p className="text-slate-500 text-xs mt-1">
+          <p className="text-slate-400 text-xs mt-1">
             {da
               ? 'Auto-genereret fra navnet. Må kun indeholde små bogstaver, tal og bindestreger.'
               : 'Auto-generated from name. Only lowercase letters, digits, and hyphens.'}
@@ -154,7 +154,7 @@ export default function DomainCreateClient() {
           >
             <option value="enterprise_domain">Enterprise Domain (4.999 DKK/md)</option>
           </select>
-          <p className="text-slate-500 text-xs mt-1">
+          <p className="text-slate-400 text-xs mt-1">
             {da
               ? 'Limits opdateres automatisk når Stripe-abonnementet aktiveres.'
               : 'Limits are refreshed automatically when the Stripe subscription activates.'}

@@ -297,7 +297,7 @@ export default function ComparePageClient() {
       <div className="flex items-center justify-between">
         <div>
           <div className="flex items-center gap-3 mb-1">
-            <Link href="/dashboard" className="text-slate-500 hover:text-white transition-colors">
+            <Link href="/dashboard" className="text-slate-400 hover:text-white transition-colors">
               <ArrowLeft size={18} />
             </Link>
             <h1 className="text-2xl font-bold text-white">{labels.title}</h1>
@@ -310,7 +310,7 @@ export default function ComparePageClient() {
       {properties.length < MAX_COMPARE && (
         <div className="relative max-w-md">
           <Search
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none"
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
             size={16}
           />
           <input
@@ -339,7 +339,7 @@ export default function ComparePageClient() {
                   <Building2 size={14} className="text-emerald-400 shrink-0" />
                   <div className="min-w-0">
                     <p className="text-sm text-white truncate">{r.tekst}</p>
-                    <p className="text-xs text-slate-500">
+                    <p className="text-xs text-slate-400">
                       {r.adresse.postnr} {r.adresse.postnrnavn}
                     </p>
                   </div>
@@ -389,13 +389,13 @@ export default function ComparePageClient() {
                   >
                     {p.adresse}
                   </Link>
-                  <p className="text-xs text-slate-500 mt-0.5">
+                  <p className="text-xs text-slate-400 mt-0.5">
                     {p.postnr} {p.by}
                   </p>
                 </div>
                 <button
                   onClick={() => removeProperty(p.id)}
-                  className="text-slate-600 hover:text-red-400 transition-colors shrink-0 mt-0.5"
+                  className="text-slate-400 hover:text-red-400 transition-colors shrink-0 mt-0.5"
                 >
                   <X size={14} />
                 </button>

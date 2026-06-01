@@ -176,7 +176,7 @@ function IntegrationsContent() {
               <CheckCircle className="w-3 h-3" /> Forbundet
             </span>
           ) : (
-            <span className="text-xs text-slate-500">Ikke forbundet</span>
+            <span className="text-xs text-slate-400">Ikke forbundet</span>
           )}
         </div>
 
@@ -186,7 +186,7 @@ function IntegrationsContent() {
               Forbundet som <span className="font-medium text-white">{gmailStatus.email}</span>
             </p>
             {gmailStatus.connectedAt && (
-              <p className="text-xs text-slate-500 mt-1">
+              <p className="text-xs text-slate-400 mt-1">
                 Tilsluttet {new Date(gmailStatus.connectedAt).toLocaleDateString('da-DK')}
               </p>
             )}
@@ -236,7 +236,7 @@ function IntegrationsContent() {
               <CheckCircle className="w-3 h-3" /> Forbundet
             </span>
           ) : (
-            <span className="text-xs text-slate-500">Ikke forbundet</span>
+            <span className="text-xs text-slate-400">Ikke forbundet</span>
           )}
         </div>
 
@@ -251,12 +251,12 @@ function IntegrationsContent() {
               <p className="text-xs text-slate-400 mt-0.5">{linkedInStatus.email}</p>
             )}
             {linkedInStatus.connectedAt && (
-              <p className="text-xs text-slate-500 mt-1">
+              <p className="text-xs text-slate-400 mt-1">
                 Tilsluttet {new Date(linkedInStatus.connectedAt).toLocaleDateString('da-DK')}
               </p>
             )}
             {linkedInStatus.expiresAt && (
-              <p className="text-xs text-slate-500 mt-0.5">
+              <p className="text-xs text-slate-400 mt-0.5">
                 Token udløber {new Date(linkedInStatus.expiresAt).toLocaleDateString('da-DK')}{' '}
                 (LinkedIn tokens varer 60 dage)
               </p>

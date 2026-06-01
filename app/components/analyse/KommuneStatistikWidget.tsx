@@ -66,7 +66,7 @@ export default function KommuneStatistikWidget({ kommunekode, lang }: Props) {
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 text-slate-500 text-xs py-2">
+      <div className="flex items-center gap-2 text-slate-400 text-xs py-2">
         <Loader2 size={12} className="animate-spin" />
         {da ? 'Henter kommunestatistik...' : 'Loading municipality stats...'}
       </div>
@@ -83,7 +83,7 @@ export default function KommuneStatistikWidget({ kommunekode, lang }: Props) {
       </h3>
       <div className="grid grid-cols-2 gap-3">
         <div className="bg-slate-900/50 rounded-lg p-3">
-          <p className="text-[10px] text-slate-500 uppercase tracking-wider">
+          <p className="text-[10px] text-slate-400 uppercase tracking-wider">
             {da ? 'Kommune' : 'Municipality'}
           </p>
           <p className="text-white text-sm font-bold flex items-center gap-1.5 mt-1">
@@ -92,7 +92,7 @@ export default function KommuneStatistikWidget({ kommunekode, lang }: Props) {
           </p>
         </div>
         <div className="bg-slate-900/50 rounded-lg p-3">
-          <p className="text-[10px] text-slate-500 uppercase tracking-wider">
+          <p className="text-[10px] text-slate-400 uppercase tracking-wider">
             {da ? 'Adresser' : 'Addresses'}
           </p>
           <p className="text-white text-sm font-bold mt-1">
@@ -101,7 +101,7 @@ export default function KommuneStatistikWidget({ kommunekode, lang }: Props) {
         </div>
       </div>
       {data.dar_synced_at && (
-        <p className="text-[9px] text-slate-600 mt-2 flex items-center gap-1">
+        <p className="text-[9px] text-slate-400 mt-2 flex items-center gap-1">
           <AlertCircle size={8} />
           {da ? 'Opdateret' : 'Updated'}: {new Date(data.dar_synced_at).toLocaleDateString('da-DK')}
         </p>

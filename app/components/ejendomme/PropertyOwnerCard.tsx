@@ -63,7 +63,7 @@ function mapEjendomstype(
 ): { label: string; color: string } {
   if (etage && etage.length > 0)
     return { label: 'Ejerlejlighed', color: 'text-purple-300 bg-purple-900/40' };
-  if (!type) return { label: 'Ukendt', color: 'text-slate-500 bg-slate-800' };
+  if (!type) return { label: 'Ukendt', color: 'text-slate-400 bg-slate-800' };
   const t = type.toLowerCase();
   if (t.includes('ejerlejlighed'))
     return { label: 'Ejerlejlighed', color: 'text-purple-300 bg-purple-900/40' };
@@ -218,7 +218,7 @@ export default function PropertyOwnerCard({
         <div className="flex items-start gap-2">
           <Home
             size={14}
-            className={`mt-0.5 flex-shrink-0 ${aktiv ? 'text-emerald-500' : 'text-slate-500'}`}
+            className={`mt-0.5 flex-shrink-0 ${aktiv ? 'text-emerald-500' : 'text-slate-400'}`}
           />
           <div className="min-w-0">
             <p className="text-white font-medium text-sm leading-snug truncate">{adresselinje}</p>
@@ -249,7 +249,7 @@ export default function PropertyOwnerCard({
             </span>
           )}
           {ejendom.kommune && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] text-slate-500 bg-slate-900/40">
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] text-slate-400 bg-slate-900/40">
               {ejendom.kommune}
             </span>
           )}
@@ -265,9 +265,9 @@ export default function PropertyOwnerCard({
               className="flex items-center gap-1.5"
               title={da ? 'Bolig-areal fra BBR' : 'Residential area from BBR'}
             >
-              <Home size={10} className="text-slate-500" />
+              <Home size={10} className="text-slate-400" />
               <span className="text-slate-300 text-[11px]">
-                <span className="text-slate-500">{da ? 'Bolig:' : 'Resi:'}</span>{' '}
+                <span className="text-slate-400">{da ? 'Bolig:' : 'Resi:'}</span>{' '}
                 {(enriched.boligAreal ?? 0).toLocaleString('da-DK')} m²
               </span>
             </div>
@@ -275,9 +275,9 @@ export default function PropertyOwnerCard({
               className="flex items-center gap-1.5"
               title={da ? 'Erhvervs-areal fra BBR' : 'Commercial area from BBR'}
             >
-              <Building2 size={10} className="text-slate-500" />
+              <Building2 size={10} className="text-slate-400" />
               <span className="text-slate-300 text-[11px]">
-                <span className="text-slate-500">{da ? 'Erhv:' : 'Comm:'}</span>{' '}
+                <span className="text-slate-400">{da ? 'Erhv:' : 'Comm:'}</span>{' '}
                 {(enriched.erhvervsAreal ?? 0).toLocaleString('da-DK')} m²
               </span>
             </div>
@@ -285,9 +285,9 @@ export default function PropertyOwnerCard({
               className="flex items-center gap-1.5"
               title={da ? 'Matrikel-areal fra DAWA' : 'Cadastral area from DAWA'}
             >
-              <MapIcon size={10} className="text-slate-500" />
+              <MapIcon size={10} className="text-slate-400" />
               <span className="text-slate-300 text-[11px]">
-                <span className="text-slate-500">{da ? 'Matr:' : 'Cad:'}</span>{' '}
+                <span className="text-slate-400">{da ? 'Matr:' : 'Cad:'}</span>{' '}
                 {(enriched.matrikelAreal ?? 0).toLocaleString('da-DK')} m²
               </span>
             </div>
@@ -333,8 +333,8 @@ export default function PropertyOwnerCard({
                     : 'Valuation unavailable — property may be retired, condominium without own valuation, or data not yet loaded'
                 }
               >
-                <TrendingUp size={10} className="text-slate-600" aria-hidden="true" />
-                <span className="text-slate-500 text-[11px] italic">
+                <TrendingUp size={10} className="text-slate-400" aria-hidden="true" />
+                <span className="text-slate-400 text-[11px] italic">
                   <span>{da ? 'Vurd.' : 'Val.'}:</span> –
                 </span>
               </div>
@@ -352,14 +352,14 @@ export default function PropertyOwnerCard({
                   : 'Latest purchase price from land registry (EJF Ejerskifte)'
               }
             >
-              <ShoppingCart size={10} className="text-slate-500" aria-hidden="true" />
+              <ShoppingCart size={10} className="text-slate-400" aria-hidden="true" />
               <span className="text-slate-300 text-[11px]">
-                <span className="text-slate-500">{da ? 'Købt' : 'Purchased'}:</span>{' '}
+                <span className="text-slate-400">{da ? 'Købt' : 'Purchased'}:</span>{' '}
                 {enriched.koebesum != null && enriched.koebesum > 0 ? (
                   <>
                     {formatDkkShort(enriched.koebesum)} DKK
                     {enriched.koebsdato && (
-                      <span className="text-slate-500 ml-0.5">
+                      <span className="text-slate-400 ml-0.5">
                         (
                         {new Date(enriched.koebsdato).toLocaleDateString('da-DK', {
                           year: 'numeric',
@@ -380,12 +380,12 @@ export default function PropertyOwnerCard({
                       year: 'numeric',
                       month: 'short',
                     })}{' '}
-                    <span className="text-slate-600">
+                    <span className="text-slate-400">
                       ({da ? 'pris ej oplyst' : 'price not disclosed'})
                     </span>
                   </span>
                 ) : (
-                  <span className="text-slate-600">{da ? '— ingen handel' : '— no sale'}</span>
+                  <span className="text-slate-400">{da ? '— ingen handel' : '— no sale'}</span>
                 )}
               </span>
             </div>
@@ -401,12 +401,12 @@ export default function PropertyOwnerCard({
                     : 'Sale price for this owner (EJF Ejerskifte to next owner)'
                 }
               >
-                <ShoppingCart size={10} className="text-slate-500" aria-hidden="true" />
+                <ShoppingCart size={10} className="text-slate-400" aria-hidden="true" />
                 <span className="text-slate-300 text-[11px]">
-                  <span className="text-slate-500">{da ? 'Solgt' : 'Sold'}:</span>{' '}
+                  <span className="text-slate-400">{da ? 'Solgt' : 'Sold'}:</span>{' '}
                   {formatDkkShort(enriched.salgesum)} DKK
                   {enriched.salgesdato && (
-                    <span className="text-slate-500 ml-0.5">
+                    <span className="text-slate-400 ml-0.5">
                       (
                       {new Date(enriched.salgesdato).toLocaleDateString('da-DK', {
                         year: 'numeric',
@@ -442,9 +442,9 @@ export default function PropertyOwnerCard({
                 className="flex items-center gap-1.5 col-span-2"
                 title={da ? 'Tinglyst ejer' : 'Registered owner'}
               >
-                <User size={10} className="text-slate-500" aria-hidden="true" />
+                <User size={10} className="text-slate-400" aria-hidden="true" />
                 <span className="text-slate-400 text-[11px] truncate">
-                  <span className="text-slate-500">{da ? 'Ejer' : 'Owner'}:</span>{' '}
+                  <span className="text-slate-400">{da ? 'Ejer' : 'Owner'}:</span>{' '}
                   {enriched.ejerNavn}
                 </span>
               </div>
@@ -487,7 +487,7 @@ export default function PropertyOwnerCard({
           <span className="flex items-center justify-between w-full px-3 py-1.5 rounded-lg bg-slate-700/30 text-slate-400 text-[10px] font-medium">
             <span>{da ? 'Solgt' : 'Sold'}</span>
             {ejendom.solgtDato && (
-              <span className="text-slate-500 text-[9px]">
+              <span className="text-slate-400 text-[9px]">
                 {new Date(ejendom.solgtDato).toLocaleDateString('da-DK', {
                   year: 'numeric',
                   month: 'short',
@@ -507,7 +507,7 @@ export default function PropertyOwnerCard({
       {aktiv && detailHref && (
         <ExternalLink
           size={11}
-          className="absolute top-3 right-3 text-slate-600 opacity-0 group-hover:opacity-100 group-hover:text-emerald-400 transition-opacity pointer-events-none"
+          className="absolute top-3 right-3 text-slate-400 opacity-0 group-hover:opacity-100 group-hover:text-emerald-400 transition-opacity pointer-events-none"
           aria-hidden="true"
         />
       )}

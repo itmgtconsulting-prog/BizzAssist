@@ -520,7 +520,7 @@ function StatusBadge({ status, da }: { status: ServiceStatus; da: boolean }) {
       },
       loading: {
         dot: 'bg-slate-600 animate-pulse',
-        text: 'text-slate-500',
+        text: 'text-slate-400',
         label: 'Checking…',
         labelDa: 'Tjekker…',
       },
@@ -569,7 +569,7 @@ function ServiceCard({
           </div>
           <div>
             <h3 className="text-white font-semibold text-sm leading-tight">{service.name}</h3>
-            <p className="text-slate-500 text-xs">{service.role}</p>
+            <p className="text-slate-400 text-xs">{service.role}</p>
           </div>
         </div>
         <a
@@ -577,7 +577,7 @@ function ServiceCard({
           target="_blank"
           rel="noopener noreferrer"
           aria-label={`Åbn ${service.name} ekstern dashboard`}
-          className="text-slate-600 hover:text-slate-300 transition-colors shrink-0 mt-0.5"
+          className="text-slate-400 hover:text-slate-300 transition-colors shrink-0 mt-0.5"
         >
           <ExternalLink size={14} />
         </a>
@@ -586,9 +586,9 @@ function ServiceCard({
       {/* Status */}
       <div>
         <StatusBadge status={state.status} da={da} />
-        {state.description && <p className="text-slate-500 text-xs mt-1">{state.description}</p>}
+        {state.description && <p className="text-slate-400 text-xs mt-1">{state.description}</p>}
         {service.note && !state.description && (
-          <p className="text-slate-600 text-xs mt-1 italic">{service.note}</p>
+          <p className="text-slate-400 text-xs mt-1 italic">{service.note}</p>
         )}
       </div>
 
@@ -618,7 +618,7 @@ function ServiceCard({
 
       {/* Last checked */}
       {state.checkedAt && (
-        <p className="text-slate-600 text-xs flex items-center gap-1 mt-auto">
+        <p className="text-slate-400 text-xs flex items-center gap-1 mt-auto">
           <Clock size={11} />
           {da ? 'Tjekket' : 'Checked'}{' '}
           {new Date(state.checkedAt).toLocaleTimeString(da ? 'da-DK' : 'en-GB', {
@@ -808,7 +808,7 @@ export default function ServiceManagementClient() {
         {/* BIZZ-739: Search — filters the service grid below */}
         <div className="flex gap-3 items-center mb-4">
           <div className="relative flex-1 max-w-xs">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
               value={searchQuery}
@@ -853,7 +853,7 @@ export default function ServiceManagementClient() {
                   <h2 className="text-slate-300 text-sm font-semibold flex items-center gap-2">
                     <Globe size={14} className="text-blue-400" />
                     {da ? 'Eksterne interfaces' : 'External interfaces'}
-                    <span className="text-slate-500 text-xs font-normal">
+                    <span className="text-slate-400 text-xs font-normal">
                       {da ? `${external.length} services` : `${external.length} services`}
                     </span>
                   </h2>
@@ -881,7 +881,7 @@ export default function ServiceManagementClient() {
                   <h2 className="text-slate-300 text-sm font-semibold flex items-center gap-2">
                     <Server size={14} className="text-purple-400" />
                     {da ? 'Interne komponenter' : 'Internal components'}
-                    <span className="text-slate-500 text-xs font-normal">
+                    <span className="text-slate-400 text-xs font-normal">
                       {da
                         ? `${internal.length} komponenter · iter 2 tilføjer live metrics`
                         : `${internal.length} components · iter 2 adds live metrics`}
@@ -910,7 +910,7 @@ export default function ServiceManagementClient() {
         })()}
 
         {/* Legend */}
-        <div className="flex flex-wrap gap-4 mt-8 text-xs text-slate-500">
+        <div className="flex flex-wrap gap-4 mt-8 text-xs text-slate-400">
           <span className="flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-emerald-400" />
             {da ? 'Operationel' : 'Operational'}

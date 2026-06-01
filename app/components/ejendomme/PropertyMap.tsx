@@ -1162,9 +1162,9 @@ function PropertyMap({
   if (!harToken) {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 text-center px-6 gap-3">
-        <MapIcon size={28} className="text-slate-500" />
+        <MapIcon size={28} className="text-slate-400" />
         <p className="text-slate-400 text-sm font-medium">Kortvisning ikke aktiveret</p>
-        <p className="text-slate-500 text-xs leading-relaxed max-w-xs">
+        <p className="text-slate-400 text-xs leading-relaxed max-w-xs">
           <code className="bg-slate-800 px-1 rounded text-blue-300">NEXT_PUBLIC_MAPBOX_TOKEN</code>{' '}
           mangler i dette miljø. Sæt den i Vercel Dashboard (Preview + Production) og redeploy,
           eller tilføj den til{' '}
@@ -1387,7 +1387,7 @@ function PropertyMap({
                 <span className="text-white text-xs font-semibold">Kortlag</span>
                 <button
                   onClick={() => setLagPanel(false)}
-                  className="text-slate-500 hover:text-slate-300 transition-colors p-0.5 rounded hover:bg-white/5"
+                  className="text-slate-400 hover:text-slate-300 transition-colors p-0.5 rounded hover:bg-white/5"
                 >
                   <X size={12} />
                 </button>

@@ -189,7 +189,7 @@ export default function ReleaseManagerClient() {
           ))}
         </div>
         <div className="bg-slate-900 rounded-lg p-4 font-mono text-sm text-slate-300 mb-4">
-          <p className="text-slate-500 mb-1"># Trigger via GitHub CLI:</p>
+          <p className="text-slate-400 mb-1"># Trigger via GitHub CLI:</p>
           <p>gh workflow run release-agent.yml --field version_bump={selectedBump}</p>
         </div>
         <a
@@ -245,8 +245,8 @@ export default function ReleaseManagerClient() {
                 <p className="text-xs text-slate-400 mt-0.5">{wf.description}</p>
               </div>
               <div className="flex items-center gap-2 shrink-0 ml-4">
-                <span className="text-xs text-slate-500 hidden sm:block">{wf.trigger}</span>
-                <ExternalLink className="w-3.5 h-3.5 text-slate-500 group-hover:text-blue-400 transition-colors" />
+                <span className="text-xs text-slate-400 hidden sm:block">{wf.trigger}</span>
+                <ExternalLink className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-400 transition-colors" />
               </div>
             </a>
           ))}

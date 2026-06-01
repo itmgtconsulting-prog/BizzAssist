@@ -219,7 +219,7 @@ export default function EjendomOverblikTab({
                     {erLejlighed ? (da ? 'Lejlighed' : 'Apartment') : t.cadastre}
                   </span>
                   {erLejlighed && tinglysningData?.ejerlejlighedNr && (
-                    <span className="text-slate-500 text-xs ml-1">
+                    <span className="text-slate-400 text-xs ml-1">
                       nr. {tinglysningData.ejerlejlighedNr}
                     </span>
                   )}
@@ -235,7 +235,7 @@ export default function EjendomOverblikTab({
                   <>
                     {/* Lejligheds-specifik info */}
                     <div>
-                      <p className="text-slate-500 text-xs leading-none mb-0.5">
+                      <p className="text-slate-400 text-xs leading-none mb-0.5">
                         {da ? 'Tinglyst areal' : 'Registered area'}
                       </p>
                       <p className="text-white text-sm font-medium">
@@ -245,19 +245,19 @@ export default function EjendomOverblikTab({
                       </p>
                     </div>
                     <div>
-                      <p className="text-slate-500 text-xs leading-none mb-0.5">
+                      <p className="text-slate-400 text-xs leading-none mb-0.5">
                         {da ? 'Værelser' : 'Rooms'}
                       </p>
                       <p className="text-white text-sm font-medium">{enhed?.vaerelser ?? '–'}</p>
                     </div>
                     <div>
-                      <p className="text-slate-500 text-xs leading-none mb-0.5">{t.cadastreNr}</p>
+                      <p className="text-slate-400 text-xs leading-none mb-0.5">{t.cadastreNr}</p>
                       <p className="text-white text-sm font-medium">
                         {dawaJordstykke?.matrikelnr ?? dawaAdresse.matrikelnr ?? '–'}
                       </p>
                     </div>
                     <div>
-                      <p className="text-slate-500 text-xs leading-none mb-0.5">{t.municipality}</p>
+                      <p className="text-slate-400 text-xs leading-none mb-0.5">{t.municipality}</p>
                       <p className="text-white text-sm">{kommunenavn ?? '–'}</p>
                     </div>
                   </>
@@ -265,7 +265,7 @@ export default function EjendomOverblikTab({
                   <>
                     {/* Standard matrikel-info */}
                     <div>
-                      <p className="text-slate-500 text-xs leading-none mb-0.5">{t.plotArea}</p>
+                      <p className="text-slate-400 text-xs leading-none mb-0.5">{t.plotArea}</p>
                       <p className="text-white text-sm font-medium">
                         {grundareal
                           ? `${grundareal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
@@ -273,19 +273,19 @@ export default function EjendomOverblikTab({
                       </p>
                     </div>
                     <div>
-                      <p className="text-slate-500 text-xs leading-none mb-0.5">{t.cadastreNr}</p>
+                      <p className="text-slate-400 text-xs leading-none mb-0.5">{t.cadastreNr}</p>
                       <p className="text-white text-sm font-medium">
                         {dawaJordstykke?.matrikelnr ?? dawaAdresse.matrikelnr ?? '–'}
                       </p>
                     </div>
                     <div>
-                      <p className="text-slate-500 text-xs leading-none mb-0.5">{t.ejerlav}</p>
+                      <p className="text-slate-400 text-xs leading-none mb-0.5">{t.ejerlav}</p>
                       <p className="text-white text-sm truncate">
                         {dawaJordstykke?.ejerlav.navn ?? '–'}
                       </p>
                     </div>
                     <div>
-                      <p className="text-slate-500 text-xs leading-none mb-0.5">{t.municipality}</p>
+                      <p className="text-slate-400 text-xs leading-none mb-0.5">{t.municipality}</p>
                       <p className="text-white text-sm">{kommunenavn ?? '–'}</p>
                     </div>
                   </>
@@ -333,10 +333,10 @@ export default function EjendomOverblikTab({
                   {/* Ejendomsværdi + Grundværdi side om side */}
                   <div className="grid grid-cols-2 gap-x-3">
                     <div>
-                      <p className="text-slate-500 text-xs leading-none mb-0.5">
+                      <p className="text-slate-400 text-xs leading-none mb-0.5">
                         {t.propertyValue}
                         {vurdering.aar && (
-                          <span className="ml-1 text-slate-600">({vurdering.aar})</span>
+                          <span className="ml-1 text-slate-400">({vurdering.aar})</span>
                         )}
                       </p>
                       <p className="text-white text-base font-bold">
@@ -352,16 +352,16 @@ export default function EjendomOverblikTab({
                       </p>
                       {vurdering.afgiftspligtigEjendomsvaerdi !== null &&
                         vurdering.afgiftspligtigEjendomsvaerdi !== vurdering.ejendomsvaerdi && (
-                          <p className="text-slate-500 text-xs mt-0.5">
+                          <p className="text-slate-400 text-xs mt-0.5">
                             {t.taxable}: {formatDKK(vurdering.afgiftspligtigEjendomsvaerdi)}
                           </p>
                         )}
                     </div>
                     <div>
-                      <p className="text-slate-500 text-xs leading-none mb-0.5">
+                      <p className="text-slate-400 text-xs leading-none mb-0.5">
                         {t.landValue}
                         {vurdering.aar && (
-                          <span className="ml-1 text-slate-600">({vurdering.aar})</span>
+                          <span className="ml-1 text-slate-400">({vurdering.aar})</span>
                         )}
                       </p>
                       <p className="text-white text-sm font-medium">
@@ -377,7 +377,7 @@ export default function EjendomOverblikTab({
                       </p>
                       {vurdering.afgiftspligtigGrundvaerdi !== null &&
                         vurdering.afgiftspligtigGrundvaerdi !== vurdering.grundvaerdi && (
-                          <p className="text-slate-500 text-xs mt-0.5">
+                          <p className="text-slate-400 text-xs mt-0.5">
                             {t.taxable}: {formatDKK(vurdering.afgiftspligtigGrundvaerdi)}
                           </p>
                         )}
@@ -386,7 +386,7 @@ export default function EjendomOverblikTab({
                   {/* Vurderet areal + Grundskyld side om side */}
                   <div className="grid grid-cols-2 gap-x-3 pt-1.5 border-t border-slate-700/30">
                     <div>
-                      <p className="text-slate-500 text-xs leading-none mb-0.5">{t.assessedArea}</p>
+                      <p className="text-slate-400 text-xs leading-none mb-0.5">{t.assessedArea}</p>
                       <p className="text-white text-sm font-medium">
                         {vurdering.vurderetAreal
                           ? `${vurdering.vurderetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
@@ -400,15 +400,15 @@ export default function EjendomOverblikTab({
                       if (faktiskGrundskyld !== null && faktiskGrundskyld > 0) {
                         return (
                           <div>
-                            <p className="text-slate-500 text-xs leading-none mb-0.5">
+                            <p className="text-slate-400 text-xs leading-none mb-0.5">
                               {t.groundTax}
-                              <span className="text-slate-600 ml-1">
+                              <span className="text-slate-400 ml-1">
                                 ({nyesteFrl!.vurderingsaar})
                               </span>
                             </p>
                             <p className="text-white text-sm font-medium flex items-center gap-1">
                               {formatDKK(faktiskGrundskyld)}
-                              <span className="text-slate-500 text-xs">{t.perYear}</span>
+                              <span className="text-slate-400 text-xs">{t.perYear}</span>
                             </p>
                           </div>
                         );
@@ -419,7 +419,7 @@ export default function EjendomOverblikTab({
                   </div>
                 </div>
               ) : forelobige.length === 0 ? (
-                <p className="text-slate-500 text-xs">
+                <p className="text-slate-400 text-xs">
                   {bbrLoader || !bbrData
                     ? t.awaitingBBR
                     : !bbrData.ejendomsrelationer?.[0]?.bfeNummer
@@ -442,13 +442,13 @@ export default function EjendomOverblikTab({
                       <span className="px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] text-amber-400 font-medium">
                         {t.preliminary}
                       </span>
-                      <span className="text-slate-600 text-[10px]">
+                      <span className="text-slate-400 text-[10px]">
                         {nyesteForelobig.vurderingsaar}
                       </span>
                     </div>
                     <div className="grid grid-cols-2 gap-x-2 gap-y-1">
                       <div>
-                        <p className="text-slate-500 text-xs leading-none mb-0.5">
+                        <p className="text-slate-400 text-xs leading-none mb-0.5">
                           {t.propertyValue}
                         </p>
                         <p className="text-amber-200 text-sm font-medium">
@@ -460,7 +460,7 @@ export default function EjendomOverblikTab({
                         </p>
                       </div>
                       <div>
-                        <p className="text-slate-500 text-xs leading-none mb-0.5">{t.landValue}</p>
+                        <p className="text-slate-400 text-xs leading-none mb-0.5">{t.landValue}</p>
                         <p className="text-amber-200 text-sm font-medium">
                           {nyesteForelobig.grundvaerdi
                             ? formatDKK(nyesteForelobig.grundvaerdi)
@@ -471,7 +471,7 @@ export default function EjendomOverblikTab({
                       </div>
                       {nyesteForelobig.grundskyld != null && nyesteForelobig.grundskyld > 0 && (
                         <div>
-                          <p className="text-slate-500 text-xs leading-none mb-0.5">
+                          <p className="text-slate-400 text-xs leading-none mb-0.5">
                             {t.groundTax}
                           </p>
                           <p className="text-amber-200 text-sm font-medium">
@@ -481,7 +481,7 @@ export default function EjendomOverblikTab({
                       )}
                       {nyesteForelobig.totalSkat != null && nyesteForelobig.totalSkat > 0 && (
                         <div>
-                          <p className="text-slate-500 text-xs leading-none mb-0.5">
+                          <p className="text-slate-400 text-xs leading-none mb-0.5">
                             {da ? 'Skat i alt' : 'Total tax'}
                           </p>
                           <p className="text-amber-200 text-sm font-medium">
@@ -535,14 +535,14 @@ export default function EjendomOverblikTab({
               </div>
               <div className="grid grid-cols-2 gap-x-2 gap-y-1">
                 <div>
-                  <p className="text-slate-500 text-xs leading-none mb-0.5">{t.buildingArea}</p>
+                  <p className="text-slate-400 text-xs leading-none mb-0.5">{t.buildingArea}</p>
                   {/* BIZZ-1083: Vis '–' i stedet for '0 m²' når BBR data mangler */}
                   <p className="text-white text-sm font-medium">
                     {totAreal ? `${totAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²` : '–'}
                   </p>
                 </div>
                 <div>
-                  <p className="text-slate-500 text-xs leading-none mb-0.5">{t.residentialArea}</p>
+                  <p className="text-slate-400 text-xs leading-none mb-0.5">{t.residentialArea}</p>
                   <p className="text-white text-sm font-medium">
                     {effektivBoligAreal
                       ? `${effektivBoligAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
@@ -550,13 +550,13 @@ export default function EjendomOverblikTab({
                   </p>
                 </div>
                 <div>
-                  <p className="text-slate-500 text-xs leading-none mb-0.5">{t.commercialArea}</p>
+                  <p className="text-slate-400 text-xs leading-none mb-0.5">{t.commercialArea}</p>
                   <p className="text-white text-sm font-medium">
                     {erhvAreal ? `${erhvAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²` : '–'}
                   </p>
                 </div>
                 <div>
-                  <p className="text-slate-500 text-xs leading-none mb-0.5">{t.basement}</p>
+                  <p className="text-slate-400 text-xs leading-none mb-0.5">{t.basement}</p>
                   <p className="text-white text-sm font-medium">
                     {kaelder ? `${kaelder.toLocaleString(da ? 'da-DK' : 'en-GB')} m²` : '–'}
                   </p>
@@ -589,7 +589,7 @@ export default function EjendomOverblikTab({
                 </div>
                 <div className="grid grid-cols-2 gap-x-2 gap-y-1">
                   <div>
-                    <p className="text-slate-500 text-xs leading-none mb-0.5">
+                    <p className="text-slate-400 text-xs leading-none mb-0.5">
                       {t.residentialUnits}
                     </p>
                     <p className="text-white text-sm font-medium">
@@ -597,13 +597,13 @@ export default function EjendomOverblikTab({
                     </p>
                   </div>
                   <div>
-                    <p className="text-slate-500 text-xs leading-none mb-0.5">
+                    <p className="text-slate-400 text-xs leading-none mb-0.5">
                       {t.commercialUnits}
                     </p>
                     <p className="text-white text-sm font-medium">0</p>
                   </div>
                   <div className="col-span-2">
-                    <p className="text-slate-500 text-xs leading-none mb-0.5">{t.totalUnitArea}</p>
+                    <p className="text-slate-400 text-xs leading-none mb-0.5">{t.totalUnitArea}</p>
                     <p className="text-white text-sm font-medium">
                       {lejligheder && antalLej > 0
                         ? `${lejligheder.reduce((s, l) => s + (l.areal ?? 0), 0).toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
@@ -625,15 +625,15 @@ export default function EjendomOverblikTab({
               </div>
               <div className="grid grid-cols-2 gap-x-2 gap-y-1">
                 <div>
-                  <p className="text-slate-500 text-xs leading-none mb-0.5">{t.residentialUnits}</p>
+                  <p className="text-slate-400 text-xs leading-none mb-0.5">{t.residentialUnits}</p>
                   <p className="text-white text-sm font-medium">{boligEnh}</p>
                 </div>
                 <div>
-                  <p className="text-slate-500 text-xs leading-none mb-0.5">{t.commercialUnits}</p>
+                  <p className="text-slate-400 text-xs leading-none mb-0.5">{t.commercialUnits}</p>
                   <p className="text-white text-sm font-medium">{erhvEnh}</p>
                 </div>
                 <div className="col-span-2">
-                  <p className="text-slate-500 text-xs leading-none mb-0.5">{t.totalUnitArea}</p>
+                  <p className="text-slate-400 text-xs leading-none mb-0.5">{t.totalUnitArea}</p>
                   <p className="text-white text-sm font-medium">
                     {totAreal
                       ? `${totAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
@@ -691,7 +691,7 @@ export default function EjendomOverblikTab({
                     key={label}
                     className="flex justify-between py-0.5 border-b border-slate-700/30 last:border-b-0"
                   >
-                    <span className="text-slate-500 text-xs">{label}</span>
+                    <span className="text-slate-400 text-xs">{label}</span>
                     <span className="text-white text-xs font-medium">{value}</span>
                   </div>
                 ))}
@@ -730,14 +730,14 @@ export default function EjendomOverblikTab({
               <code className="block bg-slate-900 rounded-lg px-3 py-2 mt-2 text-xs text-emerald-400 font-mono">
                 CVR_ES_USER=din@email.dk{'\n'}CVR_ES_PASS=dit_password
               </code>
-              <p className="text-slate-500 text-xs mt-2">{t.restartDevServer}</p>
+              <p className="text-slate-400 text-xs mt-2">{t.restartDevServer}</p>
             </div>
           ) : cvrApiDown ? (
             <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
               <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-2">
                 {t.companiesAtAddress}
               </p>
-              <p className="text-slate-500 text-sm">
+              <p className="text-slate-400 text-sm">
                 {da
                   ? 'CVR-data er midlertidigt utilgængeligt — prøv igen om lidt.'
                   : 'CVR data is temporarily unavailable — please try again shortly.'}
@@ -748,7 +748,7 @@ export default function EjendomOverblikTab({
               <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-2">
                 {t.companiesAtAddress}
               </p>
-              <div className="flex items-center gap-2 text-slate-500 text-sm">
+              <div className="flex items-center gap-2 text-slate-400 text-sm">
                 <div className="w-3.5 h-3.5 border border-slate-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
                 {t.loadingCVR}
               </div>
@@ -786,14 +786,14 @@ export default function EjendomOverblikTab({
                   <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
                     <p className="text-slate-200 text-sm font-semibold">{t.companiesAtAddress}</p>
                     <div className="flex items-center gap-3">
-                      <span className="text-slate-500 text-xs">
+                      <span className="text-slate-400 text-xs">
                         {aktive.length} {t.active}
                         {historiske.length > 0 && ` · ${historiske.length} ${t.historical}`}
                       </span>
                       {historiske.length > 0 && (
                         <button
                           onClick={() => setVisOphoerte(!visOphoerte)}
-                          className="flex items-center gap-1 text-slate-500 hover:text-slate-300 text-xs transition-colors"
+                          className="flex items-center gap-1 text-slate-400 hover:text-slate-300 text-xs transition-colors"
                         >
                           {visOphoerte ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
                           {visOphoerte
@@ -804,7 +804,7 @@ export default function EjendomOverblikTab({
                     </div>
                   </div>
                   {/* Tabelheader */}
-                  <div className="min-w-[500px] grid grid-cols-[1fr_1fr_120px_72px] px-4 py-2 text-slate-500 text-xs font-medium border-b border-slate-700/30">
+                  <div className="min-w-[500px] grid grid-cols-[1fr_1fr_120px_72px] px-4 py-2 text-slate-400 text-xs font-medium border-b border-slate-700/30">
                     <span>{t.company}</span>
                     <span>{t.industry}</span>
                     <span className="text-right">{t.period}</span>
@@ -828,7 +828,7 @@ export default function EjendomOverblikTab({
                             >
                               {v.navn}
                             </Link>
-                            <p className="text-slate-500 text-xs truncate">
+                            <p className="text-slate-400 text-xs truncate">
                               {v.type ? `${v.type} · ` : ''}CVR {v.cvr}
                             </p>
                           </div>
@@ -856,7 +856,7 @@ export default function EjendomOverblikTab({
               <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-1">
                 {t.companiesAtAddress}
               </p>
-              <p className="text-slate-500 text-sm">{t.noCVRFound}</p>
+              <p className="text-slate-400 text-sm">{t.noCVRFound}</p>
             </div>
           )}
         </>

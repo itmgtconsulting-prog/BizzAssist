@@ -296,7 +296,7 @@ export default async function SfeDetailPage({ params }: SfeDetailPageProps) {
                 <>
                   <Building2 size={18} className="text-emerald-400" />
                   Bygning {displayLabel}
-                  <span className="text-xs text-slate-500 font-normal">
+                  <span className="text-xs text-slate-400 font-normal">
                     ({items.length} enhed{items.length === 1 ? '' : 'er'})
                   </span>
                 </>
@@ -335,7 +335,7 @@ export default async function SfeDetailPage({ params }: SfeDetailPageProps) {
                           <Home size={14} className="text-blue-400 shrink-0" />
                           <div className="flex-1 min-w-0">
                             <p className="text-white text-sm font-medium truncate">{k.adresse}</p>
-                            <p className="text-slate-500 text-xs mt-0.5">
+                            <p className="text-slate-400 text-xs mt-0.5">
                               {unitLabel}
                               {k.areal != null && ` · ${k.areal} m²`}
                               {k.bfe > 0 && ` · BFE ${k.bfe}`}
@@ -362,7 +362,7 @@ export default async function SfeDetailPage({ params }: SfeDetailPageProps) {
             sektion øverst. Ejerandele per lejlighed via EjerandelBadge (client-
             lazy-load). Mapbox-kort med byg021-farvekodede markører parkes til
             iter 3 — kræver byg021-per-bygning data i jordstykke-response. */}
-        <div className="text-xs text-slate-600 italic pt-4">
+        <div className="text-xs text-slate-400 italic pt-4">
           Iter 3 parked: kort med farve-kodede bygnings-markører (kræver byg021- data pr. bygning i
           komponent-response).
         </div>

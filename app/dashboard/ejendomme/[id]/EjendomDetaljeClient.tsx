@@ -39,7 +39,7 @@ import {
 } from 'lucide-react';
 /** BIZZ-600: PropertyMap wraps mapbox-gl (browser-only) — dynamic() keeps mapbox-gl out of initial bundle */
 // prettier-ignore
-const PropertyMap = dynamic(/* mapbox-gl */ () => import('@/app/components/ejendomme/PropertyMap'), { ssr: false, loading: () => (<div className="w-full h-64 bg-slate-800/50 rounded-xl animate-pulse flex items-center justify-center"><span className="text-slate-500 text-sm">Indlæser kort...</span></div>) });
+const PropertyMap = dynamic(/* mapbox-gl */ () => import('@/app/components/ejendomme/PropertyMap'), { ssr: false, loading: () => (<div className="w-full h-64 bg-slate-800/50 rounded-xl animate-pulse flex items-center justify-center"><span className="text-slate-400 text-sm">Indlæser kort...</span></div>) });
 import { erDawaId, type DawaAdresse, type DawaJordstykke } from '@/app/lib/dawa';
 import { benyttelseskodeTilBoligtype } from '@/app/lib/benyttelseskoder';
 import { isAktivStatusLabel } from '@/app/lib/bbrKoder';
@@ -1637,7 +1637,7 @@ export default function EjendomDetaljeClient({
   if (erDAWA && dawaStatus === 'fejl') {
     return (
       <div className="flex flex-col items-center justify-center h-full text-center px-6">
-        <MapPin size={40} className="text-slate-600 mb-4" />
+        <MapPin size={40} className="text-slate-400 mb-4" />
         <h2 className="text-white text-xl font-semibold mb-2">{t.addressNotFound}</h2>
         <p className="text-slate-400 text-sm mb-6">{t.addressNotFoundDesc}</p>
         <Link
@@ -2129,7 +2129,7 @@ export default function EjendomDetaljeClient({
   // Show a not-found message and link back to search.
   return (
     <div className="flex flex-col items-center justify-center h-full text-center px-6">
-      <MapPin size={40} className="text-slate-600 mb-4" />
+      <MapPin size={40} className="text-slate-400 mb-4" />
       <h2 className="text-white text-xl font-semibold mb-2">{t.propertyNotFound}</h2>
       <p className="text-slate-400 text-sm mb-6">{t.propertyNotFoundDesc}</p>
       <Link

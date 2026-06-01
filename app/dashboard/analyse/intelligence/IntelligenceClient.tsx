@@ -359,7 +359,7 @@ export default function IntelligenceClient(): React.ReactElement {
               <h1 className="text-lg font-bold">Data Intelligence</h1>
             </div>
             {!response && (
-              <p className="text-slate-500 text-xs">
+              <p className="text-slate-400 text-xs">
                 Stil et spørgsmål i AI Chat til højre — resultater vises her.
               </p>
             )}
@@ -396,9 +396,9 @@ export default function IntelligenceClient(): React.ReactElement {
           {/* BIZZ-1716: Tom-tilstand — vis hint om AI Chat */}
           {!response && !loading && !error && (
             <div className="flex flex-col items-center justify-center py-20 text-center">
-              <BarChart3 className="w-16 h-16 text-slate-700 mb-4" />
+              <BarChart3 className="w-16 h-16 text-slate-400 mb-4" />
               <p className="text-slate-400 text-sm mb-2">Ingen data endnu</p>
-              <p className="text-slate-600 text-xs max-w-sm">
+              <p className="text-slate-400 text-xs max-w-sm">
                 Stil et spørgsmål i AI Chat til højre — fx &quot;Top 10 kommuner med flest
                 virksomheder&quot; — og resultatet vises her med graf og tabel.
               </p>
@@ -514,7 +514,7 @@ export default function IntelligenceClient(): React.ReactElement {
                       <span>•</span>
                       <button
                         onClick={() => setShowChart((v) => !v)}
-                        className={`flex items-center gap-1 transition-colors ${showChart ? 'text-emerald-400 hover:text-emerald-300' : 'text-slate-500 hover:text-slate-400'}`}
+                        className={`flex items-center gap-1 transition-colors ${showChart ? 'text-emerald-400 hover:text-emerald-300' : 'text-slate-400 hover:text-slate-400'}`}
                         aria-label={showChart ? 'Skjul graf' : 'Vis graf'}
                       >
                         <BarChart3 className="w-4 h-4" aria-hidden />
@@ -530,7 +530,7 @@ export default function IntelligenceClient(): React.ReactElement {
                               className={`text-xs px-2 py-0.5 rounded transition-colors ${
                                 chartType === t
                                   ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                                  : 'text-slate-500 hover:text-slate-300'
+                                  : 'text-slate-400 hover:text-slate-300'
                               }`}
                             >
                               {t === 'auto'
@@ -611,7 +611,7 @@ export default function IntelligenceClient(): React.ReactElement {
                           <tr aria-hidden>
                             <td
                               colSpan={response.columns.length}
-                              className="px-4 py-3 text-center text-xs text-slate-600 border-t border-slate-800"
+                              className="px-4 py-3 text-center text-xs text-slate-400 border-t border-slate-800"
                             >
                               — Slut på resultater ({response.rows.length}{' '}
                               {response.rows.length === 1 ? 'række' : 'rækker'}) —
@@ -628,7 +628,7 @@ export default function IntelligenceClient(): React.ReactElement {
                         ? `Viser de første 200 af ${response.rows.length} rækker`
                         : `${response.rows.length} ${response.rows.length === 1 ? 'række' : 'rækker'} i alt`}
                     </span>
-                    <span className="text-slate-600">
+                    <span className="text-slate-400">
                       {response.columns.length}{' '}
                       {response.columns.length === 1 ? 'kolonne' : 'kolonner'}
                     </span>

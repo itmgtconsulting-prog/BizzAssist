@@ -98,7 +98,7 @@ function VerifyEmailContent() {
 
       {/* Resend section */}
       <div className="border-t border-white/10 pt-6 space-y-3">
-        <p className="text-slate-500 text-xs">
+        <p className="text-slate-400 text-xs">
           {lang === 'da' ? 'Fik du ikke e-mailen?' : "Didn't receive the email?"}
         </p>
 

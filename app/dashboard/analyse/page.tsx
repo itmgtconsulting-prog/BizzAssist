@@ -121,7 +121,7 @@ export default function AnalyseLandingPage() {
                     {modul.label}
                   </h3>
                   {modul.requiredPlan && (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/5 text-slate-500 font-medium shrink-0">
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/5 text-slate-400 font-medium shrink-0">
                       {isEnt ? 'Enterprise' : 'Pro'}
                     </span>
                   )}

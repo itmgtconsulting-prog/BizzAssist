@@ -327,7 +327,7 @@ export default function TinglysningTab({
   if (fejl || !bfe)
     return (
       <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl p-6 text-center">
-        <Landmark size={32} className="text-slate-600 mx-auto mb-3" />
+        <Landmark size={32} className="text-slate-400 mx-auto mb-3" />
         <p className="text-slate-400 text-sm">
           {fejl ?? (da ? 'BFE-nummer mangler' : 'BFE number missing')}
         </p>
@@ -405,13 +405,13 @@ export default function TinglysningTab({
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3">
               {tingbogsattest.bfeNr && (
                 <div>
-                  <p className="text-slate-500 text-[10px] uppercase tracking-wider">BFE-nr.</p>
+                  <p className="text-slate-400 text-[10px] uppercase tracking-wider">BFE-nr.</p>
                   <p className="text-white text-sm font-medium">{tingbogsattest.bfeNr}</p>
                 </div>
               )}
               {tingbogsattest.ejerlejlighedNr && (
                 <div>
-                  <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                  <p className="text-slate-400 text-[10px] uppercase tracking-wider">
                     {da ? 'Ejerlejlighed nr.' : 'Unit no.'}
                   </p>
                   <p className="text-white text-sm font-medium">{tingbogsattest.ejerlejlighedNr}</p>
@@ -419,7 +419,7 @@ export default function TinglysningTab({
               )}
               {tingbogsattest.hovedNotering && (
                 <div>
-                  <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                  <p className="text-slate-400 text-[10px] uppercase tracking-wider">
                     {da ? 'Hovednotering' : 'Main notation'}
                   </p>
                   <p className="text-white text-sm">
@@ -429,7 +429,7 @@ export default function TinglysningTab({
               )}
               {tingbogsattest.fordelingstal && (
                 <div>
-                  <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                  <p className="text-slate-400 text-[10px] uppercase tracking-wider">
                     {da ? 'Fordelingstal' : 'Distribution ratio'}
                   </p>
                   <p className="text-white text-sm font-medium">
@@ -445,7 +445,7 @@ export default function TinglysningTab({
               <div className="mt-3 pt-3 border-t border-slate-700/30">
                 <button
                   onClick={() => setShowMatrikler(!showMatrikler)}
-                  className="flex items-center gap-1.5 text-slate-500 text-[10px] uppercase tracking-wider hover:text-slate-300 transition-colors w-full text-left"
+                  className="flex items-center gap-1.5 text-slate-400 text-[10px] uppercase tracking-wider hover:text-slate-300 transition-colors w-full text-left"
                 >
                   {showMatrikler ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
                   {da ? 'Matrikler' : 'Cadastral parcels'} ({tingbogsattest.matrikler.length})
@@ -469,7 +469,7 @@ export default function TinglysningTab({
               <div className="mt-3 pt-3 border-t border-slate-700/30">
                 <button
                   onClick={() => setShowNoteringer(!showNoteringer)}
-                  className="flex items-center gap-1.5 text-slate-500 text-[10px] uppercase tracking-wider hover:text-slate-300 transition-colors w-full text-left"
+                  className="flex items-center gap-1.5 text-slate-400 text-[10px] uppercase tracking-wider hover:text-slate-300 transition-colors w-full text-left"
                 >
                   {showNoteringer ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
                   {da ? 'Noteringstekst' : 'Notation text'} ({tingbogsattest.noteringer.length})
@@ -492,7 +492,7 @@ export default function TinglysningTab({
               <div className="mt-3 pt-3 border-t border-slate-700/30">
                 <button
                   onClick={() => setShowTillaeg(!showTillaeg)}
-                  className="flex items-center gap-1.5 text-slate-500 text-[10px] uppercase tracking-wider hover:text-slate-300 transition-colors w-full text-left"
+                  className="flex items-center gap-1.5 text-slate-400 text-[10px] uppercase tracking-wider hover:text-slate-300 transition-colors w-full text-left"
                 >
                   {showTillaeg ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
                   {da ? 'Tillægstekst' : 'Supplementary text'} (
@@ -533,7 +533,7 @@ export default function TinglysningTab({
           <span className="text-sm font-semibold text-slate-200">
             {da ? 'Tinglyste dokumenter' : 'Registered documents'}
           </span>
-          <span className="text-slate-600 text-xs">
+          <span className="text-slate-400 text-xs">
             ({adkomstGroups.length + haeftelser.length + servitutter.length})
           </span>
           <button
@@ -558,18 +558,18 @@ export default function TinglysningTab({
         {/* Kolonneheader: Expand | Pri | Dato | Dokument | Beløb | Type | PDF | Check */}
         <div className="grid grid-cols-[24px_36px_90px_1fr_100px_100px_50px_28px] gap-x-2 px-4 py-1.5 border-b border-slate-700/20">
           <span />
-          <span className="text-[10px] font-medium text-slate-500 uppercase">Pri.</span>
-          <span className="text-[10px] font-medium text-slate-500 uppercase">
+          <span className="text-[10px] font-medium text-slate-400 uppercase">Pri.</span>
+          <span className="text-[10px] font-medium text-slate-400 uppercase">
             {da ? 'Dato' : 'Date'}
           </span>
-          <span className="text-[10px] font-medium text-slate-500 uppercase">
+          <span className="text-[10px] font-medium text-slate-400 uppercase">
             {da ? 'Dokument' : 'Document'}
           </span>
-          <span className="text-[10px] font-medium text-slate-500 uppercase">
+          <span className="text-[10px] font-medium text-slate-400 uppercase">
             {da ? 'Beløb' : 'Amount'}
           </span>
-          <span className="text-[10px] font-medium text-slate-500 uppercase">Type</span>
-          <span className="text-[10px] font-medium text-slate-500 uppercase">
+          <span className="text-[10px] font-medium text-slate-400 uppercase">Type</span>
+          <span className="text-[10px] font-medium text-slate-400 uppercase">
             {da ? 'Dok.' : 'Doc.'}
           </span>
           <span />
@@ -611,9 +611,9 @@ export default function TinglysningTab({
                     }
                   >
                     {isOpen ? (
-                      <ChevronDown size={12} className="text-slate-500" />
+                      <ChevronDown size={12} className="text-slate-400" />
                     ) : (
-                      <ChevronRight size={12} className="text-slate-500" />
+                      <ChevronRight size={12} className="text-slate-400" />
                     )}
                     <span />
                     <span className="text-xs text-slate-400 tabular-nums whitespace-nowrap">
@@ -696,7 +696,7 @@ export default function TinglysningTab({
                       <div className="space-y-2 mt-1 mb-2">
                         {group.map((e, j) => (
                           <div key={j}>
-                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                            <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                               {da ? 'Adkomsthaver' : 'Owner'}
                               {group.length > 1 ? ` ${j + 1}` : ''}
                             </p>
@@ -724,7 +724,7 @@ export default function TinglysningTab({
                               <p className="text-slate-400 text-[11px]">{String(e.adresse)}</p>
                             )}
                             {e.andel && (
-                              <p className="text-slate-500 text-[11px]">{String(e.andel)}</p>
+                              <p className="text-slate-400 text-[11px]">{String(e.andel)}</p>
                             )}
                           </div>
                         ))}
@@ -734,7 +734,7 @@ export default function TinglysningTab({
                         {first.tinglysningsafgift != null &&
                           Number(first.tinglysningsafgift) > 0 && (
                             <div>
-                              <p className="text-slate-500 text-[10px] uppercase">
+                              <p className="text-slate-400 text-[10px] uppercase">
                                 {da ? 'Tinglysningsafgift' : 'Reg. fee'}
                               </p>
                               <p className="text-slate-200">
@@ -744,7 +744,7 @@ export default function TinglysningTab({
                           )}
                         {first.kontantKoebesum != null && Number(first.kontantKoebesum) > 0 && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase">
+                            <p className="text-slate-400 text-[10px] uppercase">
                               {da ? 'Købesum kontant' : 'Cash'}
                             </p>
                             <p className="text-slate-200">
@@ -754,7 +754,7 @@ export default function TinglysningTab({
                         )}
                         {first.iAltKoebesum != null && Number(first.iAltKoebesum) > 0 && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase">
+                            <p className="text-slate-400 text-[10px] uppercase">
                               {da ? 'Købesum i alt' : 'Total'}
                             </p>
                             <p className="text-slate-200">
@@ -764,7 +764,7 @@ export default function TinglysningTab({
                         )}
                         {first.koebsaftaledato && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase">
+                            <p className="text-slate-400 text-[10px] uppercase">
                               {da ? 'Købsaftaledato' : 'Agreement'}
                             </p>
                             <p className="text-slate-200">
@@ -774,7 +774,7 @@ export default function TinglysningTab({
                         )}
                         {first.overtagelsesdato && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase">
+                            <p className="text-slate-400 text-[10px] uppercase">
                               {da ? 'Overtagelsesdato' : 'Acquisition'}
                             </p>
                             <p className="text-slate-200">
@@ -784,7 +784,7 @@ export default function TinglysningTab({
                         )}
                         {first.ejendomKategori && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase">
+                            <p className="text-slate-400 text-[10px] uppercase">
                               {da ? 'Ejendomskategori' : 'Category'}
                             </p>
                             <p className="text-slate-200">{String(first.ejendomKategori)}</p>
@@ -792,7 +792,7 @@ export default function TinglysningTab({
                         )}
                         {first.handelKode && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase">
+                            <p className="text-slate-400 text-[10px] uppercase">
                               {da ? 'Handelsmetode' : 'Trade'}
                             </p>
                             <p className="text-slate-200">{String(first.handelKode)}</p>
@@ -801,7 +801,7 @@ export default function TinglysningTab({
                       </div>
                       {(first.anmelderNavn || first.anmelderEmail) && (
                         <div className="mt-2 pt-2 border-t border-slate-700/20 text-xs">
-                          <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                          <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                             {da ? 'Anmelder' : 'Registrant'}
                           </p>
                           {first.anmelderNavn && (
@@ -814,7 +814,7 @@ export default function TinglysningTab({
                       )}
                       {first.skoedeTekst && (
                         <div className="mt-2 pt-2 border-t border-slate-700/20 text-xs">
-                          <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                          <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                             {da ? 'Skødetekst' : 'Deed text'}
                           </p>
                           <p className="text-slate-400 leading-relaxed">
@@ -823,7 +823,7 @@ export default function TinglysningTab({
                         </div>
                       )}
                       {first.dokumentAlias && (
-                        <p className="text-slate-600 text-[10px] mt-2">
+                        <p className="text-slate-400 text-[10px] mt-2">
                           Dok: {String(first.dokumentAlias)}
                         </p>
                       )}
@@ -864,9 +864,9 @@ export default function TinglysningTab({
                     }
                   >
                     {isOpen ? (
-                      <ChevronDown size={12} className="text-slate-500" />
+                      <ChevronDown size={12} className="text-slate-400" />
                     ) : (
-                      <ChevronRight size={12} className="text-slate-500" />
+                      <ChevronRight size={12} className="text-slate-400" />
                     )}
                     <span className="text-xs text-slate-400 tabular-nums">
                       {String(h.prioritet ?? '')}
@@ -879,7 +879,7 @@ export default function TinglysningTab({
                         {haeftelseTypeMap[String(h.type)] ?? String(h.type)}
                       </span>
                       {Array.isArray(h.debitorer) && (h.debitorer as string[]).length > 0 && (
-                        <span className="text-[10px] text-slate-500 truncate block">
+                        <span className="text-[10px] text-slate-400 truncate block">
                           {(h.debitorer as string[]).join(', ')}
                         </span>
                       )}
@@ -945,7 +945,7 @@ export default function TinglysningTab({
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 mt-1">
                         {h.tinglysningsafgift != null && Number(h.tinglysningsafgift) > 0 && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase">
+                            <p className="text-slate-400 text-[10px] uppercase">
                               {da ? 'Tinglysningsafgift' : 'Reg. fee'}
                             </p>
                             <p className="text-slate-300">
@@ -955,7 +955,7 @@ export default function TinglysningTab({
                         )}
                         {h.pantebrevFormular && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase">
+                            <p className="text-slate-400 text-[10px] uppercase">
                               {da ? 'Pantebrev — Lovpligtig kode' : 'Mortgage form code'}
                             </p>
                             <p className="text-slate-300">{String(h.pantebrevFormular)}</p>
@@ -963,7 +963,7 @@ export default function TinglysningTab({
                         )}
                         {h.laantype && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase">
+                            <p className="text-slate-400 text-[10px] uppercase">
                               {da ? 'Lånetypekode' : 'Loan type'}
                             </p>
                             <p className="text-slate-300">
@@ -978,7 +978,7 @@ export default function TinglysningTab({
                         Array.isArray(h.laanevilkaar) &&
                         h.laanevilkaar.length > 0 && (
                           <div className="mt-3">
-                            <p className="text-slate-500 text-[10px] uppercase mb-1">
+                            <p className="text-slate-400 text-[10px] uppercase mb-1">
                               {da ? 'Særlige lånevilkår' : 'Special loan terms'}
                             </p>
                             <div className="flex flex-wrap gap-1.5">
@@ -1001,7 +1001,7 @@ export default function TinglysningTab({
                       {/* ── Kreditorbetegnelse ── */}
                       {h.kreditorbetegnelse && (
                         <div className="mt-3">
-                          <p className="text-slate-500 text-[10px] uppercase">
+                          <p className="text-slate-400 text-[10px] uppercase">
                             {da ? 'Kreditorbetegnelse' : 'Creditor ID'}
                           </p>
                           <p className="text-slate-300">{String(h.kreditorbetegnelse)}</p>
@@ -1012,7 +1012,7 @@ export default function TinglysningTab({
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 mt-3">
                         {h.kreditor && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase">
+                            <p className="text-slate-400 text-[10px] uppercase">
                               {da ? 'Kreditor' : 'Creditor'}
                             </p>
                             {h.kreditorCvr ? (
@@ -1028,7 +1028,7 @@ export default function TinglysningTab({
                           </div>
                         )}
                         <div>
-                          <p className="text-slate-500 text-[10px] uppercase">
+                          <p className="text-slate-400 text-[10px] uppercase">
                             {da
                               ? Array.isArray(h.debitorer) && h.debitorer.length > 1
                                 ? 'Debitorer'
@@ -1044,7 +1044,7 @@ export default function TinglysningTab({
                               </p>
                             ))
                           ) : (
-                            <p className="text-slate-500">—</p>
+                            <p className="text-slate-400">—</p>
                           )}
                         </div>
                       </div>
@@ -1052,18 +1052,18 @@ export default function TinglysningTab({
                       {/* ── Rente-sektion ── */}
                       {(h.rente != null || h.renteType || h.referenceRenteNavn) && (
                         <div className="mt-3 pt-2 border-t border-slate-700/20">
-                          <p className="text-slate-500 text-[10px] uppercase font-semibold mb-1.5">
+                          <p className="text-slate-400 text-[10px] uppercase font-semibold mb-1.5">
                             {da ? 'Rente' : 'Interest'}
                           </p>
                           <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 ml-2">
                             {h.renteType && (
                               <div>
-                                <p className="text-slate-500 text-[10px] uppercase">Type</p>
+                                <p className="text-slate-400 text-[10px] uppercase">Type</p>
                                 <p className="text-slate-300">{String(h.renteType)}</p>
                               </div>
                             )}
                             <div>
-                              <p className="text-slate-500 text-[10px] uppercase">
+                              <p className="text-slate-400 text-[10px] uppercase">
                                 {da ? 'Pålydende sats' : 'Nominal rate'}
                               </p>
                               <p className="text-slate-300">
@@ -1071,7 +1071,7 @@ export default function TinglysningTab({
                               </p>
                             </div>
                             <div>
-                              <p className="text-slate-500 text-[10px] uppercase">
+                              <p className="text-slate-400 text-[10px] uppercase">
                                 {da ? 'Foreløbig' : 'Preliminary'}
                               </p>
                               <p className="text-slate-300">
@@ -1080,7 +1080,7 @@ export default function TinglysningTab({
                             </div>
                             {h.referenceRenteNavn && (
                               <div className="col-span-2 sm:col-span-3">
-                                <p className="text-slate-500 text-[10px] uppercase">
+                                <p className="text-slate-400 text-[10px] uppercase">
                                   {da ? 'Referencerente' : 'Reference rate'}
                                 </p>
                                 <p className="text-slate-300">
@@ -1107,13 +1107,13 @@ export default function TinglysningTab({
                           const up = h.underpant as TLUnderpant;
                           return (
                             <div className="mt-3 pt-2 border-t border-slate-700/20">
-                              <p className="text-slate-500 text-[10px] uppercase font-semibold mb-1.5">
+                              <p className="text-slate-400 text-[10px] uppercase font-semibold mb-1.5">
                                 {da ? 'Underpant' : 'Sub-collateral'}
                               </p>
                               <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 ml-2">
                                 {up.prioritet != null && (
                                   <div>
-                                    <p className="text-slate-500 text-[10px] uppercase">
+                                    <p className="text-slate-400 text-[10px] uppercase">
                                       {da ? 'Prioritet' : 'Priority'}
                                     </p>
                                     <p className="text-slate-300">{up.prioritet}</p>
@@ -1121,7 +1121,7 @@ export default function TinglysningTab({
                                 )}
                                 {up.beloeb != null && (
                                   <div>
-                                    <p className="text-slate-500 text-[10px] uppercase">
+                                    <p className="text-slate-400 text-[10px] uppercase">
                                       {da ? 'Underpantsbeløb' : 'Sub-collateral amount'}
                                     </p>
                                     <p className="text-slate-300">
@@ -1131,7 +1131,7 @@ export default function TinglysningTab({
                                 )}
                                 {up.havere.length > 0 && (
                                   <div>
-                                    <p className="text-slate-500 text-[10px] uppercase">
+                                    <p className="text-slate-400 text-[10px] uppercase">
                                       {da ? 'Underpanthavere' : 'Sub-collateral holders'}
                                     </p>
                                     {up.havere.map((n, ni) => (
@@ -1150,7 +1150,7 @@ export default function TinglysningTab({
                       {Array.isArray(h.fuldmagtsbestemmelser) &&
                         (h.fuldmagtsbestemmelser as string[]).length > 0 && (
                           <div className="mt-3 pt-2 border-t border-slate-700/20">
-                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                            <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                               {da ? 'Fuldmagtsbestemmelser' : 'Power of attorney'}
                             </p>
                             {(h.fuldmagtsbestemmelser as string[]).map((navn, fi) => (
@@ -1164,7 +1164,7 @@ export default function TinglysningTab({
                       {/* ── Lånetekst / beskrivelse ── */}
                       {h.laaneTekst && (
                         <div className="mt-3 pt-2 border-t border-slate-700/20">
-                          <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                          <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                             {da ? 'Beskrivelse' : 'Description'}
                           </p>
                           <p className="text-slate-400 whitespace-pre-wrap leading-relaxed">
@@ -1173,7 +1173,7 @@ export default function TinglysningTab({
                         </div>
                       )}
                       {h.dokumentAlias && (
-                        <p className="text-slate-600 text-[10px] mt-2">
+                        <p className="text-slate-400 text-[10px] mt-2">
                           Dok: {String(h.dokumentAlias)}
                         </p>
                       )}
@@ -1227,7 +1227,7 @@ export default function TinglysningTab({
           !servituterTimedOut &&
           servitutter.length === 0 && (
             <div className="mx-4 my-3 flex items-center gap-2 rounded-md border border-slate-700/30 bg-slate-800/40 px-3 py-2">
-              <span className="text-slate-500 text-sm">
+              <span className="text-slate-400 text-sm">
                 {da
                   ? 'Ingen servitutter fundet for denne ejendom.'
                   : 'No easements found for this property.'}
@@ -1307,9 +1307,9 @@ export default function TinglysningTab({
                   >
                     {hasDetails ? (
                       isOpen ? (
-                        <ChevronDown size={12} className="text-slate-500" />
+                        <ChevronDown size={12} className="text-slate-400" />
                       ) : (
-                        <ChevronRight size={12} className="text-slate-500" />
+                        <ChevronRight size={12} className="text-slate-400" />
                       )
                     ) : (
                       <span />
@@ -1325,7 +1325,7 @@ export default function TinglysningTab({
                         {String(s.tekst ?? '') ||
                           (servitutTypeMap[String(s.type)] ?? String(s.type))}
                         {s.ogsaaLystPaa != null && Number(s.ogsaaLystPaa) > 1 && (
-                          <span className="text-slate-600 text-[10px] ml-1">
+                          <span className="text-slate-400 text-[10px] ml-1">
                             ({String(s.ogsaaLystPaa)} ejd.)
                           </span>
                         )}
@@ -1378,7 +1378,7 @@ export default function TinglysningTab({
                       )}
                     </span>
                     <span />
-                    <span className="text-xs text-slate-500 truncate">
+                    <span className="text-xs text-slate-400 truncate">
                       {servitutTypeMap[String(s.type)] ?? String(s.type)}
                     </span>
                     <div
@@ -1454,7 +1454,7 @@ export default function TinglysningTab({
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 mt-1">
                         {s.paataleberettiget && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase">
+                            <p className="text-slate-400 text-[10px] uppercase">
                               {da ? 'Påtaleberettiget' : 'Enforcement'}
                             </p>
                             {s.paataleberettigetCvr ? (
@@ -1477,7 +1477,7 @@ export default function TinglysningTab({
                           Array.isArray(s.indholdKoder) &&
                           s.indholdKoder.length > 0 && (
                             <div>
-                              <p className="text-slate-500 text-[10px] uppercase">
+                              <p className="text-slate-400 text-[10px] uppercase">
                                 {da ? 'Indhold' : 'Content'}
                               </p>
                               <p className="text-slate-300">
@@ -1487,7 +1487,7 @@ export default function TinglysningTab({
                           )}
                         {s.tinglysningsafgift != null && Number(s.tinglysningsafgift) > 0 && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase">
+                            <p className="text-slate-400 text-[10px] uppercase">
                               {da ? 'Afgift' : 'Fee'}
                             </p>
                             <p className="text-slate-300">
@@ -1498,7 +1498,7 @@ export default function TinglysningTab({
                       </div>
                       {s.tillaegsTekst && (
                         <div className="mt-2 pt-2 border-t border-slate-700/20">
-                          <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                          <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                             {da ? 'Tillægstekst' : 'Supplementary text'}
                           </p>
                           <div className="text-slate-400 leading-relaxed space-y-1">
@@ -1511,7 +1511,7 @@ export default function TinglysningTab({
                         </div>
                       )}
                       {s.dokumentAlias && (
-                        <p className="text-slate-600 text-[10px] mt-2">
+                        <p className="text-slate-400 text-[10px] mt-2">
                           Dok: {String(s.dokumentAlias)}
                         </p>
                       )}
@@ -1536,7 +1536,7 @@ export default function TinglysningTab({
                         return (
                           <div className="mt-2 pt-2 border-t border-slate-700/20">
                             <div className="flex items-center justify-between mb-1.5">
-                              <p className="text-slate-500 text-[10px] uppercase">
+                              <p className="text-slate-400 text-[10px] uppercase">
                                 {da ? 'Tilknyttede bilag' : 'Attachments'} ({visBilag.length})
                               </p>
                               {/* BIZZ-1056: Bulk download alle bilag som samlet PDF */}
@@ -1614,7 +1614,7 @@ export default function TinglysningTab({
                 <span />
                 <span className="text-sm text-slate-300 truncate">{b.tekst || 'Bilag'}</span>
                 <span />
-                <span className="text-xs text-slate-500">PDF</span>
+                <span className="text-xs text-slate-400">PDF</span>
                 <div className="flex items-center gap-1.5">
                   <a
                     href={`/api/tinglysning/dokument?bilag=${b.id}`}

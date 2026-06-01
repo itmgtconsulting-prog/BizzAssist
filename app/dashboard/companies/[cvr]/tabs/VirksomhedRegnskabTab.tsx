@@ -77,7 +77,7 @@ export default function VirksomhedRegnskabTab({
         !regnskabLoading &&
         (!regnskaber || regnskaber.length === 0) && (
           <EmptyState
-            ikon={<BarChart3 size={32} className="text-slate-600" />}
+            ikon={<BarChart3 size={32} className="text-slate-400" />}
             tekst={c.noFinancials}
           />
         )}
@@ -89,7 +89,7 @@ export default function VirksomhedRegnskabTab({
             <BarChart3 size={15} className="text-slate-400" />
             <span className="text-sm font-semibold text-slate-200">{c.annualReports}</span>
             {regnskabLoading && (
-              <span className="ml-2 text-xs text-slate-500 animate-pulse">{c.loading}</span>
+              <span className="ml-2 text-xs text-slate-400 animate-pulse">{c.loading}</span>
             )}
             <button
               onClick={async () => {
@@ -120,13 +120,13 @@ export default function VirksomhedRegnskabTab({
           </div>
           <div className="min-w-[420px] grid grid-cols-[28px_60px_1fr_80px] gap-x-3 px-4 py-1.5 border-b border-slate-700/20">
             <span />
-            <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+            <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">
               {lang === 'da' ? 'År' : 'Year'}
             </span>
-            <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+            <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">
               {lang === 'da' ? 'Dokument' : 'Document'}
             </span>
-            <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+            <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">
               {lang === 'da' ? 'Dok.' : 'Doc.'}
             </span>
           </div>
@@ -157,7 +157,7 @@ export default function VirksomhedRegnskabTab({
                     <span className="text-sm text-slate-300 tabular-nums">{year ?? '—'}</span>
                     <div className="min-w-0">
                       <p className="text-sm text-slate-200 truncate">{label}</p>
-                      <p className="text-xs text-slate-500 mt-0.5">
+                      <p className="text-xs text-slate-400 mt-0.5">
                         {regnsk.periodeStart ?? '?'} — {regnsk.periodeSlut ?? '?'}
                       </p>
                     </div>
@@ -234,7 +234,7 @@ export default function VirksomhedRegnskabTab({
                           </label>
                         </div>
                       )}
-                      {!pdfDok && !xbrlDok && <span className="text-slate-600 text-xs">—</span>}
+                      {!pdfDok && !xbrlDok && <span className="text-slate-400 text-xs">—</span>}
                     </div>
                   </div>
                 );
@@ -257,7 +257,7 @@ export default function VirksomhedRegnskabTab({
           ) : (
             !regnskabLoading && (
               <div className="px-4 py-6 text-center">
-                <p className="text-slate-500 text-sm">{c.noFinancials}</p>
+                <p className="text-slate-400 text-sm">{c.noFinancials}</p>
               </div>
             )
           )}

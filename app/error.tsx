@@ -28,7 +28,7 @@ export default function GlobalError({
           <p className="text-slate-400 text-sm mb-6">
             Der opstod en uventet fejl i applikationen.
             {error.digest && (
-              <span className="block mt-2 font-mono text-xs text-slate-600">
+              <span className="block mt-2 font-mono text-xs text-slate-400">
                 Fejlkode: {error.digest}
               </span>
             )}

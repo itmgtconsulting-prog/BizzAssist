@@ -262,7 +262,7 @@ export default function VirksomhedshandlerClient() {
           } ${align === 'right' ? 'flex-row-reverse' : ''}`}
         >
           {label}
-          <span className="text-[9px] text-slate-500">
+          <span className="text-[9px] text-slate-400">
             {active ? (sortDir === 'asc' ? '▲' : '▼') : '↕'}
           </span>
         </button>
@@ -678,7 +678,7 @@ export default function VirksomhedshandlerClient() {
           Selve filtrene bor nu i tabel-headeren (per-kolonne, lige over data). */}
       <div className="shrink-0 flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-4">
-          <p className="text-slate-500 text-xs">
+          <p className="text-slate-400 text-xs">
             {t(
               `${total.toLocaleString('da-DK')} kandidater fundet`,
               `${total.toLocaleString('en')} candidates found`
@@ -724,7 +724,7 @@ export default function VirksomhedshandlerClient() {
             >
               ← {t('Forrige', 'Previous')}
             </button>
-            <span className="text-xs text-slate-500 tabular-nums">
+            <span className="text-xs text-slate-400 tabular-nums">
               {offset + 1}–{Math.min(offset + LIMIT, total)} / {total.toLocaleString('da-DK')}
             </span>
             <button
@@ -780,7 +780,7 @@ export default function VirksomhedshandlerClient() {
                   </span>
                   <ChevronDown
                     size={11}
-                    className={`text-slate-500 transition-transform ${signalDropdownOpen ? 'rotate-180' : ''}`}
+                    className={`text-slate-400 transition-transform ${signalDropdownOpen ? 'rotate-180' : ''}`}
                   />
                 </button>
                 {signalDropdownOpen && (
@@ -851,7 +851,7 @@ export default function VirksomhedshandlerClient() {
                   </span>
                   <ChevronDown
                     size={11}
-                    className={`text-slate-500 transition-transform ${brancheDropdownOpen ? 'rotate-180' : ''}`}
+                    className={`text-slate-400 transition-transform ${brancheDropdownOpen ? 'rotate-180' : ''}`}
                   />
                 </button>
                 {brancheDropdownOpen && (
@@ -868,7 +868,7 @@ export default function VirksomhedshandlerClient() {
                     </div>
                     <div className="overflow-auto py-1">
                       {brancheOptions.length === 0 ? (
-                        <p className="px-3 py-2 text-xs text-slate-500">
+                        <p className="px-3 py-2 text-xs text-slate-400">
                           {t('Indlæser brancher...', 'Loading industries...')}
                         </p>
                       ) : (
@@ -900,7 +900,7 @@ export default function VirksomhedshandlerClient() {
                                 className="accent-indigo-500 w-3.5 h-3.5 shrink-0"
                               />
                               <span className="truncate flex-1">{b.branche_tekst}</span>
-                              <span className="text-slate-500 tabular-nums">
+                              <span className="text-slate-400 tabular-nums">
                                 {b.antal.toLocaleString('da-DK')}
                               </span>
                             </label>
@@ -914,7 +914,7 @@ export default function VirksomhedshandlerClient() {
                           setSelectedBrancher(new Set());
                           setOffset(0);
                         }}
-                        className="text-left px-3 py-1.5 text-xs text-slate-500 hover:text-white border-t border-slate-700/50"
+                        className="text-left px-3 py-1.5 text-xs text-slate-400 hover:text-white border-t border-slate-700/50"
                       >
                         {t('Nulstil branchevalg', 'Reset industry selection')}
                       </button>
@@ -1188,7 +1188,7 @@ export default function VirksomhedshandlerClient() {
                   </span>
                   <ChevronDown
                     size={11}
-                    className={`text-slate-500 transition-transform ${confidenceDropdownOpen ? 'rotate-180' : ''}`}
+                    className={`text-slate-400 transition-transform ${confidenceDropdownOpen ? 'rotate-180' : ''}`}
                   />
                 </button>
                 {confidenceDropdownOpen && (
@@ -1265,7 +1265,7 @@ export default function VirksomhedshandlerClient() {
               ))
             ) : kandidater.length === 0 ? (
               <tr>
-                <td colSpan={13} className="px-4 py-12 text-center text-slate-500">
+                <td colSpan={13} className="px-4 py-12 text-center text-slate-400">
                   {t(
                     'Ingen kandidater fundet med de valgte filtre',
                     'No candidates found with selected filters'
@@ -1319,7 +1319,7 @@ export default function VirksomhedshandlerClient() {
                         <div className="text-white font-medium truncate max-w-[200px] group-hover:text-indigo-300 group-hover:underline transition-colors">
                           {k.virksomhed_navn ?? k.virksomhed_cvr}
                         </div>
-                        <span className="text-slate-500 text-[10px] font-mono">
+                        <span className="text-slate-400 text-[10px] font-mono">
                           CVR {k.virksomhed_cvr}
                         </span>
                       </Link>
@@ -1344,12 +1344,12 @@ export default function VirksomhedshandlerClient() {
                     </td>
                     <td className="px-4 py-3 text-slate-300 text-xs">
                       {fraPct}% → {tilPct}%
-                      <span className="text-slate-500 ml-1">(Δ{delta} pp)</span>
+                      <span className="text-slate-400 ml-1">(Δ{delta} pp)</span>
                     </td>
                     <td className="px-4 py-3 text-slate-300 text-xs tabular-nums">
                       {(k.aendringsdato ?? k.gyldig_til ?? k.gyldig_fra)?.slice(0, 10) ?? '—'}
                     </td>
-                    <td className="px-4 py-3 text-slate-500 text-xs">
+                    <td className="px-4 py-3 text-slate-400 text-xs">
                       {k.sidst_opdateret?.slice(0, 10) ?? '—'}
                     </td>
                     <td className="px-4 py-3 text-xs">
@@ -1358,14 +1358,14 @@ export default function VirksomhedshandlerClient() {
                           {formatDKK(berig.estimeret_vaerdi.mid)}
                         </span>
                       ) : (
-                        <span className="text-slate-600">—</span>
+                        <span className="text-slate-400">—</span>
                       )}
                     </td>
                     <td className="px-4 py-3 text-xs">
                       {berig ? (
                         <ConfidenceBadge level={berig.confidence} />
                       ) : (
-                        <span className="text-slate-600">—</span>
+                        <span className="text-slate-400">—</span>
                       )}
                     </td>
                     <td className="px-4 py-3">
@@ -1402,7 +1402,7 @@ export default function VirksomhedshandlerClient() {
               <tr>
                 <td
                   colSpan={13}
-                  className="px-4 py-3 text-center text-[11px] text-slate-500 bg-slate-800/20"
+                  className="px-4 py-3 text-center text-[11px] text-slate-400 bg-slate-800/20"
                 >
                   {offset + LIMIT >= total
                     ? t(
@@ -1431,7 +1431,7 @@ export default function VirksomhedshandlerClient() {
           >
             ← {t('Forrige', 'Previous')}
           </button>
-          <span className="text-xs text-slate-500">
+          <span className="text-xs text-slate-400">
             {offset + 1}–{Math.min(offset + LIMIT, total)} / {total}
           </span>
           <button

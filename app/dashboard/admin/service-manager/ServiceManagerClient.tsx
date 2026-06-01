@@ -363,14 +363,14 @@ function FixStatusBadge({ status }: { status: FixRecord['status'] }) {
  */
 function DiffViewer({ diff }: { diff: string }) {
   if (!diff.trim()) {
-    return <p className="text-slate-500 text-xs italic px-3 py-2">Intet diff tilgængeligt.</p>;
+    return <p className="text-slate-400 text-xs italic px-3 py-2">Intet diff tilgængeligt.</p>;
   }
 
   return (
     <pre className="text-xs font-mono overflow-x-auto leading-5 select-text">
       {diff.split('\n').map((line, i) => {
         let cls = 'text-slate-400';
-        if (line.startsWith('+++') || line.startsWith('---')) cls = 'text-slate-500';
+        if (line.startsWith('+++') || line.startsWith('---')) cls = 'text-slate-400';
         else if (line.startsWith('@@')) cls = 'text-blue-400';
         else if (line.startsWith('+')) cls = 'text-emerald-400 bg-emerald-500/5';
         else if (line.startsWith('-')) cls = 'text-red-400 bg-red-500/5';
@@ -468,7 +468,7 @@ function FixCard({
               {da ? 'Afvisningsgrund:' : 'Rejection reason:'} {fix.rejection_reason}
             </p>
           )}
-          <p className="text-slate-600 text-xs mt-1.5">
+          <p className="text-slate-400 text-xs mt-1.5">
             {new Date(fix.created_at).toLocaleString(da ? 'da-DK' : 'en-GB', {
               day: '2-digit',
               month: 'short',
@@ -531,7 +531,7 @@ function FixCard({
               </button>
               <button
                 onClick={() => setShowRejectInput(false)}
-                className="text-slate-500 hover:text-slate-300 text-xs px-2"
+                className="text-slate-400 hover:text-slate-300 text-xs px-2"
               >
                 {da ? 'Annuller' : 'Cancel'}
               </button>
@@ -566,7 +566,7 @@ function FixCard({
                 ? 'Anvend Hotfix'
                 : 'Apply Hotfix'}
           </button>
-          <p className="text-slate-500 text-xs">
+          <p className="text-slate-400 text-xs">
             {da
               ? 'Opretter branch, committer og pusher til remote'
               : 'Creates branch, commits and pushes to remote'}
@@ -589,7 +589,7 @@ function FixCard({
             </span>
           )}
           {fix.applied_at && (
-            <span className="text-slate-500 text-xs pl-5">
+            <span className="text-slate-400 text-xs pl-5">
               {new Date(fix.applied_at).toLocaleString(da ? 'da-DK' : 'en-GB', {
                 day: '2-digit',
                 month: 'short',
@@ -705,7 +705,7 @@ function ScanRow({
         onClick={() => setOpen((v) => !v)}
         className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-800/40 transition-colors text-left"
       >
-        <span className="text-slate-500">
+        <span className="text-slate-400">
           {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </span>
         <ScanStatusBadge status={scan.status} da={da} />
@@ -726,7 +726,7 @@ function ScanRow({
           {scan.issues_found.length === 0 && scan.status === 'completed' && (
             <span className="text-emerald-400 text-xs">{da ? 'Ingen problemer' : 'Clean'}</span>
           )}
-          <span className="text-slate-500 text-xs">
+          <span className="text-slate-400 text-xs">
             {new Date(scan.created_at).toLocaleString(da ? 'da-DK' : 'en-GB', {
               day: '2-digit',
               month: 'short',
@@ -765,7 +765,7 @@ function ScanRow({
                           <span className="text-white text-xs truncate">{issue.message}</span>
                         </div>
                         {issue.context && (
-                          <p className="text-slate-500 text-xs font-mono mt-0.5 truncate">
+                          <p className="text-slate-400 text-xs font-mono mt-0.5 truncate">
                             {issue.context}
                           </p>
                         )}
@@ -834,7 +834,7 @@ function ScanRow({
 
           {/* Loading fixes indicator */}
           {loadingFixes && (
-            <div className="px-4 py-2 flex items-center gap-2 text-slate-500 text-xs border-t border-slate-700/30">
+            <div className="px-4 py-2 flex items-center gap-2 text-slate-400 text-xs border-t border-slate-700/30">
               <Loader2 size={12} className="animate-spin" />
               {da ? 'Indlæser fix-forslag…' : 'Loading fix proposals…'}
             </div>
@@ -965,19 +965,19 @@ function ActivityRow({ activity, da }: { activity: ActivityRecord; da: boolean }
           {hasDetails && (
             <button
               onClick={() => setShowDetails((v) => !v)}
-              className="text-slate-600 hover:text-slate-400 text-xs"
+              className="text-slate-400 hover:text-slate-400 text-xs"
             >
               {showDetails ? '▲' : '▼'}
             </button>
           )}
         </div>
         {showDetails && (
-          <pre className="text-slate-500 text-xs font-mono mt-1 overflow-x-auto whitespace-pre-wrap break-all">
+          <pre className="text-slate-400 text-xs font-mono mt-1 overflow-x-auto whitespace-pre-wrap break-all">
             {JSON.stringify(activity.details, null, 2)}
           </pre>
         )}
       </div>
-      <span className="text-slate-600 text-xs shrink-0 whitespace-nowrap">
+      <span className="text-slate-400 text-xs shrink-0 whitespace-nowrap">
         {new Date(activity.created_at).toLocaleTimeString(da ? 'da-DK' : 'en-GB', {
           hour: '2-digit',
           minute: '2-digit',
@@ -1125,7 +1125,7 @@ export default function ServiceManagerClient() {
     return (
       <div className="flex-1 flex items-center justify-center text-slate-400">
         <div className="text-center">
-          <ShieldCheck size={40} className="mx-auto mb-3 text-slate-600" />
+          <ShieldCheck size={40} className="mx-auto mb-3 text-slate-400" />
           <p className="text-sm">{da ? 'Adgang nægtet.' : 'Access denied.'}</p>
         </div>
       </div>
@@ -1246,7 +1246,7 @@ export default function ServiceManagerClient() {
                 {isRefreshing ? (da ? 'Opdaterer…' : 'Refreshing…') : da ? 'Opdater' : 'Refresh'}
               </button>
               {lastRefresh && (
-                <span className="text-slate-500 text-xs">
+                <span className="text-slate-400 text-xs">
                   {da ? 'Opdateret' : 'Updated'}{' '}
                   {lastRefresh.toLocaleTimeString(da ? 'da-DK' : 'en-GB', {
                     hour: '2-digit',
@@ -1310,7 +1310,7 @@ export default function ServiceManagerClient() {
               )}
 
               {deployments.length === 0 ? (
-                <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl px-4 py-6 text-center text-slate-500 text-sm">
+                <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl px-4 py-6 text-center text-slate-400 text-sm">
                   {configured
                     ? da
                       ? 'Ingen deployments fundet.'
@@ -1323,7 +1323,7 @@ export default function ServiceManagerClient() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="text-left text-slate-500 text-xs border-b border-slate-700/50">
+                      <tr className="text-left text-slate-400 text-xs border-b border-slate-700/50">
                         <th className="pb-2 pr-4 font-medium">{da ? 'Status' : 'Status'}</th>
                         <th className="pb-2 pr-4 font-medium">{da ? 'Besked' : 'Message'}</th>
                         <th className="pb-2 pr-4 font-medium">{da ? 'Branch' : 'Branch'}</th>
@@ -1423,7 +1423,7 @@ export default function ServiceManagerClient() {
               {activeTab === 'scans' && (
                 <>
                   {scans.length === 0 ? (
-                    <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl px-4 py-6 text-center text-slate-500 text-sm">
+                    <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl px-4 py-6 text-center text-slate-400 text-sm">
                       {da
                         ? 'Ingen scans endnu. Tryk "Kør fejlscan" for at starte.'
                         : 'No scans yet. Click "Run Bug Scan" to start.'}
@@ -1441,7 +1441,7 @@ export default function ServiceManagerClient() {
               {activeTab === 'activity' && (
                 <>
                   {activities.length === 0 ? (
-                    <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl px-4 py-6 text-center text-slate-500 text-sm">
+                    <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl px-4 py-6 text-center text-slate-400 text-sm">
                       {da ? 'Ingen aktiviteter endnu.' : 'No activity yet.'}
                     </div>
                   ) : (

@@ -248,7 +248,7 @@ export default function VurderingsrapportClient() {
 
           {/* Beskrivelse */}
           <div>
-            <label className="text-xs text-slate-500 block mb-1">Beskrivelse (valgfri)</label>
+            <label className="text-xs text-slate-400 block mb-1">Beskrivelse (valgfri)</label>
             <input
               type="text"
               value={formBeskrivelse}
@@ -260,7 +260,7 @@ export default function VurderingsrapportClient() {
 
           {/* Kunde-søgning */}
           <div>
-            <label className="text-xs text-slate-500 block mb-1">Kunde *</label>
+            <label className="text-xs text-slate-400 block mb-1">Kunde *</label>
             {formKunde ? (
               <div className="flex items-center gap-2 px-3 py-2 bg-emerald-950/30 border border-emerald-900 rounded-lg">
                 {formKunde.type === 'company' ? (
@@ -271,7 +271,7 @@ export default function VurderingsrapportClient() {
                 <span className="text-sm text-white">{formKunde.navn}</span>
                 <button
                   onClick={() => setFormKunde(null)}
-                  className="ml-auto text-xs text-slate-500 hover:text-white"
+                  className="ml-auto text-xs text-slate-400 hover:text-white"
                 >
                   Skift
                 </button>
@@ -279,7 +279,7 @@ export default function VurderingsrapportClient() {
             ) : (
               <div className="relative">
                 <div className="flex items-center gap-2 px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg focus-within:border-emerald-500">
-                  <Search size={14} className="text-slate-500" />
+                  <Search size={14} className="text-slate-400" />
                   <input
                     type="text"
                     value={kundeQuery}
@@ -287,7 +287,7 @@ export default function VurderingsrapportClient() {
                     placeholder="Søg virksomhed eller person..."
                     className="flex-1 bg-transparent text-sm text-white placeholder:text-slate-600 focus:outline-none"
                   />
-                  {kundeLoading && <Loader2 size={14} className="animate-spin text-slate-500" />}
+                  {kundeLoading && <Loader2 size={14} className="animate-spin text-slate-400" />}
                 </div>
                 {kundeResults.length > 0 && (
                   <div className="absolute z-10 mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg shadow-xl max-h-[28rem] overflow-y-auto">
@@ -312,7 +312,7 @@ export default function VurderingsrapportClient() {
                               {r.title}
                             </span>
                             {r.meta?.cvr && (
-                              <span className="text-[10px] text-slate-500 flex-shrink-0">
+                              <span className="text-[10px] text-slate-400 flex-shrink-0">
                                 CVR {r.meta.cvr}
                               </span>
                             )}
@@ -329,7 +329,7 @@ export default function VurderingsrapportClient() {
                             )}
                           </div>
                           {r.subtitle && (
-                            <p className="text-xs text-slate-500 truncate mt-0.5">{r.subtitle}</p>
+                            <p className="text-xs text-slate-400 truncate mt-0.5">{r.subtitle}</p>
                           )}
                         </div>
                       </button>
@@ -342,15 +342,15 @@ export default function VurderingsrapportClient() {
 
           {/* Ejendom-søgning */}
           <div>
-            <label className="text-xs text-slate-500 block mb-1">Ejendom (valgfri)</label>
+            <label className="text-xs text-slate-400 block mb-1">Ejendom (valgfri)</label>
             {formEjendom ? (
               <div className="flex items-center gap-2 px-3 py-2 bg-emerald-950/30 border border-emerald-900 rounded-lg">
                 <MapPin size={14} className="text-emerald-400" />
                 <span className="text-sm text-white">{formEjendom.adresse}</span>
-                <span className="text-xs text-slate-500">BFE {formEjendom.bfe}</span>
+                <span className="text-xs text-slate-400">BFE {formEjendom.bfe}</span>
                 <button
                   onClick={() => setFormEjendom(null)}
-                  className="ml-auto text-xs text-slate-500 hover:text-white"
+                  className="ml-auto text-xs text-slate-400 hover:text-white"
                 >
                   Skift
                 </button>
@@ -358,7 +358,7 @@ export default function VurderingsrapportClient() {
             ) : (
               <div className="relative">
                 <div className="flex items-center gap-2 px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg focus-within:border-emerald-500">
-                  <Search size={14} className="text-slate-500" />
+                  <Search size={14} className="text-slate-400" />
                   <input
                     type="text"
                     value={ejdQuery}
@@ -366,7 +366,7 @@ export default function VurderingsrapportClient() {
                     placeholder="Søg adresse eller BFE..."
                     className="flex-1 bg-transparent text-sm text-white placeholder:text-slate-600 focus:outline-none"
                   />
-                  {ejdLoading && <Loader2 size={14} className="animate-spin text-slate-500" />}
+                  {ejdLoading && <Loader2 size={14} className="animate-spin text-slate-400" />}
                 </div>
                 {ejdResults.length > 0 && (
                   <div className="absolute z-10 mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg shadow-xl max-h-[28rem] overflow-y-auto">
@@ -382,7 +382,7 @@ export default function VurderingsrapportClient() {
                             {r.title}
                           </span>
                           {r.subtitle && (
-                            <p className="text-xs text-slate-500 truncate mt-0.5">{r.subtitle}</p>
+                            <p className="text-xs text-slate-400 truncate mt-0.5">{r.subtitle}</p>
                           )}
                         </div>
                       </button>
@@ -407,7 +407,7 @@ export default function VurderingsrapportClient() {
       {/* Loading */}
       {loading && (
         <div className="flex items-center justify-center py-12">
-          <Loader2 size={24} className="animate-spin text-slate-500" />
+          <Loader2 size={24} className="animate-spin text-slate-400" />
         </div>
       )}
 
@@ -416,8 +416,8 @@ export default function VurderingsrapportClient() {
 
       {/* Sag-liste */}
       {!loading && sager.length === 0 && (
-        <div className="text-center py-16 text-slate-500">
-          <FileText size={40} className="mx-auto mb-3 text-slate-600" />
+        <div className="text-center py-16 text-slate-400">
+          <FileText size={40} className="mx-auto mb-3 text-slate-400" />
           <p className="text-sm">Ingen sager endnu. Klik &quot;Ny sag&quot; for at starte.</p>
         </div>
       )}
@@ -426,7 +426,7 @@ export default function VurderingsrapportClient() {
         <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-slate-800 text-slate-500 text-xs">
+              <tr className="border-b border-slate-800 text-slate-400 text-xs">
                 <th className="text-left px-4 py-3 font-medium">Sagsnr</th>
                 <th className="text-left px-4 py-3 font-medium">Kunde</th>
                 <th className="text-left px-4 py-3 font-medium hidden sm:table-cell">Ejendom</th>
@@ -462,13 +462,13 @@ export default function VurderingsrapportClient() {
                         {sag.status}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-right text-slate-500 text-xs">
+                    <td className="px-4 py-3 text-right text-slate-400 text-xs">
                       {new Date(sag.created_at).toLocaleDateString('da-DK')}
                     </td>
                     <td className="px-2 py-3">
                       <button
                         onClick={() => handleDelete(sag.id)}
-                        className="p-1.5 text-slate-600 hover:text-red-400 transition-colors"
+                        className="p-1.5 text-slate-400 hover:text-red-400 transition-colors"
                         aria-label={`Slet ${sag.sag_nummer}`}
                       >
                         <Trash2 size={14} />

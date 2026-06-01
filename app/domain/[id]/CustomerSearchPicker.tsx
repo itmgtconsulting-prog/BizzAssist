@@ -133,7 +133,7 @@ export function CustomerSearchPicker({ value, onChange, placeholder, compact }: 
           <Icon size={14} className={`${style.textColor} shrink-0`} />
           <div className="min-w-0">
             <p className="text-sm text-white truncate">{value.name}</p>
-            <p className="text-[10px] text-slate-500 uppercase">
+            <p className="text-[10px] text-slate-400 uppercase">
               {value.kind === 'company'
                 ? `CVR ${value.cvr}`
                 : da
@@ -159,7 +159,7 @@ export function CustomerSearchPicker({ value, onChange, placeholder, compact }: 
       <div className="relative">
         <Search
           size={14}
-          className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none"
+          className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
         />
         <input
           type="text"
@@ -185,7 +185,7 @@ export function CustomerSearchPicker({ value, onChange, placeholder, compact }: 
       {open && query.trim().length >= 2 && (
         <div className="absolute top-full left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-md shadow-xl z-50 max-h-72 overflow-y-auto">
           {results.length === 0 && !loading && (
-            <p className="px-3 py-3 text-xs text-slate-500">
+            <p className="px-3 py-3 text-xs text-slate-400">
               {da ? 'Ingen kunder fundet' : 'No customers found'}
             </p>
           )}

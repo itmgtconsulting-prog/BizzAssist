@@ -97,11 +97,11 @@ export const DataModelPanel = memo(function DataModelPanel({
                   : 'text-slate-300 hover:bg-slate-700/40 border border-transparent'
               }`}
             >
-              <span className={isSelected ? `text-${activeDomain.color}-400` : 'text-slate-500'}>
+              <span className={isSelected ? `text-${activeDomain.color}-400` : 'text-slate-400'}>
                 <FieldTypeIcon type={field.type} />
               </span>
               <span className="flex-1 truncate">{field.label}</span>
-              <span className="text-[10px] text-slate-600">{field.type}</span>
+              <span className="text-[10px] text-slate-400">{field.type}</span>
             </button>
           );
         })}

@@ -808,7 +808,7 @@ export default async function EjendomPublicPage({
   if (fejl || !adresse) {
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center text-center px-4">
-        <MapPin size={40} className="text-slate-600 mb-4" />
+        <MapPin size={40} className="text-slate-400 mb-4" />
         <h1 className="text-2xl font-bold text-white mb-2">Ejendom ikke fundet</h1>
         <p className="text-slate-400 mb-6">
           BFE-nummer {bfe} findes ikke i registrene, eller data er midlertidigt utilgængeligt.
@@ -844,7 +844,7 @@ export default async function EjendomPublicPage({
 
       <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8 md:py-12">
         {/* Breadcrumb */}
-        <nav className="text-xs text-slate-500 mb-6 flex items-center gap-1.5 flex-wrap">
+        <nav className="text-xs text-slate-400 mb-6 flex items-center gap-1.5 flex-wrap">
           <Link href="/" className="hover:text-slate-300 transition-colors">
             Forside
           </Link>
@@ -865,10 +865,10 @@ export default async function EjendomPublicPage({
                 {adresseStr}
               </h1>
               <p className="text-slate-400 text-lg mt-1 flex items-center gap-1.5">
-                <MapPin size={14} className="text-slate-500" />
+                <MapPin size={14} className="text-slate-400" />
                 {byStr}
                 {adresse.kommunenavn && adresse.kommunenavn !== adresse.postnrnavn && (
-                  <span className="text-slate-600"> · {adresse.kommunenavn} Kommune</span>
+                  <span className="text-slate-400"> · {adresse.kommunenavn} Kommune</span>
                 )}
               </p>
             </div>
@@ -961,7 +961,7 @@ export default async function EjendomPublicPage({
                 <p className="text-2xl font-bold text-white">
                   {vurdering.ejendomsvaerdi ? formatKr(vurdering.ejendomsvaerdi) : '–'}
                 </p>
-                <p className="text-xs text-slate-500 mt-1">Seneste offentlige vurdering</p>
+                <p className="text-xs text-slate-400 mt-1">Seneste offentlige vurdering</p>
               </div>
               <div className="bg-slate-800/50 border border-white/10 rounded-xl p-5">
                 <div className="flex items-center gap-2 mb-2">
@@ -973,7 +973,7 @@ export default async function EjendomPublicPage({
                 <p className="text-2xl font-bold text-white">
                   {vurdering.grundvaerdi ? formatKr(vurdering.grundvaerdi) : '–'}
                 </p>
-                <p className="text-xs text-slate-500 mt-1">Offentlig grundvurdering</p>
+                <p className="text-xs text-slate-400 mt-1">Offentlig grundvurdering</p>
               </div>
             </div>
           </section>
@@ -986,7 +986,7 @@ export default async function EjendomPublicPage({
         <PublicPricingSection />
 
         {/* Datakilde-note */}
-        <p className="mt-8 text-xs text-slate-600 text-center">
+        <p className="mt-8 text-xs text-slate-400 text-center">
           Data fra BBR (Bygnings- og Boligregistret), DAR (Danmarks Adresseregister) og
           Vurderingsstyrelsen. Sidst opdateret:{' '}
           {new Date().toLocaleDateString('da-DK', {

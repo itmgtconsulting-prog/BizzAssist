@@ -33,7 +33,7 @@ const PenhedMiniMap = dynamic(/* mapbox-gl */ () => import('@/app/components/Pen
   ssr: false,
   loading: () => (
     <div className="w-full h-[280px] bg-slate-800/50 rounded-lg animate-pulse flex items-center justify-center">
-      <span className="text-slate-500 text-sm">Indlæser kort...</span>
+      <span className="text-slate-400 text-sm">Indlæser kort...</span>
     </div>
   ),
 });
@@ -256,7 +256,7 @@ export default function VirksomhedOverblikTab({
                         className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-slate-700/40 border border-slate-600/40 text-slate-300"
                         title={b.code != null ? `${b.code} — ${b.desc ?? '—'}` : (b.desc ?? '')}
                       >
-                        {b.code != null && <span className="text-slate-500 mr-1">{b.code}</span>}
+                        {b.code != null && <span className="text-slate-400 mr-1">{b.code}</span>}
                         {b.desc ?? '—'}
                       </span>
                     ))}
@@ -270,7 +270,7 @@ export default function VirksomhedOverblikTab({
                 {/* ── Stamdata — 2-kolonne grid, label over værdi ── */}
                 <div className="grid grid-cols-2 gap-x-4 gap-y-3">
                   <div>
-                    <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                    <p className="text-slate-400 text-[10px] uppercase tracking-wider">
                       {c.founded}
                     </p>
                     <p className="text-white text-sm font-medium">
@@ -278,13 +278,13 @@ export default function VirksomhedOverblikTab({
                     </p>
                   </div>
                   <div>
-                    <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                    <p className="text-slate-400 text-[10px] uppercase tracking-wider">
                       {c.employees}
                     </p>
                     <p className="text-white text-sm font-medium">{data.employees ?? '—'}</p>
                   </div>
                   <div>
-                    <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                    <p className="text-slate-400 text-[10px] uppercase tracking-wider">
                       {c.registeredCapital}
                     </p>
                     <p className="text-white text-sm font-medium">
@@ -294,13 +294,13 @@ export default function VirksomhedOverblikTab({
                     </p>
                   </div>
                   <div>
-                    <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                    <p className="text-slate-400 text-[10px] uppercase tracking-wider">
                       {c.municipality}
                     </p>
                     <p className="text-white text-sm font-medium">{data.kommune ?? '—'}</p>
                   </div>
                   <div>
-                    <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                    <p className="text-slate-400 text-[10px] uppercase tracking-wider">
                       {c.accountingYear}
                     </p>
                     <p className="text-white text-sm font-medium">
@@ -310,7 +310,7 @@ export default function VirksomhedOverblikTab({
                     </p>
                   </div>
                   <div>
-                    <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                    <p className="text-slate-400 text-[10px] uppercase tracking-wider">
                       {c.adProtected}
                     </p>
                     <p className="text-white text-sm font-medium">
@@ -319,7 +319,7 @@ export default function VirksomhedOverblikTab({
                   </div>
                   {data.enddate && (
                     <div className="col-span-2">
-                      <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                      <p className="text-slate-400 text-[10px] uppercase tracking-wider">
                         {c.endDate}
                       </p>
                       <p className="text-red-400 text-sm font-medium">{data.enddate}</p>
@@ -327,7 +327,7 @@ export default function VirksomhedOverblikTab({
                   )}
                   {data.senesteVedtaegtsdato && (
                     <div>
-                      <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                      <p className="text-slate-400 text-[10px] uppercase tracking-wider">
                         {lang === 'da' ? 'Seneste vedtægtsdato' : 'Latest articles date'}
                       </p>
                       <p className="text-white text-sm font-medium">{data.senesteVedtaegtsdato}</p>
@@ -335,7 +335,7 @@ export default function VirksomhedOverblikTab({
                   )}
                   {data.foersteRegnskabsperiode && (
                     <div>
-                      <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                      <p className="text-slate-400 text-[10px] uppercase tracking-wider">
                         {lang === 'da' ? 'Første regnskabsperiode' : 'First accounting period'}
                       </p>
                       <p className="text-white text-sm font-medium">
@@ -345,7 +345,7 @@ export default function VirksomhedOverblikTab({
                   )}
                   {data.statusTekst && (
                     <div>
-                      <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                      <p className="text-slate-400 text-[10px] uppercase tracking-wider">
                         {lang === 'da' ? 'Virksomhedsstatus' : 'Company status'}
                       </p>
                       <p className="text-white text-sm font-medium">{data.statusTekst}</p>
@@ -371,13 +371,13 @@ export default function VirksomhedOverblikTab({
                   {/* BIZZ-520: P-enheder count */}
                   {data.productionunits && data.productionunits.length > 0 && (
                     <div>
-                      <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                      <p className="text-slate-400 text-[10px] uppercase tracking-wider">
                         {lang === 'da' ? 'Produktionsenheder' : 'Production units'}
                       </p>
                       <p className="text-white text-sm font-medium">
                         {data.productionunits.filter((p) => p.active).length}
                         {data.productionunits.some((p) => !p.active) && (
-                          <span className="text-slate-500 text-xs ml-1">
+                          <span className="text-slate-400 text-xs ml-1">
                             ({data.productionunits.length} {lang === 'da' ? 'i alt' : 'total'})
                           </span>
                         )}
@@ -387,7 +387,7 @@ export default function VirksomhedOverblikTab({
                   {/* BIZZ-520: sidstOpdateret — CVR data freshness */}
                   {data.sidstOpdateret && (
                     <div className="col-span-2">
-                      <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                      <p className="text-slate-400 text-[10px] uppercase tracking-wider">
                         {lang === 'da' ? 'Data opdateret' : 'Data updated'}
                       </p>
                       <p className="text-slate-400 text-xs">
@@ -403,17 +403,17 @@ export default function VirksomhedOverblikTab({
                 {/* BIZZ-513: Beskæftigelseshistorik */}
                 {data.aarsbeskaeftigelse && data.aarsbeskaeftigelse.length > 0 && (
                   <div className="mt-4 pt-3 border-t border-slate-700/30">
-                    <p className="text-slate-500 text-[10px] uppercase tracking-wider font-medium mb-2">
+                    <p className="text-slate-400 text-[10px] uppercase tracking-wider font-medium mb-2">
                       {lang === 'da' ? 'Beskæftigelseshistorik' : 'Employment history'}
                     </p>
                     <div className="grid grid-cols-[auto_1fr_1fr] gap-x-4 gap-y-1 text-xs">
-                      <span className="text-slate-500 font-medium">
+                      <span className="text-slate-400 font-medium">
                         {lang === 'da' ? 'År' : 'Year'}
                       </span>
-                      <span className="text-slate-500 font-medium text-right">
+                      <span className="text-slate-400 font-medium text-right">
                         {lang === 'da' ? 'Ansatte' : 'Employees'}
                       </span>
-                      <span className="text-slate-500 font-medium text-right">
+                      <span className="text-slate-400 font-medium text-right">
                         {lang === 'da' ? 'Årsværk' : 'FTE'}
                       </span>
                       {data.aarsbeskaeftigelse.slice(0, 8).map((a, idx) => (
@@ -436,7 +436,7 @@ export default function VirksomhedOverblikTab({
                   {/* Ejere */}
                   {aktiveEjere.length > 0 && (
                     <div>
-                      <p className="text-slate-500 text-[10px] uppercase tracking-wider font-medium mb-1.5">
+                      <p className="text-slate-400 text-[10px] uppercase tracking-wider font-medium mb-1.5">
                         {lang === 'da' ? 'Ejere' : 'Owners'}
                       </p>
                       <ul className="space-y-1.5">
@@ -470,7 +470,7 @@ export default function VirksomhedOverblikTab({
                   {/* Direktion */}
                   {aktiveDirektion.length > 0 && (
                     <div>
-                      <p className="text-slate-500 text-[10px] uppercase tracking-wider font-medium mb-1.5">
+                      <p className="text-slate-400 text-[10px] uppercase tracking-wider font-medium mb-1.5">
                         {lang === 'da' ? 'Direktion' : 'Management'}
                       </p>
                       <ul className="space-y-1">
@@ -499,7 +499,7 @@ export default function VirksomhedOverblikTab({
                   {/* Revision */}
                   {aktiveRevision.length > 0 && (
                     <div>
-                      <p className="text-slate-500 text-[10px] uppercase tracking-wider font-medium mb-1.5">
+                      <p className="text-slate-400 text-[10px] uppercase tracking-wider font-medium mb-1.5">
                         {lang === 'da' ? 'Revision' : 'Auditor'}
                       </p>
                       <ul className="space-y-1">
@@ -527,24 +527,24 @@ export default function VirksomhedOverblikTab({
 
                   {/* Kontakt */}
                   <div>
-                    <p className="text-slate-500 text-[10px] uppercase tracking-wider font-medium mb-1.5">
+                    <p className="text-slate-400 text-[10px] uppercase tracking-wider font-medium mb-1.5">
                       {c.contact}
                     </p>
                     <div className="space-y-1">
                       <p className="text-white text-sm flex items-center gap-1.5">
-                        <MapPin size={12} className="text-slate-500 shrink-0" />
+                        <MapPin size={12} className="text-slate-400 shrink-0" />
                         {data.address}
                         {data.addressco ? `, ${data.addressco}` : ''}, {data.zipcode} {data.city}
                       </p>
                       {data.phone && (
                         <p className="text-white text-sm flex items-center gap-1.5">
-                          <Phone size={12} className="text-slate-500 shrink-0" />
+                          <Phone size={12} className="text-slate-400 shrink-0" />
                           {data.phone}
                         </p>
                       )}
                       {data.email && (
                         <p className="text-white text-sm flex items-center gap-1.5">
-                          <Mail size={12} className="text-slate-500 shrink-0" />
+                          <Mail size={12} className="text-slate-400 shrink-0" />
                           {data.email}
                         </p>
                       )}
@@ -557,7 +557,7 @@ export default function VirksomhedOverblikTab({
                   <div className="mt-3 pt-3 border-t border-slate-700/30 grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {data.tegningsregel && (
                       <div>
-                        <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-0.5">
+                        <p className="text-slate-400 text-[10px] uppercase tracking-wider mb-0.5">
                           {c.signingRule}
                         </p>
                         <p className="text-slate-300 text-xs leading-relaxed">
@@ -567,7 +567,7 @@ export default function VirksomhedOverblikTab({
                     )}
                     {data.formaal && (
                       <div>
-                        <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-0.5">
+                        <p className="text-slate-400 text-[10px] uppercase tracking-wider mb-0.5">
                           {c.purpose}
                         </p>
                         <p className="text-slate-300 text-xs leading-relaxed">{data.formaal}</p>
@@ -610,25 +610,25 @@ export default function VirksomhedOverblikTab({
                   <div className="grid grid-cols-2 gap-3">
                     <div className="bg-slate-900/50 rounded-lg p-3 text-center">
                       <p className="text-xl font-bold text-white">{totalDatter + 1}</p>
-                      <p className="text-slate-500 text-[10px] mt-0.5">
+                      <p className="text-slate-400 text-[10px] mt-0.5">
                         {lang === 'da' ? 'Virksomheder' : 'Companies'}
                       </p>
                     </div>
                     <div className="bg-slate-900/50 rounded-lg p-3 text-center">
                       <p className="text-xl font-bold text-white">{fmtNum(totalAnsatte)}</p>
-                      <p className="text-slate-500 text-[10px] mt-0.5">
+                      <p className="text-slate-400 text-[10px] mt-0.5">
                         {lang === 'da' ? 'Ansatte' : 'Employees'}
                       </p>
                     </div>
                     <div className="bg-slate-900/50 rounded-lg p-3 text-center">
                       <p className="text-xl font-bold text-white">{fmtNum(totalPenheder)}</p>
-                      <p className="text-slate-500 text-[10px] mt-0.5">
+                      <p className="text-slate-400 text-[10px] mt-0.5">
                         P-{lang === 'da' ? 'enheder' : 'units'}
                       </p>
                     </div>
                     <div className="bg-slate-900/50 rounded-lg p-3 text-center">
                       <p className="text-xl font-bold text-white">{totalDatter}</p>
-                      <p className="text-slate-500 text-[10px] mt-0.5">
+                      <p className="text-slate-400 text-[10px] mt-0.5">
                         {lang === 'da' ? 'Datterselskaber' : 'Subsidiaries'}
                       </p>
                     </div>
@@ -669,12 +669,12 @@ export default function VirksomhedOverblikTab({
                 <section className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-5">
                   <h3 className="text-white font-semibold text-sm mb-3">
                     {lang === 'da' ? 'Nøgletal' : 'Key Figures'}
-                    <span className="text-slate-500 text-xs font-normal ml-2">({seneste.aar})</span>
+                    <span className="text-slate-400 text-xs font-normal ml-2">({seneste.aar})</span>
                   </h3>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                     {r.bruttofortjeneste != null && (
                       <div>
-                        <p className="text-slate-500 text-xs">
+                        <p className="text-slate-400 text-xs">
                           {lang === 'da' ? 'Bruttofortjeneste' : 'Gross profit'}
                         </p>
                         <p
@@ -686,7 +686,7 @@ export default function VirksomhedOverblikTab({
                     )}
                     {r.resultatFoerSkat != null && (
                       <div>
-                        <p className="text-slate-500 text-xs">
+                        <p className="text-slate-400 text-xs">
                           {lang === 'da' ? 'Resultat før skat' : 'Profit before tax'}
                         </p>
                         <p
@@ -698,7 +698,7 @@ export default function VirksomhedOverblikTab({
                     )}
                     {b.egenkapital != null && (
                       <div>
-                        <p className="text-slate-500 text-xs">
+                        <p className="text-slate-400 text-xs">
                           {lang === 'da' ? 'Egenkapital' : 'Equity'}
                         </p>
                         <p
@@ -726,7 +726,7 @@ export default function VirksomhedOverblikTab({
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-left text-slate-500 text-xs uppercase tracking-wide border-b border-slate-700/40">
+                  <tr className="text-left text-slate-400 text-xs uppercase tracking-wide border-b border-slate-700/40">
                     <th className="pb-2 pr-4">{c.pNumber}</th>
                     <th className="pb-2 pr-4">{c.name}</th>
                     <th className="pb-2 pr-4">{c.address}</th>
@@ -781,7 +781,7 @@ export default function VirksomhedOverblikTab({
                             {loc && (
                               <Link
                                 href={`/dashboard/kort?lat=${loc.lat}&lng=${loc.lng}&zoom=16`}
-                                className="inline-flex items-center text-slate-500 hover:text-cyan-400 transition-colors"
+                                className="inline-flex items-center text-slate-400 hover:text-cyan-400 transition-colors"
                                 title={lang === 'da' ? 'Vis på kort' : 'Show on map'}
                                 aria-label={lang === 'da' ? 'Vis på kort' : 'Show on map'}
                               >
@@ -839,7 +839,7 @@ export default function VirksomhedOverblikTab({
                                 <span className="truncate max-w-[140px]">{pu.email}</span>
                               </a>
                             )}
-                            {!pu.phone && !pu.email && <span className="text-slate-600">—</span>}
+                            {!pu.phone && !pu.email && <span className="text-slate-400">—</span>}
                           </div>
                         </td>
                         <td className="py-2">
@@ -857,7 +857,7 @@ export default function VirksomhedOverblikTab({
             </div>
           ) : (
             <EmptyState
-              ikon={<MapPin size={32} className="text-slate-600" />}
+              ikon={<MapPin size={32} className="text-slate-400" />}
               tekst={c.noProductionUnits}
             />
           )}

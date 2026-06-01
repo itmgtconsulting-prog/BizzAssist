@@ -171,7 +171,7 @@ export default function SkabelonPickerModal({
           )}
           {error && <p className="text-rose-300 text-xs py-4 text-center">{error}</p>}
           {templates && templates.length === 0 && !loading && (
-            <p className="text-slate-500 text-xs py-12 text-center">
+            <p className="text-slate-400 text-xs py-12 text-center">
               {da
                 ? 'Ingen skabeloner er oprettet for dette domæne endnu.'
                 : 'No templates have been created for this domain yet.'}
@@ -198,7 +198,7 @@ export default function SkabelonPickerModal({
                         {checked ? (
                           <CheckCircle2 size={14} className="text-blue-400" />
                         ) : (
-                          <Circle size={14} className="text-slate-600" />
+                          <Circle size={14} className="text-slate-400" />
                         )}
                       </div>
                       <FileText size={14} className="text-slate-400 shrink-0 mt-0.5" />
@@ -209,7 +209,7 @@ export default function SkabelonPickerModal({
                             {t.description}
                           </p>
                         )}
-                        <div className="flex items-center gap-2 mt-1 text-[10px] text-slate-500 uppercase tracking-wide">
+                        <div className="flex items-center gap-2 mt-1 text-[10px] text-slate-400 uppercase tracking-wide">
                           <span>{t.file_type}</span>
                           <span>·</span>
                           <span>v{t.version}</span>

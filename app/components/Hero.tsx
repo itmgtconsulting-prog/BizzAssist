@@ -107,7 +107,7 @@ function HeroSearch({ lang }: { lang: 'da' | 'en' }) {
   return (
     <div className="relative max-w-xl mx-auto mb-8">
       <div className="relative">
-        <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
+        <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
         <input
           type="text"
           value={query}
@@ -136,7 +136,7 @@ function HeroSearch({ lang }: { lang: 'da' | 'en' }) {
               )}
               <div className="min-w-0">
                 <p className="text-white text-sm font-medium truncate">{r.label}</p>
-                <p className="text-slate-500 text-xs">{r.sublabel}</p>
+                <p className="text-slate-400 text-xs">{r.sublabel}</p>
               </div>
             </button>
           ))}
@@ -210,7 +210,7 @@ export default function Hero() {
                 <div className="w-3 h-3 rounded-full bg-yellow-500/70" />
                 <div className="w-3 h-3 rounded-full bg-green-500/70" />
               </div>
-              <div className="flex-1 mx-4 bg-white/5 rounded-lg px-4 py-1.5 text-xs text-slate-500">
+              <div className="flex-1 mx-4 bg-white/5 rounded-lg px-4 py-1.5 text-xs text-slate-400">
                 app.bizzassist.dk/dashboard
               </div>
             </div>

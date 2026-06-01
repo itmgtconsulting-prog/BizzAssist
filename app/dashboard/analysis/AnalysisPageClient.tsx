@@ -191,7 +191,7 @@ function AnalysisAreaCard({ config, title, desc, onClick }: AreaCardProps) {
         {/* Arrow */}
         <ChevronRight
           size={15}
-          className="text-slate-600 group-hover:text-slate-400 shrink-0 mt-0.5 transition-colors"
+          className="text-slate-400 group-hover:text-slate-400 shrink-0 mt-0.5 transition-colors"
         />
       </div>
     </button>
@@ -727,7 +727,7 @@ export default function AnalysisPageClient() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">{t('title')}</h1>
-          {phase === 'grid' && <p className="text-sm text-slate-500 mt-1">{t('subtitle')}</p>}
+          {phase === 'grid' && <p className="text-sm text-slate-400 mt-1">{t('subtitle')}</p>}
         </div>
         {(phase === 'streaming' || phase === 'done') && (
           <button
@@ -745,7 +745,7 @@ export default function AnalysisPageClient() {
       {/* ── Phase: grid ── */}
       {phase === 'grid' && (
         <div className="space-y-4 max-w-3xl">
-          <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">
+          <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">
             {t('chooseArea')}
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -792,7 +792,7 @@ export default function AnalysisPageClient() {
             };
             return (
               <div className="mt-8 space-y-3">
-                <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">
+                <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">
                   {lang === 'da' ? 'Branchemoduler' : 'Industry modules'}
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -818,12 +818,12 @@ export default function AnalysisPageClient() {
                                 {m.label}
                               </h3>
                               {m.requiredPlan && (
-                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/5 text-slate-500 font-medium shrink-0">
+                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/5 text-slate-400 font-medium shrink-0">
                                   {m.requiredPlan === 'enterprise' ? 'Enterprise' : 'Pro'}
                                 </span>
                               )}
                             </div>
-                            <p className="text-xs text-slate-500 mt-1 line-clamp-2">
+                            <p className="text-xs text-slate-400 mt-1 line-clamp-2">
                               {m.description}
                             </p>
                           </div>
@@ -843,7 +843,7 @@ export default function AnalysisPageClient() {
             </div>
             <div>
               <div className="text-sm font-medium text-slate-300">{t('emptyHint')}</div>
-              <div className="text-xs text-slate-500 mt-1">{t('emptyHintSub')}</div>
+              <div className="text-xs text-slate-400 mt-1">{t('emptyHintSub')}</div>
             </div>
           </div>
         </div>
@@ -898,7 +898,7 @@ export default function AnalysisPageClient() {
                     {selectedEntity.title}
                   </div>
                   {selectedEntity.subtitle && (
-                    <div className="text-xs text-slate-500 truncate">{selectedEntity.subtitle}</div>
+                    <div className="text-xs text-slate-400 truncate">{selectedEntity.subtitle}</div>
                   )}
                 </div>
                 <button
@@ -909,7 +909,7 @@ export default function AnalysisPageClient() {
                     setTimeout(() => targetInputRef.current?.focus(), 50);
                   }}
                   aria-label={t('clearEntity')}
-                  className="text-slate-500 hover:text-white transition-colors"
+                  className="text-slate-400 hover:text-white transition-colors"
                 >
                   <X size={14} />
                 </button>
@@ -936,7 +936,7 @@ export default function AnalysisPageClient() {
           {/* Optional entity search (only for non-area modes) */}
           {selectedArea.inputMode !== 'area' && !selectedEntity && (
             <div className="space-y-2">
-              <p className="text-xs text-slate-500">{t('orSearch')}</p>
+              <p className="text-xs text-slate-400">{t('orSearch')}</p>
               <div className="relative">
                 <div className="relative flex items-center">
                   {searchLoading ? (
@@ -947,7 +947,7 @@ export default function AnalysisPageClient() {
                   ) : (
                     <Search
                       size={15}
-                      className="absolute left-3.5 text-slate-500 pointer-events-none"
+                      className="absolute left-3.5 text-slate-400 pointer-events-none"
                     />
                   )}
                   <input
@@ -969,7 +969,7 @@ export default function AnalysisPageClient() {
                       type="button"
                       onClick={() => handleSearchQueryChange('')}
                       aria-label={lang === 'da' ? 'Ryd søgning' : 'Clear search'}
-                      className="absolute right-3.5 text-slate-500 hover:text-white transition-colors"
+                      className="absolute right-3.5 text-slate-400 hover:text-white transition-colors"
                     >
                       <X size={13} />
                     </button>
@@ -998,10 +998,10 @@ export default function AnalysisPageClient() {
                         <div className="min-w-0 flex-1">
                           <div className="text-sm text-white truncate">{result.title}</div>
                           {result.subtitle && (
-                            <div className="text-xs text-slate-500 truncate">{result.subtitle}</div>
+                            <div className="text-xs text-slate-400 truncate">{result.subtitle}</div>
                           )}
                         </div>
-                        <ChevronRight size={13} className="text-slate-600 shrink-0" />
+                        <ChevronRight size={13} className="text-slate-400 shrink-0" />
                       </button>
                     ))}
                   </div>
@@ -1049,9 +1049,9 @@ export default function AnalysisPageClient() {
                 {isStreaming ? t('runningAnalysis') : areaLabel(selectedArea.id).title}
               </span>
               {!isStreaming && (
-                <span className="text-slate-500 font-normal text-sm"> — {t('result')}</span>
+                <span className="text-slate-400 font-normal text-sm"> — {t('result')}</span>
               )}
-              <div className="text-xs text-slate-500 truncate mt-0.5">
+              <div className="text-xs text-slate-400 truncate mt-0.5">
                 {selectedEntity?.title ?? targetValue}
               </div>
             </div>

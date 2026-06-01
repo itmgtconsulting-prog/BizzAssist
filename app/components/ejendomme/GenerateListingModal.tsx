@@ -453,7 +453,7 @@ export default function GenerateListingModal({
         <div className="flex-1 overflow-y-auto px-5 py-4 min-h-[200px]">
           {!output && variants.length === 0 && !loading && !error && (
             <div className="flex flex-col items-center justify-center h-full gap-3 py-8">
-              <p className="text-slate-500 text-sm text-center max-w-xs">
+              <p className="text-slate-400 text-sm text-center max-w-xs">
                 {da
                   ? `Generér en professionel boligannonce for ${adresse}`
                   : `Generate a professional listing for ${adresse}`}
@@ -597,7 +597,7 @@ export default function GenerateListingModal({
               </button>
             </div>
           )}
-          <p className="text-slate-600 text-[10px]">
+          <p className="text-slate-400 text-[10px]">
             {da
               ? 'AI-genereret forslag — gennemgå og tilpas teksten før brug.'
               : 'AI-generated suggestion — review and adapt the text before use.'}

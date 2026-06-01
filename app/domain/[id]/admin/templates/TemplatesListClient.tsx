@@ -210,7 +210,7 @@ export default function TemplatesListClient({ domainId }: { domainId: string }) 
               <FileText size={22} className="text-emerald-400" />
               {da ? 'Skabeloner' : 'Templates'}
             </h1>
-            <p className="text-slate-500 text-sm mt-1">
+            <p className="text-slate-400 text-sm mt-1">
               {templates.length} {da ? 'skabeloner' : 'templates'}
             </p>
           </div>
@@ -252,7 +252,7 @@ export default function TemplatesListClient({ domainId }: { domainId: string }) 
             <div className="relative flex-1 max-w-xs">
               <Search
                 size={14}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
               />
               <input
                 type="text"
@@ -290,13 +290,13 @@ export default function TemplatesListClient({ domainId }: { domainId: string }) 
               <Loader2 className="w-6 h-6 text-blue-400 animate-spin" />
             </div>
           ) : templates.length === 0 ? (
-            <div className="text-center py-10 text-slate-500 text-sm">
+            <div className="text-center py-10 text-slate-400 text-sm">
               {da
                 ? 'Ingen skabeloner endnu. Upload en skabelon for at starte.'
                 : 'No templates yet. Upload one to get started.'}
             </div>
           ) : filteredTemplates.length === 0 ? (
-            <div className="text-center py-10 text-slate-500 text-sm">
+            <div className="text-center py-10 text-slate-400 text-sm">
               {da ? 'Ingen skabeloner matcher filteret.' : 'No templates match the filter.'}
             </div>
           ) : (
@@ -326,13 +326,13 @@ export default function TemplatesListClient({ domainId }: { domainId: string }) 
                         )}
                       </div>
                       {t.description && (
-                        <p className="text-slate-500 text-xs truncate mt-0.5">{t.description}</p>
+                        <p className="text-slate-400 text-xs truncate mt-0.5">{t.description}</p>
                       )}
                     </div>
-                    <span className="text-slate-500 text-xs whitespace-nowrap">
+                    <span className="text-slate-400 text-xs whitespace-nowrap">
                       {t.placeholders?.length ?? 0} {da ? 'felter' : 'fields'}
                     </span>
-                    <span className="text-slate-600 text-xs">v{t.version}</span>
+                    <span className="text-slate-400 text-xs">v{t.version}</span>
                     {/* BIZZ-790: Action-ikoner per row — rediger + slet */}
                     <div
                       className="flex items-center gap-1 shrink-0"
@@ -393,7 +393,7 @@ export default function TemplatesListClient({ domainId }: { domainId: string }) 
           >
             <GripHorizontal
               size={14}
-              className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-600 group-hover:text-blue-300"
+              className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-400 group-hover:text-blue-300"
             />
           </div>
 
@@ -407,7 +407,7 @@ export default function TemplatesListClient({ domainId }: { domainId: string }) 
                   editoren og bringer dokumenter tilbage; i docs-mode rydder
                   ✕ valget af skabelon. */}
               <div className="shrink-0 px-2 py-1 border-b border-slate-700/40 bg-slate-900/50 flex items-center justify-between">
-                <span className="text-[11px] text-slate-500 pl-2">
+                <span className="text-[11px] text-slate-400 pl-2">
                   {bottomMode === 'editor'
                     ? da
                       ? 'Rediger skabelon'

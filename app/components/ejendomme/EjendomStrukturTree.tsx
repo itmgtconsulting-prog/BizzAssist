@@ -129,7 +129,7 @@ function TreeNode({ node, depth, lang, currentBfe, currentDawaId, showOwnership 
             {style.badge}
           </span>
           {node.bfe > 0 && (
-            <span className="text-slate-600 text-[9px] shrink-0">BFE {node.bfe}</span>
+            <span className="text-slate-400 text-[9px] shrink-0">BFE {node.bfe}</span>
           )}
           {isCurrent && (
             <span className="text-blue-400 text-[9px] font-medium shrink-0">
@@ -147,7 +147,7 @@ function TreeNode({ node, depth, lang, currentBfe, currentDawaId, showOwnership 
               <span className="text-slate-200 font-medium">{fmtDkk(vurdering)}</span>
             </span>
             {node.grundvaerdi != null && node.grundvaerdi > 0 && (
-              <span className="text-slate-500 text-[10px]">
+              <span className="text-slate-400 text-[10px]">
                 {da ? 'Grund' : 'Land'}: {fmtDkk(node.grundvaerdi)}
               </span>
             )}
@@ -161,10 +161,10 @@ function TreeNode({ node, depth, lang, currentBfe, currentDawaId, showOwnership 
           <span className="w-[130px] text-slate-400 truncate text-left" title={node.ejer ?? ''}>
             {node.ejer ?? '–'}
           </span>
-          <span className="w-[45px] text-slate-500 text-right">
+          <span className="w-[45px] text-slate-400 text-right">
             {node.areal != null && node.areal > 0 ? `${node.areal} m²` : '–'}
           </span>
-          <span className="w-[35px] text-slate-500 text-right">
+          <span className="w-[35px] text-slate-400 text-right">
             {node.vaerelser != null && node.vaerelser > 0 ? `${node.vaerelser} v` : ''}
           </span>
           <span className="w-[100px] text-slate-300 text-right font-medium">
@@ -172,7 +172,7 @@ function TreeNode({ node, depth, lang, currentBfe, currentDawaId, showOwnership 
               ? `${node.koebspris.toLocaleString('da-DK')} DKK`
               : '–'}
           </span>
-          <span className="w-[75px] text-slate-500 text-right">
+          <span className="w-[75px] text-slate-400 text-right">
             {node.koebsdato
               ? new Date(node.koebsdato).toLocaleDateString('da-DK', {
                   day: 'numeric',
@@ -191,7 +191,7 @@ function TreeNode({ node, depth, lang, currentBfe, currentDawaId, showOwnership 
             <span className="text-slate-400 text-[10px] tabular-nums">{node.areal} m²</span>
           )}
           {node.vaerelser != null && node.vaerelser > 0 && (
-            <span className="text-slate-500 text-[10px] tabular-nums">
+            <span className="text-slate-400 text-[10px] tabular-nums">
               {node.vaerelser} {da ? 'vær.' : 'rooms'}
             </span>
           )}
@@ -206,7 +206,7 @@ function TreeNode({ node, depth, lang, currentBfe, currentDawaId, showOwnership 
               {node.areal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²
             </span>
           )}
-          <span className="text-slate-500 text-[10px] tabular-nums">
+          <span className="text-slate-400 text-[10px] tabular-nums">
             {node.children.length}{' '}
             {node.children[0]?.niveau === 'ejerlejlighed'
               ? da
@@ -228,7 +228,7 @@ function TreeNode({ node, depth, lang, currentBfe, currentDawaId, showOwnership 
         {hasChildren ? (
           <button
             onClick={() => setExpanded(!expanded)}
-            className="p-0.5 text-slate-500 hover:text-slate-300 transition-colors shrink-0"
+            className="p-0.5 text-slate-400 hover:text-slate-300 transition-colors shrink-0"
             aria-label={expanded ? 'Fold sammen' : 'Udvid'}
           >
             {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -310,7 +310,7 @@ export default function EjendomStrukturTree({
       </h3>
       {/* Kolonneoverskrifter for ejerskab-mode */}
       {showOwnership && (
-        <div className="flex items-center mb-1 text-[9px] text-slate-600 font-medium uppercase tracking-wide">
+        <div className="flex items-center mb-1 text-[9px] text-slate-400 font-medium uppercase tracking-wide">
           <span className="flex-1" />
           <div className="flex items-center shrink-0">
             <span className="w-[130px] text-left">{da ? 'Ejer' : 'Owner'}</span>

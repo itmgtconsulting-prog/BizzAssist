@@ -72,14 +72,14 @@ export default function BoligmarkedWidget({ kommunekode, postnr, lang }: Props) 
             {da ? 'Boligmarked' : 'Housing Market'}
           </h3>
         </div>
-        <span className="text-xs text-slate-500">{data.omraade}</span>
+        <span className="text-xs text-slate-400">{data.omraade}</span>
       </div>
 
       <div className="flex items-baseline gap-3 mt-1">
         <span className="text-2xl font-bold text-white">
           {(latest.prisTusindKr / 1000).toFixed(1)} mio.
         </span>
-        <span className="text-xs text-slate-500">
+        <span className="text-xs text-slate-400">
           {da ? 'gns. salgspris' : 'avg. sale price'} ({latest.kvartal})
         </span>
         {data.aendringYoY != null && (
@@ -94,11 +94,11 @@ export default function BoligmarkedWidget({ kommunekode, postnr, lang }: Props) 
           </span>
         )}
       </div>
-      <p className="text-[10px] text-slate-600 mt-1">
+      <p className="text-[10px] text-slate-400 mt-1">
         {data.type} · {da ? 'Kilde: DST EJEN77' : 'Source: DST EJEN77'}
       </p>
       {/* BIZZ-1045: Kontekst */}
-      <p className="text-[9px] text-slate-600 mt-0.5">
+      <p className="text-[9px] text-slate-400 mt-0.5">
         {da
           ? `Gennemsnitlig salgspris for ${data.type.toLowerCase()} i ${data.omraade} ved almindelig fri handel.${data.aendringYoY != null ? ` Ændring er ift. samme kvartal året før.` : ''}`
           : `Average sale price for ${data.type.toLowerCase()} in ${data.omraade} in arm's-length transactions.${data.aendringYoY != null ? ' Change is YoY same quarter.' : ''}`}
@@ -111,11 +111,11 @@ export default function BoligmarkedWidget({ kommunekode, postnr, lang }: Props) 
             <span className="text-lg font-bold text-white">
               {kvmData.medianKvmPris.toLocaleString('da-DK')} kr/m²
             </span>
-            <span className="text-xs text-slate-500">
+            <span className="text-xs text-slate-400">
               {da ? 'median kvm-pris (frie handler)' : "median sqm price (arm's length)"}
             </span>
           </div>
-          <p className="text-[9px] text-slate-600 mt-0.5">
+          <p className="text-[9px] text-slate-400 mt-0.5">
             {da
               ? `Baseret på ${kvmData.antalHandler} frie handler i postnr ${kvmData.postnr} (${kvmData.periode})`
               : `Based on ${kvmData.antalHandler} arm's-length transactions in zip ${kvmData.postnr} (${kvmData.periode})`}

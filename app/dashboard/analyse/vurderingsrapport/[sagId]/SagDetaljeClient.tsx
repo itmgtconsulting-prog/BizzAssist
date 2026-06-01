@@ -139,7 +139,7 @@ export default function SagDetaljeClient({ sagId }: Props) {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <Loader2 size={24} className="animate-spin text-slate-500" />
+        <Loader2 size={24} className="animate-spin text-slate-400" />
       </div>
     );
   }
@@ -218,18 +218,18 @@ export default function SagDetaljeClient({ sagId }: Props) {
                   <span className="text-sm font-medium text-white flex-1 text-left">
                     {zone.label}
                   </span>
-                  <span className="text-xs text-slate-500">{docs.length} filer</span>
+                  <span className="text-xs text-slate-400">{docs.length} filer</span>
                   {isOpen ? (
-                    <ChevronDown size={14} className="text-slate-500" />
+                    <ChevronDown size={14} className="text-slate-400" />
                   ) : (
-                    <ChevronRight size={14} className="text-slate-500" />
+                    <ChevronRight size={14} className="text-slate-400" />
                   )}
                 </button>
                 {isOpen && (
                   <div className="px-4 pb-3 border-t border-slate-800 space-y-3">
                     {/* BIZZ-1684: Fritekst-noter til AI-kontekst */}
                     <div className="mt-2">
-                      <label className="text-xs text-slate-500 block mb-1">
+                      <label className="text-xs text-slate-400 block mb-1">
                         Noter til AI-generering
                       </label>
                       <textarea
@@ -258,7 +258,7 @@ export default function SagDetaljeClient({ sagId }: Props) {
                     </div>
                     {/* BIZZ-1692: Funktionel file-upload */}
                     <label
-                      className="border-2 border-dashed border-slate-700 rounded-lg p-4 text-center text-xs text-slate-500 hover:border-blue-500/50 cursor-pointer transition-colors block"
+                      className="border-2 border-dashed border-slate-700 rounded-lg p-4 text-center text-xs text-slate-400 hover:border-blue-500/50 cursor-pointer transition-colors block"
                       onDragOver={(e) => {
                         e.preventDefault();
                         e.currentTarget.classList.add('border-blue-500');
@@ -395,8 +395,8 @@ export default function SagDetaljeClient({ sagId }: Props) {
               const tabData = data.tabs.find((t) => t.tab_key === activeTab);
               if (!tabData) {
                 return (
-                  <div className="text-center py-12 text-slate-500 text-sm">
-                    <FileText size={32} className="mx-auto mb-2 text-slate-600" />
+                  <div className="text-center py-12 text-slate-400 text-sm">
+                    <FileText size={32} className="mx-auto mb-2 text-slate-400" />
                     <p>Ingen data endnu for denne sektion.</p>
                     <p className="text-xs mt-1">Upload dokumenter eller kør AI-generering.</p>
                   </div>

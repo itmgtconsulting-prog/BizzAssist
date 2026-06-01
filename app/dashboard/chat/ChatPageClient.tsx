@@ -263,7 +263,7 @@ function MarkdownContent({ text }: { text: string }) {
     if (line.startsWith('- ') || line.startsWith('* ')) {
       elements.push(
         <div key={`li-${keyCounter++}`} className="flex items-start gap-2 text-sm">
-          <span className="text-slate-500 mt-0.5 shrink-0">•</span>
+          <span className="text-slate-400 mt-0.5 shrink-0">•</span>
           <span>{renderInline(line.slice(2))}</span>
         </div>
       );
@@ -275,7 +275,7 @@ function MarkdownContent({ text }: { text: string }) {
     if (numMatch) {
       elements.push(
         <div key={`nl-${keyCounter++}`} className="flex items-start gap-2 text-sm">
-          <span className="text-slate-500 mt-0.5 shrink-0 w-4 text-right">{numMatch[1]}.</span>
+          <span className="text-slate-400 mt-0.5 shrink-0 w-4 text-right">{numMatch[1]}.</span>
           <span>{renderInline(numMatch[2])}</span>
         </div>
       );
@@ -871,13 +871,13 @@ export default function ChatPageClient() {
         {/* History list */}
         <div className="flex-1 overflow-y-auto py-2">
           {conversations.length === 0 ? (
-            <p className="text-slate-500 text-xs px-4 py-3">
+            <p className="text-slate-400 text-xs px-4 py-3">
               {da ? 'Ingen tidligere samtaler' : 'No previous conversations'}
             </p>
           ) : (
             Array.from(grouped.entries()).map(([dateLabel, convs]) => (
               <div key={dateLabel}>
-                <p className="text-slate-600 text-xs font-medium px-4 py-2 uppercase tracking-wider">
+                <p className="text-slate-400 text-xs font-medium px-4 py-2 uppercase tracking-wider">
                   {dateLabel}
                 </p>
                 {convs.map((conv) => (
@@ -891,13 +891,13 @@ export default function ChatPageClient() {
                     }`}
                   >
                     <div className="flex items-start gap-2 min-w-0">
-                      <MessageSquare size={13} className="shrink-0 mt-0.5 text-slate-500" />
+                      <MessageSquare size={13} className="shrink-0 mt-0.5 text-slate-400" />
                       <span className="text-xs truncate leading-5">{conv.title}</span>
                     </div>
                     <button
                       onClick={(e) => handleDeleteConversation(conv.id, e)}
                       aria-label={da ? 'Slet samtale' : 'Delete conversation'}
-                      className="shrink-0 opacity-0 group-hover:opacity-100 text-slate-600 hover:text-red-400 transition-all"
+                      className="shrink-0 opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-400 transition-all"
                     >
                       <Trash2 size={12} />
                     </button>
@@ -952,7 +952,7 @@ export default function ChatPageClient() {
                       router.push('/dashboard');
                     }
                   }}
-                  className="text-slate-500 hover:text-slate-200 transition-colors p-1 rounded-lg hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ml-1"
+                  className="text-slate-400 hover:text-slate-200 transition-colors p-1 rounded-lg hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ml-1"
                   aria-label={da ? 'Luk AI Chat' : 'Close AI Chat'}
                   title={da ? 'Luk' : 'Close'}
                 >
@@ -972,7 +972,7 @@ export default function ChatPageClient() {
                   router.push('/dashboard');
                 }
               }}
-              className="text-slate-500 hover:text-slate-200 transition-colors p-1 rounded-lg hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              className="text-slate-400 hover:text-slate-200 transition-colors p-1 rounded-lg hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               aria-label={da ? 'Luk AI Chat' : 'Close AI Chat'}
               title={da ? 'Luk' : 'Close'}
             >
@@ -1197,7 +1197,7 @@ export default function ChatPageClient() {
                   <FileText size={14} className="text-blue-400 shrink-0" />
                   <div className="min-w-0 flex-1">
                     <p className="text-sm text-slate-200 truncate">{att.name}</p>
-                    <p className="text-[10px] text-slate-500 uppercase">
+                    <p className="text-[10px] text-slate-400 uppercase">
                       {att.file_type} · {Math.round(att.size / 1024)} KB
                       {att.truncated && ` · ${da ? 'beskåret' : 'truncated'}`}
                     </p>
@@ -1300,7 +1300,7 @@ export default function ChatPageClient() {
           </div>
 
           {/* Disclaimer */}
-          <p className="text-slate-600 text-xs text-center mt-2">
+          <p className="text-slate-400 text-xs text-center mt-2">
             {da
               ? 'AI kan lave fejl — verificér vigtige oplysninger.'
               : 'AI can make mistakes — verify important information.'}

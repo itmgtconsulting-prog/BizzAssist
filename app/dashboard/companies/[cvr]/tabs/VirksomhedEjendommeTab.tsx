@@ -316,7 +316,7 @@ export default function VirksomhedEjendommeTab({
           {/* Mangler nøgle / adgang */}
           {ejendommeFetchComplete && ejendommeManglerNoegle && (
             <div className="flex flex-col items-center justify-center py-12 text-center">
-              <Home size={36} className="text-slate-600 mb-3" />
+              <Home size={36} className="text-slate-400 mb-3" />
               <p className="text-slate-400 text-sm max-w-sm">
                 {lang === 'da'
                   ? 'Ejendomsopslag kræver Datafordeler OAuth-nøgler (DATAFORDELER_OAUTH_CLIENT_ID / CLIENT_SECRET).'
@@ -326,7 +326,7 @@ export default function VirksomhedEjendommeTab({
           )}
           {ejendommeFetchComplete && ejendommeManglerAdgang && (
             <div className="flex flex-col items-center justify-center py-12 text-center">
-              <Home size={36} className="text-slate-600 mb-3" />
+              <Home size={36} className="text-slate-400 mb-3" />
               <p className="text-slate-400 text-sm max-w-sm">
                 {lang === 'da'
                   ? 'Adgang til Ejerfortegnelsen (EJF) er ikke godkendt endnu. Ansøg om Dataadgang på datafordeler.dk.'
@@ -378,7 +378,7 @@ export default function VirksomhedEjendommeTab({
                 </p>
                 <div className="flex items-center gap-2">
                   {relatedCompanies.length > 0 && (
-                    <span className="text-slate-500 text-xs">
+                    <span className="text-slate-400 text-xs">
                       {lang === 'da'
                         ? `Inkl. ${relatedCompanies.filter((v) => v.aktiv).length} datterselskab${relatedCompanies.filter((v) => v.aktiv).length !== 1 ? 'er' : ''}`
                         : `Incl. ${relatedCompanies.filter((v) => v.aktiv).length} subsidiar${relatedCompanies.filter((v) => v.aktiv).length !== 1 ? 'ies' : 'y'}`}
@@ -477,13 +477,13 @@ export default function VirksomhedEjendommeTab({
                           >
                             <Building2
                               size={14}
-                              className="text-slate-500 group-hover:text-blue-400 transition-colors"
+                              className="text-slate-400 group-hover:text-blue-400 transition-colors"
                             />
                             <h3 className="text-sm font-semibold text-slate-200 group-hover:text-blue-400 transition-colors">
                               {name}
                             </h3>
-                            <span className="text-[10px] text-slate-500 font-mono">CVR {cvr}</span>
-                            <span className="text-[10px] text-slate-500">
+                            <span className="text-[10px] text-slate-400 font-mono">CVR {cvr}</span>
+                            <span className="text-[10px] text-slate-400">
                               · {props.length}{' '}
                               {lang === 'da'
                                 ? props.length === 1
@@ -605,7 +605,7 @@ export default function VirksomhedEjendommeTab({
                               : `Administered properties (${administrerede.length})`}
                           </h3>
                         </div>
-                        <p className="text-slate-500 text-xs mb-3">
+                        <p className="text-slate-400 text-xs mb-3">
                           {lang === 'da'
                             ? 'Følgende ejendomme administreres af denne virksomhed/ejerforening.'
                             : 'The following properties are administered by this company/association.'}
@@ -739,15 +739,15 @@ export default function VirksomhedEjendommeTab({
                                       >
                                         <Building2
                                           size={14}
-                                          className="text-slate-500 group-hover:text-blue-400 transition-colors"
+                                          className="text-slate-400 group-hover:text-blue-400 transition-colors"
                                         />
                                         <h3 className="text-sm font-semibold text-slate-400 group-hover:text-blue-400 transition-colors">
                                           {name}
                                         </h3>
-                                        <span className="text-[10px] text-slate-500 font-mono">
+                                        <span className="text-[10px] text-slate-400 font-mono">
                                           CVR {cvr}
                                         </span>
-                                        <span className="text-[10px] text-slate-500">
+                                        <span className="text-[10px] text-slate-400">
                                           · {props.length}{' '}
                                           {lang === 'da'
                                             ? props.length === 1
@@ -782,7 +782,7 @@ export default function VirksomhedEjendommeTab({
               })()}
 
               {ejendommeLoadingMore && (
-                <div className="flex items-center justify-center gap-2 py-4 text-slate-500 text-sm">
+                <div className="flex items-center justify-center gap-2 py-4 text-slate-400 text-sm">
                   <Loader2 className="w-4 h-4 animate-spin" />
                   {lang === 'da' ? `Indlæser flere ejendomme…` : `Loading more properties…`}
                 </div>
@@ -796,7 +796,7 @@ export default function VirksomhedEjendommeTab({
             !ejendommeManglerAdgang &&
             displayEjendomme.length === 0 && (
               <div className="flex flex-col items-center justify-center py-12 text-center">
-                <Home size={36} className="text-slate-600 mb-3" />
+                <Home size={36} className="text-slate-400 mb-3" />
                 <p className="text-slate-400 text-sm">
                   {lang === 'da'
                     ? 'Ingen registrerede ejendomme fundet for denne virksomhed eller dens koncern.'
@@ -855,7 +855,7 @@ export default function VirksomhedEjendommeTab({
                   </button>
                   {aiExpanded && (
                     <div className="space-y-2">
-                      <p className="text-slate-500 text-[10px] italic mb-2">
+                      <p className="text-slate-400 text-[10px] italic mb-2">
                         {lang === 'da'
                           ? 'Genereret af AI — kan indeholde fejl. Bør verificeres manuelt.'
                           : 'Generated by AI — may contain errors. Should be verified manually.'}
@@ -905,7 +905,7 @@ export default function VirksomhedEjendommeTab({
                                           ? 'Lav'
                                           : 'Low'}
                                   </span>
-                                  <span className="text-[10px] text-slate-500 truncate">
+                                  <span className="text-[10px] text-slate-400 truncate">
                                     {c.reasoning}
                                   </span>
                                 </div>
@@ -995,7 +995,7 @@ export default function VirksomhedEjendommeTab({
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 text-center">
                   <p className="text-xl font-bold text-white">{ejendomshandler.length}</p>
-                  <p className="text-slate-500 text-[10px] mt-0.5">
+                  <p className="text-slate-400 text-[10px] mt-0.5">
                     {lang === 'da' ? 'Handler i alt' : 'Total trades'}
                   </p>
                 </div>
@@ -1003,7 +1003,7 @@ export default function VirksomhedEjendommeTab({
                   <p className="text-xl font-bold text-emerald-400">
                     {ejendomshandler.filter((h) => h.rolle === 'koeber').length}
                   </p>
-                  <p className="text-slate-500 text-[10px] mt-0.5">
+                  <p className="text-slate-400 text-[10px] mt-0.5">
                     {lang === 'da' ? 'Køb' : 'Purchases'}
                   </p>
                 </div>
@@ -1011,7 +1011,7 @@ export default function VirksomhedEjendommeTab({
                   <p className="text-xl font-bold text-rose-400">
                     {ejendomshandler.filter((h) => h.rolle === 'saelger').length}
                   </p>
-                  <p className="text-slate-500 text-[10px] mt-0.5">
+                  <p className="text-slate-400 text-[10px] mt-0.5">
                     {lang === 'da' ? 'Salg' : 'Sales'}
                   </p>
                 </div>
@@ -1019,7 +1019,7 @@ export default function VirksomhedEjendommeTab({
                   <p className="text-xl font-bold text-white">
                     {new Set(ejendomshandler.map((h) => h.bfeNummer)).size}
                   </p>
-                  <p className="text-slate-500 text-[10px] mt-0.5">
+                  <p className="text-slate-400 text-[10px] mt-0.5">
                     {lang === 'da' ? 'Ejendomme' : 'Properties'}
                   </p>
                 </div>
@@ -1030,7 +1030,7 @@ export default function VirksomhedEjendommeTab({
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="text-left text-slate-500 text-xs uppercase tracking-wide border-b border-slate-700/30">
+                      <tr className="text-left text-slate-400 text-xs uppercase tracking-wide border-b border-slate-700/30">
                         <th className="px-4 py-2.5 whitespace-nowrap">
                           {lang === 'da' ? 'Dato' : 'Date'}
                         </th>
@@ -1095,14 +1095,14 @@ export default function VirksomhedEjendommeTab({
                             </td>
                             <td className="px-4 py-2.5 text-right whitespace-nowrap">
                               <span
-                                className={`text-sm font-medium ${h.kontantKoebesum != null ? 'text-white' : 'text-slate-600'}`}
+                                className={`text-sm font-medium ${h.kontantKoebesum != null ? 'text-white' : 'text-slate-400'}`}
                               >
                                 {fmtPris(h.kontantKoebesum)}
                               </span>
                             </td>
                             <td className="px-4 py-2.5 text-right whitespace-nowrap">
                               <span
-                                className={`text-sm font-medium ${h.samletKoebesum != null ? 'text-white' : 'text-slate-600'}`}
+                                className={`text-sm font-medium ${h.samletKoebesum != null ? 'text-white' : 'text-slate-400'}`}
                               >
                                 {fmtPris(h.samletKoebesum)}
                               </span>
@@ -1123,7 +1123,7 @@ export default function VirksomhedEjendommeTab({
                   ? 'Afventer EJF-adgang fra Datafordeler'
                   : 'Awaiting EJF access from Datafordeler'}
               </p>
-              <p className="text-slate-500 text-xs max-w-md">
+              <p className="text-slate-400 text-xs max-w-md">
                 {lang === 'da'
                   ? 'Ejendomshandler kræver godkendt Dataadgang til Ejerfortegnelsen (EJF) hos Geodatastyrelsen. Ansøgningen er indsendt.'
                   : 'Property trades require approved data access to EJF from the Danish Geodata Agency. The application has been submitted.'}
@@ -1131,7 +1131,7 @@ export default function VirksomhedEjendommeTab({
             </div>
           ) : !handlerLoading ? (
             <EmptyState
-              ikon={<ArrowRightLeft size={32} className="text-slate-600" />}
+              ikon={<ArrowRightLeft size={32} className="text-slate-400" />}
               tekst={c.noTradesFound}
             />
           ) : null}
@@ -1150,7 +1150,7 @@ export default function VirksomhedEjendommeTab({
               <div className="px-4 py-2.5 border-b border-slate-700/40">
                 <p className="text-slate-200 text-xs font-semibold">
                   {da ? 'Historiske ejendomme (solgte)' : 'Historical properties (sold)'}
-                  <span className="text-slate-500 font-normal ml-2">({solgte.length})</span>
+                  <span className="text-slate-400 font-normal ml-2">({solgte.length})</span>
                 </p>
               </div>
               <div className="divide-y divide-slate-700/20">
@@ -1161,7 +1161,7 @@ export default function VirksomhedEjendommeTab({
                   >
                     <div>
                       <p className="text-slate-300 text-xs">{h.adresse}</p>
-                      <p className="text-slate-500 text-[10px]">
+                      <p className="text-slate-400 text-[10px]">
                         {h.overtagelsesdato
                           ? new Date(h.overtagelsesdato).toLocaleDateString('da-DK', {
                               day: 'numeric',

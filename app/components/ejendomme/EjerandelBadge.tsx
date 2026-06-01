@@ -102,8 +102,8 @@ export default function EjerandelBadge({ bfe, variant = 'badge' }: Props) {
       <span
         className={
           variant === 'inline'
-            ? 'text-slate-600 text-[10px]'
-            : 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-slate-800/60 text-slate-500 text-[10px]'
+            ? 'text-slate-400 text-[10px]'
+            : 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-slate-800/60 text-slate-400 text-[10px]'
         }
         title="Henter ejerandel…"
       >
@@ -121,7 +121,7 @@ export default function EjerandelBadge({ bfe, variant = 'badge' }: Props) {
 
   if (variant === 'inline') {
     return (
-      <span className="text-slate-500 text-[10px] ml-1" title={label}>
+      <span className="text-slate-400 text-[10px] ml-1" title={label}>
         · {pct}%
       </span>
     );

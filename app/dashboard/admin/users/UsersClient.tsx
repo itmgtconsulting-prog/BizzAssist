@@ -497,6 +497,20 @@ export default function UsersClient() {
                       <div className="flex items-center gap-2 mb-0.5">
                         <p className="text-white font-semibold text-sm truncate">{u.email}</p>
                         <StatusBadge status={u.subscription!.status as SubStatus} da={da} />
+                        {/* BIZZ-1947: orphaned user (no tenant_membership → 401/empty data) */}
+                        {!u.hasTenant && (
+                          <span
+                            className="bg-red-500/20 text-red-400 border border-red-500/30 px-1.5 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1"
+                            title={
+                              da
+                                ? 'Brugeren mangler tenant-tilknytning — alle data-kald returnerer tom data'
+                                : 'User has no tenant membership — all data calls return empty'
+                            }
+                          >
+                            <AlertTriangle size={10} />
+                            {da ? 'Ingen tenant' : 'No tenant'}
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-2 text-xs text-slate-400">
                         <PlanIcon planId={u.subscription!.planId} />
@@ -621,6 +635,20 @@ export default function UsersClient() {
                         {plan.priceDkk > 0 && !sub.isPaid && (
                           <span className="bg-amber-500/20 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded-full text-[10px] font-bold">
                             {da ? 'Ikke betalt' : 'Unpaid'}
+                          </span>
+                        )}
+                        {/* BIZZ-1947: orphaned user (no tenant_membership → 401/empty data) */}
+                        {!u.hasTenant && (
+                          <span
+                            className="bg-red-500/20 text-red-400 border border-red-500/30 px-1.5 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1"
+                            title={
+                              da
+                                ? 'Brugeren mangler tenant-tilknytning — alle data-kald returnerer tom data'
+                                : 'User has no tenant membership — all data calls return empty'
+                            }
+                          >
+                            <AlertTriangle size={10} />
+                            {da ? 'Ingen tenant' : 'No tenant'}
                           </span>
                         )}
                       </div>

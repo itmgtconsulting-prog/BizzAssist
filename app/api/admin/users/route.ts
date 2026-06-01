@@ -65,6 +65,12 @@ interface AdminUserRow {
   lastSignIn: string | null;
   emailConfirmed: boolean;
   isAdmin: boolean;
+  /**
+   * BIZZ-1947: false when the user has no row in tenant_memberships. Such a user
+   * can log in but every API route returns 401/empty data. Surfaced as a warning
+   * badge in the admin user list so the problem is caught early.
+   */
+  hasTenant: boolean;
   subscription: {
     planId: string;
     status: string;
@@ -115,6 +121,11 @@ export async function GET(): Promise<NextResponse> {
       return NextResponse.json({ error: 'Failed to list users' }, { status: 500 });
     }
 
+    // BIZZ-1947: set of user_ids that have a tenant_membership, so we can flag
+    // orphaned users (no membership → 401/empty data) in the admin list.
+    const { data: memberships } = await admin.from('tenant_memberships').select('user_id');
+    const usersWithTenant = new Set((memberships ?? []).map((m) => m.user_id));
+
     const users: AdminUserRow[] = data.users.map((u) => {
       const sub = u.app_metadata?.subscription as AdminUserRow['subscription'] | undefined;
       return {
@@ -125,6 +136,7 @@ export async function GET(): Promise<NextResponse> {
         lastSignIn: u.last_sign_in_at ?? null,
         emailConfirmed: !!u.email_confirmed_at,
         isAdmin: !!u.app_metadata?.isAdmin,
+        hasTenant: usersWithTenant.has(u.id),
         subscription: sub
           ? {
               planId: sub.planId ?? 'demo',
@@ -157,7 +169,8 @@ export async function GET(): Promise<NextResponse> {
  */
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
-    if (!(await verifyAdmin())) {
+    const adminUser = await verifyAdmin();
+    if (!adminUser) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -183,16 +196,50 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Failed to create user' }, { status: 400 });
     }
 
+    // BIZZ-1947: Assign the new user to the creating admin's tenant.
+    // Unlike the /signup flow (which calls provisionTenantForUser to create a
+    // dedicated tenant + membership), admin.auth.admin.createUser only creates
+    // the auth.users row. Without a tenant_memberships row, resolveTenantId()
+    // returns null and EVERY API route returns 401/empty data — the user can
+    // log in and see the UI shell but no data loads. We mirror the team model:
+    // the admin-created user joins the admin's own tenant as tenant_admin.
+    let tenantAssigned = false;
+    const { data: adminMembership } = await admin
+      .from('tenant_memberships')
+      .select('tenant_id')
+      .eq('user_id', adminUser.id)
+      .limit(1)
+      .single();
+
+    if (adminMembership?.tenant_id) {
+      const { error: memberErr } = await admin.from('tenant_memberships').insert({
+        tenant_id: adminMembership.tenant_id,
+        user_id: newUser.user.id,
+        role: 'tenant_admin',
+      });
+      if (memberErr) {
+        logger.error(
+          '[admin/users] tenant_membership insert error:',
+          memberErr.code ?? memberErr.message
+        );
+      } else {
+        tenantAssigned = true;
+      }
+    } else {
+      logger.error('[admin/users] admin has no tenant_membership — new user left without tenant');
+    }
+
     // Audit log — fire-and-forget (ISO 27001 A.12.4)
     await insertAuditLog(admin, {
       action: 'admin.user.create',
       resource_type: 'user',
       resource_id: newUser.user.id,
-      metadata: JSON.stringify({ createdEmail: email }),
+      metadata: JSON.stringify({ createdEmail: email, tenantAssigned }),
     });
 
     return NextResponse.json({
       ok: true,
+      tenantAssigned,
       user: {
         id: newUser.user.id,
         email: newUser.user.email,

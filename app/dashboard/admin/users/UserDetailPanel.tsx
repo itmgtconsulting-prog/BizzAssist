@@ -47,6 +47,8 @@ export interface AdminUser {
   lastSignIn: string | null;
   emailConfirmed: boolean;
   isAdmin: boolean;
+  /** BIZZ-1947: false when the user has no tenant_membership (all API calls return 401/empty). */
+  hasTenant: boolean;
   subscription: {
     planId: PlanId;
     status: SubStatus;

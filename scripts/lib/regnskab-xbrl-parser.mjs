@@ -2,13 +2,13 @@
  * BIZZ-1936: Direct-port af app/api/regnskab/xbrl/route.ts parser-logik
  * til pure JS .mjs så vi kan backfille regnskab_cache uden HTTP roundtrip.
  *
- * Holder samme PARSER_VERSION som route.ts ('v7') så cache er kompatibel.
+ * Holder samme PARSER_VERSION som route.ts ('v8') så cache er kompatibel.
  * Skema for years[i] er identisk med RegnskabsAar interface i route.ts.
  *
  * Vedligehold: hvis route.ts parseren ændres, opdater også denne fil.
  */
 
-export const PARSER_VERSION = 'v7';
+export const PARSER_VERSION = 'v8';
 
 // ─── Tag mappings (identisk med route.ts) ─────────────────────────────────────
 
@@ -129,22 +129,26 @@ function extractValue(xml, tagNames, validCtxIds) {
         }
         const num = parseFloat(cleaned);
         if (!isNaN(num)) {
+          // BIZZ-1944: hold i sync med app/api/regnskab/xbrl/route.ts extractValue.
           const scaleMatch = attrs.match(/scale="(-?\d+)"/);
-          const scale = scaleMatch ? parseInt(scaleMatch[1], 10) : 0;
           const hasScale = scaleMatch !== null;
+          const isNeg = /\bsign="-"/i.test(attrs);
+          const unitRef = attrs.match(/unitRef="([^"]*)"/i)?.[1] ?? '';
+          const erIkkeMonetaer = /pure|shares|antal|decimal/i.test(unitRef);
           const decimalsMatch = attrs.match(/decimals="(-?\d+|INF)"/i);
           let dkkValue;
-          if (hasScale && scale > 0) {
-            dkkValue = num * Math.pow(10, scale);
-          } else if (hasScale && scale === 0 && num > 0 && num < 10_000_000) {
-            dkkValue = num * 1_000_000;
+          if (erIkkeMonetaer) {
+            dkkValue = num;
+          } else if (hasScale) {
+            dkkValue = num * Math.pow(10, parseInt(scaleMatch[1], 10));
           } else if (decimalsMatch && decimalsMatch[1] !== 'INF') {
             const d = parseInt(decimalsMatch[1], 10);
             dkkValue = d < 0 ? num * Math.pow(10, -d) : num;
           } else {
             dkkValue = num;
           }
-          return Math.round(dkkValue);
+          const rounded = Math.round(dkkValue);
+          return isNeg ? -rounded : rounded;
         }
       }
     }

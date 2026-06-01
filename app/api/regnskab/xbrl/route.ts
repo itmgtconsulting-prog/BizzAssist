@@ -383,7 +383,11 @@ function parseContexts(xml: string, periodeStart: string, periodeSlut: string) {
  * @param tagNames - Mulige tag-navne at søge efter (uden namespace)
  * @param validCtxIds - Gyldige context-refs (tomme = accepter alle)
  */
-function extractValue(xml: string, tagNames: string[], validCtxIds?: Set<string>): number | null {
+export function extractValue(
+  xml: string,
+  tagNames: string[],
+  validCtxIds?: Set<string>
+): number | null {
   for (const tag of tagNames) {
     // Alle matches for dette tag — vi vælger den med korrekt context
     const patterns: Array<{ re: RegExp; attrsGroup: number; valGroup: number }> = [
@@ -433,25 +437,31 @@ function extractValue(xml: string, tagNames: string[], validCtxIds?: Set<string>
         if (!isNaN(num)) {
           // Beregn reel DKK-værdi baseret på iXBRL scale eller standard XBRL decimals
           const scaleMatch = attrs.match(/scale="(-?\d+)"/);
-          const scale = scaleMatch ? parseInt(scaleMatch[1], 10) : 0;
           const hasScale = scaleMatch !== null;
+          // BIZZ-1944: iXBRL angiver fortegn separat via sign="-" (det viste tal er
+          // altid en positiv magnitude). Et underskud/negativ egenkapital får derfor
+          // sign="-" og SKAL negeres — ellers vises tab som overskud.
+          const isNeg = /\bsign="-"/i.test(attrs);
+          // BIZZ-1944: Ikke-monetære enheder (U-pure, antal, andele) må ALDRIG skaleres.
+          // Fx AverageNumberOfEmployees="3" unitRef="U-pure" er bogstaveligt 3 ansatte.
+          const unitRef = attrs.match(/unitRef="([^"]*)"/i)?.[1] ?? '';
+          const erIkkeMonetaer = /pure|shares|antal|decimal/i.test(unitRef);
           // BIZZ-449: Standard XBRL bruger decimals-attribut til at angive enhed
           // decimals="-3" → tusinder, decimals="-6" → millioner, "INF"/0 → hele DKK
           const decimalsMatch = attrs.match(/decimals="(-?\d+|INF)"/i);
           let dkkValue: number;
 
-          if (hasScale && scale > 0) {
-            // iXBRL med scale > 0: visuelt tal × 10^scale = DKK
-            // F.eks. scale="6" + 154944 = 154944 × 10^6 = 154,944,000,000 DKK
-            dkkValue = num * Math.pow(10, scale);
-          } else if (hasScale && scale === 0 && num > 0 && num < 10_000_000) {
-            // iXBRL scale="0" med relativt små tal (< 10M):
-            // Sandsynligvis i millioner DKK (visuel display-enhed ikke i XBRL).
-            // Heuristik: hvis scale=0 men tal < 10M, antag millioner.
-            dkkValue = num * 1_000_000;
+          if (erIkkeMonetaer) {
+            // Antal/andele — tallet er allerede den reelle værdi.
+            dkkValue = num;
+          } else if (hasScale) {
+            // BIZZ-1944: iXBRL scale er autoritativ — det viste tal × 10^scale = DKK.
+            // scale="0" → ×1 (hele DKK, IKKE en gætte-heuristik om millioner). Den
+            // tidligere scale=0→×1.000.000-antagelse inflaterede alle hele-DKK-regnskaber.
+            dkkValue = num * Math.pow(10, parseInt(scaleMatch[1], 10));
           } else if (decimalsMatch && decimalsMatch[1] !== 'INF') {
-            // BIZZ-449: Standard XBRL med decimals-attribut (mest almindelig for danske SMB'er)
-            // decimals="-3" → værdi er i tusinder → gang med 1.000
+            // BIZZ-449: Standard XBRL uden scale-attribut bruger decimals som enhed
+            // (mest almindelig for danske SMB'er). decimals="-3" → tusinder → ×1.000.
             const d = parseInt(decimalsMatch[1], 10);
             dkkValue = d < 0 ? num * Math.pow(10, -d) : num;
           } else {
@@ -459,7 +469,8 @@ function extractValue(xml: string, tagNames: string[], validCtxIds?: Set<string>
             dkkValue = num;
           }
           // BIZZ-435: Return hele DKK — UI formatter selv med toLocaleString
-          return Math.round(dkkValue);
+          const rounded = Math.round(dkkValue);
+          return isNeg ? -rounded : rounded;
         }
       }
     }
@@ -1003,7 +1014,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // BIZZ-449: Append parser version to timestamp so cache is invalidated when
     // the XBRL parser logic changes (e.g. decimals attribute handling fix).
     // v6: BIZZ-562 — extractText vælger LÆNGSTE match for ESEF continuation cases
-    const PARSER_VERSION = 'v7';
+    // v8: BIZZ-1944 — trust iXBRL scale (drop scale=0→×1M-gæt), honorér sign="-",
+    //     spring ikke-monetære enheder (U-pure/antal) over. Inflaterede/fortegns-
+    //     forkerte regnskaber re-parses ved næste access.
+    const PARSER_VERSION = 'v8';
     const latestTimestamp =
       (regnskabData.regnskaber[0]?.offentliggjort ?? '') + `_${PARSER_VERSION}`;
 

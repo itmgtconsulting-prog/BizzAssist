@@ -141,8 +141,20 @@ export default function VirksomhedshandlerClient() {
   // Regnskabs-range-filtre (server-side, DKK)
   const [minOmsaetning, setMinOmsaetning] = useState('');
   const [maxOmsaetning, setMaxOmsaetning] = useState('');
+  const [minBruttofortjeneste, setMinBruttofortjeneste] = useState('');
+  const [maxBruttofortjeneste, setMaxBruttofortjeneste] = useState('');
   const [minOverskud, setMinOverskud] = useState('');
   const [maxOverskud, setMaxOverskud] = useState('');
+  // Klient-side filtre på kolonner uden server-støtte:
+  // Ændring = ejerandels-delta (pp), Est. værdi + Confidence = AI-berigede felter.
+  const [minAendring, setMinAendring] = useState('');
+  const [maxAendring, setMaxAendring] = useState('');
+  const [minEstVaerdi, setMinEstVaerdi] = useState('');
+  const [maxEstVaerdi, setMaxEstVaerdi] = useState('');
+  const [confidenceFilter, setConfidenceFilter] = useState<Set<'low' | 'medium' | 'high'>>(
+    new Set()
+  );
+  const [confidenceDropdownOpen, setConfidenceDropdownOpen] = useState(false);
   // Server-side sortering: kolonne-nøgle + retning (klik på overskrift toggler).
   // Default = ændringsdato (nyeste ejerskabsændringer først); indrapporteret er
   // MV-refresh-dato og dermed ens for alle rækker — ubrugelig som default-sort.
@@ -167,8 +179,15 @@ export default function VirksomhedshandlerClient() {
     selectedBrancher.size > 0 ||
     !!minOmsaetning ||
     !!maxOmsaetning ||
+    !!minBruttofortjeneste ||
+    !!maxBruttofortjeneste ||
     !!minOverskud ||
     !!maxOverskud ||
+    !!minAendring ||
+    !!maxAendring ||
+    !!minEstVaerdi ||
+    !!maxEstVaerdi ||
+    confidenceFilter.size > 0 ||
     !!deltagerFilter ||
     !!cvrFilter ||
     !!toDate ||
@@ -182,8 +201,15 @@ export default function VirksomhedshandlerClient() {
     setSelectedBrancher(new Set());
     setMinOmsaetning('');
     setMaxOmsaetning('');
+    setMinBruttofortjeneste('');
+    setMaxBruttofortjeneste('');
     setMinOverskud('');
     setMaxOverskud('');
+    setMinAendring('');
+    setMaxAendring('');
+    setMinEstVaerdi('');
+    setMaxEstVaerdi('');
+    setConfidenceFilter(new Set());
     setDeltagerFilter('');
     setCvrFilter('');
     setSortKey('aendringsdato');
@@ -256,6 +282,8 @@ export default function VirksomhedshandlerClient() {
     if (selectedBrancher.size > 0) params.set('brancher', [...selectedBrancher].join(','));
     if (minOmsaetning) params.set('min_omsaetning', minOmsaetning);
     if (maxOmsaetning) params.set('max_omsaetning', maxOmsaetning);
+    if (minBruttofortjeneste) params.set('min_bruttofortjeneste', minBruttofortjeneste);
+    if (maxBruttofortjeneste) params.set('max_bruttofortjeneste', maxBruttofortjeneste);
     if (minOverskud) params.set('min_overskud', minOverskud);
     if (maxOverskud) params.set('max_overskud', maxOverskud);
     params.set('sort', sortKey);
@@ -283,6 +311,8 @@ export default function VirksomhedshandlerClient() {
     selectedBrancher,
     minOmsaetning,
     maxOmsaetning,
+    minBruttofortjeneste,
+    maxBruttofortjeneste,
     minOverskud,
     maxOverskud,
     sortKey,
@@ -308,8 +338,18 @@ export default function VirksomhedshandlerClient() {
             if (Array.isArray(f.brancher)) setSelectedBrancher(new Set(f.brancher as string[]));
             if (typeof f.minOmsaetning === 'string') setMinOmsaetning(f.minOmsaetning);
             if (typeof f.maxOmsaetning === 'string') setMaxOmsaetning(f.maxOmsaetning);
+            if (typeof f.minBruttofortjeneste === 'string')
+              setMinBruttofortjeneste(f.minBruttofortjeneste);
+            if (typeof f.maxBruttofortjeneste === 'string')
+              setMaxBruttofortjeneste(f.maxBruttofortjeneste);
             if (typeof f.minOverskud === 'string') setMinOverskud(f.minOverskud);
             if (typeof f.maxOverskud === 'string') setMaxOverskud(f.maxOverskud);
+            if (typeof f.minAendring === 'string') setMinAendring(f.minAendring);
+            if (typeof f.maxAendring === 'string') setMaxAendring(f.maxAendring);
+            if (typeof f.minEstVaerdi === 'string') setMinEstVaerdi(f.minEstVaerdi);
+            if (typeof f.maxEstVaerdi === 'string') setMaxEstVaerdi(f.maxEstVaerdi);
+            if (Array.isArray(f.confidence))
+              setConfidenceFilter(new Set(f.confidence as Array<'low' | 'medium' | 'high'>));
             if (typeof f.sortKey === 'string') setSortKey(f.sortKey);
             if (f.sortDir === 'asc' || f.sortDir === 'desc') setSortDir(f.sortDir);
           }
@@ -350,8 +390,15 @@ export default function VirksomhedshandlerClient() {
               brancher: [...selectedBrancher],
               minOmsaetning,
               maxOmsaetning,
+              minBruttofortjeneste,
+              maxBruttofortjeneste,
               minOverskud,
               maxOverskud,
+              minAendring,
+              maxAendring,
+              minEstVaerdi,
+              maxEstVaerdi,
+              confidence: [...confidenceFilter],
               sortKey,
               sortDir,
             },
@@ -370,8 +417,15 @@ export default function VirksomhedshandlerClient() {
     selectedBrancher,
     minOmsaetning,
     maxOmsaetning,
+    minBruttofortjeneste,
+    maxBruttofortjeneste,
     minOverskud,
     maxOverskud,
+    minAendring,
+    maxAendring,
+    minEstVaerdi,
+    maxEstVaerdi,
+    confidenceFilter,
     sortKey,
     sortDir,
   ]);
@@ -765,8 +819,33 @@ export default function VirksomhedshandlerClient() {
                   />
                 </div>
               </th>
-              {/* Bruttofortjeneste — intet serverfilter */}
-              <th className="px-2 py-1" />
+              {/* Bruttofortjeneste min/max */}
+              <th className="px-2 py-1 font-normal">
+                <div className="flex flex-col gap-0.5">
+                  <input
+                    type="number"
+                    value={minBruttofortjeneste}
+                    onChange={(e) => {
+                      setMinBruttofortjeneste(e.target.value);
+                      setOffset(0);
+                    }}
+                    placeholder={t('Min', 'Min')}
+                    aria-label={t('Minimum bruttofortjeneste', 'Minimum gross profit')}
+                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white text-right tabular-nums placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                  />
+                  <input
+                    type="number"
+                    value={maxBruttofortjeneste}
+                    onChange={(e) => {
+                      setMaxBruttofortjeneste(e.target.value);
+                      setOffset(0);
+                    }}
+                    placeholder={t('Max', 'Max')}
+                    aria-label={t('Maksimum bruttofortjeneste', 'Maximum gross profit')}
+                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white text-right tabular-nums placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                  />
+                </div>
+              </th>
               {/* Overskud min/max */}
               <th className="px-2 py-1 font-normal">
                 <div className="flex flex-col gap-0.5">
@@ -794,8 +873,33 @@ export default function VirksomhedshandlerClient() {
                   />
                 </div>
               </th>
-              {/* Ændring — intet serverfilter */}
-              <th className="px-2 py-1" />
+              {/* Ændring min/max (ejerandels-delta i procentpoint, klient-side) */}
+              <th className="px-2 py-1 font-normal">
+                <div className="flex flex-col gap-0.5">
+                  <input
+                    type="number"
+                    value={minAendring}
+                    onChange={(e) => setMinAendring(e.target.value)}
+                    placeholder={t('Min pp', 'Min pp')}
+                    aria-label={t(
+                      'Minimum ændring i procentpoint',
+                      'Minimum change in percentage points'
+                    )}
+                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white text-right tabular-nums placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                  />
+                  <input
+                    type="number"
+                    value={maxAendring}
+                    onChange={(e) => setMaxAendring(e.target.value)}
+                    placeholder={t('Max pp', 'Max pp')}
+                    aria-label={t(
+                      'Maksimum ændring i procentpoint',
+                      'Maximum change in percentage points'
+                    )}
+                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white text-right tabular-nums placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                  />
+                </div>
+              </th>
               {/* Ændringsdato fra/til */}
               <th className="px-2 py-1 font-normal">
                 <div className="flex flex-col gap-0.5">
@@ -825,12 +929,73 @@ export default function VirksomhedshandlerClient() {
                   />
                 </div>
               </th>
-              {/* Indrapporteret — intet filter */}
+              {/* Indrapporteret — MV-refresh-dato (ens for alle rækker), intet filter */}
               <th className="px-2 py-1" />
-              {/* Est. værdi — intet filter */}
-              <th className="px-2 py-1" />
-              {/* Confidence — intet filter */}
-              <th className="px-2 py-1" />
+              {/* Est. værdi min/max (kun AI-berigede rækker, klient-side) */}
+              <th className="px-2 py-1 font-normal">
+                <div className="flex flex-col gap-0.5">
+                  <input
+                    type="number"
+                    value={minEstVaerdi}
+                    onChange={(e) => setMinEstVaerdi(e.target.value)}
+                    placeholder={t('Min', 'Min')}
+                    aria-label={t('Minimum estimeret værdi', 'Minimum estimated value')}
+                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white text-right tabular-nums placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                  />
+                  <input
+                    type="number"
+                    value={maxEstVaerdi}
+                    onChange={(e) => setMaxEstVaerdi(e.target.value)}
+                    placeholder={t('Max', 'Max')}
+                    aria-label={t('Maksimum estimeret værdi', 'Maximum estimated value')}
+                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white text-right tabular-nums placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                  />
+                </div>
+              </th>
+              {/* Confidence-multiselect (kun AI-berigede rækker, klient-side) */}
+              <th className="px-2 py-1 relative font-normal">
+                <button
+                  type="button"
+                  onClick={() => setConfidenceDropdownOpen((v) => !v)}
+                  aria-label={t('Filtrer på confidence', 'Filter by confidence')}
+                  className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white flex items-center justify-between gap-1"
+                >
+                  <span className="truncate">
+                    {confidenceFilter.size === 0
+                      ? t('Alle', 'All')
+                      : `${confidenceFilter.size} ${t('valgt', 'selected')}`}
+                  </span>
+                  <ChevronDown
+                    size={11}
+                    className={`text-slate-500 transition-transform ${confidenceDropdownOpen ? 'rotate-180' : ''}`}
+                  />
+                </button>
+                {confidenceDropdownOpen && (
+                  <div className="absolute top-full right-0 mt-1 z-30 bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-1 min-w-[140px]">
+                    {(['high', 'medium', 'low'] as const).map((lvl) => (
+                      <label
+                        key={lvl}
+                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-700/50 cursor-pointer text-sm text-white"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={confidenceFilter.has(lvl)}
+                          onChange={() => {
+                            setConfidenceFilter((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(lvl)) next.delete(lvl);
+                              else next.add(lvl);
+                              return next;
+                            });
+                          }}
+                          className="accent-indigo-500 w-3.5 h-3.5"
+                        />
+                        <ConfidenceBadge level={lvl} />
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </th>
               {/* Handlinger — intet filter */}
               <th className="px-2 py-1" />
             </tr>
@@ -901,6 +1066,23 @@ export default function VirksomhedshandlerClient() {
                       !(k.virksomhed_navn ?? '').toLowerCase().includes(q)
                     )
                       return false;
+                  }
+                  // Ændring (ejerandels-delta i procentpoint) — klient-side range.
+                  const delta = Math.abs(k.current_ejerandel_pct - k.prev_ejerandel_pct);
+                  if (minAendring && delta < Number(minAendring)) return false;
+                  if (maxAendring && delta > Number(maxAendring)) return false;
+                  // Est. værdi + Confidence findes kun på AI-berigede rækker. Når et
+                  // af disse filtre er aktivt, skjules ikke-berigede rækker.
+                  const key = `${k.deltager_enhedsnummer}-${k.virksomhed_cvr}-${k.gyldig_fra}`;
+                  const berig = berigResults[key];
+                  if (minEstVaerdi || maxEstVaerdi) {
+                    const mid = berig?.estimeret_vaerdi?.mid;
+                    if (mid == null) return false;
+                    if (minEstVaerdi && mid < Number(minEstVaerdi)) return false;
+                    if (maxEstVaerdi && mid > Number(maxEstVaerdi)) return false;
+                  }
+                  if (confidenceFilter.size > 0) {
+                    if (!berig || !confidenceFilter.has(berig.confidence)) return false;
                   }
                   return true;
                 })

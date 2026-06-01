@@ -13,6 +13,7 @@
  *                   er begge grænser hele-dags-inklusive → samme dato i begge = 1 dag.
  * - brancher      - Komma-separeret liste af branche_kode (DB07) at filtrere på
  * - min_omsaetning / max_omsaetning - Filter på seneste regnskabs omsætning (DKK)
+ * - min_bruttofortjeneste / max_bruttofortjeneste - Filter på seneste regnskabs bruttofortjeneste (DKK)
  * - min_overskud / max_overskud     - Filter på seneste regnskabs resultat før skat (DKK)
  * - sort          - Sorteringskolonne (deltager|virksomhed|branche|omsaetning|
  *                   bruttofortjeneste|overskud|aendring|aendringsdato|indrapporteret)
@@ -93,6 +94,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   };
   const minOmsaetning = numParam('min_omsaetning');
   const maxOmsaetning = numParam('max_omsaetning');
+  const minBruttofortjeneste = numParam('min_bruttofortjeneste');
+  const maxBruttofortjeneste = numParam('max_bruttofortjeneste');
   const minOverskud = numParam('min_overskud');
   const maxOverskud = numParam('max_overskud');
 
@@ -128,9 +131,18 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     // Regnskabs-range-filter — kræver regnskab_cache-join (ekskluderer ucachede rækker).
     const needRegnskabJoin =
-      minOmsaetning != null || maxOmsaetning != null || minOverskud != null || maxOverskud != null;
+      minOmsaetning != null ||
+      maxOmsaetning != null ||
+      minBruttofortjeneste != null ||
+      maxBruttofortjeneste != null ||
+      minOverskud != null ||
+      maxOverskud != null;
     if (minOmsaetning != null) conditions.push(`rc.omsaetning >= ${minOmsaetning}`);
     if (maxOmsaetning != null) conditions.push(`rc.omsaetning <= ${maxOmsaetning}`);
+    if (minBruttofortjeneste != null)
+      conditions.push(`rc.bruttofortjeneste >= ${minBruttofortjeneste}`);
+    if (maxBruttofortjeneste != null)
+      conditions.push(`rc.bruttofortjeneste <= ${maxBruttofortjeneste}`);
     if (minOverskud != null) conditions.push(`rc.resultat_foer_skat >= ${minOverskud}`);
     if (maxOverskud != null) conditions.push(`rc.resultat_foer_skat <= ${maxOverskud}`);
 

@@ -10,6 +10,7 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef } from 'react';
+import Link from 'next/link';
 import { ChevronDown } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 
@@ -327,9 +328,9 @@ export default function VirksomhedshandlerClient() {
   // ─── Render ───────────────────────────────────────────────────────
 
   return (
-    <div className="flex-1 bg-[#0a1628] p-6 space-y-6">
+    <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-[#0a1628] p-6 gap-6">
       {/* Header */}
-      <div>
+      <div className="shrink-0">
         <h1 className="text-white text-2xl font-bold">
           {t('Virksomhedshandler — M&A-radar', 'Corporate Transactions — M&A Radar')}
         </h1>
@@ -342,7 +343,7 @@ export default function VirksomhedshandlerClient() {
       </div>
 
       {/* Info banner */}
-      <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
+      <div className="shrink-0 bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
         <p className="text-amber-300 text-sm font-medium mb-1">
           {t('Vigtige begrænsninger', 'Important limitations')}
         </p>
@@ -369,7 +370,7 @@ export default function VirksomhedshandlerClient() {
       </div>
 
       {/* Filter bar */}
-      <div className="flex flex-wrap gap-3 items-end">
+      <div className="shrink-0 flex flex-wrap gap-3 items-end">
         <div className="relative">
           <label className="block text-xs text-slate-400 mb-1">{t('Signal', 'Signal')}</label>
           <button
@@ -634,7 +635,7 @@ export default function VirksomhedshandlerClient() {
       </div>
 
       {/* Results count + top pagination (altid synlig — nem navigation) */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
+      <div className="shrink-0 flex items-center justify-between gap-3 flex-wrap">
         <p className="text-slate-500 text-xs">
           {t(
             `${total.toLocaleString('da-DK')} kandidater fundet`,
@@ -666,8 +667,9 @@ export default function VirksomhedshandlerClient() {
         )}
       </div>
 
-      {/* Table */}
-      <div className="overflow-auto rounded-xl border border-slate-700/30 max-h-[70vh]">
+      {/* Table — flex-1 så den udfylder resten af højden og er det ENESTE
+          vertikale scroll-område (ingen dobbelt-scrollbar, bund altid nåelig) */}
+      <div className="flex-1 min-h-0 overflow-auto rounded-xl border border-slate-700/30">
         <table className="w-full text-sm">
           <thead className="bg-slate-800 sticky top-0 z-10 shadow-[0_1px_0_0_rgba(148,163,184,0.2)]">
             <tr className="text-left text-slate-400 text-xs uppercase tracking-wider">
@@ -804,14 +806,34 @@ export default function VirksomhedshandlerClient() {
                           {signal?.da ?? k.signal_type}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-white text-xs">{k.deltager_navn}</td>
                       <td className="px-4 py-3 text-xs">
-                        <div className="text-white font-medium truncate max-w-[200px]">
-                          {k.virksomhed_navn ?? k.virksomhed_cvr}
-                        </div>
-                        <span className="text-slate-500 text-[10px] font-mono">
-                          CVR {k.virksomhed_cvr}
-                        </span>
+                        <Link
+                          href={`/dashboard/owners/${k.deltager_enhedsnummer}`}
+                          className="text-white hover:text-indigo-300 hover:underline transition-colors"
+                          aria-label={t(
+                            `Åbn person ${k.deltager_navn}`,
+                            `Open person ${k.deltager_navn}`
+                          )}
+                        >
+                          {k.deltager_navn}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-3 text-xs">
+                        <Link
+                          href={`/dashboard/companies/${k.virksomhed_cvr}`}
+                          className="group block"
+                          aria-label={t(
+                            `Åbn virksomhed ${k.virksomhed_navn ?? k.virksomhed_cvr}`,
+                            `Open company ${k.virksomhed_navn ?? k.virksomhed_cvr}`
+                          )}
+                        >
+                          <div className="text-white font-medium truncate max-w-[200px] group-hover:text-indigo-300 group-hover:underline transition-colors">
+                            {k.virksomhed_navn ?? k.virksomhed_cvr}
+                          </div>
+                          <span className="text-slate-500 text-[10px] font-mono">
+                            CVR {k.virksomhed_cvr}
+                          </span>
+                        </Link>
                       </td>
                       <td className="px-4 py-3 text-slate-400 text-[10px] truncate max-w-[150px]">
                         {k.branche_tekst ?? '—'}
@@ -908,7 +930,7 @@ export default function VirksomhedshandlerClient() {
 
       {/* Pagination */}
       {total > LIMIT && (
-        <div className="flex items-center justify-between">
+        <div className="shrink-0 flex items-center justify-between">
           <button
             onClick={() => setOffset(Math.max(0, offset - LIMIT))}
             disabled={offset === 0}

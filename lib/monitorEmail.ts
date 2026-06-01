@@ -396,6 +396,20 @@ export function classifyEmail(email: GraphEmail): ClassifiedEmail {
   const subjectLower = subject.toLowerCase();
   const bodyText = stripHtml(email.body?.content ?? '').slice(0, 3000);
 
+  // ── 0. Self-referential / internal-noise guard (break the alert loop) ─────
+  // BizzAssist's own critical-alert emails (subject "[KRITISK] BizzAssist …",
+  // sent from noreply@bizzassist.dk) and other internal BizzAssist senders
+  // MUST NOT be re-classified as actionable. Otherwise an inbound copy of our
+  // own alert (e.g. forwarded to the monitor mailbox) is tagged uptime_alert
+  // and fires ANOTHER sendCriticalAlert → an amplifying email/SMS loop. This
+  // was the source of the recurring synthetic "email-uptime-<ts>" runtime-error
+  // alerts (BIZZ-1955). Skip them silently.
+  const isOwnCriticalAlert = /^\s*\[kritisk\]\s+bizzassist\b/i.test(subject);
+  const isInternalSender = senderDomain === 'bizzassist.dk';
+  if (isOwnCriticalAlert || isInternalSender) {
+    return { email, category: 'unknown', metadata: { subject, senderAddress } };
+  }
+
   // ── 1. Security alerts (highest priority — never auto-fix) ────────────────
   // GitHub security advisories come from security@github.com or have specific subjects
   const isSecuritySender =
@@ -470,17 +484,23 @@ export function classifyEmail(email: GraphEmail): ClassifiedEmail {
     };
   }
 
-  // ── 4. Uptime alerts (generic) ────────────────────────────────────────────
-  // Matches common uptime monitor patterns from services like UptimeRobot,
-  // Better Uptime, Freshping, etc.
-  const isUptimeSubject = /\b(down|outage|unreachable|alert|incident|monitor(ing)?)\b/i.test(
-    subject
-  );
+  // ── 4. Uptime alerts (genuine down/outage events only) ────────────────────
+  // Matches dedicated uptime/monitoring services (UptimeRobot, Better Uptime,
+  // Freshping, PagerDuty, Opsgenie, …) OR a subject that strongly indicates a
+  // real outage. The bare words "alert"/"monitor"/"incident" are deliberately
+  // NOT triggers on their own — they appear in countless unrelated emails
+  // (Sentry digests, GitHub/Dependabot notices, our own alerts) and caused
+  // false-positive critical alerts + an alert loop (BIZZ-1955). Require either
+  // a recognized monitoring sender or an explicit down/outage phrase instead.
   const isUptimeSender = /uptimerobot|betteruptime|freshping|statuspage|pagerduty|opsgenie/i.test(
     senderDomain
   );
+  const isStrongUptimeSubject =
+    /\b(is\s+down|went\s+down|currently\s+down|is\s+unreachable|outage|service\s+disruption|uptime\s+alert)\b/i.test(
+      subject
+    ) || /\bmonitor(ing)?\b[^.]*\b(down|unreachable|offline)\b/i.test(subject);
 
-  if (isUptimeSubject || isUptimeSender) {
+  if (isUptimeSender || isStrongUptimeSubject) {
     return {
       email,
       category: 'uptime_alert',

@@ -11,7 +11,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { ChevronDown, X, Download } from 'lucide-react';
+import { ChevronDown, X, Download, Building2, User } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import VirksomhedshandelDetailModal from './VirksomhedshandelDetailModal';
 
@@ -20,6 +20,10 @@ import VirksomhedshandelDetailModal from './VirksomhedshandelDetailModal';
 interface Kandidat {
   deltager_enhedsnummer: number;
   deltager_navn: string;
+  // Klassificering fra API: er deltageren en virksomhed (navne-match i cvr_virksomhed)?
+  // deltager_cvr er kun sat ved unikt match → bruges til direkte company-link.
+  deltager_er_virksomhed?: boolean;
+  deltager_cvr?: string | null;
   virksomhed_cvr: string;
   relation_type: string;
   current_ejerandel_pct: number;
@@ -1326,16 +1330,54 @@ export default function VirksomhedshandlerClient() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-xs">
-                      <Link
-                        href={`/dashboard/owners/${k.deltager_enhedsnummer}`}
-                        className="text-white hover:text-indigo-300 hover:underline transition-colors"
-                        aria-label={t(
-                          `Åbn person ${k.deltager_navn}`,
-                          `Open person ${k.deltager_navn}`
-                        )}
-                      >
-                        {k.deltager_navn}
-                      </Link>
+                      {k.deltager_er_virksomhed ? (
+                        k.deltager_cvr ? (
+                          // Virksomheds-deltager med entydigt CVR → link til virksomhedssiden.
+                          <Link
+                            href={`/dashboard/companies/${k.deltager_cvr}`}
+                            className="group inline-flex items-center gap-1.5 text-white hover:text-blue-300 hover:underline transition-colors"
+                            aria-label={t(
+                              `Åbn virksomhed ${k.deltager_navn}`,
+                              `Open company ${k.deltager_navn}`
+                            )}
+                          >
+                            <Building2
+                              size={13}
+                              className="flex-shrink-0 text-slate-400 group-hover:text-blue-400 transition-colors"
+                            />
+                            {k.deltager_navn}
+                          </Link>
+                        ) : (
+                          // Virksomhed, men flertydigt navn (flere CVR-match) → vis som
+                          // virksomhed uden link frem for at sende brugeren til en forkert side.
+                          <span
+                            className="inline-flex items-center gap-1.5 text-white"
+                            title={t(
+                              'Virksomhed — flere selskaber har dette navn',
+                              'Company — multiple companies share this name'
+                            )}
+                          >
+                            <Building2 size={13} className="flex-shrink-0 text-slate-400" />
+                            {k.deltager_navn}
+                          </span>
+                        )
+                      ) : (
+                        // Person-deltager → link til person-/ejer-siden.
+                        <Link
+                          href={`/dashboard/owners/${k.deltager_enhedsnummer}`}
+                          className="group inline-flex items-center gap-1.5 text-white hover:text-indigo-300 hover:underline transition-colors"
+                          aria-label={t(
+                            `Åbn person ${k.deltager_navn}`,
+                            `Open person ${k.deltager_navn}`
+                          )}
+                        >
+                          <User
+                            size={13}
+                            className="flex-shrink-0 text-slate-400 group-hover:text-indigo-400 transition-colors"
+                          />
+                          {k.deltager_navn}
+                        </Link>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-xs">
                       <Link

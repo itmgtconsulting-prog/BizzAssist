@@ -26,7 +26,12 @@
  * overskud = resultat før skat) fra regnskab_cache, samt branche_kode fra
  * cvr_virksomhed. Tomme værdier returneres som null (regnskab ikke cachet endnu).
  *
- * @returns { kandidater: [...], total: number }
+ * Klassificerer desuden hver deltager som person eller virksomhed via navne-opslag
+ * i cvr_virksomhed (deltager_er_virksomhed + deltager_cvr) så frontend kan linke
+ * virksomheds-deltagere til /dashboard/companies i stedet for person-siden.
+ *
+ * @returns { kandidater: [...], total: number } — hver kandidat har desuden
+ *   deltager_er_virksomhed (boolean) og deltager_cvr (string|null, kun ved unikt match)
  *
  * @module app/api/virksomhedshandler/kandidater/route
  */
@@ -190,7 +195,53 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     ]);
 
     const total = Array.isArray(countRes) && countRes[0]?.total != null ? countRes[0].total : 0;
-    const data = Array.isArray(dataRes) ? dataRes : [];
+    const data: Record<string, unknown>[] = Array.isArray(dataRes) ? dataRes : [];
+
+    // En deltager kan være en PERSON eller en VIRKSOMHED, men cvr_deltager.enhedstype
+    // er ikke beriget i cachen (NULL). Vi klassificerer derfor ved at slå deltager-navnet
+    // op i cvr_virksomhed: unikt navne-match ⟹ virksomhed (med CVR til company-link);
+    // flertydigt navn ⟹ virksomhed uden entydigt CVR; intet match ⟹ person. Kun de
+    // ≤200 viste rækkers navne slås op (btree-indeks idx_cvr_virksomhed_navn → hurtigt).
+    const deltagerNavne = Array.from(
+      new Set(
+        data
+          .map((r) => (typeof r.deltager_navn === 'string' ? r.deltager_navn : null))
+          .filter((n): n is string => !!n)
+      )
+    );
+    if (deltagerNavne.length > 0) {
+      const navnArray = deltagerNavne.map((n) => `'${n.replace(/'/g, "''")}'`).join(',');
+      const resolveSql = `SELECT navn, MIN(cvr) AS cvr, COUNT(*) AS cnt FROM cvr_virksomhed WHERE navn = ANY(ARRAY[${navnArray}]::text[]) GROUP BY navn`;
+      try {
+        const resolveRes = await fetch(
+          `https://api.supabase.com/v1/projects/${projectRef}/database/query`,
+          {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: resolveSql }),
+            signal: AbortSignal.timeout(15000),
+          }
+        ).then((r) => r.json());
+        const byNavn = new Map<string, { cvr: string | null; cnt: number }>();
+        if (Array.isArray(resolveRes)) {
+          for (const row of resolveRes) {
+            byNavn.set(row.navn as string, {
+              cvr: row.cvr != null ? String(row.cvr) : null,
+              cnt: Number(row.cnt),
+            });
+          }
+        }
+        for (const r of data) {
+          const navn = typeof r.deltager_navn === 'string' ? r.deltager_navn : null;
+          const match = navn ? byNavn.get(navn) : undefined;
+          r.deltager_er_virksomhed = !!match;
+          r.deltager_cvr = match && match.cnt === 1 ? match.cvr : null;
+        }
+      } catch (e) {
+        // Best-effort berigelse — ved fejl falder klienten tilbage til person-link.
+        logger.warn('[virksomhedshandler/kandidater] deltager-resolve fejl', { error: e });
+      }
+    }
 
     return NextResponse.json({ kandidater: data, total });
   } catch (err) {

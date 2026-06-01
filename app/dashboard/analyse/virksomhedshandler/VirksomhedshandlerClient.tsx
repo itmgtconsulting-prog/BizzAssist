@@ -145,6 +145,13 @@ export default function VirksomhedshandlerClient() {
   const [sortKey, setSortKey] = useState('aendringsdato');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
+  // Persisterede filter-settings: gemmes pr. bruger i public.users.preferences
+  // (JSONB) via /api/preferences — IKKE localStorage (jf. CLAUDE.md state-regel),
+  // så samme bruger ser sine seneste filtre på tværs af browsere/enheder.
+  // prefsLoaded gater både første fetch og auto-gem, så vi ikke overskriver de
+  // gemte filtre med default-værdier under den indledende restore.
+  const [prefsLoaded, setPrefsLoaded] = useState(false);
+
   const LIMIT = 50;
 
   /**
@@ -246,9 +253,91 @@ export default function VirksomhedshandlerClient() {
     offset,
   ]);
 
+  // Restore: hent brugerens gemte M&A-radar-filtre én gang ved mount og
+  // gendan dem. Sæt prefsLoaded=true uanset udfald, så fetch/auto-gem frigives.
   useEffect(() => {
+    let aktiv = true;
+    void (async () => {
+      try {
+        const res = await fetch('/api/preferences');
+        if (res.ok && aktiv) {
+          const data = await res.json();
+          const f = data?.preferences?.maRadarFilters;
+          if (f && typeof f === 'object') {
+            if (Array.isArray(f.signalFilters))
+              setSignalFilters(new Set(f.signalFilters as SignalType[]));
+            if (typeof f.fromDate === 'string') setFromDate(f.fromDate);
+            if (typeof f.toDate === 'string') setToDate(f.toDate);
+            if (Array.isArray(f.brancher)) setSelectedBrancher(new Set(f.brancher as string[]));
+            if (typeof f.minOmsaetning === 'string') setMinOmsaetning(f.minOmsaetning);
+            if (typeof f.maxOmsaetning === 'string') setMaxOmsaetning(f.maxOmsaetning);
+            if (typeof f.minOverskud === 'string') setMinOverskud(f.minOverskud);
+            if (typeof f.maxOverskud === 'string') setMaxOverskud(f.maxOverskud);
+            if (typeof f.sortKey === 'string') setSortKey(f.sortKey);
+            if (f.sortDir === 'asc' || f.sortDir === 'desc') setSortDir(f.sortDir);
+          }
+        }
+      } catch {
+        // Mislykket restore er ikke kritisk — falder tilbage til defaults
+      } finally {
+        if (aktiv) setPrefsLoaded(true);
+      }
+    })();
+    return () => {
+      aktiv = false;
+    };
+  }, []);
+
+  // Fetch kører først efter restore, så vi ikke laver et spildt kald med
+  // default-filtre inden de gemte filtre er gendannet.
+  useEffect(() => {
+    if (!prefsLoaded) return;
     void fetchKandidater();
-  }, [fetchKandidater]);
+  }, [prefsLoaded, fetchKandidater]);
+
+  // Auto-gem: debounced PUT af de aktuelle filtre til brugerens preferences.
+  // Springer over indtil restore er færdig (prefsLoaded), så default-værdier
+  // aldrig overskriver de gemte filtre.
+  useEffect(() => {
+    if (!prefsLoaded) return;
+    const handle = setTimeout(() => {
+      void fetch('/api/preferences', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          preferences: {
+            maRadarFilters: {
+              signalFilters: [...signalFilters],
+              fromDate,
+              toDate,
+              brancher: [...selectedBrancher],
+              minOmsaetning,
+              maxOmsaetning,
+              minOverskud,
+              maxOverskud,
+              sortKey,
+              sortDir,
+            },
+          },
+        }),
+      }).catch(() => {
+        // Gem-fejl er ikke kritisk — filtrene virker stadig i nuværende session
+      });
+    }, 800);
+    return () => clearTimeout(handle);
+  }, [
+    prefsLoaded,
+    signalFilters,
+    fromDate,
+    toDate,
+    selectedBrancher,
+    minOmsaetning,
+    maxOmsaetning,
+    minOverskud,
+    maxOverskud,
+    sortKey,
+    sortDir,
+  ]);
 
   // Hent branche-optioner til multiselect-filteret (én gang, cachet server-side)
   useEffect(() => {

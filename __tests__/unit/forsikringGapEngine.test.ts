@@ -1013,6 +1013,109 @@ describe('runPortfolioChecks — GAP-067: Branchekrav-aggregat', () => {
     );
     expect(gaps.find((g) => g.check_id === 'GAP-067')).toBeUndefined();
   });
+
+  // BIZZ-1939: Topdanmark/If dækker grundejeransvar via Erhvervsansvar — så et
+  // Erhvervsansvar på en Topdanmark-police skal opfylde hus_grundejer_ansvar-kravet.
+  it('Topdanmark Erhvervsansvar opfylder hus_grundejer_ansvar-kravet (BIZZ-1939)', () => {
+    const pol = makePolicy({
+      insurer_name: 'Topdanmark - en del af If Skadeforsikring',
+      business_activity: 'Udlejning af erhvervsejendomme',
+    });
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    // Ingen eksplicit hus_grundejer_ansvar-linje — kun Erhvervsansvar.
+    coveragesByPolicy.set(pol.id, [
+      makeCoverage('bygningskasko'),
+      makeCoverage('erhvervsansvar'),
+      makeCoverage('huslejetab'),
+      makeCoverage('driftstab'),
+    ]);
+
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [pol],
+        coveragesByPolicy,
+        branche: {
+          hovedbranche: '681020',
+          hovedbranche_tekst: 'Udlejning af erhvervsejendomme',
+          bibrancher: [],
+        },
+      })
+    );
+    // Alle krav dækket (hus_grundejer_ansvar via alias) → intet GAP-067.
+    expect(gaps.find((g) => g.check_id === 'GAP-067')).toBeUndefined();
+  });
+
+  it('Alm. Brand Erhvervsansvar opfylder IKKE hus_grundejer_ansvar (intet alias)', () => {
+    const pol = makePolicy({
+      insurer_name: 'Alm. Brand Forsikring A/S',
+      business_activity: 'Udlejning af erhvervsejendomme',
+    });
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    coveragesByPolicy.set(pol.id, [
+      makeCoverage('bygningskasko'),
+      makeCoverage('erhvervsansvar'),
+      makeCoverage('huslejetab'),
+      makeCoverage('driftstab'),
+    ]);
+
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [pol],
+        coveragesByPolicy,
+        branche: {
+          hovedbranche: '681020',
+          hovedbranche_tekst: 'Udlejning af erhvervsejendomme',
+          bibrancher: [],
+        },
+      })
+    );
+    const gap = gaps.find((g) => g.check_id === 'GAP-067');
+    expect(gap).toBeDefined();
+    const manglende = (gap?.source_data as { manglende_krav?: string[] }).manglende_krav ?? [];
+    // Kun grundejeransvar mangler — Alm. Brand bruger en separat linje for det.
+    expect(manglende).toContain('hus_grundejer_ansvar');
+    expect(manglende).not.toContain('erhvervsansvar');
+    expect(manglende).not.toContain('huslejetab');
+    expect(manglende).not.toContain('driftstab');
+  });
+});
+
+describe('runGapEngine — GAP-STD-BASELINE coverage-alias (BIZZ-1939)', () => {
+  const stdBetingelser = [
+    {
+      titel: 'DF20903-2 Ansvarsforsikring',
+      selskab: 'Topdanmark',
+      krav: [
+        {
+          omraade: 'hus_grundejer_ansvar',
+          beskrivelse: 'Hus- og grundejeransvar',
+          paakraevet: true,
+        },
+      ],
+    },
+  ];
+
+  it('Topdanmark Erhvervsansvar dækker standard-vilkår-krav om hus_grundejer_ansvar', () => {
+    const gaps = runGapEngine(
+      makeInput({
+        policy: makePolicy({ insurer_name: 'Topdanmark - en del af If Skadeforsikring' }),
+        coverages: [makeCoverage('erhvervsansvar')],
+        standardBetingelser: stdBetingelser,
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-STD-BASELINE')).toBeUndefined();
+  });
+
+  it('Alm. Brand Erhvervsansvar opfylder IKKE standard-vilkår-krav om hus_grundejer_ansvar', () => {
+    const gaps = runGapEngine(
+      makeInput({
+        policy: makePolicy({ insurer_name: 'Alm. Brand Forsikring A/S' }),
+        coverages: [makeCoverage('erhvervsansvar')],
+        standardBetingelser: stdBetingelser,
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-STD-BASELINE')).toBeDefined();
+  });
 });
 
 describe('runPortfolioChecks — GAP-066: Lav præmie (deaktiveret)', () => {

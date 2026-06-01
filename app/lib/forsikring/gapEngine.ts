@@ -25,6 +25,7 @@ import type {
   GapEngineInput,
 } from './types';
 import { COVERAGE_LABELS_DA } from './types';
+import { effectiveCoveredCodes } from './coverageAliases';
 import { lookupBrancheKrav, isOperationelBranche } from './brancheRisiko';
 import type { Aktiv } from './koncernWalk';
 import type { MatchResult } from './assetMatcher';
@@ -858,9 +859,10 @@ export function runGapEngine(input: GapEngineInput): DetectedGap[] {
   // BIZZ-1902: Standard betingelser baseline-gaps
   // Sammenlign policens dækninger med krav fra standard betingelser
   if (input.standardBetingelser && input.standardBetingelser.length > 0) {
-    const coveredCodes = new Set(
-      input.coverages.filter((c) => c.is_covered).map((c) => c.coverage_code)
-    );
+    // BIZZ-1939: Brug selskabs-aware effektive dækningskoder, så fx Topdanmark
+    // Erhvervsansvar tæller som hus_grundejer_ansvar (terminologi-mapping) og
+    // ikke fejlagtigt flages som manglende standard-vilkår.
+    const coveredCodes = effectiveCoveredCodes(input.policy.insurer_name, input.coverages);
 
     for (const std of input.standardBetingelser) {
       const missingKrav = (std.krav ?? []).filter(
@@ -1425,11 +1427,13 @@ function isKravCovered(
   const kravLower = krav.toLowerCase();
   const coverageCode = KRAV_TO_COVERAGE_CODE[kravLower];
 
-  // 1. Tjek coverage-koder hvis kravet mapper til en kanonisk kode
+  // 1. Tjek coverage-koder hvis kravet mapper til en kanonisk kode.
+  //    BIZZ-1939: brug selskabs-aware effektive koder, så fx Topdanmark
+  //    Erhvervsansvar opfylder hus_grundejer_ansvar-kravet (terminologi-mapping).
   if (coverageCode) {
     for (const pol of policer) {
       const covs = coveragesByPolicy.get(pol.id) ?? [];
-      if (covs.some((c) => c.coverage_code === coverageCode && c.is_covered)) {
+      if (effectiveCoveredCodes(pol.insurer_name, covs).has(coverageCode)) {
         return true;
       }
     }

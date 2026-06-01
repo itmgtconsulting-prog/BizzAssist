@@ -13,6 +13,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { ChevronDown, X, Download } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
+import VirksomhedshandelDetailModal from './VirksomhedshandelDetailModal';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -46,15 +47,18 @@ interface BrancheOption {
 }
 
 interface BerigResult {
-  estimeret_vaerdi: { lav: number; mid: number; hoej: number; currency: 'DKK' } | null;
-  formel_forklaring: string;
-  medie_links: Array<{
-    title: string;
-    url: string;
-    publisher: string;
-    published_at: string;
-    relevance_score: number;
-  }>;
+  estimeret_transaktionsvaerdi: { lav: number; mid: number; hoej: number; currency: 'DKK' } | null;
+  breakdown: {
+    ebitda_used: number;
+    multiple: { lav: number; mid: number; hoej: number };
+    ev_range: { lav: number; mid: number; hoej: number };
+    delta_pct: number;
+    transaktionsvaerdi: { lav: number; mid: number; hoej: number };
+    branche_label: string;
+    kilde: string;
+  } | null;
+  data_sources: string[];
+  caveats: string[];
   confidence: 'low' | 'medium' | 'high';
   confidence_reason: string;
 }
@@ -134,6 +138,12 @@ export default function VirksomhedshandlerClient() {
   const [berigResults, setBerigResults] = useState<Record<string, BerigResult>>({});
   const [berigLoading, setBerigLoading] = useState<Set<string>>(new Set());
   const [bulkLoading, setBulkLoading] = useState(false);
+  // BIZZ-1948: AI-forklaring-popup for en beriget kandidat (transaktionsværdi-breakdown).
+  const [detailModal, setDetailModal] = useState<{
+    navn: string;
+    cvr: string;
+    berig: BerigResult;
+  } | null>(null);
   // Kolonne-filtre
   const [deltagerFilter, setDeltagerFilter] = useState('');
   const [cvrFilter, setCvrFilter] = useState('');
@@ -485,6 +495,13 @@ export default function VirksomhedshandlerClient() {
             : typeof k.overskud === 'string'
               ? Number(k.overskud)
               : k.overskud;
+        // Omsætning sendes med som datakilde/caveat-kontekst (ikke til beregningen).
+        const omsaetningNum =
+          k.omsaetning == null || k.omsaetning === ''
+            ? null
+            : typeof k.omsaetning === 'string'
+              ? Number(k.omsaetning)
+              : k.omsaetning;
         const res = await fetch('/api/virksomhedshandler/berig', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -497,6 +514,9 @@ export default function VirksomhedshandlerClient() {
             ejerandel_delta_pp: delta,
             aarsresultat_dkk: Number.isFinite(overskudNum) ? overskudNum : 0,
             branchekode: k.branche_kode || '70',
+            omsaetning_dkk:
+              omsaetningNum != null && Number.isFinite(omsaetningNum) ? omsaetningNum : null,
+            regnskab_aar: k.regnskab_aar ?? null,
             gyldig_fra: k.gyldig_fra,
           }),
         });
@@ -543,7 +563,7 @@ export default function VirksomhedshandlerClient() {
     const key = `${k.deltager_enhedsnummer}-${k.virksomhed_cvr}-${k.gyldig_fra}`;
     const berig = berigResults[key];
     if (minEstVaerdi || maxEstVaerdi) {
-      const mid = berig?.estimeret_vaerdi?.mid;
+      const mid = berig?.estimeret_transaktionsvaerdi?.mid;
       if (mid == null) return false;
       if (minEstVaerdi && mid < Number(minEstVaerdi)) return false;
       if (maxEstVaerdi && mid > Number(maxEstVaerdi)) return false;
@@ -584,7 +604,7 @@ export default function VirksomhedshandlerClient() {
       t('Delta (pp)', 'Delta (pp)'),
       t('Ændringsdato', 'Change date'),
       t('Indrapporteret', 'Reported'),
-      t('Est. værdi (DKK)', 'Est. value (DKK)'),
+      t('Est. transaktionsværdi (DKK)', 'Est. transaction value (DKK)'),
       'Confidence',
     ];
     const num = (v: number | string | null | undefined): string => {
@@ -612,7 +632,7 @@ export default function VirksomhedshandlerClient() {
         num(delta),
         (k.aendringsdato ?? k.gyldig_til ?? k.gyldig_fra)?.slice(0, 10) ?? '',
         k.sidst_opdateret?.slice(0, 10) ?? '',
-        num(berig?.estimeret_vaerdi?.mid),
+        num(berig?.estimeret_transaktionsvaerdi?.mid),
         berig?.confidence ?? '',
       ]
         .map(esc)
@@ -707,6 +727,10 @@ export default function VirksomhedshandlerClient() {
             onClick={bulkBerig}
             disabled={bulkLoading || kandidater.length === 0}
             aria-label={t('Berig top 10 med AI', 'Enrich top 10 with AI')}
+            title={t(
+              'Estimerer transaktionsværdi for de 10 største ejerandels-ændringer baseret på regnskabsdata og branche-multiples.',
+              'Estimates transaction value for the 10 largest ownership changes based on financials and industry multiples.'
+            )}
             className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs px-3 py-1.5 rounded-lg transition-colors"
           >
             {bulkLoading
@@ -755,7 +779,7 @@ export default function VirksomhedshandlerClient() {
               {renderSortTh('aendring', t('Ændring', 'Change'))}
               {renderSortTh('aendringsdato', t('Ændringsdato', 'Change date'))}
               {renderSortTh('indrapporteret', t('Indrapporteret', 'Reported'))}
-              <th className="px-4 py-2">{t('Est. værdi', 'Est. value')}</th>
+              <th className="px-4 py-2">{t('Est. transaktionsværdi', 'Est. transaction value')}</th>
               <th className="px-4 py-2">{t('Confidence', 'Confidence')}</th>
               <th className="px-4 py-2" />
             </tr>
@@ -1160,7 +1184,10 @@ export default function VirksomhedshandlerClient() {
                     value={minEstVaerdi}
                     onChange={(e) => setMinEstVaerdi(e.target.value)}
                     placeholder={t('Min', 'Min')}
-                    aria-label={t('Minimum estimeret værdi', 'Minimum estimated value')}
+                    aria-label={t(
+                      'Minimum estimeret transaktionsværdi',
+                      'Minimum estimated transaction value'
+                    )}
                     className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[11px] text-white text-right tabular-nums placeholder-slate-400 focus:border-indigo-500/50 focus:outline-none"
                   />
                   <input
@@ -1168,7 +1195,10 @@ export default function VirksomhedshandlerClient() {
                     value={maxEstVaerdi}
                     onChange={(e) => setMaxEstVaerdi(e.target.value)}
                     placeholder={t('Max', 'Max')}
-                    aria-label={t('Maksimum estimeret værdi', 'Maximum estimated value')}
+                    aria-label={t(
+                      'Maksimum estimeret transaktionsværdi',
+                      'Maximum estimated transaction value'
+                    )}
                     className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[11px] text-white text-right tabular-nums placeholder-slate-400 focus:border-indigo-500/50 focus:outline-none"
                   />
                 </div>
@@ -1353,10 +1383,38 @@ export default function VirksomhedshandlerClient() {
                       {k.sidst_opdateret?.slice(0, 10) ?? '—'}
                     </td>
                     <td className="px-4 py-3 text-xs">
-                      {berig?.estimeret_vaerdi ? (
-                        <span className="text-emerald-400">
-                          {formatDKK(berig.estimeret_vaerdi.mid)}
-                        </span>
+                      {berig?.estimeret_transaktionsvaerdi ? (
+                        <button
+                          onClick={() =>
+                            setDetailModal({
+                              navn: k.virksomhed_navn ?? k.virksomhed_cvr,
+                              cvr: k.virksomhed_cvr,
+                              berig,
+                            })
+                          }
+                          aria-label={t(
+                            `Se beregning for ${k.virksomhed_navn ?? k.virksomhed_cvr}`,
+                            `View calculation for ${k.virksomhed_navn ?? k.virksomhed_cvr}`
+                          )}
+                          className="text-emerald-400 hover:text-emerald-300 hover:underline transition-colors tabular-nums"
+                        >
+                          {formatDKK(berig.estimeret_transaktionsvaerdi.lav)}–
+                          {formatDKK(berig.estimeret_transaktionsvaerdi.hoej)}
+                        </button>
+                      ) : berig ? (
+                        <button
+                          onClick={() =>
+                            setDetailModal({
+                              navn: k.virksomhed_navn ?? k.virksomhed_cvr,
+                              cvr: k.virksomhed_cvr,
+                              berig,
+                            })
+                          }
+                          aria-label={t('Se forklaring', 'View explanation')}
+                          className="text-slate-400 hover:text-slate-200 hover:underline transition-colors"
+                        >
+                          {t('Ingen estimat', 'No estimate')}
+                        </button>
                       ) : (
                         <span className="text-slate-400">—</span>
                       )}
@@ -1382,16 +1440,20 @@ export default function VirksomhedshandlerClient() {
                           {isBerigLoading ? '...' : t('Berig', 'Enrich')}
                         </button>
                       )}
-                      {berig && berig.medie_links.length > 0 && (
-                        <a
-                          href={berig.medie_links[0].url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-blue-400 hover:text-blue-300"
-                          aria-label={t('Åbn medielink', 'Open media link')}
+                      {berig && (
+                        <button
+                          onClick={() =>
+                            setDetailModal({
+                              navn: k.virksomhed_navn ?? k.virksomhed_cvr,
+                              cvr: k.virksomhed_cvr,
+                              berig,
+                            })
+                          }
+                          aria-label={t('Se detaljer', 'View details')}
+                          className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
                         >
-                          {t('Artikel', 'Article')}
-                        </a>
+                          {t('Detaljer', 'Details')}
+                        </button>
                       )}
                     </td>
                   </tr>
@@ -1444,6 +1506,15 @@ export default function VirksomhedshandlerClient() {
           </button>
         </div>
       )}
+
+      {/* BIZZ-1948: AI-forklaring-popup for beriget kandidat */}
+      <VirksomhedshandelDetailModal
+        open={detailModal !== null}
+        onClose={() => setDetailModal(null)}
+        virksomhedNavn={detailModal?.navn ?? ''}
+        virksomhedCvr={detailModal?.cvr ?? ''}
+        berig={detailModal?.berig ?? null}
+      />
     </div>
   );
 }

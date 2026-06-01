@@ -427,3 +427,79 @@ export function estimerVaerdi(
     high: Math.round(aarsresultat * multiple.ev_ebitda_high * factor),
   };
 }
+
+/** Et lav/mid/høj-interval i DKK. */
+export interface Interval {
+  lav: number;
+  mid: number;
+  hoej: number;
+}
+
+/**
+ * Fuldt beregnings-breakdown for en estimeret transaktionsværdi.
+ *
+ * BIZZ-1948: Bruges til AI-forklaring-popup'en, så brugeren kan se HVAD
+ * estimatet bygger på (EBITDA × branche-multiple → enterprise value →
+ * × ejerandels-delta → transaktionsværdi).
+ */
+export interface TransaktionsBreakdown {
+  /** EBITDA-proxy brugt i beregningen (resultat før skat) i DKK */
+  ebitda_used: number;
+  /** Branche-multiple range (EV/EBITDA) */
+  multiple: { lav: number; mid: number; hoej: number };
+  /** Enterprise value = EBITDA × multiple */
+  ev_range: Interval;
+  /** Ejerandels-delta i procentpoint */
+  delta_pct: number;
+  /** Transaktionsværdi = EV × delta% */
+  transaktionsvaerdi: Interval;
+  /** Dansk branche-label for den matchede multiple */
+  branche_label: string;
+  /** Datakilde for multiplen (fx "Damodaran 2025") */
+  kilde: string;
+}
+
+/**
+ * Beregn estimeret transaktionsværdi for en ejerandels-ændring, med fuldt
+ * mellemregnings-breakdown til AI-forklaring.
+ *
+ * Logik: Enterprise Value = EBITDA × branche-multiple;
+ *        Transaktionsværdi = EV × (ejerandels-delta / 100).
+ *
+ * @param db07Code - DB07 branchekode
+ * @param ebitda - EBITDA-proxy (resultat før skat) i DKK
+ * @param ejerandelDelta - Ændring i ejerandel i procentpoint (0-100)
+ * @returns Fuldt breakdown, eller null hvis EBITDA/branche/delta mangler
+ */
+export function beregnTransaktionsvaerdi(
+  db07Code: string | null | undefined,
+  ebitda: number | null | undefined,
+  ejerandelDelta: number
+): TransaktionsBreakdown | null {
+  if (!ebitda || ebitda <= 0 || ejerandelDelta <= 0) return null;
+  const multiple = lookupBrancheMultiple(db07Code);
+  if (!multiple) return null;
+
+  const factor = ejerandelDelta / 100;
+  const evLow = Math.round(ebitda * multiple.ev_ebitda_low);
+  const evMid = Math.round(ebitda * multiple.ev_ebitda_mid);
+  const evHigh = Math.round(ebitda * multiple.ev_ebitda_high);
+
+  return {
+    ebitda_used: ebitda,
+    multiple: {
+      lav: multiple.ev_ebitda_low,
+      mid: multiple.ev_ebitda_mid,
+      hoej: multiple.ev_ebitda_high,
+    },
+    ev_range: { lav: evLow, mid: evMid, hoej: evHigh },
+    delta_pct: ejerandelDelta,
+    transaktionsvaerdi: {
+      lav: Math.round(evLow * factor),
+      mid: Math.round(evMid * factor),
+      hoej: Math.round(evHigh * factor),
+    },
+    branche_label: multiple.branche_label,
+    kilde: multiple.kilde,
+  };
+}

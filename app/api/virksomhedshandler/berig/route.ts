@@ -1,20 +1,26 @@
 /**
  * POST /api/virksomhedshandler/berig
  *
- * BIZZ-1928: AI-beriget virksomhedshandel-kandidat.
- * Beregner estimeret salgsværdi (interval) via branche-multiple,
- * søger medie-links via Brave Search, og returnerer confidence-level.
+ * BIZZ-1928 / BIZZ-1948: AI-beriget virksomhedshandel-kandidat.
+ * Beregner estimeret TRANSAKTIONSVÆRDI for en ejerandels-ændring via
+ * branche-multiple, returnerer fuldt beregnings-breakdown (EBITDA × multiple
+ * → enterprise value → × ejerandels-delta), datakilde-liste, caveats og et
+ * confidence-niveau begrundet i regnskabs-friskhed (ikke medie-hits).
+ *
+ * Understøttende nyhedsartikler hentes IKKE her — frontend-modalen kalder
+ * /api/ai/article-search/articles?phase=raw asynkront (Serper, ingen tokens),
+ * så berig forbliver hurtigt og gratis.
+ *
+ * Retention: ingen persistering — beregnes on-demand, caches kun in-memory (24h).
  *
  * @param body.kandidat_id        - Unik ID for kandidat-rækken
  * @param body.virksomhed_cvr     - CVR-nummer på target-virksomheden
- * @param body.person_enhedsnummer - Enhedsnummer for deltager (valgfrit)
- * @param body.deltager_navn      - Navn på deltager (valgfrit, til mediesøgning)
- * @param body.virksomhed_navn    - Virksomhedsnavn (valgfrit, til mediesøgning)
  * @param body.ejerandel_delta_pp - Ændring i ejerandel i procentpoint
- * @param body.aarsresultat_dkk   - Seneste årsresultat (EBITDA proxy) i DKK
+ * @param body.aarsresultat_dkk   - Seneste resultat før skat (EBITDA-proxy) i DKK
  * @param body.branchekode        - DB07 branchekode
- * @param body.gyldig_fra         - Gyldig-fra dato for ejerskiftet (valgfrit, til medie-tidsfilter)
- * @returns Estimeret værdi, medie-links, confidence
+ * @param body.omsaetning_dkk     - Seneste omsætning i DKK (valgfri, til datakilde/caveat)
+ * @param body.regnskab_aar       - Regnskabsår for de brugte tal (valgfri, til confidence/caveat)
+ * @returns Estimeret transaktionsværdi, breakdown, datakilder, caveats, confidence
  *
  * @module app/api/virksomhedshandler/berig/route
  */
@@ -24,8 +30,11 @@ import { checkRateLimit, aiRateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
 import { assertAiAllowed } from '@/app/lib/aiGate';
 import { logger } from '@/app/lib/logger';
-import { estimerVaerdi } from '@/app/lib/virksomhedshandler/brancheMultiples';
-import { BRAVE_SEARCH_ENDPOINT } from '@/app/lib/serviceEndpoints';
+import {
+  beregnTransaktionsvaerdi,
+  type Interval,
+  type TransaktionsBreakdown,
+} from '@/app/lib/virksomhedshandler/brancheMultiples';
 import { recordAiUsage } from '@/app/lib/aiTracking';
 
 export const runtime = 'nodejs';
@@ -42,21 +51,16 @@ interface BerigRequest {
   ejerandel_delta_pp: number;
   aarsresultat_dkk: number;
   branchekode: string;
+  omsaetning_dkk?: number | null;
+  regnskab_aar?: number | null;
   gyldig_fra?: string;
 }
 
-interface MediaLink {
-  title: string;
-  url: string;
-  publisher: string;
-  published_at: string;
-  relevance_score: number;
-}
-
 interface BerigResponse {
-  estimeret_vaerdi: { lav: number; mid: number; hoej: number; currency: 'DKK' } | null;
-  formel_forklaring: string;
-  medie_links: MediaLink[];
+  estimeret_transaktionsvaerdi: (Interval & { currency: 'DKK' }) | null;
+  breakdown: TransaktionsBreakdown | null;
+  data_sources: string[];
+  caveats: string[];
   confidence: 'low' | 'medium' | 'high';
   confidence_reason: string;
 }
@@ -79,105 +83,117 @@ function pruneCache(): void {
   }
 }
 
-// ─── Brave Search helper ────────────────────────────────────────────────────
+// ─── DKK-formattering (til menneskelæsbare datakilder/caveats) ────────────────
 
 /**
- * Søger Brave for medie-dækning af en virksomhedshandel.
+ * Formaterer et DKK-beløb kompakt (mio./t.) til datakilde-tekster.
  *
- * @param query - Søgeforespørgsel
- * @param gyldigFra - Dato for ejerskiftet (brugt til tidsfilter)
+ * @param amount - Beløb i DKK
+ * @returns Kompakt streng, fx "64,4 mio. DKK"
  */
-async function searchMedia(query: string, gyldigFra?: string): Promise<MediaLink[]> {
-  const braveKey = process.env.BRAVE_SEARCH_API_KEY;
-  if (!braveKey) return [];
-
-  const params = new URLSearchParams({
-    q: query,
-    count: '10',
-    country: 'dk',
-  });
-
-  // Tilføj freshness-filter: ±3 måneder omkring gyldig_fra
-  if (gyldigFra) {
-    const date = new Date(gyldigFra);
-    if (!isNaN(date.getTime())) {
-      const from = new Date(date);
-      from.setMonth(from.getMonth() - 3);
-      const to = new Date(date);
-      to.setMonth(to.getMonth() + 3);
-      const fmt = (d: Date) => d.toISOString().slice(0, 10);
-      params.set('freshness', `${fmt(from)}to${fmt(to)}`);
-    }
-  }
-
-  const url = `${BRAVE_SEARCH_ENDPOINT}?${params}`;
-  const res = await fetch(url, {
-    headers: { 'X-Subscription-Token': braveKey, Accept: 'application/json' },
-    signal: AbortSignal.timeout(10000),
-  });
-
-  if (!res.ok) return [];
-
-  const data = await res.json();
-  const results: Array<{
-    title: string;
-    url: string;
-    description?: string;
-    age?: string;
-    meta_url?: { hostname?: string };
-  }> = data.web?.results ?? [];
-
-  const seen = new Set<string>();
-  return results
-    .filter((r) => {
-      if (!r.url || seen.has(r.url)) return false;
-      seen.add(r.url);
-      return true;
-    })
-    .map((r, i) => ({
-      title: r.title?.trim() ?? '',
-      url: r.url?.trim() ?? '',
-      publisher: r.meta_url?.hostname?.replace(/^www\./, '').trim() ?? '',
-      published_at: r.age?.trim() ?? '',
-      relevance_score: Math.max(0, 1 - i * 0.1),
-    }))
-    .filter((r) => r.title && r.url)
-    .slice(0, 5);
+function fmtDkk(amount: number): string {
+  const abs = Math.abs(amount);
+  const sign = amount < 0 ? '-' : '';
+  if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(1).replace('.', ',')} mio. DKK`;
+  if (abs >= 1_000) return `${sign}${Math.round(abs / 1_000)} t. DKK`;
+  return `${sign}${abs} DKK`;
 }
 
-// ─── Confidence scoring ─────────────────────────────────────────────────────
+// ─── Datakilder + caveats ─────────────────────────────────────────────────────
 
 /**
- * Beregner confidence-niveau baseret på data-tilgængelighed.
+ * Bygger listen over hvilke datakilder estimatet hviler på.
  *
- * @param mediaLinks - Fundne medie-links
- * @param deltaPercent - Ejerandel-ændring i procentpoint
- * @param hasValuation - Om en værdiansættelse kunne beregnes
+ * @param breakdown - Det beregnede breakdown
+ * @param req - Den oprindelige request (regnskabsår, omsætning, branche)
+ */
+function buildDataSources(breakdown: TransaktionsBreakdown, req: BerigRequest): string[] {
+  const sources: string[] = [];
+  const aar = req.regnskab_aar ? `${req.regnskab_aar}` : 'seneste';
+  const omsDel = req.omsaetning_dkk ? `omsætning ${fmtDkk(req.omsaetning_dkk)}, ` : '';
+  sources.push(
+    `Regnskab (${aar}): ${omsDel}resultat før skat ${fmtDkk(breakdown.ebitda_used)} (EBITDA-proxy)`
+  );
+  sources.push(
+    `Branche-multiple: ${breakdown.branche_label} ${breakdown.multiple.lav}–${breakdown.multiple.hoej}x EV/EBITDA (kilde: ${breakdown.kilde})`
+  );
+  sources.push(
+    `CVR-data: branchekode ${req.branchekode}, ejerandels-ændring ${breakdown.delta_pct} pp`
+  );
+  return sources;
+}
+
+/**
+ * Bygger forbehold (caveats) brugeren bør kende, så estimatet ikke
+ * fejlfortolkes som en præcis værdiansættelse.
+ *
+ * @param breakdown - Det beregnede breakdown
+ * @param req - Den oprindelige request
+ * @param aar - Regnskabets alder i år (null hvis ukendt)
+ */
+function buildCaveats(
+  breakdown: TransaktionsBreakdown,
+  req: BerigRequest,
+  aar: number | null
+): string[] {
+  const caveats: string[] = [];
+  if (aar != null && aar >= 2) {
+    caveats.push(`Regnskabet er ${aar} år gammelt — tallene kan være forældede.`);
+  } else if (req.regnskab_aar == null) {
+    caveats.push('Regnskabsår er ukendt — estimatet bygger på senest cachede tal.');
+  }
+  caveats.push(
+    'EBITDA-proxy = resultat før skat, ikke ren EBITDA — afskrivninger og renter er ikke renset ud.'
+  );
+  caveats.push(
+    `Branche-multiplen (${breakdown.multiple.lav}–${breakdown.multiple.hoej}x) er et sektor-gennemsnit; faktisk multipel afhænger af vækst, margin og marked.`
+  );
+  caveats.push(
+    'Estimatet er enterprise-value-baseret og ikke korrigeret for gæld, likviditet eller kontrol-præmie.'
+  );
+  return caveats;
+}
+
+// ─── Confidence scoring (regnskabs-baseret, ikke medie-baseret) ──────────────
+
+/**
+ * Beregner confidence ud fra regnskabets friskhed og om en branche-multiple
+ * kunne matches — ikke længere ud fra medie-dækning (BIZZ-1948).
+ *
+ * @param hasBreakdown - Om et breakdown kunne beregnes (EBITDA + branche fundet)
+ * @param regnskabAlderAar - Regnskabets alder i år (null = ukendt)
+ * @param deltaPct - Ejerandels-ændring i procentpoint
  */
 function scoreConfidence(
-  mediaLinks: MediaLink[],
-  deltaPercent: number,
-  hasValuation: boolean
+  hasBreakdown: boolean,
+  regnskabAlderAar: number | null,
+  deltaPct: number
 ): { confidence: 'low' | 'medium' | 'high'; reason: string } {
-  if (mediaLinks.length > 0 && deltaPercent > 25) {
-    return { confidence: 'high', reason: 'Medie-dækning fundet + stor ejerandelsændring (>25 pp)' };
-  }
-  if (mediaLinks.length > 0 && deltaPercent > 5) {
+  if (!hasBreakdown) {
     return {
-      confidence: 'medium',
-      reason: 'Medie-dækning fundet + moderat ejerandelsændring (>5 pp)',
+      confidence: 'low',
+      reason: 'Mangler EBITDA eller branche-multiple — transaktionsværdi kunne ikke estimeres.',
     };
   }
-  if (deltaPercent > 25 && hasValuation) {
+  if (regnskabAlderAar != null && regnskabAlderAar <= 2 && deltaPct >= 25) {
     return {
-      confidence: 'medium',
-      reason: 'Stor ejerandelsændring (>25 pp) med branche-multiple tilgængelig',
+      confidence: 'high',
+      reason: `Friskt regnskab (${regnskabAlderAar} år) + kendt branche-multiple + stor ejerandels-ændring (${deltaPct} pp).`,
     };
   }
-  if (deltaPercent > 5) {
-    return { confidence: 'low', reason: 'Moderat ejerandelsændring, ingen medie-dækning fundet' };
+  if (regnskabAlderAar != null && regnskabAlderAar <= 4) {
+    return {
+      confidence: 'medium',
+      reason: `Regnskab ${regnskabAlderAar} år gammelt + kendt branche-multiple — rimeligt estimat med moderat usikkerhed.`,
+    };
   }
-  return { confidence: 'low', reason: 'Lille ejerandelsændring (<5 pp), ingen stærke signaler' };
+  return {
+    confidence: 'low',
+    reason:
+      regnskabAlderAar == null
+        ? 'Regnskabsår ukendt — estimatet er behæftet med stor usikkerhed.'
+        : `Regnskab er ${regnskabAlderAar} år gammelt — estimatet er behæftet med stor usikkerhed.`,
+  };
 }
 
 // ─── POST handler ───────────────────────────────────────────────────────────
@@ -185,7 +201,8 @@ function scoreConfidence(
 /**
  * POST /api/virksomhedshandler/berig
  *
- * Beriger en virksomhedshandel-kandidat med værdiansættelse og medie-links.
+ * Beriger en virksomhedshandel-kandidat med estimeret transaktionsværdi,
+ * beregnings-breakdown, datakilder, caveats og confidence.
  */
 export async function POST(req: NextRequest): Promise<NextResponse> {
   // Rate limit
@@ -237,28 +254,28 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    // 1. Estimér værdi via branche-multiple
-    const vaerdi = estimerVaerdi(branchekode, aarsresultat_dkk, ejerandel_delta_pp);
+    // 1. Beregn transaktionsværdi + breakdown
+    const breakdown = beregnTransaktionsvaerdi(branchekode, aarsresultat_dkk, ejerandel_delta_pp);
 
-    // 2. Søg medie-links
-    const searchParts: string[] = [];
-    if (body.deltager_navn) searchParts.push(body.deltager_navn);
-    if (body.virksomhed_navn) searchParts.push(body.virksomhed_navn);
-    if (searchParts.length === 0) searchParts.push(virksomhed_cvr);
-    searchParts.push('salg exit handel');
+    // 2. Regnskabs-alder (til confidence + caveats)
+    const regnskabAlder =
+      body.regnskab_aar != null ? new Date().getFullYear() - body.regnskab_aar : null;
 
-    const mediaLinks = await searchMedia(searchParts.join(' '), body.gyldig_fra);
-
-    // 3. Confidence scoring
-    const { confidence, reason } = scoreConfidence(mediaLinks, ejerandel_delta_pp, vaerdi !== null);
+    // 3. Confidence
+    const { confidence, reason } = scoreConfidence(
+      breakdown !== null,
+      regnskabAlder,
+      ejerandel_delta_pp
+    );
 
     // 4. Byg response
     const response: BerigResponse = {
-      estimeret_vaerdi: vaerdi
-        ? { lav: vaerdi.low, mid: vaerdi.mid, hoej: vaerdi.high, currency: 'DKK' }
+      estimeret_transaktionsvaerdi: breakdown
+        ? { ...breakdown.transaktionsvaerdi, currency: 'DKK' }
         : null,
-      formel_forklaring: `andel_delta (${ejerandel_delta_pp}%) × årsresultat (${aarsresultat_dkk.toLocaleString('da-DK')} DKK) × branche_multiple`,
-      medie_links: mediaLinks,
+      breakdown,
+      data_sources: breakdown ? buildDataSources(breakdown, body) : [],
+      caveats: breakdown ? buildCaveats(breakdown, body, regnskabAlder) : [],
       confidence,
       confidence_reason: reason,
     };
@@ -266,14 +283,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // 5. Cache result
     cache.set(cacheKey, { data: response, ts: Date.now() });
 
-    // 6. Record AI usage (fire-and-forget — Brave tokens minimal)
+    // 6. Record AI usage (fire-and-forget — ren beregning, ingen tokens)
     void recordAiUsage({
       userId: auth.userId,
       tenantId: auth.tenantId,
       route: 'virksomhedshandler.berig',
       inputTokens: 0,
       outputTokens: 0,
-      model: 'brave-search',
+      model: 'branche-multiple',
     });
 
     return NextResponse.json(response);

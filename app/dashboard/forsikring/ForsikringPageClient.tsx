@@ -2770,10 +2770,22 @@ function AnalyseDetailSection({
             });
           };
 
+          // BIZZ-1941: Forsikringsejer-/virksomheds-gaps løftes op i dedikerede
+          // sektioner; ejendomsrækker viser kun ejendomsspecifikke gaps (scope='property').
+          const ownerGaps = dedupGaps(detail.gaps.filter((g) => gapScope(g.check_id) === 'owner'));
+          const companyGaps = dedupGaps(
+            detail.gaps.filter((g) => gapScope(g.check_id) === 'company')
+          );
+
           // Byg PropertyGroups
           const groups: PropertyGroup[] = uniqueAktiver.map((aktiv) => {
             const aktivGaps = aktiv.matched_policy_id
-              ? dedupGaps(detail.gaps.filter((g) => g.policy_id === aktiv.matched_policy_id))
+              ? dedupGaps(
+                  detail.gaps.filter(
+                    (g) =>
+                      g.policy_id === aktiv.matched_policy_id && gapScope(g.check_id) === 'property'
+                  )
+                )
               : [];
             return {
               aktiv,
@@ -2813,6 +2825,40 @@ function AnalyseDetailSection({
 
           return (
             <>
+              {/* BIZZ-1941: Forsikringsejer-niveau — vises kun her, ikke per ejendom */}
+              {ownerGaps.length > 0 && (
+                <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Briefcase size={14} className="text-purple-400" />
+                    <h4 className="text-white text-sm font-semibold">
+                      {da ? 'Forsikringsejer-niveau' : 'Insurance owner level'}
+                    </h4>
+                    <span className="text-slate-400 text-[11px]">
+                      {da
+                        ? `${ownerGaps.length} generelle findings`
+                        : `${ownerGaps.length} general findings`}
+                    </span>
+                  </div>
+                  <GapList gaps={ownerGaps} da={da} />
+                </div>
+              )}
+
+              {/* BIZZ-1941: Virksomheds-niveau — gælder porteføljen, ikke per ejendom */}
+              {companyGaps.length > 0 && (
+                <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Building2 size={14} className="text-blue-400" />
+                    <h4 className="text-white text-sm font-semibold">
+                      {da ? 'Virksomheds-niveau' : 'Company level'}
+                    </h4>
+                    <span className="text-slate-400 text-[11px]">
+                      {companyGaps.length} findings
+                    </span>
+                  </div>
+                  <GapList gaps={companyGaps} da={da} />
+                </div>
+              )}
+
               {trees.map((tree) => (
                 <div key={tree.v.aktiv.id} className="space-y-2">
                   <PropertyRow group={tree.v} da={da} />

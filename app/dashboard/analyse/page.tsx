@@ -92,7 +92,7 @@ export default function AnalyseLandingPage() {
           <h2 className="text-base font-semibold text-white">Tools</h2>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-w-5xl">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
           {enabledModules.map((modul) => {
             const Icon = iconMap[modul.icon] ?? Sparkles;
             const isPro = modul.requiredPlan === 'professionel';
@@ -126,9 +126,7 @@ export default function AnalyseLandingPage() {
                     </span>
                   )}
                 </div>
-                <p className="text-slate-400 text-xs leading-relaxed line-clamp-2">
-                  {modul.description}
-                </p>
+                <p className="text-slate-400 text-xs leading-relaxed">{modul.description}</p>
               </Link>
             );
           })}

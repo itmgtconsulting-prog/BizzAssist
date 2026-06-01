@@ -159,6 +159,24 @@ export interface CVRPublicData {
      * null hvis retningen ikke kan udledes entydigt.
      */
     retning?: 'ind' | 'ud' | null;
+    /**
+     * BIZZ-1958: For 'ejerskab'-entries — strukturerede entiteter så frontend kan
+     * rendere klikbare links pr. ejer i stedet for én plain-text streng. Hver
+     * entitet bærer navn + type + identifikator (enhedsNummer for personer,
+     * cvr for virksomheder). Mangler en identifikator → frontend viser plain text.
+     */
+    entiteter?: Array<{
+      /** Ejerens navn */
+      navn: string;
+      /** Entitetstype — bestemmer link-destination og ikon */
+      type: 'person' | 'virksomhed';
+      /** CVR-ES enhedsnummer (link til /dashboard/owners/[enhedsNummer]) */
+      enhedsNummer: number | null;
+      /** CVR-nummer for virksomheder (link til /dashboard/companies/[cvr]) */
+      cvr: string | null;
+      /** Ejerandel som læsbar interval-streng (f.eks. "25-33.33%"), null hvis ukendt */
+      andel: string | null;
+    }>;
   }>;
 
   /**
@@ -170,6 +188,12 @@ export interface CVRPublicData {
     navn: string;
     /** Deltagerens enhedsnummer (personnummer erstattes ikke — kun enhedsnummer fra CVR) */
     enhedsNummer: number | null;
+    /**
+     * BIZZ-564 v3 / BIZZ-1958: CVR-nummer (forretningsnoegle, 8-cifret) for
+     * virksomheds-deltagere — null for personer. Bruges til at linke til
+     * /dashboard/companies/[cvr].
+     */
+    cvr: string | null;
     /** Om deltageren er en virksomhed (true) eller person (false) */
     erVirksomhed: boolean;
     /** Detaljerede roller med perioder og attributter */
@@ -744,6 +768,15 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
     const dNavn = gyldigNu(dnavne)?.navn;
 
     const enhedsNummer = typeof deltager.enhedsNummer === 'number' ? deltager.enhedsNummer : null;
+    // BIZZ-564 v3 / BIZZ-1958: forretningsnoegle er CVR-nr (8-cifret) for
+    // virksomheds-deltagere — enhedsNummer er det interne CVR-ES id og kan ikke
+    // bruges til at slå virksomheden op via /dashboard/companies/[cvr].
+    const forretningsnoegle =
+      typeof deltager.forretningsnoegle === 'number'
+        ? String(deltager.forretningsnoegle)
+        : typeof deltager.forretningsnoegle === 'string'
+          ? deltager.forretningsnoegle
+          : null;
     // Afgør om deltageren er en virksomhed: check enhedstype, og fallback til navnemønster
     const enhedstype = typeof deltager.enhedstype === 'string' ? deltager.enhedstype : '';
     const erVirksomhed =
@@ -854,25 +887,48 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
     }
 
     if (dNavn) {
-      deltagere.push({ navn: dNavn, enhedsNummer, erVirksomhed, roller: rollerMedPerioder });
+      // CVR kun gyldig for virksomheder med 8-cifret forretningsnoegle.
+      const cvr =
+        erVirksomhed && forretningsnoegle && /^\d{8}$/.test(forretningsnoegle)
+          ? forretningsnoegle
+          : null;
+      deltagere.push({ navn: dNavn, enhedsNummer, cvr, erVirksomhed, roller: rollerMedPerioder });
     }
   }
 
   // BIZZ-403 + BIZZ-424: Tilføj ejerskabs-ændringer til historik-tidslinje.
   // Gruppér ejere med samme startdato på én linje for overskuelighed.
   {
-    const ejerskabByDate = new Map<string, { fra: string; til: string | null; navne: string[] }>();
+    type EjerEntitet = NonNullable<CVRPublicData['historik'][0]['entiteter']>[0];
+    const ejerskabByDate = new Map<
+      string,
+      { fra: string; til: string | null; navne: string[]; entiteter: EjerEntitet[] }
+    >();
     for (const d of deltagere) {
       for (const rolle of d.roller) {
         const upper = rolle.rolle.toUpperCase();
         if (upper.includes('EJER') || upper.includes('LEGALE') || upper.includes('REEL')) {
           const key = `${rolle.fra ?? ''}_${rolle.til ?? ''}`;
           const label = `${d.navn}${rolle.ejerandel ? ` (${rolle.ejerandel})` : ''}`;
+          // BIZZ-1958: struktureret entitet så frontend kan rendere klikbart link.
+          const entitet: EjerEntitet = {
+            navn: d.navn,
+            type: d.erVirksomhed ? 'virksomhed' : 'person',
+            enhedsNummer: d.enhedsNummer,
+            cvr: d.cvr,
+            andel: rolle.ejerandel,
+          };
           const existing = ejerskabByDate.get(key);
           if (existing) {
             existing.navne.push(label);
+            existing.entiteter.push(entitet);
           } else {
-            ejerskabByDate.set(key, { fra: rolle.fra ?? '', til: rolle.til, navne: [label] });
+            ejerskabByDate.set(key, {
+              fra: rolle.fra ?? '',
+              til: rolle.til,
+              navne: [label],
+              entiteter: [entitet],
+            });
           }
         }
       }
@@ -883,6 +939,7 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
         fra: entry.fra,
         til: entry.til,
         vaerdi: entry.navne.join(', '),
+        entiteter: entry.entiteter,
       });
     }
   }

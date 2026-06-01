@@ -9,6 +9,7 @@ import Link from 'next/link';
 import {
   ArrowRightLeft,
   Briefcase,
+  Building2,
   CheckCircle,
   Coins,
   FileSearch,
@@ -18,9 +19,76 @@ import {
   MapPin,
   Shield,
   Tag,
+  User,
 } from 'lucide-react';
 import { translations } from '@/app/lib/translations';
+import { PersonLink, CompanyLink } from '@/app/components/ui/EntityLink';
 import type { CVRPublicData } from '@/app/api/cvr-public/route';
+
+/** En enkelt ejerskabs-entitet fra historik-entryet (BIZZ-1958). */
+type EjerEntitet = NonNullable<CVRPublicData['historik'][0]['entiteter']>[0];
+
+/**
+ * Renderer en liste af ejerskabs-entiteter som klikbare links (BIZZ-1958).
+ * Personer → /dashboard/owners/[enhedsNummer] (lilla hover + person-ikon).
+ * Virksomheder → /dashboard/companies/[cvr] (blå hover + building-ikon).
+ * Entiteter uden brugbar identifikator vises som plain text med tooltip.
+ *
+ * @param entiteter - Strukturerede ejere fra et 'ejerskab'-historik-entry.
+ * @param lang - Aktivt sprog (da/en) til tooltip-tekst.
+ * @returns Inline-liste af links/plain-text adskilt af komma.
+ */
+function EjerskabEntiteter({ entiteter, lang }: { entiteter: EjerEntitet[]; lang: 'da' | 'en' }) {
+  const ikkeLinkbar =
+    lang === 'da'
+      ? 'Kan ikke linkes — manglende identifikator'
+      : 'Cannot link — missing identifier';
+  return (
+    <p className="text-white text-sm font-medium flex flex-wrap items-center gap-x-1.5 gap-y-1">
+      {entiteter.map((ent, i) => {
+        const Ikon = ent.type === 'person' ? User : Building2;
+        const andel = ent.andel ? ` (${ent.andel})` : '';
+        const komma = i < entiteter.length - 1;
+        const href =
+          ent.type === 'virksomhed' && ent.cvr
+            ? `/dashboard/companies/${ent.cvr}`
+            : ent.enhedsNummer != null
+              ? `/dashboard/owners/${ent.enhedsNummer}`
+              : null;
+        const indhold = (
+          <>
+            <Ikon size={12} className="shrink-0" aria-hidden="true" />
+            <span>
+              {ent.navn}
+              {andel}
+            </span>
+          </>
+        );
+        if (!href) {
+          return (
+            <span
+              key={i}
+              title={ikkeLinkbar}
+              className="inline-flex items-center gap-1 text-slate-300 cursor-help"
+            >
+              {indhold}
+              {komma ? ',' : ''}
+            </span>
+          );
+        }
+        const LinkComp = ent.type === 'person' ? PersonLink : CompanyLink;
+        return (
+          <span key={i} className="inline-flex items-center">
+            <LinkComp href={href} className="inline-flex items-center gap-1">
+              {indhold}
+            </LinkComp>
+            {komma ? ',' : ''}
+          </span>
+        );
+      })}
+    </p>
+  );
+}
 
 function EmptyState({ ikon, tekst }: { ikon: React.ReactNode; tekst: string }) {
   return (
@@ -145,7 +213,14 @@ export default function VirksomhedHistorikTab({
                             }`}
                           />
                           <div className="bg-slate-900/50 rounded-lg p-3 border border-slate-700/30">
-                            <p className="text-white text-sm font-medium">{entry.vaerdi}</p>
+                            {/* BIZZ-1958: ejerskab-entries renderes som klikbare entity-links */}
+                            {entry.type === 'ejerskab' &&
+                            entry.entiteter &&
+                            entry.entiteter.length > 0 ? (
+                              <EjerskabEntiteter entiteter={entry.entiteter} lang={lang} />
+                            ) : (
+                              <p className="text-white text-sm font-medium">{entry.vaerdi}</p>
+                            )}
                             <p className="text-slate-400 text-xs mt-1">
                               {c.period}: {entry.fra}
                               {entry.til

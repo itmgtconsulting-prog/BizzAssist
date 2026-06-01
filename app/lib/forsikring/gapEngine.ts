@@ -1555,7 +1555,13 @@ const checkDobbeltForsikring: PortfolioCheckFn = ({ policer }) => {
     existing.push(p.policy_number);
     adresseMap.set(key, existing);
   }
-  const doubles = [...adresseMap.entries()].filter(([, nums]) => nums.length >= 2);
+  // BIZZ-1940: Tæl kun DISTINKTE policenumre. Samme police kan optræde som
+  // flere rows fordi parseren splitter en polices sektioner (Ansvar/Ejendom/
+  // Skur) i separate rows med samme policy_number — det er ikke dobbelt-
+  // forsikring, blot én polices strukturelle nedbrydning.
+  const doubles = [...adresseMap.entries()]
+    .map(([key, nums]) => [key, [...new Set(nums)]] as [string, string[]])
+    .filter(([, nums]) => nums.length >= 2);
   if (doubles.length === 0) return null;
   const first = doubles[0];
   return {
@@ -1594,7 +1600,13 @@ const checkDaekningsOverlap: PortfolioCheckFn = ({ policer, coveragesByPolicy })
   const overlaps: Array<{ adresse: string; coverage: string; policer: string[] }> = [];
   for (const [addr, covMap] of adresseCoverages) {
     for (const [code, nums] of covMap) {
-      if (nums.length >= 2) overlaps.push({ adresse: addr, coverage: code, policer: nums });
+      // BIZZ-1940: Reelt overlap kræver 2+ FORSKELLIGE policer. Samme police
+      // kan bidrage med samme coverage_code flere gange — enten fordi den er
+      // splittet i flere rows (Ansvar/Ejendom/Skur deler policy_number), eller
+      // fordi koden optræder i flere sektioner i samme row. Dedup på distinkte
+      // policenumre, så én polices interne gentagelser ikke tælles som overlap.
+      const distinct = [...new Set(nums)];
+      if (distinct.length >= 2) overlaps.push({ adresse: addr, coverage: code, policer: distinct });
     }
   }
   if (overlaps.length === 0) return null;

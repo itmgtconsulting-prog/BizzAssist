@@ -1137,3 +1137,71 @@ describe('runPortfolioChecks — GAP-066: Lav præmie (deaktiveret)', () => {
     expect(gaps.find((g) => g.check_id === 'GAP-066')).toBeUndefined();
   });
 });
+
+describe('runPortfolioChecks — GAP-070: Dobbelt-forsikring (BIZZ-1940)', () => {
+  it('flagger IKKE når samme police-nummer optræder som flere rows på samme adresse', () => {
+    // Parser splitter én polices sektioner (Ansvar/Ejendom/Skur) i separate
+    // rows med samme policy_number — det er ikke dobbelt-forsikring.
+    const adr = 'Stjernegade 17, 3000 Helsingør';
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [
+          makePolicy({ id: 'pol-a', policy_number: '9417319074', property_address: adr }),
+          makePolicy({ id: 'pol-b', policy_number: '9417319074', property_address: adr }),
+          makePolicy({ id: 'pol-c', policy_number: '9417319074', property_address: adr }),
+        ],
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-070')).toBeUndefined();
+  });
+
+  it('flagger reelt dobbelt-forsikring når 2 FORSKELLIGE policer dækker samme adresse', () => {
+    const adr = 'Stjernegade 17, 3000 Helsingør';
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [
+          makePolicy({ id: 'pol-a', policy_number: '9417319074', property_address: adr }),
+          makePolicy({ id: 'pol-b', policy_number: '50143392', property_address: adr }),
+        ],
+      })
+    );
+    const gap = gaps.find((g) => g.check_id === 'GAP-070');
+    expect(gap).toBeDefined();
+  });
+});
+
+describe('runPortfolioChecks — GAP-071: Dæknings-overlap (BIZZ-1940)', () => {
+  it('flagger IKKE overlap når samme police gentager samme coverage_code (én polices sektioner)', () => {
+    // Reproducerer Stjernegade 17A: ÉN police (9417319074) hvor brand_el
+    // optræder 3x fordi koden findes i flere sektioner — distinct policenumre = 1.
+    const adr = 'Stjernegade 17, 3000 Helsingør';
+    const pol = makePolicy({ id: 'pol-a', policy_number: '9417319074', property_address: adr });
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    coveragesByPolicy.set(pol.id, [
+      makeCoverage('brand_el'),
+      makeCoverage('brand_el'),
+      makeCoverage('brand_el'),
+      makeCoverage('haerverk'),
+      makeCoverage('haerverk'),
+    ]);
+    const gaps = runPortfolioChecks(makePortfolioInput({ policer: [pol], coveragesByPolicy }));
+    expect(gaps.find((g) => g.check_id === 'GAP-071')).toBeUndefined();
+  });
+
+  it('flagger overlap når 2 FORSKELLIGE policer dækker samme coverage på samme adresse', () => {
+    const adr = 'Stjernegade 17, 3000 Helsingør';
+    const polA = makePolicy({ id: 'pol-a', policy_number: '9417319074', property_address: adr });
+    const polB = makePolicy({ id: 'pol-b', policy_number: '50143392', property_address: adr });
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    coveragesByPolicy.set(polA.id, [makeCoverage('brand_el')]);
+    coveragesByPolicy.set(polB.id, [makeCoverage('brand_el')]);
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({ policer: [polA, polB], coveragesByPolicy })
+    );
+    const gap = gaps.find((g) => g.check_id === 'GAP-071');
+    expect(gap).toBeDefined();
+    // De rapporterede policer skal være de 2 distinkte numre (ikke duplikater)
+    const overlaps = (gap?.source_data as { overlaps?: Array<{ policer: string[] }> })?.overlaps;
+    expect(overlaps?.[0]?.policer).toEqual(['9417319074', '50143392']);
+  });
+});

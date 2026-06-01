@@ -446,9 +446,6 @@ export function extractValue(
           // Fx AverageNumberOfEmployees="3" unitRef="U-pure" er bogstaveligt 3 ansatte.
           const unitRef = attrs.match(/unitRef="([^"]*)"/i)?.[1] ?? '';
           const erIkkeMonetaer = /pure|shares|antal|decimal/i.test(unitRef);
-          // BIZZ-449: Standard XBRL bruger decimals-attribut til at angive enhed
-          // decimals="-3" → tusinder, decimals="-6" → millioner, "INF"/0 → hele DKK
-          const decimalsMatch = attrs.match(/decimals="(-?\d+|INF)"/i);
           let dkkValue: number;
 
           if (erIkkeMonetaer) {
@@ -459,13 +456,16 @@ export function extractValue(
             // scale="0" → ×1 (hele DKK, IKKE en gætte-heuristik om millioner). Den
             // tidligere scale=0→×1.000.000-antagelse inflaterede alle hele-DKK-regnskaber.
             dkkValue = num * Math.pow(10, parseInt(scaleMatch[1], 10));
-          } else if (decimalsMatch && decimalsMatch[1] !== 'INF') {
-            // BIZZ-449: Standard XBRL uden scale-attribut bruger decimals som enhed
-            // (mest almindelig for danske SMB'er). decimals="-3" → tusinder → ×1.000.
-            const d = parseInt(decimalsMatch[1], 10);
-            dkkValue = d < 0 ? num * Math.pow(10, -d) : num;
           } else {
-            // Standard XBRL uden scale/decimals: tal er i hele DKK
+            // BIZZ-1956: Standard XBRL (uden iXBRL scale) — elementets indhold ER den
+            // fulde monetære værdi i DKK. `decimals` er KUN en præcisions-/afrundings-
+            // indikator (XBRL 2.1 §4.6.4): decimals="-3" betyder "nøjagtig til nærmeste
+            // 1.000", IKKE "tallet er i tusinder". Det tidligere BIZZ-449-gæt gangede
+            // med 10^(-decimals) og inflaterede facts med decimals="-6" ×1.000 efter
+            // T DKK-normaliseringen (HEARTLAND A/S: 60,9 mia → 60.900 mia; intra-år-
+            // inkonsistens fordi søsterfelter med decimals="-3" nettede til ×1).
+            // Erhvervsstyrelsens årsrapport-XBRL angiver altid hele DKK; iXBRL scale
+            // håndteres ovenfor. Cross-år T DKK-konvertering sker i normaliserAlleAar().
             dkkValue = num;
           }
           // BIZZ-435: Return hele DKK — UI formatter selv med toLocaleString
@@ -1017,7 +1017,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // v8: BIZZ-1944 — trust iXBRL scale (drop scale=0→×1M-gæt), honorér sign="-",
     //     spring ikke-monetære enheder (U-pure/antal) over. Inflaterede/fortegns-
     //     forkerte regnskaber re-parses ved næste access.
-    const PARSER_VERSION = 'v8';
+    // v9: BIZZ-1956 — `decimals` skaleres ALDRIG (kun præcision, ikke enhed). Fjerner
+    //     ×1.000-inflation af decimals="-6"-facts (HEARTLAND-trillion-bug). Tvinger
+    //     re-parse af alle cachede regnskaber med den korrekte fulde-DKK-fortolkning.
+    const PARSER_VERSION = 'v9';
     const latestTimestamp =
       (regnskabData.regnskaber[0]?.offentliggjort ?? '') + `_${PARSER_VERSION}`;
 

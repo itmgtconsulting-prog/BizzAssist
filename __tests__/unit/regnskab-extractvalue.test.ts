@@ -7,7 +7,8 @@
  *  2. Honorerer sign="-" (det viste tal er en positiv magnitude → tab/negativ
  *     egenkapital skal negeres).
  *  3. Aldrig skalerer ikke-monetære enheder (U-pure, antal ansatte).
- *  4. Stadig håndterer standard-XBRL decimals="-3" → tusinder (legacy BIZZ-449).
+ *  4. BIZZ-1956: `decimals` skaleres ALDRIG — det er kun en præcisionsindikator
+ *     (XBRL 2.1), ikke en enhed. Elementets indhold er altid hele DKK.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -48,9 +49,18 @@ describe('extractValue — scale/sign/unit (BIZZ-1944)', () => {
     expect(extractValue(xml, ['Revenue'])).toBe(154_000_000);
   });
 
-  it('standard XBRL decimals="-3" uden scale → ×1.000 (legacy BIZZ-449)', () => {
-    const xml = `<fsa:Revenue contextRef="D0" decimals="-3" unitRef="U-iso4217-DKK">5000</fsa:Revenue>`;
-    expect(extractValue(xml, ['Revenue'])).toBe(5_000_000);
+  it('BIZZ-1956: standard XBRL decimals="-3" skaleres IKKE (præcision, ikke enhed)', () => {
+    // decimals="-3" betyder "nøjagtig til nærmeste 1.000", IKKE "tal i tusinder".
+    // Elementets indhold er allerede hele DKK. (HEARTLAND: ShorttermLiabilities
+    // 21.537.870.000 med decimals="-3" = 21,5 mia DKK — ikke 21,5 billioner.)
+    const xml = `<fsa:Revenue contextRef="D0" decimals="-3" unitRef="U-iso4217-DKK">21537870000</fsa:Revenue>`;
+    expect(extractValue(xml, ['Revenue'])).toBe(21_537_870_000);
+  });
+
+  it('BIZZ-1956: standard XBRL decimals="-6" skaleres IKKE (trillion-bug fix)', () => {
+    // decimals="-6" inflaterede tidligere værdien ×10^6 → ×1.000 efter T DKK-norm.
+    const xml = `<fsa:Assets contextRef="D0" decimals="-6" unitRef="U-iso4217-DKK">60900000000</fsa:Assets>`;
+    expect(extractValue(xml, ['Assets'])).toBe(60_900_000_000);
   });
 
   it('standard XBRL decimals="INF" → hele DKK uændret', () => {

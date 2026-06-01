@@ -24,7 +24,7 @@ import type {
   ForsikringPolicy,
   GapEngineInput,
 } from './types';
-import { COVERAGE_LABELS_DA } from './types';
+import { COVERAGE_LABELS_DA, gapScope } from './types';
 import { effectiveCoveredCodes } from './coverageAliases';
 import { lookupBrancheKrav, isOperationelBranche } from './brancheRisiko';
 import type { Aktiv } from './koncernWalk';
@@ -891,7 +891,8 @@ export function runGapEngine(input: GapEngineInput): DetectedGap[] {
     }
   }
 
-  return results;
+  // BIZZ-1941: Stempl hierarki-scope ud fra check_id på hvert gap.
+  return results.map((g) => ({ ...g, scope: gapScope(g.check_id) }));
 }
 
 // ─── BIZZ-1365: Risk-scoring ────────────────────────────────────
@@ -1672,5 +1673,6 @@ export function runPortfolioChecks(input: PortfolioCheckInput): DetectedGap[] {
       continue;
     }
   }
-  return results;
+  // BIZZ-1941: Stempl hierarki-scope ud fra check_id på hvert gap.
+  return results.map((g) => ({ ...g, scope: gapScope(g.check_id) }));
 }

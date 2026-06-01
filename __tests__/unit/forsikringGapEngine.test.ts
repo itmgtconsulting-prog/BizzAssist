@@ -19,6 +19,7 @@ import {
   runPortfolioChecks,
 } from '@/app/lib/forsikring/gapEngine';
 import type { PortfolioCheckInput } from '@/app/lib/forsikring/gapEngine';
+import { gapScope } from '@/app/lib/forsikring/types';
 import type {
   BbrPropertyFacts,
   ForsikringCoverage,
@@ -1203,5 +1204,65 @@ describe('runPortfolioChecks — GAP-071: Dæknings-overlap (BIZZ-1940)', () => 
     // De rapporterede policer skal være de 2 distinkte numre (ikke duplikater)
     const overlaps = (gap?.source_data as { overlaps?: Array<{ policer: string[] }> })?.overlaps;
     expect(overlaps?.[0]?.policer).toEqual(['9417319074', '50143392']);
+  });
+});
+
+// ─── BIZZ-1941: gap-scope hierarki ────────────────────────────────
+
+describe('gapScope — hierarki-niveau pr. check_id', () => {
+  it('mapper forsikringsejer-niveau checks til owner', () => {
+    for (const id of [
+      'GAP-060',
+      'GAP-061',
+      'GAP-063',
+      'GAP-064',
+      'GAP-065',
+      'GAP-067',
+      'GAP-103',
+    ]) {
+      expect(gapScope(id)).toBe('owner');
+    }
+  });
+
+  it('mapper virksomheds-niveau checks til company', () => {
+    for (const id of [
+      'GAP-050',
+      'GAP-051',
+      'GAP-052',
+      'GAP-053',
+      'GAP-062',
+      'GAP-066',
+      'GAP-070',
+      'GAP-071',
+      'GAP-STD-BASELINE',
+    ]) {
+      expect(gapScope(id)).toBe('company');
+    }
+  });
+
+  it('defaulter ejendomsspecifikke + ukendte checks til property', () => {
+    for (const id of [
+      'GAP-001',
+      'GAP-004',
+      'GAP-016',
+      'GAP-020',
+      'GAP-030',
+      'GAP-040',
+      'GAP-999',
+    ]) {
+      expect(gapScope(id)).toBe('property');
+    }
+  });
+
+  it('stempler scope på gaps fra runPortfolioChecks', () => {
+    const pol = makePolicy({ policyholder_cvr: '12345678' });
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    coveragesByPolicy.set(pol.id, []);
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({ policer: [pol], coveragesByPolicy, virksomhedsform: 'A/S' })
+    );
+    for (const g of gaps) {
+      expect(g.scope).toBe(gapScope(g.check_id));
+    }
   });
 });

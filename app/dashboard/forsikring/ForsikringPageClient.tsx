@@ -43,6 +43,7 @@ import { useLanguage } from '@/app/context/LanguageContext';
 import { useSubscription } from '@/app/context/SubscriptionContext';
 import { translations } from '@/app/lib/translations';
 import TokenUsageBar from '@/app/components/TokenUsageBar';
+import { gapScope } from '@/app/lib/forsikring/types';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -143,6 +144,87 @@ interface PropertyGroup {
 }
 
 // ─── BIZZ-1389: Samlet ejendomsvisning ──────────────────────────
+
+/**
+ * BIZZ-1941: Dedup en liste af gaps på check_id (fallback titel).
+ * Identiske findings vises kun én gang.
+ *
+ * @param list - Rå gaps
+ * @returns Gaps uden duplikater på check_id
+ */
+function dedupGaps(list: AnalyseGap[]): AnalyseGap[] {
+  const seen = new Set<string>();
+  return list.filter((g) => {
+    const key = g.check_id ?? g.title;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/**
+ * BIZZ-1941: Genbrugelig liste af gap-kort. Bruges af både forsikringsejer-/
+ * virksomheds-sektionerne og de enkelte ejendomsrækker, så markup er ens.
+ *
+ * @param props.gaps - Gaps der skal vises
+ * @param props.da - Dansk sprogflag
+ */
+function GapList({ gaps, da }: { gaps: AnalyseGap[]; da: boolean }) {
+  return (
+    <div className="space-y-1.5">
+      {gaps.map((g) => (
+        <div
+          key={g.id}
+          className={`rounded-lg px-3 py-2 text-xs ${
+            g.severity === 'critical'
+              ? 'bg-red-500/10 border border-red-500/20'
+              : g.severity === 'warning'
+                ? 'bg-amber-500/10 border border-amber-500/20'
+                : 'bg-slate-500/10 border border-slate-500/20'
+          }`}
+        >
+          <div className="flex items-center gap-1.5 mb-0.5">
+            {g.severity === 'critical' ? (
+              <AlertTriangle size={11} className="text-red-400" />
+            ) : g.severity === 'warning' ? (
+              <AlertCircle size={11} className="text-amber-400" />
+            ) : (
+              <ShieldCheck size={11} className="text-slate-400" />
+            )}
+            <span
+              className={
+                g.severity === 'critical'
+                  ? 'text-red-300 font-medium'
+                  : g.severity === 'warning'
+                    ? 'text-amber-300 font-medium'
+                    : 'text-slate-300 font-medium'
+              }
+            >
+              {g.title}
+            </span>
+          </div>
+          <p className="text-slate-400 ml-4">{g.description}</p>
+          {g.recommendation && (
+            <p className="text-slate-400 ml-4 mt-0.5 italic">{g.recommendation}</p>
+          )}
+          {/* BIZZ-1833 Fase 6: vis baseline-kilde for standard_betingelser-gaps */}
+          {g.category === 'standard_betingelser' && g.source_data?.source_url && (
+            <a
+              href={g.source_data.source_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-teal-400 hover:text-teal-300 text-[10px] ml-4 mt-0.5 flex items-center gap-1 underline-offset-2 hover:underline"
+              aria-label={`Åbn standard betingelse: ${g.source_data.source_url}`}
+            >
+              <ExternalLink size={9} />
+              {da ? 'Se standard betingelse' : 'View standard terms'}
+            </a>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 /**
  * Expandable property row — viser aktiv med matchet police + gaps.
@@ -276,57 +358,8 @@ function PropertyRow({ group, da }: { group: PropertyGroup; da: boolean }) {
 
           {/* Gaps for this property */}
           {group.gaps.length > 0 ? (
-            <div className="space-y-1.5 mt-2">
-              {group.gaps.map((g) => (
-                <div
-                  key={g.id}
-                  className={`rounded-lg px-3 py-2 text-xs ${
-                    g.severity === 'critical'
-                      ? 'bg-red-500/10 border border-red-500/20'
-                      : g.severity === 'warning'
-                        ? 'bg-amber-500/10 border border-amber-500/20'
-                        : 'bg-slate-500/10 border border-slate-500/20'
-                  }`}
-                >
-                  <div className="flex items-center gap-1.5 mb-0.5">
-                    {g.severity === 'critical' ? (
-                      <AlertTriangle size={11} className="text-red-400" />
-                    ) : g.severity === 'warning' ? (
-                      <AlertCircle size={11} className="text-amber-400" />
-                    ) : (
-                      <ShieldCheck size={11} className="text-slate-400" />
-                    )}
-                    <span
-                      className={
-                        g.severity === 'critical'
-                          ? 'text-red-300 font-medium'
-                          : g.severity === 'warning'
-                            ? 'text-amber-300 font-medium'
-                            : 'text-slate-300 font-medium'
-                      }
-                    >
-                      {g.title}
-                    </span>
-                  </div>
-                  <p className="text-slate-400 ml-4">{g.description}</p>
-                  {g.recommendation && (
-                    <p className="text-slate-400 ml-4 mt-0.5 italic">{g.recommendation}</p>
-                  )}
-                  {/* BIZZ-1833 Fase 6: vis baseline-kilde for standard_betingelser-gaps */}
-                  {g.category === 'standard_betingelser' && g.source_data?.source_url && (
-                    <a
-                      href={g.source_data.source_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-teal-400 hover:text-teal-300 text-[10px] ml-4 mt-0.5 flex items-center gap-1 underline-offset-2 hover:underline"
-                      aria-label={`Åbn standard betingelse: ${g.source_data.source_url}`}
-                    >
-                      <ExternalLink size={9} />
-                      {da ? 'Se standard betingelse' : 'View standard terms'}
-                    </a>
-                  )}
-                </div>
-              ))}
+            <div className="mt-2">
+              <GapList gaps={group.gaps} da={da} />
             </div>
           ) : isInsured ? (
             <div className="text-emerald-400 text-xs flex items-center gap-1 mt-1">
@@ -388,17 +421,16 @@ function UnifiedAnalyseView({
     if (seenAddresses.has(addrKey)) continue;
     seenAddresses.add(addrKey);
 
-    // BIZZ-1792: Dedup gaps per check_id — identiske gaps vises kun 1 gang
+    // BIZZ-1792: Dedup gaps per check_id — identiske gaps vises kun 1 gang.
+    // BIZZ-1941: Ejendomsrækker viser KUN ejendomsspecifikke gaps (scope='property').
+    // Forsikringsejer-/virksomheds-gaps løftes op i dedikerede sektioner (se nedenfor),
+    // så de ikke gentages under hver ejendom.
     const rawGaps = aktiv.matched_policy_id
-      ? gaps.filter((g) => g.policy_id === aktiv.matched_policy_id)
+      ? gaps.filter(
+          (g) => g.policy_id === aktiv.matched_policy_id && gapScope(g.check_id) === 'property'
+        )
       : [];
-    const seenCheckIds = new Set<string>();
-    const aktivGaps = rawGaps.filter((g) => {
-      const key = g.check_id ?? g.title;
-      if (seenCheckIds.has(key)) return false;
-      seenCheckIds.add(key);
-      return true;
-    });
+    const aktivGaps = dedupGaps(rawGaps);
     allGroups.push({
       aktiv,
       matchedPolicy: aktiv.matched_policy_id
@@ -407,6 +439,12 @@ function UnifiedAnalyseView({
       gaps: aktivGaps,
     });
   }
+
+  // BIZZ-1941: Løft forsikringsejer- og virksomheds-niveau findings ud i dedikerede
+  // sektioner — deduppet på check_id på tværs af hele porteføljen, så de vises præcis
+  // én gang i stedet for gentaget under hver ejendom/police.
+  const ownerGaps = dedupGaps(gaps.filter((g) => gapScope(g.check_id) === 'owner'));
+  const companyGaps = dedupGaps(gaps.filter((g) => gapScope(g.check_id) === 'company'));
 
   // Split into companies and properties for tree-grouping
   const virksomhedGroups = allGroups.filter((g) => g.aktiv.type === 'virksomhed');
@@ -538,6 +576,51 @@ function UnifiedAnalyseView({
           />
         </div>
       </div>
+
+      {/* BIZZ-1941: Forsikringsejer-niveau — generelle findings for hele ejeren.
+          Vises kun her, ikke gentaget under virksomhed/ejendom. */}
+      {ownerGaps.length > 0 && (
+        <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <Briefcase size={14} className="text-purple-400" />
+            <h4 className="text-white text-sm font-semibold">
+              {da ? 'Forsikringsejer-niveau' : 'Insurance owner level'}
+            </h4>
+            <span className="text-slate-400 text-[11px]">
+              {da
+                ? `${ownerGaps.length} generelle findings`
+                : `${ownerGaps.length} general findings`}
+            </span>
+          </div>
+          <p className="text-slate-400 text-[11px]">
+            {da
+              ? 'Gælder hele forsikringsejeren — ikke en enkelt virksomhed eller ejendom.'
+              : 'Applies to the entire insurance owner — not a single company or property.'}
+          </p>
+          <GapList gaps={ownerGaps} da={da} />
+        </div>
+      )}
+
+      {/* BIZZ-1941: Virksomheds-niveau — gælder porteføljen/virksomheden, ikke per ejendom. */}
+      {companyGaps.length > 0 && (
+        <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <Building2 size={14} className="text-blue-400" />
+            <h4 className="text-white text-sm font-semibold">
+              {da ? 'Virksomheds-niveau' : 'Company level'}
+            </h4>
+            <span className="text-slate-400 text-[11px]">
+              {da ? `${companyGaps.length} findings` : `${companyGaps.length} findings`}
+            </span>
+          </div>
+          <p className="text-slate-400 text-[11px]">
+            {da
+              ? 'Dæknings-overlap, kollektiv forsikring og standard-betingelser — på tværs af policer.'
+              : 'Coverage overlap, collective insurance and standard terms — across policies.'}
+          </p>
+          <GapList gaps={companyGaps} da={da} />
+        </div>
+      )}
 
       {/* Niveau 2: Virksomheds-træer med ejendomme grupperet under */}
       <div className="space-y-4">

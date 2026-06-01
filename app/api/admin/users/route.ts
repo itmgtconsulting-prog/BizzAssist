@@ -61,10 +61,12 @@ async function insertAuditLog(
  * Runs a raw SQL statement against the tenant database via the Supabase
  * Management API.
  *
- * Needed for operations the PostgREST admin client cannot perform: DDL
- * (DROP SCHEMA) and deletes on `public.tenants`, which has RLS with only a
- * SELECT policy — `admin.from('tenants').delete()` is silently blocked and
- * leaves orphan rows. The Management API bypasses RLS entirely.
+ * Needed for DDL (DROP SCHEMA) and for deletes on `public.tenants` that must
+ * succeed even when the shared PostgREST instance is unhealthy. The admin
+ * (PostgREST) client returns PGRST002 503 ("Could not query the database for
+ * the schema cache") for ALL requests whenever the exposed `db_schema` list
+ * references a schema that no longer exists — see deprovisionSchemaFromPostgrest
+ * below. The Management API talks straight to Postgres and is unaffected.
  *
  * @param sql - SQL statement to execute. Callers must only interpolate
  *              server-validated values (never raw user input).
@@ -96,6 +98,50 @@ async function runManagementSql(sql: string): Promise<boolean> {
   } catch (err) {
     logger.error('[admin/users] Management API SQL error:', err);
     return false;
+  }
+}
+
+/**
+ * Removes a dropped tenant schema from the PostgREST `db_schema` exposure list.
+ *
+ * CRITICAL (BIZZ-1952): tenant provisioning ADDS each new schema to PostgREST's
+ * exposed `db_schema` config so `tenantDb(schema)` queries work. When a tenant
+ * is torn down we DROP the schema, but if it is left in the exposure list
+ * PostgREST can no longer build its schema cache and returns PGRST002 503 for
+ * EVERY request instance-wide — silently breaking all subsequent tenant
+ * provisioning and writes. This is the inverse of that provisioning step: it
+ * must run whenever a schema is dropped so the exposure list never references a
+ * missing schema.
+ *
+ * @param schemaName - The dropped schema to remove from the exposure list.
+ */
+async function deprovisionSchemaFromPostgrest(schemaName: string): Promise<void> {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const accessToken = process.env.SUPABASE_ACCESS_TOKEN;
+  if (!supabaseUrl || !accessToken) return;
+  try {
+    const projectRef = supabaseUrl.replace('https://', '').split('.')[0];
+    const base = `https://api.supabase.com/v1/projects/${projectRef}/postgrest`;
+    const getRes = await fetch(base, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!getRes.ok) return;
+    const cfg = (await getRes.json()) as { db_schema: string };
+    const schemas = cfg.db_schema.split(',').map((s) => s.trim());
+    if (!schemas.includes(schemaName)) return;
+    const next = schemas.filter((s) => s !== schemaName).join(',');
+    const patchRes = await fetch(base, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ db_schema: next }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!patchRes.ok) {
+      logger.error('[admin/users] PostgREST de-exposure failed:', patchRes.status);
+    }
+  } catch (err) {
+    logger.error('[admin/users] PostgREST de-exposure error:', err);
   }
 }
 
@@ -397,6 +443,10 @@ export async function DELETE(req: NextRequest): Promise<NextResponse> {
             // schemaName comes from the tenants row (server-controlled), not user
             // input. Safe to interpolate into the DROP SCHEMA statement.
             await runManagementSql(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE`);
+            // BIZZ-1952: the schema MUST also be removed from PostgREST's exposure
+            // list, otherwise the now-missing schema poisons the schema cache and
+            // breaks all subsequent provisioning/writes with PGRST002 503.
+            await deprovisionSchemaFromPostgrest(schemaName);
           }
         }
 

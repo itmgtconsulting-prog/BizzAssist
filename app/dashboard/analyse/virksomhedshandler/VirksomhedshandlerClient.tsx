@@ -9,7 +9,7 @@
 
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 
@@ -136,12 +136,67 @@ export default function VirksomhedshandlerClient() {
   const [maxOmsaetning, setMaxOmsaetning] = useState('');
   const [minOverskud, setMinOverskud] = useState('');
   const [maxOverskud, setMaxOverskud] = useState('');
+  // Server-side sortering: kolonne-nøgle + retning (klik på overskrift toggler)
+  const [sortKey, setSortKey] = useState('indrapporteret');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   const LIMIT = 50;
 
+  /**
+   * Toggler sortering på en kolonne. Første klik på en ny kolonne → desc;
+   * efterfølgende klik på samme kolonne skifter mellem desc og asc.
+   *
+   * @param key - Sorteringskolonne-nøgle (matcher route'ens whitelist)
+   */
+  const toggleSort = useCallback((key: string) => {
+    setSortKey((prevKey) => {
+      if (prevKey === key) {
+        setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
+        return key;
+      }
+      setSortDir('desc');
+      return key;
+    });
+    setOffset(0);
+  }, []);
+
+  /**
+   * Renderer en klikbar, sorterbar kolonneoverskrift med retnings-indikator.
+   *
+   * @param key - Sorteringsnøgle (matcher route'ens whitelist)
+   * @param label - Vist kolonnenavn
+   * @param align - Tekst-justering (left/right)
+   */
+  const renderSortTh = (key: string, label: string, align: 'left' | 'right' = 'left') => {
+    const active = sortKey === key;
+    return (
+      <th className={`px-4 py-2 ${align === 'right' ? 'text-right' : ''}`}>
+        <button
+          type="button"
+          onClick={() => toggleSort(key)}
+          aria-label={t(`Sortér efter ${label}`, `Sort by ${label}`)}
+          className={`inline-flex items-center gap-1 uppercase tracking-wider transition-colors hover:text-white ${
+            active ? 'text-white' : ''
+          } ${align === 'right' ? 'flex-row-reverse' : ''}`}
+        >
+          {label}
+          <span className="text-[9px] text-slate-500">
+            {active ? (sortDir === 'asc' ? '▲' : '▼') : '↕'}
+          </span>
+        </button>
+      </th>
+    );
+  };
+
   // ─── Fetch kandidater ─────────────────────────────────────────────
 
+  // Sekvens-guard: hvert kald får et stigende id; kun det nyeste svar må
+  // opdatere tabellen. Forhindrer at et langsomt, mindre-filtreret svar
+  // (fx midt i indtastning af et beløb) overskriver et nyere, korrekt svar.
+  const reqSeq = useRef(0);
+
   const fetchKandidater = useCallback(async () => {
+    const seq = ++reqSeq.current;
     setLoading(true);
     const params = new URLSearchParams();
     if (signalFilters.size > 0) {
@@ -154,18 +209,23 @@ export default function VirksomhedshandlerClient() {
     if (maxOmsaetning) params.set('max_omsaetning', maxOmsaetning);
     if (minOverskud) params.set('min_overskud', minOverskud);
     if (maxOverskud) params.set('max_overskud', maxOverskud);
+    params.set('sort', sortKey);
+    params.set('dir', sortDir);
     params.set('limit', String(LIMIT));
     params.set('offset', String(offset));
 
     try {
       const res = await fetch(`/api/virksomhedshandler/kandidater?${params}`);
+      // Ignorér svar hvis et nyere kald er startet i mellemtiden (stale guard).
+      if (seq !== reqSeq.current) return;
       if (res.ok) {
         const data = await res.json();
         setKandidater(data.kandidater);
         setTotal(data.total);
       }
     } finally {
-      setLoading(false);
+      // Lad kun det nyeste kald rydde loading-state.
+      if (seq === reqSeq.current) setLoading(false);
     }
   }, [
     signalFilters,
@@ -176,6 +236,8 @@ export default function VirksomhedshandlerClient() {
     maxOmsaetning,
     minOverskud,
     maxOverskud,
+    sortKey,
+    sortDir,
     offset,
   ]);
 
@@ -607,17 +669,17 @@ export default function VirksomhedshandlerClient() {
       {/* Table */}
       <div className="overflow-auto rounded-xl border border-slate-700/30 max-h-[70vh]">
         <table className="w-full text-sm">
-          <thead className="bg-slate-800/60">
+          <thead className="bg-slate-800 sticky top-0 z-10 shadow-[0_1px_0_0_rgba(148,163,184,0.2)]">
             <tr className="text-left text-slate-400 text-xs uppercase tracking-wider">
               <th className="px-4 py-2">{t('Signal', 'Signal')}</th>
-              <th className="px-4 py-2">{t('Deltager', 'Participant')}</th>
-              <th className="px-4 py-2">{t('Virksomhed', 'Company')}</th>
-              <th className="px-4 py-2">{t('Branche', 'Industry')}</th>
-              <th className="px-4 py-2 text-right">{t('Omsætning', 'Revenue')}</th>
-              <th className="px-4 py-2 text-right">{t('Bruttofortjeneste', 'Gross profit')}</th>
-              <th className="px-4 py-2 text-right">{t('Overskud', 'Profit')}</th>
-              <th className="px-4 py-2">{t('Ændring', 'Change')}</th>
-              <th className="px-4 py-2">{t('Indrapporteret', 'Reported')}</th>
+              {renderSortTh('deltager', t('Deltager', 'Participant'))}
+              {renderSortTh('virksomhed', t('Virksomhed', 'Company'))}
+              {renderSortTh('branche', t('Branche', 'Industry'))}
+              {renderSortTh('omsaetning', t('Omsætning', 'Revenue'), 'right')}
+              {renderSortTh('bruttofortjeneste', t('Bruttofortjeneste', 'Gross profit'), 'right')}
+              {renderSortTh('overskud', t('Overskud', 'Profit'), 'right')}
+              {renderSortTh('aendring', t('Ændring', 'Change'))}
+              {renderSortTh('indrapporteret', t('Indrapporteret', 'Reported'))}
               <th className="px-4 py-2">{t('Est. værdi', 'Est. value')}</th>
               <th className="px-4 py-2">{t('Confidence', 'Confidence')}</th>
               <th className="px-4 py-2" />
@@ -726,6 +788,12 @@ export default function VirksomhedshandlerClient() {
                   const isBerigLoading = berigLoading.has(key);
                   const signal = SIGNAL_LABELS[k.signal_type];
                   const delta = Math.abs(k.current_ejerandel_pct - k.prev_ejerandel_pct);
+                  // For 'exit' holder current_ejerandel_pct den andel deltageren HAVDE
+                  // (prev er en COALESCE(0)-artefakt fordi der ingen forudgående LAG-række er).
+                  // Vis derfor "havde% → 0%" så pilen peger rigtig vej (de er fratrådt).
+                  const fraPct =
+                    k.signal_type === 'exit' ? k.current_ejerandel_pct : k.prev_ejerandel_pct;
+                  const tilPct = k.signal_type === 'exit' ? 0 : k.current_ejerandel_pct;
 
                   return (
                     <tr key={key} className="hover:bg-slate-800/30 transition-colors">
@@ -764,7 +832,7 @@ export default function VirksomhedshandlerClient() {
                         {formatRegnskab(k.overskud)}
                       </td>
                       <td className="px-4 py-3 text-slate-300 text-xs">
-                        {k.prev_ejerandel_pct}% → {k.current_ejerandel_pct}%
+                        {fraPct}% → {tilPct}%
                         <span className="text-slate-500 ml-1">(Δ{delta} pp)</span>
                       </td>
                       <td className="px-4 py-3 text-slate-400 text-xs">
@@ -815,6 +883,24 @@ export default function VirksomhedshandlerClient() {
                     </tr>
                   );
                 })
+            )}
+            {!loading && kandidater.length > 0 && (
+              <tr>
+                <td
+                  colSpan={12}
+                  className="px-4 py-3 text-center text-[11px] text-slate-500 bg-slate-800/20"
+                >
+                  {offset + LIMIT >= total
+                    ? t(
+                        `● Slut på listen — ${total.toLocaleString('da-DK')} kandidater i alt`,
+                        `● End of list — ${total.toLocaleString('en')} candidates total`
+                      )
+                    : t(
+                        `Viser ${offset + 1}–${Math.min(offset + LIMIT, total)} af ${total.toLocaleString('da-DK')} — brug "Næste" for flere`,
+                        `Showing ${offset + 1}–${Math.min(offset + LIMIT, total)} of ${total.toLocaleString('en')} — use "Next" for more`
+                      )}
+                </td>
+              </tr>
             )}
           </tbody>
         </table>

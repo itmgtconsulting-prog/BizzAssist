@@ -25,6 +25,20 @@ import {
 } from 'lucide-react';
 import { getEnabledModules } from '@/app/lib/analyseModules';
 
+/**
+ * Force dynamic (per-request) rendering (BIZZ-1951).
+ *
+ * The CSP in proxy.ts uses a per-request `script-src 'nonce-…'`. Next.js can
+ * only stamp that nonce onto inline framework scripts when the route is
+ * rendered per-request. As a pure static server component this page was
+ * prerendered at build time with unnonced scripts, so at runtime every inline
+ * script was blocked by CSP and the page never hydrated (stuck on the
+ * dashboard "Kontrollerer adgang…" access gate). Forcing dynamic rendering
+ * makes Next inject the matching nonce, exactly like the other dashboard
+ * routes which are already dynamic via auth/cookies.
+ */
+export const dynamic = 'force-dynamic';
+
 /** Map fra ikon-streng til Lucide-komponent */
 const iconMap: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
   Sparkles,

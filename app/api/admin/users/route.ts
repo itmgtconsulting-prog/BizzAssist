@@ -57,6 +57,48 @@ async function insertAuditLog(
   }
 }
 
+/**
+ * Runs a raw SQL statement against the tenant database via the Supabase
+ * Management API.
+ *
+ * Needed for operations the PostgREST admin client cannot perform: DDL
+ * (DROP SCHEMA) and deletes on `public.tenants`, which has RLS with only a
+ * SELECT policy — `admin.from('tenants').delete()` is silently blocked and
+ * leaves orphan rows. The Management API bypasses RLS entirely.
+ *
+ * @param sql - SQL statement to execute. Callers must only interpolate
+ *              server-validated values (never raw user input).
+ * @returns true if the statement executed without error, false otherwise.
+ */
+async function runManagementSql(sql: string): Promise<boolean> {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const accessToken = process.env.SUPABASE_ACCESS_TOKEN;
+  if (!supabaseUrl || !accessToken) {
+    logger.error('[admin/users] Management API not configured — skipping SQL');
+    return false;
+  }
+  try {
+    const projectRef = supabaseUrl.replace('https://', '').split('.')[0];
+    const res = await fetch(`https://api.supabase.com/v1/projects/${projectRef}/database/query`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ query: sql }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) {
+      logger.error('[admin/users] Management API SQL failed:', res.status);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    logger.error('[admin/users] Management API SQL error:', err);
+    return false;
+  }
+}
+
 /** Shape returned per user — includes subscription from app_metadata */
 interface AdminUserRow {
   id: string;
@@ -352,32 +394,23 @@ export async function DELETE(req: NextRequest): Promise<NextResponse> {
           // this so co-members keep their data (GDPR erasure for THIS user is
           // already satisfied by the per-user row deletes above).
           if (isLastMember) {
-            try {
-              const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-              const accessToken = process.env.SUPABASE_ACCESS_TOKEN;
-              if (supabaseUrl && accessToken) {
-                const projectRef = supabaseUrl.replace('https://', '').split('.')[0];
-                await fetch(`https://api.supabase.com/v1/projects/${projectRef}/database/query`, {
-                  method: 'POST',
-                  headers: {
-                    Authorization: `Bearer ${accessToken}`,
-                    'Content-Type': 'application/json',
-                  },
-                  body: JSON.stringify({ query: `DROP SCHEMA IF EXISTS ${schemaName} CASCADE` }),
-                  signal: AbortSignal.timeout(10000),
-                });
-              }
-            } catch (dropErr) {
-              logger.error('[admin/users] Schema drop error (non-fatal):', dropErr);
-            }
+            // schemaName comes from the tenants row (server-controlled), not user
+            // input. Safe to interpolate into the DROP SCHEMA statement.
+            await runManagementSql(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE`);
           }
         }
 
         if (isLastMember) {
           // Last member — tear down the whole tenant so re-registration starts
-          // from a clean slate (no orphaned rows).
+          // from a clean slate (no orphaned rows). The tenant row delete MUST go
+          // through the Management API: public.tenants has RLS with only a SELECT
+          // policy, so admin.from('tenants').delete() is silently blocked and
+          // leaves an orphan row (BIZZ-1950). tenant_memberships cascades via the
+          // ON DELETE CASCADE FK once the tenant row is gone, but we delete it
+          // explicitly first so the row is gone even if the SQL call fails.
           await admin.from('tenant_memberships').delete().eq('tenant_id', tenantId);
-          await admin.from('tenants').delete().eq('id', tenantId);
+          // tenantId is a UUID read from tenant_memberships (server-controlled).
+          await runManagementSql(`DELETE FROM public.tenants WHERE id = '${tenantId}'`);
         } else {
           // Shared tenant — remove ONLY this user's membership; leave the tenant
           // and its other members untouched.

@@ -98,6 +98,16 @@ function formatRegnskab(amount: number | string | null | undefined): string {
   return `${sign}${abs}`;
 }
 
+/** Default-startdato for ændringsdato-filteret: 3 måneder tilbage (ISO YYYY-MM-DD). */
+function defaultFromDate(): string {
+  const d = new Date();
+  d.setMonth(d.getMonth() - 3);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Default signal-filtre (alle undtagen 'decrease'). */
+const DEFAULT_SIGNALS: SignalType[] = ['entry', 'exit', 'increase'];
+
 // ─── Component ──────────────────────────────────────────────────────────────
 
 /**
@@ -111,16 +121,10 @@ export default function VirksomhedshandlerClient() {
   const [kandidater, setKandidater] = useState<Kandidat[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [signalFilters, setSignalFilters] = useState<Set<SignalType>>(
-    new Set(['entry', 'exit', 'increase'])
-  );
+  const [signalFilters, setSignalFilters] = useState<Set<SignalType>>(new Set(DEFAULT_SIGNALS));
   const [signalDropdownOpen, setSignalDropdownOpen] = useState(false);
   // Default: seneste 3 måneder (baseret på ændringsdato = COALESCE(gyldig_til, gyldig_fra))
-  const [fromDate, setFromDate] = useState(() => {
-    const d = new Date();
-    d.setMonth(d.getMonth() - 3);
-    return d.toISOString().slice(0, 10);
-  });
+  const [fromDate, setFromDate] = useState(defaultFromDate);
   const [toDate, setToDate] = useState('');
   const [offset, setOffset] = useState(0);
   const [berigResults, setBerigResults] = useState<Record<string, BerigResult>>({});
@@ -153,6 +157,39 @@ export default function VirksomhedshandlerClient() {
   const [prefsLoaded, setPrefsLoaded] = useState(false);
 
   const LIMIT = 50;
+
+  // Er mindst ét filter aktivt (afviger fra default)? Styrer "Nulstil filtre".
+  const signalsAreDefault =
+    signalFilters.size === DEFAULT_SIGNALS.length &&
+    DEFAULT_SIGNALS.every((s) => signalFilters.has(s));
+  const anyFilterActive =
+    !signalsAreDefault ||
+    selectedBrancher.size > 0 ||
+    !!minOmsaetning ||
+    !!maxOmsaetning ||
+    !!minOverskud ||
+    !!maxOverskud ||
+    !!deltagerFilter ||
+    !!cvrFilter ||
+    !!toDate ||
+    fromDate !== defaultFromDate();
+
+  /** Nulstiller alle filtre til default-tilstand (auto-gem persisterer det bagefter). */
+  const resetFilters = useCallback(() => {
+    setSignalFilters(new Set(DEFAULT_SIGNALS));
+    setFromDate(defaultFromDate());
+    setToDate('');
+    setSelectedBrancher(new Set());
+    setMinOmsaetning('');
+    setMaxOmsaetning('');
+    setMinOverskud('');
+    setMaxOverskud('');
+    setDeltagerFilter('');
+    setCvrFilter('');
+    setSortKey('aendringsdato');
+    setSortDir('desc');
+    setOffset(0);
+  }, []);
 
   /**
    * Toggler sortering på en kolonne. Første klik på en ny kolonne → desc;
@@ -462,283 +499,37 @@ export default function VirksomhedshandlerClient() {
         </ul>
       </div>
 
-      {/* Filter bar */}
-      <div className="shrink-0 flex flex-wrap gap-3 items-end">
-        <div className="relative">
-          <label className="block text-xs text-slate-400 mb-1">{t('Signal', 'Signal')}</label>
-          <button
-            type="button"
-            onClick={() => setSignalDropdownOpen((v) => !v)}
-            aria-label={t('Filtrer på signaltype', 'Filter by signal type')}
-            className="bg-slate-800 text-white text-sm rounded-lg px-3 py-2 border border-slate-700 min-w-[160px] text-left flex items-center justify-between gap-2"
-          >
-            <span className="truncate">
-              {signalFilters.size === 0
-                ? t('Alle signaler', 'All signals')
-                : signalFilters.size === 1
-                  ? (SIGNAL_LABELS[[...signalFilters][0]]?.[lang === 'da' ? 'da' : 'en'] ??
-                    [...signalFilters][0])
-                  : `${signalFilters.size} ${t('signaler', 'signals')}`}
-            </span>
-            <ChevronDown
-              size={14}
-              className={`text-slate-500 transition-transform ${signalDropdownOpen ? 'rotate-180' : ''}`}
-            />
-          </button>
-          {signalDropdownOpen && (
-            <div className="absolute top-full left-0 mt-1 z-20 bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-1 min-w-[180px]">
-              {(['entry', 'exit', 'increase', 'decrease'] as SignalType[]).map((sig) => (
-                <label
-                  key={sig}
-                  className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-700/50 cursor-pointer text-sm text-white"
-                >
-                  <input
-                    type="checkbox"
-                    checked={signalFilters.has(sig)}
-                    onChange={() => {
-                      setSignalFilters((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(sig)) next.delete(sig);
-                        else next.add(sig);
-                        return next;
-                      });
-                      setOffset(0);
-                    }}
-                    className="accent-indigo-500 w-3.5 h-3.5"
-                  />
-                  <span
-                    className={`inline-flex px-1.5 py-0.5 rounded text-xs font-medium ${SIGNAL_LABELS[sig]?.color ?? ''}`}
-                  >
-                    {SIGNAL_LABELS[sig]?.[lang === 'da' ? 'da' : 'en'] ?? sig}
-                  </span>
-                </label>
-              ))}
-              {signalFilters.size > 0 && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSignalFilters(new Set());
-                    setOffset(0);
-                  }}
-                  className="w-full text-left px-3 py-1.5 text-xs text-slate-500 hover:text-white border-t border-slate-700/50 mt-1"
-                >
-                  {t('Nulstil', 'Reset')}
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div>
-          <label htmlFor="from-date" className="block text-xs text-slate-400 mb-1">
-            {t('Ændringsdato fra', 'Change date from')}
-          </label>
-          <input
-            id="from-date"
-            type="date"
-            aria-label={t('Filtrer fra ændringsdato', 'Filter from change date')}
-            value={fromDate}
-            // Åbn dato-vælgeren ved klik hvor som helst i feltet (ikke kun på det
-            // lille kalender-ikon) — showPicker() er supporteret i moderne browsere.
-            onClick={(e) => e.currentTarget.showPicker?.()}
-            onChange={(e) => {
-              setFromDate(e.target.value);
-              setOffset(0);
-            }}
-            className="bg-slate-800 text-white text-sm rounded-lg px-3 py-2 border border-slate-700 cursor-pointer"
-          />
-        </div>
-
-        <div>
-          <label htmlFor="to-date" className="block text-xs text-slate-400 mb-1">
-            {t('Ændringsdato til', 'Change date to')}
-          </label>
-          <input
-            id="to-date"
-            type="date"
-            aria-label={t('Filtrer til ændringsdato', 'Filter to change date')}
-            value={toDate}
-            onClick={(e) => e.currentTarget.showPicker?.()}
-            onChange={(e) => {
-              setToDate(e.target.value);
-              setOffset(0);
-            }}
-            className="bg-slate-800 text-white text-sm rounded-lg px-3 py-2 border border-slate-700 cursor-pointer"
-          />
-        </div>
-
-        {/* Branche-multiselect */}
-        <div className="relative">
-          <label className="block text-xs text-slate-400 mb-1">{t('Branche', 'Industry')}</label>
-          <button
-            type="button"
-            onClick={() => setBrancheDropdownOpen((v) => !v)}
-            aria-label={t('Filtrer på branche', 'Filter by industry')}
-            className="bg-slate-800 text-white text-sm rounded-lg px-3 py-2 border border-slate-700 min-w-[200px] text-left flex items-center justify-between gap-2"
-          >
-            <span className="truncate">
-              {selectedBrancher.size === 0
-                ? t('Alle brancher', 'All industries')
-                : `${selectedBrancher.size} ${t('valgt', 'selected')}`}
-            </span>
-            <ChevronDown
-              size={14}
-              className={`text-slate-500 transition-transform ${brancheDropdownOpen ? 'rotate-180' : ''}`}
-            />
-          </button>
-          {brancheDropdownOpen && (
-            <div className="absolute top-full left-0 mt-1 z-20 bg-slate-800 border border-slate-700 rounded-lg shadow-xl w-[340px] max-h-[360px] flex flex-col">
-              <div className="p-2 border-b border-slate-700/60">
-                <input
-                  type="text"
-                  value={brancheSearch}
-                  onChange={(e) => setBrancheSearch(e.target.value)}
-                  placeholder={t('Søg branche...', 'Search industry...')}
-                  aria-label={t('Søg branche', 'Search industry')}
-                  className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-1 text-xs text-white placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
-                />
-              </div>
-              <div className="overflow-auto py-1">
-                {brancheOptions.length === 0 ? (
-                  <p className="px-3 py-2 text-xs text-slate-500">
-                    {t('Indlæser brancher...', 'Loading industries...')}
-                  </p>
-                ) : (
-                  brancheOptions
-                    .filter(
-                      (b) =>
-                        !brancheSearch ||
-                        b.branche_tekst.toLowerCase().includes(brancheSearch.toLowerCase()) ||
-                        b.branche_kode.includes(brancheSearch)
-                    )
-                    .slice(0, 200)
-                    .map((b) => (
-                      <label
-                        key={b.branche_kode}
-                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-700/50 cursor-pointer text-xs text-white"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedBrancher.has(b.branche_kode)}
-                          onChange={() => {
-                            setSelectedBrancher((prev) => {
-                              const next = new Set(prev);
-                              if (next.has(b.branche_kode)) next.delete(b.branche_kode);
-                              else next.add(b.branche_kode);
-                              return next;
-                            });
-                            setOffset(0);
-                          }}
-                          className="accent-indigo-500 w-3.5 h-3.5 shrink-0"
-                        />
-                        <span className="truncate flex-1">{b.branche_tekst}</span>
-                        <span className="text-slate-500 tabular-nums">
-                          {b.antal.toLocaleString('da-DK')}
-                        </span>
-                      </label>
-                    ))
-                )}
-              </div>
-              {selectedBrancher.size > 0 && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedBrancher(new Set());
-                    setOffset(0);
-                  }}
-                  className="text-left px-3 py-1.5 text-xs text-slate-500 hover:text-white border-t border-slate-700/50"
-                >
-                  {t('Nulstil branchevalg', 'Reset industry selection')}
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Omsætnings-range */}
-        <div>
-          <label className="block text-xs text-slate-400 mb-1">
-            {t('Omsætning (DKK)', 'Revenue (DKK)')}
-          </label>
-          <div className="flex items-center gap-1">
-            <input
-              type="number"
-              value={minOmsaetning}
-              onChange={(e) => {
-                setMinOmsaetning(e.target.value);
-                setOffset(0);
-              }}
-              placeholder={t('Min', 'Min')}
-              aria-label={t('Minimum omsætning', 'Minimum revenue')}
-              className="bg-slate-800 text-white text-sm rounded-lg px-2 py-2 border border-slate-700 w-28"
-            />
-            <span className="text-slate-600 text-xs">–</span>
-            <input
-              type="number"
-              value={maxOmsaetning}
-              onChange={(e) => {
-                setMaxOmsaetning(e.target.value);
-                setOffset(0);
-              }}
-              placeholder={t('Max', 'Max')}
-              aria-label={t('Maksimum omsætning', 'Maximum revenue')}
-              className="bg-slate-800 text-white text-sm rounded-lg px-2 py-2 border border-slate-700 w-28"
-            />
-          </div>
-        </div>
-
-        {/* Overskuds-range */}
-        <div>
-          <label className="block text-xs text-slate-400 mb-1">
-            {t('Overskud (DKK)', 'Profit (DKK)')}
-          </label>
-          <div className="flex items-center gap-1">
-            <input
-              type="number"
-              value={minOverskud}
-              onChange={(e) => {
-                setMinOverskud(e.target.value);
-                setOffset(0);
-              }}
-              placeholder={t('Min', 'Min')}
-              aria-label={t('Minimum overskud', 'Minimum profit')}
-              className="bg-slate-800 text-white text-sm rounded-lg px-2 py-2 border border-slate-700 w-28"
-            />
-            <span className="text-slate-600 text-xs">–</span>
-            <input
-              type="number"
-              value={maxOverskud}
-              onChange={(e) => {
-                setMaxOverskud(e.target.value);
-                setOffset(0);
-              }}
-              placeholder={t('Max', 'Max')}
-              aria-label={t('Maksimum overskud', 'Maximum profit')}
-              className="bg-slate-800 text-white text-sm rounded-lg px-2 py-2 border border-slate-700 w-28"
-            />
-          </div>
-        </div>
-
-        <button
-          onClick={bulkBerig}
-          disabled={bulkLoading || kandidater.length === 0}
-          aria-label={t('Berig top 10 med AI', 'Enrich top 10 with AI')}
-          className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm px-4 py-2 rounded-lg transition-colors"
-        >
-          {bulkLoading
-            ? t('Beriger...', 'Enriching...')
-            : t('Berig top 10 med AI', 'Enrich top 10 with AI')}
-        </button>
-      </div>
-
-      {/* Results count + top pagination (altid synlig — nem navigation) */}
+      {/* Toolbar: resultat-tæller, nulstil-filtre, berig + top-pagination.
+          Selve filtrene bor nu i tabel-headeren (per-kolonne, lige over data). */}
       <div className="shrink-0 flex items-center justify-between gap-3 flex-wrap">
-        <p className="text-slate-500 text-xs">
-          {t(
-            `${total.toLocaleString('da-DK')} kandidater fundet`,
-            `${total.toLocaleString('en')} candidates found`
+        <div className="flex items-center gap-4">
+          <p className="text-slate-500 text-xs">
+            {t(
+              `${total.toLocaleString('da-DK')} kandidater fundet`,
+              `${total.toLocaleString('en')} candidates found`
+            )}
+          </p>
+          {anyFilterActive && (
+            <button
+              type="button"
+              onClick={resetFilters}
+              aria-label={t('Nulstil alle filtre', 'Reset all filters')}
+              className="text-xs text-slate-400 hover:text-white underline-offset-2 hover:underline transition-colors"
+            >
+              {t('Nulstil filtre', 'Reset filters')}
+            </button>
           )}
-        </p>
+          <button
+            onClick={bulkBerig}
+            disabled={bulkLoading || kandidater.length === 0}
+            aria-label={t('Berig top 10 med AI', 'Enrich top 10 with AI')}
+            className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs px-3 py-1.5 rounded-lg transition-colors"
+          >
+            {bulkLoading
+              ? t('Beriger...', 'Enriching...')
+              : t('Berig top 10 med AI', 'Enrich top 10 with AI')}
+          </button>
+        </div>
         {total > LIMIT && (
           <div className="flex items-center gap-3">
             <button
@@ -784,9 +575,63 @@ export default function VirksomhedshandlerClient() {
               <th className="px-4 py-2">{t('Confidence', 'Confidence')}</th>
               <th className="px-4 py-2" />
             </tr>
-            <tr className="bg-slate-800/30">
-              <th className="px-4 py-1" />
-              <th className="px-4 py-1">
+            {/* Per-kolonne filter-række — hvert filter sidder lige over sin egen
+                kolonne (signal, deltager, virksomhed, branche, beløb, ændringsdato). */}
+            <tr className="bg-slate-800/30 align-top normal-case tracking-normal">
+              {/* Signal-multiselect */}
+              <th className="px-2 py-1 relative font-normal">
+                <button
+                  type="button"
+                  onClick={() => setSignalDropdownOpen((v) => !v)}
+                  aria-label={t('Filtrer på signaltype', 'Filter by signal type')}
+                  className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white flex items-center justify-between gap-1"
+                >
+                  <span className="truncate">
+                    {signalFilters.size === 0
+                      ? t('Alle', 'All')
+                      : signalFilters.size === 1
+                        ? (SIGNAL_LABELS[[...signalFilters][0]]?.[lang === 'da' ? 'da' : 'en'] ??
+                          [...signalFilters][0])
+                        : `${signalFilters.size} ${t('valgt', 'selected')}`}
+                  </span>
+                  <ChevronDown
+                    size={11}
+                    className={`text-slate-500 transition-transform ${signalDropdownOpen ? 'rotate-180' : ''}`}
+                  />
+                </button>
+                {signalDropdownOpen && (
+                  <div className="absolute top-full left-0 mt-1 z-30 bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-1 min-w-[170px]">
+                    {(['entry', 'exit', 'increase', 'decrease'] as SignalType[]).map((sig) => (
+                      <label
+                        key={sig}
+                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-700/50 cursor-pointer text-sm text-white"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={signalFilters.has(sig)}
+                          onChange={() => {
+                            setSignalFilters((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(sig)) next.delete(sig);
+                              else next.add(sig);
+                              return next;
+                            });
+                            setOffset(0);
+                          }}
+                          className="accent-indigo-500 w-3.5 h-3.5"
+                        />
+                        <span
+                          className={`inline-flex px-1.5 py-0.5 rounded text-xs font-medium ${SIGNAL_LABELS[sig]?.color ?? ''}`}
+                        >
+                          {SIGNAL_LABELS[sig]?.[lang === 'da' ? 'da' : 'en'] ?? sig}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </th>
+              {/* Deltager-tekstfilter */}
+              <th className="px-2 py-1 font-normal">
                 <input
                   type="text"
                   value={deltagerFilter}
@@ -796,25 +641,198 @@ export default function VirksomhedshandlerClient() {
                   className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
                 />
               </th>
-              <th className="px-4 py-1">
+              {/* Virksomhed-tekstfilter */}
+              <th className="px-2 py-1 font-normal">
                 <input
                   type="text"
                   value={cvrFilter}
                   onChange={(e) => setCvrFilter(e.target.value)}
-                  placeholder={t('Filtrer virksomhed...', 'Filter company...')}
+                  placeholder={t('Filtrer...', 'Filter...')}
                   aria-label={t('Filtrer virksomhed', 'Filter company')}
                   className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
                 />
               </th>
-              <th className="px-4 py-1" />
-              <th className="px-4 py-1" />
-              <th className="px-4 py-1" />
-              <th className="px-4 py-1" />
-              <th className="px-4 py-1" />
-              <th className="px-4 py-1" />
-              <th className="px-4 py-1" />
-              <th className="px-4 py-1" />
-              <th className="px-4 py-1" />
+              {/* Branche-multiselect */}
+              <th className="px-2 py-1 relative font-normal">
+                <button
+                  type="button"
+                  onClick={() => setBrancheDropdownOpen((v) => !v)}
+                  aria-label={t('Filtrer på branche', 'Filter by industry')}
+                  className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white flex items-center justify-between gap-1"
+                >
+                  <span className="truncate">
+                    {selectedBrancher.size === 0
+                      ? t('Alle', 'All')
+                      : `${selectedBrancher.size} ${t('valgt', 'selected')}`}
+                  </span>
+                  <ChevronDown
+                    size={11}
+                    className={`text-slate-500 transition-transform ${brancheDropdownOpen ? 'rotate-180' : ''}`}
+                  />
+                </button>
+                {brancheDropdownOpen && (
+                  <div className="absolute top-full left-0 mt-1 z-30 bg-slate-800 border border-slate-700 rounded-lg shadow-xl w-[320px] max-h-[340px] flex flex-col">
+                    <div className="p-2 border-b border-slate-700/60">
+                      <input
+                        type="text"
+                        value={brancheSearch}
+                        onChange={(e) => setBrancheSearch(e.target.value)}
+                        placeholder={t('Søg branche...', 'Search industry...')}
+                        aria-label={t('Søg branche', 'Search industry')}
+                        className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-1 text-xs text-white placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                      />
+                    </div>
+                    <div className="overflow-auto py-1">
+                      {brancheOptions.length === 0 ? (
+                        <p className="px-3 py-2 text-xs text-slate-500">
+                          {t('Indlæser brancher...', 'Loading industries...')}
+                        </p>
+                      ) : (
+                        brancheOptions
+                          .filter(
+                            (b) =>
+                              !brancheSearch ||
+                              b.branche_tekst.toLowerCase().includes(brancheSearch.toLowerCase()) ||
+                              b.branche_kode.includes(brancheSearch)
+                          )
+                          .slice(0, 200)
+                          .map((b) => (
+                            <label
+                              key={b.branche_kode}
+                              className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-700/50 cursor-pointer text-xs text-white"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selectedBrancher.has(b.branche_kode)}
+                                onChange={() => {
+                                  setSelectedBrancher((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(b.branche_kode)) next.delete(b.branche_kode);
+                                    else next.add(b.branche_kode);
+                                    return next;
+                                  });
+                                  setOffset(0);
+                                }}
+                                className="accent-indigo-500 w-3.5 h-3.5 shrink-0"
+                              />
+                              <span className="truncate flex-1">{b.branche_tekst}</span>
+                              <span className="text-slate-500 tabular-nums">
+                                {b.antal.toLocaleString('da-DK')}
+                              </span>
+                            </label>
+                          ))
+                      )}
+                    </div>
+                    {selectedBrancher.size > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedBrancher(new Set());
+                          setOffset(0);
+                        }}
+                        className="text-left px-3 py-1.5 text-xs text-slate-500 hover:text-white border-t border-slate-700/50"
+                      >
+                        {t('Nulstil branchevalg', 'Reset industry selection')}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </th>
+              {/* Omsætning min/max */}
+              <th className="px-2 py-1 font-normal">
+                <div className="flex flex-col gap-0.5">
+                  <input
+                    type="number"
+                    value={minOmsaetning}
+                    onChange={(e) => {
+                      setMinOmsaetning(e.target.value);
+                      setOffset(0);
+                    }}
+                    placeholder={t('Min', 'Min')}
+                    aria-label={t('Minimum omsætning', 'Minimum revenue')}
+                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white text-right tabular-nums placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                  />
+                  <input
+                    type="number"
+                    value={maxOmsaetning}
+                    onChange={(e) => {
+                      setMaxOmsaetning(e.target.value);
+                      setOffset(0);
+                    }}
+                    placeholder={t('Max', 'Max')}
+                    aria-label={t('Maksimum omsætning', 'Maximum revenue')}
+                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white text-right tabular-nums placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                  />
+                </div>
+              </th>
+              {/* Bruttofortjeneste — intet serverfilter */}
+              <th className="px-2 py-1" />
+              {/* Overskud min/max */}
+              <th className="px-2 py-1 font-normal">
+                <div className="flex flex-col gap-0.5">
+                  <input
+                    type="number"
+                    value={minOverskud}
+                    onChange={(e) => {
+                      setMinOverskud(e.target.value);
+                      setOffset(0);
+                    }}
+                    placeholder={t('Min', 'Min')}
+                    aria-label={t('Minimum overskud', 'Minimum profit')}
+                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white text-right tabular-nums placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                  />
+                  <input
+                    type="number"
+                    value={maxOverskud}
+                    onChange={(e) => {
+                      setMaxOverskud(e.target.value);
+                      setOffset(0);
+                    }}
+                    placeholder={t('Max', 'Max')}
+                    aria-label={t('Maksimum overskud', 'Maximum profit')}
+                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white text-right tabular-nums placeholder-slate-600 focus:border-indigo-500/50 focus:outline-none"
+                  />
+                </div>
+              </th>
+              {/* Ændring — intet serverfilter */}
+              <th className="px-2 py-1" />
+              {/* Ændringsdato fra/til */}
+              <th className="px-2 py-1 font-normal">
+                <div className="flex flex-col gap-0.5">
+                  <input
+                    id="from-date"
+                    type="date"
+                    value={fromDate}
+                    aria-label={t('Ændringsdato fra', 'Change date from')}
+                    onClick={(e) => e.currentTarget.showPicker?.()}
+                    onChange={(e) => {
+                      setFromDate(e.target.value);
+                      setOffset(0);
+                    }}
+                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white cursor-pointer focus:border-indigo-500/50 focus:outline-none"
+                  />
+                  <input
+                    id="to-date"
+                    type="date"
+                    value={toDate}
+                    aria-label={t('Ændringsdato til', 'Change date to')}
+                    onClick={(e) => e.currentTarget.showPicker?.()}
+                    onChange={(e) => {
+                      setToDate(e.target.value);
+                      setOffset(0);
+                    }}
+                    className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[10px] text-white cursor-pointer focus:border-indigo-500/50 focus:outline-none"
+                  />
+                </div>
+              </th>
+              {/* Indrapporteret — intet filter */}
+              <th className="px-2 py-1" />
+              {/* Est. værdi — intet filter */}
+              <th className="px-2 py-1" />
+              {/* Confidence — intet filter */}
+              <th className="px-2 py-1" />
+              {/* Handlinger — intet filter */}
+              <th className="px-2 py-1" />
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-700/30">

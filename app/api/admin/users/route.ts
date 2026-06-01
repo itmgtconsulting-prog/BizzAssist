@@ -19,6 +19,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
+import { provisionTenantForUser } from '@/lib/tenant/provisionTenant';
 
 /** Zod schema for POST /api/admin/users request body */
 const usersPostSchema = z
@@ -169,8 +170,7 @@ export async function GET(): Promise<NextResponse> {
  */
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
-    const adminUser = await verifyAdmin();
-    if (!adminUser) {
+    if (!(await verifyAdmin())) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -196,37 +196,20 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Failed to create user' }, { status: 400 });
     }
 
-    // BIZZ-1947: Assign the new user to the creating admin's tenant.
-    // Unlike the /signup flow (which calls provisionTenantForUser to create a
-    // dedicated tenant + membership), admin.auth.admin.createUser only creates
-    // the auth.users row. Without a tenant_memberships row, resolveTenantId()
-    // returns null and EVERY API route returns 401/empty data — the user can
-    // log in and see the UI shell but no data loads. We mirror the team model:
-    // the admin-created user joins the admin's own tenant as tenant_admin.
-    let tenantAssigned = false;
-    const { data: adminMembership } = await admin
-      .from('tenant_memberships')
-      .select('tenant_id')
-      .eq('user_id', adminUser.id)
-      .limit(1)
-      .single();
-
-    if (adminMembership?.tenant_id) {
-      const { error: memberErr } = await admin.from('tenant_memberships').insert({
-        tenant_id: adminMembership.tenant_id,
-        user_id: newUser.user.id,
-        role: 'tenant_admin',
-      });
-      if (memberErr) {
-        logger.error(
-          '[admin/users] tenant_membership insert error:',
-          memberErr.code ?? memberErr.message
-        );
-      } else {
-        tenantAssigned = true;
-      }
-    } else {
-      logger.error('[admin/users] admin has no tenant_membership — new user left without tenant');
+    // BIZZ-1947 (follow-up): Provision a DEDICATED tenant for the new user,
+    // exactly like the public /signup flow. admin.auth.admin.createUser only
+    // creates the auth.users row; without a tenant + membership, resolveTenantId()
+    // returns null and EVERY API route returns 401/empty data.
+    //
+    // We intentionally do NOT attach the new user to the creating admin's tenant:
+    // sharing a tenant breaks tenant isolation (different users could read each
+    // other's data — forbidden by CLAUDE.md) and made the DELETE handler below
+    // destroy a shared tenant whenever any one member was removed. Every user
+    // gets their own tenant, so deletion only ever affects that user.
+    const provisionedTenantId = await provisionTenantForUser(newUser.user.id, email);
+    const tenantAssigned = provisionedTenantId != null;
+    if (!tenantAssigned) {
+      logger.error('[admin/users] tenant provisioning failed for new user');
     }
 
     // Audit log — fire-and-forget (ISO 27001 A.12.4)
@@ -336,8 +319,22 @@ export async function DELETE(req: NextRequest): Promise<NextResponse> {
 
         const schemaName: string | null = tenantRow?.schema_name ?? null;
 
+        // CRITICAL (BIZZ-1947 follow-up): a tenant may have more than one member
+        // (team invites, or legacy admin-created users that shared a tenant).
+        // We must NEVER drop the schema or the tenant while OTHER members remain
+        // — doing so destroys their data too. Count the other members first and
+        // only perform the destructive tenant teardown when this user is the last
+        // one standing. Otherwise we erase only THIS user's personal rows + their
+        // own membership and leave the shared tenant intact.
+        const { count: memberCount } = await admin
+          .from('tenant_memberships')
+          .select('user_id', { count: 'exact', head: true })
+          .eq('tenant_id', tenantId);
+        const isLastMember = (memberCount ?? 0) <= 1;
+
         if (schemaName) {
-          // Delete from each tenant-schema table where user_id matches.
+          // Delete from each tenant-schema table where user_id matches — this is
+          // safe even on a shared tenant since it is scoped to this user.
           const db = tenantDb(schemaName);
 
           await db.from('recent_entities').delete().eq('user_id', targetUser.id);
@@ -349,35 +346,47 @@ export async function DELETE(req: NextRequest): Promise<NextResponse> {
           await db.from('recent_searches').delete().eq('user_id', targetUser.id);
           await db.from('activity_log').delete().eq('user_id', targetUser.id);
 
-          // Drop the schema entirely via raw SQL — all personal data has already
-          // been deleted above. Dropping the schema now ensures that re-registering
-          // with the same email starts from a completely clean slate.
-          // GDPR Art. 17: data is already erased above; the empty schema has no
-          // retention value so it is dropped immediately rather than after 30 days.
-          try {
-            const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-            const accessToken = process.env.SUPABASE_ACCESS_TOKEN;
-            if (supabaseUrl && accessToken) {
-              const projectRef = supabaseUrl.replace('https://', '').split('.')[0];
-              await fetch(`https://api.supabase.com/v1/projects/${projectRef}/database/query`, {
-                method: 'POST',
-                headers: {
-                  Authorization: `Bearer ${accessToken}`,
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ query: `DROP SCHEMA IF EXISTS ${schemaName} CASCADE` }),
-                signal: AbortSignal.timeout(10000),
-              });
+          // Drop the schema entirely ONLY when this is the last member — all
+          // personal data has already been deleted above. Re-registering with the
+          // same email then starts from a clean slate. On a shared tenant we skip
+          // this so co-members keep their data (GDPR erasure for THIS user is
+          // already satisfied by the per-user row deletes above).
+          if (isLastMember) {
+            try {
+              const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+              const accessToken = process.env.SUPABASE_ACCESS_TOKEN;
+              if (supabaseUrl && accessToken) {
+                const projectRef = supabaseUrl.replace('https://', '').split('.')[0];
+                await fetch(`https://api.supabase.com/v1/projects/${projectRef}/database/query`, {
+                  method: 'POST',
+                  headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({ query: `DROP SCHEMA IF EXISTS ${schemaName} CASCADE` }),
+                  signal: AbortSignal.timeout(10000),
+                });
+              }
+            } catch (dropErr) {
+              logger.error('[admin/users] Schema drop error (non-fatal):', dropErr);
             }
-          } catch (dropErr) {
-            logger.error('[admin/users] Schema drop error (non-fatal):', dropErr);
           }
         }
 
-        // Delete tenant membership and tenant record so re-registration with the
-        // same email starts from a clean slate (no orphaned rows).
-        await admin.from('tenant_memberships').delete().eq('tenant_id', tenantId);
-        await admin.from('tenants').delete().eq('id', tenantId);
+        if (isLastMember) {
+          // Last member — tear down the whole tenant so re-registration starts
+          // from a clean slate (no orphaned rows).
+          await admin.from('tenant_memberships').delete().eq('tenant_id', tenantId);
+          await admin.from('tenants').delete().eq('id', tenantId);
+        } else {
+          // Shared tenant — remove ONLY this user's membership; leave the tenant
+          // and its other members untouched.
+          await admin
+            .from('tenant_memberships')
+            .delete()
+            .eq('tenant_id', tenantId)
+            .eq('user_id', targetUser.id);
+        }
       }
     } catch (cascadeErr) {
       // Non-critical path — log but do not abort deletion.

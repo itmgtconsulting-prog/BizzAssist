@@ -18,6 +18,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
+import { withCronMonitor } from '@/app/lib/cronMonitor';
 
 export const maxDuration = 300;
 
@@ -199,73 +200,79 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const admin = createAdminClient();
-  const cutoff = new Date(Date.now() - STALE_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  // BIZZ-1971: heartbeat + Sentry cron-monitoring
+  return withCronMonitor(
+    { jobName: 'refresh-deltager-berigelse', schedule: '15 4 * * *', intervalMinutes: 1440 },
+    async () => {
+      const admin = createAdminClient();
+      const cutoff = new Date(Date.now() - STALE_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-  // Hent stale deltagere (berigelse_sidst < cutoff ELLER NULL)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: staleRows, error: fetchErr } = await (admin as any)
-    .from('cvr_deltager')
-    .select('enhedsnummer')
-    .or(`berigelse_sidst.lt.${cutoff},berigelse_sidst.is.null`)
-    .order('enhedsnummer', { ascending: true })
-    .limit(PER_RUN_CAP);
-
-  if (fetchErr) {
-    logger.error('[refresh-deltager] fetch stale fejlede:', fetchErr.message);
-    return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
-  }
-
-  const rows = (staleRows ?? []) as Array<{ enhedsnummer: number }>;
-  if (rows.length === 0) {
-    return NextResponse.json({ ok: true, processed: 0, updated: 0, note: 'no stale rows' });
-  }
-
-  let processed = 0;
-  let updated = 0;
-  let errors = 0;
-  const nowIso = new Date().toISOString();
-
-  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-    const chunk = rows.slice(i, i + BATCH_SIZE).map((r) => Number(r.enhedsnummer));
-
-    try {
-      const aggs = await aggregateForBatch(admin, chunk);
-      const upsertRows = Array.from(aggs.entries()).map(([enr, agg]) => ({
-        enhedsnummer: enr,
-        is_aktiv: agg.is_aktiv,
-        aktive_roller_json: agg.aktive_roller_json,
-        antal_aktive_selskaber: agg.antal_aktive_selskaber,
-        senest_indtraadt_dato: agg.senest_indtraadt_dato,
-        role_typer: agg.role_typer,
-        antal_historiske_virksomheder: agg.antal_historiske_virksomheder,
-        totalt_antal_roller: agg.totalt_antal_roller,
-        berigelse_sidst: nowIso,
-      }));
-
+      // Hent stale deltagere (berigelse_sidst < cutoff ELLER NULL)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error: upsertErr } = await (admin as any)
+      const { data: staleRows, error: fetchErr } = await (admin as any)
         .from('cvr_deltager')
-        .upsert(upsertRows, { onConflict: 'enhedsnummer' });
+        .select('enhedsnummer')
+        .or(`berigelse_sidst.lt.${cutoff},berigelse_sidst.is.null`)
+        .order('enhedsnummer', { ascending: true })
+        .limit(PER_RUN_CAP);
 
-      if (upsertErr) {
-        logger.error('[refresh-deltager] upsert fejl:', upsertErr.message);
-        errors += chunk.length;
-      } else {
-        updated += upsertRows.length;
+      if (fetchErr) {
+        logger.error('[refresh-deltager] fetch stale fejlede:', fetchErr.message);
+        return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
       }
-      processed += chunk.length;
-    } catch (err) {
-      logger.error('[refresh-deltager] batch fejl:', (err as Error)?.message ?? 'unknown');
-      errors += chunk.length;
-    }
-  }
 
-  return NextResponse.json({
-    ok: true,
-    processed,
-    updated,
-    errors,
-    capReached: rows.length >= PER_RUN_CAP,
-  });
+      const rows = (staleRows ?? []) as Array<{ enhedsnummer: number }>;
+      if (rows.length === 0) {
+        return NextResponse.json({ ok: true, processed: 0, updated: 0, note: 'no stale rows' });
+      }
+
+      let processed = 0;
+      let updated = 0;
+      let errors = 0;
+      const nowIso = new Date().toISOString();
+
+      for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+        const chunk = rows.slice(i, i + BATCH_SIZE).map((r) => Number(r.enhedsnummer));
+
+        try {
+          const aggs = await aggregateForBatch(admin, chunk);
+          const upsertRows = Array.from(aggs.entries()).map(([enr, agg]) => ({
+            enhedsnummer: enr,
+            is_aktiv: agg.is_aktiv,
+            aktive_roller_json: agg.aktive_roller_json,
+            antal_aktive_selskaber: agg.antal_aktive_selskaber,
+            senest_indtraadt_dato: agg.senest_indtraadt_dato,
+            role_typer: agg.role_typer,
+            antal_historiske_virksomheder: agg.antal_historiske_virksomheder,
+            totalt_antal_roller: agg.totalt_antal_roller,
+            berigelse_sidst: nowIso,
+          }));
+
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { error: upsertErr } = await (admin as any)
+            .from('cvr_deltager')
+            .upsert(upsertRows, { onConflict: 'enhedsnummer' });
+
+          if (upsertErr) {
+            logger.error('[refresh-deltager] upsert fejl:', upsertErr.message);
+            errors += chunk.length;
+          } else {
+            updated += upsertRows.length;
+          }
+          processed += chunk.length;
+        } catch (err) {
+          logger.error('[refresh-deltager] batch fejl:', (err as Error)?.message ?? 'unknown');
+          errors += chunk.length;
+        }
+      }
+
+      return NextResponse.json({
+        ok: true,
+        processed,
+        updated,
+        errors,
+        capReached: rows.length >= PER_RUN_CAP,
+      });
+    }
+  );
 }

@@ -16,6 +16,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { buildAndUpsertCatalog } from '@/app/lib/dataIntelligence/buildCatalog';
+import { withCronMonitor } from '@/app/lib/cronMonitor';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -41,34 +42,40 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const start = Date.now();
-  try {
-    const { results } = await buildAndUpsertCatalog();
-    const totalRows = results.reduce((sum, r) => sum + r.rows, 0);
-    const failed = results.filter((r) => r.error).length;
-    const durationMs = Date.now() - start;
+  // BIZZ-1971: heartbeat + Sentry cron-monitoring
+  return withCronMonitor(
+    { jobName: 'refresh-data-catalog', schedule: '0 3 * * *', intervalMinutes: 1440 },
+    async () => {
+      const start = Date.now();
+      try {
+        const { results } = await buildAndUpsertCatalog();
+        const totalRows = results.reduce((sum, r) => sum + r.rows, 0);
+        const failed = results.filter((r) => r.error).length;
+        const durationMs = Date.now() - start;
 
-    logger.log('[cron/refresh-data-catalog]', {
-      tables: results.length,
-      totalRows,
-      failed,
-      durationMs,
-    });
+        logger.log('[cron/refresh-data-catalog]', {
+          tables: results.length,
+          totalRows,
+          failed,
+          durationMs,
+        });
 
-    return NextResponse.json({
-      ok: failed === 0,
-      tables: results.length,
-      totalRows,
-      failed,
-      durationMs,
-      results,
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Ukendt fejl';
-    logger.error('[cron/refresh-data-catalog] fatal:', msg);
-    return NextResponse.json(
-      { ok: false, error: 'Ekstern API fejl', durationMs: Date.now() - start },
-      { status: 500 }
-    );
-  }
+        return NextResponse.json({
+          ok: failed === 0,
+          tables: results.length,
+          totalRows,
+          failed,
+          durationMs,
+          results,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Ukendt fejl';
+        logger.error('[cron/refresh-data-catalog] fatal:', msg);
+        return NextResponse.json(
+          { ok: false, error: 'Ekstern API fejl', durationMs: Date.now() - start },
+          { status: 500 }
+        );
+      }
+    }
+  );
 }

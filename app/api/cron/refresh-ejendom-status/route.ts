@@ -28,6 +28,7 @@ import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { BBR_STATUS_UDFASET } from '@/app/lib/bbrKoder';
 import { fetchBBRGraphQL } from '@/app/lib/fetchBbrData';
+import { withCronMonitor } from '@/app/lib/cronMonitor';
 
 export const maxDuration = 300;
 
@@ -244,106 +245,115 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const admin = createAdminClient();
-  const cutoff = new Date(Date.now() - STALE_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  // BIZZ-1971: heartbeat + Sentry cron-monitoring
+  return withCronMonitor(
+    { jobName: 'refresh-ejendom-status', schedule: '0 2 * * 0', intervalMinutes: 10080 },
+    async () => {
+      const admin = createAdminClient();
+      const cutoff = new Date(Date.now() - STALE_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: stale, error: fetchErr } = await (admin as any)
-    .from('bbr_ejendom_status')
-    .select('bfe_nummer, is_udfaset, bbr_status_code')
-    .lt('status_last_checked_at', cutoff)
-    .order('status_last_checked_at', { ascending: true })
-    .limit(PER_RUN_CAP);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: stale, error: fetchErr } = await (admin as any)
+        .from('bbr_ejendom_status')
+        .select('bfe_nummer, is_udfaset, bbr_status_code')
+        .lt('status_last_checked_at', cutoff)
+        .order('status_last_checked_at', { ascending: true })
+        .limit(PER_RUN_CAP);
 
-  if (fetchErr) {
-    logger.error('[refresh-ejendom-status] fetch fejlede:', fetchErr.message);
-    return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
-  }
-
-  const rows = (stale ?? []) as Array<{
-    bfe_nummer: number;
-    is_udfaset: boolean;
-    bbr_status_code: number | null;
-  }>;
-
-  if (rows.length === 0) {
-    return NextResponse.json({ ok: true, checked: 0, changed: 0, note: 'no stale rows' });
-  }
-
-  // Current-state lookup så vi kan tælle changed-count
-  const currentByBfe = new Map<number, { is_udfaset: boolean; bbr_status_code: number | null }>();
-  for (const r of rows) {
-    currentByBfe.set(r.bfe_nummer, {
-      is_udfaset: r.is_udfaset,
-      bbr_status_code: r.bbr_status_code,
-    });
-  }
-
-  let checked = 0;
-  let changed = 0;
-  let upserted = 0;
-  let failed = 0;
-  const nowIso = new Date().toISOString();
-
-  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-    const chunk = rows.slice(i, i + BATCH_SIZE).map((r) => r.bfe_nummer);
-
-    let statusMap: Map<number, BbrStatusResult>;
-    try {
-      statusMap = await fetchBbrStatusForBfeBatch(chunk);
-    } catch (err) {
-      failed += chunk.length;
-      logger.warn('[refresh-ejendom-status] batch fejl:', (err as Error)?.message ?? 'unknown');
-      continue;
-    }
-
-    const upsertRows = [];
-    for (const bfe of chunk) {
-      const entry = statusMap.get(bfe);
-      if (!entry) continue;
-      checked++;
-      const current = currentByBfe.get(bfe);
-      if (
-        current &&
-        (current.is_udfaset !== entry.is_udfaset ||
-          current.bbr_status_code !== entry.bbr_status_code)
-      ) {
-        changed++;
+      if (fetchErr) {
+        logger.error('[refresh-ejendom-status] fetch fejlede:', fetchErr.message);
+        return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
       }
-      upsertRows.push({
-        bfe_nummer: bfe,
-        adgangsadresse_id: entry.adgangsadresse_id,
-        is_udfaset: entry.is_udfaset,
-        bbr_status_code: entry.bbr_status_code,
-        kommune_kode: entry.kommune_kode,
-        status_last_checked_at: nowIso,
-        // BIZZ-907: berigelse-felter (BIZZ-821 phase-2)
-        samlet_boligareal: entry.samlet_boligareal,
-        opfoerelsesaar: entry.opfoerelsesaar,
-        byg021_anvendelse: entry.byg021_anvendelse,
-        berigelse_sidst: nowIso,
+
+      const rows = (stale ?? []) as Array<{
+        bfe_nummer: number;
+        is_udfaset: boolean;
+        bbr_status_code: number | null;
+      }>;
+
+      if (rows.length === 0) {
+        return NextResponse.json({ ok: true, checked: 0, changed: 0, note: 'no stale rows' });
+      }
+
+      // Current-state lookup så vi kan tælle changed-count
+      const currentByBfe = new Map<
+        number,
+        { is_udfaset: boolean; bbr_status_code: number | null }
+      >();
+      for (const r of rows) {
+        currentByBfe.set(r.bfe_nummer, {
+          is_udfaset: r.is_udfaset,
+          bbr_status_code: r.bbr_status_code,
+        });
+      }
+
+      let checked = 0;
+      let changed = 0;
+      let upserted = 0;
+      let failed = 0;
+      const nowIso = new Date().toISOString();
+
+      for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+        const chunk = rows.slice(i, i + BATCH_SIZE).map((r) => r.bfe_nummer);
+
+        let statusMap: Map<number, BbrStatusResult>;
+        try {
+          statusMap = await fetchBbrStatusForBfeBatch(chunk);
+        } catch (err) {
+          failed += chunk.length;
+          logger.warn('[refresh-ejendom-status] batch fejl:', (err as Error)?.message ?? 'unknown');
+          continue;
+        }
+
+        const upsertRows = [];
+        for (const bfe of chunk) {
+          const entry = statusMap.get(bfe);
+          if (!entry) continue;
+          checked++;
+          const current = currentByBfe.get(bfe);
+          if (
+            current &&
+            (current.is_udfaset !== entry.is_udfaset ||
+              current.bbr_status_code !== entry.bbr_status_code)
+          ) {
+            changed++;
+          }
+          upsertRows.push({
+            bfe_nummer: bfe,
+            adgangsadresse_id: entry.adgangsadresse_id,
+            is_udfaset: entry.is_udfaset,
+            bbr_status_code: entry.bbr_status_code,
+            kommune_kode: entry.kommune_kode,
+            status_last_checked_at: nowIso,
+            // BIZZ-907: berigelse-felter (BIZZ-821 phase-2)
+            samlet_boligareal: entry.samlet_boligareal,
+            opfoerelsesaar: entry.opfoerelsesaar,
+            byg021_anvendelse: entry.byg021_anvendelse,
+            berigelse_sidst: nowIso,
+          });
+        }
+
+        if (upsertRows.length > 0) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { error: upsertErr } = await (admin as any)
+            .from('bbr_ejendom_status')
+            .upsert(upsertRows, { onConflict: 'bfe_nummer' });
+          if (upsertErr) {
+            logger.error('[refresh-ejendom-status] upsert fejl:', upsertErr.message);
+          } else {
+            upserted += upsertRows.length;
+          }
+        }
+      }
+
+      return NextResponse.json({
+        ok: true,
+        checked,
+        changed,
+        upserted,
+        failed,
+        capReached: rows.length >= PER_RUN_CAP,
       });
     }
-
-    if (upsertRows.length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error: upsertErr } = await (admin as any)
-        .from('bbr_ejendom_status')
-        .upsert(upsertRows, { onConflict: 'bfe_nummer' });
-      if (upsertErr) {
-        logger.error('[refresh-ejendom-status] upsert fejl:', upsertErr.message);
-      } else {
-        upserted += upsertRows.length;
-      }
-    }
-  }
-
-  return NextResponse.json({
-    ok: true,
-    checked,
-    changed,
-    upserted,
-    failed,
-    capReached: rows.length >= PER_RUN_CAP,
-  });
+  );
 }

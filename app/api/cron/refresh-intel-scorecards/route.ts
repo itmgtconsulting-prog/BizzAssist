@@ -17,6 +17,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { createDefaultSqlRunner } from '@/app/lib/dataIntelligence/buildCatalog';
+import { withCronMonitor } from '@/app/lib/cronMonitor';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -42,35 +43,41 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const start = Date.now();
-  try {
-    const runner = createDefaultSqlRunner();
-    const rows = (await runner(
-      'SELECT keys_updated, duration_ms FROM public.refresh_intel_scorecards()'
-    )) as Array<{ keys_updated: number; duration_ms: number }>;
+  // BIZZ-1971: heartbeat + Sentry cron-monitoring
+  return withCronMonitor(
+    { jobName: 'refresh-intel-scorecards', schedule: '0 4 * * *', intervalMinutes: 1440 },
+    async () => {
+      const start = Date.now();
+      try {
+        const runner = createDefaultSqlRunner();
+        const rows = (await runner(
+          'SELECT keys_updated, duration_ms FROM public.refresh_intel_scorecards()'
+        )) as Array<{ keys_updated: number; duration_ms: number }>;
 
-    const keysUpdated = rows[0]?.keys_updated ?? 0;
-    const dbDurationMs = rows[0]?.duration_ms ?? 0;
-    const totalMs = Date.now() - start;
+        const keysUpdated = rows[0]?.keys_updated ?? 0;
+        const dbDurationMs = rows[0]?.duration_ms ?? 0;
+        const totalMs = Date.now() - start;
 
-    logger.log('[cron/refresh-intel-scorecards]', {
-      keysUpdated,
-      dbDurationMs,
-      totalMs,
-    });
+        logger.log('[cron/refresh-intel-scorecards]', {
+          keysUpdated,
+          dbDurationMs,
+          totalMs,
+        });
 
-    return NextResponse.json({
-      ok: true,
-      keysUpdated,
-      dbDurationMs,
-      totalMs,
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'unknown error';
-    logger.error('[cron/refresh-intel-scorecards] fejl:', message);
-    return NextResponse.json(
-      { ok: false, error: 'Refresh fejlede', totalMs: Date.now() - start },
-      { status: 500 }
-    );
-  }
+        return NextResponse.json({
+          ok: true,
+          keysUpdated,
+          dbDurationMs,
+          totalMs,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'unknown error';
+        logger.error('[cron/refresh-intel-scorecards] fejl:', message);
+        return NextResponse.json(
+          { ok: false, error: 'Refresh fejlede', totalMs: Date.now() - start },
+          { status: 500 }
+        );
+      }
+    }
+  );
 }

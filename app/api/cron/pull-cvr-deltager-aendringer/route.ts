@@ -44,8 +44,11 @@ const DEFAULT_WINDOW_DAYS = 5;
 /** ES batch-size */
 const ES_PAGE_SIZE = 500;
 
-/** Safety cap på ES-batches */
-const MAX_ES_PAGES = 200;
+/** Safety cap på ES-batches. BIZZ-1976: hævet fra 200 → 800 (op til 400k
+ *  docs/kørsel) så travle feed-dage (~180k/dag) og watermark-backlog kan
+ *  drænes i én kørsel. Den reelle grænse er tidsbudgettet (SAFETY_MARGIN_MS
+ *  før maxDuration), så et højere sidetal udnytter blot hele 5-min-vinduet. */
+const MAX_ES_PAGES = 800;
 
 /** Supabase upsert-batch */
 const UPSERT_BATCH_SIZE = 200;

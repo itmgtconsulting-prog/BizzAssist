@@ -53,6 +53,9 @@ interface Kandidat {
   virksomhed_status_raw?: string | null;
   virksomhed_status_kode?: CvrStatusKode | null;
   deltager_status_raw?: string | null;
+  // BIZZ-1967: autoritativ aktiv-markør for deltageren (person ELLER virksomhed),
+  // fra cvr_deltager.is_aktiv. true = aktiv/levende, false = ophørt, null = ukendt.
+  deltager_is_aktiv?: boolean | null;
 }
 
 /**
@@ -74,6 +77,27 @@ function StatusBadge({ kode, lang }: { kode: CvrStatusKode; lang: 'da' | 'en' })
       {label}
     </span>
   );
+}
+
+/**
+ * Udleder deltagerens aktiv-status (BIZZ-1967).
+ *
+ * cvr_deltager.is_aktiv er den autoritative aktiv-markør for BÅDE personer og
+ * virksomheder (levende person / aktiv virksomhed = true, ophørt = false). For
+ * virksomheds-deltagere med entydigt CVR foretrækkes den rige rå-status (incl.
+ * konkurs-undertyper) når den findes; ellers bruges is_aktiv (true→aktiv,
+ * false→ophørt). null is_aktiv ⟹ ukendt (returnerer null = filtreres ikke).
+ *
+ * @param k - Kandidat-rækken.
+ * @returns Status-kategori, eller null hvis ukendt.
+ */
+function deltagerStatusKode(k: Kandidat): CvrStatusKode | null {
+  if (k.deltager_er_virksomhed && k.deltager_status_raw != null) {
+    return deriveCvrStatusKode(k.deltager_status_raw);
+  }
+  if (k.deltager_is_aktiv === true) return 'aktiv';
+  if (k.deltager_is_aktiv === false) return 'tvangsoploest';
+  return null;
 }
 
 interface BrancheOption {
@@ -638,15 +662,13 @@ export default function VirksomhedshandlerClient() {
     if (confidenceFilter.size > 0) {
       if (!berig || !confidenceFilter.has(berig.confidence)) return false;
     }
-    // BIZZ-1962: deltager-status filtreres kun for virksomheds-deltagere med
-    // entydigt CVR (de eneste der har en kendt status). Person-deltagere og
-    // flertydige virksomheds-navne passerer altid (ingen status at filtrere på).
-    if (
-      deltagerStatusFilters.size > 0 &&
-      k.deltager_er_virksomhed &&
-      k.deltager_status_raw != null
-    ) {
-      if (!deltagerStatusFilters.has(deriveCvrStatusKode(k.deltager_status_raw))) return false;
+    // BIZZ-1967: deltager-status filtreres nu via den autoritative is_aktiv-markør
+    // (gælder BÅDE personer og virksomheder). Ophørte deltagere skjules når kun
+    // "Aktiv" er valgt; levende personer regnes som aktive. Ukendt status (null
+    // is_aktiv uden entydigt virksomheds-CVR) passerer altid.
+    if (deltagerStatusFilters.size > 0) {
+      const kode = deltagerStatusKode(k);
+      if (kode != null && !deltagerStatusFilters.has(kode)) return false;
     }
     return true;
   });
@@ -697,12 +719,11 @@ export default function VirksomhedshandlerClient() {
       const delta = Math.abs(k.current_ejerandel_pct - k.prev_ejerandel_pct);
       const fraPct = k.signal_type === 'exit' ? k.current_ejerandel_pct : k.prev_ejerandel_pct;
       const tilPct = k.signal_type === 'exit' ? 0 : k.current_ejerandel_pct;
-      // Status-label til eksport: deltager kun hvis virksomhed med kendt status.
+      // BIZZ-1967: status-label til eksport via autoritativ is_aktiv-udledning.
+      const deltagerKode = deltagerStatusKode(k);
       const deltagerStatusLabel =
-        k.deltager_er_virksomhed && k.deltager_status_raw != null
-          ? CVR_STATUS_INFO[deriveCvrStatusKode(k.deltager_status_raw)][
-              lang === 'da' ? 'label' : 'labelEn'
-            ]
+        deltagerKode != null
+          ? CVR_STATUS_INFO[deltagerKode][lang === 'da' ? 'label' : 'labelEn']
           : '';
       const virksomhedStatusLabel =
         CVR_STATUS_INFO[k.virksomhed_status_kode ?? deriveCvrStatusKode(k.virksomhed_status_raw)][
@@ -1575,16 +1596,17 @@ export default function VirksomhedshandlerClient() {
                           {k.deltager_navn}
                         </Link>
                       )}
-                      {/* BIZZ-1962: status-badge KUN for virksomheds-deltagere med
-                          kendt status — person-deltagere har User-ikon som indikator. */}
-                      {k.deltager_er_virksomhed && k.deltager_status_raw != null && (
-                        <div className="mt-1">
-                          <StatusBadge
-                            kode={deriveCvrStatusKode(k.deltager_status_raw)}
-                            lang={lang === 'da' ? 'da' : 'en'}
-                          />
-                        </div>
-                      )}
+                      {/* BIZZ-1967: status-badge vises kun når deltageren er OPHØRT
+                          (is_aktiv=false eller konkurs-/opløsnings-status). Aktive
+                          deltagere holdes rene — ikonet (Building2/User) er nok. */}
+                      {(() => {
+                        const dKode = deltagerStatusKode(k);
+                        return dKode != null && dKode !== 'aktiv' ? (
+                          <div className="mt-1">
+                            <StatusBadge kode={dKode} lang={lang === 'da' ? 'da' : 'en'} />
+                          </div>
+                        ) : null;
+                      })()}
                     </td>
                     <td className="px-4 py-3 text-xs">
                       <Link
@@ -1595,7 +1617,9 @@ export default function VirksomhedshandlerClient() {
                           `Open company ${k.virksomhed_navn ?? k.virksomhed_cvr}`
                         )}
                       >
-                        <div className="text-white font-medium truncate max-w-[200px] group-hover:text-indigo-300 group-hover:underline transition-colors">
+                        {/* BIZZ-1968: ombryd lange virksomhedsnavne (break-words) i
+                            stedet for at afkorte med ellipsis, saa hele navnet ses. */}
+                        <div className="text-white font-medium break-words max-w-[220px] group-hover:text-indigo-300 group-hover:underline transition-colors">
                           {k.virksomhed_navn ?? k.virksomhed_cvr}
                         </div>
                         <span className="text-slate-400 text-[10px] font-mono">

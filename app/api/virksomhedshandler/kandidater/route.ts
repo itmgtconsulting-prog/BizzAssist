@@ -226,7 +226,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // Data-query joiner altid regnskab_cache + cvr_virksomhed for kolonne-berigelse.
     // BIZZ-1962: virksomhed_status_raw (rå JSON) + virksomhed_status_kode (udledt
     // kategori) leveres så frontend kan rendere status-badge uden selv at JSON-parse.
-    const dataSql = `SELECT k.*, ${AENDRINGSDATO} AS aendringsdato, v.navn AS virksomhed_navn, v.branche_tekst, v.branche_kode, v.status AS virksomhed_status_raw, ${statusKategoriSql('v')} AS virksomhed_status_kode, rc.seneste_aar AS regnskab_aar, rc.omsaetning, rc.bruttofortjeneste, rc.resultat_foer_skat AS overskud FROM mv_virksomhedshandel_kandidater k LEFT JOIN cvr_virksomhed v ON v.cvr = k.virksomhed_cvr LEFT JOIN regnskab_cache rc ON rc.cvr = k.virksomhed_cvr WHERE ${where} ORDER BY ${sortCol} ${sortDir} NULLS LAST, ${AENDRINGSDATO} DESC NULLS LAST LIMIT ${limit} OFFSET ${offset}`;
+    // BIZZ-1967: deltager-status (aktiv/ophørt) udledes IKKE længere fra et skrøbeligt
+    // navne-opslag i cvr_virksomhed (som kun virkede for entydige virksomhedsnavne og
+    // efterlod NULL-status-rækker ufiltreret). cvr_deltager.is_aktiv er den autoritative
+    // per-deltager aktiv-markør for BÅDE personer og virksomheder (levende person /
+    // aktiv virksomhed = true, ophørt = false), keyet på enhedsnummer.
+    const dataSql = `SELECT k.*, ${AENDRINGSDATO} AS aendringsdato, v.navn AS virksomhed_navn, v.branche_tekst, v.branche_kode, v.status AS virksomhed_status_raw, ${statusKategoriSql('v')} AS virksomhed_status_kode, cd.is_aktiv AS deltager_is_aktiv, rc.seneste_aar AS regnskab_aar, rc.omsaetning, rc.bruttofortjeneste, rc.resultat_foer_skat AS overskud FROM mv_virksomhedshandel_kandidater k LEFT JOIN cvr_virksomhed v ON v.cvr = k.virksomhed_cvr LEFT JOIN cvr_deltager cd ON cd.enhedsnummer = k.deltager_enhedsnummer LEFT JOIN regnskab_cache rc ON rc.cvr = k.virksomhed_cvr WHERE ${where} ORDER BY ${sortCol} ${sortDir} NULLS LAST, ${AENDRINGSDATO} DESC NULLS LAST LIMIT ${limit} OFFSET ${offset}`;
 
     const [countRes, dataRes] = await Promise.all([
       fetch(`https://api.supabase.com/v1/projects/${projectRef}/database/query`, {

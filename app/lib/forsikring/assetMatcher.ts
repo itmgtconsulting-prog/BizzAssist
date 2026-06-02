@@ -80,6 +80,79 @@ function stripFloorDoor(addr: string): string {
 }
 
 /**
+ * BIZZ-1973: Parse en normaliseret adresse til { vejnavn, husnr-nummer, postnr }.
+ * Husnummer-bogstav stripes ("47a" → "47") så matchet bliver bogstav-agnostisk.
+ *
+ * @param norm - Allerede normaliseret adresse (via normalize())
+ * @returns Strukturerede dele, eller null hvis vejnavn+husnr ikke kunne udledes
+ */
+function parseStreetAddr(
+  norm: string
+): { vejnavn: string; husnr: string; postnr: string | null } | null {
+  const tokens = norm.split(' ').filter(Boolean);
+  // Husnummer = første token der starter med et ciffer (evt. efterfulgt af bogstav)
+  let husnrIdx = -1;
+  for (let i = 0; i < tokens.length; i++) {
+    if (/^\d+[a-z]?$/.test(tokens[i])) {
+      husnrIdx = i;
+      break;
+    }
+  }
+  // Kræv mindst ét vejnavn-token før husnummeret
+  if (husnrIdx <= 0) return null;
+  const vejnavn = tokens.slice(0, husnrIdx).join(' ');
+  const husnr = tokens[husnrIdx].replace(/[a-z]+$/, ''); // strip bogstav → kun nummer
+  // Postnummer = et 4-cifret token efter husnummeret
+  let postnr: string | null = null;
+  for (let i = husnrIdx + 1; i < tokens.length; i++) {
+    if (/^\d{4}$/.test(tokens[i])) {
+      postnr = tokens[i];
+      break;
+    }
+  }
+  return { vejnavn, husnr, postnr };
+}
+
+/**
+ * BIZZ-1973: Afgør om to adresser med rimelig sikkerhed refererer til samme
+ * ejendom. Bruges til at advare når en uploadet police dækker en adresse der
+ * hverken ejes eller administreres af forsikringssejeren.
+ *
+ * Matchet er husnummer-bogstav-agnostisk ("Stjernegade 17" = "Stjernegade 17A")
+ * jf. BIZZ-1908, og kræver at postnummeret matcher når begge adresser har et
+ * (så "Hovedgade 5" i to forskellige byer ikke fejlmatcher).
+ *
+ * @param a - Første adresse (rå streng, fx police.property_address)
+ * @param b - Anden adresse (rå streng, fx en porteføljeejendoms adresse)
+ * @returns true hvis adresserne sandsynligvis er samme ejendom
+ */
+export function addressesMatch(
+  a: string | null | undefined,
+  b: string | null | undefined
+): boolean {
+  const na = normalize(a);
+  const nb = normalize(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  if (na.includes(nb) || nb.includes(na)) return true;
+  // Etage/dør-tolerant sammenligning
+  const baseA = stripFloorDoor(na);
+  const baseB = stripFloorDoor(nb);
+  if (baseA && baseB && (baseA === baseB || baseA.includes(baseB) || baseB.includes(baseA))) {
+    return true;
+  }
+  // Struktureret sammenligning: vejnavn + husnr-nummer (bogstav-agnostisk) + postnr
+  const pa = parseStreetAddr(baseA || na);
+  const pb = parseStreetAddr(baseB || nb);
+  if (!pa || !pb) return false;
+  if (pa.vejnavn !== pb.vejnavn) return false;
+  if (pa.husnr !== pb.husnr) return false;
+  // Postnr skal matche når begge har et — ellers er gade+husnr nok
+  if (pa.postnr && pb.postnr && pa.postnr !== pb.postnr) return false;
+  return true;
+}
+
+/**
  * Beregn match-score mellem et aktiv og en police.
  *
  * @param aktiv - Aktiv fra koncern-walk

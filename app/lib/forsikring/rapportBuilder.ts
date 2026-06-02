@@ -49,6 +49,16 @@ export interface GapRapportInput {
     sum_insured_dkk: number | null;
     deductible_dkk: number | null;
   }>;
+  /**
+   * BIZZ-1973: Policer der dækker en adresse uden for kundens portefølje
+   * (hverken ejet eller administreret). Vises som advarselssektion i rapporten.
+   */
+  addressMismatches?: Array<{
+    policy_number: string;
+    insurer_name: string;
+    property_address: string | null;
+    is_policyholder_address: boolean;
+  }>;
 }
 
 /** XML-escape */
@@ -137,6 +147,7 @@ const hline = (color = LIGHT_BLUE) =>
 export async function buildGapRapportDocx(input: GapRapportInput): Promise<Buffer> {
   const { default: PizZip } = await import('pizzip');
   const { kundeNavn, analyse, aktiver, policies, gaps } = input;
+  const addressMismatches = input.addressMismatches ?? [];
 
   const policyById = new Map(policies.map((p) => [p.id, p]));
   const total = analyse.total_aktiver;
@@ -202,6 +213,47 @@ export async function buildGapRapportDocx(input: GapRapportInput): Promise<Buffe
       '</w:tbl>'
   );
   body.push(spacer());
+
+  // ─── BIZZ-1973: ADVARSEL — policer uden for porteføljen ──────
+  if (addressMismatches.length > 0) {
+    body.push(
+      p(`⚠ ${addressMismatches.length} police(r) dækker en adresse uden for porteføljen`, {
+        bold: true,
+        color: RED,
+        size: 24,
+      })
+    );
+    body.push(
+      p(
+        'Følgende policer dækker en ejendom der hverken ejes eller administreres af ' +
+          'forsikringssejeren. Verificér at dokumentet hører til denne kunde.',
+        { color: GRAY, size: 18 }
+      )
+    );
+    body.push(
+      `<w:tbl><w:tblPr><w:tblW w:w="9000" w:type="dxa"/><w:tblBorders><w:top w:val="single" w:sz="4" w:color="${AMBER}"/><w:bottom w:val="single" w:sz="4" w:color="${AMBER}"/><w:insideH w:val="single" w:sz="2" w:color="e2e8f0"/></w:tblBorders></w:tblPr>` +
+        tr(
+          tc('Adresse', { bg: LIGHT_AMBER_BG, bold: true, color: DARK, width: 4000 }),
+          tc('Selskab', { bg: LIGHT_AMBER_BG, bold: true, color: DARK, width: 2500 }),
+          tc('Police', { bg: LIGHT_AMBER_BG, bold: true, color: DARK, width: 2500 })
+        ) +
+        addressMismatches
+          .map((m) =>
+            tr(
+              tc(
+                (m.property_address ?? 'Ukendt adresse') +
+                  (m.is_policyholder_address ? ' (forsikringstagers egen adresse)' : ''),
+                { width: 4000 }
+              ),
+              tc(m.insurer_name, { color: GRAY, width: 2500 }),
+              tc(m.policy_number, { color: GRAY, width: 2500 })
+            )
+          )
+          .join('') +
+        '</w:tbl>'
+    );
+    body.push(spacer());
+  }
 
   // ─── EJENDOMSOVERSIGT (BIZZ-1802/1806: hierarkisk layout) ──
   body.push(heading('2. Ejendomsoversigt', 1));

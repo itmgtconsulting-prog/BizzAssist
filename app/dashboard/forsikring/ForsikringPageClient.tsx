@@ -68,6 +68,20 @@ interface PendingDocument {
   created_at: string;
 }
 
+/**
+ * BIZZ-1973: En police hvis dækkede adresse ikke matcher nogen ejet/administreret
+ * ejendom i forsikringssejerens portefølje.
+ */
+interface AddressMismatch {
+  policy_id: string;
+  document_id: string | null;
+  policy_number: string;
+  insurer_name: string;
+  property_address: string | null;
+  /** true når adressen er forsikringstagers egen adresse (typisk hovedkontor) */
+  is_policyholder_address: boolean;
+}
+
 interface ListResponse {
   policies: PolicyRow[];
   documents: PendingDocument[];
@@ -759,7 +773,16 @@ function AnalyseSection({
     insured_count: number;
     gaps_count: number;
     total_risk_score: number;
+    /** BIZZ-1973: Policer der dækker en adresse uden for porteføljen */
+    address_mismatches?: AddressMismatch[];
   } | null>(null);
+  /**
+   * BIZZ-1973: Preflight-advarsel — sættes når adresse-tjek finder policer der
+   * dækker en ejendom uden for kundens portefølje. Vises som modal med 3 valg.
+   */
+  const [mismatchWarning, setMismatchWarning] = useState<AddressMismatch[] | null>(null);
+  /** BIZZ-1973: Dokument-IDs med adresse-mismatch — bruges til ⚠-badge i doc-listen */
+  const [mismatchDocIds, setMismatchDocIds] = useState<Set<string>>(new Set());
   /** BIZZ-1389: Full analyse detail for unified view */
   const [analyseDetail, setAnalyseDetail] = useState<AnalyseDetail | null>(null);
   /** BIZZ-1355: Snapshot-dato for historisk analyse */
@@ -1061,100 +1084,146 @@ function AnalyseSection({
     }, 300);
   }, []);
 
-  /** Start gap-analyse + opret/find sag */
-  const startAnalyse = useCallback(async () => {
-    if (!selected || running) return;
-    setRunning(true);
-    setAnalyseResult(null);
-    try {
-      // BIZZ-1384: Auto-opret sag ved analyse
-      // BIZZ-1399: Capture sag_id for upload-filtrering
-      const sagRes = await fetch('/api/forsikring/sager', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          kunde_type: selected.type,
-          kunde_id: selected.id,
-          kunde_navn: selected.navn,
-        }),
-      });
-      if (sagRes.ok) {
-        const sagData = (await sagRes.json()) as { sag?: { id: string } };
-        if (sagData.sag?.id) onSagChange(sagData.sag.id);
-      }
-      // BIZZ-1440: Samle ALLE doc IDs (genbrugte + wizard-uploads + parent-uploads).
-      // Dedup via Set så samme doc_id ikke sendes to gange — duplikat-detektion
-      // i wizard-upload (skipped_duplicate) auto-tilføjer existing doc_id til
-      // selectedDocIds, hvilket kan overlappe med wizardDocIds for almindelige
-      // uploads. Junction-tabellen forsikring_analyse_documents har unique
-      // constraint, så duplikerede inserts ville fejle.
-      const reusedDocIds = [...selectedDocIds];
-      const wizardDocIds = wizardUploads
-        .filter((u) => u.status === 'done' && u.docId)
-        .map((u) => u.docId!);
-      const allDocIds = Array.from(
-        new Set<string>([...reusedDocIds, ...wizardDocIds, ...newDocumentIds])
-      );
-      // Hvis wizard er åben, send altid scoped doc IDs — aldrig fald tilbage til alle policer
-      const hasAnyDocs = allDocIds.length > 0;
-      // BIZZ-1833: Saml standard doc DB-IDs for valgte standard-betingelser
-      const stdDocIds = [...stdSelectedIds]
-        .map((url) => stdSavedIds.get(url))
-        .filter((id): id is string => !!id);
+  /**
+   * Start gap-analyse + opret/find sag.
+   *
+   * BIZZ-1973: Kører først et adresse-preflight. Hvis en uploadet police dækker
+   * en ejendom uden for kundens portefølje, vises en advarsels-modal og analysen
+   * pauses indtil brugeren tager stilling. `opts.skipPreflight` springer tjekket
+   * over (sættes når brugeren har valgt "Ja, fortsæt" i modalen).
+   *
+   * @param opts - { skipPreflight } for at omgå preflight efter brugerbekræftelse
+   */
+  const startAnalyse = useCallback(
+    async (opts?: { skipPreflight?: boolean }) => {
+      if (!selected || running) return;
+      setRunning(true);
+      setAnalyseResult(null);
+      try {
+        // BIZZ-1440: Samle ALLE doc IDs (genbrugte + wizard-uploads + parent-uploads).
+        // Dedup via Set så samme doc_id ikke sendes to gange — duplikat-detektion
+        // i wizard-upload (skipped_duplicate) auto-tilføjer existing doc_id til
+        // selectedDocIds, hvilket kan overlappe med wizardDocIds for almindelige
+        // uploads. Junction-tabellen forsikring_analyse_documents har unique
+        // constraint, så duplikerede inserts ville fejle.
+        const reusedDocIds = [...selectedDocIds];
+        const wizardDocIds = wizardUploads
+          .filter((u) => u.status === 'done' && u.docId)
+          .map((u) => u.docId!);
+        const allDocIds = Array.from(
+          new Set<string>([...reusedDocIds, ...wizardDocIds, ...newDocumentIds])
+        );
+        // Hvis wizard er åben, send altid scoped doc IDs — aldrig fald tilbage til alle policer
+        const hasAnyDocs = allDocIds.length > 0;
+        // BIZZ-1833: Saml standard doc DB-IDs for valgte standard-betingelser
+        const stdDocIds = [...stdSelectedIds]
+          .map((url) => stdSavedIds.get(url))
+          .filter((id): id is string => !!id);
 
-      const res = await fetch('/api/forsikring/analyser', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          kunde_type: selected.type,
-          kunde_id: selected.id,
-          kunde_navn: selected.navn,
-          ...(asOfDate ? { as_of_date: asOfDate } : {}),
-          // BIZZ-1443: Send alle valgte doc IDs samlet — reused + nye, dedupet
-          // Hvis ingen er valgt, send IKKE document_ids → backend bruger alle policer
-          ...(hasAnyDocs ? { document_ids: allDocIds } : {}),
-          // BIZZ-1833: Standard betingelser
-          ...(stdDocIds.length > 0 ? { standard_doc_ids: stdDocIds } : {}),
-        }),
-      });
-      if (res.ok) {
-        const result = await res.json();
-        setAnalyseResult(result);
-        // BIZZ-1389: Fetch full detail for unified property view
-        try {
-          const detailRes = await fetch(`/api/forsikring/analyser/${result.analyse_id}`);
-          if (detailRes.ok) {
-            const detail = await detailRes.json();
-            setAnalyseDetail(detail);
-            // Notify parent to update AI context with gaps
-            onAnalyseDetail(detail, selected?.navn ?? null);
+        // BIZZ-1973: Preflight — advar hvis en police dækker en adresse uden for
+        // porteføljen. Best-effort: ved fejl fortsætter vi til den rigtige analyse.
+        if (!opts?.skipPreflight) {
+          try {
+            const pf = await fetch('/api/forsikring/analyser', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                kunde_type: selected.type,
+                kunde_id: selected.id,
+                kunde_navn: selected.navn,
+                ...(asOfDate ? { as_of_date: asOfDate } : {}),
+                ...(hasAnyDocs ? { document_ids: allDocIds } : {}),
+                preflight: true,
+              }),
+            });
+            if (pf.ok) {
+              const pfData = (await pf.json()) as { mismatches?: AddressMismatch[] };
+              const mismatches = pfData.mismatches ?? [];
+              if (mismatches.length > 0) {
+                setMismatchWarning(mismatches);
+                setMismatchDocIds(
+                  new Set(mismatches.map((m) => m.document_id).filter((id): id is string => !!id))
+                );
+                setRunning(false);
+                return; // vent på brugerens valg i modalen
+              }
+            }
+          } catch {
+            // Preflight er best-effort — fortsæt til den rigtige analyse
           }
-        } catch {
-          // Best-effort — fallback to old view if detail fails
         }
-        // Refresh sagsliste
-        fetch('/api/forsikring/sager')
-          .then((r) => (r.ok ? r.json() : { sager: [] }))
-          .then((d) => setSager(d.sager ?? []))
-          .catch(() => {});
+
+        // BIZZ-1384: Auto-opret sag ved analyse
+        // BIZZ-1399: Capture sag_id for upload-filtrering
+        const sagRes = await fetch('/api/forsikring/sager', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            kunde_type: selected.type,
+            kunde_id: selected.id,
+            kunde_navn: selected.navn,
+          }),
+        });
+        if (sagRes.ok) {
+          const sagData = (await sagRes.json()) as { sag?: { id: string } };
+          if (sagData.sag?.id) onSagChange(sagData.sag.id);
+        }
+
+        const res = await fetch('/api/forsikring/analyser', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            kunde_type: selected.type,
+            kunde_id: selected.id,
+            kunde_navn: selected.navn,
+            ...(asOfDate ? { as_of_date: asOfDate } : {}),
+            // BIZZ-1443: Send alle valgte doc IDs samlet — reused + nye, dedupet
+            // Hvis ingen er valgt, send IKKE document_ids → backend bruger alle policer
+            ...(hasAnyDocs ? { document_ids: allDocIds } : {}),
+            // BIZZ-1833: Standard betingelser
+            ...(stdDocIds.length > 0 ? { standard_doc_ids: stdDocIds } : {}),
+          }),
+        });
+        if (res.ok) {
+          const result = await res.json();
+          setAnalyseResult(result);
+          // BIZZ-1389: Fetch full detail for unified property view
+          try {
+            const detailRes = await fetch(`/api/forsikring/analyser/${result.analyse_id}`);
+            if (detailRes.ok) {
+              const detail = await detailRes.json();
+              setAnalyseDetail(detail);
+              // Notify parent to update AI context with gaps
+              onAnalyseDetail(detail, selected?.navn ?? null);
+            }
+          } catch {
+            // Best-effort — fallback to old view if detail fails
+          }
+          // Refresh sagsliste
+          fetch('/api/forsikring/sager')
+            .then((r) => (r.ok ? r.json() : { sager: [] }))
+            .then((d) => setSager(d.sager ?? []))
+            .catch(() => {});
+        }
+      } catch {
+        // Handled silently
+      } finally {
+        setRunning(false);
       }
-    } catch {
-      // Handled silently
-    } finally {
-      setRunning(false);
-    }
-  }, [
-    selected,
-    running,
-    asOfDate,
-    onAnalyseDetail,
-    onSagChange,
-    newDocumentIds,
-    selectedDocIds,
-    wizardUploads,
-    stdSelectedIds,
-    stdSavedIds,
-  ]);
+    },
+    [
+      selected,
+      running,
+      asOfDate,
+      onAnalyseDetail,
+      onSagChange,
+      newDocumentIds,
+      selectedDocIds,
+      wizardUploads,
+      stdSelectedIds,
+      stdSavedIds,
+    ]
+  );
 
   return (
     <section className="bg-white/5 border border-white/8 rounded-2xl p-5 space-y-3">
@@ -1447,6 +1516,20 @@ function AnalyseSection({
                           />
                           <FileText size={14} className="text-slate-400 shrink-0" />
                           <span className="text-white text-xs flex-1 truncate">{doc.name}</span>
+                          {/* BIZZ-1973: ⚠-badge når dokumentets police dækker en adresse uden for porteføljen */}
+                          {mismatchDocIds.has(doc.id) && (
+                            <span
+                              className="text-[10px] shrink-0 flex items-center gap-1 text-amber-300 bg-amber-500/15 border border-amber-500/30 rounded px-1.5 py-0.5"
+                              title={
+                                da
+                                  ? 'Police dækker en adresse uden for porteføljen'
+                                  : 'Policy covers an address outside the portfolio'
+                              }
+                            >
+                              <AlertTriangle size={10} className="text-amber-400" />
+                              {da ? 'adresse-mismatch' : 'address mismatch'}
+                            </span>
+                          )}
                           <span
                             className={`text-[10px] shrink-0 ${doc.source === 'new' ? 'text-emerald-400' : 'text-slate-400'}`}
                           >
@@ -2429,7 +2512,7 @@ function AnalyseSection({
           {showDocPicker && (
             <button
               type="button"
-              onClick={startAnalyse}
+              onClick={() => startAnalyse()}
               disabled={running}
               className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"
             >
@@ -2448,6 +2531,131 @@ function AnalyseSection({
               )}
             </button>
           )}
+        </div>
+      )}
+
+      {/* BIZZ-1973: Advarsels-modal — police dækker ejendom uden for porteføljen */}
+      {mismatchWarning && mismatchWarning.length > 0 && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="mismatch-title"
+        >
+          <div className="bg-slate-900 border border-amber-500/40 rounded-2xl max-w-lg w-full p-5 space-y-4 shadow-2xl">
+            <div className="flex items-start gap-3">
+              <AlertTriangle size={22} className="text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <h3 id="mismatch-title" className="text-white font-semibold text-sm">
+                  {da
+                    ? 'Police dækker en adresse uden for porteføljen'
+                    : 'Policy covers an address outside the portfolio'}
+                </h3>
+                <p className="text-slate-300 text-xs mt-1">
+                  {da
+                    ? `${mismatchWarning.length === 1 ? 'Følgende police' : `${mismatchWarning.length} policer`} dækker en ejendom der hverken ejes eller administreres af ${selected?.navn ?? 'forsikringssejeren'}. Kontrollér at dokumentet hører til denne forsikringssejer.`
+                    : `${mismatchWarning.length === 1 ? 'The following policy' : `${mismatchWarning.length} policies`} cover a property neither owned nor administered by ${selected?.navn ?? 'the policyholder'}. Verify the document belongs to this policyholder.`}
+                </p>
+              </div>
+            </div>
+            <ul className="space-y-1.5 max-h-40 overflow-y-auto">
+              {mismatchWarning.map((m) => (
+                <li
+                  key={m.policy_id}
+                  className="bg-amber-500/10 border border-amber-500/25 rounded-lg px-3 py-2 text-xs"
+                >
+                  <div className="text-amber-200 font-medium">
+                    {m.property_address ?? (da ? 'Ukendt adresse' : 'Unknown address')}
+                  </div>
+                  <div className="text-slate-400">
+                    {m.insurer_name} · {da ? 'Police' : 'Policy'} {m.policy_number}
+                    {m.is_policyholder_address && (
+                      <span className="text-amber-300">
+                        {' '}
+                        · {da ? 'forsikringstagers egen adresse' : "policyholder's own address"}
+                      </span>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setMismatchWarning(null);
+                  startAnalyse({ skipPreflight: true });
+                }}
+                className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-medium"
+              >
+                {da ? 'Ja, fortsæt analysen' : 'Yes, continue analysis'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMismatchWarning(null);
+                  setSelected(null);
+                  setQuery('');
+                  setAnalyseResult(null);
+                  setAnalyseDetail(null);
+                  setKundePolicer([]);
+                  setLastAnalyse(null);
+                  setAsOfDate('');
+                }}
+                className="bg-slate-700 hover:bg-slate-600 text-slate-100 px-4 py-2 rounded-lg text-sm font-medium"
+              >
+                {da ? 'Skift forsikringssejer' : 'Change policyholder'}
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  // Slet de mismatchede dokumenter så de ikke indgår i analysen
+                  const docIds = [
+                    ...new Set(
+                      mismatchWarning.map((m) => m.document_id).filter((id): id is string => !!id)
+                    ),
+                  ];
+                  await Promise.allSettled(
+                    docIds.map((id) =>
+                      fetch(`/api/forsikring/documents/${id}`, { method: 'DELETE' })
+                    )
+                  );
+                  // Fjern fra valgte docs + tidligere docs så UI er konsistent
+                  setSelectedDocIds((prev) => {
+                    const next = new Set(prev);
+                    for (const id of docIds) next.delete(id);
+                    return next;
+                  });
+                  setPreviousDocs((prev) => prev.filter((d) => !docIds.includes(d.id)));
+                  setMismatchDocIds(new Set());
+                  setMismatchWarning(null);
+                }}
+                className="text-red-400 hover:text-red-300 px-4 py-2 rounded-lg text-sm font-medium"
+              >
+                {da ? 'Fjern dokument(er)' : 'Remove document(s)'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BIZZ-1973: Inline advarsels-banner når analyse blev kørt trods mismatch */}
+      {analyseResult?.address_mismatches && analyseResult.address_mismatches.length > 0 && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 flex items-start gap-2">
+          <AlertTriangle size={15} className="text-amber-400 shrink-0 mt-0.5" />
+          <div className="text-xs">
+            <div className="text-amber-200 font-medium">
+              {da
+                ? `${analyseResult.address_mismatches.length} police${analyseResult.address_mismatches.length === 1 ? '' : 'r'} dækker en adresse uden for porteføljen`
+                : `${analyseResult.address_mismatches.length} polic${analyseResult.address_mismatches.length === 1 ? 'y' : 'ies'} cover an address outside the portfolio`}
+            </div>
+            <div className="text-slate-400 mt-0.5">
+              {analyseResult.address_mismatches
+                .map((m) => m.property_address)
+                .filter(Boolean)
+                .join(' · ')}
+            </div>
+          </div>
         </div>
       )}
 

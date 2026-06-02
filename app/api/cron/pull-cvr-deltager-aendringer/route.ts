@@ -162,6 +162,10 @@ function mapDeltagerHit(hit: Record<string, unknown>): {
         const attrs = Array.isArray(md.attributter) ? md.attributter : [];
 
         let ejerandelPct: number | null = null;
+        // BIZZ-1966: reel CVR-offentliggørelsesdato for ejerandel-perioden,
+        // bruges som sidst_opdateret (INDRAPPORTERET) på register-rækker i
+        // stedet for deltager-niveau del.sidstOpdateret.
+        let ejerandelSidstOpdateret: string | null = null;
         const ejerAttr = (attrs as Record<string, unknown>[]).find(
           (a) => a.type === 'EJERANDEL' || a.type === 'EJERANDEL_PROCENT'
         );
@@ -175,6 +179,7 @@ function mapDeltagerHit(hit: Record<string, unknown>): {
           if (gyldigEjer?.vaerdi) {
             const raw = parseFloat(gyldigEjer.vaerdi as string);
             ejerandelPct = raw <= 1 ? raw * 100 : raw;
+            ejerandelSidstOpdateret = (gyldigEjer.sidstOpdateret as string) ?? null;
           }
         }
 
@@ -199,7 +204,13 @@ function mapDeltagerHit(hit: Record<string, unknown>): {
               ejerandel_pct: rolle === 'register' ? ejerandelPct : null,
               gyldig_fra: gyldigFra,
               gyldig_til: ((periodeObj?.gyldigTil as string) ?? '').slice(0, 10) || null,
-              sidst_opdateret: (del.sidstOpdateret as string) ?? null,
+              // BIZZ-1966: reel CVR-offentliggørelsesdato pr. periode (register =
+              // ejerandel-værdiens dato, øvrige roller = FUNKTION-værdiens dato),
+              // ikke deltager-niveau del.sidstOpdateret (ét nyligt tidsstempel).
+              sidst_opdateret:
+                (rolle === 'register' ? ejerandelSidstOpdateret : null) ??
+                (v.sidstOpdateret as string) ??
+                null,
               sidst_hentet_fra_cvr: new Date().toISOString(),
             });
           }
@@ -216,7 +227,9 @@ function mapDeltagerHit(hit: Record<string, unknown>): {
           ejerandel_pct: null,
           gyldig_fra: '1900-01-01',
           gyldig_til: null,
-          sidst_opdateret: (del.sidstOpdateret as string) ?? null,
+          // BIZZ-1966: fallback uden pr-værdi-periode har ingen reel
+          // offentliggørelsesdato i kilden → null (vises som '—').
+          sidst_opdateret: null,
           sidst_hentet_fra_cvr: new Date().toISOString(),
         });
       }

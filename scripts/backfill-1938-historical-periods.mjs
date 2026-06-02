@@ -76,6 +76,9 @@ function extractRelations(targetCvr, deltagerRelations) {
               pct,
               gyldigFra: v.periode?.gyldigFra?.slice(0, 10) ?? '1900-01-01',
               gyldigTil: v.periode?.gyldigTil?.slice(0, 10) ?? null,
+              // BIZZ-1966: CVR's pr-værdi sidstOpdateret = reel registrerings-/
+              // offentliggørelsesdato. Bevares så INDRAPPORTERET viser ægte dato.
+              sidstOpdateret: v.sidstOpdateret ?? null,
             });
           }
         }
@@ -104,7 +107,8 @@ function extractRelations(targetCvr, deltagerRelations) {
               virksomhed_cvr: String(targetCvr), deltager_enhedsnummer: enhedsNummer,
               type: rolle, gyldig_fra: fra, gyldig_til: til,
               ejerandel_pct: rolle === 'register' ? orgEjerandelPct : null,
-              sidst_opdateret: new Date().toISOString(),
+              // BIZZ-1966: reel CVR-offentliggørelsesdato pr. FUNKTION-værdi.
+              sidst_opdateret: v.sidstOpdateret ?? null,
               sidst_hentet_fra_cvr: new Date().toISOString(),
               ejer_cvr: deltagerCvr,
             });
@@ -118,7 +122,9 @@ function extractRelations(targetCvr, deltagerRelations) {
           virksomhed_cvr: String(targetCvr), deltager_enhedsnummer: enhedsNummer,
           type: 'register', gyldig_fra: per.gyldigFra, gyldig_til: per.gyldigTil,
           ejerandel_pct: per.pct,
-          sidst_opdateret: new Date().toISOString(),
+          // BIZZ-1966: reel CVR-offentliggørelsesdato pr. ejerandel-periode
+          // (≥ gyldig_fra), ikke backfill-kørslens tidsstempel.
+          sidst_opdateret: per.sidstOpdateret ?? null,
           sidst_hentet_fra_cvr: new Date().toISOString(),
           ejer_cvr: deltagerCvr,
         });
@@ -133,7 +139,9 @@ function extractRelations(targetCvr, deltagerRelations) {
           gyldig_fra: orgEjerandelGyldigFra ?? '1900-01-01',
           gyldig_til: orgEjerandelGyldigTil,
           ejerandel_pct: fallbackType === 'register' ? orgEjerandelPct : null,
-          sidst_opdateret: new Date().toISOString(),
+          // BIZZ-1966: fallback-rolle uden pr-værdi-periode har ingen reel
+          // offentliggørelsesdato i kilden → null (vises som '—', ikke vildledende).
+          sidst_opdateret: null,
           sidst_hentet_fra_cvr: new Date().toISOString(),
           ejer_cvr: deltagerCvr,
         });

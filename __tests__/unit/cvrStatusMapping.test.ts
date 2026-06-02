@@ -73,6 +73,35 @@ describe('deriveCvrStatusKode', () => {
   it('både statustekst og kreditoplysningtekst null → aktiv', () => {
     expect(deriveCvrStatusKode(status(null, null))).toBe('aktiv');
   });
+
+  // BIZZ-1974: ophoert-dato er det autoritative ophørs-signal når status-blobben
+  // er NULL (gælder ~2.1M selskaber i cachen).
+  it('NULL status men ophoert-dato sat → ophoert', () => {
+    expect(deriveCvrStatusKode(null, '2017-12-12')).toBe('ophoert');
+    expect(deriveCvrStatusKode(null, '2026-03-13')).toBe('ophoert');
+  });
+
+  it('ophoert-dato i fremtiden ignoreres → aktiv', () => {
+    expect(deriveCvrStatusKode(null, '2999-01-01')).toBe('aktiv');
+  });
+
+  it('tom/null ophoert → aktiv', () => {
+    expect(deriveCvrStatusKode(null, null)).toBe('aktiv');
+    expect(deriveCvrStatusKode(null, '')).toBe('aktiv');
+  });
+
+  it('insolvens-blob vinder over ophoert (mere specifik)', () => {
+    expect(deriveCvrStatusKode(status('Regnskab og boafslutning', 'Konkurs'), '2020-01-01')).toBe(
+      'oploest_konkurs'
+    );
+    expect(deriveCvrStatusKode(status('Dekret', 'Konkurs'), '2020-01-01')).toBe('under_konkurs');
+  });
+
+  it('"Ophævelse af dekret" + ophoert-dato → ophoert (blob neutral, dato afgør)', () => {
+    expect(deriveCvrStatusKode(status('Ophævelse af dekret', 'Konkurs'), '2020-01-01')).toBe(
+      'ophoert'
+    );
+  });
 });
 
 describe('mapCvrStatus', () => {
@@ -92,8 +121,8 @@ describe('mapCvrStatus', () => {
 });
 
 describe('CVR_STATUS-registry', () => {
-  it('CVR_STATUS_KODER dækker præcis alle 5 kategorier i registry', () => {
-    expect(CVR_STATUS_KODER).toHaveLength(5);
+  it('CVR_STATUS_KODER dækker præcis alle 6 kategorier i registry', () => {
+    expect(CVR_STATUS_KODER).toHaveLength(6);
     for (const kode of CVR_STATUS_KODER) {
       expect(CVR_STATUS_INFO[kode]).toBeDefined();
       expect(CVR_STATUS_INFO[kode].kode).toBe(kode);

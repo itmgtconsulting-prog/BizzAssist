@@ -53,6 +53,10 @@ interface Kandidat {
   virksomhed_status_raw?: string | null;
   virksomhed_status_kode?: CvrStatusKode | null;
   deltager_status_raw?: string | null;
+  // BIZZ-1974: autoritativ ophørsdato (cvr_virksomhed.ophoert) for hhv. virksomheden
+  // og deltager-virksomheden — bruges som fallback når status-blobben er NULL.
+  virksomhed_ophoert?: string | null;
+  deltager_ophoert?: string | null;
   // BIZZ-1967: autoritativ aktiv-markør for deltageren (person ELLER virksomhed),
   // fra cvr_deltager.is_aktiv. true = aktiv/levende, false = ophørt, null = ukendt.
   deltager_is_aktiv?: boolean | null;
@@ -92,8 +96,10 @@ function StatusBadge({ kode, lang }: { kode: CvrStatusKode; lang: 'da' | 'en' })
  * @returns Status-kategori, eller null hvis ukendt.
  */
 function deltagerStatusKode(k: Kandidat): CvrStatusKode | null {
-  if (k.deltager_er_virksomhed && k.deltager_status_raw != null) {
-    return deriveCvrStatusKode(k.deltager_status_raw);
+  // BIZZ-1974: for virksomheds-deltagere udledes status af status-blobben OG den
+  // autoritative ophoert-dato (blobben er NULL for de fleste selskaber).
+  if (k.deltager_er_virksomhed && (k.deltager_status_raw != null || k.deltager_ophoert != null)) {
+    return deriveCvrStatusKode(k.deltager_status_raw, k.deltager_ophoert);
   }
   if (k.deltager_is_aktiv === true) return 'aktiv';
   if (k.deltager_is_aktiv === false) return 'tvangsoploest';
@@ -726,9 +732,10 @@ export default function VirksomhedshandlerClient() {
           ? CVR_STATUS_INFO[deltagerKode][lang === 'da' ? 'label' : 'labelEn']
           : '';
       const virksomhedStatusLabel =
-        CVR_STATUS_INFO[k.virksomhed_status_kode ?? deriveCvrStatusKode(k.virksomhed_status_raw)][
-          lang === 'da' ? 'label' : 'labelEn'
-        ];
+        CVR_STATUS_INFO[
+          k.virksomhed_status_kode ??
+            deriveCvrStatusKode(k.virksomhed_status_raw, k.virksomhed_ophoert)
+        ][lang === 'da' ? 'label' : 'labelEn'];
       return [
         SIGNAL_LABELS[k.signal_type]?.[lang === 'da' ? 'da' : 'en'] ?? k.signal_type,
         k.deltager_navn,
@@ -1630,7 +1637,8 @@ export default function VirksomhedshandlerClient() {
                       <div className="mt-1">
                         <StatusBadge
                           kode={
-                            k.virksomhed_status_kode ?? deriveCvrStatusKode(k.virksomhed_status_raw)
+                            k.virksomhed_status_kode ??
+                            deriveCvrStatusKode(k.virksomhed_status_raw, k.virksomhed_ophoert)
                           }
                           lang={lang === 'da' ? 'da' : 'en'}
                         />

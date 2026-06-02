@@ -87,23 +87,34 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   // fra sidst_opdateret (per-række indrapporterings-dato — egen filter-akse).
   const AENDRINGSDATO = 'COALESCE(k.gyldig_til, k.gyldig_fra)';
 
-  // BIZZ-1962: SQL-CASE der udleder status-kategori fra cvr_virksomhed.status
-  // (JSON-blob). MATCHER 1:1 deriveCvrStatusKode() i app/lib/cvrStatusMapping.ts
-  // så server-filter og klient-badge altid er enige. left()='{' guard undgår at
+  // BIZZ-1962/BIZZ-1974: SQL-CASE der udleder status-kategori fra
+  // cvr_virksomhed.status (JSON-blob) OG den autoritative ophoert-dato.
+  // MATCHER 1:1 deriveCvrStatusKode() i app/lib/cvrStatusMapping.ts så
+  // server-filter og klient-badge altid er enige. left()='{' guard undgår at
   // caste ikke-JSON tekst til jsonb (ville kaste og vælte hele queryen).
+  //
+  // BIZZ-1974: status-blobben er NULL for ~2.1M rækker (holder kun insolvens-
+  // hændelser), så den autoritative ceased-markør er ophoert-datoen. Insolvens
+  // fra blobben er mere specifik og vinder; ellers ⟹ ophoert hvis dato sat.
+  const ophoertSql = (alias: string): string =>
+    `${alias}.ophoert IS NOT NULL AND ${alias}.ophoert <= CURRENT_DATE`;
   const statusKategoriSql = (alias: string): string =>
     `CASE
-       WHEN ${alias}.status IS NULL THEN 'aktiv'
-       WHEN left(${alias}.status, 1) <> '{' THEN 'aktiv'
-       WHEN (${alias}.status::jsonb->>'statustekst') = 'Ophævelse af dekret' THEN 'aktiv'
-       WHEN (${alias}.status::jsonb->>'statustekst') = 'Regnskab og boafslutning' THEN 'oploest_konkurs'
-       WHEN (${alias}.status::jsonb->>'kreditoplysningtekst') IS NOT NULL THEN 'under_konkurs'
+       WHEN ${alias}.status IS NOT NULL AND left(${alias}.status, 1) = '{'
+            AND (${alias}.status::jsonb->>'statustekst') = 'Ophævelse af dekret'
+         THEN CASE WHEN ${ophoertSql(alias)} THEN 'ophoert' ELSE 'aktiv' END
+       WHEN ${alias}.status IS NOT NULL AND left(${alias}.status, 1) = '{'
+            AND (${alias}.status::jsonb->>'statustekst') = 'Regnskab og boafslutning' THEN 'oploest_konkurs'
+       WHEN ${alias}.status IS NOT NULL AND left(${alias}.status, 1) = '{'
+            AND (${alias}.status::jsonb->>'kreditoplysningtekst') IS NOT NULL THEN 'under_konkurs'
+       WHEN ${ophoertSql(alias)} THEN 'ophoert'
        ELSE 'aktiv'
      END`;
 
   // Whitelist af gyldige status-kategorier (mod SQL-injektion i IN-listen).
   const GYLDIGE_STATUS = new Set([
     'aktiv',
+    'ophoert',
     'under_konkurs',
     'oploest_konkurs',
     'fusioneret',
@@ -231,7 +242,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // efterlod NULL-status-rækker ufiltreret). cvr_deltager.is_aktiv er den autoritative
     // per-deltager aktiv-markør for BÅDE personer og virksomheder (levende person /
     // aktiv virksomhed = true, ophørt = false), keyet på enhedsnummer.
-    const dataSql = `SELECT k.*, ${AENDRINGSDATO} AS aendringsdato, v.navn AS virksomhed_navn, v.branche_tekst, v.branche_kode, v.status AS virksomhed_status_raw, ${statusKategoriSql('v')} AS virksomhed_status_kode, cd.is_aktiv AS deltager_is_aktiv, rc.seneste_aar AS regnskab_aar, rc.omsaetning, rc.bruttofortjeneste, rc.resultat_foer_skat AS overskud FROM mv_virksomhedshandel_kandidater k LEFT JOIN cvr_virksomhed v ON v.cvr = k.virksomhed_cvr LEFT JOIN cvr_deltager cd ON cd.enhedsnummer = k.deltager_enhedsnummer LEFT JOIN regnskab_cache rc ON rc.cvr = k.virksomhed_cvr WHERE ${where} ORDER BY ${sortCol} ${sortDir} NULLS LAST, ${AENDRINGSDATO} DESC NULLS LAST LIMIT ${limit} OFFSET ${offset}`;
+    const dataSql = `SELECT k.*, ${AENDRINGSDATO} AS aendringsdato, v.navn AS virksomhed_navn, v.branche_tekst, v.branche_kode, v.status AS virksomhed_status_raw, v.ophoert AS virksomhed_ophoert, ${statusKategoriSql('v')} AS virksomhed_status_kode, cd.is_aktiv AS deltager_is_aktiv, rc.seneste_aar AS regnskab_aar, rc.omsaetning, rc.bruttofortjeneste, rc.resultat_foer_skat AS overskud FROM mv_virksomhedshandel_kandidater k LEFT JOIN cvr_virksomhed v ON v.cvr = k.virksomhed_cvr LEFT JOIN cvr_deltager cd ON cd.enhedsnummer = k.deltager_enhedsnummer LEFT JOIN regnskab_cache rc ON rc.cvr = k.virksomhed_cvr WHERE ${where} ORDER BY ${sortCol} ${sortDir} NULLS LAST, ${AENDRINGSDATO} DESC NULLS LAST LIMIT ${limit} OFFSET ${offset}`;
 
     const [countRes, dataRes] = await Promise.all([
       fetch(`https://api.supabase.com/v1/projects/${projectRef}/database/query`, {
@@ -268,7 +279,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       // BIZZ-1962: ved unikt navne-match (cnt=1) er status entydig → MAX(status)
       // returnerer den ene rækkes status, så deltager-virksomheder også kan
       // status-markeres. Ved flertydigt navn ignoreres status (vises ikke).
-      const resolveSql = `SELECT navn, MIN(cvr) AS cvr, COUNT(*) AS cnt, MAX(status) AS status FROM cvr_virksomhed WHERE navn = ANY(ARRAY[${navnArray}]::text[]) GROUP BY navn`;
+      // BIZZ-1974: hent også MAX(ophoert) så deltager-status kan udledes af den
+      // autoritative ophørsdato (status-blobben er NULL for de fleste selskaber).
+      const resolveSql = `SELECT navn, MIN(cvr) AS cvr, COUNT(*) AS cnt, MAX(status) AS status, MAX(ophoert) AS ophoert FROM cvr_virksomhed WHERE navn = ANY(ARRAY[${navnArray}]::text[]) GROUP BY navn`;
       try {
         const resolveRes = await fetch(
           `https://api.supabase.com/v1/projects/${projectRef}/database/query`,
@@ -281,7 +294,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         ).then((r) => r.json());
         const byNavn = new Map<
           string,
-          { cvr: string | null; cnt: number; status: string | null }
+          { cvr: string | null; cnt: number; status: string | null; ophoert: string | null }
         >();
         if (Array.isArray(resolveRes)) {
           for (const row of resolveRes) {
@@ -289,6 +302,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
               cvr: row.cvr != null ? String(row.cvr) : null,
               cnt: Number(row.cnt),
               status: row.status != null ? String(row.status) : null,
+              ophoert: row.ophoert != null ? String(row.ophoert) : null,
             });
           }
         }
@@ -300,6 +314,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           // BIZZ-1962: status kun ved entydigt match (ellers er det uvist hvilket
           // selskabs status der gælder). Rå JSON — frontend udleder kategori.
           r.deltager_status_raw = match && match.cnt === 1 ? match.status : null;
+          // BIZZ-1974: ophørsdato med samme entydigheds-krav som status.
+          r.deltager_ophoert = match && match.cnt === 1 ? match.ophoert : null;
         }
       } catch (e) {
         // Best-effort berigelse — ved fejl falder klienten tilbage til person-link.

@@ -20,9 +20,10 @@
  * @module app/lib/cvrStatusMapping
  */
 
-/** De 5 visuelle status-kategorier brugt i M&A-radar (BIZZ-1962). */
+/** De visuelle status-kategorier brugt i M&A-radar (BIZZ-1962, BIZZ-1974). */
 export type CvrStatusKode =
   | 'aktiv'
+  | 'ophoert'
   | 'under_konkurs'
   | 'oploest_konkurs'
   | 'fusioneret'
@@ -53,6 +54,15 @@ export const CVR_STATUS_INFO: Record<CvrStatusKode, CvrStatusInfo> = {
     labelEn: 'Active',
     dotClass: 'bg-emerald-400',
     badgeClass: 'bg-emerald-500/20 text-emerald-300',
+  },
+  // BIZZ-1974: Selskab med en registreret ophørsdato (cvr_virksomhed.ophoert).
+  // Dette er det autoritative "ophørt"-signal — uafhængigt af insolvens-blobben.
+  ophoert: {
+    kode: 'ophoert',
+    label: 'Ophørt',
+    labelEn: 'Ceased',
+    dotClass: 'bg-slate-400',
+    badgeClass: 'bg-slate-500/20 text-slate-300',
   },
   under_konkurs: {
     kode: 'under_konkurs',
@@ -87,6 +97,7 @@ export const CVR_STATUS_INFO: Record<CvrStatusKode, CvrStatusInfo> = {
 /** Alle kategori-nøgler i visnings-rækkefølge (til filter-dropdown). */
 export const CVR_STATUS_KODER: CvrStatusKode[] = [
   'aktiv',
+  'ophoert',
   'under_konkurs',
   'oploest_konkurs',
   'fusioneret',
@@ -102,28 +113,51 @@ interface RawCvrStatus {
 /**
  * Afkoder en rå `cvr_virksomhed.status`-værdi til en visuel kategori.
  *
- * Regler (matcher 1:1 SQL-CASE i /api/virksomhedshandler/kandidater så
- * server-side filter og klient-side badge altid er enige):
- *   - NULL / tom / ikke-JSON           → aktiv
- *   - statustekst "Ophævelse af dekret" → aktiv (dekret hævet, selskab fortsætter)
- *   - statustekst "Regnskab og boafslutning" → oploest_konkurs (bo afsluttet)
- *   - kreditoplysningtekst sat (Konkurs/Tvangsakkord) → under_konkurs (igangværende)
- *   - ellers                            → aktiv
- *
  * @param raw - Rå status-streng fra cache (JSON-blob eller null).
+ * @param ophoert - Autoritativ ophørsdato (cvr_virksomhed.ophoert, ISO el. null).
  * @returns CvrStatusInfo for den udledte kategori (default 'aktiv').
  */
-export function mapCvrStatus(raw: string | null | undefined): CvrStatusInfo {
-  return CVR_STATUS_INFO[deriveCvrStatusKode(raw)];
+export function mapCvrStatus(
+  raw: string | null | undefined,
+  ophoert?: string | null
+): CvrStatusInfo {
+  return CVR_STATUS_INFO[deriveCvrStatusKode(raw, ophoert)];
 }
 
 /**
  * Som {@link mapCvrStatus}, men returnerer kun kategori-nøglen.
  *
+ * Regler (matcher 1:1 SQL-CASE i /api/virksomhedshandler/kandidater så
+ * server-side filter og klient-side badge altid er enige):
+ *   - insolvens fra status-JSON (Konkurs/boafslutning) → under_konkurs/oploest_konkurs
+ *     (mere specifik end et generelt "ophørt", så den vinder)
+ *   - ellers ophoert-dato sat og <= i dag → ophoert (BIZZ-1974: autoritativt signal,
+ *     fanger selskaber hvor status-blobben er NULL men ophørsdatoen er synket)
+ *   - ellers → aktiv
+ *
  * @param raw - Rå status-streng fra cache (JSON-blob eller null).
+ * @param ophoert - Autoritativ ophørsdato (cvr_virksomhed.ophoert, ISO el. null).
  * @returns Den udledte CvrStatusKode (default 'aktiv').
  */
-export function deriveCvrStatusKode(raw: string | null | undefined): CvrStatusKode {
+export function deriveCvrStatusKode(
+  raw: string | null | undefined,
+  ophoert?: string | null
+): CvrStatusKode {
+  const fromStatusBlob = deriveFromStatusBlob(raw);
+  // Insolvens-status fra blobben er mere specifik end et generelt "ophørt".
+  if (fromStatusBlob !== 'aktiv') return fromStatusBlob;
+  // BIZZ-1974: ophoert-dato er det autoritative ophørs-signal når blobben er tom.
+  if (isOphoert(ophoert)) return 'ophoert';
+  return 'aktiv';
+}
+
+/**
+ * Afkoder KUN status-JSON-blobben (insolvens-livsforløb) til en kategori.
+ *
+ * @param raw - Rå status-streng fra cache (JSON-blob eller null).
+ * @returns Kategori udledt af blobben (default 'aktiv').
+ */
+function deriveFromStatusBlob(raw: string | null | undefined): CvrStatusKode {
   if (!raw) return 'aktiv';
   const trimmed = raw.trim();
   if (!trimmed.startsWith('{')) return 'aktiv';
@@ -143,4 +177,19 @@ export function deriveCvrStatusKode(raw: string | null | undefined): CvrStatusKo
   if (statustekst === 'Regnskab og boafslutning') return 'oploest_konkurs';
   if (kreditoplysningtekst) return 'under_konkurs';
   return 'aktiv';
+}
+
+/**
+ * Afgør om en ophørsdato betyder selskabet reelt er ophørt (sat og ikke i fremtiden).
+ *
+ * @param ophoert - ISO-dato-streng eller null.
+ * @returns true hvis selskabet har en effektiv ophørsdato.
+ */
+function isOphoert(ophoert: string | null | undefined): boolean {
+  if (!ophoert) return false;
+  const trimmed = ophoert.trim();
+  if (!trimmed) return false;
+  // Sammenlign på dato-niveau (YYYY-MM-DD) for at matche SQL's CURRENT_DATE-check.
+  const today = new Date().toISOString().slice(0, 10);
+  return trimmed.slice(0, 10) <= today;
 }

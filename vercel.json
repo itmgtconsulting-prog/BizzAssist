@@ -1,20 +1,8 @@
 {
   "crons": [
     {
-      "path": "/api/cron/generate-sitemap?phase=companies",
-      "schedule": "23 * * * *"
-    },
-    {
-      "path": "/api/cron/generate-sitemap?phase=properties",
-      "schedule": "30 * * * *"
-    },
-    {
-      "path": "/api/cron/generate-sitemap?phase=vp-properties",
-      "schedule": "51 * * * *"
-    },
-    {
-      "path": "/api/cron/generate-sitemap?phase=render-xml",
-      "schedule": "10 * * * *"
+      "path": "/api/cron/generate-sitemap?phase=cycle",
+      "schedule": "*/15 * * * *"
     },
     {
       "path": "/api/cron/poll-properties",
@@ -165,16 +153,8 @@
       "schedule": "45 3 * * *"
     },
     {
-      "path": "/api/cron/sync-ejf-ejerskifte",
+      "path": "/api/cron/sync-ejf-all",
       "schedule": "0 5 * * *"
-    },
-    {
-      "path": "/api/cron/sync-ejf-handelsoplysninger",
-      "schedule": "15 5 * * *"
-    },
-    {
-      "path": "/api/cron/sync-ejf-administrator",
-      "schedule": "30 5 * * *"
     }
   ]
 }

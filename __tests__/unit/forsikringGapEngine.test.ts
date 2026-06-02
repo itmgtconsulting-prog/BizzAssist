@@ -19,6 +19,7 @@ import {
   runPortfolioChecks,
 } from '@/app/lib/forsikring/gapEngine';
 import type { PortfolioCheckInput } from '@/app/lib/forsikring/gapEngine';
+import { gapScope } from '@/app/lib/forsikring/types';
 import type {
   BbrPropertyFacts,
   ForsikringCoverage,
@@ -225,6 +226,41 @@ describe('runGapEngine — manglende dækninger', () => {
     const gaps = runGapEngine(makeInput({ coverages }));
     expect(gaps.find((g) => g.check_id === 'GAP-013')).toBeDefined();
     expect(gaps.find((g) => g.check_id === 'GAP-014')).toBeDefined();
+  });
+
+  // BIZZ-1933: En police parset fra et resumé-/oversigtsdokument (fx mægler-
+  // forsikringsoversigt som "RTM Forsikringsoversigt.pdf") har INGEN parsede
+  // dækninger. Gap-engine må ikke flage hver bygningsdækning som "manglende" —
+  // manglende dækningsdata betyder ikke at dækningen mangler. Tidligere gav det
+  // 7 falske "Manglende dækning"-gaps pr. ejendom matchet til en resumé-police.
+  it('BIZZ-1933: flagger INGEN manglende-dækning når policen ingen parsede dækninger har', () => {
+    const gaps = runGapEngine(
+      makeInput({
+        coverages: [],
+        asset: { type: 'ejendom', vaerdiDkk: 2_000_000, matchScore: 70 },
+      })
+    );
+    const daekningGaps = gaps.filter((g) => g.category === 'daekning');
+    expect(daekningGaps).toHaveLength(0);
+    for (const id of [
+      'GAP-010',
+      'GAP-011',
+      'GAP-012',
+      'GAP-013',
+      'GAP-014',
+      'GAP-015',
+      'GAP-016',
+    ]) {
+      expect(gaps.find((g) => g.check_id === id)).toBeUndefined();
+    }
+  });
+
+  // BIZZ-1933: Modsat — en police MED dækningsdata skal stadig flage de
+  // dækninger der faktisk mangler (sikrer at guarden ikke slår alle checks fra).
+  it('BIZZ-1933: flager stadig manglende dækning når policen har delvise dækninger', () => {
+    const coverages = [makeCoverage('brand_el'), makeCoverage('bygningskasko')];
+    const gaps = runGapEngine(makeInput({ coverages }));
+    expect(gaps.find((g) => g.check_id === 'GAP-010')).toBeDefined();
   });
 });
 
@@ -978,6 +1014,109 @@ describe('runPortfolioChecks — GAP-067: Branchekrav-aggregat', () => {
     );
     expect(gaps.find((g) => g.check_id === 'GAP-067')).toBeUndefined();
   });
+
+  // BIZZ-1939: Topdanmark/If dækker grundejeransvar via Erhvervsansvar — så et
+  // Erhvervsansvar på en Topdanmark-police skal opfylde hus_grundejer_ansvar-kravet.
+  it('Topdanmark Erhvervsansvar opfylder hus_grundejer_ansvar-kravet (BIZZ-1939)', () => {
+    const pol = makePolicy({
+      insurer_name: 'Topdanmark - en del af If Skadeforsikring',
+      business_activity: 'Udlejning af erhvervsejendomme',
+    });
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    // Ingen eksplicit hus_grundejer_ansvar-linje — kun Erhvervsansvar.
+    coveragesByPolicy.set(pol.id, [
+      makeCoverage('bygningskasko'),
+      makeCoverage('erhvervsansvar'),
+      makeCoverage('huslejetab'),
+      makeCoverage('driftstab'),
+    ]);
+
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [pol],
+        coveragesByPolicy,
+        branche: {
+          hovedbranche: '681020',
+          hovedbranche_tekst: 'Udlejning af erhvervsejendomme',
+          bibrancher: [],
+        },
+      })
+    );
+    // Alle krav dækket (hus_grundejer_ansvar via alias) → intet GAP-067.
+    expect(gaps.find((g) => g.check_id === 'GAP-067')).toBeUndefined();
+  });
+
+  it('Alm. Brand Erhvervsansvar opfylder IKKE hus_grundejer_ansvar (intet alias)', () => {
+    const pol = makePolicy({
+      insurer_name: 'Alm. Brand Forsikring A/S',
+      business_activity: 'Udlejning af erhvervsejendomme',
+    });
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    coveragesByPolicy.set(pol.id, [
+      makeCoverage('bygningskasko'),
+      makeCoverage('erhvervsansvar'),
+      makeCoverage('huslejetab'),
+      makeCoverage('driftstab'),
+    ]);
+
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [pol],
+        coveragesByPolicy,
+        branche: {
+          hovedbranche: '681020',
+          hovedbranche_tekst: 'Udlejning af erhvervsejendomme',
+          bibrancher: [],
+        },
+      })
+    );
+    const gap = gaps.find((g) => g.check_id === 'GAP-067');
+    expect(gap).toBeDefined();
+    const manglende = (gap?.source_data as { manglende_krav?: string[] }).manglende_krav ?? [];
+    // Kun grundejeransvar mangler — Alm. Brand bruger en separat linje for det.
+    expect(manglende).toContain('hus_grundejer_ansvar');
+    expect(manglende).not.toContain('erhvervsansvar');
+    expect(manglende).not.toContain('huslejetab');
+    expect(manglende).not.toContain('driftstab');
+  });
+});
+
+describe('runGapEngine — GAP-STD-BASELINE coverage-alias (BIZZ-1939)', () => {
+  const stdBetingelser = [
+    {
+      titel: 'DF20903-2 Ansvarsforsikring',
+      selskab: 'Topdanmark',
+      krav: [
+        {
+          omraade: 'hus_grundejer_ansvar',
+          beskrivelse: 'Hus- og grundejeransvar',
+          paakraevet: true,
+        },
+      ],
+    },
+  ];
+
+  it('Topdanmark Erhvervsansvar dækker standard-vilkår-krav om hus_grundejer_ansvar', () => {
+    const gaps = runGapEngine(
+      makeInput({
+        policy: makePolicy({ insurer_name: 'Topdanmark - en del af If Skadeforsikring' }),
+        coverages: [makeCoverage('erhvervsansvar')],
+        standardBetingelser: stdBetingelser,
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-STD-BASELINE')).toBeUndefined();
+  });
+
+  it('Alm. Brand Erhvervsansvar opfylder IKKE standard-vilkår-krav om hus_grundejer_ansvar', () => {
+    const gaps = runGapEngine(
+      makeInput({
+        policy: makePolicy({ insurer_name: 'Alm. Brand Forsikring A/S' }),
+        coverages: [makeCoverage('erhvervsansvar')],
+        standardBetingelser: stdBetingelser,
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-STD-BASELINE')).toBeDefined();
+  });
 });
 
 describe('runPortfolioChecks — GAP-066: Lav præmie (deaktiveret)', () => {
@@ -997,5 +1136,133 @@ describe('runPortfolioChecks — GAP-066: Lav præmie (deaktiveret)', () => {
       })
     );
     expect(gaps.find((g) => g.check_id === 'GAP-066')).toBeUndefined();
+  });
+});
+
+describe('runPortfolioChecks — GAP-070: Dobbelt-forsikring (BIZZ-1940)', () => {
+  it('flagger IKKE når samme police-nummer optræder som flere rows på samme adresse', () => {
+    // Parser splitter én polices sektioner (Ansvar/Ejendom/Skur) i separate
+    // rows med samme policy_number — det er ikke dobbelt-forsikring.
+    const adr = 'Stjernegade 17, 3000 Helsingør';
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [
+          makePolicy({ id: 'pol-a', policy_number: '9417319074', property_address: adr }),
+          makePolicy({ id: 'pol-b', policy_number: '9417319074', property_address: adr }),
+          makePolicy({ id: 'pol-c', policy_number: '9417319074', property_address: adr }),
+        ],
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-070')).toBeUndefined();
+  });
+
+  it('flagger reelt dobbelt-forsikring når 2 FORSKELLIGE policer dækker samme adresse', () => {
+    const adr = 'Stjernegade 17, 3000 Helsingør';
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [
+          makePolicy({ id: 'pol-a', policy_number: '9417319074', property_address: adr }),
+          makePolicy({ id: 'pol-b', policy_number: '50143392', property_address: adr }),
+        ],
+      })
+    );
+    const gap = gaps.find((g) => g.check_id === 'GAP-070');
+    expect(gap).toBeDefined();
+  });
+});
+
+describe('runPortfolioChecks — GAP-071: Dæknings-overlap (BIZZ-1940)', () => {
+  it('flagger IKKE overlap når samme police gentager samme coverage_code (én polices sektioner)', () => {
+    // Reproducerer Stjernegade 17A: ÉN police (9417319074) hvor brand_el
+    // optræder 3x fordi koden findes i flere sektioner — distinct policenumre = 1.
+    const adr = 'Stjernegade 17, 3000 Helsingør';
+    const pol = makePolicy({ id: 'pol-a', policy_number: '9417319074', property_address: adr });
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    coveragesByPolicy.set(pol.id, [
+      makeCoverage('brand_el'),
+      makeCoverage('brand_el'),
+      makeCoverage('brand_el'),
+      makeCoverage('haerverk'),
+      makeCoverage('haerverk'),
+    ]);
+    const gaps = runPortfolioChecks(makePortfolioInput({ policer: [pol], coveragesByPolicy }));
+    expect(gaps.find((g) => g.check_id === 'GAP-071')).toBeUndefined();
+  });
+
+  it('flagger overlap når 2 FORSKELLIGE policer dækker samme coverage på samme adresse', () => {
+    const adr = 'Stjernegade 17, 3000 Helsingør';
+    const polA = makePolicy({ id: 'pol-a', policy_number: '9417319074', property_address: adr });
+    const polB = makePolicy({ id: 'pol-b', policy_number: '50143392', property_address: adr });
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    coveragesByPolicy.set(polA.id, [makeCoverage('brand_el')]);
+    coveragesByPolicy.set(polB.id, [makeCoverage('brand_el')]);
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({ policer: [polA, polB], coveragesByPolicy })
+    );
+    const gap = gaps.find((g) => g.check_id === 'GAP-071');
+    expect(gap).toBeDefined();
+    // De rapporterede policer skal være de 2 distinkte numre (ikke duplikater)
+    const overlaps = (gap?.source_data as { overlaps?: Array<{ policer: string[] }> })?.overlaps;
+    expect(overlaps?.[0]?.policer).toEqual(['9417319074', '50143392']);
+  });
+});
+
+// ─── BIZZ-1941: gap-scope hierarki ────────────────────────────────
+
+describe('gapScope — hierarki-niveau pr. check_id', () => {
+  it('mapper forsikringsejer-niveau checks til owner', () => {
+    for (const id of [
+      'GAP-060',
+      'GAP-061',
+      'GAP-063',
+      'GAP-064',
+      'GAP-065',
+      'GAP-067',
+      'GAP-103',
+    ]) {
+      expect(gapScope(id)).toBe('owner');
+    }
+  });
+
+  it('mapper virksomheds-niveau checks til company', () => {
+    for (const id of [
+      'GAP-050',
+      'GAP-051',
+      'GAP-052',
+      'GAP-053',
+      'GAP-062',
+      'GAP-066',
+      'GAP-070',
+      'GAP-071',
+      'GAP-STD-BASELINE',
+    ]) {
+      expect(gapScope(id)).toBe('company');
+    }
+  });
+
+  it('defaulter ejendomsspecifikke + ukendte checks til property', () => {
+    for (const id of [
+      'GAP-001',
+      'GAP-004',
+      'GAP-016',
+      'GAP-020',
+      'GAP-030',
+      'GAP-040',
+      'GAP-999',
+    ]) {
+      expect(gapScope(id)).toBe('property');
+    }
+  });
+
+  it('stempler scope på gaps fra runPortfolioChecks', () => {
+    const pol = makePolicy({ policyholder_cvr: '12345678' });
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    coveragesByPolicy.set(pol.id, []);
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({ policer: [pol], coveragesByPolicy, virksomhedsform: 'A/S' })
+    );
+    for (const g of gaps) {
+      expect(g.scope).toBe(gapScope(g.check_id));
+    }
   });
 });

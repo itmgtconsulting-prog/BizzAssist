@@ -25,7 +25,7 @@ export default function TabLoadingSpinner({
       <div className="h-0.5 w-full bg-slate-700/30 rounded-full overflow-hidden">
         <div className="h-full bg-blue-500 rounded-full animate-[progress_1.5s_ease-in-out_infinite]" />
       </div>
-      {label && <p className="text-slate-500 text-xs text-center mt-3">{label}</p>}
+      {label && <p className="text-slate-400 text-xs text-center mt-3">{label}</p>}
     </div>
   );
 }

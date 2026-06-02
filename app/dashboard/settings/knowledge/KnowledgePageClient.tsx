@@ -211,7 +211,7 @@ function AddModal({ onClose, onCreated }: AddModalProps) {
               placeholder="F.eks. Vores investeringsstrategi"
               className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2.5 text-white text-sm placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
             />
-            <p className="text-slate-500 text-xs mt-1 text-right">
+            <p className="text-slate-400 text-xs mt-1 text-right">
               {title.length} / {MAX_TITLE_CHARS}
             </p>
           </div>
@@ -238,7 +238,7 @@ function AddModal({ onClose, onCreated }: AddModalProps) {
                   ? 'text-red-400'
                   : contentNearLimit
                     ? 'text-amber-400'
-                    : 'text-slate-500'
+                    : 'text-slate-400'
               }`}
             >
               {content.length.toLocaleString('da-DK')} / {MAX_CONTENT_CHARS.toLocaleString('da-DK')}{' '}
@@ -552,10 +552,10 @@ export default function KnowledgePageClient() {
         {!loading && !fetchError && items.length === 0 && (
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <div className="w-12 h-12 rounded-full bg-slate-800 flex items-center justify-center mb-4">
-              <BookOpen size={20} className="text-slate-500" />
+              <BookOpen size={20} className="text-slate-400" />
             </div>
             <p className="text-slate-300 font-medium mb-1">Ingen viden tilføjet endnu</p>
-            <p className="text-slate-500 text-sm mb-5 max-w-xs">
+            <p className="text-slate-400 text-sm mb-5 max-w-xs">
               Klik på &quot;Tilføj viden&quot; for at give AI-assistenten organisationsspecifik
               kontekst.
             </p>
@@ -595,7 +595,7 @@ export default function KnowledgePageClient() {
                       onClick={() => void handleDelete(item.id)}
                       disabled={deletingId === item.id}
                       aria-label={`Slet "${item.title}"`}
-                      className="shrink-0 text-slate-500 hover:text-red-400 transition-colors p-1 rounded opacity-0 group-hover:opacity-100 focus:opacity-100"
+                      className="shrink-0 text-slate-400 hover:text-red-400 transition-colors p-1 rounded opacity-0 group-hover:opacity-100 focus:opacity-100"
                     >
                       {deletingId === item.id ? (
                         <Loader2 size={14} className="animate-spin" />
@@ -613,15 +613,15 @@ export default function KnowledgePageClient() {
 
                   {/* Metadata */}
                   <div className="flex items-center gap-3 mt-3">
-                    <span className="inline-flex items-center gap-1 text-xs text-slate-500">
+                    <span className="inline-flex items-center gap-1 text-xs text-slate-400">
                       <span className="w-1.5 h-1.5 rounded-full bg-slate-600 inline-block" />
                       {sourceTypeLabel(item.source_type)}
                     </span>
-                    <span className="inline-flex items-center gap-1 text-xs text-slate-500">
+                    <span className="inline-flex items-center gap-1 text-xs text-slate-400">
                       <Clock size={10} />
                       {formatDate(item.created_at)}
                     </span>
-                    <span className="text-xs text-slate-600">
+                    <span className="text-xs text-slate-400">
                       {item.content.length.toLocaleString('da-DK')} tegn
                     </span>
                   </div>

@@ -143,7 +143,7 @@ export default function DomainSettingsClient({ domainId }: { domainId: string })
         <h1 className="text-xl font-bold text-white">
           {da ? 'Indstillinger' : 'Settings'} — {data.name}
         </h1>
-        <p className="text-slate-500 text-sm mt-1">
+        <p className="text-slate-400 text-sm mt-1">
           {da
             ? 'Disse indstillinger gælder for hele dette domain'
             : 'These settings apply to this entire domain'}
@@ -194,7 +194,7 @@ export default function DomainSettingsClient({ domainId }: { domainId: string })
                 className="mt-1 w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-md text-white text-sm"
               />
             </label>
-            <div className="text-slate-500 text-xs">
+            <div className="text-slate-400 text-xs">
               {da ? 'Slug' : 'Slug'}: <code>{data.slug}</code> —{' '}
               {da ? 'kan ikke ændres' : 'cannot be changed'}
             </div>
@@ -237,7 +237,7 @@ export default function DomainSettingsClient({ domainId }: { domainId: string })
               {da ? 'Opbevaringsperiode' : 'Retention period'}: {retentionMonths}{' '}
               {da ? 'måneder' : 'months'}
             </div>
-            <p className="text-slate-500 text-xs">
+            <p className="text-slate-400 text-xs">
               {da
                 ? 'Sættes af Super-admin. Kontakt support for ændring.'
                 : 'Set by Super-admin. Contact support to change.'}

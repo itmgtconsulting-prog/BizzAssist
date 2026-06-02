@@ -68,7 +68,7 @@ function CompanyNode({ data }: { data: RFNodeData }) {
           {data.label}
         </p>
         {data.sublabel && (
-          <p className={`text-[9px] truncate ${isMain ? 'text-blue-300/60' : 'text-slate-500'}`}>
+          <p className={`text-[9px] truncate ${isMain ? 'text-blue-300/60' : 'text-slate-400'}`}>
             {data.sublabel}
           </p>
         )}
@@ -211,7 +211,7 @@ export default function DiagramFlow({ graph, lang }: DiagramVariantProps) {
           <Building2 size={16} className="text-cyan-400" />
           React Flow (Interactive)
         </h2>
-        <span className="text-slate-500 text-[10px]">
+        <span className="text-slate-400 text-[10px]">
           {lang === 'da'
             ? 'Scroll for zoom · Træk for panorering · Flyt noder frit'
             : 'Scroll to zoom · Drag to pan · Move nodes freely'}

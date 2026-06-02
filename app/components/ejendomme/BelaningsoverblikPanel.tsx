@@ -102,7 +102,7 @@ export default function BelaningsoverblikPanel({
         <h3 className="text-white font-semibold text-sm">
           {da ? 'Belåningsoverblik' : 'Mortgage overview'}
         </h3>
-        <span className="text-xs text-slate-500">
+        <span className="text-xs text-slate-400">
           ({haeftelser.length} {da ? 'pantbreve' : 'mortgages'})
         </span>
       </div>
@@ -111,7 +111,7 @@ export default function BelaningsoverblikPanel({
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {/* Samlet belåning */}
         <div className="bg-slate-800/40 border border-slate-700/40 rounded-lg p-3">
-          <p className="text-slate-500 text-[10px] uppercase">
+          <p className="text-slate-400 text-[10px] uppercase">
             {da ? 'Samlet belåning' : 'Total debt'}
           </p>
           <p className="text-white text-sm font-bold tabular-nums">
@@ -121,14 +121,14 @@ export default function BelaningsoverblikPanel({
 
         {/* Belåningsgrad */}
         <div className={`rounded-lg p-3 border ${belaningsBg}`}>
-          <p className="text-slate-500 text-[10px] uppercase">
+          <p className="text-slate-400 text-[10px] uppercase">
             {da ? 'Belåningsgrad' : 'LTV ratio'}
           </p>
           <p className={`text-sm font-bold tabular-nums ${belaningsFarve}`}>
             {belaningsgrad != null ? `${belaningsgrad}%` : '—'}
           </p>
           {belaningsgrad != null && (
-            <p className="text-slate-500 text-[10px] mt-0.5">
+            <p className="text-slate-400 text-[10px] mt-0.5">
               {da ? 'af ejendomsværdi' : 'of property value'}
             </p>
           )}
@@ -136,10 +136,10 @@ export default function BelaningsoverblikPanel({
 
         {/* Antal pantbreve + seneste dato */}
         <div className="bg-slate-800/40 border border-slate-700/40 rounded-lg p-3">
-          <p className="text-slate-500 text-[10px] uppercase">{da ? 'Pantbreve' : 'Mortgages'}</p>
+          <p className="text-slate-400 text-[10px] uppercase">{da ? 'Pantbreve' : 'Mortgages'}</p>
           <p className="text-white text-sm font-bold">{haeftelser.length}</p>
           {sortedByDate[0]?.dato && (
-            <p className="text-slate-500 text-[10px] mt-0.5">
+            <p className="text-slate-400 text-[10px] mt-0.5">
               {da ? 'Seneste:' : 'Latest:'}{' '}
               {new Date(sortedByDate[0].dato).toLocaleDateString(da ? 'da-DK' : 'en-GB', {
                 year: 'numeric',
@@ -151,12 +151,12 @@ export default function BelaningsoverblikPanel({
 
         {/* Gns. rente + profil */}
         <div className="bg-slate-800/40 border border-slate-700/40 rounded-lg p-3">
-          <p className="text-slate-500 text-[10px] uppercase">{da ? 'Gns. rente' : 'Avg. rate'}</p>
+          <p className="text-slate-400 text-[10px] uppercase">{da ? 'Gns. rente' : 'Avg. rate'}</p>
           <p className="text-white text-sm font-bold tabular-nums">
             {gnsRente != null ? `${gnsRente.toFixed(2)}%` : '—'}
           </p>
           {(antalFast > 0 || antalVariabel > 0) && (
-            <p className="text-slate-500 text-[10px] mt-0.5">
+            <p className="text-slate-400 text-[10px] mt-0.5">
               {antalFast > 0 && (
                 <span className="text-blue-400">
                   {antalFast} {da ? 'fast' : 'fixed'}
@@ -204,7 +204,7 @@ export default function BelaningsoverblikPanel({
       )}
 
       {/* Disclaimer */}
-      <p className="text-slate-600 text-[10px] leading-relaxed">
+      <p className="text-slate-400 text-[10px] leading-relaxed">
         {da
           ? 'Baseret på tinglyste pantebreve. Restgæld kan afvige fra faktisk saldo.'
           : 'Based on registered mortgages. Outstanding balance may differ from actual balance.'}

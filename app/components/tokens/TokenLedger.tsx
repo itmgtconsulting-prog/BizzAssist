@@ -93,11 +93,11 @@ export default function TokenLedger({ lang }: Props) {
       </h3>
 
       {loading && transactions.length === 0 ? (
-        <div className="text-slate-500 text-xs py-8 text-center">
+        <div className="text-slate-400 text-xs py-8 text-center">
           {da ? 'Henter transaktioner…' : 'Loading transactions…'}
         </div>
       ) : transactions.length === 0 ? (
-        <div className="text-slate-500 text-xs py-8 text-center">
+        <div className="text-slate-400 text-xs py-8 text-center">
           {da ? 'Ingen transaktioner endnu.' : 'No transactions yet.'}
         </div>
       ) : (
@@ -105,7 +105,7 @@ export default function TokenLedger({ lang }: Props) {
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
-                <tr className="text-slate-500 border-b border-slate-700/40">
+                <tr className="text-slate-400 border-b border-slate-700/40">
                   <th className="text-left py-1.5 px-2 font-medium">{da ? 'Dato' : 'Date'}</th>
                   <th className="text-left py-1.5 px-2 font-medium">{da ? 'Type' : 'Type'}</th>
                   <th className="text-left py-1.5 px-2 font-medium">
@@ -137,7 +137,7 @@ export default function TokenLedger({ lang }: Props) {
                     <td className="py-1.5 px-2 text-slate-300 max-w-[200px] truncate">
                       {txn.description ?? actionLabels[txn.action] ?? txn.action}
                       {txn.model && (
-                        <span className="ml-1 text-slate-600 text-[10px]">({txn.model})</span>
+                        <span className="ml-1 text-slate-400 text-[10px]">({txn.model})</span>
                       )}
                     </td>
                     <td
@@ -158,7 +158,7 @@ export default function TokenLedger({ lang }: Props) {
           {/* Pagination */}
           {total > limit && (
             <div className="flex items-center justify-between mt-3 pt-2 border-t border-slate-700/30">
-              <span className="text-[10px] text-slate-500">
+              <span className="text-[10px] text-slate-400">
                 {offset + 1}–{Math.min(offset + limit, total)} {da ? 'af' : 'of'} {total}
               </span>
               <div className="flex gap-1">

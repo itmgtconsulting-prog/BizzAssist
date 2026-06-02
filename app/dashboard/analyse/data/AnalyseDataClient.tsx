@@ -364,7 +364,7 @@ export default function AnalyseDataClient() {
       {/* ── Query input ── */}
       <form onSubmit={handleSubmit} className="flex gap-2">
         <div className="flex-1 relative">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
             value={query}
@@ -387,7 +387,7 @@ export default function AnalyseDataClient() {
       {/* BIZZ-1262: Data-tilgængelighed og foreslåede queries */}
       {!result && !loading && (
         <div className="space-y-3">
-          <p className="text-slate-500 text-xs">
+          <p className="text-slate-400 text-xs">
             Tilgængelig data: BBR ejendomsdata (2,5M ejendomme), CVR virksomheder (2,1M), EJF
             ejerskab (7,6M rækker) og virksomhedsregnskaber.
           </p>
@@ -429,7 +429,7 @@ export default function AnalyseDataClient() {
           {/* Summary */}
           <div className="bg-slate-800/40 border border-slate-700/30 rounded-lg p-4">
             <p className="text-slate-300 text-sm">{result.summary}</p>
-            <p className="text-slate-500 text-xs mt-1">
+            <p className="text-slate-400 text-xs mt-1">
               {result.rowCount.toLocaleString('da-DK')} rækker
             </p>
           </div>
@@ -475,7 +475,7 @@ export default function AnalyseDataClient() {
             <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 bg-slate-800 z-10">
-                  <tr className="text-left text-slate-500 text-xs uppercase tracking-wide border-b border-slate-700/40">
+                  <tr className="text-left text-slate-400 text-xs uppercase tracking-wide border-b border-slate-700/40">
                     {result.columns.map((col) => (
                       <th key={col.key} className="px-4 py-2.5">
                         {col.label}
@@ -504,14 +504,14 @@ export default function AnalyseDataClient() {
           <div className="flex items-center gap-4">
             <button
               onClick={() => setShowPivot(!showPivot)}
-              className={`flex items-center gap-2 text-xs transition-colors ${showPivot ? 'text-emerald-400' : 'text-slate-500 hover:text-slate-300'}`}
+              className={`flex items-center gap-2 text-xs transition-colors ${showPivot ? 'text-emerald-400' : 'text-slate-400 hover:text-slate-300'}`}
             >
               <LayoutGrid size={12} />
               {showPivot ? 'Skjul Pivot' : 'Åbn i Pivot'}
             </button>
             <button
               onClick={() => setShowSql(!showSql)}
-              className="flex items-center gap-2 text-xs text-slate-500 hover:text-slate-300 transition-colors"
+              className="flex items-center gap-2 text-xs text-slate-400 hover:text-slate-300 transition-colors"
             >
               {showSql ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
               <Code2 size={12} />

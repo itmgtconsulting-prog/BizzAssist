@@ -62,25 +62,25 @@ export default function PlandataSektion({ adresseId, lang }: Props) {
       <div className="grid grid-cols-2 gap-2 text-xs">
         {lp.detaljer?.anvendelse && (
           <div>
-            <span className="text-slate-500">{da ? 'Anvendelse' : 'Use'}</span>
+            <span className="text-slate-400">{da ? 'Anvendelse' : 'Use'}</span>
             <p className="text-slate-300">{lp.detaljer.anvendelse}</p>
           </div>
         )}
         {lp.detaljer?.bebygpct != null && (
           <div>
-            <span className="text-slate-500">{da ? 'Bebyggelsespct.' : 'Building pct.'}</span>
+            <span className="text-slate-400">{da ? 'Bebyggelsespct.' : 'Building pct.'}</span>
             <p className="text-slate-300">{lp.detaljer.bebygpct}%</p>
           </div>
         )}
         {lp.detaljer?.maxetager != null && (
           <div>
-            <span className="text-slate-500">{da ? 'Max etager' : 'Max floors'}</span>
+            <span className="text-slate-400">{da ? 'Max etager' : 'Max floors'}</span>
             <p className="text-slate-300">{lp.detaljer.maxetager}</p>
           </div>
         )}
         {lp.detaljer?.maxbygnhjd != null && (
           <div>
-            <span className="text-slate-500">{da ? 'Max højde' : 'Max height'}</span>
+            <span className="text-slate-400">{da ? 'Max højde' : 'Max height'}</span>
             <p className="text-slate-300">{lp.detaljer.maxbygnhjd} m</p>
           </div>
         )}

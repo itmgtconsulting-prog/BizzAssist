@@ -23,7 +23,7 @@ export default function Footer() {
                 Bizz<span className="text-blue-400">Assist</span>
               </span>
             </div>
-            <p className="text-slate-500 text-sm leading-relaxed">{footer.tagline}</p>
+            <p className="text-slate-400 text-sm leading-relaxed">{footer.tagline}</p>
           </div>
 
           {/* Product */}
@@ -63,7 +63,7 @@ export default function Footer() {
             <h4 className="text-white font-semibold mb-4">{footer.contact}</h4>
             <ul className="space-y-3 text-sm">
               <li>
-                <span className="text-slate-500 block text-xs mb-0.5">{footer.links.support}</span>
+                <span className="text-slate-400 block text-xs mb-0.5">{footer.links.support}</span>
                 <a
                   href={`mailto:${companyInfo.supportEmail}`}
                   className="hover:text-white transition-colors"
@@ -78,14 +78,14 @@ export default function Footer() {
         {/* Bottom bar */}
         <div className="border-t border-white/10 pt-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div className="flex flex-col gap-1">
-            <p className="text-slate-500 text-sm">{footer.copyright}</p>
-            <p className="text-slate-500 text-xs">
+            <p className="text-slate-400 text-sm">{footer.copyright}</p>
+            <p className="text-slate-400 text-xs">
               {footer.supplier.label}:{' '}
               <span className="text-slate-400">{footer.supplier.name}</span>
               {' · '}
-              <span className="text-slate-500">{footer.supplier.cvr}</span>
+              <span className="text-slate-400">{footer.supplier.cvr}</span>
               {' · '}
-              <span className="text-slate-500">{footer.supplier.address}</span>
+              <span className="text-slate-400">{footer.supplier.address}</span>
             </p>
           </div>
         </div>

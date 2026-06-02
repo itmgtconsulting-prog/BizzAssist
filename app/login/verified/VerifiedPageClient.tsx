@@ -66,11 +66,11 @@ export default function VerifiedPageClient() {
             <ArrowRight size={16} />
           </Link>
 
-          <p className="text-slate-600 text-xs mt-4">
+          <p className="text-slate-400 text-xs mt-4">
             Har du problemer med at logge ind?{' '}
             <a
               href={`mailto:${companyInfo.supportEmail}`}
-              className="text-slate-500 hover:text-slate-300 underline underline-offset-2 transition-colors"
+              className="text-slate-400 hover:text-slate-300 underline underline-offset-2 transition-colors"
             >
               Kontakt support
             </a>

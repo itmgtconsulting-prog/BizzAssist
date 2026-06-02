@@ -154,7 +154,7 @@ export default function EjendomDokumenterTab(props: Props) {
           <FileText size={15} className="text-slate-400" />
           <span className="text-sm font-semibold text-slate-200">{t.documents}</span>
           {(plandataLoader || energiLoader || jordLoader) && (
-            <span className="ml-2 text-xs text-slate-500 animate-pulse">{t.loading}</span>
+            <span className="ml-2 text-xs text-slate-400 animate-pulse">{t.loading}</span>
           )}
           {/* Download-knap — højrestillet */}
           <button
@@ -269,16 +269,16 @@ export default function EjendomDokumenterTab(props: Props) {
               {/* Kolonneheader — identisk med plan-tabellen */}
               <div className="min-w-[500px] grid grid-cols-[28px_72px_1fr_120px_80px] gap-x-3 px-4 py-1.5 border-b border-slate-700/20">
                 <span />
-                <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">
                   {da ? 'År' : 'Year'}
                 </span>
-                <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">
                   {da ? 'Dokument' : 'Document'}
                 </span>
-                <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">
                   Status
                 </span>
-                <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">
                   {da ? 'Dok.' : 'Doc.'}
                 </span>
               </div>
@@ -311,7 +311,7 @@ export default function EjendomDokumenterTab(props: Props) {
                       PDF
                     </a>
                   ) : (
-                    <span className="text-slate-600 text-xs">—</span>
+                    <span className="text-slate-400 text-xs">—</span>
                   )}
                   {bfeNummer && (
                     <label
@@ -360,7 +360,7 @@ export default function EjendomDokumenterTab(props: Props) {
                 >
                   <ChevronRight
                     size={14}
-                    className={`text-slate-500 mt-0.5 transition-transform flex-shrink-0 ${!jordItem ? 'opacity-0' : ''} ${jordErUdvidet ? 'rotate-90' : ''}`}
+                    className={`text-slate-400 mt-0.5 transition-transform flex-shrink-0 ${!jordItem ? 'opacity-0' : ''} ${jordErUdvidet ? 'rotate-90' : ''}`}
                   />
                   <span className="text-sm text-slate-300 tabular-nums">
                     {jordItem?.modifiedDate ? new Date(jordItem.modifiedDate).getFullYear() : '—'}
@@ -368,7 +368,7 @@ export default function EjendomDokumenterTab(props: Props) {
                   <div>
                     <span className="text-sm text-slate-200">{t.soilContamination}</span>
                     {jordLoader && (
-                      <p className="text-xs text-slate-500 mt-0.5 animate-pulse">{t.loading}</p>
+                      <p className="text-xs text-slate-400 mt-0.5 animate-pulse">{t.loading}</p>
                     )}
                   </div>
                   {/* Status — alignet med plan-status kolonnen */}
@@ -405,7 +405,7 @@ export default function EjendomDokumenterTab(props: Props) {
                         PDF
                       </a>
                     ) : (
-                      <span className="text-slate-600 text-xs">—</span>
+                      <span className="text-slate-400 text-xs">—</span>
                     )}
                     {rapportUrl && (
                       <label
@@ -444,7 +444,7 @@ export default function EjendomDokumenterTab(props: Props) {
                     <div className="divide-y divide-slate-700/20">
                       {jordDetaljer.map((r) => (
                         <div key={r.label} className="grid grid-cols-[180px_1fr] px-3 py-1 text-xs">
-                          <span className="text-slate-500">{r.label}</span>
+                          <span className="text-slate-400">{r.label}</span>
                           <span className="text-slate-300">{r.value}</span>
                         </div>
                       ))}
@@ -479,7 +479,7 @@ export default function EjendomDokumenterTab(props: Props) {
                           PDF
                         </a>
                       ) : (
-                        <span className="text-slate-600 text-xs">—</span>
+                        <span className="text-slate-400 text-xs">—</span>
                       )}
                       {downloadUrl && (
                         <label className="flex items-center cursor-pointer flex-shrink-0">
@@ -518,7 +518,7 @@ export default function EjendomDokumenterTab(props: Props) {
                   <span className="text-sm text-slate-300 tabular-nums">—</span>
                   <div>
                     <span className="text-sm text-slate-200">{t.slotsOgKultur}</span>
-                    <p className="text-xs text-slate-500 mt-0.5">{t.protectedBuilding}</p>
+                    <p className="text-xs text-slate-400 mt-0.5">{t.protectedBuilding}</p>
                   </div>
                   <span className="inline-flex items-center self-start px-2 py-0.5 rounded text-xs font-medium bg-amber-500/15 text-amber-400">
                     Fredet
@@ -541,7 +541,7 @@ export default function EjendomDokumenterTab(props: Props) {
         {/* ── Planer subsection ── */}
         <div className="border-b border-slate-700/30">
           <div className="px-4 py-2 flex items-center gap-2">
-            <MapIcon size={13} className="text-slate-500" />
+            <MapIcon size={13} className="text-slate-400" />
             <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
               Planer
             </span>
@@ -550,7 +550,7 @@ export default function EjendomDokumenterTab(props: Props) {
           {plandataFejl && <div className="px-4 py-2 text-xs text-red-400">{plandataFejl}</div>}
 
           {!plandataLoader && !plandataFejl && (!plandata || plandata.length === 0) && (
-            <div className="px-4 py-3 text-center text-slate-500 text-xs">{t.noPlansFound}</div>
+            <div className="px-4 py-3 text-center text-slate-400 text-xs">{t.noPlansFound}</div>
           )}
 
           {plandata && plandata.length > 0 && (
@@ -558,16 +558,16 @@ export default function EjendomDokumenterTab(props: Props) {
               {/* Header */}
               <div className="min-w-[500px] grid grid-cols-[28px_72px_1fr_120px_80px] gap-x-3 px-4 py-2 border-b border-slate-700/20">
                 <span />
-                <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">
                   {da ? 'År' : 'Year'}
                 </span>
-                <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">
                   {da ? 'Type' : 'Type'}
                 </span>
-                <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">
                   Status
                 </span>
-                <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">
                   {da ? 'Dok.' : 'Doc.'}
                 </span>
               </div>
@@ -637,7 +637,7 @@ export default function EjendomDokumenterTab(props: Props) {
                     >
                       <ChevronRight
                         size={14}
-                        className={`text-slate-500 mt-0.5 transition-transform flex-shrink-0 ${erUdvidet ? 'rotate-90' : ''}`}
+                        className={`text-slate-400 mt-0.5 transition-transform flex-shrink-0 ${erUdvidet ? 'rotate-90' : ''}`}
                       />
                       <span className="text-sm text-slate-300 tabular-nums">{plan.aar ?? '—'}</span>
                       <div>
@@ -645,7 +645,7 @@ export default function EjendomDokumenterTab(props: Props) {
                           {plan.type} ({plan.nummer})
                         </span>
                         {plan.navn && (
-                          <p className="text-xs text-slate-500 mt-0.5 leading-tight">{plan.navn}</p>
+                          <p className="text-xs text-slate-400 mt-0.5 leading-tight">{plan.navn}</p>
                         )}
                       </div>
                       <span
@@ -666,7 +666,7 @@ export default function EjendomDokumenterTab(props: Props) {
                             PDF
                           </a>
                         ) : (
-                          <span className="text-slate-600 text-xs">—</span>
+                          <span className="text-slate-400 text-xs">—</span>
                         )}
                         {plan.doklink && (
                           <label
@@ -715,7 +715,7 @@ export default function EjendomDokumenterTab(props: Props) {
                             </div>
                           ))
                         ) : (
-                          <p className="px-3 py-1.5 text-xs text-slate-500">
+                          <p className="px-3 py-1.5 text-xs text-slate-400">
                             {t.noAdditionalDetails}
                           </p>
                         )}
@@ -736,7 +736,7 @@ export default function EjendomDokumenterTab(props: Props) {
             end de øvrige dokument-sektioner. */}
         <div className="border-t border-slate-700/30">
           <div className="px-4 py-2 flex items-center gap-2">
-            <Zap size={13} className="text-slate-500" />
+            <Zap size={13} className="text-slate-400" />
             <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
               {t.energyReports}
             </span>
@@ -745,7 +745,7 @@ export default function EjendomDokumenterTab(props: Props) {
           {/* BIZZ-332: For ejerlejligheder vises energimærker fra moderejendommen,
               da mærker registreres på bygningsniveau — ikke på den individuelle lejlighed. */}
           {!!dawaAdresse?.etage && !!bbrData?.moderBfe && (
-            <div className="px-4 pb-2 text-xs text-slate-500 italic">
+            <div className="px-4 pb-2 text-xs text-slate-400 italic">
               {da
                 ? `Energimærker hentes fra hovedejendommen (BFE ${bbrData.moderBfe}) — mærker registreres på bygningsniveau.`
                 : `Energy labels are fetched from the parent property (BFE ${bbrData.moderBfe}) — labels are registered at building level.`}
@@ -766,7 +766,7 @@ export default function EjendomDokumenterTab(props: Props) {
             !energiFejl &&
             !energiManglerAdgang &&
             (!energimaerker || energimaerker.length === 0) && (
-              <div className="px-4 py-3 text-center text-slate-500 text-xs">{t.noEnergyLabels}</div>
+              <div className="px-4 py-3 text-center text-slate-400 text-xs">{t.noEnergyLabels}</div>
             )}
 
           {energimaerker && energimaerker.length > 0 && (
@@ -781,25 +781,25 @@ export default function EjendomDokumenterTab(props: Props) {
                   dokument-sektioner. */}
               <div className="min-w-[760px] grid grid-cols-[28px_72px_1fr_60px_100px_100px_120px_80px] gap-x-3 px-4 py-1.5 border-b border-slate-700/20">
                 <span />
-                <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">
                   {da ? 'År' : 'Year'}
                 </span>
-                <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">
                   {da ? 'Adresse' : 'Address'}
                 </span>
-                <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">
                   Klasse
                 </span>
-                <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">
                   {da ? 'Gyldig fra' : 'Valid from'}
                 </span>
-                <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">
                   {da ? 'Gyldig til' : 'Valid until'}
                 </span>
-                <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">
                   Status
                 </span>
-                <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">
                   {da ? 'Rapport' : 'Report'}
                 </span>
               </div>
@@ -845,7 +845,7 @@ export default function EjendomDokumenterTab(props: Props) {
                     <div>
                       <p className="text-sm text-slate-200">{m.adresse ?? '—'}</p>
                       {m.bygninger.length > 0 && (
-                        <p className="text-xs text-slate-500 mt-0.5">
+                        <p className="text-xs text-slate-400 mt-0.5">
                           {m.bygninger.length === 1
                             ? `${t.buildingLabel} ${m.bygninger[0].bygningsnr}`
                             : `${m.bygninger.length} ${t.buildingsLabel}`}
@@ -891,7 +891,7 @@ export default function EjendomDokumenterTab(props: Props) {
                           PDF
                         </a>
                       ) : (
-                        <span className="text-xs text-slate-600">—</span>
+                        <span className="text-xs text-slate-400">—</span>
                       )}
                       {m.pdfUrl && (
                         <label

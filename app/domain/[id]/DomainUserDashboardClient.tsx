@@ -309,7 +309,7 @@ export default function DomainUserDashboardClient({ domainId }: { domainId: stri
 
       {topTab === 'overview' && (
         <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-8 text-center">
-          <LayoutDashboard size={32} className="mx-auto text-slate-600 mb-3" />
+          <LayoutDashboard size={32} className="mx-auto text-slate-400 mb-3" />
           <p className="text-slate-400 text-sm">
             {da
               ? 'Overblik — domain-stats og seneste aktivitet kommer i iter 2.'
@@ -327,7 +327,7 @@ export default function DomainUserDashboardClient({ domainId }: { domainId: stri
             <div className="relative flex-1 min-w-[200px]">
               <Search
                 size={14}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
               />
               <input
                 type="text"

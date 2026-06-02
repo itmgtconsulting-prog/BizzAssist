@@ -66,11 +66,11 @@ export default function OmraadeProfilSektion({ kommunekode, lang }: Props) {
       <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
         {data.befolkning != null && (
           <>
-            <span className="text-slate-500 text-xs flex items-center gap-1">
+            <span className="text-slate-400 text-xs flex items-center gap-1">
               <Users size={10} className="text-blue-400" />
               {da ? 'Befolkning' : 'Population'}
               {data.befolkningKvartal && (
-                <span className="text-slate-600 text-[9px]">({data.befolkningKvartal})</span>
+                <span className="text-slate-400 text-[9px]">({data.befolkningKvartal})</span>
               )}
             </span>
             <span className="text-white text-xs font-medium text-right">
@@ -80,11 +80,11 @@ export default function OmraadeProfilSektion({ kommunekode, lang }: Props) {
         )}
         {data.gnsIndkomst != null && (
           <>
-            <span className="text-slate-500 text-xs flex items-center gap-1">
+            <span className="text-slate-400 text-xs flex items-center gap-1">
               <Wallet size={10} className="text-emerald-400" />
               {da ? 'Gns. indkomst' : 'Avg. income'}
               {data.indkomstAar && (
-                <span className="text-slate-600 text-[9px]">({data.indkomstAar})</span>
+                <span className="text-slate-400 text-[9px]">({data.indkomstAar})</span>
               )}
             </span>
             <span className="text-white text-xs font-medium text-right">
@@ -94,11 +94,11 @@ export default function OmraadeProfilSektion({ kommunekode, lang }: Props) {
         )}
         {data.antalBoliger != null && (
           <>
-            <span className="text-slate-500 text-xs flex items-center gap-1">
+            <span className="text-slate-400 text-xs flex items-center gap-1">
               <Home size={10} className="text-amber-400" />
               {da ? 'Boliger' : 'Dwellings'}
               {data.boligAar && (
-                <span className="text-slate-600 text-[9px]">({data.boligAar})</span>
+                <span className="text-slate-400 text-[9px]">({data.boligAar})</span>
               )}
             </span>
             <span className="text-white text-xs font-medium text-right">
@@ -107,7 +107,7 @@ export default function OmraadeProfilSektion({ kommunekode, lang }: Props) {
           </>
         )}
       </div>
-      <p className="text-slate-600 text-[9px] mt-2 text-right">
+      <p className="text-slate-400 text-[9px] mt-2 text-right">
         {da ? 'Kilde: Danmarks Statistik' : 'Source: Statistics Denmark'}
       </p>
     </section>

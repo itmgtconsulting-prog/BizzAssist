@@ -23,7 +23,7 @@ const PerspectiveViewerLazy = dynamic(() => import('./PerspectiveViewer'), {
   ssr: false,
   loading: () => (
     <div className="flex items-center justify-center h-[400px] rounded-xl border border-white/8 bg-white/3">
-      <div className="flex items-center gap-2 text-sm text-slate-500">
+      <div className="flex items-center gap-2 text-sm text-slate-400">
         <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
         <span>Indlæser pivot-komponent…</span>
       </div>
@@ -62,16 +62,126 @@ interface DataPivotTabProps {
  * Simulates a typical portfolio overview with Danish property metrics.
  */
 const DEMO_PORTEFOLJE: DataRow[] = [
-  { BFE: 1234567, Adresse: 'Vestergade 12, 8000 Aarhus C', Kommune: 'Aarhus', Postnummer: 8000, Areal_m2: 245, Vurdering_DKK: 3_200_000, Grundvaerdi_DKK: 1_100_000, Opfoerelsesaar: 1923, Energimaerke: 'C', Type: 'Ejerlejlighed' },
-  { BFE: 2345678, Adresse: 'Nørregade 5, 1165 København K', Kommune: 'København', Postnummer: 1165, Areal_m2: 120, Vurdering_DKK: 4_800_000, Grundvaerdi_DKK: 2_200_000, Opfoerelsesaar: 1890, Energimaerke: 'D', Type: 'Ejerlejlighed' },
-  { BFE: 3456789, Adresse: 'Havnegade 22, 5000 Odense C', Kommune: 'Odense', Postnummer: 5000, Areal_m2: 380, Vurdering_DKK: 5_500_000, Grundvaerdi_DKK: 1_800_000, Opfoerelsesaar: 1965, Energimaerke: 'B', Type: 'Bygning' },
-  { BFE: 4567890, Adresse: 'Algade 8, 4000 Roskilde', Kommune: 'Roskilde', Postnummer: 4000, Areal_m2: 195, Vurdering_DKK: 2_900_000, Grundvaerdi_DKK: 950_000, Opfoerelsesaar: 1955, Energimaerke: 'C', Type: 'Ejerlejlighed' },
-  { BFE: 5678901, Adresse: 'Søndergade 14, 7100 Vejle', Kommune: 'Vejle', Postnummer: 7100, Areal_m2: 310, Vurdering_DKK: 4_100_000, Grundvaerdi_DKK: 1_400_000, Opfoerelsesaar: 1978, Energimaerke: 'C', Type: 'Bygning' },
-  { BFE: 6789012, Adresse: 'Torvet 3, 6000 Kolding', Kommune: 'Kolding', Postnummer: 6000, Areal_m2: 165, Vurdering_DKK: 2_100_000, Grundvaerdi_DKK: 780_000, Opfoerelsesaar: 1942, Energimaerke: 'E', Type: 'Ejerlejlighed' },
-  { BFE: 7890123, Adresse: 'Strandvejen 45, 2900 Hellerup', Kommune: 'Gentofte', Postnummer: 2900, Areal_m2: 420, Vurdering_DKK: 12_500_000, Grundvaerdi_DKK: 5_800_000, Opfoerelsesaar: 1910, Energimaerke: 'B', Type: 'SFE' },
-  { BFE: 8901234, Adresse: 'Jernbanegade 7, 9000 Aalborg', Kommune: 'Aalborg', Postnummer: 9000, Areal_m2: 275, Vurdering_DKK: 3_600_000, Grundvaerdi_DKK: 1_250_000, Opfoerelsesaar: 1988, Energimaerke: 'B', Type: 'Ejerlejlighed' },
-  { BFE: 9012345, Adresse: 'Brogade 19, 4600 Køge', Kommune: 'Køge', Postnummer: 4600, Areal_m2: 210, Vurdering_DKK: 2_750_000, Grundvaerdi_DKK: 900_000, Opfoerelsesaar: 1970, Energimaerke: 'D', Type: 'Ejerlejlighed' },
-  { BFE: 1023456, Adresse: 'Havnevej 33, 3000 Helsingør', Kommune: 'Helsingør', Postnummer: 3000, Areal_m2: 340, Vurdering_DKK: 6_200_000, Grundvaerdi_DKK: 2_400_000, Opfoerelsesaar: 1935, Energimaerke: 'C', Type: 'Bygning' },
+  {
+    BFE: 1234567,
+    Adresse: 'Vestergade 12, 8000 Aarhus C',
+    Kommune: 'Aarhus',
+    Postnummer: 8000,
+    Areal_m2: 245,
+    Vurdering_DKK: 3_200_000,
+    Grundvaerdi_DKK: 1_100_000,
+    Opfoerelsesaar: 1923,
+    Energimaerke: 'C',
+    Type: 'Ejerlejlighed',
+  },
+  {
+    BFE: 2345678,
+    Adresse: 'Nørregade 5, 1165 København K',
+    Kommune: 'København',
+    Postnummer: 1165,
+    Areal_m2: 120,
+    Vurdering_DKK: 4_800_000,
+    Grundvaerdi_DKK: 2_200_000,
+    Opfoerelsesaar: 1890,
+    Energimaerke: 'D',
+    Type: 'Ejerlejlighed',
+  },
+  {
+    BFE: 3456789,
+    Adresse: 'Havnegade 22, 5000 Odense C',
+    Kommune: 'Odense',
+    Postnummer: 5000,
+    Areal_m2: 380,
+    Vurdering_DKK: 5_500_000,
+    Grundvaerdi_DKK: 1_800_000,
+    Opfoerelsesaar: 1965,
+    Energimaerke: 'B',
+    Type: 'Bygning',
+  },
+  {
+    BFE: 4567890,
+    Adresse: 'Algade 8, 4000 Roskilde',
+    Kommune: 'Roskilde',
+    Postnummer: 4000,
+    Areal_m2: 195,
+    Vurdering_DKK: 2_900_000,
+    Grundvaerdi_DKK: 950_000,
+    Opfoerelsesaar: 1955,
+    Energimaerke: 'C',
+    Type: 'Ejerlejlighed',
+  },
+  {
+    BFE: 5678901,
+    Adresse: 'Søndergade 14, 7100 Vejle',
+    Kommune: 'Vejle',
+    Postnummer: 7100,
+    Areal_m2: 310,
+    Vurdering_DKK: 4_100_000,
+    Grundvaerdi_DKK: 1_400_000,
+    Opfoerelsesaar: 1978,
+    Energimaerke: 'C',
+    Type: 'Bygning',
+  },
+  {
+    BFE: 6789012,
+    Adresse: 'Torvet 3, 6000 Kolding',
+    Kommune: 'Kolding',
+    Postnummer: 6000,
+    Areal_m2: 165,
+    Vurdering_DKK: 2_100_000,
+    Grundvaerdi_DKK: 780_000,
+    Opfoerelsesaar: 1942,
+    Energimaerke: 'E',
+    Type: 'Ejerlejlighed',
+  },
+  {
+    BFE: 7890123,
+    Adresse: 'Strandvejen 45, 2900 Hellerup',
+    Kommune: 'Gentofte',
+    Postnummer: 2900,
+    Areal_m2: 420,
+    Vurdering_DKK: 12_500_000,
+    Grundvaerdi_DKK: 5_800_000,
+    Opfoerelsesaar: 1910,
+    Energimaerke: 'B',
+    Type: 'SFE',
+  },
+  {
+    BFE: 8901234,
+    Adresse: 'Jernbanegade 7, 9000 Aalborg',
+    Kommune: 'Aalborg',
+    Postnummer: 9000,
+    Areal_m2: 275,
+    Vurdering_DKK: 3_600_000,
+    Grundvaerdi_DKK: 1_250_000,
+    Opfoerelsesaar: 1988,
+    Energimaerke: 'B',
+    Type: 'Ejerlejlighed',
+  },
+  {
+    BFE: 9012345,
+    Adresse: 'Brogade 19, 4600 Køge',
+    Kommune: 'Køge',
+    Postnummer: 4600,
+    Areal_m2: 210,
+    Vurdering_DKK: 2_750_000,
+    Grundvaerdi_DKK: 900_000,
+    Opfoerelsesaar: 1970,
+    Energimaerke: 'D',
+    Type: 'Ejerlejlighed',
+  },
+  {
+    BFE: 1023456,
+    Adresse: 'Havnevej 33, 3000 Helsingør',
+    Kommune: 'Helsingør',
+    Postnummer: 3000,
+    Areal_m2: 340,
+    Vurdering_DKK: 6_200_000,
+    Grundvaerdi_DKK: 2_400_000,
+    Opfoerelsesaar: 1935,
+    Energimaerke: 'C',
+    Type: 'Bygning',
+  },
 ];
 
 /**
@@ -79,21 +189,156 @@ const DEMO_PORTEFOLJE: DataRow[] = [
  * Simulates multi-year financials for 5 companies.
  */
 const DEMO_REGNSKAB: DataRow[] = [
-  { CVR: 12345678, Virksomhed: 'Nordic Invest A/S', Aar: 2023, Omsaetning_DKK: 45_000_000, Resultat_DKK: 3_200_000, Egenkapital_DKK: 18_500_000, Ansatte: 42, Branche: 'Investeringsvirksomhed' },
-  { CVR: 12345678, Virksomhed: 'Nordic Invest A/S', Aar: 2022, Omsaetning_DKK: 41_000_000, Resultat_DKK: 2_800_000, Egenkapital_DKK: 15_300_000, Ansatte: 38, Branche: 'Investeringsvirksomhed' },
-  { CVR: 12345678, Virksomhed: 'Nordic Invest A/S', Aar: 2021, Omsaetning_DKK: 38_500_000, Resultat_DKK: 2_100_000, Egenkapital_DKK: 12_500_000, Ansatte: 35, Branche: 'Investeringsvirksomhed' },
-  { CVR: 23456789, Virksomhed: 'Dansk Ejendom ApS', Aar: 2023, Omsaetning_DKK: 12_000_000, Resultat_DKK: 1_500_000, Egenkapital_DKK: 8_200_000, Ansatte: 8, Branche: 'Ejendomsadministration' },
-  { CVR: 23456789, Virksomhed: 'Dansk Ejendom ApS', Aar: 2022, Omsaetning_DKK: 11_200_000, Resultat_DKK: 1_200_000, Egenkapital_DKK: 6_700_000, Ansatte: 7, Branche: 'Ejendomsadministration' },
-  { CVR: 23456789, Virksomhed: 'Dansk Ejendom ApS', Aar: 2021, Omsaetning_DKK: 10_500_000, Resultat_DKK: 900_000, Egenkapital_DKK: 5_500_000, Ansatte: 6, Branche: 'Ejendomsadministration' },
-  { CVR: 34567890, Virksomhed: 'Byggegruppen A/S', Aar: 2023, Omsaetning_DKK: 89_000_000, Resultat_DKK: 5_600_000, Egenkapital_DKK: 32_000_000, Ansatte: 120, Branche: 'Byggeri' },
-  { CVR: 34567890, Virksomhed: 'Byggegruppen A/S', Aar: 2022, Omsaetning_DKK: 82_000_000, Resultat_DKK: 4_800_000, Egenkapital_DKK: 26_400_000, Ansatte: 115, Branche: 'Byggeri' },
-  { CVR: 34567890, Virksomhed: 'Byggegruppen A/S', Aar: 2021, Omsaetning_DKK: 75_000_000, Resultat_DKK: 3_900_000, Egenkapital_DKK: 21_600_000, Ansatte: 108, Branche: 'Byggeri' },
-  { CVR: 45678901, Virksomhed: 'GreenTech Solutions ApS', Aar: 2023, Omsaetning_DKK: 22_000_000, Resultat_DKK: 2_400_000, Egenkapital_DKK: 11_000_000, Ansatte: 25, Branche: 'Cleantech' },
-  { CVR: 45678901, Virksomhed: 'GreenTech Solutions ApS', Aar: 2022, Omsaetning_DKK: 18_000_000, Resultat_DKK: 1_800_000, Egenkapital_DKK: 8_600_000, Ansatte: 20, Branche: 'Cleantech' },
-  { CVR: 45678901, Virksomhed: 'GreenTech Solutions ApS', Aar: 2021, Omsaetning_DKK: 14_000_000, Resultat_DKK: 1_100_000, Egenkapital_DKK: 6_800_000, Ansatte: 16, Branche: 'Cleantech' },
-  { CVR: 56789012, Virksomhed: 'Maritime Holding A/S', Aar: 2023, Omsaetning_DKK: 156_000_000, Resultat_DKK: 12_000_000, Egenkapital_DKK: 65_000_000, Ansatte: 210, Branche: 'Shipping' },
-  { CVR: 56789012, Virksomhed: 'Maritime Holding A/S', Aar: 2022, Omsaetning_DKK: 142_000_000, Resultat_DKK: 10_500_000, Egenkapital_DKK: 53_000_000, Ansatte: 195, Branche: 'Shipping' },
-  { CVR: 56789012, Virksomhed: 'Maritime Holding A/S', Aar: 2021, Omsaetning_DKK: 128_000_000, Resultat_DKK: 8_200_000, Egenkapital_DKK: 42_500_000, Ansatte: 185, Branche: 'Shipping' },
+  {
+    CVR: 12345678,
+    Virksomhed: 'Nordic Invest A/S',
+    Aar: 2023,
+    Omsaetning_DKK: 45_000_000,
+    Resultat_DKK: 3_200_000,
+    Egenkapital_DKK: 18_500_000,
+    Ansatte: 42,
+    Branche: 'Investeringsvirksomhed',
+  },
+  {
+    CVR: 12345678,
+    Virksomhed: 'Nordic Invest A/S',
+    Aar: 2022,
+    Omsaetning_DKK: 41_000_000,
+    Resultat_DKK: 2_800_000,
+    Egenkapital_DKK: 15_300_000,
+    Ansatte: 38,
+    Branche: 'Investeringsvirksomhed',
+  },
+  {
+    CVR: 12345678,
+    Virksomhed: 'Nordic Invest A/S',
+    Aar: 2021,
+    Omsaetning_DKK: 38_500_000,
+    Resultat_DKK: 2_100_000,
+    Egenkapital_DKK: 12_500_000,
+    Ansatte: 35,
+    Branche: 'Investeringsvirksomhed',
+  },
+  {
+    CVR: 23456789,
+    Virksomhed: 'Dansk Ejendom ApS',
+    Aar: 2023,
+    Omsaetning_DKK: 12_000_000,
+    Resultat_DKK: 1_500_000,
+    Egenkapital_DKK: 8_200_000,
+    Ansatte: 8,
+    Branche: 'Ejendomsadministration',
+  },
+  {
+    CVR: 23456789,
+    Virksomhed: 'Dansk Ejendom ApS',
+    Aar: 2022,
+    Omsaetning_DKK: 11_200_000,
+    Resultat_DKK: 1_200_000,
+    Egenkapital_DKK: 6_700_000,
+    Ansatte: 7,
+    Branche: 'Ejendomsadministration',
+  },
+  {
+    CVR: 23456789,
+    Virksomhed: 'Dansk Ejendom ApS',
+    Aar: 2021,
+    Omsaetning_DKK: 10_500_000,
+    Resultat_DKK: 900_000,
+    Egenkapital_DKK: 5_500_000,
+    Ansatte: 6,
+    Branche: 'Ejendomsadministration',
+  },
+  {
+    CVR: 34567890,
+    Virksomhed: 'Byggegruppen A/S',
+    Aar: 2023,
+    Omsaetning_DKK: 89_000_000,
+    Resultat_DKK: 5_600_000,
+    Egenkapital_DKK: 32_000_000,
+    Ansatte: 120,
+    Branche: 'Byggeri',
+  },
+  {
+    CVR: 34567890,
+    Virksomhed: 'Byggegruppen A/S',
+    Aar: 2022,
+    Omsaetning_DKK: 82_000_000,
+    Resultat_DKK: 4_800_000,
+    Egenkapital_DKK: 26_400_000,
+    Ansatte: 115,
+    Branche: 'Byggeri',
+  },
+  {
+    CVR: 34567890,
+    Virksomhed: 'Byggegruppen A/S',
+    Aar: 2021,
+    Omsaetning_DKK: 75_000_000,
+    Resultat_DKK: 3_900_000,
+    Egenkapital_DKK: 21_600_000,
+    Ansatte: 108,
+    Branche: 'Byggeri',
+  },
+  {
+    CVR: 45678901,
+    Virksomhed: 'GreenTech Solutions ApS',
+    Aar: 2023,
+    Omsaetning_DKK: 22_000_000,
+    Resultat_DKK: 2_400_000,
+    Egenkapital_DKK: 11_000_000,
+    Ansatte: 25,
+    Branche: 'Cleantech',
+  },
+  {
+    CVR: 45678901,
+    Virksomhed: 'GreenTech Solutions ApS',
+    Aar: 2022,
+    Omsaetning_DKK: 18_000_000,
+    Resultat_DKK: 1_800_000,
+    Egenkapital_DKK: 8_600_000,
+    Ansatte: 20,
+    Branche: 'Cleantech',
+  },
+  {
+    CVR: 45678901,
+    Virksomhed: 'GreenTech Solutions ApS',
+    Aar: 2021,
+    Omsaetning_DKK: 14_000_000,
+    Resultat_DKK: 1_100_000,
+    Egenkapital_DKK: 6_800_000,
+    Ansatte: 16,
+    Branche: 'Cleantech',
+  },
+  {
+    CVR: 56789012,
+    Virksomhed: 'Maritime Holding A/S',
+    Aar: 2023,
+    Omsaetning_DKK: 156_000_000,
+    Resultat_DKK: 12_000_000,
+    Egenkapital_DKK: 65_000_000,
+    Ansatte: 210,
+    Branche: 'Shipping',
+  },
+  {
+    CVR: 56789012,
+    Virksomhed: 'Maritime Holding A/S',
+    Aar: 2022,
+    Omsaetning_DKK: 142_000_000,
+    Resultat_DKK: 10_500_000,
+    Egenkapital_DKK: 53_000_000,
+    Ansatte: 195,
+    Branche: 'Shipping',
+  },
+  {
+    CVR: 56789012,
+    Virksomhed: 'Maritime Holding A/S',
+    Aar: 2021,
+    Omsaetning_DKK: 128_000_000,
+    Resultat_DKK: 8_200_000,
+    Egenkapital_DKK: 42_500_000,
+    Ansatte: 185,
+    Branche: 'Shipping',
+  },
 ];
 
 /** All available demo datasets */
@@ -189,12 +434,12 @@ export default function DataPivotTab({ analysisData }: DataPivotTabProps) {
               selectedDataset ? 'text-white' : 'text-slate-400',
             ].join(' ')}
           >
-            <Database size={14} className="text-slate-500" />
+            <Database size={14} className="text-slate-400" />
             <span>{selectedDataset ? getLabel(selectedDataset) : pt.pivotDataset}</span>
             <ChevronDown
               size={13}
               className={[
-                'text-slate-500 transition-transform',
+                'text-slate-400 transition-transform',
                 dropdownOpen ? 'rotate-180' : '',
               ].join(' ')}
             />
@@ -225,7 +470,7 @@ export default function DataPivotTab({ analysisData }: DataPivotTabProps) {
                     <Table2 size={14} className="text-blue-400 shrink-0" />
                     <div className="min-w-0 flex-1">
                       <div className="text-sm text-white">{pt.pivotLatestAnalysis}</div>
-                      <div className="text-xs text-slate-500 mt-0.5">
+                      <div className="text-xs text-slate-400 mt-0.5">
                         {analysisData!.length} {lang === 'da' ? 'rækker' : 'rows'}
                       </div>
                     </div>
@@ -249,7 +494,7 @@ export default function DataPivotTab({ analysisData }: DataPivotTabProps) {
                   <div className="text-sm text-white">
                     {lang === 'da' ? ds.labelDa : ds.labelEn}
                   </div>
-                  <div className="text-xs text-slate-500 mt-0.5">
+                  <div className="text-xs text-slate-400 mt-0.5">
                     {lang === 'da' ? ds.descDa : ds.descEn}
                   </div>
                 </button>
@@ -290,12 +535,8 @@ export default function DataPivotTab({ analysisData }: DataPivotTabProps) {
           <div className="w-12 h-12 rounded-xl bg-blue-500/10 flex items-center justify-center mb-4">
             <Table2 size={22} className="text-blue-400" />
           </div>
-          <div className="text-sm font-medium text-slate-300 text-center">
-            {pt.pivotNoData}
-          </div>
-          <div className="text-xs text-slate-500 mt-2 text-center max-w-sm">
-            {pt.pivotSubtitle}
-          </div>
+          <div className="text-sm font-medium text-slate-300 text-center">{pt.pivotNoData}</div>
+          <div className="text-xs text-slate-400 mt-2 text-center max-w-sm">{pt.pivotSubtitle}</div>
         </div>
       )}
     </div>

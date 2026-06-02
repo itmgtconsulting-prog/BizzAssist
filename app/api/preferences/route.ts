@@ -56,7 +56,7 @@ export async function GET() {
     const admin = createAdminClient();
     const { data, error } = await admin
       .from('users')
-      .select('preferred_language')
+      .select('preferred_language, preferences')
       .eq('id', userId)
       .single();
 
@@ -67,7 +67,9 @@ export async function GET() {
       });
     }
 
-    const row = data as Record<string, unknown>;
+    // `preferences` findes i DB'en men mangler i de genererede Supabase-typer,
+    // så select-resultatet types som SelectQueryError — cast via unknown.
+    const row = data as unknown as Record<string, unknown>;
     return NextResponse.json({
       language: row.preferred_language ?? 'da',
       preferences: row.preferences ?? {},

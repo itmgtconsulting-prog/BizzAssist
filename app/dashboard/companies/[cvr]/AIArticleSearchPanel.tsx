@@ -268,7 +268,7 @@ export default function AIArticleSearchPanel({
         <div className="w-8 h-8 bg-amber-500/10 rounded-lg flex items-center justify-center">
           <Lock size={14} className="text-amber-400" />
         </div>
-        <p className="text-slate-500 text-xs leading-relaxed">
+        <p className="text-slate-400 text-xs leading-relaxed">
           {da
             ? 'AI-søgning kræver et aktivt abonnement.'
             : 'AI search requires an active subscription.'}
@@ -281,7 +281,7 @@ export default function AIArticleSearchPanel({
   const tokenBar =
     tokenInfo && (tokenInfo.limit > 0 || tokenInfo.limit === -1) ? (
       <div className="flex items-center gap-2 mb-3">
-        <span className="text-[10px] text-slate-600 whitespace-nowrap">Tokens</span>
+        <span className="text-[10px] text-slate-400 whitespace-nowrap">Tokens</span>
         {tokenInfo.limit === -1 ? (
           <>
             <div className="flex-1 h-1 bg-slate-800 rounded-full overflow-hidden">
@@ -309,7 +309,7 @@ export default function AIArticleSearchPanel({
                   ? 'text-red-400'
                   : tokenInfo.used / tokenInfo.limit > 0.7
                     ? 'text-amber-400'
-                    : 'text-slate-500'
+                    : 'text-slate-400'
               }`}
             >
               {formatTokens(tokenInfo.used)}/{formatTokens(tokenInfo.limit)}
@@ -321,7 +321,7 @@ export default function AIArticleSearchPanel({
 
   /** AI disclaimer — vises altid under token-bar */
   const aiDisclaimer = (
-    <p className="text-xs text-slate-500 mb-3">
+    <p className="text-xs text-slate-400 mb-3">
       ⚠️ Svar genereret af AI er ikke nødvendigvis korrekte. Verificér altid vigtig information.
     </p>
   );
@@ -382,7 +382,7 @@ export default function AIArticleSearchPanel({
 
       {/* Token-forbrug (vises når alle er færdige) */}
       {!anyLoading && tokensUsedThisSearch > 0 && (
-        <p className="text-[10px] text-slate-600 mb-3">
+        <p className="text-[10px] text-slate-400 mb-3">
           {da
             ? `Brugte ${formatTokens(tokensUsedThisSearch)} tokens`
             : `Used ${formatTokens(tokensUsedThisSearch)} tokens`}
@@ -401,7 +401,7 @@ export default function AIArticleSearchPanel({
       {/* Artikler — fade-in når de ankommer */}
       {articlesLoading && articles.length === 0 ? null : articles.length === 0 &&
         !articlesLoading ? (
-        <p className="text-slate-600 text-xs">
+        <p className="text-slate-400 text-xs">
           {da
             ? 'Ingen danske medieartikler fundet for denne virksomhed.'
             : 'No Danish media articles found for this company.'}
@@ -421,18 +421,18 @@ export default function AIArticleSearchPanel({
             >
               <ExternalLink
                 size={10}
-                className="text-slate-600 group-hover:text-blue-400 flex-shrink-0 mt-0.5"
+                className="text-slate-400 group-hover:text-blue-400 flex-shrink-0 mt-0.5"
               />
               <div className="min-w-0">
                 <p className="text-slate-300 text-xs font-medium group-hover:text-blue-300 transition-colors leading-snug">
                   {a.title}
                 </p>
-                <p className="text-slate-600 text-[10px] mt-0.5">
+                <p className="text-slate-400 text-[10px] mt-0.5">
                   {a.source}
                   {a.date ? ` · ${a.date}` : ''}
                 </p>
                 {a.description && (
-                  <p className="text-slate-600 text-[10px] mt-0.5 line-clamp-2">{a.description}</p>
+                  <p className="text-slate-400 text-[10px] mt-0.5 line-clamp-2">{a.description}</p>
                 )}
               </div>
             </a>
@@ -440,7 +440,7 @@ export default function AIArticleSearchPanel({
           {visibleCount < articles.length && (
             <button
               onClick={() => setVisibleCount((c) => Math.min(c + 5, articles.length))}
-              className="mt-1 flex items-center gap-1 text-[10px] text-slate-500 hover:text-blue-400 transition-colors"
+              className="mt-1 flex items-center gap-1 text-[10px] text-slate-400 hover:text-blue-400 transition-colors"
             >
               <ChevronDown size={10} />
               {da
@@ -455,7 +455,7 @@ export default function AIArticleSearchPanel({
       {!anyLoading && (
         <button
           onClick={handleSearch}
-          className="mt-3 flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-blue-400 transition-colors"
+          className="mt-3 flex items-center gap-1.5 text-[10px] text-slate-400 hover:text-blue-400 transition-colors"
         >
           <Zap size={9} />
           {da ? 'Søg igen' : 'Search again'}

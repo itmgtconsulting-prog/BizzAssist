@@ -150,7 +150,7 @@ export default function DomainUsersClient({ domainId }: { domainId: string }) {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-white">{da ? 'Brugere' : 'Users'}</h1>
-          <p className="text-slate-500 text-sm mt-1">
+          <p className="text-slate-400 text-sm mt-1">
             {members.length} {da ? 'medlemmer' : 'members'}
           </p>
         </div>
@@ -179,7 +179,7 @@ export default function DomainUsersClient({ domainId }: { domainId: string }) {
       {!loading && members.length > 0 && (
         <div className="flex gap-3 items-center">
           <div className="relative flex-1 max-w-xs">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
               value={searchQuery}

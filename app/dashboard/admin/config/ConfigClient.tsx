@@ -240,7 +240,7 @@ export default function ConfigClient() {
         {/* Søgefelt + reload */}
         <div className="mt-6 mb-4 flex items-center gap-2">
           <div className="relative flex-1">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
               value={search}
@@ -284,7 +284,7 @@ export default function ConfigClient() {
                   }`}
                 >
                   {label}
-                  <span className="ml-1.5 text-[10px] text-slate-500">({count})</span>
+                  <span className="ml-1.5 text-[10px] text-slate-400">({count})</span>
                 </button>
               );
             })}
@@ -304,7 +304,7 @@ export default function ConfigClient() {
             {da ? 'Henter konfiguration…' : 'Loading configuration…'}
           </div>
         ) : filteredRows.length === 0 ? (
-          <div className="text-center py-12 text-slate-500 text-sm">
+          <div className="text-center py-12 text-slate-400 text-sm">
             {da ? 'Ingen resultater' : 'No results'}
           </div>
         ) : (
@@ -334,7 +334,7 @@ export default function ConfigClient() {
                         {row.category}
                       </span>
                     )}
-                    <span className="text-[10px] text-slate-500 ml-auto">
+                    <span className="text-[10px] text-slate-400 ml-auto">
                       {da ? 'Opdateret' : 'Updated'}{' '}
                       {new Date(row.updated_at).toLocaleString(da ? 'da-DK' : 'en-GB')}
                     </span>

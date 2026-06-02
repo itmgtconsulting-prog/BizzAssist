@@ -243,7 +243,7 @@ export function TemplateDocumentsPanel({ domainId, templateId }: Props) {
             <FolderOpen size={15} className="text-blue-400 shrink-0" />
             {da ? 'Tilknyttede dokumenter' : 'Linked documents'}
           </h3>
-          <p className="text-[11px] text-slate-500 mt-0.5 truncate">
+          <p className="text-[11px] text-slate-400 mt-0.5 truncate">
             {da
               ? 'Baggrundsviden AI bruger til denne skabelon'
               : 'Background knowledge the AI uses for this template'}
@@ -297,7 +297,7 @@ export function TemplateDocumentsPanel({ domainId, templateId }: Props) {
             <button
               type="button"
               onClick={() => setPickerOpen(false)}
-              className="text-xs text-slate-500 hover:text-white"
+              className="text-xs text-slate-400 hover:text-white"
             >
               {da ? 'Luk' : 'Close'}
             </button>
@@ -310,7 +310,7 @@ export function TemplateDocumentsPanel({ domainId, templateId }: Props) {
               const pickable = availableDocs.filter((d) => !attachedIds.has(d.id));
               if (pickable.length === 0) {
                 return (
-                  <p className="text-xs text-slate-500 py-2">
+                  <p className="text-xs text-slate-400 py-2">
                     {da
                       ? 'Alle dokumenter er allerede tilknyttet. Upload et nyt ovenfor.'
                       : 'All documents already attached. Upload a new one above.'}
@@ -328,7 +328,7 @@ export function TemplateDocumentsPanel({ domainId, templateId }: Props) {
                       >
                         <FileText size={12} className="text-slate-400 shrink-0" />
                         <span className="text-xs text-white truncate">{d.name}</span>
-                        <span className="ml-auto text-[10px] text-slate-500 uppercase tracking-wide">
+                        <span className="ml-auto text-[10px] text-slate-400 uppercase tracking-wide">
                           {d.doc_type}
                         </span>
                       </button>
@@ -348,10 +348,10 @@ export function TemplateDocumentsPanel({ domainId, templateId }: Props) {
             <Loader2 size={18} className="animate-spin text-blue-400" />
           </div>
         ) : attachments.length === 0 ? (
-          <div className="py-10 text-center text-xs text-slate-500 space-y-2">
-            <FolderOpen size={28} className="mx-auto text-slate-700" />
+          <div className="py-10 text-center text-xs text-slate-400 space-y-2">
+            <FolderOpen size={28} className="mx-auto text-slate-400" />
             <p>{da ? 'Ingen dokumenter tilknyttet endnu.' : 'No documents linked yet.'}</p>
-            <p className="text-slate-600">
+            <p className="text-slate-400">
               {da
                 ? 'Upload eller tilføj et dokument fra videnbasen for at give AI\u2019en baggrundsviden om skabelonen.'
                 : 'Upload or attach a document from the knowledge base to give the AI background context for this template.'}
@@ -374,7 +374,7 @@ export function TemplateDocumentsPanel({ domainId, templateId }: Props) {
                       {a.document?.name ?? (da ? '(ukendt)' : '(unknown)')}
                     </p>
                     {extFromPath(a.document?.file_path) && (
-                      <p className="text-[10px] text-slate-500 uppercase tracking-wide">
+                      <p className="text-[10px] text-slate-400 uppercase tracking-wide">
                         {extFromPath(a.document?.file_path)}
                       </p>
                     )}
@@ -415,7 +415,7 @@ export function TemplateDocumentsPanel({ domainId, templateId }: Props) {
                         ? 'Guidelines — hvordan AI\u2019en skal bruge dokumentet'
                         : 'Guidelines — how the AI should use this doc'}
                     </span>
-                    <span className="text-slate-600">{draft.length}/4000</span>
+                    <span className="text-slate-400">{draft.length}/4000</span>
                   </span>
                   <textarea
                     value={draft}

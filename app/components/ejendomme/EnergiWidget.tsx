@@ -55,21 +55,21 @@ export default function EnergiWidget({ kommunekode, lang }: Props) {
             {da ? 'Elpris' : 'Electricity Price'}
           </h3>
         </div>
-        <span className="text-xs text-slate-500">{data.prisomraade}</span>
+        <span className="text-xs text-slate-400">{data.prisomraade}</span>
       </div>
 
       <div className="grid grid-cols-3 gap-3">
         <div className="text-center">
           <p className="text-lg font-semibold text-white">{data.gennemsnit.toFixed(2)}</p>
-          <p className="text-[10px] text-slate-500 uppercase">{da ? 'Gns. 30d' : 'Avg 30d'}</p>
+          <p className="text-[10px] text-slate-400 uppercase">{da ? 'Gns. 30d' : 'Avg 30d'}</p>
         </div>
         <div className="text-center">
           <p className="text-lg font-semibold text-emerald-400">{data.min.toFixed(2)}</p>
-          <p className="text-[10px] text-slate-500 uppercase">Min</p>
+          <p className="text-[10px] text-slate-400 uppercase">Min</p>
         </div>
         <div className="text-center">
           <p className="text-lg font-semibold text-rose-400">{data.max.toFixed(2)}</p>
-          <p className="text-[10px] text-slate-500 uppercase">Max</p>
+          <p className="text-[10px] text-slate-400 uppercase">Max</p>
         </div>
       </div>
       <p className="text-[10px] text-slate-400 mt-2 text-center">{data.enhed}</p>

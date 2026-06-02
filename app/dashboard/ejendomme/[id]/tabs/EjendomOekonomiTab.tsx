@@ -228,12 +228,12 @@ function RegnskabSektion({ bfe, lang }: { bfe: number; lang: string }) {
         <h3 className="text-white font-semibold text-sm">
           {da ? 'Ejer-regnskab' : 'Owner financials'}
         </h3>
-        <span className="text-xs text-slate-500">{regnskab.navn}</span>
+        <span className="text-xs text-slate-400">{regnskab.navn}</span>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {regnskab.omsaetning != null && (
           <div className="bg-slate-800/20 border border-slate-700/30 rounded-lg p-3">
-            <p className="text-slate-500 text-[10px] uppercase">{da ? 'Omsætning' : 'Revenue'}</p>
+            <p className="text-slate-400 text-[10px] uppercase">{da ? 'Omsætning' : 'Revenue'}</p>
             <p className="text-white text-sm font-medium">
               {regnskab.omsaetning.toLocaleString('da-DK')} t.DKK
             </p>
@@ -241,7 +241,7 @@ function RegnskabSektion({ bfe, lang }: { bfe: number; lang: string }) {
         )}
         {regnskab.egenkapital != null && (
           <div className="bg-slate-800/20 border border-slate-700/30 rounded-lg p-3">
-            <p className="text-slate-500 text-[10px] uppercase">{da ? 'Egenkapital' : 'Equity'}</p>
+            <p className="text-slate-400 text-[10px] uppercase">{da ? 'Egenkapital' : 'Equity'}</p>
             <p className="text-white text-sm font-medium">
               {regnskab.egenkapital.toLocaleString('da-DK')} t.DKK
             </p>
@@ -249,7 +249,7 @@ function RegnskabSektion({ bfe, lang }: { bfe: number; lang: string }) {
         )}
         {regnskab.aarsresultat != null && (
           <div className="bg-slate-800/20 border border-slate-700/30 rounded-lg p-3">
-            <p className="text-slate-500 text-[10px] uppercase">
+            <p className="text-slate-400 text-[10px] uppercase">
               {da ? 'Årsresultat' : 'Net income'}
             </p>
             <p
@@ -261,7 +261,7 @@ function RegnskabSektion({ bfe, lang }: { bfe: number; lang: string }) {
         )}
         {regnskab.seneste_aar != null && (
           <div className="bg-slate-800/20 border border-slate-700/30 rounded-lg p-3">
-            <p className="text-slate-500 text-[10px] uppercase">{da ? 'Regnskabsår' : 'Year'}</p>
+            <p className="text-slate-400 text-[10px] uppercase">{da ? 'Regnskabsår' : 'Year'}</p>
             <p className="text-white text-sm font-medium">{regnskab.seneste_aar}</p>
           </div>
         )}
@@ -368,7 +368,7 @@ function AktExtractionLoader({
   // Loading — diskret placeholder så brugeren ved at noget loader
   if (status.kind === 'loading') {
     return (
-      <div className="mt-2 text-[11px] text-slate-500 inline-flex items-center gap-1.5">
+      <div className="mt-2 text-[11px] text-slate-400 inline-flex items-center gap-1.5">
         <div className="w-2.5 h-2.5 border-2 border-slate-600 border-t-transparent rounded-full animate-spin" />
         <span>{da ? 'Tjekker indskannede akter…' : 'Checking scanned deeds…'}</span>
       </div>
@@ -573,7 +573,7 @@ export default function EjendomOekonomiTab(props: Props) {
       <div>
         <SectionTitle title={t.propertyValuation} />
         {vurderingLoader ? (
-          <div className="flex items-center gap-2 text-slate-500 text-sm py-4">
+          <div className="flex items-center gap-2 text-slate-400 text-sm py-4">
             <div className="w-4 h-4 border-2 border-slate-600 border-t-blue-500 rounded-full animate-spin" />
             {t.loadingValuation}
           </div>
@@ -594,7 +594,7 @@ export default function EjendomOekonomiTab(props: Props) {
                     : `This property is divided into ${lejlighederCount || 'multiple'} condominiums. The Danish Valuation Agency registers no combined property or land value on the main property — valuations are distributed to individual units instead. See per-unit valuations in the Ownership tab.`}
                 </p>
                 {vurdering.vurderetAreal != null && (
-                  <p className="text-slate-500 text-xs">
+                  <p className="text-slate-400 text-xs">
                     {da ? 'Grundareal:' : 'Plot area:'}{' '}
                     <span className="text-slate-300 font-medium">
                       {vurdering.vurderetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²
@@ -608,13 +608,13 @@ export default function EjendomOekonomiTab(props: Props) {
                 <p className="text-slate-400 text-sm">
                   {da ? 'Endnu ikke vurderet' : 'Not yet assessed'}
                 </p>
-                <p className="text-slate-500 text-xs mt-1">
+                <p className="text-slate-400 text-xs mt-1">
                   {da
                     ? 'Vurderingsstyrelsen har ikke udstedt en vurdering for denne ejendom endnu.'
                     : 'The Danish Property Assessment Agency has not yet issued an assessment for this property.'}
                 </p>
                 {vurdering.vurderetAreal != null && (
-                  <p className="text-slate-500 text-xs mt-2">
+                  <p className="text-slate-400 text-xs mt-2">
                     {da ? 'Grundareal:' : 'Plot area:'}{' '}
                     <span className="text-slate-300 font-medium">
                       {vurdering.vurderetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²
@@ -630,7 +630,7 @@ export default function EjendomOekonomiTab(props: Props) {
                     <p className="text-slate-400 text-xs">
                       {t.propertyValue}
                       {vurdering.aar && (
-                        <span className="ml-1 text-slate-500">({vurdering.aar})</span>
+                        <span className="ml-1 text-slate-400">({vurdering.aar})</span>
                       )}
                     </p>
                     {!skjulForelobige &&
@@ -700,7 +700,7 @@ export default function EjendomOekonomiTab(props: Props) {
                 <p className="text-white text-sm font-bold mb-2">
                   {formatDKK(vurFradrag.vaerdiSum)}
                   {vurFradrag.foersteGangAar && (
-                    <span className="text-slate-500 text-xs font-normal ml-2">
+                    <span className="text-slate-400 text-xs font-normal ml-2">
                       {da ? 'fra' : 'from'} {vurFradrag.foersteGangAar}
                     </span>
                   )}
@@ -711,7 +711,7 @@ export default function EjendomOekonomiTab(props: Props) {
                       <div key={i} className="flex items-center justify-between text-xs">
                         <span className="text-slate-400">
                           {post.tekst ?? (da ? 'Fradrag' : 'Deduction')}
-                          {post.aar && <span className="text-slate-500 ml-1">({post.aar})</span>}
+                          {post.aar && <span className="text-slate-400 ml-1">({post.aar})</span>}
                         </span>
                         <span className="text-slate-300 tabular-nums">
                           {post.vaerdi != null ? formatDKK(post.vaerdi) : '—'}
@@ -734,7 +734,7 @@ export default function EjendomOekonomiTab(props: Props) {
                     <div key={i} className="grid grid-cols-2 gap-3">
                       {f.ejerboligvaerdi != null && (
                         <div>
-                          <p className="text-slate-500 text-[10px] uppercase">
+                          <p className="text-slate-400 text-[10px] uppercase">
                             {da ? 'Ejerboligværdi' : 'Owner-occupied value'}
                           </p>
                           <p className="text-white text-sm font-medium">
@@ -744,7 +744,7 @@ export default function EjendomOekonomiTab(props: Props) {
                       )}
                       {f.ejerboliggrundvaerdi != null && (
                         <div>
-                          <p className="text-slate-500 text-[10px] uppercase">
+                          <p className="text-slate-400 text-[10px] uppercase">
                             {da ? 'Ejerboliggrundværdi' : 'Owner-occupied land value'}
                           </p>
                           <p className="text-white text-sm font-medium">
@@ -767,7 +767,7 @@ export default function EjendomOekonomiTab(props: Props) {
                   </p>
                 </div>
                 <div className="min-w-[400px]">
-                  <div className="grid grid-cols-[1fr_80px_90px_90px] px-4 py-1.5 text-slate-500 text-[10px] font-medium uppercase bg-slate-900/30">
+                  <div className="grid grid-cols-[1fr_80px_90px_90px] px-4 py-1.5 text-slate-400 text-[10px] font-medium uppercase bg-slate-900/30">
                     <span>{da ? 'Beskrivelse' : 'Description'}</span>
                     <span className="text-right">{da ? 'Areal' : 'Area'}</span>
                     <span className="text-right">{da ? 'Enhedspris' : 'Unit price'}</span>
@@ -807,7 +807,7 @@ export default function EjendomOekonomiTab(props: Props) {
                 >
                   <ChevronRight
                     size={14}
-                    className={`text-slate-500 transition-transform flex-shrink-0 ${visVurderingHistorik ? 'rotate-90' : ''}`}
+                    className={`text-slate-400 transition-transform flex-shrink-0 ${visVurderingHistorik ? 'rotate-90' : ''}`}
                   />
                   <span className="text-slate-300 text-sm font-medium">{t.valuationHistory}</span>
                   {forelobige.length > 0 && (
@@ -820,7 +820,7 @@ export default function EjendomOekonomiTab(props: Props) {
                 {visVurderingHistorik && (
                   <>
                     {/* Header */}
-                    <div className="min-w-[550px] grid grid-cols-[140px_1fr_1fr_100px] px-4 py-2 text-slate-500 text-xs font-medium border-t border-slate-700/30 bg-slate-900/30">
+                    <div className="min-w-[550px] grid grid-cols-[140px_1fr_1fr_100px] px-4 py-2 text-slate-400 text-xs font-medium border-t border-slate-700/30 bg-slate-900/30">
                       <span>{t.yearCol}</span>
                       <span>{t.propertyValueCol}</span>
                       <span>{t.landValueCol}</span>
@@ -900,7 +900,7 @@ export default function EjendomOekonomiTab(props: Props) {
           </div>
         ) : (
           <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl p-4 text-center">
-            <p className="text-slate-500 text-xs">{t.noValuationFound}</p>
+            <p className="text-slate-400 text-xs">{t.noValuationFound}</p>
           </div>
         )}
       </div>
@@ -945,7 +945,7 @@ export default function EjendomOekonomiTab(props: Props) {
               {/* BIZZ-324: table expanded with tinglysningsdato, tinglysningsafgift, loesoeresum and entreprisesum */}
               <table className="w-full text-sm min-w-[700px]">
                 <thead>
-                  <tr className="border-b border-slate-700/30 text-slate-500 text-xs uppercase tracking-wider">
+                  <tr className="border-b border-slate-700/30 text-slate-400 text-xs uppercase tracking-wider">
                     <th className="text-left px-4 py-2.5 font-medium">{t.date}</th>
                     <th className="text-left px-4 py-2.5 font-medium">{t.buyerName}</th>
                     {/* BIZZ-1583: Sælger udledes fra forrige (kronologisk ældre) handels køber. */}
@@ -1015,11 +1015,11 @@ export default function EjendomOekonomiTab(props: Props) {
                                 )}
                               </p>
                               {h.koebercvr && (
-                                <p className="text-slate-500 text-[10px]">CVR {h.koebercvr}</p>
+                                <p className="text-slate-400 text-[10px]">CVR {h.koebercvr}</p>
                               )}
                             </div>
                           ) : (
-                            <span className="text-slate-500 text-xs">—</span>
+                            <span className="text-slate-400 text-xs">—</span>
                           )}
                         </td>
                         {/* BIZZ-1583: Sælger-kolonne — afledt fra forrige (ældre) handels køber. */}
@@ -1039,12 +1039,12 @@ export default function EjendomOekonomiTab(props: Props) {
                                 )}
                               </p>
                               {saelgerCvr && (
-                                <p className="text-slate-500 text-[10px]">CVR {saelgerCvr}</p>
+                                <p className="text-slate-400 text-[10px]">CVR {saelgerCvr}</p>
                               )}
                             </div>
                           ) : (
                             <span
-                              className="text-slate-500 text-xs"
+                              className="text-slate-400 text-xs"
                               title={
                                 da
                                   ? 'Ingen tidligere handel registreret'
@@ -1120,7 +1120,7 @@ export default function EjendomOekonomiTab(props: Props) {
                                 fra EJF (fx "Salg", "Arv", "Gave", "Fusion"). Vises når
                                 den afviger fra den fritekstede overdragelsesmaade. */}
                             {h.forretningshaendelse && h.forretningshaendelse !== overdragelse && (
-                              <span className="text-[10px] text-slate-500 italic">
+                              <span className="text-[10px] text-slate-400 italic">
                                 {h.forretningshaendelse}
                               </span>
                             )}
@@ -1170,8 +1170,8 @@ export default function EjendomOekonomiTab(props: Props) {
             </div>
           ) : (
             <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-5 text-center space-y-2">
-              <TrendingUp size={22} className="text-slate-600 mx-auto" />
-              <p className="text-slate-500 text-xs">{t.noTransactions}</p>
+              <TrendingUp size={22} className="text-slate-400 mx-auto" />
+              <p className="text-slate-400 text-xs">{t.noTransactions}</p>
               {salgshistorikManglerAdgang && (
                 <p className="text-slate-400 text-[10px] max-w-sm mx-auto leading-relaxed">
                   {t.salesHistoryEJF}

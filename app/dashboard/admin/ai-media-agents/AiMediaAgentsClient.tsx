@@ -524,7 +524,7 @@ export default function AiMediaAgentsClient() {
           {loading && (
             <div className="text-center py-20">
               <RefreshCw size={24} className="animate-spin text-blue-400 mx-auto mb-3" />
-              <p className="text-slate-500 text-sm">{t.loading}</p>
+              <p className="text-slate-400 text-sm">{t.loading}</p>
             </div>
           )}
 
@@ -556,7 +556,7 @@ export default function AiMediaAgentsClient() {
                       {confidenceThreshold}%
                     </span>
                   </div>
-                  <p className="text-xs text-slate-500">{t.confidenceThresholdDesc}</p>
+                  <p className="text-xs text-slate-400">{t.confidenceThresholdDesc}</p>
                   <input
                     type="range"
                     min={0}
@@ -569,7 +569,7 @@ export default function AiMediaAgentsClient() {
                     }}
                     className="w-full h-2 bg-slate-700 rounded-full appearance-none cursor-pointer accent-amber-500"
                   />
-                  <div className="flex justify-between text-[10px] text-slate-600">
+                  <div className="flex justify-between text-[10px] text-slate-400">
                     <span>0%</span>
                     <span>50%</span>
                     <span>100%</span>
@@ -586,7 +586,7 @@ export default function AiMediaAgentsClient() {
                       {greenThreshold}%
                     </span>
                   </div>
-                  <p className="text-xs text-slate-500">{t.greenThresholdDesc}</p>
+                  <p className="text-xs text-slate-400">{t.greenThresholdDesc}</p>
                   <input
                     type="range"
                     min={0}
@@ -602,7 +602,7 @@ export default function AiMediaAgentsClient() {
                     }}
                     className="w-full h-2 bg-slate-700 rounded-full appearance-none cursor-pointer accent-emerald-500"
                   />
-                  <div className="flex justify-between text-[10px] text-slate-600">
+                  <div className="flex justify-between text-[10px] text-slate-400">
                     <span>0%</span>
                     <span>50%</span>
                     <span>100%</span>
@@ -617,7 +617,7 @@ export default function AiMediaAgentsClient() {
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-500/15 border border-amber-500/20 rounded text-[11px] text-amber-400">
                     {confidenceThreshold}–{greenThreshold}% → {da ? 'Gul badge' : 'Yellow badge'}
                   </span>
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-700/40 border border-slate-600/30 rounded text-[11px] text-slate-500">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-700/40 border border-slate-600/30 rounded text-[11px] text-slate-400">
                     &lt;{confidenceThreshold}% → {da ? 'Skjult' : 'Hidden'}
                   </span>
                 </div>
@@ -702,7 +702,7 @@ export default function AiMediaAgentsClient() {
                 {/* Brave API key */}
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-slate-200">{t.braveKeyLabel}</label>
-                  <p className="text-xs text-slate-500">{t.braveKeyDesc}</p>
+                  <p className="text-xs text-slate-400">{t.braveKeyDesc}</p>
                   <div className="flex gap-2">
                     <div className="relative flex-1">
                       <input
@@ -714,7 +714,7 @@ export default function AiMediaAgentsClient() {
                       />
                       <button
                         onClick={() => setShowBraveKey((v) => !v)}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-300 transition-colors"
                       >
                         {showBraveKey ? <EyeOff size={15} /> : <Eye size={15} />}
                       </button>
@@ -731,7 +731,7 @@ export default function AiMediaAgentsClient() {
                 <div className="space-y-3">
                   <div>
                     <p className="text-sm font-medium text-slate-200">{t.primaryMediaLabel}</p>
-                    <p className="text-xs text-slate-500 mt-0.5">{t.primaryMediaDesc}</p>
+                    <p className="text-xs text-slate-400 mt-0.5">{t.primaryMediaDesc}</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {primaryMediaDomains.map((domain) => (
@@ -785,7 +785,7 @@ export default function AiMediaAgentsClient() {
                     onChange={(e) => setMaxArticles(Number(e.target.value))}
                     className="w-full h-2 bg-slate-700 rounded-full appearance-none cursor-pointer accent-blue-500"
                   />
-                  <div className="flex justify-between text-[10px] text-slate-600">
+                  <div className="flex justify-between text-[10px] text-slate-400">
                     <span>5</span>
                     <span>15</span>
                     <span>30</span>
@@ -805,7 +805,7 @@ export default function AiMediaAgentsClient() {
                       onChange={(e) => setMaxTokens(Number(e.target.value))}
                       className="w-36 bg-slate-900/60 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:border-blue-500"
                     />
-                    <span className="text-slate-500 text-xs">tokens</span>
+                    <span className="text-slate-400 text-xs">tokens</span>
                   </div>
                 </div>
 
@@ -837,7 +837,7 @@ export default function AiMediaAgentsClient() {
                 <div className="flex items-center justify-between gap-4 py-2 border-b border-slate-700/40">
                   <div>
                     <p className="text-sm font-medium text-slate-200">{t.contactSearchLabel}</p>
-                    <p className="text-xs text-slate-500 mt-0.5">{t.contactSearchDesc}</p>
+                    <p className="text-xs text-slate-400 mt-0.5">{t.contactSearchDesc}</p>
                   </div>
                   <Toggle
                     enabled={contactSearchEnabled}
@@ -853,7 +853,7 @@ export default function AiMediaAgentsClient() {
                 <div className="flex items-center justify-between gap-4 py-2 border-b border-slate-700/40">
                   <div>
                     <p className="text-sm font-medium text-slate-200">{t.phoneFallbackLabel}</p>
-                    <p className="text-xs text-slate-500 mt-0.5">{t.phoneFallbackDesc}</p>
+                    <p className="text-xs text-slate-400 mt-0.5">{t.phoneFallbackDesc}</p>
                   </div>
                   <Toggle
                     enabled={phoneFallbackEnabled}
@@ -868,7 +868,7 @@ export default function AiMediaAgentsClient() {
                 {/* Social platforms */}
                 <div className="space-y-3">
                   <p className="text-sm font-medium text-slate-200">{t.socialPlatformsLabel}</p>
-                  <p className="text-xs text-slate-500">{t.socialPlatformsDesc}</p>
+                  <p className="text-xs text-slate-400">{t.socialPlatformsDesc}</p>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                     {knownPlatforms.map((platform) => {
                       const active = activePlatforms.includes(platform.key);
@@ -879,7 +879,7 @@ export default function AiMediaAgentsClient() {
                           className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg border text-sm font-medium transition-all ${
                             active
                               ? 'bg-blue-600/20 border-blue-500/40 text-blue-300'
-                              : 'bg-slate-900/40 border-slate-700/40 text-slate-500 hover:border-slate-500'
+                              : 'bg-slate-900/40 border-slate-700/40 text-slate-400 hover:border-slate-500'
                           }`}
                         >
                           <span

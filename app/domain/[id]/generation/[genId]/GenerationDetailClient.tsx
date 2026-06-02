@@ -133,7 +133,7 @@ export default function GenerationDetailClient({
                       : 'Pending'}
             </p>
             {data.completed_at && (
-              <p className="text-slate-500 text-xs">
+              <p className="text-slate-400 text-xs">
                 {new Date(data.completed_at).toLocaleString(da ? 'da-DK' : 'en-GB')}
               </p>
             )}
@@ -161,11 +161,11 @@ export default function GenerationDetailClient({
         {/* Metadata */}
         <dl className="grid grid-cols-2 gap-3 text-xs text-slate-400">
           <div>
-            <dt className="text-slate-500">{da ? 'Tokens brugt' : 'Tokens used'}</dt>
+            <dt className="text-slate-400">{da ? 'Tokens brugt' : 'Tokens used'}</dt>
             <dd className="text-slate-300">{data.claude_tokens}</dd>
           </div>
           <div>
-            <dt className="text-slate-500">{da ? 'Startet' : 'Started'}</dt>
+            <dt className="text-slate-400">{da ? 'Startet' : 'Started'}</dt>
             <dd className="text-slate-300">
               {data.started_at
                 ? new Date(data.started_at).toLocaleTimeString(da ? 'da-DK' : 'en-GB')
@@ -174,7 +174,7 @@ export default function GenerationDetailClient({
           </div>
           {data.user_prompt && (
             <div className="col-span-2">
-              <dt className="text-slate-500">{da ? 'Instruktioner' : 'Instructions'}</dt>
+              <dt className="text-slate-400">{da ? 'Instruktioner' : 'Instructions'}</dt>
               <dd className="text-slate-300 whitespace-pre-wrap">{data.user_prompt}</dd>
             </div>
           )}

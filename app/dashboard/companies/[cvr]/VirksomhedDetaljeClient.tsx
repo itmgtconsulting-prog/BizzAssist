@@ -1952,7 +1952,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
             {/* Sociale medier & links */}
             <div>
               <div className="flex items-center gap-2 mb-3">
-                <Globe size={12} className="text-slate-500" />
+                <Globe size={12} className="text-slate-400" />
                 <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
                   {lang === 'da' ? 'Sociale medier & hjemmeside' : 'Social media & website'}
                 </p>
@@ -2011,7 +2011,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
             {/* Sociale medier & links */}
             <div>
               <div className="flex items-center gap-2 mb-3">
-                <Globe size={12} className="text-slate-500" />
+                <Globe size={12} className="text-slate-400" />
                 <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
                   {lang === 'da' ? 'Sociale medier & hjemmeside' : 'Social media & website'}
                 </p>
@@ -2029,7 +2029,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           </div>
           {/* Build-nummer — diskret footer i bunden af mobil nyheder-overlay */}
           <div className="px-4 py-2 border-t border-slate-700/30 flex-shrink-0">
-            <p className="text-slate-600 text-xs">
+            <p className="text-slate-400 text-xs">
               Build: {process.env.NEXT_PUBLIC_BUILD_ID ?? 'dev'}
             </p>
           </div>

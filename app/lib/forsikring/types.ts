@@ -110,6 +110,56 @@ export type InsuranceForm = 'nyvaerdi' | 'sum' | 'f_risiko' | 'nedrivning' | 'uf
 /** Severity-niveau for en gap-detektion */
 export type GapSeverity = 'info' | 'warning' | 'critical';
 
+/**
+ * BIZZ-1941: Hierarki-niveau et gap hører til på i gap-rapporten.
+ *
+ * - owner: generel finding for hele forsikringsejeren (D&O, cyber, retshjælp,
+ *   branchekrav, huslejetab-portefølje, driftstab) — vises KUN i toppen.
+ * - company: gælder en virksomhed/porteføljen (dæknings-overlap, kollektiv
+ *   bygningsforsikring, standard-betingelser, branche-checks) — vises på
+ *   virksomheds-niveau, ikke gentaget per ejendom.
+ * - property: ejendomsspecifik finding (areal, etager, tag, dækningsmangler
+ *   på DENNE ejendom) — vises kun under den enkelte ejendom.
+ */
+export type GapScope = 'owner' | 'company' | 'property';
+
+/** Check-id'er der hører til forsikringsejer-niveau (vises kun én gang, i toppen) */
+const OWNER_SCOPE_CHECKS = new Set<string>([
+  'GAP-060', // D&O mangler (A/S)
+  'GAP-061', // huslejetab mangler (portefølje)
+  'GAP-063', // cyber-forsikring mangler
+  'GAP-064', // retshjælpsforsikring mangler
+  'GAP-065', // driftstab mangler (udlejning)
+  'GAP-067', // branchekrav-aggregat (portefølje)
+  'GAP-103', // D&O — bestyrelsespost i A/S
+]);
+
+/** Check-id'er der hører til virksomheds-niveau (vises per virksomhed, ikke per ejendom) */
+const COMPANY_SCOPE_CHECKS = new Set<string>([
+  'GAP-050', // multibranche
+  'GAP-051', // højrisiko-branche mangler dækninger
+  'GAP-052', // CVR-branche vs. police-virksomhedsart
+  'GAP-053', // holding med operationel bibranche
+  'GAP-062', // kollektiv bygningsforsikring anbefalet
+  'GAP-066', // lav præmie vs. portefølje
+  'GAP-070', // dobbelt-forsikring (samme ejendom, 2+ policer)
+  'GAP-071', // dæknings-overlap på tværs af policer
+  'GAP-STD-BASELINE', // standard betingelser sammenligning
+]);
+
+/**
+ * BIZZ-1941: Afled hierarki-scope for et gap ud fra dets check_id.
+ * Alt der ikke er eksplicit owner/company er ejendomsspecifikt (property).
+ *
+ * @param checkId - Gap-check-id (fx 'GAP-060')
+ * @returns Hierarki-niveau gap'et skal vises på
+ */
+export function gapScope(checkId: string): GapScope {
+  if (OWNER_SCOPE_CHECKS.has(checkId)) return 'owner';
+  if (COMPANY_SCOPE_CHECKS.has(checkId)) return 'company';
+  return 'property';
+}
+
 /** Uploaded PDF-fil */
 export interface ForsikringDocument {
   id: string;
@@ -225,6 +275,7 @@ export const COVERAGE_CODES = [
   'forurening',
   'driftstab',
   'erhvervsansvar',
+  'udvidet_vandskade',
 ] as const;
 
 export type CoverageCode = (typeof COVERAGE_CODES)[number];
@@ -248,6 +299,7 @@ export const COVERAGE_LABELS_DA: Record<CoverageCode, string> = {
   forurening: 'Forurening',
   driftstab: 'Driftstab',
   erhvervsansvar: 'Erhvervsansvar',
+  udvidet_vandskade: 'Udvidet vandskade',
 };
 
 // ─── Parser output schema (Claude → JSON) ────────────────────────
@@ -399,4 +451,6 @@ export interface DetectedGap {
   recommendation: string | null;
   estimated_impact_dkk: number | null;
   source_data: Record<string, unknown>;
+  /** BIZZ-1941: Hierarki-niveau (owner/company/property) afledt af check_id */
+  scope?: GapScope;
 }

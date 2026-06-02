@@ -86,20 +86,26 @@ async function getTenantSchema(tenantId: string): Promise<string | null> {
  */
 async function fetchUserRows(
   schemaName: string,
-  tableName: string,
+  tableName: 'recent_entities' | 'saved_entities' | 'notifications',
   userId: string
 ): Promise<unknown[]> {
   try {
-    // Use the typed tenantDb helper — runtime schema name is cast via the helper
-    // tableName is a runtime string; cast to a known table name to satisfy TypeScript.
-    // The value is always one of: 'recent_entities', 'saved_entities', 'notifications'.
-    type ExportTable = 'saved_entities' | 'notifications';
     const db = tenantDb(schemaName);
-    const { data, error } = await db
-      .from(tableName as ExportTable)
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
+    // saved_entities records the creating user in created_by; the other tables use
+    // user_id. Branch so each .from() is a concrete table and the filter column
+    // type-checks against that table's row shape.
+    const { data, error } =
+      tableName === 'saved_entities'
+        ? await db
+            .from('saved_entities')
+            .select('*')
+            .eq('created_by', userId)
+            .order('created_at', { ascending: false })
+        : await db
+            .from(tableName as 'notifications')
+            .select('*')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false });
 
     if (error) {
       // Table may not exist on older tenants — treat as empty rather than failing

@@ -133,7 +133,7 @@ export function DomainAdminTabs({
         {isSuperAdminScope && (
           <nav
             aria-label="Breadcrumb"
-            className="flex items-center gap-2 text-xs text-slate-500 mb-2"
+            className="flex items-center gap-2 text-xs text-slate-400 mb-2"
           >
             <Link href="/dashboard/admin/users" className="hover:text-slate-300 transition-colors">
               Admin
@@ -162,7 +162,7 @@ export function DomainAdminTabs({
             <Shield size={20} className="text-purple-400" />
             {domainName ?? (da ? 'Domain Administration' : 'Domain Administration')}
           </h1>
-          <span className="text-slate-500 text-xs ml-2">
+          <span className="text-slate-400 text-xs ml-2">
             {da ? 'Administration' : 'Administration'}
           </span>
         </div>

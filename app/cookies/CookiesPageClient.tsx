@@ -29,7 +29,7 @@ export default function CookiesPageClient() {
           <h1 className="text-4xl font-bold text-white mb-2">
             {lang === 'da' ? 'Cookiepolitik' : 'Cookie Policy'}
           </h1>
-          <p className="text-slate-500 text-sm mb-10">
+          <p className="text-slate-400 text-sm mb-10">
             {lang === 'da' ? 'Sidst opdateret: 29. marts 2026' : 'Last updated: March 29, 2026'}
           </p>
 

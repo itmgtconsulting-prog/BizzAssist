@@ -171,7 +171,7 @@ function RangeControl({
           }}
           className="w-20 bg-slate-800/60 border border-slate-700/50 rounded-md px-2 py-1 text-xs text-white focus:border-blue-500 focus:outline-none"
         />
-        <span className="text-slate-500 text-xs">–</span>
+        <span className="text-slate-400 text-xs">–</span>
         <label htmlFor={idMax} className="sr-only">
           {lang === 'da' ? 'Maksimum' : 'Maximum'}
         </label>
@@ -219,7 +219,7 @@ function ToggleControl({
         <span className="flex-1">
           <span className="font-medium text-slate-200">{schema.label}</span>
           {schema.description && (
-            <span className="block text-[10px] text-slate-500 mt-0.5 leading-snug">
+            <span className="block text-[10px] text-slate-400 mt-0.5 leading-snug">
               {schema.description}
             </span>
           )}

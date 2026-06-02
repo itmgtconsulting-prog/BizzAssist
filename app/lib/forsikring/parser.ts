@@ -206,7 +206,7 @@ Din opgave er at udtrække ALLE policer fra oversigten og returnere dem som JSON
       "general_deductible_dkk": number | null,
       "coverages": [
         {
-          "coverage_code": "brand_el" | "bygningskasko" | "udvidet_roerskade" | "glas" | "sanitet" | "insekt_svamp" | "restvaerdi" | "stikledning" | "jordskade" | "lovliggoerelse" | "huslejetab" | "haerverk" | "omstilling_laase" | "hus_grundejer_ansvar" | "forurening" | "driftstab" | "erhvervsansvar",
+          "coverage_code": "brand_el" | "bygningskasko" | "udvidet_roerskade" | "glas" | "sanitet" | "insekt_svamp" | "restvaerdi" | "stikledning" | "jordskade" | "lovliggoerelse" | "huslejetab" | "haerverk" | "omstilling_laase" | "hus_grundejer_ansvar" | "forurening" | "driftstab" | "erhvervsansvar" | "udvidet_vandskade",
           "coverage_label": string,
           "is_covered": boolean,
           "sum_dkk": number | null,
@@ -229,8 +229,8 @@ REGLER:
 5. Hvis en police har flere adresser, opret én entry per adresse med samme policenummer.
 6. insurance_type: fx "Bygningsforsikring", "Erhvervsansvar", "Løsøre", etc.
 7. Hvis policyholder er den samme for alle policer, gentag navnet i hver entry.
-8. VIGTIGT: Scan ALLE sider for dækninger. Hvis dokumentet indeholder "Sådan er bygningen dækket", "Dækninger og dækningssummer" eller lignende sektioner, ekstraher ALLE dækninger som coverages[]. Typiske dækninger: Brand, Storm og nedbør, Udstrømning af vand, Pludselig skade, Indbrud, Svamp, Insekt, Rørskade, Glas, Sanitet, Stikledning, Jordskade, Huslejetab, Hærværk, Omstilling af låse.
-9. coverage_code skal matche én af de 17 kanoniske koder. Hvis en dækning ikke passer, brug den nærmeste.
+8. KRITISK — DÆKNINGER: Scan HELE dokumentet for dæknings-sektioner ("Sådan er bygningen dækket", "Dækninger og dækningssummer", "Forsikringsdækninger"). Ekstraher ALLE dækninger som coverages[]. En typisk police har 8-15 dækninger. Mapping: "Brand/Pludselig skade"→brand_el, "Storm/Nedbør"→bygningskasko, "Udstrømning af vand/Rørskade"→udvidet_roerskade, "Glas"→glas, "Sanitet"→sanitet, "Svamp/Insekt"→insekt_svamp, "Restværdi"→restvaerdi, "Stikledning"→stikledning, "Jordskade"→jordskade, "Huslejetab"→huslejetab, "Hærværk"→haerverk, "Omstilling af låse"→omstilling_laase, "Hus-/Grundejeransvar"→hus_grundejer_ansvar, "Udvidet vandskade"→udvidet_vandskade.
+9. coverage_code skal matche én af de 18 kanoniske koder. Hvis en dækning ikke passer, brug den nærmeste. Finder du færre end 5, gennemlæs dokumentet igen.
 
 Returnér nu JSON for følgende forsikringsoversigt:`;
 
@@ -320,7 +320,7 @@ Din opgave er at uddrage strukturerede felter fra rå PDF-tekst og returnere ét
   "policy_issued_date": string | null,        // YYYY-MM-DD (police-tegningsdato)
   "coverages": [
     {
-      "coverage_code": "brand_el" | "bygningskasko" | "udvidet_roerskade" | "glas" | "sanitet" | "insekt_svamp" | "restvaerdi" | "stikledning" | "jordskade" | "lovliggoerelse" | "huslejetab" | "haerverk" | "omstilling_laase" | "hus_grundejer_ansvar" | "forurening" | "driftstab" | "erhvervsansvar",
+      "coverage_code": "brand_el" | "bygningskasko" | "udvidet_roerskade" | "glas" | "sanitet" | "insekt_svamp" | "restvaerdi" | "stikledning" | "jordskade" | "lovliggoerelse" | "huslejetab" | "haerverk" | "omstilling_laase" | "hus_grundejer_ansvar" | "forurening" | "driftstab" | "erhvervsansvar" | "udvidet_vandskade",
       "coverage_label": string,               // Original tekst fra policen
       "is_covered": boolean,                  // false hvis explicit ekskluderet
       "sum_dkk": number | null,
@@ -337,11 +337,13 @@ REGLER:
 2. Hvis et felt ikke kan findes i teksten, sæt det til null (ikke "ukendt" eller tom streng).
 3. Belob: udregn til hele DKK uden punktum eller komma (fx "33.998 kr" → 33998).
 4. Datoer: konverter "8. juli 2022" → "2022-07-08", "1. april" → brug indeværende eller næste år som passende.
-5. Dækninger: inkluder BÅDE aktive (is_covered:true) OG eksplicit ekskluderede (is_covered:false fra "Forsikringen dækker ikke"-sektioner).
-6. Hvis policen kun viser en dækning som tekst uden detaljer, sæt sum_dkk og deductible_dkk til null.
-7. coverage_code skal være ÉN af de 17 kanoniske koder ovenfor — map den danske beskrivelse til den nærmeste kode.
-8. Hvis policen er en oversigt/sammenfatning af flere policer, vælg den FØRSTE police og parse den.
-9. notes-feltet bruges til "Særlige forhold", besigtigelses-bemærkninger og forudsætninger (fx "Uautoriserede el-installationer", "Fedthåndslukker påkrævet").
+5. KRITISK — DÆKNINGER: Du SKAL scanne HELE dokumentet fra start til slut for dækninger. Søg specifikt efter sektioner med overskrifter som "Sådan er bygningen dækket", "Dækninger og dækningssummer", "Forsikringsdækninger", "Dækningsoversigt", "Bygningsforsikring dækker" — disse ligger typisk MIDT eller SIDST i dokumentet (side 4-8), IKKE i starten. Inkludér ALLE fundne dækninger — både aktive (is_covered:true) OG eksplicit ekskluderede (is_covered:false).
+6. MAPPING-EKSEMPLER: "Brand inkl. pludselig skade" → brand_el, "Storm og nedbør" → bygningskasko, "Udstrømning af vand / Rørskade" → udvidet_roerskade, "Glas" → glas, "Sanitet" → sanitet, "Svamp / Insekt" → insekt_svamp, "Restværdi" → restvaerdi, "Stikledning" → stikledning, "Jordskade / Grundejerskade" → jordskade, "Lovliggørelse" → lovliggoerelse, "Huslejetab" → huslejetab, "Hærværk" → haerverk, "Omstilling af låse" → omstilling_laase, "Husejer- / Grundejeransvar" → hus_grundejer_ansvar, "Forurening" → forurening, "Driftstab" → driftstab, "Erhvervsansvar" → erhvervsansvar, "Udvidet vandskade / Oversvømmelse" → udvidet_vandskade.
+7. Hvis policen kun viser en dækning som tekst uden detaljer, sæt sum_dkk og deductible_dkk til null.
+8. coverage_code skal være ÉN af de 18 kanoniske koder ovenfor — map den danske beskrivelse til den nærmeste kode.
+9. Hvis policen er en oversigt/sammenfatning af flere policer, vælg den FØRSTE police og parse den.
+10. notes-feltet bruges til "Særlige forhold", besigtigelses-bemærkninger og forudsætninger (fx "Uautoriserede el-installationer", "Fedthåndslukker påkrævet").
+11. En typisk dansk bygningsforsikrings-police har 8-15 dækninger. Hvis du finder færre end 5 coverages, gennemlæs dokumentet IGEN — du har sandsynligvis overset en dæknings-sektion.
 
 Returnér nu JSON for følgende police-tekst:`;
 

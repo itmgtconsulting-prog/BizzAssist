@@ -114,6 +114,30 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       /* sibling expansion non-critical for verification lookup */
     }
 
+    // BIZZ-1911: Udvid med SFE-children — hvis target er en hovedejendom/SFE,
+    // inkludér alle ejerlejligheder i strukturen (og omvendt: fra lejlighed
+    // til SFE + andre lejligheder). Bruger ejendom-struktur API internt.
+    try {
+      const strukturRes = await fetch(
+        `${process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'}/api/ejendom-struktur?bfe=${bfeNummer}`,
+        { signal: AbortSignal.timeout(8000), headers: { Cookie: '' } }
+      );
+      if (strukturRes.ok) {
+        const struktur = (await strukturRes.json()) as {
+          children?: Array<{ bfeNummer?: number }>;
+          parent?: { bfeNummer?: number };
+        };
+        if (struktur.parent?.bfeNummer) {
+          verificationBfeSet.add(struktur.parent.bfeNummer);
+        }
+        for (const child of struktur.children ?? []) {
+          if (child.bfeNummer) verificationBfeSet.add(child.bfeNummer);
+        }
+      }
+    } catch {
+      /* SFE-children expansion non-critical */
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: verifiedRows } = await (admin as any)
       .from('ejerforening_verification_counts')
@@ -456,14 +480,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // BIZZ-1841: Direkte EJF-søgning for foreninger i samme postnr (fallback
+    // BIZZ-1841: Direkte EJF-søgning for foreninger i samme gade+postnr (fallback
     // når DAWA er langsom eller gadenavn-søgning er tom). Find alle forenings-CVR'er
-    // der har ejf_administrator/ejf_ejerskab records for BFE'er i dette postnr.
+    // der har ejf_administrator/ejf_ejerskab records for BFE'er i denne gade.
+    // BIZZ-1917: Strammet fra postnr-only til gade+postnr for at undgå falske
+    // positives i tætbebyggede kvarterer (Carlsberg Byen, Frederiksberg, indre by).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: postnrBfes } = await (admin as any)
       .from('bfe_adresse_cache')
       .select('bfe_nummer')
       .eq('postnr', postnr)
+      .ilike('adresse', `${gadenavn}%`)
       .limit(500);
     const postnrBfeList = ((postnrBfes ?? []) as Array<{ bfe_nummer: number }>).map(
       (r) => r.bfe_nummer

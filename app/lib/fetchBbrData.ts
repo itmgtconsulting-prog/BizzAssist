@@ -500,7 +500,11 @@ export async function fetchBBRGraphQL(
  * @returns { bfeNummer, adgangsadresseId } — bfeNummer null ved fejl,
  *          adgangsadresseId er adgangsadresse-UUID (bruges til BBR_Bygning husnummer-felt)
  */
-async function fetchBFENummer(dawaId: string): Promise<{
+async function fetchBFENummer(
+  dawaId: string,
+  /** BIZZ-1894: Etage/dør hints fra caller — bruges til cache-fallback BFE-lookup */
+  hints?: { etage?: string; doer?: string }
+): Promise<{
   bfeNummer: number | null;
   ejerlejlighedBfe: number | null;
   moderBfe: number | null;
@@ -814,7 +818,55 @@ async function fetchBFENummer(dawaId: string): Promise<{
     }
 
     // Bestem primær BFE: ejerlejlighed hvis fundet, ellers jordstykke
-    const primaryBfe = ejerlejlighedBfe ?? jordBfe;
+    let primaryBfe = ejerlejlighedBfe ?? jordBfe;
+
+    // BIZZ-1894/1901: Cache-fallback for ejerlejligheder hvor VP/BBR
+    // returnerer SFE-BFE i stedet for individuel lejligheds-BFE.
+    // bfe_adresse_cache er backfill-populeret med korrekte BFE'er.
+    // BIZZ-1894/1901: Cache-fallback for ejerlejligheder hvor VP/BBR
+    // returnerer SFE-BFE. Tjek bfe_adresse_cache via DAWA-ID (kan være
+    // adresse-ID ELLER adgangsadresse-ID — cache har begge typer).
+    if (!ejerlejlighedBfe || ejerlejlighedBfe === jordBfe) {
+      try {
+        const admin = (await import('@/lib/supabase/admin')).createAdminClient();
+        // Forsøg 1: Direkte dawa_id match
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let cacheRow = await (admin as any)
+          .from('bfe_adresse_cache')
+          .select('bfe_nummer')
+          .eq('dawa_id', dawaId)
+          .maybeSingle()
+          .then((r: { data: { bfe_nummer: number } | null }) => r.data);
+
+        // Forsøg 2: Adresse + etage + dør match (når dawa_id ikke matcher)
+        if (!cacheRow?.bfe_nummer && adresseTekst) {
+          const vejHusnr = adresseTekst.split(',')[0]?.trim();
+          // Brug etage/dør fra hints (page.tsx) eller fra DAWA-parse
+          const cacheEtage = hints?.etage ?? etage;
+          const cacheDoer = hints?.doer ?? doer;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          let q = (admin as any)
+            .from('bfe_adresse_cache')
+            .select('bfe_nummer')
+            .ilike('adresse', `${vejHusnr}%`);
+          if (cacheEtage) q = q.eq('etage', cacheEtage);
+          if (cacheDoer) q = q.eq('doer', cacheDoer);
+          cacheRow = await q
+            .maybeSingle()
+            .then((r: { data: { bfe_nummer: number } | null }) => r.data);
+        }
+
+        if (cacheRow?.bfe_nummer && cacheRow.bfe_nummer !== jordBfe) {
+          logger.log(
+            `[fetchBFENummer] Cache-fallback: BFE ${cacheRow.bfe_nummer} for ${adresseTekst ?? dawaId} (VP/BBR gav ${primaryBfe})`
+          );
+          primaryBfe = cacheRow.bfe_nummer;
+          ejerlejlighedBfe = cacheRow.bfe_nummer;
+        }
+      } catch {
+        /* cache fallback non-fatal */
+      }
+    }
 
     return {
       bfeNummer: primaryBfe,
@@ -2157,7 +2209,9 @@ async function resolveHierarkiChain(
  * @returns Aggregeret BBR-response (identisk med /api/ejendom/[id] uden dawaId-feltet)
  */
 export async function fetchBbrForAddress(
-  dawaId: string
+  dawaId: string,
+  /** BIZZ-1894: Etage/dør fra DAWA-adresse — bruges til cache-fallback BFE-lookup */
+  hints?: { etage?: string; doer?: string }
 ): Promise<Omit<EjendomApiResponse, 'dawaId'>> {
   const vt = nowDafDateTime();
 
@@ -2166,7 +2220,7 @@ export async function fetchBbrForAddress(
   // BBR_Bygning.husnummer kræver adgangsadresse-UUID; BBR_Enhed.adresseIdentificerer
   // accepterer begge typer, så vi bruger original id for enheder.
   const { bfeNummer, ejerlejlighedBfe, moderBfe, adgangsadresseId, ejerlavKode, matrikelnr } =
-    await fetchBFENummer(dawaId);
+    await fetchBFENummer(dawaId, hints);
 
   // Hent bygninger og enheder parallelt med korrekte UUIDs.
   const [rawBygninger, rawEnheder] = await Promise.all([

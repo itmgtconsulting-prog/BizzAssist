@@ -180,7 +180,7 @@ function RecentCompanyCard({
               </>
             )}
           </span>
-          <div className="flex items-center gap-1 text-slate-500 text-xs">
+          <div className="flex items-center gap-1 text-slate-400 text-xs">
             <Clock size={11} />
             {timeText}
           </div>
@@ -191,12 +191,12 @@ function RecentCompanyCard({
         <p className="text-slate-400 text-xs mt-0.5">
           CVR {company.cvr} · {company.zipcode} {company.city}
         </p>
-        {company.industry && <p className="text-slate-500 text-xs mt-1">{company.industry}</p>}
+        {company.industry && <p className="text-slate-400 text-xs mt-1">{company.industry}</p>}
       </div>
       <div className="flex items-center justify-end pt-1 border-t border-slate-700/40">
         <ChevronRight
           size={16}
-          className="text-slate-600 group-hover:text-blue-400 transition-colors"
+          className="text-slate-400 group-hover:text-blue-400 transition-colors"
         />
       </div>
     </Link>
@@ -251,10 +251,10 @@ function DropdownResultItem({
             {data.active ? t[lang].active : t[lang].inactive}
           </span>
           {data.companyType && (
-            <span className="text-[10px] text-slate-500 flex-shrink-0">{data.companyType}</span>
+            <span className="text-[10px] text-slate-400 flex-shrink-0">{data.companyType}</span>
           )}
         </div>
-        <p className="text-slate-500 text-xs truncate">
+        <p className="text-slate-400 text-xs truncate">
           CVR {data.cvr}
           {data.industry ? ` · ${data.industry}` : ''}
           {data.address ? ` · ${data.address}, ${data.zipcode} ${data.city}` : ''}
@@ -262,7 +262,7 @@ function DropdownResultItem({
       </div>
       <ArrowRight
         size={13}
-        className={aktiv ? 'text-blue-400' : 'text-slate-600 group-hover:text-blue-400'}
+        className={aktiv ? 'text-blue-400' : 'text-slate-400 group-hover:text-blue-400'}
       />
     </button>
   );
@@ -343,7 +343,7 @@ function DropdownPortal({
     >
       {/* Loading */}
       {searching && (
-        <div className="flex items-center gap-3 px-4 py-3 text-slate-500 text-sm">
+        <div className="flex items-center gap-3 px-4 py-3 text-slate-400 text-sm">
           <Loader2 size={14} className="animate-spin" />
           {txt.searching}
         </div>
@@ -363,7 +363,7 @@ function DropdownPortal({
           ))}
           {results.length >= 15 && (
             <div className="px-4 py-2 border-t border-slate-700/40">
-              <p className="text-slate-600 text-xs text-center">{txt.showingBest}</p>
+              <p className="text-slate-400 text-xs text-center">{txt.showingBest}</p>
             </div>
           )}
         </>
@@ -371,7 +371,7 @@ function DropdownPortal({
 
       {/* No results */}
       {!searching && searchDone && results.length === 0 && error && (
-        <div className="px-4 py-4 text-slate-500 text-sm text-center">
+        <div className="px-4 py-4 text-slate-400 text-sm text-center">
           {txt.noResults} &ldquo;{query}&rdquo;
         </div>
       )}
@@ -561,7 +561,7 @@ function ActiveFilterChips({
       <button
         type="button"
         onClick={() => onFiltersChange(DEFAULT_FILTERS)}
-        className="text-slate-500 hover:text-slate-300 text-xs transition-colors ml-1"
+        className="text-slate-400 hover:text-slate-300 text-xs transition-colors ml-1"
       >
         {txt.nulstilFiltre}
       </button>
@@ -880,7 +880,7 @@ export default function VirksomhederListesideClient() {
                       setÅben(false);
                       inputRef.current?.focus();
                     }}
-                    className="text-slate-500 hover:text-slate-300 transition-colors"
+                    className="text-slate-400 hover:text-slate-300 transition-colors"
                   >
                     <X size={18} />
                   </button>
@@ -959,7 +959,7 @@ export default function VirksomhederListesideClient() {
                 <h2 className="text-white font-semibold text-base">
                   {lang === 'da' ? 'Søgeresultater' : 'Search results'}
                 </h2>
-                <span className="text-slate-500 text-xs">
+                <span className="text-slate-400 text-xs">
                   — {searchTotal.toLocaleString('da-DK')}{' '}
                   {lang === 'da' ? 'virksomheder' : 'companies'}
                 </span>
@@ -985,13 +985,13 @@ export default function VirksomhederListesideClient() {
                             <span>CVR {r.cvr}</span>
                             {r.virksomhedsform && (
                               <>
-                                <span className="text-slate-600">·</span>
+                                <span className="text-slate-400">·</span>
                                 <span>{r.virksomhedsform}</span>
                               </>
                             )}
                           </div>
                           {r.branche_tekst && (
-                            <p className="text-slate-500 text-xs mt-1 truncate">
+                            <p className="text-slate-400 text-xs mt-1 truncate">
                               {r.branche_tekst}
                             </p>
                           )}
@@ -1008,7 +1008,7 @@ export default function VirksomhederListesideClient() {
                           )}
                           <ChevronRight
                             size={14}
-                            className="text-slate-600 group-hover:text-blue-400 transition-colors"
+                            className="text-slate-400 group-hover:text-blue-400 transition-colors"
                           />
                         </div>
                       </div>
@@ -1044,7 +1044,7 @@ export default function VirksomhederListesideClient() {
             ) : (
               <div className="flex flex-col items-center justify-center py-12 text-center gap-3">
                 <div className="p-4 bg-slate-800/40 rounded-2xl">
-                  <Filter size={24} className="text-slate-600" />
+                  <Filter size={24} className="text-slate-400" />
                 </div>
                 <p className="text-slate-400 text-sm font-medium">{txt.ingenMatch}</p>
                 <button
@@ -1068,7 +1068,7 @@ export default function VirksomhederListesideClient() {
               <button
                 type="button"
                 onClick={clearRecent}
-                className="text-slate-600 hover:text-slate-400 text-xs transition-colors"
+                className="text-slate-400 hover:text-slate-400 text-xs transition-colors"
               >
                 {txt.clearHistory}
               </button>
@@ -1083,10 +1083,10 @@ export default function VirksomhederListesideClient() {
         ) : (
           <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
             <div className="p-4 bg-slate-800/40 rounded-2xl">
-              <Building2 size={28} className="text-slate-600" />
+              <Building2 size={28} className="text-slate-400" />
             </div>
             <p className="text-slate-400 text-sm font-medium">{txt.emptyTitle}</p>
-            <p className="text-slate-600 text-xs max-w-xs leading-relaxed">{txt.emptyDesc}</p>
+            <p className="text-slate-400 text-xs max-w-xs leading-relaxed">{txt.emptyDesc}</p>
           </div>
         )}
       </div>

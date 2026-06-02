@@ -157,7 +157,7 @@ export default function EjendomAdministratorCard({
       </div>
       {/* BIZZ-1815: Note when admin is inherited from parent SFE */}
       {arvFraSfeBfe && (
-        <p className="text-xs text-slate-500 mb-3">
+        <p className="text-xs text-slate-400 mb-3">
           {lang === 'da'
             ? `Arvet fra moderejendom (SFE ${arvFraSfeBfe})`
             : `Inherited from parent property (SFE ${arvFraSfeBfe})`}
@@ -187,7 +187,7 @@ export default function EjendomAdministratorCard({
                   <div className="text-sm text-white font-medium truncate">
                     {displayName}
                     {isVirksomhed && (
-                      <ExternalLink size={12} className="inline ml-1 text-slate-500" />
+                      <ExternalLink size={12} className="inline ml-1 text-slate-400" />
                     )}
                   </div>
                   <div className="flex items-center gap-2 mt-0.5 text-xs text-slate-400">

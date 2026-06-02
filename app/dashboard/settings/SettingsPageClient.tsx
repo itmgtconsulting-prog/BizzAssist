@@ -377,7 +377,7 @@ function ProfileTab({ lang }: { lang: 'da' | 'en' }) {
               <button
                 type="button"
                 onClick={() => setShowCurrentPw(!showCurrentPw)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-300"
               >
                 {showCurrentPw ? <EyeOff size={14} /> : <Eye size={14} />}
               </button>
@@ -403,7 +403,7 @@ function ProfileTab({ lang }: { lang: 'da' | 'en' }) {
               <button
                 type="button"
                 onClick={() => setShowNewPw(!showNewPw)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-300"
               >
                 {showNewPw ? <EyeOff size={14} /> : <Eye size={14} />}
               </button>
@@ -1099,7 +1099,7 @@ export default function SettingsPageClient() {
                       className={`ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
                         filter === fb.key
                           ? 'bg-blue-500/30 text-blue-300'
-                          : 'bg-slate-700/60 text-slate-500'
+                          : 'bg-slate-700/60 text-slate-400'
                       }`}
                     >
                       {fb.count}
@@ -1148,12 +1148,12 @@ export default function SettingsPageClient() {
             {/* Liste */}
             {filtered.length === 0 ? (
               <div className="text-center py-16">
-                <BellOff size={40} className="mx-auto mb-4 text-slate-600" />
+                <BellOff size={40} className="mx-auto mb-4 text-slate-400" />
                 <p className="text-slate-400 text-sm mb-2">
                   {filter === 'all' ? t.ingenFulgte : t.ingenIKategori}
                 </p>
                 {filter === 'all' && (
-                  <p className="text-slate-500 text-xs max-w-sm mx-auto leading-relaxed">
+                  <p className="text-slate-400 text-xs max-w-sm mx-auto leading-relaxed">
                     {t.ingenFulgteHint}
                   </p>
                 )}
@@ -1173,12 +1173,12 @@ export default function SettingsPageClient() {
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="text-white text-sm font-medium truncate">{ej.adresse}</p>
-                      <p className="text-slate-500 text-xs mt-0.5 truncate">
+                      <p className="text-slate-400 text-xs mt-0.5 truncate">
                         {ej.postnr} {ej.by}
                         {ej.kommune ? ` · ${ej.kommune}` : ''}
                         {ej.anvendelse ? ` · ${ej.anvendelse}` : ''}
                       </p>
-                      <p className="text-slate-600 text-[10px] mt-1">
+                      <p className="text-slate-400 text-[10px] mt-1">
                         {t.fulgtSiden}{' '}
                         {new Date(ej.trackedSiden).toLocaleDateString(
                           lang === 'da' ? 'da-DK' : 'en-GB',
@@ -1217,12 +1217,12 @@ export default function SettingsPageClient() {
                             e.stopPropagation();
                             setConfirmDelete(ej.id);
                           }}
-                          className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                          className="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
                           title={t.stopFoelg}
                         >
                           <Trash2 size={15} />
                         </button>
-                        <ChevronRight size={16} className="text-slate-600" />
+                        <ChevronRight size={16} className="text-slate-400" />
                       </div>
                     )}
                   </div>

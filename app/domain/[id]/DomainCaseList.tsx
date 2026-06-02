@@ -80,7 +80,7 @@ export function DomainCaseList({
   if (cases.length === 0) {
     return (
       <div className="text-center py-16 bg-slate-800/40 border border-slate-700/40 rounded-xl">
-        <Briefcase size={32} className="mx-auto text-slate-600 mb-3" />
+        <Briefcase size={32} className="mx-auto text-slate-400 mb-3" />
         <p className="text-slate-400 text-sm">{da ? 'Ingen sager fundet' : 'No cases found'}</p>
         {showCreateEmptyAction && (
           <Link
@@ -156,7 +156,7 @@ export function DomainCaseList({
             <div className="min-w-0 shrink-0 basis-1/4">
               <p className="text-white text-sm font-medium truncate">{c.name}</p>
               {c.client_ref && (
-                <p className="text-slate-500 text-[11px] truncate">{c.client_ref}</p>
+                <p className="text-slate-400 text-[11px] truncate">{c.client_ref}</p>
               )}
             </div>
             {/* Tags (max 2 synlige + overflow-count) */}
@@ -171,7 +171,7 @@ export function DomainCaseList({
                   </span>
                 ))}
                 {c.tags.length > 2 && (
-                  <span className="text-slate-500 text-[10px] whitespace-nowrap">
+                  <span className="text-slate-400 text-[10px] whitespace-nowrap">
                     +{c.tags.length - 2}
                   </span>
                 )}
@@ -199,7 +199,7 @@ export function DomainCaseList({
               {c.status}
             </span>
             {/* Opdateret-dato */}
-            <p className="hidden sm:block text-slate-500 text-[11px] shrink-0 tabular-nums">
+            <p className="hidden sm:block text-slate-400 text-[11px] shrink-0 tabular-nums">
               {new Date(c.updated_at).toLocaleDateString(da ? 'da-DK' : 'en-GB')}
             </p>
           </Wrapper>

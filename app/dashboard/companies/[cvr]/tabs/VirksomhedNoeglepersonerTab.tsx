@@ -177,14 +177,14 @@ export default function VirksomhedNoeglepersonerTab({
                           {person.enhedsNummer && (
                             <ExternalLink
                               size={11}
-                              className={`transition-colors flex-shrink-0 ${person.erVirksomhed ? 'text-slate-600 group-hover:text-blue-400' : 'text-slate-600 group-hover:text-purple-400'}`}
+                              className={`transition-colors flex-shrink-0 ${person.erVirksomhed ? 'text-slate-400 group-hover:text-blue-400' : 'text-slate-400 group-hover:text-purple-400'}`}
                             />
                           )}
                         </div>
-                        <p className="text-xs text-slate-500 mt-0.5">
+                        <p className="text-xs text-slate-400 mt-0.5">
                           {r.fra ? formatDatoKort(r.fra) : '?'} —{' '}
                           {r.til ? formatDatoKort(r.til) : lang === 'da' ? 'nu' : 'present'}
-                          {r.rolle && <span className="ml-2 text-slate-600">({r.rolle})</span>}
+                          {r.rolle && <span className="ml-2 text-slate-400">({r.rolle})</span>}
                         </p>
                       </div>
                     </div>
@@ -220,7 +220,7 @@ export default function VirksomhedNoeglepersonerTab({
                   <h2 className="text-white font-semibold text-base mb-3 flex items-center gap-2">
                     {kategoriIkon(kat)}
                     {kategoriLabel(kat)}
-                    <span className="text-slate-500 font-normal text-sm ml-1">
+                    <span className="text-slate-400 font-normal text-sm ml-1">
                       ({totalAktive}
                       {totalHistoriske > 0
                         ? ` + ${totalHistoriske} ${lang === 'da' ? 'historiske' : 'historical'}`
@@ -293,7 +293,7 @@ export default function VirksomhedNoeglepersonerTab({
 
                   {/* Ingen aktive, men har historiske */}
                   {totalAktive === 0 && !erUdfoldet && (
-                    <p className="text-slate-500 text-sm">
+                    <p className="text-slate-400 text-sm">
                       {lang === 'da' ? 'Ingen aktive' : 'No active members'}
                     </p>
                   )}
@@ -302,7 +302,7 @@ export default function VirksomhedNoeglepersonerTab({
             })}
         </>
       ) : (
-        <EmptyState ikon={<Users size={32} className="text-slate-600" />} tekst={c.noKeyPersons} />
+        <EmptyState ikon={<Users size={32} className="text-slate-400" />} tekst={c.noKeyPersons} />
       )}
     </div>
   );

@@ -170,6 +170,18 @@ export const ANALYSE_MODULES: AnalyseModuleConfig[] = [
     defaultTarget: 'ejendom',
     hint: 'Opret en sag, vælg kunde og ejendom, upload dokumentation og generer en struktureret vurderingsrapport.',
   },
+  {
+    id: 'virksomhedshandler',
+    label: 'Virksomhedshandler',
+    labelEn: 'Corporate Transactions',
+    icon: 'TrendingUp',
+    path: '/dashboard/analyse/virksomhedshandler',
+    enabled: { dev: true, preview: true, prod: false },
+    requiredPlan: 'professionel',
+    description: 'M&A-radar med AI-værdiansættelse — detekterer ejerskabsændringer',
+    defaultTarget: 'virksomhed',
+    hint: 'Gennemse ejerskabsændringer (entry/exit/increase/decrease) med estimeret handelsværdi og medie-dækning.',
+  },
 ];
 
 /**

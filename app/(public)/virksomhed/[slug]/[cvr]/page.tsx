@@ -33,8 +33,17 @@ import {
 import { generateVirksomhedSlug } from '@/app/lib/slug';
 import PublicPricingSection from '@/app/(public)/components/PublicPricingSection';
 
-// ─── ISR cache-periode: 7 dage ─────────────────────────────────────────────
+// ─── ISR config ────────────────────────────────────────────────────────────
 export const revalidate = 604800;
+export const dynamicParams = true;
+
+/**
+ * Return empty array so Next.js enables ISR for dynamic routes.
+ * Pages are generated on-demand and cached for 7 days.
+ */
+export async function generateStaticParams() {
+  return [];
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -263,7 +272,7 @@ function DataRow({
         <Icon size={13} className="text-blue-400" />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-xs text-slate-500 mb-0.5">{label}</p>
+        <p className="text-xs text-slate-400 mb-0.5">{label}</p>
         <p className="text-white text-sm font-medium leading-snug break-words">{value}</p>
       </div>
     </div>
@@ -426,7 +435,7 @@ export default async function VirksomhedPublicPage({
   if (v.fejl || !v.navn) {
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center text-center px-4">
-        <Building2 size={40} className="text-slate-600 mb-4" />
+        <Building2 size={40} className="text-slate-400 mb-4" />
         <h1 className="text-2xl font-bold text-white mb-2">Virksomhed ikke fundet</h1>
         <p className="text-slate-400 mb-6">
           CVR-nummer {cvr} findes ikke i registrene, eller data er midlertidigt utilgængeligt.
@@ -449,7 +458,7 @@ export default async function VirksomhedPublicPage({
 
       <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8 md:py-12">
         {/* Breadcrumb */}
-        <nav className="text-xs text-slate-500 mb-6 flex items-center gap-1.5 flex-wrap">
+        <nav className="text-xs text-slate-400 mb-6 flex items-center gap-1.5 flex-wrap">
           <Link href="/" className="hover:text-slate-300 transition-colors">
             Forside
           </Link>
@@ -472,7 +481,7 @@ export default async function VirksomhedPublicPage({
               </h1>
               {adresseStr && (
                 <p className="text-slate-400 text-base mt-1 flex items-center gap-1.5">
-                  <MapPin size={14} className="text-slate-500 flex-shrink-0" />
+                  <MapPin size={14} className="text-slate-400 flex-shrink-0" />
                   {adresseStr}
                 </p>
               )}
@@ -500,7 +509,7 @@ export default async function VirksomhedPublicPage({
             {v.branche && (
               <span className="inline-flex items-center gap-1.5 bg-slate-800 border border-white/10 text-slate-400 text-xs font-medium px-3 py-1.5 rounded-full">
                 {v.branche}
-                {v.branckekode && <span className="text-slate-600 ml-0.5">({v.branckekode})</span>}
+                {v.branckekode && <span className="text-slate-400 ml-0.5">({v.branckekode})</span>}
               </span>
             )}
           </div>
@@ -542,7 +551,7 @@ export default async function VirksomhedPublicPage({
                   <Hash size={13} className="text-blue-400" />
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500 mb-0.5">Telefon</p>
+                  <p className="text-xs text-slate-400 mb-0.5">Telefon</p>
                   <a
                     href={`tel:${v.telefon}`}
                     className="text-blue-400 hover:text-blue-300 text-sm font-medium transition-colors"
@@ -558,7 +567,7 @@ export default async function VirksomhedPublicPage({
                   <Globe size={13} className="text-blue-400" />
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500 mb-0.5">E-mail</p>
+                  <p className="text-xs text-slate-400 mb-0.5">E-mail</p>
                   <a
                     href={`mailto:${v.email}`}
                     className="text-blue-400 hover:text-blue-300 text-sm font-medium transition-colors break-all"
@@ -578,7 +587,7 @@ export default async function VirksomhedPublicPage({
         <PublicPricingSection />
 
         {/* Datakilde-note */}
-        <p className="mt-8 text-xs text-slate-600 text-center">
+        <p className="mt-8 text-xs text-slate-400 text-center">
           Data fra Det Centrale Virksomhedsregister (CVR), Erhvervsstyrelsen. Sidst opdateret:{' '}
           {new Date().toLocaleDateString('da-DK', {
             day: 'numeric',

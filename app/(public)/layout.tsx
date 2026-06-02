@@ -76,7 +76,7 @@ function PublicFooter() {
             <span className="text-white font-semibold">
               Bizz<span className="text-blue-400">Assist</span>
             </span>
-            <span className="text-slate-600 text-sm ml-2">
+            <span className="text-slate-400 text-sm ml-2">
               © {year} {companyInfo.name}
             </span>
           </div>
@@ -101,7 +101,7 @@ function PublicFooter() {
           </nav>
         </div>
 
-        <p className="mt-6 text-xs text-slate-600 leading-relaxed">
+        <p className="mt-6 text-xs text-slate-400 leading-relaxed">
           Data på denne side stammer fra offentlige registre: BBR (Bygnings- og Boligregistret), DAR
           (Danmarks Adresseregister), Datafordeler og CVR (Det Centrale Virksomhedsregister).
           BizzAssist er ikke ansvarlig for fejl i kildedataene.

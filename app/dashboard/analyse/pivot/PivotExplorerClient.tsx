@@ -141,9 +141,9 @@ function FilterValueInput({
             >
               <span>
                 {s.value}
-                {s.label && <span className="text-slate-500 ml-1.5">— {s.label}</span>}
+                {s.label && <span className="text-slate-400 ml-1.5">— {s.label}</span>}
               </span>
-              <span className="text-slate-600 text-[10px] shrink-0 ml-2">
+              <span className="text-slate-400 text-[10px] shrink-0 ml-2">
                 {s.count.toLocaleString('da-DK')}
               </span>
             </button>
@@ -152,7 +152,7 @@ function FilterValueInput({
       )}
       {fetching && (
         <div className="absolute right-2 top-1/2 -translate-y-1/2">
-          <Loader2 size={10} className="text-slate-500 animate-spin" />
+          <Loader2 size={10} className="text-slate-400 animate-spin" />
         </div>
       )}
     </div>
@@ -351,7 +351,7 @@ export default function PivotExplorerClient() {
       <div>
         <Link
           href="/dashboard/analyse"
-          className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300 transition-colors mb-3"
+          className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-slate-300 transition-colors mb-3"
         >
           <ChevronLeft size={14} />
           Analyse & Tools
@@ -412,7 +412,7 @@ export default function PivotExplorerClient() {
                     <button
                       type="button"
                       onClick={deselectAllColumns}
-                      className="text-[10px] text-slate-500 hover:text-slate-300 transition-colors"
+                      className="text-[10px] text-slate-400 hover:text-slate-300 transition-colors"
                     >
                       Fravælg alle
                     </button>
@@ -427,12 +427,12 @@ export default function PivotExplorerClient() {
                       className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs transition-all ${
                         selectedColumns.has(col)
                           ? 'bg-emerald-600/20 border border-emerald-500/40 text-emerald-300'
-                          : 'bg-slate-800/40 border border-slate-700/30 text-slate-500 hover:text-slate-300'
+                          : 'bg-slate-800/40 border border-slate-700/30 text-slate-400 hover:text-slate-300'
                       }`}
                       title={meta.description}
                     >
                       <span>{col}</span>
-                      <span className="text-[9px] text-slate-600">{meta.type}</span>
+                      <span className="text-[9px] text-slate-400">{meta.type}</span>
                     </button>
                   ))}
                 </div>
@@ -501,7 +501,7 @@ export default function PivotExplorerClient() {
                           type="button"
                           onClick={() => removeFilter(f.id)}
                           aria-label="Fjern filter"
-                          className="p-1.5 text-slate-500 hover:text-red-400 transition-colors"
+                          className="p-1.5 text-slate-400 hover:text-red-400 transition-colors"
                         >
                           <Trash2 size={12} />
                         </button>
@@ -554,7 +554,7 @@ export default function PivotExplorerClient() {
         {/* BIZZ-1269: DataModelPanel (højre side) */}
         <div className="hidden lg:block">
           <div className="sticky top-6">
-            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium mb-2">
+            <p className="text-[10px] text-slate-400 uppercase tracking-wider font-medium mb-2">
               Datamodel
             </p>
             <DataModelPanel
@@ -573,13 +573,13 @@ export default function PivotExplorerClient() {
           <p className="text-slate-400 text-xs">
             {data.length.toLocaleString('da-DK')} rækker indlæst
             {totalCount > data.length && (
-              <span className="text-slate-500">
+              <span className="text-slate-400">
                 {' '}
                 (af {totalCount.toLocaleString('da-DK')} totalt — maks 10.000 vist)
               </span>
             )}
           </p>
-          <p className="text-slate-500 text-[10px]">
+          <p className="text-slate-400 text-[10px]">
             Træk kolonner til gruppering, filtrering og sortering i pivot-tabellen nedenfor
           </p>
         </div>

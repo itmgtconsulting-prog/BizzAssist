@@ -237,7 +237,7 @@ Du SKAL kalde generate_document — brugeren har eksplicit bedt om Word-output.`
         {/* BIZZ-1250: Autocomplete ejendomssøgning */}
         <div className="relative" ref={dropdownRef}>
           <div className="relative">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
               value={searchQuery}
@@ -346,7 +346,7 @@ Du SKAL kalde generate_document — brugeren har eksplicit bedt om Word-output.`
           <ChevronRight size={14} />
         </button>
 
-        <p className="text-slate-600 text-[10px]">
+        <p className="text-slate-400 text-[10px]">
           Annoncen genereres i AI Chat med BBR-data, vurdering og energimærke som kontekst.
         </p>
       </div>

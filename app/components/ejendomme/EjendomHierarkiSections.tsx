@@ -98,7 +98,7 @@ export default function EjendomHierarkiSections({
               const label = renderLabel(lvl);
               return (
                 <li key={`${label}-${i}`} className="flex items-center gap-1">
-                  {i > 0 && <ChevronRight size={12} className="text-slate-600 shrink-0" />}
+                  {i > 0 && <ChevronRight size={12} className="text-slate-400 shrink-0" />}
                   {isLast || !lvl.href ? (
                     <span
                       aria-current={isLast ? 'page' : undefined}
@@ -130,7 +130,7 @@ export default function EjendomHierarkiSections({
           <Building2 size={16} className="text-amber-400 shrink-0" />
           <div className="flex-1">
             <p className="text-amber-300 text-sm font-medium">{h.belongsToMain}</p>
-            <p className="text-slate-500 text-xs mt-0.5">
+            <p className="text-slate-400 text-xs mt-0.5">
               {h.sfe} {sfeBfe} — {h.mainProperty}
             </p>
           </div>
@@ -149,7 +149,7 @@ export default function EjendomHierarkiSections({
                   : 'Units in the building'
                 : h.siblingUnits}
             </h2>
-            <span className="text-slate-500 text-xs">
+            <span className="text-slate-400 text-xs">
               {sisterEnheder.length}{' '}
               {lang === 'da'
                 ? sisterEnheder.length === 1
@@ -171,10 +171,10 @@ export default function EjendomHierarkiSections({
               return (
                 <div key={e.id} className="px-4 py-2.5 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2 min-w-0">
-                    <Building2 size={12} className="text-slate-500 shrink-0" />
+                    <Building2 size={12} className="text-slate-400 shrink-0" />
                     <span className="text-slate-200 text-sm font-medium truncate">{unitLabel}</span>
                     {e.anvendelse && (
-                      <span className="text-slate-500 text-xs truncate">· {e.anvendelse}</span>
+                      <span className="text-slate-400 text-xs truncate">· {e.anvendelse}</span>
                     )}
                   </div>
                   <div className="flex items-center gap-3 text-xs text-slate-400 shrink-0">

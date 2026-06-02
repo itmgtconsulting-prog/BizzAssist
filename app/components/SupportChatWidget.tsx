@@ -378,7 +378,7 @@ export default function SupportChatWidget({
               <h3 id="support-chat-title" className="text-white text-sm font-semibold truncate">
                 {txt.title}
               </h3>
-              <p className="text-slate-500 text-[10px] truncate">{txt.subtitle}</p>
+              <p className="text-slate-400 text-[10px] truncate">{txt.subtitle}</p>
             </div>
             {hideFloatingTrigger && (
               <button

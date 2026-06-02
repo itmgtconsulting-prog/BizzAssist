@@ -313,7 +313,7 @@ export default function SignupClient() {
             {/* Divider */}
             <div className="flex items-center gap-4 mb-6">
               <div className="flex-1 border-t border-white/10" />
-              <span className="text-slate-500 text-xs">
+              <span className="text-slate-400 text-xs">
                 {da ? 'eller opret med e-mail' : 'or sign up with email'}
               </span>
               <div className="flex-1 border-t border-white/10" />
@@ -394,7 +394,7 @@ export default function SignupClient() {
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-300 transition-colors"
                   >
                     {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                   </button>
@@ -410,7 +410,7 @@ export default function SignupClient() {
                         />
                       ))}
                     </div>
-                    <p className="text-xs text-slate-500">{strength.label[lang]}</p>
+                    <p className="text-xs text-slate-400">{strength.label[lang]}</p>
                   </div>
                 )}
               </div>
@@ -439,7 +439,7 @@ export default function SignupClient() {
                   <button
                     type="button"
                     onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-300 transition-colors"
                   >
                     {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                   </button>
@@ -458,7 +458,7 @@ export default function SignupClient() {
                 </label>
 
                 {plansLoading ? (
-                  <div className="flex items-center justify-center gap-2 text-slate-500 py-4">
+                  <div className="flex items-center justify-center gap-2 text-slate-400 py-4">
                     <Loader2 size={14} className="animate-spin" />
                     <span className="text-xs">{da ? 'Henter planer…' : 'Loading plans…'}</span>
                   </div>
@@ -488,7 +488,7 @@ export default function SignupClient() {
                           <p className="text-white text-base font-bold">
                             {plan.priceDkk === 0 ? (da ? 'Gratis' : 'Free') : `${plan.priceDkk} kr`}
                             {plan.priceDkk > 0 && (
-                              <span className="text-slate-500 text-xs font-normal">/md</span>
+                              <span className="text-slate-400 text-xs font-normal">/md</span>
                             )}
                           </p>
                           {plan.aiEnabled && (
@@ -519,7 +519,7 @@ export default function SignupClient() {
                         {da ? 'Denne plan kræver godkendelse' : 'This plan requires approval'}
                       </span>
                     </div>
-                    <p className="text-slate-500 text-xs leading-relaxed pl-[22px]">
+                    <p className="text-slate-400 text-xs leading-relaxed pl-[22px]">
                       {da
                         ? 'Din konto oprettes med det samme, men du får begrænset adgang indtil en administrator godkender din anmodning.'
                         : 'Your account is created immediately, but you will have limited access until an administrator approves your request.'}
@@ -604,7 +604,7 @@ export default function SignupClient() {
               </button>
             </form>
 
-            <p className="text-center text-slate-500 text-sm mt-6">
+            <p className="text-center text-slate-400 text-sm mt-6">
               {da ? 'Har du allerede en konto?' : 'Already have an account?'}{' '}
               <Link
                 href="/login"

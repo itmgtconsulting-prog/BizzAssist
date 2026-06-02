@@ -25,6 +25,20 @@ import {
 } from 'lucide-react';
 import { getEnabledModules } from '@/app/lib/analyseModules';
 
+/**
+ * Force dynamic (per-request) rendering (BIZZ-1951).
+ *
+ * The CSP in proxy.ts uses a per-request `script-src 'nonce-…'`. Next.js can
+ * only stamp that nonce onto inline framework scripts when the route is
+ * rendered per-request. As a pure static server component this page was
+ * prerendered at build time with unnonced scripts, so at runtime every inline
+ * script was blocked by CSP and the page never hydrated (stuck on the
+ * dashboard "Kontrollerer adgang…" access gate). Forcing dynamic rendering
+ * makes Next inject the matching nonce, exactly like the other dashboard
+ * routes which are already dynamic via auth/cookies.
+ */
+export const dynamic = 'force-dynamic';
+
 /** Map fra ikon-streng til Lucide-komponent */
 const iconMap: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
   Sparkles,
@@ -92,7 +106,7 @@ export default function AnalyseLandingPage() {
           <h2 className="text-base font-semibold text-white">Tools</h2>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-w-5xl">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
           {enabledModules.map((modul) => {
             const Icon = iconMap[modul.icon] ?? Sparkles;
             const isPro = modul.requiredPlan === 'professionel';
@@ -121,14 +135,12 @@ export default function AnalyseLandingPage() {
                     {modul.label}
                   </h3>
                   {modul.requiredPlan && (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/5 text-slate-500 font-medium shrink-0">
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/5 text-slate-400 font-medium shrink-0">
                       {isEnt ? 'Enterprise' : 'Pro'}
                     </span>
                   )}
                 </div>
-                <p className="text-slate-400 text-xs leading-relaxed line-clamp-2">
-                  {modul.description}
-                </p>
+                <p className="text-slate-400 text-xs leading-relaxed">{modul.description}</p>
               </Link>
             );
           })}

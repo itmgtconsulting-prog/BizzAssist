@@ -111,7 +111,7 @@ export default function MarkdownContent({ text }: { text: string }) {
     if (line.startsWith('- ') || line.startsWith('* ')) {
       elements.push(
         <div key={`li-${keyCounter++}`} className="flex items-start gap-2 text-sm">
-          <span className="text-slate-500 mt-0.5 shrink-0">•</span>
+          <span className="text-slate-400 mt-0.5 shrink-0">•</span>
           <span>{renderInline(line.slice(2))}</span>
         </div>
       );
@@ -122,7 +122,7 @@ export default function MarkdownContent({ text }: { text: string }) {
     if (numMatch) {
       elements.push(
         <div key={`nl-${keyCounter++}`} className="flex items-start gap-2 text-sm">
-          <span className="text-slate-500 mt-0.5 shrink-0 w-4 text-right">{numMatch[1]}.</span>
+          <span className="text-slate-400 mt-0.5 shrink-0 w-4 text-right">{numMatch[1]}.</span>
           <span>{renderInline(numMatch[2])}</span>
         </div>
       );
@@ -162,7 +162,7 @@ export default function MarkdownContent({ text }: { text: string }) {
           >
             <table className="w-full text-xs">
               <thead>
-                <tr className="text-slate-500 border-b border-slate-700/40">
+                <tr className="text-slate-400 border-b border-slate-700/40">
                   {headers.map((h, i) => (
                     <th key={i} className="px-2 py-1.5 text-left font-medium">
                       {h}

@@ -80,7 +80,7 @@ export default function EjerKort({
             <Building2 size={14} className="text-slate-400" />
             <p className="text-slate-300 text-sm">{ejer.navn}</p>
           </div>
-          <p className="text-slate-500 text-xs mt-1">
+          <p className="text-slate-400 text-xs mt-1">
             {da
               ? 'Ejerskab registreret på de enkelte ejerlejligheder'
               : 'Ownership registered on the individual condominiums'}
@@ -94,7 +94,7 @@ export default function EjerKort({
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
-                <tr className="text-slate-500 border-b border-slate-700/30">
+                <tr className="text-slate-400 border-b border-slate-700/30">
                   <th className="px-3 py-2 text-left font-medium">{da ? 'Ejer' : 'Owner'}</th>
                   <th className="px-3 py-2 text-right font-medium">{da ? 'Andel' : 'Share'}</th>
                   <th className="px-3 py-2 text-left font-medium">

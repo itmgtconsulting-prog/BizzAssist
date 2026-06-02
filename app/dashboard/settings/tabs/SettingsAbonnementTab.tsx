@@ -260,13 +260,13 @@ export default function SettingsAbonnementTab({
 
                 {/* ─── Subscription details grid ─── */}
                 <div className="bg-slate-800/40 rounded-xl p-4 space-y-3">
-                  <p className="text-slate-500 text-[10px] uppercase tracking-wider font-semibold">
+                  <p className="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">
                     {t.subscriptionDetails}
                   </p>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-3">
                     {/* Price */}
                     <div>
-                      <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                      <p className="text-slate-400 text-[10px] uppercase tracking-wider">
                         {t.price}
                       </p>
                       <p className="text-white text-sm font-medium">
@@ -276,7 +276,7 @@ export default function SettingsAbonnementTab({
 
                     {/* Status */}
                     <div>
-                      <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                      <p className="text-slate-400 text-[10px] uppercase tracking-wider">
                         {t.status}
                       </p>
                       <p
@@ -299,7 +299,7 @@ export default function SettingsAbonnementTab({
                     {/* Next payment date */}
                     {billing?.nextPaymentDate && !billing.cancelAtPeriodEnd && (
                       <div>
-                        <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                        <p className="text-slate-400 text-[10px] uppercase tracking-wider">
                           {t.nextPayment}
                         </p>
                         <p className="text-white text-sm font-medium">
@@ -314,7 +314,7 @@ export default function SettingsAbonnementTab({
                     {/* Payment method */}
                     {billing?.cardLast4 && (
                       <div>
-                        <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                        <p className="text-slate-400 text-[10px] uppercase tracking-wider">
                           {t.paymentMethod}
                         </p>
                         <p className="text-white text-sm font-medium flex items-center gap-1.5">
@@ -329,7 +329,7 @@ export default function SettingsAbonnementTab({
                     {/* Approved date */}
                     {subscription.approvedAt && (
                       <div>
-                        <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                        <p className="text-slate-400 text-[10px] uppercase tracking-wider">
                           {t.approvedOn}
                         </p>
                         <p className="text-white text-sm font-medium">
@@ -343,7 +343,7 @@ export default function SettingsAbonnementTab({
 
                     {/* AI */}
                     <div>
-                      <p className="text-slate-500 text-[10px] uppercase tracking-wider">AI</p>
+                      <p className="text-slate-400 text-[10px] uppercase tracking-wider">AI</p>
                       <p className="text-white text-sm font-medium">
                         {plan.aiEnabled
                           ? plan.aiTokensPerMonth === -1
@@ -481,7 +481,7 @@ export default function SettingsAbonnementTab({
                   )}
 
                 {/* Member since */}
-                <p className="text-slate-600 text-xs">
+                <p className="text-slate-400 text-xs">
                   {t.memberSince}{' '}
                   {new Date(subscription.createdAt).toLocaleDateString(
                     lang === 'da' ? 'da-DK' : 'en-GB',
@@ -498,9 +498,9 @@ export default function SettingsAbonnementTab({
         </div>
       ) : (
         <div className="text-center py-16">
-          <CreditCard size={32} className="mx-auto mb-3 text-slate-600" />
+          <CreditCard size={32} className="mx-auto mb-3 text-slate-400" />
           <p className="text-slate-400 text-sm mb-1">{t.noSub}</p>
-          <p className="text-slate-500 text-xs max-w-sm mx-auto">{t.noSubHint}</p>
+          <p className="text-slate-400 text-xs max-w-sm mx-auto">{t.noSubHint}</p>
         </div>
       )}
 
@@ -552,7 +552,7 @@ export default function SettingsAbonnementTab({
                 <p className="text-white text-lg font-bold">
                   {plan.priceDkk === 0 ? t.free : `${plan.priceDkk} kr`}
                   {plan.priceDkk > 0 && (
-                    <span className="text-slate-500 text-xs font-normal">/md</span>
+                    <span className="text-slate-400 text-xs font-normal">/md</span>
                   )}
                 </p>
                 <ul className="mt-3 space-y-1.5">
@@ -561,7 +561,7 @@ export default function SettingsAbonnementTab({
                     {t.unlimitedSearches}
                   </li>
                   <li
-                    className={`flex items-center gap-2 text-xs ${plan.aiEnabled ? 'text-slate-400' : 'text-slate-600'}`}
+                    className={`flex items-center gap-2 text-xs ${plan.aiEnabled ? 'text-slate-400' : 'text-slate-400'}`}
                   >
                     {plan.aiEnabled ? (
                       <CheckCircle size={12} className="text-emerald-400 shrink-0" />
@@ -620,7 +620,7 @@ export default function SettingsAbonnementTab({
             );
           })}
         </div>
-        <p className="text-slate-600 text-xs mt-4 text-center">{t.contactChange}</p>
+        <p className="text-slate-400 text-xs mt-4 text-center">{t.contactChange}</p>
       </div>
     </div>
   );

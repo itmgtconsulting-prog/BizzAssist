@@ -200,7 +200,7 @@ export default function PublicPricingSection() {
                   Kom i gang
                 </Link>
                 {plan.requiresApproval && (
-                  <p className="text-center text-[10px] text-slate-600">
+                  <p className="text-center text-[10px] text-slate-400">
                     Kræver godkendelse af administrator
                   </p>
                 )}
@@ -210,7 +210,7 @@ export default function PublicPricingSection() {
         })}
       </div>
 
-      <p className="text-center text-slate-600 text-xs mt-6">
+      <p className="text-center text-slate-400 text-xs mt-6">
         Alle priser er inkl. moms. Ingen bindingsperiode — opsig når som helst.
       </p>
     </section>

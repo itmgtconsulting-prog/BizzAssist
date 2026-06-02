@@ -167,24 +167,24 @@ export default function PrisudviklingClient(): React.ReactElement {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                   {data.ejendom.samlet_boligareal && (
                     <div>
-                      <p className="text-slate-500">Boligareal</p>
+                      <p className="text-slate-400">Boligareal</p>
                       <p className="font-medium">{data.ejendom.samlet_boligareal} m²</p>
                     </div>
                   )}
                   {data.ejendom.opfoerelsesaar && (
                     <div>
-                      <p className="text-slate-500">Opført</p>
+                      <p className="text-slate-400">Opført</p>
                       <p className="font-medium">{data.ejendom.opfoerelsesaar}</p>
                     </div>
                   )}
                   {data.ejendom.energimaerke && (
                     <div>
-                      <p className="text-slate-500">Energimærke</p>
+                      <p className="text-slate-400">Energimærke</p>
                       <p className="font-medium">{data.ejendom.energimaerke}</p>
                     </div>
                   )}
                   <div>
-                    <p className="text-slate-500">Datapunkter</p>
+                    <p className="text-slate-400">Datapunkter</p>
                     <p className="font-medium">
                       {data.dataPunkter} ejerskifter, {data.medPris} med pris
                     </p>
@@ -225,7 +225,7 @@ export default function PrisudviklingClient(): React.ReactElement {
                             {row.ejer_navn ?? 'Ukendt ejer'}
                           </span>
                           {row.ejer_cvr && (
-                            <span className="text-xs text-slate-500">CVR {row.ejer_cvr}</span>
+                            <span className="text-xs text-slate-400">CVR {row.ejer_cvr}</span>
                           )}
                         </div>
                         <div className="flex items-center gap-3 mt-1 text-xs text-slate-400 flex-wrap">
@@ -248,7 +248,7 @@ export default function PrisudviklingClient(): React.ReactElement {
                             </span>
                           )}
                           {row.ejer_type && (
-                            <span className="px-1.5 py-0.5 bg-slate-800 rounded text-slate-500">
+                            <span className="px-1.5 py-0.5 bg-slate-800 rounded text-slate-400">
                               {row.ejer_type}
                             </span>
                           )}

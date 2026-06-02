@@ -47,6 +47,8 @@ export interface AdminUser {
   lastSignIn: string | null;
   emailConfirmed: boolean;
   isAdmin: boolean;
+  /** BIZZ-1947: false when the user has no tenant_membership (all API calls return 401/empty). */
+  hasTenant: boolean;
   subscription: {
     planId: PlanId;
     status: SubStatus;
@@ -360,7 +362,7 @@ export const UserDetailPanel = memo(function UserDetailPanel({
                     <PlanIcon planId={p.id} />
                     <div className="flex-1 min-w-0">
                       <p className="text-white text-xs font-medium">{da ? p.nameDa : p.nameEn}</p>
-                      <p className="text-slate-500 text-[10px]">
+                      <p className="text-slate-400 text-[10px]">
                         {p.priceDkk === 0 ? (da ? 'Gratis' : 'Free') : `${p.priceDkk} kr/md`}
                       </p>
                     </div>
@@ -554,7 +556,7 @@ export const UserDetailPanel = memo(function UserDetailPanel({
                           <span className="text-slate-300 text-[11px]">
                             {event.event_type.replace(/_/g, ' ')}
                           </span>
-                          <span className="text-slate-500 text-[10px]">
+                          <span className="text-slate-400 text-[10px]">
                             {new Date(event.created_at).toLocaleDateString(da ? 'da-DK' : 'en-GB', {
                               day: 'numeric',
                               month: 'short',
@@ -571,7 +573,7 @@ export const UserDetailPanel = memo(function UserDetailPanel({
                 {/* Empty state */}
                 {activityData.timeline.length === 0 &&
                   Object.keys(activityData.eventCounts).length === 0 && (
-                    <p className="text-slate-500 text-sm text-center py-8">
+                    <p className="text-slate-400 text-sm text-center py-8">
                       {da
                         ? 'Ingen aktivitet registreret de seneste 30 dage.'
                         : 'No activity recorded in the last 30 days.'}
@@ -595,7 +597,7 @@ export const UserDetailPanel = memo(function UserDetailPanel({
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-white font-semibold text-sm truncate">{user.email}</p>
-                <p className="text-slate-500 text-xs">
+                <p className="text-slate-400 text-xs">
                   {user.fullName && <span className="text-slate-400">{user.fullName} · </span>}
                   {da ? 'Oprettet' : 'Created'}{' '}
                   {new Date(user.createdAt).toLocaleDateString(da ? 'da-DK' : 'en-GB', {
@@ -697,7 +699,7 @@ export const UserDetailPanel = memo(function UserDetailPanel({
             </button>
 
             {sub.approvedAt && (
-              <p className="text-slate-600 text-[11px]">
+              <p className="text-slate-400 text-[11px]">
                 {da ? 'Godkendt' : 'Approved'}{' '}
                 {new Date(sub.approvedAt).toLocaleDateString(da ? 'da-DK' : 'en-GB', {
                   day: 'numeric',
@@ -743,7 +745,7 @@ export const UserDetailPanel = memo(function UserDetailPanel({
               </div>
               <div>
                 <p className="text-white text-sm font-semibold">{da ? plan.nameDa : plan.nameEn}</p>
-                <p className="text-slate-500 text-xs">
+                <p className="text-slate-400 text-xs">
                   {plan.priceDkk === 0 ? (da ? 'Gratis' : 'Free') : `${plan.priceDkk} kr/md`}
                 </p>
               </div>
@@ -762,7 +764,7 @@ export const UserDetailPanel = memo(function UserDetailPanel({
                     <p className="text-red-300 text-xs font-medium">
                       {da ? 'Fjern plan' : 'Remove plan'}
                     </p>
-                    <p className="text-slate-500 text-[10px]">
+                    <p className="text-slate-400 text-[10px]">
                       {da ? 'Fjerner brugerens abonnement' : "Removes the user's subscription"}
                     </p>
                   </div>
@@ -780,7 +782,7 @@ export const UserDetailPanel = memo(function UserDetailPanel({
                     <PlanIcon planId={p.id} />
                     <div className="flex-1 min-w-0">
                       <p className="text-white text-xs font-medium">{da ? p.nameDa : p.nameEn}</p>
-                      <p className="text-slate-500 text-[10px]">
+                      <p className="text-slate-400 text-[10px]">
                         {p.priceDkk === 0 ? (da ? 'Gratis' : 'Free') : `${p.priceDkk} kr/md`}
                         {p.aiEnabled
                           ? ` · ${p.aiTokensPerMonth === -1 ? (da ? 'Ubegrænset' : 'Unlimited') : formatTokens(p.aiTokensPerMonth) + ' tokens'}`
@@ -810,10 +812,10 @@ export const UserDetailPanel = memo(function UserDetailPanel({
                   <Plus size={12} />
                   {da ? 'Tildel' : 'Add'}
                 </button>
-                <span className="text-slate-700">|</span>
+                <span className="text-slate-400">|</span>
                 <button
                   onClick={handleResetUsage}
-                  className="flex items-center gap-1 text-slate-500 hover:text-slate-300 text-xs font-medium transition-colors"
+                  className="flex items-center gap-1 text-slate-400 hover:text-slate-300 text-xs font-medium transition-colors"
                 >
                   <RotateCcw size={11} />
                   {da ? 'Nulstil' : 'Reset'}
@@ -827,14 +829,14 @@ export const UserDetailPanel = memo(function UserDetailPanel({
                 <div className="flex items-center justify-between mb-1.5">
                   <p className="text-white text-sm font-semibold">
                     {formatTokens(sub.tokensUsedThisMonth)}
-                    <span className="text-slate-500 font-normal">
+                    <span className="text-slate-400 font-normal">
                       {isUnlimited ? ' / ∞' : ` / ${formatTokens(totalTokens)}`}
                     </span>
                   </p>
                   {isUnlimited ? (
                     <span className="text-purple-400 text-xs font-medium">∞</span>
                   ) : (
-                    <p className="text-slate-500 text-xs">{usagePercent.toFixed(0)}%</p>
+                    <p className="text-slate-400 text-xs">{usagePercent.toFixed(0)}%</p>
                   )}
                 </div>
                 <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
@@ -857,7 +859,7 @@ export const UserDetailPanel = memo(function UserDetailPanel({
                 {/* Breakdown */}
                 <div className="mt-2 space-y-1">
                   <div className="flex items-center justify-between text-[11px]">
-                    <span className="text-slate-500">{da ? 'Plan-tokens' : 'Plan tokens'}</span>
+                    <span className="text-slate-400">{da ? 'Plan-tokens' : 'Plan tokens'}</span>
                     <span className="text-slate-400">
                       {isUnlimited
                         ? da
@@ -868,7 +870,7 @@ export const UserDetailPanel = memo(function UserDetailPanel({
                   </div>
                   {!isUnlimited && (sub.bonusTokens ?? 0) > 0 && (
                     <div className="flex items-center justify-between text-[11px]">
-                      <span className="text-slate-500 flex items-center gap-1">
+                      <span className="text-slate-400 flex items-center gap-1">
                         <Coins size={10} className="text-amber-400" />
                         {da ? 'Bonus-tokens' : 'Bonus tokens'}
                       </span>
@@ -876,7 +878,7 @@ export const UserDetailPanel = memo(function UserDetailPanel({
                     </div>
                   )}
                   <div className="flex items-center justify-between text-[11px]">
-                    <span className="text-slate-500">
+                    <span className="text-slate-400">
                       {da ? 'Brugt denne måned' : 'Used this month'}
                     </span>
                     <span className="text-white font-medium">
@@ -884,7 +886,7 @@ export const UserDetailPanel = memo(function UserDetailPanel({
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-[11px]">
-                    <span className="text-slate-500">{da ? 'Periode start' : 'Period start'}</span>
+                    <span className="text-slate-400">{da ? 'Periode start' : 'Period start'}</span>
                     <span className="text-slate-400">
                       {new Date(sub.periodStart).toLocaleDateString(da ? 'da-DK' : 'en-GB')}
                     </span>
@@ -892,7 +894,7 @@ export const UserDetailPanel = memo(function UserDetailPanel({
                 </div>
               </div>
             ) : (
-              <p className="text-slate-500 text-xs">
+              <p className="text-slate-400 text-xs">
                 {da ? 'AI er ikke inkluderet i denne plan.' : 'AI is not included in this plan.'}
               </p>
             )}

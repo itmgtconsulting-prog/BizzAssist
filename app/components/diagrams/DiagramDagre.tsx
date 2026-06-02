@@ -102,7 +102,7 @@ export default function DiagramDagre({ graph, lang: _lang }: DiagramVariantProps
           >
             +
           </button>
-          <span className="text-slate-500 text-[10px] w-8 text-center">
+          <span className="text-slate-400 text-[10px] w-8 text-center">
             {Math.round(zoom * 100)}%
           </span>
           <button

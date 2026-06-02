@@ -389,7 +389,7 @@ export default function EjendomEjerforeningFinder({
 
       {/* Community-loading state */}
       {communityLoading && (
-        <div className="flex items-center gap-2 text-xs text-slate-500 py-1">
+        <div className="flex items-center gap-2 text-xs text-slate-400 py-1">
           <Loader2 size={12} className="animate-spin" />
           {da ? 'Checker verificeringer...' : 'Checking verifications...'}
         </div>
@@ -422,7 +422,7 @@ export default function EjendomEjerforeningFinder({
                         {cv.navn}
                       </Link>
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
-                        <span className="text-xs text-slate-500">CVR {cv.cvr}</span>
+                        <span className="text-xs text-slate-400">CVR {cv.cvr}</span>
                         {userVerdict && (
                           <span
                             className={`text-[10px] px-1.5 py-0.5 rounded ${
@@ -554,7 +554,7 @@ export default function EjendomEjerforeningFinder({
 
       {/* Ingen resultater */}
       {hasSearched && !loading && !error && candidates.length === 0 && (
-        <p className="text-xs text-slate-500 py-2">
+        <p className="text-xs text-slate-400 py-2">
           {da
             ? 'Ingen kandidat-ejerforeninger fundet i nærområdet.'
             : 'No candidate housing associations found in the area.'}
@@ -564,7 +564,7 @@ export default function EjendomEjerforeningFinder({
       {/* Resultater med verificering */}
       {hasSearched && !loading && candidates.length > 0 && (
         <div className="space-y-3">
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-slate-400">
             {da
               ? `${candidates.length} kandidat${candidates.length > 1 ? 'er' : ''} fundet — verificér med 👍 eller afvis med 👎`
               : `${candidates.length} candidate${candidates.length > 1 ? 's' : ''} found — verify with 👍 or reject with 👎`}
@@ -602,14 +602,14 @@ export default function EjendomEjerforeningFinder({
                         {candidate.navn}
                       </Link>
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
-                        <span className="text-xs text-slate-500">CVR {candidate.cvr}</span>
+                        <span className="text-xs text-slate-400">CVR {candidate.cvr}</span>
                         <span
                           className={`text-[10px] px-1.5 py-0.5 rounded ${style.bg} ${style.text}`}
                         >
                           {da ? style.label : style.labelEn}
                         </span>
                         {candidate.administeredCount > 0 && (
-                          <span className="text-[10px] text-slate-500">
+                          <span className="text-[10px] text-slate-400">
                             {candidate.administeredCount}{' '}
                             {da ? 'ejendomme i området' : 'properties in the area'}
                           </span>
@@ -660,7 +660,7 @@ export default function EjendomEjerforeningFinder({
             );
           })}
 
-          <p className="text-[10px] text-slate-600 mt-2">
+          <p className="text-[10px] text-slate-400 mt-2">
             {da
               ? 'AI-resultater er vejledende. Verificeringer hjælper andre brugere.'
               : 'AI results are indicative. Verifications help other users.'}

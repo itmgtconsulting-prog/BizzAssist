@@ -116,7 +116,7 @@ export default function TrainingDocsClient({ domainId }: { domainId: string }) {
           <FileText size={22} className="text-cyan-400" />
           {da ? 'Dokumenter' : 'Documents'}
         </h1>
-        <p className="text-slate-500 text-sm mt-1">
+        <p className="text-slate-400 text-sm mt-1">
           {da
             ? 'Kontekst-materiale som AI\u2019en bruger til hver generation i dette domain.'
             : 'Context material the AI consumes on every generation in this domain.'}
@@ -179,7 +179,7 @@ export default function TrainingDocsClient({ domainId }: { domainId: string }) {
             {uploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
             {da ? 'Vælg fil' : 'Choose file'}
           </button>
-          <span className="text-slate-500 text-xs">
+          <span className="text-slate-400 text-xs">
             {da
               ? `docx, xlsx, pptx, pdf, txt, md, csv m.fl. · max ${MAX_MB} MB`
               : `docx, xlsx, pptx, pdf, txt, md, csv et al. · max ${MAX_MB} MB`}
@@ -230,7 +230,7 @@ export default function TrainingDocsClient({ domainId }: { domainId: string }) {
             <Loader2 className="w-6 h-6 text-blue-400 animate-spin" />
           </div>
         ) : docs.length === 0 ? (
-          <div className="text-center py-10 text-slate-500 text-sm">
+          <div className="text-center py-10 text-slate-400 text-sm">
             {da ? 'Ingen træningsdokumenter endnu' : 'No training documents yet'}
           </div>
         ) : (

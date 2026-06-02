@@ -129,7 +129,7 @@ export default function FinansieringsrapportClient(): React.ReactElement {
             </p>
           </div>
         </div>
-        <p className="text-slate-500 text-sm">
+        <p className="text-slate-400 text-sm">
           Søg en ejendom og generér en teknisk ejendomsbeskrivelse baseret på BBR, vurdering,
           tinglysning og servitutter. Vælg mellem tre tonarter: realkredit (formel), bankrådgiver
           (key-points) eller internt memo (kort bullets).
@@ -147,7 +147,7 @@ export default function FinansieringsrapportClient(): React.ReactElement {
           </label>
           <div className="relative" ref={dropdownRef}>
             <div className="flex items-center gap-2 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-500/20">
-              <Search size={16} className="text-slate-500" />
+              <Search size={16} className="text-slate-400" />
               <input
                 id="property-search"
                 type="text"
@@ -158,7 +158,7 @@ export default function FinansieringsrapportClient(): React.ReactElement {
                 onFocus={() => searchResults.length > 0 && setDropdownOpen(true)}
               />
               {searchLoading && (
-                <Loader2 size={14} className="text-slate-500 animate-spin" aria-hidden />
+                <Loader2 size={14} className="text-slate-400 animate-spin" aria-hidden />
               )}
             </div>
 
@@ -176,10 +176,10 @@ export default function FinansieringsrapportClient(): React.ReactElement {
                       <div className="flex-1 min-w-0">
                         <p className="text-sm text-slate-200 truncate">{r.title}</p>
                         {r.subtitle && (
-                          <p className="text-xs text-slate-500 truncate">{r.subtitle}</p>
+                          <p className="text-xs text-slate-400 truncate">{r.subtitle}</p>
                         )}
                       </div>
-                      <ChevronRight size={14} className="text-slate-600" />
+                      <ChevronRight size={14} className="text-slate-400" />
                     </button>
                   ))}
               </div>
@@ -243,7 +243,7 @@ export default function FinansieringsrapportClient(): React.ReactElement {
                     >
                       {t.label}
                     </p>
-                    <p className="text-xs text-slate-500 mt-0.5">{t.desc}</p>
+                    <p className="text-xs text-slate-400 mt-0.5">{t.desc}</p>
                   </button>
                 );
               })}

@@ -49,9 +49,9 @@ function FlowStep({
 
   return (
     <div className={`rounded-lg border p-3 ${colorMap[color]}`}>
-      <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-0.5">{label}</p>
+      <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-0.5">{label}</p>
       <p className="text-lg font-bold">{value}</p>
-      {note && <p className="text-[10px] text-slate-500 mt-0.5">{note}</p>}
+      {note && <p className="text-[10px] text-slate-400 mt-0.5">{note}</p>}
     </div>
   );
 }
@@ -60,8 +60,8 @@ function FlowStep({
 function FlowArrow({ label }: { label?: string }) {
   return (
     <div className="flex flex-col items-center py-1">
-      <ArrowDown size={14} className="text-slate-600" />
-      {label && <span className="text-[9px] text-slate-600 mt-0.5">{label}</span>}
+      <ArrowDown size={14} className="text-slate-400" />
+      {label && <span className="text-[9px] text-slate-400 mt-0.5">{label}</span>}
     </div>
   );
 }
@@ -221,7 +221,7 @@ export default function SkatteberegningFlow({
             </p>
             <p className="text-white text-lg font-bold">{formatDKK(totalSkat)}</p>
           </div>
-          <p className="text-slate-500 text-[10px] mt-0.5">
+          <p className="text-slate-400 text-[10px] mt-0.5">
             {da
               ? `Grundskyld ${formatDKK(grundskyld ?? 0)} + ejendomsværdiskat ${formatDKK(ejendomsskat ?? 0)}`
               : `Land tax ${formatDKK(grundskyld ?? 0)} + property tax ${formatDKK(ejendomsskat ?? 0)}`}
@@ -230,7 +230,7 @@ export default function SkatteberegningFlow({
       )}
 
       {/* BIZZ-992: Forklarende note om nyt vs. gammelt system */}
-      <p className="text-slate-600 text-[9px] mt-3 leading-relaxed">
+      <p className="text-slate-400 text-[9px] mt-3 leading-relaxed">
         {da
           ? 'Skattebeløbene er fra Vurderingsstyrelsens foreløbige beregning. Den faktiske opkrævede skat kan afvige pga. skatteloft, overgangsordninger og individuelle fradrag.'
           : "Tax amounts are from the Assessment Authority's preliminary calculation. Actual tax charged may differ due to tax ceilings, transitional rules and individual deductions."}

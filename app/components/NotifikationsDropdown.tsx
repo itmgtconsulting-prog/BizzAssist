@@ -223,7 +223,7 @@ function NotifikationsDropdown({ lang }: NotifikationsDropdownProps) {
             >
               {notifs.length === 0 ? (
                 <div className="px-4 py-8 text-center">
-                  <Bell size={28} className="mx-auto mb-3 text-slate-600" />
+                  <Bell size={28} className="mx-auto mb-3 text-slate-400" />
                   <p className="text-slate-300 text-sm">{t.ingenNotifikationer}</p>
                   <p className="text-slate-400 text-xs mt-2 leading-relaxed">
                     {t.notifikationerKommer}
@@ -255,7 +255,7 @@ function NotifikationsDropdown({ lang }: NotifikationsDropdownProps) {
                         <div className="min-w-0 flex-1">
                           <p className="text-white text-sm font-medium truncate">{n.adresse}</p>
                           <p className="text-slate-300 text-xs mt-0.5">{n.besked}</p>
-                          <p className="text-slate-500 text-[10px] mt-1">
+                          <p className="text-slate-400 text-[10px] mt-1">
                             {new Date(n.tidspunkt).toLocaleDateString(
                               lang === 'da' ? 'da-DK' : 'en-GB',
                               {
@@ -285,7 +285,7 @@ function NotifikationsDropdown({ lang }: NotifikationsDropdownProps) {
             >
               {tracked.length === 0 ? (
                 <div className="px-4 py-8 text-center">
-                  <BellOff size={28} className="mx-auto mb-3 text-slate-600" />
+                  <BellOff size={28} className="mx-auto mb-3 text-slate-400" />
                   <p className="text-slate-300 text-sm">{t.ingenFulgte}</p>
                   <p className="text-slate-400 text-xs mt-2 leading-relaxed px-2">
                     {t.ingenFulgteHint}
@@ -311,13 +311,13 @@ function NotifikationsDropdown({ lang }: NotifikationsDropdownProps) {
                     <div className="flex items-center gap-1 flex-shrink-0">
                       <button
                         onClick={(e) => handleUntrack(e, ej.id)}
-                        className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                        className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
                         title={t.stopFoelg}
                         aria-label={t.stopFoelg}
                       >
                         <X size={13} />
                       </button>
-                      <ChevronRight size={14} className="text-slate-600" />
+                      <ChevronRight size={14} className="text-slate-400" />
                     </div>
                   </button>
                 ))

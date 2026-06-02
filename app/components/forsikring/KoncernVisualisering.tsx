@@ -184,7 +184,7 @@ export default function KoncernVisualisering(props: Props): React.ReactElement {
           <h3 className="text-sm font-semibold text-white">
             {da ? 'Koncern-forsikringsstatus' : 'Group insurance status'}
           </h3>
-          {running && <Loader2 className="w-3 h-3 animate-spin text-slate-500" aria-hidden />}
+          {running && <Loader2 className="w-3 h-3 animate-spin text-slate-400" aria-hidden />}
         </div>
         <div className="flex items-center gap-3 text-xs">
           {(Object.entries(statusCounts) as [ForsikringStatus, number][])
@@ -275,7 +275,7 @@ export default function KoncernVisualisering(props: Props): React.ReactElement {
       {/* Tids-slider (kun synlig hvis der er snapshot-datoer) */}
       {snapshotDates && snapshotDates.length > 1 && (
         <div className="mt-3 px-2">
-          <div className="flex items-center justify-between text-[10px] text-slate-500 mb-1">
+          <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
             <span>{snapshotDates[0]}</span>
             <span className="text-emerald-400 font-medium">
               {selectedDate ?? snapshotDates[snapshotDates.length - 1]}

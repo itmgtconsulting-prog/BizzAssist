@@ -171,7 +171,7 @@ export default function ForklarVurderingWidget({
               setForklaring(null);
               setError(null);
             }}
-            className="text-slate-600 hover:text-slate-400 transition-colors"
+            className="text-slate-400 hover:text-slate-400 transition-colors"
             aria-label={da ? 'Luk forklaring' : 'Close explanation'}
           >
             <X size={14} />
@@ -202,7 +202,7 @@ export default function ForklarVurderingWidget({
 
       {/* Disclaimer */}
       {forklaring && !loading && (
-        <p className="text-slate-600 text-[10px] mt-3 border-t border-slate-700/30 pt-2">
+        <p className="text-slate-400 text-[10px] mt-3 border-t border-slate-700/30 pt-2">
           {da
             ? '⚠ AI-genereret forklaring — verificér altid vigtig information.'
             : '⚠ AI-generated explanation — always verify important information.'}

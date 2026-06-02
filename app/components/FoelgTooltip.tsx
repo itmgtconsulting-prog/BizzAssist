@@ -89,8 +89,8 @@ export default function FoelgTooltip({ lang, visible }: FoelgTooltipProps) {
 
       {/* Timing */}
       <div className="px-4 py-2.5 bg-slate-800/50 border-t border-white/5 flex items-center gap-2">
-        <Clock size={12} className="text-slate-500" />
-        <p className="text-slate-500 text-[11px]">
+        <Clock size={12} className="text-slate-400" />
+        <p className="text-slate-400 text-[11px]">
           {lang === 'da'
             ? 'Tjekkes automatisk hver nat kl. 03:00'
             : 'Checked automatically every night at 03:00'}

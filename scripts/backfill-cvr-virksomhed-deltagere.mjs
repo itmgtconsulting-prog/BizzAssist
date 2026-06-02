@@ -130,32 +130,54 @@ function extractRelations(targetCvr, deltagerRels) {
     for (const org of orgs) {
       const medlemsData = Array.isArray(org.medlemsData) ? org.medlemsData : [];
 
-      // Først: saml ejerandel fra EJERANDEL-attribut (bruges på register-rækken)
-      let orgEjerandelPct = null;
+      // BIZZ-1938: Saml ALLE ejerandel-perioder (ikke kun aktuel) for at understøtte
+      // M&A-radar exit/increase/decrease signaler via LAG-window i mv_virksomhedshandel_kandidater.
+      // Tidligere brug af gyldigNu() tog kun ÉN periode — historiske ejerandels-shifts blev tabt.
+      const ejerandelPerioder = [];
       for (const md of medlemsData) {
         const attrs = Array.isArray(md.attributter) ? md.attributter : [];
         const ejerAttr = attrs.find(a => a.type === 'EJERANDEL' || a.type === 'EJERANDEL_PROCENT');
         if (ejerAttr) {
           const vals = Array.isArray(ejerAttr.vaerdier) ? ejerAttr.vaerdier : [];
-          const gyldig = vals.find(v => !v.periode?.gyldigTil) ?? vals[vals.length - 1];
-          if (gyldig?.vaerdi) {
-            const raw = parseFloat(gyldig.vaerdi);
+          for (const v of vals) {
+            if (!v.vaerdi) continue;
+            const raw = parseFloat(v.vaerdi);
             // CVR ES returnerer 0-1 skala (1.0 = 100%) — konvertér til procent
-            orgEjerandelPct = raw <= 1 ? raw * 100 : raw;
+            const pct = raw <= 1 ? raw * 100 : raw;
+            ejerandelPerioder.push({
+              pct,
+              gyldigFra: v.periode?.gyldigFra?.slice(0, 10) ?? '1900-01-01',
+              gyldigTil: v.periode?.gyldigTil?.slice(0, 10) ?? null,
+            });
           }
         }
       }
 
+      // Backward-compat: "latest" ejerandel (gæld for FUNKTION-register-uden-ejerandelPerioder + fallback)
+      let orgEjerandelPct = null;
+      let orgEjerandelGyldigFra = null;
+      let orgEjerandelGyldigTil = null;
+      if (ejerandelPerioder.length > 0) {
+        const latest = ejerandelPerioder.find(p => !p.gyldigTil) ?? ejerandelPerioder[ejerandelPerioder.length - 1];
+        orgEjerandelPct = latest.pct;
+        orgEjerandelGyldigFra = latest.gyldigFra;
+        orgEjerandelGyldigTil = latest.gyldigTil;
+      }
+
+      // FUNKTION-rolles (direktion, bestyrelse, etc.) — emit per periode på FUNKTION-vaerdier
+      // BIZZ-1938: Skip FUNKTION rolle='register' hvis vi har ejerandelPerioder — undgår duplikering
+      // (register-rows kommer fra ejerandelPerioder med korrekte historiske datoer + pct).
       for (const md of medlemsData) {
         const attrs = Array.isArray(md.attributter) ? md.attributter : [];
 
-        // Find FUNKTION-attributter (roller)
         const funktioner = attrs.filter(a => a.type === 'FUNKTION');
         for (const attr of funktioner) {
           const vaerdier = Array.isArray(attr.vaerdier) ? attr.vaerdier : [];
           for (const v of vaerdier) {
             if (!v.vaerdi) continue;
             const rolle = v.vaerdi.toLowerCase().slice(0, 60);
+            // BIZZ-1938: register-rolle håndteres separat hvis ejerandel-data eksisterer
+            if (rolle === 'register' && ejerandelPerioder.length > 0) continue;
             const fra = v.periode?.gyldigFra?.slice(0, 10) ?? '1900-01-01';
             const til = v.periode?.gyldigTil?.slice(0, 10) ?? null;
 
@@ -165,6 +187,7 @@ function extractRelations(targetCvr, deltagerRels) {
               type: rolle,
               gyldig_fra: fra,
               gyldig_til: til,
+              // Når FUNKTION='register' uden ejerandelPerioder, har vi ingen pct
               ejerandel_pct: rolle === 'register' ? orgEjerandelPct : null,
               sidst_opdateret: new Date().toISOString(),
               sidst_hentet_fra_cvr: new Date().toISOString(),
@@ -176,15 +199,33 @@ function extractRelations(targetCvr, deltagerRels) {
         }
       }
 
-      // Fallback: brug hovedtype som rolle (inkl. ejerandel for register)
+      // BIZZ-1938: Emit ALLE ejerandel-perioder som register-rows.
+      // Hvert periode-shift = en M&A-signal (entry/exit/increase/decrease) via LAG().
+      for (const per of ejerandelPerioder) {
+        rows.push({
+          virksomhed_cvr: String(targetCvr),
+          deltager_enhedsnummer: enhedsNummer,
+          type: 'register',
+          gyldig_fra: per.gyldigFra,
+          gyldig_til: per.gyldigTil,
+          ejerandel_pct: per.pct,
+          sidst_opdateret: new Date().toISOString(),
+          sidst_hentet_fra_cvr: new Date().toISOString(),
+          _ejer_cvr: deltagerCvr,
+          _ejer_navn: navn,
+        });
+        foundRolle = true;
+      }
+
+      // Fallback: hovedtype-baseret rolle (kun hvis ingen FUNKTION og ingen ejerandel-data)
       if (!foundRolle && org.hovedtype) {
         const fallbackType = org.hovedtype.toLowerCase().slice(0, 60);
         rows.push({
           virksomhed_cvr: String(targetCvr),
           deltager_enhedsnummer: enhedsNummer,
           type: fallbackType,
-          gyldig_fra: '1900-01-01',
-          gyldig_til: null,
+          gyldig_fra: orgEjerandelGyldigFra ?? '1900-01-01',
+          gyldig_til: orgEjerandelGyldigTil,
           ejerandel_pct: fallbackType === 'register' ? orgEjerandelPct : null,
           sidst_opdateret: new Date().toISOString(),
           sidst_hentet_fra_cvr: new Date().toISOString(),

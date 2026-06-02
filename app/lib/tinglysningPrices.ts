@@ -109,6 +109,80 @@ export async function fetchTinglysningPriceRowsByBfe(bfe: number): Promise<Tingl
   const cached = priceCache.get(bfe);
   if (cached) return cached;
 
+  // BIZZ-1931: Cache-first lookup mod ejendomshandel (130K+ backfilled rows).
+  // Undgår live e-TL kald og 429 rate-limit for allerede backfillede BFE'er.
+  try {
+    const { createAdminClient } = await import('@/lib/supabase/admin');
+    const admin = createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: dbRows } = await (admin as any)
+      .from('ejendomshandel')
+      .select('dato, koebsaftale_dato, tinglyst_dato, koebesum, samlet_koebesum')
+      .eq('bfe_nummer', bfe)
+      .order('dato', { ascending: false })
+      .limit(20);
+
+    if (dbRows && dbRows.length > 0) {
+      const rows: TinglysningPriceRow[] = (
+        dbRows as Array<{
+          dato: string | null;
+          koebsaftale_dato: string | null;
+          tinglyst_dato: string | null;
+          koebesum: number | string | null;
+          samlet_koebesum: number | string | null;
+        }>
+      ).map((r) => ({
+        overtagelsesdato: r.dato?.slice(0, 10) ?? null,
+        tinglysningsdato: r.tinglyst_dato?.slice(0, 10) ?? null,
+        koebsaftaleDato: r.koebsaftale_dato?.slice(0, 10) ?? null,
+        kontantKoebesum: r.koebesum ? Number(r.koebesum) : null,
+        iAltKoebesum: r.samlet_koebesum ? Number(r.samlet_koebesum) : null,
+        dokumentId: null,
+      }));
+      priceCache.set(bfe, rows);
+      return rows;
+    }
+  } catch {
+    // DB lookup non-fatal — fall through to live e-TL
+  }
+
+  // Also check ejerskifte_historik (572K rows with some prices)
+  try {
+    const { createAdminClient } = await import('@/lib/supabase/admin');
+    const admin = createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: histRows } = await (admin as any)
+      .from('ejerskifte_historik')
+      .select('overtagelsesdato, koebsaftale_dato, kontant_koebesum, i_alt_koebesum, dokument_id')
+      .eq('bfe_nummer', bfe)
+      .not('kontant_koebesum', 'is', null)
+      .order('overtagelsesdato', { ascending: false })
+      .limit(20);
+
+    if (histRows && histRows.length > 0) {
+      const rows: TinglysningPriceRow[] = (
+        histRows as Array<{
+          overtagelsesdato: string | null;
+          koebsaftale_dato: string | null;
+          kontant_koebesum: number | null;
+          i_alt_koebesum: number | null;
+          dokument_id: string | null;
+        }>
+      ).map((r) => ({
+        overtagelsesdato: r.overtagelsesdato?.slice(0, 10) ?? null,
+        tinglysningsdato: null,
+        koebsaftaleDato: r.koebsaftale_dato?.slice(0, 10) ?? null,
+        kontantKoebesum: r.kontant_koebesum,
+        iAltKoebesum: r.i_alt_koebesum,
+        dokumentId: r.dokument_id,
+      }));
+      priceCache.set(bfe, rows);
+      return rows;
+    }
+  } catch {
+    // DB lookup non-fatal — fall through to live e-TL
+  }
+
   try {
     // Step 1: Resolve BFE → Tinglysning ejendom UUID
     const searchRes = await tlFetch(

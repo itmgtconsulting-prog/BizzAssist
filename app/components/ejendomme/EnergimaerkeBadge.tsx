@@ -93,12 +93,12 @@ export default function EnergimaerkeBadge({ energimaerker, loading, lang, onNavi
             </span>
             <FileText
               size={12}
-              className="text-slate-600 group-hover:text-slate-400 transition-colors"
+              className="text-slate-400 group-hover:text-slate-400 transition-colors"
             />
           </div>
         </div>
         {nyeste.udloeber && (
-          <p className="text-slate-600 text-[10px] mt-1">
+          <p className="text-slate-400 text-[10px] mt-1">
             {da ? 'Gyldig til' : 'Valid until'} {nyeste.udloeber}
           </p>
         )}

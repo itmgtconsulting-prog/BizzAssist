@@ -88,6 +88,9 @@ const VP_PROGRESS_KEY = 'sitemap_vp_after';
 /** Supabase ai_settings nøgle til render-xml cursor (sidst renderede page_id) */
 const RENDER_XML_PROGRESS_KEY = 'sitemap_render_page';
 
+/** Supabase ai_settings nøgle til fase-rotations-cursor (BIZZ-1954, ?phase=cycle) */
+const SITEMAP_ROTATION_KEY = 'sitemap_phase_rotation';
+
 // ─── Auth ──────────────────────────────────────────────────────────────────────
 
 /**
@@ -704,14 +707,15 @@ async function phaseRenderXml(
 // ─── Route handler ─────────────────────────────────────────────────────────────
 
 /**
- * GET /api/cron/generate-sitemap?phase=companies|properties|vp-properties
+ * GET /api/cron/generate-sitemap?phase=cycle|companies|properties|vp-properties|render-xml
  *
  * Kræver:
  *   - Authorization: Bearer <CRON_SECRET>
  *   - x-vercel-cron: 1 (kun i production)
  *
  * Query params:
- *   - phase: 'companies' | 'properties' | 'vp-properties' (påkrævet)
+ *   - phase: 'cycle' | 'companies' | 'properties' | 'vp-properties' | 'render-xml' (påkrævet).
+ *     'cycle' (BIZZ-1954) roterer gennem de 4 faser via cursor, så ét cron-job dækker alle.
  *
  * @param request - Indgående Next.js request med Authorization header og phase query param
  * @returns JSON-respons med fase, antal upserted og status
@@ -722,7 +726,21 @@ export async function GET(request: NextRequest) {
   }
 
   const { searchParams } = new URL(request.url);
-  const phase = searchParams.get('phase');
+  let phase = searchParams.get('phase');
+
+  // BIZZ-1954: `?phase=cycle` roterer gennem de 4 faser via en cursor i
+  // ai_settings, så ÉT cron-job (hvert 15. min) dækker alle faser i stedet for
+  // 4 separate cron-entries (Vercel Pro capper ved 40 crons). Hver fase kører
+  // stadig i sin egen invocation med fuldt 240s-budget — ingen timeout-risiko —
+  // og rammer samme hourly-kadence (4 faser × 15 min = 60 min).
+  if (phase === 'cycle') {
+    const rotation = ['companies', 'properties', 'vp-properties', 'render-xml'] as const;
+    const admin = createAdminClient();
+    const cursorRaw = await getProgress(admin, SITEMAP_ROTATION_KEY);
+    const cursor = Number.isFinite(Number(cursorRaw)) ? Number(cursorRaw) : 0;
+    phase = rotation[((cursor % 4) + 4) % 4];
+    await saveProgress(admin, SITEMAP_ROTATION_KEY, (cursor + 1) % 4);
+  }
 
   if (
     phase !== 'companies' &&
@@ -733,7 +751,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       {
         error:
-          'Ugyldig phase — brug ?phase=companies, ?phase=properties, ?phase=vp-properties eller ?phase=render-xml',
+          'Ugyldig phase — brug ?phase=cycle, ?phase=companies, ?phase=properties, ?phase=vp-properties eller ?phase=render-xml',
       },
       { status: 400 }
     );

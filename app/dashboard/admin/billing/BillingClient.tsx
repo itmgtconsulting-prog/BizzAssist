@@ -215,7 +215,7 @@ export default function BillingClient() {
   const statusBadge = (status: SubStatus | null) => {
     if (!status) {
       return (
-        <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-slate-500/15 text-slate-500 border border-slate-500/20">
+        <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-slate-500/15 text-slate-400 border border-slate-500/20">
           <UserX size={10} /> {t.noPlan}
         </span>
       );
@@ -303,7 +303,7 @@ export default function BillingClient() {
         {loading && users.length === 0 && (
           <div className="text-center py-20">
             <RefreshCw size={24} className="animate-spin text-blue-400 mx-auto mb-3" />
-            <p className="text-slate-500 text-sm">{t.loading}</p>
+            <p className="text-slate-400 text-sm">{t.loading}</p>
           </div>
         )}
 
@@ -324,7 +324,7 @@ export default function BillingClient() {
                   <p className="text-slate-400 text-xs uppercase tracking-wide">{t.mrr}</p>
                   <p className="text-white text-2xl font-bold">
                     {stats.mrr.toLocaleString('da-DK')}{' '}
-                    <span className="text-sm font-normal text-slate-500">{t.dkk}</span>
+                    <span className="text-sm font-normal text-slate-400">{t.dkk}</span>
                   </p>
                 </div>
                 <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
@@ -355,7 +355,7 @@ export default function BillingClient() {
 
             {/* Filter pills */}
             <div className="flex items-center gap-1.5 mb-4 overflow-x-auto">
-              <Filter size={14} className="text-slate-600 mr-1 shrink-0" />
+              <Filter size={14} className="text-slate-400 mr-1 shrink-0" />
               {filterTabs.map((tab) => (
                 <button
                   key={tab.key}
@@ -374,7 +374,7 @@ export default function BillingClient() {
             {/* Users table */}
             <div className="bg-slate-900/30 border border-slate-700/40 rounded-xl overflow-hidden">
               {/* Header row */}
-              <div className="grid grid-cols-[1fr_100px_90px_100px_90px_120px] gap-3 px-5 py-3 border-b border-slate-700/40 text-slate-500 text-xs uppercase tracking-wide">
+              <div className="grid grid-cols-[1fr_100px_90px_100px_90px_120px] gap-3 px-5 py-3 border-b border-slate-700/40 text-slate-400 text-xs uppercase tracking-wide">
                 <span>{t.user}</span>
                 <span>{t.plan}</span>
                 <span>{t.status}</span>
@@ -385,7 +385,7 @@ export default function BillingClient() {
 
               {/* User rows */}
               {filtered.length === 0 ? (
-                <div className="px-5 py-8 text-center text-slate-600 text-sm">
+                <div className="px-5 py-8 text-center text-slate-400 text-sm">
                   {da ? 'Ingen brugere i denne kategori' : 'No users in this category'}
                 </div>
               ) : (
@@ -405,7 +405,7 @@ export default function BillingClient() {
                       <div className="min-w-0">
                         <p className="text-white text-xs font-medium truncate">{u.email}</p>
                         {u.fullName && (
-                          <p className="text-slate-500 text-[11px] truncate">{u.fullName}</p>
+                          <p className="text-slate-400 text-[11px] truncate">{u.fullName}</p>
                         )}
                       </div>
 
@@ -413,7 +413,7 @@ export default function BillingClient() {
                       <span className={`text-xs font-medium text-${planColor}-400`}>
                         {planName}
                         {plan && plan.priceDkk > 0 && (
-                          <span className="text-slate-600 font-normal ml-1">{plan.priceDkk},-</span>
+                          <span className="text-slate-400 font-normal ml-1">{plan.priceDkk},-</span>
                         )}
                       </span>
 
@@ -421,17 +421,17 @@ export default function BillingClient() {
                       {statusBadge(sub?.status ?? null)}
 
                       {/* Since */}
-                      <span className="text-slate-500 text-[11px]">
+                      <span className="text-slate-400 text-[11px]">
                         {fmtDate(sub?.createdAt ?? u.createdAt)}
                       </span>
 
                       {/* Last seen */}
-                      <span className="text-slate-600 text-[11px]">{fmtDate(u.lastSignIn)}</span>
+                      <span className="text-slate-400 text-[11px]">{fmtDate(u.lastSignIn)}</span>
 
                       {/* Actions */}
                       <div className="flex justify-end gap-1.5">
                         {isLoading ? (
-                          <RefreshCw size={12} className="animate-spin text-slate-500" />
+                          <RefreshCw size={12} className="animate-spin text-slate-400" />
                         ) : (
                           <>
                             {sub?.status === 'pending' && (

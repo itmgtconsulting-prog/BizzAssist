@@ -127,14 +127,14 @@ export default function BetingelserAdminClient({ domainId: _domainId }: { domain
               : 'Manage terms shared with all domain users. Upload new terms via the insurance page.'}
           </p>
         </div>
-        <span className="text-slate-500 text-xs">
+        <span className="text-slate-400 text-xs">
           {docs.length} {da ? 'betingelser' : 'terms'}
         </span>
       </div>
 
       {loading ? (
         <div className="flex items-center justify-center py-12">
-          <Loader2 size={20} className="animate-spin text-slate-500" />
+          <Loader2 size={20} className="animate-spin text-slate-400" />
         </div>
       ) : docs.length === 0 ? (
         <div className="bg-slate-800/30 border border-slate-700/30 rounded-xl p-8 text-center">
@@ -147,7 +147,7 @@ export default function BetingelserAdminClient({ domainId: _domainId }: { domain
       ) : (
         <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl overflow-hidden">
           {/* Header */}
-          <div className="grid grid-cols-[1fr_180px_100px_100px_80px] gap-2 px-4 py-2 text-slate-500 text-[10px] uppercase tracking-wide border-b border-slate-700/30">
+          <div className="grid grid-cols-[1fr_180px_100px_100px_80px] gap-2 px-4 py-2 text-slate-400 text-[10px] uppercase tracking-wide border-b border-slate-700/30">
             <div>{da ? 'Titel' : 'Title'}</div>
             <div>{da ? 'Selskab' : 'Company'}</div>
             <div>{da ? 'Område' : 'Area'}</div>
@@ -192,7 +192,7 @@ export default function BetingelserAdminClient({ domainId: _domainId }: { domain
                     <button
                       type="button"
                       onClick={() => setEditingId(null)}
-                      className="text-slate-500 hover:text-white p-1"
+                      className="text-slate-400 hover:text-white p-1"
                       aria-label={da ? 'Annuller' : 'Cancel'}
                     >
                       <X size={14} />
@@ -210,13 +210,13 @@ export default function BetingelserAdminClient({ domainId: _domainId }: { domain
                       href={doc.source_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-slate-500 hover:text-blue-400 shrink-0"
+                      className="text-slate-400 hover:text-blue-400 shrink-0"
                     >
                       <ExternalLink size={11} />
                     </a>
                   </div>
                   <span className="text-slate-400 truncate">{doc.selskab}</span>
-                  <span className="text-slate-500">
+                  <span className="text-slate-400">
                     {doc.omraade ? (
                       <span className="px-1.5 py-0.5 bg-indigo-500/10 text-indigo-400 rounded text-[9px]">
                         {doc.omraade}
@@ -225,12 +225,12 @@ export default function BetingelserAdminClient({ domainId: _domainId }: { domain
                       '–'
                     )}
                   </span>
-                  <span className="text-slate-500">{doc.gyldig_fra ?? '–'}</span>
+                  <span className="text-slate-400">{doc.gyldig_fra ?? '–'}</span>
                   <div className="flex items-center gap-1">
                     <button
                       type="button"
                       onClick={() => startEdit(doc)}
-                      className="text-slate-500 hover:text-white p-1"
+                      className="text-slate-400 hover:text-white p-1"
                       aria-label={da ? 'Rediger' : 'Edit'}
                     >
                       <Pencil size={12} />
@@ -239,7 +239,7 @@ export default function BetingelserAdminClient({ domainId: _domainId }: { domain
                       type="button"
                       onClick={() => handleDelete(doc.id)}
                       disabled={deleting === doc.id}
-                      className="text-slate-500 hover:text-red-400 p-1 disabled:opacity-40"
+                      className="text-slate-400 hover:text-red-400 p-1 disabled:opacity-40"
                       aria-label={da ? 'Slet' : 'Delete'}
                     >
                       {deleting === doc.id ? (

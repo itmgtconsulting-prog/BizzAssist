@@ -176,7 +176,7 @@ function PersonbogSection({
 
   /** Empty state — compact single line */
   if (haeftelser.length === 0) {
-    return <p className="text-slate-500 text-xs px-4 py-3 italic">{c.personbogEmpty}</p>;
+    return <p className="text-slate-400 text-xs px-4 py-3 italic">{c.personbogEmpty}</p>;
   }
 
   /** Gruppér hæftelser efter type */
@@ -224,18 +224,18 @@ function PersonbogSection({
       {/* Kolonneoverskrifter */}
       <div className="grid grid-cols-[24px_36px_90px_1fr_100px_100px_50px_28px] gap-x-2 px-4 py-1.5 border-b border-slate-700/20">
         <span />
-        <span className="text-[10px] font-medium text-slate-500 uppercase">Pri.</span>
-        <span className="text-[10px] font-medium text-slate-500 uppercase">
+        <span className="text-[10px] font-medium text-slate-400 uppercase">Pri.</span>
+        <span className="text-[10px] font-medium text-slate-400 uppercase">
           {da ? 'Dato' : 'Date'}
         </span>
-        <span className="text-[10px] font-medium text-slate-500 uppercase">
+        <span className="text-[10px] font-medium text-slate-400 uppercase">
           {da ? 'Dokument' : 'Document'}
         </span>
-        <span className="text-[10px] font-medium text-slate-500 uppercase">
+        <span className="text-[10px] font-medium text-slate-400 uppercase">
           {da ? 'Beløb' : 'Amount'}
         </span>
-        <span className="text-[10px] font-medium text-slate-500 uppercase">Type</span>
-        <span className="text-[10px] font-medium text-slate-500 uppercase">
+        <span className="text-[10px] font-medium text-slate-400 uppercase">Type</span>
+        <span className="text-[10px] font-medium text-slate-400 uppercase">
           {da ? 'Dok.' : 'Doc.'}
         </span>
         <span />
@@ -267,9 +267,9 @@ function PersonbogSection({
                     onClick={() => toggleExpand(idx)}
                   >
                     {isExpanded ? (
-                      <ChevronDown size={12} className="text-slate-500" />
+                      <ChevronDown size={12} className="text-slate-400" />
                     ) : (
-                      <ChevronRight size={12} className="text-slate-500" />
+                      <ChevronRight size={12} className="text-slate-400" />
                     )}
                     <span className="text-xs text-slate-400 tabular-nums">
                       {String(h.prioritet ?? '')}
@@ -282,7 +282,7 @@ function PersonbogSection({
                         {personbogTypeLabel(h.type, c)}
                       </span>
                       {h.debitorer.length > 0 && (
-                        <span className="text-[10px] text-slate-500 truncate block">
+                        <span className="text-[10px] text-slate-400 truncate block">
                           {h.debitorer.join(', ')}
                         </span>
                       )}
@@ -364,7 +364,7 @@ function PersonbogSection({
                         {/* Kreditor */}
                         {h.kreditor && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                            <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                               {c.personbogKreditor}
                             </p>
                             <p className="text-white">
@@ -385,7 +385,7 @@ function PersonbogSection({
                         {/* Debitor(er) */}
                         {h.debitorer.length > 0 && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                            <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                               {c.personbogDebitor}
                             </p>
                             {h.debitorer.map((d, di) => (
@@ -408,7 +408,7 @@ function PersonbogSection({
                         {/* Hovedstol */}
                         {h.hovedstol != null && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                            <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                               {c.personbogHovedstol}
                             </p>
                             <p className="text-white">
@@ -420,7 +420,7 @@ function PersonbogSection({
                         {/* Rente */}
                         {h.rente != null && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                            <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                               {c.personbogRente}
                             </p>
                             <p className="text-white">
@@ -432,7 +432,7 @@ function PersonbogSection({
                         {/* BIZZ-532: Referencerente + tillaeg */}
                         {h.referenceRenteNavn && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                            <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                               {da ? 'Referencerente' : 'Reference rate'}
                             </p>
                             <p className="text-white">
@@ -446,7 +446,7 @@ function PersonbogSection({
                         {/* BIZZ-532: Kreditorbetegnelse */}
                         {h.kreditorbetegnelse && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                            <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                               {da ? 'Kreditorbetegnelse' : 'Creditor designation'}
                             </p>
                             <p className="text-white">{h.kreditorbetegnelse}</p>
@@ -456,7 +456,7 @@ function PersonbogSection({
                         {/* BIZZ-532: Laantype + pantebrevformular */}
                         {(h.laantype || h.pantebrevFormular) && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                            <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                               {da ? 'Låntype' : 'Loan type'}
                             </p>
                             <p className="text-white">
@@ -468,7 +468,7 @@ function PersonbogSection({
                         {/* Tinglysningsdato */}
                         {h.tinglysningsdato && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                            <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                               {c.personbogTinglysningsdato}
                             </p>
                             <p className="text-white">{formatDatoKort(h.tinglysningsdato)}</p>
@@ -478,7 +478,7 @@ function PersonbogSection({
                         {/* Registreringsdato */}
                         {h.registreringsdato && h.registreringsdato !== h.tinglysningsdato && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                            <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                               {c.personbogRegistreringsdato}
                             </p>
                             <p className="text-white">{formatDatoKort(h.registreringsdato)}</p>
@@ -488,7 +488,7 @@ function PersonbogSection({
                         {/* Tinglysningsafgift */}
                         {h.tinglysningsafgift != null && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                            <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                               {c.personbogTinglysningsafgift}
                             </p>
                             <p className="text-white">
@@ -500,7 +500,7 @@ function PersonbogSection({
                         {/* Loebetid */}
                         {h.loebetid && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                            <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                               {c.personbogLoebetid}
                             </p>
                             <p className="text-white">{h.loebetid}</p>
@@ -510,7 +510,7 @@ function PersonbogSection({
                         {/* Dokumentalias */}
                         {h.dokumentAlias && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                            <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                               {da ? 'Dokument' : 'Document'}
                             </p>
                             <p className="text-white text-[11px]">{h.dokumentAlias}</p>
@@ -521,7 +521,7 @@ function PersonbogSection({
                       {/* Vilkaar */}
                       {h.vilkaar && (
                         <div className="mt-2 pt-2 border-t border-slate-700/20">
-                          <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                          <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                             {c.personbogVilkaar}
                           </p>
                           <p className="text-slate-300 text-xs mt-0.5 whitespace-pre-line">
@@ -533,7 +533,7 @@ function PersonbogSection({
                       {/* Anmelder */}
                       {h.anmelderNavn && (
                         <div className="mt-2 pt-2 border-t border-slate-700/20">
-                          <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                          <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                             {c.personbogAnmelder}
                           </p>
                           <p className="text-white text-xs">
@@ -590,9 +590,9 @@ function PersonbogSection({
                     onClick={() => toggleExpand(idx)}
                   >
                     {isExpanded ? (
-                      <ChevronDown size={12} className="text-slate-500" />
+                      <ChevronDown size={12} className="text-slate-400" />
                     ) : (
-                      <ChevronRight size={12} className="text-slate-500" />
+                      <ChevronRight size={12} className="text-slate-400" />
                     )}
                     <span className="text-xs text-slate-400 tabular-nums">
                       {String(h.prioritet ?? '')}
@@ -659,7 +659,7 @@ function PersonbogSection({
                       <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-xs mt-1">
                         {h.kreditor && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                            <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                               {c.personbogKreditor}
                             </p>
                             <p className="text-white">{h.kreditor}</p>
@@ -667,7 +667,7 @@ function PersonbogSection({
                         )}
                         {h.hovedstol != null && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                            <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                               {c.personbogHovedstol}
                             </p>
                             <p className="text-white">
@@ -677,7 +677,7 @@ function PersonbogSection({
                         )}
                         {h.tinglysningsdato && (
                           <div>
-                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                            <p className="text-slate-400 text-[10px] uppercase mb-0.5">
                               {c.personbogTinglysningsdato}
                             </p>
                             <p className="text-white">{formatDatoKort(h.tinglysningsdato)}</p>
@@ -699,7 +699,7 @@ function PersonbogSection({
           dokumenter.fusioner.length > 0 ||
           dokumenter.ejerpantebreve.length > 0) && (
           <div className="px-4 py-3 border-t border-slate-700/20 space-y-2">
-            <p className="text-slate-500 text-[10px] uppercase tracking-wider font-semibold">
+            <p className="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">
               {da ? 'Øvrige tinglyste dokumenter' : 'Other registered documents'}
             </p>
             {dokumenter.vedtaegter.length > 0 && (
@@ -708,7 +708,7 @@ function PersonbogSection({
                   {da ? 'Vedtægter' : 'Articles of association'}:
                 </span>
                 <span className="text-white font-medium">{dokumenter.vedtaegter.length}</span>
-                <span className="text-slate-500">
+                <span className="text-slate-400">
                   {dokumenter.vedtaegter
                     .map((d) => d.tinglysningsdato)
                     .filter(Boolean)
@@ -723,7 +723,7 @@ function PersonbogSection({
                   {da ? 'Fusioner/spaltninger' : 'Mergers/demergers'}:
                 </span>
                 <span className="text-white font-medium">{dokumenter.fusioner.length}</span>
-                <span className="text-slate-500">
+                <span className="text-slate-400">
                   {dokumenter.fusioner
                     .map((d) => d.tinglysningsdato)
                     .filter(Boolean)
@@ -738,7 +738,7 @@ function PersonbogSection({
                   {da ? 'Ejerpantebreve i løsøre' : 'Owner mortgage in chattels'}:
                 </span>
                 <span className="text-white font-medium">{dokumenter.ejerpantebreve.length}</span>
-                <span className="text-slate-500">
+                <span className="text-slate-400">
                   {dokumenter.ejerpantebreve
                     .map((d) => d.tinglysningsdato)
                     .filter(Boolean)
@@ -879,17 +879,17 @@ export default function VirksomhedTinglysningTab({
               {/* Chevron — altid yderst til venstre */}
               <span className="flex-shrink-0 w-4">
                 {personbogLoading ? (
-                  <Loader2 size={12} className="animate-spin text-slate-500" />
+                  <Loader2 size={12} className="animate-spin text-slate-400" />
                 ) : personbogRowOpen ? (
-                  <ChevronDown size={13} className="text-slate-500" />
+                  <ChevronDown size={13} className="text-slate-400" />
                 ) : (
-                  <ChevronRight size={13} className="text-slate-500" />
+                  <ChevronRight size={13} className="text-slate-400" />
                 )}
               </span>
-              <FileText size={15} className="text-slate-500 flex-shrink-0" />
+              <FileText size={15} className="text-slate-400 flex-shrink-0" />
               <span className="text-slate-200 text-sm">
                 {c.personBook}
-                <span className="text-slate-500 text-xs ml-1">
+                <span className="text-slate-400 text-xs ml-1">
                   ({personbogLoading ? '…' : (personbogData?.length ?? 0)})
                 </span>
               </span>
@@ -944,18 +944,18 @@ export default function VirksomhedTinglysningTab({
             >
               <span className="flex-shrink-0 w-4">
                 {bilbogLoading ? (
-                  <Loader2 size={12} className="animate-spin text-slate-500" />
+                  <Loader2 size={12} className="animate-spin text-slate-400" />
                 ) : bilbogData.length === 0 ? (
                   <span />
                 ) : bilbogOpen ? (
-                  <ChevronDown size={13} className="text-slate-500" />
+                  <ChevronDown size={13} className="text-slate-400" />
                 ) : (
-                  <ChevronRight size={13} className="text-slate-500" />
+                  <ChevronRight size={13} className="text-slate-400" />
                 )}
               </span>
               <FileText
                 size={15}
-                className={bilbogData.length > 0 ? 'text-slate-500' : 'text-slate-600'}
+                className={bilbogData.length > 0 ? 'text-slate-400' : 'text-slate-400'}
               />
               <span
                 className={
@@ -963,7 +963,7 @@ export default function VirksomhedTinglysningTab({
                 }
               >
                 {c.carBook}
-                <span className="text-slate-500 text-xs ml-1">
+                <span className="text-slate-400 text-xs ml-1">
                   ({bilbogLoading ? '…' : bilbogData.length})
                 </span>
               </span>
@@ -990,13 +990,13 @@ export default function VirksomhedTinglysningTab({
                       </span>
                     )}
                     {bil.stelnummer && (
-                      <span className="text-slate-500 font-mono">
+                      <span className="text-slate-400 font-mono">
                         {c.bilbogStelnummer}: {bil.stelnummer}
                       </span>
                     )}
                   </div>
                   {bil.haeftelser.length === 0 ? (
-                    <div className="mt-2 text-xs text-slate-500">{c.bilbogIngenHaeftelser}</div>
+                    <div className="mt-2 text-xs text-slate-400">{c.bilbogIngenHaeftelser}</div>
                   ) : (
                     <ul className="mt-2 space-y-2">
                       {bil.haeftelser.map((h, i) => (
@@ -1012,12 +1012,12 @@ export default function VirksomhedTinglysningTab({
                               </span>
                             )}
                             {h.kreditor && (
-                              <span className="text-slate-500">
+                              <span className="text-slate-400">
                                 {c.personbogKreditor}: {h.kreditor}
                               </span>
                             )}
                             {h.tinglysningsdato && (
-                              <span className="text-slate-600">{h.tinglysningsdato}</span>
+                              <span className="text-slate-400">{h.tinglysningsdato}</span>
                             )}
                             {h.dokumentId && (
                               <a
@@ -1056,18 +1056,18 @@ export default function VirksomhedTinglysningTab({
             >
               <span className="flex-shrink-0 w-4">
                 {andelsbogLoading ? (
-                  <Loader2 size={12} className="animate-spin text-slate-500" />
+                  <Loader2 size={12} className="animate-spin text-slate-400" />
                 ) : andelsbogData.length === 0 ? (
                   <span />
                 ) : andelsbogOpen ? (
-                  <ChevronDown size={13} className="text-slate-500" />
+                  <ChevronDown size={13} className="text-slate-400" />
                 ) : (
-                  <ChevronRight size={13} className="text-slate-500" />
+                  <ChevronRight size={13} className="text-slate-400" />
                 )}
               </span>
               <FileText
                 size={15}
-                className={andelsbogData.length > 0 ? 'text-slate-500' : 'text-slate-600'}
+                className={andelsbogData.length > 0 ? 'text-slate-400' : 'text-slate-400'}
               />
               <span
                 className={
@@ -1075,7 +1075,7 @@ export default function VirksomhedTinglysningTab({
                 }
               >
                 {c.cooperativeBook}
-                <span className="text-slate-500 text-xs ml-1">
+                <span className="text-slate-400 text-xs ml-1">
                   ({andelsbogLoading ? '…' : andelsbogData.length})
                 </span>
               </span>
@@ -1096,7 +1096,7 @@ export default function VirksomhedTinglysningTab({
                     </div>
                   )}
                   {andel.haeftelser.length === 0 ? (
-                    <div className="mt-2 text-xs text-slate-500">{c.andelsbogIngenHaeftelser}</div>
+                    <div className="mt-2 text-xs text-slate-400">{c.andelsbogIngenHaeftelser}</div>
                   ) : (
                     <ul className="mt-2 space-y-2">
                       {andel.haeftelser.map((h, i) => (
@@ -1112,12 +1112,12 @@ export default function VirksomhedTinglysningTab({
                               </span>
                             )}
                             {h.kreditor && (
-                              <span className="text-slate-500">
+                              <span className="text-slate-400">
                                 {c.personbogKreditor}: {h.kreditor}
                               </span>
                             )}
                             {h.tinglysningsdato && (
-                              <span className="text-slate-600">{h.tinglysningsdato}</span>
+                              <span className="text-slate-400">{h.tinglysningsdato}</span>
                             )}
                             {h.dokumentId && (
                               <a
@@ -1174,18 +1174,18 @@ export default function VirksomhedTinglysningTab({
                 >
                   <span className="flex-shrink-0 w-4">
                     {fastEjendomLoading ? (
-                      <Loader2 size={12} className="animate-spin text-slate-500" />
+                      <Loader2 size={12} className="animate-spin text-slate-400" />
                     ) : rows.length === 0 ? (
                       <span />
                     ) : open ? (
-                      <ChevronDown size={13} className="text-slate-500" />
+                      <ChevronDown size={13} className="text-slate-400" />
                     ) : (
-                      <ChevronRight size={13} className="text-slate-500" />
+                      <ChevronRight size={13} className="text-slate-400" />
                     )}
                   </span>
                   <FileText
                     size={15}
-                    className={rows.length > 0 ? 'text-slate-500' : 'text-slate-600'}
+                    className={rows.length > 0 ? 'text-slate-400' : 'text-slate-400'}
                   />
                   <span
                     className={
@@ -1193,7 +1193,7 @@ export default function VirksomhedTinglysningTab({
                     }
                   >
                     {label}
-                    <span className="text-slate-500 text-xs ml-1">
+                    <span className="text-slate-400 text-xs ml-1">
                       ({fastEjendomLoading ? '…' : rows.length})
                     </span>
                   </span>
@@ -1310,7 +1310,7 @@ export default function VirksomhedTinglysningTab({
                                       <span className="text-amber-400 text-sm font-semibold">
                                         {sumBeloeb.toLocaleString('da-DK')} DKK
                                       </span>
-                                      <span className="text-[10px] text-slate-500 uppercase tracking-wide">
+                                      <span className="text-[10px] text-slate-400 uppercase tracking-wide">
                                         {lang === 'da' ? 'Hæftelse' : 'Lien'}
                                         {haeftelser.length > 1 ? ` × ${haeftelser.length}` : ''}
                                       </span>
@@ -1324,7 +1324,7 @@ export default function VirksomhedTinglysningTab({
                                 );
                               })()}
                               {all.some((r) => r.dokumentAlias) && (
-                                <div className="text-[10px] text-slate-500 font-mono pt-1 border-t border-slate-700/30">
+                                <div className="text-[10px] text-slate-400 font-mono pt-1 border-t border-slate-700/30">
                                   {all
                                     .map((r) => r.dokumentAlias)
                                     .filter((a): a is string => !!a)

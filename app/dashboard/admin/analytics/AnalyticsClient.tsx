@@ -162,7 +162,7 @@ export default function AnalyticsClient() {
               <div className="relative flex-1 max-w-xs">
                 <Search
                   size={14}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
                 />
                 <input
                   type="text"
@@ -188,7 +188,7 @@ export default function AnalyticsClient() {
           {loading && !data && (
             <div className="text-center py-20">
               <RefreshCw size={24} className="animate-spin text-blue-400 mx-auto mb-3" />
-              <p className="text-slate-500 text-sm">{t.loading}</p>
+              <p className="text-slate-400 text-sm">{t.loading}</p>
             </div>
           )}
 
@@ -210,28 +210,28 @@ export default function AnalyticsClient() {
                     <MessageCircleQuestion size={18} />
                   </div>
                   <p className="text-2xl font-bold text-white">{data.total}</p>
-                  <p className="text-xs text-slate-500 mt-0.5">{t.totalQuestions}</p>
+                  <p className="text-xs text-slate-400 mt-0.5">{t.totalQuestions}</p>
                 </div>
                 <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
                   <div className="flex items-center gap-2 mb-2 text-emerald-400 opacity-70">
                     <CheckCircle size={18} />
                   </div>
                   <p className="text-2xl font-bold text-white">{data.matched}</p>
-                  <p className="text-xs text-slate-500 mt-0.5">{t.matchedQuestions}</p>
+                  <p className="text-xs text-slate-400 mt-0.5">{t.matchedQuestions}</p>
                 </div>
                 <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
                   <div className="flex items-center gap-2 mb-2 text-red-400 opacity-70">
                     <XCircle size={18} />
                   </div>
                   <p className="text-2xl font-bold text-white">{data.unmatched}</p>
-                  <p className="text-xs text-slate-500 mt-0.5">{t.unmatchedQuestions}</p>
+                  <p className="text-xs text-slate-400 mt-0.5">{t.unmatchedQuestions}</p>
                 </div>
                 <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
                   <div className="flex items-center gap-2 mb-2 text-purple-400 opacity-70">
                     <BarChart3 size={18} />
                   </div>
                   <p className="text-2xl font-bold text-white">{data.matchRate}%</p>
-                  <p className="text-xs text-slate-500 mt-0.5">{t.matchRate}</p>
+                  <p className="text-xs text-slate-400 mt-0.5">{t.matchRate}</p>
                 </div>
               </div>
 
@@ -293,13 +293,13 @@ export default function AnalyticsClient() {
                             style={{ height: `${(counts.matched / maxDaily) * 100}%` }}
                           />
                         </div>
-                        <span className="text-[9px] text-slate-600 whitespace-nowrap">
+                        <span className="text-[9px] text-slate-400 whitespace-nowrap">
                           {day.slice(5)}
                         </span>
                       </div>
                     ))}
                   </div>
-                  <div className="flex items-center gap-4 mt-3 text-xs text-slate-500">
+                  <div className="flex items-center gap-4 mt-3 text-xs text-slate-400">
                     <span className="flex items-center gap-1.5">
                       <span className="w-2.5 h-2.5 bg-slate-600/50 rounded" /> {t.total}
                     </span>
@@ -322,7 +322,7 @@ export default function AnalyticsClient() {
                       !searchQuery.trim() ||
                       i.question.toLowerCase().includes(searchQuery.toLowerCase())
                   ).length === 0 ? (
-                    <p className="text-slate-600 text-xs">{t.noData}</p>
+                    <p className="text-slate-400 text-xs">{t.noData}</p>
                   ) : (
                     <div className="space-y-2 max-h-64 overflow-y-auto">
                       {data.topUnmatched
@@ -336,7 +336,7 @@ export default function AnalyticsClient() {
                             <p className="text-slate-300 text-xs leading-relaxed flex-1 line-clamp-2">
                               {item.question}
                             </p>
-                            <span className="text-xs text-slate-500 whitespace-nowrap font-mono">
+                            <span className="text-xs text-slate-400 whitespace-nowrap font-mono">
                               {item.count}x
                             </span>
                           </div>
@@ -355,7 +355,7 @@ export default function AnalyticsClient() {
                       !searchQuery.trim() ||
                       i.page.toLowerCase().includes(searchQuery.toLowerCase())
                   ).length === 0 ? (
-                    <p className="text-slate-600 text-xs">{t.noData}</p>
+                    <p className="text-slate-400 text-xs">{t.noData}</p>
                   ) : (
                     <div className="space-y-2">
                       {data.topPages
@@ -369,7 +369,7 @@ export default function AnalyticsClient() {
                             <span className="text-slate-300 text-xs truncate flex-1">
                               {item.page}
                             </span>
-                            <span className="text-xs text-slate-500 whitespace-nowrap font-mono">
+                            <span className="text-xs text-slate-400 whitespace-nowrap font-mono">
                               {item.count}
                             </span>
                           </div>
@@ -391,7 +391,7 @@ export default function AnalyticsClient() {
                       i.question.toLowerCase().includes(searchQuery.toLowerCase()) ||
                       (i.page ?? '').toLowerCase().includes(searchQuery.toLowerCase()))
                 ).length === 0 ? (
-                  <p className="text-slate-600 text-xs">{t.noData}</p>
+                  <p className="text-slate-400 text-xs">{t.noData}</p>
                 ) : (
                   <div className="space-y-3">
                     {data.recentUnmatched
@@ -404,7 +404,7 @@ export default function AnalyticsClient() {
                       )
                       .map((item, i) => (
                         <div key={i} className="flex items-start gap-3 text-xs">
-                          <span className="text-slate-600 whitespace-nowrap font-mono">
+                          <span className="text-slate-400 whitespace-nowrap font-mono">
                             {new Date(item.createdAt).toLocaleDateString(da ? 'da-DK' : 'en-GB', {
                               month: 'short',
                               day: 'numeric',
@@ -417,7 +417,7 @@ export default function AnalyticsClient() {
                           </span>
                           <p className="text-slate-300 leading-relaxed flex-1">{item.question}</p>
                           {item.page && (
-                            <span className="text-slate-600 truncate max-w-[120px]">
+                            <span className="text-slate-400 truncate max-w-[120px]">
                               {item.page}
                             </span>
                           )}

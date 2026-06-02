@@ -222,7 +222,7 @@ export default function DiagramV2({
   if (loading) {
     return (
       <div className="w-full h-96 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3 text-slate-500">
+        <div className="flex flex-col items-center gap-3 text-slate-400">
           <div className="w-6 h-6 border-2 border-slate-600 border-t-blue-500 rounded-full animate-spin" />
           <span className="text-xs">Henter relationer…</span>
         </div>
@@ -244,7 +244,7 @@ export default function DiagramV2({
   if (!graph || graph.nodes.length === 0) {
     return (
       <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-6 text-center">
-        <p className="text-slate-500 text-sm">
+        <p className="text-slate-400 text-sm">
           {da ? 'Ingen relationer fundet' : 'No relationships found'}
         </p>
       </div>

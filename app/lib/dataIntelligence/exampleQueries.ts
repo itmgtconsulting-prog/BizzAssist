@@ -322,6 +322,44 @@ export const EXAMPLE_QUERIES: ExampleQuery[] = [
     difficulty: 'simple',
     tags: ['nybyggeri', 'kommune'],
   },
+
+  // ───── VIRKSOMHEDSHANDEL / M&A (BIZZ-1930) ─────
+  {
+    id: 'vh-seneste-30d',
+    persona: 'finans',
+    question: 'Virksomhedshandler de seneste 30 dage',
+    sql: "SELECT k.deltager_navn, k.virksomhed_cvr, k.signal_type, k.current_ejerandel_pct, k.prev_ejerandel_pct, k.gyldig_fra FROM public.mv_virksomhedshandel_kandidater k WHERE k.gyldig_fra >= CURRENT_DATE - INTERVAL '30 days' AND k.signal_type != 'unchanged' ORDER BY k.gyldig_fra DESC LIMIT 50",
+    chartHint: 'table',
+    difficulty: 'simple',
+    tags: ['virksomhedshandel', 'ejerskifte', 'm&a'],
+  },
+  {
+    id: 'vh-top-omsaetning',
+    persona: 'finans',
+    question: 'Top 10 største virksomhedshandler sidste år sorteret efter omsætning',
+    sql: "SELECT k.deltager_navn, k.virksomhed_cvr, v.navn AS virksomhed_navn, k.signal_type, r.omsaetning FROM public.mv_virksomhedshandel_kandidater k JOIN public.cvr_virksomhed v ON v.cvr = k.virksomhed_cvr JOIN public.regnskab_cache r ON r.cvr = k.virksomhed_cvr WHERE k.gyldig_fra >= CURRENT_DATE - INTERVAL '365 days' AND k.signal_type IN ('entry', 'exit') AND r.omsaetning IS NOT NULL ORDER BY r.omsaetning DESC LIMIT 10",
+    chartHint: 'table',
+    difficulty: 'medium',
+    tags: ['virksomhedshandel', 'omsætning', 'ranking'],
+  },
+  {
+    id: 'vh-signal-fordeling',
+    persona: 'journalist',
+    question: 'Fordeling af virksomhedshandel-signaler',
+    sql: "SELECT signal_type, COUNT(*) AS antal FROM public.mv_virksomhedshandel_kandidater WHERE signal_type != 'unchanged' GROUP BY signal_type ORDER BY antal DESC LIMIT 10",
+    chartHint: 'pie',
+    difficulty: 'simple',
+    tags: ['virksomhedshandel', 'fordeling'],
+  },
+  {
+    id: 'vh-per-branche',
+    persona: 'finans',
+    question: 'Virksomhedshandler per branche de seneste 90 dage',
+    sql: "SELECT v.branche_tekst, k.signal_type, COUNT(*) AS antal FROM public.mv_virksomhedshandel_kandidater k JOIN public.cvr_virksomhed v ON v.cvr = k.virksomhed_cvr WHERE k.gyldig_fra >= CURRENT_DATE - INTERVAL '90 days' AND k.signal_type != 'unchanged' AND v.branche_tekst IS NOT NULL GROUP BY v.branche_tekst, k.signal_type ORDER BY antal DESC LIMIT 30",
+    chartHint: 'bar',
+    difficulty: 'medium',
+    tags: ['virksomhedshandel', 'branche'],
+  },
 ];
 
 /**

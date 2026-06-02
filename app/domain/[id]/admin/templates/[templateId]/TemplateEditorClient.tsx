@@ -378,7 +378,7 @@ export default function TemplateEditorClient({
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-white">{data.name}</h1>
-          <p className="text-slate-500 text-sm mt-1">
+          <p className="text-slate-400 text-sm mt-1">
             v{data.version} · {data.file_type.toUpperCase()}
           </p>
         </div>
@@ -485,7 +485,7 @@ export default function TemplateEditorClient({
                 key={i}
                 className="flex items-start gap-2 p-3 bg-slate-900/50 border border-slate-700/40 rounded-md"
               >
-                <span className="text-slate-500 text-xs mt-0.5">#{i + 1}</span>
+                <span className="text-slate-400 text-xs mt-0.5">#{i + 1}</span>
                 <div className="flex-1 min-w-0">
                   <p className="text-slate-200 text-xs whitespace-pre-wrap">{ex.text}</p>
                 </div>
@@ -581,7 +581,7 @@ export default function TemplateEditorClient({
             </button>
           </div>
           {placeholders.length === 0 ? (
-            <p className="text-slate-500 text-sm py-8 text-center">
+            <p className="text-slate-400 text-sm py-8 text-center">
               {da
                 ? 'Ingen placeholders detekteret i denne skabelon.'
                 : 'No placeholders detected in this template.'}
@@ -595,12 +595,12 @@ export default function TemplateEditorClient({
                 >
                   <div className="flex items-center justify-between">
                     <code className="text-emerald-300 text-xs font-mono">{p.name}</code>
-                    <span className="text-slate-500 text-[10px]">
+                    <span className="text-slate-400 text-[10px]">
                       {p.syntax} · {p.count ?? 1}×
                     </span>
                   </div>
                   {p.context && (
-                    <p className="text-slate-500 text-[11px] italic truncate">…{p.context}…</p>
+                    <p className="text-slate-400 text-[11px] italic truncate">…{p.context}…</p>
                   )}
                   <input
                     type="text"
@@ -670,7 +670,7 @@ export default function TemplateEditorClient({
               <Loader2 className="w-5 h-5 text-blue-400 animate-spin" />
             </div>
           ) : versions.length === 0 ? (
-            <p className="text-slate-500 text-sm py-6 text-center">
+            <p className="text-slate-400 text-sm py-6 text-center">
               {da ? 'Ingen versioner endnu' : 'No versions yet'}
             </p>
           ) : (
@@ -712,7 +712,7 @@ export default function TemplateEditorClient({
                           })()}
                         </p>
                       )}
-                      <p className="text-slate-500 text-[10px]">
+                      <p className="text-slate-400 text-[10px]">
                         {new Date(v.created_at).toLocaleString(da ? 'da-DK' : 'en-GB')}
                       </p>
                     </div>

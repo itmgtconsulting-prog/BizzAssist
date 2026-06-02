@@ -104,7 +104,7 @@ export default function VurderingSammenligning({
           ? `Foreløbig vurdering — postnummer ${postnr}`
           : `Preliminary valuation — postal area ${postnr}`}
       </h3>
-      {/* BIZZ-1053: Øget kontrast fra text-slate-600 → text-slate-400 */}
+      {/* BIZZ-1053: Øget kontrast fra text-slate-400 → text-slate-400 */}
       <p className="text-[10px] text-slate-400 mb-3">
         {da
           ? `Baseret på ${data.antalEjendomme} foreløbige ejendomsvurderinger i postnummer ${postnr} (kilde: Vurderingsstyrelsen). Endelige vurderinger kan afvige.`
@@ -120,7 +120,7 @@ export default function VurderingSammenligning({
             </p>
             <div className="grid grid-cols-3 gap-2 mb-2">
               <div className="bg-slate-900/50 rounded-lg p-2 text-center">
-                <p className="text-[10px] text-slate-500">{da ? 'Din' : 'Yours'}</p>
+                <p className="text-[10px] text-slate-400">{da ? 'Din' : 'Yours'}</p>
                 <p className="text-white text-sm font-bold">
                   {data.ejendomsvaerdi.dinVaerdi != null
                     ? formatDKK(data.ejendomsvaerdi.dinVaerdi)
@@ -128,13 +128,13 @@ export default function VurderingSammenligning({
                 </p>
               </div>
               <div className="bg-slate-900/50 rounded-lg p-2 text-center">
-                <p className="text-[10px] text-slate-500">{da ? 'Gennemsnit' : 'Average'}</p>
+                <p className="text-[10px] text-slate-400">{da ? 'Gennemsnit' : 'Average'}</p>
                 <p className="text-slate-300 text-sm font-medium">
                   {formatDKK(data.ejendomsvaerdi.gennemsnit)}
                 </p>
               </div>
               <div className="bg-slate-900/50 rounded-lg p-2 text-center">
-                <p className="text-[10px] text-slate-500">{da ? 'Median' : 'Median'}</p>
+                <p className="text-[10px] text-slate-400">{da ? 'Median' : 'Median'}</p>
                 <p className="text-slate-300 text-sm font-medium">
                   {formatDKK(data.ejendomsvaerdi.median)}
                 </p>
@@ -161,7 +161,7 @@ export default function VurderingSammenligning({
             </p>
             <div className="grid grid-cols-3 gap-2 mb-2">
               <div className="bg-slate-900/50 rounded-lg p-2 text-center">
-                <p className="text-[10px] text-slate-500">{da ? 'Din' : 'Yours'}</p>
+                <p className="text-[10px] text-slate-400">{da ? 'Din' : 'Yours'}</p>
                 <p className="text-white text-sm font-bold">
                   {data.grundvaerdiPrM2.dinVaerdi != null
                     ? `${data.grundvaerdiPrM2.dinVaerdi.toLocaleString('da-DK')} kr`
@@ -169,13 +169,13 @@ export default function VurderingSammenligning({
                 </p>
               </div>
               <div className="bg-slate-900/50 rounded-lg p-2 text-center">
-                <p className="text-[10px] text-slate-500">{da ? 'Gennemsnit' : 'Average'}</p>
+                <p className="text-[10px] text-slate-400">{da ? 'Gennemsnit' : 'Average'}</p>
                 <p className="text-slate-300 text-sm font-medium">
                   {data.grundvaerdiPrM2.gennemsnit.toLocaleString('da-DK')} kr
                 </p>
               </div>
               <div className="bg-slate-900/50 rounded-lg p-2 text-center">
-                <p className="text-[10px] text-slate-500">{da ? 'Median' : 'Median'}</p>
+                <p className="text-[10px] text-slate-400">{da ? 'Median' : 'Median'}</p>
                 <p className="text-slate-300 text-sm font-medium">
                   {data.grundvaerdiPrM2.median.toLocaleString('da-DK')} kr
                 </p>

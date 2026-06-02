@@ -69,3 +69,13 @@ export function isAnmelderEnabled(): boolean {
 export function isS2SQueryEnabled(): boolean {
   return !!(process.env.TINGLYSNING_CERT_PATH || process.env.TINGLYSNING_CERT_B64);
 }
+
+/**
+ * BIZZ-1925: Virksomhedshandler-modul (M&A-radar).
+ * Kun synlig på test/dev — ALDRIG i prod før JJR godkender.
+ *
+ * @returns true hvis virksomhedshandler er aktiveret
+ */
+export function isVirksomhedshandlerEnabled(): boolean {
+  return process.env.NEXT_PUBLIC_VIRKSOMHEDSHANDLER_ENABLED === 'true';
+}

@@ -437,7 +437,7 @@ export default function SecuritySettingsPageClient() {
                 </code>
                 <button
                   onClick={handleCopySecret}
-                  className="text-slate-500 hover:text-slate-300 transition-colors shrink-0"
+                  className="text-slate-400 hover:text-slate-300 transition-colors shrink-0"
                   title="Copy"
                 >
                   {copied ? (
@@ -561,6 +561,9 @@ export default function SecuritySettingsPageClient() {
 
       {/* ── BIZZ-1874: Session timeout ── */}
       <SessionTimeoutSection lang={lang} />
+
+      {/* ── BIZZ-1875: Active sessions ── */}
+      <ActiveSessionsSection lang={lang} />
     </div>
   );
 }
@@ -695,11 +698,167 @@ function SessionTimeoutSection({ lang }: { lang: 'da' | 'en' }) {
         </p>
       )}
 
-      <p className="text-slate-500 text-xs">
+      <p className="text-slate-400 text-xs">
         {da
           ? 'Inaktivitet = ingen klik, scroll eller tastaturinput. Åbner du systemet aktivt, nulstilles timeren.'
           : 'Inactivity = no clicks, scrolling, or keyboard input. Actively using the system resets the timer.'}
       </p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// BIZZ-1875: Active sessions per device
+// ---------------------------------------------------------------------------
+
+interface SessionEntry {
+  id: string;
+  device_label: string;
+  ip_address: string | null;
+  last_active: string;
+  created_at: string;
+}
+
+/**
+ * ActiveSessionsSection — viser og håndterer aktive login-sessioner.
+ *
+ * Henter sessioner fra /api/auth/sessions og lader brugeren
+ * manuelt revoke sessioner fra andre enheder.
+ *
+ * @param lang - 'da' | 'en'
+ */
+function ActiveSessionsSection({ lang }: { lang: 'da' | 'en' }) {
+  const da = lang === 'da';
+  const [sessions, setSessions] = useState<SessionEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [revoking, setRevoking] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch('/api/auth/sessions', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : { sessions: [] }))
+      .then((d: { sessions: SessionEntry[] }) => setSessions(d.sessions))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  /**
+   * Revoke en session via DELETE /api/auth/sessions.
+   *
+   * @param sessionId - UUID of session to revoke
+   */
+  const handleRevoke = async (sessionId: string) => {
+    setRevoking(sessionId);
+    try {
+      const res = await fetch('/api/auth/sessions', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId }),
+        credentials: 'include',
+      });
+      if (res.ok) {
+        setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+      }
+    } catch {
+      // silently fail
+    } finally {
+      setRevoking(null);
+    }
+  };
+
+  /**
+   * Formatér tidspunkt til relativ eller absolut streng.
+   *
+   * @param iso - ISO-8601 timestamp
+   */
+  const formatTime = (iso: string): string => {
+    const d = new Date(iso);
+    const now = new Date();
+    const diffMs = now.getTime() - d.getTime();
+    const diffMin = Math.floor(diffMs / 60000);
+    if (diffMin < 1) return da ? 'Lige nu' : 'Just now';
+    if (diffMin < 60) return da ? `${diffMin} min siden` : `${diffMin} min ago`;
+    const diffHours = Math.floor(diffMin / 60);
+    if (diffHours < 24)
+      return da
+        ? `${diffHours} time${diffHours > 1 ? 'r' : ''} siden`
+        : `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+    return d.toLocaleDateString(da ? 'da-DK' : 'en-US', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    });
+  };
+
+  return (
+    <div className="bg-slate-800/40 border border-slate-700/40 rounded-2xl p-6 space-y-4">
+      <div className="flex items-center gap-3">
+        <Smartphone size={20} className="text-blue-400" />
+        <div>
+          <h3 className="text-white font-semibold text-sm">
+            {da ? 'Aktive sessioner' : 'Active sessions'}
+          </h3>
+          <p className="text-slate-400 text-xs">
+            {da
+              ? 'Enheder der er logget ind med din konto. Nyt login fra anden enhed logger automatisk de andre ud.'
+              : 'Devices logged in with your account. New login from another device automatically logs out the others.'}
+          </p>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center gap-2 text-slate-400 text-sm py-4">
+          <Loader2 size={14} className="animate-spin" />
+          {da ? 'Henter sessioner...' : 'Loading sessions...'}
+        </div>
+      ) : sessions.length === 0 ? (
+        <p className="text-slate-400 text-sm py-2">
+          {da ? 'Ingen aktive sessioner fundet.' : 'No active sessions found.'}
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {sessions.map((s, i) => (
+            <div
+              key={s.id}
+              className="flex items-center justify-between bg-slate-900/40 border border-slate-700/30 rounded-xl px-4 py-3"
+            >
+              <div className="flex items-center gap-3">
+                <Smartphone size={16} className={i === 0 ? 'text-emerald-400' : 'text-slate-400'} />
+                <div>
+                  <p className="text-sm text-white">{s.device_label}</p>
+                  <p className="text-[10px] text-slate-400">
+                    {s.ip_address ? `IP: ${s.ip_address} · ` : ''}
+                    {da ? 'Sidst aktiv:' : 'Last active:'} {formatTime(s.last_active)}
+                  </p>
+                </div>
+                {i === 0 && (
+                  <span className="text-[9px] px-1.5 py-0.5 bg-emerald-500/15 border border-emerald-500/30 rounded text-emerald-400 font-medium">
+                    {da ? 'Denne enhed' : 'This device'}
+                  </span>
+                )}
+              </div>
+              {i > 0 && (
+                <button
+                  type="button"
+                  onClick={() => handleRevoke(s.id)}
+                  disabled={revoking === s.id}
+                  aria-label={
+                    da ? `Log ud fra ${s.device_label}` : `Log out from ${s.device_label}`
+                  }
+                  className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50 transition-colors"
+                >
+                  {revoking === s.id ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : da ? (
+                    'Log ud'
+                  ) : (
+                    'Log out'
+                  )}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -43,6 +43,7 @@ import { useLanguage } from '@/app/context/LanguageContext';
 import { useSubscription } from '@/app/context/SubscriptionContext';
 import { translations } from '@/app/lib/translations';
 import TokenUsageBar from '@/app/components/TokenUsageBar';
+import { gapScope } from '@/app/lib/forsikring/types';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -145,6 +146,87 @@ interface PropertyGroup {
 // ─── BIZZ-1389: Samlet ejendomsvisning ──────────────────────────
 
 /**
+ * BIZZ-1941: Dedup en liste af gaps på check_id (fallback titel).
+ * Identiske findings vises kun én gang.
+ *
+ * @param list - Rå gaps
+ * @returns Gaps uden duplikater på check_id
+ */
+function dedupGaps(list: AnalyseGap[]): AnalyseGap[] {
+  const seen = new Set<string>();
+  return list.filter((g) => {
+    const key = g.check_id ?? g.title;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/**
+ * BIZZ-1941: Genbrugelig liste af gap-kort. Bruges af både forsikringsejer-/
+ * virksomheds-sektionerne og de enkelte ejendomsrækker, så markup er ens.
+ *
+ * @param props.gaps - Gaps der skal vises
+ * @param props.da - Dansk sprogflag
+ */
+function GapList({ gaps, da }: { gaps: AnalyseGap[]; da: boolean }) {
+  return (
+    <div className="space-y-1.5">
+      {gaps.map((g) => (
+        <div
+          key={g.id}
+          className={`rounded-lg px-3 py-2 text-xs ${
+            g.severity === 'critical'
+              ? 'bg-red-500/10 border border-red-500/20'
+              : g.severity === 'warning'
+                ? 'bg-amber-500/10 border border-amber-500/20'
+                : 'bg-slate-500/10 border border-slate-500/20'
+          }`}
+        >
+          <div className="flex items-center gap-1.5 mb-0.5">
+            {g.severity === 'critical' ? (
+              <AlertTriangle size={11} className="text-red-400" />
+            ) : g.severity === 'warning' ? (
+              <AlertCircle size={11} className="text-amber-400" />
+            ) : (
+              <ShieldCheck size={11} className="text-slate-400" />
+            )}
+            <span
+              className={
+                g.severity === 'critical'
+                  ? 'text-red-300 font-medium'
+                  : g.severity === 'warning'
+                    ? 'text-amber-300 font-medium'
+                    : 'text-slate-300 font-medium'
+              }
+            >
+              {g.title}
+            </span>
+          </div>
+          <p className="text-slate-400 ml-4">{g.description}</p>
+          {g.recommendation && (
+            <p className="text-slate-400 ml-4 mt-0.5 italic">{g.recommendation}</p>
+          )}
+          {/* BIZZ-1833 Fase 6: vis baseline-kilde for standard_betingelser-gaps */}
+          {g.category === 'standard_betingelser' && g.source_data?.source_url && (
+            <a
+              href={g.source_data.source_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-teal-400 hover:text-teal-300 text-[10px] ml-4 mt-0.5 flex items-center gap-1 underline-offset-2 hover:underline"
+              aria-label={`Åbn standard betingelse: ${g.source_data.source_url}`}
+            >
+              <ExternalLink size={9} />
+              {da ? 'Se standard betingelse' : 'View standard terms'}
+            </a>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
  * Expandable property row — viser aktiv med matchet police + gaps.
  *
  * @param props.group - Property group med aktiv, police og gaps
@@ -233,9 +315,9 @@ function PropertyRow({ group, da }: { group: PropertyGroup; da: boolean }) {
 
         {/* Chevron */}
         {expanded ? (
-          <ChevronDown size={14} className="text-slate-500 shrink-0" />
+          <ChevronDown size={14} className="text-slate-400 shrink-0" />
         ) : (
-          <ChevronRight size={14} className="text-slate-500 shrink-0" />
+          <ChevronRight size={14} className="text-slate-400 shrink-0" />
         )}
       </button>
 
@@ -246,7 +328,7 @@ function PropertyRow({ group, da }: { group: PropertyGroup; da: boolean }) {
           {group.matchedPolicy && (
             <div className="text-xs text-slate-400 space-y-0.5">
               <div>
-                <span className="text-slate-500">{da ? 'Police:' : 'Policy:'}</span>{' '}
+                <span className="text-slate-400">{da ? 'Police:' : 'Policy:'}</span>{' '}
                 <Link
                   href={`/dashboard/forsikring/${group.matchedPolicy.id}`}
                   className="text-blue-300 hover:text-blue-200"
@@ -257,13 +339,13 @@ function PropertyRow({ group, da }: { group: PropertyGroup; da: boolean }) {
               </div>
               {group.matchedPolicy.annual_premium_dkk && (
                 <div>
-                  <span className="text-slate-500">{da ? 'Præmie:' : 'Premium:'}</span>{' '}
+                  <span className="text-slate-400">{da ? 'Præmie:' : 'Premium:'}</span>{' '}
                   {group.matchedPolicy.annual_premium_dkk.toLocaleString('da-DK')} kr
                 </div>
               )}
               {group.matchedPolicy.effective_to && (
                 <div>
-                  <span className="text-slate-500">{da ? 'Udløber:' : 'Expires:'}</span>{' '}
+                  <span className="text-slate-400">{da ? 'Udløber:' : 'Expires:'}</span>{' '}
                   {new Date(group.matchedPolicy.effective_to).toLocaleDateString('da-DK', {
                     day: 'numeric',
                     month: 'short',
@@ -276,57 +358,8 @@ function PropertyRow({ group, da }: { group: PropertyGroup; da: boolean }) {
 
           {/* Gaps for this property */}
           {group.gaps.length > 0 ? (
-            <div className="space-y-1.5 mt-2">
-              {group.gaps.map((g) => (
-                <div
-                  key={g.id}
-                  className={`rounded-lg px-3 py-2 text-xs ${
-                    g.severity === 'critical'
-                      ? 'bg-red-500/10 border border-red-500/20'
-                      : g.severity === 'warning'
-                        ? 'bg-amber-500/10 border border-amber-500/20'
-                        : 'bg-slate-500/10 border border-slate-500/20'
-                  }`}
-                >
-                  <div className="flex items-center gap-1.5 mb-0.5">
-                    {g.severity === 'critical' ? (
-                      <AlertTriangle size={11} className="text-red-400" />
-                    ) : g.severity === 'warning' ? (
-                      <AlertCircle size={11} className="text-amber-400" />
-                    ) : (
-                      <ShieldCheck size={11} className="text-slate-400" />
-                    )}
-                    <span
-                      className={
-                        g.severity === 'critical'
-                          ? 'text-red-300 font-medium'
-                          : g.severity === 'warning'
-                            ? 'text-amber-300 font-medium'
-                            : 'text-slate-300 font-medium'
-                      }
-                    >
-                      {g.title}
-                    </span>
-                  </div>
-                  <p className="text-slate-400 ml-4">{g.description}</p>
-                  {g.recommendation && (
-                    <p className="text-slate-500 ml-4 mt-0.5 italic">{g.recommendation}</p>
-                  )}
-                  {/* BIZZ-1833 Fase 6: vis baseline-kilde for standard_betingelser-gaps */}
-                  {g.category === 'standard_betingelser' && g.source_data?.source_url && (
-                    <a
-                      href={g.source_data.source_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-teal-400 hover:text-teal-300 text-[10px] ml-4 mt-0.5 flex items-center gap-1 underline-offset-2 hover:underline"
-                      aria-label={`Åbn standard betingelse: ${g.source_data.source_url}`}
-                    >
-                      <ExternalLink size={9} />
-                      {da ? 'Se standard betingelse' : 'View standard terms'}
-                    </a>
-                  )}
-                </div>
-              ))}
+            <div className="mt-2">
+              <GapList gaps={group.gaps} da={da} />
             </div>
           ) : isInsured ? (
             <div className="text-emerald-400 text-xs flex items-center gap-1 mt-1">
@@ -388,17 +421,22 @@ function UnifiedAnalyseView({
     if (seenAddresses.has(addrKey)) continue;
     seenAddresses.add(addrKey);
 
-    // BIZZ-1792: Dedup gaps per check_id — identiske gaps vises kun 1 gang
-    const rawGaps = aktiv.matched_policy_id
-      ? gaps.filter((g) => g.policy_id === aktiv.matched_policy_id)
-      : [];
-    const seenCheckIds = new Set<string>();
-    const aktivGaps = rawGaps.filter((g) => {
-      const key = g.check_id ?? g.title;
-      if (seenCheckIds.has(key)) return false;
-      seenCheckIds.add(key);
-      return true;
-    });
+    // BIZZ-1792: Dedup gaps per check_id — identiske gaps vises kun 1 gang.
+    // BIZZ-1941: Ejendomsrækker viser KUN ejendomsspecifikke gaps (scope='property').
+    // Forsikringsejer-/virksomheds-gaps løftes op i dedikerede sektioner (se nedenfor),
+    // så de ikke gentages under hver ejendom.
+    // BIZZ-1957: Bygnings-/ejendomsspecifikke gaps (scope='property', fx 'Udvidet
+    // vandskade') hører KUN til under ejendoms-rækker. Samme police kan være matchet
+    // til BÅDE virksomheds-aktivet og selve ejendommen; uden type-guarden lækkede
+    // bygnings-gaps op på virksomheds-niveau. Virksomheds-/ejer-scopede gaps vises
+    // alene i de dedikerede company-/owner-sektioner.
+    const rawGaps =
+      aktiv.matched_policy_id && aktiv.type === 'ejendom'
+        ? gaps.filter(
+            (g) => g.policy_id === aktiv.matched_policy_id && gapScope(g.check_id) === 'property'
+          )
+        : [];
+    const aktivGaps = dedupGaps(rawGaps);
     allGroups.push({
       aktiv,
       matchedPolicy: aktiv.matched_policy_id
@@ -407,6 +445,12 @@ function UnifiedAnalyseView({
       gaps: aktivGaps,
     });
   }
+
+  // BIZZ-1941: Løft forsikringsejer- og virksomheds-niveau findings ud i dedikerede
+  // sektioner — deduppet på check_id på tværs af hele porteføljen, så de vises præcis
+  // én gang i stedet for gentaget under hver ejendom/police.
+  const ownerGaps = dedupGaps(gaps.filter((g) => gapScope(g.check_id) === 'owner'));
+  const companyGaps = dedupGaps(gaps.filter((g) => gapScope(g.check_id) === 'company'));
 
   // Split into companies and properties for tree-grouping
   const virksomhedGroups = allGroups.filter((g) => g.aktiv.type === 'virksomhed');
@@ -539,6 +583,51 @@ function UnifiedAnalyseView({
         </div>
       </div>
 
+      {/* BIZZ-1941: Forsikringsejer-niveau — generelle findings for hele ejeren.
+          Vises kun her, ikke gentaget under virksomhed/ejendom. */}
+      {ownerGaps.length > 0 && (
+        <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <Briefcase size={14} className="text-purple-400" />
+            <h4 className="text-white text-sm font-semibold">
+              {da ? 'Forsikringsejer-niveau' : 'Insurance owner level'}
+            </h4>
+            <span className="text-slate-400 text-[11px]">
+              {da
+                ? `${ownerGaps.length} generelle findings`
+                : `${ownerGaps.length} general findings`}
+            </span>
+          </div>
+          <p className="text-slate-400 text-[11px]">
+            {da
+              ? 'Gælder hele forsikringsejeren — ikke en enkelt virksomhed eller ejendom.'
+              : 'Applies to the entire insurance owner — not a single company or property.'}
+          </p>
+          <GapList gaps={ownerGaps} da={da} />
+        </div>
+      )}
+
+      {/* BIZZ-1941: Virksomheds-niveau — gælder porteføljen/virksomheden, ikke per ejendom. */}
+      {companyGaps.length > 0 && (
+        <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <Building2 size={14} className="text-blue-400" />
+            <h4 className="text-white text-sm font-semibold">
+              {da ? 'Virksomheds-niveau' : 'Company level'}
+            </h4>
+            <span className="text-slate-400 text-[11px]">
+              {da ? `${companyGaps.length} findings` : `${companyGaps.length} findings`}
+            </span>
+          </div>
+          <p className="text-slate-400 text-[11px]">
+            {da
+              ? 'Dæknings-overlap, kollektiv forsikring og standard-betingelser — på tværs af policer.'
+              : 'Coverage overlap, collective insurance and standard terms — across policies.'}
+          </p>
+          <GapList gaps={companyGaps} da={da} />
+        </div>
+      )}
+
       {/* Niveau 2: Virksomheds-træer med ejendomme grupperet under */}
       <div className="space-y-4">
         {virksomhedsTraeer.map((tree) => (
@@ -549,7 +638,7 @@ function UnifiedAnalyseView({
             {/* Ejendomme under denne virksomhed — indrykket */}
             {tree.ejendomme.length > 0 && (
               <div className="ml-6 pl-3 border-l border-white/8 space-y-2">
-                <div className="text-slate-500 text-[11px] uppercase tracking-wide py-1">
+                <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
                   {da
                     ? `${tree.ejendomme.length} ${tree.ejendomme.length === 1 ? 'ejendom' : 'ejendomme'} ejet af ${tree.virksomhed.aktiv.label}`
                     : `${tree.ejendomme.length} ${tree.ejendomme.length === 1 ? 'property' : 'properties'} owned by ${tree.virksomhed.aktiv.label}`}
@@ -565,7 +654,7 @@ function UnifiedAnalyseView({
         {/* Ejendomme uden ejer-virksomhed (orphans) — personligt ejede eller manglende kæde */}
         {orphanEjendomme.length > 0 && (
           <div className="space-y-2">
-            <div className="text-slate-500 text-[11px] uppercase tracking-wide py-1">
+            <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
               {da
                 ? `${orphanEjendomme.length} ${orphanEjendomme.length === 1 ? 'ejendom' : 'ejendomme'} uden virksomheds-tilknytning`
                 : `${orphanEjendomme.length} ${orphanEjendomme.length === 1 ? 'property' : 'properties'} without company link`}
@@ -579,7 +668,7 @@ function UnifiedAnalyseView({
         {/* Øvrige aktiver (bestyrelsesposter, biler) */}
         {otherGroups.length > 0 && (
           <div className="space-y-2">
-            <div className="text-slate-500 text-[11px] uppercase tracking-wide py-1">
+            <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
               {da ? 'Øvrige aktiver' : 'Other assets'}
             </div>
             {otherGroups.map((eg) => (
@@ -698,6 +787,10 @@ function AnalyseSection({
   const stdSelskabRef = useRef<HTMLInputElement>(null);
   /** BIZZ-1890: PDF-upload af standard betingelser */
   const [stdPdfUploading, setStdPdfUploading] = useState(false);
+  /** BIZZ-1932: Upload-progress (filnavn + status) */
+  const [stdUploadProgress, setStdUploadProgress] = useState<string | null>(null);
+  /** BIZZ-1932: Senest uploaded standard betingelse (til bekræftelse) */
+  const [stdUploadDone, setStdUploadDone] = useState<string | null>(null);
   const stdPdfRef = useRef<HTMLInputElement>(null);
   /** BIZZ-1890: AI auto-detektion fra police-dokumenter */
   const [stdDetecting, setStdDetecting] = useState(false);
@@ -720,6 +813,8 @@ function AnalyseSection({
   const [stdLibraryOpen, setStdLibraryOpen] = useState(false);
   /** BIZZ-1921: Filter i bibliotek */
   const [stdLibraryFilter, setStdLibraryFilter] = useState('');
+  const [stdLibrarySelskabFilter, setStdLibrarySelskabFilter] = useState('');
+  const [stdLibraryKategoriFilter, setStdLibraryKategoriFilter] = useState('');
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1158,14 +1253,14 @@ function AnalyseSection({
             <button
               type="button"
               onClick={() => setAsOfDate('')}
-              className="text-slate-500 hover:text-slate-300 text-[10px]"
+              className="text-slate-400 hover:text-slate-300 text-[10px]"
               aria-label={da ? 'Ryd dato' : 'Clear date'}
             >
               {da ? 'ryd' : 'clear'}
             </button>
           )}
           {!asOfDate && (
-            <span className="text-slate-500">
+            <span className="text-slate-400">
               {da ? '(tom = aktuel dato)' : '(empty = current date)'}
             </span>
           )}
@@ -1217,7 +1312,7 @@ function AnalyseSection({
                 setShowDocPicker(false);
                 setSelectedDocIds(new Set());
               }}
-              className="text-slate-500 hover:text-white text-xs"
+              className="text-slate-400 hover:text-white text-xs"
             >
               {da ? 'Luk' : 'Close'}
             </button>
@@ -1353,7 +1448,7 @@ function AnalyseSection({
                           <FileText size={14} className="text-slate-400 shrink-0" />
                           <span className="text-white text-xs flex-1 truncate">{doc.name}</span>
                           <span
-                            className={`text-[10px] shrink-0 ${doc.source === 'new' ? 'text-emerald-400' : 'text-slate-500'}`}
+                            className={`text-[10px] shrink-0 ${doc.source === 'new' ? 'text-emerald-400' : 'text-slate-400'}`}
                           >
                             {doc.source === 'new'
                               ? da
@@ -1388,7 +1483,7 @@ function AnalyseSection({
                                 /* silent */
                               }
                             }}
-                            className="p-1 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors shrink-0"
+                            className="p-1 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors shrink-0"
                           >
                             <Trash2 size={12} />
                           </button>
@@ -1399,7 +1494,7 @@ function AnalyseSection({
                     øverst håndterer det nu i standard UX-mønster. */}
                   </>
                 ) : (
-                  <p className="text-slate-500 text-xs">
+                  <p className="text-slate-400 text-xs">
                     {da
                       ? 'Upload dokumenter nedenfor for at starte.'
                       : 'Upload documents below to begin.'}
@@ -1447,7 +1542,7 @@ function AnalyseSection({
                       ? 'Træk filer hertil eller klik for at uploade'
                       : 'Drag files here or click to upload'}
                   </div>
-                  <div className="text-[10px] text-slate-500 mt-0.5">
+                  <div className="text-[10px] text-slate-400 mt-0.5">
                     PDF, Word, Excel, billeder (max 20 MB)
                   </div>
                   <input
@@ -1488,7 +1583,7 @@ function AnalyseSection({
                         <span className="text-white truncate">{job.fileName}</span>
                         <span
                           className={`ml-auto ${
-                            job.status === 'skipped_duplicate' ? 'text-amber-300' : 'text-slate-500'
+                            job.status === 'skipped_duplicate' ? 'text-amber-300' : 'text-slate-400'
                           }`}
                         >
                           {job.status === 'done'
@@ -1575,7 +1670,7 @@ function AnalyseSection({
                             className="accent-teal-500 w-3 h-3"
                           />
                           <span className="text-slate-300 truncate flex-1">{doc.titel}</span>
-                          <span className="text-slate-600 text-[9px] shrink-0">
+                          <span className="text-slate-400 text-[9px] shrink-0">
                             {doc.selskab.length > 20 ? doc.selskab.slice(0, 20) + '…' : doc.selskab}
                           </span>
                         </label>
@@ -1975,10 +2070,15 @@ function AnalyseSection({
                       if (files.length === 0) return;
                       e.target.value = '';
                       setStdPdfUploading(true);
+                      setStdUploadDone(null);
                       try {
                         const selskab = stdSelskabRef.current?.value?.trim();
+                        let lastTitle = '';
                         // Upload filer sekventielt for at undgå rate-limit
                         for (const file of files) {
+                          setStdUploadProgress(
+                            da ? `Analyserer ${file.name}...` : `Analyzing ${file.name}...`
+                          );
                           const form = new FormData();
                           form.append('file', file);
                           if (selskab) form.append('selskab', selskab);
@@ -2010,17 +2110,54 @@ function AnalyseSection({
                               setStdSavedIds((prev) =>
                                 new Map(prev).set(data.source_url!, data.id!)
                               );
+                              // Tilføj til bibliotek-listen
+                              setStdSavedLibrary((prev) => [
+                                {
+                                  id: data.id!,
+                                  titel: data.titel!,
+                                  source_url: data.source_url!,
+                                  selskab: data.selskab ?? selskab ?? 'Ukendt',
+                                  kategori: data.kategori ?? 'ejendom',
+                                  added_via: 'manual_upload',
+                                  added_by_user: null,
+                                },
+                                ...prev,
+                              ]);
+                              lastTitle = data.titel!;
                             }
                           }
+                        }
+                        if (lastTitle) {
+                          setStdUploadDone(
+                            da
+                              ? `Tilføjet til bibliotek: ${lastTitle}`
+                              : `Added to library: ${lastTitle}`
+                          );
+                          setTimeout(() => setStdUploadDone(null), 5000);
                         }
                       } catch {
                         /* non-fatal */
                       } finally {
                         setStdPdfUploading(false);
+                        setStdUploadProgress(null);
                       }
                     }}
                   />
                 </div>
+                {/* BIZZ-1932: Upload progress + bekræftelse */}
+                {stdUploadProgress && (
+                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-indigo-900/20 border border-indigo-500/20 text-xs text-indigo-300">
+                    <Loader2 size={11} className="animate-spin shrink-0" />
+                    {stdUploadProgress}
+                  </div>
+                )}
+                {stdUploadDone && (
+                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-900/20 border border-emerald-500/20 text-xs text-emerald-300">
+                    <CheckCircle2 size={11} className="shrink-0" />
+                    {stdUploadDone}
+                  </div>
+                )}
+
                 {/* BIZZ-1921: Åbn bibliotek-knap */}
                 <button
                   type="button"
@@ -2045,7 +2182,7 @@ function AnalyseSection({
                   onClick={() => setStdLibraryOpen(false)}
                 >
                   <div
-                    className="bg-slate-900 border border-slate-700/50 rounded-2xl w-full max-w-2xl max-h-[80vh] overflow-hidden shadow-2xl"
+                    className="bg-slate-900 border border-slate-700/50 rounded-2xl w-full max-w-5xl max-h-[85vh] overflow-hidden shadow-2xl"
                     onClick={(e) => e.stopPropagation()}
                     role="dialog"
                     aria-modal="true"
@@ -2059,7 +2196,7 @@ function AnalyseSection({
                       <button
                         type="button"
                         onClick={() => setStdLibraryOpen(false)}
-                        className="text-slate-500 hover:text-white text-lg"
+                        className="text-slate-400 hover:text-white text-lg"
                         aria-label={da ? 'Luk' : 'Close'}
                       >
                         ×
@@ -2067,123 +2204,188 @@ function AnalyseSection({
                     </div>
 
                     {/* Filter */}
-                    <div className="px-5 py-2 border-b border-slate-800/50">
+                    <div className="px-5 py-2 border-b border-slate-800/50 space-y-2">
                       <input
                         type="text"
                         value={stdLibraryFilter}
                         onChange={(e) => setStdLibraryFilter(e.target.value)}
                         placeholder={
                           da
-                            ? 'Filtrer på titel, selskab eller område...'
-                            : 'Filter by title, company or area...'
+                            ? 'Søg i titel, selskab eller område...'
+                            : 'Search title, company or area...'
                         }
                         className="w-full bg-slate-800/60 border border-slate-700/40 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:border-indigo-500/50 focus:outline-none"
                       />
+                      <div className="flex gap-2">
+                        <select
+                          value={stdLibrarySelskabFilter}
+                          onChange={(e) => setStdLibrarySelskabFilter(e.target.value)}
+                          aria-label={da ? 'Filtrer på selskab' : 'Filter by company'}
+                          className="flex-1 bg-slate-800/60 border border-slate-700/40 rounded-lg px-2 py-1 text-[10px] text-slate-300"
+                        >
+                          <option value="">{da ? 'Alle selskaber' : 'All companies'}</option>
+                          {[...new Set(stdSavedLibrary.map((d) => d.selskab).filter(Boolean))]
+                            .sort()
+                            .map((s) => (
+                              <option key={s} value={s}>
+                                {s}
+                              </option>
+                            ))}
+                        </select>
+                        <select
+                          value={stdLibraryKategoriFilter}
+                          onChange={(e) => setStdLibraryKategoriFilter(e.target.value)}
+                          aria-label={da ? 'Filtrer på kategori' : 'Filter by category'}
+                          className="flex-1 bg-slate-800/60 border border-slate-700/40 rounded-lg px-2 py-1 text-[10px] text-slate-300"
+                        >
+                          <option value="">{da ? 'Alle typer' : 'All types'}</option>
+                          {[...new Set(stdSavedLibrary.map((d) => d.kategori).filter(Boolean))]
+                            .sort()
+                            .map((k) => (
+                              <option key={k} value={k}>
+                                {k}
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+                      {stdSavedLibrary.length > 0 && (
+                        <p className="text-slate-400 text-[9px]">
+                          {da
+                            ? `${stdSavedLibrary.length} betingelser i biblioteket`
+                            : `${stdSavedLibrary.length} terms in library`}
+                        </p>
+                      )}
                     </div>
 
-                    {/* Liste */}
-                    <div className="overflow-y-auto max-h-[55vh] px-5 py-2 space-y-1">
+                    {/* Tabel */}
+                    <div className="overflow-auto max-h-[60vh]">
                       {stdSavedLibrary.length === 0 ? (
-                        <p className="text-slate-500 text-xs py-4 text-center">
+                        <p className="text-slate-400 text-xs py-8 text-center">
                           {da
                             ? 'Ingen gemte betingelser endnu. Upload PDF eller find via AI.'
                             : 'No saved terms yet. Upload PDF or find via AI.'}
                         </p>
                       ) : (
-                        stdSavedLibrary
-                          .filter((doc) => {
-                            if (!stdLibraryFilter) return true;
-                            const q = stdLibraryFilter.toLowerCase();
-                            return (
-                              doc.titel.toLowerCase().includes(q) ||
-                              doc.selskab.toLowerCase().includes(q) ||
-                              (doc.omraade ?? '').toLowerCase().includes(q)
-                            );
-                          })
-                          .map((doc) => {
-                            const isSelected = stdSelectedIds.has(doc.source_url);
-                            return (
-                              <label
-                                key={doc.id}
-                                className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors ${
-                                  isSelected
-                                    ? 'bg-teal-900/30 border border-teal-500/30'
-                                    : 'bg-slate-800/30 border border-slate-700/20 hover:border-slate-600/40'
-                                }`}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={isSelected}
-                                  onChange={() => {
-                                    const alreadyInDiscovered = stdDiscovered.some(
-                                      (d) => d.source_url === doc.source_url
-                                    );
-                                    if (!alreadyInDiscovered) {
-                                      setStdDiscovered((prev) => [
-                                        ...prev,
-                                        {
-                                          titel: doc.titel,
-                                          source_url: doc.source_url,
-                                          kategori: doc.kategori,
-                                          confidence: 'high',
-                                        },
-                                      ]);
-                                      setStdSavedIds((prev) =>
-                                        new Map(prev).set(doc.source_url, doc.id)
+                        <table className="w-full text-xs">
+                          <thead className="bg-slate-800/60 sticky top-0">
+                            <tr className="text-left text-slate-400 uppercase tracking-wider text-[10px]">
+                              <th className="px-4 py-2 w-8" />
+                              <th className="px-4 py-2">{da ? 'Selskab' : 'Company'}</th>
+                              <th className="px-4 py-2">{da ? 'Betingelser' : 'Terms'}</th>
+                              <th className="px-4 py-2">{da ? 'Type' : 'Type'}</th>
+                              <th className="px-4 py-2">{da ? 'Gyldig fra' : 'Valid from'}</th>
+                              <th className="px-4 py-2 w-8" />
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-700/20">
+                            {stdSavedLibrary
+                              .filter((doc) => {
+                                if (
+                                  stdLibrarySelskabFilter &&
+                                  doc.selskab !== stdLibrarySelskabFilter
+                                )
+                                  return false;
+                                if (
+                                  stdLibraryKategoriFilter &&
+                                  doc.kategori !== stdLibraryKategoriFilter
+                                )
+                                  return false;
+                                if (!stdLibraryFilter) return true;
+                                const q = stdLibraryFilter.toLowerCase();
+                                return (
+                                  doc.titel.toLowerCase().includes(q) ||
+                                  doc.selskab.toLowerCase().includes(q) ||
+                                  (doc.omraade ?? '').toLowerCase().includes(q)
+                                );
+                              })
+                              .map((doc) => {
+                                const isSelected = stdSelectedIds.has(doc.source_url);
+                                return (
+                                  <tr
+                                    key={doc.id}
+                                    onClick={() => {
+                                      const alreadyInDiscovered = stdDiscovered.some(
+                                        (d) => d.source_url === doc.source_url
                                       );
-                                    }
-                                    setStdSelectedIds((prev) => {
-                                      const next = new Set(prev);
-                                      if (isSelected) next.delete(doc.source_url);
-                                      else next.add(doc.source_url);
-                                      return next;
-                                    });
-                                  }}
-                                  className="accent-teal-500 w-3.5 h-3.5 shrink-0"
-                                />
-                                <div className="flex-1 min-w-0">
-                                  <div className="text-white text-xs font-medium truncate">
-                                    {doc.titel}
-                                  </div>
-                                  <div className="flex items-center gap-2 mt-0.5">
-                                    <span className="text-slate-400 text-[10px]">
+                                      if (!alreadyInDiscovered) {
+                                        setStdDiscovered((prev) => [
+                                          ...prev,
+                                          {
+                                            titel: doc.titel,
+                                            source_url: doc.source_url,
+                                            kategori: doc.kategori,
+                                            confidence: 'high',
+                                          },
+                                        ]);
+                                        setStdSavedIds((prev) =>
+                                          new Map(prev).set(doc.source_url, doc.id)
+                                        );
+                                      }
+                                      setStdSelectedIds((prev) => {
+                                        const next = new Set(prev);
+                                        if (isSelected) next.delete(doc.source_url);
+                                        else next.add(doc.source_url);
+                                        return next;
+                                      });
+                                    }}
+                                    className={`cursor-pointer transition-colors ${
+                                      isSelected ? 'bg-teal-900/20' : 'hover:bg-slate-800/30'
+                                    }`}
+                                  >
+                                    <td className="px-4 py-2.5">
+                                      <input
+                                        type="checkbox"
+                                        checked={isSelected}
+                                        readOnly
+                                        className="accent-teal-500 w-3.5 h-3.5"
+                                      />
+                                    </td>
+                                    <td className="px-4 py-2.5 text-blue-400 font-medium whitespace-nowrap">
                                       {doc.selskab}
-                                    </span>
-                                    {doc.omraade && (
-                                      <span className="text-indigo-400/70 text-[9px] px-1.5 py-0.5 bg-indigo-500/10 rounded">
-                                        {doc.omraade}
+                                    </td>
+                                    <td className="px-4 py-2.5">
+                                      <div className="text-white font-medium">{doc.titel}</div>
+                                      {doc.is_valid_standard === false && (
+                                        <span className="text-amber-400 text-[9px]">
+                                          ⚠ {da ? 'Ikke standard' : 'Not standard'}
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td className="px-4 py-2.5">
+                                      <span className="text-slate-400 px-1.5 py-0.5 bg-slate-700/40 rounded text-[10px]">
+                                        {doc.kategori}
                                       </span>
-                                    )}
-                                    {doc.gyldig_fra && (
-                                      <span className="text-slate-500 text-[9px]">
-                                        {da ? 'Fra' : 'From'} {doc.gyldig_fra}
-                                      </span>
-                                    )}
-                                    {doc.is_valid_standard === false && (
-                                      <span className="text-amber-400 text-[9px]">
-                                        ⚠ {da ? 'Ikke standard' : 'Not standard'}
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-                                <a
-                                  href={doc.source_url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-slate-500 hover:text-blue-400 text-[10px] shrink-0"
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  ↗
-                                </a>
-                              </label>
-                            );
-                          })
+                                      {doc.omraade && (
+                                        <span className="text-indigo-400/70 px-1.5 py-0.5 bg-indigo-500/10 rounded text-[10px] ml-1">
+                                          {doc.omraade}
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td className="px-4 py-2.5 text-slate-400 whitespace-nowrap">
+                                      {doc.gyldig_fra ?? '—'}
+                                    </td>
+                                    <td className="px-4 py-2.5">
+                                      <a
+                                        href={doc.source_url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-slate-400 hover:text-blue-400"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        ↗
+                                      </a>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                          </tbody>
+                        </table>
                       )}
                     </div>
 
                     {/* Footer */}
                     <div className="flex items-center justify-between px-5 py-3 border-t border-slate-700/50">
-                      <span className="text-slate-500 text-[10px]">
+                      <span className="text-slate-400 text-[10px]">
                         {stdSelectedIds.size} {da ? 'valgt' : 'selected'}
                       </span>
                       <button
@@ -2257,7 +2459,7 @@ function AnalyseSection({
           </div>
           <div className="grid grid-cols-3 gap-3 text-xs">
             <div>
-              <div className="text-slate-500 mb-0.5">{da ? 'Aktiver' : 'Assets'}</div>
+              <div className="text-slate-400 mb-0.5">{da ? 'Aktiver' : 'Assets'}</div>
               <div className="text-white font-medium">
                 {lastAnalyse.total_aktiver} → {analyseResult.total_aktiver}
                 {analyseResult.total_aktiver !== lastAnalyse.total_aktiver && (
@@ -2271,7 +2473,7 @@ function AnalyseSection({
               </div>
             </div>
             <div>
-              <div className="text-slate-500 mb-0.5">{da ? 'Forsikrede' : 'Insured'}</div>
+              <div className="text-slate-400 mb-0.5">{da ? 'Forsikrede' : 'Insured'}</div>
               <div className="text-white font-medium">
                 {lastAnalyse.insured_count} → {analyseResult.insured_count}
                 {analyseResult.insured_count !== lastAnalyse.insured_count && (
@@ -2285,7 +2487,7 @@ function AnalyseSection({
               </div>
             </div>
             <div>
-              <div className="text-slate-500 mb-0.5">Gaps</div>
+              <div className="text-slate-400 mb-0.5">Gaps</div>
               <div className="text-white font-medium">
                 → {analyseResult.gaps_count}
                 {analyseResult.gaps_count > 0 && (
@@ -2362,7 +2564,7 @@ function AnalyseSection({
                 className="flex-1 text-left px-3 py-2 bg-white/3 hover:bg-white/5 rounded-lg text-xs flex items-center justify-between"
               >
                 <span className="text-white font-medium">{s.kunde_navn ?? s.kunde_id}</span>
-                <span className="text-slate-500">
+                <span className="text-slate-400">
                   {s.police_count} {da ? 'policer' : 'policies'} · {s.analyse_count}{' '}
                   {da ? 'analyser' : 'analyses'}
                 </span>
@@ -2395,7 +2597,7 @@ function AnalyseSection({
                     // Handled silently
                   }
                 }}
-                className="p-2 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors shrink-0"
+                className="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors shrink-0"
               >
                 <XCircle size={14} />
               </button>
@@ -2542,15 +2744,15 @@ function AnalyseDetailSection({
         <div className="grid grid-cols-3 gap-3 text-xs text-center">
           <div>
             <div className="text-blue-300 text-xl font-bold">{total}</div>
-            <div className="text-slate-500">{da ? 'Ejendomme' : 'Properties'}</div>
+            <div className="text-slate-400">{da ? 'Ejendomme' : 'Properties'}</div>
           </div>
           <div>
             <div className="text-emerald-300 text-xl font-bold">{insured}</div>
-            <div className="text-slate-500">{da ? 'Forsikrede' : 'Insured'}</div>
+            <div className="text-slate-400">{da ? 'Forsikrede' : 'Insured'}</div>
           </div>
           <div>
             <div className="text-red-300 text-xl font-bold">{total - insured}</div>
-            <div className="text-slate-500">{da ? 'Uforsikrede' : 'Uninsured'}</div>
+            <div className="text-slate-400">{da ? 'Uforsikrede' : 'Uninsured'}</div>
           </div>
         </div>
       </div>
@@ -2574,11 +2776,29 @@ function AnalyseDetailSection({
             });
           };
 
+          // BIZZ-1941: Forsikringsejer-/virksomheds-gaps løftes op i dedikerede
+          // sektioner; ejendomsrækker viser kun ejendomsspecifikke gaps (scope='property').
+          const ownerGaps = dedupGaps(detail.gaps.filter((g) => gapScope(g.check_id) === 'owner'));
+          const companyGaps = dedupGaps(
+            detail.gaps.filter((g) => gapScope(g.check_id) === 'company')
+          );
+
           // Byg PropertyGroups
+          // BIZZ-1957: Bygnings-/ejendomsspecifikke gaps (scope='property') må kun
+          // hænge under ejendoms-aktiver — ikke under virksomheds-aktivet, selv om
+          // policen tilfældigvis også er matchet dertil. Ellers lækker fx 'Udvidet
+          // vandskade' op på virksomheds-niveau.
           const groups: PropertyGroup[] = uniqueAktiver.map((aktiv) => {
-            const aktivGaps = aktiv.matched_policy_id
-              ? dedupGaps(detail.gaps.filter((g) => g.policy_id === aktiv.matched_policy_id))
-              : [];
+            const aktivGaps =
+              aktiv.matched_policy_id && aktiv.type === 'ejendom'
+                ? dedupGaps(
+                    detail.gaps.filter(
+                      (g) =>
+                        g.policy_id === aktiv.matched_policy_id &&
+                        gapScope(g.check_id) === 'property'
+                    )
+                  )
+                : [];
             return {
               aktiv,
               matchedPolicy: aktiv.matched_policy_id
@@ -2617,6 +2837,40 @@ function AnalyseDetailSection({
 
           return (
             <>
+              {/* BIZZ-1941: Forsikringsejer-niveau — vises kun her, ikke per ejendom */}
+              {ownerGaps.length > 0 && (
+                <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Briefcase size={14} className="text-purple-400" />
+                    <h4 className="text-white text-sm font-semibold">
+                      {da ? 'Forsikringsejer-niveau' : 'Insurance owner level'}
+                    </h4>
+                    <span className="text-slate-400 text-[11px]">
+                      {da
+                        ? `${ownerGaps.length} generelle findings`
+                        : `${ownerGaps.length} general findings`}
+                    </span>
+                  </div>
+                  <GapList gaps={ownerGaps} da={da} />
+                </div>
+              )}
+
+              {/* BIZZ-1941: Virksomheds-niveau — gælder porteføljen, ikke per ejendom */}
+              {companyGaps.length > 0 && (
+                <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Building2 size={14} className="text-blue-400" />
+                    <h4 className="text-white text-sm font-semibold">
+                      {da ? 'Virksomheds-niveau' : 'Company level'}
+                    </h4>
+                    <span className="text-slate-400 text-[11px]">
+                      {companyGaps.length} findings
+                    </span>
+                  </div>
+                  <GapList gaps={companyGaps} da={da} />
+                </div>
+              )}
+
               {trees.map((tree) => (
                 <div key={tree.v.aktiv.id} className="space-y-2">
                   <PropertyRow group={tree.v} da={da} />
@@ -3019,7 +3273,7 @@ export default function ForsikringPageClient(): React.ReactElement {
                     >
                       {pct}%
                     </span>
-                    <ChevronRight size={16} className="text-slate-500" />
+                    <ChevronRight size={16} className="text-slate-400" />
                   </div>
                 </button>
               );
@@ -3133,7 +3387,7 @@ export default function ForsikringPageClient(): React.ReactElement {
                     <FileText size={14} className="text-slate-400" />
                     <span>{doc.original_name}</span>
                     <span
-                      className={`text-xs ml-auto max-w-[300px] truncate ${doc.parse_status === 'failed' ? 'text-red-400' : 'text-slate-500'}`}
+                      className={`text-xs ml-auto max-w-[300px] truncate ${doc.parse_status === 'failed' ? 'text-red-400' : 'text-slate-400'}`}
                       title={
                         doc.parse_status === 'failed'
                           ? (doc.parse_error ?? t.parseFailed)
@@ -3160,7 +3414,7 @@ export default function ForsikringPageClient(): React.ReactElement {
                           // Handled silently
                         }
                       }}
-                      className="p-1 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors shrink-0"
+                      className="p-1 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors shrink-0"
                     >
                       <XCircle size={14} />
                     </button>
@@ -3203,7 +3457,7 @@ export default function ForsikringPageClient(): React.ReactElement {
             documents.length === 0 &&
             uploadJobs.length === 0 && (
               <div className="bg-white/5 border border-white/8 rounded-2xl p-10 text-center">
-                <Building2 className="mx-auto text-slate-600 mb-3" size={36} />
+                <Building2 className="mx-auto text-slate-400 mb-3" size={36} />
                 <h2 className="text-lg font-medium mb-1">{t.noPolicies}</h2>
                 <p className="text-sm text-slate-400">{t.noPoliciesDesc}</p>
               </div>

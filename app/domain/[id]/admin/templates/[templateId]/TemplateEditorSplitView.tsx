@@ -111,7 +111,7 @@ export function TemplateEditorSplitView({ domainId, templateId }: Props) {
           >
             <GripVertical
               size={14}
-              className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-600 group-hover:text-blue-300"
+              className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-400 group-hover:text-blue-300"
             />
           </div>
 

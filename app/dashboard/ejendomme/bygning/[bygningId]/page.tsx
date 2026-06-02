@@ -105,7 +105,7 @@ export default async function BygningDetailPage({ params }: BygningDetailPagePro
           <h1 className="text-white text-2xl font-bold">
             {bygning.anvendelse ?? 'Ukendt anvendelse'}
           </h1>
-          <p className="text-slate-500 text-xs mt-1 font-mono break-all">{bygning.id}</p>
+          <p className="text-slate-400 text-xs mt-1 font-mono break-all">{bygning.id}</p>
           {bygning.status && (
             <span
               className={`inline-block mt-3 px-2 py-0.5 rounded-full text-xs border ${
@@ -181,7 +181,7 @@ export default async function BygningDetailPage({ params }: BygningDetailPagePro
             <MapPin size={16} className="text-blue-400 shrink-0" />
             <div className="flex-1">
               <p className="text-white text-sm font-medium">Se adresse-detaljer</p>
-              <p className="text-slate-500 text-xs mt-0.5 font-mono">{bygning.husnummerId}</p>
+              <p className="text-slate-400 text-xs mt-0.5 font-mono">{bygning.husnummerId}</p>
             </div>
           </Link>
         )}

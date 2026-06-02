@@ -24,7 +24,8 @@ import type {
   ForsikringPolicy,
   GapEngineInput,
 } from './types';
-import { COVERAGE_LABELS_DA } from './types';
+import { COVERAGE_LABELS_DA, gapScope } from './types';
+import { effectiveCoveredCodes } from './coverageAliases';
 import { lookupBrancheKrav, isOperationelBranche } from './brancheRisiko';
 import type { Aktiv } from './koncernWalk';
 import type { MatchResult } from './assetMatcher';
@@ -151,6 +152,12 @@ function makeMissingCoverageCheck(
   return (input) => {
     // BIZZ-1609: Bygningsdæknings-checks kun relevante for ejendomme
     if (isNonEjendom(input)) return null;
+    // BIZZ-1933: Hvis den matchede police ikke har NOGEN parsede dækninger,
+    // stammer den fra et resumé-/oversigtsdokument uden dækningsdetaljer
+    // (fx mægler-forsikringsoversigt). Manglende dækningsdata ≠ manglende
+    // dækning — undlad at flage hver enkelt bygningsdækning som "manglende",
+    // ellers opstår falske positiver for hver police vi ikke kan læse i detaljer.
+    if (input.coverages.length === 0) return null;
     if (hasCoverage(input.coverages, code)) return null;
     return {
       check_id: checkId,
@@ -186,6 +193,8 @@ const checkMissingSanitet = makeMissingCoverageCheck(
 /** GAP-012: Mangler insekt/svamp-dækning (kritisk for ældre bygninger) */
 const checkMissingInsektSvamp: CheckFn = (input) => {
   if (isNonEjendom(input)) return null;
+  // BIZZ-1933: Spring over hvis policen ikke har parsede dækninger (resumé-dokument).
+  if (input.coverages.length === 0) return null;
   if (hasCoverage(input.coverages, 'insekt_svamp')) return null;
   const buildYear = input.policy.building_year_built;
   // Skærp severity for bygninger >50 år
@@ -224,6 +233,26 @@ const checkMissingStikledning = makeMissingCoverageCheck(
   'warning',
   'Stikledning-dækning mangler. Lækager eller brud på rør i jorden mellem ' +
     'bygning og hovedledning er kostbare at udbedre — ofte 50.000-200.000 kr.'
+);
+
+/** GAP-015: Mangler udvidet vandskade-dækning (beboelse) */
+const checkMissingUdvidetVandskade = makeMissingCoverageCheck(
+  'udvidet_vandskade',
+  'GAP-015',
+  'warning',
+  'Udvidet vandskade-dækning mangler. Beboelsesejendomme er udsat for ' +
+    'skader fra indtrængende regnvand, oversvømmelse fra toiletter/afløb og ' +
+    'vandskader fra naboejendomme. Uden dækning bæres omkostningen fuldt.'
+);
+
+/** GAP-016: Mangler jordskade-dækning */
+const checkMissingJordskade = makeMissingCoverageCheck(
+  'jordskade',
+  'GAP-016',
+  'warning',
+  'Jordskade-dækning mangler. Sætningsskader, jordskred og erosion under ' +
+    'fundamentet kan koste 100.000-500.000 kr. at udbedre. Uden dækning ' +
+    'bæres alle udgifter af forsikringstager.'
 );
 
 /** GAP-020: Forsikringstager-CVR matcher ikke ejer på adressen */
@@ -788,6 +817,8 @@ const CHECKS: readonly CheckFn[] = [
   checkMissingStikledning,
   checkMissingGlas,
   checkMissingSanitet,
+  checkMissingUdvidetVandskade,
+  checkMissingJordskade,
   checkExpiry,
   checkRenewalUpcoming,
   checkPolicyholderCvrMatch,
@@ -828,9 +859,10 @@ export function runGapEngine(input: GapEngineInput): DetectedGap[] {
   // BIZZ-1902: Standard betingelser baseline-gaps
   // Sammenlign policens dækninger med krav fra standard betingelser
   if (input.standardBetingelser && input.standardBetingelser.length > 0) {
-    const coveredCodes = new Set(
-      input.coverages.filter((c) => c.is_covered).map((c) => c.coverage_code)
-    );
+    // BIZZ-1939: Brug selskabs-aware effektive dækningskoder, så fx Topdanmark
+    // Erhvervsansvar tæller som hus_grundejer_ansvar (terminologi-mapping) og
+    // ikke fejlagtigt flages som manglende standard-vilkår.
+    const coveredCodes = effectiveCoveredCodes(input.policy.insurer_name, input.coverages);
 
     for (const std of input.standardBetingelser) {
       const missingKrav = (std.krav ?? []).filter(
@@ -859,7 +891,8 @@ export function runGapEngine(input: GapEngineInput): DetectedGap[] {
     }
   }
 
-  return results;
+  // BIZZ-1941: Stempl hierarki-scope ud fra check_id på hvert gap.
+  return results.map((g) => ({ ...g, scope: gapScope(g.check_id) }));
 }
 
 // ─── BIZZ-1365: Risk-scoring ────────────────────────────────────
@@ -883,6 +916,8 @@ const GAP_BASE_SCORES: Record<string, number> = {
   'GAP-012': 30, // insekt/svamp
   'GAP-013': 25, // restværdi
   'GAP-014': 25, // stikledning
+  'GAP-015': 25, // udvidet vandskade
+  'GAP-016': 25, // jordskade
   'GAP-020': 20, // CVR-match
   'GAP-030': 35, // udløbet
   'GAP-031': 20, // udløber snart
@@ -1393,11 +1428,13 @@ function isKravCovered(
   const kravLower = krav.toLowerCase();
   const coverageCode = KRAV_TO_COVERAGE_CODE[kravLower];
 
-  // 1. Tjek coverage-koder hvis kravet mapper til en kanonisk kode
+  // 1. Tjek coverage-koder hvis kravet mapper til en kanonisk kode.
+  //    BIZZ-1939: brug selskabs-aware effektive koder, så fx Topdanmark
+  //    Erhvervsansvar opfylder hus_grundejer_ansvar-kravet (terminologi-mapping).
   if (coverageCode) {
     for (const pol of policer) {
       const covs = coveragesByPolicy.get(pol.id) ?? [];
-      if (covs.some((c) => c.coverage_code === coverageCode && c.is_covered)) {
+      if (effectiveCoveredCodes(pol.insurer_name, covs).has(coverageCode)) {
         return true;
       }
     }
@@ -1519,7 +1556,13 @@ const checkDobbeltForsikring: PortfolioCheckFn = ({ policer }) => {
     existing.push(p.policy_number);
     adresseMap.set(key, existing);
   }
-  const doubles = [...adresseMap.entries()].filter(([, nums]) => nums.length >= 2);
+  // BIZZ-1940: Tæl kun DISTINKTE policenumre. Samme police kan optræde som
+  // flere rows fordi parseren splitter en polices sektioner (Ansvar/Ejendom/
+  // Skur) i separate rows med samme policy_number — det er ikke dobbelt-
+  // forsikring, blot én polices strukturelle nedbrydning.
+  const doubles = [...adresseMap.entries()]
+    .map(([key, nums]) => [key, [...new Set(nums)]] as [string, string[]])
+    .filter(([, nums]) => nums.length >= 2);
   if (doubles.length === 0) return null;
   const first = doubles[0];
   return {
@@ -1558,7 +1601,13 @@ const checkDaekningsOverlap: PortfolioCheckFn = ({ policer, coveragesByPolicy })
   const overlaps: Array<{ adresse: string; coverage: string; policer: string[] }> = [];
   for (const [addr, covMap] of adresseCoverages) {
     for (const [code, nums] of covMap) {
-      if (nums.length >= 2) overlaps.push({ adresse: addr, coverage: code, policer: nums });
+      // BIZZ-1940: Reelt overlap kræver 2+ FORSKELLIGE policer. Samme police
+      // kan bidrage med samme coverage_code flere gange — enten fordi den er
+      // splittet i flere rows (Ansvar/Ejendom/Skur deler policy_number), eller
+      // fordi koden optræder i flere sektioner i samme row. Dedup på distinkte
+      // policenumre, så én polices interne gentagelser ikke tælles som overlap.
+      const distinct = [...new Set(nums)];
+      if (distinct.length >= 2) overlaps.push({ adresse: addr, coverage: code, policer: distinct });
     }
   }
   if (overlaps.length === 0) return null;
@@ -1624,5 +1673,6 @@ export function runPortfolioChecks(input: PortfolioCheckInput): DetectedGap[] {
       continue;
     }
   }
-  return results;
+  // BIZZ-1941: Stempl hierarki-scope ud fra check_id på hvert gap.
+  return results.map((g) => ({ ...g, scope: gapScope(g.check_id) }));
 }

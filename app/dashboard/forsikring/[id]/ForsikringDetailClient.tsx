@@ -294,10 +294,10 @@ export default function ForsikringDetailClient({ policyId }: Props): React.React
               {c.is_covered ? (
                 <CheckCircle2 size={16} className="text-emerald-400 mt-0.5 shrink-0" />
               ) : (
-                <XCircle size={16} className="text-slate-500 mt-0.5 shrink-0" />
+                <XCircle size={16} className="text-slate-400 mt-0.5 shrink-0" />
               )}
               <div className="flex-1">
-                <div className={c.is_covered ? '' : 'text-slate-500 line-through'}>
+                <div className={c.is_covered ? '' : 'text-slate-400 line-through'}>
                   {c.coverage_label}
                 </div>
                 {(c.sum_dkk !== null || c.deductible_dkk !== null) && c.is_covered && (
@@ -314,12 +314,12 @@ export default function ForsikringDetailClient({ policyId }: Props): React.React
                     )}
                   </div>
                 )}
-                {c.notes && <div className="text-xs text-slate-500 italic mt-0.5">{c.notes}</div>}
+                {c.notes && <div className="text-xs text-slate-400 italic mt-0.5">{c.notes}</div>}
               </div>
             </div>
           ))}
           {coverages.length === 0 && (
-            <div className="px-4 py-6 text-sm text-slate-500 text-center">—</div>
+            <div className="px-4 py-6 text-sm text-slate-400 text-center">—</div>
           )}
         </div>
       </section>

@@ -365,7 +365,7 @@ function LoginForm() {
             {/* Divider */}
             <div className="flex items-center gap-4 mb-6">
               <div className="flex-1 border-t border-white/10" />
-              <span className="text-slate-500 text-xs">{t.or}</span>
+              <span className="text-slate-400 text-xs">{t.or}</span>
               <div className="flex-1 border-t border-white/10" />
             </div>
 
@@ -410,7 +410,7 @@ function LoginForm() {
                                   : '✓ Email sent! Check your inbox (incl. spam).'}
                               </p>
                               {resendCooldown > 0 ? (
-                                <p className="text-slate-500 text-xs">
+                                <p className="text-slate-400 text-xs">
                                   {lang === 'da'
                                     ? `Kan gensende om ${resendCooldown} sek.`
                                     : `Can resend in ${resendCooldown} sec.`}
@@ -536,7 +536,7 @@ function LoginForm() {
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-300 transition-colors"
                     aria-label={showPassword ? 'Hide password' : 'Show password'}
                   >
                     {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
@@ -559,7 +559,7 @@ function LoginForm() {
             </form>
 
             {/* Sign up link */}
-            <p className="text-center text-slate-500 text-sm mt-6">
+            <p className="text-center text-slate-400 text-sm mt-6">
               {t.noAccount}{' '}
               <Link
                 href="/login/signup"

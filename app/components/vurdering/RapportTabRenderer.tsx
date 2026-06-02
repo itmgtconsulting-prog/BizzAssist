@@ -54,7 +54,7 @@ function Field({ label, value }: { label: string; value: unknown }) {
   const display = value == null || value === '' ? '–' : String(value);
   return (
     <div className="flex justify-between py-1 border-b border-slate-800/50 last:border-0">
-      <span className="text-slate-500 text-xs">{label}</span>
+      <span className="text-slate-400 text-xs">{label}</span>
       <span className="text-slate-300 text-xs font-medium text-right max-w-[60%]">{display}</span>
     </div>
   );
@@ -90,7 +90,7 @@ function AiSection({ title, text }: { title: string; text: unknown }) {
 /** Data table for arrays. */
 function DataTable({ headers, rows }: { headers: string[]; rows: Array<Record<string, unknown>> }) {
   if (!rows || rows.length === 0) {
-    return <p className="text-xs text-slate-500 italic">Ingen data.</p>;
+    return <p className="text-xs text-slate-400 italic">Ingen data.</p>;
   }
   const keys = Object.keys(rows[0]);
   return (
@@ -99,7 +99,7 @@ function DataTable({ headers, rows }: { headers: string[]; rows: Array<Record<st
         <thead>
           <tr className="border-b border-slate-700">
             {headers.map((h, i) => (
-              <th key={i} className="text-left py-1.5 px-2 text-slate-500 font-medium">
+              <th key={i} className="text-left py-1.5 px-2 text-slate-400 font-medium">
                 {h}
               </th>
             ))}
@@ -271,7 +271,7 @@ function TinglysningTab({ indhold }: { indhold: Record<string, unknown> }) {
           }))}
         />
       ) : (
-        <p className="text-xs text-slate-500 italic">Ingen ejere registreret.</p>
+        <p className="text-xs text-slate-400 italic">Ingen ejere registreret.</p>
       )}
 
       <SectionHeader icon={Scale} title="Handelshistorik" />
@@ -287,7 +287,7 @@ function TinglysningTab({ indhold }: { indhold: Record<string, unknown> }) {
           }))}
         />
       ) : (
-        <p className="text-xs text-slate-500 italic">Ingen handler registreret.</p>
+        <p className="text-xs text-slate-400 italic">Ingen handler registreret.</p>
       )}
 
       <SectionHeader icon={FileText} title="Hæftelser" />
@@ -304,7 +304,7 @@ function TinglysningTab({ indhold }: { indhold: Record<string, unknown> }) {
           }))}
         />
       ) : (
-        <p className="text-xs text-slate-500 italic">Ingen hæftelser tinglyst.</p>
+        <p className="text-xs text-slate-400 italic">Ingen hæftelser tinglyst.</p>
       )}
 
       {ai && (
@@ -339,7 +339,7 @@ function ServitutterTab({ indhold }: { indhold: Record<string, unknown> }) {
           }))}
         />
       ) : (
-        <p className="text-xs text-slate-500 italic">Ingen servitutter tinglyst.</p>
+        <p className="text-xs text-slate-400 italic">Ingen servitutter tinglyst.</p>
       )}
       {typeof data.noter === 'string' && data.noter.length > 0 && (
         <div className="mt-3">

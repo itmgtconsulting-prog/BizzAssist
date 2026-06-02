@@ -160,7 +160,7 @@ function RecentEjendomCard({
         <div className="p-2 rounded-xl text-emerald-400 bg-emerald-400/10">
           <Building2 size={18} />
         </div>
-        <div className="flex items-center gap-1 text-slate-500 text-xs">
+        <div className="flex items-center gap-1 text-slate-400 text-xs">
           <Clock size={11} />
           {tidTekst}
         </div>
@@ -170,12 +170,12 @@ function RecentEjendomCard({
         <p className="text-slate-400 text-xs mt-0.5">
           {ejendom.postnr} {ejendom.by} · {ejendom.kommune}
         </p>
-        {ejendom.anvendelse && <p className="text-slate-500 text-xs mt-1">{ejendom.anvendelse}</p>}
+        {ejendom.anvendelse && <p className="text-slate-400 text-xs mt-1">{ejendom.anvendelse}</p>}
       </div>
       <div className="flex items-center justify-end pt-1 border-t border-slate-700/40">
         <ChevronRight
           size={16}
-          className="text-slate-600 group-hover:text-blue-400 transition-colors"
+          className="text-slate-400 group-hover:text-blue-400 transition-colors"
         />
       </div>
     </Link>
@@ -226,7 +226,7 @@ function DawaResultItem({
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-white text-sm font-medium truncate">{result.tekst}</p>
-        <p className="text-slate-500 text-xs">
+        <p className="text-slate-400 text-xs">
           {result.type === 'vejnavn'
             ? p.roadAddNumber
             : result.adresse.postnr
@@ -236,7 +236,7 @@ function DawaResultItem({
       </div>
       <ArrowRight
         size={13}
-        className={aktiv ? 'text-blue-400' : 'text-slate-600 group-hover:text-blue-400'}
+        className={aktiv ? 'text-blue-400' : 'text-slate-400 group-hover:text-blue-400'}
       />
     </button>
   );
@@ -323,8 +323,8 @@ function DropdownPortal({
       {søgning.length < 2 && seneste.length > 0 && (
         <div>
           <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-700/40">
-            <Clock size={12} className="text-slate-500" />
-            <span className="text-slate-500 text-xs font-medium uppercase tracking-wide">
+            <Clock size={12} className="text-slate-400" />
+            <span className="text-slate-400 text-xs font-medium uppercase tracking-wide">
               {p.recentSearches}
             </span>
           </div>
@@ -340,13 +340,13 @@ function DropdownPortal({
       {søgning.length >= 2 && (
         <>
           {søgerDAWA && (
-            <div className="flex items-center gap-3 px-4 py-3 text-slate-500 text-sm">
+            <div className="flex items-center gap-3 px-4 py-3 text-slate-400 text-sm">
               <Loader2 size={14} className="animate-spin" />
               {p.searchingAll}
             </div>
           )}
           {!søgerDAWA && søgningFærdig && resultater.length === 0 && (
-            <div className="px-4 py-4 text-slate-500 text-sm text-center">
+            <div className="px-4 py-4 text-slate-400 text-sm text-center">
               {p.noAddressesFound} &ldquo;{søgning}&rdquo;
             </div>
           )}
@@ -363,7 +363,7 @@ function DropdownPortal({
             ))}
           {resultater.length === 8 && (
             <div className="px-4 py-2 border-t border-slate-700/40">
-              <p className="text-slate-600 text-xs text-center">{p.showingBestResults}</p>
+              <p className="text-slate-400 text-xs text-center">{p.showingBestResults}</p>
             </div>
           )}
         </>
@@ -475,7 +475,7 @@ function ActiveFilterChips({
       <button
         type="button"
         onClick={() => onFiltersChange(DEFAULT_FILTERS)}
-        className="text-slate-500 hover:text-slate-300 text-xs transition-colors ml-1"
+        className="text-slate-400 hover:text-slate-300 text-xs transition-colors ml-1"
       >
         {ft.nulstilFiltre}
       </button>
@@ -884,7 +884,7 @@ export default function EjendommeListesideClient() {
                       setÅben(false);
                       inputRef.current?.focus();
                     }}
-                    className="text-slate-500 hover:text-slate-300 transition-colors"
+                    className="text-slate-400 hover:text-slate-300 transition-colors"
                   >
                     <X size={18} />
                   </button>
@@ -948,13 +948,13 @@ export default function EjendommeListesideClient() {
                 <h2 className="text-white font-semibold text-base">
                   {lang === 'da' ? 'Søgeresultater' : 'Search results'}
                 </h2>
-                <span className="text-slate-500 text-xs">
+                <span className="text-slate-400 text-xs">
                   {_searchTotal.toLocaleString(lang === 'da' ? 'da-DK' : 'en-GB')}{' '}
                   {lang === 'da' ? 'ejendomme' : 'properties'}
                 </span>
               </div>
               {_searchLoading ? (
-                <div className="flex items-center gap-2 text-slate-500 text-sm py-8">
+                <div className="flex items-center gap-2 text-slate-400 text-sm py-8">
                   <Loader2 size={14} className="animate-spin" />
                   {lang === 'da' ? 'Søger...' : 'Searching...'}
                 </div>
@@ -983,7 +983,7 @@ export default function EjendommeListesideClient() {
                   ))}
                 </div>
               ) : (
-                <p className="text-slate-500 text-sm py-4">
+                <p className="text-slate-400 text-sm py-4">
                   {lang === 'da' ? 'Ingen resultater' : 'No results'}
                 </p>
               )}
@@ -998,7 +998,7 @@ export default function EjendommeListesideClient() {
                   <Clock size={15} className="text-slate-400" />
                   <h2 className="text-white font-semibold text-base">{p.recentlyViewed}</h2>
                   {hasActiveFilters && (
-                    <span className="text-slate-500 text-xs">
+                    <span className="text-slate-400 text-xs">
                       — {ft.visResultater(filteredEjendomme.length)}
                     </span>
                   )}
@@ -1009,7 +1009,7 @@ export default function EjendommeListesideClient() {
                     fetch('/api/recents?type=property', { method: 'DELETE' }).catch(() => {});
                     setSenesteEjendomme([]);
                   }}
-                  className="text-slate-600 hover:text-slate-400 text-xs transition-colors"
+                  className="text-slate-400 hover:text-slate-400 text-xs transition-colors"
                 >
                   {p.clearHistory}
                 </button>
@@ -1024,7 +1024,7 @@ export default function EjendommeListesideClient() {
               ) : (
                 <div className="flex flex-col items-center justify-center py-12 text-center gap-3">
                   <div className="p-4 bg-slate-800/40 rounded-2xl">
-                    <Filter size={24} className="text-slate-600" />
+                    <Filter size={24} className="text-slate-400" />
                   </div>
                   <p className="text-slate-400 text-sm font-medium">{ft.ingenMatch}</p>
                   <button
@@ -1040,10 +1040,10 @@ export default function EjendommeListesideClient() {
           ) : (
             <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
               <div className="p-4 bg-slate-800/40 rounded-2xl">
-                <Building2 size={28} className="text-slate-600" />
+                <Building2 size={28} className="text-slate-400" />
               </div>
               <p className="text-slate-400 text-sm font-medium">{p.noPropertiesYet}</p>
-              <p className="text-slate-600 text-xs max-w-xs leading-relaxed">
+              <p className="text-slate-400 text-xs max-w-xs leading-relaxed">
                 {p.noPropertiesHint}
               </p>
             </div>

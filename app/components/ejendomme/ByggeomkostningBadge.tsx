@@ -51,12 +51,12 @@ export default function ByggeomkostningBadge({ lang }: Props) {
             {da ? 'Byggeomkostninger' : 'Construction Costs'}
           </h3>
         </div>
-        <span className="text-xs text-slate-500">{data.kvartal}</span>
+        <span className="text-xs text-slate-400">{data.kvartal}</span>
       </div>
 
       <div className="flex items-baseline gap-3 mt-2">
         <span className="text-2xl font-bold text-white">{data.indeks}</span>
-        <span className="text-xs text-slate-500">(2015 = 100)</span>
+        <span className="text-xs text-slate-400">(2015 = 100)</span>
         {data.aendringYoY != null && (
           <span
             className={`flex items-center gap-0.5 text-xs font-medium ${

@@ -658,7 +658,7 @@ export function DomainWorkspaceSplitView({
               >
                 <p className="text-sm text-white truncate">{c.name}</p>
                 {c.client_ref && (
-                  <p className="text-[11px] text-slate-500 truncate">{c.client_ref}</p>
+                  <p className="text-[11px] text-slate-400 truncate">{c.client_ref}</p>
                 )}
               </li>
             );
@@ -677,7 +677,7 @@ export function DomainWorkspaceSplitView({
       >
         <GripHorizontal
           size={12}
-          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-600 group-hover:text-blue-300 rotate-90"
+          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-400 group-hover:text-blue-300 rotate-90"
         />
       </div>
 
@@ -822,7 +822,7 @@ export function DomainWorkspaceSplitView({
                   )}
                   <div className="min-w-0 flex-1">
                     <p className="text-xs text-white truncate">{caseDetail.client_name}</p>
-                    <p className="text-[10px] text-slate-500 uppercase">
+                    <p className="text-[10px] text-slate-400 uppercase">
                       {caseDetail.client_kind === 'company'
                         ? `CVR ${caseDetail.client_cvr}`
                         : `Person · ${caseDetail.client_person_id}`}
@@ -881,14 +881,14 @@ export function DomainWorkspaceSplitView({
               <div className="text-xs space-y-1">
                 {caseDetail.client_ref && (
                   <p>
-                    <span className="text-slate-500">
+                    <span className="text-slate-400">
                       {da ? 'Klient-reference: ' : 'Client ref: '}
                     </span>
                     <span className="text-slate-200">{caseDetail.client_ref}</span>
                   </p>
                 )}
                 <p>
-                  <span className="text-slate-500">{da ? 'Status: ' : 'Status: '}</span>
+                  <span className="text-slate-400">{da ? 'Status: ' : 'Status: '}</span>
                   <span className="text-slate-200 capitalize">{caseDetail.status}</span>
                 </p>
                 {caseDetail.tags.length > 0 && (
@@ -913,7 +913,7 @@ export function DomainWorkspaceSplitView({
               {/* BIZZ-900/929: Skabelon-sektion viser valgte skabeloner som chips.
                   Knap er flyttet til sags-header (BIZZ-929). */}
               <div>
-                <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-1.5">
+                <p className="text-[11px] uppercase tracking-wide text-slate-400 mb-1.5">
                   {da ? 'Skabeloner' : 'Templates'}
                   {selectedTemplateIds.size > 0 && (
                     <span className="ml-1.5 px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 text-[10px] normal-case tracking-normal">
@@ -923,7 +923,7 @@ export function DomainWorkspaceSplitView({
                   )}
                 </p>
                 {selectedTemplateIds.size === 0 ? (
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-slate-400">
                     {da ? 'Ingen skabeloner valgt.' : 'No templates selected.'}
                   </p>
                 ) : (
@@ -955,7 +955,7 @@ export function DomainWorkspaceSplitView({
 
               <div>
                 <div className="flex items-center justify-between mb-1.5 gap-2">
-                  <p className="text-[11px] uppercase tracking-wide text-slate-500 whitespace-nowrap">
+                  <p className="text-[11px] uppercase tracking-wide text-slate-400 whitespace-nowrap">
                     {da ? 'Dokumenter' : 'Documents'} · {caseDocs.length}
                     {selectedDocIds.size > 0 && (
                       <span className="ml-1.5 px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 text-[10px] normal-case tracking-normal">
@@ -1017,7 +1017,7 @@ export function DomainWorkspaceSplitView({
                   </p>
                 )}
                 {caseDocs.length === 0 ? (
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-slate-400">
                     {da ? 'Ingen dokumenter på sagen.' : 'No documents on this case.'}
                   </p>
                 ) : (
@@ -1057,7 +1057,7 @@ export function DomainWorkspaceSplitView({
           {caseDetail && editing && (
             <div className="space-y-2">
               <label className="block">
-                <span className="text-[10px] uppercase tracking-wide text-slate-500">
+                <span className="text-[10px] uppercase tracking-wide text-slate-400">
                   {da ? 'Sagsnavn' : 'Case name'}
                 </span>
                 <input
@@ -1069,7 +1069,7 @@ export function DomainWorkspaceSplitView({
                 />
               </label>
               <label className="block">
-                <span className="text-[10px] uppercase tracking-wide text-slate-500">
+                <span className="text-[10px] uppercase tracking-wide text-slate-400">
                   {da ? 'Kunde (valgfri)' : 'Customer (optional)'}
                 </span>
                 <div className="mt-0.5">
@@ -1077,7 +1077,7 @@ export function DomainWorkspaceSplitView({
                 </div>
               </label>
               <label className="block">
-                <span className="text-[10px] uppercase tracking-wide text-slate-500">
+                <span className="text-[10px] uppercase tracking-wide text-slate-400">
                   {da ? 'Klient-ref' : 'Client ref'}
                 </span>
                 <input
@@ -1088,7 +1088,7 @@ export function DomainWorkspaceSplitView({
                 />
               </label>
               <label className="block">
-                <span className="text-[10px] uppercase tracking-wide text-slate-500">
+                <span className="text-[10px] uppercase tracking-wide text-slate-400">
                   {da ? 'Status' : 'Status'}
                 </span>
                 <select
@@ -1102,7 +1102,7 @@ export function DomainWorkspaceSplitView({
                 </select>
               </label>
               <label className="block">
-                <span className="text-[10px] uppercase tracking-wide text-slate-500">
+                <span className="text-[10px] uppercase tracking-wide text-slate-400">
                   {da ? 'Tags (komma)' : 'Tags (comma)'}
                 </span>
                 <input
@@ -1115,9 +1115,9 @@ export function DomainWorkspaceSplitView({
               {/* BIZZ-809: Kort beskrivelse (max 200 tegn). Vises på
                   sagskort i listen. Char-counter i label. */}
               <label className="block">
-                <span className="text-[10px] uppercase tracking-wide text-slate-500 flex items-center justify-between">
+                <span className="text-[10px] uppercase tracking-wide text-slate-400 flex items-center justify-between">
                   <span>{da ? 'Kort beskrivelse' : 'Short description'}</span>
-                  <span className="text-slate-600 tabular-nums">
+                  <span className="text-slate-400 tabular-nums">
                     {editShortDescription.length}/200
                   </span>
                 </span>
@@ -1135,7 +1135,7 @@ export function DomainWorkspaceSplitView({
                 />
               </label>
               <label className="block">
-                <span className="text-[10px] uppercase tracking-wide text-slate-500">
+                <span className="text-[10px] uppercase tracking-wide text-slate-400">
                   {da ? 'Noter' : 'Notes'}
                 </span>
                 <textarea
@@ -1186,7 +1186,7 @@ export function DomainWorkspaceSplitView({
           >
             <GripHorizontal
               size={12}
-              className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-600 group-hover:text-blue-300 rotate-90"
+              className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-400 group-hover:text-blue-300 rotate-90"
             />
           </div>
         </>

@@ -1141,7 +1141,7 @@ function AIChatPanel() {
                 // Focus input så brugeren kan skrive med det samme
                 setTimeout(() => inputRef.current?.focus(), 50);
               }}
-              className="text-slate-500 hover:text-slate-300 transition-colors shrink-0 p-1 rounded hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              className="text-slate-400 hover:text-slate-300 transition-colors shrink-0 p-1 rounded hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               aria-label={lang === 'da' ? 'Ny samtale' : 'New conversation'}
               title={lang === 'da' ? 'Ny samtale' : 'New conversation'}
             >
@@ -1149,7 +1149,7 @@ function AIChatPanel() {
             </button>
             <button
               onClick={openFullPageChat}
-              className="text-slate-500 hover:text-slate-300 transition-colors shrink-0 p-1 rounded hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              className="text-slate-400 hover:text-slate-300 transition-colors shrink-0 p-1 rounded hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               aria-label={lang === 'da' ? 'Åbn fuld AI Chat' : 'Open full AI Chat'}
               title={lang === 'da' ? 'Åbn fuld AI Chat' : 'Open full AI Chat'}
             >
@@ -1157,7 +1157,7 @@ function AIChatPanel() {
             </button>
             <button
               onClick={() => chatCtx.setDrawerOpen(false)}
-              className="text-slate-500 hover:text-slate-200 transition-colors p-1 rounded hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              className="text-slate-400 hover:text-slate-200 transition-colors p-1 rounded hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               aria-label={lang === 'da' ? 'Luk chat' : 'Close chat'}
             >
               <X size={16} />
@@ -1286,7 +1286,7 @@ function AIChatPanel() {
         {tokenBalance &&
           (tokenBalance.plan > 0 || tokenBalance.bonus > 0 || tokenBalance.topUp > 0) && (
             <p
-              className="px-4 pb-2 text-[10px] text-slate-500 font-mono"
+              className="px-4 pb-2 text-[10px] text-slate-400 font-mono"
               title={
                 lang === 'da'
                   ? 'Balance pr. kilde efter seneste kald'
@@ -1295,10 +1295,10 @@ function AIChatPanel() {
             >
               <span className="text-slate-400">{lang === 'da' ? 'Plan: ' : 'Plan: '}</span>
               {tokenBalance.plan.toLocaleString(lang === 'da' ? 'da-DK' : 'en-GB')}
-              <span className="text-slate-600 mx-1.5">·</span>
+              <span className="text-slate-400 mx-1.5">·</span>
               <span className="text-slate-400">{lang === 'da' ? 'Bonus: ' : 'Bonus: '}</span>
               {tokenBalance.bonus.toLocaleString(lang === 'da' ? 'da-DK' : 'en-GB')}
-              <span className="text-slate-600 mx-1.5">·</span>
+              <span className="text-slate-400 mx-1.5">·</span>
               <span className="text-emerald-400/80">
                 {lang === 'da' ? 'Købt: ' : 'Purchased: '}
               </span>
@@ -1309,7 +1309,7 @@ function AIChatPanel() {
           )}
 
         {/* AI disclaimer */}
-        <p className="px-3 pb-1 text-[11px] text-slate-500">
+        <p className="px-3 pb-1 text-[11px] text-slate-400">
           ⚠️ Svar genereret af AI er ikke nødvendigvis korrekte. Verificér altid vigtig information.
         </p>
       </div>
@@ -1569,7 +1569,7 @@ function AIChatPanel() {
                     <FileText size={12} className="text-blue-400 shrink-0" />
                     <div className="min-w-0 flex-1">
                       <p className="text-xs text-slate-200 truncate">{att.name}</p>
-                      <p className="text-[10px] text-slate-500 uppercase">
+                      <p className="text-[10px] text-slate-400 uppercase">
                         {att.file_type} · {Math.round(att.size / 1024)} KB
                         {att.truncated && ` · ${lang === 'da' ? 'beskåret' : 'truncated'}`}
                       </p>

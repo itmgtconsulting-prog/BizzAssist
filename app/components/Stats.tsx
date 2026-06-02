@@ -14,7 +14,7 @@ export default function Stats() {
           {stats.map((stat) => (
             <div key={stat.label} className="text-center">
               <div className="text-4xl md:text-5xl font-bold text-white mb-2">{stat.value}</div>
-              <div className="text-slate-500 text-sm font-medium">{stat.label}</div>
+              <div className="text-slate-400 text-sm font-medium">{stat.label}</div>
             </div>
           ))}
         </div>

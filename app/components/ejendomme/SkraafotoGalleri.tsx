@@ -87,8 +87,8 @@ export default function SkraafotoGalleri({ lat, lng, lang }: Props) {
     return (
       <div className="bg-slate-800/40 rounded-xl p-4 mt-4 animate-pulse">
         <div className="flex items-center gap-2 mb-3">
-          <Camera className="w-4 h-4 text-slate-500" />
-          <span className="text-slate-500 text-sm">
+          <Camera className="w-4 h-4 text-slate-400" />
+          <span className="text-slate-400 text-sm">
             {da ? 'Henter luftfotos...' : 'Loading aerial photos...'}
           </span>
         </div>
@@ -116,7 +116,7 @@ export default function SkraafotoGalleri({ lat, lng, lang }: Props) {
             </h3>
           </div>
           {year && (
-            <span className="text-xs text-slate-500">
+            <span className="text-xs text-slate-400">
               {da ? `Foto: ${year}` : `Photo: ${year}`}
             </span>
           )}
@@ -145,7 +145,7 @@ export default function SkraafotoGalleri({ lat, lng, lang }: Props) {
                   if (parent && !parent.querySelector('.skraafoto-fallback')) {
                     const div = document.createElement('div');
                     div.className =
-                      'skraafoto-fallback w-full h-32 bg-slate-700/50 flex items-center justify-center text-slate-500 text-xs';
+                      'skraafoto-fallback w-full h-32 bg-slate-700/50 flex items-center justify-center text-slate-400 text-xs';
                     div.textContent = da ? 'Foto utilgængeligt' : 'Photo unavailable';
                     parent.insertBefore(div, target);
                   }

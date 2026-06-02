@@ -1509,6 +1509,37 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     }
   }
 
+  // BIZZ-1864: AI-verificerede ejendomme fra ejerforening_verifications.
+  // Hvis brugere har verificeret at en ejerforening administrerer en BFE,
+  // vis den som administreret+aiVerified uden at re-køre AI.
+  const aiVerifiedByBfe = new Set<number>();
+  if (cvrNumre.length > 0) {
+    try {
+      const admin = createAdminClient();
+      const cvrStrings = cvrNumre.map((c) => String(c));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: verifiedRows } = await (admin as any)
+        .from('ejerforening_verifications')
+        .select('bfe_nummer, candidate_cvr')
+        .in('candidate_cvr', cvrStrings)
+        .eq('verdict', 'verified')
+        .limit(200);
+
+      if (verifiedRows && verifiedRows.length > 0) {
+        for (const row of verifiedRows as Array<{ bfe_nummer: number; candidate_cvr: string }>) {
+          aiVerifiedByBfe.add(row.bfe_nummer);
+          if (!bfeTilCvr.has(row.bfe_nummer)) {
+            bfeTilCvr.set(row.bfe_nummer, row.candidate_cvr.padStart(8, '0'));
+            administreretByBfe.add(row.bfe_nummer);
+            aktivByBfe.set(row.bfe_nummer, true);
+          }
+        }
+      }
+    } catch {
+      /* AI-verified lookup non-fatal */
+    }
+  }
+
   try {
     const alleBfe = [...bfeTilCvr.keys()];
     const totalBfe = alleBfe.length;
@@ -1546,6 +1577,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       ...adresseData[idx],
       ejerandel: bfeTilEjerandel.get(bfe) ?? null,
       administreret: administreretByBfe.has(bfe),
+      aiVerified: aiVerifiedByBfe.has(bfe) || undefined,
       aktiv: aktivByBfe.get(bfe) ?? true,
       solgtDato: solgtDatoByBfe.get(bfe) ?? null,
       ownerBuyDate: ownerBuyDateByBfe.get(bfe) ?? null,

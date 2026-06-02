@@ -525,7 +525,7 @@ export default function OnboardingClient() {
         </div>
         <div>
           <h2 className="text-lg font-bold text-white">{da ? 'Din virksomhed' : 'Your company'}</h2>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-slate-400">
             {da
               ? 'Hjælper os med at tilpasse din oplevelse'
               : 'Helps us personalise your experience'}
@@ -559,7 +559,7 @@ export default function OnboardingClient() {
             {loadingCvr && (
               <Loader2
                 size={15}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 animate-spin"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 animate-spin"
               />
             )}
           </div>
@@ -574,7 +574,7 @@ export default function OnboardingClient() {
                   className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-left hover:bg-slate-700/50 transition-colors"
                 >
                   <span className="text-white font-medium truncate">{s.name}</span>
-                  <span className="text-slate-500 text-xs ml-2 shrink-0">CVR {s.cvr}</span>
+                  <span className="text-slate-400 text-xs ml-2 shrink-0">CVR {s.cvr}</span>
                 </button>
               ))}
             </div>
@@ -602,7 +602,7 @@ export default function OnboardingClient() {
               onChange={(e) => setIndustry(e.target.value)}
               className="w-full appearance-none bg-slate-800/60 border border-slate-700/60 text-sm rounded-xl px-4 py-2.5 pr-9 focus:outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/30 transition-colors text-white"
             >
-              <option value="" className="text-slate-500 bg-[#1e293b]">
+              <option value="" className="text-slate-400 bg-[#1e293b]">
                 {da ? 'Vælg branche…' : 'Select industry…'}
               </option>
               {INDUSTRY_OPTIONS.map((opt) => (
@@ -613,7 +613,7 @@ export default function OnboardingClient() {
             </select>
             <ChevronDown
               size={15}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
             />
           </div>
         </div>
@@ -633,7 +633,7 @@ export default function OnboardingClient() {
               onChange={(e) => setHeadcount(e.target.value)}
               className="w-full appearance-none bg-slate-800/60 border border-slate-700/60 text-sm rounded-xl px-4 py-2.5 pr-9 focus:outline-none focus:border-blue-500/70 focus:ring-1 focus:ring-blue-500/30 transition-colors text-white"
             >
-              <option value="" className="text-slate-500 bg-[#1e293b]">
+              <option value="" className="text-slate-400 bg-[#1e293b]">
                 {da ? 'Vælg størrelse…' : 'Select size…'}
               </option>
               {HEADCOUNT_OPTIONS.map((opt) => (
@@ -644,7 +644,7 @@ export default function OnboardingClient() {
             </select>
             <ChevronDown
               size={15}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
             />
           </div>
         </div>
@@ -682,7 +682,7 @@ export default function OnboardingClient() {
           <h2 className="text-lg font-bold text-white mb-1">
             {da ? 'Vælg en plan' : 'Choose a plan'}
           </h2>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-slate-400">
             {da
               ? 'Du kan opgradere eller skifte plan når som helst'
               : 'You can upgrade or change plan at any time'}
@@ -698,7 +698,7 @@ export default function OnboardingClient() {
         )}
 
         {plansLoading ? (
-          <div className="flex items-center justify-center gap-2 text-slate-500 py-10">
+          <div className="flex items-center justify-center gap-2 text-slate-400 py-10">
             <Loader2 size={16} className="animate-spin" />
             <span className="text-xs">{da ? 'Henter planer…' : 'Loading plans…'}</span>
           </div>
@@ -741,13 +741,13 @@ export default function OnboardingClient() {
                         <span className="text-sm font-bold text-white">
                           {plan.priceDkk === 0 ? (da ? 'Gratis' : 'Free') : `${plan.priceDkk} kr`}
                           {plan.priceDkk > 0 && (
-                            <span className="text-slate-500 text-xs font-normal">/md</span>
+                            <span className="text-slate-400 text-xs font-normal">/md</span>
                           )}
                         </span>
                       </div>
 
                       {/* Short description */}
-                      <p className="text-xs text-slate-500 mt-0.5">
+                      <p className="text-xs text-slate-400 mt-0.5">
                         {da ? plan.descDa : plan.descEn}
                       </p>
 
@@ -787,7 +787,7 @@ export default function OnboardingClient() {
 
                       {/* Requires approval badge */}
                       {plan.requiresApproval && (
-                        <span className="inline-flex items-center gap-1 text-[10px] text-slate-500">
+                        <span className="inline-flex items-center gap-1 text-[10px] text-slate-400">
                           <Clock size={9} />
                           {da ? 'Godkendelse' : 'Approval'}
                         </span>
@@ -861,7 +861,7 @@ export default function OnboardingClient() {
             <p className="text-sm font-semibold text-white group-hover:text-blue-300 transition-colors">
               {da ? 'Søg en ejendom' : 'Search a property'}
             </p>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-slate-400">
               {da
                 ? 'Find BBR-data, vurdering, ejerskab m.m.'
                 : 'Find BBR data, valuation, ownership etc.'}
@@ -869,7 +869,7 @@ export default function OnboardingClient() {
           </div>
           <ArrowRight
             size={15}
-            className="ml-auto text-slate-600 group-hover:text-slate-400 transition-colors shrink-0"
+            className="ml-auto text-slate-400 group-hover:text-slate-400 transition-colors shrink-0"
           />
         </Link>
 
@@ -884,13 +884,13 @@ export default function OnboardingClient() {
             <p className="text-sm font-semibold text-white group-hover:text-emerald-300 transition-colors">
               {da ? 'Søg en virksomhed' : 'Search a company'}
             </p>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-slate-400">
               {da ? 'CVR-data, regnskaber, ejere og mere' : 'CVR data, financials, owners and more'}
             </p>
           </div>
           <ArrowRight
             size={15}
-            className="ml-auto text-slate-600 group-hover:text-slate-400 transition-colors shrink-0"
+            className="ml-auto text-slate-400 group-hover:text-slate-400 transition-colors shrink-0"
           />
         </Link>
 
@@ -905,7 +905,7 @@ export default function OnboardingClient() {
             <p className="text-sm font-semibold text-white group-hover:text-purple-300 transition-colors">
               {da ? 'Prøv AI-assistenten' : 'Try the AI assistant'}
             </p>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-slate-400">
               {da
                 ? 'Stil spørgsmål om ejendomme og virksomheder'
                 : 'Ask questions about properties and companies'}
@@ -913,7 +913,7 @@ export default function OnboardingClient() {
           </div>
           <ArrowRight
             size={15}
-            className="ml-auto text-slate-600 group-hover:text-slate-400 transition-colors shrink-0"
+            className="ml-auto text-slate-400 group-hover:text-slate-400 transition-colors shrink-0"
           />
         </Link>
       </div>
@@ -988,7 +988,7 @@ export default function OnboardingClient() {
                 .catch(() => {});
               router.replace('/dashboard');
             }}
-            className="text-xs text-slate-600 hover:text-slate-400 transition-colors"
+            className="text-xs text-slate-400 hover:text-slate-400 transition-colors"
           >
             {da ? 'Spring over — gå direkte til dashboard' : 'Skip — go directly to dashboard'}
           </button>

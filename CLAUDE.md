@@ -37,6 +37,7 @@ Incident response: `docs/security/INCIDENT_RESPONSE.md`
 - Bilingual: all strings in `app/lib/translations.ts`
 - Components must be mobile-ready (future React Native port)
 - No hardcoded tenant references in UI components
+- **Minimum text contrast (WCAG AA — non-negotiable, BIZZ-1943):** On the dark theme, informative text MUST be at least `text-slate-400` (#94a3b8 → 4.6:1). Never use `text-slate-500`/`600`/`700` for text meant to be read — they fail AA (3.0:1 / 2.1:1 / 1.5:1). `text-slate-500` is allowed ONLY via `placeholder:`/`disabled:` variants or on `cursor-not-allowed` (disabled) elements. Primary text: `text-white`/`text-slate-100`; secondary: `text-slate-300`; tertiary/muted: `text-slate-400` (absolute floor).
 
 ### Code Quality
 
@@ -158,6 +159,14 @@ Full process: `docs/agents/RELEASE_PROCESS.md`
 - New React components MUST have component tests
 - New Stripe webhook event types MUST have integration tests
 - Run `npm run test:coverage` to verify before committing
+
+### Visual Verification Before Done (non-negotiable)
+
+1. Before transitioning a ticket to In Review, the code agent MUST run a Playwright test against `test.bizzassist.dk` that confirms the specific acceptance criteria visually
+2. Visual verification = screenshot + assertion: navigate to the specific URL in the ticket test-case, take a screenshot, assert that the expected change is visible
+3. If the fix cannot be verified visually (e.g., infrastructure fix), explicitly document the reason in a JIRA comment with curl output, SQL result, or similar artifact
+4. If the fix requires a prod deploy to take effect (code merged to main + Vercel deploy complete), the agent must explicitly wait for deploy status and verify prod AFTER deploy, not before
+5. The visual verification artifact (screenshot path + Playwright test output) must be included in the JIRA comment when transitioning the ticket to In Review
 
 ## Agent Roles
 

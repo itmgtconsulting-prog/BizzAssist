@@ -291,7 +291,7 @@ export default function OpsDashboardClient() {
         </div>
 
         {/* Footer legend */}
-        <div className="flex flex-wrap gap-4 mt-6 text-xs text-slate-500">
+        <div className="flex flex-wrap gap-4 mt-6 text-xs text-slate-400">
           <span className="flex items-center gap-1.5">
             <CheckCircle2 size={12} className="text-emerald-400" /> {da ? 'OK' : 'OK'}
           </span>
@@ -333,7 +333,7 @@ function OpsTile({ href, icon, title, description, hint, status, statusLabel }: 
       : status === 'warning'
         ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
         : status === 'loading'
-          ? 'bg-slate-700/20 border-slate-600/30 text-slate-500 animate-pulse'
+          ? 'bg-slate-700/20 border-slate-600/30 text-slate-400 animate-pulse'
           : 'bg-slate-700/20 border-slate-600/30 text-slate-400';
 
   return (
@@ -350,7 +350,7 @@ function OpsTile({ href, icon, title, description, hint, status, statusLabel }: 
             <h3 className="text-white font-semibold text-sm leading-tight group-hover:text-blue-300 transition-colors">
               {title}
             </h3>
-            <p className="text-slate-500 text-xs mt-0.5">{description}</p>
+            <p className="text-slate-400 text-xs mt-0.5">{description}</p>
           </div>
         </div>
       </div>

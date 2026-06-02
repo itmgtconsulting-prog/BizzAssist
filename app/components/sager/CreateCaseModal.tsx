@@ -209,7 +209,7 @@ export default function CreateCaseModal({ initialEntity, onClose }: Props) {
           <div className="p-5 space-y-4">
             {/* Domain picker / read-only display */}
             {loadingMemberships ? (
-              <div className="text-xs text-slate-500 flex items-center gap-2">
+              <div className="text-xs text-slate-400 flex items-center gap-2">
                 <Loader2 size={12} className="animate-spin" />
                 {da ? 'Henter domains…' : 'Loading domains…'}
               </div>
@@ -221,12 +221,12 @@ export default function CreateCaseModal({ initialEntity, onClose }: Props) {
               </div>
             ) : memberships.length === 1 ? (
               <div>
-                <span className="text-[10px] uppercase tracking-wide text-slate-500">Domain</span>
+                <span className="text-[10px] uppercase tracking-wide text-slate-400">Domain</span>
                 <p className="mt-0.5 text-sm text-white">{memberships[0].name}</p>
               </div>
             ) : (
               <label className="block">
-                <span className="text-[10px] uppercase tracking-wide text-slate-500">Domain</span>
+                <span className="text-[10px] uppercase tracking-wide text-slate-400">Domain</span>
                 <select
                   value={selectedDomainId}
                   onChange={(e) => setSelectedDomainId(e.target.value)}
@@ -246,7 +246,7 @@ export default function CreateCaseModal({ initialEntity, onClose }: Props) {
             {/* Pre-populated entity */}
             {entityChip && (
               <div>
-                <span className="text-[10px] uppercase tracking-wide text-slate-500">
+                <span className="text-[10px] uppercase tracking-wide text-slate-400">
                   {da ? 'Kunde (pre-populeret)' : 'Customer (pre-populated)'}
                 </span>
                 <div className="mt-0.5">{entityChip}</div>
@@ -262,7 +262,7 @@ export default function CreateCaseModal({ initialEntity, onClose }: Props) {
 
             {/* Name (required) */}
             <label className="block">
-              <span className="text-[10px] uppercase tracking-wide text-slate-500">
+              <span className="text-[10px] uppercase tracking-wide text-slate-400">
                 {da ? 'Sagsnavn' : 'Case name'} *
               </span>
               <input
@@ -279,7 +279,7 @@ export default function CreateCaseModal({ initialEntity, onClose }: Props) {
 
             {/* Client ref (optional) */}
             <label className="block">
-              <span className="text-[10px] uppercase tracking-wide text-slate-500">
+              <span className="text-[10px] uppercase tracking-wide text-slate-400">
                 {da ? 'Klient-reference (valgfri)' : 'Client reference (optional)'}
               </span>
               <input
@@ -294,9 +294,9 @@ export default function CreateCaseModal({ initialEntity, onClose }: Props) {
                 preview på sagskort i listen. Textarea for plads til 2-3
                 linjer, counter viser tegn-antal. */}
             <label className="block">
-              <span className="text-[10px] uppercase tracking-wide text-slate-500 flex items-center justify-between">
+              <span className="text-[10px] uppercase tracking-wide text-slate-400 flex items-center justify-between">
                 <span>{da ? 'Kort beskrivelse (valgfri)' : 'Short description (optional)'}</span>
-                <span className="text-slate-600 tabular-nums">{shortDescription.length}/200</span>
+                <span className="text-slate-400 tabular-nums">{shortDescription.length}/200</span>
               </span>
               <textarea
                 value={shortDescription}
@@ -313,7 +313,7 @@ export default function CreateCaseModal({ initialEntity, onClose }: Props) {
             </label>
 
             {/* Iter 2 note */}
-            <p className="text-[10px] text-slate-600 italic">
+            <p className="text-[10px] text-slate-400 italic">
               {da
                 ? 'Status, tags, noter og multi-entity-kobling kommer i iter 2 (BIZZ-808b).'
                 : 'Status, tags, notes and multi-entity linking come in iter 2 (BIZZ-808b).'}

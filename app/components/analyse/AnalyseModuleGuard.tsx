@@ -35,7 +35,7 @@ export default function AnalyseModuleGuard({ moduleId, children }: Props) {
       <div className="flex-1 flex items-center justify-center p-8">
         <div className="text-center">
           <p className="text-slate-400 text-lg font-medium">Modul ikke tilgængeligt</p>
-          <p className="text-slate-600 text-sm mt-2">
+          <p className="text-slate-400 text-sm mt-2">
             Dette analyse-modul er ikke aktiveret i det nuværende miljø.
           </p>
         </div>

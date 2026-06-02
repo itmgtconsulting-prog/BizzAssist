@@ -129,7 +129,7 @@ export default function VirksomhedGruppeTab({
                 <div className="flex items-center gap-2 mb-3">
                   <Building2
                     size={15}
-                    className="text-slate-500 group-hover:text-blue-400 shrink-0 transition-colors"
+                    className="text-slate-400 group-hover:text-blue-400 shrink-0 transition-colors"
                   />
                   <span className="text-white text-sm font-semibold truncate group-hover:text-blue-300 transition-colors">
                     {rel.navn}
@@ -150,7 +150,7 @@ export default function VirksomhedGruppeTab({
                   )}
                   <ExternalLink
                     size={12}
-                    className="ml-auto text-slate-600 group-hover:text-blue-400 shrink-0 transition-colors"
+                    className="ml-auto text-slate-400 group-hover:text-blue-400 shrink-0 transition-colors"
                   />
                 </div>
 
@@ -158,7 +158,7 @@ export default function VirksomhedGruppeTab({
                 <div className="flex items-stretch gap-0 rounded-lg bg-[#0a1020]/60 border border-slate-700/30">
                   {/* Sektion 1: Stamdata */}
                   <div className="flex-[3] min-w-0 px-3.5 py-2.5">
-                    <div className="text-[10px] text-slate-500/80 font-medium uppercase tracking-wider mb-1.5">
+                    <div className="text-[10px] text-slate-400/80 font-medium uppercase tracking-wider mb-1.5">
                       Stamdata
                     </div>
                     <div className="text-xs text-slate-300">
@@ -170,7 +170,7 @@ export default function VirksomhedGruppeTab({
                       </div>
                     )}
                     {rel.adresse && (
-                      <div className="text-[11px] text-slate-500 truncate mt-0.5">
+                      <div className="text-[11px] text-slate-400 truncate mt-0.5">
                         {rel.adresse}
                         {rel.postnr ? `, ${rel.postnr}` : ''}
                         {rel.by ? ` ${rel.by}` : ''}
@@ -188,24 +188,24 @@ export default function VirksomhedGruppeTab({
 
                   {/* Sektion 2: Organisation */}
                   <div className="flex-[2] min-w-0 px-3.5 py-2.5">
-                    <div className="text-[10px] text-slate-500/80 font-medium uppercase tracking-wider mb-1.5">
+                    <div className="text-[10px] text-slate-400/80 font-medium uppercase tracking-wider mb-1.5">
                       Organisation
                     </div>
                     <div className="space-y-1">
                       <div className="flex justify-between text-[11px]">
-                        <span className="text-slate-500">Ansatte</span>
+                        <span className="text-slate-400">Ansatte</span>
                         <span className="text-slate-300 font-medium tabular-nums">
                           {rel.ansatte ?? '–'}
                         </span>
                       </div>
                       <div className="flex justify-between text-[11px]">
-                        <span className="text-slate-500">P-enheder</span>
+                        <span className="text-slate-400">P-enheder</span>
                         <span className="text-slate-300 font-medium tabular-nums">
                           {rel.antalPenheder}
                         </span>
                       </div>
                       <div className="flex justify-between text-[11px]">
-                        <span className="text-slate-500">Datterselskaber</span>
+                        <span className="text-slate-400">Datterselskaber</span>
                         <span className="text-slate-300 font-medium tabular-nums">
                           {rel.antalDatterselskaber}
                         </span>
@@ -218,7 +218,7 @@ export default function VirksomhedGruppeTab({
 
                   {/* Sektion 3: Regnskab */}
                   <div className="flex-[2] min-w-0 px-3.5 py-2.5">
-                    <div className="text-[10px] text-slate-500/80 font-medium uppercase tracking-wider mb-1.5">
+                    <div className="text-[10px] text-slate-400/80 font-medium uppercase tracking-wider mb-1.5">
                       Regnskab
                       {gruppeFinansLoading && !fin && (
                         <Loader2 size={8} className="inline ml-1 animate-spin" />
@@ -226,23 +226,23 @@ export default function VirksomhedGruppeTab({
                     </div>
                     <div className="space-y-1">
                       <div className="flex justify-between text-[11px]">
-                        <span className="text-slate-500">Brutto</span>
+                        <span className="text-slate-400">Brutto</span>
                         <span
-                          className={`font-medium tabular-nums ${fin?.brutto != null ? (fin.brutto >= 0 ? 'text-emerald-400' : 'text-red-400') : 'text-slate-500'}`}
+                          className={`font-medium tabular-nums ${fin?.brutto != null ? (fin.brutto >= 0 ? 'text-emerald-400' : 'text-red-400') : 'text-slate-400'}`}
                         >
                           {fin ? fmtKr(fin.brutto) : '–'}
                         </span>
                       </div>
                       <div className="flex justify-between text-[11px]">
-                        <span className="text-slate-500">Balance</span>
+                        <span className="text-slate-400">Balance</span>
                         <span className="font-medium tabular-nums text-slate-300">
                           {fin ? fmtKr(fin.balance) : '–'}
                         </span>
                       </div>
                       <div className="flex justify-between text-[11px]">
-                        <span className="text-slate-500">Egenkapital</span>
+                        <span className="text-slate-400">Egenkapital</span>
                         <span
-                          className={`font-medium tabular-nums ${fin?.egenkapital != null ? (fin.egenkapital >= 0 ? 'text-emerald-400' : 'text-red-400') : 'text-slate-500'}`}
+                          className={`font-medium tabular-nums ${fin?.egenkapital != null ? (fin.egenkapital >= 0 ? 'text-emerald-400' : 'text-red-400') : 'text-slate-400'}`}
                         >
                           {fin ? fmtKr(fin.egenkapital) : '–'}
                         </span>
@@ -337,7 +337,7 @@ export default function VirksomhedGruppeTab({
                             <div className="flex items-center gap-2">
                               <Building2
                                 size={15}
-                                className="text-slate-500 group-hover:text-blue-400 shrink-0 transition-colors"
+                                className="text-slate-400 group-hover:text-blue-400 shrink-0 transition-colors"
                               />
                               <span className="text-white text-sm font-semibold truncate group-hover:text-blue-300 transition-colors">
                                 {pc.navn}
@@ -352,7 +352,7 @@ export default function VirksomhedGruppeTab({
                               </span>
                               <Loader2
                                 size={12}
-                                className="ml-auto text-slate-500 animate-spin shrink-0"
+                                className="ml-auto text-slate-400 animate-spin shrink-0"
                               />
                             </div>
                           </button>
@@ -402,7 +402,7 @@ export default function VirksomhedGruppeTab({
                     <div className="flex items-stretch gap-0 rounded-lg bg-[#0a1020]/60 border border-blue-500/20">
                       {/* Sektion 1: Stamdata */}
                       <div className="flex-[3] min-w-0 px-3.5 py-2.5">
-                        <div className="text-[10px] text-slate-500/80 font-medium uppercase tracking-wider mb-1.5">
+                        <div className="text-[10px] text-slate-400/80 font-medium uppercase tracking-wider mb-1.5">
                           Stamdata
                         </div>
                         <div className="text-xs text-slate-300">
@@ -414,7 +414,7 @@ export default function VirksomhedGruppeTab({
                           </div>
                         )}
                         {data.address && (
-                          <div className="text-[11px] text-slate-500 truncate mt-0.5">
+                          <div className="text-[11px] text-slate-400 truncate mt-0.5">
                             {data.address}, {data.zipcode} {data.city}
                           </div>
                         )}
@@ -430,24 +430,24 @@ export default function VirksomhedGruppeTab({
 
                       {/* Sektion 2: Organisation */}
                       <div className="flex-[2] min-w-0 px-3.5 py-2.5">
-                        <div className="text-[10px] text-slate-500/80 font-medium uppercase tracking-wider mb-1.5">
+                        <div className="text-[10px] text-slate-400/80 font-medium uppercase tracking-wider mb-1.5">
                           Organisation
                         </div>
                         <div className="space-y-1">
                           <div className="flex justify-between text-[11px]">
-                            <span className="text-slate-500">Ansatte</span>
+                            <span className="text-slate-400">Ansatte</span>
                             <span className="text-slate-300 font-medium tabular-nums">
                               {data.employees ?? '–'}
                             </span>
                           </div>
                           <div className="flex justify-between text-[11px]">
-                            <span className="text-slate-500">P-enheder</span>
+                            <span className="text-slate-400">P-enheder</span>
                             <span className="text-slate-300 font-medium tabular-nums">
                               {selPenheder}
                             </span>
                           </div>
                           <div className="flex justify-between text-[11px]">
-                            <span className="text-slate-500">Datterselskaber</span>
+                            <span className="text-slate-400">Datterselskaber</span>
                             <span className="text-slate-300 font-medium tabular-nums">
                               {aktive.length}
                             </span>
@@ -460,7 +460,7 @@ export default function VirksomhedGruppeTab({
 
                       {/* Sektion 3: Regnskab */}
                       <div className="flex-[2] min-w-0 px-3.5 py-2.5">
-                        <div className="text-[10px] text-slate-500/80 font-medium uppercase tracking-wider mb-1.5">
+                        <div className="text-[10px] text-slate-400/80 font-medium uppercase tracking-wider mb-1.5">
                           Regnskab
                           {!selFin && xbrlLoading && (
                             <Loader2 size={8} className="inline ml-1 animate-spin" />
@@ -468,23 +468,23 @@ export default function VirksomhedGruppeTab({
                         </div>
                         <div className="space-y-1">
                           <div className="flex justify-between text-[11px]">
-                            <span className="text-slate-500">Brutto</span>
+                            <span className="text-slate-400">Brutto</span>
                             <span
-                              className={`font-medium tabular-nums ${selFin?.brutto != null ? (selFin.brutto >= 0 ? 'text-emerald-400' : 'text-red-400') : 'text-slate-500'}`}
+                              className={`font-medium tabular-nums ${selFin?.brutto != null ? (selFin.brutto >= 0 ? 'text-emerald-400' : 'text-red-400') : 'text-slate-400'}`}
                             >
                               {selFin ? fmtKr(selFin.brutto) : '–'}
                             </span>
                           </div>
                           <div className="flex justify-between text-[11px]">
-                            <span className="text-slate-500">Balance</span>
+                            <span className="text-slate-400">Balance</span>
                             <span className="font-medium tabular-nums text-slate-300">
                               {selFin ? fmtKr(selFin.balance) : '–'}
                             </span>
                           </div>
                           <div className="flex justify-between text-[11px]">
-                            <span className="text-slate-500">Egenkapital</span>
+                            <span className="text-slate-400">Egenkapital</span>
                             <span
-                              className={`font-medium tabular-nums ${selFin?.egenkapital != null ? (selFin.egenkapital >= 0 ? 'text-emerald-400' : 'text-red-400') : 'text-slate-500'}`}
+                              className={`font-medium tabular-nums ${selFin?.egenkapital != null ? (selFin.egenkapital >= 0 ? 'text-emerald-400' : 'text-red-400') : 'text-slate-400'}`}
                             >
                               {selFin ? fmtKr(selFin.egenkapital) : '–'}
                             </span>
@@ -555,7 +555,7 @@ export default function VirksomhedGruppeTab({
                   >
                     <ChevronDown
                       size={14}
-                      className={`text-slate-500 group-hover:text-slate-400 transition-all duration-200 shrink-0 ${visHistorik ? '' : '-rotate-90'}`}
+                      className={`text-slate-400 group-hover:text-slate-400 transition-all duration-200 shrink-0 ${visHistorik ? '' : '-rotate-90'}`}
                     />
                     <span className="text-sm text-slate-400 group-hover:text-slate-300 font-medium transition-colors whitespace-nowrap">
                       {lang === 'da'
@@ -575,8 +575,8 @@ export default function VirksomhedGruppeTab({
               {/* No related companies */}
               {aktive.length === 0 && historiske.length === 0 && (
                 <div className="text-center py-8">
-                  <Building2 size={32} className="mx-auto text-slate-600 mb-2" />
-                  <p className="text-slate-500 text-sm">{c.noCompanies}</p>
+                  <Building2 size={32} className="mx-auto text-slate-400 mb-2" />
+                  <p className="text-slate-400 text-sm">{c.noCompanies}</p>
                 </div>
               )}
             </>

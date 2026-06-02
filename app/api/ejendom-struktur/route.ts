@@ -847,6 +847,72 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
       }
     }
 
+    // BIZZ-1901: Supplér med DAWA-adgangsadresser der ikke er i TL-resultatet.
+    // Carlsberg Byen har hovedejendomme (fx J.C. Jacobsens Gade) der ikke
+    // returneres fra TL matrikel-søgning men har adgangsadresser i DAWA.
+    logger.log(
+      `[ejendom-struktur] DAWA supplement check: ejerlav=${ejerlavKode} matr=${matrikelnr} children=${root.children.length}`
+    );
+    if (ejerlavKode && matrikelnr && root.children.length > 0) {
+      try {
+        // BIZZ-1901: Plain fetch — fetchDawa wrapper kan have ISR-issues
+        const dawaRes = await fetch(
+          `https://api.dataforsyningen.dk/adgangsadresser?ejerlavkode=${ejerlavKode}&matrikelnr=${encodeURIComponent(matrikelnr)}&per_side=30&format=json&struktur=mini`,
+          { signal: AbortSignal.timeout(5000), next: { revalidate: 3600 } }
+        );
+        logger.log(`[ejendom-struktur] DAWA supplement: ${dawaRes.status}`);
+        if (dawaRes.ok) {
+          const dawaAdresser = (await dawaRes.json()) as Array<{
+            id: string;
+            vejnavn: string;
+            husnr: string;
+            postnr: string;
+            postnrnavn: string;
+          }>;
+          // Find adresser der ikke matcher eksisterende hovedejendomme
+          const existingHusnrs = new Set(
+            root.children.map((c) => {
+              const parts = c.adresse.split(',')[0].trim().toLowerCase();
+              return parts;
+            })
+          );
+          for (const adg of dawaAdresser) {
+            const adgKey = `${adg.vejnavn} ${adg.husnr}`.toLowerCase();
+            const alreadyExists = [...existingHusnrs].some(
+              (h) => h.includes(adgKey) || adgKey.includes(h)
+            );
+            if (!alreadyExists) {
+              root.children.push({
+                bfe: 0,
+                adresse: `${adg.vejnavn} ${adg.husnr}, ${adg.postnr} ${adg.postnrnavn}`,
+                niveau: 'hovedejendom',
+                dawaId: adg.id,
+                ejendomsvaerdi: null,
+                grundvaerdi: null,
+                vurderingsaar: null,
+                tlVurdering: null,
+                areal: null,
+                vaerelser: null,
+                ejer: null,
+                ejertype: null,
+                koebspris: null,
+                koebsdato: null,
+                children: [],
+              });
+              existingHusnrs.add(adgKey);
+            }
+          }
+        }
+      } catch (supplementErr) {
+        logger.warn(
+          '[ejendom-struktur] DAWA supplement fejlede:',
+          supplementErr instanceof Error ? supplementErr.message : String(supplementErr)
+        );
+      }
+    }
+
+    logger.log(`[ejendom-struktur] Final tree: ${root.children.length} children`);
+
     return NextResponse.json(
       { tree: root, fejl: null },
       {

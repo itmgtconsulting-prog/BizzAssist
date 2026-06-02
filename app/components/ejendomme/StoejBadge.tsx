@@ -69,7 +69,7 @@ export default function StoejBadge({ lat, lng, lang }: Props) {
       <Volume2 size={12} />
       {labels[level]} ({maxDb} dB)
       {data.vejstoejLdenDb != null && data.togstoejLdenDb != null && (
-        <span className="text-slate-500 ml-1">
+        <span className="text-slate-400 ml-1">
           {da ? 'vej' : 'road'}: {data.vejstoejLdenDb}dB, {da ? 'tog' : 'rail'}:{' '}
           {data.togstoejLdenDb}dB
         </span>

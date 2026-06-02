@@ -19,7 +19,7 @@ import {
   runPortfolioChecks,
 } from '@/app/lib/forsikring/gapEngine';
 import type { PortfolioCheckInput } from '@/app/lib/forsikring/gapEngine';
-import { gapScope } from '@/app/lib/forsikring/types';
+import { gapScope, shouldFoldOwnerIntoCompany } from '@/app/lib/forsikring/types';
 import type {
   BbrPropertyFacts,
   ForsikringCoverage,
@@ -1264,5 +1264,31 @@ describe('gapScope — hierarki-niveau pr. check_id', () => {
     for (const g of gaps) {
       expect(g.scope).toBe(gapScope(g.check_id));
     }
+  });
+});
+
+describe('shouldFoldOwnerIntoCompany — BIZZ-1972 fold-beslutning', () => {
+  it('folder ind når forsikringssejeren ER den eneste virksomhed (samme CVR)', () => {
+    expect(shouldFoldOwnerIntoCompany('virksomhed', '24301117', ['24301117'])).toBe(true);
+  });
+
+  it('folder IKKE når der er 2+ virksomheder (holding-case)', () => {
+    expect(shouldFoldOwnerIntoCompany('virksomhed', '24301117', ['24301117', '99999999'])).toBe(
+      false
+    );
+  });
+
+  it('folder IKKE når den eneste virksomhed har et andet CVR end sejeren', () => {
+    expect(shouldFoldOwnerIntoCompany('virksomhed', '24301117', ['11112222'])).toBe(false);
+  });
+
+  it('folder IKKE for en person-sejer', () => {
+    expect(shouldFoldOwnerIntoCompany('person', '0101801234', ['24301117'])).toBe(false);
+  });
+
+  it('folder IKKE når kunde_id mangler eller porteføljen er tom', () => {
+    expect(shouldFoldOwnerIntoCompany('virksomhed', undefined, ['24301117'])).toBe(false);
+    expect(shouldFoldOwnerIntoCompany('virksomhed', '24301117', [])).toBe(false);
+    expect(shouldFoldOwnerIntoCompany(undefined, '24301117', ['24301117'])).toBe(false);
   });
 });

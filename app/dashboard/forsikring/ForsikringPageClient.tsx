@@ -43,7 +43,7 @@ import { useLanguage } from '@/app/context/LanguageContext';
 import { useSubscription } from '@/app/context/SubscriptionContext';
 import { translations } from '@/app/lib/translations';
 import TokenUsageBar from '@/app/components/TokenUsageBar';
-import { gapScope } from '@/app/lib/forsikring/types';
+import { gapScope, shouldFoldOwnerIntoCompany } from '@/app/lib/forsikring/types';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -145,6 +145,14 @@ interface AnalyseDetail {
     insured_count: number;
     uninsured_count: number;
     total_risk_score: number;
+    /**
+     * BIZZ-1972: Kunde-type/-id for forsikringssejeren. For en virksomheds-
+     * kunde er `kunde_id` selve forsikringssejerens CVR — bruges til at folde
+     * forsikringsejer-niveau-findings ind under virksomheden når sejeren ER
+     * den eneste virksomhed i porteføljen (samme entitet).
+     */
+    kunde_type?: string;
+    kunde_id?: string;
   };
   aktiver: AnalyseAktiv[];
   gaps: AnalyseGap[];
@@ -245,8 +253,19 @@ function GapList({ gaps, da }: { gaps: AnalyseGap[]; da: boolean }) {
  *
  * @param props.group - Property group med aktiv, police og gaps
  * @param props.da - Dansk sprogflag
+ * @param props.foldedNote - BIZZ-1972: når true folder denne virksomheds-række
+ *   forsikringsejer-/virksomheds-niveau-findings ind (sejeren ER den eneste
+ *   virksomhed). Viser et samlet findings-badge + en info-label i collapse.
  */
-function PropertyRow({ group, da }: { group: PropertyGroup; da: boolean }) {
+function PropertyRow({
+  group,
+  da,
+  foldedNote = false,
+}: {
+  group: PropertyGroup;
+  da: boolean;
+  foldedNote?: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
   const isInsured = group.aktiv.matched_policy_id !== null;
   const gapCritical = group.gaps.filter((g) => g.severity === 'critical').length;
@@ -305,20 +324,36 @@ function PropertyRow({ group, da }: { group: PropertyGroup; da: boolean }) {
         )}
 
         {/* Gap badges */}
-        {(gapCritical > 0 || gapWarning > 0) && (
-          <div className="flex items-center gap-1 shrink-0">
-            {gapCritical > 0 && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] bg-red-500/20 text-red-300">
-                {gapCritical}
+        {foldedNote
+          ? // BIZZ-1972: Foldet virksomheds-række viser ÉT samlet findings-badge
+            // (alle severities) — så forsikringsejer-niveau-findings tælles med,
+            // også rene info-findings der ellers ikke vises som rød/gul pille.
+            group.gaps.length > 0 && (
+              <span
+                className="px-1.5 py-0.5 rounded text-[10px] bg-slate-500/25 text-slate-200 shrink-0"
+                title={
+                  da
+                    ? 'Samlet antal findings (inkl. forsikringsejer-niveau)'
+                    : 'Total findings (incl. insurance owner level)'
+                }
+              >
+                {group.gaps.length} {da ? 'findings' : 'findings'}
               </span>
+            )
+          : (gapCritical > 0 || gapWarning > 0) && (
+              <div className="flex items-center gap-1 shrink-0">
+                {gapCritical > 0 && (
+                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-red-500/20 text-red-300">
+                    {gapCritical}
+                  </span>
+                )}
+                {gapWarning > 0 && (
+                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-500/20 text-amber-300">
+                    {gapWarning}
+                  </span>
+                )}
+              </div>
             )}
-            {gapWarning > 0 && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-500/20 text-amber-300">
-                {gapWarning}
-              </span>
-            )}
-          </div>
-        )}
 
         {/* Uforsikret label */}
         {!isInsured && (
@@ -367,6 +402,18 @@ function PropertyRow({ group, da }: { group: PropertyGroup; da: boolean }) {
                   })}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* BIZZ-1972: Info-label når forsikringsejer-niveau er foldet ind */}
+          {foldedNote && group.gaps.length > 0 && (
+            <div className="flex items-start gap-1.5 text-[11px] text-slate-400 bg-white/3 border border-white/8 rounded-lg px-2.5 py-1.5">
+              <Briefcase size={12} className="text-purple-400 shrink-0 mt-0.5" />
+              <span>
+                {da
+                  ? 'Inkluderer findings på forsikringsejer-niveau (samme entitet som virksomheden).'
+                  : 'Includes insurance-owner-level findings (same entity as the company).'}
+              </span>
             </div>
           )}
 
@@ -473,6 +520,17 @@ function UnifiedAnalyseView({
     (g) => g.aktiv.type !== 'virksomhed' && g.aktiv.type !== 'ejendom'
   );
 
+  // BIZZ-1972: Når forsikringssejeren ER den eneste virksomhed i porteføljen
+  // (samme entitet), giver en separat "Forsikringsejer-niveau"-sektion ingen
+  // mening — den dublerer reelt virksomheden. Vi folder så forsikringsejer- og
+  // virksomheds-findings ind under selve virksomheds-rækken. For holding-cases
+  // med 2+ virksomheder under én sejer bevares de separate sektioner.
+  const foldOwnerIntoCompany = shouldFoldOwnerIntoCompany(
+    detail.analyse.kunde_type,
+    detail.analyse.kunde_id,
+    virksomhedGroups.map((v) => v.aktiv.cvr)
+  );
+
   /**
    * Build company-tree: hver virksomhed med sine ejendomme grupperet under.
    * En ejendom matches til en virksomhed via `raw_data.ejer_cvr`.
@@ -510,7 +568,10 @@ function UnifiedAnalyseView({
   // Sortér virksomheder: hovedvirksomheden (flest egne ejendomme) først
   const virksomhedsTraeer: VirksomhedsTree[] = virksomhedGroups
     .map((v) => ({
-      virksomhed: v,
+      // BIZZ-1972: I fold-casen får den eneste virksomhed forsikringsejer- og
+      // virksomheds-findings injiceret i sin egen række (så badge + collapse
+      // afspejler totalen) — i stedet for at vise dem i separate sektioner.
+      virksomhed: foldOwnerIntoCompany ? { ...v, gaps: [...ownerGaps, ...companyGaps] } : v,
       ejendomme: sortProperties(ejendommeByCvr.get(v.aktiv.cvr ?? '') ?? []),
     }))
     .sort((a, b) => b.ejendomme.length - a.ejendomme.length);
@@ -598,8 +659,10 @@ function UnifiedAnalyseView({
       </div>
 
       {/* BIZZ-1941: Forsikringsejer-niveau — generelle findings for hele ejeren.
-          Vises kun her, ikke gentaget under virksomhed/ejendom. */}
-      {ownerGaps.length > 0 && (
+          Vises kun her, ikke gentaget under virksomhed/ejendom.
+          BIZZ-1972: Skjules når forsikringssejeren ER den eneste virksomhed —
+          findings foldes da ind under virksomheds-rækken nedenfor. */}
+      {!foldOwnerIntoCompany && ownerGaps.length > 0 && (
         <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
           <div className="flex items-center gap-2">
             <Briefcase size={14} className="text-purple-400" />
@@ -621,8 +684,9 @@ function UnifiedAnalyseView({
         </div>
       )}
 
-      {/* BIZZ-1941: Virksomheds-niveau — gælder porteføljen/virksomheden, ikke per ejendom. */}
-      {companyGaps.length > 0 && (
+      {/* BIZZ-1941: Virksomheds-niveau — gælder porteføljen/virksomheden, ikke per ejendom.
+          BIZZ-1972: Skjules i fold-casen — findings foldes ind under virksomheds-rækken. */}
+      {!foldOwnerIntoCompany && companyGaps.length > 0 && (
         <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
           <div className="flex items-center gap-2">
             <Building2 size={14} className="text-blue-400" />
@@ -647,7 +711,7 @@ function UnifiedAnalyseView({
         {virksomhedsTraeer.map((tree) => (
           <div key={tree.virksomhed.aktiv.id} className="space-y-2">
             {/* Virksomheds-række (header) */}
-            <PropertyRow group={tree.virksomhed} da={da} />
+            <PropertyRow group={tree.virksomhed} da={da} foldedNote={foldOwnerIntoCompany} />
 
             {/* Ejendomme under denne virksomhed — indrykket */}
             {tree.ejendomme.length > 0 && (
@@ -3043,10 +3107,19 @@ function AnalyseDetailSection({
             .map((v) => ({ v, ejd: (ejdByCvr.get(v.aktiv.cvr ?? '') ?? []).sort(sortGrp) }))
             .sort((a, b) => b.ejd.length - a.ejd.length);
 
+          // BIZZ-1972: Fold forsikringsejer-/virksomheds-findings ind under den
+          // eneste virksomhed når den ER forsikringssejeren (samme entitet).
+          const foldOwnerIntoCompany = shouldFoldOwnerIntoCompany(
+            detail.analyse.kunde_type,
+            detail.analyse.kunde_id,
+            virkGroups.map((v) => v.aktiv.cvr)
+          );
+
           return (
             <>
-              {/* BIZZ-1941: Forsikringsejer-niveau — vises kun her, ikke per ejendom */}
-              {ownerGaps.length > 0 && (
+              {/* BIZZ-1941: Forsikringsejer-niveau — vises kun her, ikke per ejendom.
+                  BIZZ-1972: Skjult i fold-casen (foldet ind under virksomheden). */}
+              {!foldOwnerIntoCompany && ownerGaps.length > 0 && (
                 <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
                   <div className="flex items-center gap-2">
                     <Briefcase size={14} className="text-purple-400" />
@@ -3063,8 +3136,9 @@ function AnalyseDetailSection({
                 </div>
               )}
 
-              {/* BIZZ-1941: Virksomheds-niveau — gælder porteføljen, ikke per ejendom */}
-              {companyGaps.length > 0 && (
+              {/* BIZZ-1941: Virksomheds-niveau — gælder porteføljen, ikke per ejendom.
+                  BIZZ-1972: Skjult i fold-casen (foldet ind under virksomheden). */}
+              {!foldOwnerIntoCompany && companyGaps.length > 0 && (
                 <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
                   <div className="flex items-center gap-2">
                     <Building2 size={14} className="text-blue-400" />
@@ -3081,7 +3155,15 @@ function AnalyseDetailSection({
 
               {trees.map((tree) => (
                 <div key={tree.v.aktiv.id} className="space-y-2">
-                  <PropertyRow group={tree.v} da={da} />
+                  <PropertyRow
+                    group={
+                      foldOwnerIntoCompany
+                        ? { ...tree.v, gaps: [...ownerGaps, ...companyGaps] }
+                        : tree.v
+                    }
+                    da={da}
+                    foldedNote={foldOwnerIntoCompany}
+                  />
                   {tree.ejd.length > 0 && (
                     <div className="ml-6 pl-3 border-l border-white/8 space-y-2">
                       {tree.ejd.map((eg) => (

@@ -160,6 +160,30 @@ export function gapScope(checkId: string): GapScope {
   return 'property';
 }
 
+/**
+ * BIZZ-1972: Afgør om forsikringsejer-/virksomheds-niveau-findings skal foldes
+ * ind under den eneste virksomhed i porteføljen.
+ *
+ * Sand når forsikringssejeren ER den eneste virksomhed (samme CVR-entitet) —
+ * en separat "Forsikringsejer-niveau"-sektion dublerer da reelt virksomheden.
+ * For holding-cases med 2+ virksomheder under én sejer (eller en person-sejer)
+ * bevares de separate sektioner, så findings ikke duplikeres per virksomhed.
+ *
+ * @param kundeType - Forsikringssejerens type ('virksomhed' | 'person' | undefined)
+ * @param kundeId - Forsikringssejerens id; for en virksomhed er dette CVR'et
+ * @param virksomhedCvrs - CVR for hver virksomhed i porteføljen (kan indeholde null)
+ * @returns true hvis sejer-/virksomheds-findings skal foldes ind under virksomheden
+ */
+export function shouldFoldOwnerIntoCompany(
+  kundeType: string | undefined,
+  kundeId: string | undefined | null,
+  virksomhedCvrs: Array<string | null | undefined>
+): boolean {
+  if (kundeType !== 'virksomhed' || !kundeId) return false;
+  if (virksomhedCvrs.length !== 1) return false;
+  return virksomhedCvrs[0] === kundeId;
+}
+
 /** Uploaded PDF-fil */
 export interface ForsikringDocument {
   id: string;

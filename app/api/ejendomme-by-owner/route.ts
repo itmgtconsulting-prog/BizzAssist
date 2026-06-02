@@ -995,7 +995,15 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
   // CVR-lookups bruger ejer_cvr; person-lookups bruger ejer_enheds_nummer
   // (kolonnen er backfillet for 1.5M rækker — se reference_ejf_ingestion_hybrid).
   // Tidligere kommentar om manglende enhedsNummer-kolonne var forkert (BIZZ-1588).
-  const EJF_STALE_MS = 7 * 24 * 60 * 60 * 1000; // 7 dage
+  // BIZZ-1977: 90-dages threshold (var 7) — `sidst_opdateret` på gældende
+  // CVR-ejerskaber er reelt et engangs-backfill-tidsstempel (2026-04-19/04-20),
+  // så ALLE virksomheders ejerskaber er permanent >7d "stale" → cachen blev
+  // sprunget over og live-EJF-fallback returnerede tom liste (virksomheder med
+  // ejendomme viste "Ingen registrerede ejendomme"). Virksomhedsejerskab er
+  // stabilt og verificeres uanset via re-tjek af gældende ejere pr. BFE nedenfor,
+  // så 7-dages-porten var redundant og skadelig. 90 dage matcher person-pathen
+  // (PERSON_STALE_MS, BIZZ-1588).
+  const EJF_STALE_MS = 90 * 24 * 60 * 60 * 1000; // 90 dage
   let cacheFullHit = false;
   const bfeTilCvr = new Map<number, string>();
   const bfeTilEjerandel = new Map<number, string>();

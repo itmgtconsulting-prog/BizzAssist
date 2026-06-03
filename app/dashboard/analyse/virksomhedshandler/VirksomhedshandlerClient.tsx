@@ -1059,23 +1059,8 @@ export default function VirksomhedshandlerClient() {
           <p className="text-slate-400 text-xs">
             {t(`${fmtTotalDa} kandidater fundet`, `${fmtTotalEn} candidates found`)}
           </p>
-          {/* BIZZ-1962: hurtig-toggle — sætter begge status-filtre til kun Aktiv. */}
-          <button
-            type="button"
-            onClick={() => {
-              setVirksomhedStatusFilters(new Set<CvrStatusKode>(['aktiv']));
-              setDeltagerStatusFilters(new Set<CvrStatusKode>(['aktiv']));
-              setOffset(0);
-            }}
-            aria-label={t('Skjul alle ophørte selskaber', 'Hide all ceased companies')}
-            title={t(
-              'Skjuler konkursramte, opløste og fusionerede selskaber (både deltager og virksomhed).',
-              'Hides bankrupt, dissolved and merged companies (both participant and company).'
-            )}
-            className="inline-flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 text-white text-xs px-3 py-1.5 rounded-lg transition-colors"
-          >
-            {t('Skjul alle ophørte', 'Hide all ceased')}
-          </button>
+          {/* BIZZ-1985: "Skjul alle ophørte"-genvejen er fjernet — ophørte selskaber
+              skjules nu via status-filtrene i kolonne-headeren (default = Aktiv). */}
           <button
             onClick={exportCsv}
             disabled={filteredKandidater.length === 0}

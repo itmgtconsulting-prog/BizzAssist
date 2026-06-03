@@ -174,15 +174,21 @@ function formatRegnskab(amount: number | string | null | undefined): string {
   return `${sign}${abs}`;
 }
 
-/** Default-startdato for ændringsdato-filteret: 3 måneder tilbage (ISO YYYY-MM-DD). */
+/** Default-startdato for ændringsdato-filteret: 60 dage tilbage (ISO YYYY-MM-DD). */
 function defaultFromDate(): string {
   const d = new Date();
-  d.setMonth(d.getMonth() - 3);
+  // BIZZ-1984: default-vindue strammet fra 3 mdr. til 60 dage, så radaren som
+  // udgangspunkt kun viser de nyeste ejerskabsændringer.
+  d.setDate(d.getDate() - 60);
   return d.toISOString().slice(0, 10);
 }
 
-/** Default signal-filtre (alle undtagen 'decrease'). */
-const DEFAULT_SIGNALS: SignalType[] = ['entry', 'exit', 'increase'];
+/**
+ * Default signal-filtre (BIZZ-1984): kun exit ("Fratrådt") og decrease
+ * ("Reduceret") — radaren fokuserer som udgangspunkt på exit-/reduktions-
+ * signaler, der typisk indikerer et muligt salg.
+ */
+const DEFAULT_SIGNALS: SignalType[] = ['exit', 'decrease'];
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
@@ -202,7 +208,7 @@ export default function VirksomhedshandlerClient() {
   const [loading, setLoading] = useState(true);
   const [signalFilters, setSignalFilters] = useState<Set<SignalType>>(new Set(DEFAULT_SIGNALS));
   const [signalDropdownOpen, setSignalDropdownOpen] = useState(false);
-  // Default: seneste 3 måneder (baseret på ændringsdato = COALESCE(gyldig_til, gyldig_fra))
+  // Default: seneste 60 dage (baseret på ændringsdato = COALESCE(gyldig_til, gyldig_fra))
   const [fromDate, setFromDate] = useState(defaultFromDate);
   const [toDate, setToDate] = useState('');
   // Indrapporterings-dato (server-side range på sidst_opdateret = per-række
@@ -213,6 +219,19 @@ export default function VirksomhedshandlerClient() {
   const [berigResults, setBerigResults] = useState<Record<string, BerigResult>>({});
   const [berigLoading, setBerigLoading] = useState<Set<string>>(new Set());
   const [bulkLoading, setBulkLoading] = useState(false);
+  // BIZZ-1984: fremdrift + opsummering for "Berig hele siden med AI". Viser hvad
+  // AIen nåede (antal berigede, hvor mange fik et værdi-estimat, confidence-
+  // fordeling, anvendte datakilder og forbehold) i en info-boks efter berigelse.
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
+  const [berigSummary, setBerigSummary] = useState<{
+    antal: number;
+    medVaerdi: number;
+    high: number;
+    medium: number;
+    low: number;
+    kilder: string[];
+    caveats: string[];
+  } | null>(null);
   // BIZZ-1948: AI-forklaring-popup for en beriget kandidat (transaktionsværdi-breakdown).
   const [detailModal, setDetailModal] = useState<{
     navn: string;
@@ -325,6 +344,49 @@ export default function VirksomhedshandlerClient() {
     setDeltagerStatusFilters(new Set<CvrStatusKode>(['aktiv']));
     setSortKey('aendringsdato');
     setSortDir('desc');
+    setOffset(0);
+  }, []);
+
+  /**
+   * BIZZ-1984: Fjerner ALLE filtreringer, så hele datasættet vises (i modsætning
+   * til resetFilters, der går tilbage til default-filtrene). Tomme signal- og
+   * deltager-status-sæt = ingen filtrering klient-side; alle gyldige virksomheds-
+   * status-kategorier sendes til serveren, hvilket deaktiverer status-filteret dér
+   * (route'en springer status-WHERE over når antal kategorier = alle gyldige).
+   */
+  const clearAllFilters = useCallback(() => {
+    setSignalFilters(new Set());
+    setFromDate('');
+    setToDate('');
+    setIndrapFra('');
+    setIndrapTil('');
+    setSelectedBrancher(new Set());
+    setMinOmsaetning('');
+    setMaxOmsaetning('');
+    setMinBruttofortjeneste('');
+    setMaxBruttofortjeneste('');
+    setMinOverskud('');
+    setMaxOverskud('');
+    setMinAendring('');
+    setMaxAendring('');
+    setMinEstVaerdi('');
+    setMaxEstVaerdi('');
+    setConfidenceFilter(new Set());
+    setDeltagerFilter('');
+    setCvrFilter('');
+    // Tom virksomheds-status ⟹ server-default (kun aktiv). For at vise ALT sender
+    // vi i stedet alle gyldige kategorier, så route'en deaktiverer status-filteret.
+    setVirksomhedStatusFilters(
+      new Set<CvrStatusKode>([
+        'aktiv',
+        'ophoert',
+        'under_konkurs',
+        'oploest_konkurs',
+        'fusioneret',
+        'tvangsoploest',
+      ])
+    );
+    setDeltagerStatusFilters(new Set());
     setOffset(0);
   }, []);
 
@@ -586,9 +648,12 @@ export default function VirksomhedshandlerClient() {
   // ─── Berig single row ─────────────────────────────────────────────
 
   const berigRow = useCallback(
-    async (k: Kandidat) => {
+    async (k: Kandidat): Promise<BerigResult | null> => {
       const key = `${k.deltager_enhedsnummer}-${k.virksomhed_cvr}-${k.gyldig_fra}`;
-      if (berigResults[key] || berigLoading.has(key)) return;
+      // Allerede beriget → returnér det cachede resultat (så bulk-opsummeringen
+      // også medregner rækker, der var berigede i forvejen). Igangværende → skip.
+      if (berigResults[key]) return berigResults[key];
+      if (berigLoading.has(key)) return null;
 
       setBerigLoading((prev) => new Set(prev).add(key));
       try {
@@ -630,7 +695,9 @@ export default function VirksomhedshandlerClient() {
         if (res.ok) {
           const data: BerigResult = await res.json();
           setBerigResults((prev) => ({ ...prev, [key]: data }));
+          return data;
         }
+        return null;
       } finally {
         setBerigLoading((prev) => {
           const next = new Set(prev);
@@ -641,17 +708,6 @@ export default function VirksomhedshandlerClient() {
     },
     [berigResults, berigLoading]
   );
-
-  // ─── Bulk berig top 10 ────────────────────────────────────────────
-
-  const bulkBerig = useCallback(async () => {
-    setBulkLoading(true);
-    const top10 = kandidater.slice(0, 10);
-    for (const k of top10) {
-      await berigRow(k);
-    }
-    setBulkLoading(false);
-  }, [kandidater, berigRow]);
 
   // ─── Klient-side filtrering ───────────────────────────────────────
   // Anvendes både af tabellen og Excel-eksporten, så de altid viser
@@ -779,6 +835,39 @@ export default function VirksomhedshandlerClient() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }, [filteredKandidater, berigResults, lang, t]);
+
+  // ─── Bulk berig (hele siden) ──────────────────────────────────────
+  // BIZZ-1984: beriger ALLE records på den aktuelle side (de filtrerede
+  // rækker der vises), ikke kun de 10 første. Kører sekventielt for ikke at
+  // overbelaste berig-routen, opdaterer fremdrift undervejs og opsummerer til
+  // sidst hvad AIen nåede (antal, værdi-estimater, confidence, kilder, forbehold).
+  const bulkBerig = useCallback(async () => {
+    const rows = filteredKandidater;
+    if (rows.length === 0) return;
+    setBulkLoading(true);
+    setBerigSummary(null);
+    setBulkProgress({ done: 0, total: rows.length });
+    const collected: BerigResult[] = [];
+    for (let i = 0; i < rows.length; i++) {
+      const r = await berigRow(rows[i]);
+      if (r) collected.push(r);
+      setBulkProgress({ done: i + 1, total: rows.length });
+    }
+    // Saml datakilder + forbehold på tværs af alle berigede rækker (unik liste).
+    const kilder = [...new Set(collected.flatMap((r) => r.data_sources ?? []))];
+    const caveats = [...new Set(collected.flatMap((r) => r.caveats ?? []))];
+    setBerigSummary({
+      antal: collected.length,
+      medVaerdi: collected.filter((r) => r.estimeret_transaktionsvaerdi?.mid != null).length,
+      high: collected.filter((r) => r.confidence === 'high').length,
+      medium: collected.filter((r) => r.confidence === 'medium').length,
+      low: collected.filter((r) => r.confidence === 'low').length,
+      kilder,
+      caveats,
+    });
+    setBulkProgress(null);
+    setBulkLoading(false);
+  }, [filteredKandidater, berigRow]);
 
   /**
    * Renderer en kompakt multi-select status-dropdown til en kolonne-filterrække
@@ -913,16 +1002,6 @@ export default function VirksomhedshandlerClient() {
           <p className="text-slate-400 text-xs">
             {t(`${fmtTotalDa} kandidater fundet`, `${fmtTotalEn} candidates found`)}
           </p>
-          {anyFilterActive && (
-            <button
-              type="button"
-              onClick={resetFilters}
-              aria-label={t('Nulstil alle filtre', 'Reset all filters')}
-              className="text-xs text-slate-400 hover:text-white underline-offset-2 hover:underline transition-colors"
-            >
-              {t('Nulstil filtre', 'Reset filters')}
-            </button>
-          )}
           {/* BIZZ-1962: hurtig-toggle — sætter begge status-filtre til kun Aktiv. */}
           <button
             type="button"
@@ -951,43 +1030,121 @@ export default function VirksomhedshandlerClient() {
           </button>
           <button
             onClick={bulkBerig}
-            disabled={bulkLoading || kandidater.length === 0}
-            aria-label={t('Berig top 10 med AI', 'Enrich top 10 with AI')}
+            disabled={bulkLoading || filteredKandidater.length === 0}
+            aria-label={t('Berig alle med AI', 'Enrich all with AI')}
             title={t(
-              'Estimerer transaktionsværdi for de 10 største ejerandels-ændringer baseret på regnskabsdata og branche-multiples.',
-              'Estimates transaction value for the 10 largest ownership changes based on financials and industry multiples.'
+              'Estimerer transaktionsværdi for ALLE viste ejerandels-ændringer baseret på regnskabsdata og branche-multiples.',
+              'Estimates transaction value for ALL shown ownership changes based on financials and industry multiples.'
             )}
             className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs px-3 py-1.5 rounded-lg transition-colors"
           >
             {bulkLoading
-              ? t('Beriger...', 'Enriching...')
-              : t('Berig top 10 med AI', 'Enrich top 10 with AI')}
+              ? bulkProgress
+                ? t(
+                    `Beriger ${bulkProgress.done}/${bulkProgress.total}...`,
+                    `Enriching ${bulkProgress.done}/${bulkProgress.total}...`
+                  )
+                : t('Beriger...', 'Enriching...')
+              : t('Berig med AI', 'Enrich with AI')}
           </button>
         </div>
-        {total > LIMIT && (
-          <div className="flex items-center gap-3">
+        {/* BIZZ-1984: filter-handlinger flyttet til højre over tabellen.
+            "Nulstil filtre" (kun synlig når et filter afviger fra default) går
+            tilbage til default-filtrene; "Fjern filtre" fjerner ALL filtrering. */}
+        <div className="flex items-center gap-4">
+          {anyFilterActive && (
             <button
-              onClick={() => setOffset(Math.max(0, offset - LIMIT))}
-              disabled={offset === 0}
-              aria-label={t('Forrige side', 'Previous page')}
-              className="text-sm text-slate-400 hover:text-white disabled:opacity-30 transition-colors"
+              type="button"
+              onClick={resetFilters}
+              aria-label={t('Nulstil alle filtre til standard', 'Reset all filters to default')}
+              className="text-xs text-slate-400 hover:text-white underline-offset-2 hover:underline transition-colors"
             >
-              ← {t('Forrige', 'Previous')}
+              {t('Nulstil filtre', 'Reset filters')}
             </button>
-            <span className="text-xs text-slate-400 tabular-nums">
-              {offset + 1}–{Math.min(offset + LIMIT, total)} / {fmtTotalDa}
-            </span>
+          )}
+          <button
+            type="button"
+            onClick={clearAllFilters}
+            aria-label={t('Fjern alle filtreringer', 'Remove all filtering')}
+            title={t(
+              'Fjerner ALLE filtre — viser hele datasættet uden begrænsninger.',
+              'Removes ALL filters — shows the entire dataset without restrictions.'
+            )}
+            className="inline-flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 text-white text-xs px-3 py-1.5 rounded-lg transition-colors"
+          >
+            {t('Fjern filtre', 'Clear filters')}
+          </button>
+          {total > LIMIT && (
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setOffset(Math.max(0, offset - LIMIT))}
+                disabled={offset === 0}
+                aria-label={t('Forrige side', 'Previous page')}
+                className="text-sm text-slate-400 hover:text-white disabled:opacity-30 transition-colors"
+              >
+                ← {t('Forrige', 'Previous')}
+              </button>
+              <span className="text-xs text-slate-400 tabular-nums">
+                {offset + 1}–{Math.min(offset + LIMIT, total)} / {fmtTotalDa}
+              </span>
+              <button
+                onClick={() => setOffset(offset + LIMIT)}
+                disabled={offset + LIMIT >= total}
+                aria-label={t('Næste side', 'Next page')}
+                className="text-sm text-slate-400 hover:text-white disabled:opacity-30 transition-colors"
+              >
+                {t('Næste', 'Next')} →
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* BIZZ-1984: info-boks efter "Berig med AI" — opsummerer hvad AIen gjorde:
+          antal berigede rækker, hvor mange fik et værdi-estimat, confidence-
+          fordeling, anvendte datakilder og fælles forbehold. */}
+      {berigSummary && (
+        <div
+          className="shrink-0 bg-indigo-500/10 border border-indigo-500/30 rounded-xl p-4"
+          role="status"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <p className="text-indigo-200 text-sm font-medium mb-1">
+              {t('AI-berigelse fuldført', 'AI enrichment complete')}
+            </p>
             <button
-              onClick={() => setOffset(offset + LIMIT)}
-              disabled={offset + LIMIT >= total}
-              aria-label={t('Næste side', 'Next page')}
-              className="text-sm text-slate-400 hover:text-white disabled:opacity-30 transition-colors"
+              type="button"
+              onClick={() => setBerigSummary(null)}
+              aria-label={t('Luk info', 'Dismiss info')}
+              className="text-indigo-300 hover:text-white text-xs"
             >
-              {t('Næste', 'Next')} →
+              {t('Luk', 'Dismiss')}
             </button>
           </div>
-        )}
-      </div>
+          <p className="text-indigo-100/90 text-xs">
+            {t(
+              `AIen behandlede ${berigSummary.antal} ${berigSummary.antal === 1 ? 'række' : 'rækker'} og estimerede en transaktionsværdi for ${berigSummary.medVaerdi} af dem ud fra regnskabstal (overskud som EBITDA-proxy) og branche-multiples.`,
+              `The AI processed ${berigSummary.antal} ${berigSummary.antal === 1 ? 'row' : 'rows'} and estimated a transaction value for ${berigSummary.medVaerdi} of them based on financials (profit as EBITDA proxy) and industry multiples.`
+            )}
+          </p>
+          <p className="text-indigo-200/80 text-xs mt-1">
+            {t('Sikkerhed', 'Confidence')}: {berigSummary.high} {t('høj', 'high')} ·{' '}
+            {berigSummary.medium} {t('middel', 'medium')} · {berigSummary.low} {t('lav', 'low')}
+          </p>
+          {berigSummary.kilder.length > 0 && (
+            <p className="text-indigo-200/80 text-xs mt-1">
+              {t('Datakilder', 'Data sources')}: {berigSummary.kilder.join(', ')}
+            </p>
+          )}
+          {berigSummary.caveats.length > 0 && (
+            <ul className="text-indigo-200/70 text-xs mt-1 space-y-0.5 list-disc list-inside">
+              {berigSummary.caveats.slice(0, 4).map((c, i) => (
+                <li key={i}>{c}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {/* Table — flex-1 så den udfylder resten af højden og er det ENESTE
           vertikale scroll-område (ingen dobbelt-scrollbar, bund altid nåelig) */}

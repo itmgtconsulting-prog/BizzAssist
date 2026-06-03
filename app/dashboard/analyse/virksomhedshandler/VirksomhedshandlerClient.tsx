@@ -133,6 +133,13 @@ interface BerigResult {
   caveats: string[];
   confidence: 'low' | 'medium' | 'high';
   confidence_reason: string;
+  ai_vurdering: {
+    vurdering: string;
+    vaerdidrivere: string[];
+    risici: string[];
+  } | null;
+  tokensUsed?: number;
+  fromCache?: boolean;
 }
 
 type SignalType = 'entry' | 'exit' | 'increase' | 'decrease';

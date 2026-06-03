@@ -16,7 +16,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { X, ExternalLink } from 'lucide-react';
+import { X, ExternalLink, Sparkles, TrendingUp, AlertTriangle } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -39,6 +39,13 @@ export interface DetailBreakdown {
   kilde: string;
 }
 
+/** Claude-genereret kvalitativ AI-vurdering oven på baseline-beregningen. */
+export interface DetailAiVurdering {
+  vurdering: string;
+  vaerdidrivere: string[];
+  risici: string[];
+}
+
 /** Beriget resultat (delmængde brugt af modalen). */
 export interface DetailBerig {
   estimeret_transaktionsvaerdi: (Interval & { currency: 'DKK' }) | null;
@@ -47,6 +54,9 @@ export interface DetailBerig {
   caveats: string[];
   confidence: 'low' | 'medium' | 'high';
   confidence_reason: string;
+  ai_vurdering?: DetailAiVurdering | null;
+  tokensUsed?: number;
+  fromCache?: boolean;
 }
 
 interface ArtikelResultat {
@@ -227,6 +237,62 @@ export default function VirksomhedshandelDetailModal({
                 {t('Midtpunkt', 'Midpoint')}: {fmt(bd.transaktionsvaerdi.mid)}
               </p>
             </div>
+
+            {/* AI-vurdering (Claude, forankret i baseline) */}
+            {berig.ai_vurdering && berig.ai_vurdering.vurdering && (
+              <section className="mb-5 rounded-xl bg-violet-500/5 border border-violet-500/20 p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Sparkles size={15} className="text-violet-300 shrink-0" />
+                  <h3 className="text-sm font-semibold text-white">
+                    {t('AI-vurdering', 'AI assessment')}
+                  </h3>
+                  {/* Token-forbrug — vist når et nyt Claude-kald faktisk skete
+                      (ikke på cache-hits), så det aligner med øvrige AI-handlinger. */}
+                  {typeof berig.tokensUsed === 'number' &&
+                    berig.tokensUsed > 0 &&
+                    !berig.fromCache && (
+                      <span className="text-slate-400 text-xs ml-auto">
+                        ({berig.tokensUsed.toLocaleString()} tokens)
+                      </span>
+                    )}
+                </div>
+                <p className="text-slate-200 text-xs leading-relaxed mb-3">
+                  {berig.ai_vurdering.vurdering}
+                </p>
+                {berig.ai_vurdering.vaerdidrivere.length > 0 && (
+                  <div className="mb-3">
+                    <p className="flex items-center gap-1.5 text-emerald-300 text-xs font-medium mb-1">
+                      <TrendingUp size={12} className="shrink-0" />
+                      {t('Værdidrivere', 'Value drivers')}
+                    </p>
+                    <ul className="space-y-1">
+                      {berig.ai_vurdering.vaerdidrivere.map((d, i) => (
+                        <li key={i} className="text-slate-400 text-xs flex gap-2">
+                          <span className="text-emerald-400 shrink-0">•</span>
+                          <span>{d}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {berig.ai_vurdering.risici.length > 0 && (
+                  <div>
+                    <p className="flex items-center gap-1.5 text-amber-300 text-xs font-medium mb-1">
+                      <AlertTriangle size={12} className="shrink-0" />
+                      {t('Risici', 'Risks')}
+                    </p>
+                    <ul className="space-y-1">
+                      {berig.ai_vurdering.risici.map((r, i) => (
+                        <li key={i} className="text-slate-400 text-xs flex gap-2">
+                          <span className="text-amber-400 shrink-0">•</span>
+                          <span>{r}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </section>
+            )}
 
             {/* Beregnings-breakdown */}
             <section className="mb-5">

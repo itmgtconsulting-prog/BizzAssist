@@ -7,9 +7,14 @@
  * → enterprise value → × ejerandels-delta), datakilde-liste, caveats og et
  * confidence-niveau begrundet i regnskabs-friskhed (ikke medie-hits).
  *
+ * Oven på den deterministiske baseline kalder routen Claude for en KVALITATIV
+ * AI-vurdering (vurdering + værdidrivere + risici), forankret i de beregnede
+ * tal så modellen ikke kan hallucinere nye hårde beløb. Det reelle token-forbrug
+ * tilskrives brugeren via recordAiUsage og returneres som `tokensUsed`, så det
+ * vises og tæller med på linje med løsningens øvrige AI-handlinger.
+ *
  * Understøttende nyhedsartikler hentes IKKE her — frontend-modalen kalder
- * /api/ai/article-search/articles?phase=raw asynkront (Serper, ingen tokens),
- * så berig forbliver hurtigt og gratis.
+ * /api/ai/article-search/articles?phase=raw asynkront (Serper, ingen tokens).
  *
  * Retention: ingen persistering — beregnes on-demand, caches kun in-memory (24h).
  *
@@ -26,6 +31,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import Anthropic from '@anthropic-ai/sdk';
 import { checkRateLimit, aiRateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
 import { requireModuleAccess } from '@/app/lib/serverModuleAccess';
@@ -36,7 +42,7 @@ import {
   type Interval,
   type TransaktionsBreakdown,
 } from '@/app/lib/virksomhedshandler/brancheMultiples';
-import { recordAiUsage } from '@/app/lib/aiTracking';
+import { recordAiUsage, extractTokenUsage } from '@/app/lib/aiTracking';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -57,6 +63,19 @@ interface BerigRequest {
   gyldig_fra?: string;
 }
 
+/**
+ * AI-genereret kvalitativ vurdering oven på det deterministiske baseline-estimat.
+ * Claude tilføjer IKKE nye hårde tal — den fortolker baseline-beregningen.
+ */
+interface AiVurdering {
+  /** 2-3 sætningers narrativ vurdering forankret i baseline-beregningen. */
+  vurdering: string;
+  /** Faktorer der kan trække værdien op (vækst, margin, marked). */
+  vaerdidrivere: string[];
+  /** Faktorer der kan trække værdien ned / usikkerheder. */
+  risici: string[];
+}
+
 interface BerigResponse {
   estimeret_transaktionsvaerdi: (Interval & { currency: 'DKK' }) | null;
   breakdown: TransaktionsBreakdown | null;
@@ -64,6 +83,12 @@ interface BerigResponse {
   caveats: string[];
   confidence: 'low' | 'medium' | 'high';
   confidence_reason: string;
+  /** Claude-genereret kvalitativ vurdering (null hvis AI-kald fejlede/ikke kørte). */
+  ai_vurdering: AiVurdering | null;
+  /** Samlet antal Claude-tokens brugt på denne berigelse (0 = ingen AI-kald). */
+  tokensUsed: number;
+  /** True når svaret kom fra cachen (intet nyt token-forbrug). */
+  fromCache: boolean;
 }
 
 // ─── Cache (24h TTL) ────────────────────────────────────────────────────────
@@ -197,6 +222,98 @@ function scoreConfidence(
   };
 }
 
+// ─── AI-vurdering (Claude, forankret i deterministisk baseline) ──────────────
+
+/** Resultat af et Claude-berigelses-kald: vurdering + reelt token-forbrug. */
+interface AiVurderingResult {
+  aiVurdering: AiVurdering | null;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/**
+ * Kalder Claude for en kvalitativ M&A-vurdering FORANKRET i det deterministiske
+ * baseline-estimat. Claude må ikke opfinde nye hårde tal — den fortolker den
+ * allerede beregnede transaktionsværdi (vækst-/margin-drivere, risici), så
+ * brugeren får en reel AI-værdiansættelse der bruger + viser tokens som de
+ * øvrige AI-handlinger i løsningen.
+ *
+ * Fail-soft: returnerer aiVurdering=null + 0 tokens hvis nøglen mangler, Claude
+ * fejler, eller svaret ikke kan parses — så baseline-estimatet altid leveres.
+ *
+ * @param breakdown - Det deterministiske beregnings-breakdown (baseline)
+ * @param req - Den oprindelige request (virksomheds-kontekst)
+ * @param confidence - Det regnskabs-baserede confidence-niveau
+ * @returns AI-vurdering + input/output-tokens (0 ved fallback)
+ */
+async function generateAiVurdering(
+  breakdown: TransaktionsBreakdown,
+  req: BerigRequest,
+  confidence: 'low' | 'medium' | 'high'
+): Promise<AiVurderingResult> {
+  const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
+  if (!apiKey) return { aiVurdering: null, inputTokens: 0, outputTokens: 0 };
+
+  const navn = req.virksomhed_navn ? `"${req.virksomhed_navn}"` : `CVR ${req.virksomhed_cvr}`;
+  const tv = breakdown.transaktionsvaerdi;
+  const system =
+    'Du er en dansk M&A-analytiker. Du får en deterministisk baseline-værdiansættelse ' +
+    'af en ejerandels-ændring, beregnet via branche-multiple (EV/EBITDA). Din opgave er ' +
+    'at give en KVALITATIV fortolkning — IKKE at opfinde nye tal. Anvend kun de tal du får. ' +
+    'Vurdér hvad der kan trække værdien op eller ned. Svar UDELUKKENDE med gyldig JSON i ' +
+    'formatet: {"vurdering": string (2-3 sætninger på dansk), "vaerdidrivere": string[] ' +
+    '(2-4 korte punkter), "risici": string[] (2-4 korte punkter)}. Ingen markdown, kun JSON.';
+  const userMessage =
+    `Virksomhed: ${navn}\n` +
+    `Branche: ${breakdown.branche_label} (DB07 ${req.branchekode})\n` +
+    `EBITDA-proxy (resultat før skat): ${fmtDkk(breakdown.ebitda_used)}\n` +
+    `${req.omsaetning_dkk ? `Omsætning: ${fmtDkk(req.omsaetning_dkk)}\n` : ''}` +
+    `Anvendt branche-multiple: ${breakdown.multiple.lav}–${breakdown.multiple.hoej}x EV/EBITDA\n` +
+    `Enterprise value: ${fmtDkk(breakdown.ev_range.lav)} – ${fmtDkk(breakdown.ev_range.hoej)}\n` +
+    `Ejerandels-ændring: ${breakdown.delta_pct} procentpoint\n` +
+    `Baseline transaktionsværdi: ${fmtDkk(tv.lav)} – ${fmtDkk(tv.hoej)} (midt ${fmtDkk(tv.mid)})\n` +
+    `Datafriskhed/confidence: ${confidence}\n\n` +
+    'Giv din kvalitative vurdering forankret i ovenstående tal.';
+
+  try {
+    const client = new Anthropic({ apiKey });
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 700,
+      system,
+      messages: [{ role: 'user', content: userMessage }],
+    });
+    const text = response.content
+      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+      .map((b) => b.text)
+      .join('')
+      .trim();
+    const { inputTokens, outputTokens } = extractTokenUsage(response);
+
+    // Trim evt. markdown-fence og parse JSON.
+    const jsonStr = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+    const parsed = JSON.parse(jsonStr) as Partial<AiVurdering>;
+    const aiVurdering: AiVurdering = {
+      vurdering: typeof parsed.vurdering === 'string' ? parsed.vurdering : '',
+      vaerdidrivere: Array.isArray(parsed.vaerdidrivere)
+        ? parsed.vaerdidrivere.filter((x): x is string => typeof x === 'string').slice(0, 4)
+        : [],
+      risici: Array.isArray(parsed.risici)
+        ? parsed.risici.filter((x): x is string => typeof x === 'string').slice(0, 4)
+        : [],
+    };
+    if (!aiVurdering.vurdering) {
+      return { aiVurdering: null, inputTokens, outputTokens };
+    }
+    return { aiVurdering, inputTokens, outputTokens };
+  } catch (err) {
+    logger.warn('virksomhedshandler/berig: AI-vurdering fejlede (fallback til baseline)', {
+      error: err,
+    });
+    return { aiVurdering: null, inputTokens: 0, outputTokens: 0 };
+  }
+}
+
 // ─── POST handler ───────────────────────────────────────────────────────────
 
 /**
@@ -255,7 +372,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const cacheKey = `berig:${kandidat_id}`;
   const cached = cache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
-    return NextResponse.json(cached.data);
+    // Cache-hit: intet nyt token-forbrug — markér så UI'en ikke viser token-pris igen.
+    return NextResponse.json({ ...cached.data, fromCache: true });
   }
 
   try {
@@ -273,7 +391,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       ejerandel_delta_pp
     );
 
-    // 4. Byg response
+    // 4. AI-vurdering via Claude — forankret i baseline-beregningen.
+    // Kun når et breakdown findes (ellers er der intet at fortolke).
+    let aiVurdering: AiVurdering | null = null;
+    let inputTokens = 0;
+    let outputTokens = 0;
+    if (breakdown) {
+      const ai = await generateAiVurdering(breakdown, body, confidence);
+      aiVurdering = ai.aiVurdering;
+      inputTokens = ai.inputTokens;
+      outputTokens = ai.outputTokens;
+    }
+
+    // 5. Byg response
     const response: BerigResponse = {
       estimeret_transaktionsvaerdi: breakdown
         ? { ...breakdown.transaktionsvaerdi, currency: 'DKK' }
@@ -283,19 +413,22 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       caveats: breakdown ? buildCaveats(breakdown, body, regnskabAlder) : [],
       confidence,
       confidence_reason: reason,
+      ai_vurdering: aiVurdering,
+      tokensUsed: inputTokens + outputTokens,
+      fromCache: false,
     };
 
-    // 5. Cache result
+    // 6. Cache result
     cache.set(cacheKey, { data: response, ts: Date.now() });
 
-    // 6. Record AI usage (fire-and-forget — ren beregning, ingen tokens)
+    // 7. Record AI-token-forbrug (kun hvis Claude faktisk kørte → no-op ved 0).
     void recordAiUsage({
       userId: auth.userId,
       tenantId: auth.tenantId,
       route: 'virksomhedshandler.berig',
-      inputTokens: 0,
-      outputTokens: 0,
-      model: 'branche-multiple',
+      inputTokens,
+      outputTokens,
+      model: 'claude-sonnet-4-6',
     });
 
     return NextResponse.json(response);

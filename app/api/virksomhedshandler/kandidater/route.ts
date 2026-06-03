@@ -252,7 +252,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // efterlod NULL-status-rækker ufiltreret). cvr_deltager.is_aktiv er den autoritative
     // per-deltager aktiv-markør for BÅDE personer og virksomheder (levende person /
     // aktiv virksomhed = true, ophørt = false), keyet på enhedsnummer.
-    const dataSql = `SELECT k.*, ${AENDRINGSDATO} AS aendringsdato, v.navn AS virksomhed_navn, v.branche_tekst, v.branche_kode, v.status AS virksomhed_status_raw, v.ophoert AS virksomhed_ophoert, ${statusKategoriSql('v')} AS virksomhed_status_kode, cd.is_aktiv AS deltager_is_aktiv, rc.seneste_aar AS regnskab_aar, rc.omsaetning, rc.bruttofortjeneste, rc.resultat_foer_skat AS overskud FROM mv_virksomhedshandel_kandidater k LEFT JOIN cvr_virksomhed v ON v.cvr = k.virksomhed_cvr LEFT JOIN cvr_deltager cd ON cd.enhedsnummer = k.deltager_enhedsnummer LEFT JOIN regnskab_cache rc ON rc.cvr = k.virksomhed_cvr WHERE ${where} ORDER BY ${sortCol} ${sortDir} NULLS LAST, ${AENDRINGSDATO} DESC NULLS LAST LIMIT ${limit} OFFSET ${offset}`;
+    // BIZZ-1982: ~10% af deltagere har is_aktiv = NULL (aldrig beriget) → intet status-tag
+    // i radaren. is_aktiv beregnes rent fra cvr_deltagerrelation (aktive relationer > 0),
+    // så vi udleder værdien live med COALESCE+EXISTS når cachen er NULL. Alle radar-
+    // kandidater stammer fra cvr_deltagerrelation, så fallback giver altid true/false →
+    // 100% tag-dækning uden en data-backfill.
+    const dataSql = `SELECT k.*, ${AENDRINGSDATO} AS aendringsdato, v.navn AS virksomhed_navn, v.branche_tekst, v.branche_kode, v.status AS virksomhed_status_raw, v.ophoert AS virksomhed_ophoert, ${statusKategoriSql('v')} AS virksomhed_status_kode, COALESCE(cd.is_aktiv, EXISTS (SELECT 1 FROM cvr_deltagerrelation dr WHERE dr.deltager_enhedsnummer = k.deltager_enhedsnummer AND (dr.gyldig_til IS NULL OR dr.gyldig_til > now()))) AS deltager_is_aktiv, rc.seneste_aar AS regnskab_aar, rc.omsaetning, rc.bruttofortjeneste, rc.resultat_foer_skat AS overskud FROM mv_virksomhedshandel_kandidater k LEFT JOIN cvr_virksomhed v ON v.cvr = k.virksomhed_cvr LEFT JOIN cvr_deltager cd ON cd.enhedsnummer = k.deltager_enhedsnummer LEFT JOIN regnskab_cache rc ON rc.cvr = k.virksomhed_cvr WHERE ${where} ORDER BY ${sortCol} ${sortDir} NULLS LAST, ${AENDRINGSDATO} DESC NULLS LAST LIMIT ${limit} OFFSET ${offset}`;
 
     const [countRes, dataRes] = await Promise.all([
       fetch(`https://api.supabase.com/v1/projects/${projectRef}/database/query`, {

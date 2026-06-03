@@ -90,7 +90,9 @@ function StatusBadge({ kode, lang }: { kode: CvrStatusKode; lang: 'da' | 'en' })
  * virksomheder (levende person / aktiv virksomhed = true, ophørt = false). For
  * virksomheds-deltagere med entydigt CVR foretrækkes den rige rå-status (incl.
  * konkurs-undertyper) når den findes; ellers bruges is_aktiv (true→aktiv,
- * false→ophørt). null is_aktiv ⟹ ukendt (returnerer null = filtreres ikke).
+ * false→ophørt). BIZZ-1982: serveren udleder nu is_aktiv live fra
+ * cvr_deltagerrelation når cachen er NULL, så den sidste null-gren reelt aldrig
+ * rammes for radar-kandidater (hver ejer får et tag).
  *
  * @param k - Kandidat-rækken.
  * @returns Status-kategori, eller null hvis ukendt.
@@ -102,7 +104,11 @@ function deltagerStatusKode(k: Kandidat): CvrStatusKode | null {
     return deriveCvrStatusKode(k.deltager_status_raw, k.deltager_ophoert);
   }
   if (k.deltager_is_aktiv === true) return 'aktiv';
-  if (k.deltager_is_aktiv === false) return 'tvangsoploest';
+  // BIZZ-1982: is_aktiv = false betyder blot "ingen aktive ejerrelationer" — gælder
+  // både ophørte selskaber og personer der er udtrådt. Brug derfor den neutrale
+  // 'ophoert' frem for det selskabs-specifikke 'tvangsoploest' (som fejlagtigt
+  // påstår en tvangsopløsning vi ikke har belæg for).
+  if (k.deltager_is_aktiv === false) return 'ophoert';
   return null;
 }
 

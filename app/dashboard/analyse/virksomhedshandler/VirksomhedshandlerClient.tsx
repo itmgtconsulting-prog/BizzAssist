@@ -697,8 +697,8 @@ export default function VirksomhedshandlerClient() {
     };
     const headers = [
       t('Signal', 'Signal'),
-      t('Deltager', 'Participant'),
-      t('Deltager-status', 'Participant status'),
+      t('Ejer', 'Owner'),
+      t('Ejer-status', 'Owner status'),
       t('Virksomhed', 'Company'),
       'CVR',
       t('Virksomheds-status', 'Company status'),
@@ -985,7 +985,7 @@ export default function VirksomhedshandlerClient() {
           <thead className="bg-slate-800 sticky top-0 z-10 shadow-[0_1px_0_0_rgba(148,163,184,0.2)]">
             <tr className="text-left text-slate-400 text-xs uppercase tracking-wider">
               <th className="px-4 py-2">{t('Signal', 'Signal')}</th>
-              {renderSortTh('deltager', t('Deltager', 'Participant'))}
+              {renderSortTh('deltager', t('Ejer', 'Owner'))}
               {renderSortTh('virksomhed', t('Virksomhed', 'Company'))}
               {renderSortTh('branche', t('Branche', 'Industry'))}
               {renderSortTh('omsaetning', t('Omsætning', 'Revenue'), 'right')}
@@ -1060,7 +1060,7 @@ export default function VirksomhedshandlerClient() {
                   value={deltagerFilter}
                   onChange={(e) => setDeltagerFilter(e.target.value)}
                   placeholder={t('Filtrer...', 'Filter...')}
-                  aria-label={t('Filtrer deltager', 'Filter participant')}
+                  aria-label={t('Filtrer ejer', 'Filter owner')}
                   className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[11px] text-white placeholder-slate-400 focus:border-indigo-500/50 focus:outline-none"
                 />
                 {renderStatusDropdown(
@@ -1068,7 +1068,7 @@ export default function VirksomhedshandlerClient() {
                   setDeltagerStatusFilters,
                   deltagerStatusDropdownOpen,
                   setDeltagerStatusDropdownOpen,
-                  t('Filtrer på deltager-status', 'Filter by participant status')
+                  t('Filtrer på ejer-status', 'Filter by owner status')
                 )}
               </th>
               {/* Virksomhed-tekstfilter + status-multiselect (BIZZ-1962) */}
@@ -1603,12 +1603,13 @@ export default function VirksomhedshandlerClient() {
                           {k.deltager_navn}
                         </Link>
                       )}
-                      {/* BIZZ-1967: status-badge vises kun når deltageren er OPHØRT
-                          (is_aktiv=false eller konkurs-/opløsnings-status). Aktive
-                          deltagere holdes rene — ikonet (Building2/User) er nok. */}
+                      {/* BIZZ-1979: status-badge vises ALTID for ejer/deltager (aktiv,
+                          ophørt, konkurs osv.) så brugeren kan se selskabets status
+                          direkte i kolonnen — på linje med virksomheds-kolonnen.
+                          Kun ukendt status (null kode) skjules. */}
                       {(() => {
                         const dKode = deltagerStatusKode(k);
-                        return dKode != null && dKode !== 'aktiv' ? (
+                        return dKode != null ? (
                           <div className="mt-1">
                             <StatusBadge kode={dKode} lang={lang === 'da' ? 'da' : 'en'} />
                           </div>

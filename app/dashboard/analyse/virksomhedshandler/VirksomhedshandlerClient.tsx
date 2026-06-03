@@ -1656,7 +1656,9 @@ export default function VirksomhedshandlerClient() {
                         />
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-slate-400 text-[10px] truncate max-w-[150px]">
+                    {/* BIZZ-1983: ombryd branchetekst (break-words frem for truncate) og
+                        forstør til text-xs så hele teksten er læsbar uden ellipsis. */}
+                    <td className="px-4 py-3 text-slate-400 text-xs break-words max-w-[180px]">
                       {k.branche_tekst ?? '—'}
                     </td>
                     <td className="px-4 py-3 text-right text-slate-300 text-xs tabular-nums">

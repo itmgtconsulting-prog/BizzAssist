@@ -230,6 +230,10 @@ export default function VirksomhedshandlerClient() {
   const [offset, setOffset] = useState(0);
   const [berigResults, setBerigResults] = useState<Record<string, BerigResult>>({});
   const [berigLoading, setBerigLoading] = useState<Set<string>>(new Set());
+  // BIZZ-1987: fejl-feedback pr. række. Når et berig-kald fejler (AI-loft/plan,
+  // validering, ekstern fejl) gemmes en læsbar grund her, så brugeren kan se
+  // HVORFOR der ikke skete noget — tidligere blev non-ok-svar kasseret stille.
+  const [berigErrors, setBerigErrors] = useState<Record<string, string>>({});
   const [bulkLoading, setBulkLoading] = useState(false);
   // BIZZ-1984: fremdrift + opsummering for "Berig hele siden med AI". Viser hvad
   // AIen nåede (antal berigede, hvor mange fik et værdi-estimat, confidence-
@@ -670,6 +674,13 @@ export default function VirksomhedshandlerClient() {
       if (berigResults[key]) return berigResults[key];
       if (berigLoading.has(key)) return null;
 
+      // Ryd tidligere fejl for denne række ved (gen)forsøg.
+      setBerigErrors((prev) => {
+        if (!prev[key]) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
       setBerigLoading((prev) => new Set(prev).add(key));
       try {
         const delta = Math.abs(k.current_ejerandel_pct - k.prev_ejerandel_pct);
@@ -712,6 +723,30 @@ export default function VirksomhedshandlerClient() {
           setBerigResults((prev) => ({ ...prev, [key]: data }));
           return data;
         }
+        // Non-ok → udled en læsbar grund og vis den inline i rækken.
+        let reason: string;
+        if (res.status === 402 || res.status === 403) {
+          reason = t('AI-grænse nået for din plan', 'AI limit reached for your plan');
+        } else if (res.status === 429) {
+          reason = t('For mange kald — prøv igen om lidt', 'Rate limited — try again shortly');
+        } else if (res.status === 401) {
+          reason = t('Login udløbet — log ind igen', 'Session expired — sign in again');
+        } else {
+          // Forsøg at læse server-besked; ellers generisk.
+          const serverMsg = await res
+            .json()
+            .then((b: { error?: string }) => b?.error)
+            .catch(() => undefined);
+          reason = serverMsg || t('AI-berigelse fejlede', 'AI enrichment failed');
+        }
+        setBerigErrors((prev) => ({ ...prev, [key]: reason }));
+        return null;
+      } catch {
+        // Netværks-/parsefejl — vis en generisk grund frem for stilhed.
+        setBerigErrors((prev) => ({
+          ...prev,
+          [key]: t('Netværksfejl — prøv igen', 'Network error — try again'),
+        }));
         return null;
       } finally {
         setBerigLoading((prev) => {
@@ -721,7 +756,7 @@ export default function VirksomhedshandlerClient() {
         });
       }
     },
-    [berigResults, berigLoading]
+    [berigResults, berigLoading, t]
   );
 
   // ─── Klient-side filtrering ───────────────────────────────────────
@@ -1982,17 +2017,33 @@ export default function VirksomhedshandlerClient() {
                     </td>
                     <td className="px-4 py-3">
                       {!berig && (
-                        <button
-                          onClick={() => berigRow(k)}
-                          disabled={isBerigLoading}
-                          aria-label={t(
-                            `Berig ${k.virksomhed_cvr} med AI`,
-                            `Enrich ${k.virksomhed_cvr} with AI`
+                        <div className="flex flex-col gap-0.5">
+                          <button
+                            onClick={() => berigRow(k)}
+                            disabled={isBerigLoading}
+                            aria-label={t(
+                              `Berig ${k.virksomhed_cvr} med AI`,
+                              `Enrich ${k.virksomhed_cvr} with AI`
+                            )}
+                            className="text-left text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50 transition-colors"
+                          >
+                            {isBerigLoading
+                              ? '...'
+                              : berigErrors[key]
+                                ? t('Prøv igen', 'Retry')
+                                : t('Berig', 'Enrich')}
+                          </button>
+                          {/* BIZZ-1987: vis HVORFOR berigelsen fejlede inline. */}
+                          {berigErrors[key] && !isBerigLoading && (
+                            <span
+                              role="alert"
+                              className="text-[11px] text-amber-400"
+                              title={berigErrors[key]}
+                            >
+                              {berigErrors[key]}
+                            </span>
                           )}
-                          className="text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50 transition-colors"
-                        >
-                          {isBerigLoading ? '...' : t('Berig', 'Enrich')}
-                        </button>
+                        </div>
                       )}
                       {berig && (
                         <button

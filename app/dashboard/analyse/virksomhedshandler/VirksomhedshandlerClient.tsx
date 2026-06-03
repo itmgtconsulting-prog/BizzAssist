@@ -174,6 +174,18 @@ function formatRegnskab(amount: number | string | null | undefined): string {
   return `${sign}${abs}`;
 }
 
+/**
+ * Stabil nøgle for en kandidat-række (deltager + virksomhed + gyldighedsdato).
+ * Bruges til berig-cache, række-selektion og Excel-eksport, så de altid peger
+ * på samme række.
+ *
+ * @param k - Kandidat-rækken
+ * @returns Sammensat streng-nøgle
+ */
+function kandidatKey(k: Kandidat): string {
+  return `${k.deltager_enhedsnummer}-${k.virksomhed_cvr}-${k.gyldig_fra}`;
+}
+
 /** Default-startdato for ændringsdato-filteret: 60 dage tilbage (ISO YYYY-MM-DD). */
 function defaultFromDate(): string {
   const d = new Date();
@@ -223,6 +235,9 @@ export default function VirksomhedshandlerClient() {
   // AIen nåede (antal berigede, hvor mange fik et værdi-estimat, confidence-
   // fordeling, anvendte datakilder og forbehold) i en info-boks efter berigelse.
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
+  // BIZZ-1985: valgte rækker (nøgle = deltager-cvr-gyldigfra). "Berig med AI"
+  // kører på de valgte rækker; tomt udvalg ⟹ alle viste rækker beriges.
+  const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
   const [berigSummary, setBerigSummary] = useState<{
     antal: number;
     medVaerdi: number;
@@ -842,7 +857,11 @@ export default function VirksomhedshandlerClient() {
   // overbelaste berig-routen, opdaterer fremdrift undervejs og opsummerer til
   // sidst hvad AIen nåede (antal, værdi-estimater, confidence, kilder, forbehold).
   const bulkBerig = useCallback(async () => {
-    const rows = filteredKandidater;
+    // BIZZ-1985: berig de valgte rækker; intet udvalg ⟹ alle viste rækker.
+    const rows =
+      selectedRows.size > 0
+        ? filteredKandidater.filter((k) => selectedRows.has(kandidatKey(k)))
+        : filteredKandidater;
     if (rows.length === 0) return;
     setBulkLoading(true);
     setBerigSummary(null);
@@ -867,7 +886,45 @@ export default function VirksomhedshandlerClient() {
     });
     setBulkProgress(null);
     setBulkLoading(false);
-  }, [filteredKandidater, berigRow]);
+  }, [filteredKandidater, selectedRows, berigRow]);
+
+  // ─── Række-selektion (BIZZ-1985) ──────────────────────────────────
+  // Antal valgte rækker der faktisk er synlige (klient-filtrene kan have skjult
+  // nogle af de valgte). Styrer vælg-alle-checkboxens tristate + knap-label.
+  const visibleKeys = filteredKandidater.map(kandidatKey);
+  const selectedVisibleCount = visibleKeys.filter((k) => selectedRows.has(k)).length;
+  const allVisibleSelected = visibleKeys.length > 0 && selectedVisibleCount === visibleKeys.length;
+
+  /** Vælg/fravælg en enkelt række. */
+  const toggleRow = useCallback((key: string) => {
+    setSelectedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  /** Vælg-alle / ryd alle synlige rækker (afhænger af nuværende tilstand). */
+  const toggleSelectAll = useCallback(() => {
+    const keys = filteredKandidater.map(kandidatKey);
+    setSelectedRows((prev) => {
+      const allSelected = keys.length > 0 && keys.every((k) => prev.has(k));
+      if (allSelected) {
+        // Fjern netop de synlige nøgler (bevar evt. valg uden for filteret).
+        const next = new Set(prev);
+        keys.forEach((k) => next.delete(k));
+        return next;
+      }
+      return new Set([...prev, ...keys]);
+    });
+  }, [filteredKandidater]);
+
+  // Ryd udvalget når brugeren skifter side (offset), så valg ikke bæres med
+  // over til en ny side hvor rækkerne alligevel ikke er synlige/berigbare.
+  useEffect(() => {
+    setSelectedRows(new Set());
+  }, [offset]);
 
   /**
    * Renderer en kompakt multi-select status-dropdown til en kolonne-filterrække
@@ -1031,11 +1088,25 @@ export default function VirksomhedshandlerClient() {
           <button
             onClick={bulkBerig}
             disabled={bulkLoading || filteredKandidater.length === 0}
-            aria-label={t('Berig alle med AI', 'Enrich all with AI')}
-            title={t(
-              'Estimerer transaktionsværdi for ALLE viste ejerandels-ændringer baseret på regnskabsdata og branche-multiples.',
-              'Estimates transaction value for ALL shown ownership changes based on financials and industry multiples.'
-            )}
+            aria-label={
+              selectedVisibleCount > 0
+                ? t(
+                    `Berig ${selectedVisibleCount} valgte med AI`,
+                    `Enrich ${selectedVisibleCount} selected with AI`
+                  )
+                : t('Berig alle viste med AI', 'Enrich all shown with AI')
+            }
+            title={
+              selectedVisibleCount > 0
+                ? t(
+                    'Estimerer transaktionsværdi for de valgte rækker baseret på regnskabsdata og branche-multiples.',
+                    'Estimates transaction value for the selected rows based on financials and industry multiples.'
+                  )
+                : t(
+                    'Estimerer transaktionsværdi for ALLE viste ejerandels-ændringer baseret på regnskabsdata og branche-multiples. Vælg rækker med checkboksene for kun at berige et udvalg.',
+                    'Estimates transaction value for ALL shown ownership changes. Tick the checkboxes to enrich only a selection.'
+                  )
+            }
             className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs px-3 py-1.5 rounded-lg transition-colors"
           >
             {bulkLoading
@@ -1045,7 +1116,12 @@ export default function VirksomhedshandlerClient() {
                     `Enriching ${bulkProgress.done}/${bulkProgress.total}...`
                   )
                 : t('Beriger...', 'Enriching...')
-              : t('Berig med AI', 'Enrich with AI')}
+              : selectedVisibleCount > 0
+                ? t(
+                    `Berig ${selectedVisibleCount} valgte med AI`,
+                    `Enrich ${selectedVisibleCount} selected with AI`
+                  )
+                : t('Berig med AI', 'Enrich with AI')}
           </button>
         </div>
         {/* BIZZ-1984: filter-handlinger flyttet til højre over tabellen.
@@ -1152,6 +1228,20 @@ export default function VirksomhedshandlerClient() {
         <table className="w-full text-sm">
           <thead className="bg-slate-800 sticky top-0 z-10 shadow-[0_1px_0_0_rgba(148,163,184,0.2)]">
             <tr className="text-left text-slate-400 text-xs uppercase tracking-wider">
+              {/* BIZZ-1985: vælg-alle checkbox. Tristate: checked når alle synlige
+                  er valgt, indeterminate når kun nogle er valgt. */}
+              <th className="px-3 py-2 w-9">
+                <input
+                  type="checkbox"
+                  checked={allVisibleSelected}
+                  ref={(el) => {
+                    if (el) el.indeterminate = selectedVisibleCount > 0 && !allVisibleSelected;
+                  }}
+                  onChange={toggleSelectAll}
+                  aria-label={t('Vælg alle rækker', 'Select all rows')}
+                  className="accent-indigo-500 w-4 h-4 align-middle"
+                />
+              </th>
               <th className="px-4 py-2">{t('Signal', 'Signal')}</th>
               {renderSortTh('deltager', t('Ejer', 'Owner'))}
               {renderSortTh('virksomhed', t('Virksomhed', 'Company'))}
@@ -1169,6 +1259,8 @@ export default function VirksomhedshandlerClient() {
             {/* Per-kolonne filter-række — hvert filter sidder lige over sin egen
                 kolonne (signal, deltager, virksomhed, branche, beløb, ændringsdato). */}
             <tr className="bg-slate-800/30 align-top normal-case tracking-normal">
+              {/* BIZZ-1985: tom celle ud for vælg-alle checkbox-kolonnen. */}
+              <th className="px-3 py-1 w-9" />
               {/* Signal-multiselect */}
               <th className="px-2 py-1 relative font-normal">
                 <button
@@ -1652,6 +1744,9 @@ export default function VirksomhedshandlerClient() {
             {loading ? (
               Array.from({ length: 8 }).map((_, i) => (
                 <tr key={i} className="animate-pulse">
+                  <td className="px-3 py-3 w-9">
+                    <div className="h-4 w-4 bg-slate-700/40 rounded" />
+                  </td>
                   <td className="px-4 py-3">
                     <div className="h-4 bg-slate-700/40 rounded w-16" />
                   </td>
@@ -1692,7 +1787,7 @@ export default function VirksomhedshandlerClient() {
               ))
             ) : kandidater.length === 0 ? (
               <tr>
-                <td colSpan={13} className="px-4 py-12 text-center text-slate-400">
+                <td colSpan={14} className="px-4 py-12 text-center text-slate-400">
                   {t(
                     'Ingen kandidater fundet med de valgte filtre',
                     'No candidates found with selected filters'
@@ -1714,7 +1809,20 @@ export default function VirksomhedshandlerClient() {
                 const tilPct = k.signal_type === 'exit' ? 0 : k.current_ejerandel_pct;
 
                 return (
-                  <tr key={key} className="hover:bg-slate-800/30 transition-colors">
+                  <tr
+                    key={key}
+                    className={`hover:bg-slate-800/30 transition-colors ${selectedRows.has(key) ? 'bg-indigo-500/5' : ''}`}
+                  >
+                    {/* BIZZ-1985: række-checkbox til AI-berigelse af valgte rækker. */}
+                    <td className="px-3 py-3 w-9">
+                      <input
+                        type="checkbox"
+                        checked={selectedRows.has(key)}
+                        onChange={() => toggleRow(key)}
+                        aria-label={t('Vælg række', 'Select row')}
+                        className="accent-indigo-500 w-4 h-4 align-middle"
+                      />
+                    </td>
                     <td className="px-4 py-3">
                       <span
                         className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${signal?.color ?? 'text-slate-400'}`}
@@ -1924,7 +2032,7 @@ export default function VirksomhedshandlerClient() {
             {!loading && kandidater.length > 0 && (
               <tr>
                 <td
-                  colSpan={13}
+                  colSpan={14}
                   className="px-4 py-3 text-center text-[11px] text-slate-400 bg-slate-800/20"
                 >
                   {offset + LIMIT >= total

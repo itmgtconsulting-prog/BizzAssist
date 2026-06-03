@@ -810,6 +810,13 @@ export default function VirksomhedshandlerClient() {
    * præcis de rækker der vises (server-side side + klient-side filtre).
    */
   const exportCsv = useCallback(() => {
+    // BIZZ-1989: eksportér kun de valgte rækker når et udvalg findes — præcis
+    // som dokument-download ("Download valgte"). Tomt udvalg ⟹ alle viste rækker.
+    // Mirror'er bulkBerig-logikken, så checkboksene styrer både berigelse og eksport.
+    const rowsToExport =
+      selectedRows.size > 0
+        ? filteredKandidater.filter((k) => selectedRows.has(kandidatKey(k)))
+        : filteredKandidater;
     // Semikolon-separator: dansk Excel bruger ';' som standard-delimiter.
     const SEP = ';';
     // Escape: ombrydes i dobbelt-citationstegn hvis værdien indeholder
@@ -842,8 +849,8 @@ export default function VirksomhedshandlerClient() {
       const n = typeof v === 'string' ? Number(v) : v;
       return Number.isFinite(n) ? String(n) : '';
     };
-    const rows = filteredKandidater.map((k) => {
-      const key = `${k.deltager_enhedsnummer}-${k.virksomhed_cvr}-${k.gyldig_fra}`;
+    const rows = rowsToExport.map((k) => {
+      const key = kandidatKey(k);
       const berig = berigResults[key];
       const delta = Math.abs(k.current_ejerandel_pct - k.prev_ejerandel_pct);
       const fraPct = k.signal_type === 'exit' ? k.current_ejerandel_pct : k.prev_ejerandel_pct;
@@ -891,7 +898,7 @@ export default function VirksomhedshandlerClient() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  }, [filteredKandidater, berigResults, lang, t]);
+  }, [filteredKandidater, selectedRows, berigResults, lang, t]);
 
   // ─── Bulk berig (hele siden) ──────────────────────────────────────
   // BIZZ-1984: beriger ALLE records på den aktuelle side (de filtrerede
@@ -1106,11 +1113,34 @@ export default function VirksomhedshandlerClient() {
           <button
             onClick={exportCsv}
             disabled={filteredKandidater.length === 0}
-            aria-label={t('Eksporter til Excel', 'Export to Excel')}
+            aria-label={
+              selectedVisibleCount > 0
+                ? t(
+                    `Eksporter ${selectedVisibleCount} valgte til Excel`,
+                    `Export ${selectedVisibleCount} selected to Excel`
+                  )
+                : t('Eksporter til Excel', 'Export to Excel')
+            }
+            title={
+              selectedVisibleCount > 0
+                ? t(
+                    `Eksporterer kun de ${selectedVisibleCount} valgte rækker til Excel.`,
+                    `Exports only the ${selectedVisibleCount} selected rows to Excel.`
+                  )
+                : t(
+                    'Eksporterer ALLE viste rækker til Excel. Vælg rækker med checkboksene for kun at eksportere et udvalg.',
+                    'Exports ALL shown rows to Excel. Tick the checkboxes to export only a selection.'
+                  )
+            }
             className="inline-flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-xs px-3 py-1.5 rounded-lg transition-colors"
           >
             <Download size={13} />
-            {t('Eksporter til Excel', 'Export to Excel')}
+            {selectedVisibleCount > 0
+              ? t(
+                  `Eksporter ${selectedVisibleCount} valgte til Excel`,
+                  `Export ${selectedVisibleCount} selected to Excel`
+                )
+              : t('Eksporter til Excel', 'Export to Excel')}
           </button>
           <button
             onClick={bulkBerig}

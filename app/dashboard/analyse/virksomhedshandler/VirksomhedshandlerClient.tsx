@@ -190,6 +190,9 @@ export default function VirksomhedshandlerClient() {
   // State
   const [kandidater, setKandidater] = useState<Kandidat[]>([]);
   const [total, setTotal] = useState(0);
+  // BIZZ-1980: true når server-total er cappet ved COUNT_CAP (50.000) — så viser
+  // UI'et "50.000+" i stedet for et misvisende eksakt tal.
+  const [totalCapped, setTotalCapped] = useState(false);
   const [loading, setLoading] = useState(true);
   const [signalFilters, setSignalFilters] = useState<Set<SignalType>>(new Set(DEFAULT_SIGNALS));
   const [signalDropdownOpen, setSignalDropdownOpen] = useState(false);
@@ -406,6 +409,7 @@ export default function VirksomhedshandlerClient() {
         const data = await res.json();
         setKandidater(data.kandidater);
         setTotal(data.total);
+        setTotalCapped(!!data.total_capped);
       }
     } finally {
       // Lad kun det nyeste kald rydde loading-state.
@@ -850,6 +854,10 @@ export default function VirksomhedshandlerClient() {
 
   // ─── Render ───────────────────────────────────────────────────────
 
+  // BIZZ-1980: cappet total vises som "50.000+" (totalCapped) ellers eksakt.
+  const fmtTotalDa = `${total.toLocaleString('da-DK')}${totalCapped ? '+' : ''}`;
+  const fmtTotalEn = `${total.toLocaleString('en')}${totalCapped ? '+' : ''}`;
+
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-[#0a1628] p-6 gap-6">
       {/* Header */}
@@ -897,10 +905,7 @@ export default function VirksomhedshandlerClient() {
       <div className="shrink-0 flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-4">
           <p className="text-slate-400 text-xs">
-            {t(
-              `${total.toLocaleString('da-DK')} kandidater fundet`,
-              `${total.toLocaleString('en')} candidates found`
-            )}
+            {t(`${fmtTotalDa} kandidater fundet`, `${fmtTotalEn} candidates found`)}
           </p>
           {anyFilterActive && (
             <button
@@ -964,7 +969,7 @@ export default function VirksomhedshandlerClient() {
               ← {t('Forrige', 'Previous')}
             </button>
             <span className="text-xs text-slate-400 tabular-nums">
-              {offset + 1}–{Math.min(offset + LIMIT, total)} / {total.toLocaleString('da-DK')}
+              {offset + 1}–{Math.min(offset + LIMIT, total)} / {fmtTotalDa}
             </span>
             <button
               onClick={() => setOffset(offset + LIMIT)}
@@ -1759,12 +1764,12 @@ export default function VirksomhedshandlerClient() {
                 >
                   {offset + LIMIT >= total
                     ? t(
-                        `● Slut på listen — ${total.toLocaleString('da-DK')} kandidater i alt`,
-                        `● End of list — ${total.toLocaleString('en')} candidates total`
+                        `● Slut på listen — ${fmtTotalDa} kandidater i alt`,
+                        `● End of list — ${fmtTotalEn} candidates total`
                       )
                     : t(
-                        `Viser ${offset + 1}–${Math.min(offset + LIMIT, total)} af ${total.toLocaleString('da-DK')} — brug "Næste" for flere`,
-                        `Showing ${offset + 1}–${Math.min(offset + LIMIT, total)} of ${total.toLocaleString('en')} — use "Next" for more`
+                        `Viser ${offset + 1}–${Math.min(offset + LIMIT, total)} af ${fmtTotalDa} — brug "Næste" for flere`,
+                        `Showing ${offset + 1}–${Math.min(offset + LIMIT, total)} of ${fmtTotalEn} — use "Next" for more`
                       )}
                 </td>
               </tr>
@@ -1785,7 +1790,7 @@ export default function VirksomhedshandlerClient() {
             ← {t('Forrige', 'Previous')}
           </button>
           <span className="text-xs text-slate-400">
-            {offset + 1}–{Math.min(offset + LIMIT, total)} / {total}
+            {offset + 1}–{Math.min(offset + LIMIT, total)} / {fmtTotalDa}
           </span>
           <button
             onClick={() => setOffset(offset + LIMIT)}

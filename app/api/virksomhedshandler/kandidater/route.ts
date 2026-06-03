@@ -47,6 +47,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
+import { requireModuleAccess } from '@/app/lib/serverModuleAccess';
 import { logger } from '@/app/lib/logger';
 
 export const runtime = 'nodejs';
@@ -66,6 +67,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   if (!auth) {
     return NextResponse.json({ error: 'Ikke autentificeret' }, { status: 401 });
   }
+
+  // BIZZ-1988: server-side modul-håndhævelse (plan/addon-entitlement). Kan ikke
+  // omgås ved at kalde API'et direkte uden for ServerModuleGate'ede sider.
+  const blocked = await requireModuleAccess('virksomhedshandler');
+  if (blocked) return blocked as unknown as NextResponse;
 
   const { searchParams } = new URL(req.url);
   const signalType = searchParams.get('signal_type');

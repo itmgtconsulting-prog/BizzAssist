@@ -1,16 +1,16 @@
 /**
  * Server entry for inkasso-aktivsoegning analyse-modul.
- * BIZZ-1240: Wrapped i AnalyseModuleGuard for feature flag check.
+ * BIZZ-1240: Wrapped i ServerModuleGate for feature flag check.
  */
 import InkassoAktivsoegningClient from './InkassoAktivsoegningClient';
-import AnalyseModuleGuard from '@/app/components/analyse/AnalyseModuleGuard';
+import ServerModuleGate from '@/app/components/analyse/ServerModuleGate';
 
 export const dynamic = 'force-dynamic';
 
 export default function Page() {
   return (
-    <AnalyseModuleGuard moduleId="inkasso-aktivsoegning">
+    <ServerModuleGate moduleId="inkasso-aktivsoegning">
       <InkassoAktivsoegningClient />
-    </AnalyseModuleGuard>
+    </ServerModuleGate>
   );
 }

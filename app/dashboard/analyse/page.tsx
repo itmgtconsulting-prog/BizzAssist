@@ -23,6 +23,7 @@ import {
   Database,
   Landmark,
 } from 'lucide-react';
+import { Lock } from 'lucide-react';
 import { getEnabledModules } from '@/app/lib/analyseModules';
 
 /**
@@ -56,10 +57,22 @@ const iconMap: Record<string, React.ComponentType<{ size?: number; className?: s
 /**
  * Analyse & Tools landing page med 2 sektioner.
  *
+ * BIZZ-1988: Når ServerModuleGate afviser et modul (manglende plan-adgang)
+ * redirecter den hertil med `?locked=<moduleId>`. Vi viser da et upsell-banner
+ * der forklarer hvorfor modulet ikke kunne åbnes.
+ *
+ * @param props - Next.js searchParams (Promise med valgfri `locked`-modul-id)
  * @returns Landing page JSX
  */
-export default function AnalyseLandingPage() {
+export default async function AnalyseLandingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ locked?: string }>;
+}) {
+  const { locked } = await searchParams;
   const enabledModules = getEnabledModules();
+  // Slå det afviste modul op for at vise et menneskeligt navn i banneret.
+  const lockedModule = locked ? enabledModules.find((m) => m.id === locked) : null;
 
   return (
     <div className="flex-1 bg-[#0a1628] p-8 overflow-y-auto">
@@ -67,6 +80,27 @@ export default function AnalyseLandingPage() {
       <p className="text-slate-400 text-sm mb-8">
         Udforsk data med pivot-tabeller og AI, eller brug specialiserede brancheværktøjer.
       </p>
+
+      {/* BIZZ-1988: Upsell-banner når et modul blev afvist server-side. */}
+      {lockedModule && (
+        <div
+          role="alert"
+          className="mb-8 flex items-start gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4"
+        >
+          <Lock size={18} className="mt-0.5 shrink-0 text-amber-400" />
+          <div>
+            <p className="text-sm font-semibold text-amber-300">
+              {lockedModule.label} er ikke inkluderet i dit abonnement
+            </p>
+            <p className="mt-1 text-xs text-slate-300">
+              Opgradér din plan eller tilføj modulet som tilkøb for at få adgang.{' '}
+              <Link href="/dashboard/settings" className="underline hover:text-amber-300">
+                Se abonnement
+              </Link>
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* ── Sektion 1: Analyse ── */}
       <div className="mb-10">

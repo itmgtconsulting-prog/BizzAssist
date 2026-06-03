@@ -1,16 +1,16 @@
 /**
  * Server entry for aml-kyc analyse-modul.
- * BIZZ-1240: Wrapped i AnalyseModuleGuard for feature flag check.
+ * BIZZ-1240: Wrapped i ServerModuleGate for feature flag check.
  */
 import AmlKycClient from './AmlKycClient';
-import AnalyseModuleGuard from '@/app/components/analyse/AnalyseModuleGuard';
+import ServerModuleGate from '@/app/components/analyse/ServerModuleGate';
 
 export const dynamic = 'force-dynamic';
 
 export default function Page() {
   return (
-    <AnalyseModuleGuard moduleId="aml-kyc">
+    <ServerModuleGate moduleId="aml-kyc">
       <AmlKycClient />
-    </AnalyseModuleGuard>
+    </ServerModuleGate>
   );
 }

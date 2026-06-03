@@ -28,6 +28,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit, aiRateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
+import { requireModuleAccess } from '@/app/lib/serverModuleAccess';
 import { assertAiAllowed } from '@/app/lib/aiGate';
 import { logger } from '@/app/lib/logger';
 import {
@@ -214,6 +215,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   if (!auth) {
     return NextResponse.json({ error: 'Ikke autentificeret' }, { status: 401 });
   }
+
+  // BIZZ-1988: server-side modul-håndhævelse (plan/addon-entitlement) før AI-gaten.
+  const blocked = await requireModuleAccess('virksomhedshandler');
+  if (blocked) return blocked as unknown as NextResponse;
 
   // AI billing gate
   const gateResponse = await assertAiAllowed(auth.userId);

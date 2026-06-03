@@ -1,16 +1,16 @@
 /**
  * Server entry for revisor-benchmark analyse-modul.
- * BIZZ-1240: Wrapped i AnalyseModuleGuard for feature flag check.
+ * BIZZ-1240: Wrapped i ServerModuleGate for feature flag check.
  */
 import RevisorBenchmarkClient from './RevisorBenchmarkClient';
-import AnalyseModuleGuard from '@/app/components/analyse/AnalyseModuleGuard';
+import ServerModuleGate from '@/app/components/analyse/ServerModuleGate';
 
 export const dynamic = 'force-dynamic';
 
 export default function Page() {
   return (
-    <AnalyseModuleGuard moduleId="revisor-benchmark">
+    <ServerModuleGate moduleId="revisor-benchmark">
       <RevisorBenchmarkClient />
-    </AnalyseModuleGuard>
+    </ServerModuleGate>
   );
 }

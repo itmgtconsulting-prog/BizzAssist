@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback, useTransition } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { signOut, selectFreePlan } from '@/app/auth/actions';
+import { signOut, selectFreePlan, startTrialPlan } from '@/app/auth/actions';
 import {
   LayoutDashboard,
   Search,
@@ -1586,8 +1586,18 @@ function PlanSelectionOverlay({
     setSubmitting(true);
     const plan = plans.find((p) => p.id === selectedPlan);
     try {
-      if (plan && plan.priceDkk > 0) {
-        // Warn early if Stripe price ID is missing — avoids a round-trip that will always fail
+      if (plan && plan.priceDkk > 0 && plan.freeTrialDays > 0) {
+        // Paid plan with free trial — start trial without payment
+        const result = await startTrialPlan(selectedPlan);
+        if (result?.error) {
+          logger.error('[PlanOverlay] startTrialPlan failed:', result.error);
+          setError(da ? 'Noget gik galt. Prøv igen.' : 'Something went wrong. Please try again.');
+          setSubmitting(false);
+          return;
+        }
+        window.location.reload();
+      } else if (plan && plan.priceDkk > 0) {
+        // Paid plan without trial — Stripe checkout
         if (!plan.stripePriceId) {
           const msg = da
             ? `Stripe-pris ikke konfigureret for "${da ? plan.nameDa : plan.nameEn}". Kontakt administrator.`
@@ -1805,6 +1815,11 @@ function PlanSelectionOverlay({
                 (() => {
                   const plan = plans.find((p) => p.id === selectedPlan);
                   if (!plan) return da ? 'Vælg plan' : 'Select plan';
+                  if (plan.priceDkk > 0 && plan.freeTrialDays > 0) {
+                    return da
+                      ? `Start ${plan.freeTrialDays} dages gratis prøve`
+                      : `Start ${plan.freeTrialDays}-day free trial`;
+                  }
                   if (plan.priceDkk > 0) {
                     return da
                       ? `Gå til betaling — ${plan.priceDkk} kr/md`

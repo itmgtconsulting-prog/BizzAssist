@@ -98,7 +98,25 @@ export default function SubscriptionGate({
   let title: string;
   let description: string;
 
-  if (unpaid && sub?.status === 'active') {
+  if (unpaid && sub?.status === 'active' && !sub.isPaid) {
+    // Trial expired or never paid — show trial-specific message
+    const plan = resolvePlan(sub.planId);
+    const isTrialExpired = plan.freeTrialDays > 0;
+    title = isTrialExpired
+      ? da
+        ? 'Din gratis prøveperiode er udløbet'
+        : 'Your free trial has expired'
+      : da
+        ? 'Betaling påkrævet'
+        : 'Payment required';
+    description = isTrialExpired
+      ? da
+        ? 'Din prøveperiode er slut. Vælg et abonnement for at fortsætte med at bruge BizzAssist.'
+        : 'Your trial period has ended. Choose a subscription to continue using BizzAssist.'
+      : da
+        ? 'Dit abonnement er aktivt, men der mangler betaling. Gå til indstillinger for at gennemføre betalingen og få adgang til alle funktioner.'
+        : 'Your subscription is active but payment is pending. Go to settings to complete payment and unlock all features.';
+  } else if (unpaid && sub?.status === 'active') {
     title = da ? 'Betaling påkrævet' : 'Payment required';
     description = da
       ? 'Dit abonnement er aktivt, men der mangler betaling. Gå til indstillinger for at gennemføre betalingen og få adgang til alle funktioner.'

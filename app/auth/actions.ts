@@ -635,6 +635,77 @@ export async function selectFreePlan(planId: string): Promise<AuthResult> {
   }
 }
 
+/**
+ * Start a free trial for a paid plan — creates subscription with isPaid=false.
+ * Access is granted via isSubscriptionFunctional() while within freeTrialDays.
+ * When the trial expires, the user must pay to continue using the platform.
+ *
+ * @param planId - Plan identifier (must have freeTrialDays > 0 in plan_configs)
+ * @returns AuthResult with error message, or { error: null } on success
+ */
+export async function startTrialPlan(planId: string): Promise<AuthResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { error: 'not_authenticated' };
+  }
+
+  const now = new Date().toISOString();
+
+  try {
+    const admin = createAdminClient();
+
+    // Verify the plan exists and has a trial period
+    const { data: planRow } = (await admin
+      .from('plan_configs')
+      .select('free_trial_days')
+      .eq('plan_id', planId)
+      .single()) as { data: { free_trial_days: number } | null; error: unknown };
+
+    if (!planRow || !planRow.free_trial_days || planRow.free_trial_days <= 0) {
+      return { error: 'no_trial_available' };
+    }
+
+    // Check for existing subscription — don't overwrite an active paid sub
+    const { data: freshUserData } = await admin.auth.admin.getUserById(user.id);
+    const existingSub =
+      (freshUserData?.user?.app_metadata?.subscription as {
+        status?: string;
+        isPaid?: boolean;
+      }) ?? {};
+
+    if (existingSub.status === 'active' && existingSub.isPaid) {
+      return { error: 'already_paid' };
+    }
+
+    await admin.auth.admin.updateUserById(user.id, {
+      app_metadata: {
+        subscription: {
+          planId,
+          status: 'active',
+          createdAt: now,
+          approvedAt: now,
+          tokensUsedThisMonth: 0,
+          periodStart: now,
+          accumulatedTokens: 0,
+          topUpTokens: 0,
+          bonusTokens: 0,
+          isPaid: false,
+        },
+      },
+    });
+
+    logger.log('[startTrialPlan] Started trial for plan', planId, 'for user [user]');
+    return { error: null };
+  } catch (err) {
+    logger.error('[startTrialPlan] Error:', err);
+    return { error: 'unexpected_error' };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // MFA — verify TOTP challenge
 // ---------------------------------------------------------------------------

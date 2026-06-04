@@ -1285,19 +1285,43 @@ export default function VirksomhedshandlerClient() {
         <table className="w-full text-sm">
           <thead className="bg-slate-800 sticky top-0 z-10 shadow-[0_1px_0_0_rgba(148,163,184,0.2)]">
             <tr className="text-left text-slate-400 text-xs uppercase tracking-wider">
-              {/* BIZZ-1985: vælg-alle checkbox. Tristate: checked når alle synlige
-                  er valgt, indeterminate når kun nogle er valgt. */}
+              {/* BIZZ-1985: vælg-alle checkbox. Tristate: flueben når alle synlige
+                  er valgt, streg når kun nogle er valgt.
+                  BIZZ-1989: custom-stylet boks (samme layout som ejendoms-siden). */}
               <th className="px-3 py-2 w-9">
-                <input
-                  type="checkbox"
-                  checked={allVisibleSelected}
-                  ref={(el) => {
-                    if (el) el.indeterminate = selectedVisibleCount > 0 && !allVisibleSelected;
-                  }}
-                  onChange={toggleSelectAll}
-                  aria-label={t('Vælg alle rækker', 'Select all rows')}
-                  className="accent-indigo-500 w-4 h-4 align-middle"
-                />
+                <label className="flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="sr-only"
+                    checked={allVisibleSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = selectedVisibleCount > 0 && !allVisibleSelected;
+                    }}
+                    onChange={toggleSelectAll}
+                    aria-label={t('Vælg alle rækker', 'Select all rows')}
+                  />
+                  <span
+                    className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${
+                      allVisibleSelected || selectedVisibleCount > 0
+                        ? 'bg-indigo-500 border-indigo-500'
+                        : 'bg-[#0a1020] border-slate-400'
+                    }`}
+                  >
+                    {allVisibleSelected ? (
+                      <svg
+                        viewBox="0 0 10 10"
+                        className="w-2 h-2 text-white"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.5"
+                      >
+                        <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
+                      </svg>
+                    ) : selectedVisibleCount > 0 ? (
+                      <span className="w-2 h-0.5 rounded-full bg-white" />
+                    ) : null}
+                  </span>
+                </label>
               </th>
               <th className="px-4 py-2">{t('Signal', 'Signal')}</th>
               {renderSortTh('deltager', t('Ejer', 'Owner'))}
@@ -1870,15 +1894,34 @@ export default function VirksomhedshandlerClient() {
                     key={key}
                     className={`hover:bg-slate-800/30 transition-colors ${selectedRows.has(key) ? 'bg-indigo-500/5' : ''}`}
                   >
-                    {/* BIZZ-1985: række-checkbox til AI-berigelse af valgte rækker. */}
+                    {/* BIZZ-1985: række-checkbox til AI-berigelse af valgte rækker.
+                        BIZZ-1989: custom-stylet boks + flueben (samme layout som
+                        dokument-download på ejendoms-siden), ikke native checkbox. */}
                     <td className="px-3 py-3 w-9">
-                      <input
-                        type="checkbox"
-                        checked={selectedRows.has(key)}
-                        onChange={() => toggleRow(key)}
-                        aria-label={t('Vælg række', 'Select row')}
-                        className="accent-indigo-500 w-4 h-4 align-middle"
-                      />
+                      <label className="flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="sr-only"
+                          checked={selectedRows.has(key)}
+                          onChange={() => toggleRow(key)}
+                          aria-label={t('Vælg række', 'Select row')}
+                        />
+                        <span
+                          className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${selectedRows.has(key) ? 'bg-indigo-500 border-indigo-500' : 'bg-[#0a1020] border-slate-400'}`}
+                        >
+                          {selectedRows.has(key) && (
+                            <svg
+                              viewBox="0 0 10 10"
+                              className="w-2 h-2 text-white"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                            >
+                              <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
+                            </svg>
+                          )}
+                        </span>
+                      </label>
                     </td>
                     <td className="px-4 py-3">
                       <span

@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { createClient } from '@/lib/supabase/client';
 
 // ─── Lazy Mapbox ────────────────────────────────────────────────────────────
 
@@ -129,8 +130,55 @@ export default function DaekningsanalyseClient() {
   const [analysed, setAnalysed] = useState(false);
 
   // Threshold config (BIZZ-1999) — red max and green min; yellow is the gap
-  const [redMax, setRedMax] = useState(20);
-  const [greenMin, setGreenMin] = useState(40);
+  // Persisted in Supabase user_metadata.daekningsanalyse_thresholds
+  const [redMax, setRedMaxState] = useState(20);
+  const [greenMin, setGreenMinState] = useState(40);
+  const thresholdSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Load thresholds from user_metadata on mount */
+  useEffect(() => {
+    (async () => {
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const prefs = user?.user_metadata?.daekningsanalyse_thresholds as
+        | { redMax?: number; greenMin?: number }
+        | undefined;
+      if (prefs) {
+        if (typeof prefs.redMax === 'number') setRedMaxState(prefs.redMax);
+        if (typeof prefs.greenMin === 'number') setGreenMinState(prefs.greenMin);
+      }
+    })();
+  }, []);
+
+  /** Save thresholds to user_metadata (debounced 1s) */
+  const persistThresholds = useCallback((red: number, green: number) => {
+    if (thresholdSaveTimer.current) clearTimeout(thresholdSaveTimer.current);
+    thresholdSaveTimer.current = setTimeout(() => {
+      createClient().auth.updateUser({
+        data: { daekningsanalyse_thresholds: { redMax: red, greenMin: green } },
+      });
+    }, 1000);
+  }, []);
+
+  /** Set red threshold and persist */
+  const setRedMax = useCallback(
+    (v: number) => {
+      setRedMaxState(v);
+      persistThresholds(v, greenMin);
+    },
+    [greenMin, persistThresholds]
+  );
+
+  /** Set green threshold and persist */
+  const setGreenMin = useCallback(
+    (v: number) => {
+      setGreenMinState(v);
+      persistThresholds(redMax, v);
+    },
+    [redMax, persistThresholds]
+  );
 
   // Table sorting
   const [sortKey, setSortKey] = useState<SortKey>('daekningPct');

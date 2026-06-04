@@ -172,8 +172,8 @@ export const ANALYSE_MODULES: AnalyseModuleConfig[] = [
   },
   {
     id: 'daekningsanalyse',
-    label: 'Dækningsanalyse',
-    labelEn: 'Coverage analysis',
+    label: 'Matrikkel dækningsanalyse',
+    labelEn: 'Cadastre coverage analysis',
     icon: 'MapPin',
     path: '/dashboard/analyse/daekningsanalyse',
     enabled: { dev: true, preview: true, prod: false },

@@ -508,7 +508,7 @@ export default function DaekningsanalyseClient() {
               <div className="px-4 pt-4 pb-2 flex-shrink-0">
                 <div className="flex items-center justify-between mb-3">
                   <h2 className="text-lg font-bold text-white">
-                    {da ? 'Dækningsanalyse' : 'Coverage Analysis'}
+                    {da ? 'Matrikkel dækningsanalyse' : 'Cadastre Coverage Analysis'}
                   </h2>
                   <div className="flex items-center gap-2">
                     <button
@@ -774,7 +774,7 @@ export default function DaekningsanalyseClient() {
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-white">
-          {da ? 'Dækningsanalyse' : 'Coverage Analysis'}
+          {da ? 'Matrikkel dækningsanalyse' : 'Cadastre Coverage Analysis'}
         </h1>
         <p className="text-slate-400 text-sm mt-1">
           {da

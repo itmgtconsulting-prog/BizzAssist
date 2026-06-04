@@ -14,6 +14,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requireModuleAccess } from '@/app/lib/serverModuleAccess';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { parseBody } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
 
@@ -238,10 +239,79 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
         koordinat: group.koordinat,
         geometry: geometries[i],
         adresserLabel: adresserLines.join('\n'),
-        ejerforening: null,
-        ejerforeningCvr: null,
+        ejerforening: null as string | null,
+        ejerforeningCvr: null as string | null,
       };
     });
+
+    // Step 6: EJF enrichment — look up ejerforening for each matrikel via BFE
+    // Match adresser → bfe_adresse_cache → ejf_ejerskab (virksomhed with forening/E/F/A/B in name)
+    try {
+      const admin = createAdminClient();
+      // Get BFEs for the addresses we resolved (use koordinat to match in bfe_adresse_cache)
+      const adresseLabels = results
+        .map((r) => r.adresserLabel.split('\n')[0]?.trim())
+        .filter(Boolean);
+      if (adresseLabels.length > 0) {
+        // Query bfe_adresse_cache for matching addresses
+        const { data: bfeRows } = (await admin
+          .from('bfe_adresse_cache')
+          .select('bfe_nummer, adresse')
+          .or(
+            adresseLabels
+              .map((a) => `adresse.ilike.%${a.split(' ').slice(0, 2).join(' ')}%`)
+              .join(',')
+          )
+          .limit(200)) as { data: { bfe_nummer: number; adresse: string }[] | null };
+
+        if (bfeRows?.length) {
+          const bfeNums = [...new Set(bfeRows.map((r) => r.bfe_nummer))];
+          // Look up ejerforeninger (virksomhed-type with forening/E-F/A-B in name)
+          const { data: ejfRows } = (await admin
+            .from('ejf_ejerskab')
+            .select('bfe_nummer, ejer_navn, ejer_cvr')
+            .in('bfe_nummer', bfeNums.slice(0, 100))
+            .eq('status', 'Aktiv')
+            .eq('ejer_type', 'virksomhed')
+            .or(
+              'ejer_navn.ilike.%forening%,ejer_navn.ilike.%E/F%,ejer_navn.ilike.%A/B%,ejer_navn.ilike.%andel%'
+            )
+            .limit(100)) as {
+            data: { bfe_nummer: number; ejer_navn: string; ejer_cvr: string | null }[] | null;
+          };
+
+          if (ejfRows?.length) {
+            // Map BFE → ejerforening
+            const bfeToEjf = new Map<number, { navn: string; cvr: string | null }>();
+            for (const row of ejfRows) {
+              if (!bfeToEjf.has(row.bfe_nummer)) {
+                bfeToEjf.set(row.bfe_nummer, { navn: row.ejer_navn, cvr: row.ejer_cvr });
+              }
+            }
+            // Map adresse → BFE → ejerforening back to results
+            for (const result of results) {
+              const firstAddr = result.adresserLabel.split('\n')[0]?.trim() ?? '';
+              const matchBfe = bfeRows.find((r) =>
+                firstAddr
+                  .split(' ')
+                  .slice(0, 2)
+                  .every((w) => r.adresse?.includes(w))
+              );
+              if (matchBfe) {
+                const ejf = bfeToEjf.get(matchBfe.bfe_nummer);
+                if (ejf) {
+                  result.ejerforening = ejf.navn;
+                  result.ejerforeningCvr = ejf.cvr;
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (ejfErr) {
+      // Non-fatal — ejerforening is optional enrichment
+      logger.warn('[daekningsanalyse/resolve] EJF enrichment failed:', ejfErr);
+    }
 
     // Sort by coverage ascending (lowest first)
     results.sort((a, b) => a.daekningPct - b.daekningPct);

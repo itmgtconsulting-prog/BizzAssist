@@ -37,6 +37,10 @@ const DaekningsMap = dynamic(() => import('./DaekningsMap'), { ssr: false });
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 /** Result per matrikel from the resolve API */
+/** GeoJSON geometry from DAWA jordstykke */
+type GeoJsonGeometry = GeoJSON.Polygon | GeoJSON.MultiPolygon;
+
+/** Result per matrikel from the resolve API */
 interface MatrikelResult {
   matrikelnr: string;
   ejerlavskode: number;
@@ -45,6 +49,7 @@ interface MatrikelResult {
   kundeAntal: number;
   daekningPct: number;
   koordinat: { lat: number; lng: number } | null;
+  geometry: GeoJsonGeometry | null;
   adresserLabel: string;
   ejerforening?: string | null;
   ejerforeningCvr?: string | null;
@@ -477,10 +482,10 @@ export default function DaekningsanalyseClient() {
         </div>
       )}
 
-      {/* Results */}
+      {/* Results — split layout: table left, map right */}
       {analysed && results.length > 0 && (
         <>
-          {/* Summary badges */}
+          {/* Toolbar */}
           <div className="flex items-center gap-4 flex-wrap">
             <button
               type="button"
@@ -500,6 +505,24 @@ export default function DaekningsanalyseClient() {
                 <CheckCircle2 size={10} /> {greenCount}
               </span>
             </div>
+            {/* Table filter */}
+            <div className="flex items-center gap-1.5 ml-2">
+              <Filter size={12} className="text-slate-400" />
+              {(['all', 'red', 'yellow', 'green'] as const).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => setStatusFilter(f)}
+                  className={`text-xs px-2 py-0.5 rounded-full transition-colors ${
+                    statusFilter === f
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-white/5 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {f === 'all' ? (da ? 'Alle' : 'All') : STATUS_LABELS[f][lang]}
+                </button>
+              ))}
+            </div>
             <button
               type="button"
               onClick={exportExcel}
@@ -509,98 +532,83 @@ export default function DaekningsanalyseClient() {
             </button>
           </div>
 
-          {/* Map (BIZZ-1995) */}
-          <div
-            className="bg-[#1e293b] border border-white/10 rounded-xl overflow-hidden"
-            style={{ height: 400 }}
-          >
-            <DaekningsMap results={classified} />
-          </div>
-
-          {/* Table filter */}
-          <div className="flex items-center gap-2">
-            <Filter size={14} className="text-slate-400" />
-            {(['all', 'red', 'yellow', 'green'] as const).map((f) => (
-              <button
-                key={f}
-                type="button"
-                onClick={() => setStatusFilter(f)}
-                className={`text-xs px-2.5 py-1 rounded-full transition-colors ${
-                  statusFilter === f
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-white/5 text-slate-400 hover:text-white'
-                }`}
-              >
-                {f === 'all' ? (da ? 'Alle' : 'All') : STATUS_LABELS[f][lang]}
-              </button>
-            ))}
-          </div>
-
-          {/* Table (BIZZ-1996) */}
-          <div className="bg-[#1e293b] border border-white/10 rounded-xl overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-white/10">
-                  {(
-                    [
-                      ['matrikelnr', da ? 'Matrikel' : 'Cadastre'],
-                      ['adresserLabel', da ? 'Adresse(r)' : 'Address(es)'],
-                      ['totalEnheder', da ? 'Total' : 'Total'],
-                      ['kundeAntal', da ? 'Kunder' : 'Customers'],
-                      ['daekningPct', da ? 'Dækning' : 'Coverage'],
-                    ] as [SortKey, string][]
-                  ).map(([key, label]) => (
-                    <th
-                      key={key}
-                      onClick={() => toggleSort(key)}
-                      className="text-left text-xs text-slate-400 font-medium px-4 py-3 cursor-pointer hover:text-white transition-colors select-none"
-                    >
-                      {label}
-                      <SortIcon col={key} />
+          {/* Split view: table + map */}
+          <div className="flex gap-4" style={{ height: 'calc(100vh - 340px)', minHeight: 400 }}>
+            {/* Left: Table */}
+            <div className="w-1/2 min-w-0 bg-[#1e293b] border border-white/10 rounded-xl overflow-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-[#1e293b] z-10">
+                  <tr className="border-b border-white/10">
+                    {(
+                      [
+                        ['matrikelnr', da ? 'Matrikel' : 'Cadastre'],
+                        ['adresserLabel', da ? 'Adresse(r)' : 'Address(es)'],
+                        ['totalEnheder', da ? 'Total' : 'Total'],
+                        ['kundeAntal', da ? 'Kunder' : 'Cust.'],
+                        ['daekningPct', da ? 'Dækning' : 'Cov.'],
+                      ] as [SortKey, string][]
+                    ).map(([key, label]) => (
+                      <th
+                        key={key}
+                        onClick={() => toggleSort(key)}
+                        className="text-left text-xs text-slate-400 font-medium px-3 py-2.5 cursor-pointer hover:text-white transition-colors select-none whitespace-nowrap"
+                      >
+                        {label}
+                        <SortIcon col={key} />
+                      </th>
+                    ))}
+                    <th className="text-left text-xs text-slate-400 font-medium px-3 py-2.5">
+                      Status
                     </th>
-                  ))}
-                  <th className="text-left text-xs text-slate-400 font-medium px-4 py-3">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedResults.map((r) => {
-                  const st = STATUS_STYLES[r.status];
-                  return (
-                    <tr
-                      key={r.matrikelnr + r.ejerlavskode}
-                      className="border-b border-white/5 hover:bg-white/[0.02]"
-                    >
-                      <td className="px-4 py-3 text-white font-mono text-xs">{r.matrikelnr}</td>
-                      <td className="px-4 py-3 text-slate-300 text-xs max-w-xs truncate">
-                        {r.adresserLabel}
-                        {r.ejerforening && (
-                          <span className="block text-slate-400 text-[10px] mt-0.5">
-                            {r.ejerforening}
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedResults.map((r) => {
+                    const st = STATUS_STYLES[r.status];
+                    return (
+                      <tr
+                        key={r.matrikelnr + r.ejerlavskode}
+                        className="border-b border-white/5 hover:bg-white/[0.02]"
+                      >
+                        <td className="px-3 py-2 text-white font-mono text-xs">{r.matrikelnr}</td>
+                        <td className="px-3 py-2 text-slate-300 text-xs max-w-[200px] truncate">
+                          {r.adresserLabel}
+                          {r.ejerforening && (
+                            <span className="block text-slate-400 text-[10px] mt-0.5">
+                              {r.ejerforening}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-white text-xs tabular-nums">
+                          {r.totalEnheder}
+                        </td>
+                        <td className="px-3 py-2 text-white text-xs tabular-nums">
+                          {r.kundeAntal}
+                        </td>
+                        <td className="px-3 py-2 text-white text-xs font-bold tabular-nums">
+                          {Math.round(r.daekningPct)}%
+                        </td>
+                        <td className="px-3 py-2">
+                          <span
+                            className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full ${st.bg} ${st.text} border ${st.border} whitespace-nowrap`}
+                          >
+                            {r.status === 'red' && <AlertTriangle size={8} />}
+                            {r.status === 'yellow' && <MinusCircle size={8} />}
+                            {r.status === 'green' && <CheckCircle2 size={8} />}
+                            {STATUS_LABELS[r.status][lang]}
                           </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-white text-xs tabular-nums">
-                        {r.totalEnheder}
-                      </td>
-                      <td className="px-4 py-3 text-white text-xs tabular-nums">{r.kundeAntal}</td>
-                      <td className="px-4 py-3 text-white text-xs font-bold tabular-nums">
-                        {Math.round(r.daekningPct)}%
-                      </td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full ${st.bg} ${st.text} border ${st.border}`}
-                        >
-                          {r.status === 'red' && <AlertTriangle size={9} />}
-                          {r.status === 'yellow' && <MinusCircle size={9} />}
-                          {r.status === 'green' && <CheckCircle2 size={9} />}
-                          {STATUS_LABELS[r.status][lang]}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Right: Map with matrikel polygons */}
+            <div className="w-1/2 min-w-0 bg-[#1e293b] border border-white/10 rounded-xl overflow-hidden">
+              <DaekningsMap results={classified} />
+            </div>
           </div>
         </>
       )}

@@ -186,6 +186,23 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
 
     const totalCounts = await runConcurrent(countTasks, DAWA_CONCURRENCY);
 
+    // Step 5: Fetch jordstykke polygon geometry for each matrikel
+    const geoTasks = matrikelKeys.map(([, group]) => async () => {
+      try {
+        const url = `https://api.dataforsyningen.dk/jordstykker?matrikelnr=${encodeURIComponent(group.matrikelnr)}&ejerlavkode=${group.ejerlavskode}&format=geojson`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(DAWA_TIMEOUT) });
+        if (!res.ok) return null;
+        const geojson = await res.json();
+        // GeoJSON FeatureCollection — return first feature's geometry
+        const feature = geojson?.features?.[0];
+        return feature?.geometry ?? null;
+      } catch {
+        return null;
+      }
+    });
+
+    const geometries = await runConcurrent(geoTasks, DAWA_CONCURRENCY);
+
     // Build results
     const results = matrikelKeys.map(([, group], i) => {
       const totalEnheder = totalCounts[i];
@@ -201,6 +218,7 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
         kundeAntal,
         daekningPct: Math.round(daekningPct * 10) / 10,
         koordinat: group.koordinat,
+        geometry: geometries[i],
         adresserLabel: `Nr. ${husnumreArr.join(', ')} (${group.ejerlav})`,
         ejerforening: null,
         ejerforeningCvr: null,

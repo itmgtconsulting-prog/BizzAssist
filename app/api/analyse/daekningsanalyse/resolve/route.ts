@@ -66,7 +66,8 @@ interface MatrikelGroup {
   ejerlav: string;
   kundeAdgangsIds: Set<string>;
   koordinat: { lat: number; lng: number } | null;
-  husnumre: Set<string>;
+  /** Map of vejnavn → Set of husnumre */
+  vejHusnumre: Map<string, Set<string>>;
 }
 
 /**
@@ -161,13 +162,15 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
           ejerlav: aa.jordstykke.ejerlav.navn,
           kundeAdgangsIds: new Set(),
           koordinat: coords ? { lat: coords[1], lng: coords[0] } : null,
-          husnumre: new Set(),
+          vejHusnumre: new Map(),
         });
       }
 
       const group = matrikelMap.get(key)!;
       group.kundeAdgangsIds.add(aa.id);
-      group.husnumre.add(aa.husnr);
+      const vejnavn = aa.vejnavn || 'Ukendt';
+      if (!group.vejHusnumre.has(vejnavn)) group.vejHusnumre.set(vejnavn, new Set());
+      group.vejHusnumre.get(vejnavn)!.add(aa.husnr);
     }
 
     // Step 4: For each matrikel, count total addresses (all units on the matrikel)
@@ -208,7 +211,13 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
       const totalEnheder = totalCounts[i];
       const kundeAntal = group.kundeAdgangsIds.size;
       const daekningPct = totalEnheder > 0 ? (kundeAntal / totalEnheder) * 100 : 0;
-      const husnumreArr = [...group.husnumre].sort((a, b) => parseInt(a) - parseInt(b));
+
+      // Build address label: "Vejnavn husnumre" per line
+      const adresserLines: string[] = [];
+      for (const [vej, numre] of group.vejHusnumre) {
+        const sorted = [...numre].sort((a, b) => parseInt(a) - parseInt(b));
+        adresserLines.push(`${vej} ${sorted.join(', ')}`);
+      }
 
       return {
         matrikelnr: group.matrikelnr,
@@ -219,7 +228,7 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
         daekningPct: Math.round(daekningPct * 10) / 10,
         koordinat: group.koordinat,
         geometry: geometries[i],
-        adresserLabel: `Nr. ${husnumreArr.join(', ')} (${group.ejerlav})`,
+        adresserLabel: adresserLines.join('\n'),
         ejerforening: null,
         ejerforeningCvr: null,
       };

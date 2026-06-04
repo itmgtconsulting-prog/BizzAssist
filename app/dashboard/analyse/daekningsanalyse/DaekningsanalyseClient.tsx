@@ -67,11 +67,21 @@ type StatusFilter = 'all' | 'red' | 'yellow' | 'green';
  * @param expected - Expected market share percentage
  * @returns 'red' | 'yellow' | 'green'
  */
-function classifyCoverage(pct: number, expected: number): 'red' | 'yellow' | 'green' {
-  if (expected <= 0) return 'green';
-  const ratio = pct / expected;
-  if (ratio < 0.5) return 'red';
-  if (ratio < 0.8) return 'yellow';
+/**
+ * Classify coverage based on configurable thresholds.
+ *
+ * @param pct - Actual coverage percentage (0-100)
+ * @param redBelow - Below this % = red
+ * @param yellowBelow - Below this % = yellow, above = green
+ * @returns 'red' | 'yellow' | 'green'
+ */
+function classifyCoverage(
+  pct: number,
+  redBelow: number,
+  yellowBelow: number
+): 'red' | 'yellow' | 'green' {
+  if (pct < redBelow) return 'red';
+  if (pct < yellowBelow) return 'yellow';
   return 'green';
 }
 
@@ -83,9 +93,9 @@ const STATUS_STYLES = {
 } as const;
 
 const STATUS_LABELS = {
-  red: { da: 'Mulig konkurrence', en: 'Possible competition' },
-  yellow: { da: 'Under forventet', en: 'Below expected' },
-  green: { da: 'Normal dækning', en: 'Normal coverage' },
+  red: { da: 'Rød', en: 'Red' },
+  yellow: { da: 'Gul', en: 'Yellow' },
+  green: { da: 'Grøn', en: 'Green' },
 } as const;
 
 /**
@@ -109,8 +119,9 @@ export default function DaekningsanalyseClient() {
   const [results, setResults] = useState<MatrikelResult[]>([]);
   const [analysed, setAnalysed] = useState(false);
 
-  // Threshold config (BIZZ-1999)
-  const [expectedShare, setExpectedShare] = useState(45);
+  // Threshold config (BIZZ-1999) — separate red/yellow/green boundaries
+  const [redBelow, setRedBelow] = useState(20);
+  const [yellowBelow, setYellowBelow] = useState(40);
 
   // Table sorting
   const [sortKey, setSortKey] = useState<SortKey>('daekningPct');
@@ -264,9 +275,9 @@ export default function DaekningsanalyseClient() {
     () =>
       results.map((r) => ({
         ...r,
-        status: classifyCoverage(r.daekningPct, expectedShare),
+        status: classifyCoverage(r.daekningPct, redBelow, yellowBelow),
       })),
-    [results, expectedShare]
+    [results, redBelow, yellowBelow]
   );
 
   /** Filtered + sorted results */
@@ -309,12 +320,12 @@ export default function DaekningsanalyseClient() {
     const ws1 = wb.addWorksheet(da ? 'Oversigt' : 'Overview');
     ws1.columns = [
       { header: 'Matrikelnr', key: 'mat', width: 15 },
-      { header: da ? 'Adresse(r)' : 'Address(es)', key: 'addr', width: 40 },
-      { header: da ? 'Ejerforening' : "Owners' association", key: 'ejf', width: 30 },
-      { header: da ? 'Total enheder' : 'Total units', key: 'total', width: 14 },
-      { header: da ? 'Kunder' : 'Customers', key: 'kunder', width: 10 },
+      { header: da ? 'Adresse(r)' : 'Address(es)', key: 'addr', width: 45 },
+      { header: da ? 'Total antal adresser' : 'Total addresses', key: 'total', width: 18 },
+      { header: da ? 'Antal kunder' : 'Customers', key: 'kunder', width: 14 },
       { header: da ? 'Dækning %' : 'Coverage %', key: 'pct', width: 12 },
-      { header: 'Status', key: 'status', width: 20 },
+      { header: da ? 'Ejerforening' : 'Association', key: 'ejf', width: 30 },
+      { header: 'Status', key: 'status', width: 12 },
     ];
     ws1.getRow(1).font = { bold: true };
     for (const r of classified) {
@@ -400,24 +411,43 @@ export default function DaekningsanalyseClient() {
                   </div>
                 </div>
 
-                {/* Threshold slider */}
-                <div className="bg-[#1e293b] border border-white/10 rounded-lg p-3 mb-3">
+                {/* Threshold sliders — separate red/yellow/green */}
+                <div className="bg-[#1e293b] border border-white/10 rounded-lg p-3 mb-3 space-y-2">
                   <label className="flex items-center gap-2">
-                    <span className="text-xs text-slate-300 whitespace-nowrap">
-                      {da ? 'Forventet:' : 'Expected:'}
-                    </span>
+                    <span className="text-xs text-red-400 w-8">{da ? 'Rød' : 'Red'}</span>
+                    <span className="text-[10px] text-slate-400">&lt;</span>
                     <input
                       type="range"
                       min={5}
-                      max={80}
-                      value={expectedShare}
-                      onChange={(e) => setExpectedShare(Number(e.target.value))}
-                      className="flex-1 accent-blue-500"
+                      max={yellowBelow - 1}
+                      value={redBelow}
+                      onChange={(e) => setRedBelow(Number(e.target.value))}
+                      className="flex-1 accent-red-500"
                     />
                     <span className="text-xs font-bold text-white w-10 text-right">
-                      {expectedShare}%
+                      {redBelow}%
                     </span>
                   </label>
+                  <label className="flex items-center gap-2">
+                    <span className="text-xs text-amber-400 w-8">{da ? 'Gul' : 'Yel.'}</span>
+                    <span className="text-[10px] text-slate-400">&lt;</span>
+                    <input
+                      type="range"
+                      min={redBelow + 1}
+                      max={80}
+                      value={yellowBelow}
+                      onChange={(e) => setYellowBelow(Number(e.target.value))}
+                      className="flex-1 accent-amber-500"
+                    />
+                    <span className="text-xs font-bold text-white w-10 text-right">
+                      {yellowBelow}%
+                    </span>
+                  </label>
+                  <p className="text-[10px] text-slate-400">
+                    {da
+                      ? `Rød: <${redBelow}% · Gul: ${redBelow}-${yellowBelow}% · Grøn: >${yellowBelow}%`
+                      : `Red: <${redBelow}% · Yellow: ${redBelow}-${yellowBelow}% · Green: >${yellowBelow}%`}
+                  </p>
                 </div>
 
                 {/* Badges + filter + export */}
@@ -474,8 +504,8 @@ export default function DaekningsanalyseClient() {
                         [
                           ['matrikelnr', da ? 'Matrikel' : 'Cadastre'],
                           ['adresserLabel', da ? 'Adresse(r)' : 'Address(es)'],
-                          ['totalEnheder', 'Total'],
-                          ['kundeAntal', da ? 'Kunder' : 'Cust.'],
+                          ['totalEnheder', da ? 'Total adresser' : 'Total addr.'],
+                          ['kundeAntal', da ? 'Antal kunder' : 'Customers'],
                           ['daekningPct', '%'],
                         ] as [SortKey, string][]
                       ).map(([key, label]) => (
@@ -488,6 +518,9 @@ export default function DaekningsanalyseClient() {
                           <SortIcon col={key} />
                         </th>
                       ))}
+                      <th className="text-left text-[10px] text-slate-400 font-medium px-2 py-2">
+                        {da ? 'Ejerforening' : 'Association'}
+                      </th>
                       <th className="text-left text-[10px] text-slate-400 font-medium px-2 py-2">
                         Status
                       </th>
@@ -502,13 +535,18 @@ export default function DaekningsanalyseClient() {
                           className="border-b border-white/5 hover:bg-white/[0.03]"
                         >
                           <td className="px-2 py-1.5 text-white font-mono">{r.matrikelnr}</td>
-                          <td className="px-2 py-1.5 text-slate-300 max-w-[140px] truncate">
-                            {r.adresserLabel}
+                          <td className="px-2 py-1.5 text-slate-300 max-w-[180px]">
+                            <div className="text-xs leading-relaxed whitespace-pre-line">
+                              {r.adresserLabel}
+                            </div>
                           </td>
                           <td className="px-2 py-1.5 text-white tabular-nums">{r.totalEnheder}</td>
                           <td className="px-2 py-1.5 text-white tabular-nums">{r.kundeAntal}</td>
                           <td className="px-2 py-1.5 text-white font-bold tabular-nums">
                             {Math.round(r.daekningPct)}%
+                          </td>
+                          <td className="px-2 py-1.5 text-slate-400 text-[10px] italic">
+                            {r.ejerforening || '—'}
                           </td>
                           <td className="px-2 py-1.5">
                             <span
@@ -578,26 +616,41 @@ export default function DaekningsanalyseClient() {
         </p>
       </div>
 
-      {/* Threshold config (BIZZ-1999) */}
-      <div className="bg-[#1e293b] border border-white/10 rounded-xl p-4">
+      {/* Threshold config (BIZZ-1999) — separate red/yellow/green */}
+      <div className="bg-[#1e293b] border border-white/10 rounded-xl p-4 space-y-3">
+        <p className="text-sm font-medium text-white">
+          {da ? 'Dækningsgrænser' : 'Coverage thresholds'}
+        </p>
         <label className="flex items-center gap-3">
-          <span className="text-sm text-slate-300 whitespace-nowrap">
-            {da ? 'Forventet markedsandel:' : 'Expected market share:'}
-          </span>
+          <span className="text-sm text-red-400 w-10">{da ? 'Rød' : 'Red'}</span>
+          <span className="text-xs text-slate-400">&lt;</span>
           <input
             type="range"
             min={5}
-            max={80}
-            value={expectedShare}
-            onChange={(e) => setExpectedShare(Number(e.target.value))}
-            className="flex-1 accent-blue-500"
+            max={yellowBelow - 1}
+            value={redBelow}
+            onChange={(e) => setRedBelow(Number(e.target.value))}
+            className="flex-1 accent-red-500"
           />
-          <span className="text-sm font-bold text-white w-12 text-right">{expectedShare}%</span>
+          <span className="text-sm font-bold text-white w-12 text-right">{redBelow}%</span>
         </label>
-        <p className="text-xs text-slate-400 mt-1.5">
+        <label className="flex items-center gap-3">
+          <span className="text-sm text-amber-400 w-10">{da ? 'Gul' : 'Yellow'}</span>
+          <span className="text-xs text-slate-400">&lt;</span>
+          <input
+            type="range"
+            min={redBelow + 1}
+            max={80}
+            value={yellowBelow}
+            onChange={(e) => setYellowBelow(Number(e.target.value))}
+            className="flex-1 accent-amber-500"
+          />
+          <span className="text-sm font-bold text-white w-12 text-right">{yellowBelow}%</span>
+        </label>
+        <p className="text-xs text-slate-400">
           {da
-            ? `Rød: <${Math.round(expectedShare * 0.5)}% · Gul: ${Math.round(expectedShare * 0.5)}-${Math.round(expectedShare * 0.8)}% · Grøn: >${Math.round(expectedShare * 0.8)}%`
-            : `Red: <${Math.round(expectedShare * 0.5)}% · Yellow: ${Math.round(expectedShare * 0.5)}-${Math.round(expectedShare * 0.8)}% · Green: >${Math.round(expectedShare * 0.8)}%`}
+            ? `Rød: <${redBelow}% · Gul: ${redBelow}-${yellowBelow}% · Grøn: >${yellowBelow}%`
+            : `Red: <${redBelow}% · Yellow: ${redBelow}-${yellowBelow}% · Green: >${yellowBelow}%`}
         </p>
       </div>
 

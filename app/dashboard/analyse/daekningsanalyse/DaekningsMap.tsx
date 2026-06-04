@@ -171,15 +171,23 @@ export default function DaekningsMap({ results }: Props) {
         map.getCanvas().style.cursor = '';
       });
 
-      // Fit bounds to all polygons
+      // Fit bounds to all polygon geometries (not point coordinates)
       if (features.length > 0) {
         const bounds = new mapboxgl.LngLatBounds();
-        for (const r of results) {
-          if (r.koordinat) {
-            bounds.extend([r.koordinat.lng, r.koordinat.lat]);
+        for (const feat of features) {
+          const geo = feat.geometry;
+          // Extract all coordinates from Polygon or MultiPolygon
+          const rings =
+            geo.type === 'MultiPolygon'
+              ? (geo.coordinates as number[][][][]).flat()
+              : (geo.coordinates as number[][][]);
+          for (const ring of rings) {
+            for (const coord of ring) {
+              bounds.extend(coord as [number, number]);
+            }
           }
         }
-        map.fitBounds(bounds, { padding: 60, maxZoom: 17 });
+        map.fitBounds(bounds, { padding: 40, maxZoom: 17 });
       }
     });
 

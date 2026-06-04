@@ -190,7 +190,7 @@ export default function DaekningsanalyseClient() {
 
   // Sidebar state for results view
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sidebarWidth, setSidebarWidth] = useState(600);
+  const [sidebarWidth, setSidebarWidth] = useState(750);
   const [resizing, setResizing] = useState(false);
   const resizeStart = useRef<{ x: number; width: number } | null>(null);
 
@@ -200,7 +200,7 @@ export default function DaekningsanalyseClient() {
     function onMove(e: MouseEvent) {
       if (!resizeStart.current) return;
       const delta = e.clientX - resizeStart.current.x;
-      const newWidth = Math.min(900, Math.max(300, resizeStart.current.width + delta));
+      const newWidth = Math.min(1400, Math.max(300, resizeStart.current.width + delta));
       setSidebarWidth(newWidth);
     }
     function onUp() {

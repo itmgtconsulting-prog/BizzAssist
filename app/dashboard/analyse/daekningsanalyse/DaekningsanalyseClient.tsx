@@ -71,18 +71,27 @@ type StatusFilter = 'all' | 'red' | 'yellow' | 'green';
  * Classify coverage based on configurable thresholds.
  *
  * @param pct - Actual coverage percentage (0-100)
- * @param redBelow - Below this % = red
- * @param yellowBelow - Below this % = yellow, above = green
+ * @param redMax - Below this % = red
+ * @param greenMin - Below this % = yellow, above = green
+ * @returns 'red' | 'yellow' | 'green'
+ */
+/**
+ * Classify coverage: red below redMax, green at/above greenMin,
+ * yellow in between (only if there's a gap).
+ *
+ * @param pct - Actual coverage percentage (0-100)
+ * @param redMax - Below this = red
+ * @param greenMin - At or above this = green. If equal to redMax, no yellow zone.
  * @returns 'red' | 'yellow' | 'green'
  */
 function classifyCoverage(
   pct: number,
-  redBelow: number,
-  yellowBelow: number
+  redMax: number,
+  greenMin: number
 ): 'red' | 'yellow' | 'green' {
-  if (pct < redBelow) return 'red';
-  if (pct < yellowBelow) return 'yellow';
-  return 'green';
+  if (pct < redMax) return 'red';
+  if (pct >= greenMin) return 'green';
+  return 'yellow';
 }
 
 /** Status badge colors */
@@ -119,9 +128,9 @@ export default function DaekningsanalyseClient() {
   const [results, setResults] = useState<MatrikelResult[]>([]);
   const [analysed, setAnalysed] = useState(false);
 
-  // Threshold config (BIZZ-1999) — separate red/yellow/green boundaries
-  const [redBelow, setRedBelow] = useState(20);
-  const [yellowBelow, setYellowBelow] = useState(40);
+  // Threshold config (BIZZ-1999) — red max and green min; yellow is the gap
+  const [redMax, setRedMax] = useState(20);
+  const [greenMin, setGreenMin] = useState(40);
 
   // Table sorting
   const [sortKey, setSortKey] = useState<SortKey>('daekningPct');
@@ -275,9 +284,9 @@ export default function DaekningsanalyseClient() {
     () =>
       results.map((r) => ({
         ...r,
-        status: classifyCoverage(r.daekningPct, redBelow, yellowBelow),
+        status: classifyCoverage(r.daekningPct, redMax, greenMin),
       })),
-    [results, redBelow, yellowBelow]
+    [results, redMax, greenMin]
   );
 
   /** Filtered + sorted results */
@@ -411,42 +420,44 @@ export default function DaekningsanalyseClient() {
                   </div>
                 </div>
 
-                {/* Threshold sliders — separate red/yellow/green */}
+                {/* Threshold sliders — grøn (top), rød (bottom); gul = gap */}
                 <div className="bg-[#1e293b] border border-white/10 rounded-lg p-3 mb-3 space-y-2">
+                  <label className="flex items-center gap-2">
+                    <span className="text-xs text-emerald-400 w-8">{da ? 'Grøn' : 'Green'}</span>
+                    <span className="text-[10px] text-slate-400">≥</span>
+                    <input
+                      type="range"
+                      min={redMax}
+                      max={80}
+                      value={greenMin}
+                      onChange={(e) => setGreenMin(Number(e.target.value))}
+                      className="flex-1 accent-emerald-500"
+                    />
+                    <span className="text-xs font-bold text-white w-10 text-right">
+                      {greenMin}%
+                    </span>
+                  </label>
                   <label className="flex items-center gap-2">
                     <span className="text-xs text-red-400 w-8">{da ? 'Rød' : 'Red'}</span>
                     <span className="text-[10px] text-slate-400">&lt;</span>
                     <input
                       type="range"
                       min={5}
-                      max={yellowBelow - 1}
-                      value={redBelow}
-                      onChange={(e) => setRedBelow(Number(e.target.value))}
+                      max={greenMin}
+                      value={redMax}
+                      onChange={(e) => setRedMax(Number(e.target.value))}
                       className="flex-1 accent-red-500"
                     />
-                    <span className="text-xs font-bold text-white w-10 text-right">
-                      {redBelow}%
-                    </span>
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <span className="text-xs text-amber-400 w-8">{da ? 'Gul' : 'Yel.'}</span>
-                    <span className="text-[10px] text-slate-400">&lt;</span>
-                    <input
-                      type="range"
-                      min={redBelow + 1}
-                      max={80}
-                      value={yellowBelow}
-                      onChange={(e) => setYellowBelow(Number(e.target.value))}
-                      className="flex-1 accent-amber-500"
-                    />
-                    <span className="text-xs font-bold text-white w-10 text-right">
-                      {yellowBelow}%
-                    </span>
+                    <span className="text-xs font-bold text-white w-10 text-right">{redMax}%</span>
                   </label>
                   <p className="text-[10px] text-slate-400">
-                    {da
-                      ? `Rød: <${redBelow}% · Gul: ${redBelow}-${yellowBelow}% · Grøn: >${yellowBelow}%`
-                      : `Red: <${redBelow}% · Yellow: ${redBelow}-${yellowBelow}% · Green: >${yellowBelow}%`}
+                    {redMax === greenMin
+                      ? da
+                        ? `Rød: <${redMax}% · Grøn: ≥${greenMin}%`
+                        : `Red: <${redMax}% · Green: ≥${greenMin}%`
+                      : da
+                        ? `Rød: <${redMax}% · Gul: ${redMax}-${greenMin}% · Grøn: ≥${greenMin}%`
+                        : `Red: <${redMax}% · Yellow: ${redMax}-${greenMin}% · Green: ≥${greenMin}%`}
                   </p>
                 </div>
 
@@ -616,41 +627,45 @@ export default function DaekningsanalyseClient() {
         </p>
       </div>
 
-      {/* Threshold config (BIZZ-1999) — separate red/yellow/green */}
+      {/* Threshold config (BIZZ-1999) — grøn (top), rød (bottom); gul = gap */}
       <div className="bg-[#1e293b] border border-white/10 rounded-xl p-4 space-y-3">
         <p className="text-sm font-medium text-white">
           {da ? 'Dækningsgrænser' : 'Coverage thresholds'}
         </p>
+        <label className="flex items-center gap-3">
+          <span className="text-sm text-emerald-400 w-10">{da ? 'Grøn' : 'Green'}</span>
+          <span className="text-xs text-slate-400">≥</span>
+          <input
+            type="range"
+            min={redMax}
+            max={80}
+            value={greenMin}
+            onChange={(e) => setGreenMin(Number(e.target.value))}
+            className="flex-1 accent-emerald-500"
+          />
+          <span className="text-sm font-bold text-white w-12 text-right">{greenMin}%</span>
+        </label>
         <label className="flex items-center gap-3">
           <span className="text-sm text-red-400 w-10">{da ? 'Rød' : 'Red'}</span>
           <span className="text-xs text-slate-400">&lt;</span>
           <input
             type="range"
             min={5}
-            max={yellowBelow - 1}
-            value={redBelow}
-            onChange={(e) => setRedBelow(Number(e.target.value))}
+            max={greenMin}
+            value={redMax}
+            onChange={(e) => setRedMax(Number(e.target.value))}
             className="flex-1 accent-red-500"
           />
-          <span className="text-sm font-bold text-white w-12 text-right">{redBelow}%</span>
-        </label>
-        <label className="flex items-center gap-3">
-          <span className="text-sm text-amber-400 w-10">{da ? 'Gul' : 'Yellow'}</span>
-          <span className="text-xs text-slate-400">&lt;</span>
-          <input
-            type="range"
-            min={redBelow + 1}
-            max={80}
-            value={yellowBelow}
-            onChange={(e) => setYellowBelow(Number(e.target.value))}
-            className="flex-1 accent-amber-500"
-          />
-          <span className="text-sm font-bold text-white w-12 text-right">{yellowBelow}%</span>
+          <span className="text-sm font-bold text-white w-12 text-right">{redMax}%</span>
         </label>
         <p className="text-xs text-slate-400">
-          {da
-            ? `Rød: <${redBelow}% · Gul: ${redBelow}-${yellowBelow}% · Grøn: >${yellowBelow}%`
-            : `Red: <${redBelow}% · Yellow: ${redBelow}-${yellowBelow}% · Green: >${yellowBelow}%`}
+          {redMax === greenMin
+            ? da
+              ? `Rød: <${redMax}% · Grøn: ≥${greenMin}%`
+              : `Red: <${redMax}% · Green: ≥${greenMin}%`
+            : da
+              ? `Rød: <${redMax}% · Gul: ${redMax}-${greenMin}% · Grøn: ≥${greenMin}%`
+              : `Red: <${redMax}% · Yellow: ${redMax}-${greenMin}% · Green: ≥${greenMin}%`}
         </p>
       </div>
 

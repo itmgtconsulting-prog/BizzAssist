@@ -276,6 +276,30 @@ export default function DaekningsanalyseClient() {
     }
   }, [saveName, results, redMax, greenMin, file]);
 
+  /** Load a previously saved analysis by ID */
+  const loadSavedAnalysis = useCallback(
+    async (id: string) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch(`/api/analyse/daekningsanalyse/saved/${id}`);
+        if (!res.ok) throw new Error('Could not load');
+        const data = await res.json();
+        setResults((data.results ?? []) as MatrikelResult[]);
+        if (data.thresholds) {
+          setRedMaxState(data.thresholds.redMax ?? 20);
+          setGreenMinState(data.thresholds.greenMin ?? 40);
+        }
+        setAnalysed(true);
+      } catch {
+        setError(da ? 'Kunne ikke indlæse analyse' : 'Could not load analysis');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [da]
+  );
+
   /**
    * Parse uploaded Excel/CSV file and extract addresses.
    *
@@ -833,9 +857,12 @@ export default function DaekningsanalyseClient() {
           </h3>
           <div className="space-y-2">
             {savedAnalyses.map((sa) => (
-              <div
+              <button
                 key={sa.id}
-                className="flex items-center justify-between bg-white/5 rounded-lg px-3 py-2"
+                type="button"
+                onClick={() => loadSavedAnalysis(sa.id)}
+                disabled={loading}
+                className="w-full flex items-center justify-between bg-white/5 hover:bg-white/10 rounded-lg px-3 py-2 transition-colors text-left disabled:opacity-50"
               >
                 <div>
                   <span className="text-sm text-white">{sa.name}</span>
@@ -847,7 +874,7 @@ export default function DaekningsanalyseClient() {
                 <span className="text-[10px] text-slate-400">
                   {new Date(sa.created_at).toLocaleDateString('da-DK')}
                 </span>
-              </div>
+              </button>
             ))}
           </div>
         </div>

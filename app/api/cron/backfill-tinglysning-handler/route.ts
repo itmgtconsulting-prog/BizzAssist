@@ -24,6 +24,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { backfillHandlerForBfe } from '@/app/lib/tinglysningHandlerCache';
+import { withCronMonitor } from '@/app/lib/cronMonitor';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -93,53 +94,59 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) {
-    return NextResponse.json({ error: 'Supabase misconfigured' }, { status: 500 });
-  }
-  const client = createClient(url, key, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-
-  const start = Date.now();
-  const bfes = await pickBfes(client);
-  if (bfes.length === 0) {
-    return NextResponse.json({ ok: true, processed: 0, totalMs: Date.now() - start });
-  }
-
-  let successCount = 0;
-  let failCount = 0;
-  let totalRows = 0;
-  for (const bfe of bfes) {
-    try {
-      const n = await backfillHandlerForBfe(bfe);
-      if (n > 0) {
-        successCount++;
-        totalRows += n;
+  // BIZZ-1971: heartbeat + Sentry cron-monitoring
+  return withCronMonitor(
+    { jobName: 'backfill-tinglysning-handler', schedule: '0 5 * * *', intervalMinutes: 1440 },
+    async () => {
+      const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (!url || !key) {
+        return NextResponse.json({ error: 'Supabase misconfigured' }, { status: 500 });
       }
-    } catch (err) {
-      failCount++;
-      logger.warn('[cron/backfill-tinglysning-handler] BFE fejl', { bfe, err });
+      const client = createClient(url, key, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+
+      const start = Date.now();
+      const bfes = await pickBfes(client);
+      if (bfes.length === 0) {
+        return NextResponse.json({ ok: true, processed: 0, totalMs: Date.now() - start });
+      }
+
+      let successCount = 0;
+      let failCount = 0;
+      let totalRows = 0;
+      for (const bfe of bfes) {
+        try {
+          const n = await backfillHandlerForBfe(bfe);
+          if (n > 0) {
+            successCount++;
+            totalRows += n;
+          }
+        } catch (err) {
+          failCount++;
+          logger.warn('[cron/backfill-tinglysning-handler] BFE fejl', { bfe, err });
+        }
+        await sleep(THROTTLE_MS);
+      }
+
+      const totalMs = Date.now() - start;
+      logger.log('[cron/backfill-tinglysning-handler]', {
+        requested: bfes.length,
+        successCount,
+        failCount,
+        totalRows,
+        totalMs,
+      });
+
+      return NextResponse.json({
+        ok: failCount === 0,
+        requested: bfes.length,
+        successCount,
+        failCount,
+        totalRows,
+        totalMs,
+      });
     }
-    await sleep(THROTTLE_MS);
-  }
-
-  const totalMs = Date.now() - start;
-  logger.log('[cron/backfill-tinglysning-handler]', {
-    requested: bfes.length,
-    successCount,
-    failCount,
-    totalRows,
-    totalMs,
-  });
-
-  return NextResponse.json({
-    ok: failCount === 0,
-    requested: bfes.length,
-    successCount,
-    failCount,
-    totalRows,
-    totalMs,
-  });
+  );
 }

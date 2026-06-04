@@ -14,6 +14,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
+import { withCronMonitor } from '@/app/lib/cronMonitor';
 
 export const maxDuration = 300;
 import { logger } from '@/app/lib/logger';
@@ -158,69 +159,74 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const admin = createAdminClient();
+  return withCronMonitor(
+    { jobName: 'backfill-ejerandel', schedule: '30 4 * * *', intervalMinutes: 1440 },
+    async () => {
+      const admin = createAdminClient();
 
-  // Find relationer der mangler ejerandel_pct
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: missingRows } = await (admin as any)
-    .from('cvr_deltagerrelation')
-    .select('deltager_enhedsnummer, virksomhed_cvr')
-    .in('type', ['register', 'reel_ejer'])
-    .is('gyldig_til', null)
-    .is('ejerandel_pct', null)
-    .limit(2000);
+      // Find relationer der mangler ejerandel_pct
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: missingRows } = await (admin as any)
+        .from('cvr_deltagerrelation')
+        .select('deltager_enhedsnummer, virksomhed_cvr')
+        .in('type', ['register', 'reel_ejer'])
+        .is('gyldig_til', null)
+        .is('ejerandel_pct', null)
+        .limit(2000);
 
-  if (!missingRows?.length) {
-    return NextResponse.json({
-      status: 'done',
-      processed: 0,
-      message: 'Ingen manglende ejerandele',
-    });
-  }
-
-  // Unikke personer
-  const uniquePersons = Array.from(
-    new Set(
-      (missingRows as Array<{ deltager_enhedsnummer: number }>).map((r) => r.deltager_enhedsnummer)
-    )
-  ).slice(0, PER_RUN_CAP);
-
-  let updated = 0;
-  let errors = 0;
-
-  // Samle alle updates for batch-SQL
-  const allUpdates: Array<{
-    en: number;
-    cvr: string;
-    pct: number;
-    fra: string | null;
-    til: string | null;
-  }> = [];
-
-  for (const en of uniquePersons) {
-    try {
-      const ejerandele = await fetchEjerandele(en);
-      for (const [virkCvr, info] of ejerandele) {
-        allUpdates.push({ en, cvr: virkCvr, pct: info.pct, fra: info.fra, til: info.til });
+      if (!missingRows?.length) {
+        return NextResponse.json({
+          status: 'done',
+          processed: 0,
+          message: 'Ingen manglende ejerandele',
+        });
       }
-    } catch {
-      errors++;
-    }
-  }
 
-  // Batch-update via SQL for performance (1 query i stedet for N)
-  if (allUpdates.length > 0) {
-    const BATCH_SIZE = 500;
-    for (let i = 0; i < allUpdates.length; i += BATCH_SIZE) {
-      const batch = allUpdates.slice(i, i + BATCH_SIZE);
-      const values = batch
-        .map((u) => {
-          const fra = u.fra ? `'${u.fra}'` : 'NULL';
-          const til = u.til ? `'${u.til}'` : 'NULL';
-          return `(${u.en}, '${u.cvr}', ${u.pct}, ${fra}::date, ${til}::date)`;
-        })
-        .join(',\n');
-      const sql = `
+      // Unikke personer
+      const uniquePersons = Array.from(
+        new Set(
+          (missingRows as Array<{ deltager_enhedsnummer: number }>).map(
+            (r) => r.deltager_enhedsnummer
+          )
+        )
+      ).slice(0, PER_RUN_CAP);
+
+      let updated = 0;
+      let errors = 0;
+
+      // Samle alle updates for batch-SQL
+      const allUpdates: Array<{
+        en: number;
+        cvr: string;
+        pct: number;
+        fra: string | null;
+        til: string | null;
+      }> = [];
+
+      for (const en of uniquePersons) {
+        try {
+          const ejerandele = await fetchEjerandele(en);
+          for (const [virkCvr, info] of ejerandele) {
+            allUpdates.push({ en, cvr: virkCvr, pct: info.pct, fra: info.fra, til: info.til });
+          }
+        } catch {
+          errors++;
+        }
+      }
+
+      // Batch-update via SQL for performance (1 query i stedet for N)
+      if (allUpdates.length > 0) {
+        const BATCH_SIZE = 500;
+        for (let i = 0; i < allUpdates.length; i += BATCH_SIZE) {
+          const batch = allUpdates.slice(i, i + BATCH_SIZE);
+          const values = batch
+            .map((u) => {
+              const fra = u.fra ? `'${u.fra}'` : 'NULL';
+              const til = u.til ? `'${u.til}'` : 'NULL';
+              return `(${u.en}, '${u.cvr}', ${u.pct}, ${fra}::date, ${til}::date)`;
+            })
+            .join(',\n');
+          const sql = `
         UPDATE cvr_deltagerrelation AS t
         SET ejerandel_pct = v.pct, ejerandel_fra = v.fra, ejerandel_til = v.til
         FROM (VALUES ${values}) AS v(en, cvr, pct, fra, til)
@@ -229,37 +235,39 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           AND t.type IN ('register', 'reel_ejer')
           AND t.gyldig_til IS NULL
       `;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error } = await (admin as any).rpc('exec_sql', { query: sql });
-      if (error) {
-        // Fallback: enkelt-updates
-        for (const u of batch) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { error: e2 } = await (admin as any)
-            .from('cvr_deltagerrelation')
-            .update({ ejerandel_pct: u.pct, ejerandel_fra: u.fra, ejerandel_til: u.til })
-            .eq('deltager_enhedsnummer', u.en)
-            .eq('virksomhed_cvr', u.cvr)
-            .in('type', ['register', 'reel_ejer'])
-            .is('gyldig_til', null);
-          if (!e2) updated++;
-          else errors++;
+          const { error } = await (admin as any).rpc('exec_sql', { query: sql });
+          if (error) {
+            // Fallback: enkelt-updates
+            for (const u of batch) {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const { error: e2 } = await (admin as any)
+                .from('cvr_deltagerrelation')
+                .update({ ejerandel_pct: u.pct, ejerandel_fra: u.fra, ejerandel_til: u.til })
+                .eq('deltager_enhedsnummer', u.en)
+                .eq('virksomhed_cvr', u.cvr)
+                .in('type', ['register', 'reel_ejer'])
+                .is('gyldig_til', null);
+              if (!e2) updated++;
+              else errors++;
+            }
+          } else {
+            updated += batch.length;
+          }
         }
-      } else {
-        updated += batch.length;
       }
+
+      logger.log(
+        `[backfill-ejerandel] Processed ${uniquePersons.length} persons, updated ${updated} rows, ${errors} errors`
+      );
+
+      return NextResponse.json({
+        status: 'ok',
+        personsProcessed: uniquePersons.length,
+        rowsUpdated: updated,
+        errors,
+        remaining: (missingRows?.length ?? 0) - uniquePersons.length,
+      });
     }
-  }
-
-  logger.log(
-    `[backfill-ejerandel] Processed ${uniquePersons.length} persons, updated ${updated} rows, ${errors} errors`
   );
-
-  return NextResponse.json({
-    status: 'ok',
-    personsProcessed: uniquePersons.length,
-    rowsUpdated: updated,
-    errors,
-    remaining: (missingRows?.length ?? 0) - uniquePersons.length,
-  });
 }

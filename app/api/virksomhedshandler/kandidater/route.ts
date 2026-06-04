@@ -34,7 +34,9 @@
  * i cvr_virksomhed (deltager_er_virksomhed + deltager_cvr) så frontend kan linke
  * virksomheds-deltagere til /dashboard/companies i stedet for person-siden.
  *
- * @returns { kandidater: [...], total: number } — hver kandidat har desuden
+ * @returns { kandidater: [...], total: number, total_capped: boolean } — total
+ *   er cappet ved COUNT_CAP (50.000); total_capped=true betyder "mindst så mange".
+ *   Hver kandidat har desuden
  *   deltager_er_virksomhed (boolean), deltager_cvr (string|null, kun ved unikt match),
  *   virksomhed_status_raw (rå CVR-status-JSON), virksomhed_status_kode (udledt kategori)
  *   og deltager_status_raw (rå status, kun ved entydigt virksomheds-match) — BIZZ-1962
@@ -45,6 +47,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
+import { requireModuleAccess } from '@/app/lib/serverModuleAccess';
 import { logger } from '@/app/lib/logger';
 
 export const runtime = 'nodejs';
@@ -65,6 +68,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Ikke autentificeret' }, { status: 401 });
   }
 
+  // BIZZ-1988: server-side modul-håndhævelse (plan/addon-entitlement). Kan ikke
+  // omgås ved at kalde API'et direkte uden for ServerModuleGate'ede sider.
+  const blocked = await requireModuleAccess('virksomhedshandler');
+  if (blocked) return blocked as unknown as NextResponse;
+
   const { searchParams } = new URL(req.url);
   const signalType = searchParams.get('signal_type');
   const signalTypes = searchParams.get('signal_types');
@@ -80,6 +88,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const virksomhedStatusParam = searchParams.get('virksomhed_status');
   const limit = Math.min(Number(searchParams.get('limit')) || 50, 200);
   const offset = Number(searchParams.get('offset')) || 0;
+  // BIZZ-1980: øvre grænse for det eksakte COUNT. En eksakt COUNT over den dyre
+  // jsonb status-CASE skalerer til 15-18s for brede filtre (1M+ rækker) og kan
+  // ramme 25s-timeouten → før faldt total stille til 0 (tom radar trods data).
+  // Vi tæller højst COUNT_CAP+1 rækker via subquery-LIMIT; over cap'en vises
+  // "COUNT_CAP+" i UI'et. Reelle filtrerede visninger (< 50k) er stadig eksakte.
+  const COUNT_CAP = 50000;
 
   // Reel ejerskabs-ændringsdato. For entry/increase er det gyldig_fra (tiltrædelse/
   // forøgelse); for exit/decrease ligger den meningsfulde dato i gyldig_til (fratrædelse).
@@ -87,23 +101,34 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   // fra sidst_opdateret (per-række indrapporterings-dato — egen filter-akse).
   const AENDRINGSDATO = 'COALESCE(k.gyldig_til, k.gyldig_fra)';
 
-  // BIZZ-1962: SQL-CASE der udleder status-kategori fra cvr_virksomhed.status
-  // (JSON-blob). MATCHER 1:1 deriveCvrStatusKode() i app/lib/cvrStatusMapping.ts
-  // så server-filter og klient-badge altid er enige. left()='{' guard undgår at
+  // BIZZ-1962/BIZZ-1974: SQL-CASE der udleder status-kategori fra
+  // cvr_virksomhed.status (JSON-blob) OG den autoritative ophoert-dato.
+  // MATCHER 1:1 deriveCvrStatusKode() i app/lib/cvrStatusMapping.ts så
+  // server-filter og klient-badge altid er enige. left()='{' guard undgår at
   // caste ikke-JSON tekst til jsonb (ville kaste og vælte hele queryen).
+  //
+  // BIZZ-1974: status-blobben er NULL for ~2.1M rækker (holder kun insolvens-
+  // hændelser), så den autoritative ceased-markør er ophoert-datoen. Insolvens
+  // fra blobben er mere specifik og vinder; ellers ⟹ ophoert hvis dato sat.
+  const ophoertSql = (alias: string): string =>
+    `${alias}.ophoert IS NOT NULL AND ${alias}.ophoert <= CURRENT_DATE`;
   const statusKategoriSql = (alias: string): string =>
     `CASE
-       WHEN ${alias}.status IS NULL THEN 'aktiv'
-       WHEN left(${alias}.status, 1) <> '{' THEN 'aktiv'
-       WHEN (${alias}.status::jsonb->>'statustekst') = 'Ophævelse af dekret' THEN 'aktiv'
-       WHEN (${alias}.status::jsonb->>'statustekst') = 'Regnskab og boafslutning' THEN 'oploest_konkurs'
-       WHEN (${alias}.status::jsonb->>'kreditoplysningtekst') IS NOT NULL THEN 'under_konkurs'
+       WHEN ${alias}.status IS NOT NULL AND left(${alias}.status, 1) = '{'
+            AND (${alias}.status::jsonb->>'statustekst') = 'Ophævelse af dekret'
+         THEN CASE WHEN ${ophoertSql(alias)} THEN 'ophoert' ELSE 'aktiv' END
+       WHEN ${alias}.status IS NOT NULL AND left(${alias}.status, 1) = '{'
+            AND (${alias}.status::jsonb->>'statustekst') = 'Regnskab og boafslutning' THEN 'oploest_konkurs'
+       WHEN ${alias}.status IS NOT NULL AND left(${alias}.status, 1) = '{'
+            AND (${alias}.status::jsonb->>'kreditoplysningtekst') IS NOT NULL THEN 'under_konkurs'
+       WHEN ${ophoertSql(alias)} THEN 'ophoert'
        ELSE 'aktiv'
      END`;
 
   // Whitelist af gyldige status-kategorier (mod SQL-injektion i IN-listen).
   const GYLDIGE_STATUS = new Set([
     'aktiv',
+    'ophoert',
     'under_konkurs',
     'oploest_konkurs',
     'fusioneret',
@@ -221,7 +246,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       'mv_virksomhedshandel_kandidater k' +
       (needCompanyJoin ? ' JOIN cvr_virksomhed v ON v.cvr = k.virksomhed_cvr' : '') +
       (needRegnskabJoin ? ' JOIN regnskab_cache rc ON rc.cvr = k.virksomhed_cvr' : '');
-    const countSql = `SELECT COUNT(*)::int AS total FROM ${countFrom} WHERE ${where}`;
+    // BIZZ-1980: cap COUNT med subquery-LIMIT så scan stopper tidligt (< 4s i
+    // stedet for 15-18s) og aldrig rammer timeouten.
+    const countSql = `SELECT COUNT(*)::int AS total FROM (SELECT 1 FROM ${countFrom} WHERE ${where} LIMIT ${COUNT_CAP + 1}) s`;
 
     // Data-query joiner altid regnskab_cache + cvr_virksomhed for kolonne-berigelse.
     // BIZZ-1962: virksomhed_status_raw (rå JSON) + virksomhed_status_kode (udledt
@@ -231,7 +258,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // efterlod NULL-status-rækker ufiltreret). cvr_deltager.is_aktiv er den autoritative
     // per-deltager aktiv-markør for BÅDE personer og virksomheder (levende person /
     // aktiv virksomhed = true, ophørt = false), keyet på enhedsnummer.
-    const dataSql = `SELECT k.*, ${AENDRINGSDATO} AS aendringsdato, v.navn AS virksomhed_navn, v.branche_tekst, v.branche_kode, v.status AS virksomhed_status_raw, ${statusKategoriSql('v')} AS virksomhed_status_kode, cd.is_aktiv AS deltager_is_aktiv, rc.seneste_aar AS regnskab_aar, rc.omsaetning, rc.bruttofortjeneste, rc.resultat_foer_skat AS overskud FROM mv_virksomhedshandel_kandidater k LEFT JOIN cvr_virksomhed v ON v.cvr = k.virksomhed_cvr LEFT JOIN cvr_deltager cd ON cd.enhedsnummer = k.deltager_enhedsnummer LEFT JOIN regnskab_cache rc ON rc.cvr = k.virksomhed_cvr WHERE ${where} ORDER BY ${sortCol} ${sortDir} NULLS LAST, ${AENDRINGSDATO} DESC NULLS LAST LIMIT ${limit} OFFSET ${offset}`;
+    // BIZZ-1982: ~10% af deltagere har is_aktiv = NULL (aldrig beriget) → intet status-tag
+    // i radaren. is_aktiv beregnes rent fra cvr_deltagerrelation (aktive relationer > 0),
+    // så vi udleder værdien live med COALESCE+EXISTS når cachen er NULL. Alle radar-
+    // kandidater stammer fra cvr_deltagerrelation, så fallback giver altid true/false →
+    // 100% tag-dækning uden en data-backfill.
+    const dataSql = `SELECT k.*, ${AENDRINGSDATO} AS aendringsdato, v.navn AS virksomhed_navn, v.branche_tekst, v.branche_kode, v.status AS virksomhed_status_raw, v.ophoert AS virksomhed_ophoert, ${statusKategoriSql('v')} AS virksomhed_status_kode, COALESCE(cd.is_aktiv, EXISTS (SELECT 1 FROM cvr_deltagerrelation dr WHERE dr.deltager_enhedsnummer = k.deltager_enhedsnummer AND (dr.gyldig_til IS NULL OR dr.gyldig_til > now()))) AS deltager_is_aktiv, rc.seneste_aar AS regnskab_aar, rc.omsaetning, rc.bruttofortjeneste, rc.resultat_foer_skat AS overskud FROM mv_virksomhedshandel_kandidater k LEFT JOIN cvr_virksomhed v ON v.cvr = k.virksomhed_cvr LEFT JOIN cvr_deltager cd ON cd.enhedsnummer = k.deltager_enhedsnummer LEFT JOIN regnskab_cache rc ON rc.cvr = k.virksomhed_cvr WHERE ${where} ORDER BY ${sortCol} ${sortDir} NULLS LAST, ${AENDRINGSDATO} DESC NULLS LAST LIMIT ${limit} OFFSET ${offset}`;
 
     const [countRes, dataRes] = await Promise.all([
       fetch(`https://api.supabase.com/v1/projects/${projectRef}/database/query`, {
@@ -248,8 +280,18 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       }).then((r) => r.json()),
     ]);
 
-    const total = Array.isArray(countRes) && countRes[0]?.total != null ? countRes[0].total : 0;
     const data: Record<string, unknown>[] = Array.isArray(dataRes) ? dataRes : [];
+    // BIZZ-1980: capped total. Når count-querien fejler (timeout/Management-API-
+    // fejl) men vi HAR data, falder vi tilbage til offset+sidelængde (+1 hvis fuld
+    // side) i stedet for stille 0 — så radaren ikke fejlagtigt viser "0 kandidater"
+    // mens der faktisk vises rækker. total_capped flagger at antallet er > COUNT_CAP.
+    const rawTotal =
+      Array.isArray(countRes) && countRes[0]?.total != null ? Number(countRes[0].total) : null;
+    const totalCapped = rawTotal != null && rawTotal > COUNT_CAP;
+    const total =
+      rawTotal != null
+        ? Math.min(rawTotal, COUNT_CAP)
+        : offset + data.length + (data.length === limit ? 1 : 0);
 
     // En deltager kan være en PERSON eller en VIRKSOMHED, men cvr_deltager.enhedstype
     // er ikke beriget i cachen (NULL). Vi klassificerer derfor ved at slå deltager-navnet
@@ -268,7 +310,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       // BIZZ-1962: ved unikt navne-match (cnt=1) er status entydig → MAX(status)
       // returnerer den ene rækkes status, så deltager-virksomheder også kan
       // status-markeres. Ved flertydigt navn ignoreres status (vises ikke).
-      const resolveSql = `SELECT navn, MIN(cvr) AS cvr, COUNT(*) AS cnt, MAX(status) AS status FROM cvr_virksomhed WHERE navn = ANY(ARRAY[${navnArray}]::text[]) GROUP BY navn`;
+      // BIZZ-1974: hent også MAX(ophoert) så deltager-status kan udledes af den
+      // autoritative ophørsdato (status-blobben er NULL for de fleste selskaber).
+      const resolveSql = `SELECT navn, MIN(cvr) AS cvr, COUNT(*) AS cnt, MAX(status) AS status, MAX(ophoert) AS ophoert FROM cvr_virksomhed WHERE navn = ANY(ARRAY[${navnArray}]::text[]) GROUP BY navn`;
       try {
         const resolveRes = await fetch(
           `https://api.supabase.com/v1/projects/${projectRef}/database/query`,
@@ -281,7 +325,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         ).then((r) => r.json());
         const byNavn = new Map<
           string,
-          { cvr: string | null; cnt: number; status: string | null }
+          { cvr: string | null; cnt: number; status: string | null; ophoert: string | null }
         >();
         if (Array.isArray(resolveRes)) {
           for (const row of resolveRes) {
@@ -289,6 +333,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
               cvr: row.cvr != null ? String(row.cvr) : null,
               cnt: Number(row.cnt),
               status: row.status != null ? String(row.status) : null,
+              ophoert: row.ophoert != null ? String(row.ophoert) : null,
             });
           }
         }
@@ -300,6 +345,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           // BIZZ-1962: status kun ved entydigt match (ellers er det uvist hvilket
           // selskabs status der gælder). Rå JSON — frontend udleder kategori.
           r.deltager_status_raw = match && match.cnt === 1 ? match.status : null;
+          // BIZZ-1974: ophørsdato med samme entydigheds-krav som status.
+          r.deltager_ophoert = match && match.cnt === 1 ? match.ophoert : null;
         }
       } catch (e) {
         // Best-effort berigelse — ved fejl falder klienten tilbage til person-link.
@@ -307,7 +354,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       }
     }
 
-    return NextResponse.json({ kandidater: data, total });
+    return NextResponse.json({ kandidater: data, total, total_capped: totalCapped });
   } catch (err) {
     logger.error('[virksomhedshandler/kandidater] catch', { error: err });
     return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 502 });

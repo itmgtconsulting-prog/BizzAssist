@@ -26,6 +26,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { RESEND_ENDPOINT } from '@/app/lib/serviceEndpoints';
+import { withCronMonitor } from '@/app/lib/cronMonitor';
 
 export const maxDuration = 300;
 
@@ -131,34 +132,40 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const admin = createAdminClient();
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  // BIZZ-1971: heartbeat + Sentry cron-monitoring
+  return withCronMonitor(
+    { jobName: 'domain-anomalies', schedule: '45 4 * * *', intervalMinutes: 1440 },
+    async () => {
+      const admin = createAdminClient();
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data, error } = (await (admin as any)
-    .from('domain_suspicious_access')
-    .select('*')
-    .gte('created_at', since)
-    .limit(500)) as { data: SuspiciousAccessRow[] | null; error: { message: string } | null };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = (await (admin as any)
+        .from('domain_suspicious_access')
+        .select('*')
+        .gte('created_at', since)
+        .limit(500)) as { data: SuspiciousAccessRow[] | null; error: { message: string } | null };
 
-  if (error) {
-    logger.error('[cron/domain-anomalies] Query failed:', error.message);
-    return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
-  }
+      if (error) {
+        logger.error('[cron/domain-anomalies] Query failed:', error.message);
+        return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
+      }
 
-  const rows = data ?? [];
-  let emailed = false;
+      const rows = data ?? [];
+      let emailed = false;
 
-  if (rows.length > 0) {
-    await sendAnomalyAlert(rows);
-    emailed = true;
-    logger.warn(`[cron/domain-anomalies] ${rows.length} anomalies detected + alert sent`);
-  }
+      if (rows.length > 0) {
+        await sendAnomalyAlert(rows);
+        emailed = true;
+        logger.warn(`[cron/domain-anomalies] ${rows.length} anomalies detected + alert sent`);
+      }
 
-  return NextResponse.json({
-    ok: true,
-    anomalies_found: rows.length,
-    since,
-    emailed,
-  });
+      return NextResponse.json({
+        ok: true,
+        anomalies_found: rows.length,
+        since,
+        emailed,
+      });
+    }
+  );
 }

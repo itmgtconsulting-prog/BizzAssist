@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { matchAssetsToPolicies } from '@/app/lib/forsikring/assetMatcher';
+import { matchAssetsToPolicies, addressesMatch } from '@/app/lib/forsikring/assetMatcher';
 import type { Aktiv } from '@/app/lib/forsikring/koncernWalk';
 import type { ForsikringPolicy } from '@/app/lib/forsikring/types';
 
@@ -135,5 +135,54 @@ describe('matchAssetsToPolicies', () => {
     const r1 = matchAssetsToPolicies(aktiver, policer);
     const r2 = matchAssetsToPolicies(aktiver, policer);
     expect(r1[0].bestMatch?.score).toBe(r2[0].bestMatch?.score);
+  });
+});
+
+describe('addressesMatch (BIZZ-1973)', () => {
+  it('matcher identiske adresser', () => {
+    expect(
+      addressesMatch('Stjernegade 17A, 3000 Helsingør', 'Stjernegade 17A, 3000 Helsingør')
+    ).toBe(true);
+  });
+
+  it('er husnummer-bogstav-agnostisk: "Stjernegade 17" = "Stjernegade 17A"', () => {
+    expect(
+      addressesMatch('Stjernegade 17, 3000 Helsingør', 'Stjernegade 17A, 3000 Helsingør')
+    ).toBe(true);
+  });
+
+  it('matcher trods manglende postnr på den ene side', () => {
+    expect(addressesMatch('Stengade 7', 'Stengade 7, 3000 Helsingør')).toBe(true);
+  });
+
+  it('matcher æ/ø/å mod ae/oe/aa-stavning', () => {
+    expect(
+      addressesMatch('Gefionsvej 47A, 3000 Helsingør', 'Gefionsvej 47a, 3000 Helsingoer')
+    ).toBe(true);
+  });
+
+  it('matcher trods etage/dør-forskel', () => {
+    expect(
+      addressesMatch('Kaffevej 31, 3000 Helsingør', 'Kaffevej 31, 1. tv, 3000 Helsingør')
+    ).toBe(true);
+  });
+
+  it('matcher IKKE forskellige veje (Torvegade 5A vs Stjernegade 17A)', () => {
+    expect(addressesMatch('Torvegade 5A, 3000 Helsingør', 'Stjernegade 17A, 3000 Helsingør')).toBe(
+      false
+    );
+  });
+
+  it('matcher IKKE samme vej+husnr i forskellige byer (postnr afviger)', () => {
+    expect(addressesMatch('Hovedgade 5, 3000 Helsingør', 'Hovedgade 5, 8000 Aarhus')).toBe(false);
+  });
+
+  it('matcher IKKE forskelligt husnummer på samme vej', () => {
+    expect(addressesMatch('Stengade 7, 3000 Helsingør', 'Stengade 48, 3000 Helsingør')).toBe(false);
+  });
+
+  it('returnerer false for tom/null input', () => {
+    expect(addressesMatch(null, 'Stengade 7')).toBe(false);
+    expect(addressesMatch('Stengade 7', '')).toBe(false);
   });
 });

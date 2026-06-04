@@ -22,7 +22,7 @@ import { useRouter } from 'next/navigation';
 import { ArrowLeft, Check, CheckCircle2, Loader2, AlertCircle, Zap, Clock } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
-import { selectFreePlan } from '@/app/auth/actions';
+import { selectFreePlan, startTrialPlan } from '@/app/auth/actions';
 import { logger } from '@/app/lib/logger';
 
 /** Plan data shape returned by /api/plans */
@@ -135,14 +135,22 @@ export default function SelectPlanClient() {
     const plan = plans.find((p) => p.id === selectedPlan);
 
     try {
-      if (plan && plan.priceDkk > 0) {
-        // Warn early if Stripe price ID is missing
+      if (plan && plan.priceDkk > 0 && plan.freeTrialDays > 0) {
+        // Paid plan with free trial — start trial without payment
+        const result = await startTrialPlan(selectedPlan);
+        if (result?.error) {
+          setError(result.error);
+          setSubmitting(false);
+          return;
+        }
+        router.replace('/dashboard');
+      } else if (plan && plan.priceDkk > 0) {
+        // Paid plan without trial — create Stripe checkout session
         if (!plan.stripePriceId) {
           setError('stripe_not_configured');
           setSubmitting(false);
           return;
         }
-        // Paid plan — create Stripe checkout session
         const res = await fetch('/api/stripe/create-checkout', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -165,7 +173,6 @@ export default function SelectPlanClient() {
           setSubmitting(false);
           return;
         }
-        // Beta period: demo plan is auto-approved — go directly to dashboard
         router.replace('/dashboard');
       }
     } catch {
@@ -186,6 +193,14 @@ export default function SelectPlanClient() {
     stripe_not_configured: {
       da: 'Betaling er ikke konfigureret for denne plan. Kontakt administrator.',
       en: 'Payment is not configured for this plan. Contact administrator.',
+    },
+    no_trial_available: {
+      da: 'Denne plan har ingen gratis prøveperiode.',
+      en: 'This plan has no free trial period.',
+    },
+    already_paid: {
+      da: 'Du har allerede et aktivt abonnement.',
+      en: 'You already have an active subscription.',
     },
   };
   const errorMsg = error
@@ -378,6 +393,11 @@ export default function SelectPlanClient() {
                   (() => {
                     const plan = plans.find((p) => p.id === selectedPlan);
                     if (!plan) return da ? 'Vælg plan' : 'Select plan';
+                    if (plan.priceDkk > 0 && plan.freeTrialDays > 0) {
+                      return da
+                        ? `Start ${plan.freeTrialDays} dages gratis prøve`
+                        : `Start ${plan.freeTrialDays}-day free trial`;
+                    }
                     if (plan.priceDkk > 0) {
                       return da
                         ? `Gå til betaling — ${plan.priceDkk} kr/md`

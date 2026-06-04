@@ -125,6 +125,21 @@ export async function GET(
           sum_insured_dkk: (c.sum_insured_dkk as number) ?? null,
           deductible_dkk: (c.deductible_dkk as number) ?? null,
         })),
+        // BIZZ-1973: Adresse-mismatch advarsel fra analysens summary
+        addressMismatches: Array.isArray(
+          (analyse.summary as Record<string, unknown> | null)?.address_mismatches
+        )
+          ? (
+              (analyse.summary as Record<string, unknown>).address_mismatches as Array<
+                Record<string, unknown>
+              >
+            ).map((m) => ({
+              policy_number: String(m.policy_number ?? ''),
+              insurer_name: String(m.insurer_name ?? ''),
+              property_address: (m.property_address as string) ?? null,
+              is_policyholder_address: m.is_policyholder_address === true,
+            }))
+          : [],
       });
 
       const kundeSlug = ((analyse.kunde_navn as string) ?? String(analyse.kunde_id))

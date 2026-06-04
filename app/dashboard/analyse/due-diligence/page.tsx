@@ -1,16 +1,16 @@
 /**
  * Server entry for due-diligence analyse-modul.
- * BIZZ-1240: Wrapped i AnalyseModuleGuard for feature flag check.
+ * BIZZ-1240: Wrapped i ServerModuleGate for feature flag check.
  */
 import DueDiligenceClient from './DueDiligenceClient';
-import AnalyseModuleGuard from '@/app/components/analyse/AnalyseModuleGuard';
+import ServerModuleGate from '@/app/components/analyse/ServerModuleGate';
 
 export const dynamic = 'force-dynamic';
 
 export default function Page() {
   return (
-    <AnalyseModuleGuard moduleId="due-diligence">
+    <ServerModuleGate moduleId="due-diligence">
       <DueDiligenceClient />
-    </AnalyseModuleGuard>
+    </ServerModuleGate>
   );
 }

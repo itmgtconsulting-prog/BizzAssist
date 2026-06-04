@@ -43,7 +43,7 @@ import { useLanguage } from '@/app/context/LanguageContext';
 import { useSubscription } from '@/app/context/SubscriptionContext';
 import { translations } from '@/app/lib/translations';
 import TokenUsageBar from '@/app/components/TokenUsageBar';
-import { gapScope } from '@/app/lib/forsikring/types';
+import { gapScope, shouldFoldOwnerIntoCompany } from '@/app/lib/forsikring/types';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -66,6 +66,20 @@ interface PendingDocument {
   parse_status: 'pending' | 'parsing' | 'parsed' | 'failed';
   parse_error: string | null;
   created_at: string;
+}
+
+/**
+ * BIZZ-1973: En police hvis dækkede adresse ikke matcher nogen ejet/administreret
+ * ejendom i forsikringssejerens portefølje.
+ */
+interface AddressMismatch {
+  policy_id: string;
+  document_id: string | null;
+  policy_number: string;
+  insurer_name: string;
+  property_address: string | null;
+  /** true når adressen er forsikringstagers egen adresse (typisk hovedkontor) */
+  is_policyholder_address: boolean;
 }
 
 interface ListResponse {
@@ -131,6 +145,14 @@ interface AnalyseDetail {
     insured_count: number;
     uninsured_count: number;
     total_risk_score: number;
+    /**
+     * BIZZ-1972: Kunde-type/-id for forsikringssejeren. For en virksomheds-
+     * kunde er `kunde_id` selve forsikringssejerens CVR — bruges til at folde
+     * forsikringsejer-niveau-findings ind under virksomheden når sejeren ER
+     * den eneste virksomhed i porteføljen (samme entitet).
+     */
+    kunde_type?: string;
+    kunde_id?: string;
   };
   aktiver: AnalyseAktiv[];
   gaps: AnalyseGap[];
@@ -231,8 +253,19 @@ function GapList({ gaps, da }: { gaps: AnalyseGap[]; da: boolean }) {
  *
  * @param props.group - Property group med aktiv, police og gaps
  * @param props.da - Dansk sprogflag
+ * @param props.foldedNote - BIZZ-1972: når true folder denne virksomheds-række
+ *   forsikringsejer-/virksomheds-niveau-findings ind (sejeren ER den eneste
+ *   virksomhed). Viser et samlet findings-badge + en info-label i collapse.
  */
-function PropertyRow({ group, da }: { group: PropertyGroup; da: boolean }) {
+function PropertyRow({
+  group,
+  da,
+  foldedNote = false,
+}: {
+  group: PropertyGroup;
+  da: boolean;
+  foldedNote?: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
   const isInsured = group.aktiv.matched_policy_id !== null;
   const gapCritical = group.gaps.filter((g) => g.severity === 'critical').length;
@@ -291,20 +324,36 @@ function PropertyRow({ group, da }: { group: PropertyGroup; da: boolean }) {
         )}
 
         {/* Gap badges */}
-        {(gapCritical > 0 || gapWarning > 0) && (
-          <div className="flex items-center gap-1 shrink-0">
-            {gapCritical > 0 && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] bg-red-500/20 text-red-300">
-                {gapCritical}
+        {foldedNote
+          ? // BIZZ-1972: Foldet virksomheds-række viser ÉT samlet findings-badge
+            // (alle severities) — så forsikringsejer-niveau-findings tælles med,
+            // også rene info-findings der ellers ikke vises som rød/gul pille.
+            group.gaps.length > 0 && (
+              <span
+                className="px-1.5 py-0.5 rounded text-[10px] bg-slate-500/25 text-slate-200 shrink-0"
+                title={
+                  da
+                    ? 'Samlet antal findings (inkl. forsikringsejer-niveau)'
+                    : 'Total findings (incl. insurance owner level)'
+                }
+              >
+                {group.gaps.length} {da ? 'findings' : 'findings'}
               </span>
+            )
+          : (gapCritical > 0 || gapWarning > 0) && (
+              <div className="flex items-center gap-1 shrink-0">
+                {gapCritical > 0 && (
+                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-red-500/20 text-red-300">
+                    {gapCritical}
+                  </span>
+                )}
+                {gapWarning > 0 && (
+                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-500/20 text-amber-300">
+                    {gapWarning}
+                  </span>
+                )}
+              </div>
             )}
-            {gapWarning > 0 && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-500/20 text-amber-300">
-                {gapWarning}
-              </span>
-            )}
-          </div>
-        )}
 
         {/* Uforsikret label */}
         {!isInsured && (
@@ -353,6 +402,18 @@ function PropertyRow({ group, da }: { group: PropertyGroup; da: boolean }) {
                   })}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* BIZZ-1972: Info-label når forsikringsejer-niveau er foldet ind */}
+          {foldedNote && group.gaps.length > 0 && (
+            <div className="flex items-start gap-1.5 text-[11px] text-slate-400 bg-white/3 border border-white/8 rounded-lg px-2.5 py-1.5">
+              <Briefcase size={12} className="text-purple-400 shrink-0 mt-0.5" />
+              <span>
+                {da
+                  ? 'Inkluderer findings på forsikringsejer-niveau (samme entitet som virksomheden).'
+                  : 'Includes insurance-owner-level findings (same entity as the company).'}
+              </span>
             </div>
           )}
 
@@ -459,6 +520,17 @@ function UnifiedAnalyseView({
     (g) => g.aktiv.type !== 'virksomhed' && g.aktiv.type !== 'ejendom'
   );
 
+  // BIZZ-1972: Når forsikringssejeren ER den eneste virksomhed i porteføljen
+  // (samme entitet), giver en separat "Forsikringsejer-niveau"-sektion ingen
+  // mening — den dublerer reelt virksomheden. Vi folder så forsikringsejer- og
+  // virksomheds-findings ind under selve virksomheds-rækken. For holding-cases
+  // med 2+ virksomheder under én sejer bevares de separate sektioner.
+  const foldOwnerIntoCompany = shouldFoldOwnerIntoCompany(
+    detail.analyse.kunde_type,
+    detail.analyse.kunde_id,
+    virksomhedGroups.map((v) => v.aktiv.cvr)
+  );
+
   /**
    * Build company-tree: hver virksomhed med sine ejendomme grupperet under.
    * En ejendom matches til en virksomhed via `raw_data.ejer_cvr`.
@@ -496,7 +568,10 @@ function UnifiedAnalyseView({
   // Sortér virksomheder: hovedvirksomheden (flest egne ejendomme) først
   const virksomhedsTraeer: VirksomhedsTree[] = virksomhedGroups
     .map((v) => ({
-      virksomhed: v,
+      // BIZZ-1972: I fold-casen får den eneste virksomhed forsikringsejer- og
+      // virksomheds-findings injiceret i sin egen række (så badge + collapse
+      // afspejler totalen) — i stedet for at vise dem i separate sektioner.
+      virksomhed: foldOwnerIntoCompany ? { ...v, gaps: [...ownerGaps, ...companyGaps] } : v,
       ejendomme: sortProperties(ejendommeByCvr.get(v.aktiv.cvr ?? '') ?? []),
     }))
     .sort((a, b) => b.ejendomme.length - a.ejendomme.length);
@@ -584,8 +659,10 @@ function UnifiedAnalyseView({
       </div>
 
       {/* BIZZ-1941: Forsikringsejer-niveau — generelle findings for hele ejeren.
-          Vises kun her, ikke gentaget under virksomhed/ejendom. */}
-      {ownerGaps.length > 0 && (
+          Vises kun her, ikke gentaget under virksomhed/ejendom.
+          BIZZ-1972: Skjules når forsikringssejeren ER den eneste virksomhed —
+          findings foldes da ind under virksomheds-rækken nedenfor. */}
+      {!foldOwnerIntoCompany && ownerGaps.length > 0 && (
         <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
           <div className="flex items-center gap-2">
             <Briefcase size={14} className="text-purple-400" />
@@ -607,8 +684,9 @@ function UnifiedAnalyseView({
         </div>
       )}
 
-      {/* BIZZ-1941: Virksomheds-niveau — gælder porteføljen/virksomheden, ikke per ejendom. */}
-      {companyGaps.length > 0 && (
+      {/* BIZZ-1941: Virksomheds-niveau — gælder porteføljen/virksomheden, ikke per ejendom.
+          BIZZ-1972: Skjules i fold-casen — findings foldes ind under virksomheds-rækken. */}
+      {!foldOwnerIntoCompany && companyGaps.length > 0 && (
         <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
           <div className="flex items-center gap-2">
             <Building2 size={14} className="text-blue-400" />
@@ -633,7 +711,7 @@ function UnifiedAnalyseView({
         {virksomhedsTraeer.map((tree) => (
           <div key={tree.virksomhed.aktiv.id} className="space-y-2">
             {/* Virksomheds-række (header) */}
-            <PropertyRow group={tree.virksomhed} da={da} />
+            <PropertyRow group={tree.virksomhed} da={da} foldedNote={foldOwnerIntoCompany} />
 
             {/* Ejendomme under denne virksomhed — indrykket */}
             {tree.ejendomme.length > 0 && (
@@ -759,7 +837,16 @@ function AnalyseSection({
     insured_count: number;
     gaps_count: number;
     total_risk_score: number;
+    /** BIZZ-1973: Policer der dækker en adresse uden for porteføljen */
+    address_mismatches?: AddressMismatch[];
   } | null>(null);
+  /**
+   * BIZZ-1973: Preflight-advarsel — sættes når adresse-tjek finder policer der
+   * dækker en ejendom uden for kundens portefølje. Vises som modal med 3 valg.
+   */
+  const [mismatchWarning, setMismatchWarning] = useState<AddressMismatch[] | null>(null);
+  /** BIZZ-1973: Dokument-IDs med adresse-mismatch — bruges til ⚠-badge i doc-listen */
+  const [mismatchDocIds, setMismatchDocIds] = useState<Set<string>>(new Set());
   /** BIZZ-1389: Full analyse detail for unified view */
   const [analyseDetail, setAnalyseDetail] = useState<AnalyseDetail | null>(null);
   /** BIZZ-1355: Snapshot-dato for historisk analyse */
@@ -1061,100 +1148,146 @@ function AnalyseSection({
     }, 300);
   }, []);
 
-  /** Start gap-analyse + opret/find sag */
-  const startAnalyse = useCallback(async () => {
-    if (!selected || running) return;
-    setRunning(true);
-    setAnalyseResult(null);
-    try {
-      // BIZZ-1384: Auto-opret sag ved analyse
-      // BIZZ-1399: Capture sag_id for upload-filtrering
-      const sagRes = await fetch('/api/forsikring/sager', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          kunde_type: selected.type,
-          kunde_id: selected.id,
-          kunde_navn: selected.navn,
-        }),
-      });
-      if (sagRes.ok) {
-        const sagData = (await sagRes.json()) as { sag?: { id: string } };
-        if (sagData.sag?.id) onSagChange(sagData.sag.id);
-      }
-      // BIZZ-1440: Samle ALLE doc IDs (genbrugte + wizard-uploads + parent-uploads).
-      // Dedup via Set så samme doc_id ikke sendes to gange — duplikat-detektion
-      // i wizard-upload (skipped_duplicate) auto-tilføjer existing doc_id til
-      // selectedDocIds, hvilket kan overlappe med wizardDocIds for almindelige
-      // uploads. Junction-tabellen forsikring_analyse_documents har unique
-      // constraint, så duplikerede inserts ville fejle.
-      const reusedDocIds = [...selectedDocIds];
-      const wizardDocIds = wizardUploads
-        .filter((u) => u.status === 'done' && u.docId)
-        .map((u) => u.docId!);
-      const allDocIds = Array.from(
-        new Set<string>([...reusedDocIds, ...wizardDocIds, ...newDocumentIds])
-      );
-      // Hvis wizard er åben, send altid scoped doc IDs — aldrig fald tilbage til alle policer
-      const hasAnyDocs = allDocIds.length > 0;
-      // BIZZ-1833: Saml standard doc DB-IDs for valgte standard-betingelser
-      const stdDocIds = [...stdSelectedIds]
-        .map((url) => stdSavedIds.get(url))
-        .filter((id): id is string => !!id);
+  /**
+   * Start gap-analyse + opret/find sag.
+   *
+   * BIZZ-1973: Kører først et adresse-preflight. Hvis en uploadet police dækker
+   * en ejendom uden for kundens portefølje, vises en advarsels-modal og analysen
+   * pauses indtil brugeren tager stilling. `opts.skipPreflight` springer tjekket
+   * over (sættes når brugeren har valgt "Ja, fortsæt" i modalen).
+   *
+   * @param opts - { skipPreflight } for at omgå preflight efter brugerbekræftelse
+   */
+  const startAnalyse = useCallback(
+    async (opts?: { skipPreflight?: boolean }) => {
+      if (!selected || running) return;
+      setRunning(true);
+      setAnalyseResult(null);
+      try {
+        // BIZZ-1440: Samle ALLE doc IDs (genbrugte + wizard-uploads + parent-uploads).
+        // Dedup via Set så samme doc_id ikke sendes to gange — duplikat-detektion
+        // i wizard-upload (skipped_duplicate) auto-tilføjer existing doc_id til
+        // selectedDocIds, hvilket kan overlappe med wizardDocIds for almindelige
+        // uploads. Junction-tabellen forsikring_analyse_documents har unique
+        // constraint, så duplikerede inserts ville fejle.
+        const reusedDocIds = [...selectedDocIds];
+        const wizardDocIds = wizardUploads
+          .filter((u) => u.status === 'done' && u.docId)
+          .map((u) => u.docId!);
+        const allDocIds = Array.from(
+          new Set<string>([...reusedDocIds, ...wizardDocIds, ...newDocumentIds])
+        );
+        // Hvis wizard er åben, send altid scoped doc IDs — aldrig fald tilbage til alle policer
+        const hasAnyDocs = allDocIds.length > 0;
+        // BIZZ-1833: Saml standard doc DB-IDs for valgte standard-betingelser
+        const stdDocIds = [...stdSelectedIds]
+          .map((url) => stdSavedIds.get(url))
+          .filter((id): id is string => !!id);
 
-      const res = await fetch('/api/forsikring/analyser', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          kunde_type: selected.type,
-          kunde_id: selected.id,
-          kunde_navn: selected.navn,
-          ...(asOfDate ? { as_of_date: asOfDate } : {}),
-          // BIZZ-1443: Send alle valgte doc IDs samlet — reused + nye, dedupet
-          // Hvis ingen er valgt, send IKKE document_ids → backend bruger alle policer
-          ...(hasAnyDocs ? { document_ids: allDocIds } : {}),
-          // BIZZ-1833: Standard betingelser
-          ...(stdDocIds.length > 0 ? { standard_doc_ids: stdDocIds } : {}),
-        }),
-      });
-      if (res.ok) {
-        const result = await res.json();
-        setAnalyseResult(result);
-        // BIZZ-1389: Fetch full detail for unified property view
-        try {
-          const detailRes = await fetch(`/api/forsikring/analyser/${result.analyse_id}`);
-          if (detailRes.ok) {
-            const detail = await detailRes.json();
-            setAnalyseDetail(detail);
-            // Notify parent to update AI context with gaps
-            onAnalyseDetail(detail, selected?.navn ?? null);
+        // BIZZ-1973: Preflight — advar hvis en police dækker en adresse uden for
+        // porteføljen. Best-effort: ved fejl fortsætter vi til den rigtige analyse.
+        if (!opts?.skipPreflight) {
+          try {
+            const pf = await fetch('/api/forsikring/analyser', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                kunde_type: selected.type,
+                kunde_id: selected.id,
+                kunde_navn: selected.navn,
+                ...(asOfDate ? { as_of_date: asOfDate } : {}),
+                ...(hasAnyDocs ? { document_ids: allDocIds } : {}),
+                preflight: true,
+              }),
+            });
+            if (pf.ok) {
+              const pfData = (await pf.json()) as { mismatches?: AddressMismatch[] };
+              const mismatches = pfData.mismatches ?? [];
+              if (mismatches.length > 0) {
+                setMismatchWarning(mismatches);
+                setMismatchDocIds(
+                  new Set(mismatches.map((m) => m.document_id).filter((id): id is string => !!id))
+                );
+                setRunning(false);
+                return; // vent på brugerens valg i modalen
+              }
+            }
+          } catch {
+            // Preflight er best-effort — fortsæt til den rigtige analyse
           }
-        } catch {
-          // Best-effort — fallback to old view if detail fails
         }
-        // Refresh sagsliste
-        fetch('/api/forsikring/sager')
-          .then((r) => (r.ok ? r.json() : { sager: [] }))
-          .then((d) => setSager(d.sager ?? []))
-          .catch(() => {});
+
+        // BIZZ-1384: Auto-opret sag ved analyse
+        // BIZZ-1399: Capture sag_id for upload-filtrering
+        const sagRes = await fetch('/api/forsikring/sager', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            kunde_type: selected.type,
+            kunde_id: selected.id,
+            kunde_navn: selected.navn,
+          }),
+        });
+        if (sagRes.ok) {
+          const sagData = (await sagRes.json()) as { sag?: { id: string } };
+          if (sagData.sag?.id) onSagChange(sagData.sag.id);
+        }
+
+        const res = await fetch('/api/forsikring/analyser', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            kunde_type: selected.type,
+            kunde_id: selected.id,
+            kunde_navn: selected.navn,
+            ...(asOfDate ? { as_of_date: asOfDate } : {}),
+            // BIZZ-1443: Send alle valgte doc IDs samlet — reused + nye, dedupet
+            // Hvis ingen er valgt, send IKKE document_ids → backend bruger alle policer
+            ...(hasAnyDocs ? { document_ids: allDocIds } : {}),
+            // BIZZ-1833: Standard betingelser
+            ...(stdDocIds.length > 0 ? { standard_doc_ids: stdDocIds } : {}),
+          }),
+        });
+        if (res.ok) {
+          const result = await res.json();
+          setAnalyseResult(result);
+          // BIZZ-1389: Fetch full detail for unified property view
+          try {
+            const detailRes = await fetch(`/api/forsikring/analyser/${result.analyse_id}`);
+            if (detailRes.ok) {
+              const detail = await detailRes.json();
+              setAnalyseDetail(detail);
+              // Notify parent to update AI context with gaps
+              onAnalyseDetail(detail, selected?.navn ?? null);
+            }
+          } catch {
+            // Best-effort — fallback to old view if detail fails
+          }
+          // Refresh sagsliste
+          fetch('/api/forsikring/sager')
+            .then((r) => (r.ok ? r.json() : { sager: [] }))
+            .then((d) => setSager(d.sager ?? []))
+            .catch(() => {});
+        }
+      } catch {
+        // Handled silently
+      } finally {
+        setRunning(false);
       }
-    } catch {
-      // Handled silently
-    } finally {
-      setRunning(false);
-    }
-  }, [
-    selected,
-    running,
-    asOfDate,
-    onAnalyseDetail,
-    onSagChange,
-    newDocumentIds,
-    selectedDocIds,
-    wizardUploads,
-    stdSelectedIds,
-    stdSavedIds,
-  ]);
+    },
+    [
+      selected,
+      running,
+      asOfDate,
+      onAnalyseDetail,
+      onSagChange,
+      newDocumentIds,
+      selectedDocIds,
+      wizardUploads,
+      stdSelectedIds,
+      stdSavedIds,
+    ]
+  );
 
   return (
     <section className="bg-white/5 border border-white/8 rounded-2xl p-5 space-y-3">
@@ -1447,6 +1580,20 @@ function AnalyseSection({
                           />
                           <FileText size={14} className="text-slate-400 shrink-0" />
                           <span className="text-white text-xs flex-1 truncate">{doc.name}</span>
+                          {/* BIZZ-1973: ⚠-badge når dokumentets police dækker en adresse uden for porteføljen */}
+                          {mismatchDocIds.has(doc.id) && (
+                            <span
+                              className="text-[10px] shrink-0 flex items-center gap-1 text-amber-300 bg-amber-500/15 border border-amber-500/30 rounded px-1.5 py-0.5"
+                              title={
+                                da
+                                  ? 'Police dækker en adresse uden for porteføljen'
+                                  : 'Policy covers an address outside the portfolio'
+                              }
+                            >
+                              <AlertTriangle size={10} className="text-amber-400" />
+                              {da ? 'adresse-mismatch' : 'address mismatch'}
+                            </span>
+                          )}
                           <span
                             className={`text-[10px] shrink-0 ${doc.source === 'new' ? 'text-emerald-400' : 'text-slate-400'}`}
                           >
@@ -2429,7 +2576,7 @@ function AnalyseSection({
           {showDocPicker && (
             <button
               type="button"
-              onClick={startAnalyse}
+              onClick={() => startAnalyse()}
               disabled={running}
               className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"
             >
@@ -2448,6 +2595,131 @@ function AnalyseSection({
               )}
             </button>
           )}
+        </div>
+      )}
+
+      {/* BIZZ-1973: Advarsels-modal — police dækker ejendom uden for porteføljen */}
+      {mismatchWarning && mismatchWarning.length > 0 && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="mismatch-title"
+        >
+          <div className="bg-slate-900 border border-amber-500/40 rounded-2xl max-w-lg w-full p-5 space-y-4 shadow-2xl">
+            <div className="flex items-start gap-3">
+              <AlertTriangle size={22} className="text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <h3 id="mismatch-title" className="text-white font-semibold text-sm">
+                  {da
+                    ? 'Police dækker en adresse uden for porteføljen'
+                    : 'Policy covers an address outside the portfolio'}
+                </h3>
+                <p className="text-slate-300 text-xs mt-1">
+                  {da
+                    ? `${mismatchWarning.length === 1 ? 'Følgende police' : `${mismatchWarning.length} policer`} dækker en ejendom der hverken ejes eller administreres af ${selected?.navn ?? 'forsikringssejeren'}. Kontrollér at dokumentet hører til denne forsikringssejer.`
+                    : `${mismatchWarning.length === 1 ? 'The following policy' : `${mismatchWarning.length} policies`} cover a property neither owned nor administered by ${selected?.navn ?? 'the policyholder'}. Verify the document belongs to this policyholder.`}
+                </p>
+              </div>
+            </div>
+            <ul className="space-y-1.5 max-h-40 overflow-y-auto">
+              {mismatchWarning.map((m) => (
+                <li
+                  key={m.policy_id}
+                  className="bg-amber-500/10 border border-amber-500/25 rounded-lg px-3 py-2 text-xs"
+                >
+                  <div className="text-amber-200 font-medium">
+                    {m.property_address ?? (da ? 'Ukendt adresse' : 'Unknown address')}
+                  </div>
+                  <div className="text-slate-400">
+                    {m.insurer_name} · {da ? 'Police' : 'Policy'} {m.policy_number}
+                    {m.is_policyholder_address && (
+                      <span className="text-amber-300">
+                        {' '}
+                        · {da ? 'forsikringstagers egen adresse' : "policyholder's own address"}
+                      </span>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setMismatchWarning(null);
+                  startAnalyse({ skipPreflight: true });
+                }}
+                className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-medium"
+              >
+                {da ? 'Ja, fortsæt analysen' : 'Yes, continue analysis'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMismatchWarning(null);
+                  setSelected(null);
+                  setQuery('');
+                  setAnalyseResult(null);
+                  setAnalyseDetail(null);
+                  setKundePolicer([]);
+                  setLastAnalyse(null);
+                  setAsOfDate('');
+                }}
+                className="bg-slate-700 hover:bg-slate-600 text-slate-100 px-4 py-2 rounded-lg text-sm font-medium"
+              >
+                {da ? 'Skift forsikringssejer' : 'Change policyholder'}
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  // Slet de mismatchede dokumenter så de ikke indgår i analysen
+                  const docIds = [
+                    ...new Set(
+                      mismatchWarning.map((m) => m.document_id).filter((id): id is string => !!id)
+                    ),
+                  ];
+                  await Promise.allSettled(
+                    docIds.map((id) =>
+                      fetch(`/api/forsikring/documents/${id}`, { method: 'DELETE' })
+                    )
+                  );
+                  // Fjern fra valgte docs + tidligere docs så UI er konsistent
+                  setSelectedDocIds((prev) => {
+                    const next = new Set(prev);
+                    for (const id of docIds) next.delete(id);
+                    return next;
+                  });
+                  setPreviousDocs((prev) => prev.filter((d) => !docIds.includes(d.id)));
+                  setMismatchDocIds(new Set());
+                  setMismatchWarning(null);
+                }}
+                className="text-red-400 hover:text-red-300 px-4 py-2 rounded-lg text-sm font-medium"
+              >
+                {da ? 'Fjern dokument(er)' : 'Remove document(s)'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BIZZ-1973: Inline advarsels-banner når analyse blev kørt trods mismatch */}
+      {analyseResult?.address_mismatches && analyseResult.address_mismatches.length > 0 && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 flex items-start gap-2">
+          <AlertTriangle size={15} className="text-amber-400 shrink-0 mt-0.5" />
+          <div className="text-xs">
+            <div className="text-amber-200 font-medium">
+              {da
+                ? `${analyseResult.address_mismatches.length} police${analyseResult.address_mismatches.length === 1 ? '' : 'r'} dækker en adresse uden for porteføljen`
+                : `${analyseResult.address_mismatches.length} polic${analyseResult.address_mismatches.length === 1 ? 'y' : 'ies'} cover an address outside the portfolio`}
+            </div>
+            <div className="text-slate-400 mt-0.5">
+              {analyseResult.address_mismatches
+                .map((m) => m.property_address)
+                .filter(Boolean)
+                .join(' · ')}
+            </div>
+          </div>
         </div>
       )}
 
@@ -2835,10 +3107,19 @@ function AnalyseDetailSection({
             .map((v) => ({ v, ejd: (ejdByCvr.get(v.aktiv.cvr ?? '') ?? []).sort(sortGrp) }))
             .sort((a, b) => b.ejd.length - a.ejd.length);
 
+          // BIZZ-1972: Fold forsikringsejer-/virksomheds-findings ind under den
+          // eneste virksomhed når den ER forsikringssejeren (samme entitet).
+          const foldOwnerIntoCompany = shouldFoldOwnerIntoCompany(
+            detail.analyse.kunde_type,
+            detail.analyse.kunde_id,
+            virkGroups.map((v) => v.aktiv.cvr)
+          );
+
           return (
             <>
-              {/* BIZZ-1941: Forsikringsejer-niveau — vises kun her, ikke per ejendom */}
-              {ownerGaps.length > 0 && (
+              {/* BIZZ-1941: Forsikringsejer-niveau — vises kun her, ikke per ejendom.
+                  BIZZ-1972: Skjult i fold-casen (foldet ind under virksomheden). */}
+              {!foldOwnerIntoCompany && ownerGaps.length > 0 && (
                 <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
                   <div className="flex items-center gap-2">
                     <Briefcase size={14} className="text-purple-400" />
@@ -2855,8 +3136,9 @@ function AnalyseDetailSection({
                 </div>
               )}
 
-              {/* BIZZ-1941: Virksomheds-niveau — gælder porteføljen, ikke per ejendom */}
-              {companyGaps.length > 0 && (
+              {/* BIZZ-1941: Virksomheds-niveau — gælder porteføljen, ikke per ejendom.
+                  BIZZ-1972: Skjult i fold-casen (foldet ind under virksomheden). */}
+              {!foldOwnerIntoCompany && companyGaps.length > 0 && (
                 <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
                   <div className="flex items-center gap-2">
                     <Building2 size={14} className="text-blue-400" />
@@ -2873,7 +3155,15 @@ function AnalyseDetailSection({
 
               {trees.map((tree) => (
                 <div key={tree.v.aktiv.id} className="space-y-2">
-                  <PropertyRow group={tree.v} da={da} />
+                  <PropertyRow
+                    group={
+                      foldOwnerIntoCompany
+                        ? { ...tree.v, gaps: [...ownerGaps, ...companyGaps] }
+                        : tree.v
+                    }
+                    da={da}
+                    foldedNote={foldOwnerIntoCompany}
+                  />
                   {tree.ejd.length > 0 && (
                     <div className="ml-6 pl-3 border-l border-white/8 space-y-2">
                       {tree.ejd.map((eg) => (

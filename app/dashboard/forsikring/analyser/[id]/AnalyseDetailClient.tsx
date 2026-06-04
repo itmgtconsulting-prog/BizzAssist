@@ -106,6 +106,16 @@ export default function AnalyseDetailClient({ analyseId }: { analyseId: string }
   const warningGaps = gaps.filter((g) => g.severity === 'warning');
   const infoGaps = gaps.filter((g) => g.severity === 'info');
 
+  // BIZZ-1973: Policer der dækker en adresse uden for kundens portefølje
+  const addressMismatches = Array.isArray(analyse.summary?.address_mismatches)
+    ? (analyse.summary.address_mismatches as Array<{
+        policy_number: string;
+        insurer_name: string;
+        property_address: string | null;
+        is_policyholder_address: boolean;
+      }>)
+    : [];
+
   /** Ikon for aktiv-type */
   const typeIcon = (type: string) => {
     switch (type) {
@@ -185,6 +195,40 @@ export default function AnalyseDetailClient({ analyseId }: { analyseId: string }
           <div className="text-slate-400 text-xs mt-1">Risk score</div>
         </div>
       </div>
+
+      {/* BIZZ-1973: Advarsel — policer der dækker en adresse uden for porteføljen */}
+      {addressMismatches.length > 0 && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 flex items-start gap-3">
+          <AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5" />
+          <div className="text-sm">
+            <h2 className="text-amber-200 font-semibold">
+              {da
+                ? `${addressMismatches.length} police${addressMismatches.length === 1 ? '' : 'r'} dækker en adresse uden for porteføljen`
+                : `${addressMismatches.length} polic${addressMismatches.length === 1 ? 'y' : 'ies'} cover an address outside the portfolio`}
+            </h2>
+            <p className="text-slate-300 text-xs mt-1">
+              {da
+                ? 'Følgende policer dækker en ejendom der hverken ejes eller administreres af forsikringssejeren. Verificér at dokumentet hører til denne kunde.'
+                : 'The following policies cover a property neither owned nor administered by the policyholder. Verify the document belongs to this customer.'}
+            </p>
+            <ul className="mt-2 space-y-1">
+              {addressMismatches.map((m, i) => (
+                <li key={i} className="text-xs text-amber-100">
+                  <span className="font-medium">
+                    {m.property_address ?? (da ? 'Ukendt adresse' : 'Unknown address')}
+                  </span>
+                  <span className="text-slate-400">
+                    {' '}
+                    — {m.insurer_name} · {da ? 'Police' : 'Policy'} {m.policy_number}
+                    {m.is_policyholder_address &&
+                      (da ? ' · forsikringstagers egen adresse' : " · policyholder's own address")}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
 
       {/* Aktiver-tabel */}
       <section className="bg-white/5 border border-white/8 rounded-2xl overflow-hidden">

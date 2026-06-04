@@ -15,7 +15,7 @@ import { getTenantSchemaName } from '@/lib/db/tenant';
 import { getInsuranceApi } from '@/lib/db/insurance';
 import { walkKoncern } from '@/app/lib/forsikring/koncernWalk';
 import * as Sentry from '@sentry/nextjs';
-import { matchAssetsToPolicies } from '@/app/lib/forsikring/assetMatcher';
+import { matchAssetsToPolicies, addressesMatch } from '@/app/lib/forsikring/assetMatcher';
 import { runGapEngine, computeRiskScore, runPortfolioChecks } from '@/app/lib/forsikring/gapEngine';
 import type { ForsikringCoverage } from '@/app/lib/forsikring/types';
 import {
@@ -55,6 +55,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     sag_id?: string;
     /** BIZZ-1833: Standard forsikringsbetingelser valgt til analysen */
     standard_doc_ids?: string[];
+    /**
+     * BIZZ-1973: Hvis true, kører kun adresse-tjek (walk + policer) og returnerer
+     * { mismatches } UDEN at køre gap-engine eller persistere noget. Bruges som
+     * preflight inden analysen, så brugeren kan advares om policer der dækker en
+     * ejendom uden for kundens portefølje.
+     */
+    preflight?: boolean;
   };
   try {
     body = await request.json();
@@ -184,6 +191,35 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       policer = allPolicies;
     } else {
       policer = [];
+    }
+
+    // BIZZ-1973: Detektér policer der dækker en adresse uden for kundens
+    // portefølje (hverken ejet eller administreret). Bruges som advarsel — en
+    // police uden property_address (fx ren ansvarsforsikring) springes over.
+    const portefoeljeAdresser = aktiver
+      .filter((a) => a.type === 'ejendom' && a.adresse)
+      .map((a) => a.adresse as string);
+    const addressMismatches = policer
+      .filter((p) => p.property_address && p.property_address.trim().length > 0)
+      .filter((p) => !portefoeljeAdresser.some((addr) => addressesMatch(p.property_address, addr)))
+      .map((p) => ({
+        policy_id: p.id,
+        document_id: p.document_id ?? null,
+        policy_number: p.policy_number,
+        insurer_name: p.insurer_name,
+        property_address: p.property_address,
+        // true når adressen er forsikringstagers egen adresse (typisk HQ) — så
+        // advarslen kan forklare at det er hovedkontoret, ikke en ejet ejendom.
+        is_policyholder_address:
+          !!p.policyholder_address && addressesMatch(p.property_address, p.policyholder_address),
+      }));
+
+    // BIZZ-1973: Preflight — returnér kun mismatches, kør ikke gap-engine/persist.
+    if (body.preflight) {
+      logger.log(
+        `[forsikring/analyser] Preflight: ${addressMismatches.length} adresse-mismatch(es) af ${policer.length} policer`
+      );
+      return NextResponse.json({ preflight: true, mismatches: addressMismatches });
     }
 
     // 3. Match aktiver mod policer
@@ -623,6 +659,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           gaps_warning: allGaps.filter((g) => g.severity === 'warning').length,
           policer_count: policer.length,
           as_of_date: as_of_date ?? null,
+          // BIZZ-1973: Policer der dækker en adresse uden for porteføljen —
+          // surfaces i rapport-banner + DOCX selv hvis brugeren valgte "fortsæt".
+          address_mismatches: addressMismatches,
         },
         created_by: auth.userId,
       })
@@ -737,6 +776,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       insured_count: insuredCount,
       gaps_count: allGaps.length,
       total_risk_score: totalRiskScore,
+      // BIZZ-1973: Medsend mismatches så inline-resultatet kan vise advarsels-banner
+      address_mismatches: addressMismatches,
     });
   } catch (err) {
     logger.error('[forsikring/analyser] Fejl:', err);

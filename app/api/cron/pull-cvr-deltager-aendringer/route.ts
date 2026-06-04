@@ -1,9 +1,16 @@
 /**
  * Cron: CVR deltager delta-sync — /api/cron/pull-cvr-deltager-aendringer
  *
- * BIZZ-1187: Dagligt 5-dages rullende vindue på CVR ES deltager-index.
- * Henter deltagere (personer/virksomheder) med sidstOpdateret >= now-5d
- * og upsert'er til cvr_deltager + cvr_deltagerrelation.
+ * BIZZ-1187: Dagligt vindue på CVR ES deltager-index. Henter deltagere
+ * (personer/virksomheder) og upsert'er til cvr_deltager + cvr_deltagerrelation.
+ *
+ * BIZZ-1976: Skiftet fra FAST 5-dages rullende vindue (now-5d) til PERSISTENT
+ * watermark på CVR-feltet `sidstIndlaest` (feed-ankomst, monotont stigende ift.
+ * vores forbrug). Genoptager fra (gemt watermark − safety-overlap), så cron-
+ * nedetid > vindue ikke længere taber delta permanent (jf. BIZZ-1954/1975: 14
+ * dages tabt delta da DB stoppede). Watermark gemmes pr. kørsel i sync_state
+ * (source='cvr_deltager') og må kun rykke fremad (shouldAdvanceWatermark).
+ * windowDays bevares som bootstrap-fallback ved manglende watermark.
  *
  * Samme pattern som pull-cvr-aendringer (BIZZ-651) — search_after pagination,
  * idempotent upsert, safety margin.
@@ -18,18 +25,30 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
+import {
+  DEFAULT_OVERLAP_MINUTES,
+  computeSyncFrom,
+  maxIso,
+  shouldAdvanceWatermark,
+} from '@/app/lib/syncWatermark';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
 
-/** Default 5-dages rolling window */
+/** sync_state-kilde-identifikator for denne inkrementelle sync */
+const SYNC_SOURCE = 'cvr_deltager';
+
+/** Default bootstrap-vindue (dage) når der ikke findes et gemt watermark */
 const DEFAULT_WINDOW_DAYS = 5;
 
 /** ES batch-size */
 const ES_PAGE_SIZE = 500;
 
-/** Safety cap på ES-batches */
-const MAX_ES_PAGES = 200;
+/** Safety cap på ES-batches. BIZZ-1976: hævet fra 200 → 800 (op til 400k
+ *  docs/kørsel) så travle feed-dage (~180k/dag) og watermark-backlog kan
+ *  drænes i én kørsel. Den reelle grænse er tidsbudgettet (SAFETY_MARGIN_MS
+ *  før maxDuration), så et højere sidetal udnytter blot hele 5-min-vinduet. */
+const MAX_ES_PAGES = 800;
 
 /** Supabase upsert-batch */
 const UPSERT_BATCH_SIZE = 200;
@@ -290,17 +309,44 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
       const windowDaysRaw = request.nextUrl.searchParams.get('windowDays');
       const maxPagesRaw = request.nextUrl.searchParams.get('maxPages');
+      const overlapRaw = request.nextUrl.searchParams.get('overlapMinutes');
       const windowDays = windowDaysRaw ? parseInt(windowDaysRaw, 10) : DEFAULT_WINDOW_DAYS;
       const maxPages = maxPagesRaw ? parseInt(maxPagesRaw, 10) : MAX_ES_PAGES;
+      const overlapMinutes = overlapRaw ? parseInt(overlapRaw, 10) : DEFAULT_OVERLAP_MINUTES;
 
-      const fromMs = Date.now() - windowDays * 24 * 60 * 60 * 1000;
-      const fromDate = new Date(fromMs).toISOString();
+      const admin = createAdminClient();
 
-      logger.log(`[deltager-delta] Starter: window ${fromDate} (${windowDays}d)`);
+      // BIZZ-1976: Læs persistent watermark. from = (watermark − overlap), eller
+      // bootstrap-fallback (now − windowDays) ved manglende/ugyldigt watermark.
+      let storedWatermark: string | null = null;
+      {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: ss, error: ssErr } = await (admin as any)
+          .from('sync_state')
+          .select('last_watermark')
+          .eq('source', SYNC_SOURCE)
+          .maybeSingle();
+        if (ssErr) {
+          logger.warn(`[deltager-delta] sync_state read fejl: ${ssErr.message} — bruger fallback`);
+        } else {
+          storedWatermark = (ss?.last_watermark as string) ?? null;
+        }
+      }
+
+      const now = new Date();
+      const fromDate = computeSyncFrom(storedWatermark, windowDays, overlapMinutes, now);
+
+      logger.log(
+        `[deltager-delta] Starter: watermark=${storedWatermark ?? 'INGEN'} → from=${fromDate} ` +
+          `(overlap ${overlapMinutes}m, bootstrap ${windowDays}d)`
+      );
 
       // 1. Fetch deltager-ændringer fra CVR ES
       const allDeltagere: DeltagerRow[] = [];
       const allRelationer: RelationRow[] = [];
+      // BIZZ-1976: akkumulér MAX(sidstIndlaest) på tværs af alle sider →
+      // næste watermark-kandidat.
+      let maxSidstIndlaest: string | null = null;
       let searchAfter: unknown[] | null = null;
       let pagesFetched = 0;
       let esError: string | null = null;
@@ -321,13 +367,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             'Vrdeltagerperson.sidstIndlaest',
           ],
           size: ES_PAGE_SIZE,
+          // BIZZ-1976: sortér/filtrér på sidstIndlaest (feed-ankomst) i stedet
+          // for sidstOpdateret — fanger også genudgivelser/korrektioner hvor
+          // sidstOpdateret ikke flytter sig.
           sort: [
-            { 'Vrdeltagerperson.sidstOpdateret': 'asc' },
+            { 'Vrdeltagerperson.sidstIndlaest': 'asc' },
             { 'Vrdeltagerperson.enhedsNummer': 'asc' },
           ],
           query: {
             range: {
-              'Vrdeltagerperson.sidstOpdateret': { gte: fromDate },
+              'Vrdeltagerperson.sidstIndlaest': { gte: fromDate },
             },
           },
         };
@@ -355,6 +404,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             if (mapped) {
               allDeltagere.push(mapped.deltager);
               allRelationer.push(...mapped.relationer);
+              // BIZZ-1976: ryk watermark-kandidat frem til seneste feed-ankomst.
+              maxSidstIndlaest = maxIso(maxSidstIndlaest, mapped.deltager.sidst_indlaest);
             }
           }
           pagesFetched++;
@@ -380,7 +431,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       );
 
       // 2. Batch upsert til Supabase
-      const admin = createAdminClient();
       let deltagerUpserted = 0;
       let relationerUpserted = 0;
 
@@ -421,15 +471,47 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         }
       }
 
+      // 3. BIZZ-1976: Persistér watermark — KUN fremad og KUN ved fejlfri kørsel.
+      // Et esError (partiel/afbrudt fetch) eller upsert-fejl må ikke rykke
+      // watermark, ellers tabes ufuldstændigt hentet delta permanent.
+      const cleanRun = !esError;
+      const advance = cleanRun && shouldAdvanceWatermark(storedWatermark, maxSidstIndlaest);
+      let watermarkSaved: string | null = null;
+      if (advance) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error: wmErr } = await (admin as any).from('sync_state').upsert(
+          {
+            source: SYNC_SOURCE,
+            last_watermark: maxSidstIndlaest,
+            last_run_at: new Date().toISOString(),
+            last_run_count: deltagerUpserted,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'source' }
+        );
+        if (wmErr) {
+          logger.error(`[deltager-delta] watermark-gem fejl: ${wmErr.message}`);
+        } else {
+          watermarkSaved = maxSidstIndlaest;
+        }
+      } else if (!cleanRun) {
+        logger.warn('[deltager-delta] Partiel kørsel (esError) — watermark IKKE rykket');
+      }
+
       const durationMs = Date.now() - startTime;
       logger.log(
-        `[deltager-delta] Done: ${deltagerUpserted} deltagere, ${relationerUpserted} relationer, ${durationMs}ms`
+        `[deltager-delta] Done: ${deltagerUpserted} deltagere, ${relationerUpserted} relationer, ` +
+          `watermark=${watermarkSaved ?? 'uændret'}, ${durationMs}ms`
       );
 
       return NextResponse.json({
         ok: true,
         windowDays,
+        overlapMinutes,
+        watermarkFrom: storedWatermark,
         fromDate,
+        maxSidstIndlaest,
+        watermarkSaved,
         pagesFetched,
         deltagereFetched: allDeltagere.length,
         relationerFetched: allRelationer.length,

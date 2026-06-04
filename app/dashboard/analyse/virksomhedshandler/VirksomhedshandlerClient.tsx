@@ -53,6 +53,10 @@ interface Kandidat {
   virksomhed_status_raw?: string | null;
   virksomhed_status_kode?: CvrStatusKode | null;
   deltager_status_raw?: string | null;
+  // BIZZ-1974: autoritativ ophørsdato (cvr_virksomhed.ophoert) for hhv. virksomheden
+  // og deltager-virksomheden — bruges som fallback når status-blobben er NULL.
+  virksomhed_ophoert?: string | null;
+  deltager_ophoert?: string | null;
   // BIZZ-1967: autoritativ aktiv-markør for deltageren (person ELLER virksomhed),
   // fra cvr_deltager.is_aktiv. true = aktiv/levende, false = ophørt, null = ukendt.
   deltager_is_aktiv?: boolean | null;
@@ -86,17 +90,25 @@ function StatusBadge({ kode, lang }: { kode: CvrStatusKode; lang: 'da' | 'en' })
  * virksomheder (levende person / aktiv virksomhed = true, ophørt = false). For
  * virksomheds-deltagere med entydigt CVR foretrækkes den rige rå-status (incl.
  * konkurs-undertyper) når den findes; ellers bruges is_aktiv (true→aktiv,
- * false→ophørt). null is_aktiv ⟹ ukendt (returnerer null = filtreres ikke).
+ * false→ophørt). BIZZ-1982: serveren udleder nu is_aktiv live fra
+ * cvr_deltagerrelation når cachen er NULL, så den sidste null-gren reelt aldrig
+ * rammes for radar-kandidater (hver ejer får et tag).
  *
  * @param k - Kandidat-rækken.
  * @returns Status-kategori, eller null hvis ukendt.
  */
 function deltagerStatusKode(k: Kandidat): CvrStatusKode | null {
-  if (k.deltager_er_virksomhed && k.deltager_status_raw != null) {
-    return deriveCvrStatusKode(k.deltager_status_raw);
+  // BIZZ-1974: for virksomheds-deltagere udledes status af status-blobben OG den
+  // autoritative ophoert-dato (blobben er NULL for de fleste selskaber).
+  if (k.deltager_er_virksomhed && (k.deltager_status_raw != null || k.deltager_ophoert != null)) {
+    return deriveCvrStatusKode(k.deltager_status_raw, k.deltager_ophoert);
   }
   if (k.deltager_is_aktiv === true) return 'aktiv';
-  if (k.deltager_is_aktiv === false) return 'tvangsoploest';
+  // BIZZ-1982: is_aktiv = false betyder blot "ingen aktive ejerrelationer" — gælder
+  // både ophørte selskaber og personer der er udtrådt. Brug derfor den neutrale
+  // 'ophoert' frem for det selskabs-specifikke 'tvangsoploest' (som fejlagtigt
+  // påstår en tvangsopløsning vi ikke har belæg for).
+  if (k.deltager_is_aktiv === false) return 'ophoert';
   return null;
 }
 
@@ -121,6 +133,13 @@ interface BerigResult {
   caveats: string[];
   confidence: 'low' | 'medium' | 'high';
   confidence_reason: string;
+  ai_vurdering: {
+    vurdering: string;
+    vaerdidrivere: string[];
+    risici: string[];
+  } | null;
+  tokensUsed?: number;
+  fromCache?: boolean;
 }
 
 type SignalType = 'entry' | 'exit' | 'increase' | 'decrease';
@@ -162,15 +181,33 @@ function formatRegnskab(amount: number | string | null | undefined): string {
   return `${sign}${abs}`;
 }
 
-/** Default-startdato for ændringsdato-filteret: 3 måneder tilbage (ISO YYYY-MM-DD). */
+/**
+ * Stabil nøgle for en kandidat-række (deltager + virksomhed + gyldighedsdato).
+ * Bruges til berig-cache, række-selektion og Excel-eksport, så de altid peger
+ * på samme række.
+ *
+ * @param k - Kandidat-rækken
+ * @returns Sammensat streng-nøgle
+ */
+function kandidatKey(k: Kandidat): string {
+  return `${k.deltager_enhedsnummer}-${k.virksomhed_cvr}-${k.gyldig_fra}`;
+}
+
+/** Default-startdato for ændringsdato-filteret: 60 dage tilbage (ISO YYYY-MM-DD). */
 function defaultFromDate(): string {
   const d = new Date();
-  d.setMonth(d.getMonth() - 3);
+  // BIZZ-1984: default-vindue strammet fra 3 mdr. til 60 dage, så radaren som
+  // udgangspunkt kun viser de nyeste ejerskabsændringer.
+  d.setDate(d.getDate() - 60);
   return d.toISOString().slice(0, 10);
 }
 
-/** Default signal-filtre (alle undtagen 'decrease'). */
-const DEFAULT_SIGNALS: SignalType[] = ['entry', 'exit', 'increase'];
+/**
+ * Default signal-filtre (BIZZ-1984): kun exit ("Fratrådt") og decrease
+ * ("Reduceret") — radaren fokuserer som udgangspunkt på exit-/reduktions-
+ * signaler, der typisk indikerer et muligt salg.
+ */
+const DEFAULT_SIGNALS: SignalType[] = ['exit', 'decrease'];
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
@@ -184,10 +221,13 @@ export default function VirksomhedshandlerClient() {
   // State
   const [kandidater, setKandidater] = useState<Kandidat[]>([]);
   const [total, setTotal] = useState(0);
+  // BIZZ-1980: true når server-total er cappet ved COUNT_CAP (50.000) — så viser
+  // UI'et "50.000+" i stedet for et misvisende eksakt tal.
+  const [totalCapped, setTotalCapped] = useState(false);
   const [loading, setLoading] = useState(true);
   const [signalFilters, setSignalFilters] = useState<Set<SignalType>>(new Set(DEFAULT_SIGNALS));
   const [signalDropdownOpen, setSignalDropdownOpen] = useState(false);
-  // Default: seneste 3 måneder (baseret på ændringsdato = COALESCE(gyldig_til, gyldig_fra))
+  // Default: seneste 60 dage (baseret på ændringsdato = COALESCE(gyldig_til, gyldig_fra))
   const [fromDate, setFromDate] = useState(defaultFromDate);
   const [toDate, setToDate] = useState('');
   // Indrapporterings-dato (server-side range på sidst_opdateret = per-række
@@ -197,7 +237,27 @@ export default function VirksomhedshandlerClient() {
   const [offset, setOffset] = useState(0);
   const [berigResults, setBerigResults] = useState<Record<string, BerigResult>>({});
   const [berigLoading, setBerigLoading] = useState<Set<string>>(new Set());
+  // BIZZ-1987: fejl-feedback pr. række. Når et berig-kald fejler (AI-loft/plan,
+  // validering, ekstern fejl) gemmes en læsbar grund her, så brugeren kan se
+  // HVORFOR der ikke skete noget — tidligere blev non-ok-svar kasseret stille.
+  const [berigErrors, setBerigErrors] = useState<Record<string, string>>({});
   const [bulkLoading, setBulkLoading] = useState(false);
+  // BIZZ-1984: fremdrift + opsummering for "Berig hele siden med AI". Viser hvad
+  // AIen nåede (antal berigede, hvor mange fik et værdi-estimat, confidence-
+  // fordeling, anvendte datakilder og forbehold) i en info-boks efter berigelse.
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
+  // BIZZ-1985: valgte rækker (nøgle = deltager-cvr-gyldigfra). "Berig med AI"
+  // kører på de valgte rækker; tomt udvalg ⟹ alle viste rækker beriges.
+  const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
+  const [berigSummary, setBerigSummary] = useState<{
+    antal: number;
+    medVaerdi: number;
+    high: number;
+    medium: number;
+    low: number;
+    kilder: string[];
+    caveats: string[];
+  } | null>(null);
   // BIZZ-1948: AI-forklaring-popup for en beriget kandidat (transaktionsværdi-breakdown).
   const [detailModal, setDetailModal] = useState<{
     navn: string;
@@ -314,6 +374,49 @@ export default function VirksomhedshandlerClient() {
   }, []);
 
   /**
+   * BIZZ-1984: Fjerner ALLE filtreringer, så hele datasættet vises (i modsætning
+   * til resetFilters, der går tilbage til default-filtrene). Tomme signal- og
+   * deltager-status-sæt = ingen filtrering klient-side; alle gyldige virksomheds-
+   * status-kategorier sendes til serveren, hvilket deaktiverer status-filteret dér
+   * (route'en springer status-WHERE over når antal kategorier = alle gyldige).
+   */
+  const clearAllFilters = useCallback(() => {
+    setSignalFilters(new Set());
+    setFromDate('');
+    setToDate('');
+    setIndrapFra('');
+    setIndrapTil('');
+    setSelectedBrancher(new Set());
+    setMinOmsaetning('');
+    setMaxOmsaetning('');
+    setMinBruttofortjeneste('');
+    setMaxBruttofortjeneste('');
+    setMinOverskud('');
+    setMaxOverskud('');
+    setMinAendring('');
+    setMaxAendring('');
+    setMinEstVaerdi('');
+    setMaxEstVaerdi('');
+    setConfidenceFilter(new Set());
+    setDeltagerFilter('');
+    setCvrFilter('');
+    // Tom virksomheds-status ⟹ server-default (kun aktiv). For at vise ALT sender
+    // vi i stedet alle gyldige kategorier, så route'en deaktiverer status-filteret.
+    setVirksomhedStatusFilters(
+      new Set<CvrStatusKode>([
+        'aktiv',
+        'ophoert',
+        'under_konkurs',
+        'oploest_konkurs',
+        'fusioneret',
+        'tvangsoploest',
+      ])
+    );
+    setDeltagerStatusFilters(new Set());
+    setOffset(0);
+  }, []);
+
+  /**
    * Toggler sortering på en kolonne. Første klik på en ny kolonne → desc;
    * efterfølgende klik på samme kolonne skifter mellem desc og asc.
    *
@@ -400,6 +503,7 @@ export default function VirksomhedshandlerClient() {
         const data = await res.json();
         setKandidater(data.kandidater);
         setTotal(data.total);
+        setTotalCapped(!!data.total_capped);
       }
     } finally {
       // Lad kun det nyeste kald rydde loading-state.
@@ -570,10 +674,20 @@ export default function VirksomhedshandlerClient() {
   // ─── Berig single row ─────────────────────────────────────────────
 
   const berigRow = useCallback(
-    async (k: Kandidat) => {
+    async (k: Kandidat): Promise<BerigResult | null> => {
       const key = `${k.deltager_enhedsnummer}-${k.virksomhed_cvr}-${k.gyldig_fra}`;
-      if (berigResults[key] || berigLoading.has(key)) return;
+      // Allerede beriget → returnér det cachede resultat (så bulk-opsummeringen
+      // også medregner rækker, der var berigede i forvejen). Igangværende → skip.
+      if (berigResults[key]) return berigResults[key];
+      if (berigLoading.has(key)) return null;
 
+      // Ryd tidligere fejl for denne række ved (gen)forsøg.
+      setBerigErrors((prev) => {
+        if (!prev[key]) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
       setBerigLoading((prev) => new Set(prev).add(key));
       try {
         const delta = Math.abs(k.current_ejerandel_pct - k.prev_ejerandel_pct);
@@ -614,7 +728,33 @@ export default function VirksomhedshandlerClient() {
         if (res.ok) {
           const data: BerigResult = await res.json();
           setBerigResults((prev) => ({ ...prev, [key]: data }));
+          return data;
         }
+        // Non-ok → udled en læsbar grund og vis den inline i rækken.
+        let reason: string;
+        if (res.status === 402 || res.status === 403) {
+          reason = t('AI-grænse nået for din plan', 'AI limit reached for your plan');
+        } else if (res.status === 429) {
+          reason = t('For mange kald — prøv igen om lidt', 'Rate limited — try again shortly');
+        } else if (res.status === 401) {
+          reason = t('Login udløbet — log ind igen', 'Session expired — sign in again');
+        } else {
+          // Forsøg at læse server-besked; ellers generisk.
+          const serverMsg = await res
+            .json()
+            .then((b: { error?: string }) => b?.error)
+            .catch(() => undefined);
+          reason = serverMsg || t('AI-berigelse fejlede', 'AI enrichment failed');
+        }
+        setBerigErrors((prev) => ({ ...prev, [key]: reason }));
+        return null;
+      } catch {
+        // Netværks-/parsefejl — vis en generisk grund frem for stilhed.
+        setBerigErrors((prev) => ({
+          ...prev,
+          [key]: t('Netværksfejl — prøv igen', 'Network error — try again'),
+        }));
+        return null;
       } finally {
         setBerigLoading((prev) => {
           const next = new Set(prev);
@@ -623,19 +763,8 @@ export default function VirksomhedshandlerClient() {
         });
       }
     },
-    [berigResults, berigLoading]
+    [berigResults, berigLoading, t]
   );
-
-  // ─── Bulk berig top 10 ────────────────────────────────────────────
-
-  const bulkBerig = useCallback(async () => {
-    setBulkLoading(true);
-    const top10 = kandidater.slice(0, 10);
-    for (const k of top10) {
-      await berigRow(k);
-    }
-    setBulkLoading(false);
-  }, [kandidater, berigRow]);
 
   // ─── Klient-side filtrering ───────────────────────────────────────
   // Anvendes både af tabellen og Excel-eksporten, så de altid viser
@@ -681,6 +810,13 @@ export default function VirksomhedshandlerClient() {
    * præcis de rækker der vises (server-side side + klient-side filtre).
    */
   const exportCsv = useCallback(() => {
+    // BIZZ-1989: eksportér kun de valgte rækker når et udvalg findes — præcis
+    // som dokument-download ("Download valgte"). Tomt udvalg ⟹ alle viste rækker.
+    // Mirror'er bulkBerig-logikken, så checkboksene styrer både berigelse og eksport.
+    const rowsToExport =
+      selectedRows.size > 0
+        ? filteredKandidater.filter((k) => selectedRows.has(kandidatKey(k)))
+        : filteredKandidater;
     // Semikolon-separator: dansk Excel bruger ';' som standard-delimiter.
     const SEP = ';';
     // Escape: ombrydes i dobbelt-citationstegn hvis værdien indeholder
@@ -691,8 +827,8 @@ export default function VirksomhedshandlerClient() {
     };
     const headers = [
       t('Signal', 'Signal'),
-      t('Deltager', 'Participant'),
-      t('Deltager-status', 'Participant status'),
+      t('Ejer', 'Owner'),
+      t('Ejer-status', 'Owner status'),
       t('Virksomhed', 'Company'),
       'CVR',
       t('Virksomheds-status', 'Company status'),
@@ -713,8 +849,8 @@ export default function VirksomhedshandlerClient() {
       const n = typeof v === 'string' ? Number(v) : v;
       return Number.isFinite(n) ? String(n) : '';
     };
-    const rows = filteredKandidater.map((k) => {
-      const key = `${k.deltager_enhedsnummer}-${k.virksomhed_cvr}-${k.gyldig_fra}`;
+    const rows = rowsToExport.map((k) => {
+      const key = kandidatKey(k);
       const berig = berigResults[key];
       const delta = Math.abs(k.current_ejerandel_pct - k.prev_ejerandel_pct);
       const fraPct = k.signal_type === 'exit' ? k.current_ejerandel_pct : k.prev_ejerandel_pct;
@@ -726,9 +862,10 @@ export default function VirksomhedshandlerClient() {
           ? CVR_STATUS_INFO[deltagerKode][lang === 'da' ? 'label' : 'labelEn']
           : '';
       const virksomhedStatusLabel =
-        CVR_STATUS_INFO[k.virksomhed_status_kode ?? deriveCvrStatusKode(k.virksomhed_status_raw)][
-          lang === 'da' ? 'label' : 'labelEn'
-        ];
+        CVR_STATUS_INFO[
+          k.virksomhed_status_kode ??
+            deriveCvrStatusKode(k.virksomhed_status_raw, k.virksomhed_ophoert)
+        ][lang === 'da' ? 'label' : 'labelEn'];
       return [
         SIGNAL_LABELS[k.signal_type]?.[lang === 'da' ? 'da' : 'en'] ?? k.signal_type,
         k.deltager_navn,
@@ -761,7 +898,82 @@ export default function VirksomhedshandlerClient() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  }, [filteredKandidater, berigResults, lang, t]);
+  }, [filteredKandidater, selectedRows, berigResults, lang, t]);
+
+  // ─── Bulk berig (hele siden) ──────────────────────────────────────
+  // BIZZ-1984: beriger ALLE records på den aktuelle side (de filtrerede
+  // rækker der vises), ikke kun de 10 første. Kører sekventielt for ikke at
+  // overbelaste berig-routen, opdaterer fremdrift undervejs og opsummerer til
+  // sidst hvad AIen nåede (antal, værdi-estimater, confidence, kilder, forbehold).
+  const bulkBerig = useCallback(async () => {
+    // BIZZ-1985: berig de valgte rækker; intet udvalg ⟹ alle viste rækker.
+    const rows =
+      selectedRows.size > 0
+        ? filteredKandidater.filter((k) => selectedRows.has(kandidatKey(k)))
+        : filteredKandidater;
+    if (rows.length === 0) return;
+    setBulkLoading(true);
+    setBerigSummary(null);
+    setBulkProgress({ done: 0, total: rows.length });
+    const collected: BerigResult[] = [];
+    for (let i = 0; i < rows.length; i++) {
+      const r = await berigRow(rows[i]);
+      if (r) collected.push(r);
+      setBulkProgress({ done: i + 1, total: rows.length });
+    }
+    // Saml datakilder + forbehold på tværs af alle berigede rækker (unik liste).
+    const kilder = [...new Set(collected.flatMap((r) => r.data_sources ?? []))];
+    const caveats = [...new Set(collected.flatMap((r) => r.caveats ?? []))];
+    setBerigSummary({
+      antal: collected.length,
+      medVaerdi: collected.filter((r) => r.estimeret_transaktionsvaerdi?.mid != null).length,
+      high: collected.filter((r) => r.confidence === 'high').length,
+      medium: collected.filter((r) => r.confidence === 'medium').length,
+      low: collected.filter((r) => r.confidence === 'low').length,
+      kilder,
+      caveats,
+    });
+    setBulkProgress(null);
+    setBulkLoading(false);
+  }, [filteredKandidater, selectedRows, berigRow]);
+
+  // ─── Række-selektion (BIZZ-1985) ──────────────────────────────────
+  // Antal valgte rækker der faktisk er synlige (klient-filtrene kan have skjult
+  // nogle af de valgte). Styrer vælg-alle-checkboxens tristate + knap-label.
+  const visibleKeys = filteredKandidater.map(kandidatKey);
+  const selectedVisibleCount = visibleKeys.filter((k) => selectedRows.has(k)).length;
+  const allVisibleSelected = visibleKeys.length > 0 && selectedVisibleCount === visibleKeys.length;
+
+  /** Vælg/fravælg en enkelt række. */
+  const toggleRow = useCallback((key: string) => {
+    setSelectedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  /** Vælg-alle / ryd alle synlige rækker (afhænger af nuværende tilstand). */
+  const toggleSelectAll = useCallback(() => {
+    const keys = filteredKandidater.map(kandidatKey);
+    setSelectedRows((prev) => {
+      const allSelected = keys.length > 0 && keys.every((k) => prev.has(k));
+      if (allSelected) {
+        // Fjern netop de synlige nøgler (bevar evt. valg uden for filteret).
+        const next = new Set(prev);
+        keys.forEach((k) => next.delete(k));
+        return next;
+      }
+      return new Set([...prev, ...keys]);
+    });
+  }, [filteredKandidater]);
+
+  // Ryd udvalget når brugeren skifter side (offset), så valg ikke bæres med
+  // over til en ny side hvor rækkerne alligevel ikke er synlige/berigbare.
+  useEffect(() => {
+    setSelectedRows(new Set());
+  }, [offset]);
 
   /**
    * Renderer en kompakt multi-select status-dropdown til en kolonne-filterrække
@@ -843,6 +1055,10 @@ export default function VirksomhedshandlerClient() {
 
   // ─── Render ───────────────────────────────────────────────────────
 
+  // BIZZ-1980: cappet total vises som "50.000+" (totalCapped) ellers eksakt.
+  const fmtTotalDa = `${total.toLocaleString('da-DK')}${totalCapped ? '+' : ''}`;
+  const fmtTotalEn = `${total.toLocaleString('en')}${totalCapped ? '+' : ''}`;
+
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-[#0a1628] p-6 gap-6">
       {/* Header */}
@@ -890,86 +1106,178 @@ export default function VirksomhedshandlerClient() {
       <div className="shrink-0 flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-4">
           <p className="text-slate-400 text-xs">
-            {t(
-              `${total.toLocaleString('da-DK')} kandidater fundet`,
-              `${total.toLocaleString('en')} candidates found`
-            )}
+            {t(`${fmtTotalDa} kandidater fundet`, `${fmtTotalEn} candidates found`)}
           </p>
+          {/* BIZZ-1985: "Skjul alle ophørte"-genvejen er fjernet — ophørte selskaber
+              skjules nu via status-filtrene i kolonne-headeren (default = Aktiv). */}
+          <button
+            onClick={exportCsv}
+            disabled={filteredKandidater.length === 0}
+            aria-label={
+              selectedVisibleCount > 0
+                ? t(
+                    `Eksporter ${selectedVisibleCount} valgte til Excel`,
+                    `Export ${selectedVisibleCount} selected to Excel`
+                  )
+                : t('Eksporter til Excel', 'Export to Excel')
+            }
+            title={
+              selectedVisibleCount > 0
+                ? t(
+                    `Eksporterer kun de ${selectedVisibleCount} valgte rækker til Excel.`,
+                    `Exports only the ${selectedVisibleCount} selected rows to Excel.`
+                  )
+                : t(
+                    'Eksporterer ALLE viste rækker til Excel. Vælg rækker med checkboksene for kun at eksportere et udvalg.',
+                    'Exports ALL shown rows to Excel. Tick the checkboxes to export only a selection.'
+                  )
+            }
+            className="inline-flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-xs px-3 py-1.5 rounded-lg transition-colors"
+          >
+            <Download size={13} />
+            {selectedVisibleCount > 0
+              ? t(
+                  `Eksporter ${selectedVisibleCount} valgte til Excel`,
+                  `Export ${selectedVisibleCount} selected to Excel`
+                )
+              : t('Eksporter til Excel', 'Export to Excel')}
+          </button>
+          <button
+            onClick={bulkBerig}
+            disabled={bulkLoading || filteredKandidater.length === 0}
+            aria-label={
+              selectedVisibleCount > 0
+                ? t(
+                    `Berig ${selectedVisibleCount} valgte med AI`,
+                    `Enrich ${selectedVisibleCount} selected with AI`
+                  )
+                : t('Berig alle viste med AI', 'Enrich all shown with AI')
+            }
+            title={
+              selectedVisibleCount > 0
+                ? t(
+                    'Estimerer transaktionsværdi for de valgte rækker baseret på regnskabsdata og branche-multiples.',
+                    'Estimates transaction value for the selected rows based on financials and industry multiples.'
+                  )
+                : t(
+                    'Estimerer transaktionsværdi for ALLE viste ejerandels-ændringer baseret på regnskabsdata og branche-multiples. Vælg rækker med checkboksene for kun at berige et udvalg.',
+                    'Estimates transaction value for ALL shown ownership changes. Tick the checkboxes to enrich only a selection.'
+                  )
+            }
+            className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs px-3 py-1.5 rounded-lg transition-colors"
+          >
+            {bulkLoading
+              ? bulkProgress
+                ? t(
+                    `Beriger ${bulkProgress.done}/${bulkProgress.total}...`,
+                    `Enriching ${bulkProgress.done}/${bulkProgress.total}...`
+                  )
+                : t('Beriger...', 'Enriching...')
+              : selectedVisibleCount > 0
+                ? t(
+                    `Berig ${selectedVisibleCount} valgte med AI`,
+                    `Enrich ${selectedVisibleCount} selected with AI`
+                  )
+                : t('Berig med AI', 'Enrich with AI')}
+          </button>
+        </div>
+        {/* BIZZ-1984: filter-handlinger flyttet til højre over tabellen.
+            "Nulstil filtre" (kun synlig når et filter afviger fra default) går
+            tilbage til default-filtrene; "Fjern filtre" fjerner ALL filtrering. */}
+        <div className="flex items-center gap-4">
           {anyFilterActive && (
             <button
               type="button"
               onClick={resetFilters}
-              aria-label={t('Nulstil alle filtre', 'Reset all filters')}
+              aria-label={t('Nulstil alle filtre til standard', 'Reset all filters to default')}
               className="text-xs text-slate-400 hover:text-white underline-offset-2 hover:underline transition-colors"
             >
               {t('Nulstil filtre', 'Reset filters')}
             </button>
           )}
-          {/* BIZZ-1962: hurtig-toggle — sætter begge status-filtre til kun Aktiv. */}
           <button
             type="button"
-            onClick={() => {
-              setVirksomhedStatusFilters(new Set<CvrStatusKode>(['aktiv']));
-              setDeltagerStatusFilters(new Set<CvrStatusKode>(['aktiv']));
-              setOffset(0);
-            }}
-            aria-label={t('Skjul alle ophørte selskaber', 'Hide all ceased companies')}
+            onClick={clearAllFilters}
+            aria-label={t('Fjern alle filtreringer', 'Remove all filtering')}
             title={t(
-              'Skjuler konkursramte, opløste og fusionerede selskaber (både deltager og virksomhed).',
-              'Hides bankrupt, dissolved and merged companies (both participant and company).'
+              'Fjerner ALLE filtre — viser hele datasættet uden begrænsninger.',
+              'Removes ALL filters — shows the entire dataset without restrictions.'
             )}
             className="inline-flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 text-white text-xs px-3 py-1.5 rounded-lg transition-colors"
           >
-            {t('Skjul alle ophørte', 'Hide all ceased')}
+            {t('Fjern filtre', 'Clear filters')}
           </button>
-          <button
-            onClick={exportCsv}
-            disabled={filteredKandidater.length === 0}
-            aria-label={t('Eksporter til Excel', 'Export to Excel')}
-            className="inline-flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-xs px-3 py-1.5 rounded-lg transition-colors"
-          >
-            <Download size={13} />
-            {t('Eksporter til Excel', 'Export to Excel')}
-          </button>
-          <button
-            onClick={bulkBerig}
-            disabled={bulkLoading || kandidater.length === 0}
-            aria-label={t('Berig top 10 med AI', 'Enrich top 10 with AI')}
-            title={t(
-              'Estimerer transaktionsværdi for de 10 største ejerandels-ændringer baseret på regnskabsdata og branche-multiples.',
-              'Estimates transaction value for the 10 largest ownership changes based on financials and industry multiples.'
-            )}
-            className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs px-3 py-1.5 rounded-lg transition-colors"
-          >
-            {bulkLoading
-              ? t('Beriger...', 'Enriching...')
-              : t('Berig top 10 med AI', 'Enrich top 10 with AI')}
-          </button>
+          {total > LIMIT && (
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setOffset(Math.max(0, offset - LIMIT))}
+                disabled={offset === 0}
+                aria-label={t('Forrige side', 'Previous page')}
+                className="text-sm text-slate-400 hover:text-white disabled:opacity-30 transition-colors"
+              >
+                ← {t('Forrige', 'Previous')}
+              </button>
+              <span className="text-xs text-slate-400 tabular-nums">
+                {offset + 1}–{Math.min(offset + LIMIT, total)} / {fmtTotalDa}
+              </span>
+              <button
+                onClick={() => setOffset(offset + LIMIT)}
+                disabled={offset + LIMIT >= total}
+                aria-label={t('Næste side', 'Next page')}
+                className="text-sm text-slate-400 hover:text-white disabled:opacity-30 transition-colors"
+              >
+                {t('Næste', 'Next')} →
+              </button>
+            </div>
+          )}
         </div>
-        {total > LIMIT && (
-          <div className="flex items-center gap-3">
+      </div>
+
+      {/* BIZZ-1984: info-boks efter "Berig med AI" — opsummerer hvad AIen gjorde:
+          antal berigede rækker, hvor mange fik et værdi-estimat, confidence-
+          fordeling, anvendte datakilder og fælles forbehold. */}
+      {berigSummary && (
+        <div
+          className="shrink-0 bg-indigo-500/10 border border-indigo-500/30 rounded-xl p-4"
+          role="status"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <p className="text-indigo-200 text-sm font-medium mb-1">
+              {t('AI-berigelse fuldført', 'AI enrichment complete')}
+            </p>
             <button
-              onClick={() => setOffset(Math.max(0, offset - LIMIT))}
-              disabled={offset === 0}
-              aria-label={t('Forrige side', 'Previous page')}
-              className="text-sm text-slate-400 hover:text-white disabled:opacity-30 transition-colors"
+              type="button"
+              onClick={() => setBerigSummary(null)}
+              aria-label={t('Luk info', 'Dismiss info')}
+              className="text-indigo-300 hover:text-white text-xs"
             >
-              ← {t('Forrige', 'Previous')}
-            </button>
-            <span className="text-xs text-slate-400 tabular-nums">
-              {offset + 1}–{Math.min(offset + LIMIT, total)} / {total.toLocaleString('da-DK')}
-            </span>
-            <button
-              onClick={() => setOffset(offset + LIMIT)}
-              disabled={offset + LIMIT >= total}
-              aria-label={t('Næste side', 'Next page')}
-              className="text-sm text-slate-400 hover:text-white disabled:opacity-30 transition-colors"
-            >
-              {t('Næste', 'Next')} →
+              {t('Luk', 'Dismiss')}
             </button>
           </div>
-        )}
-      </div>
+          <p className="text-indigo-100/90 text-xs">
+            {t(
+              `AIen behandlede ${berigSummary.antal} ${berigSummary.antal === 1 ? 'række' : 'rækker'} og estimerede en transaktionsværdi for ${berigSummary.medVaerdi} af dem ud fra regnskabstal (overskud som EBITDA-proxy) og branche-multiples.`,
+              `The AI processed ${berigSummary.antal} ${berigSummary.antal === 1 ? 'row' : 'rows'} and estimated a transaction value for ${berigSummary.medVaerdi} of them based on financials (profit as EBITDA proxy) and industry multiples.`
+            )}
+          </p>
+          <p className="text-indigo-200/80 text-xs mt-1">
+            {t('Sikkerhed', 'Confidence')}: {berigSummary.high} {t('høj', 'high')} ·{' '}
+            {berigSummary.medium} {t('middel', 'medium')} · {berigSummary.low} {t('lav', 'low')}
+          </p>
+          {berigSummary.kilder.length > 0 && (
+            <p className="text-indigo-200/80 text-xs mt-1">
+              {t('Datakilder', 'Data sources')}: {berigSummary.kilder.join(', ')}
+            </p>
+          )}
+          {berigSummary.caveats.length > 0 && (
+            <ul className="text-indigo-200/70 text-xs mt-1 space-y-0.5 list-disc list-inside">
+              {berigSummary.caveats.slice(0, 4).map((c, i) => (
+                <li key={i}>{c}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {/* Table — flex-1 så den udfylder resten af højden og er det ENESTE
           vertikale scroll-område (ingen dobbelt-scrollbar, bund altid nåelig) */}
@@ -977,8 +1285,46 @@ export default function VirksomhedshandlerClient() {
         <table className="w-full text-sm">
           <thead className="bg-slate-800 sticky top-0 z-10 shadow-[0_1px_0_0_rgba(148,163,184,0.2)]">
             <tr className="text-left text-slate-400 text-xs uppercase tracking-wider">
+              {/* BIZZ-1985: vælg-alle checkbox. Tristate: flueben når alle synlige
+                  er valgt, streg når kun nogle er valgt.
+                  BIZZ-1989: custom-stylet boks (samme layout som ejendoms-siden). */}
+              <th className="px-3 py-2 w-9">
+                <label className="flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="sr-only"
+                    checked={allVisibleSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = selectedVisibleCount > 0 && !allVisibleSelected;
+                    }}
+                    onChange={toggleSelectAll}
+                    aria-label={t('Vælg alle rækker', 'Select all rows')}
+                  />
+                  <span
+                    className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${
+                      allVisibleSelected || selectedVisibleCount > 0
+                        ? 'bg-indigo-500 border-indigo-500'
+                        : 'bg-[#0a1020] border-slate-400'
+                    }`}
+                  >
+                    {allVisibleSelected ? (
+                      <svg
+                        viewBox="0 0 10 10"
+                        className="w-2 h-2 text-white"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.5"
+                      >
+                        <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
+                      </svg>
+                    ) : selectedVisibleCount > 0 ? (
+                      <span className="w-2 h-0.5 rounded-full bg-white" />
+                    ) : null}
+                  </span>
+                </label>
+              </th>
               <th className="px-4 py-2">{t('Signal', 'Signal')}</th>
-              {renderSortTh('deltager', t('Deltager', 'Participant'))}
+              {renderSortTh('deltager', t('Ejer', 'Owner'))}
               {renderSortTh('virksomhed', t('Virksomhed', 'Company'))}
               {renderSortTh('branche', t('Branche', 'Industry'))}
               {renderSortTh('omsaetning', t('Omsætning', 'Revenue'), 'right')}
@@ -994,6 +1340,8 @@ export default function VirksomhedshandlerClient() {
             {/* Per-kolonne filter-række — hvert filter sidder lige over sin egen
                 kolonne (signal, deltager, virksomhed, branche, beløb, ændringsdato). */}
             <tr className="bg-slate-800/30 align-top normal-case tracking-normal">
+              {/* BIZZ-1985: tom celle ud for vælg-alle checkbox-kolonnen. */}
+              <th className="px-3 py-1 w-9" />
               {/* Signal-multiselect */}
               <th className="px-2 py-1 relative font-normal">
                 <button
@@ -1053,7 +1401,7 @@ export default function VirksomhedshandlerClient() {
                   value={deltagerFilter}
                   onChange={(e) => setDeltagerFilter(e.target.value)}
                   placeholder={t('Filtrer...', 'Filter...')}
-                  aria-label={t('Filtrer deltager', 'Filter participant')}
+                  aria-label={t('Filtrer ejer', 'Filter owner')}
                   className="w-full bg-slate-900/60 border border-slate-700/40 rounded px-2 py-0.5 text-[11px] text-white placeholder-slate-400 focus:border-indigo-500/50 focus:outline-none"
                 />
                 {renderStatusDropdown(
@@ -1061,7 +1409,7 @@ export default function VirksomhedshandlerClient() {
                   setDeltagerStatusFilters,
                   deltagerStatusDropdownOpen,
                   setDeltagerStatusDropdownOpen,
-                  t('Filtrer på deltager-status', 'Filter by participant status')
+                  t('Filtrer på ejer-status', 'Filter by owner status')
                 )}
               </th>
               {/* Virksomhed-tekstfilter + status-multiselect (BIZZ-1962) */}
@@ -1477,6 +1825,9 @@ export default function VirksomhedshandlerClient() {
             {loading ? (
               Array.from({ length: 8 }).map((_, i) => (
                 <tr key={i} className="animate-pulse">
+                  <td className="px-3 py-3 w-9">
+                    <div className="h-4 w-4 bg-slate-700/40 rounded" />
+                  </td>
                   <td className="px-4 py-3">
                     <div className="h-4 bg-slate-700/40 rounded w-16" />
                   </td>
@@ -1517,7 +1868,7 @@ export default function VirksomhedshandlerClient() {
               ))
             ) : kandidater.length === 0 ? (
               <tr>
-                <td colSpan={13} className="px-4 py-12 text-center text-slate-400">
+                <td colSpan={14} className="px-4 py-12 text-center text-slate-400">
                   {t(
                     'Ingen kandidater fundet med de valgte filtre',
                     'No candidates found with selected filters'
@@ -1539,7 +1890,39 @@ export default function VirksomhedshandlerClient() {
                 const tilPct = k.signal_type === 'exit' ? 0 : k.current_ejerandel_pct;
 
                 return (
-                  <tr key={key} className="hover:bg-slate-800/30 transition-colors">
+                  <tr
+                    key={key}
+                    className={`hover:bg-slate-800/30 transition-colors ${selectedRows.has(key) ? 'bg-indigo-500/5' : ''}`}
+                  >
+                    {/* BIZZ-1985: række-checkbox til AI-berigelse af valgte rækker.
+                        BIZZ-1989: custom-stylet boks + flueben (samme layout som
+                        dokument-download på ejendoms-siden), ikke native checkbox. */}
+                    <td className="px-3 py-3 w-9">
+                      <label className="flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="sr-only"
+                          checked={selectedRows.has(key)}
+                          onChange={() => toggleRow(key)}
+                          aria-label={t('Vælg række', 'Select row')}
+                        />
+                        <span
+                          className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${selectedRows.has(key) ? 'bg-indigo-500 border-indigo-500' : 'bg-[#0a1020] border-slate-400'}`}
+                        >
+                          {selectedRows.has(key) && (
+                            <svg
+                              viewBox="0 0 10 10"
+                              className="w-2 h-2 text-white"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                            >
+                              <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
+                            </svg>
+                          )}
+                        </span>
+                      </label>
+                    </td>
                     <td className="px-4 py-3">
                       <span
                         className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${signal?.color ?? 'text-slate-400'}`}
@@ -1596,12 +1979,13 @@ export default function VirksomhedshandlerClient() {
                           {k.deltager_navn}
                         </Link>
                       )}
-                      {/* BIZZ-1967: status-badge vises kun når deltageren er OPHØRT
-                          (is_aktiv=false eller konkurs-/opløsnings-status). Aktive
-                          deltagere holdes rene — ikonet (Building2/User) er nok. */}
+                      {/* BIZZ-1979: status-badge vises ALTID for ejer/deltager (aktiv,
+                          ophørt, konkurs osv.) så brugeren kan se selskabets status
+                          direkte i kolonnen — på linje med virksomheds-kolonnen.
+                          Kun ukendt status (null kode) skjules. */}
                       {(() => {
                         const dKode = deltagerStatusKode(k);
-                        return dKode != null && dKode !== 'aktiv' ? (
+                        return dKode != null ? (
                           <div className="mt-1">
                             <StatusBadge kode={dKode} lang={lang === 'da' ? 'da' : 'en'} />
                           </div>
@@ -1630,13 +2014,16 @@ export default function VirksomhedshandlerClient() {
                       <div className="mt-1">
                         <StatusBadge
                           kode={
-                            k.virksomhed_status_kode ?? deriveCvrStatusKode(k.virksomhed_status_raw)
+                            k.virksomhed_status_kode ??
+                            deriveCvrStatusKode(k.virksomhed_status_raw, k.virksomhed_ophoert)
                           }
                           lang={lang === 'da' ? 'da' : 'en'}
                         />
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-slate-400 text-[10px] truncate max-w-[150px]">
+                    {/* BIZZ-1983: ombryd branchetekst (break-words frem for truncate) og
+                        forstør til text-xs så hele teksten er læsbar uden ellipsis. */}
+                    <td className="px-4 py-3 text-slate-400 text-xs break-words max-w-[180px]">
                       {k.branche_tekst ?? '—'}
                     </td>
                     <td className="px-4 py-3 text-right text-slate-300 text-xs tabular-nums">
@@ -1710,17 +2097,33 @@ export default function VirksomhedshandlerClient() {
                     </td>
                     <td className="px-4 py-3">
                       {!berig && (
-                        <button
-                          onClick={() => berigRow(k)}
-                          disabled={isBerigLoading}
-                          aria-label={t(
-                            `Berig ${k.virksomhed_cvr} med AI`,
-                            `Enrich ${k.virksomhed_cvr} with AI`
+                        <div className="flex flex-col gap-0.5">
+                          <button
+                            onClick={() => berigRow(k)}
+                            disabled={isBerigLoading}
+                            aria-label={t(
+                              `Berig ${k.virksomhed_cvr} med AI`,
+                              `Enrich ${k.virksomhed_cvr} with AI`
+                            )}
+                            className="text-left text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50 transition-colors"
+                          >
+                            {isBerigLoading
+                              ? '...'
+                              : berigErrors[key]
+                                ? t('Prøv igen', 'Retry')
+                                : t('Berig', 'Enrich')}
+                          </button>
+                          {/* BIZZ-1987: vis HVORFOR berigelsen fejlede inline. */}
+                          {berigErrors[key] && !isBerigLoading && (
+                            <span
+                              role="alert"
+                              className="text-[11px] text-amber-400"
+                              title={berigErrors[key]}
+                            >
+                              {berigErrors[key]}
+                            </span>
                           )}
-                          className="text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50 transition-colors"
-                        >
-                          {isBerigLoading ? '...' : t('Berig', 'Enrich')}
-                        </button>
+                        </div>
                       )}
                       {berig && (
                         <button
@@ -1745,17 +2148,17 @@ export default function VirksomhedshandlerClient() {
             {!loading && kandidater.length > 0 && (
               <tr>
                 <td
-                  colSpan={13}
+                  colSpan={14}
                   className="px-4 py-3 text-center text-[11px] text-slate-400 bg-slate-800/20"
                 >
                   {offset + LIMIT >= total
                     ? t(
-                        `● Slut på listen — ${total.toLocaleString('da-DK')} kandidater i alt`,
-                        `● End of list — ${total.toLocaleString('en')} candidates total`
+                        `● Slut på listen — ${fmtTotalDa} kandidater i alt`,
+                        `● End of list — ${fmtTotalEn} candidates total`
                       )
                     : t(
-                        `Viser ${offset + 1}–${Math.min(offset + LIMIT, total)} af ${total.toLocaleString('da-DK')} — brug "Næste" for flere`,
-                        `Showing ${offset + 1}–${Math.min(offset + LIMIT, total)} of ${total.toLocaleString('en')} — use "Next" for more`
+                        `Viser ${offset + 1}–${Math.min(offset + LIMIT, total)} af ${fmtTotalDa} — brug "Næste" for flere`,
+                        `Showing ${offset + 1}–${Math.min(offset + LIMIT, total)} of ${fmtTotalEn} — use "Next" for more`
                       )}
                 </td>
               </tr>
@@ -1776,7 +2179,7 @@ export default function VirksomhedshandlerClient() {
             ← {t('Forrige', 'Previous')}
           </button>
           <span className="text-xs text-slate-400">
-            {offset + 1}–{Math.min(offset + LIMIT, total)} / {total}
+            {offset + 1}–{Math.min(offset + LIMIT, total)} / {fmtTotalDa}
           </span>
           <button
             onClick={() => setOffset(offset + LIMIT)}

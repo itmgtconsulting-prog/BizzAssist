@@ -25,6 +25,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
+import { withCronMonitor } from '@/app/lib/cronMonitor';
 
 export const maxDuration = 300;
 
@@ -197,38 +198,44 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const admin = createAdminClient();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: domains, error } = await (admin as any)
-    .from('domain')
-    .select('id, limits')
-    .eq('status', 'active');
+  // BIZZ-1971: heartbeat + Sentry cron-monitoring
+  return withCronMonitor(
+    { jobName: 'domain-retention', schedule: '30 3 * * *', intervalMinutes: 1440 },
+    async () => {
+      const admin = createAdminClient();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: domains, error } = await (admin as any)
+        .from('domain')
+        .select('id, limits')
+        .eq('status', 'active');
 
-  if (error) {
-    logger.error('[cron/domain-retention] Fetch domains failed:', error.message);
-    return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
-  }
+      if (error) {
+        logger.error('[cron/domain-retention] Fetch domains failed:', error.message);
+        return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
+      }
 
-  const results: PurgeSummary[] = [];
-  for (const d of (domains ?? []) as Array<{ id: string; limits: Record<string, number> }>) {
-    const retention = Number(d.limits?.retention_months ?? DEFAULT_RETENTION_MONTHS);
-    const r = await purgeOneDomain(admin, d.id, retention);
-    results.push(r);
-  }
+      const results: PurgeSummary[] = [];
+      for (const d of (domains ?? []) as Array<{ id: string; limits: Record<string, number> }>) {
+        const retention = Number(d.limits?.retention_months ?? DEFAULT_RETENTION_MONTHS);
+        const r = await purgeOneDomain(admin, d.id, retention);
+        results.push(r);
+      }
 
-  const totalPurged = results.reduce(
-    (s, r) =>
-      s + r.caseDocsPurged + r.closedCasesPurged + r.generationsPurged + r.auditEntriesPurged,
-    0
+      const totalPurged = results.reduce(
+        (s, r) =>
+          s + r.caseDocsPurged + r.closedCasesPurged + r.generationsPurged + r.auditEntriesPurged,
+        0
+      );
+      logger.warn(
+        `[cron/domain-retention] Processed ${results.length} domains, purged ${totalPurged} rows total`
+      );
+
+      return NextResponse.json({
+        ok: true,
+        domains_processed: results.length,
+        total_purged: totalPurged,
+        results,
+      });
+    }
   );
-  logger.warn(
-    `[cron/domain-retention] Processed ${results.length} domains, purged ${totalPurged} rows total`
-  );
-
-  return NextResponse.json({
-    ok: true,
-    domains_processed: results.length,
-    total_purged: totalPurged,
-    results,
-  });
 }

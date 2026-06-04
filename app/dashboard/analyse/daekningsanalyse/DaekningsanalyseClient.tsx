@@ -12,7 +12,7 @@
 
 'use client';
 
-import { useState, useCallback, useRef, useMemo } from 'react';
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import {
   Upload,
   FileSpreadsheet,
@@ -122,6 +122,30 @@ export default function DaekningsanalyseClient() {
 
   // Sidebar state for results view
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarWidth, setSidebarWidth] = useState(600);
+  const [resizing, setResizing] = useState(false);
+  const resizeStart = useRef<{ x: number; width: number } | null>(null);
+
+  /** Global drag handlers for sidebar resize — active only while resizing */
+  useEffect(() => {
+    if (!resizing) return;
+    function onMove(e: MouseEvent) {
+      if (!resizeStart.current) return;
+      const delta = e.clientX - resizeStart.current.x;
+      const newWidth = Math.min(900, Math.max(300, resizeStart.current.width + delta));
+      setSidebarWidth(newWidth);
+    }
+    function onUp() {
+      setResizing(false);
+      resizeStart.current = null;
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [resizing]);
 
   /**
    * Parse uploaded Excel/CSV file and extract addresses.
@@ -343,10 +367,11 @@ export default function DaekningsanalyseClient() {
   // ── Full-screen map mode when results are shown ──
   if (analysed && results.length > 0) {
     return (
-      <div className="absolute inset-0 flex">
-        {/* Sidebar overlay — table + controls */}
+      <div className={`absolute inset-0 flex${resizing ? ' select-none' : ''}`}>
+        {/* Sidebar — table + controls */}
         <div
-          className={`relative flex-shrink-0 h-full transition-all duration-200 ${sidebarOpen ? 'w-[420px]' : 'w-0'}`}
+          className="relative flex-shrink-0 h-full transition-all duration-200"
+          style={{ width: sidebarOpen ? sidebarWidth : 0 }}
         >
           {sidebarOpen && (
             <div className="absolute inset-0 bg-[#0f172a] border-r border-white/10 flex flex-col overflow-hidden z-10">
@@ -356,13 +381,23 @@ export default function DaekningsanalyseClient() {
                   <h2 className="text-lg font-bold text-white">
                     {da ? 'Dækningsanalyse' : 'Coverage Analysis'}
                   </h2>
-                  <button
-                    type="button"
-                    onClick={reset}
-                    className="text-xs text-slate-400 hover:text-white transition-colors"
-                  >
-                    {da ? '← Ny analyse' : '← New analysis'}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={reset}
+                      className="text-xs text-slate-400 hover:text-white transition-colors"
+                    >
+                      {da ? '← Ny analyse' : '← New analysis'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSidebarOpen(false)}
+                      className="text-slate-400 hover:text-white transition-colors p-1"
+                      aria-label={da ? 'Skjul panel' : 'Hide panel'}
+                    >
+                      <ChevronLeft size={14} />
+                    </button>
+                  </div>
                 </div>
 
                 {/* Threshold slider */}
@@ -495,16 +530,31 @@ export default function DaekningsanalyseClient() {
           )}
         </div>
 
-        {/* Sidebar toggle */}
-        <button
-          type="button"
-          onClick={() => setSidebarOpen((o) => !o)}
-          className="absolute top-1/2 -translate-y-1/2 z-20 bg-[#1e293b] border border-white/10 rounded-r-lg px-1 py-3 text-slate-400 hover:text-white transition-colors"
-          style={{ left: sidebarOpen ? 420 : 0 }}
-          aria-label={sidebarOpen ? 'Skjul panel' : 'Vis panel'}
-        >
-          {sidebarOpen ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
-        </button>
+        {/* Resize handle + toggle */}
+        {sidebarOpen && (
+          <div
+            className={`w-1.5 flex-shrink-0 cursor-col-resize flex items-center justify-center group transition-colors ${resizing ? 'bg-blue-500/30' : 'bg-slate-800 hover:bg-blue-500/20'}`}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              resizeStart.current = { x: e.clientX, width: sidebarWidth };
+              setResizing(true);
+            }}
+          >
+            <div
+              className={`w-0.5 h-10 rounded-full transition-colors ${resizing ? 'bg-blue-400' : 'bg-slate-600 group-hover:bg-blue-400'}`}
+            />
+          </div>
+        )}
+        {!sidebarOpen && (
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(true)}
+            className="absolute top-1/2 -translate-y-1/2 left-0 z-20 bg-[#1e293b] border border-white/10 rounded-r-lg px-1 py-3 text-slate-400 hover:text-white transition-colors"
+            aria-label="Vis panel"
+          >
+            <ChevronRight size={14} />
+          </button>
+        )}
 
         {/* Map — full remaining space */}
         <div className="flex-1 min-w-0 relative">

@@ -9,9 +9,16 @@
 
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
+
+/** Map style options — matches PropertyMap pattern */
+type MapStyle = 'dark' | 'satellite';
+const STYLES: Record<MapStyle, string> = {
+  dark: 'mapbox://styles/mapbox/dark-v11',
+  satellite: 'mapbox://styles/mapbox/satellite-streets-v12',
+};
 
 /** GeoJSON geometry (Polygon or MultiPolygon from DAWA) */
 type GeoJsonGeometry = GeoJSON.Polygon | GeoJSON.MultiPolygon;
@@ -55,6 +62,7 @@ const STATUS_FILL_OPACITY: Record<string, number> = {
 export default function DaekningsMap({ results }: Props) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
+  const [mapStyle, setMapStyle] = useState<MapStyle>('dark');
 
   useEffect(() => {
     if (!mapContainer.current) return;
@@ -69,11 +77,15 @@ export default function DaekningsMap({ results }: Props) {
 
     const map = new mapboxgl.Map({
       container: mapContainer.current,
-      style: 'mapbox://styles/mapbox/dark-v11',
+      style: STYLES[mapStyle],
       center: [firstWithCoords.koordinat.lng, firstWithCoords.koordinat.lat],
       zoom: 15,
     });
     mapRef.current = map;
+
+    // Navigation controls — matches PropertyMap pattern (bottom-right)
+    map.addControl(new mapboxgl.NavigationControl({ showCompass: true }), 'bottom-right');
+    map.addControl(new mapboxgl.FullscreenControl(), 'bottom-right');
 
     map.on('load', () => {
       // Build GeoJSON FeatureCollection from results with geometry
@@ -175,7 +187,26 @@ export default function DaekningsMap({ results }: Props) {
       map.remove();
       mapRef.current = null;
     };
-  }, [results]);
+  }, [results, mapStyle]);
 
-  return <div ref={mapContainer} className="w-full h-full" />;
+  return (
+    <div className="relative w-full h-full">
+      <div ref={mapContainer} className="w-full h-full" />
+      {/* Style toggle — top-right, matches PropertyMap pattern */}
+      <div className="absolute top-3 right-3 z-10 flex bg-[#1e293b]/90 border border-white/10 rounded-lg overflow-hidden backdrop-blur-sm">
+        {(['dark', 'satellite'] as const).map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => setMapStyle(s)}
+            className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+              mapStyle === s ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            {s === 'dark' ? 'Kort' : 'Satellit'}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }

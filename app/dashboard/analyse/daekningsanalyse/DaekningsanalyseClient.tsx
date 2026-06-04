@@ -27,6 +27,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   MinusCircle,
+  Save,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { useLanguage } from '@/app/context/LanguageContext';
@@ -214,6 +215,66 @@ export default function DaekningsanalyseClient() {
       window.removeEventListener('mouseup', onUp);
     };
   }, [resizing]);
+
+  // Saved analyses
+  interface SavedAnalysis {
+    id: string;
+    name: string;
+    matrikel_count: number;
+    kunde_count: number;
+    total_count: number;
+    created_at: string;
+    file_name: string | null;
+  }
+  const [savedAnalyses, setSavedAnalyses] = useState<SavedAnalysis[]>([]);
+  const [saveName, setSaveName] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  /** Load saved analyses on mount */
+  useEffect(() => {
+    fetch('/api/analyse/daekningsanalyse/saved')
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: SavedAnalysis[]) => setSavedAnalyses(data))
+      .catch(() => {});
+  }, []);
+
+  /** Save current analysis */
+  const saveAnalysis = useCallback(async () => {
+    if (!saveName.trim() || results.length === 0) return;
+    setSaving(true);
+    try {
+      const res = await fetch('/api/analyse/daekningsanalyse/saved', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: saveName.trim(),
+          thresholds: { redMax, greenMin },
+          results,
+          fileName: file?.name ?? null,
+        }),
+      });
+      if (res.ok) {
+        const { id } = await res.json();
+        setSavedAnalyses((prev) => [
+          {
+            id,
+            name: saveName.trim(),
+            matrikel_count: results.length,
+            kunde_count: results.reduce((s, r) => s + r.kundeAntal, 0),
+            total_count: results.reduce((s, r) => s + r.totalEnheder, 0),
+            created_at: new Date().toISOString(),
+            file_name: file?.name ?? null,
+          },
+          ...prev,
+        ]);
+        setSaveName('');
+      }
+    } catch {
+      /* ignore */
+    } finally {
+      setSaving(false);
+    }
+  }, [saveName, results, redMax, greenMin, file]);
 
   /**
    * Parse uploaded Excel/CSV file and extract addresses.
@@ -479,7 +540,7 @@ export default function DaekningsanalyseClient() {
                       max={80}
                       value={greenMin}
                       onChange={(e) => setGreenMin(Number(e.target.value))}
-                      className="flex-1 accent-blue-500"
+                      className="flex-1 accent-blue-500 [&::-webkit-slider-runnable-track]:bg-slate-700 [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:h-1.5 [&::-moz-range-track]:bg-slate-700 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:h-1.5"
                     />
                     <span className="text-xs font-bold text-white w-10 text-right">
                       {greenMin}%
@@ -494,7 +555,7 @@ export default function DaekningsanalyseClient() {
                       max={greenMin}
                       value={redMax}
                       onChange={(e) => setRedMax(Number(e.target.value))}
-                      className="flex-1 accent-blue-500"
+                      className="flex-1 accent-blue-500 [&::-webkit-slider-runnable-track]:bg-slate-700 [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:h-1.5 [&::-moz-range-track]:bg-slate-700 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:h-1.5"
                     />
                     <span className="text-xs font-bold text-white w-10 text-right">{redMax}%</span>
                   </label>
@@ -507,6 +568,27 @@ export default function DaekningsanalyseClient() {
                         ? `Rød: <${redMax}% · Gul: ${redMax}-${greenMin}% · Grøn: ≥${greenMin}%`
                         : `Red: <${redMax}% · Yellow: ${redMax}-${greenMin}% · Green: ≥${greenMin}%`}
                   </p>
+                </div>
+
+                {/* Save analysis */}
+                <div className="flex items-center gap-1.5 mb-3">
+                  <input
+                    type="text"
+                    value={saveName}
+                    onChange={(e) => setSaveName(e.target.value)}
+                    placeholder={da ? 'Navngiv analyse…' : 'Name analysis…'}
+                    className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder:text-slate-400 focus:outline-none focus:border-blue-500"
+                    onKeyDown={(e) => e.key === 'Enter' && saveAnalysis()}
+                  />
+                  <button
+                    type="button"
+                    onClick={saveAnalysis}
+                    disabled={saving || !saveName.trim()}
+                    className="inline-flex items-center gap-1 text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-2.5 py-1.5 rounded-lg transition-colors"
+                  >
+                    {saving ? <Loader2 size={10} className="animate-spin" /> : <Save size={10} />}
+                    {da ? 'Gem' : 'Save'}
+                  </button>
                 </div>
 
                 {/* Badges + filter + export */}
@@ -715,7 +797,7 @@ export default function DaekningsanalyseClient() {
             max={80}
             value={greenMin}
             onChange={(e) => setGreenMin(Number(e.target.value))}
-            className="flex-1 accent-blue-500"
+            className="flex-1 accent-blue-500 [&::-webkit-slider-runnable-track]:bg-slate-700 [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:h-1.5 [&::-moz-range-track]:bg-slate-700 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:h-1.5"
           />
           <span className="text-sm font-bold text-white w-12 text-right">{greenMin}%</span>
         </label>
@@ -728,7 +810,7 @@ export default function DaekningsanalyseClient() {
             max={greenMin}
             value={redMax}
             onChange={(e) => setRedMax(Number(e.target.value))}
-            className="flex-1 accent-blue-500"
+            className="flex-1 accent-blue-500 [&::-webkit-slider-runnable-track]:bg-slate-700 [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:h-1.5 [&::-moz-range-track]:bg-slate-700 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:h-1.5"
           />
           <span className="text-sm font-bold text-white w-12 text-right">{redMax}%</span>
         </label>
@@ -742,6 +824,34 @@ export default function DaekningsanalyseClient() {
               : `Red: <${redMax}% · Yellow: ${redMax}-${greenMin}% · Green: ≥${greenMin}%`}
         </p>
       </div>
+
+      {/* Saved analyses */}
+      {savedAnalyses.length > 0 && !analysed && (
+        <div className="bg-[#1e293b] border border-white/10 rounded-xl p-4">
+          <h3 className="text-sm font-medium text-white mb-3">
+            {da ? 'Gemte analyser' : 'Saved analyses'}
+          </h3>
+          <div className="space-y-2">
+            {savedAnalyses.map((sa) => (
+              <div
+                key={sa.id}
+                className="flex items-center justify-between bg-white/5 rounded-lg px-3 py-2"
+              >
+                <div>
+                  <span className="text-sm text-white">{sa.name}</span>
+                  <span className="text-xs text-slate-400 ml-2">
+                    {sa.matrikel_count} {da ? 'matrikler' : 'cadastres'} · {sa.kunde_count}/
+                    {sa.total_count}
+                  </span>
+                </div>
+                <span className="text-[10px] text-slate-400">
+                  {new Date(sa.created_at).toLocaleDateString('da-DK')}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Upload zone */}
       {!analysed && (

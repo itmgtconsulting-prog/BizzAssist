@@ -156,6 +156,8 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
 
     for (const aa of adgangsadresser) {
       if (!aa.jordstykke) continue;
+      // Skip road/utility matrikler (7000-prefix = offentligt vejareal)
+      if (aa.jordstykke.matrikelnr.startsWith('7000')) continue;
       const key = `${aa.jordstykke.matrikelnr}|${aa.jordstykke.ejerlav.kode}`;
 
       if (!matrikelMap.has(key)) {

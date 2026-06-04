@@ -22,10 +22,11 @@ import {
   MapPin,
   ChevronUp,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   AlertTriangle,
   CheckCircle2,
   MinusCircle,
-  Filter,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { useLanguage } from '@/app/context/LanguageContext';
@@ -118,6 +119,9 @@ export default function DaekningsanalyseClient() {
 
   // Dragging state
   const [dragging, setDragging] = useState(false);
+
+  // Sidebar state for results view
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   /**
    * Parse uploaded Excel/CSV file and extract addresses.
@@ -336,6 +340,180 @@ export default function DaekningsanalyseClient() {
     );
   };
 
+  // ── Full-screen map mode when results are shown ──
+  if (analysed && results.length > 0) {
+    return (
+      <div className="absolute inset-0 flex">
+        {/* Sidebar overlay — table + controls */}
+        <div
+          className={`relative flex-shrink-0 h-full transition-all duration-200 ${sidebarOpen ? 'w-[420px]' : 'w-0'}`}
+        >
+          {sidebarOpen && (
+            <div className="absolute inset-0 bg-[#0f172a] border-r border-white/10 flex flex-col overflow-hidden z-10">
+              {/* Sidebar header */}
+              <div className="px-4 pt-4 pb-2 flex-shrink-0">
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-lg font-bold text-white">
+                    {da ? 'Dækningsanalyse' : 'Coverage Analysis'}
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={reset}
+                    className="text-xs text-slate-400 hover:text-white transition-colors"
+                  >
+                    {da ? '← Ny analyse' : '← New analysis'}
+                  </button>
+                </div>
+
+                {/* Threshold slider */}
+                <div className="bg-[#1e293b] border border-white/10 rounded-lg p-3 mb-3">
+                  <label className="flex items-center gap-2">
+                    <span className="text-xs text-slate-300 whitespace-nowrap">
+                      {da ? 'Forventet:' : 'Expected:'}
+                    </span>
+                    <input
+                      type="range"
+                      min={5}
+                      max={80}
+                      value={expectedShare}
+                      onChange={(e) => setExpectedShare(Number(e.target.value))}
+                      className="flex-1 accent-blue-500"
+                    />
+                    <span className="text-xs font-bold text-white w-10 text-right">
+                      {expectedShare}%
+                    </span>
+                  </label>
+                </div>
+
+                {/* Badges + filter + export */}
+                <div className="flex items-center gap-2 flex-wrap mb-2">
+                  <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-400">
+                    <AlertTriangle size={9} /> {redCount}
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400">
+                    <MinusCircle size={9} /> {yellowCount}
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400">
+                    <CheckCircle2 size={9} /> {greenCount}
+                  </span>
+                  <div className="flex items-center gap-1 ml-auto">
+                    {(['all', 'red', 'yellow', 'green'] as const).map((f) => (
+                      <button
+                        key={f}
+                        type="button"
+                        onClick={() => setStatusFilter(f)}
+                        className={`text-[10px] px-1.5 py-0.5 rounded-full transition-colors ${
+                          statusFilter === f
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-white/5 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {f === 'all'
+                          ? da
+                            ? 'Alle'
+                            : 'All'
+                          : f === 'red'
+                            ? '!'
+                            : f === 'yellow'
+                              ? '~'
+                              : '✓'}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={exportExcel}
+                      className="inline-flex items-center gap-1 text-[10px] text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 px-2 py-0.5 rounded-full transition-colors ml-1"
+                    >
+                      <Download size={9} /> Excel
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Table — scrollable */}
+              <div className="flex-1 overflow-auto">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-[#0f172a] z-10">
+                    <tr className="border-b border-white/10">
+                      {(
+                        [
+                          ['matrikelnr', da ? 'Matrikel' : 'Cadastre'],
+                          ['adresserLabel', da ? 'Adresse(r)' : 'Address(es)'],
+                          ['totalEnheder', 'Total'],
+                          ['kundeAntal', da ? 'Kunder' : 'Cust.'],
+                          ['daekningPct', '%'],
+                        ] as [SortKey, string][]
+                      ).map(([key, label]) => (
+                        <th
+                          key={key}
+                          onClick={() => toggleSort(key)}
+                          className="text-left text-[10px] text-slate-400 font-medium px-2 py-2 cursor-pointer hover:text-white transition-colors select-none whitespace-nowrap"
+                        >
+                          {label}
+                          <SortIcon col={key} />
+                        </th>
+                      ))}
+                      <th className="text-left text-[10px] text-slate-400 font-medium px-2 py-2">
+                        Status
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedResults.map((r) => {
+                      const st = STATUS_STYLES[r.status];
+                      return (
+                        <tr
+                          key={r.matrikelnr + r.ejerlavskode}
+                          className="border-b border-white/5 hover:bg-white/[0.03]"
+                        >
+                          <td className="px-2 py-1.5 text-white font-mono">{r.matrikelnr}</td>
+                          <td className="px-2 py-1.5 text-slate-300 max-w-[140px] truncate">
+                            {r.adresserLabel}
+                          </td>
+                          <td className="px-2 py-1.5 text-white tabular-nums">{r.totalEnheder}</td>
+                          <td className="px-2 py-1.5 text-white tabular-nums">{r.kundeAntal}</td>
+                          <td className="px-2 py-1.5 text-white font-bold tabular-nums">
+                            {Math.round(r.daekningPct)}%
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <span
+                              className={`inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded-full ${st.bg} ${st.text} border ${st.border} whitespace-nowrap`}
+                            >
+                              {r.status === 'red' && <AlertTriangle size={7} />}
+                              {r.status === 'yellow' && <MinusCircle size={7} />}
+                              {r.status === 'green' && <CheckCircle2 size={7} />}
+                              {STATUS_LABELS[r.status][lang]}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Sidebar toggle */}
+        <button
+          type="button"
+          onClick={() => setSidebarOpen((o) => !o)}
+          className="absolute top-1/2 -translate-y-1/2 z-20 bg-[#1e293b] border border-white/10 rounded-r-lg px-1 py-3 text-slate-400 hover:text-white transition-colors"
+          style={{ left: sidebarOpen ? 420 : 0 }}
+          aria-label={sidebarOpen ? 'Skjul panel' : 'Vis panel'}
+        >
+          {sidebarOpen ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
+        </button>
+
+        {/* Map — full remaining space */}
+        <div className="flex-1 min-w-0 relative">
+          <DaekningsMap results={classified} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
@@ -480,137 +658,6 @@ export default function DaekningsanalyseClient() {
           <AlertTriangle size={16} className="text-red-400 shrink-0 mt-0.5" />
           <p className="text-red-300 text-sm">{error}</p>
         </div>
-      )}
-
-      {/* Results — split layout: table left, map right */}
-      {analysed && results.length > 0 && (
-        <>
-          {/* Toolbar */}
-          <div className="flex items-center gap-4 flex-wrap">
-            <button
-              type="button"
-              onClick={reset}
-              className="text-sm text-slate-400 hover:text-white transition-colors"
-            >
-              {da ? '← Ny analyse' : '← New analysis'}
-            </button>
-            <div className="flex items-center gap-2">
-              <span className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-red-500/10 text-red-400">
-                <AlertTriangle size={10} /> {redCount}
-              </span>
-              <span className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-amber-500/10 text-amber-400">
-                <MinusCircle size={10} /> {yellowCount}
-              </span>
-              <span className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-emerald-500/10 text-emerald-400">
-                <CheckCircle2 size={10} /> {greenCount}
-              </span>
-            </div>
-            {/* Table filter */}
-            <div className="flex items-center gap-1.5 ml-2">
-              <Filter size={12} className="text-slate-400" />
-              {(['all', 'red', 'yellow', 'green'] as const).map((f) => (
-                <button
-                  key={f}
-                  type="button"
-                  onClick={() => setStatusFilter(f)}
-                  className={`text-xs px-2 py-0.5 rounded-full transition-colors ${
-                    statusFilter === f
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-white/5 text-slate-400 hover:text-white'
-                  }`}
-                >
-                  {f === 'all' ? (da ? 'Alle' : 'All') : STATUS_LABELS[f][lang]}
-                </button>
-              ))}
-            </div>
-            <button
-              type="button"
-              onClick={exportExcel}
-              className="ml-auto inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 px-3 py-1.5 rounded-lg transition-colors"
-            >
-              <Download size={12} /> Excel
-            </button>
-          </div>
-
-          {/* Split view: table + map */}
-          <div className="flex gap-4" style={{ height: 'calc(100vh - 340px)', minHeight: 400 }}>
-            {/* Left: Table */}
-            <div className="w-1/2 min-w-0 bg-[#1e293b] border border-white/10 rounded-xl overflow-auto">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-[#1e293b] z-10">
-                  <tr className="border-b border-white/10">
-                    {(
-                      [
-                        ['matrikelnr', da ? 'Matrikel' : 'Cadastre'],
-                        ['adresserLabel', da ? 'Adresse(r)' : 'Address(es)'],
-                        ['totalEnheder', da ? 'Total' : 'Total'],
-                        ['kundeAntal', da ? 'Kunder' : 'Cust.'],
-                        ['daekningPct', da ? 'Dækning' : 'Cov.'],
-                      ] as [SortKey, string][]
-                    ).map(([key, label]) => (
-                      <th
-                        key={key}
-                        onClick={() => toggleSort(key)}
-                        className="text-left text-xs text-slate-400 font-medium px-3 py-2.5 cursor-pointer hover:text-white transition-colors select-none whitespace-nowrap"
-                      >
-                        {label}
-                        <SortIcon col={key} />
-                      </th>
-                    ))}
-                    <th className="text-left text-xs text-slate-400 font-medium px-3 py-2.5">
-                      Status
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sortedResults.map((r) => {
-                    const st = STATUS_STYLES[r.status];
-                    return (
-                      <tr
-                        key={r.matrikelnr + r.ejerlavskode}
-                        className="border-b border-white/5 hover:bg-white/[0.02]"
-                      >
-                        <td className="px-3 py-2 text-white font-mono text-xs">{r.matrikelnr}</td>
-                        <td className="px-3 py-2 text-slate-300 text-xs max-w-[200px] truncate">
-                          {r.adresserLabel}
-                          {r.ejerforening && (
-                            <span className="block text-slate-400 text-[10px] mt-0.5">
-                              {r.ejerforening}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-white text-xs tabular-nums">
-                          {r.totalEnheder}
-                        </td>
-                        <td className="px-3 py-2 text-white text-xs tabular-nums">
-                          {r.kundeAntal}
-                        </td>
-                        <td className="px-3 py-2 text-white text-xs font-bold tabular-nums">
-                          {Math.round(r.daekningPct)}%
-                        </td>
-                        <td className="px-3 py-2">
-                          <span
-                            className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full ${st.bg} ${st.text} border ${st.border} whitespace-nowrap`}
-                          >
-                            {r.status === 'red' && <AlertTriangle size={8} />}
-                            {r.status === 'yellow' && <MinusCircle size={8} />}
-                            {r.status === 'green' && <CheckCircle2 size={8} />}
-                            {STATUS_LABELS[r.status][lang]}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Right: Map with matrikel polygons */}
-            <div className="w-1/2 min-w-0 bg-[#1e293b] border border-white/10 rounded-xl overflow-hidden">
-              <DaekningsMap results={classified} />
-            </div>
-          </div>
-        </>
       )}
 
       {analysed && results.length === 0 && !error && (

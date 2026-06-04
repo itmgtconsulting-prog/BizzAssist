@@ -220,20 +220,20 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       }
 
       // 3. Opdater cursor
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (admin as any)
-        .from('dar_sync_cursor')
-        .upsert(
+      {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error: cursorErr } = await (admin as any).from('dar_sync_cursor').upsert(
           {
             id: 'default',
             sekvensnummer: lastSekvensnummer,
             updated_at: new Date().toISOString(),
           },
           { onConflict: 'id' }
-        )
-        .catch((err: Error) => {
-          logger.error('[dar-delta] Cursor update fejl:', err.message);
-        });
+        );
+        if (cursorErr) {
+          logger.error('[dar-delta] Cursor update fejl:', cursorErr.message);
+        }
+      }
 
       const durationMs = Date.now() - startTime;
       logger.log(

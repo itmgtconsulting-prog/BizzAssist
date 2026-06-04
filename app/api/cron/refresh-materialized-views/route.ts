@@ -83,20 +83,18 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
         // Opdater sync-status
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (admin as any)
-          .from('data_sync_status')
-          .upsert(
-            {
-              source_name: view,
-              last_sync_at: new Date().toISOString(),
-              last_success: results[results.length - 1].ok ? new Date().toISOString() : undefined,
-              sync_duration_ms: results[results.length - 1].durationMs,
-              last_error: results[results.length - 1].error ?? null,
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: 'source_name' }
-          )
-          .catch(() => {});
+        const { error: syncErr } = await (admin as any).from('data_sync_status').upsert(
+          {
+            source_name: view,
+            last_sync_at: new Date().toISOString(),
+            last_success: results[results.length - 1].ok ? new Date().toISOString() : undefined,
+            sync_duration_ms: results[results.length - 1].durationMs,
+            last_error: results[results.length - 1].error ?? null,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'source_name' }
+        );
+        if (syncErr) logger.warn('[mv-refresh] Sync status update fejl:', syncErr.message);
       }
 
       return NextResponse.json({ ok: true, results });

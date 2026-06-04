@@ -232,11 +232,14 @@ export async function GET(request: NextRequest) {
       const admin = createAdminClient();
 
       /* Hent BFE-numre hvor energimaerke_data er NULL */
-      const { data: rows, error: qErr } = await admin
+      const { data: rows, error: qErr } = (await admin
         .from('bbr_ejendom_status')
         .select('bfe_nummer')
         .is('energimaerke_data', null)
-        .limit(BATCH_SIZE);
+        .limit(BATCH_SIZE)) as {
+        data: { bfe_nummer: number }[] | null;
+        error: { message: string } | null;
+      };
 
       if (qErr) {
         logger.error('[backfill-emo] Query error:', qErr.message);
@@ -244,7 +247,7 @@ export async function GET(request: NextRequest) {
       }
 
       if (!rows?.length) {
-        logger.info('[backfill-emo] Ingen NULL-rows — backfill komplet');
+        logger.log('[backfill-emo] Ingen NULL-rows — backfill komplet');
         return NextResponse.json({ message: 'Backfill complete', processed: 0, remaining: 0 });
       }
 
@@ -261,9 +264,10 @@ export async function GET(request: NextRequest) {
           failed++;
         } else {
           /* Gem resultat (kan være tom array for ejd. uden energimærke) */
-          const { error: uErr } = await admin
-            .from('bbr_ejendom_status')
-            .update({ energimaerke_data: maerker })
+          const { error: uErr } = await (
+            admin.from('bbr_ejendom_status') as ReturnType<typeof admin.from>
+          )
+            .update({ energimaerke_data: maerker } as Record<string, unknown>)
             .eq('bfe_nummer', bfe);
 
           if (uErr) {
@@ -295,7 +299,7 @@ export async function GET(request: NextRequest) {
         remaining: count ?? 'unknown',
       };
 
-      logger.info('[backfill-emo] Batch done:', result);
+      logger.log('[backfill-emo] Batch done:', result);
 
       Sentry.addBreadcrumb({
         category: 'cron',

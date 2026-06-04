@@ -190,6 +190,64 @@ export default function DaekningsMap({ results }: Props) {
         });
       }
 
+      // Matrikelskel — add thin white boundary lines for ALL matrikler in the GeoJSON
+      // (our colored fill already shows the shapes, this adds a crisp white outline)
+      map.addLayer({
+        id: 'matrikler-boundary',
+        type: 'line',
+        source: 'matrikler',
+        paint: {
+          'line-color': '#ffffff',
+          'line-width': 0.5,
+          'line-opacity': 0.4,
+        },
+        minzoom: 15,
+      });
+
+      // Matrikel labels — show matrikelnr at center of each polygon
+      map.addLayer({
+        id: 'matrikler-labels',
+        type: 'symbol',
+        source: 'matrikler',
+        minzoom: 16,
+        layout: {
+          'text-field': ['get', 'matrikelnr'],
+          'text-size': 10,
+          'text-allow-overlap': false,
+        },
+        paint: {
+          'text-color': '#ffffff',
+          'text-halo-color': '#000000',
+          'text-halo-width': 1,
+        },
+      });
+
+      // Husnumre — Mapbox streets-v8 vector source
+      if (!map.getSource('streets-v8-housenum')) {
+        map.addSource('streets-v8-housenum', {
+          type: 'vector',
+          url: 'mapbox://mapbox.mapbox-streets-v8',
+        });
+      }
+      map.addLayer({
+        id: 'housenum-overlay',
+        type: 'symbol',
+        source: 'streets-v8-housenum',
+        'source-layer': 'housenum_label',
+        minzoom: 16,
+        layout: {
+          'text-field': ['get', 'house_num'],
+          'text-size': 12,
+          'text-allow-overlap': false,
+          'text-ignore-placement': false,
+        },
+        paint: {
+          'text-color': '#ffffff',
+          'text-halo-color': '#000000',
+          'text-halo-width': 1.5,
+        },
+      });
+
       // Fit bounds to all polygon geometries (not point coordinates)
       if (features.length > 0) {
         const bounds = new mapboxgl.LngLatBounds();

@@ -109,6 +109,10 @@
       "schedule": "30 4 * * *"
     },
     {
+      "path": "/api/cron/backfill-energimaerke",
+      "schedule": "7 * * * *"
+    },
+    {
       "path": "/api/cron/refresh-materialized-views",
       "schedule": "0 5 * * *"
     },

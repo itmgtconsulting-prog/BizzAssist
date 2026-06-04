@@ -47,6 +47,8 @@ interface DawaVaskResult {
 interface DawaAdgangsadresse {
   id: string;
   vejnavn: string;
+  /** Nestet format har vejstykke.navn i stedet for vejnavn */
+  vejstykke?: { navn?: string };
   husnr: string;
   postnr: string;
   postnrnavn: string;
@@ -168,7 +170,8 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
 
       const group = matrikelMap.get(key)!;
       group.kundeAdgangsIds.add(aa.id);
-      const vejnavn = aa.vejnavn || 'Ukendt';
+      // Nestet format: vejstykke.navn; flat format: vejnavn
+      const vejnavn = aa.vejstykke?.navn || aa.vejnavn || 'Ukendt';
       if (!group.vejHusnumre.has(vejnavn)) group.vejHusnumre.set(vejnavn, new Set());
       group.vejHusnumre.get(vejnavn)!.add(aa.husnr);
     }

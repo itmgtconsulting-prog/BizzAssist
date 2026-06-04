@@ -575,6 +575,32 @@ export default function DaekningsanalyseClient() {
                   </tbody>
                 </table>
               </div>
+
+              {/* Sticky footer — summary bar */}
+              <div className="flex-shrink-0 border-t border-white/10 px-4 py-2 bg-[#0f172a]">
+                <div className="flex items-center justify-between text-[10px] text-slate-400">
+                  <span>
+                    {da
+                      ? `Viser ${sortedResults.length} af ${classified.length} matrikler`
+                      : `Showing ${sortedResults.length} of ${classified.length} cadastres`}
+                  </span>
+                  <span className="tabular-nums">
+                    {classified.reduce((s, r) => s + r.kundeAntal, 0)} /{' '}
+                    {classified.reduce((s, r) => s + r.totalEnheder, 0)} (
+                    {classified.length > 0
+                      ? Math.round(
+                          (classified.reduce((s, r) => s + r.kundeAntal, 0) /
+                            Math.max(
+                              1,
+                              classified.reduce((s, r) => s + r.totalEnheder, 0)
+                            )) *
+                            100
+                        )
+                      : 0}
+                    % {da ? 'samlet' : 'total'})
+                  </span>
+                </div>
+              </div>
             </div>
           )}
         </div>

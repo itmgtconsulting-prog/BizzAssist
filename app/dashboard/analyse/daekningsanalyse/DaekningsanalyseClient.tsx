@@ -479,7 +479,7 @@ export default function DaekningsanalyseClient() {
                       max={80}
                       value={greenMin}
                       onChange={(e) => setGreenMin(Number(e.target.value))}
-                      className="flex-1 accent-emerald-500"
+                      className="flex-1 accent-blue-500"
                     />
                     <span className="text-xs font-bold text-white w-10 text-right">
                       {greenMin}%
@@ -494,7 +494,7 @@ export default function DaekningsanalyseClient() {
                       max={greenMin}
                       value={redMax}
                       onChange={(e) => setRedMax(Number(e.target.value))}
-                      className="flex-1 accent-red-500"
+                      className="flex-1 accent-blue-500"
                     />
                     <span className="text-xs font-bold text-white w-10 text-right">{redMax}%</span>
                   </label>
@@ -715,7 +715,7 @@ export default function DaekningsanalyseClient() {
             max={80}
             value={greenMin}
             onChange={(e) => setGreenMin(Number(e.target.value))}
-            className="flex-1 accent-emerald-500"
+            className="flex-1 accent-blue-500"
           />
           <span className="text-sm font-bold text-white w-12 text-right">{greenMin}%</span>
         </label>
@@ -728,7 +728,7 @@ export default function DaekningsanalyseClient() {
             max={greenMin}
             value={redMax}
             onChange={(e) => setRedMax(Number(e.target.value))}
-            className="flex-1 accent-red-500"
+            className="flex-1 accent-blue-500"
           />
           <span className="text-sm font-bold text-white w-12 text-right">{redMax}%</span>
         </label>

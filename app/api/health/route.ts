@@ -209,6 +209,12 @@ export async function GET(request: NextRequest): Promise<NextResponse<HealthStat
           { deprecated: true }
         ),
         probeApi('vurderingsportalen', 'https://api-fs.vurderingsportalen.dk/'),
+        probeApi('emo', `https://emoweb.dk/EMOData/EMOData.svc/SearchEnergyLabelBFE/0`, {
+          headers: {
+            Authorization: `Basic ${Buffer.from(`${process.env.EMO_USERNAME ?? ''}:${process.env.EMO_PASSWORD ?? ''}`).toString('base64')}`,
+            Accept: 'application/json',
+          },
+        }),
       ]);
 
       healthStatus.checks.external_apis = {};

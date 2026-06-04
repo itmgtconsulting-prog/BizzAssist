@@ -52,6 +52,7 @@ interface DawaAdgangsadresse {
   husnr: string;
   postnr: string;
   postnrnavn: string;
+  kommune?: { kode?: string };
   jordstykke: {
     matrikelnr: string;
     ejerlav: { kode: number; navn: string };
@@ -66,6 +67,7 @@ interface MatrikelGroup {
   matrikelnr: string;
   ejerlavskode: number;
   ejerlav: string;
+  kommunekode: string;
   kundeAdgangsIds: Set<string>;
   koordinat: { lat: number; lng: number } | null;
   /** Map of vejnavn → Set of husnumre */
@@ -162,6 +164,7 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
           matrikelnr: aa.jordstykke.matrikelnr,
           ejerlavskode: aa.jordstykke.ejerlav.kode,
           ejerlav: aa.jordstykke.ejerlav.navn,
+          kommunekode: aa.kommune?.kode ?? '',
           kundeAdgangsIds: new Set(),
           koordinat: coords ? { lat: coords[1], lng: coords[0] } : null,
           vejHusnumre: new Map(),
@@ -195,7 +198,8 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
     // Step 5: Fetch jordstykke polygon geometry for each matrikel
     const geoTasks = matrikelKeys.map(([, group]) => async () => {
       try {
-        const url = `https://api.dataforsyningen.dk/jordstykker?matrikelnr=${encodeURIComponent(group.matrikelnr)}&ejerlavkode=${group.ejerlavskode}&format=geojson`;
+        // Use kommunekode for unique match — ejerlavkode param doesn't filter correctly in DAWA jordstykker
+        const url = `https://api.dataforsyningen.dk/jordstykker?matrikelnr=${encodeURIComponent(group.matrikelnr)}&kommunekode=${group.kommunekode}&format=geojson`;
         const res = await fetch(url, { signal: AbortSignal.timeout(DAWA_TIMEOUT) });
         if (!res.ok) return null;
         const geojson = await res.json();

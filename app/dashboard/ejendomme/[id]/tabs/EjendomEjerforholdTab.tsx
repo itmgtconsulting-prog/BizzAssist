@@ -383,6 +383,20 @@ export default function EjendomEjerforholdTab({
                     currentBfe={currentBfe}
                     currentDawaId={currentDawaId}
                     showOwnership
+                    currentBfeOwnership={
+                      chainEjerDetaljer.length > 0
+                        ? {
+                            ejer: chainEjerDetaljer
+                              .filter((e) => e.type !== 'status')
+                              .map((e) => e.navn)
+                              .join(' + '),
+                            koebspris: chainEjerDetaljer.find((e) => e.koebesum)?.koebesum ?? null,
+                            koebsdato:
+                              chainEjerDetaljer.find((e) => e.overtagelsesdato)?.overtagelsesdato ??
+                              null,
+                          }
+                        : null
+                    }
                   />
                 </div>
               );
@@ -751,6 +765,21 @@ export default function EjendomEjerforholdTab({
                       currentBfe={currentBfe}
                       currentDawaId={currentDawaId}
                       showOwnership
+                      currentBfeOwnership={
+                        chainEjerDetaljer.length > 0
+                          ? {
+                              ejer: chainEjerDetaljer
+                                .filter((e) => e.type !== 'status')
+                                .map((e) => e.navn)
+                                .join(' + '),
+                              koebspris:
+                                chainEjerDetaljer.find((e) => e.koebesum)?.koebesum ?? null,
+                              koebsdato:
+                                chainEjerDetaljer.find((e) => e.overtagelsesdato)
+                                  ?.overtagelsesdato ?? null,
+                            }
+                          : null
+                      }
                     />
                   );
                 })()}

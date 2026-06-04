@@ -171,6 +171,18 @@ export const ANALYSE_MODULES: AnalyseModuleConfig[] = [
     hint: 'Opret en sag, vælg kunde og ejendom, upload dokumentation og generer en struktureret vurderingsrapport.',
   },
   {
+    id: 'daekningsanalyse',
+    label: 'Matrikkel dækningsanalyse',
+    labelEn: 'Cadastre coverage analysis',
+    icon: 'MapPin',
+    path: '/dashboard/analyse/daekningsanalyse',
+    enabled: { dev: true, preview: true, prod: false },
+    requiredPlan: 'professionel',
+    description: 'Upload kundeadresser og se dækning pr. matrikel/ejerforening på heatmap',
+    defaultTarget: 'ejendom',
+    hint: 'Upload en Excel/CSV med kundeadresser. Systemet matcher adresser til matrikler og viser dækning som heatmap med rød/gul/grøn markering.',
+  },
+  {
     id: 'virksomhedshandler',
     label: 'Virksomhedshandler',
     labelEn: 'Corporate Transactions',

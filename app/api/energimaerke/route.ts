@@ -17,6 +17,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import * as Sentry from '@sentry/nextjs';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
@@ -27,6 +28,104 @@ const energimaerkeQuerySchema = z.object({
 });
 
 const EMO_BASE = 'https://emoweb.dk/EMOData/EMOData.svc';
+
+/** BIZZ-2004: Timeout raised from 10s to 30s — EMO is slow on cold-cache */
+const EMO_TIMEOUT_MS = 30_000;
+
+/** BIZZ-2004: Max retries for transient errors (timeout/connection reset) */
+const EMO_MAX_RETRIES = 2;
+
+// ─── BIZZ-2004: Error classification ──────────────────────────────────────
+
+/** Structured error types for EMO-service failures */
+export type EmoErrorType =
+  | 'timeout'
+  | 'connection_refused'
+  | 'dns_failure'
+  | 'connection_reset'
+  | 'tls_failure'
+  | 'unknown';
+
+/**
+ * Classifies a caught fetch error into a structured EmoErrorType.
+ * Inspects error name, cause.code, and message to determine the root cause.
+ *
+ * @param err - The caught error from a fetch call
+ * @returns Structured error type string
+ */
+function classifyEmoError(err: unknown): EmoErrorType {
+  const e = err as Error & { cause?: { code?: string } };
+
+  if (e.name === 'TimeoutError' || e.name === 'AbortError') return 'timeout';
+  if (e.cause?.code === 'ECONNREFUSED') return 'connection_refused';
+  if (e.cause?.code === 'ENOTFOUND') return 'dns_failure';
+  if (e.cause?.code === 'ECONNRESET') return 'connection_reset';
+  if (
+    e.message?.includes('certificate') ||
+    e.message?.includes('SSL') ||
+    e.message?.includes('TLS')
+  )
+    return 'tls_failure';
+
+  return 'unknown';
+}
+
+/**
+ * Returns a user-friendly Danish error message for the given error type.
+ *
+ * @param errorType - Classified EMO error type
+ * @returns Bruger-venlig fejlbesked
+ */
+function emoErrorMessage(errorType: EmoErrorType): string {
+  switch (errorType) {
+    case 'timeout':
+      return 'EMO-servicen svarede ikke i tide — prøv igen om lidt.';
+    case 'connection_refused':
+    case 'dns_failure':
+      return 'EMO-servicen er midlertidigt utilgængelig.';
+    case 'connection_reset':
+      return 'Forbindelsen til EMO-servicen blev afbrudt — prøv igen.';
+    case 'tls_failure':
+      return 'Sikker forbindelse til EMO-servicen kunne ikke etableres.';
+    case 'unknown':
+      return 'Uventet fejl mod EMO-service.';
+  }
+}
+
+/** Error types considered transient and worth retrying */
+const RETRYABLE_ERRORS: ReadonlySet<EmoErrorType> = new Set<EmoErrorType>([
+  'timeout',
+  'connection_reset',
+]);
+
+/**
+ * Fetches a URL with exponential backoff retry for transient errors.
+ * Only retries on timeout and connection reset — permanent errors fail immediately.
+ *
+ * @param url - URL to fetch
+ * @param opts - Fetch options
+ * @param retries - Max number of retries (default EMO_MAX_RETRIES)
+ * @returns Fetch Response
+ * @throws The last error if all retries are exhausted
+ */
+async function fetchWithRetry(
+  url: string,
+  opts: RequestInit,
+  retries: number = EMO_MAX_RETRIES
+): Promise<Response> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fetch(url, opts);
+    } catch (err) {
+      const errorType = classifyEmoError(err);
+      if (attempt === retries || !RETRYABLE_ERRORS.has(errorType)) throw err;
+      /* Exponential backoff: 500ms, 1000ms */
+      await new Promise((r) => setTimeout(r, 500 * Math.pow(2, attempt)));
+    }
+  }
+  /* Unreachable — satisfies TypeScript */
+  throw new Error('fetchWithRetry: exhausted retries');
+}
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -69,6 +168,8 @@ export interface EnergimaerkeResponse {
   /** True hvis EMO_USERNAME/PASSWORD mangler i .env.local */
   manglerAdgang: boolean;
   fejl: string | null;
+  /** BIZZ-2004: Structured error type for frontend diagnostics */
+  errorType?: EmoErrorType;
 }
 
 // ─── Raw EMO response types ─────────────────────────────────────────────────
@@ -208,11 +309,14 @@ export async function GET(request: NextRequest): Promise<NextResponse<Energimaer
   }
 
   try {
-    const res = await fetch(`${EMO_BASE}/SearchEnergyLabelBFE/${encodeURIComponent(bfeNummer)}`, {
-      headers: { Authorization: basicAuth(), Accept: 'application/json' },
-      signal: AbortSignal.timeout(10000),
-      cache: 'no-store',
-    });
+    const res = await fetchWithRetry(
+      `${EMO_BASE}/SearchEnergyLabelBFE/${encodeURIComponent(bfeNummer)}`,
+      {
+        headers: { Authorization: basicAuth(), Accept: 'application/json' },
+        signal: AbortSignal.timeout(EMO_TIMEOUT_MS),
+        cache: 'no-store',
+      }
+    );
 
     if (res.status === 401 || res.status === 403) {
       return NextResponse.json({
@@ -310,11 +414,24 @@ export async function GET(request: NextRequest): Promise<NextResponse<Energimaer
       }
     );
   } catch (err) {
-    logger.error('[Energimærke] Fetch fejl:', err);
+    /* BIZZ-2004: Structured error classification + Sentry tagging */
+    const errorType = classifyEmoError(err);
+    const e = err as Error;
+
+    Sentry.captureException(err, {
+      tags: { source: 'emo-service', bfe: bfeNummer, errorType },
+    });
+    logger.error(
+      `[Energimærke] ${errorType} for BFE ${bfeNummer}:`,
+      e.message,
+      (e as Error & { cause?: unknown }).cause
+    );
+
     return NextResponse.json({
       maerker: null,
       manglerAdgang: false,
-      fejl: 'Timeout eller netværksfejl mod EMO-service',
+      fejl: emoErrorMessage(errorType),
+      errorType,
     });
   }
 }

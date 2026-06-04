@@ -11,7 +11,7 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { Building2, Home, ChevronDown, ChevronRight } from 'lucide-react';
 import type { StrukturNode, StrukturNiveau } from '@/app/api/ejendom-struktur/route';
@@ -276,6 +276,13 @@ function TreeNode({ node, depth, lang, currentBfe, currentDawaId, showOwnership 
   );
 }
 
+/** BIZZ-2010: Pre-loaded ownership data for the current BFE */
+interface CurrentBfeOwnership {
+  ejer: string | null;
+  koebspris: number | null;
+  koebsdato: string | null;
+}
+
 interface Props {
   /** Træ-data fra /api/ejendom-struktur */
   tree: StrukturNode;
@@ -287,6 +294,8 @@ interface Props {
   currentDawaId?: string | null;
   /** Vis ejer, købspris og købsdato på ejerlejligheder */
   showOwnership?: boolean;
+  /** BIZZ-2010: Pre-loaded ownership for current BFE (from ejerskab chain, already fetched) */
+  currentBfeOwnership?: CurrentBfeOwnership | null;
 }
 
 /**
@@ -300,8 +309,26 @@ export default function EjendomStrukturTree({
   currentBfe,
   currentDawaId,
   showOwnership,
+  currentBfeOwnership,
 }: Props) {
   const da = lang === 'da';
+
+  // BIZZ-2010: Enrich tree node for current BFE with pre-loaded ownership data
+  const enrichedTree = useMemo(() => {
+    if (!currentBfeOwnership || !currentBfe) return tree;
+    function enrichNode(node: StrukturNode): StrukturNode {
+      const isMatch = node.bfe === currentBfe;
+      return {
+        ...node,
+        ejer: isMatch && !node.ejer ? currentBfeOwnership!.ejer : node.ejer,
+        koebspris:
+          isMatch && node.koebspris == null ? currentBfeOwnership!.koebspris : node.koebspris,
+        koebsdato: isMatch && !node.koebsdato ? currentBfeOwnership!.koebsdato : node.koebsdato,
+        children: node.children.map(enrichNode),
+      };
+    }
+    return enrichNode(tree);
+  }, [tree, currentBfe, currentBfeOwnership]);
 
   return (
     <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
@@ -322,7 +349,7 @@ export default function EjendomStrukturTree({
         </div>
       )}
       <TreeNode
-        node={tree}
+        node={enrichedTree}
         depth={0}
         lang={lang}
         currentBfe={currentBfe}

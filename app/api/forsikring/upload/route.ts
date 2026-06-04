@@ -74,9 +74,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // BIZZ-1439: Dedup-check — skip upload+parse hvis samme filnavn+størrelse allerede eksisterer
     const insuranceForDedup = await getInsuranceApi(auth.tenantId);
     const existingDocs = await insuranceForDedup.documents.list();
+    // BIZZ-2008: Also dedup against 'processing' docs to prevent race condition
+    // when same file is uploaded twice in quick succession
     const duplicate = existingDocs.find(
       (d) =>
-        d.original_name === file.name && d.size_bytes === file.size && d.parse_status === 'parsed'
+        d.original_name === file.name &&
+        d.size_bytes === file.size &&
+        (d.parse_status === 'parsed' || d.parse_status === 'parsing')
     );
     if (duplicate) {
       logger.log(

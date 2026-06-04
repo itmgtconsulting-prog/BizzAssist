@@ -20,6 +20,7 @@ const saveSchema = z.object({
   thresholds: z.object({ redMax: z.number(), greenMin: z.number() }),
   results: z.array(z.record(z.string(), z.unknown())),
   fileName: z.string().max(500).optional(),
+  filePath: z.string().max(500).nullable().optional(),
   originalAddresses: z.array(z.string()).optional(),
 });
 
@@ -75,7 +76,7 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
 
   const parsed = await parseBody(req, saveSchema);
   if (!parsed.success) return parsed.response;
-  const { name, thresholds, results, fileName } = parsed.data;
+  const { name, thresholds, results, fileName, filePath } = parsed.data;
 
   try {
     const admin = createAdminClient();
@@ -100,6 +101,7 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
         thresholds,
         results: results as unknown,
         file_name: fileName ?? null,
+        file_path: filePath ?? null,
         matrikel_count: matrikelCount,
         kunde_count: kundeCount,
         total_count: totalCount,

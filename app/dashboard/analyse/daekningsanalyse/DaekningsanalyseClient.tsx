@@ -238,11 +238,26 @@ export default function DaekningsanalyseClient() {
       .catch(() => {});
   }, []);
 
-  /** Save current analysis */
+  /** Save current analysis + upload source file to Supabase storage */
   const saveAnalysis = useCallback(async () => {
     if (!saveName.trim() || results.length === 0) return;
     setSaving(true);
     try {
+      // BIZZ-2003: Upload source file first (if available)
+      let filePath: string | null = null;
+      if (file) {
+        const formData = new FormData();
+        formData.append('file', file);
+        const uploadRes = await fetch('/api/analyse/daekningsanalyse/saved/upload', {
+          method: 'POST',
+          body: formData,
+        });
+        if (uploadRes.ok) {
+          const uploadData = await uploadRes.json();
+          filePath = (uploadData as { filePath: string }).filePath;
+        }
+      }
+
       const res = await fetch('/api/analyse/daekningsanalyse/saved', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -251,6 +266,7 @@ export default function DaekningsanalyseClient() {
           thresholds: { redMax, greenMin },
           results,
           fileName: file?.name ?? null,
+          filePath,
         }),
       });
       if (res.ok) {

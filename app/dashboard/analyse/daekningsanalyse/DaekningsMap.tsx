@@ -125,31 +125,38 @@ export default function DaekningsMap({ results }: Props) {
         data: geojson,
       });
 
-      // Fill layer — colored polygons
-      map.addLayer({
-        id: 'matrikler-fill',
-        type: 'fill',
-        source: 'matrikler',
-        paint: {
-          'fill-color': ['get', 'color'],
-          'fill-opacity': ['get', 'fillOpacity'],
-        },
-      });
+      // Render in z-order: red (bottom) → yellow → green (top)
+      // This ensures small green polygons aren't hidden under large red ones
+      const layerOrder: Array<'red' | 'yellow' | 'green'> = ['red', 'yellow', 'green'];
+      for (const status of layerOrder) {
+        map.addLayer({
+          id: `matrikler-fill-${status}`,
+          type: 'fill',
+          source: 'matrikler',
+          filter: ['==', ['get', 'status'], status],
+          paint: {
+            'fill-color': ['get', 'color'],
+            'fill-opacity': ['get', 'fillOpacity'],
+          },
+        });
+        map.addLayer({
+          id: `matrikler-outline-${status}`,
+          type: 'line',
+          source: 'matrikler',
+          filter: ['==', ['get', 'status'], status],
+          paint: {
+            'line-color': ['get', 'color'],
+            'line-width': ['get', 'lineWidth'],
+            'line-opacity': 0.9,
+          },
+        });
+      }
 
-      // Outline layer
-      map.addLayer({
-        id: 'matrikler-outline',
-        type: 'line',
-        source: 'matrikler',
-        paint: {
-          'line-color': ['get', 'color'],
-          'line-width': ['get', 'lineWidth'],
-          'line-opacity': 0.8,
-        },
-      });
-
-      // Click popup
-      map.on('click', 'matrikler-fill', (e) => {
+      // Click popup — listen on all fill layers
+      const fillLayers = ['matrikler-fill-red', 'matrikler-fill-yellow', 'matrikler-fill-green'];
+      const handleClick = (
+        e: mapboxgl.MapMouseEvent & { features?: mapboxgl.GeoJSONFeature[] }
+      ) => {
         if (!e.features?.length) return;
         const props = e.features[0].properties!;
         const color = props.color as string;
@@ -168,15 +175,20 @@ export default function DaekningsMap({ results }: Props) {
             </div>`
           )
           .addTo(map);
-      });
+      };
+      for (const layer of fillLayers) {
+        map.on('click', layer, handleClick);
+      }
 
       // Cursor pointer on hover
-      map.on('mouseenter', 'matrikler-fill', () => {
-        map.getCanvas().style.cursor = 'pointer';
-      });
-      map.on('mouseleave', 'matrikler-fill', () => {
-        map.getCanvas().style.cursor = '';
-      });
+      for (const layer of fillLayers) {
+        map.on('mouseenter', layer, () => {
+          map.getCanvas().style.cursor = 'pointer';
+        });
+        map.on('mouseleave', layer, () => {
+          map.getCanvas().style.cursor = '';
+        });
+      }
 
       // Fit bounds to all polygon geometries (not point coordinates)
       if (features.length > 0) {

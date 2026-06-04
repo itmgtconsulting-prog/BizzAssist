@@ -549,13 +549,44 @@ function UnifiedAnalyseView({
     }
   }
 
-  /** Sort properties: uforsikrede først, derefter flest gaps */
+  /**
+   * Parse address string into sortable parts: postnr (numeric), vejnavn, husnr (numeric + suffix).
+   *
+   * @param addr - e.g. "Fenrisvej 23, 3000 Helsingør"
+   * @returns Sortable tuple [postnr, vejnavn, husnrNum, husnrSuffix]
+   */
+  function parseAddrSort(addr: string | null): [number, string, number, string] {
+    if (!addr) return [99999, '', 0, ''];
+    // Extract postnr: look for 4-digit number after comma
+    const postnrMatch = addr.match(/,\s*(\d{4})\s/);
+    const postnr = postnrMatch ? parseInt(postnrMatch[1], 10) : 99999;
+    // Extract vejnavn + husnr before the comma
+    const beforeComma = addr.split(',')[0]?.trim() ?? '';
+    const husnrMatch = beforeComma.match(/^(.+?)\s+(\d+)(\S*)$/);
+    const vejnavn = husnrMatch ? husnrMatch[1] : beforeComma;
+    const husnrNum = husnrMatch ? parseInt(husnrMatch[2], 10) : 0;
+    const husnrSuffix = husnrMatch ? (husnrMatch[3] ?? '') : '';
+    return [postnr, vejnavn.toLowerCase(), husnrNum, husnrSuffix.toLowerCase()];
+  }
+
+  /** Sort properties: postnr ASC → vejnavn ASC → husnr ASC. Uforsikrede først inden for gruppen. */
   function sortProperties(list: PropertyGroup[]): PropertyGroup[] {
     return [...list].sort((a, b) => {
-      const aInsured = a.aktiv.matched_policy_id ? 1 : 0;
-      const bInsured = b.aktiv.matched_policy_id ? 1 : 0;
-      if (aInsured !== bInsured) return aInsured - bInsured;
-      return b.gaps.length - a.gaps.length;
+      const [aPostnr, aVej, aHusnr, aSuf] = parseAddrSort(a.aktiv.adresse);
+      const [bPostnr, bVej, bHusnr, bSuf] = parseAddrSort(b.aktiv.adresse);
+      // Primary: postnr ascending
+      if (aPostnr !== bPostnr) return aPostnr - bPostnr;
+      // Secondary: vejnavn alphabetical (Danish locale)
+      const vejCmp = aVej.localeCompare(bVej, 'da');
+      if (vejCmp !== 0) return vejCmp;
+      // Tertiary: husnr numeric
+      if (aHusnr !== bHusnr) return aHusnr - bHusnr;
+      // Quaternary: husnr suffix (A, B, C...)
+      if (aSuf !== bSuf) return aSuf.localeCompare(bSuf, 'da');
+      // Tiebreaker: uforsikrede først
+      const aIns = a.aktiv.matched_policy_id ? 1 : 0;
+      const bIns = b.aktiv.matched_policy_id ? 1 : 0;
+      return aIns - bIns;
     });
   }
 

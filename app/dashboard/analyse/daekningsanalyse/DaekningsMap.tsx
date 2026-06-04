@@ -48,9 +48,15 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const STATUS_FILL_OPACITY: Record<string, number> = {
-  red: 0.45,
-  yellow: 0.35,
-  green: 0.3,
+  red: 0.5,
+  yellow: 0.45,
+  green: 0.4,
+};
+
+const STATUS_LINE_WIDTH: Record<string, number> = {
+  red: 2.5,
+  yellow: 2,
+  green: 2,
 };
 
 /**
@@ -103,6 +109,7 @@ export default function DaekningsMap({ results }: Props) {
             ejerforening: r.ejerforening || '',
             color: STATUS_COLORS[r.status],
             fillOpacity: STATUS_FILL_OPACITY[r.status],
+            lineWidth: STATUS_LINE_WIDTH[r.status],
           },
           geometry: r.geometry!,
         }));
@@ -136,7 +143,7 @@ export default function DaekningsMap({ results }: Props) {
         source: 'matrikler',
         paint: {
           'line-color': ['get', 'color'],
-          'line-width': 2,
+          'line-width': ['get', 'lineWidth'],
           'line-opacity': 0.8,
         },
       });

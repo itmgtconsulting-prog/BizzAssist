@@ -54,6 +54,8 @@ interface DawaAdgangsadresse {
   postnr: string;
   postnrnavn: string;
   kommune?: { kode?: string };
+  /** Nestet format: postnummer.nr */
+  postnummer?: { nr?: string };
   jordstykke: {
     matrikelnr: string;
     ejerlav: { kode: number; navn: string };
@@ -169,7 +171,7 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
           ejerlavskode: aa.jordstykke.ejerlav.kode,
           ejerlav: aa.jordstykke.ejerlav.navn,
           kommunekode: aa.kommune?.kode ?? '',
-          postnr: aa.postnr ?? '',
+          postnr: aa.postnummer?.nr ?? aa.postnr ?? '',
           kundeAdgangsIds: new Set(),
           koordinat: coords ? { lat: coords[1], lng: coords[0] } : null,
           vejHusnumre: new Map(),

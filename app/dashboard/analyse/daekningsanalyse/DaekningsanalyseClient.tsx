@@ -576,7 +576,7 @@ export default function DaekningsanalyseClient() {
                     <span className="text-[10px] text-slate-400">≥</span>
                     <input
                       type="range"
-                      min={redMax}
+                      min={0}
                       max={80}
                       value={greenMin}
                       onChange={(e) => setGreenMin(Number(e.target.value))}
@@ -592,7 +592,7 @@ export default function DaekningsanalyseClient() {
                     <input
                       type="range"
                       min={5}
-                      max={greenMin}
+                      max={80}
                       value={redMax}
                       onChange={(e) => setRedMax(Number(e.target.value))}
                       className="flex-1 accent-blue-500 [&::-webkit-slider-runnable-track]:bg-slate-700 [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:h-1.5 [&::-moz-range-track]:bg-slate-700 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:h-1.5"
@@ -847,7 +847,7 @@ export default function DaekningsanalyseClient() {
           <input
             type="range"
             min={5}
-            max={greenMin}
+            max={80}
             value={redMax}
             onChange={(e) => setRedMax(Number(e.target.value))}
             className="flex-1 accent-blue-500 [&::-webkit-slider-runnable-track]:bg-slate-700 [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:h-1.5 [&::-moz-range-track]:bg-slate-700 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:h-1.5"

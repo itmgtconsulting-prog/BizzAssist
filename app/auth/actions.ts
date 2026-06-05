@@ -698,6 +698,14 @@ export async function startTrialPlan(planId: string): Promise<AuthResult> {
       },
     });
 
+    // Provision tenant if user doesn't have one yet (new OAuth users)
+    try {
+      await provisionTenantForUser(user.id, user.email ?? '');
+    } catch (provErr) {
+      // Non-fatal — user can still use the platform, just without chat persistence
+      logger.warn('[startTrialPlan] Tenant provision failed:', provErr);
+    }
+
     logger.log('[startTrialPlan] Started trial for plan', planId, 'for user [user]');
     return { error: null };
   } catch (err) {

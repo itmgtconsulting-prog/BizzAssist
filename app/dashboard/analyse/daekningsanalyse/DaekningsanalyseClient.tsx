@@ -580,7 +580,7 @@ export default function DaekningsanalyseClient() {
                       max={80}
                       value={greenMin}
                       onChange={(e) => setGreenMin(Number(e.target.value))}
-                      className="flex-1 accent-blue-500 [&::-webkit-slider-runnable-track]:bg-slate-700 [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:h-1.5 [&::-moz-range-track]:bg-slate-700 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:h-1.5"
+                      className="flex-1 h-1.5 appearance-none bg-slate-700 rounded-full cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:bg-blue-500 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:cursor-pointer [&::-moz-range-thumb]:w-3.5 [&::-moz-range-thumb]:h-3.5 [&::-moz-range-thumb]:bg-blue-500 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:cursor-pointer"
                     />
                     <span className="text-xs font-bold text-white w-10 text-right">
                       {greenMin}%
@@ -595,7 +595,7 @@ export default function DaekningsanalyseClient() {
                       max={80}
                       value={redMax}
                       onChange={(e) => setRedMax(Number(e.target.value))}
-                      className="flex-1 accent-blue-500 [&::-webkit-slider-runnable-track]:bg-slate-700 [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:h-1.5 [&::-moz-range-track]:bg-slate-700 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:h-1.5"
+                      className="flex-1 h-1.5 appearance-none bg-slate-700 rounded-full cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:bg-blue-500 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:cursor-pointer [&::-moz-range-thumb]:w-3.5 [&::-moz-range-thumb]:h-3.5 [&::-moz-range-thumb]:bg-blue-500 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:cursor-pointer"
                     />
                     <span className="text-xs font-bold text-white w-10 text-right">{redMax}%</span>
                   </label>
@@ -837,7 +837,7 @@ export default function DaekningsanalyseClient() {
             max={80}
             value={greenMin}
             onChange={(e) => setGreenMin(Number(e.target.value))}
-            className="flex-1 accent-blue-500 [&::-webkit-slider-runnable-track]:bg-slate-700 [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:h-1.5 [&::-moz-range-track]:bg-slate-700 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:h-1.5"
+            className="flex-1 h-1.5 appearance-none bg-slate-700 rounded-full cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:bg-blue-500 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:cursor-pointer [&::-moz-range-thumb]:w-3.5 [&::-moz-range-thumb]:h-3.5 [&::-moz-range-thumb]:bg-blue-500 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:cursor-pointer"
           />
           <span className="text-sm font-bold text-white w-12 text-right">{greenMin}%</span>
         </label>
@@ -850,7 +850,7 @@ export default function DaekningsanalyseClient() {
             max={80}
             value={redMax}
             onChange={(e) => setRedMax(Number(e.target.value))}
-            className="flex-1 accent-blue-500 [&::-webkit-slider-runnable-track]:bg-slate-700 [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:h-1.5 [&::-moz-range-track]:bg-slate-700 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:h-1.5"
+            className="flex-1 h-1.5 appearance-none bg-slate-700 rounded-full cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:bg-blue-500 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:cursor-pointer [&::-moz-range-thumb]:w-3.5 [&::-moz-range-thumb]:h-3.5 [&::-moz-range-thumb]:bg-blue-500 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:cursor-pointer"
           />
           <span className="text-sm font-bold text-white w-12 text-right">{redMax}%</span>
         </label>

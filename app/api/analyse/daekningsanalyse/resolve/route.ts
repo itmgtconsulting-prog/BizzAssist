@@ -69,6 +69,7 @@ interface MatrikelGroup {
   ejerlavskode: number;
   ejerlav: string;
   kommunekode: string;
+  postnr: string;
   kundeAdgangsIds: Set<string>;
   koordinat: { lat: number; lng: number } | null;
   /** Map of vejnavn → Set of husnumre */
@@ -168,6 +169,7 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
           ejerlavskode: aa.jordstykke.ejerlav.kode,
           ejerlav: aa.jordstykke.ejerlav.navn,
           kommunekode: aa.kommune?.kode ?? '',
+          postnr: aa.postnr ?? '',
           kundeAdgangsIds: new Set(),
           koordinat: coords ? { lat: coords[1], lng: coords[0] } : null,
           vejHusnumre: new Map(),
@@ -327,6 +329,127 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
     } catch (ejfErr) {
       // Non-fatal — ejerforening is optional enrichment
       logger.warn('[daekningsanalyse/resolve] EJF enrichment failed:', ejfErr);
+    }
+
+    // BIZZ-2022: Find ALL matrikler on the same streets — add uncovered ones as grey (0%)
+    try {
+      // Collect unique vejnavn+postnr+kommunekode from resolved addresses
+      const vejKeys = new Set<string>();
+      for (const [, group] of matrikelMap) {
+        for (const vej of group.vejHusnumre.keys()) {
+          vejKeys.add(`${vej}|${group.postnr}|${group.kommunekode}`);
+        }
+      }
+      // Set of matrikler we already have
+      const existingMatrikler = new Set(results.map((r) => `${r.matrikelnr}|${r.ejerlavskode}`));
+
+      // For each unique street, fetch ALL adgangsadresser and their matrikler
+      const streetTasks = [...vejKeys].map((key) => async () => {
+        const [vejnavn, postnr, kommunekode] = key.split('|');
+        try {
+          const url = `https://api.dataforsyningen.dk/adgangsadresser?vejnavn=${encodeURIComponent(vejnavn)}&postnr=${postnr}&kommunekode=${kommunekode}&struktur=nestet&per_side=500`;
+          const res = await fetch(url, { signal: AbortSignal.timeout(DAWA_TIMEOUT) });
+          if (!res.ok) return [];
+          return (await res.json()) as DawaAdgangsadresse[];
+        } catch {
+          return [];
+        }
+      });
+      const streetResults = await runConcurrent(streetTasks, DAWA_CONCURRENCY);
+
+      // Collect uncovered matrikler
+      const uncoveredMap = new Map<
+        string,
+        {
+          matrikelnr: string;
+          ejerlavskode: number;
+          ejerlav: string;
+          kommunekode: string;
+          koordinat: { lat: number; lng: number } | null;
+          vejHusnumre: Map<string, Set<string>>;
+        }
+      >();
+
+      for (const allAddrs of streetResults) {
+        for (const aa of allAddrs) {
+          if (!aa.jordstykke) continue;
+          if (aa.jordstykke.matrikelnr.startsWith('7000')) continue;
+          const key = `${aa.jordstykke.matrikelnr}|${aa.jordstykke.ejerlav.kode}`;
+          if (existingMatrikler.has(key)) continue; // Already in results
+          if (!uncoveredMap.has(key)) {
+            const coords = aa.adgangspunkt?.koordinater;
+            uncoveredMap.set(key, {
+              matrikelnr: aa.jordstykke.matrikelnr,
+              ejerlavskode: aa.jordstykke.ejerlav.kode,
+              ejerlav: aa.jordstykke.ejerlav.navn,
+              kommunekode: aa.kommune?.kode ?? '',
+              koordinat: coords ? { lat: coords[1], lng: coords[0] } : null,
+              vejHusnumre: new Map(),
+            });
+          }
+          const g = uncoveredMap.get(key)!;
+          const vej = aa.vejstykke?.navn || aa.vejnavn || 'Ukendt';
+          if (!g.vejHusnumre.has(vej)) g.vejHusnumre.set(vej, new Set());
+          g.vejHusnumre.get(vej)!.add(aa.husnr);
+        }
+      }
+
+      // Fetch geometry for uncovered matrikler
+      const uncoveredEntries = [...uncoveredMap.entries()];
+      const uncovGeoTasks = uncoveredEntries.map(([, g]) => async () => {
+        try {
+          const url = `https://api.dataforsyningen.dk/jordstykker?matrikelnr=${encodeURIComponent(g.matrikelnr)}&kommunekode=${g.kommunekode}&format=geojson`;
+          const res = await fetch(url, { signal: AbortSignal.timeout(DAWA_TIMEOUT) });
+          if (!res.ok) return null;
+          const geojson = await res.json();
+          const features = geojson?.features;
+          if (!features?.length) return null;
+          if (features.length === 1) return features[0].geometry ?? null;
+          if (!g.koordinat) return features[0].geometry ?? null;
+          let bestIdx = 0;
+          let bestDist = Infinity;
+          for (let i = 0; i < features.length; i++) {
+            const c =
+              features[i].properties?.visueltcenter ?? features[i].geometry?.coordinates?.[0]?.[0];
+            if (!c) continue;
+            const dist = Math.pow(c[0] - g.koordinat.lng, 2) + Math.pow(c[1] - g.koordinat.lat, 2);
+            if (dist < bestDist) {
+              bestDist = dist;
+              bestIdx = i;
+            }
+          }
+          return features[bestIdx].geometry ?? null;
+        } catch {
+          return null;
+        }
+      });
+      const uncovGeos = await runConcurrent(uncovGeoTasks, DAWA_CONCURRENCY);
+
+      // Add uncovered matrikler to results with 0% coverage
+      for (let i = 0; i < uncoveredEntries.length; i++) {
+        const [, g] = uncoveredEntries[i];
+        const adresserLines: string[] = [];
+        for (const [vej, numre] of g.vejHusnumre) {
+          const sorted = [...numre].sort((a, b) => parseInt(a) - parseInt(b));
+          adresserLines.push(`${vej} ${sorted.join(', ')}`);
+        }
+        results.push({
+          matrikelnr: g.matrikelnr,
+          ejerlavskode: g.ejerlavskode,
+          ejerlav: g.ejerlav,
+          totalEnheder: 1, // At least 1 address exists
+          kundeAntal: 0,
+          daekningPct: 0,
+          koordinat: g.koordinat,
+          geometry: uncovGeos[i],
+          adresserLabel: adresserLines.join('\n'),
+          ejerforening: null as string | null,
+          ejerforeningCvr: null as string | null,
+        });
+      }
+    } catch (uncovErr) {
+      // Non-fatal — grey matrikler are optional enrichment
+      logger.warn('[daekningsanalyse/resolve] Uncovered matrikler failed:', uncovErr);
     }
 
     // Sort by coverage ascending (lowest first)

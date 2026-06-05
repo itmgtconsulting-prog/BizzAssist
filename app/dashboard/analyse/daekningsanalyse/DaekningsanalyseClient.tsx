@@ -60,7 +60,7 @@ interface MatrikelResult {
 
 type SortKey = 'matrikelnr' | 'adresserLabel' | 'totalEnheder' | 'kundeAntal' | 'daekningPct';
 type SortDir = 'asc' | 'desc';
-type StatusFilter = 'all' | 'red' | 'yellow' | 'green';
+type StatusFilter = 'all' | 'red' | 'yellow' | 'green' | 'grey';
 
 /**
  * Classify coverage relative to expected market share.
@@ -90,7 +90,8 @@ function classifyCoverage(
   pct: number,
   redMax: number,
   greenMin: number
-): 'red' | 'yellow' | 'green' {
+): 'red' | 'yellow' | 'green' | 'grey' {
+  if (pct === 0) return 'grey';
   if (pct < redMax) return 'red';
   if (pct >= greenMin) return 'green';
   return 'yellow';
@@ -101,12 +102,14 @@ const STATUS_STYLES = {
   red: { bg: 'bg-red-500/10', text: 'text-red-400', border: 'border-red-500/30' },
   yellow: { bg: 'bg-amber-500/10', text: 'text-amber-400', border: 'border-amber-500/30' },
   green: { bg: 'bg-emerald-500/10', text: 'text-emerald-400', border: 'border-emerald-500/30' },
+  grey: { bg: 'bg-slate-500/10', text: 'text-slate-400', border: 'border-slate-500/30' },
 } as const;
 
 const STATUS_LABELS = {
   red: { da: 'Rød', en: 'Red' },
   yellow: { da: 'Gul', en: 'Yellow' },
   green: { da: 'Grøn', en: 'Green' },
+  grey: { da: 'Ingen dækning', en: 'No coverage' },
 } as const;
 
 /**

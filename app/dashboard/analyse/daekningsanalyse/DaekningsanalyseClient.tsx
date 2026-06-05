@@ -335,6 +335,19 @@ export default function DaekningsanalyseClient() {
   }
 
   /**
+   * Check if parsed addresses look valid (contain Danish postnr pattern).
+   * If <30% of rows match, data is probably not structured addresses.
+   *
+   * @param addrs - Parsed first-column values
+   * @returns true if data looks like valid addresses
+   */
+  function looksLikeAddresses(addrs: string[]): boolean {
+    if (addrs.length === 0) return false;
+    const withPostnr = addrs.filter((a) => /\d{4}\s/.test(a));
+    return withPostnr.length / addrs.length > 0.3;
+  }
+
+  /**
    * Parse uploaded file — structured files (xlsx/csv) parsed directly,
    * other formats (PDF, Word, TXT, images) sent to AI for extraction.
    *
@@ -386,32 +399,61 @@ export default function DaekningsanalyseClient() {
         return;
       }
 
-      // Structured files → direct parsing
+      // Structured files → try direct parsing first, fallback to AI if data doesn't look like addresses
       try {
         const ExcelJS = (await import('exceljs')).default;
         const wb = new ExcelJS.Workbook();
+        let directAddrs: string[] = [];
 
         if (f.name.endsWith('.csv')) {
           const text = await f.text();
           const lines = text.split(/\r?\n/).filter((l) => l.trim());
-          const addrs = lines
+          directAddrs = lines
             .slice(1)
             .map((l) => l.replace(/^"/, '').replace(/"$/, '').trim())
             .filter(Boolean);
-          setParsedAddresses(addrs);
         } else {
           const buf = await f.arrayBuffer();
           await wb.xlsx.load(buf);
           const ws = wb.worksheets[0];
           if (!ws) throw new Error('Ingen ark fundet i filen');
 
-          const addrs: string[] = [];
           ws.eachRow((row, rowNum) => {
             if (rowNum === 1) return;
             const val = row.getCell(1).text?.trim();
-            if (val) addrs.push(val);
+            if (val) directAddrs.push(val);
           });
-          setParsedAddresses(addrs);
+        }
+
+        // Check if direct parsing produced valid addresses
+        if (directAddrs.length > 0 && looksLikeAddresses(directAddrs)) {
+          setParsedAddresses(directAddrs);
+        } else {
+          // Data doesn't look like structured addresses → send to AI
+          setAiExtracting(true);
+          try {
+            const formData = new FormData();
+            formData.append('file', f);
+            const res = await fetch('/api/analyse/daekningsanalyse/extract-addresses', {
+              method: 'POST',
+              body: formData,
+            });
+            if (!res.ok) {
+              const json = await res.json().catch(() => ({}));
+              throw new Error((json as { error?: string }).error || `HTTP ${res.status}`);
+            }
+            const data = await res.json();
+            const aiAddrs = (data.addresses ?? []) as string[];
+            setParsedAddresses(aiAddrs);
+            setAiTokensUsed(data.tokensUsed ?? 0);
+            if (aiAddrs.length === 0) {
+              setParseError(
+                da ? 'AI fandt ingen adresser i filen.' : 'AI found no addresses in the file.'
+              );
+            }
+          } finally {
+            setAiExtracting(false);
+          }
         }
       } catch (err) {
         setParseError(

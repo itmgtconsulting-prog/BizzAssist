@@ -583,7 +583,7 @@ export default function DaekningsanalyseClient() {
                       max={80}
                       value={greenMin}
                       onChange={(e) => setGreenMin(Number(e.target.value))}
-                      className="flex-1 accent-blue-500 cursor-pointer [&::-webkit-slider-runnable-track]:bg-slate-600 [&::-webkit-slider-runnable-track]:rounded-full [&::-moz-range-track]:bg-slate-600 [&::-moz-range-track]:rounded-full"
+                      className="flex-1 accent-emerald-500 cursor-pointer [&::-webkit-slider-runnable-track]:bg-slate-600 [&::-webkit-slider-runnable-track]:rounded-full [&::-moz-range-track]:bg-slate-600 [&::-moz-range-track]:rounded-full"
                     />
                     <span className="text-xs font-bold text-white w-10 text-right">
                       {greenMin}%
@@ -598,7 +598,7 @@ export default function DaekningsanalyseClient() {
                       max={80}
                       value={redMax}
                       onChange={(e) => setRedMax(Number(e.target.value))}
-                      className="flex-1 accent-blue-500 cursor-pointer [&::-webkit-slider-runnable-track]:bg-slate-600 [&::-webkit-slider-runnable-track]:rounded-full [&::-moz-range-track]:bg-slate-600 [&::-moz-range-track]:rounded-full"
+                      className="flex-1 accent-red-500 cursor-pointer [&::-webkit-slider-runnable-track]:bg-slate-600 [&::-webkit-slider-runnable-track]:rounded-full [&::-moz-range-track]:bg-slate-600 [&::-moz-range-track]:rounded-full"
                     />
                     <span className="text-xs font-bold text-white w-10 text-right">{redMax}%</span>
                   </label>
@@ -836,11 +836,11 @@ export default function DaekningsanalyseClient() {
           <span className="text-xs text-slate-400">≥</span>
           <input
             type="range"
-            min={redMax}
+            min={0}
             max={80}
             value={greenMin}
             onChange={(e) => setGreenMin(Number(e.target.value))}
-            className="flex-1 accent-blue-500 cursor-pointer [&::-webkit-slider-runnable-track]:bg-slate-600 [&::-webkit-slider-runnable-track]:rounded-full [&::-moz-range-track]:bg-slate-600 [&::-moz-range-track]:rounded-full"
+            className="flex-1 accent-emerald-500 cursor-pointer [&::-webkit-slider-runnable-track]:bg-slate-600 [&::-webkit-slider-runnable-track]:rounded-full [&::-moz-range-track]:bg-slate-600 [&::-moz-range-track]:rounded-full"
           />
           <span className="text-sm font-bold text-white w-12 text-right">{greenMin}%</span>
         </label>
@@ -853,7 +853,7 @@ export default function DaekningsanalyseClient() {
             max={80}
             value={redMax}
             onChange={(e) => setRedMax(Number(e.target.value))}
-            className="flex-1 accent-blue-500 cursor-pointer [&::-webkit-slider-runnable-track]:bg-slate-600 [&::-webkit-slider-runnable-track]:rounded-full [&::-moz-range-track]:bg-slate-600 [&::-moz-range-track]:rounded-full"
+            className="flex-1 accent-red-500 cursor-pointer [&::-webkit-slider-runnable-track]:bg-slate-600 [&::-webkit-slider-runnable-track]:rounded-full [&::-moz-range-track]:bg-slate-600 [&::-moz-range-track]:rounded-full"
           />
           <span className="text-sm font-bold text-white w-12 text-right">{redMax}%</span>
         </label>

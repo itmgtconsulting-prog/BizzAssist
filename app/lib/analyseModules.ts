@@ -188,7 +188,7 @@ export const ANALYSE_MODULES: AnalyseModuleConfig[] = [
     labelEn: 'Corporate Transactions',
     icon: 'TrendingUp',
     path: '/dashboard/analyse/virksomhedshandler',
-    enabled: { dev: true, preview: true, prod: false },
+    enabled: { dev: true, preview: true, prod: true },
     requiredPlan: 'professionel',
     description: 'M&A-radar med AI-værdiansættelse — detekterer ejerskabsændringer',
     defaultTarget: 'virksomhed',

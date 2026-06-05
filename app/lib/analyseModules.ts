@@ -176,7 +176,7 @@ export const ANALYSE_MODULES: AnalyseModuleConfig[] = [
     labelEn: 'Cadastre coverage analysis',
     icon: 'MapPin',
     path: '/dashboard/analyse/daekningsanalyse',
-    enabled: { dev: true, preview: true, prod: false },
+    enabled: { dev: true, preview: true, prod: true },
     requiredPlan: 'professionel',
     description: 'Upload kundeadresser og se dækning pr. matrikel/ejerforening på heatmap',
     defaultTarget: 'ejendom',

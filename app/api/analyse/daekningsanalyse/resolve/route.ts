@@ -201,14 +201,30 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
     // Step 5: Fetch jordstykke polygon geometry for each matrikel
     const geoTasks = matrikelKeys.map(([, group]) => async () => {
       try {
-        // Use kommunekode for unique match — ejerlavkode param doesn't filter correctly in DAWA jordstykker
         const url = `https://api.dataforsyningen.dk/jordstykker?matrikelnr=${encodeURIComponent(group.matrikelnr)}&kommunekode=${group.kommunekode}&format=geojson`;
         const res = await fetch(url, { signal: AbortSignal.timeout(DAWA_TIMEOUT) });
         if (!res.ok) return null;
         const geojson = await res.json();
-        // GeoJSON FeatureCollection — return first feature's geometry
-        const feature = geojson?.features?.[0];
-        return feature?.geometry ?? null;
+        const features = geojson?.features;
+        if (!features?.length) return null;
+        if (features.length === 1) return features[0].geometry ?? null;
+        // Multiple features for same matrikelnr in kommune — pick closest to address coordinate
+        if (!group.koordinat) return features[0].geometry ?? null;
+        let bestIdx = 0;
+        let bestDist = Infinity;
+        for (let i = 0; i < features.length; i++) {
+          const centroid =
+            features[i].properties?.visueltcenter ?? features[i].geometry?.coordinates?.[0]?.[0];
+          if (!centroid) continue;
+          const [cx, cy] = Array.isArray(centroid) ? centroid : [0, 0];
+          const dist =
+            Math.pow(cx - group.koordinat.lng, 2) + Math.pow(cy - group.koordinat.lat, 2);
+          if (dist < bestDist) {
+            bestDist = dist;
+            bestIdx = i;
+          }
+        }
+        return features[bestIdx].geometry ?? null;
       } catch {
         return null;
       }

@@ -84,10 +84,12 @@ function TreeNode({ node, depth, lang, currentBfe, currentDawaId, showOwnership 
   const Icon = style.Icon;
   const hasChildren = node.children.length > 0;
   const da = lang === 'da';
-  // BIZZ-1288: Match på BFE (primær) eller DAWA-ID (fallback for ejerlejligheder med BFE-mismatch)
-  const isCurrent =
-    (currentBfe != null && node.bfe > 0 && node.bfe === currentBfe) ||
-    (currentDawaId != null && node.dawaId != null && node.dawaId === currentDawaId);
+  // BIZZ-2012: Match primært på DAWA-ID (unik per node), BFE kun som fallback
+  // når DAWA-ID ikke er tilgængelig. Forhindrer at 2 noder med samme BFE
+  // begge markeres som '(denne)'.
+  const isCurrent = currentDawaId
+    ? node.dawaId != null && node.dawaId === currentDawaId
+    : currentBfe != null && node.bfe > 0 && node.bfe === currentBfe;
   // BIZZ-1821: SFE-noder linker via /dashboard/ejendomme/sfe/[bfe].
   // Hovedejendom + EL linker via dawaId eller BFE.
   const nodeHref = node.dawaId
@@ -155,17 +157,12 @@ function TreeNode({ node, depth, lang, currentBfe, currentDawaId, showOwnership 
         )}
       </div>
 
-      {/* Ejer + areal + vær + pris + dato for ejerlejligheder (ejerskab-mode) */}
+      {/* BIZZ-2011: Areal + købspris + købsdato for ejerlejligheder (ejerskab-mode).
+          Ejer + værelser skjult indtil batch-endpoint beriger dem (BIZZ-2010 Trin 2). */}
       {showOwnership && node.niveau === 'ejerlejlighed' && (
         <div className="flex items-center shrink-0 text-[10px] tabular-nums">
-          <span className="w-[130px] text-slate-400 truncate text-left" title={node.ejer ?? ''}>
-            {node.ejer ?? '–'}
-          </span>
           <span className="w-[45px] text-slate-400 text-right">
             {node.areal != null && node.areal > 0 ? `${node.areal} m²` : '–'}
-          </span>
-          <span className="w-[35px] text-slate-400 text-right">
-            {node.vaerelser != null && node.vaerelser > 0 ? `${node.vaerelser} v` : ''}
           </span>
           <span className="w-[100px] text-slate-300 text-right font-medium">
             {node.koebspris != null && node.koebspris > 0
@@ -339,10 +336,9 @@ export default function EjendomStrukturTree({
       {showOwnership && (
         <div className="flex items-center mb-1 text-[9px] text-slate-400 font-medium uppercase tracking-wide">
           <span className="flex-1" />
+          {/* BIZZ-2011: Ejer + Vær. skjult — vises igen når batch-endpoint er klar */}
           <div className="flex items-center shrink-0">
-            <span className="w-[130px] text-left">{da ? 'Ejer' : 'Owner'}</span>
             <span className="w-[45px] text-right">{da ? 'Areal' : 'Area'}</span>
-            <span className="w-[35px] text-right">{da ? 'Vær.' : 'Rooms'}</span>
             <span className="w-[100px] text-right">{da ? 'Købspris' : 'Price'}</span>
             <span className="w-[75px] text-right">{da ? 'Købsdato' : 'Date'}</span>
           </div>

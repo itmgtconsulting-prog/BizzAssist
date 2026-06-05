@@ -319,8 +319,24 @@ export default function DaekningsanalyseClient() {
     [da]
   );
 
+  // AI extraction state
+  const [aiExtracting, setAiExtracting] = useState(false);
+  const [aiTokensUsed, setAiTokensUsed] = useState(0);
+
   /**
-   * Parse uploaded Excel/CSV file and extract addresses.
+   * Check if file needs AI extraction (non-structured format).
+   *
+   * @param name - File name
+   * @returns true if AI is needed
+   */
+  function needsAiExtraction(name: string): boolean {
+    const ext = name.toLowerCase().split('.').pop();
+    return !['xlsx', 'csv'].includes(ext ?? '');
+  }
+
+  /**
+   * Parse uploaded file — structured files (xlsx/csv) parsed directly,
+   * other formats (PDF, Word, TXT, images) sent to AI for extraction.
    *
    * @param f - File to parse
    */
@@ -331,14 +347,52 @@ export default function DaekningsanalyseClient() {
       setParsedAddresses([]);
       setResults([]);
       setAnalysed(false);
+      setAiTokensUsed(0);
 
+      // Non-structured files → AI extraction
+      if (needsAiExtraction(f.name)) {
+        setAiExtracting(true);
+        try {
+          const formData = new FormData();
+          formData.append('file', f);
+          const res = await fetch('/api/analyse/daekningsanalyse/extract-addresses', {
+            method: 'POST',
+            body: formData,
+          });
+          if (!res.ok) {
+            const json = await res.json().catch(() => ({}));
+            throw new Error((json as { error?: string }).error || `HTTP ${res.status}`);
+          }
+          const data = await res.json();
+          const addrs = (data.addresses ?? []) as string[];
+          setParsedAddresses(addrs);
+          setAiTokensUsed(data.tokensUsed ?? 0);
+          if (addrs.length === 0) {
+            setParseError(
+              da
+                ? 'AI fandt ingen adresser i filen. Prøv med et andet format.'
+                : 'AI found no addresses in the file. Try a different format.'
+            );
+          }
+        } catch (err) {
+          setParseError(
+            da
+              ? `AI-ekstraktion fejlede: ${err instanceof Error ? err.message : 'Ukendt fejl'}`
+              : `AI extraction failed: ${err instanceof Error ? err.message : 'Unknown error'}`
+          );
+        } finally {
+          setAiExtracting(false);
+        }
+        return;
+      }
+
+      // Structured files → direct parsing
       try {
         const ExcelJS = (await import('exceljs')).default;
         const wb = new ExcelJS.Workbook();
 
         if (f.name.endsWith('.csv')) {
           const text = await f.text();
-          // Simple CSV parse — split on newlines, skip header
           const lines = text.split(/\r?\n/).filter((l) => l.trim());
           const addrs = lines
             .slice(1)
@@ -353,7 +407,7 @@ export default function DaekningsanalyseClient() {
 
           const addrs: string[] = [];
           ws.eachRow((row, rowNum) => {
-            if (rowNum === 1) return; // Skip header
+            if (rowNum === 1) return;
             const val = row.getCell(1).text?.trim();
             if (val) addrs.push(val);
           });
@@ -929,14 +983,21 @@ export default function DaekningsanalyseClient() {
                 </button>
               </div>
 
+              {aiExtracting && (
+                <div className="flex items-center gap-2 text-blue-400 text-sm">
+                  <Loader2 size={14} className="animate-spin" />
+                  {da ? 'AI ekstrakter adresser fra filen…' : 'AI extracting addresses from file…'}
+                </div>
+              )}
+
               {parseError && <p className="text-red-400 text-sm">{parseError}</p>}
 
               {parsedAddresses.length > 0 && (
                 <>
                   <p className="text-slate-400 text-sm">
                     {da
-                      ? `${parsedAddresses.length} adresser fundet i filen`
-                      : `${parsedAddresses.length} addresses found in file`}
+                      ? `${parsedAddresses.length} adresser fundet${aiTokensUsed > 0 ? ` (AI: ${aiTokensUsed.toLocaleString('da-DK')} tokens)` : ''}`
+                      : `${parsedAddresses.length} addresses found${aiTokensUsed > 0 ? ` (AI: ${aiTokensUsed.toLocaleString()} tokens)` : ''}`}
                   </p>
                   {/* Preview first 5 */}
                   <div className="bg-white/5 rounded-lg p-3 max-w-md mx-auto">
@@ -980,7 +1041,7 @@ export default function DaekningsanalyseClient() {
                   ? 'Træk en fil hertil eller klik for at vælge'
                   : 'Drop a file here or click to select'}
               </p>
-              <p className="text-slate-400 text-xs">Excel (.xlsx) eller CSV</p>
+              <p className="text-slate-400 text-xs">Excel, CSV, PDF, Word, TXT, billeder</p>
               <button
                 type="button"
                 onClick={() => fileRef.current?.click()}
@@ -991,7 +1052,7 @@ export default function DaekningsanalyseClient() {
               <input
                 ref={fileRef}
                 type="file"
-                accept=".xlsx,.csv"
+                accept=".xlsx,.csv,.pdf,.docx,.doc,.txt,.png,.jpg,.jpeg"
                 onChange={onFileChange}
                 className="hidden"
               />

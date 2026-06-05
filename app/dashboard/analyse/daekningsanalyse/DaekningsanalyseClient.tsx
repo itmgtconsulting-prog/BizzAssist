@@ -341,10 +341,19 @@ export default function DaekningsanalyseClient() {
    * @param addrs - Parsed first-column values
    * @returns true if data looks like valid addresses
    */
+  /**
+   * Check if parsed values look like Danish addresses.
+   * Requires comma + 4-digit postnr + city name pattern.
+   *
+   * @param addrs - Parsed first-column values
+   * @returns true if data looks like valid addresses
+   */
   function looksLikeAddresses(addrs: string[]): boolean {
     if (addrs.length === 0) return false;
-    const withPostnr = addrs.filter((a) => /\d{4}\s/.test(a));
-    return withPostnr.length / addrs.length > 0.3;
+    // Match "..., NNNN CityName" pattern (Danish address with postnr + by)
+    const addrPattern = /,\s*\d{4}\s+[A-ZÆØÅa-zæøå]/;
+    const matching = addrs.filter((a) => addrPattern.test(a));
+    return matching.length / addrs.length > 0.3;
   }
 
   /**

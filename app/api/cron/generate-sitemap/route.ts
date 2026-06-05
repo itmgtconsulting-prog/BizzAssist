@@ -764,8 +764,9 @@ export async function GET(request: NextRequest) {
     'render-xml': { schedule: '10 * * * *' },
   }[phase];
 
-  // companies + properties kører hourly for hurtig backfill; vp-properties dagligt; render-xml hourly
-  const intervalMinutes = phase === 'vp-properties' ? 1440 : 60;
+  // Cycle roterer 4 faser hvert 15. min = hver fase ~60 min, med jitter op til 120 min.
+  // vp-properties kører kun dagligt via cycle.
+  const intervalMinutes = phase === 'vp-properties' ? 1440 : 120;
 
   return withCronMonitor(
     {

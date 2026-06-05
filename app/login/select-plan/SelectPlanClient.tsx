@@ -202,6 +202,10 @@ export default function SelectPlanClient() {
       da: 'Du har allerede et aktivt abonnement.',
       en: 'You already have an active subscription.',
     },
+    trial_already_used: {
+      da: 'Du har allerede brugt din gratis prøveperiode. Vælg en betalt plan for at fortsætte.',
+      en: 'You have already used your free trial. Choose a paid plan to continue.',
+    },
   };
   const errorMsg = error
     ? (errorMessages[error]?.[lang] ?? errorMessages.unexpected_error[lang])

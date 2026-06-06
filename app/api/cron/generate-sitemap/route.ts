@@ -764,9 +764,8 @@ export async function GET(request: NextRequest) {
     'render-xml': { schedule: '10 * * * *' },
   }[phase];
 
-  // Cycle roterer 4 faser hvert 15. min = hver fase ~60 min, med jitter op til 120 min.
-  // vp-properties kører kun dagligt via cycle.
-  const intervalMinutes = phase === 'vp-properties' ? 1440 : 120;
+  // Cycle roterer 4 faser hvert 15. min — watchdog threshold 2×15+5 = 35 min.
+  const intervalMinutes = 15;
 
   return withCronMonitor(
     {

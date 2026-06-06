@@ -131,7 +131,7 @@ export async function GET(request: NextRequest) {
 
   // BIZZ-621 + BIZZ-624: heartbeat + Sentry cron-monitoring.
   return withCronMonitor(
-    { jobName: 'pull-bbr-events', schedule: '0 */6 * * *', intervalMinutes: 360 },
+    { jobName: 'pull-bbr-events', schedule: '0 3 * * *', intervalMinutes: 1440 },
     async () => {
       if (!process.env.DATAFORDELER_USER || !process.env.DATAFORDELER_PASS) {
         return NextResponse.json(

@@ -223,7 +223,7 @@ export async function GET(request: NextRequest) {
   }
 
   return withCronMonitor(
-    { jobName: 'backfill-energimaerke', schedule: '7 * * * *', intervalMinutes: 120 },
+    { jobName: 'backfill-energimaerke', schedule: '7 * * * *', intervalMinutes: 60 },
     async () => {
       if (!process.env.EMO_USERNAME || !process.env.EMO_PASSWORD) {
         return NextResponse.json({ error: 'EMO credentials not configured' }, { status: 500 });

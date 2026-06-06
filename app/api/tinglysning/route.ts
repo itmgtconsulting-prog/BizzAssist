@@ -184,6 +184,12 @@ export async function GET(req: NextRequest) {
 
     if (bfe) {
       const searchRes = await tlFetch(`/ejendom/hovednoteringsnummer?hovednoteringsnummer=${bfe}`);
+      if (searchRes.status === 429) {
+        return NextResponse.json(
+          { error: 'Tinglysning er midlertidigt utilgængelig — prøv igen om et øjeblik' },
+          { status: 429, headers: { 'Retry-After': '30' } }
+        );
+      }
       if (searchRes.status !== 200) {
         return NextResponse.json({ error: 'Tinglysning API fejl' }, { status: 502 });
       }

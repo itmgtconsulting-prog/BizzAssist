@@ -798,8 +798,20 @@ export default function EjendomDetaljeClient({
     fetch(`/api/tinglysning?bfe=${bfe}`, { signal })
       .then(async (r) => {
         if (r.ok) return r.json();
+        // e-TL rate-limit (429): vent og prøv én gang mere
+        if (r.status === 429) {
+          await new Promise((resolve) => setTimeout(resolve, 15000));
+          if (signal.aborted) return null;
+          const retryRes = await fetch(`/api/tinglysning?bfe=${bfe}`, { signal });
+          if (retryRes.ok) return retryRes.json();
+        }
         // BIZZ-525: Adresse-fallback når BFE-opslag returnerer 404
-        if (r.status === 404 && dawaAdresse?.vejnavn && dawaAdresse?.husnr && dawaAdresse?.postnr) {
+        if (
+          (r.status === 404 || r.status === 429) &&
+          dawaAdresse?.vejnavn &&
+          dawaAdresse?.husnr &&
+          dawaAdresse?.postnr
+        ) {
           const params = new URLSearchParams({
             vejnavn: dawaAdresse.vejnavn,
             husnummer: dawaAdresse.husnr,

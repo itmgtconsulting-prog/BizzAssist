@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { Linkedin } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
 import { companyInfo } from '@/app/lib/companyInfo';
@@ -88,6 +89,15 @@ export default function Footer() {
               <span className="text-slate-400">{footer.supplier.address}</span>
             </p>
           </div>
+          <a
+            href="https://www.linkedin.com/company/bizzassist"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-slate-400 hover:text-white transition-colors"
+            aria-label="BizzAssist LinkedIn"
+          >
+            <Linkedin className="w-5 h-5" />
+          </a>
         </div>
       </div>
     </footer>

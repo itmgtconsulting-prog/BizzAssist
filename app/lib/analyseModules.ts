@@ -183,6 +183,19 @@ export const ANALYSE_MODULES: AnalyseModuleConfig[] = [
     hint: 'Upload en Excel/CSV med kundeadresser. Systemet matcher adresser til matrikler og viser dækning som heatmap med rød/gul/grøn markering.',
   },
   {
+    id: 'boligpris',
+    label: 'Boligpris Dashboard',
+    labelEn: 'Property price dashboard',
+    icon: 'TrendingUp',
+    path: '/dashboard/analyse/boligpris',
+    enabled: { dev: true, preview: true, prod: false },
+    requiredPlan: 'professionel',
+    description:
+      'Prisudvikling og gennemsnitspriser pr. kommune med BBR-filtre og interaktivt kort',
+    defaultTarget: 'ejendom',
+    hint: 'Se gennemsnitspriser, m²-priser og prisudvikling pr. kommune/region. Filtrer på boligtype, areal, byggeår og mere.',
+  },
+  {
     id: 'virksomhedshandler',
     label: 'Virksomhedshandler',
     labelEn: 'Corporate Transactions',

@@ -44,6 +44,7 @@ const VIEWS = [
   'mv_deltager_beriget',
   'mv_virksomhed_portefolje',
   'mv_kommune_statistik',
+  'mv_boligpris_maaned',
 ];
 
 export async function GET(request: NextRequest): Promise<NextResponse> {

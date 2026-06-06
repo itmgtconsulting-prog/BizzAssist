@@ -36,6 +36,27 @@ function PublicHeader() {
 
           {/* Actions */}
           <nav className="flex items-center gap-3">
+            <a
+              href="https://www.linkedin.com/company/bizzassist"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-slate-300 hover:text-white transition-colors hidden sm:block"
+              aria-label="BizzAssist LinkedIn"
+            >
+              <svg
+                className="w-5 h-5"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z" />
+                <rect width="4" height="12" x="2" y="9" />
+                <circle cx="4" cy="4" r="2" />
+              </svg>
+            </a>
             <Link
               href="/login"
               className="text-slate-300 hover:text-white text-sm font-medium transition-colors hidden sm:block"
@@ -81,8 +102,29 @@ function PublicFooter() {
             </span>
           </div>
 
-          {/* Links */}
-          <nav className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-slate-400">
+          {/* Social + Links */}
+          <nav className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-slate-400">
+            <a
+              href="https://www.linkedin.com/company/bizzassist"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-white transition-colors"
+              aria-label="BizzAssist LinkedIn"
+            >
+              <svg
+                className="w-4 h-4"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z" />
+                <rect width="4" height="12" x="2" y="9" />
+                <circle cx="4" cy="4" r="2" />
+              </svg>
+            </a>
             <Link href="/login" className="hover:text-white transition-colors">
               Log ind
             </Link>

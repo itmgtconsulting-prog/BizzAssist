@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { Menu, X } from 'lucide-react';
+import { Menu, X, Linkedin } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
 
@@ -63,6 +63,16 @@ export default function Navbar() {
 
             {/* Right side */}
             <div className="hidden md:flex items-center gap-4">
+              {/* LinkedIn */}
+              <a
+                href="https://www.linkedin.com/company/bizzassist"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-slate-300 hover:text-white transition-colors"
+                aria-label="BizzAssist LinkedIn"
+              >
+                <Linkedin className="w-5 h-5" />
+              </a>
               {/* Language Toggle */}
               <div className="flex items-center bg-white/10 rounded-full p-1 gap-1">
                 <button

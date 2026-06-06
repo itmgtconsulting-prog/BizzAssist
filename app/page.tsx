@@ -9,6 +9,7 @@ import Navbar from '@/app/components/Navbar';
 import Hero from '@/app/components/Hero';
 import Features from '@/app/components/Features';
 import UseCases from '@/app/components/UseCases';
+import LinkedInPosts from '@/app/components/LinkedInPosts';
 import PopularEntities from '@/app/components/PopularEntities';
 import PricingSection from '@/app/components/PricingSection';
 import CTABanner from '@/app/components/CTABanner';
@@ -43,6 +44,7 @@ export default function HomePage() {
       <Hero />
       <Features />
       <UseCases />
+      <LinkedInPosts />
       <PopularEntities />
       <PricingSection />
       <CTABanner />

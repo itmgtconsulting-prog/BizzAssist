@@ -75,23 +75,34 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const admin = createAdminClient() as any;
 
-    // --- Tidsserier fra MV ---
-    let mvQuery = admin
-      .from('mv_boligpris_maaned')
-      .select(
-        'kommune_kode, boligtype_kode, maaned, antal_handler, avg_pris, median_pris, avg_m2_pris'
-      )
-      .gte('maaned', fra)
-      .lte('maaned', til)
-      .order('maaned', { ascending: true });
+    // --- Tidsserier fra MV (pagineret — PostgREST capper ved 1000 rows) ---
+    const PAGE_SIZE = 1000;
+    const mvData: Array<Record<string, unknown>> = [];
+    let mvOffset = 0;
 
-    if (kommuner) mvQuery = mvQuery.in('kommune_kode', kommuner);
-    if (boligtyper) mvQuery = mvQuery.in('boligtype_kode', boligtyper);
+    while (true) {
+      let mvQuery = admin
+        .from('mv_boligpris_maaned')
+        .select(
+          'kommune_kode, boligtype_kode, maaned, antal_handler, avg_pris, median_pris, avg_m2_pris'
+        )
+        .gte('maaned', fra)
+        .lte('maaned', til)
+        .order('maaned', { ascending: true })
+        .range(mvOffset, mvOffset + PAGE_SIZE - 1);
 
-    const { data: mvData, error: mvErr } = await mvQuery.limit(10000);
-    if (mvErr) {
-      logger.error('[boligpris] MV query fejl:', mvErr.message);
-      return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
+      if (kommuner) mvQuery = mvQuery.in('kommune_kode', kommuner);
+      if (boligtyper) mvQuery = mvQuery.in('boligtype_kode', boligtyper);
+
+      const { data: page, error: mvErr } = await mvQuery;
+      if (mvErr) {
+        logger.error('[boligpris] MV query fejl:', mvErr.message);
+        return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
+      }
+      if (!page || page.length === 0) break;
+      mvData.push(...page);
+      if (page.length < PAGE_SIZE) break;
+      mvOffset += PAGE_SIZE;
     }
 
     // --- Aggregér tidsserier ---
@@ -121,7 +132,7 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
     let totalM2Sum = 0;
     let totalM2Count = 0;
 
-    for (const row of mvData ?? []) {
+    for (const row of mvData) {
       const m = String(row.maaned);
       const ah = Number(row.antal_handler) || 0;
       const ap = Number(row.avg_pris) || 0;
@@ -197,10 +208,10 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
     const curYearStart = `${nowYear}-01-01`;
     const prevYearStart = `${nowYear - 1}-01-01`;
     const prevYearEnd = `${nowYear - 1}-12-31`;
-    const curYearRows = (mvData ?? []).filter(
+    const curYearRows = mvData.filter(
       (r: Record<string, unknown>) => String(r.maaned) >= curYearStart && String(r.maaned) <= til
     );
-    const prevYearRows = (mvData ?? []).filter(
+    const prevYearRows = mvData.filter(
       (r: Record<string, unknown>) =>
         String(r.maaned) >= prevYearStart && String(r.maaned) <= prevYearEnd
     );

@@ -223,7 +223,7 @@ export async function GET(request: NextRequest) {
   }
 
   return withCronMonitor(
-    { jobName: 'backfill-energimaerke', schedule: '7 * * * *', intervalMinutes: 60 },
+    { jobName: 'backfill-energimaerke', schedule: '7 * * * *', intervalMinutes: 120 },
     async () => {
       if (!process.env.EMO_USERNAME || !process.env.EMO_PASSWORD) {
         return NextResponse.json({ error: 'EMO credentials not configured' }, { status: 500 });
@@ -290,6 +290,15 @@ export async function GET(request: NextRequest) {
         .from('bbr_ejendom_status')
         .select('bfe_nummer', { count: 'exact', head: true })
         .is('energimaerke_data', null);
+
+      // BIZZ-2005: Alert when EMO success rate drops below 50%
+      const successRate = rows.length > 0 ? (rows.length - failed) / rows.length : 1;
+      if (successRate < 0.5 && rows.length >= 5) {
+        Sentry.captureMessage(
+          `EMO success-rate kritisk lav: ${Math.round(successRate * 100)}% (${failed}/${rows.length} fejlede)`,
+          { level: 'warning', tags: { source: 'emo-service' } }
+        );
+      }
 
       const result = {
         processed: rows.length,

@@ -906,6 +906,19 @@ export default function VirksomhedshandlerClient() {
   // overbelaste berig-routen, opdaterer fremdrift undervejs og opsummerer til
   // sidst hvad AIen nåede (antal, værdi-estimater, confidence, kilder, forbehold).
   const bulkBerig = useCallback(async () => {
+    // BIZZ-2018: Pre-flight subscription check before bulk AI operation
+    try {
+      const subRes = await fetch('/api/subscription');
+      if (subRes.ok) {
+        const subData = await subRes.json();
+        if (!subData.isFunctional && !subData.isAdmin) {
+          return; // Silently blocked — SubscriptionGate handles UI
+        }
+      }
+    } catch {
+      // Non-fatal — let the actual API calls handle auth errors
+    }
+
     // BIZZ-1985: berig de valgte rækker; intet udvalg ⟹ alle viste rækker.
     const rows =
       selectedRows.size > 0

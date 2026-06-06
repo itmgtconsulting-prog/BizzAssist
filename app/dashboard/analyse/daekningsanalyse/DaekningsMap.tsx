@@ -33,7 +33,7 @@ interface MatrikelWithStatus {
   geometry: GeoJsonGeometry | null;
   adresserLabel: string;
   ejerforening?: string | null;
-  status: 'red' | 'yellow' | 'green';
+  status: 'red' | 'yellow' | 'green' | 'grey';
 }
 
 interface Props {
@@ -41,18 +41,21 @@ interface Props {
 }
 
 const STATUS_COLORS: Record<string, string> = {
+  grey: '#64748b',
   red: '#ef4444',
   yellow: '#f59e0b',
   green: '#10b981',
 };
 
 const STATUS_FILL_OPACITY: Record<string, number> = {
+  grey: 0.2,
   red: 0.5,
   yellow: 0.45,
   green: 0.4,
 };
 
 const STATUS_LINE_WIDTH: Record<string, number> = {
+  grey: 1,
   red: 2.5,
   yellow: 2,
   green: 2,
@@ -126,7 +129,12 @@ export default function DaekningsMap({ results }: Props) {
 
       // Render in z-order: red (bottom) → yellow → green (top)
       // This ensures small green polygons aren't hidden under large red ones
-      const layerOrder: Array<'red' | 'yellow' | 'green'> = ['red', 'yellow', 'green'];
+      const layerOrder: Array<'grey' | 'red' | 'yellow' | 'green'> = [
+        'grey',
+        'red',
+        'yellow',
+        'green',
+      ];
       for (const status of layerOrder) {
         map.addLayer({
           id: `matrikler-fill-${status}`,
@@ -152,7 +160,12 @@ export default function DaekningsMap({ results }: Props) {
       }
 
       // Click popup — listen on all fill layers
-      const fillLayers = ['matrikler-fill-red', 'matrikler-fill-yellow', 'matrikler-fill-green'];
+      const fillLayers = [
+        'matrikler-fill-grey',
+        'matrikler-fill-red',
+        'matrikler-fill-yellow',
+        'matrikler-fill-green',
+      ];
       const handleClick = (
         e: mapboxgl.MapMouseEvent & { features?: mapboxgl.GeoJSONFeature[] }
       ) => {

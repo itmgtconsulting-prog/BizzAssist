@@ -29,6 +29,12 @@ const DiagramForce = dynamic(() => import('./DiagramForce'), {
   loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />,
 });
 
+/** DiagramDagre — hierarchical layout (BIZZ-2013) */
+const DiagramDagre = dynamic(() => import('./DiagramDagre'), {
+  ssr: false,
+  loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />,
+});
+
 export interface DiagramV2Props {
   /** Entitetstype for root-noden */
   rootType: 'company' | 'person' | 'property';
@@ -68,6 +74,8 @@ export default function DiagramV2({
   const [graph, setGraph] = useState<DiagramGraph | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // BIZZ-2013: Layout toggle — dagre (hierarkisk) vs force (interaktiv med expand)
+  const [layoutMode, setLayoutMode] = useState<'force' | 'dagre'>('force');
 
   /**
    * Ref der holder styr på alle noder i grafen (inkl. extension-noder).
@@ -252,14 +260,38 @@ export default function DiagramV2({
   }
 
   return (
-    <DiagramForce
-      graph={graph}
-      lang={lang}
-      defaultShowProperties={true}
-      onExpand={handleExpand}
-      onCollapse={handleCollapse}
-      onNodeClick={onNodeClick}
-      onDiagramReady={onDiagramReady}
-    />
+    <div className="relative">
+      {/* BIZZ-2013: Layout toggle */}
+      <div className="absolute top-2 left-2 z-10 flex bg-slate-800/90 border border-white/10 rounded-lg overflow-hidden text-[10px]">
+        <button
+          type="button"
+          onClick={() => setLayoutMode('force')}
+          className={`px-2.5 py-1 font-medium transition-colors ${layoutMode === 'force' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
+        >
+          {da ? 'Interaktiv' : 'Interactive'}
+        </button>
+        <button
+          type="button"
+          onClick={() => setLayoutMode('dagre')}
+          className={`px-2.5 py-1 font-medium transition-colors ${layoutMode === 'dagre' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
+        >
+          {da ? 'Hierarkisk' : 'Hierarchical'}
+        </button>
+      </div>
+
+      {layoutMode === 'dagre' ? (
+        <DiagramDagre graph={graph} lang={lang} />
+      ) : (
+        <DiagramForce
+          graph={graph}
+          lang={lang}
+          defaultShowProperties={true}
+          onExpand={handleExpand}
+          onCollapse={handleCollapse}
+          onNodeClick={onNodeClick}
+          onDiagramReady={onDiagramReady}
+        />
+      )}
+    </div>
   );
 }

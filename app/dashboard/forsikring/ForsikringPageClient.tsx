@@ -1192,6 +1192,18 @@ function AnalyseSection({
   const startAnalyse = useCallback(
     async (opts?: { skipPreflight?: boolean }) => {
       if (!selected || running) return;
+
+      // BIZZ-2019: Pre-flight subscription check before AI analysis
+      try {
+        const subRes = await fetch('/api/subscription');
+        if (subRes.ok) {
+          const subData = await subRes.json();
+          if (!subData.isFunctional && !subData.isAdmin) return;
+        }
+      } catch {
+        /* non-fatal */
+      }
+
       setRunning(true);
       setAnalyseResult(null);
       try {

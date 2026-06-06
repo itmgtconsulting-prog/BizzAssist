@@ -60,7 +60,7 @@ interface MatrikelResult {
 
 type SortKey = 'matrikelnr' | 'adresserLabel' | 'totalEnheder' | 'kundeAntal' | 'daekningPct';
 type SortDir = 'asc' | 'desc';
-type StatusFilter = 'all' | 'red' | 'yellow' | 'green';
+type StatusFilter = 'all' | 'red' | 'yellow' | 'green' | 'grey';
 
 /**
  * Classify coverage relative to expected market share.
@@ -90,7 +90,8 @@ function classifyCoverage(
   pct: number,
   redMax: number,
   greenMin: number
-): 'red' | 'yellow' | 'green' {
+): 'red' | 'yellow' | 'green' | 'grey' {
+  if (pct === 0) return 'grey';
   if (pct < redMax) return 'red';
   if (pct >= greenMin) return 'green';
   return 'yellow';
@@ -101,12 +102,14 @@ const STATUS_STYLES = {
   red: { bg: 'bg-red-500/10', text: 'text-red-400', border: 'border-red-500/30' },
   yellow: { bg: 'bg-amber-500/10', text: 'text-amber-400', border: 'border-amber-500/30' },
   green: { bg: 'bg-emerald-500/10', text: 'text-emerald-400', border: 'border-emerald-500/30' },
+  grey: { bg: 'bg-slate-500/10', text: 'text-slate-400', border: 'border-slate-500/30' },
 } as const;
 
 const STATUS_LABELS = {
   red: { da: 'Rød', en: 'Red' },
   yellow: { da: 'Gul', en: 'Yellow' },
   green: { da: 'Grøn', en: 'Green' },
+  grey: { da: 'Ingen dækning', en: 'No coverage' },
 } as const;
 
 /**
@@ -316,8 +319,46 @@ export default function DaekningsanalyseClient() {
     [da]
   );
 
+  // AI extraction state
+  const [aiExtracting, setAiExtracting] = useState(false);
+  const [aiTokensUsed, setAiTokensUsed] = useState(0);
+
   /**
-   * Parse uploaded Excel/CSV file and extract addresses.
+   * Check if file needs AI extraction (non-structured format).
+   *
+   * @param name - File name
+   * @returns true if AI is needed
+   */
+  function needsAiExtraction(name: string): boolean {
+    const ext = name.toLowerCase().split('.').pop();
+    return !['xlsx', 'csv'].includes(ext ?? '');
+  }
+
+  /**
+   * Check if parsed addresses look valid (contain Danish postnr pattern).
+   * If <30% of rows match, data is probably not structured addresses.
+   *
+   * @param addrs - Parsed first-column values
+   * @returns true if data looks like valid addresses
+   */
+  /**
+   * Check if parsed values look like Danish addresses.
+   * Requires comma + 4-digit postnr + city name pattern.
+   *
+   * @param addrs - Parsed first-column values
+   * @returns true if data looks like valid addresses
+   */
+  function looksLikeAddresses(addrs: string[]): boolean {
+    if (addrs.length === 0) return false;
+    // Match "..., NNNN CityName" pattern (Danish address with postnr + by)
+    const addrPattern = /,\s*\d{4}\s+[A-ZÆØÅa-zæøå]/;
+    const matching = addrs.filter((a) => addrPattern.test(a));
+    return matching.length / addrs.length > 0.3;
+  }
+
+  /**
+   * Parse uploaded file — structured files (xlsx/csv) parsed directly,
+   * other formats (PDF, Word, TXT, images) sent to AI for extraction.
    *
    * @param f - File to parse
    */
@@ -328,33 +369,100 @@ export default function DaekningsanalyseClient() {
       setParsedAddresses([]);
       setResults([]);
       setAnalysed(false);
+      setAiTokensUsed(0);
 
+      // Non-structured files → AI extraction
+      if (needsAiExtraction(f.name)) {
+        setAiExtracting(true);
+        try {
+          const formData = new FormData();
+          formData.append('file', f);
+          const res = await fetch('/api/analyse/daekningsanalyse/extract-addresses', {
+            method: 'POST',
+            body: formData,
+          });
+          if (!res.ok) {
+            const json = await res.json().catch(() => ({}));
+            throw new Error((json as { error?: string }).error || `HTTP ${res.status}`);
+          }
+          const data = await res.json();
+          const addrs = (data.addresses ?? []) as string[];
+          setParsedAddresses(addrs);
+          setAiTokensUsed(data.tokensUsed ?? 0);
+          if (addrs.length === 0) {
+            setParseError(
+              da
+                ? 'AI fandt ingen adresser i filen. Prøv med et andet format.'
+                : 'AI found no addresses in the file. Try a different format.'
+            );
+          }
+        } catch (err) {
+          setParseError(
+            da
+              ? `AI-ekstraktion fejlede: ${err instanceof Error ? err.message : 'Ukendt fejl'}`
+              : `AI extraction failed: ${err instanceof Error ? err.message : 'Unknown error'}`
+          );
+        } finally {
+          setAiExtracting(false);
+        }
+        return;
+      }
+
+      // Structured files → try direct parsing first, fallback to AI if data doesn't look like addresses
       try {
         const ExcelJS = (await import('exceljs')).default;
         const wb = new ExcelJS.Workbook();
+        let directAddrs: string[] = [];
 
         if (f.name.endsWith('.csv')) {
           const text = await f.text();
-          // Simple CSV parse — split on newlines, skip header
           const lines = text.split(/\r?\n/).filter((l) => l.trim());
-          const addrs = lines
+          directAddrs = lines
             .slice(1)
             .map((l) => l.replace(/^"/, '').replace(/"$/, '').trim())
             .filter(Boolean);
-          setParsedAddresses(addrs);
         } else {
           const buf = await f.arrayBuffer();
           await wb.xlsx.load(buf);
           const ws = wb.worksheets[0];
           if (!ws) throw new Error('Ingen ark fundet i filen');
 
-          const addrs: string[] = [];
           ws.eachRow((row, rowNum) => {
-            if (rowNum === 1) return; // Skip header
+            if (rowNum === 1) return;
             const val = row.getCell(1).text?.trim();
-            if (val) addrs.push(val);
+            if (val) directAddrs.push(val);
           });
-          setParsedAddresses(addrs);
+        }
+
+        // Check if direct parsing produced valid addresses
+        if (directAddrs.length > 0 && looksLikeAddresses(directAddrs)) {
+          setParsedAddresses(directAddrs);
+        } else {
+          // Data doesn't look like structured addresses → send to AI
+          setAiExtracting(true);
+          try {
+            const formData = new FormData();
+            formData.append('file', f);
+            const res = await fetch('/api/analyse/daekningsanalyse/extract-addresses', {
+              method: 'POST',
+              body: formData,
+            });
+            if (!res.ok) {
+              const json = await res.json().catch(() => ({}));
+              throw new Error((json as { error?: string }).error || `HTTP ${res.status}`);
+            }
+            const data = await res.json();
+            const aiAddrs = (data.addresses ?? []) as string[];
+            setParsedAddresses(aiAddrs);
+            setAiTokensUsed(data.tokensUsed ?? 0);
+            if (aiAddrs.length === 0) {
+              setParseError(
+                da ? 'AI fandt ingen adresser i filen.' : 'AI found no addresses in the file.'
+              );
+            }
+          } finally {
+            setAiExtracting(false);
+          }
         }
       } catch (err) {
         setParseError(
@@ -576,11 +684,11 @@ export default function DaekningsanalyseClient() {
                     <span className="text-[10px] text-slate-400">≥</span>
                     <input
                       type="range"
-                      min={redMax}
+                      min={0}
                       max={80}
                       value={greenMin}
                       onChange={(e) => setGreenMin(Number(e.target.value))}
-                      className="flex-1 accent-blue-500 [&::-webkit-slider-runnable-track]:bg-slate-700 [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:h-1.5 [&::-moz-range-track]:bg-slate-700 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:h-1.5"
+                      className="flex-1 accent-emerald-500 cursor-pointer [&::-webkit-slider-runnable-track]:bg-slate-600 [&::-webkit-slider-runnable-track]:rounded-full [&::-moz-range-track]:bg-slate-600 [&::-moz-range-track]:rounded-full"
                     />
                     <span className="text-xs font-bold text-white w-10 text-right">
                       {greenMin}%
@@ -592,10 +700,10 @@ export default function DaekningsanalyseClient() {
                     <input
                       type="range"
                       min={5}
-                      max={greenMin}
+                      max={80}
                       value={redMax}
                       onChange={(e) => setRedMax(Number(e.target.value))}
-                      className="flex-1 accent-blue-500 [&::-webkit-slider-runnable-track]:bg-slate-700 [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:h-1.5 [&::-moz-range-track]:bg-slate-700 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:h-1.5"
+                      className="flex-1 accent-red-500 cursor-pointer [&::-webkit-slider-runnable-track]:bg-slate-600 [&::-webkit-slider-runnable-track]:rounded-full [&::-moz-range-track]:bg-slate-600 [&::-moz-range-track]:rounded-full"
                     />
                     <span className="text-xs font-bold text-white w-10 text-right">{redMax}%</span>
                   </label>
@@ -833,11 +941,11 @@ export default function DaekningsanalyseClient() {
           <span className="text-xs text-slate-400">≥</span>
           <input
             type="range"
-            min={redMax}
+            min={0}
             max={80}
             value={greenMin}
             onChange={(e) => setGreenMin(Number(e.target.value))}
-            className="flex-1 accent-blue-500 [&::-webkit-slider-runnable-track]:bg-slate-700 [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:h-1.5 [&::-moz-range-track]:bg-slate-700 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:h-1.5"
+            className="flex-1 accent-emerald-500 cursor-pointer [&::-webkit-slider-runnable-track]:bg-slate-600 [&::-webkit-slider-runnable-track]:rounded-full [&::-moz-range-track]:bg-slate-600 [&::-moz-range-track]:rounded-full"
           />
           <span className="text-sm font-bold text-white w-12 text-right">{greenMin}%</span>
         </label>
@@ -847,10 +955,10 @@ export default function DaekningsanalyseClient() {
           <input
             type="range"
             min={5}
-            max={greenMin}
+            max={80}
             value={redMax}
             onChange={(e) => setRedMax(Number(e.target.value))}
-            className="flex-1 accent-blue-500 [&::-webkit-slider-runnable-track]:bg-slate-700 [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:h-1.5 [&::-moz-range-track]:bg-slate-700 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:h-1.5"
+            className="flex-1 accent-red-500 cursor-pointer [&::-webkit-slider-runnable-track]:bg-slate-600 [&::-webkit-slider-runnable-track]:rounded-full [&::-moz-range-track]:bg-slate-600 [&::-moz-range-track]:rounded-full"
           />
           <span className="text-sm font-bold text-white w-12 text-right">{redMax}%</span>
         </label>
@@ -926,14 +1034,21 @@ export default function DaekningsanalyseClient() {
                 </button>
               </div>
 
+              {aiExtracting && (
+                <div className="flex items-center gap-2 text-blue-400 text-sm">
+                  <Loader2 size={14} className="animate-spin" />
+                  {da ? 'AI ekstrakter adresser fra filen…' : 'AI extracting addresses from file…'}
+                </div>
+              )}
+
               {parseError && <p className="text-red-400 text-sm">{parseError}</p>}
 
               {parsedAddresses.length > 0 && (
                 <>
                   <p className="text-slate-400 text-sm">
                     {da
-                      ? `${parsedAddresses.length} adresser fundet i filen`
-                      : `${parsedAddresses.length} addresses found in file`}
+                      ? `${parsedAddresses.length} adresser fundet${aiTokensUsed > 0 ? ` (AI: ${aiTokensUsed.toLocaleString('da-DK')} tokens)` : ''}`
+                      : `${parsedAddresses.length} addresses found${aiTokensUsed > 0 ? ` (AI: ${aiTokensUsed.toLocaleString()} tokens)` : ''}`}
                   </p>
                   {/* Preview first 5 */}
                   <div className="bg-white/5 rounded-lg p-3 max-w-md mx-auto">
@@ -977,7 +1092,7 @@ export default function DaekningsanalyseClient() {
                   ? 'Træk en fil hertil eller klik for at vælge'
                   : 'Drop a file here or click to select'}
               </p>
-              <p className="text-slate-400 text-xs">Excel (.xlsx) eller CSV</p>
+              <p className="text-slate-400 text-xs">Excel, CSV, PDF, Word, TXT, billeder</p>
               <button
                 type="button"
                 onClick={() => fileRef.current?.click()}
@@ -988,7 +1103,7 @@ export default function DaekningsanalyseClient() {
               <input
                 ref={fileRef}
                 type="file"
-                accept=".xlsx,.csv"
+                accept=".xlsx,.csv,.pdf,.docx,.doc,.txt,.png,.jpg,.jpeg"
                 onChange={onFileChange}
                 className="hidden"
               />

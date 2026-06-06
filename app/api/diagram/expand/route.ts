@@ -462,9 +462,35 @@ async function expandCompany(
       return r.ejerandel_pct != null && r.ejerandel_pct > 0;
     });
     if (filteredPersonRows.length > 0) {
-      const ownerEnheder = Array.from(
+      // BIZZ-2023: Filter enhedsnumre that are already in the graph as either
+      // person-nodes (en-X) OR company-nodes (cvr-X with matching deltager_enhedsnummer).
+      // Also check cvr_deltager to see if the enhedsnummer is a virksomhed
+      // (has enhedstype='virksomhed') — those should not be added as person-nodes.
+      const virksomhedEnheder = new Set<number>();
+      const candidateEnheder = Array.from(
         new Set(filteredPersonRows.map((r) => r.deltager_enhedsnummer))
       ).filter((en) => !existingIds.has(`en-${en}`) && !addedIds.has(`en-${en}`));
+
+      if (candidateEnheder.length > 0) {
+        // Check if any candidates are virksomheder (not persons)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: deltagerTypeRows } = await (admin as any)
+          .from('cvr_deltager')
+          .select('enhedsnummer, enhedstype')
+          .in('enhedsnummer', candidateEnheder.slice(0, 20));
+        for (const r of (deltagerTypeRows ?? []) as Array<{
+          enhedsnummer: number;
+          enhedstype: string | null;
+        }>) {
+          if (r.enhedstype === 'virksomhed') virksomhedEnheder.add(r.enhedsnummer);
+        }
+      }
+
+      const ownerEnheder = candidateEnheder.filter((en) => {
+        // Skip virksomhed-deltagere — de vises allerede som company-noder
+        if (virksomhedEnheder.has(en)) return false;
+        return true;
+      });
 
       // Hent navne
       let nameMap = new Map<number, string>();

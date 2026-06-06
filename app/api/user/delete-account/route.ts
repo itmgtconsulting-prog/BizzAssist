@@ -176,6 +176,28 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
       metadata: JSON.stringify({ tenantId }),
     });
 
+    // ── Step 5b: BIZZ-2028: Record deleted email to prevent trial re-abuse ──
+    if (user.email) {
+      const { data: adminUser } = await admin.auth.admin.getUserById(user.id);
+      const sub = ((adminUser?.user?.app_metadata ?? {}) as Record<string, unknown>)
+        .subscription as {
+        planId?: string;
+        isPaid?: boolean;
+        tokensUsedThisMonth?: number;
+      };
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (admin as any).from('deleted_accounts').insert({
+          email: user.email.toLowerCase(),
+          had_trial: !sub.isPaid,
+          plan_id: sub.planId ?? null,
+          tokens_used: sub.tokensUsedThisMonth ?? 0,
+        });
+      } catch {
+        // Non-fatal — worst case trial abuse is possible but account is still deleted
+      }
+    }
+
     // ── Step 6: Send deletion confirmation BEFORE auth deletion ────────────
     // BIZZ-272: Email must be sent while user record still exists
     if (user.email) {

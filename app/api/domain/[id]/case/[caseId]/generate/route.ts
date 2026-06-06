@@ -19,6 +19,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { assertDomainMember } from '@/app/lib/domainAuth';
 import { assertDomainAiAllowed } from '@/app/lib/domainAiGate';
+import { assertAiAllowed } from '@/app/lib/aiGate';
 import { recordAiUsage } from '@/app/lib/aiTracking';
 import { buildGenerationContext } from '@/app/lib/domainPromptBuilder';
 import {
@@ -378,9 +379,11 @@ export async function POST(request: NextRequest, context: RouteContext): Promise
     return NextResponse.json({ error: 'template_id is required' }, { status: 400 });
   }
 
-  // BIZZ-720: domain-level AI gate (monthly token cap). User-level gate is
-  // handled separately in aiGate.ts for non-domain routes; domain routes only
-  // meter against the domain's budget since the feature is enterprise-plan.
+  // BIZZ-2015: User-level AI gate — ensures unpaid users cannot bypass billing.
+  const userBlocked = await assertAiAllowed(ctx.userId);
+  if (userBlocked) return userBlocked as unknown as NextResponse;
+
+  // BIZZ-720: Domain-level AI gate (monthly token cap).
   const domainBlocked = await assertDomainAiAllowed(domainId);
   if (domainBlocked) return domainBlocked as unknown as NextResponse;
 

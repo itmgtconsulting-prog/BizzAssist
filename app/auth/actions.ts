@@ -669,6 +669,22 @@ export async function startTrialPlan(planId: string): Promise<AuthResult> {
       return { error: 'no_trial_available' };
     }
 
+    // BIZZ-2028: Check if this email previously had a trial (deleted + re-registered)
+    if (user.email) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: prevAccount } = (await (admin as any)
+        .from('deleted_accounts')
+        .select('id')
+        .eq('email', user.email.toLowerCase())
+        .eq('had_trial', true)
+        .limit(1)) as { data: { id: string }[] | null };
+
+      if (prevAccount && prevAccount.length > 0) {
+        logger.warn('[startTrialPlan] Trial abuse blocked for re-registered email:', '[email]');
+        return { error: 'trial_already_used' };
+      }
+    }
+
     // Check for existing subscription — don't overwrite an active paid sub
     const { data: freshUserData } = await admin.auth.admin.getUserById(user.id);
     const existingSub =
@@ -697,6 +713,14 @@ export async function startTrialPlan(planId: string): Promise<AuthResult> {
         },
       },
     });
+
+    // Provision tenant if user doesn't have one yet (new OAuth users)
+    try {
+      await provisionTenantForUser(user.id, user.email ?? '');
+    } catch (provErr) {
+      // Non-fatal — user can still use the platform, just without chat persistence
+      logger.warn('[startTrialPlan] Tenant provision failed:', provErr);
+    }
 
     logger.log('[startTrialPlan] Started trial for plan', planId, 'for user [user]');
     return { error: null };

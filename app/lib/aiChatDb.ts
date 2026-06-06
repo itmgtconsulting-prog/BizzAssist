@@ -109,16 +109,18 @@ export async function getAiChatDb(): Promise<AiChatDbContext | null> {
     }
 
     // Resolve tenant_id + schema_name via user-scoped client.
+    // BIZZ-2015: Use maybeSingle() instead of limit(1).single() to handle
+    // users with 0 or multiple tenant memberships gracefully.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: membership, error: membershipError } = (await (supabase as any)
+    const { data: memberships, error: membershipError } = (await (supabase as any)
       .from('tenant_memberships')
       .select('tenant_id, tenants(schema_name)')
       .eq('user_id', user.id)
-      .limit(1)
-      .single()) as {
-      data: { tenant_id: string; tenants: { schema_name: string } | null } | null;
+      .limit(1)) as {
+      data: Array<{ tenant_id: string; tenants: { schema_name: string } | null }> | null;
       error: { message: string; code: string } | null;
     };
+    const membership = memberships?.[0] ?? null;
     if (membershipError) {
       console.warn(
         '[aiChatDb] membership query error:',

@@ -1764,11 +1764,13 @@ function PlanSelectionOverlay({
                         className={`mt-1.5 inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full ${colors.badge}`}
                       >
                         <Zap size={10} />
-                        {plan.aiTokensPerMonth >= 1_000_000
+                        {plan.aiTokensPerMonth < 0
                           ? da
                             ? 'Ubegrænset AI'
                             : 'Unlimited AI'
-                          : `${Math.round(plan.aiTokensPerMonth / 1000)}K AI`}
+                          : plan.aiTokensPerMonth >= 1_000_000
+                            ? `${(plan.aiTokensPerMonth / 1_000_000).toFixed(plan.aiTokensPerMonth % 1_000_000 === 0 ? 0 : 1)}M AI`
+                            : `${Math.round(plan.aiTokensPerMonth / 1000)}K AI`}
                       </div>
                     )}
                     {plan.requiresApproval && (

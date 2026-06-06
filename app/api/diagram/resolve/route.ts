@@ -2945,6 +2945,15 @@ export async function GET(request: NextRequest): Promise<NextResponse<ResolveRes
       );
     }
 
+    // BIZZ-2014: Fjern self-loop edges (node → sig selv)
+    graph.edges = graph.edges.filter((e) => {
+      if (e.from === e.to) {
+        logger.warn(`[diagram] Self-loop edge filtered: ${e.from}`);
+        return false;
+      }
+      return true;
+    });
+
     // Fjern duplikat-edges (samme from+to)
     const edgeKeys = new Set<string>();
     graph.edges = graph.edges.filter((e) => {

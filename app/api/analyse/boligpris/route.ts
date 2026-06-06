@@ -86,13 +86,12 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
         .in('postnr', postnrStrings)
         .limit(1000);
       if (postnrRows && postnrRows.length > 0) {
-        const postnrKommuner = [
-          ...new Set(
-            postnrRows
-              .map((r: { kommune_kode: string }) => Number(r.kommune_kode))
-              .filter((n: number) => Number.isFinite(n) && n > 0)
-          ),
-        ];
+        const postnrKommuneSet = new Set<number>();
+        for (const r of postnrRows) {
+          const kk = Number((r as Record<string, unknown>).kommune_kode);
+          if (Number.isFinite(kk) && kk > 0) postnrKommuneSet.add(kk);
+        }
+        const postnrKommuner = Array.from(postnrKommuneSet);
         // Merge med eventuelle eksisterende kommune-filtre
         kommuner = kommuner ? kommuner.filter((k) => postnrKommuner.includes(k)) : postnrKommuner;
       }

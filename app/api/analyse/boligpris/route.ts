@@ -29,7 +29,7 @@ export const runtime = 'nodejs';
 const BOLIGTYPE_LABELS: Record<string, string> = {
   '120': 'Enfamiliehus',
   '130': 'Rækkehus',
-  '140': 'Etagebolig',
+  '140': 'Etagebolig / Lejlighed',
   '210': 'Erhverv (kontor)',
   '320': 'Erhverv (industri)',
   '410': 'Fritidshus',

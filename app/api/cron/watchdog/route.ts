@@ -125,7 +125,11 @@ async function checkHeartbeats(): Promise<HeartbeatIssue[]> {
         });
       }
 
-      if (overdueMs > 0) {
+      // Grace period: minimum 30 min overdue before alerting.
+      // Vercel's cron scheduler has ±15 min jitter — without grace,
+      // high-frequency jobs (*/5, */30) trigger false alerts constantly.
+      const GRACE_MS = 30 * 60 * 1000;
+      if (overdueMs > GRACE_MS) {
         const overdueMin = Math.floor(overdueMs / 60000);
         issues.push({
           jobName: row.job_name,

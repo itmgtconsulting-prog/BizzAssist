@@ -500,7 +500,7 @@ export async function GET(request: NextRequest) {
 
   // BIZZ-621 + BIZZ-624: heartbeat + Sentry cron-monitoring.
   return withCronMonitor(
-    { jobName: 'monitor-email', schedule: '*/5 * * * *', intervalMinutes: 15 },
+    { jobName: 'monitor-email', schedule: '*/5 * * * *', intervalMinutes: 5 },
     async () => {
       try {
         const now = new Date();

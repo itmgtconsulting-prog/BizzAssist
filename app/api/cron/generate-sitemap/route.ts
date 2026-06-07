@@ -764,8 +764,9 @@ export async function GET(request: NextRequest) {
     'render-xml': { schedule: '10 * * * *' },
   }[phase];
 
-  // Cycle roterer 4 faser hvert 15. min — watchdog threshold 2×15+5 = 35 min.
-  const intervalMinutes = 15;
+  // Cycle roterer 4 faser hvert 15. min — hver fase kører ~1x/time.
+  // Watchdog threshold: 2×60+10 = 130 min.
+  const intervalMinutes = 60;
 
   return withCronMonitor(
     {

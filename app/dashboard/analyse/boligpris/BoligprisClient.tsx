@@ -23,6 +23,7 @@ import {
   Ruler,
   ChevronLeft,
   ChevronRight,
+  MapPin,
 } from 'lucide-react';
 
 /* Lazy-load chart — Recharts kræver browser DOM */
@@ -118,6 +119,7 @@ export default function BoligprisClient(): React.ReactElement {
   /* --- State --- */
   const [selectedTypes, setSelectedTypes] = useState<Set<string>>(new Set());
   const [periodeIdx, setPeriodeIdx] = useState(0);
+  const [postnr, setPostnr] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ApiResponse | null>(null);
@@ -146,6 +148,9 @@ export default function BoligprisClient(): React.ReactElement {
         if (selectedTypes.size > 0) {
           params.set('boligtyper', Array.from(selectedTypes).join(','));
         }
+        if (postnr.trim()) {
+          params.set('postnumre', postnr.trim());
+        }
         if (includeHandler) {
           params.set('handler', 'true');
           params.set('limit', String(limit));
@@ -166,14 +171,20 @@ export default function BoligprisClient(): React.ReactElement {
         setLoading(false);
       }
     },
-    [fra, til, selectedTypes]
+    [fra, til, selectedTypes, postnr]
   );
 
-  /* Auto-fetch ved filter-ændring */
+  /* Auto-fetch ved filter-ændring (debounced for postnr-input) */
   useEffect(() => {
-    setHandlerPage(0);
-    fetchData(true, 0, handlerPageSize);
-  }, [fetchData, handlerPageSize]);
+    const timer = setTimeout(
+      () => {
+        setHandlerPage(0);
+        fetchData(true, 0, handlerPageSize);
+      },
+      postnr ? 500 : 0
+    );
+    return () => clearTimeout(timer);
+  }, [fetchData, handlerPageSize, postnr]);
 
   /* --- Toggle boligtype chip --- */
   const toggleType = useCallback((kode: string) => {
@@ -246,6 +257,22 @@ export default function BoligprisClient(): React.ReactElement {
                 {p.label}
               </button>
             ))}
+          </div>
+
+          {/* Separator */}
+          <div className="w-px h-8 bg-slate-700/50" />
+
+          {/* Postnr-filter */}
+          <div className="flex items-center gap-2">
+            <MapPin className="w-4 h-4 text-slate-400" />
+            <input
+              type="text"
+              value={postnr}
+              onChange={(e) => setPostnr(e.target.value)}
+              placeholder="Postnr (fx 2100,2200)"
+              className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 w-44"
+              aria-label="Filtrer på postnummer"
+            />
           </div>
         </div>
 

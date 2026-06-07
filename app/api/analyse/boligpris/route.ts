@@ -9,6 +9,7 @@
  *   - boligtyper: kommasepareret BBR-koder (e.g. "120,130,140")
  *   - fra: startdato YYYY-MM-DD (default: 12 mdr siden)
  *   - til: slutdato YYYY-MM-DD (default: i dag)
+ *   - postnumre: kommasepareret postnumre (e.g. "2100,2200") — BIZZ-2046
  *   - handler: "true" for at inkludere individuelle handler
  *   - limit: antal handler (default 50, max 500)
  *   - offset: handler offset (default 0)
@@ -60,8 +61,9 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
 
   try {
     const sp = req.nextUrl.searchParams;
-    const kommuner = parseNumList(sp.get('kommuner'));
+    let kommuner = parseNumList(sp.get('kommuner'));
     const boligtyper = parseNumList(sp.get('boligtyper'));
+    const postnumre = parseNumList(sp.get('postnumre'));
     const now = new Date();
     const defaultFra = new Date(now.getFullYear() - 1, now.getMonth(), 1)
       .toISOString()
@@ -74,6 +76,26 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const admin = createAdminClient() as any;
+
+    // BIZZ-2046: Postnr-filter — oversæt postnumre til kommune_koder via bfe_adresse_cache
+    if (postnumre && postnumre.length > 0) {
+      const postnrStrings = postnumre.map((p) => String(p).padStart(4, '0'));
+      const { data: postnrRows } = await admin
+        .from('bfe_adresse_cache')
+        .select('kommune_kode')
+        .in('postnr', postnrStrings)
+        .limit(1000);
+      if (postnrRows && postnrRows.length > 0) {
+        const postnrKommuneSet = new Set<number>();
+        for (const r of postnrRows) {
+          const kk = Number((r as Record<string, unknown>).kommune_kode);
+          if (Number.isFinite(kk) && kk > 0) postnrKommuneSet.add(kk);
+        }
+        const postnrKommuner = Array.from(postnrKommuneSet);
+        // Merge med eventuelle eksisterende kommune-filtre
+        kommuner = kommuner ? kommuner.filter((k) => postnrKommuner.includes(k)) : postnrKommuner;
+      }
+    }
 
     // --- Tidsserier fra MV (pagineret — PostgREST capper ved 1000 rows) ---
     const PAGE_SIZE = 1000;
@@ -238,74 +260,55 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
     };
 
     // --- Individuelle handler (valgfrit) ---
+    // BIZZ-2045: Bruger ejerskifte_historik i stedet for v_ejerskifte_handel
+    // (viewet timeout'er ved dato-range + sortering).
     let handler = undefined;
     let handlerTotal = undefined;
     if (wantHandler) {
       let hQuery = admin
-        .from('v_ejerskifte_handel')
-        .select('bfe_nummer, samlet_koebesum, overtagelsesdato, overdragelsesmaade', {
-          count: 'exact',
-        })
-        .gt('samlet_koebesum', 0)
-        .not('overtagelsesdato', 'is', null)
+        .from('ejerskifte_historik')
+        .select(
+          'bfe_nummer, i_alt_koebesum, overtagelsesdato, kommune_kode, m2_pris, boligareal_m2',
+          { count: 'exact' }
+        )
+        .gt('i_alt_koebesum', 0)
         .gte('overtagelsesdato', fra)
         .lte('overtagelsesdato', til)
         .order('overtagelsesdato', { ascending: false })
         .range(offset, offset + limit - 1);
 
-      // Filtrer via BFE'er der matcher kommune/boligtype
-      if (kommuner || boligtyper) {
-        let bbrQuery = admin.from('bbr_ejendom_status').select('bfe_nummer');
-        if (kommuner) bbrQuery = bbrQuery.in('kommune_kode', kommuner);
-        if (boligtyper) bbrQuery = bbrQuery.in('byg021_anvendelse', boligtyper);
-        const { data: bbrBfes } = await bbrQuery.limit(1000);
-        if (bbrBfes && bbrBfes.length > 0) {
-          const bfeList = bbrBfes.map((b: { bfe_nummer: number }) => b.bfe_nummer);
-          hQuery = hQuery.in('bfe_nummer', bfeList);
-        }
-      }
+      if (kommuner) hQuery = hQuery.in('kommune_kode', kommuner);
 
       const { data: hData, count: hCount, error: hErr } = await hQuery;
       if (hErr) {
         logger.warn('[boligpris] handler query fejl:', hErr.message);
       } else {
-        // Berig med adresse + BBR
+        // Berig med adresse
         const bfeNums = (hData ?? []).map((h: { bfe_nummer: number }) => h.bfe_nummer);
-        const [adresseRes, bbrRes] = await Promise.all([
+        const adresseRes =
           bfeNums.length > 0
-            ? admin
+            ? await admin
                 .from('bfe_adresse_cache')
                 .select('bfe_nummer, adresse, postnr, postnrnavn, kommune')
                 .in('bfe_nummer', bfeNums)
-            : { data: [] },
-          bfeNums.length > 0
-            ? admin
-                .from('bbr_ejendom_status')
-                .select('bfe_nummer, samlet_boligareal, byg021_anvendelse, kommune_kode')
-                .in('bfe_nummer', bfeNums)
-            : { data: [] },
-        ]);
+            : { data: [] };
 
         const adresseMap = new Map<number, Record<string, unknown>>();
         for (const a of adresseRes.data ?? []) adresseMap.set(a.bfe_nummer, a);
-        const bbrMap = new Map<number, Record<string, unknown>>();
-        for (const b of bbrRes.data ?? []) bbrMap.set(b.bfe_nummer, b);
 
         handler = (hData ?? []).map((h: Record<string, unknown>) => {
           const bfe = h.bfe_nummer as number;
           const adr = adresseMap.get(bfe);
-          const bbr = bbrMap.get(bfe);
-          const areal = Number(bbr?.samlet_boligareal) || 0;
-          const pris = Number(h.samlet_koebesum) || 0;
-          const typeKode = String(bbr?.byg021_anvendelse ?? '');
+          const pris = Number(h.i_alt_koebesum) || 0;
+          const areal = Number(h.boligareal_m2) || 0;
           return {
             bfe_nummer: bfe,
             dato: h.overtagelsesdato,
             pris,
-            m2_pris: areal > 0 ? Math.round(pris / areal) : null,
+            m2_pris: Number(h.m2_pris) || (areal > 0 ? Math.round(pris / areal) : null),
             areal: areal || null,
-            boligtype: BOLIGTYPE_LABELS[typeKode] ?? (typeKode || null),
-            kommune_kode: bbr?.kommune_kode ?? null,
+            boligtype: null,
+            kommune_kode: h.kommune_kode ?? null,
             adresse: adr ? `${adr.adresse}, ${adr.postnr} ${adr.postnrnavn}` : null,
             kommune: (adr as Record<string, unknown>)?.kommune ?? null,
           };

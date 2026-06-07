@@ -78,7 +78,7 @@ interface ApiResponse {
 const BOLIGTYPER = [
   { kode: '120', label: 'Enfamiliehus' },
   { kode: '130', label: 'Rækkehus' },
-  { kode: '140', label: 'Etagebolig' },
+  { kode: '140', label: 'Etagebolig / Lejlighed' },
   { kode: '210', label: 'Erhverv' },
   { kode: '410', label: 'Fritidshus' },
 ];

@@ -441,13 +441,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     for (const match of matches) {
       if (!match.bestMatch) continue;
       const policyCoverages = coveragesByPolicy.get(match.bestMatch.policy.id) ?? [];
+
+      // BIZZ-2047: Filtrer standard-betingelser til kun at matche policens selskab.
+      // Topdanmark-vilkår skal ikke bruges som baseline for Alm. Brand policer osv.
+      const policyInsurer = (match.bestMatch.policy.insurer_name ?? '').toLowerCase();
+      const matchedStdBetingelser =
+        standardBetingelserBaseline.length > 0 && policyInsurer
+          ? standardBetingelserBaseline.filter(
+              (sb) =>
+                policyInsurer.includes(sb.selskab.toLowerCase()) ||
+                sb.selskab.toLowerCase().includes(policyInsurer)
+            )
+          : [];
+
       const gaps = runGapEngine({
         policy: match.bestMatch.policy,
         coverages: policyCoverages,
         bbr: null,
         asOfDate: new Date(),
-        standardBetingelser:
-          standardBetingelserBaseline.length > 0 ? standardBetingelserBaseline : undefined,
+        standardBetingelser: matchedStdBetingelser.length > 0 ? matchedStdBetingelser : undefined,
         branche: brancheData,
         asset: {
           type: match.aktiv.type,

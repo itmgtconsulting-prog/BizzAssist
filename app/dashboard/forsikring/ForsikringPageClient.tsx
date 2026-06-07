@@ -1353,6 +1353,9 @@ function AnalyseSection({
               setKundePolicer([]);
               setLastAnalyse(null);
               setAsOfDate('');
+              setMismatchWarning(null);
+              setMismatchDocIds(new Set());
+              onCustomerSelect(null);
             }}
             className="text-slate-400 hover:text-white text-xs px-2 py-1 rounded hover:bg-white/5 transition-colors"
           >

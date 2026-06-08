@@ -83,8 +83,8 @@ interface ApiResponse {
 /* ---------- Boligtype-chips ---------- */
 
 const BOLIGTYPER = [
-  { kode: '120', label: 'Enfamiliehus' },
-  { kode: '130', label: 'Rækkehus' },
+  { kode: '110,120', label: 'Enfamiliehus' },
+  { kode: '130,131,132', label: 'Rækkehus' },
   { kode: '140', label: 'Etagebolig / Lejlighed' },
   { kode: '210,220,230,290,310,320,323,330', label: 'Erhverv' },
   { kode: '410,510,520,530,540,585,590', label: 'Fritidshus / Kolonihave' },

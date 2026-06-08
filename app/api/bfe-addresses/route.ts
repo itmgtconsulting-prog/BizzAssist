@@ -236,13 +236,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: cached } = await (admin as any)
         .from('bfe_adresse_cache')
-        .select('bfe_nummer, adresse, postnr, postnrnavn, dawa_id, ejendomstype, etage, doer')
+        .select(
+          'bfe_nummer, adresse, postnr, postnrnavn, kommune, dawa_id, ejendomstype, etage, doer'
+        )
         .in('bfe_nummer', bfeNums);
       for (const row of (cached ?? []) as Array<{
         bfe_nummer: number;
         adresse: string | null;
         postnr: string | null;
         postnrnavn: string | null;
+        kommune: string | null;
         dawa_id: string | null;
         ejendomstype: string | null;
         etage: string | null;
@@ -254,11 +257,23 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             adresse: row.adresse,
             postnr: row.postnr,
             by: row.postnrnavn,
-            kommune: null,
+            kommune: row.kommune,
             dawaId: row.dawa_id,
             ejendomstype: row.ejendomstype,
             etage: row.etage,
             doer: row.doer,
+          });
+        } else if (!row.adresse && row.kommune) {
+          // Ejendomme uden adresse men med kommune — vis kommune som fallback
+          cachedMap.set(String(row.bfe_nummer), {
+            adresse: row.kommune,
+            postnr: null,
+            by: null,
+            kommune: row.kommune,
+            dawaId: null,
+            ejendomstype: row.ejendomstype,
+            etage: null,
+            doer: null,
           });
         }
       }

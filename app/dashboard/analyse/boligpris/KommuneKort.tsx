@@ -66,6 +66,17 @@ export default function KommuneKort({
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const [loaded, setLoaded] = useState(false);
 
+  /** Resize kort når container ændrer størrelse (divider drag) */
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      mapRef.current?.resize();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
   // Beregn min/max m²-pris for farveskala
   const m2Prices = kommuneBreakdown.filter((k) => k.avg_m2_pris > 0).map((k) => k.avg_m2_pris);
   const minP = Math.min(...m2Prices, 0);

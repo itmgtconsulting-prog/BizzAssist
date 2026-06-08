@@ -35,23 +35,17 @@ interface Props {
   onToggleKommune: (kode: number) => void;
 }
 
-/** Interpoler farve baseret på m²-pris (blå=lav → emerald → amber=høj). */
+/** Interpoler farve baseret på m²-pris — slate-grå base med subtil blå accent for høje priser. */
 function priceColor(m2Pris: number, minP: number, maxP: number): string {
-  if (maxP <= minP) return '#3b82f6';
+  if (maxP <= minP) return 'rgba(100,116,139,0.4)';
   const t = Math.min(1, Math.max(0, (m2Pris - minP) / (maxP - minP)));
-  // Blå (#3b82f6) → Emerald (#34d399) → Amber (#f59e0b)
-  if (t < 0.5) {
-    const s = t * 2; // 0→1 within first half
-    const r = Math.round(59 + (52 - 59) * s);
-    const g = Math.round(130 + (211 - 130) * s);
-    const b = Math.round(246 + (153 - 246) * s);
-    return `rgb(${r},${g},${b})`;
-  }
-  const s = (t - 0.5) * 2; // 0→1 within second half
-  const r = Math.round(52 + (245 - 52) * s);
-  const g = Math.round(211 + (158 - 211) * s);
-  const b = Math.round(153 + (11 - 153) * s);
-  return `rgb(${r},${g},${b})`;
+  // Mørk slate (#334155) → Medium slate-blue (#475569) → Lys slate-blue (#64748b)
+  // Subtil — fra næsten usynlig til tydeligt synlig, men aldrig skarp farve
+  const r = Math.round(51 + (100 - 51) * t);
+  const g = Math.round(65 + (116 - 65) * t);
+  const b = Math.round(85 + (139 - 85) * t);
+  const a = 0.3 + t * 0.5; // 0.3 → 0.8 opacity
+  return `rgba(${r},${g},${b},${a})`;
 }
 
 /** Formatér tal til dansk format. */
@@ -277,15 +271,15 @@ export default function KommuneKort({
           <span>m²-pris</span>
         </div>
         <div className="flex items-center gap-1">
-          <div className="w-3 h-3 rounded-sm" style={{ background: '#22c55e' }} />
+          <div className="w-3 h-3 rounded-sm" style={{ background: 'rgba(51,65,85,0.3)' }} />
           <span>{minP > 0 ? `${Math.round(minP / 1000)}k` : '0'}</span>
           <div
             className="w-12 h-2 rounded-sm"
             style={{
-              background: 'linear-gradient(to right, #22c55e, #eab308, #ef4444)',
+              background: 'linear-gradient(to right, rgba(51,65,85,0.3), rgba(100,116,139,0.8))',
             }}
           />
-          <div className="w-3 h-3 rounded-sm" style={{ background: '#ef4444' }} />
+          <div className="w-3 h-3 rounded-sm" style={{ background: 'rgba(100,116,139,0.8)' }} />
           <span>{maxP > 0 ? `${Math.round(maxP / 1000)}k` : '–'}</span>
         </div>
       </div>

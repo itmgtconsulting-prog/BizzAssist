@@ -1140,8 +1140,11 @@ export default function EjendomDetaljeClient({
     // få 100ms — bedre end at vise forkerte ejer-data eller "Opdelt ejerskab".
     if (!dawaAdresse) return;
     const erModer = !dawaAdresse.etage && !!bbrData?.ejerlejlighedBfe;
+    // For moderejendommen: brug ejendomsrelationer BFE (221040) IKKE moderBfe (SFE 2160256).
+    // EJF-ejerskab er registreret på hovedejendomens BFE, og SFE returnerer ofte "Ukendt"
+    // fra tinglysning. Fallback til moderBfe kun hvis ejendomsrelationer er tom.
     const bfeNummer = erModer
-      ? (bbrData?.moderBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer)
+      ? (bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? bbrData?.moderBfe)
       : (bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? bbrData?.ejerlejlighedBfe ?? cachedBfe);
     if (!bfeNummer) return;
 

@@ -435,7 +435,14 @@ export default function BoligprisClient(): React.ReactElement {
               {data.handler && (
                 <div className="bg-slate-800/40 rounded-xl p-6">
                   <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-lg font-semibold text-white">Seneste handler</h2>
+                    <div className="flex items-center gap-3">
+                      <h2 className="text-lg font-semibold text-white">Seneste handler</h2>
+                      {data.handlerTotal !== undefined && (
+                        <span className="text-xs text-slate-400 bg-slate-700/40 px-2 py-0.5 rounded-full">
+                          {data.handlerTotal.toLocaleString('da-DK')} i alt
+                        </span>
+                      )}
+                    </div>
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-slate-400">Vis:</span>
                       <select

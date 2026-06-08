@@ -260,8 +260,8 @@ export default function KommuneKort({
   }, [loaded, dataMap]);
 
   return (
-    <div className="relative w-full h-full min-h-[400px] rounded-xl overflow-hidden">
-      <div ref={containerRef} className="absolute inset-0" />
+    <div className="w-full h-full overflow-hidden" style={{ minHeight: 400 }}>
+      <div ref={containerRef} className="w-full h-full" />
       {/* Farveskala legend */}
       <div className="absolute bottom-3 left-3 bg-slate-900/80 backdrop-blur-sm rounded-lg px-3 py-2 text-xs text-slate-300">
         <div className="flex items-center gap-2 mb-1">

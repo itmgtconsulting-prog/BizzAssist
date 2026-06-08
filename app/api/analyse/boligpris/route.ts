@@ -279,6 +279,21 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
 
       if (kommuner) hQuery = hQuery.in('kommune_kode', kommuner);
 
+      // Filtrer handler via BBR når boligtype er valgt
+      if (boligtyper) {
+        let bbrQuery = admin.from('bbr_ejendom_status').select('bfe_nummer');
+        bbrQuery = bbrQuery.in('byg021_anvendelse', boligtyper);
+        if (kommuner) bbrQuery = bbrQuery.in('kommune_kode', kommuner);
+        const { data: bbrBfes } = await bbrQuery.limit(1000);
+        if (bbrBfes && bbrBfes.length > 0) {
+          const bfeList = bbrBfes.map((b: { bfe_nummer: number }) => b.bfe_nummer);
+          hQuery = hQuery.in('bfe_nummer', bfeList);
+        } else {
+          // Ingen BBR-matches → 0 handler
+          hQuery = hQuery.eq('bfe_nummer', -1);
+        }
+      }
+
       const { data: hData, count: hCount, error: hErr } = await hQuery;
       if (hErr) {
         logger.warn('[boligpris] handler query fejl:', hErr.message);

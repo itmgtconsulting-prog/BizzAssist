@@ -263,12 +263,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             etage: row.etage,
             doer: row.doer,
           });
-        } else if (!row.adresse && row.kommune) {
-          // Ejendomme uden adresse men med kommune — vis kommune som fallback
+        } else if (!row.adresse) {
+          // Ejendomme uden adresse (typisk ubebygget jordstykke) — markér som
+          // resolved så diagram/enrichment ikke genforsøger, men med null-adresse
+          // så frontend kan vise sin egen fallback-label.
           cachedMap.set(String(row.bfe_nummer), {
-            adresse: row.kommune,
+            adresse: null,
             postnr: null,
-            by: null,
+            by: row.kommune ?? null,
             kommune: row.kommune,
             dawaId: null,
             ejendomstype: row.ejendomstype,

@@ -2607,10 +2607,15 @@ async function enrichPropertyNodes(
       if (node.label && !node.label.startsWith('BFE ')) continue;
 
       const info = data[String(node.bfeNummer)];
-      if (!info?.adresse) continue;
-      node.label = fmtLabel(info) ?? node.label;
-      if (info.postnr && info.by) {
-        node.sublabel = `${info.postnr} ${info.by}`;
+      if (!info) continue;
+      if (info.adresse) {
+        node.label = fmtLabel(info) ?? node.label;
+        if (info.postnr && info.by) {
+          node.sublabel = `${info.postnr} ${info.by}`;
+        }
+      } else if (info.by) {
+        // Ejendom uden adresse men med kommune — typisk ubebygget jordstykke
+        node.label = `Ubebygget grund, ${info.by}`;
       }
       const link = buildLink(info, node.bfeNummer ?? null);
       if (link) node.link = link;

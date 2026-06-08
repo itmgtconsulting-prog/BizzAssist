@@ -19,7 +19,6 @@ import {
   Loader2,
   BarChart3,
   Hash,
-  DollarSign,
   Ruler,
   ChevronLeft,
   ChevronRight,
@@ -87,8 +86,8 @@ const BOLIGTYPER = [
   { kode: '120', label: 'Enfamiliehus' },
   { kode: '130', label: 'Rækkehus' },
   { kode: '140', label: 'Etagebolig / Lejlighed' },
-  { kode: '210', label: 'Erhverv' },
-  { kode: '410', label: 'Fritidshus' },
+  { kode: '210,220,230,290,310,320,323,330', label: 'Erhverv' },
+  { kode: '410,510,520,530,540,585,590', label: 'Fritidshus / Kolonihave' },
 ];
 
 /* ---------- Tidsperioder ---------- */
@@ -346,7 +345,7 @@ export default function BoligprisClient(): React.ReactElement {
                   color="blue"
                 />
                 <KpiCard
-                  icon={<DollarSign className="w-5 h-5" />}
+                  icon={<span className="text-sm font-bold">kr</span>}
                   label="Gns. pris"
                   value={`${fmtDkk(data.noegletal.avg_pris)} kr.`}
                   color="emerald"

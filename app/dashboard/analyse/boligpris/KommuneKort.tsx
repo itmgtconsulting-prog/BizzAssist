@@ -37,13 +37,13 @@ interface Props {
   onNamesLoaded?: (names: Record<number, string>) => void;
 }
 
-/** Interpoler farve baseret på m²-pris — mørk teal → lys teal (altid synlig). */
+/** Interpoler farve baseret på m²-pris — altid synlig teal. */
 function priceColor(m2Pris: number, minP: number, maxP: number): string {
-  if (maxP <= minP) return 'rgba(20,184,166,0.3)';
+  if (maxP <= minP) return 'rgba(45,212,191,0.4)';
   const t = Math.min(1, Math.max(0, (m2Pris - minP) / (maxP - minP)));
-  // Mørk teal rgba(13,148,136,0.25) → Lys teal rgba(20,184,166,0.7)
-  const a = 0.25 + t * 0.45;
-  return `rgba(20,184,166,${a.toFixed(2)})`;
+  // Lav pris: dæmpet teal → Høj pris: stærk teal
+  const a = 0.35 + t * 0.5; // 0.35 → 0.85
+  return `rgba(45,212,191,${a.toFixed(2)})`;
 }
 
 /** Formatér tal til dansk format. */
@@ -98,10 +98,13 @@ export default function KommuneKort({
       style: 'mapbox://styles/mapbox/dark-v11',
       center: [10.5, 56.0],
       zoom: 6.2,
-      minZoom: 5,
-      maxZoom: 10,
+      minZoom: 4,
+      maxZoom: 14,
       attributionControl: false,
     });
+
+    // Zoom-knapper (compact for sidepanel)
+    map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-right');
 
     map.on('load', async () => {
       // Hent GeoJSON
@@ -119,20 +122,14 @@ export default function KommuneKort({
 
         map.addSource('kommuner', { type: 'geojson', data: geojson });
 
-        // Fill layer — farvekodning
+        // Fill layer — initial transparent, farver sættes via useEffect
         map.addLayer({
           id: 'kommune-fill',
           type: 'fill',
           source: 'kommuner',
           paint: {
-            'fill-color': [
-              'case',
-              // Default transparent for kommuner uden data
-              ['==', ['get', 'kode'], ''],
-              'rgba(100,116,139,0.1)',
-              'rgba(100,116,139,0.15)',
-            ],
-            'fill-opacity': 0.7,
+            'fill-color': 'rgba(45,212,191,0.2)',
+            'fill-opacity': 0.8,
           },
         });
 
@@ -265,9 +262,12 @@ export default function KommuneKort({
         const navn =
           props?.navn ?? KOMMUNE_NAVNE[String(kode).padStart(4, '0')] ?? `Kommune ${kode}`;
         const d = dataMap.get(kode);
-        const html = d
-          ? `<strong>${navn}</strong><br/>m²-pris: ${d.avg_m2_pris.toLocaleString('da-DK')} kr<br/>Handler: ${d.antal_handler.toLocaleString('da-DK')}<br/>Gns. pris: ${fmtDkk(d.avg_pris)} kr`
-          : `<strong>${navn}</strong><br/>Ingen data`;
+        const style =
+          'background:#1e293b;color:#e2e8f0;padding:8px 12px;border-radius:8px;font-size:12px;line-height:1.5;border:1px solid rgba(148,163,184,0.2)';
+        const content = d
+          ? `<strong style="color:#fff;font-size:13px">${navn}</strong><br/>m²-pris: ${d.avg_m2_pris.toLocaleString('da-DK')} kr/m²<br/>Handler: ${d.antal_handler.toLocaleString('da-DK')}<br/>Gns. pris: ${fmtDkk(d.avg_pris)} kr`
+          : `<strong style="color:#fff">${navn}</strong><br/><span style="color:#94a3b8">Ingen data</span>`;
+        const html = `<div style="${style}">${content}</div>`;
         popup.setLngLat(e.lngLat).setHTML(html).addTo(map);
       } else {
         popup.remove();
@@ -291,15 +291,15 @@ export default function KommuneKort({
           <span>m²-pris</span>
         </div>
         <div className="flex items-center gap-1">
-          <div className="w-3 h-3 rounded-sm" style={{ background: 'rgba(51,65,85,0.3)' }} />
+          <div className="w-3 h-3 rounded-sm" style={{ background: 'rgba(45,212,191,0.35)' }} />
           <span>{minP > 0 ? `${Math.round(minP / 1000)}k` : '0'}</span>
           <div
             className="w-12 h-2 rounded-sm"
             style={{
-              background: 'linear-gradient(to right, rgba(51,65,85,0.3), rgba(100,116,139,0.8))',
+              background: 'linear-gradient(to right, rgba(45,212,191,0.35), rgba(45,212,191,0.85))',
             }}
           />
-          <div className="w-3 h-3 rounded-sm" style={{ background: 'rgba(100,116,139,0.8)' }} />
+          <div className="w-3 h-3 rounded-sm" style={{ background: 'rgba(45,212,191,0.85)' }} />
           <span>{maxP > 0 ? `${Math.round(maxP / 1000)}k` : '–'}</span>
         </div>
       </div>

@@ -289,6 +289,60 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       out[b] = cachedMap.get(b) ?? results[uncached.indexOf(b)] ?? empty();
     }
 
+    // BIZZ-2047: Tinglysning fallback for BFE'er uden adresse.
+    // Max 3 pr. request for at undgå e-TL rate-limiting.
+    const unresolved = Object.entries(out)
+      .filter(([, v]) => !v.adresse)
+      .slice(0, 3);
+    if (unresolved.length > 0) {
+      const cookie = req.headers.get('cookie') ?? '';
+      const proto = req.headers.get('x-forwarded-proto') ?? 'https';
+      const host = `${proto}://${req.headers.get('host') ?? 'localhost:3000'}`;
+      for (const [bfe] of unresolved) {
+        try {
+          const tlRes = await fetch(`${host}/api/tinglysning?bfe=${bfe}`, {
+            headers: { cookie },
+            signal: AbortSignal.timeout(8000),
+          });
+          if (!tlRes.ok) continue;
+          const tlData = await tlRes.json();
+          if (tlData?.adresse) {
+            const parts = tlData.adresse.split(',').map((s: string) => s.trim());
+            const street = parts[0] ?? null;
+            const postBy = parts[1]?.split(' ') ?? [];
+            const postnr = postBy[0] ?? null;
+            const by = postBy.slice(1).join(' ') || null;
+            out[bfe] = {
+              adresse: street,
+              postnr,
+              by,
+              kommune: null,
+              dawaId: null,
+              ejendomstype: tlData.ejendomstype ?? null,
+              etage: null,
+              doer: null,
+            };
+            // Opdater cache asynkront (fire-and-forget)
+            void (admin as ReturnType<typeof createAdminClient>)
+              .from('bfe_adresse_cache')
+              .update({
+                adresse: street,
+                postnr,
+                postnrnavn: by,
+                ejendomstype: tlData.ejendomstype ?? null,
+                kilde: 'tinglysning_resolve',
+                sidst_opdateret: new Date().toISOString(),
+                next_retry_after: null,
+              })
+              .eq('bfe_nummer', Number(bfe))
+              .then(() => {});
+          }
+        } catch {
+          // TL-fallback er best-effort
+        }
+      }
+    }
+
     return NextResponse.json(out, {
       headers: {
         'Cache-Control': 'public, s-maxage=86400, stale-while-revalidate=21600',

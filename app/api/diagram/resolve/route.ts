@@ -2545,6 +2545,7 @@ async function enrichPropertyNodes(
         dawaId: string | null;
         etage: string | null;
         doer: string | null;
+        ejendomstype?: string | null;
       }
     > = await res.json();
 
@@ -2611,7 +2612,9 @@ async function enrichPropertyNodes(
       if (info.adresse) {
         node.label = fmtLabel(info) ?? node.label;
         if (info.postnr && info.by) {
-          node.sublabel = `${info.postnr} ${info.by}`;
+          // BIZZ-2048: Tilføj ejendomstype til sublabel hvis tilgængelig
+          const typeTag = info.ejendomstype ? ` · ${info.ejendomstype}` : '';
+          node.sublabel = `${info.postnr} ${info.by}${typeTag}`;
         }
       } else if (info.by) {
         // Ejendom uden officiel adresse — vis postnr/by som lokation

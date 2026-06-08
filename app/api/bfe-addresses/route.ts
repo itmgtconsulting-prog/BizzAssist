@@ -295,9 +295,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       .filter(([, v]) => !v.adresse)
       .slice(0, 3);
     if (unresolved.length > 0) {
-      const cookie = req.headers.get('cookie') ?? '';
-      const proto = req.headers.get('x-forwarded-proto') ?? 'https';
-      const host = `${proto}://${req.headers.get('host') ?? 'localhost:3000'}`;
+      const cookie = request.headers.get('cookie') ?? '';
+      const proto = request.headers.get('x-forwarded-proto') ?? 'https';
+      const host = `${proto}://${request.headers.get('host') ?? 'localhost:3000'}`;
       for (const [bfe] of unresolved) {
         try {
           const tlRes = await fetch(`${host}/api/tinglysning?bfe=${bfe}`, {
@@ -323,7 +323,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
               doer: null,
             };
             // Opdater cache asynkront (fire-and-forget)
-            void (admin as ReturnType<typeof createAdminClient>)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            void (admin as any)
               .from('bfe_adresse_cache')
               .update({
                 adresse: street,

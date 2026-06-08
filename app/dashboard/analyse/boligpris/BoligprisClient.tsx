@@ -531,18 +531,20 @@ export default function BoligprisClient(): React.ReactElement {
         </div>
 
         {/* HØJRE: Kommune-kort */}
-        <div className="w-[420px] flex-shrink-0 h-full border-l border-slate-700/30">
-          {data ? (
-            <KommuneKort
-              kommuneBreakdown={data.kommuneBreakdown}
-              selectedKommuner={selectedKommuner}
-              onToggleKommune={toggleKommune}
-            />
-          ) : (
-            <div className="w-full h-full bg-slate-800/20 flex items-center justify-center">
-              <span className="text-slate-400 text-sm">Kort indlæses…</span>
-            </div>
-          )}
+        <div className="w-[420px] flex-shrink-0 relative border-l border-slate-700/30">
+          <div className="absolute inset-0">
+            {data ? (
+              <KommuneKort
+                kommuneBreakdown={data.kommuneBreakdown}
+                selectedKommuner={selectedKommuner}
+                onToggleKommune={toggleKommune}
+              />
+            ) : (
+              <div className="w-full h-full bg-slate-800/20 flex items-center justify-center">
+                <span className="text-slate-400 text-sm">Kort indlæses…</span>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

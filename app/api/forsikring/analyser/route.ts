@@ -782,14 +782,34 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       gaps: allGaps.length,
     });
 
+    // Tjek om valgte standard-betingelser matchede policernes selskab
+    let stdBetingelserAdvarsel: string | null = null;
+    if (standardBetingelserBaseline.length > 0) {
+      const betSelskaber = [...new Set(standardBetingelserBaseline.map((b) => b.selskab))];
+      const polSelskaber = [
+        ...new Set(policer.map((p) => p.insurer_name).filter((n): n is string => !!n)),
+      ];
+      const noMatch = betSelskaber.filter(
+        (bs) =>
+          !polSelskaber.some(
+            (ps) =>
+              ps.toLowerCase().includes(bs.toLowerCase()) ||
+              bs.toLowerCase().includes(ps.toLowerCase())
+          )
+      );
+      if (noMatch.length > 0) {
+        stdBetingelserAdvarsel = `Standard betingelser fra ${noMatch.join(', ')} blev ikke anvendt — policerne er fra ${polSelskaber.join(', ') || 'ukendt selskab'}. Tilføj betingelser fra det korrekte selskab for at få en mere præcis gap-analyse.`;
+      }
+    }
+
     return NextResponse.json({
       analyse_id: analyse.id,
       total_aktiver: aktiver.length,
       insured_count: insuredCount,
       gaps_count: allGaps.length,
       total_risk_score: totalRiskScore,
-      // BIZZ-1973: Medsend mismatches så inline-resultatet kan vise advarsels-banner
       address_mismatches: addressMismatches,
+      std_betingelser_advarsel: stdBetingelserAdvarsel,
     });
   } catch (err) {
     logger.error('[forsikring/analyser] Fejl:', err);

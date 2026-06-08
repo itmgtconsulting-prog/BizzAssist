@@ -419,6 +419,7 @@ export default function EjendomEjerforholdTab({
                               ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
                               : `BFE ${bfeForDiagram}`
                           }
+                          lang={lang}
                           prefetchedGraph={prefetchedDiagramGraph ?? undefined}
                         />
                       )}

@@ -2613,11 +2613,10 @@ async function enrichPropertyNodes(
         if (info.postnr && info.by) {
           node.sublabel = `${info.postnr} ${info.by}`;
         }
-      } else if (info.by || info.kommune) {
-        // Ejendom uden officiel adresse i cache — vis kommune/postnr
-        const loc =
-          info.postnr && info.by ? `${info.postnr} ${info.by}` : (info.by ?? info.kommune ?? '');
-        node.label = loc ? `Uden officiel adresse, ${loc}` : node.label;
+      } else if (info.by) {
+        // Ejendom uden officiel adresse — vis postnr/by som lokation
+        const loc = info.postnr ? `${info.postnr} ${info.by}` : info.by;
+        node.label = `Uden officiel adresse, ${loc}`;
       }
       const link = buildLink(info, node.bfeNummer ?? null);
       if (link) node.link = link;

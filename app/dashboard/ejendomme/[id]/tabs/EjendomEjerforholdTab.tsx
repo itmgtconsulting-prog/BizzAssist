@@ -376,6 +376,13 @@ export default function EjendomEjerforholdTab({
 
               return (
                 <div className="space-y-4">
+                  {/* Ejerskab over moderejendommen — vises altid over strukturtræet */}
+                  {chainEjerDetaljer.length > 0 && (
+                    <>
+                      <SectionTitle title={da ? 'Ejer af ejendommen' : 'Property owner'} />
+                      <EjerKort ejerDetaljer={chainEjerDetaljer} lang={lang} />
+                    </>
+                  )}
                   <SectionTitle title={t.ownershipStructure} />
                   <EjendomStrukturTree
                     tree={enriched}
@@ -398,6 +405,25 @@ export default function EjendomEjerforholdTab({
                         : null
                     }
                   />
+                  {/* Diagram under strukturtræet */}
+                  {bfeForDiagram && chainEjerDetaljer.some((e) => e.type !== 'status') && (
+                    <>
+                      {diagramResolveLoader ? (
+                        <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />
+                      ) : (
+                        <DiagramV2
+                          rootType="property"
+                          rootId={String(bfeForDiagram)}
+                          rootLabel={
+                            dawaAdresse
+                              ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
+                              : `BFE ${bfeForDiagram}`
+                          }
+                          prefetchedGraph={prefetchedDiagramGraph ?? undefined}
+                        />
+                      )}
+                    </>
+                  )}
                 </div>
               );
             }

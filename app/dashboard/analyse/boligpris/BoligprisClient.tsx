@@ -26,9 +26,16 @@ import {
   MapPin,
 } from 'lucide-react';
 
+import ResizableDivider from '@/app/components/ResizableDivider';
+
 /* Lazy-load chart + kort — kræver browser DOM */
 const BoligprisChart = dynamic(() => import('./BoligprisChart'), { ssr: false });
 const KommuneKort = dynamic(() => import('./KommuneKort'), { ssr: false });
+
+/** Kort-panel bredde (default/min/max) */
+const MAP_DEFAULT_WIDTH = 420;
+const MAP_MIN_WIDTH = 300;
+const MAP_MAX_WIDTH = 700;
 
 /* ---------- Typer ---------- */
 
@@ -127,6 +134,7 @@ export default function BoligprisClient(): React.ReactElement {
   const [data, setData] = useState<ApiResponse | null>(null);
   const [handlerPage, setHandlerPage] = useState(0);
   const [handlerPageSize, setHandlerPageSize] = useState(50);
+  const [mapWidth, setMapWidth] = useState(MAP_DEFAULT_WIDTH);
 
   /* --- Dato-beregning baseret på valgt periode --- */
   const { fra, til } = useMemo(() => {
@@ -530,8 +538,17 @@ export default function BoligprisClient(): React.ReactElement {
           )}
         </div>
 
+        {/* Resizable divider */}
+        <ResizableDivider
+          width={mapWidth}
+          minWidth={MAP_MIN_WIDTH}
+          maxWidth={MAP_MAX_WIDTH}
+          onChange={setMapWidth}
+          ariaLabel="Juster kort-panel bredde"
+        />
+
         {/* HØJRE: Kommune-kort */}
-        <div className="w-[420px] flex-shrink-0 relative border-l border-slate-700/30">
+        <div className="flex-shrink-0 relative" style={{ width: mapWidth }}>
           <div className="absolute inset-0">
             {data ? (
               <KommuneKort

@@ -35,14 +35,23 @@ interface Props {
   onToggleKommune: (kode: number) => void;
 }
 
-/** Interpoler farve baseret på m²-pris (grøn=lav → gul → rød=høj). */
+/** Interpoler farve baseret på m²-pris (blå=lav → emerald → amber=høj). */
 function priceColor(m2Pris: number, minP: number, maxP: number): string {
-  if (maxP <= minP) return '#22c55e';
+  if (maxP <= minP) return '#3b82f6';
   const t = Math.min(1, Math.max(0, (m2Pris - minP) / (maxP - minP)));
-  // Grøn (0) → Gul (0.5) → Rød (1)
-  const r = t < 0.5 ? Math.round(255 * (t * 2)) : 255;
-  const g = t < 0.5 ? 255 : Math.round(255 * (1 - (t - 0.5) * 2));
-  return `rgb(${r},${g},60)`;
+  // Blå (#3b82f6) → Emerald (#34d399) → Amber (#f59e0b)
+  if (t < 0.5) {
+    const s = t * 2; // 0→1 within first half
+    const r = Math.round(59 + (52 - 59) * s);
+    const g = Math.round(130 + (211 - 130) * s);
+    const b = Math.round(246 + (153 - 246) * s);
+    return `rgb(${r},${g},${b})`;
+  }
+  const s = (t - 0.5) * 2; // 0→1 within second half
+  const r = Math.round(52 + (245 - 52) * s);
+  const g = Math.round(211 + (158 - 211) * s);
+  const b = Math.round(153 + (11 - 153) * s);
+  return `rgb(${r},${g},${b})`;
 }
 
 /** Formatér tal til dansk format. */

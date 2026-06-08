@@ -245,7 +245,7 @@ export default function BoligprisClient(): React.ReactElement {
       {/* Split layout: venstre data + højre kort */}
       <div className="flex items-stretch" style={{ height: 'calc(100vh - 140px)' }}>
         {/* VENSTRE: Data-panel */}
-        <div className="flex-1 overflow-y-auto px-6 pb-6 space-y-6">
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-6 space-y-6">
           {/* Filtre: boligtype chips + periode */}
           <div className="flex flex-wrap items-center gap-3">
             {/* Boligtype chips */}

@@ -37,17 +37,13 @@ interface Props {
   onNamesLoaded?: (names: Record<number, string>) => void;
 }
 
-/** Interpoler farve baseret på m²-pris — slate-grå base med subtil blå accent for høje priser. */
+/** Interpoler farve baseret på m²-pris — mørk teal → lys teal (altid synlig). */
 function priceColor(m2Pris: number, minP: number, maxP: number): string {
-  if (maxP <= minP) return 'rgba(100,116,139,0.4)';
+  if (maxP <= minP) return 'rgba(20,184,166,0.3)';
   const t = Math.min(1, Math.max(0, (m2Pris - minP) / (maxP - minP)));
-  // Mørk slate (#334155) → Medium slate-blue (#475569) → Lys slate-blue (#64748b)
-  // Subtil — fra næsten usynlig til tydeligt synlig, men aldrig skarp farve
-  const r = Math.round(51 + (100 - 51) * t);
-  const g = Math.round(65 + (116 - 65) * t);
-  const b = Math.round(85 + (139 - 85) * t);
-  const a = 0.3 + t * 0.5; // 0.3 → 0.8 opacity
-  return `rgba(${r},${g},${b},${a})`;
+  // Mørk teal rgba(13,148,136,0.25) → Lys teal rgba(20,184,166,0.7)
+  const a = 0.25 + t * 0.45;
+  return `rgba(20,184,166,${a.toFixed(2)})`;
 }
 
 /** Formatér tal til dansk format. */
@@ -247,7 +243,7 @@ export default function KommuneKort({
     const popup = new mapboxgl.Popup({
       closeButton: false,
       closeOnClick: false,
-      className: 'kommune-tooltip',
+      maxWidth: '220px',
     });
 
     const handleMove = (e: mapboxgl.MapMouseEvent) => {

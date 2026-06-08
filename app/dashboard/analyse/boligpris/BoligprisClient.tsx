@@ -135,6 +135,7 @@ export default function BoligprisClient(): React.ReactElement {
   const [handlerPage, setHandlerPage] = useState(0);
   const [handlerPageSize, setHandlerPageSize] = useState(50);
   const [mapWidth, setMapWidth] = useState(MAP_DEFAULT_WIDTH);
+  const [kommuneNavne, setKommuneNavne] = useState<Record<number, string>>({});
 
   /* --- Dato-beregning baseret på valgt periode --- */
   const { fra, til } = useMemo(() => {
@@ -288,15 +289,22 @@ export default function BoligprisClient(): React.ReactElement {
             {/* Separator */}
             <div className="w-px h-8 bg-slate-700/50" />
 
-            {/* Kommune-filter badge */}
-            {selectedKommuner.size > 0 && (
+            {/* Kommune-filter tags — én pr. valgt kommune */}
+            {Array.from(selectedKommuner).map((kode) => (
               <button
-                onClick={() => setSelectedKommuner(new Set())}
+                key={kode}
+                onClick={() => {
+                  setSelectedKommuner((prev) => {
+                    const next = new Set(prev);
+                    next.delete(kode);
+                    return next;
+                  });
+                }}
                 className="px-3 py-1.5 rounded-full text-sm font-medium bg-blue-500/20 text-blue-300 ring-1 ring-blue-500/40 hover:bg-blue-500/30 transition-colors"
               >
-                {selectedKommuner.size} kommune{selectedKommuner.size > 1 ? 'r' : ''} valgt ✕
+                {kommuneNavne[kode] ?? kode} ✕
               </button>
-            )}
+            ))}
 
             {/* Postnr-filter */}
             <div className="flex items-center gap-2">
@@ -404,7 +412,9 @@ export default function BoligprisClient(): React.ReactElement {
                             key={k.kommune_kode}
                             className="border-b border-slate-700/20 hover:bg-slate-700/20"
                           >
-                            <td className="py-2 pr-4 text-slate-200">{k.kommune_kode}</td>
+                            <td className="py-2 pr-4 text-slate-200">
+                              {kommuneNavne[k.kommune_kode] ?? k.kommune_kode}
+                            </td>
                             <td className="py-2 px-4 text-right text-slate-300">
                               {k.antal_handler.toLocaleString('da-DK')}
                             </td>
@@ -496,9 +506,9 @@ export default function BoligprisClient(): React.ReactElement {
                     </table>
                   </div>
 
-                  {/* Paginering */}
+                  {/* Paginering — sticky så den altid er synlig */}
                   {data.handlerTotal !== undefined && data.handlerTotal > handlerPageSize && (
-                    <div className="flex items-center justify-between mt-4 pt-4 border-t border-slate-700/30">
+                    <div className="flex items-center justify-between mt-4 pt-4 pb-2 border-t border-slate-700/30 sticky bottom-0 bg-[#0a1628]">
                       <span className="text-sm text-slate-400">
                         {handlerPage * handlerPageSize + 1}–
                         {Math.min((handlerPage + 1) * handlerPageSize, data.handlerTotal)} af{' '}
@@ -555,6 +565,7 @@ export default function BoligprisClient(): React.ReactElement {
                 kommuneBreakdown={data.kommuneBreakdown}
                 selectedKommuner={selectedKommuner}
                 onToggleKommune={toggleKommune}
+                onNamesLoaded={setKommuneNavne}
               />
             ) : (
               <div className="w-full h-full bg-slate-800/20 flex items-center justify-center">

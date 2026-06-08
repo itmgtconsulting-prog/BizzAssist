@@ -33,6 +33,8 @@ interface Props {
   selectedKommuner: Set<number>;
   /** Callback når kommune klikkes */
   onToggleKommune: (kode: number) => void;
+  /** Callback med kommunenavn-lookup når GeoJSON er loaded */
+  onNamesLoaded?: (names: Record<number, string>) => void;
 }
 
 /** Interpoler farve baseret på m²-pris — slate-grå base med subtil blå accent for høje priser. */
@@ -62,6 +64,7 @@ export default function KommuneKort({
   kommuneBreakdown,
   selectedKommuner,
   onToggleKommune,
+  onNamesLoaded,
 }: Props): React.ReactElement {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
@@ -99,10 +102,13 @@ export default function KommuneKort({
         const res = await fetch('/geo/kommuner.geojson');
         const geojson = await res.json();
 
-        // Gem kommunenavne
+        // Gem kommunenavne + eksponér til parent
+        const nameMap: Record<number, string> = {};
         for (const f of geojson.features) {
           KOMMUNE_NAVNE[f.properties.kode] = f.properties.navn;
+          nameMap[Number(f.properties.kode)] = f.properties.navn;
         }
+        onNamesLoaded?.(nameMap);
 
         map.addSource('kommuner', { type: 'geojson', data: geojson });
 
@@ -179,6 +185,13 @@ export default function KommuneKort({
 
     try {
       if (selectedKodes.length > 0) {
+        // Highlight valgte kommuner med blå fill + outline
+        map.setPaintProperty('kommune-fill', 'fill-opacity', [
+          'case',
+          ['in', ['get', 'kode'], ['literal', selectedKodes]],
+          0.5,
+          0.7,
+        ] as mapboxgl.Expression);
         map.setPaintProperty('kommune-outline', 'line-color', [
           'case',
           ['in', ['get', 'kode'], ['literal', selectedKodes]],

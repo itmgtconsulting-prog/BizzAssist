@@ -311,31 +311,47 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
       if (hErr) {
         logger.warn('[boligpris] handler query fejl:', hErr.message);
       } else {
-        // Berig med adresse
+        // Berig med adresse + BBR-areal
         const bfeNums = (hData ?? []).map((h: { bfe_nummer: number }) => h.bfe_nummer);
-        const adresseRes =
+        const [adresseRes, bbrRes] = await Promise.all([
           bfeNums.length > 0
-            ? await admin
+            ? admin
                 .from('bfe_adresse_cache')
                 .select('bfe_nummer, adresse, postnr, postnrnavn, kommune')
                 .in('bfe_nummer', bfeNums)
-            : { data: [] };
+            : { data: [] },
+          bfeNums.length > 0
+            ? admin
+                .from('bbr_ejendom_status')
+                .select('bfe_nummer, samlet_boligareal, samlet_erhvervsareal, byg021_anvendelse')
+                .in('bfe_nummer', bfeNums)
+            : { data: [] },
+        ]);
 
         const adresseMap = new Map<number, Record<string, unknown>>();
         for (const a of adresseRes.data ?? []) adresseMap.set(a.bfe_nummer, a);
+        const bbrMap = new Map<number, Record<string, unknown>>();
+        for (const b of bbrRes.data ?? []) bbrMap.set(b.bfe_nummer, b);
 
         handler = (hData ?? []).map((h: Record<string, unknown>) => {
           const bfe = h.bfe_nummer as number;
           const adr = adresseMap.get(bfe);
+          const bbr = bbrMap.get(bfe);
           const pris = Number(h.i_alt_koebesum) || 0;
-          const areal = Number(h.boligareal_m2) || 0;
+          // Areal: ejerskifte_historik → BBR boligareal → BBR erhvervsareal
+          const areal =
+            Number(h.boligareal_m2) ||
+            Number(bbr?.samlet_boligareal) ||
+            Number(bbr?.samlet_erhvervsareal) ||
+            0;
+          const typeKode = String(bbr?.byg021_anvendelse ?? '');
           return {
             bfe_nummer: bfe,
             dato: h.overtagelsesdato,
             pris,
             m2_pris: Number(h.m2_pris) || (areal > 0 ? Math.round(pris / areal) : null),
             areal: areal || null,
-            boligtype: null,
+            boligtype: BOLIGTYPE_LABELS[typeKode] ?? (typeKode || null),
             kommune_kode: h.kommune_kode ?? null,
             adresse: adr ? `${adr.adresse}, ${adr.postnr} ${adr.postnrnavn}` : null,
             kommune: (adr as Record<string, unknown>)?.kommune ?? null,

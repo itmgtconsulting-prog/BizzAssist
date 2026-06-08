@@ -2613,9 +2613,11 @@ async function enrichPropertyNodes(
         if (info.postnr && info.by) {
           node.sublabel = `${info.postnr} ${info.by}`;
         }
-      } else if (info.by) {
-        // Ejendom uden adresse men med kommune — typisk ubebygget jordstykke
-        node.label = `Ubebygget grund, ${info.by}`;
+      } else if (info.by || info.kommune) {
+        // Ejendom uden officiel adresse i cache — vis kommune/postnr
+        const loc =
+          info.postnr && info.by ? `${info.postnr} ${info.by}` : (info.by ?? info.kommune ?? '');
+        node.label = loc ? `Uden officiel adresse, ${loc}` : node.label;
       }
       const link = buildLink(info, node.bfeNummer ?? null);
       if (link) node.link = link;

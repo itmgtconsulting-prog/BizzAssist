@@ -3079,7 +3079,7 @@ function DiagramForce({
                         (() => {
                           // BIZZ-1867: Fallback-label for ejendomme der ikke blev resolved
                           const rawLabel = node.label.startsWith('BFE ')
-                            ? `Ubebygget grund, ${node.label}`
+                            ? `Uden officiel adresse, ${node.label}`
                             : node.label;
                           const parts = rawLabel.split(',').map((s) => s.trim());
                           const street = parts[0] ?? rawLabel;

@@ -32,7 +32,7 @@ const BoligprisChart = dynamic(() => import('./BoligprisChart'), { ssr: false })
 const KommuneKort = dynamic(() => import('./KommuneKort'), { ssr: false });
 
 /** Kort-panel bredde (default/min/max) */
-const MAP_DEFAULT_WIDTH = 420;
+const MAP_DEFAULT_WIDTH = 550;
 const MAP_MIN_WIDTH = 300;
 const MAP_MAX_WIDTH = 700;
 

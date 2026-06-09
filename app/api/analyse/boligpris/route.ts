@@ -93,7 +93,7 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
     const arealMax = Number(sp.get('areal_max')) || 0;
     const byggearMin = Number(sp.get('byggear_min')) || 0;
     const byggearMax = Number(sp.get('byggear_max')) || 0;
-    const hasBbrFilter = arealMin > 0 || arealMax > 0 || byggearMin > 0 || byggearMax > 0;
+    // BBR-filtre sendes til RPC-funktionen
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const admin = createAdminClient() as any;
@@ -283,126 +283,50 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
       yoy_pct: yoyPct !== null ? Math.round(yoyPct * 10) / 10 : null,
     };
 
-    // --- Individuelle handler (valgfrit) ---
-    // BIZZ-2045: Bruger ejerskifte_historik i stedet for v_ejerskifte_handel
-    // (viewet timeout'er ved dato-range + sortering).
+    // --- Individuelle handler via RPC (same join as MV — korrekt boligtype-filter) ---
     let handler = undefined;
     let handlerTotal = undefined;
     if (wantHandler) {
-      let hQuery = admin
-        .from('ejerskifte_historik')
-        .select(
-          'bfe_nummer, i_alt_koebesum, overtagelsesdato, kommune_kode, m2_pris, boligareal_m2',
-          { count: 'exact' }
-        )
-        .gt('i_alt_koebesum', 0)
-        .gte('overtagelsesdato', fra)
-        .lte('overtagelsesdato', til)
-        .order('overtagelsesdato', { ascending: false })
-        .range(offset, offset + limit - 1);
-
-      if (kommuner) hQuery = hQuery.in('kommune_kode', kommuner);
-
-      // Boligtype-filtrering sker via MV (KPI/chart). Handler-tabellen viser
-      // alle handler for valgt kommune — BBR-type beriges i Type-kolonnen.
-      // Tidligere BBR BFE-lookup fjernet da PostgREST .in() limit (1000) fejlede
-      // for multi-kode chips (erhverv = 8 koder × hundredevis af BFE'er).
-
-      const { data: hData, error: hErr } = await hQuery;
-      if (hErr) {
-        logger.warn('[boligpris] handler query fejl:', hErr.message);
-      } else {
-        // Berig med adresse + BBR-areal
-        const bfeNums = (hData ?? []).map((h: { bfe_nummer: number }) => h.bfe_nummer);
-        const [adresseRes, bbrRes] = await Promise.all([
-          bfeNums.length > 0
-            ? admin
-                .from('bfe_adresse_cache')
-                .select('bfe_nummer, adresse, postnr, postnrnavn, kommune')
-                .in('bfe_nummer', bfeNums)
-            : { data: [] },
-          bfeNums.length > 0
-            ? admin
-                .from('bbr_ejendom_status')
-                .select('bfe_nummer, samlet_boligareal, samlet_erhvervsareal, byg021_anvendelse')
-                .in('bfe_nummer', bfeNums)
-            : { data: [] },
-        ]);
-
-        const adresseMap = new Map<number, Record<string, unknown>>();
-        for (const a of adresseRes.data ?? []) adresseMap.set(a.bfe_nummer, a);
-        const bbrMap = new Map<number, Record<string, unknown>>();
-        for (const b of bbrRes.data ?? []) bbrMap.set(b.bfe_nummer, b);
-
-        handler = (hData ?? []).map((h: Record<string, unknown>) => {
-          const bfe = h.bfe_nummer as number;
-          const adr = adresseMap.get(bfe);
-          const bbr = bbrMap.get(bfe);
-          const pris = Number(h.i_alt_koebesum) || 0;
-          // Areal: ejerskifte_historik → BBR boligareal → BBR erhvervsareal
-          const areal =
-            Number(h.boligareal_m2) ||
-            Number(bbr?.samlet_boligareal) ||
-            Number(bbr?.samlet_erhvervsareal) ||
-            0;
-          const typeKode = String(bbr?.byg021_anvendelse ?? '');
-          return {
-            bfe_nummer: bfe,
-            dato: h.overtagelsesdato,
-            pris,
-            m2_pris: Number(h.m2_pris) || (areal > 0 ? Math.round(pris / areal) : null),
-            areal: areal || null,
-            boligtype: BOLIGTYPE_LABELS[typeKode] ?? (typeKode || null),
-            kommune_kode: h.kommune_kode ?? null,
-            adresse: adr ? `${adr.adresse}, ${adr.postnr} ${adr.postnrnavn}` : null,
-            kommune: (adr as Record<string, unknown>)?.kommune ?? null,
-          };
+      try {
+        const { data: hData, error: hErr } = await admin.rpc('boligpris_handler', {
+          p_kommune_koder: kommuner ?? null,
+          p_boligtype_koder: boligtyper ?? null,
+          p_fra: fra,
+          p_til: til,
+          p_areal_min: arealMin,
+          p_areal_max: arealMax,
+          p_byggear_min: byggearMin,
+          p_byggear_max: byggearMax,
+          p_limit: limit,
+          p_offset: offset,
         });
-
-        // Dedupliker: samme BFE + dato + pris = samme handel (EJF + TL dobbelt-entries)
-        const seen = new Set<string>();
-        handler = handler.filter((h: Record<string, unknown>) => {
-          const key = `${h.bfe_nummer}-${h.dato}-${h.pris}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
-        handlerTotal = handler.length;
-      }
-    }
-
-    // BIZZ-2051: BBR-filtre på handler (areal + byggeår)
-    if (handler && hasBbrFilter) {
-      // Hent BBR-data for handler BFE'er
-      const handlerBfes = handler.map((h: Record<string, unknown>) => h.bfe_nummer as number);
-      if (handlerBfes.length > 0) {
-        const { data: bbrFilter } = await admin
-          .from('bbr_ejendom_status')
-          .select('bfe_nummer, samlet_boligareal, opfoerelsesaar')
-          .in('bfe_nummer', handlerBfes.slice(0, 1000));
-        const bbrLookup = new Map<number, { areal: number; aar: number }>();
-        for (const b of (bbrFilter ?? []) as Array<{
-          bfe_nummer: number;
-          samlet_boligareal: number | null;
-          opfoerelsesaar: number | null;
-        }>) {
-          bbrLookup.set(b.bfe_nummer, {
-            areal: b.samlet_boligareal ?? 0,
-            aar: b.opfoerelsesaar ?? 0,
+        if (hErr) {
+          logger.warn('[boligpris] RPC handler fejl:', hErr.message);
+        } else {
+          handler = ((hData ?? []) as Array<Record<string, unknown>>).map((h) => {
+            const pris = Number(h.samlet_koebesum) || 0;
+            const areal = Number(h.samlet_boligareal) || 0;
+            const typeKode = String(h.byg021_anvendelse ?? '');
+            return {
+              bfe_nummer: h.bfe_nummer,
+              dato: h.overtagelsesdato,
+              pris,
+              m2_pris: areal > 0 ? Math.round(pris / areal) : null,
+              areal: areal || null,
+              boligtype: BOLIGTYPE_LABELS[typeKode] ?? (typeKode || null),
+              kommune_kode: null,
+              adresse: h.adresse ? `${h.adresse}, ${h.postnr} ${h.postnrnavn}` : null,
+              kommune: h.kommune ?? h.postnrnavn ?? null,
+            };
           });
+          handlerTotal = handler.length;
         }
-        handler = handler.filter((h: Record<string, unknown>) => {
-          const bbr = bbrLookup.get(h.bfe_nummer as number);
-          if (!bbr) return true; // Vis handler uden BBR-data
-          if (arealMin > 0 && bbr.areal < arealMin) return false;
-          if (arealMax > 0 && bbr.areal > arealMax) return false;
-          if (byggearMin > 0 && bbr.aar < byggearMin) return false;
-          if (byggearMax > 0 && bbr.aar > byggearMax) return false;
-          return true;
-        });
-        handlerTotal = handler.length;
+      } catch (err) {
+        logger.warn('[boligpris] RPC handler exception:', err);
       }
     }
+
+    // BBR-filtre (areal + byggeår) håndteres nu i RPC-funktionen
 
     return NextResponse.json({
       tidsserier,

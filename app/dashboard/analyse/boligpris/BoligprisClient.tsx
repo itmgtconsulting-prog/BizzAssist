@@ -236,22 +236,10 @@ export default function BoligprisClient(): React.ReactElement {
     [fetchData, handlerPageSize]
   );
 
-  /** Filtrer handler client-side baseret på valgt boligtype (BBR-beriget type-felt) */
-  const filteredHandler = useMemo(() => {
-    if (!data?.handler || selectedTypes.size === 0) return data?.handler;
-    // Byg set af valgte boligtype-labels fra BOLIGTYPE_LABELS
-    const selectedLabels = new Set<string>();
-    for (const kodeStr of selectedTypes) {
-      for (const k of kodeStr.split(',')) {
-        const label = data.boligtypeLabels?.[k];
-        if (label) selectedLabels.add(label);
-      }
-    }
-    if (selectedLabels.size === 0) return data?.handler;
-    const filtered = data.handler.filter((h) => !h.boligtype || selectedLabels.has(h.boligtype));
-    // Vis alle handler hvis filtrering giver 0 (data-mismatch mellem kilder)
-    return filtered.length > 0 ? filtered : data.handler;
-  }, [data?.handler, data?.boligtypeLabels, selectedTypes]);
+  // Handler vises ufiltreret — KPI (MV) og handler (ejerskifte_historik) bruger
+  // forskellige datakilder med forskellig BBR-type-coverage. Client-side filter
+  // gav 0 resultater for mange kombinationer og skabte mere forvirring.
+  const filteredHandler = data?.handler;
 
   return (
     <div className="flex-1 bg-[#0a1628] min-h-screen">

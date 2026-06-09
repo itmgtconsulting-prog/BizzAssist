@@ -309,9 +309,13 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
           logger.warn('[boligpris] RPC handler fejl:', hErr.message);
         } else {
           const rows = (hData ?? []) as Array<Record<string, unknown>>;
-          // total_count er en window-funktion (COUNT(*) OVER()) — samme på alle
-          // rækker; matcher KPI/MV-antal handler. Tom liste → 0.
-          handlerTotal = rows.length > 0 ? Number(rows[0].total_count) || 0 : 0;
+          // RPC'en returnerer KUN sidens rækker (ingen vindues-COUNT — den var
+          // ustabil/timeout-følsom nationalt). Det samlede antal ("i alt"-badge)
+          // tages fra KPI'en (noegletal.antal_handler) — samme tal brugeren ser i
+          // KPI-kortet, beregnet fra mv_boligpris_maaned over præcis samme
+          // join-population som handler-MV'en → garanteret match på alle
+          // granulariteter, og hurtigt.
+          handlerTotal = noegletal.antal_handler;
           handler = rows.map((h) => {
             const pris = Number(h.samlet_koebesum) || 0;
             const areal = Number(h.samlet_boligareal) || 0;

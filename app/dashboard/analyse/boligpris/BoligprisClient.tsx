@@ -242,7 +242,7 @@ export default function BoligprisClient(): React.ReactElement {
       <div className="px-6 pt-6 pb-2">
         <h1 className="text-2xl font-bold text-white flex items-center gap-2">
           <TrendingUp className="w-6 h-6 text-emerald-400" />
-          Ejendoms Dashboard
+          Ejendomspris Dashboard
         </h1>
         <p className="text-slate-400 mt-1">
           Prisudvikling og gennemsnitspriser pr. kommune — baseret på registrerede bolighandler

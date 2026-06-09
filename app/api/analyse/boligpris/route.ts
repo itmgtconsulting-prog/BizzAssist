@@ -86,8 +86,13 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
     const fra = sp.get('fra') || defaultFra;
     const til = sp.get('til') || now.toISOString().slice(0, 10);
     const wantHandler = sp.get('handler') === 'true';
-    const limit = Math.min(Math.max(Number(sp.get('limit')) || 50, 1), 500);
-    const offset = Math.max(Number(sp.get('offset')) || 0, 0);
+    // Export-mode: hent alle matchende rækker (op til 20000) så Excel-eksport
+    // matcher KPI-antal handler. Normal paginering capper ved 500.
+    const wantExport = sp.get('export') === 'true';
+    const maxLimit = wantExport ? 20000 : 500;
+    const defaultLimit = wantExport ? 20000 : 50;
+    const limit = Math.min(Math.max(Number(sp.get('limit')) || defaultLimit, 1), maxLimit);
+    const offset = wantExport ? 0 : Math.max(Number(sp.get('offset')) || 0, 0);
     // BIZZ-2051: BBR-filtre
     const arealMin = Number(sp.get('areal_min')) || 0;
     const arealMax = Number(sp.get('areal_max')) || 0;
@@ -303,7 +308,11 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
         if (hErr) {
           logger.warn('[boligpris] RPC handler fejl:', hErr.message);
         } else {
-          handler = ((hData ?? []) as Array<Record<string, unknown>>).map((h) => {
+          const rows = (hData ?? []) as Array<Record<string, unknown>>;
+          // total_count er en window-funktion (COUNT(*) OVER()) — samme på alle
+          // rækker; matcher KPI/MV-antal handler. Tom liste → 0.
+          handlerTotal = rows.length > 0 ? Number(rows[0].total_count) || 0 : 0;
+          handler = rows.map((h) => {
             const pris = Number(h.samlet_koebesum) || 0;
             const areal = Number(h.samlet_boligareal) || 0;
             const typeKode = String(h.byg021_anvendelse ?? '');
@@ -319,7 +328,6 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
               kommune: h.kommune ?? h.postnrnavn ?? null,
             };
           });
-          handlerTotal = handler.length;
         }
       } catch (err) {
         logger.warn('[boligpris] RPC handler exception:', err);

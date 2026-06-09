@@ -22,7 +22,11 @@ import {
   Ruler,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
+  ChevronDown,
+  ChevronsUpDown,
   MapPin,
+  Download,
 } from 'lucide-react';
 
 import ResizableDivider from '@/app/components/ResizableDivider';
@@ -32,9 +36,12 @@ const BoligprisChart = dynamic(() => import('./BoligprisChart'), { ssr: false })
 const KommuneKort = dynamic(() => import('./KommuneKort'), { ssr: false });
 
 /** Kort-panel bredde (default/min/max) */
-const MAP_DEFAULT_WIDTH = 420;
+const MAP_DEFAULT_WIDTH = 760;
 const MAP_MIN_WIDTH = 300;
-const MAP_MAX_WIDTH = 700;
+const MAP_MAX_WIDTH = 1000;
+
+/** Sorterbare kolonner i handler-tabellen */
+type HandlerSortKey = 'dato' | 'adresse' | 'boligtype' | 'areal' | 'pris' | 'm2_pris' | 'kommune';
 
 /* ---------- Typer ---------- */
 
@@ -139,6 +146,10 @@ export default function BoligprisClient(): React.ReactElement {
   const [handlerPageSize, setHandlerPageSize] = useState(50);
   const [mapWidth, setMapWidth] = useState(MAP_DEFAULT_WIDTH);
   const [kommuneNavne, setKommuneNavne] = useState<Record<number, string>>({});
+  const [sortKey, setSortKey] = useState<HandlerSortKey>('dato');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
+  const [exporting, setExporting] = useState(false);
 
   /* --- Dato-beregning baseret på valgt periode --- */
   const { fra, til } = useMemo(() => {
@@ -200,6 +211,7 @@ export default function BoligprisClient(): React.ReactElement {
     const timer = setTimeout(
       () => {
         setHandlerPage(0);
+        setSelectedRows(new Set());
         fetchData(true, 0, handlerPageSize);
       },
       postnr ? 500 : 0
@@ -241,6 +253,168 @@ export default function BoligprisClient(): React.ReactElement {
   // gav 0 resultater for mange kombinationer og skabte mere forvirring.
   const filteredHandler = data?.handler;
 
+  /* --- Sortering af handler-tabel (default dato faldende; klikbare overskrifter) --- */
+  const sortedHandler = useMemo(() => {
+    if (!filteredHandler) return filteredHandler;
+    const dir = sortDir === 'asc' ? 1 : -1;
+    // Numeriske kolonner sammenlignes som tal, øvrige som streng/dato
+    const numeric: Set<HandlerSortKey> = new Set(['areal', 'pris', 'm2_pris']);
+    return [...filteredHandler].sort((a, b) => {
+      if (sortKey === 'dato') {
+        return (
+          ((a.dato ?? '') < (b.dato ?? '') ? -1 : (a.dato ?? '') > (b.dato ?? '') ? 1 : 0) * dir
+        );
+      }
+      if (numeric.has(sortKey)) {
+        const av = Number(a[sortKey]) || 0;
+        const bv = Number(b[sortKey]) || 0;
+        return (av - bv) * dir;
+      }
+      const av = String(a[sortKey] ?? '');
+      const bv = String(b[sortKey] ?? '');
+      return av.localeCompare(bv, 'da-DK') * dir;
+    });
+  }, [filteredHandler, sortKey, sortDir]);
+
+  /* --- Skift sortering: samme kolonne vender retning, ny kolonne nulstiller --- */
+  const toggleSort = useCallback((key: HandlerSortKey) => {
+    setSortKey((prevKey) => {
+      if (prevKey === key) {
+        // Samme kolonne: vend retning
+        setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+        return prevKey;
+      }
+      // Ny kolonne: dato/tal starter faldende, tekst stigende
+      setSortDir(
+        key === 'dato' || key === 'areal' || key === 'pris' || key === 'm2_pris' ? 'desc' : 'asc'
+      );
+      return key;
+    });
+  }, []);
+
+  /* --- Række-markering (Excel-eksport) — stabil nøgle på tværs af sortering --- */
+  const rowKey = useCallback((h: HandelRow): string => `${h.bfe_nummer}|${h.dato}|${h.pris}`, []);
+
+  /* Er alle rækker på den aktuelle side markeret? */
+  const allPageSelected = useMemo(() => {
+    if (!sortedHandler || sortedHandler.length === 0) return false;
+    return sortedHandler.every((h) => selectedRows.has(rowKey(h)));
+  }, [sortedHandler, selectedRows, rowKey]);
+
+  /* Markér/afmarkér alle rækker på den aktuelle side */
+  const toggleSelectAll = useCallback(() => {
+    setSelectedRows((prev) => {
+      const next = new Set(prev);
+      const rows = sortedHandler ?? [];
+      const allSelected = rows.length > 0 && rows.every((h) => next.has(rowKey(h)));
+      if (allSelected) {
+        for (const h of rows) next.delete(rowKey(h));
+      } else {
+        for (const h of rows) next.add(rowKey(h));
+      }
+      return next;
+    });
+  }, [sortedHandler, rowKey]);
+
+  /* Markér/afmarkér en enkelt række */
+  const toggleSelectRow = useCallback((key: string) => {
+    setSelectedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  /* --- Excel-eksport (CSV med semikolon + UTF-8 BOM) --- */
+  const handleExport = useCallback(async () => {
+    setExporting(true);
+    try {
+      let rows: HandelRow[];
+      if (selectedRows.size > 0) {
+        // Eksportér kun markerede rækker (fra den aktuelt indlæste side)
+        rows = (sortedHandler ?? []).filter((h) => selectedRows.has(rowKey(h)));
+      } else {
+        // Ingen markering → hent ALLE matchende rækker så linjer matcher KPI-antal
+        const params = new URLSearchParams();
+        params.set('fra', fra);
+        params.set('til', til);
+        if (selectedTypes.size > 0) params.set('boligtyper', Array.from(selectedTypes).join(','));
+        if (selectedKommuner.size > 0)
+          params.set('kommuner', Array.from(selectedKommuner).join(','));
+        if (postnr.trim()) params.set('postnumre', postnr.trim());
+        if (arealMin) params.set('areal_min', arealMin);
+        if (arealMax) params.set('areal_max', arealMax);
+        if (byggearMin) params.set('byggear_min', byggearMin);
+        if (byggearMax) params.set('byggear_max', byggearMax);
+        params.set('handler', 'true');
+        params.set('export', 'true');
+        const res = await fetch(`/api/analyse/boligpris?${params.toString()}`);
+        if (!res.ok) throw new Error('Eksport fejlede');
+        const json: ApiResponse = await res.json();
+        rows = json.handler ?? [];
+      }
+
+      // Byg CSV — semikolon-separeret, UTF-8 BOM (Excel-kompatibel dansk)
+      const esc = (v: string | number | null): string => {
+        const s = v === null || v === undefined ? '' : String(v);
+        return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const header = [
+        'Dato',
+        'Adresse',
+        'Type',
+        'Areal (m²)',
+        'Pris (kr)',
+        'm²-pris (kr)',
+        'Kommune',
+        'BFE',
+      ];
+      const lines = [header.join(';')];
+      for (const h of rows) {
+        lines.push(
+          [
+            esc(h.dato ?? ''),
+            esc(h.adresse ?? ''),
+            esc(h.boligtype ?? ''),
+            esc(h.areal ?? ''),
+            esc(h.pris ?? ''),
+            esc(h.m2_pris ?? ''),
+            esc(h.kommune ?? ''),
+            esc(h.bfe_nummer ?? ''),
+          ].join(';')
+        );
+      }
+      const csv = '\uFEFF' + lines.join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `boligpris-handler-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Eksport fejlede');
+    } finally {
+      setExporting(false);
+    }
+  }, [
+    selectedRows,
+    sortedHandler,
+    rowKey,
+    fra,
+    til,
+    selectedTypes,
+    selectedKommuner,
+    postnr,
+    arealMin,
+    arealMax,
+    byggearMin,
+    byggearMax,
+  ]);
+
   return (
     <div className="flex-1 bg-[#0a1628] min-h-screen">
       {/* Header */}
@@ -257,7 +431,7 @@ export default function BoligprisClient(): React.ReactElement {
       {/* Split layout: venstre data + højre kort */}
       <div className="flex items-stretch" style={{ height: 'calc(100vh - 140px)' }}>
         {/* VENSTRE: Data-panel */}
-        <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-6 space-y-6">
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-32 space-y-6">
           {/* Filtre: boligtype chips + periode */}
           <div className="flex flex-wrap items-center gap-3">
             {/* Boligtype chips */}
@@ -493,13 +667,28 @@ export default function BoligprisClient(): React.ReactElement {
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-3">
                       <h2 className="text-lg font-semibold text-white">Seneste handler</h2>
-                      {filteredHandler && (
+                      {data.handlerTotal !== undefined && (
                         <span className="text-xs text-slate-400 bg-slate-700/40 px-2 py-0.5 rounded-full">
-                          {filteredHandler.length.toLocaleString('da-DK')} i alt
+                          {data.handlerTotal.toLocaleString('da-DK')} i alt
                         </span>
                       )}
                     </div>
                     <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleExport}
+                        disabled={exporting || !data.handlerTotal}
+                        className="flex items-center gap-1.5 bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40 text-sm font-medium rounded-lg px-3 py-1 hover:bg-emerald-500/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        aria-label="Eksportér handler til Excel"
+                      >
+                        {exporting ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Download className="w-4 h-4" />
+                        )}
+                        {selectedRows.size > 0
+                          ? `Eksportér ${selectedRows.size.toLocaleString('da-DK')} valgte`
+                          : 'Eksportér alle til Excel'}
+                      </button>
                       <span className="text-sm text-slate-400">Vis:</span>
                       <select
                         value={handlerPageSize}
@@ -521,49 +710,126 @@ export default function BoligprisClient(): React.ReactElement {
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="text-slate-400 border-b border-slate-700/50">
-                          <th className="text-left py-2 pr-4">Dato</th>
-                          <th className="text-left py-2 px-4">Adresse</th>
-                          <th className="text-left py-2 px-4">Type</th>
-                          <th className="text-right py-2 px-4">Areal</th>
-                          <th className="text-right py-2 px-4">Pris</th>
-                          <th className="text-right py-2 px-4">m²-pris</th>
-                          <th className="text-left py-2 pl-4">Kommune</th>
+                          <th className="py-2 pr-3 w-8">
+                            <input
+                              type="checkbox"
+                              checked={allPageSelected}
+                              onChange={toggleSelectAll}
+                              className="w-4 h-4 rounded border-slate-600 bg-slate-700/60 text-emerald-500 focus:ring-emerald-500/40 cursor-pointer"
+                              aria-label="Markér alle rækker på siden"
+                            />
+                          </th>
+                          <SortHeader
+                            label="Dato"
+                            sortKey="dato"
+                            align="left"
+                            className="pr-4"
+                            activeKey={sortKey}
+                            dir={sortDir}
+                            onSort={toggleSort}
+                          />
+                          <SortHeader
+                            label="Adresse"
+                            sortKey="adresse"
+                            align="left"
+                            className="px-4"
+                            activeKey={sortKey}
+                            dir={sortDir}
+                            onSort={toggleSort}
+                          />
+                          <SortHeader
+                            label="Type"
+                            sortKey="boligtype"
+                            align="left"
+                            className="px-4"
+                            activeKey={sortKey}
+                            dir={sortDir}
+                            onSort={toggleSort}
+                          />
+                          <SortHeader
+                            label="Areal"
+                            sortKey="areal"
+                            align="right"
+                            className="px-4"
+                            activeKey={sortKey}
+                            dir={sortDir}
+                            onSort={toggleSort}
+                          />
+                          <SortHeader
+                            label="Pris"
+                            sortKey="pris"
+                            align="right"
+                            className="px-4"
+                            activeKey={sortKey}
+                            dir={sortDir}
+                            onSort={toggleSort}
+                          />
+                          <SortHeader
+                            label="m²-pris"
+                            sortKey="m2_pris"
+                            align="right"
+                            className="px-4"
+                            activeKey={sortKey}
+                            dir={sortDir}
+                            onSort={toggleSort}
+                          />
+                          <SortHeader
+                            label="Kommune"
+                            sortKey="kommune"
+                            align="left"
+                            className="pl-4"
+                            activeKey={sortKey}
+                            dir={sortDir}
+                            onSort={toggleSort}
+                          />
                         </tr>
                       </thead>
                       <tbody>
-                        {(filteredHandler ?? []).map((h, idx) => (
-                          <tr
-                            key={`${h.bfe_nummer}-${idx}`}
-                            className="border-b border-slate-700/20 hover:bg-slate-700/20 cursor-pointer"
-                            onClick={() =>
-                              window.open(`/dashboard/ejendomme/${h.bfe_nummer}`, '_blank')
-                            }
-                            role="link"
-                            tabIndex={0}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter')
-                                window.open(`/dashboard/ejendomme/${h.bfe_nummer}`, '_blank');
-                            }}
-                          >
-                            <td className="py-2 pr-4 text-slate-300 whitespace-nowrap">
-                              {h.dato ? fmtDato(h.dato) : '–'}
-                            </td>
-                            <td className="py-2 px-4 text-slate-200 max-w-[250px] truncate">
-                              {h.adresse ?? '–'}
-                            </td>
-                            <td className="py-2 px-4 text-slate-300">{h.boligtype ?? '–'}</td>
-                            <td className="py-2 px-4 text-right text-slate-300">
-                              {h.areal ? `${h.areal} m²` : '–'}
-                            </td>
-                            <td className="py-2 px-4 text-right text-slate-200 font-medium">
-                              {fmtDkk(h.pris)} kr.
-                            </td>
-                            <td className="py-2 px-4 text-right text-slate-300">
-                              {h.m2_pris ? `${h.m2_pris.toLocaleString('da-DK')} kr/m²` : '–'}
-                            </td>
-                            <td className="py-2 pl-4 text-slate-300">{h.kommune ?? '–'}</td>
-                          </tr>
-                        ))}
+                        {(sortedHandler ?? []).map((h, idx) => {
+                          const key = rowKey(h);
+                          return (
+                            <tr
+                              key={`${h.bfe_nummer}-${idx}`}
+                              className="border-b border-slate-700/20 hover:bg-slate-700/20 cursor-pointer"
+                              onClick={() =>
+                                window.open(`/dashboard/ejendomme/${h.bfe_nummer}`, '_blank')
+                              }
+                              role="link"
+                              tabIndex={0}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter')
+                                  window.open(`/dashboard/ejendomme/${h.bfe_nummer}`, '_blank');
+                              }}
+                            >
+                              <td className="py-2 pr-3" onClick={(e) => e.stopPropagation()}>
+                                <input
+                                  type="checkbox"
+                                  checked={selectedRows.has(key)}
+                                  onChange={() => toggleSelectRow(key)}
+                                  className="w-4 h-4 rounded border-slate-600 bg-slate-700/60 text-emerald-500 focus:ring-emerald-500/40 cursor-pointer"
+                                  aria-label="Markér række"
+                                />
+                              </td>
+                              <td className="py-2 pr-4 text-slate-300 whitespace-nowrap">
+                                {h.dato ? fmtDato(h.dato) : '–'}
+                              </td>
+                              <td className="py-2 px-4 text-slate-200 max-w-[250px] truncate">
+                                {h.adresse ?? '–'}
+                              </td>
+                              <td className="py-2 px-4 text-slate-300">{h.boligtype ?? '–'}</td>
+                              <td className="py-2 px-4 text-right text-slate-300">
+                                {h.areal ? `${h.areal} m²` : '–'}
+                              </td>
+                              <td className="py-2 px-4 text-right text-slate-200 font-medium">
+                                {fmtDkk(h.pris)} kr.
+                              </td>
+                              <td className="py-2 px-4 text-right text-slate-300">
+                                {h.m2_pris ? `${h.m2_pris.toLocaleString('da-DK')} kr/m²` : '–'}
+                              </td>
+                              <td className="py-2 pl-4 text-slate-300">{h.kommune ?? '–'}</td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -673,5 +939,63 @@ function KpiCard({ icon, label, value, color }: KpiCardProps) {
         <p className="text-white text-lg font-semibold mt-0.5">{value}</p>
       </div>
     </div>
+  );
+}
+
+/* ---------- Sorterbar kolonne-overskrift ---------- */
+
+/** Props for SortHeader. */
+interface SortHeaderProps {
+  label: string;
+  sortKey: HandlerSortKey;
+  align: 'left' | 'right';
+  className?: string;
+  activeKey: HandlerSortKey;
+  dir: 'asc' | 'desc';
+  onSort: (key: HandlerSortKey) => void;
+}
+
+/**
+ * Klikbar tabel-overskrift der sorterer handler-tabellen på den angivne kolonne.
+ * Viser pil-ikon for aktiv sortering og dobbeltpil for inaktive kolonner.
+ *
+ * @param props - Label, sorteringsnøgle, justering og aktuel sorteringstilstand
+ * @returns th-element med sorteringsknap
+ */
+function SortHeader({ label, sortKey, align, className, activeKey, dir, onSort }: SortHeaderProps) {
+  const active = activeKey === sortKey;
+  const justify = align === 'right' ? 'justify-end' : 'justify-start';
+  const textAlign = align === 'right' ? 'text-right' : 'text-left';
+  return (
+    <th
+      className={`${textAlign} py-2 ${className ?? ''}`}
+      aria-sort={active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className={`flex items-center gap-1 ${justify} w-full font-medium transition-colors hover:text-slate-200 ${active ? 'text-slate-200' : 'text-slate-400'}`}
+        aria-label={`Sortér efter ${label}`}
+      >
+        {align === 'right' && <SortIcon active={active} dir={dir} />}
+        {label}
+        {align === 'left' && <SortIcon active={active} dir={dir} />}
+      </button>
+    </th>
+  );
+}
+
+/**
+ * Sorterings-indikator: aktiv kolonne viser op/ned-pil, inaktiv viser dobbeltpil.
+ *
+ * @param props - Om kolonnen er aktiv og sorteringsretning
+ * @returns Lucide-ikon
+ */
+function SortIcon({ active, dir }: { active: boolean; dir: 'asc' | 'desc' }) {
+  if (!active) return <ChevronsUpDown className="w-3.5 h-3.5 opacity-50" />;
+  return dir === 'asc' ? (
+    <ChevronUp className="w-3.5 h-3.5" />
+  ) : (
+    <ChevronDown className="w-3.5 h-3.5" />
   );
 }

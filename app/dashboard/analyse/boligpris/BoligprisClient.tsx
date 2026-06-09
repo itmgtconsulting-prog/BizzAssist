@@ -128,6 +128,10 @@ export default function BoligprisClient(): React.ReactElement {
   const [selectedKommuner, setSelectedKommuner] = useState<Set<number>>(new Set());
   const [periodeIdx, setPeriodeIdx] = useState(0);
   const [postnr, setPostnr] = useState('');
+  const [arealMin, setArealMin] = useState('');
+  const [arealMax, setArealMax] = useState('');
+  const [byggearMin, setByggearMin] = useState('');
+  const [byggearMax, setByggearMax] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ApiResponse | null>(null);
@@ -164,6 +168,10 @@ export default function BoligprisClient(): React.ReactElement {
         if (postnr.trim()) {
           params.set('postnumre', postnr.trim());
         }
+        if (arealMin) params.set('areal_min', arealMin);
+        if (arealMax) params.set('areal_max', arealMax);
+        if (byggearMin) params.set('byggear_min', byggearMin);
+        if (byggearMax) params.set('byggear_max', byggearMax);
         if (includeHandler) {
           params.set('handler', 'true');
           params.set('limit', String(limit));
@@ -184,7 +192,7 @@ export default function BoligprisClient(): React.ReactElement {
         setLoading(false);
       }
     },
-    [fra, til, selectedTypes, selectedKommuner, postnr]
+    [fra, til, selectedTypes, selectedKommuner, postnr, arealMin, arealMax, byggearMin, byggearMax]
   );
 
   /* Auto-fetch ved filter-ændring (debounced for postnr-input) */
@@ -315,6 +323,49 @@ export default function BoligprisClient(): React.ReactElement {
                 placeholder="Postnr (fx 2100,2200)"
                 className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 w-44"
                 aria-label="Filtrer på postnummer"
+              />
+            </div>
+
+            {/* BBR-filtre: areal + byggeår */}
+            <div className="w-px h-8 bg-slate-700/50" />
+            <div className="flex items-center gap-1.5 text-xs">
+              <Ruler className="w-3.5 h-3.5 text-slate-400" />
+              <input
+                type="number"
+                value={arealMin}
+                onChange={(e) => setArealMin(e.target.value)}
+                placeholder="m² min"
+                className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-2 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 w-20"
+                aria-label="Minimum boligareal"
+              />
+              <span className="text-slate-500">–</span>
+              <input
+                type="number"
+                value={arealMax}
+                onChange={(e) => setArealMax(e.target.value)}
+                placeholder="m² max"
+                className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-2 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 w-20"
+                aria-label="Maksimum boligareal"
+              />
+            </div>
+            <div className="flex items-center gap-1.5 text-xs">
+              <Hash className="w-3.5 h-3.5 text-slate-400" />
+              <input
+                type="number"
+                value={byggearMin}
+                onChange={(e) => setByggearMin(e.target.value)}
+                placeholder="Byggeår fra"
+                className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-2 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 w-24"
+                aria-label="Minimum byggeår"
+              />
+              <span className="text-slate-500">–</span>
+              <input
+                type="number"
+                value={byggearMax}
+                onChange={(e) => setByggearMax(e.target.value)}
+                placeholder="Byggeår til"
+                className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-2 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 w-24"
+                aria-label="Maksimum byggeår"
               />
             </div>
           </div>

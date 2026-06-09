@@ -88,6 +88,12 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
     const wantHandler = sp.get('handler') === 'true';
     const limit = Math.min(Math.max(Number(sp.get('limit')) || 50, 1), 500);
     const offset = Math.max(Number(sp.get('offset')) || 0, 0);
+    // BIZZ-2051: BBR-filtre
+    const arealMin = Number(sp.get('areal_min')) || 0;
+    const arealMax = Number(sp.get('areal_max')) || 0;
+    const byggearMin = Number(sp.get('byggear_min')) || 0;
+    const byggearMax = Number(sp.get('byggear_max')) || 0;
+    const hasBbrFilter = arealMin > 0 || arealMax > 0 || byggearMin > 0 || byggearMax > 0;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const admin = createAdminClient() as any;
@@ -356,6 +362,39 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
           const key = `${h.bfe_nummer}-${h.dato}-${h.pris}`;
           if (seen.has(key)) return false;
           seen.add(key);
+          return true;
+        });
+        handlerTotal = handler.length;
+      }
+    }
+
+    // BIZZ-2051: BBR-filtre på handler (areal + byggeår)
+    if (handler && hasBbrFilter) {
+      // Hent BBR-data for handler BFE'er
+      const handlerBfes = handler.map((h: Record<string, unknown>) => h.bfe_nummer as number);
+      if (handlerBfes.length > 0) {
+        const { data: bbrFilter } = await admin
+          .from('bbr_ejendom_status')
+          .select('bfe_nummer, samlet_boligareal, opfoerelsesaar')
+          .in('bfe_nummer', handlerBfes.slice(0, 1000));
+        const bbrLookup = new Map<number, { areal: number; aar: number }>();
+        for (const b of (bbrFilter ?? []) as Array<{
+          bfe_nummer: number;
+          samlet_boligareal: number | null;
+          opfoerelsesaar: number | null;
+        }>) {
+          bbrLookup.set(b.bfe_nummer, {
+            areal: b.samlet_boligareal ?? 0,
+            aar: b.opfoerelsesaar ?? 0,
+          });
+        }
+        handler = handler.filter((h: Record<string, unknown>) => {
+          const bbr = bbrLookup.get(h.bfe_nummer as number);
+          if (!bbr) return true; // Vis handler uden BBR-data
+          if (arealMin > 0 && bbr.areal < arealMin) return false;
+          if (arealMax > 0 && bbr.areal > arealMax) return false;
+          if (byggearMin > 0 && bbr.aar < byggearMin) return false;
+          if (byggearMax > 0 && bbr.aar > byggearMax) return false;
           return true;
         });
         handlerTotal = handler.length;

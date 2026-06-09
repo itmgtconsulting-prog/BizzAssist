@@ -41,8 +41,8 @@ interface Props {
 function priceColor(m2Pris: number, minP: number, maxP: number): string {
   if (maxP <= minP) return 'rgba(45,212,191,0.3)';
   const t = Math.min(1, Math.max(0, (m2Pris - minP) / (maxP - minP)));
-  // Smal opacity-range så alle kommuner ser ensartede ud
-  const a = 0.25 + t * 0.25; // 0.25 → 0.50
+  // Meget smal opacity-range — næsten ensartet
+  const a = 0.3 + t * 0.12; // 0.30 → 0.42
   return `rgba(45,212,191,${a.toFixed(2)})`;
 }
 
@@ -128,7 +128,7 @@ export default function KommuneKort({
           type: 'fill',
           source: 'kommuner',
           paint: {
-            'fill-color': 'rgba(45,212,191,0.2)',
+            'fill-color': 'rgba(45,212,191,0.30)',
             'fill-opacity': 0.8,
           },
         });

@@ -27,12 +27,27 @@ export const runtime = 'nodejs';
 
 /** Boligtype-koder til danske labels */
 const BOLIGTYPE_LABELS: Record<string, string> = {
+  '110': 'Stuehus',
   '120': 'Enfamiliehus',
   '130': 'Rækkehus',
+  '131': 'Dobbelthus',
+  '132': 'Kædehus',
   '140': 'Etagebolig / Lejlighed',
-  '210': 'Erhverv (kontor)',
-  '320': 'Erhverv (industri)',
-  '410': 'Fritidshus',
+  '210': 'Kontor',
+  '220': 'Detailhandel',
+  '230': 'Lager',
+  '290': 'Erhverv',
+  '310': 'Transport',
+  '320': 'Industri',
+  '323': 'Kraftværk',
+  '330': 'Landbrug',
+  '410': 'Sommerhus',
+  '510': 'Fritidshus',
+  '520': 'Feriecenter',
+  '530': 'Campinghytte',
+  '540': 'Kolonihavehus',
+  '585': 'Idræt',
+  '590': 'Fritid',
 };
 
 /**
@@ -307,7 +322,7 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
         }
       }
 
-      const { data: hData, count: hCount, error: hErr } = await hQuery;
+      const { data: hData, error: hErr } = await hQuery;
       if (hErr) {
         logger.warn('[boligpris] handler query fejl:', hErr.message);
       } else {
@@ -357,7 +372,16 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
             kommune: (adr as Record<string, unknown>)?.kommune ?? null,
           };
         });
-        handlerTotal = hCount ?? handler.length;
+
+        // Dedupliker: samme BFE + dato + pris = samme handel (EJF + TL dobbelt-entries)
+        const seen = new Set<string>();
+        handler = handler.filter((h) => {
+          const key = `${h.bfe_nummer}-${h.dato}-${h.pris}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        handlerTotal = handler.length;
       }
     }
 

@@ -375,7 +375,7 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
 
         // Dedupliker: samme BFE + dato + pris = samme handel (EJF + TL dobbelt-entries)
         const seen = new Set<string>();
-        handler = handler.filter((h) => {
+        handler = handler.filter((h: Record<string, unknown>) => {
           const key = `${h.bfe_nummer}-${h.dato}-${h.pris}`;
           if (seen.has(key)) return false;
           seen.add(key);

@@ -37,12 +37,12 @@ interface Props {
   onNamesLoaded?: (names: Record<number, string>) => void;
 }
 
-/** Interpoler farve baseret på m²-pris — altid synlig teal. */
+/** Interpoler farve baseret på m²-pris — jævn teal med lille variation. */
 function priceColor(m2Pris: number, minP: number, maxP: number): string {
-  if (maxP <= minP) return 'rgba(45,212,191,0.4)';
+  if (maxP <= minP) return 'rgba(45,212,191,0.3)';
   const t = Math.min(1, Math.max(0, (m2Pris - minP) / (maxP - minP)));
-  // Lav pris: dæmpet teal → Høj pris: stærk teal
-  const a = 0.35 + t * 0.5; // 0.35 → 0.85
+  // Smal opacity-range så alle kommuner ser ensartede ud
+  const a = 0.25 + t * 0.25; // 0.25 → 0.50
   return `rgba(45,212,191,${a.toFixed(2)})`;
 }
 
@@ -262,13 +262,13 @@ export default function KommuneKort({
         const navn =
           props?.navn ?? KOMMUNE_NAVNE[String(kode).padStart(4, '0')] ?? `Kommune ${kode}`;
         const d = dataMap.get(kode);
-        const style =
-          'background:#1e293b;color:#e2e8f0;padding:8px 12px;border-radius:8px;font-size:12px;line-height:1.5;border:1px solid rgba(148,163,184,0.2)';
         const content = d
           ? `<strong style="color:#fff;font-size:13px">${navn}</strong><br/>m²-pris: ${d.avg_m2_pris.toLocaleString('da-DK')} kr/m²<br/>Handler: ${d.antal_handler.toLocaleString('da-DK')}<br/>Gns. pris: ${fmtDkk(d.avg_pris)} kr`
           : `<strong style="color:#fff">${navn}</strong><br/><span style="color:#94a3b8">Ingen data</span>`;
-        const html = `<div style="${style}">${content}</div>`;
-        popup.setLngLat(e.lngLat).setHTML(html).addTo(map);
+        // Inject CSS for Mapbox popup container (ydre wrapper)
+        const css =
+          '<style>.mapboxgl-popup-content{background:#0f172a!important;color:#e2e8f0;padding:10px 14px!important;border-radius:8px!important;border:1px solid #1e293b!important;box-shadow:0 4px 12px rgba(0,0,0,0.6)!important;font-size:12px;line-height:1.5}.mapboxgl-popup-tip{border-top-color:#0f172a!important;border-bottom-color:#0f172a!important}</style>';
+        popup.setLngLat(e.lngLat).setHTML(`${css}${content}`).addTo(map);
       } else {
         popup.remove();
       }

@@ -2545,6 +2545,7 @@ async function enrichPropertyNodes(
         dawaId: string | null;
         etage: string | null;
         doer: string | null;
+        ejendomstype?: string | null;
       }
     > = await res.json();
 
@@ -2607,10 +2608,18 @@ async function enrichPropertyNodes(
       if (node.label && !node.label.startsWith('BFE ')) continue;
 
       const info = data[String(node.bfeNummer)];
-      if (!info?.adresse) continue;
-      node.label = fmtLabel(info) ?? node.label;
-      if (info.postnr && info.by) {
-        node.sublabel = `${info.postnr} ${info.by}`;
+      if (!info) continue;
+      if (info.adresse) {
+        node.label = fmtLabel(info) ?? node.label;
+        if (info.postnr && info.by) {
+          // BIZZ-2048: Tilføj ejendomstype til sublabel hvis tilgængelig
+          const typeTag = info.ejendomstype ? ` · ${info.ejendomstype}` : '';
+          node.sublabel = `${info.postnr} ${info.by}${typeTag}`;
+        }
+      } else if (info.by) {
+        // Ejendom uden officiel adresse — vis postnr/by som lokation
+        const loc = info.postnr ? `${info.postnr} ${info.by}` : info.by;
+        node.label = `Uden officiel adresse, ${loc}`;
       }
       const link = buildLink(info, node.bfeNummer ?? null);
       if (link) node.link = link;

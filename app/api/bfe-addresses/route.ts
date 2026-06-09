@@ -236,13 +236,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: cached } = await (admin as any)
         .from('bfe_adresse_cache')
-        .select('bfe_nummer, adresse, postnr, postnrnavn, dawa_id, ejendomstype, etage, doer')
+        .select(
+          'bfe_nummer, adresse, postnr, postnrnavn, kommune, dawa_id, ejendomstype, etage, doer'
+        )
         .in('bfe_nummer', bfeNums);
       for (const row of (cached ?? []) as Array<{
         bfe_nummer: number;
         adresse: string | null;
         postnr: string | null;
         postnrnavn: string | null;
+        kommune: string | null;
         dawa_id: string | null;
         ejendomstype: string | null;
         etage: string | null;
@@ -254,11 +257,25 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             adresse: row.adresse,
             postnr: row.postnr,
             by: row.postnrnavn,
-            kommune: null,
+            kommune: row.kommune,
             dawaId: row.dawa_id,
             ejendomstype: row.ejendomstype,
             etage: row.etage,
             doer: row.doer,
+          });
+        } else if (!row.adresse) {
+          // Ejendomme uden adresse (typisk ubebygget jordstykke) — markér som
+          // resolved så diagram/enrichment ikke genforsøger, men med null-adresse
+          // så frontend kan vise sin egen fallback-label.
+          cachedMap.set(String(row.bfe_nummer), {
+            adresse: null,
+            postnr: null,
+            by: row.kommune ?? null,
+            kommune: row.kommune,
+            dawaId: null,
+            ejendomstype: row.ejendomstype,
+            etage: null,
+            doer: null,
           });
         }
       }
@@ -270,6 +287,61 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Merge cache + live results
     for (const b of list) {
       out[b] = cachedMap.get(b) ?? results[uncached.indexOf(b)] ?? empty();
+    }
+
+    // BIZZ-2047: Tinglysning fallback for BFE'er uden adresse.
+    // Max 3 pr. request for at undgå e-TL rate-limiting.
+    const unresolved = Object.entries(out)
+      .filter(([, v]) => !v.adresse)
+      .slice(0, 3);
+    if (unresolved.length > 0) {
+      const cookie = request.headers.get('cookie') ?? '';
+      const proto = request.headers.get('x-forwarded-proto') ?? 'https';
+      const host = `${proto}://${request.headers.get('host') ?? 'localhost:3000'}`;
+      for (const [bfe] of unresolved) {
+        try {
+          const tlRes = await fetch(`${host}/api/tinglysning?bfe=${bfe}`, {
+            headers: { cookie },
+            signal: AbortSignal.timeout(8000),
+          });
+          if (!tlRes.ok) continue;
+          const tlData = await tlRes.json();
+          if (tlData?.adresse) {
+            const parts = tlData.adresse.split(',').map((s: string) => s.trim());
+            const street = parts[0] ?? null;
+            const postBy = parts[1]?.split(' ') ?? [];
+            const postnr = postBy[0] ?? null;
+            const by = postBy.slice(1).join(' ') || null;
+            out[bfe] = {
+              adresse: street,
+              postnr,
+              by,
+              kommune: null,
+              dawaId: null,
+              ejendomstype: tlData.ejendomstype ?? null,
+              etage: null,
+              doer: null,
+            };
+            // Opdater cache asynkront (fire-and-forget)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            void (admin as any)
+              .from('bfe_adresse_cache')
+              .update({
+                adresse: street,
+                postnr,
+                postnrnavn: by,
+                ejendomstype: tlData.ejendomstype ?? null,
+                kilde: 'tinglysning_resolve',
+                sidst_opdateret: new Date().toISOString(),
+                next_retry_after: null,
+              })
+              .eq('bfe_nummer', Number(bfe))
+              .then(() => {});
+          }
+        } catch {
+          // TL-fallback er best-effort
+        }
+      }
     }
 
     return NextResponse.json(out, {

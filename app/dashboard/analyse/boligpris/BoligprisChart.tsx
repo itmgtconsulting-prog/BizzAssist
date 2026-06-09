@@ -103,7 +103,15 @@ export default function BoligprisChart({ tidsserier }: Props): React.ReactElemen
           stroke="#94a3b8"
           tick={{ fill: '#94a3b8', fontSize: 12 }}
           tickFormatter={fmtDkk}
-          width={60}
+          width={70}
+          label={{
+            value: 'Gns. pris (kr)',
+            angle: -90,
+            position: 'insideLeft',
+            fill: '#64748b',
+            fontSize: 11,
+            offset: -5,
+          }}
         />
         <YAxis
           yAxisId="m2"
@@ -111,7 +119,15 @@ export default function BoligprisChart({ tidsserier }: Props): React.ReactElemen
           stroke="#94a3b8"
           tick={{ fill: '#94a3b8', fontSize: 12 }}
           tickFormatter={fmtDkk}
-          width={60}
+          width={70}
+          label={{
+            value: 'm²-pris (kr/m²)',
+            angle: 90,
+            position: 'insideRight',
+            fill: '#64748b',
+            fontSize: 11,
+            offset: -5,
+          }}
         />
         <Tooltip content={<ChartTooltip />} />
         <Legend wrapperStyle={{ color: '#94a3b8', fontSize: 13 }} />

@@ -34,12 +34,15 @@ export const metadata: Metadata = {
     statusBarStyle: 'black-translucent',
     title: 'BizzAssist',
   },
-  // Hreflang alternates — appen er fuldt tosproget (DA/EN) på samme URL-struktur
+  // Hreflang alternates — appen er fuldt tosproget (DA/EN) på SAMME URL-struktur.
+  // Sproget styres via client-side toggle i Navbar.tsx (ikke URL-prefix), så
+  // både `da` og `en` peger på samme canonical URL. Bemærk: der findes INGEN
+  // /en route — at sætte `en: '${baseUrl}/en'` her vil generere et 404-link.
   alternates: {
     canonical: process.env.NEXT_PUBLIC_APP_URL ?? 'https://bizzassist.dk',
     languages: {
       da: process.env.NEXT_PUBLIC_APP_URL ?? 'https://bizzassist.dk',
-      en: `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://bizzassist.dk'}/en`,
+      en: process.env.NEXT_PUBLIC_APP_URL ?? 'https://bizzassist.dk',
       'x-default': process.env.NEXT_PUBLIC_APP_URL ?? 'https://bizzassist.dk',
     },
   },

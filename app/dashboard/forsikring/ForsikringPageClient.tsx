@@ -870,6 +870,8 @@ function AnalyseSection({
     total_risk_score: number;
     /** BIZZ-1973: Policer der dækker en adresse uden for porteføljen */
     address_mismatches?: AddressMismatch[];
+    /** Advarsel når standard betingelser ikke matcher policens selskab */
+    std_betingelser_advarsel?: string | null;
   } | null>(null);
   /**
    * BIZZ-1973: Preflight-advarsel — sættes når adresse-tjek finder policer der
@@ -1353,6 +1355,9 @@ function AnalyseSection({
               setKundePolicer([]);
               setLastAnalyse(null);
               setAsOfDate('');
+              setMismatchWarning(null);
+              setMismatchDocIds(new Set());
+              onCustomerSelect(null);
             }}
             className="text-slate-400 hover:text-white text-xs px-2 py-1 rounded hover:bg-white/5 transition-colors"
           >
@@ -2763,6 +2768,14 @@ function AnalyseSection({
                 .join(' · ')}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Advarsel: standard betingelser matchede ikke policens selskab */}
+      {analyseResult?.std_betingelser_advarsel && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 flex items-start gap-2">
+          <AlertTriangle size={15} className="text-amber-400 shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-200">{analyseResult.std_betingelser_advarsel}</p>
         </div>
       )}
 

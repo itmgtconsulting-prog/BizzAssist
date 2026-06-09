@@ -184,7 +184,7 @@ export const ANALYSE_MODULES: AnalyseModuleConfig[] = [
   },
   {
     id: 'boligpris',
-    label: 'Boligpris Dashboard',
+    label: 'Ejendomspris Dashboard',
     labelEn: 'Property price dashboard',
     icon: 'TrendingUp',
     path: '/dashboard/analyse/boligpris',

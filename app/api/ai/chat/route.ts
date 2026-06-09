@@ -1235,12 +1235,29 @@ async function executeTool(
         }
         // Berig med ejerskab fra mv_ejerskab_beriget
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: ejere } = await (admin as any)
+        const { data: ejereRaw } = await (admin as any)
           .from('mv_ejerskab_beriget')
           .select('ejer_navn, ejer_cvr, ejer_type, ejerandel_pct, virksomhed_navn, virksomhedsform')
           .eq('bfe_nummer', bfe)
           .limit(10);
-        result = { ...ejData, ejere: ejere ?? [] };
+        // Dedupliker ejere og brug opløst virksomhedsnavn i stedet for "CVR XXXXX"
+        const ejere = (ejereRaw ?? []).map(
+          (r: {
+            ejer_navn: string;
+            ejer_cvr: string | null;
+            ejer_type: string;
+            ejerandel_pct: string | null;
+            virksomhed_navn: string | null;
+            virksomhedsform: string | null;
+          }) => ({
+            navn: r.virksomhed_navn || r.ejer_navn,
+            cvr: r.ejer_cvr,
+            type: r.ejer_type,
+            ejerandel: r.ejerandel_pct ? `${r.ejerandel_pct}%` : null,
+            virksomhedsform: r.virksomhedsform,
+          })
+        );
+        result = { ...ejData, ejere };
         break;
       }
 

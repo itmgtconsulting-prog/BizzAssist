@@ -236,6 +236,21 @@ export default function BoligprisClient(): React.ReactElement {
     [fetchData, handlerPageSize]
   );
 
+  /** Filtrer handler client-side baseret på valgt boligtype (BBR-beriget type-felt) */
+  const filteredHandler = useMemo(() => {
+    if (!data?.handler || selectedTypes.size === 0) return data?.handler;
+    // Byg set af valgte boligtype-labels fra BOLIGTYPE_LABELS
+    const selectedLabels = new Set<string>();
+    for (const kodeStr of selectedTypes) {
+      for (const k of kodeStr.split(',')) {
+        const label = data.boligtypeLabels?.[k];
+        if (label) selectedLabels.add(label);
+      }
+    }
+    if (selectedLabels.size === 0) return data?.handler;
+    return data.handler.filter((h) => !h.boligtype || selectedLabels.has(h.boligtype));
+  }, [data?.handler, data?.boligtypeLabels, selectedTypes]);
+
   return (
     <div className="flex-1 bg-[#0a1628] min-h-screen">
       {/* Header */}
@@ -488,13 +503,10 @@ export default function BoligprisClient(): React.ReactElement {
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-3">
                       <h2 className="text-lg font-semibold text-white">Seneste handler</h2>
-                      {data.handlerTotal !== undefined && (
+                      {filteredHandler && (
                         <span className="text-xs text-slate-400 bg-slate-700/40 px-2 py-0.5 rounded-full">
-                          {data.handlerTotal.toLocaleString('da-DK')} i alt
+                          {filteredHandler.length.toLocaleString('da-DK')} i alt
                         </span>
-                      )}
-                      {selectedTypes.size > 0 && (
-                        <span className="text-[10px] text-slate-500">(alle typer i kommunen)</span>
                       )}
                     </div>
                     <div className="flex items-center gap-2">
@@ -529,7 +541,7 @@ export default function BoligprisClient(): React.ReactElement {
                         </tr>
                       </thead>
                       <tbody>
-                        {data.handler.map((h, idx) => (
+                        {(filteredHandler ?? []).map((h, idx) => (
                           <tr
                             key={`${h.bfe_nummer}-${idx}`}
                             className="border-b border-slate-700/20 hover:bg-slate-700/20 cursor-pointer"

@@ -248,7 +248,9 @@ export default function BoligprisClient(): React.ReactElement {
       }
     }
     if (selectedLabels.size === 0) return data?.handler;
-    return data.handler.filter((h) => !h.boligtype || selectedLabels.has(h.boligtype));
+    const filtered = data.handler.filter((h) => !h.boligtype || selectedLabels.has(h.boligtype));
+    // Vis alle handler hvis filtrering giver 0 (data-mismatch mellem kilder)
+    return filtered.length > 0 ? filtered : data.handler;
   }, [data?.handler, data?.boligtypeLabels, selectedTypes]);
 
   return (

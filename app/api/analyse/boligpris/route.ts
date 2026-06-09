@@ -294,33 +294,10 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
 
       if (kommuner) hQuery = hQuery.in('kommune_kode', kommuner);
 
-      // Filtrer handler via BBR når boligtype + kommune er valgt.
-      // Kun muligt med kommune-filter — uden kommune er BFE-mængden for stor
-      // til PostgREST .in() (1000-row cap). Uden kommune vises alle handler.
-      if (boligtyper && kommuner) {
-        const bbrPages: number[] = [];
-        let bbrOff = 0;
-        // Paginér BBR-lookup (PostgREST 1000-row cap)
-        while (bbrOff < 5000) {
-          const { data: page } = await admin
-            .from('bbr_ejendom_status')
-            .select('bfe_nummer')
-            .in('byg021_anvendelse', boligtyper)
-            .in('kommune_kode', kommuner)
-            .range(bbrOff, bbrOff + 999);
-          if (!page || page.length === 0) break;
-          for (const b of page as Array<{ bfe_nummer: number }>) bbrPages.push(b.bfe_nummer);
-          if (page.length < 1000) break;
-          bbrOff += 1000;
-        }
-        if (bbrPages.length > 0) {
-          // PostgREST .in() max ~1000 items — chunk if needed
-          const chunk = bbrPages.slice(0, 1000);
-          hQuery = hQuery.in('bfe_nummer', chunk);
-        } else {
-          hQuery = hQuery.eq('bfe_nummer', -1);
-        }
-      }
+      // Boligtype-filtrering sker via MV (KPI/chart). Handler-tabellen viser
+      // alle handler for valgt kommune — BBR-type beriges i Type-kolonnen.
+      // Tidligere BBR BFE-lookup fjernet da PostgREST .in() limit (1000) fejlede
+      // for multi-kode chips (erhverv = 8 koder × hundredevis af BFE'er).
 
       const { data: hData, error: hErr } = await hQuery;
       if (hErr) {

@@ -293,20 +293,35 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
     let handlerTotal = undefined;
     if (wantHandler) {
       try {
-        const { data: hData, error: hErr } = await admin.rpc('boligpris_handler', {
-          p_kommune_koder: kommuner ?? null,
-          p_boligtype_koder: boligtyper ?? null,
-          p_fra: fra,
-          p_til: til,
-          p_areal_min: arealMin,
-          p_areal_max: arealMax,
-          p_byggear_min: byggearMin,
-          p_byggear_max: byggearMax,
-          p_limit: limit,
-          p_offset: offset,
-        });
+        // BIZZ-2056: RPC-kaldet fejler intermitterende (transient PostgREST/pooler-
+        // fejl) for nogle boligtyper — selve SQL'en kører på 5-60ms. Når det sker
+        // udelades handler-tabellen helt, så brugeren oplever at kun den først-viste
+        // boligtype (typisk Enfamiliehus, som er varm) reproducerbart returnerer data.
+        // Bounded retry (3 forsøg, kort backoff) gør hentningen robust uden at maskere
+        // ægte fejl.
+        let hData: unknown = null;
+        let hErr: { message: string } | null = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          const res = await admin.rpc('boligpris_handler', {
+            p_kommune_koder: kommuner ?? null,
+            p_boligtype_koder: boligtyper ?? null,
+            p_fra: fra,
+            p_til: til,
+            p_areal_min: arealMin,
+            p_areal_max: arealMax,
+            p_byggear_min: byggearMin,
+            p_byggear_max: byggearMax,
+            p_limit: limit,
+            p_offset: offset,
+          });
+          hData = res.data;
+          hErr = res.error;
+          if (!hErr) break;
+          logger.warn(`[boligpris] RPC handler fejl (forsøg ${attempt}/3):`, hErr.message);
+          if (attempt < 3) await new Promise((r) => setTimeout(r, 200 * attempt));
+        }
         if (hErr) {
-          logger.warn('[boligpris] RPC handler fejl:', hErr.message);
+          logger.warn('[boligpris] RPC handler opgivet efter 3 forsøg:', hErr.message);
         } else {
           const rows = (hData ?? []) as Array<Record<string, unknown>>;
           // RPC'en returnerer KUN sidens rækker (ingen vindues-COUNT — den var

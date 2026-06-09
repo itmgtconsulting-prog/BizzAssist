@@ -148,7 +148,6 @@ export default function BoligprisClient(): React.ReactElement {
   const [kommuneNavne, setKommuneNavne] = useState<Record<number, string>>({});
   const [sortKey, setSortKey] = useState<HandlerSortKey>('dato');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
-  const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
   const [exporting, setExporting] = useState(false);
 
   /* --- Dato-beregning baseret på valgt periode --- */
@@ -211,7 +210,6 @@ export default function BoligprisClient(): React.ReactElement {
     const timer = setTimeout(
       () => {
         setHandlerPage(0);
-        setSelectedRows(new Set());
         fetchData(true, 0, handlerPageSize);
       },
       postnr ? 500 : 0
@@ -292,68 +290,28 @@ export default function BoligprisClient(): React.ReactElement {
     });
   }, []);
 
-  /* --- Række-markering (Excel-eksport) — stabil nøgle på tværs af sortering --- */
-  const rowKey = useCallback((h: HandelRow): string => `${h.bfe_nummer}|${h.dato}|${h.pris}`, []);
-
-  /* Er alle rækker på den aktuelle side markeret? */
-  const allPageSelected = useMemo(() => {
-    if (!sortedHandler || sortedHandler.length === 0) return false;
-    return sortedHandler.every((h) => selectedRows.has(rowKey(h)));
-  }, [sortedHandler, selectedRows, rowKey]);
-
-  /* Markér/afmarkér alle rækker på den aktuelle side */
-  const toggleSelectAll = useCallback(() => {
-    setSelectedRows((prev) => {
-      const next = new Set(prev);
-      const rows = sortedHandler ?? [];
-      const allSelected = rows.length > 0 && rows.every((h) => next.has(rowKey(h)));
-      if (allSelected) {
-        for (const h of rows) next.delete(rowKey(h));
-      } else {
-        for (const h of rows) next.add(rowKey(h));
-      }
-      return next;
-    });
-  }, [sortedHandler, rowKey]);
-
-  /* Markér/afmarkér en enkelt række */
-  const toggleSelectRow = useCallback((key: string) => {
-    setSelectedRows((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }, []);
-
   /* --- Excel-eksport (CSV med semikolon + UTF-8 BOM) --- */
   const handleExport = useCallback(async () => {
     setExporting(true);
     try {
-      let rows: HandelRow[];
-      if (selectedRows.size > 0) {
-        // Eksportér kun markerede rækker (fra den aktuelt indlæste side)
-        rows = (sortedHandler ?? []).filter((h) => selectedRows.has(rowKey(h)));
-      } else {
-        // Ingen markering → hent ALLE matchende rækker så linjer matcher KPI-antal
-        const params = new URLSearchParams();
-        params.set('fra', fra);
-        params.set('til', til);
-        if (selectedTypes.size > 0) params.set('boligtyper', Array.from(selectedTypes).join(','));
-        if (selectedKommuner.size > 0)
-          params.set('kommuner', Array.from(selectedKommuner).join(','));
-        if (postnr.trim()) params.set('postnumre', postnr.trim());
-        if (arealMin) params.set('areal_min', arealMin);
-        if (arealMax) params.set('areal_max', arealMax);
-        if (byggearMin) params.set('byggear_min', byggearMin);
-        if (byggearMax) params.set('byggear_max', byggearMax);
-        params.set('handler', 'true');
-        params.set('export', 'true');
-        const res = await fetch(`/api/analyse/boligpris?${params.toString()}`);
-        if (!res.ok) throw new Error('Eksport fejlede');
-        const json: ApiResponse = await res.json();
-        rows = json.handler ?? [];
-      }
+      // Hent ALLE matchende rækker (op til 20000) så eksporterede linjer matcher
+      // de aktive filtre — ingen række-markering, hele resultatet eksporteres.
+      const params = new URLSearchParams();
+      params.set('fra', fra);
+      params.set('til', til);
+      if (selectedTypes.size > 0) params.set('boligtyper', Array.from(selectedTypes).join(','));
+      if (selectedKommuner.size > 0) params.set('kommuner', Array.from(selectedKommuner).join(','));
+      if (postnr.trim()) params.set('postnumre', postnr.trim());
+      if (arealMin) params.set('areal_min', arealMin);
+      if (arealMax) params.set('areal_max', arealMax);
+      if (byggearMin) params.set('byggear_min', byggearMin);
+      if (byggearMax) params.set('byggear_max', byggearMax);
+      params.set('handler', 'true');
+      params.set('export', 'true');
+      const res = await fetch(`/api/analyse/boligpris?${params.toString()}`);
+      if (!res.ok) throw new Error('Eksport fejlede');
+      const json: ApiResponse = await res.json();
+      const rows: HandelRow[] = json.handler ?? [];
 
       // Byg CSV — semikolon-separeret, UTF-8 BOM (Excel-kompatibel dansk)
       const esc = (v: string | number | null): string => {
@@ -401,9 +359,6 @@ export default function BoligprisClient(): React.ReactElement {
       setExporting(false);
     }
   }, [
-    selectedRows,
-    sortedHandler,
-    rowKey,
     fra,
     til,
     selectedTypes,
@@ -685,9 +640,7 @@ export default function BoligprisClient(): React.ReactElement {
                         ) : (
                           <Download className="w-4 h-4" />
                         )}
-                        {selectedRows.size > 0
-                          ? `Eksportér ${selectedRows.size.toLocaleString('da-DK')} valgte`
-                          : 'Eksportér alle til Excel'}
+                        Eksportér alle til Excel
                       </button>
                       <span className="text-sm text-slate-400">Vis:</span>
                       <select
@@ -710,15 +663,6 @@ export default function BoligprisClient(): React.ReactElement {
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="text-slate-400 border-b border-slate-700/50">
-                          <th className="py-2 pr-3 w-8">
-                            <input
-                              type="checkbox"
-                              checked={allPageSelected}
-                              onChange={toggleSelectAll}
-                              className="w-4 h-4 rounded border-slate-600 bg-slate-700/60 text-emerald-500 focus:ring-emerald-500/40 cursor-pointer"
-                              aria-label="Markér alle rækker på siden"
-                            />
-                          </th>
                           <SortHeader
                             label="Dato"
                             sortKey="dato"
@@ -786,7 +730,6 @@ export default function BoligprisClient(): React.ReactElement {
                       </thead>
                       <tbody>
                         {(sortedHandler ?? []).map((h, idx) => {
-                          const key = rowKey(h);
                           return (
                             <tr
                               key={`${h.bfe_nummer}-${idx}`}
@@ -801,15 +744,6 @@ export default function BoligprisClient(): React.ReactElement {
                                   window.open(`/dashboard/ejendomme/${h.bfe_nummer}`, '_blank');
                               }}
                             >
-                              <td className="py-2 pr-3" onClick={(e) => e.stopPropagation()}>
-                                <input
-                                  type="checkbox"
-                                  checked={selectedRows.has(key)}
-                                  onChange={() => toggleSelectRow(key)}
-                                  className="w-4 h-4 rounded border-slate-600 bg-slate-700/60 text-emerald-500 focus:ring-emerald-500/40 cursor-pointer"
-                                  aria-label="Markér række"
-                                />
-                              </td>
                               <td className="py-2 pr-4 text-slate-300 whitespace-nowrap">
                                 {h.dato ? fmtDato(h.dato) : '–'}
                               </td>

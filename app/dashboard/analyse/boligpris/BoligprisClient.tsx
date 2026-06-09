@@ -22,6 +22,9 @@ import {
   Ruler,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
+  ChevronDown,
+  ChevronsUpDown,
   MapPin,
 } from 'lucide-react';
 
@@ -32,9 +35,12 @@ const BoligprisChart = dynamic(() => import('./BoligprisChart'), { ssr: false })
 const KommuneKort = dynamic(() => import('./KommuneKort'), { ssr: false });
 
 /** Kort-panel bredde (default/min/max) */
-const MAP_DEFAULT_WIDTH = 550;
+const MAP_DEFAULT_WIDTH = 760;
 const MAP_MIN_WIDTH = 300;
-const MAP_MAX_WIDTH = 700;
+const MAP_MAX_WIDTH = 1000;
+
+/** Sorterbare kolonner i handler-tabellen */
+type HandlerSortKey = 'dato' | 'adresse' | 'boligtype' | 'areal' | 'pris' | 'm2_pris' | 'kommune';
 
 /* ---------- Typer ---------- */
 
@@ -139,6 +145,8 @@ export default function BoligprisClient(): React.ReactElement {
   const [handlerPageSize, setHandlerPageSize] = useState(50);
   const [mapWidth, setMapWidth] = useState(MAP_DEFAULT_WIDTH);
   const [kommuneNavne, setKommuneNavne] = useState<Record<number, string>>({});
+  const [sortKey, setSortKey] = useState<HandlerSortKey>('dato');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   /* --- Dato-beregning baseret på valgt periode --- */
   const { fra, til } = useMemo(() => {
@@ -241,6 +249,45 @@ export default function BoligprisClient(): React.ReactElement {
   // gav 0 resultater for mange kombinationer og skabte mere forvirring.
   const filteredHandler = data?.handler;
 
+  /* --- Sortering af handler-tabel (default dato faldende; klikbare overskrifter) --- */
+  const sortedHandler = useMemo(() => {
+    if (!filteredHandler) return filteredHandler;
+    const dir = sortDir === 'asc' ? 1 : -1;
+    // Numeriske kolonner sammenlignes som tal, øvrige som streng/dato
+    const numeric: Set<HandlerSortKey> = new Set(['areal', 'pris', 'm2_pris']);
+    return [...filteredHandler].sort((a, b) => {
+      if (sortKey === 'dato') {
+        return (
+          ((a.dato ?? '') < (b.dato ?? '') ? -1 : (a.dato ?? '') > (b.dato ?? '') ? 1 : 0) * dir
+        );
+      }
+      if (numeric.has(sortKey)) {
+        const av = Number(a[sortKey]) || 0;
+        const bv = Number(b[sortKey]) || 0;
+        return (av - bv) * dir;
+      }
+      const av = String(a[sortKey] ?? '');
+      const bv = String(b[sortKey] ?? '');
+      return av.localeCompare(bv, 'da-DK') * dir;
+    });
+  }, [filteredHandler, sortKey, sortDir]);
+
+  /* --- Skift sortering: samme kolonne vender retning, ny kolonne nulstiller --- */
+  const toggleSort = useCallback((key: HandlerSortKey) => {
+    setSortKey((prevKey) => {
+      if (prevKey === key) {
+        // Samme kolonne: vend retning
+        setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+        return prevKey;
+      }
+      // Ny kolonne: dato/tal starter faldende, tekst stigende
+      setSortDir(
+        key === 'dato' || key === 'areal' || key === 'pris' || key === 'm2_pris' ? 'desc' : 'asc'
+      );
+      return key;
+    });
+  }, []);
+
   return (
     <div className="flex-1 bg-[#0a1628] min-h-screen">
       {/* Header */}
@@ -257,7 +304,7 @@ export default function BoligprisClient(): React.ReactElement {
       {/* Split layout: venstre data + højre kort */}
       <div className="flex items-stretch" style={{ height: 'calc(100vh - 140px)' }}>
         {/* VENSTRE: Data-panel */}
-        <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-6 space-y-6">
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-32 space-y-6">
           {/* Filtre: boligtype chips + periode */}
           <div className="flex flex-wrap items-center gap-3">
             {/* Boligtype chips */}
@@ -521,17 +568,73 @@ export default function BoligprisClient(): React.ReactElement {
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="text-slate-400 border-b border-slate-700/50">
-                          <th className="text-left py-2 pr-4">Dato</th>
-                          <th className="text-left py-2 px-4">Adresse</th>
-                          <th className="text-left py-2 px-4">Type</th>
-                          <th className="text-right py-2 px-4">Areal</th>
-                          <th className="text-right py-2 px-4">Pris</th>
-                          <th className="text-right py-2 px-4">m²-pris</th>
-                          <th className="text-left py-2 pl-4">Kommune</th>
+                          <SortHeader
+                            label="Dato"
+                            sortKey="dato"
+                            align="left"
+                            className="pr-4"
+                            activeKey={sortKey}
+                            dir={sortDir}
+                            onSort={toggleSort}
+                          />
+                          <SortHeader
+                            label="Adresse"
+                            sortKey="adresse"
+                            align="left"
+                            className="px-4"
+                            activeKey={sortKey}
+                            dir={sortDir}
+                            onSort={toggleSort}
+                          />
+                          <SortHeader
+                            label="Type"
+                            sortKey="boligtype"
+                            align="left"
+                            className="px-4"
+                            activeKey={sortKey}
+                            dir={sortDir}
+                            onSort={toggleSort}
+                          />
+                          <SortHeader
+                            label="Areal"
+                            sortKey="areal"
+                            align="right"
+                            className="px-4"
+                            activeKey={sortKey}
+                            dir={sortDir}
+                            onSort={toggleSort}
+                          />
+                          <SortHeader
+                            label="Pris"
+                            sortKey="pris"
+                            align="right"
+                            className="px-4"
+                            activeKey={sortKey}
+                            dir={sortDir}
+                            onSort={toggleSort}
+                          />
+                          <SortHeader
+                            label="m²-pris"
+                            sortKey="m2_pris"
+                            align="right"
+                            className="px-4"
+                            activeKey={sortKey}
+                            dir={sortDir}
+                            onSort={toggleSort}
+                          />
+                          <SortHeader
+                            label="Kommune"
+                            sortKey="kommune"
+                            align="left"
+                            className="pl-4"
+                            activeKey={sortKey}
+                            dir={sortDir}
+                            onSort={toggleSort}
+                          />
                         </tr>
                       </thead>
                       <tbody>
-                        {(filteredHandler ?? []).map((h, idx) => (
+                        {(sortedHandler ?? []).map((h, idx) => (
                           <tr
                             key={`${h.bfe_nummer}-${idx}`}
                             className="border-b border-slate-700/20 hover:bg-slate-700/20 cursor-pointer"
@@ -673,5 +776,63 @@ function KpiCard({ icon, label, value, color }: KpiCardProps) {
         <p className="text-white text-lg font-semibold mt-0.5">{value}</p>
       </div>
     </div>
+  );
+}
+
+/* ---------- Sorterbar kolonne-overskrift ---------- */
+
+/** Props for SortHeader. */
+interface SortHeaderProps {
+  label: string;
+  sortKey: HandlerSortKey;
+  align: 'left' | 'right';
+  className?: string;
+  activeKey: HandlerSortKey;
+  dir: 'asc' | 'desc';
+  onSort: (key: HandlerSortKey) => void;
+}
+
+/**
+ * Klikbar tabel-overskrift der sorterer handler-tabellen på den angivne kolonne.
+ * Viser pil-ikon for aktiv sortering og dobbeltpil for inaktive kolonner.
+ *
+ * @param props - Label, sorteringsnøgle, justering og aktuel sorteringstilstand
+ * @returns th-element med sorteringsknap
+ */
+function SortHeader({ label, sortKey, align, className, activeKey, dir, onSort }: SortHeaderProps) {
+  const active = activeKey === sortKey;
+  const justify = align === 'right' ? 'justify-end' : 'justify-start';
+  const textAlign = align === 'right' ? 'text-right' : 'text-left';
+  return (
+    <th
+      className={`${textAlign} py-2 ${className ?? ''}`}
+      aria-sort={active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className={`flex items-center gap-1 ${justify} w-full font-medium transition-colors hover:text-slate-200 ${active ? 'text-slate-200' : 'text-slate-400'}`}
+        aria-label={`Sortér efter ${label}`}
+      >
+        {align === 'right' && <SortIcon active={active} dir={dir} />}
+        {label}
+        {align === 'left' && <SortIcon active={active} dir={dir} />}
+      </button>
+    </th>
+  );
+}
+
+/**
+ * Sorterings-indikator: aktiv kolonne viser op/ned-pil, inaktiv viser dobbeltpil.
+ *
+ * @param props - Om kolonnen er aktiv og sorteringsretning
+ * @returns Lucide-ikon
+ */
+function SortIcon({ active, dir }: { active: boolean; dir: 'asc' | 'desc' }) {
+  if (!active) return <ChevronsUpDown className="w-3.5 h-3.5 opacity-50" />;
+  return dir === 'asc' ? (
+    <ChevronUp className="w-3.5 h-3.5" />
+  ) : (
+    <ChevronDown className="w-3.5 h-3.5" />
   );
 }

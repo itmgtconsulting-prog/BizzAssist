@@ -179,8 +179,11 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
       const m = String(row.maaned);
       const ah = Number(row.antal_handler) || 0;
       const ap = Number(row.avg_pris) || 0;
-      const am = Number(row.avg_m2_pris) || 0;
+      let am = Number(row.avg_m2_pris) || 0;
       const kk = Number(row.kommune_kode);
+
+      // Cap urealistiske m²-priser (outliers fra korrupt kilde-data)
+      if (am > 200000) am = 0;
 
       // Tidsserie
       const existing = tidsserieMap.get(m);

@@ -493,6 +493,9 @@ export default function BoligprisClient(): React.ReactElement {
                           {data.handlerTotal.toLocaleString('da-DK')} i alt
                         </span>
                       )}
+                      {selectedTypes.size > 0 && (
+                        <span className="text-[10px] text-slate-500">(alle typer i kommunen)</span>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-slate-400">Vis:</span>

@@ -697,6 +697,33 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
       `[salgshistorik] ${handler.length} ejerskab-events fundet for BFE ${bfeNummer} via EJFCustom`
     );
 
+    // Resolve CVR-numre til firmanavne for køber-felter der kun viser "CVR XXXXX"
+    const cvrPattern = /^CVR \d+$/;
+    const unresolved = handler
+      .filter((h) => h.koeber && cvrPattern.test(h.koeber) && h.koeberCvr)
+      .map((h) => h.koeberCvr!);
+    if (unresolved.length > 0) {
+      try {
+        const uniqueCvrs = [...new Set(unresolved)];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: firms } = await (createAdminClient() as any)
+          .from('cvr_virksomhed')
+          .select('cvr, navn')
+          .in('cvr', uniqueCvrs);
+        const cvrNames = new Map<string, string>();
+        for (const f of (firms ?? []) as Array<{ cvr: string; navn: string }>) {
+          if (f.navn) cvrNames.set(f.cvr, f.navn);
+        }
+        for (const h of handler) {
+          if (h.koeber && cvrPattern.test(h.koeber) && h.koeberCvr && cvrNames.has(h.koeberCvr)) {
+            h.koeber = cvrNames.get(h.koeberCvr)!;
+          }
+        }
+      } catch {
+        // Best-effort — vis CVR-nummer hvis opslag fejler
+      }
+    }
+
     // BIZZ-633: Cache response før return
     const responseData: SalgshistorikResponse = {
       bfeNummer,

@@ -27,12 +27,27 @@ export const runtime = 'nodejs';
 
 /** Boligtype-koder til danske labels */
 const BOLIGTYPE_LABELS: Record<string, string> = {
+  '110': 'Stuehus',
   '120': 'Enfamiliehus',
   '130': 'Rækkehus',
+  '131': 'Dobbelthus',
+  '132': 'Kædehus',
   '140': 'Etagebolig / Lejlighed',
-  '210': 'Erhverv (kontor)',
-  '320': 'Erhverv (industri)',
-  '410': 'Fritidshus',
+  '210': 'Kontor',
+  '220': 'Detailhandel',
+  '230': 'Lager',
+  '290': 'Erhverv',
+  '310': 'Transport',
+  '320': 'Industri',
+  '323': 'Kraftværk',
+  '330': 'Landbrug',
+  '410': 'Sommerhus',
+  '510': 'Fritidshus',
+  '520': 'Feriecenter',
+  '530': 'Campinghytte',
+  '540': 'Kolonihavehus',
+  '585': 'Idræt',
+  '590': 'Fritid',
 };
 
 /**
@@ -73,6 +88,12 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
     const wantHandler = sp.get('handler') === 'true';
     const limit = Math.min(Math.max(Number(sp.get('limit')) || 50, 1), 500);
     const offset = Math.max(Number(sp.get('offset')) || 0, 0);
+    // BIZZ-2051: BBR-filtre
+    const arealMin = Number(sp.get('areal_min')) || 0;
+    const arealMax = Number(sp.get('areal_max')) || 0;
+    const byggearMin = Number(sp.get('byggear_min')) || 0;
+    const byggearMax = Number(sp.get('byggear_max')) || 0;
+    // BBR-filtre sendes til RPC-funktionen
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const admin = createAdminClient() as any;
@@ -158,8 +179,11 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
       const m = String(row.maaned);
       const ah = Number(row.antal_handler) || 0;
       const ap = Number(row.avg_pris) || 0;
-      const am = Number(row.avg_m2_pris) || 0;
+      let am = Number(row.avg_m2_pris) || 0;
       const kk = Number(row.kommune_kode);
+
+      // Cap urealistiske m²-priser (outliers fra korrupt kilde-data)
+      if (am > 200000) am = 0;
 
       // Tidsserie
       const existing = tidsserieMap.get(m);
@@ -259,63 +283,50 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
       yoy_pct: yoyPct !== null ? Math.round(yoyPct * 10) / 10 : null,
     };
 
-    // --- Individuelle handler (valgfrit) ---
-    // BIZZ-2045: Bruger ejerskifte_historik i stedet for v_ejerskifte_handel
-    // (viewet timeout'er ved dato-range + sortering).
+    // --- Individuelle handler via RPC (same join as MV — korrekt boligtype-filter) ---
     let handler = undefined;
     let handlerTotal = undefined;
     if (wantHandler) {
-      let hQuery = admin
-        .from('ejerskifte_historik')
-        .select(
-          'bfe_nummer, i_alt_koebesum, overtagelsesdato, kommune_kode, m2_pris, boligareal_m2',
-          { count: 'exact' }
-        )
-        .gt('i_alt_koebesum', 0)
-        .gte('overtagelsesdato', fra)
-        .lte('overtagelsesdato', til)
-        .order('overtagelsesdato', { ascending: false })
-        .range(offset, offset + limit - 1);
-
-      if (kommuner) hQuery = hQuery.in('kommune_kode', kommuner);
-
-      const { data: hData, count: hCount, error: hErr } = await hQuery;
-      if (hErr) {
-        logger.warn('[boligpris] handler query fejl:', hErr.message);
-      } else {
-        // Berig med adresse
-        const bfeNums = (hData ?? []).map((h: { bfe_nummer: number }) => h.bfe_nummer);
-        const adresseRes =
-          bfeNums.length > 0
-            ? await admin
-                .from('bfe_adresse_cache')
-                .select('bfe_nummer, adresse, postnr, postnrnavn, kommune')
-                .in('bfe_nummer', bfeNums)
-            : { data: [] };
-
-        const adresseMap = new Map<number, Record<string, unknown>>();
-        for (const a of adresseRes.data ?? []) adresseMap.set(a.bfe_nummer, a);
-
-        handler = (hData ?? []).map((h: Record<string, unknown>) => {
-          const bfe = h.bfe_nummer as number;
-          const adr = adresseMap.get(bfe);
-          const pris = Number(h.i_alt_koebesum) || 0;
-          const areal = Number(h.boligareal_m2) || 0;
-          return {
-            bfe_nummer: bfe,
-            dato: h.overtagelsesdato,
-            pris,
-            m2_pris: Number(h.m2_pris) || (areal > 0 ? Math.round(pris / areal) : null),
-            areal: areal || null,
-            boligtype: null,
-            kommune_kode: h.kommune_kode ?? null,
-            adresse: adr ? `${adr.adresse}, ${adr.postnr} ${adr.postnrnavn}` : null,
-            kommune: (adr as Record<string, unknown>)?.kommune ?? null,
-          };
+      try {
+        const { data: hData, error: hErr } = await admin.rpc('boligpris_handler', {
+          p_kommune_koder: kommuner ?? null,
+          p_boligtype_koder: boligtyper ?? null,
+          p_fra: fra,
+          p_til: til,
+          p_areal_min: arealMin,
+          p_areal_max: arealMax,
+          p_byggear_min: byggearMin,
+          p_byggear_max: byggearMax,
+          p_limit: limit,
+          p_offset: offset,
         });
-        handlerTotal = hCount ?? handler.length;
+        if (hErr) {
+          logger.warn('[boligpris] RPC handler fejl:', hErr.message);
+        } else {
+          handler = ((hData ?? []) as Array<Record<string, unknown>>).map((h) => {
+            const pris = Number(h.samlet_koebesum) || 0;
+            const areal = Number(h.samlet_boligareal) || 0;
+            const typeKode = String(h.byg021_anvendelse ?? '');
+            return {
+              bfe_nummer: h.bfe_nummer,
+              dato: h.overtagelsesdato,
+              pris,
+              m2_pris: areal > 0 ? Math.round(pris / areal) : null,
+              areal: areal || null,
+              boligtype: BOLIGTYPE_LABELS[typeKode] ?? (typeKode || null),
+              kommune_kode: null,
+              adresse: h.adresse ? `${h.adresse}, ${h.postnr} ${h.postnrnavn}` : null,
+              kommune: h.kommune ?? h.postnrnavn ?? null,
+            };
+          });
+          handlerTotal = handler.length;
+        }
+      } catch (err) {
+        logger.warn('[boligpris] RPC handler exception:', err);
       }
     }
+
+    // BBR-filtre (areal + byggeår) håndteres nu i RPC-funktionen
 
     return NextResponse.json({
       tidsserier,

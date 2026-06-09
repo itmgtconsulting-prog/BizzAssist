@@ -48,22 +48,42 @@ export async function tlFetch(
     const targetUrl = `${tlBase}${tlApiPath}${urlPath}`;
     const proxied = targetUrl.replace('https://', `${proxyUrl}/proxy/`);
 
-    try {
-      const proxyRes = await fetch(proxied, {
-        method: 'GET',
-        headers: {
-          Accept: accept,
-          ...(proxySecret ? { 'X-Proxy-Secret': proxySecret } : {}),
-        },
-        signal: AbortSignal.timeout(timeout),
-      });
-      return { status: proxyRes.status, body: await proxyRes.text() };
-    } catch (err) {
-      logger.warn(
-        '[tlFetch] Proxy failed, falling back to direct mTLS:',
-        err instanceof Error ? err.message : err
-      );
-      // Fall through to direct mTLS below
+    // Retry med exponential backoff ved 429 (e-TL rate limit)
+    const MAX_RETRIES = 3;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const proxyRes = await fetch(proxied, {
+          method: 'GET',
+          headers: {
+            Accept: accept,
+            ...(proxySecret ? { 'X-Proxy-Secret': proxySecret } : {}),
+          },
+          signal: AbortSignal.timeout(timeout),
+        });
+        if (proxyRes.status === 429 && attempt < MAX_RETRIES) {
+          const waitMs = (attempt + 1) * 2000; // 2s, 4s, 6s
+          logger.warn(
+            `[tlFetch] 429 from e-TL, retry ${attempt + 1}/${MAX_RETRIES} after ${waitMs}ms`
+          );
+          await new Promise((r) => setTimeout(r, waitMs));
+          continue;
+        }
+        return { status: proxyRes.status, body: await proxyRes.text() };
+      } catch (err) {
+        if (attempt < MAX_RETRIES) {
+          logger.warn(
+            `[tlFetch] Proxy attempt ${attempt + 1} failed:`,
+            err instanceof Error ? err.message : err
+          );
+          continue;
+        }
+        logger.warn(
+          '[tlFetch] Proxy failed after retries, falling back to direct mTLS:',
+          err instanceof Error ? err.message : err
+        );
+        // Fall through to direct mTLS below
+        break;
+      }
     }
   }
 

@@ -45,6 +45,10 @@ const VIEWS = [
   'mv_virksomhed_portefolje',
   'mv_kommune_statistik',
   'mv_boligpris_maaned',
+  // BIZZ-2054: M&A-radarens kandidat-MV. Lå tidligere ikke på nogen
+  // refresh-sti → radaren frøs på sidste manuelle refresh. Whitelistet i
+  // refresh_materialized_view() RPC i migration 170.
+  'mv_virksomhedshandel_kandidater',
 ];
 
 export async function GET(request: NextRequest): Promise<NextResponse> {

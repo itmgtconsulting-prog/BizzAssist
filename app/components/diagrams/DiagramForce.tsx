@@ -3077,9 +3077,9 @@ function DiagramForce({
                           Non-property nodes: label (line 1), role/CVR (line 2) */}
                       {isProperty ? (
                         (() => {
-                          // BIZZ-1867: Vis "Adresse ukendt" i stedet for rå BFE-numre
+                          // BIZZ-1867: Fallback-label for ejendomme der ikke blev resolved
                           const rawLabel = node.label.startsWith('BFE ')
-                            ? 'Adresse ukendt'
+                            ? `Uden officiel adresse, ${node.label}`
                             : node.label;
                           const parts = rawLabel.split(',').map((s) => s.trim());
                           const street = parts[0] ?? rawLabel;

@@ -22,6 +22,16 @@ export const DAR_ENDPOINT = process.env.DAR_ENDPOINT ?? 'https://graphql.datafor
 export const BBR_GQL_ENDPOINT =
   process.env.BBR_GQL_ENDPOINT ?? 'https://graphql.datafordeler.dk/BBR/v2';
 
+/**
+ * Datafordeler MAT (Matriklen) GraphQL endpoint.
+ *
+ * BIZZ-2061: MAT GraphQL er flyttet fra /MAT/v1 (returnerer nu HTTP 404)
+ * til /MAT/v2 — verificeret live 2026-06-10. Bruges til MAT_Ejerlejlighed
+ * (tinglyst areal + ejerlejlighedsnummer pr. BFE).
+ */
+export const MAT_GQL_ENDPOINT =
+  process.env.MAT_GQL_ENDPOINT ?? 'https://graphql.datafordeler.dk/MAT/v2';
+
 /** Datafordeler BBR WFS endpoint */
 export const BBR_WFS_ENDPOINT =
   process.env.BBR_WFS_ENDPOINT ?? 'https://wfs.datafordeler.dk/BBR/BBR_WFS/1.0.0/WFS';

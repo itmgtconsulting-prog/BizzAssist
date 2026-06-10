@@ -23,6 +23,7 @@ import { fetchDawa } from '@/app/lib/dawa';
 import { darResolveAdresseId } from '@/app/lib/dar';
 import { resolveEnhedByDawaId } from '@/app/lib/fetchBbrData';
 import { fetchTinglysningPriceRowsByBfe } from '@/app/lib/tinglysningPrices';
+import { fetchMatEjerlejlighederByBfe } from '@/app/lib/matEjerlejlighed';
 // EJF/Datafordeler er ikke nødvendig — alt data hentes fra tinglysning summarisk XML
 
 // ─── Query param validation ─────────────────────────────────────────────────
@@ -607,6 +608,9 @@ async function resolveLejlighederViaDawa(
  *   2. bfe_adresse_cache → individuel BFE pr. (adresse, etage, dør)
  *   3. ejf_ejerskab (status='gældende') → ejer pr. BFE
  *   4. cvr_virksomhed → selskabsnavn for CVR-ejere
+ *   5. MAT_Ejerlejlighed (Matriklen v2) → tinglyst areal + ejerlejlighedsnr
+ *   6. ejerskifte_historik → seneste handel (pris + dato), med
+ *      fetchTinglysningPriceRowsByBfe som fallback pr. BFE
  *
  * Falder igennem (returnerer []) når cachen ikke dækker matriklen, så
  * GET-handleren bruger den eksisterende TL/DAWA-flow uændret — ingen
@@ -642,7 +646,14 @@ async function resolveLejlighederViaBfeCache(
   // adressebetegnelse: "Hammerholmen 46A, 2650 Hvidovre" → adresse "Hammerholmen 46A"
   const adresseSet = new Set<string>();
   const postnrSet = new Set<string>();
+  // BIZZ-2061: Adgangsadresse-id-sæt bruges til at frasortere SFE-cache-rækker.
+  // SFE'ens bfe_adresse_cache-række (kilde 'cache_dar') har dawa_id = en
+  // ADGANGSADRESSE-id, mens ejerlejligheds-rækker har enhedsadresse-ids.
+  // Uden filteret lækkede SFE-BFE'en (fx 2160256) ind som "Ukendt"-enhed
+  // når klienten ikke sender moderBfe (SFE-siden gør det ikke).
+  const adgIdSet = new Set<string>();
   for (const adg of adgangsadresser) {
+    if (adg.id) adgIdSet.add(adg.id);
     const street = adg.adressebetegnelse.split(',')[0].trim();
     if (street) adresseSet.add(street);
     const post = adg.adressebetegnelse.match(/(\d{4})/);
@@ -672,7 +683,11 @@ async function resolveLejlighederViaBfeCache(
     }> | null;
   };
   const units = (cacheRows ?? []).filter(
-    (r) => r.bfe_nummer > 0 && (moderBfe == null || r.bfe_nummer !== moderBfe)
+    (r) =>
+      r.bfe_nummer > 0 &&
+      (moderBfe == null || r.bfe_nummer !== moderBfe) &&
+      // BIZZ-2061: SFE-rækken har en adgangsadresse-id som dawa_id — udelad
+      !(r.dawa_id && adgIdSet.has(r.dawa_id))
   );
   if (units.length === 0) return [];
 
@@ -729,6 +744,17 @@ async function resolveLejlighederViaBfeCache(
     }
   }
 
+  // Trin 4b (BIZZ-2061, Resights-paritet): tinglyst areal pr. BFE fra
+  // Matriklen. Erhvervs-ejerlejligheder findes typisk ikke i BBR_Enhed,
+  // så MAT_Ejerlejlighed.samletAreal er den autoritative areal-kilde.
+  // Ét batch-kald for alle BFE'er; non-fatal (areal forbliver null).
+  let matMap = new Map<number, { areal: number | null; ejerlejlighedsnummer: string | null }>();
+  try {
+    matMap = await fetchMatEjerlejlighederByBfe(bfes);
+  } catch {
+    /* areal-berigelse non-fatal */
+  }
+
   // Trin 5: byg Ejerlejlighed-liste med korrekt individuel BFE + ejer
   const lejligheder: Ejerlejlighed[] = units.map((u) => {
     const etage = u.etage && u.etage !== '' ? u.etage : null;
@@ -752,15 +778,18 @@ async function resolveLejlighederViaBfeCache(
       }
     }
 
+    const matInfo = matMap.get(u.bfe_nummer);
     return {
       bfe: u.bfe_nummer,
       adresse,
       etage,
       doer,
-      beskrivelse: 'Ejerlejlighed',
+      beskrivelse: matInfo?.ejerlejlighedsnummer
+        ? `Ejerlejlighed nr. ${matInfo.ejerlejlighedsnummer}`
+        : 'Ejerlejlighed',
       ejer,
       ejertype,
-      areal: null,
+      areal: matInfo?.areal ?? null,
       koebspris: null,
       koebsdato: null,
       dawaId: u.dawa_id ?? null,
@@ -770,10 +799,53 @@ async function resolveLejlighederViaBfeCache(
     };
   });
 
-  // Trin 6: berig koebspris/koebsdato pr. BFE (cache-first via ejendomshandel,
-  // ingen live e-TL for backfillede BFE'er). Non-fatal pr. enhed.
+  // Trin 6 (BIZZ-2061, Resights-paritet): seneste handel pr. BFE.
+  // Primær kilde er ejerskifte_historik (ét batch-opslag) — den bærer den
+  // reelle SkoedeOvertagelsesDato + KontantKoebesum/IAltKoebesum fra adkomst-
+  // dokumentet. ejendomshandel-tabellen (som fetchTinglysningPriceRowsByBfe
+  // tjekker først) har for flere backfillede BFE'er tinglysningsdato som
+  // 'dato' og en afvigende sum (fx 221037: 973.000/1988-05-03 mod adkomstens
+  // 784.128/1988-01-17) — derfor foretrækkes historik-rækken når den findes.
+  // Dato-præference koebsaftale → overtagelse matcher branchekonvention.
+  const handelMap = new Map<number, { pris: number | null; dato: string | null }>();
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: histRows } = (await (admin as any)
+      .from('ejerskifte_historik')
+      .select('bfe_nummer, overtagelsesdato, koebsaftale_dato, kontant_koebesum, i_alt_koebesum')
+      .in('bfe_nummer', bfes)
+      .order('overtagelsesdato', { ascending: false, nullsFirst: false })
+      .limit(1000)) as {
+      data: Array<{
+        bfe_nummer: number;
+        overtagelsesdato: string | null;
+        koebsaftale_dato: string | null;
+        kontant_koebesum: number | null;
+        i_alt_koebesum: number | null;
+      }> | null;
+    };
+    for (const row of histRows ?? []) {
+      // Rækker er sorteret nyeste-først — første række pr. BFE er seneste handel
+      if (handelMap.has(row.bfe_nummer)) continue;
+      const pris = row.kontant_koebesum ?? row.i_alt_koebesum ?? null;
+      const dato = row.koebsaftale_dato ?? row.overtagelsesdato ?? null;
+      if (pris == null && dato == null) continue;
+      handelMap.set(row.bfe_nummer, { pris, dato });
+    }
+  } catch {
+    /* historik-opslag non-fatal — fallback dækker */
+  }
+
+  // Fallback pr. enhed uden historik-række: eksisterende cache-first kæde
+  // (ejendomshandel → live e-TL). Non-fatal pr. enhed.
   await Promise.all(
     lejligheder.map(async (lej) => {
+      const handel = handelMap.get(lej.bfe);
+      if (handel) {
+        lej.koebspris = handel.pris;
+        lej.koebsdato = handel.dato;
+        return;
+      }
       try {
         const priceRows = await fetchTinglysningPriceRowsByBfe(lej.bfe);
         if (priceRows.length > 0) {

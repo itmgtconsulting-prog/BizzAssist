@@ -98,6 +98,11 @@ interface TLSearchItem {
   ejendomsVurdering: number | null;
   grundVaerdi: number | null;
   vurderingsDato: string | null;
+  /**
+   * BIZZ-2058: Dette er det KOMMUNALE ESR-ejendomsnummer (entydigt KUN sammen
+   * med kommuneNummer), IKKE et BFE-nummer. Må aldrig bruges som BFE — det
+   * reelle BFE (BestemtFastEjendomNummer) hentes via ejdsummarisk-opslag på uuid.
+   */
   ejendomsnummer: string | null;
   kommuneNummer: string | null;
 }
@@ -149,6 +154,47 @@ function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
     });
     req.end();
   });
+}
+
+/**
+ * BIZZ-2058: Henter det reelle BFE-nummer (BestemtFastEjendomNummer) for en
+ * TL-ejendom via ejdsummarisk-opslag på dens uuid.
+ *
+ * TL-søgesvar indeholder kun det kommunale ESR-ejendomsnummer, ikke BFE.
+ * ejdsummarisk-opslaget returnerer XML (EjendomSummariskHentResultat) hvor
+ * <ns7:BestemtFastEjendomNummer> er det entydige BFE.
+ *
+ * @param uuid - TL-objektets uuid fra søgesvaret
+ * @returns BFE-nummer eller 0 hvis det ikke kunne hentes
+ */
+async function fetchBfeFromUuid(uuid: string): Promise<number> {
+  try {
+    const res = await tlFetch(`/ejdsummarisk/${uuid}`);
+    if (res.status !== 200) return 0;
+    const m = res.body.match(/BestemtFastEjendomNummer>\s*(\d+)/i);
+    return m ? parseInt(m[1], 10) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * BIZZ-2058: Batch-resolver reelle BFE-numre for en liste af TL-uuid'er.
+ * Kalder ejdsummarisk parallelt så vi får korrekt BFE for hver ejendom
+ * frem for at fejltolke det kommunale ESR-nummer som BFE.
+ *
+ * @param uuids - TL-objekt-uuid'er
+ * @returns Map fra uuid → reelt BFE (kun entries der kunne resolves)
+ */
+async function fetchBfeBatch(uuids: string[]): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  const results = await Promise.all(
+    uuids.map(async (uuid) => ({ uuid, bfe: await fetchBfeFromUuid(uuid) }))
+  );
+  for (const { uuid, bfe } of results) {
+    if (bfe > 0) map.set(uuid, bfe);
+  }
+  return map;
 }
 
 // ─── VUR GraphQL helper ─────────────────────────────────────────────────────
@@ -553,15 +599,23 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
       items.map((i) => ({
         adresse: i.adresse,
         vedroerende: i.vedroerende,
-        bfe: i.ejendomsnummer,
+        esr: i.ejendomsnummer,
         vurdering: i.ejendomsVurdering,
       }))
     );
 
+    // ── BIZZ-2058: Hent reelle BFE-numre via ejdsummarisk ──
+    // TL-søgesvaret indeholder kun det kommunale ESR-ejendomsnummer, IKKE BFE.
+    // Tidligere blev ESR fejltolket som BFE (parseInt(ejendomsnummer)), hvilket
+    // gav links til vilkårlige forkerte ejendomme (fx ESR 134971 → BFE 134971 =
+    // Cumberlandsgade 2 i stedet for Hammerholmen 44, 1.). Vi slår derfor det
+    // reelle BFE op pr. uuid.
+    const bfeMap = await fetchBfeBatch(items.map((i) => i.uuid));
+
     // ── Trin 2: Klassificér alle items ──
     const classified = items.map((item) => {
       const niveau = klassificerItem(item);
-      const bfe = item.ejendomsnummer ? parseInt(item.ejendomsnummer, 10) : 0;
+      const bfe = bfeMap.get(item.uuid) ?? 0;
       const husnr = extractHusnr(item.adresse);
       const { etage, doer } = parseEtageDoer(item.adresse);
       return { ...item, niveau, bfe, husnr, etage, doer };

@@ -217,6 +217,31 @@ export default function BoligprisClient(): React.ReactElement {
     return () => clearTimeout(timer);
   }, [fetchData, handlerPageSize, postnr]);
 
+  /* Kommune-navne hentes direkte fra GeoJSON ved mount — UAFHÆNGIGT af om
+     WebGL-kortet rendrer. Tidligere kom navnene kun via KommuneKort's
+     onNamesLoaded (map.on('load')), så hvis kortet ikke kunne tegnes (fx WebGL
+     deaktiveret i browseren) faldt "Top kommuner" tilbage til at vise rå
+     kommune-koder i stedet for navne. */
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/geo/kommuner.geojson')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((geojson) => {
+        if (cancelled || !geojson?.features) return;
+        const navne: Record<number, string> = {};
+        for (const f of geojson.features) {
+          navne[Number(f.properties.kode)] = f.properties.navn;
+        }
+        setKommuneNavne(navne);
+      })
+      .catch(() => {
+        /* Stille fallback — tabellen viser koder hvis GeoJSON ikke kan hentes. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   /* --- Toggle kommune (fra kort) --- */
   const toggleKommune = useCallback((kode: number) => {
     setSelectedKommuner((prev) => {
@@ -512,15 +537,33 @@ export default function BoligprisClient(): React.ReactElement {
             </div>
           )}
 
+          {/* Opdaterings-indikator ved filter-ændring (synlig i venstre datapanel,
+              ikke skjult bag kortet) — viser tydeligt at dashboardet "tænker". */}
+          {loading && data && (
+            <div
+              className="flex items-center gap-2.5 rounded-lg bg-blue-500/10 border border-blue-500/30 px-4 py-2.5"
+              role="status"
+              aria-live="polite"
+            >
+              <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+              <span className="text-sm font-medium text-blue-200">Opdaterer resultater…</span>
+            </div>
+          )}
+
           {error && (
             <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 text-red-300">
               {error}
             </div>
           )}
 
-          {/* Resultater */}
+          {/* Resultater — dæmpes mens nye data hentes, så det er tydeligt at
+              de viste tal er ved at blive opdateret. */}
           {data && (
-            <>
+            <div
+              className={`space-y-6 transition-opacity duration-200 ${
+                loading ? 'opacity-50' : 'opacity-100'
+              }`}
+            >
               {/* KPI Cards */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <KpiCard
@@ -798,15 +841,7 @@ export default function BoligprisClient(): React.ReactElement {
                   )}
                 </div>
               )}
-
-              {/* Loading overlay ved filter-ændring */}
-              {loading && (
-                <div className="fixed bottom-6 right-6 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 flex items-center gap-2 shadow-xl">
-                  <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
-                  <span className="text-sm text-slate-300">Opdaterer…</span>
-                </div>
-              )}
-            </>
+            </div>
           )}
         </div>
 

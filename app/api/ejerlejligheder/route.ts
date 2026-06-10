@@ -592,6 +592,216 @@ async function resolveLejlighederViaDawa(
   return lejligheder;
 }
 
+/**
+ * BIZZ-2057 / BIZZ-2060: Autoritativ cache-first resolver for ejerlejligheder.
+ *
+ * Tinglysningens matrikelsøgning kollapser alle ejerlejligheder under én
+ * hovedejendoms-UUID til ÉT BFE (ejdsummarisk returnerer kun ét
+ * BestemtFastEjendomNummer pr. UUID). Det gav forkert individuel BFE og
+ * forkert/"ukendt" ejer for hver enhed på multi-unit-matrikler (fx
+ * Hammerholmen 44-48 hvor 18 enheder kollapsede til moderejendommens BFE).
+ *
+ * Denne resolver bygger den korrekte enhedsliste direkte fra eksisterende
+ * cache-tabeller (ingen nye tabeller):
+ *   1. DAWA /adgangsadresser → matriklens vejnavn+husnr-sæt
+ *   2. bfe_adresse_cache → individuel BFE pr. (adresse, etage, dør)
+ *   3. ejf_ejerskab (status='gældende') → ejer pr. BFE
+ *   4. cvr_virksomhed → selskabsnavn for CVR-ejere
+ *
+ * Falder igennem (returnerer []) når cachen ikke dækker matriklen, så
+ * GET-handleren bruger den eksisterende TL/DAWA-flow uændret — ingen
+ * regression for matrikler uden cache-dækning.
+ *
+ * @param ejerlavKode - Landsejerlav-kode (DAWA ejerlavkode)
+ * @param matrikelnr - Matrikelnummer på ejerlavet
+ * @param moderBfe - SFE/hovedejendoms-BFE der udelades fra enhedslisten
+ * @returns Ejerlejlighed[] med korrekt individuel BFE + ejer, eller [] ved cache-miss
+ */
+async function resolveLejlighederViaBfeCache(
+  ejerlavKode: string,
+  matrikelnr: string,
+  moderBfe?: number
+): Promise<Ejerlejlighed[]> {
+  const DAWA_BASE = 'https://dawa.aws.dk';
+
+  // Trin 1: Matriklens adgangsadresser → sæt af "Vejnavn Husnr" + postnr.
+  // Samme matrikel-scoping som den eksisterende DAWA-resolver, så vi kun
+  // henter enheder der faktisk ligger på denne matrikel.
+  const adgRes = await fetchDawa(
+    `${DAWA_BASE}/adgangsadresser?ejerlavkode=${ejerlavKode}&matrikelnr=${encodeURIComponent(matrikelnr)}&per_side=100`,
+    { signal: AbortSignal.timeout(8000), next: { revalidate: 86400 } },
+    { caller: 'ejerlejligheder.bfe-cache' }
+  );
+  if (!adgRes.ok) return [];
+  const adgangsadresser = (await adgRes.json()) as Array<{
+    id: string;
+    adressebetegnelse: string;
+  }>;
+  if (adgangsadresser.length === 0) return [];
+
+  // adressebetegnelse: "Hammerholmen 46A, 2650 Hvidovre" → adresse "Hammerholmen 46A"
+  const adresseSet = new Set<string>();
+  const postnrSet = new Set<string>();
+  for (const adg of adgangsadresser) {
+    const street = adg.adressebetegnelse.split(',')[0].trim();
+    if (street) adresseSet.add(street);
+    const post = adg.adressebetegnelse.match(/(\d{4})/);
+    if (post) postnrSet.add(post[1]);
+  }
+  if (adresseSet.size === 0) return [];
+
+  const admin = createAdminClient();
+
+  // Trin 2: bfe_adresse_cache → én række pr. individuel ejerlejlighed-BFE.
+  // Adresse-sættet kommer fra denne matrikels DAWA-svar, så scoping er korrekt.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let cacheQuery = (admin as any)
+    .from('bfe_adresse_cache')
+    .select('bfe_nummer, adresse, etage, doer, postnr, postnrnavn, dawa_id')
+    .in('adresse', [...adresseSet]);
+  if (postnrSet.size > 0) cacheQuery = cacheQuery.in('postnr', [...postnrSet]);
+  const { data: cacheRows } = (await cacheQuery.limit(500)) as {
+    data: Array<{
+      bfe_nummer: number;
+      adresse: string;
+      etage: string | null;
+      doer: string | null;
+      postnr: string | null;
+      postnrnavn: string | null;
+      dawa_id: string | null;
+    }> | null;
+  };
+  const units = (cacheRows ?? []).filter(
+    (r) => r.bfe_nummer > 0 && (moderBfe == null || r.bfe_nummer !== moderBfe)
+  );
+  if (units.length === 0) return [];
+
+  // Trin 3: ejer pr. BFE fra ejf_ejerskab (gældende). Første ejer pr. BFE.
+  const bfes = [...new Set(units.map((u) => u.bfe_nummer))];
+  const ejerMap = new Map<number, { navn: string; type: string; cvr: string | null }>();
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: ejfRows } = (await (admin as any)
+      .from('ejf_ejerskab')
+      .select('bfe_nummer, ejer_navn, ejer_type, ejer_cvr')
+      .in('bfe_nummer', bfes)
+      .eq('status', 'gældende')
+      .limit(1000)) as {
+      data: Array<{
+        bfe_nummer: number;
+        ejer_navn: string | null;
+        ejer_type: string | null;
+        ejer_cvr: string | null;
+      }> | null;
+    };
+    for (const row of ejfRows ?? []) {
+      if (!ejerMap.has(row.bfe_nummer)) {
+        ejerMap.set(row.bfe_nummer, {
+          navn: row.ejer_navn ?? '',
+          type: row.ejer_type ?? '',
+          cvr: row.ejer_cvr ?? null,
+        });
+      }
+    }
+  } catch {
+    /* ejer-opslag non-fatal — enheder returneres med 'Ukendt' */
+  }
+
+  // Trin 4: selskabsnavn for CVR-ejere (ejf_ejerskab.ejer_navn er typisk
+  // "CVR 12345678" for selskaber — vi foretrækker det rigtige firmanavn).
+  const cvrSet = [
+    ...new Set([...ejerMap.values()].map((e) => e.cvr).filter((c): c is string => !!c)),
+  ];
+  const cvrNavnMap = new Map<string, string>();
+  if (cvrSet.length > 0) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: cvrRows } = (await (admin as any)
+        .from('cvr_virksomhed')
+        .select('cvr, navn')
+        .in('cvr', cvrSet)
+        .limit(1000)) as { data: Array<{ cvr: string; navn: string | null }> | null };
+      for (const row of cvrRows ?? []) {
+        if (row.navn) cvrNavnMap.set(row.cvr, row.navn);
+      }
+    } catch {
+      /* CVR-navn non-fatal */
+    }
+  }
+
+  // Trin 5: byg Ejerlejlighed-liste med korrekt individuel BFE + ejer
+  const lejligheder: Ejerlejlighed[] = units.map((u) => {
+    const etage = u.etage && u.etage !== '' ? u.etage : null;
+    const doer = u.doer && u.doer !== '' ? u.doer : null;
+    const loc = [etage ? `${etage}.` : null, doer].filter(Boolean).join(' ');
+    const postSuffix = u.postnr ? `, ${u.postnr}${u.postnrnavn ? ' ' + u.postnrnavn : ''}` : '';
+    const adresse = `${u.adresse}${loc ? ', ' + loc : ''}${postSuffix}`;
+
+    const ejerInfo = ejerMap.get(u.bfe_nummer);
+    let ejer = 'Ukendt';
+    let ejertype: 'person' | 'selskab' | 'ukendt' = 'ukendt';
+    if (ejerInfo) {
+      const isSelskab =
+        ejerInfo.type === 'virksomhed' || ejerInfo.type === 'selskab' || !!ejerInfo.cvr;
+      if (isSelskab) {
+        ejer = (ejerInfo.cvr && cvrNavnMap.get(ejerInfo.cvr)) || ejerInfo.navn || 'Ukendt';
+        ejertype = 'selskab';
+      } else {
+        ejer = ejerInfo.navn || 'Ukendt';
+        ejertype = ejerInfo.navn ? 'person' : 'ukendt';
+      }
+    }
+
+    return {
+      bfe: u.bfe_nummer,
+      adresse,
+      etage,
+      doer,
+      beskrivelse: 'Ejerlejlighed',
+      ejer,
+      ejertype,
+      areal: null,
+      koebspris: null,
+      koebsdato: null,
+      dawaId: u.dawa_id ?? null,
+      udfaset: null,
+      bygningId: null,
+      bygningBetegnelse: null,
+    };
+  });
+
+  // Trin 6: berig koebspris/koebsdato pr. BFE (cache-first via ejendomshandel,
+  // ingen live e-TL for backfillede BFE'er). Non-fatal pr. enhed.
+  await Promise.all(
+    lejligheder.map(async (lej) => {
+      try {
+        const priceRows = await fetchTinglysningPriceRowsByBfe(lej.bfe);
+        if (priceRows.length > 0) {
+          const latest = priceRows[0];
+          lej.koebspris = latest.kontantKoebesum ?? latest.iAltKoebesum ?? null;
+          lej.koebsdato =
+            latest.overtagelsesdato ?? latest.koebsaftaleDato ?? latest.tinglysningsdato ?? null;
+        }
+      } catch {
+        /* pris-berigelse non-fatal */
+      }
+    })
+  );
+
+  // Sort: adresse → etage → dør (samme orden som de øvrige resolvere)
+  lejligheder.sort((a, b) => {
+    const addrA = a.adresse.split(',')[0].trim();
+    const addrB = b.adresse.split(',')[0].trim();
+    if (addrA !== addrB) return addrA.localeCompare(addrB, 'da');
+    const etageA = parseEtageSortValue(a.etage);
+    const etageB = parseEtageSortValue(b.etage);
+    if (etageA !== etageB) return etageA - etageB;
+    return parseDoerSortValue(a.doer) - parseDoerSortValue(b.doer);
+  });
+
+  return lejligheder;
+}
+
 // ─── Route handler ──────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest): Promise<NextResponse<EjerlejlighederResponse>> {
@@ -613,6 +823,40 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
   }
 
   try {
+    // ── Trin 0 (BIZZ-2057/2060): Autoritativ cache-first resolver ──
+    // bfe_adresse_cache + ejf_ejerskab(gældende) + cvr_virksomhed giver den
+    // korrekte individuelle BFE + ejer pr. enhed. TL-matrikelsøgningen
+    // kollapser multi-unit-hovedejendomme til ét BFE → forkert ejer. Når
+    // cachen dækker matriklen bruger vi den; ellers falder vi igennem til
+    // den eksisterende TL/DAWA-flow uændret (ingen regression).
+    try {
+      const cacheLejligheder = await resolveLejlighederViaBfeCache(
+        ejerlavKode,
+        matrikelnr,
+        moderBfe
+      );
+      if (cacheLejligheder.length > 0) {
+        logger.log(
+          `[ejerlejligheder] BFE-cache resolver: ${cacheLejligheder.length} lejligheder for ejerlav ${ejerlavKode} matr. ${matrikelnr}`
+        );
+        const filtered = includeUdfasede
+          ? cacheLejligheder
+          : cacheLejligheder.filter((l) => l.udfaset !== true);
+        return NextResponse.json(
+          { lejligheder: filtered, fejl: null },
+          {
+            status: 200,
+            headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
+          }
+        );
+      }
+    } catch (cacheErr) {
+      logger.warn(
+        '[ejerlejligheder] BFE-cache resolver fejlede (non-fatal, falder tilbage til TL):',
+        cacheErr instanceof Error ? cacheErr.message : cacheErr
+      );
+    }
+
     // ── Trin 1: Søg alle ejendomme på matriklen via Tinglysningsrettens HTTP API ──
     // Matrikelsøgning returnerer ALLE ejendomme inkl. ejerlejligheder på tværs af opgange
     const searchPath = `/ejendom/landsejerlavmatrikel?landsejerlavid=${encodeURIComponent(ejerlavKode)}&matrikelnr=${encodeURIComponent(matrikelnr)}`;

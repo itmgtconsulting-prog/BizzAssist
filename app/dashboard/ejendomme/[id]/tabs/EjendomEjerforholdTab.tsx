@@ -238,13 +238,16 @@ export default function EjendomEjerforholdTab({
               function enrichWithOwnership(node: StrukturNode): StrukturNode {
                 // Ejerlejlighed: berig med ejer/pris/dato fra lejligheder-match
                 if (node.niveau === 'ejerlejlighed') {
-                  // Match via BFE (primær) eller eksakt vejnavn+husnr (fallback)
+                  // Match via BFE (primær) eller eksakt vejnavn+husnr (fallback).
+                  // BIZZ-2061: BFE-match prioriteres FØR vejnavn-fallback — i et
+                  // samlet OR-find vandt første lejlighed på samme vejnavn over
+                  // den korrekte BFE-match, så søster-enheder fik identiske data.
                   const nodeStreet = node.adresse.split(',')[0].trim().toLowerCase();
-                  const match = lejligheder!.find(
-                    (l) =>
-                      (node.bfe > 0 && l.bfe === node.bfe) ||
-                      l.adresse.split(',')[0].trim().toLowerCase() === nodeStreet
-                  );
+                  const match =
+                    (node.bfe > 0 ? lejligheder!.find((l) => l.bfe === node.bfe) : undefined) ??
+                    lejligheder!.find(
+                      (l) => l.adresse.split(',')[0].trim().toLowerCase() === nodeStreet
+                    );
                   if (match) {
                     const etageDoer = match.adresse.split(',')[1]?.trim().toLowerCase() ?? '';
                     const bbrMatch = (bbrEnheder ?? []).find((e) => {
@@ -720,11 +723,15 @@ export default function EjendomEjerforholdTab({
                   function enrichNode(node: StrukturNode): StrukturNode {
                     if (node.niveau === 'ejerlejlighed') {
                       const nodeStreet = node.adresse.split(',')[0].trim().toLowerCase();
-                      const match = lejligheder!.find(
-                        (l) =>
-                          (node.bfe > 0 && l.bfe === node.bfe) ||
-                          l.adresse.split(',')[0].trim().toLowerCase() === nodeStreet
-                      );
+                      // BIZZ-2061: Eksakt BFE-match SKAL prioriteres før
+                      // vejnavn-fallback — i et samlet OR-find vandt den
+                      // første lejlighed på samme vejnavn over den korrekte
+                      // BFE-match, så søster-enheder fik identiske data.
+                      const match =
+                        (node.bfe > 0 ? lejligheder!.find((l) => l.bfe === node.bfe) : undefined) ??
+                        lejligheder!.find(
+                          (l) => l.adresse.split(',')[0].trim().toLowerCase() === nodeStreet
+                        );
                       // BBR-match for værelser
                       const addrParts = node.adresse.split(',').map((s) => s.trim());
                       const etageDoer = (addrParts[1] ?? '').toLowerCase();

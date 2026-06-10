@@ -175,6 +175,56 @@ export default async function EjendommeDetailPage({
       }
     }
 
+    // BIZZ-2059: Ejerlejlighed-præcision. En ejerlejlighed deler adgangsadresse
+    // med moderejendommen og de øvrige lejligheder i bygningen. Redirecter vi kun
+    // til adgangsadressen, kollapser alle enheder + SFE til samme side (der viser
+    // moderejendommen) — etage/dør smides væk. Hvis BFE'en er en ægte enhed med
+    // etage/dør (kendt fra bfe_adresse_cache), opgraderer vi derfor redirect-målet
+    // til den SPECIFIKKE DAWA-enhedsadresse, som siden allerede understøtter.
+    if (resolvedDawaId) {
+      try {
+        const { createClient } = await import('@supabase/supabase-js');
+        const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+        const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+        if (supabaseUrl && serviceKey) {
+          const admin = createClient(supabaseUrl, serviceKey);
+          const { data: cacheRow } = await admin
+            .from('bfe_adresse_cache')
+            .select('etage, doer')
+            .eq('bfe_nummer', Number(id))
+            .maybeSingle();
+          const etage = (cacheRow?.etage ?? '').toString().trim();
+          const doer = (cacheRow?.doer ?? '').toString().trim();
+          // Kun opgrader når enheden faktisk har etage/dør — moderejendom/SFE
+          // bor på selve adgangsadressen (tom etage/dør) og skal forblive der.
+          if (etage || doer) {
+            const { fetchDawa } = await import('@/app/lib/dawa');
+            const params = new URLSearchParams({
+              adgangsadresseid: resolvedDawaId,
+              struktur: 'mini',
+            });
+            if (etage) params.set('etage', etage);
+            if (doer) params.set('dør', doer);
+            const unitRes = await fetchDawa(
+              `https://dawa.aws.dk/adresser?${params.toString()}`,
+              { signal: AbortSignal.timeout(5000) },
+              { caller: 'ejendom-page.ejerlejlighed-enhedsadresse' }
+            );
+            if (unitRes.ok) {
+              const units = (await unitRes.json()) as Array<{ id: string }>;
+              // Kun ved ENTYDIGT match — ved 0 eller flere hits beholder vi
+              // adgangsadressen (bedre at vise moderejendommen end en forkert enhed).
+              if (units.length === 1 && units[0]?.id) {
+                resolvedDawaId = units[0].id;
+              }
+            }
+          }
+        }
+      } catch {
+        // Enhedsadresse-opslag er non-kritisk — behold adgangsadresse-redirect.
+      }
+    }
+
     // Redirect skal stå UDENFOR try/catch så NEXT_REDIRECT-fejlen bobler op.
     if (resolvedDawaId) {
       const { redirect } = await import('next/navigation');

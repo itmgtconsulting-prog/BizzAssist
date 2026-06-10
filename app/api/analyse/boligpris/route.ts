@@ -106,10 +106,15 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
     // BIZZ-2046: Postnr-filter — oversæt postnumre til kommune_koder via bfe_adresse_cache
     if (postnumre && postnumre.length > 0) {
       const postnrStrings = postnumre.map((p) => String(p).padStart(4, '0'));
+      // VIGTIGT: filtrér rækker med NULL kommune_kode fra i selve query'en.
+      // bfe_adresse_cache har mange rækker uden kommune_kode (fx ~65% for postnr 2500),
+      // og uden dette filter kunne .limit(1000) fyldes udelukkende med NULL-rækker →
+      // tom kommune-liste → .in('kommune_kode', []) matcher intet → 0 handler (bug).
       const { data: postnrRows } = await admin
         .from('bfe_adresse_cache')
         .select('kommune_kode')
         .in('postnr', postnrStrings)
+        .not('kommune_kode', 'is', null)
         .limit(1000);
       if (postnrRows && postnrRows.length > 0) {
         const postnrKommuneSet = new Set<number>();

@@ -27,6 +27,7 @@ import {
   ChevronsUpDown,
   MapPin,
   Download,
+  Calendar,
 } from 'lucide-react';
 
 import ResizableDivider from '@/app/components/ResizableDivider';
@@ -89,13 +90,49 @@ interface ApiResponse {
 
 /* ---------- Boligtype-chips ---------- */
 
+/** Erhverv-chippens samlede kode-bundt (alle erhvervs-anvendelseskoder). */
+const ERHVERV_KODE = '210,220,230,290,310,320,323,330';
+
 const BOLIGTYPER = [
   { kode: '110,120', label: 'Enfamiliehus' },
   { kode: '130,131,132', label: 'Rækkehus' },
   { kode: '140', label: 'Etagebolig / Lejlighed' },
-  { kode: '210,220,230,290,310,320,323,330', label: 'Erhverv' },
+  { kode: ERHVERV_KODE, label: 'Erhverv' },
   { kode: '410,510,520,530,540,585,590', label: 'Fritidshus / Kolonihave' },
 ];
+
+/** Under-typer for Erhverv — lader brugeren indsnævre fx kun Detailhandel/Industri. */
+const ERHVERV_SUB = [
+  { kode: '210', label: 'Kontor' },
+  { kode: '220', label: 'Detailhandel' },
+  { kode: '230', label: 'Lager' },
+  { kode: '320', label: 'Industri' },
+  { kode: '310', label: 'Transport' },
+  { kode: '330', label: 'Landbrug' },
+  { kode: '290', label: 'Øvrig erhverv' },
+  { kode: '323', label: 'Kraftværk' },
+];
+
+/**
+ * Bygger den flade boligtype-kodeliste til API'et. Når Erhverv-chippen er valgt
+ * og der er valgt en eller flere erhvervs-undertyper, erstattes hele erhvervs-
+ * bundtet med kun de valgte undertyper — ellers bruges chippens fulde kodeliste.
+ *
+ * @param selectedTypes - Valgte boligtype-chips (komma-separerede kode-strenge)
+ * @param erhvervSub - Valgte erhvervs-undertyper (enkeltkoder)
+ * @returns Komma-separeret CSV af anvendelseskoder (tom streng hvis intet valgt)
+ */
+function buildBoligtyperParam(selectedTypes: Set<string>, erhvervSub: Set<string>): string {
+  const codes: string[] = [];
+  for (const t of selectedTypes) {
+    if (t === ERHVERV_KODE && erhvervSub.size > 0) {
+      codes.push(...Array.from(erhvervSub));
+    } else {
+      codes.push(...t.split(','));
+    }
+  }
+  return codes.join(',');
+}
 
 /* ---------- Tidsperioder ---------- */
 
@@ -132,8 +169,11 @@ function fmtDato(iso: string): string {
 export default function BoligprisClient(): React.ReactElement {
   /* --- State --- */
   const [selectedTypes, setSelectedTypes] = useState<Set<string>>(new Set());
+  const [selectedErhvervSub, setSelectedErhvervSub] = useState<Set<string>>(new Set());
   const [selectedKommuner, setSelectedKommuner] = useState<Set<number>>(new Set());
   const [periodeIdx, setPeriodeIdx] = useState(0);
+  const [customFra, setCustomFra] = useState('');
+  const [customTil, setCustomTil] = useState('');
   const [postnr, setPostnr] = useState('');
   const [arealMin, setArealMin] = useState('');
   const [arealMax, setArealMax] = useState('');
@@ -150,15 +190,18 @@ export default function BoligprisClient(): React.ReactElement {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [exporting, setExporting] = useState(false);
 
-  /* --- Dato-beregning baseret på valgt periode --- */
+  /* --- Dato-beregning: brugerdefineret interval har forrang over preset --- */
+  const customActive = customFra !== '' && customTil !== '';
   const { fra, til } = useMemo(() => {
+    // Når brugeren har sat begge datoer, vinder det manuelle interval.
+    if (customFra && customTil) return { fra: customFra, til: customTil };
     const now = new Date();
     const tilStr = now.toISOString().slice(0, 10);
     const months = PERIODER[periodeIdx].months;
     if (months === 0) return { fra: '2000-01-01', til: tilStr };
     const fraDate = new Date(now.getFullYear(), now.getMonth() - months, 1);
     return { fra: fraDate.toISOString().slice(0, 10), til: tilStr };
-  }, [periodeIdx]);
+  }, [periodeIdx, customFra, customTil]);
 
   /* --- Fetch data --- */
   const fetchData = useCallback(
@@ -170,7 +213,7 @@ export default function BoligprisClient(): React.ReactElement {
         params.set('fra', fra);
         params.set('til', til);
         if (selectedTypes.size > 0) {
-          params.set('boligtyper', Array.from(selectedTypes).join(','));
+          params.set('boligtyper', buildBoligtyperParam(selectedTypes, selectedErhvervSub));
         }
         if (selectedKommuner.size > 0) {
           params.set('kommuner', Array.from(selectedKommuner).join(','));
@@ -202,7 +245,18 @@ export default function BoligprisClient(): React.ReactElement {
         setLoading(false);
       }
     },
-    [fra, til, selectedTypes, selectedKommuner, postnr, arealMin, arealMax, byggearMin, byggearMax]
+    [
+      fra,
+      til,
+      selectedTypes,
+      selectedErhvervSub,
+      selectedKommuner,
+      postnr,
+      arealMin,
+      arealMax,
+      byggearMin,
+      byggearMax,
+    ]
   );
 
   /* Auto-fetch ved filter-ændring (debounced for postnr-input) */
@@ -255,6 +309,18 @@ export default function BoligprisClient(): React.ReactElement {
   /* --- Toggle boligtype chip --- */
   const toggleType = useCallback((kode: string) => {
     setSelectedTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(kode)) next.delete(kode);
+      else next.add(kode);
+      return next;
+    });
+    // Erhverv-chippen nulstiller sit under-filter når den slås til/fra.
+    if (kode === ERHVERV_KODE) setSelectedErhvervSub(new Set());
+  }, []);
+
+  /* --- Toggle erhvervs-undertype --- */
+  const toggleErhvervSub = useCallback((kode: string) => {
+    setSelectedErhvervSub((prev) => {
       const next = new Set(prev);
       if (next.has(kode)) next.delete(kode);
       else next.add(kode);
@@ -324,7 +390,8 @@ export default function BoligprisClient(): React.ReactElement {
       const params = new URLSearchParams();
       params.set('fra', fra);
       params.set('til', til);
-      if (selectedTypes.size > 0) params.set('boligtyper', Array.from(selectedTypes).join(','));
+      if (selectedTypes.size > 0)
+        params.set('boligtyper', buildBoligtyperParam(selectedTypes, selectedErhvervSub));
       if (selectedKommuner.size > 0) params.set('kommuner', Array.from(selectedKommuner).join(','));
       if (postnr.trim()) params.set('postnumre', postnr.trim());
       if (arealMin) params.set('areal_min', arealMin);
@@ -387,6 +454,7 @@ export default function BoligprisClient(): React.ReactElement {
     fra,
     til,
     selectedTypes,
+    selectedErhvervSub,
     selectedKommuner,
     postnr,
     arealMin,
@@ -440,9 +508,14 @@ export default function BoligprisClient(): React.ReactElement {
               {PERIODER.map((p, idx) => (
                 <button
                   key={p.label}
-                  onClick={() => setPeriodeIdx(idx)}
+                  onClick={() => {
+                    setPeriodeIdx(idx);
+                    // Preset rydder et evt. brugerdefineret interval.
+                    setCustomFra('');
+                    setCustomTil('');
+                  }}
                   className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                    periodeIdx === idx
+                    periodeIdx === idx && !customActive
                       ? 'bg-blue-500/20 text-blue-300 ring-1 ring-blue-500/40'
                       : 'bg-slate-800/60 text-slate-300 hover:bg-slate-700/60'
                   }`}
@@ -450,6 +523,44 @@ export default function BoligprisClient(): React.ReactElement {
                   {p.label}
                 </button>
               ))}
+            </div>
+
+            {/* Brugerdefineret dato-interval — vinder over preset når begge er sat */}
+            <div
+              className={`flex items-center gap-1.5 text-xs rounded-lg px-2 py-1 transition-colors ${
+                customActive ? 'ring-1 ring-blue-500/40 bg-blue-500/10' : ''
+              }`}
+            >
+              <Calendar className="w-3.5 h-3.5 text-slate-400" />
+              <input
+                type="date"
+                value={customFra}
+                max={customTil || undefined}
+                onChange={(e) => setCustomFra(e.target.value)}
+                className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-2 py-1.5 text-sm text-slate-200 [color-scheme:dark] w-36"
+                aria-label="Fra-dato (brugerdefineret interval)"
+              />
+              <span className="text-slate-400">–</span>
+              <input
+                type="date"
+                value={customTil}
+                min={customFra || undefined}
+                onChange={(e) => setCustomTil(e.target.value)}
+                className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-2 py-1.5 text-sm text-slate-200 [color-scheme:dark] w-36"
+                aria-label="Til-dato (brugerdefineret interval)"
+              />
+              {customActive && (
+                <button
+                  onClick={() => {
+                    setCustomFra('');
+                    setCustomTil('');
+                  }}
+                  className="text-slate-400 hover:text-slate-200 transition-colors px-1"
+                  aria-label="Ryd brugerdefineret dato-interval"
+                >
+                  ✕
+                </button>
+              )}
             </div>
 
             {/* Separator */}
@@ -528,6 +639,37 @@ export default function BoligprisClient(): React.ReactElement {
               />
             </div>
           </div>
+
+          {/* Erhverv-underfilter — vises kun når Erhverv-chippen er valgt.
+              Lader brugeren indsnævre til fx kun Detailhandel eller Industri. */}
+          {selectedTypes.has(ERHVERV_KODE) && (
+            <div className="flex flex-wrap items-center gap-2 -mt-2">
+              <span className="text-xs font-medium text-slate-400">Erhverv:</span>
+              {ERHVERV_SUB.map((s) => (
+                <button
+                  key={s.kode}
+                  onClick={() => toggleErhvervSub(s.kode)}
+                  aria-pressed={selectedErhvervSub.has(s.kode)}
+                  className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                    selectedErhvervSub.has(s.kode)
+                      ? 'bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/40'
+                      : 'bg-slate-800/60 text-slate-300 hover:bg-slate-700/60'
+                  }`}
+                >
+                  {s.label}
+                </button>
+              ))}
+              {selectedErhvervSub.size > 0 && (
+                <button
+                  onClick={() => setSelectedErhvervSub(new Set())}
+                  className="text-xs text-slate-400 hover:text-slate-200 transition-colors px-1"
+                  aria-label="Ryd erhvervs-underfilter"
+                >
+                  Ryd
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Loading / Error */}
           {loading && !data && (

@@ -23,6 +23,14 @@ const LIMIT = parseInt(args.limit || '0', 10) || 999999999;
 const OFFSET = parseInt(args.offset || '0', 10);
 const CONCURRENCY = parseInt(args.concurrency || '2', 10);
 const DRY_RUN = args['dry-run'] === 'true';
+// BIZZ-1881: tinglysning.dk rate-limiter (HTTP 429). Vi kører bevidst langsomt
+// med en adaptiv inter-BFE delay der hæves automatisk hver gang vi rammer 429,
+// så scriptet selv finder en bæredygtig rate i stedet for at hamre API'et.
+const DELAY_MS = parseInt(args['delay-ms'] || '500', 10); // start-delay mellem BFEer
+const MAX_DELAY_MS = parseInt(args['max-delay-ms'] || '8000', 10);
+let baseDelayMs = DELAY_MS; // mutérbar — hæves ved 429
+let total429 = 0;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const envContent = fs.readFileSync('/root/BizzAssist/.env.local', 'utf8');
 const PROD_DB_URL = envContent.match(/^SUPABASE_PROD_DB_URL=(.+)$/m)?.[1];
@@ -83,7 +91,7 @@ function tlGetRaw(urlPath, accept = 'application/json') {
       method: 'GET', pfx, passphrase: CERT_PASS,
       rejectUnauthorized: false, timeout: 60000,
       headers: { Accept: accept },
-    }, (res) => { let body = ''; res.on('data', d => body += d); res.on('end', () => resolve({ status: res.statusCode, body })); });
+    }, (res) => { let body = ''; res.on('data', d => body += d); res.on('end', () => resolve({ status: res.statusCode, body, retryAfter: res.headers['retry-after'] })); });
     req.on('error', reject);
     req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
     req.end();
@@ -91,17 +99,27 @@ function tlGetRaw(urlPath, accept = 'application/json') {
 }
 
 async function tlGet(urlPath, accept) {
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 6; attempt++) {
     try {
       const r = await tlGetRaw(urlPath, accept);
       if (r.status === 200 || r.status === 404) return r;
-      if (attempt === 0) await new Promise(res => setTimeout(res, 2000));
+      if (r.status === 429) {
+        // Rate-limit ramt: hæv den globale delay permanent (adaptiv throttle)
+        // og vent eksponentielt (respektér Retry-After hvis sat) før retry.
+        total429++;
+        baseDelayMs = Math.min(baseDelayMs + 250, MAX_DELAY_MS);
+        const ra = parseInt(r.retryAfter || '', 10);
+        const wait = Number.isFinite(ra) ? ra * 1000 : Math.min(2000 * 2 ** attempt, 60000);
+        await sleep(wait);
+        continue;
+      }
+      await sleep(1000 * (attempt + 1)); // andre fejl: kort backoff
     } catch (err) {
-      if (attempt === 0) await new Promise(res => setTimeout(res, 2000));
-      else throw err;
+      if (attempt >= 4) throw err;
+      await sleep(1000 * (attempt + 1));
     }
   }
-  return { status: 0, body: '' };
+  return { status: 429, body: '' }; // gav op efter vedvarende 429
 }
 
 // ── Process one BFE ─────────────────────────────────────────────────
@@ -265,9 +283,11 @@ async function main() {
       else if (r.status === 'no-tl-data') noTlData++;
       else errors++;
     }
-    if (processed % 500 === 0 || processed === bfes.length) {
-      console.log(`[1881-all-ejf] processed=${processed}/${bfes.length}, ok=${ok}, no-uuid=${noUuid}, no-tl=${noTlData}, errors=${errors}, handler=${totalHandler}, haeftelser=${totalHaeftelser}`);
+    if (processed % 100 === 0 || processed === bfes.length) {
+      console.log(`[1881-all-ejf] processed=${processed}/${bfes.length}, ok=${ok}, no-uuid=${noUuid}, no-tl=${noTlData}, errors=${errors}, handler=${totalHandler}, haeftelser=${totalHaeftelser}, delay=${baseDelayMs}ms, 429s=${total429}`);
     }
+    // Adaptiv throttle: pause mellem hver BFE-batch så vi holder os under rate-limit
+    if (baseDelayMs > 0) await sleep(baseDelayMs);
   }
 
   console.log(`\n[1881-all-ejf] DONE — ok=${ok}, no-uuid=${noUuid}, no-tl=${noTlData}, errors=${errors}`);

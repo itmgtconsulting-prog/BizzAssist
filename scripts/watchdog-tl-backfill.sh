@@ -15,11 +15,12 @@ SCRIPT=scripts/backfill-tl-all-ejf-bfes.mjs
 LOG=/tmp/backfill-1881-resumed-20260601-1000.log
 OFFSET=833000
 CONC=1
-STALL_SECS=600     # 10 min uden log-vækst = stall
+DELAY_MS=800       # langsom start; scriptet hæver selv ved 429
+STALL_SECS=1800    # 30 min uden log-vækst = stall (langsom rate -> sjældne log-linjer)
 POLL=60
 
 start() {
-  nohup "$NODE" "$SCRIPT" --offset=$OFFSET --concurrency=$CONC >> "$LOG" 2>&1 &
+  nohup "$NODE" "$SCRIPT" --offset=$OFFSET --concurrency=$CONC --delay-ms=$DELAY_MS >> "$LOG" 2>&1 &
   echo $!
 }
 

@@ -138,9 +138,12 @@ async function processBfe(bfe, db) {
   // Parse adkomst
   const handler = [];
   for (const [, e] of xml.matchAll(/AdkomstSummarisk>([\s\S]*?)<\/[^:]*:?AdkomstSummarisk/g)) {
-    const dato = extractDate(e, 'SkoedeOvertagelsesDato');
+    // dato er NOT NULL i ejendomshandel (unik på bfe_nummer+dato). Falder tilbage
+    // til TinglysningsDato hvis SkoedeOvertagelsesDato mangler; springer record over
+    // hvis ingen dato findes (kan ikke gemmes uden at bryde not-null/unik-constraint).
+    const dato = extractDate(e, 'SkoedeOvertagelsesDato') || extractDate(e, 'TinglysningsDato');
     const koebesum = extractInt(e, 'KontantKoebesum');
-    if (!dato && !koebesum) continue;
+    if (!dato) continue;
     const k = extractKoebere(e);
     handler.push({
       bfe_nummer: bfe, dato,
@@ -210,7 +213,12 @@ async function processBfe(bfe, db) {
         await db.query(
           `INSERT INTO ejendomshandel
            (bfe_nummer, dato, tinglyst_dato, koebesum, samlet_koebesum, andel_taeller, andel_naevner, koeber_navne, koeber_cvrs, kilde, sidst_opdateret)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'tinglysning-summarisk',NOW())`,
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'tinglysning-summarisk',NOW())
+           ON CONFLICT (bfe_nummer, dato) DO UPDATE SET
+             tinglyst_dato = EXCLUDED.tinglyst_dato, koebesum = EXCLUDED.koebesum,
+             samlet_koebesum = EXCLUDED.samlet_koebesum, andel_taeller = EXCLUDED.andel_taeller,
+             andel_naevner = EXCLUDED.andel_naevner, koeber_navne = EXCLUDED.koeber_navne,
+             koeber_cvrs = EXCLUDED.koeber_cvrs, kilde = 'tinglysning-summarisk', sidst_opdateret = NOW()`,
           [h.bfe_nummer, h.dato, h.tinglyst_dato, h.koebesum, h.samlet_koebesum, h.andel_taeller, h.andel_naevner, h.koeber_navne, h.koeber_cvrs]
         );
       }

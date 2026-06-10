@@ -85,6 +85,23 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
       .slice(0, 10);
     const fra = sp.get('fra') || defaultFra;
     const til = sp.get('til') || now.toISOString().slice(0, 10);
+    // BIZZ-2055: Normalisér dato-vinduet til HELE måneder, så KPI (fra den
+    // måneds-bucketede mv_boligpris_maaned) og handler-listen (fra den
+    // dag-eksakte mv_boligpris_handler via RPC) dækker præcis samme periode.
+    // KPI'ens MV grupperer på date_trunc('month', overtagelsesdato): et
+    // 'til' midt i måneden inkluderer derfor HELE indeværende måneds handler
+    // (inkl. fremtidigt daterede overtagelser), mens RPC'en med dag-eksakt
+    // p_til udelod dem → KPI > antal viste handler. Ved at snappe 'fra' til
+    // månedens første dag og 'til' til månedens sidste dag i BEGGE queries
+    // bliver antal_handler i KPI = antal rækker i listen på alle granulariteter.
+    const fraD = new Date(`${fra}T00:00:00Z`);
+    const tilD = new Date(`${til}T00:00:00Z`);
+    const fraMaaned = new Date(Date.UTC(fraD.getUTCFullYear(), fraD.getUTCMonth(), 1))
+      .toISOString()
+      .slice(0, 10);
+    const tilMaanedSlut = new Date(Date.UTC(tilD.getUTCFullYear(), tilD.getUTCMonth() + 1, 0))
+      .toISOString()
+      .slice(0, 10);
     const wantHandler = sp.get('handler') === 'true';
     // Export-mode: hent alle matchende rækker (op til 20000) så Excel-eksport
     // matcher KPI-antal handler. Normal paginering capper ved 500.
@@ -139,8 +156,8 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
         .select(
           'kommune_kode, boligtype_kode, maaned, antal_handler, avg_pris, median_pris, avg_m2_pris'
         )
-        .gte('maaned', fra)
-        .lte('maaned', til)
+        .gte('maaned', fraMaaned)
+        .lte('maaned', tilMaanedSlut)
         .order('maaned', { ascending: true })
         .range(mvOffset, mvOffset + PAGE_SIZE - 1);
 
@@ -310,8 +327,8 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
           const res = await admin.rpc('boligpris_handler', {
             p_kommune_koder: kommuner ?? null,
             p_boligtype_koder: boligtyper ?? null,
-            p_fra: fra,
-            p_til: til,
+            p_fra: fraMaaned,
+            p_til: tilMaanedSlut,
             p_areal_min: arealMin,
             p_areal_max: arealMax,
             p_byggear_min: byggearMin,

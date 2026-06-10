@@ -25,6 +25,7 @@ import { parseQuery } from '@/app/lib/validate';
 import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { fetchDawa } from '@/app/lib/dawa';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 // ─── Query param validation ─────────────────────────────────────────────────
 
@@ -281,6 +282,89 @@ async function fetchVurderingBatch(bfeList: number[]): Promise<Map<number, VurRe
     }
   } catch (err) {
     logger.warn(`[ejendom-struktur] VUR batch fetch fejl:`, err);
+  }
+  return result;
+}
+
+// ─── Ejerskabs-berigelse fra ejf_ejerskab ─────────────────────────────────
+
+/** Ejerskabsdata per BFE */
+interface EjerInfo {
+  ejerNavn: string;
+  ejerType: 'person' | 'selskab' | 'ukendt';
+}
+
+/**
+ * BIZZ-2060: Batch-henter ejerskabsdata fra ejf_ejerskab for en liste af BFE'er.
+ * Returnerer Map fra BFE → ejer-info (kun gældende ejerskifter).
+ * Slår CVR-navne op i cvr_virksomhed for virksomhedsejere.
+ *
+ * @param bfeList - Array af BFE-numre
+ * @returns Map fra BFE → EjerInfo
+ */
+async function fetchEjerskabBatch(bfeList: number[]): Promise<Map<number, EjerInfo>> {
+  const result = new Map<number, EjerInfo>();
+  if (bfeList.length === 0) return result;
+
+  try {
+    const supabase = createAdminClient();
+
+    // Hent gældende ejerskaber for alle BFE'er
+    const { data: rawEjerskaber } = await supabase
+      .from('ejf_ejerskab')
+      .select('bfe_nummer, ejer_navn, ejer_cvr, ejer_type')
+      .in('bfe_nummer', bfeList)
+      .eq('status', 'gældende')
+      .order('virkning_fra', { ascending: false });
+
+    const ejerskaber = (rawEjerskaber ?? []) as Array<{
+      bfe_nummer: number;
+      ejer_navn: string | null;
+      ejer_cvr: number | null;
+      ejer_type: string | null;
+    }>;
+    if (ejerskaber.length === 0) return result;
+
+    // Saml CVR-numre der skal resolves til navne
+    const cvrSet = new Set<string>();
+    for (const e of ejerskaber) {
+      if (e.ejer_cvr && e.ejer_type === 'virksomhed') {
+        cvrSet.add(String(e.ejer_cvr));
+      }
+    }
+
+    // Batch-hent CVR-navne fra cvr_virksomhed
+    const cvrNavnMap = new Map<string, string>();
+    if (cvrSet.size > 0) {
+      const { data: rawVirksomheder } = await supabase
+        .from('cvr_virksomhed')
+        .select('cvr, navn')
+        .in('cvr', Array.from(cvrSet));
+
+      for (const v of (rawVirksomheder ?? []) as Array<{ cvr: string; navn: string }>) {
+        if (v.cvr && v.navn) cvrNavnMap.set(String(v.cvr), v.navn);
+      }
+    }
+
+    // Map til resultat — kun første (nyeste) ejer per BFE
+    for (const e of ejerskaber) {
+      if (result.has(e.bfe_nummer)) continue; // allerede sat (nyeste virkning_fra først)
+
+      let navn: string;
+      if (e.ejer_type === 'virksomhed' && e.ejer_cvr) {
+        navn = cvrNavnMap.get(String(e.ejer_cvr)) ?? e.ejer_navn ?? `CVR ${e.ejer_cvr}`;
+      } else {
+        navn = e.ejer_navn ?? 'Ukendt';
+      }
+
+      result.set(e.bfe_nummer, {
+        ejerNavn: navn,
+        ejerType:
+          e.ejer_type === 'virksomhed' ? 'selskab' : e.ejer_type === 'person' ? 'person' : 'ukendt',
+      });
+    }
+  } catch (err) {
+    logger.warn('[ejendom-struktur] Ejerskab batch fetch fejl:', err);
   }
   return result;
 }
@@ -961,6 +1045,32 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
         logger.warn(
           '[ejendom-struktur] DAWA supplement fejlede:',
           supplementErr instanceof Error ? supplementErr.message : String(supplementErr)
+        );
+      }
+    }
+
+    // ── BIZZ-2060: Berig ejerlejligheder med ejer-navne fra ejf_ejerskab ──
+    // Samler alle ejerlejligheds-BFE'er og henter ejerskab i ét batch-kald.
+    {
+      const ejlBfes: number[] = [];
+      for (const hej of root.children) {
+        for (const ejl of hej.children) {
+          if (ejl.bfe > 0) ejlBfes.push(ejl.bfe);
+        }
+      }
+      if (ejlBfes.length > 0) {
+        const ejerMap = await fetchEjerskabBatch(ejlBfes);
+        for (const hej of root.children) {
+          for (const ejl of hej.children) {
+            const ejerInfo = ejerMap.get(ejl.bfe);
+            if (ejerInfo) {
+              ejl.ejer = ejerInfo.ejerNavn;
+              ejl.ejertype = ejerInfo.ejerType;
+            }
+          }
+        }
+        logger.log(
+          `[ejendom-struktur] Ejerskab berigelse: ${ejerMap.size}/${ejlBfes.length} BFE'er med ejer`
         );
       }
     }

@@ -128,6 +128,52 @@ function extractText(xml: string, tag: string): string | null {
 }
 
 /**
+ * Extract købere fra AdkomsthaverSamling block.
+ * Finder alle <Adkomsthaver> indgange og samler navne (Person + Virksomhed),
+ * CVR-numre samt FØRSTE købers AndelIdeel (taeller/naevner).
+ *
+ * @param xml - AdkomstSummarisk XML fragment
+ * @returns Køber-info struktur
+ */
+function extractKoebere(xml: string): {
+  navne: string[];
+  cvrs: string[];
+  andelTaeller: number | null;
+  andelNaevner: number | null;
+} {
+  const samling = xml.match(/AdkomsthaverSamling[^>]*>([\s\S]*?)<\/[^:]*:?AdkomsthaverSamling/);
+  if (!samling) return { navne: [], cvrs: [], andelTaeller: null, andelNaevner: null };
+
+  const entries = [
+    ...samling[1].matchAll(/(?:^|<[^:]*:?Adkomsthaver[^>]*>)([\s\S]*?)<\/[^:]*:?Adkomsthaver/g),
+  ];
+
+  const navne: string[] = [];
+  const cvrs: string[] = [];
+  let andelTaeller: number | null = null;
+  let andelNaevner: number | null = null;
+
+  for (const [, e] of entries) {
+    const personName = extractText(e, 'PersonName');
+    const virkName = extractText(e, 'LegalUnitName');
+    const cvr = extractText(e, 'CVRnumberIdentifier');
+    if (personName) navne.push(personName);
+    else if (virkName) navne.push(virkName);
+    if (cvr) cvrs.push(cvr);
+    // AndelIdeel — kun første købers andel registreres på handelens niveau
+    if (andelTaeller === null) {
+      const ideel = e.match(/AndelIdeel[^>]*>([\s\S]*?)<\/[^:]*:?AndelIdeel/);
+      if (ideel) {
+        andelTaeller = extractInt(ideel[1], 'Taeller');
+        andelNaevner = extractInt(ideel[1], 'Naevner');
+      }
+    }
+  }
+
+  return { navne, cvrs, andelTaeller, andelNaevner };
+}
+
+/**
  * Extract kreditor name from KreditorInformationSamling block.
  * Searches only within the kreditor section to avoid picking up debitor names.
  *
@@ -176,6 +222,15 @@ async function fetchDetailForBfe(bfe: number): Promise<{
   const xml = r2.body;
 
   // Parse ADKOMST (handler)
+  // e-TL XML struktur (BIZZ-1797 fix):
+  //   AdkomstSummarisk
+  //     SkoedeOvertagelsesDato | TinglysningsDato | DokumentAliasIdentifikator
+  //     AdkomsthaverSamling
+  //       Adkomsthaver (1..n — én pr. køber)
+  //         PersonSimpelIdentifikator > PersonName        (privatperson)
+  //         VirksomhedSimpelIdentifikator > LegalUnitName + CVRnumberIdentifier  (virksomhed)
+  //         AndelIdeel > Taeller + Naevner                (denne købers andel)
+  //     SkoedeKoebesum > KontantKoebesum + IAltKoebesum
   const handler: ParsedHandler[] = [];
   const adkomstEntries = [
     ...xml.matchAll(/AdkomstSummarisk>([\s\S]*?)<\/[^:]*:?AdkomstSummarisk/g),
@@ -185,20 +240,20 @@ async function fetchDetailForBfe(bfe: number): Promise<{
     const kontantKoebesum = extractInt(e, 'KontantKoebesum');
     if (!dato && !kontantKoebesum) continue;
 
-    const koeber = extractText(e, 'PersonNavn') || extractText(e, 'VirksomhedNavn');
-    const koeberCvr = extractText(e, 'VirksomhedCvrNummer');
+    // Ekstrahér alle køber-navne + CVR + samlet andel fra AdkomsthaverSamling
+    const koeberInfo = extractKoebere(e);
 
     handler.push({
       bfe_nummer: bfe,
       dato,
       tinglyst_dato: extractDate(e, 'TinglysningsDato'),
-      koebsaftale_dato: extractDate(e, 'KoebsaftaleDato'),
+      koebsaftale_dato: null, // KoebsaftaleDato findes ikke i ejdsummarisk XML
       koebesum: kontantKoebesum,
       samlet_koebesum: extractInt(e, 'IAltKoebesum'),
-      andel_taeller: extractInt(e, 'AndelTaeller'),
-      andel_naevner: extractInt(e, 'AndelNaevner'),
-      koeber_navne: koeber ? [koeber] : null,
-      koeber_cvrs: koeberCvr ? [koeberCvr] : null,
+      andel_taeller: koeberInfo.andelTaeller,
+      andel_naevner: koeberInfo.andelNaevner,
+      koeber_navne: koeberInfo.navne.length > 0 ? koeberInfo.navne : null,
+      koeber_cvrs: koeberInfo.cvrs.length > 0 ? koeberInfo.cvrs : null,
     });
   }
 

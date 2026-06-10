@@ -162,19 +162,27 @@ async function processCvr(cvr) {
       "DELETE FROM cvr_deltagerrelation WHERE virksomhed_cvr=$1 AND gyldig_fra='1900-01-01'",
       [String(cvr)]
     );
-    // UPSERT new rows
-    for (const r of clean) {
-      await client.query(`
-        INSERT INTO cvr_deltagerrelation
+    // BATCH UPSERT alle rows i ÉN query (10x hurtigere end per-row)
+    if (clean.length > 0) {
+      const placeholders = [];
+      const params = [];
+      let p = 1;
+      for (const r of clean) {
+        placeholders.push(`($${p++},$${p++},$${p++},$${p++},$${p++},$${p++},$${p++},$${p++},$${p++})`);
+        params.push(r.virksomhed_cvr, r.deltager_enhedsnummer, r.type, r.gyldig_fra, r.gyldig_til, r.ejerandel_pct, r.sidst_opdateret, r.sidst_hentet_fra_cvr, r.ejer_cvr);
+      }
+      await client.query(
+        `INSERT INTO cvr_deltagerrelation
           (virksomhed_cvr, deltager_enhedsnummer, type, gyldig_fra, gyldig_til, ejerandel_pct, sidst_opdateret, sidst_hentet_fra_cvr, ejer_cvr)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-        ON CONFLICT (virksomhed_cvr, deltager_enhedsnummer, type, gyldig_fra) DO UPDATE SET
-          gyldig_til = EXCLUDED.gyldig_til,
-          ejerandel_pct = COALESCE(EXCLUDED.ejerandel_pct, cvr_deltagerrelation.ejerandel_pct),
-          sidst_opdateret = EXCLUDED.sidst_opdateret,
-          sidst_hentet_fra_cvr = EXCLUDED.sidst_hentet_fra_cvr,
-          ejer_cvr = COALESCE(EXCLUDED.ejer_cvr, cvr_deltagerrelation.ejer_cvr)
-      `, [r.virksomhed_cvr, r.deltager_enhedsnummer, r.type, r.gyldig_fra, r.gyldig_til, r.ejerandel_pct, r.sidst_opdateret, r.sidst_hentet_fra_cvr, r.ejer_cvr]);
+         VALUES ${placeholders.join(',')}
+         ON CONFLICT (virksomhed_cvr, deltager_enhedsnummer, type, gyldig_fra) DO UPDATE SET
+           gyldig_til = EXCLUDED.gyldig_til,
+           ejerandel_pct = COALESCE(EXCLUDED.ejerandel_pct, cvr_deltagerrelation.ejerandel_pct),
+           sidst_opdateret = EXCLUDED.sidst_opdateret,
+           sidst_hentet_fra_cvr = EXCLUDED.sidst_hentet_fra_cvr,
+           ejer_cvr = COALESCE(EXCLUDED.ejer_cvr, cvr_deltagerrelation.ejer_cvr)`,
+        params
+      );
     }
     await client.query('COMMIT');
     return { cvr, status: 'ok', rels: clean.length };

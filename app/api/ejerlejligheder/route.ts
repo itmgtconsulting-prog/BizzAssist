@@ -102,6 +102,11 @@ interface TLSearchItem {
   ejendomsVurdering: number | null;
   grundVaerdi: number | null;
   vurderingsDato: string | null;
+  /**
+   * BIZZ-2057: KOMMUNALT ESR-ejendomsnummer (entydigt KUN sammen med
+   * kommuneNummer), IKKE et BFE-nummer. Må aldrig bruges som BFE — det reelle
+   * BFE (BestemtFastEjendomNummer) hentes via ejdsummarisk-opslag på uuid.
+   */
   ejendomsnummer: string | null;
   kommuneNummer: string | null;
 }
@@ -157,6 +162,46 @@ function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
     });
     req.end();
   });
+}
+
+// ─── BFE-opslag ─────────────────────────────────────────────────────────────
+
+/**
+ * BIZZ-2057: Udtrækker det reelle BFE (BestemtFastEjendomNummer) fra en
+ * ejdsummarisk-XML-respons. TL-søgesvar indeholder kun det kommunale ESR-nummer.
+ *
+ * @param xml - ejdsummarisk XML-body
+ * @returns BFE-nummer eller 0 hvis ikke fundet
+ */
+function parseBfeFromSummarisk(xml: string): number {
+  const m = xml.match(/BestemtFastEjendomNummer>\s*(\d+)/i);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+/**
+ * BIZZ-2057: Batch-resolver reelle BFE-numre for TL-uuid'er via ejdsummarisk.
+ * Kører i CONCURRENCY-batcher så vi ikke overbelaster TL med N parallelle kald.
+ *
+ * @param uuids - TL-objekt-uuid'er
+ * @param concurrency - antal parallelle kald pr. batch
+ * @returns Map fra uuid → reelt BFE (kun entries der kunne resolves)
+ */
+async function fetchBfeBatch(uuids: string[], concurrency = 3): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  for (let i = 0; i < uuids.length; i += concurrency) {
+    const batch = uuids.slice(i, i + concurrency);
+    const results = await Promise.allSettled(
+      batch.map(async (uuid) => {
+        const res = await tlFetch(`/ejdsummarisk/${uuid}`);
+        if (res.status !== 200 || !res.body) return { uuid, bfe: 0 };
+        return { uuid, bfe: parseBfeFromSummarisk(res.body) };
+      })
+    );
+    for (const r of results) {
+      if (r.status === 'fulfilled' && r.value.bfe > 0) map.set(r.value.uuid, r.value.bfe);
+    }
+  }
+  return map;
 }
 
 // ─── Etage/dør parsing ──────────────────────────────────────────────────────
@@ -336,14 +381,15 @@ async function resolveLejlighederViaDawa(
           items.find((it) => !/hovedejendom/i.test(it.vedroerende)) ??
           items[0];
         if (!tlItem) return;
-        // ejendomsnummer is the unit-specific BFE
-        const bfe = tlItem.ejendomsnummer ? parseInt(tlItem.ejendomsnummer, 10) : 0;
-        if (bfe > 0) lej.bfe = bfe;
 
-        // Fetch summarisk XML → areal + købspris + købsdato + ejer-navn
+        // Fetch summarisk XML → reelt BFE + areal + købspris + købsdato + ejer-navn
         const sumRes = await tlFetch(`/ejdsummarisk/${tlItem.uuid}`);
         if (sumRes.status === 200 && sumRes.body) {
           const xml = sumRes.body;
+          // BIZZ-2057: reelt BFE (BestemtFastEjendomNummer) — ALDRIG det
+          // kommunale ESR-ejendomsnummer fra TL-søgesvaret.
+          const bfe = parseBfeFromSummarisk(xml);
+          if (bfe > 0) lej.bfe = bfe;
           // Ejerlejlighedens areal (primær) eller generisk areal
           const ejlAreal = xml.match(
             /[Ee]jerlejlighedens\s+tinglyste?\s+areal[^<]*<[^>]*>[^<]*<[^>]*>(\d+)\s*kvm/i
@@ -658,6 +704,13 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
       `[ejerlejligheder] ${lejlighedItems.length} lejligheder fundet via tinglysning for ejerlav ${ejerlavKode} matr. ${matrikelnr}`
     );
 
+    // ── Trin 1b: Resolve reelle BFE-numre (BIZZ-2057) ──
+    // TL-søgesvaret indeholder kun det kommunale ESR-ejendomsnummer. Tidligere
+    // blev ESR fejltolket som BFE, så lejligheder fik forkert BFE → forkerte
+    // links, forkert/tom ejer (EJF-opslag ramte SFE-BFE) og forkert vurdering.
+    // Vi slår det reelle BFE op pr. uuid via ejdsummarisk for ALLE lejligheder.
+    const bfeByUuid = await fetchBfeBatch(lejlighedItems.map((it) => it.uuid));
+
     // ── Trin 2: Hent summarisk data (areal + ejer + køb) for hver lejlighed ──
     // Alt data hentes fra tinglysning ejdsummarisk XML — kræver ingen EJF
     interface SummariskData {
@@ -672,9 +725,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
     // i stedet for at kalde TL for hver enkelt. Meget hurtigere + ingen cap.
     const ejfEjerMap = new Map<number, { navn: string; type: string }>();
     try {
-      const bfes = lejlighedItems
-        .map((it) => parseInt(it.ejendomsnummer ?? '0', 10))
-        .filter((b) => b > 0);
+      const bfes = lejlighedItems.map((it) => bfeByUuid.get(it.uuid) ?? 0).filter((b) => b > 0);
       if (bfes.length > 0) {
         const admin = createAdminClient();
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -851,7 +902,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
     const lejligheder: Ejerlejlighed[] = lejlighedItems
       .map((item) => {
         const { etage, doer } = parseEtageDoer(item.adresse);
-        const bfe = item.ejendomsnummer ? parseInt(item.ejendomsnummer, 10) : 0;
+        // BIZZ-2057: reelt BFE fra ejdsummarisk — ALDRIG det kommunale ESR-nummer.
+        const bfe = bfeByUuid.get(item.uuid) ?? 0;
         const sum = summariskMap.get(item.uuid);
 
         // BIZZ-784: heuristic — Tinglysning doesn't expose an explicit

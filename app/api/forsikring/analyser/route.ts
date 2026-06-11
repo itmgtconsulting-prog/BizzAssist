@@ -367,7 +367,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // BIZZ-1488/1492/1552: Batch-fetch coverages per policy så gap-engine
     // får faktiske dækningsdata (tidligere hardkodet til []) — uden disse
     // rapporterede checkMissingGlas/Sanitet/etc. altid "mangler".
-    const policyIds = matches.filter((m) => m.bestMatch).map((m) => m.bestMatch!.policy.id);
+    // BIZZ-2066: Hent for ALLE policer i scope — ikke kun bestMatches.
+    // Ansvar-policer uden property_address (fx en forsikringsoversigts
+    // "dækker hele virksomheden"-række) matcher aldrig et aktiv, og når to
+    // rækker deler policenummer/adresse vinder kun én bestMatch — i begge
+    // tilfælde var dækningerne (fx erhvervsansvar) usynlige for portefølje-
+    // checks (GAP-067 m.fl.), så et ekstra dokument kunne paradoksalt give
+    // FLERE manglende branchekrav.
+    const policyIds = policer.map((p) => p.id);
     const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
     if (policyIds.length > 0) {
       const coveragePromises = policyIds.map((id) =>

@@ -261,6 +261,33 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     } catch {
       // Filnavne er rent informative — analysen fortsætter uden dem.
     }
+    // BIZZ-2077: Kundens egen CVR-registrerede adresse (hovedkontor) er pr.
+    // definition IKKE et forsikringssted — policer stiles ofte dertil som ren
+    // korrespondanceadresse. Den filtreres fra, så banneret kun viser sikrede-
+    // adresser der hverken er i porteføljen eller er kundens egen adresse.
+    let kundeEgenAdresse: string | null = null;
+    if (kunde_type === 'virksomhed') {
+      try {
+        const { data: cvrRow } = await admin
+          .from('cvr_virksomhed')
+          .select('adresse_json')
+          .eq('cvr', kunde_id)
+          .maybeSingle();
+        const adr = cvrRow?.adresse_json as {
+          vejnavn?: string | null;
+          husnummerFra?: number | null;
+          bogstavFra?: string | null;
+          postnummer?: number | null;
+          postdistrikt?: string | null;
+        } | null;
+        if (adr?.vejnavn) {
+          kundeEgenAdresse =
+            `${adr.vejnavn} ${adr.husnummerFra ?? ''}${adr.bogstavFra ?? ''}, ${adr.postnummer ?? ''} ${adr.postdistrikt ?? ''}`.trim();
+        }
+      } catch {
+        // Rent informativt filter — analysen fortsætter uden hvis CVR-opslag fejler.
+      }
+    }
     const sikredeAdresseSet = new Set<string>();
     const sikredeAdresserUdenForPortefoelje: Array<{
       adresse: string;
@@ -271,6 +298,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       const adresse = p.policyholder_address?.trim();
       if (!adresse) continue;
       if (portefoeljeAdresser.some((addr) => addressesMatch(adresse, addr))) continue;
+      // BIZZ-2077: Spring kundens egen virksomhedsadresse over — den er nævnt
+      // som adressat på policen, ikke som dækket forsikringssted.
+      if (kundeEgenAdresse && addressesMatch(adresse, kundeEgenAdresse)) continue;
       const dokumentNavn = p.document_id ? (dokumentNavne.get(p.document_id) ?? null) : null;
       const key = `${adresse.toLowerCase()}|${dokumentNavn ?? ''}`;
       if (sikredeAdresseSet.has(key)) continue;

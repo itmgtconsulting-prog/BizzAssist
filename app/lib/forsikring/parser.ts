@@ -100,12 +100,13 @@ const DOC_TYPE_SYSTEM_PROMPT = `Du er en specialist i danske forsikringsdokument
 - "oversigt": En forsikringsoversigt/sammenfatning der lister FLERE policer. Typisk fra mægler eller selskab. Indeholder en tabel/liste med policenumre, selskaber, adresser, præmier for flere ejendomme.
 - "tillaeg": Et tillæg, ændring eller endorsement til en eksisterende police. Refererer til et eksisterende policenummer og ændrer dækninger/betingelser.
 - "tilbud": Et fornyelsestilbud, pristilbud eller forsikringstilbud. Endnu ikke accepteret police.
+- "praemie": En præmieopkrævning/præmiefaktura for en EKSISTERENDE police. Indeholder policenummer, forsikringstager, produkt/forsikringstype, periode og præmiebeløb — men ingen dækningsdetaljer eller betingelser. Typiske kendetegn: "Præmieopkrævning", "Fakturadetaljer", betalingsoplysninger (IBAN/betalingsreference).
 - "korrespondance": Brev, email, følgebrev, kvittering eller administrativ kommunikation. Ingen police-data.
 - "ukendt": Kan ikke klassificeres som noget af ovenstående.
 
 Returnér KUN gyldig JSON:
 {
-  "type": "police" | "oversigt" | "tillaeg" | "tilbud" | "korrespondance" | "ukendt",
+  "type": "police" | "oversigt" | "tillaeg" | "tilbud" | "praemie" | "korrespondance" | "ukendt",
   "confidence": 0.0-1.0,
   "reason": "Kort begrundelse (max 100 tegn)",
   "policy_count": number | null
@@ -119,7 +120,8 @@ Vigtige regler:
 3. Hvis dokumentet handler om ÉN specifik police med dækninger/betingelser → "police".
 4. Vær konservativ: ved tvivl mellem police og oversigt, check om der er flere policenumre.
 5. VIGTIGT: Mange forsikringsdokumenter STARTER med et følgebrev (fx "Kære kunde, her er jeres nye forsikringsaftale...") efterfulgt af den egentlige police. Klassificér ALTID baseret på HELE dokumentet — IKKE kun den første side. Hvis teksten indeholder policenummer, dækninger, præmier, selvrisiko osv. efter et følgebrev → det er en "police", IKKE "korrespondance".
-6. Forsikringspakker (følgebrev + police + dækningsoversigt i ét dokument) = "police".`;
+6. Forsikringspakker (følgebrev + police + dækningsoversigt i ét dokument) = "police".
+7. BIZZ-2083: En præmieopkrævning med policenummer, forsikringstager og præmiebeløb = "praemie" — IKKE "korrespondance", selvom den ligner en faktura/kvittering.`;
 
 /**
  * BIZZ-1392: Trin 1 — Detektér dokumenttype via Claude.
@@ -158,7 +160,15 @@ export async function detectDocumentType(
       policy_count?: number;
     };
 
-    const validTypes = ['police', 'oversigt', 'tillaeg', 'tilbud', 'korrespondance', 'ukendt'];
+    const validTypes = [
+      'police',
+      'oversigt',
+      'tillaeg',
+      'tilbud',
+      'praemie',
+      'korrespondance',
+      'ukendt',
+    ];
     const docType = validTypes.includes(parsed.type ?? '')
       ? (parsed.type as DocumentType)
       : 'ukendt';
@@ -659,8 +669,12 @@ export async function parseWithTypeDetection(
       return parseOversigt(text, apiKey);
     }
     case 'police':
-    case 'tillaeg': {
-      // Parse som individuel police (tillæg parses som police — caller kan matche)
+    case 'tillaeg':
+    case 'praemie': {
+      // Parse som individuel police (tillæg parses som police — caller kan matche).
+      // BIZZ-2083: Præmieopkrævninger indeholder policenummer, forsikringstager,
+      // produkt, periode og præmie — nok til at policen kan indgå i gap-analysen.
+      // Manglende dækningsdetaljer parses som null.
       const trimmedText = text.length > MAX_TEXT_CHARS ? text.slice(0, MAX_TEXT_CHARS) : text;
       if (!apiKey) {
         return { ok: false, text, error: 'Anthropic API-key mangler' };
@@ -741,6 +755,18 @@ export async function parseWithTypeDetection(
         'forsikringen g{lder',
       ];
       const lowerText = text.toLowerCase();
+      // BIZZ-2083: Præmieopkrævninger er korte (ofte <1000 tegn) men indeholder
+      // policenummer + forsikringstager + præmie. Fang dem her hvis
+      // klassifikationen alligevel valgte korrespondance.
+      const erPraemieopkraevning =
+        (lowerText.includes('præmieopkrævning') || lowerText.includes('pr{mieopkr{vning')) &&
+        (lowerText.includes('policenummer') || lowerText.includes('policenr'));
+      if (erPraemieopkraevning) {
+        logger.log(
+          '[forsikring/parser] Korrespondance ligner præmieopkrævning → fallback til police-parsing'
+        );
+        return parsePolicyFile(fileBuffer, fileType, apiKey);
+      }
       const matchCount = policyKeywords.filter((kw) => lowerText.includes(kw)).length;
       if (matchCount >= 2 && text.length > 3000) {
         logger.log(

@@ -25,6 +25,7 @@ import { z } from 'zod';
  * - oversigt: forsikringsoversigt med flere policer → split til N policer
  * - tillaeg: tillæg/ændring til eksisterende police → match + opdatér
  * - tilbud: fornyelsestilbud → udtrák info til notes
+ * - praemie: præmieopkrævning/faktura for eksisterende police → parse som police (BIZZ-2083)
  * - korrespondance: brev/email → udtrák info til notes
  * - ukendt: kan ikke klassificeres → vis advarsel
  */
@@ -33,6 +34,7 @@ export type DocumentType =
   | 'oversigt'
   | 'tillaeg'
   | 'tilbud'
+  | 'praemie'
   | 'korrespondance'
   | 'ukendt';
 

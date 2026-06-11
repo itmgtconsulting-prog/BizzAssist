@@ -113,8 +113,9 @@ function TreeNode({ node, depth, lang, currentBfe, currentDawaId, showOwnership 
         <Icon size={14} className={isCurrent ? 'text-blue-400' : style.color} />
       </div>
 
-      {/* Adresse + badge */}
-      <div className="flex-1 min-w-0">
+      {/* Adresse + badge. BIZZ-2064: overflow-hidden så shrink-0 børn (badge/
+          BFE) ikke maler ind over ejer-kolonnen på smalle viewports */}
+      <div className="flex-1 min-w-0 overflow-hidden">
         <div className="flex items-center gap-2">
           <span
             className={`text-xs truncate ${isCurrent ? 'text-white font-semibold' : canNavigate ? 'text-blue-300 font-medium' : 'text-slate-200 font-medium'}`}
@@ -163,7 +164,7 @@ function TreeNode({ node, depth, lang, currentBfe, currentDawaId, showOwnership 
           {/* BIZZ-2064: Venstrestillet + bredere ejer-kolonne med ombrydning,
               så det fulde ejernavn altid kan læses (før: 140px truncate) */}
           <span
-            className="w-[260px] text-slate-300 text-left whitespace-normal break-words leading-tight pr-2"
+            className="w-[200px] text-slate-300 text-left whitespace-normal break-words leading-tight pr-2"
             title={node.ejer ?? undefined}
           >
             {node.ejer ?? '–'}
@@ -346,7 +347,7 @@ export default function EjendomStrukturTree({
           {/* BIZZ-2060: Ejer-kolonne tilføjet nu batch-endpoint er klar */}
           <div className="flex items-center shrink-0">
             {/* BIZZ-2064: Ejer venstrestillet + bredere så fulde navne kan læses */}
-            <span className="w-[260px] text-left">{da ? 'Ejer' : 'Owner'}</span>
+            <span className="w-[200px] text-left">{da ? 'Ejer' : 'Owner'}</span>
             <span className="w-[55px] text-right">{da ? 'Areal' : 'Area'}</span>
             <span className="w-[100px] text-right">{da ? 'Købspris' : 'Price'}</span>
             <span className="w-[75px] text-right">{da ? 'Købsdato' : 'Date'}</span>

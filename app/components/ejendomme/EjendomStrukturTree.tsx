@@ -160,13 +160,15 @@ function TreeNode({ node, depth, lang, currentBfe, currentDawaId, showOwnership 
       {/* BIZZ-2060: Ejer + areal + købspris + købsdato for ejerlejligheder (ejerskab-mode). */}
       {showOwnership && node.niveau === 'ejerlejlighed' && (
         <div className="flex items-center shrink-0 text-[10px] tabular-nums">
+          {/* BIZZ-2064: Venstrestillet + bredere ejer-kolonne med ombrydning,
+              så det fulde ejernavn altid kan læses (før: 140px truncate) */}
           <span
-            className="w-[140px] text-slate-300 text-right truncate"
+            className="w-[260px] text-slate-300 text-left whitespace-normal break-words leading-tight pr-2"
             title={node.ejer ?? undefined}
           >
             {node.ejer ?? '–'}
           </span>
-          <span className="w-[45px] text-slate-400 text-right">
+          <span className="w-[55px] text-slate-400 text-right">
             {node.areal != null && node.areal > 0 ? `${node.areal} m²` : '–'}
           </span>
           <span className="w-[100px] text-slate-300 text-right font-medium">
@@ -343,8 +345,9 @@ export default function EjendomStrukturTree({
           <span className="flex-1" />
           {/* BIZZ-2060: Ejer-kolonne tilføjet nu batch-endpoint er klar */}
           <div className="flex items-center shrink-0">
-            <span className="w-[140px] text-right">{da ? 'Ejer' : 'Owner'}</span>
-            <span className="w-[45px] text-right">{da ? 'Areal' : 'Area'}</span>
+            {/* BIZZ-2064: Ejer venstrestillet + bredere så fulde navne kan læses */}
+            <span className="w-[260px] text-left">{da ? 'Ejer' : 'Owner'}</span>
+            <span className="w-[55px] text-right">{da ? 'Areal' : 'Area'}</span>
             <span className="w-[100px] text-right">{da ? 'Købspris' : 'Price'}</span>
             <span className="w-[75px] text-right">{da ? 'Købsdato' : 'Date'}</span>
           </div>

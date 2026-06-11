@@ -544,6 +544,176 @@ function PropertyRow({
 }
 
 /**
+ * BIZZ-2085: Seneste regnskabsår (minimal udsnit) fra /api/regnskab/xbrl.
+ * Værdier er T DKK-normaliserede (samme konvention som RegnskabstalTable).
+ */
+interface RegnskabsAarLite {
+  aar: number;
+  resultat: {
+    omsaetning: number | null;
+    bruttofortjeneste: number | null;
+    aaretsResultat: number | null;
+  };
+  balance: {
+    egenkapital: number | null;
+    aktiverIAlt: number | null;
+  };
+}
+
+/**
+ * BIZZ-2085: Dækningsniveau vs. seneste regnskab.
+ *
+ * Viser de fundne dækningssummer (fra matchede policers aktive dækninger) i
+ * en dedikeret kasse og holder dem op imod nøgletal fra kundens seneste
+ * tilgængelige årsregnskab. Regnskabstallene vises længst til højre i kassen,
+ * så dækningsniveauet kan reviewes sammen med kunden.
+ *
+ * Regnskabet hentes klient-side via /api/regnskab/xbrl (cachet server-side i
+ * regnskab_cache, T DKK-normaliseret) for forsikringssejerens CVR — kunde_id
+ * når kunde_type='virksomhed', ellers første virksomheds-aktiv i analysen.
+ *
+ * @param props.detail - Fuld analyse-detail (coverages + aktiver + kunde-id)
+ * @param props.da - Dansk sprogflag
+ */
+function DaekningVsRegnskab({ detail, da }: { detail: AnalyseDetail; da: boolean }) {
+  // Find kunde-CVR: forsikringsejeren selv, ellers første virksomheds-aktiv
+  const kundeId = detail.analyse.kunde_id ?? '';
+  const cvr =
+    detail.analyse.kunde_type === 'virksomhed' && /^\d{8}$/.test(kundeId)
+      ? kundeId
+      : (detail.aktiver.find((a) => a.type === 'virksomhed' && a.cvr)?.cvr ?? null);
+
+  const [regnskab, setRegnskab] = useState<RegnskabsAarLite | null>(null);
+  const [regnskabLoading, setRegnskabLoading] = useState(false);
+
+  // Hent seneste regnskab for kundens CVR — API'et cacher selv i regnskab_cache,
+  // så gentagne åbninger af analysen er billige.
+  useEffect(() => {
+    if (!cvr) return;
+    let cancelled = false;
+    setRegnskabLoading(true);
+    fetch(`/api/regnskab/xbrl?cvr=${cvr}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { years?: RegnskabsAarLite[] } | null) => {
+        if (!cancelled) setRegnskab(d?.years?.[0] ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setRegnskab(null);
+      })
+      .finally(() => {
+        if (!cancelled) setRegnskabLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cvr]);
+
+  // Aggregér dækningssummer per dækningsnavn på tværs af matchede policer.
+  // Samme dækning på flere policer summeres — det er det samlede dækningsniveau
+  // for porteføljen der skal holdes op imod regnskabet.
+  const sumByLabel = new Map<string, number>();
+  for (const cov of detail.coverages ?? []) {
+    if (!cov.is_covered || cov.sum_dkk == null || cov.sum_dkk <= 0) continue;
+    sumByLabel.set(cov.coverage_label, (sumByLabel.get(cov.coverage_label) ?? 0) + cov.sum_dkk);
+  }
+  const daekningsRaekker = [...sumByLabel.entries()].sort((a, b) => b[1] - a[1]);
+  const totalDaekning = daekningsRaekker.reduce((acc, [, v]) => acc + v, 0);
+
+  // Skjul kassen helt når der hverken er dækningssummer eller regnskab
+  if (daekningsRaekker.length === 0 && !regnskab && !regnskabLoading) return null;
+
+  /** Formatter T DKK-værdi fra XBRL-API'et (vises som t.kr — platform-konvention) */
+  const tkr = (v: number | null) =>
+    v == null ? (da ? 'ikke oplyst' : 'n/a') : `${v.toLocaleString('da-DK')} t.kr`;
+  /** Formatter dækningssum i hele kr */
+  const kr = (v: number) => `${v.toLocaleString('da-DK')} kr`;
+
+  const regnskabsTal: Array<[string, number | null]> = regnskab
+    ? [
+        [da ? 'Omsætning' : 'Revenue', regnskab.resultat.omsaetning],
+        [da ? 'Bruttofortjeneste' : 'Gross profit', regnskab.resultat.bruttofortjeneste],
+        [da ? 'Årets resultat' : 'Net result', regnskab.resultat.aaretsResultat],
+        [da ? 'Egenkapital' : 'Equity', regnskab.balance.egenkapital],
+        [da ? 'Aktiver i alt' : 'Total assets', regnskab.balance.aktiverIAlt],
+      ]
+    : [];
+
+  return (
+    <div className="bg-white/5 border border-white/8 rounded-xl p-4">
+      <div className="flex items-center gap-2 mb-2">
+        <ShieldCheck size={14} className="text-emerald-400" />
+        <h4 className="text-white text-sm font-semibold">
+          {da ? 'Dækningsniveau vs. seneste regnskab' : 'Coverage level vs. latest financials'}
+        </h4>
+      </div>
+      <p className="text-slate-400 text-[11px] mb-3">
+        {da
+          ? 'Fundne dækningssummer holdt op imod nøgletal fra kundens seneste tilgængelige årsregnskab.'
+          : "Detected coverage sums compared against key figures from the customer's latest available annual report."}
+      </p>
+      <div className="flex flex-col sm:flex-row gap-4">
+        {/* Venstre: dækningssummer fra de matchede policer */}
+        <div className="flex-1 min-w-0">
+          <div className="text-slate-400 text-[10px] uppercase tracking-wide mb-1.5">
+            {da ? 'Dækningssummer' : 'Coverage sums'}
+          </div>
+          {daekningsRaekker.length === 0 ? (
+            <p className="text-slate-400 text-xs">
+              {da
+                ? 'Ingen dækningssummer fundet i de matchede policer.'
+                : 'No coverage sums found in the matched policies.'}
+            </p>
+          ) : (
+            <div className="space-y-1">
+              {daekningsRaekker.map(([label, sum]) => (
+                <div key={label} className="flex items-center justify-between gap-2 text-xs">
+                  <span className="text-slate-300 truncate">{label}</span>
+                  <span className="text-emerald-300 font-medium shrink-0">{kr(sum)}</span>
+                </div>
+              ))}
+              <div className="flex items-center justify-between gap-2 text-xs border-t border-white/10 pt-1 mt-1">
+                <span className="text-white font-medium">
+                  {da ? 'Samlet dækning' : 'Total coverage'}
+                </span>
+                <span className="text-emerald-300 font-semibold shrink-0">{kr(totalDaekning)}</span>
+              </div>
+            </div>
+          )}
+        </div>
+        {/* Højre — længst til højre i kassen: regnskabstal fra seneste årsrapport */}
+        <div className="sm:w-64 shrink-0 sm:border-l sm:border-white/10 sm:pl-4">
+          <div className="text-slate-400 text-[10px] uppercase tracking-wide mb-1.5">
+            {regnskab
+              ? da
+                ? `Seneste regnskab (${regnskab.aar})`
+                : `Latest financials (${regnskab.aar})`
+              : da
+                ? 'Seneste regnskab'
+                : 'Latest financials'}
+          </div>
+          {regnskabLoading ? (
+            <Loader2 size={14} className="animate-spin text-blue-400" />
+          ) : !regnskab ? (
+            <p className="text-slate-400 text-xs">
+              {da ? 'Intet regnskab tilgængeligt.' : 'No financials available.'}
+            </p>
+          ) : (
+            <div className="space-y-1">
+              {regnskabsTal.map(([label, value]) => (
+                <div key={label} className="flex items-center justify-between gap-2 text-xs">
+                  <span className="text-slate-300">{label}</span>
+                  <span className="text-blue-300 font-medium shrink-0">{tkr(value)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Unified analyse result view — BIZZ-1389.
  * Groups assets by property and shows merged gaps from both systems.
  *
@@ -803,6 +973,10 @@ function UnifiedAnalyseView({
           />
         </div>
       </div>
+
+      {/* BIZZ-2085: Dækningsniveau vs. seneste regnskab — egen kasse med
+          regnskabstal længst til højre, så niveauet kan reviewes med kunden */}
+      <DaekningVsRegnskab detail={detail} da={da} />
 
       {/* BIZZ-1941: Forsikringsejer-niveau — generelle findings for hele ejeren.
           Vises kun her, ikke gentaget under virksomhed/ejendom.
@@ -3309,6 +3483,9 @@ function AnalyseDetailSection({
           </div>
         </div>
       </div>
+
+      {/* BIZZ-2085: Dækningsniveau vs. seneste regnskab — også i historiske analyser */}
+      <DaekningVsRegnskab detail={detail} da={da} />
 
       {/* Ejendomme-liste med expandable gaps (genbruger PropertyRow) */}
       <div className="space-y-2">

@@ -231,6 +231,7 @@ REGLER:
 7. Hvis policyholder er den samme for alle policer, gentag navnet i hver entry.
 8. KRITISK — DÆKNINGER: Scan HELE dokumentet for dæknings-sektioner ("Sådan er bygningen dækket", "Dækninger og dækningssummer", "Forsikringsdækninger"). Ekstraher ALLE dækninger som coverages[]. En typisk police har 8-15 dækninger. Mapping: "Brand/Pludselig skade"→brand_el, "Storm/Nedbør"→bygningskasko, "Udstrømning af vand/Rørskade"→udvidet_roerskade, "Glas"→glas, "Sanitet"→sanitet, "Svamp/Insekt"→insekt_svamp, "Restværdi"→restvaerdi, "Stikledning"→stikledning, "Jordskade"→jordskade, "Huslejetab"→huslejetab, "Hærværk"→haerverk, "Omstilling af låse"→omstilling_laase, "Hus-/Grundejeransvar"→hus_grundejer_ansvar, "Udvidet vandskade"→udvidet_vandskade.
 9. coverage_code skal matche én af de 18 kanoniske koder. Hvis en dækning ikke passer, brug den nærmeste. Finder du færre end 5, gennemlæs dokumentet igen.
+10. ADRESSE-KONTEKST (KRITISK): property_address er forsikringsSTEDET for den enkelte police — den adresse policens dækning gælder for. Brug ALDRIG kundens generelle virksomheds-, kontakt-, cc- eller adressat-adresse fra oversigtens brevhoved som property_address. Kun adresser der i oversigten eksplicit er knyttet til den enkelte police som forsikringssted må bruges — ellers null. Forsikringstagerens egen adresse hører til i policyholder_address.
 
 Returnér nu JSON for følgende forsikringsoversigt:`;
 
@@ -344,6 +345,7 @@ REGLER:
 9. Hvis policen er en oversigt/sammenfatning af flere policer, vælg den FØRSTE police og parse den.
 10. notes-feltet bruges til "Særlige forhold", besigtigelses-bemærkninger og forudsætninger (fx "Uautoriserede el-installationer", "Fedthåndslukker påkrævet").
 11. En typisk dansk bygningsforsikrings-police har 8-15 dækninger. Hvis du finder færre end 5 coverages, gennemlæs dokumentet IGEN — du har sandsynligvis overset en dæknings-sektion.
+12. ADRESSE-KONTEKST (KRITISK): Vurdér i hvilken kontekst hver adresse i dokumentet nævnes. property_address må KUN indeholde forsikringsSTEDET — den adresse en dækning gælder for (typisk markeret "Forsikringssted", "Forsikret ejendom", "Beliggenhed"). Adresser der kun optræder som forsikringstagers virksomhedsadresse, kontaktadresse, cc-/adressat-adresse, mægler-adresse eller i brevhoved/følgebrev må ALDRIG bruges som property_address — forsikringstagerens egen adresse hører til i policyholder_address. Findes intet eksplicit forsikringssted, sæt property_address til null.
 
 Returnér nu JSON for følgende police-tekst:`;
 

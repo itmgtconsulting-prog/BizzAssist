@@ -231,9 +231,69 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const portefoeljeAdresser = aktiver
       .filter((a) => a.type === 'ejendom' && a.adresse)
       .map((a) => a.adresse as string);
+
+    // BIZZ-2077: Kundens egen CVR-registrerede adresse (hovedkontor) er pr.
+    // definition IKKE et forsikringssted — policer stiles ofte dertil som ren
+    // korrespondanceadresse. Bruges både til advarsels-filteret (BIZZ-2079)
+    // og til sikrede-info-banneret nedenfor.
+    let kundeEgenAdresse: string | null = null;
+    if (kunde_type === 'virksomhed') {
+      try {
+        const { data: cvrRow } = await admin
+          .from('cvr_virksomhed')
+          .select('adresse_json')
+          .eq('cvr', kunde_id)
+          .maybeSingle();
+        // Admin-klienten er utypet for public-tabeller — cast adresse_json manuelt.
+        const adr = (cvrRow as { adresse_json?: unknown } | null)?.adresse_json as {
+          vejnavn?: string | null;
+          husnummerFra?: number | null;
+          bogstavFra?: string | null;
+          postnummer?: number | null;
+          postdistrikt?: string | null;
+        } | null;
+        if (adr?.vejnavn) {
+          kundeEgenAdresse =
+            `${adr.vejnavn} ${adr.husnummerFra ?? ''}${adr.bogstavFra ?? ''}, ${adr.postnummer ?? ''} ${adr.postdistrikt ?? ''}`.trim();
+        }
+      } catch {
+        // Rent informativt filter — analysen fortsætter uden hvis CVR-opslag fejler.
+      }
+    }
+
+    // BIZZ-2079: Adresse-kontekst — en police-adresse er kun et bygnings-
+    // forsikringssted hvis policen faktisk er en bygnings-/ejendomspolice.
+    // Erhvervs-/ansvars-/løsørepolicer nævner adresser som driftssted eller
+    // korrespondanceadresse — de må ikke sammenlignes med ejendomsporteføljen.
+    // Oversigt-policer gemmer insurance_type i business_activity (parse-route);
+    // individuelt parsede policer kan have typen i raw_metadata. Mangler
+    // type-information helt, antages bygningspolice (advarslen bevares).
+    const erBygningsPolice = (p: (typeof policer)[number]): boolean => {
+      const typeTekst = [
+        p.raw_metadata?.source_type === 'oversigt' ? p.business_activity : null,
+        p.raw_metadata?.insurance_type as string | undefined,
+        p.raw_metadata?.type as string | undefined,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      if (!typeTekst) return true;
+      return /bygning|ejendom|grundejer|hus(?!leje)/.test(typeTekst);
+    };
+
     const addressMismatches = policer
       .filter((p) => p.property_address && p.property_address.trim().length > 0)
       .filter((p) => !portefoeljeAdresser.some((addr) => addressesMatch(p.property_address, addr)))
+      // BIZZ-2079: kun bygnings-/ejendomspolicer har et forsikringssted der
+      // meningsfuldt kan sammenlignes med ejendomsporteføljen.
+      .filter((p) => erBygningsPolice(p))
+      // BIZZ-2079: forsikringstagers egen adresse (police-adressat/HQ) er en
+      // korrespondanceadresse — ikke et forsikringssted uden for porteføljen.
+      .filter(
+        (p) =>
+          !(p.policyholder_address && addressesMatch(p.property_address, p.policyholder_address)) &&
+          !(kundeEgenAdresse && addressesMatch(p.property_address, kundeEgenAdresse))
+      )
       .map((p) => ({
         policy_id: p.id,
         document_id: p.document_id ?? null,
@@ -261,34 +321,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     } catch {
       // Filnavne er rent informative — analysen fortsætter uden dem.
     }
-    // BIZZ-2077: Kundens egen CVR-registrerede adresse (hovedkontor) er pr.
-    // definition IKKE et forsikringssted — policer stiles ofte dertil som ren
-    // korrespondanceadresse. Den filtreres fra, så banneret kun viser sikrede-
-    // adresser der hverken er i porteføljen eller er kundens egen adresse.
-    let kundeEgenAdresse: string | null = null;
-    if (kunde_type === 'virksomhed') {
-      try {
-        const { data: cvrRow } = await admin
-          .from('cvr_virksomhed')
-          .select('adresse_json')
-          .eq('cvr', kunde_id)
-          .maybeSingle();
-        // Admin-klienten er utypet for public-tabeller — cast adresse_json manuelt.
-        const adr = (cvrRow as { adresse_json?: unknown } | null)?.adresse_json as {
-          vejnavn?: string | null;
-          husnummerFra?: number | null;
-          bogstavFra?: string | null;
-          postnummer?: number | null;
-          postdistrikt?: string | null;
-        } | null;
-        if (adr?.vejnavn) {
-          kundeEgenAdresse =
-            `${adr.vejnavn} ${adr.husnummerFra ?? ''}${adr.bogstavFra ?? ''}, ${adr.postnummer ?? ''} ${adr.postdistrikt ?? ''}`.trim();
-        }
-      } catch {
-        // Rent informativt filter — analysen fortsætter uden hvis CVR-opslag fejler.
-      }
-    }
     const sikredeAdresseSet = new Set<string>();
     const sikredeAdresserUdenForPortefoelje: Array<{
       adresse: string;
@@ -296,21 +328,28 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       policy_number: string | null;
     }> = [];
     for (const p of policer) {
-      const adresse = p.policyholder_address?.trim();
-      if (!adresse) continue;
-      if (portefoeljeAdresser.some((addr) => addressesMatch(adresse, addr))) continue;
-      // BIZZ-2077: Spring kundens egen virksomhedsadresse over — den er nævnt
-      // som adressat på policen, ikke som dækket forsikringssted.
-      if (kundeEgenAdresse && addressesMatch(adresse, kundeEgenAdresse)) continue;
-      const dokumentNavn = p.document_id ? (dokumentNavne.get(p.document_id) ?? null) : null;
-      const key = `${adresse.toLowerCase()}|${dokumentNavn ?? ''}`;
-      if (sikredeAdresseSet.has(key)) continue;
-      sikredeAdresseSet.add(key);
-      sikredeAdresserUdenForPortefoelje.push({
-        adresse,
-        dokument_navn: dokumentNavn,
-        policy_number: p.policy_number ?? null,
-      });
+      // BIZZ-2067: police-adressater (policyholder_address). BIZZ-2079:
+      // driftssteder fra ikke-bygningspolicer (fx erhvervsforsikring) vises
+      // også som info i stedet for som "uden for porteføljen"-advarsel.
+      const kandidater: Array<string | null | undefined> = [p.policyholder_address];
+      if (p.property_address && !erBygningsPolice(p)) kandidater.push(p.property_address);
+      for (const rawAdresse of kandidater) {
+        const adresse = rawAdresse?.trim();
+        if (!adresse) continue;
+        if (portefoeljeAdresser.some((addr) => addressesMatch(adresse, addr))) continue;
+        // BIZZ-2077: Spring kundens egen virksomhedsadresse over — den er nævnt
+        // som adressat på policen, ikke som dækket forsikringssted.
+        if (kundeEgenAdresse && addressesMatch(adresse, kundeEgenAdresse)) continue;
+        const dokumentNavn = p.document_id ? (dokumentNavne.get(p.document_id) ?? null) : null;
+        const key = `${adresse.toLowerCase()}|${dokumentNavn ?? ''}`;
+        if (sikredeAdresseSet.has(key)) continue;
+        sikredeAdresseSet.add(key);
+        sikredeAdresserUdenForPortefoelje.push({
+          adresse,
+          dokument_navn: dokumentNavn,
+          policy_number: p.policy_number ?? null,
+        });
+      }
     }
 
     // BIZZ-1973: Preflight — returnér kun mismatches, kør ikke gap-engine/persist.

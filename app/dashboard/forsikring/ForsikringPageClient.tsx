@@ -45,6 +45,7 @@ import { useSubscription } from '@/app/context/SubscriptionContext';
 import { translations } from '@/app/lib/translations';
 import TokenUsageBar from '@/app/components/TokenUsageBar';
 import { gapScope, shouldFoldOwnerIntoCompany } from '@/app/lib/forsikring/types';
+import { getMatchBegrundelse } from '@/app/lib/forsikring/matchBegrundelse';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -411,6 +412,26 @@ function PropertyRow({
                   })}
                 </div>
               )}
+              {/* BIZZ-2080: Match-begrundelse — vis HVORFOR policen blev koblet
+                  til aktivet, så brugeren kan vurdere om konklusionen er rigtig */}
+              {group.aktiv.match_score != null && (
+                <div>
+                  <span className="text-slate-400">{da ? 'Match:' : 'Match:'}</span>{' '}
+                  <span className="text-slate-300">
+                    {getMatchBegrundelse(group.aktiv.type, group.aktiv.match_score, da)}
+                  </span>{' '}
+                  <span className="text-slate-400">({group.aktiv.match_score}/100)</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* BIZZ-2080: Eksplicit forklaring når INGEN police er matchet */}
+          {!group.matchedPolicy && (
+            <div className="text-xs text-slate-400">
+              {da
+                ? 'Ingen police matchet — aktivet fremgår ikke af de parsede policers BFE-numre, adresser eller CVR/forsikringstager.'
+                : 'No policy matched — the asset does not appear in the parsed policies (BFE, address or CVR/policyholder).'}
             </div>
           )}
 

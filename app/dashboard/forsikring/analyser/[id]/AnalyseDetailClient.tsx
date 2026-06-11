@@ -24,6 +24,7 @@ import {
   Download,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { getMatchBegrundelse } from '@/app/lib/forsikring/matchBegrundelse';
 
 interface Analyse {
   id: string;
@@ -254,10 +255,24 @@ export default function AnalyseDetailClient({ analyseId }: { analyseId: string }
                 <td className="px-4 py-2.5 text-white">{a.label}</td>
                 <td className="px-4 py-2.5 text-slate-400">{a.adresse ?? a.cvr ?? a.bfe ?? '—'}</td>
                 <td className="px-4 py-2.5 text-center">
+                  {/* BIZZ-2080: Vis match-begrundelse + score så brugeren kan
+                      vurdere om police→aktiv-koblingen er rigtig */}
                   {a.matched_policy_id ? (
-                    <CheckCircle2 size={14} className="text-emerald-400 mx-auto" />
+                    <div className="flex flex-col items-center gap-0.5">
+                      <CheckCircle2 size={14} className="text-emerald-400" />
+                      {a.match_score != null && (
+                        <span className="text-[10px] text-slate-400">
+                          {getMatchBegrundelse(a.type, a.match_score, da)} ({a.match_score}/100)
+                        </span>
+                      )}
+                    </div>
                   ) : (
-                    <AlertCircle size={14} className="text-red-400 mx-auto" />
+                    <div className="flex flex-col items-center gap-0.5">
+                      <AlertCircle size={14} className="text-red-400" />
+                      <span className="text-[10px] text-slate-400">
+                        {da ? 'Ingen police matchet' : 'No policy matched'}
+                      </span>
+                    </div>
                   )}
                 </td>
               </tr>

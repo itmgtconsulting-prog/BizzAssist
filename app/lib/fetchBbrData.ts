@@ -29,7 +29,6 @@ import {
   energiforsyningTekst,
 } from '@/app/lib/bbrKoder';
 import { logger } from '@/app/lib/logger';
-import { tlFetch } from '@/app/lib/tlFetch';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -721,101 +720,15 @@ async function fetchBFENummer(
       }
     }
 
-    // BIZZ-1662: Tinglysning /ejendom/adresse fallback — når VP ikke finder
-    // en EL-BFE for adresser med etage, prøv TL. VP mangler data for mange
-    // ældre ejerlejligheder (fx Kampergade 11 st., Helsingør).
-    // BIZZ-1853: Relaxed vedroerende-check — Carlsberg Byen og lignende moderne
-    // udviklinger registrerer lejligheder uden "ejerlejlighed" prefix. Match
-    // i stedet på adresse-mønster (har etage+dør og BFE ≠ jordBfe).
-    if (!ejerlejlighedBfe && harEtage && adresseTekst) {
-      try {
-        const addrPart = adresseTekst.split(',')[0].trim();
-        const addrMatch = addrPart.match(/^(.+?)\s+(\d+\w*)$/);
-        const postnrMatch = adresseTekst.match(/(\d{4})\s+\S/);
-        if (addrMatch && postnrMatch) {
-          const [, vej, nr] = addrMatch;
-          const params = new URLSearchParams({
-            vejnavn: vej,
-            husnummer: nr,
-            postnummer: postnrMatch[1],
-          });
-          const res = await tlFetch(`/ejendom/adresse?${params.toString()}`);
-          if (res.status === 200 && res.body) {
-            const parsed = JSON.parse(res.body) as {
-              items?: Array<{
-                uuid: string;
-                adresse: string;
-                vedroerende: string;
-                ejendomsnummer?: string;
-              }>;
-            };
-            // BIZZ-1853: Score-baseret matching. Foretrukne match først:
-            // 1. Eksakt etage+dør match + vedroerende=ejerlejlighed
-            // 2. Eksakt etage+dør match (uden vedroerende-krav)
-            // 3. Eksakt etage match (når dør mangler)
-            let bestMatch: { bfe: number; score: number; reason: string } | null = null;
-            for (const item of parsed.items ?? []) {
-              const bfe = item.ejendomsnummer ? parseInt(item.ejendomsnummer, 10) : 0;
-              if (bfe <= 0 || bfe === jordBfe) continue;
-              const itemLower = item.adresse.toLowerCase();
-              const ved = item.vedroerende?.toLowerCase() ?? '';
-              const isEjerlejlighedVedroerende = ved.includes('ejerlejlighed');
-
-              // Cross-kommune validering: afvis kandidater fra anden kommune
-              if (adgKommunekode) {
-                try {
-                  const altJsRes = await fetchDawa(
-                    `${DAWA_BASE_URL}/jordstykker?bfenummer=${bfe}&struktur=mini`,
-                    { signal: AbortSignal.timeout(3000), next: { revalidate: 3600 } },
-                    { caller: 'fetchBbrData.tl-fallback.cross-kommune' }
-                  );
-                  if (altJsRes.ok) {
-                    const altJs = (await altJsRes.json()) as Array<{
-                      kommune?: { kode?: string };
-                    }>;
-                    const altKommune = altJs?.[0]?.kommune?.kode;
-                    if (altKommune && altKommune !== adgKommunekode) continue;
-                  }
-                } catch {
-                  /* non-fatal */
-                }
-              }
-
-              let score = 0;
-              let reason = '';
-              // Match etage (præcis)
-              const etageMatches = etage ? itemLower.includes(etage.toLowerCase()) : false;
-              const doerMatches = doer ? itemLower.includes(doer.toLowerCase()) : false;
-
-              if (etage && doer && etageMatches && doerMatches) {
-                score = isEjerlejlighedVedroerende ? 30 : 20;
-                reason = isEjerlejlighedVedroerende
-                  ? 'etage+dør+vedroerende'
-                  : 'etage+dør (relaxed)';
-              } else if (etage && etageMatches && !doer) {
-                score = isEjerlejlighedVedroerende ? 15 : 10;
-                reason = isEjerlejlighedVedroerende ? 'etage+vedroerende' : 'etage (relaxed)';
-              } else {
-                continue;
-              }
-
-              if (!bestMatch || score > bestMatch.score) {
-                bestMatch = { bfe, score, reason };
-              }
-            }
-
-            if (bestMatch) {
-              ejerlejlighedBfe = bestMatch.bfe;
-              logger.log(
-                `[fetchBFENummer] TL fallback: EL-BFE ${bestMatch.bfe} for ${adresseTekst} (${bestMatch.reason})`
-              );
-            }
-          }
-        }
-      } catch {
-        /* Tinglysning fallback er valgfri */
-      }
-    }
+    // BIZZ-2063: Den tidligere Tinglysning /ejendom/adresse-fallback
+    // (BIZZ-1662/1853) er FJERNET. TL's adressesøgning returnerer IKKE et
+    // BFE-nummer — feltet `ejendomsnummer` er det kommunale ESR-ejendoms-
+    // nummer, som koden fejlagtigt tolkede som BFE. Verificeret live
+    // 2026-06-10: Hammerholmen 46A, 2. (BFE 221046) fik ESR 134955, der som
+    // BFE tilhører Oldenborggade 20, København — og Kampergade 11 (BFE
+    // 244634) fik ESR 200784 = Blidahpark 31. Resultatet var, at en HELT
+    // ANDEN ejendoms ejere/data blev vist. Cache-fallbacket nedenfor
+    // (bfe_adresse_cache, adresse-verificeret backfill) overtager rollen.
 
     // Bestem primær BFE: ejerlejlighed hvis fundet, ellers jordstykke
     let primaryBfe = ejerlejlighedBfe ?? jordBfe;
@@ -854,6 +767,58 @@ async function fetchBFENummer(
           cacheRow = await q
             .maybeSingle()
             .then((r: { data: { bfe_nummer: number } | null }) => r.data);
+        }
+
+        // Forsøg 3 (BIZZ-2063): Designator-tolerant match. DAWA og cachen
+        // placerer ofte enheds-betegnelsen forskelligt — fx Hammerholmen
+        // 46A, 2.: DAWA har etage="2"/dør=null, mens cachen (VP-backfill)
+        // har etage=""/doer="2". Sammenlign derfor MÆNGDEN af ikke-tomme
+        // betegnelser uafhængigt af felt. Falder tilbage til adressens
+        // eneste række, hvis kun én enhed er cachet (fx Kampergade 11).
+        if (!cacheRow?.bfe_nummer && adresseTekst) {
+          const vejHusnr = adresseTekst.split(',')[0]?.trim() ?? '';
+          const cacheEtage = hints?.etage ?? etage;
+          const cacheDoer = hints?.doer ?? doer;
+          const rows: Array<{
+            bfe_nummer: number;
+            adresse: string;
+            etage: string | null;
+            doer: string | null;
+          }> =
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            await (admin as any)
+              .from('bfe_adresse_cache')
+              .select('bfe_nummer, adresse, etage, doer')
+              .ilike('adresse', `${vejHusnr}%`)
+              .limit(50)
+              .then((r: { data: unknown }) => (r.data as typeof rows) ?? []);
+
+          // Eksakt vej+husnr (ilike % kan matche "Kampergade 110")
+          const vejLower = vejHusnr.toLowerCase();
+          const addrRows = rows.filter((r) => {
+            const a = r.adresse?.trim().toLowerCase() ?? '';
+            return a === vejLower || a.startsWith(`${vejLower},`);
+          });
+
+          /** Normaliseret mængde af ikke-tomme enheds-betegnelser, fx "2" eller "2|tv" */
+          const designatorKey = (vals: Array<string | null | undefined>): string =>
+            vals
+              .map((v) => v?.trim().toLowerCase() ?? '')
+              .filter((v) => v !== '')
+              .sort()
+              .join('|');
+
+          const wanted = designatorKey([cacheEtage, cacheDoer]);
+          const matches = wanted
+            ? addrRows.filter((r) => designatorKey([r.etage, r.doer]) === wanted)
+            : [];
+
+          if (matches.length === 1) {
+            cacheRow = { bfe_nummer: matches[0].bfe_nummer };
+          } else if (matches.length === 0 && harEtage && addrRows.length === 1) {
+            // Adressen har præcis én cachet enhed — brug den
+            cacheRow = { bfe_nummer: addrRows[0].bfe_nummer };
+          }
         }
 
         if (cacheRow?.bfe_nummer && cacheRow.bfe_nummer !== jordBfe) {

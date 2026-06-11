@@ -25,7 +25,7 @@ import { logger } from '@/app/lib/logger';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getInsuranceApi } from '@/lib/db/insurance';
 import { getTenantContext } from '@/lib/db/tenant';
-import { sanitizeFilename } from '@/app/lib/aiFileGeneration';
+import { storageSafeFilename } from '@/app/lib/aiFileGeneration';
 import { resolveFileType, supportedLabels } from '@/app/lib/domainFileTypes';
 
 /** 20 MB hard cap matchende storage bucket file_size_limit */
@@ -93,7 +93,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const safeName = sanitizeFilename(file.name);
+    // BIZZ-2075: storage-sikkert navn (æ/ø/å translittereres) — original_name
+    // i DB bevarer det rå filnavn til visning.
+    const safeName = storageSafeFilename(file.name);
     // Path-konvention: {tenant_id}/{uuid}-{safeName}
     const storagePath = `${auth.tenantId}/${randomUUID()}-${safeName}`;
 

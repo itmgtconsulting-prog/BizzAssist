@@ -130,6 +130,34 @@ export function sanitizeFilename(raw: string): string {
 }
 
 /**
+ * BIZZ-2075: Storage-sikkert filnavn til Supabase Storage object keys.
+ *
+ * Supabase Storage afviser non-ASCII tegn i keys ("Invalid key"), så
+ * filnavne som "Bramstræde 5.pdf" fik upload til at fejle med HTTP 500.
+ * Danske bogstaver translittereres (æ→ae, ø→oe, å→aa), øvrige diakritiske
+ * tegn dekomponeres (é→e), og alt uden for et konservativt ASCII-sæt
+ * erstattes med '_'. Brug KUN til storage paths — original_name i DB skal
+ * fortsat være det rå filnavn, så brugeren ser sit eget navn i UI'et.
+ *
+ * @param raw - Råt filnavn fra brugeren
+ * @returns ASCII-sikkert filnavn til brug i storage keys
+ */
+export function storageSafeFilename(raw: string): string {
+  const sanitized = sanitizeFilename(raw)
+    .replace(/æ/g, 'ae')
+    .replace(/ø/g, 'oe')
+    .replace(/å/g, 'aa')
+    .replace(/Æ/g, 'Ae')
+    .replace(/Ø/g, 'Oe')
+    .replace(/Å/g, 'Aa');
+  // NFKD-dekomposition splitter fx é i 'e' + combining accent, som strippes
+  const ascii = sanitized.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+  const safe = ascii.replace(/[^A-Za-z0-9 ._()-]/g, '_');
+  const trimmed = safe.trim().slice(0, MAX_FILENAME_CHARS);
+  return trimmed.length > 0 ? trimmed : 'file';
+}
+
+/**
  * OWASP XLSX/CSV formula-injection-escape. Celler der starter med
  * `=`, `+`, `-`, `@` kan interpreteres som formula i Excel og eksfiltere
  * data. Prefix med apostrof så Excel viser dem som tekst.

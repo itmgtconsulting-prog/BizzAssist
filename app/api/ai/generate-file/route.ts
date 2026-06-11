@@ -43,6 +43,7 @@ import {
   GenerateDocxInputSchema,
   GeneratePptxInputSchema,
   sanitizeFilename,
+  storageSafeFilename,
   type GeneratedFile,
 } from '@/app/lib/aiFileGeneration';
 
@@ -392,7 +393,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // ─── Upload + ai_file tracking ──────────────────────────────
   const admin = createAdminClient();
   const safeTitle = sanitizeFilename(body.title);
-  const storagePath = `${auth.userId}/${randomUUID()}-${safeTitle}.${generated.ext}`;
+  // BIZZ-2075: storage path skal være ASCII-sikker (Supabase afviser æ/ø/å i
+  // keys) — file_name til visning/download beholder safeTitle med æ/ø/å.
+  const storagePath = `${auth.userId}/${randomUUID()}-${storageSafeFilename(body.title)}.${generated.ext}`;
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
   // BIZZ-886: Storage-upload med retry (1 forsøg mere ved transient fejl)

@@ -28,6 +28,8 @@ import {
   MapPin,
   Download,
   Calendar,
+  Layers,
+  BedDouble,
 } from 'lucide-react';
 
 import ResizableDivider from '@/app/components/ResizableDivider';
@@ -179,6 +181,11 @@ export default function BoligprisClient(): React.ReactElement {
   const [arealMax, setArealMax] = useState('');
   const [byggearMin, setByggearMin] = useState('');
   const [byggearMax, setByggearMax] = useState('');
+  // BIZZ-2070: etager/værelser-filtre (data backfillet via BBR v2-pipeline)
+  const [etagerMin, setEtagerMin] = useState('');
+  const [etagerMax, setEtagerMax] = useState('');
+  const [vaerelserMin, setVaerelserMin] = useState('');
+  const [vaerelserMax, setVaerelserMax] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ApiResponse | null>(null);
@@ -225,6 +232,10 @@ export default function BoligprisClient(): React.ReactElement {
         if (arealMax) params.set('areal_max', arealMax);
         if (byggearMin) params.set('byggear_min', byggearMin);
         if (byggearMax) params.set('byggear_max', byggearMax);
+        if (etagerMin) params.set('etager_min', etagerMin);
+        if (etagerMax) params.set('etager_max', etagerMax);
+        if (vaerelserMin) params.set('vaerelser_min', vaerelserMin);
+        if (vaerelserMax) params.set('vaerelser_max', vaerelserMax);
         if (includeHandler) {
           params.set('handler', 'true');
           params.set('limit', String(limit));
@@ -256,6 +267,10 @@ export default function BoligprisClient(): React.ReactElement {
       arealMax,
       byggearMin,
       byggearMax,
+      etagerMin,
+      etagerMax,
+      vaerelserMin,
+      vaerelserMax,
     ]
   );
 
@@ -398,6 +413,10 @@ export default function BoligprisClient(): React.ReactElement {
       if (arealMax) params.set('areal_max', arealMax);
       if (byggearMin) params.set('byggear_min', byggearMin);
       if (byggearMax) params.set('byggear_max', byggearMax);
+      if (etagerMin) params.set('etager_min', etagerMin);
+      if (etagerMax) params.set('etager_max', etagerMax);
+      if (vaerelserMin) params.set('vaerelser_min', vaerelserMin);
+      if (vaerelserMax) params.set('vaerelser_max', vaerelserMax);
       params.set('handler', 'true');
       params.set('export', 'true');
       const res = await fetch(`/api/analyse/boligpris?${params.toString()}`);
@@ -461,6 +480,10 @@ export default function BoligprisClient(): React.ReactElement {
     arealMax,
     byggearMin,
     byggearMax,
+    etagerMin,
+    etagerMax,
+    vaerelserMin,
+    vaerelserMax,
   ]);
 
   return (
@@ -636,6 +659,47 @@ export default function BoligprisClient(): React.ReactElement {
                 placeholder="Byggeår til"
                 className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-2 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 w-24"
                 aria-label="Maksimum byggeår"
+              />
+            </div>
+            {/* BIZZ-2070: etager + værelser filtre */}
+            <div className="flex items-center gap-1.5 text-xs">
+              <Layers className="w-3.5 h-3.5 text-slate-400" />
+              <input
+                type="number"
+                value={etagerMin}
+                onChange={(e) => setEtagerMin(e.target.value)}
+                placeholder="Etager min"
+                className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-2 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 w-24"
+                aria-label="Minimum antal etager"
+              />
+              <span className="text-slate-500">–</span>
+              <input
+                type="number"
+                value={etagerMax}
+                onChange={(e) => setEtagerMax(e.target.value)}
+                placeholder="Etager max"
+                className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-2 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 w-24"
+                aria-label="Maksimum antal etager"
+              />
+            </div>
+            <div className="flex items-center gap-1.5 text-xs">
+              <BedDouble className="w-3.5 h-3.5 text-slate-400" />
+              <input
+                type="number"
+                value={vaerelserMin}
+                onChange={(e) => setVaerelserMin(e.target.value)}
+                placeholder="Værelser min"
+                className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-2 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 w-28"
+                aria-label="Minimum antal værelser"
+              />
+              <span className="text-slate-500">–</span>
+              <input
+                type="number"
+                value={vaerelserMax}
+                onChange={(e) => setVaerelserMax(e.target.value)}
+                placeholder="Værelser max"
+                className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-2 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 w-28"
+                aria-label="Maksimum antal værelser"
               />
             </div>
           </div>

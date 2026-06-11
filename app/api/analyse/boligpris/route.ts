@@ -10,6 +10,8 @@
  *   - fra: startdato YYYY-MM-DD (default: 12 mdr siden)
  *   - til: slutdato YYYY-MM-DD (default: i dag)
  *   - postnumre: kommasepareret postnumre (e.g. "2100,2200") — BIZZ-2046
+ *   - areal_min/areal_max, byggear_min/byggear_max: BBR-filtre (BIZZ-2051)
+ *   - etager_min/etager_max, vaerelser_min/vaerelser_max: BBR-filtre (BIZZ-2070)
  *   - handler: "true" for at inkludere individuelle handler
  *   - limit: antal handler (default 50, max 500)
  *   - offset: handler offset (default 0)
@@ -115,6 +117,11 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
     const arealMax = Number(sp.get('areal_max')) || 0;
     const byggearMin = Number(sp.get('byggear_min')) || 0;
     const byggearMax = Number(sp.get('byggear_max')) || 0;
+    // BIZZ-2070: etager/værelser-filtre (backfillet via BBR v2-pipeline)
+    const etagerMin = Number(sp.get('etager_min')) || 0;
+    const etagerMax = Number(sp.get('etager_max')) || 0;
+    const vaerelserMin = Number(sp.get('vaerelser_min')) || 0;
+    const vaerelserMax = Number(sp.get('vaerelser_max')) || 0;
     // BBR-filtre sendes til RPC-funktionen
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -333,6 +340,10 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
             p_areal_max: arealMax,
             p_byggear_min: byggearMin,
             p_byggear_max: byggearMax,
+            p_etager_min: etagerMin,
+            p_etager_max: etagerMax,
+            p_vaerelser_min: vaerelserMin,
+            p_vaerelser_max: vaerelserMax,
             p_limit: limit,
             p_offset: offset,
           });

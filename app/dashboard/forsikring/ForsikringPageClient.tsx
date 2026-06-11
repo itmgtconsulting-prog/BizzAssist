@@ -1520,40 +1520,55 @@ function AnalyseSection({
           {/* BIZZ-1833: 2-kolonne grid — dokumenter (venstre) + standard betingelser (højre) */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className="space-y-3">
-              {/* BIZZ-1632: Slet alle dokumenter for denne kunde */}
-              {previousDocs.length > 0 && (
-                <button
-                  type="button"
-                  onClick={async () => {
-                    if (
-                      !selected?.id ||
-                      !confirm(
-                        da
-                          ? `Slet alle ${previousDocs.length} dokumenter for ${selected.navn}?`
-                          : `Delete all ${previousDocs.length} documents for ${selected.navn}?`
+              {/* BIZZ-1632: Slet alle dokumenter for denne kunde.
+                  BIZZ-2076: Tæl unikke docs fra previousDocs + nye wizard-uploads
+                  (samme merge som dokumentlisten), så antallet opdaterer når der
+                  uploades flere filer i samme session. */}
+              {(() => {
+                const deletableCount = new Set([
+                  ...previousDocs.map((d) => d.id),
+                  ...wizardUploads
+                    .filter((u) => u.status === 'done' && u.docId)
+                    .map((u) => u.docId!),
+                ]).size;
+                if (deletableCount === 0) return null;
+                return (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (
+                        !selected?.id ||
+                        !confirm(
+                          da
+                            ? `Slet alle ${deletableCount} dokumenter for ${selected.navn}?`
+                            : `Delete all ${deletableCount} documents for ${selected.navn}?`
+                        )
                       )
-                    )
-                      return;
-                    try {
-                      const r = await fetch(
-                        `/api/forsikring/documents/bulk?kunde_id=${encodeURIComponent(selected.id)}`,
-                        { method: 'DELETE' }
-                      );
-                      if (r.ok) {
-                        setPreviousDocs([]);
-                        setSelectedDocIds(new Set());
+                        return;
+                      try {
+                        const r = await fetch(
+                          `/api/forsikring/documents/bulk?kunde_id=${encodeURIComponent(selected.id)}`,
+                          { method: 'DELETE' }
+                        );
+                        if (r.ok) {
+                          setPreviousDocs([]);
+                          // Server-sletningen rammer ALLE kundens docs — ryd også
+                          // wizard-uploads så listen ikke viser slettede filer
+                          setWizardUploads([]);
+                          setSelectedDocIds(new Set());
+                        }
+                      } catch {
+                        /* non-fatal */
                       }
-                    } catch {
-                      /* non-fatal */
-                    }
-                  }}
-                  className="text-xs text-red-400 hover:text-red-300 underline"
-                >
-                  {da
-                    ? `Slet alle ${previousDocs.length} dokumenter for ${selected.navn}`
-                    : `Delete all ${previousDocs.length} documents for ${selected.navn}`}
-                </button>
-              )}
+                    }}
+                    className="text-xs text-red-400 hover:text-red-300 underline"
+                  >
+                    {da
+                      ? `Slet alle ${deletableCount} dokumenter for ${selected.navn}`
+                      : `Delete all ${deletableCount} documents for ${selected.navn}`}
+                  </button>
+                );
+              })()}
 
               {/* BIZZ-1442: Samlet doc-liste — alle docs med checkboxes */}
               {(() => {

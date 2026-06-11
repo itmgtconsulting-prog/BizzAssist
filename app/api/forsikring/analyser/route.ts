@@ -631,6 +631,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           .from('forsikring_standard_doc')
           .select('id, selskab, titel, source_url, kategori')
           .in('id', standard_doc_ids);
+        // BIZZ-2072: Kobl hvert vilkårs INFO-gap til en police fra SAMME
+        // selskab (normaliseret navnematch, jf. BIZZ-2047/2069) — ellers
+        // endte fx Topdanmark-vilkår under en Alm. Brand-police, fordi de
+        // ukritisk blev hæftet på portfolioPolicyId. Foretræk en police der
+        // er bestMatch for et aktiv (så gappet renderes under det rigtige
+        // aktiv i UI'et). Matcher intet selskab udelades INFO-gappet —
+        // std_betingelser_advarsel forklarer i forvejen at vilkårene ikke
+        // blev anvendt.
+        const bestMatchPolicyIds = new Set(
+          matches.filter((m) => m.bestMatch).map((m) => m.bestMatch!.policy.id)
+        );
         for (const doc of (stdDocs ?? []) as Array<{
           id: string;
           selskab: string;
@@ -638,8 +649,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           source_url: string;
           kategori: string;
         }>) {
+          const docSelskab = normSelskab(doc.selskab);
+          const selskabsPolicer = policer.filter((p) => {
+            const pi = normSelskab(p.insurer_name ?? '');
+            return pi.length > 0 && docSelskab.length > 0
+              ? pi.includes(docSelskab) || docSelskab.includes(pi)
+              : false;
+          });
+          const stdPolicy =
+            selskabsPolicer.find((p) => bestMatchPolicyIds.has(p.id)) ?? selskabsPolicer[0];
+          if (!stdPolicy) continue;
           allGaps.push({
-            policyId: portfolioPolicyId,
+            policyId: stdPolicy.id,
             checkId: `GAP-STD-${doc.id.slice(0, 8).toUpperCase()}`,
             category: 'standard_betingelser',
             severity: 'info',

@@ -57,19 +57,33 @@ const BBR_V2 = `https://graphql.datafordeler.dk/BBR/v2?apiKey=${env.DATAFORDELER
 const RETIRED = new Set([4, 10, 11]);
 const BATCH = 50;
 
-/** Kør SQL via Supabase Management API. */
+/** Kør SQL via Supabase Management API (retry på transiente 5xx/Cloudflare-fejl). */
 async function runSql(sql) {
-  const res = await fetch(`https://api.supabase.com/v1/projects/${REF}/database/query`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${env.SUPABASE_ACCESS_TOKEN}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ query: sql }),
-  });
-  if (!res.ok) throw new Error(`Supabase API ${res.status}: ${await res.text()}`);
-  const raw = await res.json();
-  return Array.isArray(raw) ? raw : (raw.result ?? raw.rows ?? []);
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    try {
+      const res = await fetch(`https://api.supabase.com/v1/projects/${REF}/database/query`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${env.SUPABASE_ACCESS_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ query: sql }),
+        signal: AbortSignal.timeout(120000),
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        // 4xx (fx SQL-fejl) er permanente — fail fast. 5xx er transiente.
+        if (res.status < 500) throw new Error(`Supabase API ${res.status}: ${txt.slice(0, 300)}`);
+        throw Object.assign(new Error(`Supabase API ${res.status}`), { transient: true });
+      }
+      const raw = await res.json();
+      return Array.isArray(raw) ? raw : (raw.result ?? raw.rows ?? []);
+    } catch (err) {
+      const transient = err.transient || err.name === 'TimeoutError' || err.code === 'ECONNRESET';
+      if (!transient || attempt === 4) throw err;
+      await new Promise((r) => setTimeout(r, 3000 * attempt));
+    }
+  }
 }
 
 /** BBR v2 GraphQL med retry (ECONNRESET ses jævnligt). */

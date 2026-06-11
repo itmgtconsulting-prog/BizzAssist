@@ -24,6 +24,7 @@ import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
+import { MAT_GQL_ENDPOINT } from '@/app/lib/serviceEndpoints';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -60,7 +61,8 @@ const matrikelHistorikSchema = z.object({
   bfeNummer: z.string().regex(/^\d+$/),
 });
 
-const MAT_GQL_URL = 'https://graphql.datafordeler.dk/MAT/v1';
+// BIZZ-2062: MAT GraphQL v1 er nedlagt (HTTP 404) — brug v2 via serviceEndpoints.
+const MAT_GQL_URL = MAT_GQL_ENDPOINT;
 const DF_API_KEY = process.env.DATAFORDELER_API_KEY ?? '';
 
 /** Antal historiske tidspunkter vi prøver (hvert ~5 år tilbage fra nu) */
@@ -89,7 +91,7 @@ interface RawHistoriskSFE {
 // ─── GraphQL ──────────────────────────────────────────────────────────────────
 
 /**
- * Sender en GraphQL-forespørgsel til Datafordeler MAT/v1.
+ * Sender en GraphQL-forespørgsel til Datafordeler MAT/v2.
  * Returnerer det rå data-objekt, eller null ved fejl.
  */
 async function fetchMATGraphQL(
@@ -145,11 +147,15 @@ function timestampYearsAgo(years: number): string {
 }
 
 /**
- * Hent jordstykker for en BFE ved et bestemt tidspunkt.
+ * Hent SFE-status for en BFE ved et bestemt tidspunkt.
+ *
+ * BIZZ-2062: MAT/v2 tillader hverken aliases (DAF-GQL-0008) eller flere
+ * root-felter pr. query (DAF-GQL-0010), så det gamle kombinerede snapshot
+ * er splittet i to separate queries (SFE + jordstykker).
  */
-function buildSnapshotQuery(bfeNummer: number, timestamp: string): string {
+function buildSfeSnapshotQuery(bfeNummer: number, timestamp: string): string {
   return `{
-    sfe: MAT_SamletFastEjendom(
+    MAT_SamletFastEjendom(
       first: 1
       virkningstid: "${timestamp}"
       registreringstid: "${timestamp}"
@@ -162,7 +168,15 @@ function buildSnapshotQuery(bfeNummer: number, timestamp: string): string {
         forretningshaendelse
       }
     }
-    jord: MAT_Jordstykke(
+  }`;
+}
+
+/**
+ * Hent jordstykker for en BFE ved et bestemt tidspunkt.
+ */
+function buildJordSnapshotQuery(bfeNummer: number, timestamp: string): string {
+  return `{
+    MAT_Jordstykke(
       first: 100
       virkningstid: "${timestamp}"
       registreringstid: "${timestamp}"
@@ -231,12 +245,20 @@ export async function GET(request: NextRequest): Promise<NextResponse<MatrikelHi
       const results = await Promise.all(
         batch.map(async (yearsAgo) => {
           const ts = timestampYearsAgo(yearsAgo);
-          const data = await fetchMATGraphQL(buildSnapshotQuery(bfeNummer, ts));
-          if (!data) return null;
+          // BIZZ-2062: v2 kræver ét root-felt pr. query — hent SFE og
+          // jordstykker som to parallelle kald.
+          const [sfeData, jordData] = await Promise.all([
+            fetchMATGraphQL(buildSfeSnapshotQuery(bfeNummer, ts)),
+            fetchMATGraphQL(buildJordSnapshotQuery(bfeNummer, ts)),
+          ]);
+          if (!sfeData && !jordData) return null;
 
-          const sfeNodes = (data['sfe'] as { nodes?: RawHistoriskSFE[] } | undefined)?.nodes ?? [];
+          const sfeNodes =
+            (sfeData?.['MAT_SamletFastEjendom'] as { nodes?: RawHistoriskSFE[] } | undefined)
+              ?.nodes ?? [];
           const jordNodes =
-            (data['jord'] as { nodes?: RawHistoriskJordstykke[] } | undefined)?.nodes ?? [];
+            (jordData?.['MAT_Jordstykke'] as { nodes?: RawHistoriskJordstykke[] } | undefined)
+              ?.nodes ?? [];
 
           const sfe = sfeNodes[0] ?? null;
           return {

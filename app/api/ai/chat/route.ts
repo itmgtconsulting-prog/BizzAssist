@@ -278,7 +278,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'hent_matrikeldata',
     description:
-      'Henter matrikeloplysninger (jordstykker, matrikelnumre, arealer, fredskov, strandbeskyttelse, landbrugsnotering) for en ejendom fra Datafordeler MAT/v1. Kræver BFE-nummer.',
+      'Henter matrikeloplysninger (jordstykker, matrikelnumre, arealer, fredskov, strandbeskyttelse, landbrugsnotering) for en ejendom fra Datafordeler MAT/v2. Kræver BFE-nummer.',
     input_schema: {
       type: 'object' as const,
       properties: {

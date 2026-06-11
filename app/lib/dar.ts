@@ -31,7 +31,7 @@ export type { DawaAutocompleteResult, DawaAdresse, DawaJordstykke } from './dawa
 
 import type { DawaAutocompleteResult, DawaAdresse, DawaJordstykke } from './dawa';
 import { logger } from '@/app/lib/logger';
-import { DAR_ENDPOINT } from '@/app/lib/serviceEndpoints';
+import { DAR_ENDPOINT, MAT_GQL_ENDPOINT } from '@/app/lib/serviceEndpoints';
 import { LruCache } from '@/app/lib/lruCache';
 
 // BIZZ-600: LRU-cache for DAR adresse-lookups. Samme adresse-UUID slås
@@ -69,8 +69,11 @@ const MAT_WFS_ENDPOINT = 'https://services.datafordeler.dk/Matrikel/MatGaeld662/
  */
 const DAR_WFS_ENDPOINT = 'https://services.datafordeler.dk/DAR/DAR/1/WFS';
 
-/** BIZZ-505: Datafordeler MAT GraphQL endpoint for jordstykke BFE lookup. */
-const MAT_GQL_URL = 'https://graphql.datafordeler.dk/MAT/v1';
+/**
+ * BIZZ-505: Datafordeler MAT GraphQL endpoint for jordstykke BFE lookup.
+ * BIZZ-2062: v1 er nedlagt (HTTP 404) — brug v2 via serviceEndpoints.
+ */
+const MAT_GQL_URL = MAT_GQL_ENDPOINT;
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  * GraphQL helpers
@@ -1879,7 +1882,7 @@ export interface MatJordstykkeByBfe {
  * the associated ejerlav name.
  *
  * Pipeline:
- *   1. MAT_SamletFastEjendom(BFEnummer=bfe) → jordstykke with ejerlavLokalId (UUID)
+ *   1. MAT_Jordstykke(samletFastEjendomLokalId=bfe) → jordstykke with ejerlavLokalId (UUID)
  *   2. MAT_Ejerlav(id_lokalId=ejerlavLokalId) → ejerlavskode + ejerlavsnavn
  *
  * Returns null on:
@@ -1929,46 +1932,39 @@ export async function matHentJordstykkeByBfe(bfe: number): Promise<MatJordstykke
     }
   }
 
-  // Step 1: SamletFastEjendom → jordstykke
-  const sfeQuery = `{
-    MAT_SamletFastEjendom(
+  // Step 1: Jordstykke direkte via samletFastEjendomLokalId.
+  // BIZZ-2062: MAT/v2 understøtter ikke v1's sub-query
+  // jordstykkeSamlesISamletFastEjendom på MAT_SamletFastEjendom — slå i stedet
+  // jordstykket op direkte med BFE som filterværdi (string i v2-skemaet).
+  const jordstykkeQuery = `{
+    MAT_Jordstykke(
       first: 1
       virkningstid: "${nowIso}"
       registreringstid: "${nowIso}"
-      where: { BFEnummer: { eq: ${bfe} } }
+      where: { samletFastEjendomLokalId: { eq: "${bfe}" } }
     ) {
       nodes {
-        BFEnummer
-        jordstykkeSamlesISamletFastEjendom(first: 1) {
-          nodes {
-            id_lokalId
-            matrikelnummer
-            registreretAreal
-            vejareal
-            ejerlavLokalId
-          }
-        }
+        id_lokalId
+        matrikelnummer
+        registreretAreal
+        vejareal
+        ejerlavLokalId
       }
     }
   }`;
 
-  const sfeData = await gqlQuery<{
-    MAT_SamletFastEjendom?: {
+  const jsData = await gqlQuery<{
+    MAT_Jordstykke?: {
       nodes?: Array<{
-        jordstykkeSamlesISamletFastEjendom?: {
-          nodes?: Array<{
-            matrikelnummer?: string;
-            registreretAreal?: number;
-            vejareal?: number;
-            ejerlavLokalId?: string;
-          }>;
-        };
+        matrikelnummer?: string;
+        registreretAreal?: number;
+        vejareal?: number;
+        ejerlavLokalId?: string;
       }>;
     };
-  }>(sfeQuery);
+  }>(jordstykkeQuery);
 
-  const js =
-    sfeData?.MAT_SamletFastEjendom?.nodes?.[0]?.jordstykkeSamlesISamletFastEjendom?.nodes?.[0];
+  const js = jsData?.MAT_Jordstykke?.nodes?.[0];
   if (!js || !js.matrikelnummer) {
     logger.warn(`matHentJordstykkeByBfe: no jordstykke for BFE ${bfe}`);
     return null;

@@ -29,6 +29,26 @@ import { logger } from '@/app/lib/logger';
 export const maxDuration = 60;
 
 /**
+ * Normaliserer et forsikringsselskabs-navn til selskabs-sammenligning.
+ *
+ * BIZZ-2069: Standard-betingelsers selskab kan bruge tankestreg ("Topdanmark
+ * – en del af If Skadeforsikring", U+2013) mens policens insurer_name bruger
+ * almindelig bindestreg — så ren substring-match fejler, og Topdanmark-vilkår
+ * blev fejlagtigt markeret som "ikke anvendt". Normaliserer dash-varianter,
+ * case og whitespace før sammenligning.
+ *
+ * @param navn - Rå selskabsnavn fra police eller standard-betingelse
+ * @returns Lowercase navn med ens bindestreger og kollapset whitespace
+ */
+function normSelskab(navn: string): string {
+  return navn
+    .toLowerCase()
+    .replace(/[\u2010-\u2015\u2212]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * POST /api/forsikring/analyser
  *
  * Body: { kunde_type: 'virksomhed'|'person', kunde_id: string }
@@ -479,13 +499,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       // BIZZ-2047: Filtrer standard-betingelser til kun at matche policens selskab.
       // Topdanmark-vilkår skal ikke bruges som baseline for Alm. Brand policer osv.
-      const policyInsurer = (match.bestMatch.policy.insurer_name ?? '').toLowerCase();
+      // BIZZ-2069: Sammenlign på normaliserede navne (dash/case/whitespace).
+      const policyInsurer = normSelskab(match.bestMatch.policy.insurer_name ?? '');
       const matchedStdBetingelser =
         standardBetingelserBaseline.length > 0 && policyInsurer
           ? standardBetingelserBaseline.filter(
               (sb) =>
-                policyInsurer.includes(sb.selskab.toLowerCase()) ||
-                sb.selskab.toLowerCase().includes(policyInsurer)
+                policyInsurer.includes(normSelskab(sb.selskab)) ||
+                normSelskab(sb.selskab).includes(policyInsurer)
             )
           : [];
 
@@ -826,12 +847,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       const polSelskaber = [
         ...new Set(policer.map((p) => p.insurer_name).filter((n): n is string => !!n)),
       ];
+      // BIZZ-2069: Sammenlign på normaliserede navne (dash/case/whitespace).
       const noMatch = betSelskaber.filter(
         (bs) =>
           !polSelskaber.some(
             (ps) =>
-              ps.toLowerCase().includes(bs.toLowerCase()) ||
-              bs.toLowerCase().includes(ps.toLowerCase())
+              normSelskab(ps).includes(normSelskab(bs)) || normSelskab(bs).includes(normSelskab(ps))
           )
       );
       if (noMatch.length > 0) {

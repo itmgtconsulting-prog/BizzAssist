@@ -309,6 +309,14 @@ function PropertyRow({
         <div className="flex items-center gap-2 min-w-0 flex-1">
           {typeIcon}
           <span className="text-white text-sm font-medium truncate">{group.aktiv.label}</span>
+          {/* BIZZ-2068: BFE-badge på ejendoms-aktiver — to reelle ejendomme kan
+              dele adresse (fx Gefionsvej 47A = BFE 5322356 + 5322350), og uden
+              BFE-nummeret ligner rækkerne duplikater. */}
+          {group.aktiv.type === 'ejendom' && group.aktiv.bfe != null && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-slate-500/20 text-slate-300 border border-slate-500/30 shrink-0">
+              BFE {group.aktiv.bfe}
+            </span>
+          )}
           {/* BIZZ-1829: AI-foreslået badge */}
           {!!(group.aktiv.raw_data as Record<string, unknown> | null)?.aiForeslaaet && (
             <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">

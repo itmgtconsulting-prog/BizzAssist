@@ -531,11 +531,15 @@ async function walkVirksomhed(
   }>) {
     if (seenCvrs.has(sub.ejet_cvr) || aktiver.length >= MAX_AKTIVER) continue;
 
-    // Hent virksomhedsinfo
+    // Hent virksomhedsinfo.
+    // BIZZ-2101: kolonnen hed tidligere 'ansatte' i select'en, men den findes
+    // ikke i cvr_virksomhed (skemaet har ansatte_aar + ansatte_kvartal_1..4).
+    // PostgREST afviste hele querien → virk=null → alle datterselskaber blev
+    // vist som nøgne "CVR x"-labels og ophoert-filtret virkede aldrig.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: virk } = await (admin as any)
       .from('cvr_virksomhed')
-      .select('navn, ansatte, branche_tekst, ophoert')
+      .select('navn, ansatte_aar, branche_tekst, ophoert')
       .eq('cvr', sub.ejet_cvr)
       .maybeSingle();
 
@@ -545,7 +549,7 @@ async function walkVirksomhed(
       type: 'virksomhed',
       label: virk?.navn ?? `CVR ${sub.ejet_cvr}`,
       cvr: sub.ejet_cvr,
-      ansatte: virk?.ansatte ?? undefined,
+      ansatte: virk?.ansatte_aar ?? undefined,
       rawData: {
         branche: virk?.branche_tekst,
         ejerandel_pct: sub.ejerandel_min,

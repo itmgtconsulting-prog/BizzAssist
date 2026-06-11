@@ -332,6 +332,13 @@ function PropertyRow({
               BFE {group.aktiv.bfe}
             </span>
           )}
+          {/* BIZZ-2101: CVR-badge på virksomheds-rækker — virksomheder vises
+              altid med både navn og CVR (analogt til BFE-badgen ovenfor). */}
+          {group.aktiv.type === 'virksomhed' && group.aktiv.cvr && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/30 shrink-0">
+              CVR {group.aktiv.cvr}
+            </span>
+          )}
           {/* BIZZ-1829: AI-foreslået badge */}
           {!!(group.aktiv.raw_data as Record<string, unknown> | null)?.aiForeslaaet && (
             <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">

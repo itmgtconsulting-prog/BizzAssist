@@ -131,6 +131,95 @@ describe('walkKoncern', () => {
     expect(result[0].bfe).toBe(555);
   });
 
+  it('BIZZ-2101: datterselskabs-opslag bruger kun eksisterende kolonner, mapper ansatte_aar og filtrerer ophørte', async () => {
+    // Kolonner der faktisk findes i cvr_virksomhed (skemaet har ansatte_aar +
+    // ansatte_kvartal_1..4 — IKKE 'ansatte'). En select med ukendt kolonne
+    // afvises af PostgREST → virk=null → "CVR x"-labels (BIZZ-2101-buggen).
+    const SCHEMA_COLS = new Set([
+      'navn',
+      'branche_tekst',
+      'virksomhedsform',
+      'ophoert',
+      'ansatte_aar',
+      'ansatte_kvartal_1',
+      'ansatte_kvartal_2',
+      'ansatte_kvartal_3',
+      'ansatte_kvartal_4',
+    ]);
+    const virkSelects: string[] = [];
+
+    let subCall = 0;
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'ejf_ejerskab') return mockQuery([]);
+      if (table === 'cvr_virksomhed_ejerskab') {
+        subCall++;
+        // Parent har to døtre: én aktiv, én ophørt. Døtrene har ingen døtre.
+        if (subCall === 1)
+          return mockQuery([
+            { ejet_cvr: '11111111', ejerandel_min: 100 },
+            { ejet_cvr: '22222222', ejerandel_min: 100 },
+          ]);
+        return mockQuery([]);
+      }
+      if (table === 'cvr_virksomhed') {
+        const chain = mockQuery([]);
+        chain.select = vi.fn().mockImplementation((cols: string) => {
+          virkSelects.push(cols);
+          return chain;
+        });
+        let requestedCvr = '';
+        chain.eq = vi.fn().mockImplementation((_col: string, val: string) => {
+          requestedCvr = val;
+          return chain;
+        });
+        chain.maybeSingle = vi.fn().mockImplementation(() => {
+          if (requestedCvr === '11111111')
+            return {
+              data: {
+                navn: 'Aktiv Datter A/S',
+                ansatte_aar: 42,
+                branche_tekst: 'IT',
+                ophoert: null,
+              },
+              error: null,
+            };
+          if (requestedCvr === '22222222')
+            return {
+              data: {
+                navn: 'Ophørt ApS',
+                ansatte_aar: 3,
+                branche_tekst: 'IT',
+                ophoert: '2020-06-01',
+              },
+              error: null,
+            };
+          return { data: null, error: null };
+        });
+        return chain;
+      }
+      if (table === 'cvr_deltagerrelation') return mockQuery([]);
+      return mockQuery([]);
+    });
+
+    const result = await walkKoncern('virksomhed', '41341009');
+
+    // 1) Alle cvr_virksomhed-selects må kun bede om eksisterende kolonner
+    expect(virkSelects.length).toBeGreaterThan(0);
+    for (const sel of virkSelects) {
+      for (const col of sel.split(',').map((s) => s.trim())) {
+        expect(SCHEMA_COLS.has(col), `ukendt kolonne '${col}' i select '${sel}'`).toBe(true);
+      }
+    }
+
+    // 2) Aktiv datter får navn + ansatte_aar mappet til ansatte
+    const datter = result.find((a) => a.cvr === '11111111');
+    expect(datter?.label).toBe('Aktiv Datter A/S');
+    expect(datter?.ansatte).toBe(42);
+
+    // 3) Ophørt datter filtreres fra
+    expect(result.some((a) => a.cvr === '22222222')).toBe(false);
+  });
+
   it('caps at MAX_AKTIVER (500)', async () => {
     const manyProps = Array.from({ length: 600 }, (_, i) => ({
       bfe_nummer: 1000 + i,

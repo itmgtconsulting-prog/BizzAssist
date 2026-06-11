@@ -273,7 +273,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           .select('adresse_json')
           .eq('cvr', kunde_id)
           .maybeSingle();
-        const adr = cvrRow?.adresse_json as {
+        // Admin-klienten er utypet for public-tabeller — cast adresse_json manuelt.
+        const adr = (cvrRow as { adresse_json?: unknown } | null)?.adresse_json as {
           vejnavn?: string | null;
           husnummerFra?: number | null;
           bogstavFra?: string | null;

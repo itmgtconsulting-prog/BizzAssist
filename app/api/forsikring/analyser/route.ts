@@ -226,6 +226,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           !!p.policyholder_address && addressesMatch(p.property_address, p.policyholder_address),
       }));
 
+    // BIZZ-2067: Sikrede-/korrespondance-adresser uden for porteføljen.
+    // En police er ofte stilet til virksomhedens hovedkontor (typisk lejet,
+    // ikke ejet) — det er IKKE en fejl, men brugeren skal kunne se det i
+    // rapporten, så adressen ikke forveksles med et forsikringssted. Vises
+    // som info — blokerer ikke preflight og udløser ingen advarsel.
+    const sikredeAdresserUdenForPortefoelje = [
+      ...new Set(
+        policer
+          .filter((p) => p.policyholder_address && p.policyholder_address.trim().length > 0)
+          .filter(
+            (p) => !portefoeljeAdresser.some((addr) => addressesMatch(p.policyholder_address, addr))
+          )
+          .map((p) => p.policyholder_address!.trim())
+      ),
+    ];
+
     // BIZZ-1973: Preflight — returnér kun mismatches, kør ikke gap-engine/persist.
     if (body.preflight) {
       logger.log(
@@ -693,6 +709,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           // BIZZ-1973: Policer der dækker en adresse uden for porteføljen —
           // surfaces i rapport-banner + DOCX selv hvis brugeren valgte "fortsæt".
           address_mismatches: addressMismatches,
+          // BIZZ-2067: Sikrede-adresser uden for porteføljen (info, ikke advarsel)
+          sikrede_adresser_uden_for_portefoelje: sikredeAdresserUdenForPortefoelje,
         },
         created_by: auth.userId,
       })
@@ -828,6 +846,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       gaps_count: allGaps.length,
       total_risk_score: totalRiskScore,
       address_mismatches: addressMismatches,
+      // BIZZ-2067: Sikrede-adresser uden for porteføljen (info, ikke advarsel)
+      sikrede_adresser_uden_for_portefoelje: sikredeAdresserUdenForPortefoelje,
       std_betingelser_advarsel: stdBetingelserAdvarsel,
     });
   } catch (err) {

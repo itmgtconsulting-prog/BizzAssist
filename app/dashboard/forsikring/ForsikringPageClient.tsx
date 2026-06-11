@@ -412,22 +412,35 @@ function PropertyRow({
                   })}
                 </div>
               )}
-              {/* BIZZ-2080: Match-begrundelse — vis HVORFOR policen blev koblet
-                  til aktivet, så brugeren kan vurdere om konklusionen er rigtig */}
-              {group.aktiv.match_score != null && (
-                <div>
-                  <span className="text-slate-400">{da ? 'Match:' : 'Match:'}</span>{' '}
-                  <span className="text-slate-300">
-                    {getMatchBegrundelse(group.aktiv.type, group.aktiv.match_score, da)}
-                  </span>{' '}
-                  <span className="text-slate-400">({group.aktiv.match_score}/100)</span>
-                </div>
+            </div>
+          )}
+
+          {/* BIZZ-2080: Match-begrundelse — vis HVORFOR policen blev koblet til
+              aktivet, så brugeren kan vurdere om konklusionen er rigtig.
+              Baseret på matched_policy_id (ikke matchedPolicy-objektet), da
+              policen kan være matchet i analysen uden at indgå i den aktuelt
+              indlæste police-liste. */}
+          {group.aktiv.matched_policy_id && group.aktiv.match_score != null && (
+            <div className="text-xs">
+              <span className="text-slate-400">{da ? 'Match:' : 'Match:'}</span>{' '}
+              <span className="text-slate-300">
+                {getMatchBegrundelse(group.aktiv.type, group.aktiv.match_score, da)}
+              </span>{' '}
+              <span className="text-slate-400">({group.aktiv.match_score}/100)</span>
+              {!group.matchedPolicy && (
+                <span className="text-slate-400">
+                  {' '}
+                  —{' '}
+                  {da
+                    ? 'matchet police indgår ikke i den viste police-liste'
+                    : 'matched policy is not in the displayed policy list'}
+                </span>
               )}
             </div>
           )}
 
           {/* BIZZ-2080: Eksplicit forklaring når INGEN police er matchet */}
-          {!group.matchedPolicy && (
+          {!group.aktiv.matched_policy_id && (
             <div className="text-xs text-slate-400">
               {da
                 ? 'Ingen police matchet — aktivet fremgår ikke af de parsede policers BFE-numre, adresser eller CVR/forsikringstager.'

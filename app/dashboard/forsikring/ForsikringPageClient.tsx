@@ -1057,6 +1057,10 @@ function AnalyseSection({
         jobs
           .filter((j) => !j.skipped)
           .map(async ({ jobId, file }) => {
+            // BIZZ-2076: docId løftes ud af try, så et parse-fejlet dokument
+            // (upload OK, parse fejlet) stadig tæller med i "Slet alle"-antallet
+            // — dokumentet eksisterer i DB og slettes af bulk-delete.
+            let docId: string | undefined;
             try {
               const formData = new FormData();
               formData.append('file', file);
@@ -1068,7 +1072,8 @@ function AnalyseSection({
               });
               if (!upRes.ok) throw new Error('Upload failed');
               const upJson = (await upRes.json()) as { document: { id: string } };
-              const docId = upJson.document.id;
+              const uploadedId = upJson.document.id;
+              docId = uploadedId;
 
               setWizardUploads((prev) =>
                 prev.map((j) => (j.id === jobId ? { ...j, status: 'parsing' } : j))
@@ -1093,13 +1098,13 @@ function AnalyseSection({
               }
 
               setWizardUploads((prev) =>
-                prev.map((j) => (j.id === jobId ? { ...j, status: 'done', docId } : j))
+                prev.map((j) => (j.id === jobId ? { ...j, status: 'done', docId: uploadedId } : j))
               );
               // BIZZ-1442: Auto-check nye uploads
-              setSelectedDocIds((prev) => new Set([...prev, docId]));
+              setSelectedDocIds((prev) => new Set([...prev, uploadedId]));
             } catch {
               setWizardUploads((prev) =>
-                prev.map((j) => (j.id === jobId ? { ...j, status: 'failed' } : j))
+                prev.map((j) => (j.id === jobId ? { ...j, status: 'failed', docId } : j))
               );
             }
           })
@@ -1525,11 +1530,11 @@ function AnalyseSection({
                   (samme merge som dokumentlisten), så antallet opdaterer når der
                   uploades flere filer i samme session. */}
               {(() => {
+                // Tæl alle uploads med docId — også parse-fejlede, da dokumentet
+                // findes i DB (og slettes af bulk-delete) selvom parsing fejlede.
                 const deletableCount = new Set([
                   ...previousDocs.map((d) => d.id),
-                  ...wizardUploads
-                    .filter((u) => u.status === 'done' && u.docId)
-                    .map((u) => u.docId!),
+                  ...wizardUploads.filter((u) => u.docId).map((u) => u.docId!),
                 ]).size;
                 if (deletableCount === 0) return null;
                 return (

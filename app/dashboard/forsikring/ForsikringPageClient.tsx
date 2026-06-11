@@ -944,6 +944,23 @@ function AnalyseSection({
       gyldig_fra?: string | null;
     }>
   >([]);
+  /** BIZZ-2078: Std betingelser tidligere brugt i analyser for den valgte kunde
+   *  — inline-listen viser KUN disse (blank for ny kunde uden analyser);
+   *  hele biblioteket er fortsat tilgængeligt via Bibliotek-modalen. */
+  const [stdKundeUsed, setStdKundeUsed] = useState<
+    Array<{
+      id: string;
+      titel: string;
+      source_url: string;
+      selskab: string;
+      kategori: string;
+      added_via: string;
+      added_by_user: string | null;
+      is_valid_standard?: boolean;
+      omraade?: string | null;
+      gyldig_fra?: string | null;
+    }>
+  >([]);
   /** BIZZ-1921: Bibliotek-modal åben/lukket */
   const [stdLibraryOpen, setStdLibraryOpen] = useState(false);
   /** BIZZ-1921: Filter i bibliotek */
@@ -979,6 +996,23 @@ function AnalyseSection({
         /* non-fatal */
       });
   }, []);
+
+  // BIZZ-2078: Ved kundeskift nulstilles std-valg, og inline-listen genindlæses
+  // med kun de betingelser der tidligere er brugt i analyser for denne kunde.
+  // En ny kunde uden analyser får en blank sektion — betingelser tilvælges via
+  // Bibliotek-knappen i stedet for at hele domain-biblioteket vises som default.
+  useEffect(() => {
+    setStdKundeUsed([]);
+    setStdSelectedIds(new Set());
+    setStdDiscovered([]);
+    if (!selected) return;
+    fetch(`/api/forsikring/standard-docs?kunde_id=${encodeURIComponent(selected.id)}`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => setStdKundeUsed(Array.isArray(data) ? data : []))
+      .catch(() => {
+        /* non-fatal — sektionen forbliver blank */
+      });
+  }, [selected]);
   /** BIZZ-1384: Sagsliste */
   const [sager, setSager] = useState<
     Array<{
@@ -1853,16 +1887,18 @@ function AnalyseSection({
                   : 'Add general terms from the insurance company to the analysis. AI can find them automatically.'}
               </p>
 
-              {/* BIZZ-1919: Gemte betingelser fra domain-biblioteket */}
-              {stdSavedLibrary.length > 0 && (
+              {/* BIZZ-1919: Gemte betingelser — BIZZ-2078: kun betingelser
+                  tidligere brugt i analyser for den valgte kunde. Ny kunde =
+                  blank sektion; hele biblioteket findes i Bibliotek-modalen. */}
+              {stdKundeUsed.length > 0 && (
                 <div className="space-y-1">
                   <div className="text-slate-400 text-[10px] mb-1">
                     {da
-                      ? `${stdSavedLibrary.length} tidligere gemte betingelser:`
-                      : `${stdSavedLibrary.length} previously saved terms:`}
+                      ? `${stdKundeUsed.length} betingelser tidligere brugt for denne kunde:`
+                      : `${stdKundeUsed.length} terms previously used for this customer:`}
                   </div>
                   <div className="max-h-32 overflow-y-auto space-y-0.5">
-                    {stdSavedLibrary.map((doc) => {
+                    {stdKundeUsed.map((doc) => {
                       const isSelected = stdSelectedIds.has(doc.source_url);
                       const alreadyInDiscovered = stdDiscovered.some(
                         (d) => d.source_url === doc.source_url
@@ -2116,15 +2152,17 @@ function AnalyseSection({
               {/* Discovered docs list.
                   BIZZ-2073: Gemte betingelser tilføjes til stdDiscovered når de
                   vælges (eller genfindes via AI), men de vises allerede i
-                  "tidligere gemte betingelser"-listen ovenfor — filtrér dem fra
-                  her så samme vilkår ikke renderes dobbelt. Valg-state deles
-                  via stdSelectedIds (source_url), så checkboxen ovenfor virker. */}
+                  "tidligere brugt for denne kunde"-listen ovenfor — filtrér dem
+                  fra her så samme vilkår ikke renderes dobbelt. Valg-state deles
+                  via stdSelectedIds (source_url), så checkboxen ovenfor virker.
+                  BIZZ-2078: dedup mod stdKundeUsed (ikke hele biblioteket) så
+                  Bibliotek-valg for en ny kunde stadig vises her. */}
               {stdDiscovered.some(
-                (d) => !stdSavedLibrary.some((s) => s.source_url === d.source_url)
+                (d) => !stdKundeUsed.some((s) => s.source_url === d.source_url)
               ) && (
                 <div className="space-y-1">
                   {stdDiscovered
-                    .filter((d) => !stdSavedLibrary.some((s) => s.source_url === d.source_url))
+                    .filter((d) => !stdKundeUsed.some((s) => s.source_url === d.source_url))
                     .map((doc) => {
                       const isSelected = stdSelectedIds.has(doc.source_url);
                       return (

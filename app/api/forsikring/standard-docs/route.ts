@@ -2,6 +2,8 @@
  * GET  /api/forsikring/standard-docs?selskab=Topdanmark
  *   Returnerer standard forsikringsbetingelser for et selskab.
  *   Valgfri filter: ?kategori=ejendom
+ *   BIZZ-2078: ?kunde_id=<cvr> — kun betingelser brugt i kundens tidligere
+ *   analyser (tom liste for ny kunde uden analyser).
  *
  * POST /api/forsikring/standard-docs
  *   Tilføjer et nyt standard-dokument (manuel link eller AI-discovery).
@@ -17,6 +19,7 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+import { getTenantSchemaName } from '@/lib/db/tenant';
 import crypto from 'crypto';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
@@ -73,9 +76,41 @@ export async function GET(req: NextRequest) {
 
     const selskab = req.nextUrl.searchParams.get('selskab');
     const kategori = req.nextUrl.searchParams.get('kategori');
+    const kundeId = req.nextUrl.searchParams.get('kunde_id');
 
     if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
       return NextResponse.json([], { status: 200 });
+    }
+
+    // BIZZ-2078: kunde_id-scoping — returnér kun std docs der tidligere er
+    // brugt i analyser for denne forsikringsejer (via junction-tabellen).
+    // En ny kunde uden analyser får en tom liste; betingelser tilvælges så
+    // via Bibliotek i stedet for at hele domain-biblioteket vises som default.
+    let kundeStdDocIds: string[] | null = null;
+    if (kundeId) {
+      const schemaName = await getTenantSchemaName(auth.tenantId);
+      if (!schemaName) return NextResponse.json([], { status: 200 });
+      const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tenantDb = (admin as any).schema(schemaName);
+      const { data: analyser } = await tenantDb
+        .from('forsikring_analyser')
+        .select('id')
+        .eq('kunde_id', kundeId)
+        .limit(500);
+      const analyseIds = ((analyser ?? []) as Array<{ id: string }>).map((a) => a.id);
+      if (analyseIds.length === 0) return NextResponse.json([]);
+      const { data: links } = await admin
+        .from('forsikring_analyse_standard_docs')
+        .select('standard_doc_id')
+        .in('analyse_id', analyseIds)
+        .limit(1000);
+      kundeStdDocIds = [
+        ...new Set(
+          ((links ?? []) as Array<{ standard_doc_id: string }>).map((l) => l.standard_doc_id)
+        ),
+      ];
+      if (kundeStdDocIds.length === 0) return NextResponse.json([]);
     }
 
     // BIZZ-1907: Brug session-client der respekterer RLS visibility-scoping.
@@ -92,6 +127,8 @@ export async function GET(req: NextRequest) {
 
     if (selskab) query = query.ilike('selskab', `%${selskab}%`);
     if (kategori) query = query.eq('kategori', kategori);
+    // BIZZ-2078: Begræns til std docs brugt i kundens tidligere analyser
+    if (kundeStdDocIds) query = query.in('id', kundeStdDocIds);
 
     const { data, error } = await query;
 

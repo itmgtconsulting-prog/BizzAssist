@@ -685,9 +685,15 @@ async function resolveLejlighederViaBfeCache(
   const units = (cacheRows ?? []).filter(
     (r) =>
       r.bfe_nummer > 0 &&
-      (moderBfe == null || r.bfe_nummer !== moderBfe) &&
       // BIZZ-2061: SFE-rækken har en adgangsadresse-id som dawa_id — udelad
-      !(r.dawa_id && adgIdSet.has(r.dawa_id))
+      !(r.dawa_id && adgIdSet.has(r.dawa_id)) &&
+      // BIZZ-2061: moderBfe-rækken udelades KUN når den ikke har sin egen
+      // enhedsadresse (dawa_id). Klienten sender bbrData.ejerlejlighedBfe som
+      // moderBfe — på adgangsadresse-niveau kan det være en ÆGTE leaf-enhed
+      // (fx Hammerholmen 44 → BFE 221045). Uden dette mistede enheden sin
+      // egen række, BFE-match fejlede i UI'et og vejnavn-fallback viste en
+      // søster-enheds data. SFE/moder-selvrækker fanges af adgIdSet-filteret.
+      (moderBfe == null || r.bfe_nummer !== moderBfe || !!r.dawa_id)
   );
   if (units.length === 0) return [];
 

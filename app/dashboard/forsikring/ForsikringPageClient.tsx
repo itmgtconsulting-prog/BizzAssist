@@ -2093,66 +2093,75 @@ function AnalyseSection({
                 </button>
               )}
 
-              {/* Discovered docs list */}
-              {stdDiscovered.length > 0 && (
+              {/* Discovered docs list.
+                  BIZZ-2073: Gemte betingelser tilføjes til stdDiscovered når de
+                  vælges (eller genfindes via AI), men de vises allerede i
+                  "tidligere gemte betingelser"-listen ovenfor — filtrér dem fra
+                  her så samme vilkår ikke renderes dobbelt. Valg-state deles
+                  via stdSelectedIds (source_url), så checkboxen ovenfor virker. */}
+              {stdDiscovered.some(
+                (d) => !stdSavedLibrary.some((s) => s.source_url === d.source_url)
+              ) && (
                 <div className="space-y-1">
-                  {stdDiscovered.map((doc) => {
-                    const isSelected = stdSelectedIds.has(doc.source_url);
-                    return (
-                      <label
-                        key={doc.source_url}
-                        className={`flex items-start gap-2 px-2.5 py-2 rounded-lg cursor-pointer transition-colors ${
-                          isSelected
-                            ? 'bg-teal-600/15 border border-teal-500/30'
-                            : 'bg-white/3 border border-white/5 hover:bg-white/5'
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={(e) => {
-                            setStdSelectedIds((prev) => {
-                              const next = new Set(prev);
-                              if (e.target.checked) next.add(doc.source_url);
-                              else next.delete(doc.source_url);
-                              return next;
-                            });
-                          }}
-                          className="mt-0.5 accent-teal-500 shrink-0"
-                        />
-                        <div className="flex-1 min-w-0">
-                          <div className="text-white text-[11px] font-medium truncate">
-                            {doc.titel}
+                  {stdDiscovered
+                    .filter((d) => !stdSavedLibrary.some((s) => s.source_url === d.source_url))
+                    .map((doc) => {
+                      const isSelected = stdSelectedIds.has(doc.source_url);
+                      return (
+                        <label
+                          key={doc.source_url}
+                          className={`flex items-start gap-2 px-2.5 py-2 rounded-lg cursor-pointer transition-colors ${
+                            isSelected
+                              ? 'bg-teal-600/15 border border-teal-500/30'
+                              : 'bg-white/3 border border-white/5 hover:bg-white/5'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => {
+                              setStdSelectedIds((prev) => {
+                                const next = new Set(prev);
+                                if (e.target.checked) next.add(doc.source_url);
+                                else next.delete(doc.source_url);
+                                return next;
+                              });
+                            }}
+                            className="mt-0.5 accent-teal-500 shrink-0"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="text-white text-[11px] font-medium truncate">
+                              {doc.titel}
+                            </div>
+                            <div className="flex items-center gap-1 mt-0.5">
+                              <a
+                                href={doc.source_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-blue-400 text-[10px] hover:underline truncate flex items-center gap-0.5"
+                              >
+                                <ExternalLink size={9} />
+                                {doc.source_url.length > 50
+                                  ? doc.source_url.slice(0, 50) + '…'
+                                  : doc.source_url}
+                              </a>
+                              <span
+                                className={`shrink-0 text-[9px] px-1 py-0.5 rounded-full ${
+                                  doc.confidence === 'high'
+                                    ? 'bg-emerald-500/20 text-emerald-300'
+                                    : doc.confidence === 'medium'
+                                      ? 'bg-amber-500/20 text-amber-300'
+                                      : 'bg-slate-600/30 text-slate-400'
+                                }`}
+                              >
+                                {doc.confidence}
+                              </span>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-1 mt-0.5">
-                            <a
-                              href={doc.source_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="text-blue-400 text-[10px] hover:underline truncate flex items-center gap-0.5"
-                            >
-                              <ExternalLink size={9} />
-                              {doc.source_url.length > 50
-                                ? doc.source_url.slice(0, 50) + '…'
-                                : doc.source_url}
-                            </a>
-                            <span
-                              className={`shrink-0 text-[9px] px-1 py-0.5 rounded-full ${
-                                doc.confidence === 'high'
-                                  ? 'bg-emerald-500/20 text-emerald-300'
-                                  : doc.confidence === 'medium'
-                                    ? 'bg-amber-500/20 text-amber-300'
-                                    : 'bg-slate-600/30 text-slate-400'
-                              }`}
-                            >
-                              {doc.confidence}
-                            </span>
-                          </div>
-                        </div>
-                      </label>
-                    );
-                  })}
+                        </label>
+                      );
+                    })}
                 </div>
               )}
 

@@ -86,14 +86,22 @@ function extractKoebere(xml) {
 function tlGetRaw(urlPath, accept = 'application/json') {
   return new Promise((resolve, reject) => {
     const url = new URL(TL_BASE + '/tinglysning/ssl' + urlPath);
+    // settled-guard så hard-timeout, socket-timeout og error/end ikke double-settler
+    let settled = false;
+    const finish = (fn, arg) => { if (settled) return; settled = true; clearTimeout(hardTimer); fn(arg); };
     const req = https.request({
       hostname: url.hostname, port: 443, path: url.pathname + url.search,
       method: 'GET', pfx, passphrase: CERT_PASS,
       rejectUnauthorized: false, timeout: 60000,
       headers: { Accept: accept },
-    }, (res) => { let body = ''; res.on('data', d => body += d); res.on('end', () => resolve({ status: res.statusCode, body, retryAfter: res.headers['retry-after'] })); });
-    req.on('error', reject);
-    req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
+    }, (res) => { let body = ''; res.on('data', d => body += d); res.on('end', () => finish(resolve, { status: res.statusCode, body, retryAfter: res.headers['retry-after'] })); });
+    // Hård vægur-timeout: uafhængig af socket-aktivitet. Node's timeout-option er en
+    // socket-INAKTIVITETS-timeout og fyrer ikke på zombie-sockets (halv-åbne forbindelser
+    // hvor peer er død men TCP ikke opdager det) -> event-loop hænger i ep_poll. Denne
+    // timer dræber requestet hårdt efter 45s uanset socket-tilstand.
+    const hardTimer = setTimeout(() => { req.destroy(new Error('HardTimeout')); finish(reject, new Error('HardTimeout')); }, 45000);
+    req.on('error', (err) => finish(reject, err));
+    req.on('timeout', () => { req.destroy(new Error('Timeout')); finish(reject, new Error('Timeout')); });
     req.end();
   });
 }

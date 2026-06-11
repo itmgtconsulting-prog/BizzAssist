@@ -16,7 +16,9 @@ LOG=/tmp/backfill-1881-resumed-20260601-1000.log
 OFFSET=833000
 CONC=1
 DELAY_MS=800       # langsom start; scriptet hæver selv ved 429
-STALL_SECS=1800    # 30 min uden log-vækst = stall (langsom rate -> sjældne log-linjer)
+STALL_SECS=600     # 10 min uden log-vækst = stall. Med hård 45s fetch-timeout i scriptet
+                   # logger en sund kørsel hvert ~100-150s; 10 min er rigeligt margin (selv
+                   # under 429-backoff) og genopretter 3x hurtigere end de gamle 30 min.
 POLL=60
 
 start() {

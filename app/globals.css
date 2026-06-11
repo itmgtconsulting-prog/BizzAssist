@@ -28,9 +28,13 @@ body {
 }
 
 /* BIZZ-2074: Bredere og lysere global scrollbar — 6px med mørk thumb var
-   svær at se og ramme på dark theme. Firefox-fallback via scrollbar-color. */
-html {
-  scrollbar-color: #64748b #1e293b;
+   svær at se og ramme på dark theme. Firefox-fallback scopes via @supports,
+   da scrollbar-color i Chromium 121+ ellers deaktiverer ::-webkit-scrollbar. */
+@supports not selector(::-webkit-scrollbar) {
+  html {
+    scrollbar-width: auto;
+    scrollbar-color: #64748b #1e293b;
+  }
 }
 ::-webkit-scrollbar {
   width: 12px;

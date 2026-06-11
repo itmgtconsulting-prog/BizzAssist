@@ -162,6 +162,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // 2. Hent policer — BIZZ-1404: scope til valgte dokumenter hvis angivet
     const insurance = await getInsuranceApi(auth.tenantId);
     const scopeDocIds = [...(document_ids ?? []), ...(new_document_ids ?? [])];
+    // BIZZ-2065: UI'et sender nu altid document_ids (også som tom liste).
+    // En EKSPLICIT tom liste betyder "brugeren har fravalgt alle dokumenter"
+    // og må aldrig udløse fallback til alle policer fra tidligere analyser.
+    const docScopeExplicit = document_ids !== undefined || new_document_ids !== undefined;
     const allPolicies = await insurance.policies.list();
     let policer: typeof allPolicies;
     if (scopeDocIds.length > 0) {
@@ -181,10 +185,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           `[forsikring/analyser] Scoped til ${policer.length} policer fra ${scopeDocIds.length} dokumenter (af ${allPolicies.length} total)`
         );
       }
+    } else if (docScopeExplicit) {
+      // BIZZ-2065: Eksplicit tomt dokument-scope — brugeren har fravalgt
+      // alle dokumenter. Analysér med 0 policer (alt uforsikret) i stedet
+      // for at falde tilbage til policer fra tidligere analyser.
+      logger.log(
+        `[forsikring/analyser] Eksplicit tomt dokument-scope — 0 policer brugt (${allPolicies.length} tidligere policer ignoreret)`
+      );
+      policer = [];
     } else if (allPolicies.length > 0) {
-      // BIZZ-1776: Hvis ingen dokumenter er valgt OG der er policer fra
-      // tidligere analyser, brug dem som fallback (backward compat).
-      // Men log en warning — ideelt bør UI sende document_ids.
+      // BIZZ-1776: document_ids-feltet helt udeladt (legacy kald) OG der er
+      // policer fra tidligere analyser — brug dem som fallback (backward
+      // compat). Men log en warning — ideelt bør kalderen sende document_ids.
       logger.warn(
         `[forsikring/analyser] Ingen scopeDocIds — fallback til ${allPolicies.length} policer fra tidligere analyser`
       );

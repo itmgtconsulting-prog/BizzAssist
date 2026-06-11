@@ -1222,8 +1222,11 @@ function AnalyseSection({
         const allDocIds = Array.from(
           new Set<string>([...reusedDocIds, ...wizardDocIds, ...newDocumentIds])
         );
-        // Hvis wizard er åben, send altid scoped doc IDs — aldrig fald tilbage til alle policer
-        const hasAnyDocs = allDocIds.length > 0;
+        // BIZZ-2065: Send ALTID document_ids — også som tom liste. En tom
+        // liste betyder "brugeren har fravalgt alle dokumenter" og skal give
+        // 0 policer i analysen. Udelades feltet, falder backend tilbage til
+        // alle policer fra tidligere analyser (BIZZ-1776), hvilket fejlagtigt
+        // viste dækning selvom 0/3 dokumenter var valgt.
         // BIZZ-1833: Saml standard doc DB-IDs for valgte standard-betingelser
         const stdDocIds = [...stdSelectedIds]
           .map((url) => stdSavedIds.get(url))
@@ -1241,7 +1244,7 @@ function AnalyseSection({
                 kunde_id: selected.id,
                 kunde_navn: selected.navn,
                 ...(asOfDate ? { as_of_date: asOfDate } : {}),
-                ...(hasAnyDocs ? { document_ids: allDocIds } : {}),
+                document_ids: allDocIds,
                 preflight: true,
               }),
             });
@@ -1287,8 +1290,8 @@ function AnalyseSection({
             kunde_navn: selected.navn,
             ...(asOfDate ? { as_of_date: asOfDate } : {}),
             // BIZZ-1443: Send alle valgte doc IDs samlet — reused + nye, dedupet
-            // Hvis ingen er valgt, send IKKE document_ids → backend bruger alle policer
-            ...(hasAnyDocs ? { document_ids: allDocIds } : {}),
+            // BIZZ-2065: Send altid (også tom) — tom liste = bevidst fravalg
+            document_ids: allDocIds,
             // BIZZ-1833: Standard betingelser
             ...(stdDocIds.length > 0 ? { standard_doc_ids: stdDocIds } : {}),
           }),

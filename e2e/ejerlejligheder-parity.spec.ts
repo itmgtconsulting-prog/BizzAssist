@@ -109,6 +109,36 @@ test.describe('Ejerlejligheder API — Resights-paritet (BIZZ-2061)', () => {
   });
 });
 
+test.describe('Enhedsadresse BFE-resolution (BIZZ-2063)', () => {
+  test('Hammerholmen 46A, 2. resolver til BFE 221046 — ikke ESR-nummeret 134955', async ({
+    page,
+  }) => {
+    // Regression: TL /ejendom/adresse-fallback tolkede det kommunale
+    // ESR-ejendomsnummer (134955) som BFE — hvilket er Oldenborggade 20,
+    // København — så en HELT anden ejendoms ejere blev vist. Korrekt
+    // BFE for enheden er 221046 (ALSITEK ApS) via bfe_adresse_cache.
+    test.setTimeout(120_000);
+    await page.goto('/dashboard/ejendomme/48f28021-d155-47fc-8aad-a943e2f44cd6');
+    await page.waitForLoadState('domcontentloaded');
+    await expect(page.locator('body')).not.toContainText(/Kontrollerer adgang/i, {
+      timeout: 45_000,
+    });
+
+    const body = page.locator('body');
+    // Header skal vise enhedens egen BFE — ikke Oldenborggade-ejendommens.
+    // NB: 134955 optræder LEGITIMT som kommunalt ESR-nummer (167-134955) —
+    // det er kun som BFE, tallet er forkert.
+    await expect(body).toContainText('BFE: 221046', { timeout: 60_000 });
+    await expect(body).not.toContainText('BFE: 134955');
+    await expect(body).not.toContainText('Oldenborggade');
+
+    // Ejerskab-tabben skal vise den tinglyste ejer, ikke Oldenborggades
+    await page.getByText('Ejerskab', { exact: true }).first().click({ timeout: 15_000 });
+    await expect(body).toContainText('ALSITEK', { timeout: 60_000 });
+    await expect(body).not.toContainText('Martin Harvej');
+  });
+});
+
 test.describe('Ejerskab-tab strukturtræ — enheds-data (BIZZ-2061)', () => {
   test('strukturtræet viser individuelle areal/pris/dato pr. enhed', async ({ page }) => {
     test.setTimeout(120_000);

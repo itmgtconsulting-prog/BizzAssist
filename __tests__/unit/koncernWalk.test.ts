@@ -23,6 +23,7 @@ function mockQuery(data: unknown[] | null) {
   chain.eq = vi.fn().mockReturnValue(chain);
   chain.is = vi.fn().mockReturnValue(chain);
   chain.in = vi.fn().mockReturnValue(chain);
+  chain.gte = vi.fn().mockReturnValue(chain);
   chain.limit = vi.fn().mockReturnValue({ data, error: null });
   chain.maybeSingle = vi.fn().mockReturnValue({ data: data?.[0] ?? null, error: null });
   return chain;
@@ -218,6 +219,40 @@ describe('walkKoncern', () => {
 
     // 3) Ophørt datter filtreres fra
     expect(result.some((a) => a.cvr === '22222222')).toBe(false);
+  });
+
+  it('BIZZ-2103: ekskluderer stale rækker (andel null) og minoritetsposter (< 50%)', async () => {
+    // Parent "ejer" fire selskaber i cachen: 100% (reel datter), 50% (kontrol),
+    // 5% (minoritetspost, fx SKIINVEST) og NULL (stale række fra cron'en, fx
+    // RacingRoom solgt i 2020 hvor EJERANDEL_PROCENT-perioden er afsluttet).
+    // Kun >= 50% må walkes som koncern-selskaber.
+    let subCall = 0;
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'ejf_ejerskab') return mockQuery([]);
+      if (table === 'cvr_virksomhed_ejerskab') {
+        subCall++;
+        if (subCall === 1)
+          return mockQuery([
+            { ejet_cvr: '10000001', ejerandel_min: 100 },
+            { ejet_cvr: '10000002', ejerandel_min: 50 },
+            { ejet_cvr: '10000003', ejerandel_min: 5 },
+            { ejet_cvr: '10000004', ejerandel_min: null },
+          ]);
+        return mockQuery([]);
+      }
+      if (table === 'cvr_virksomhed')
+        return mockQuery([{ navn: 'Datter', ansatte_aar: 1, branche_tekst: null, ophoert: null }]);
+      if (table === 'cvr_deltagerrelation') return mockQuery([]);
+      return mockQuery([]);
+    });
+
+    const result = await walkKoncern('virksomhed', '28864973');
+
+    const cvrs = result.filter((a) => a.type === 'virksomhed').map((a) => a.cvr);
+    expect(cvrs).toContain('10000001'); // 100% — med
+    expect(cvrs).toContain('10000002'); // 50% — med (kontrol-tærskel)
+    expect(cvrs).not.toContain('10000003'); // 5% minoritet — ekskluderet
+    expect(cvrs).not.toContain('10000004'); // stale NULL-andel — ekskluderet
   });
 
   it('caps at MAX_AKTIVER (500)', async () => {

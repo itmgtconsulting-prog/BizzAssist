@@ -56,6 +56,11 @@ function makeMockAdmin(tables: Record<string, TableSpec>) {
       filters[`lte:${col}`] = val;
       return chain;
     };
+    // BIZZ-2103: koncernWalk filtrerer ejerandel_min >= 50 server-side
+    chain.gte = (col: string, val: unknown) => {
+      filters[`gte:${col}`] = val;
+      return chain;
+    };
     chain.or = (expr: string) => {
       filters['or'] = expr;
       return chain;
@@ -236,6 +241,10 @@ describe('walkKoncern — virksomhed', () => {
       };
       chain.lte = (col: string) => {
         local.push(`lte:${col}`);
+        return chain;
+      };
+      chain.gte = (col: string) => {
+        local.push(`gte:${col}`);
         return chain;
       };
       chain.or = (expr: string) => {

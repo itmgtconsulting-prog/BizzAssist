@@ -40,6 +40,14 @@ export interface Aktiv {
 const MAX_AKTIVER = 500;
 
 /**
+ * BIZZ-2103: Minimum ejerandel (%) for at et ejet selskab regnes som
+ * koncern-selskab og walkes som datterselskab. Minoritetsposter (fx 5%)
+ * og stale cache-rækker med ejerandel NULL må ikke trække en fuld
+ * gap-analyse af et fremmed selskab ind i kundens koncern.
+ */
+const KONCERN_EJERANDEL_MIN = 50;
+
+/**
  * Walk koncern-struktur og saml aktiver.
  *
  * @param kundeType - 'virksomhed' eller 'person'
@@ -508,11 +516,15 @@ async function walkVirksomhed(
 
   // Hent datterselskaber via cvr_virksomhed_ejerskab cache
   // BIZZ-1355: Historisk filtrering på gyldig_fra/gyldig_til
+  // BIZZ-2103: Kun kontrollerende ejerskab (>= 50%) walkes som koncern —
+  // .gte ekskluderer samtidig rækker med ejerandel_min NULL (stale rækker
+  // fra cron'en uden aktiv EJERANDEL_PROCENT, fx historiske ejere).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let subQuery = (admin as any)
     .from('cvr_virksomhed_ejerskab')
     .select('ejet_cvr, ejerandel_min')
-    .eq('ejer_cvr', cvr);
+    .eq('ejer_cvr', cvr)
+    .gte('ejerandel_min', KONCERN_EJERANDEL_MIN);
 
   if (asOfDate) {
     const isoDate = asOfDate.toISOString().slice(0, 10);
@@ -530,6 +542,9 @@ async function walkVirksomhed(
     ejerandel_min: number | null;
   }>) {
     if (seenCvrs.has(sub.ejet_cvr) || aktiver.length >= MAX_AKTIVER) continue;
+    // BIZZ-2103: Defensiv guard mod stale cache-rækker (ejerandel NULL) og
+    // minoritetsposter, hvis querien af en eller anden grund returnerer dem.
+    if (sub.ejerandel_min == null || sub.ejerandel_min < KONCERN_EJERANDEL_MIN) continue;
 
     // Hent virksomhedsinfo.
     // BIZZ-2101: kolonnen hed tidligere 'ansatte' i select'en, men den findes

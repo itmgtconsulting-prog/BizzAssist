@@ -74,6 +74,8 @@ interface EjerskabRow {
   ejerandel_min: number | null;
   ejerandel_max: number | null;
   gyldig_fra: string | null;
+  /** BIZZ-2103: Slutdato for historiske ejerskaber (lukker stale rækker via upsert) */
+  gyldig_til: string | null;
   sidst_hentet_fra_cvr: string;
 }
 
@@ -132,14 +134,46 @@ function extractRelations(
           let ejerandelMin: number | null = null;
           let ejerandelMax: number | null = null;
           let gyldigFra: string | null = null;
+          // BIZZ-2103: CVR lader FUNKTION=EJERREGISTER-perioden stå åben
+          // selv efter et salg — kun EJERANDEL_PROCENT-perioden afsluttes.
+          // Tidligere pushede vi en åben række (andel NULL, gyldig_til NULL)
+          // for ENHVER REGISTER-relation, hvilket gav stale "evige" ejerskaber
+          // (fx RACEHALL Aarhus → RacingRoom solgt 2020). Nu: spor om der
+          // overhovedet findes EJERANDEL_PROCENT-værdier, og luk historiske
+          // ejerskaber med seneste afsluttede periodes gyldigTil.
+          let sawEjerandelAttr = false;
+          let aktivFundet = false;
+          let gyldigTil: string | null = null;
 
           for (const attr of allAttrSources) {
             if ((attr.type as string) !== 'EJERANDEL_PROCENT') continue;
             const vaerdier = (attr.vaerdier as Record<string, unknown>[]) ?? [];
+            if (vaerdier.length > 0) sawEjerandelAttr = true;
             const aktiv = vaerdier.find(
               (v) => !(v.periode as Record<string, unknown> | undefined)?.gyldigTil
             );
-            if (!aktiv) continue;
+            if (!aktiv) {
+              // Historisk ejer: luk rækken med seneste afsluttede periode
+              // (mønster fra scripts/backfill-cvr-ejerskab-v3.mjs) — men kun
+              // hvis en anden attribut ikke allerede har en aktiv værdi.
+              if (!aktivFundet) {
+                gyldigTil =
+                  vaerdier
+                    .map(
+                      (v) =>
+                        (v.periode as Record<string, unknown> | undefined)?.gyldigTil as
+                          | string
+                          | undefined
+                    )
+                    .filter((d): d is string => Boolean(d))
+                    .sort()
+                    .pop()
+                    ?.slice(0, 10) ?? null;
+              }
+              continue;
+            }
+            aktivFundet = true;
+            gyldigTil = null;
             const kode = aktiv.vaerdi as string;
             const interval = INTERVAL_MAP[kode];
             if (interval) {
@@ -153,12 +187,18 @@ function extractRelations(
               ) ?? null;
           }
 
+          // BIZZ-2103: Ingen EJERANDEL_PROCENT-data overhovedet → ikke et
+          // reelt ejerskab vi kan kvantificere; skip i stedet for at skrive
+          // en åben række med andel NULL.
+          if (!sawEjerandelAttr) continue;
+
           ejerskab.push({
             ejer_cvr: deltagerCvr,
             ejet_cvr: cvrNummer,
             ejerandel_min: ejerandelMin,
             ejerandel_max: ejerandelMax,
             gyldig_fra: gyldigFra,
+            gyldig_til: gyldigTil,
             sidst_hentet_fra_cvr: now,
           });
         }

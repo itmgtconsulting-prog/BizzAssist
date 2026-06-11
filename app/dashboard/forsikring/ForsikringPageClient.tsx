@@ -139,6 +139,16 @@ interface AnalyseGap {
   source_data?: Record<string, string> | null;
 }
 
+/** BIZZ-2084: Dækning fra analyse-detail API — bruges til grøn "Dækket"-visning */
+interface AnalyseCoverage {
+  policy_id: string;
+  coverage_code: string;
+  coverage_label: string;
+  is_covered: boolean;
+  sum_dkk: number | null;
+  deductible_dkk: number | null;
+}
+
 /** Full analyse-detail response */
 interface AnalyseDetail {
   analyse: {
@@ -158,6 +168,8 @@ interface AnalyseDetail {
   };
   aktiver: AnalyseAktiv[];
   gaps: AnalyseGap[];
+  /** BIZZ-2084: Dækninger for matchede policer — grøn "Dækket"-visning */
+  coverages?: AnalyseCoverage[];
 }
 
 /** Property grouped with its matched policy and relevant gaps */
@@ -165,6 +177,8 @@ interface PropertyGroup {
   aktiv: AnalyseAktiv;
   matchedPolicy: PolicyRow | null;
   gaps: AnalyseGap[];
+  /** BIZZ-2084: Aktive dækninger (is_covered=true) på den matchede police */
+  coverages: AnalyseCoverage[];
 }
 
 // ─── BIZZ-1389: Samlet ejendomsvisning ──────────────────────────
@@ -350,8 +364,17 @@ function PropertyRow({
                 {group.gaps.length} {da ? 'findings' : 'findings'}
               </span>
             )
-          : (gapCritical > 0 || gapWarning > 0) && (
+          : (gapCritical > 0 || gapWarning > 0 || group.coverages.length > 0) && (
               <div className="flex items-center gap-1 shrink-0">
+                {/* BIZZ-2084: Grøn pille = antal aktive dækninger på matchet police */}
+                {group.coverages.length > 0 && (
+                  <span
+                    className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/20 text-emerald-300"
+                    title={da ? 'Aktive dækninger' : 'Active coverages'}
+                  >
+                    {group.coverages.length}
+                  </span>
+                )}
                 {gapCritical > 0 && (
                   <span className="px-1.5 py-0.5 rounded text-[10px] bg-red-500/20 text-red-300">
                     {gapCritical}
@@ -448,6 +471,43 @@ function PropertyRow({
             </div>
           )}
 
+          {/* BIZZ-2084: Grøn "Dækket"-sektion — vis hvad der ER dækket inkl.
+              dækningssum + selvrisiko, så dækningsniveauet kan reviewes med kunden */}
+          {group.coverages.length > 0 && (
+            <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-2">
+              <div className="flex items-center gap-1.5 mb-1">
+                <CheckCircle2 size={12} className="text-emerald-400 shrink-0" />
+                <span className="text-emerald-300 text-xs font-medium">
+                  {da ? 'Dækket' : 'Covered'} ({group.coverages.length})
+                </span>
+              </div>
+              <div className="space-y-0.5">
+                {group.coverages.map((cov) => (
+                  <div
+                    key={`${cov.policy_id}-${cov.coverage_code}`}
+                    className="flex items-baseline justify-between gap-2 text-xs"
+                  >
+                    <span className="text-emerald-200">✓ {cov.coverage_label}</span>
+                    <span className="text-slate-300 shrink-0">
+                      {cov.sum_dkk != null
+                        ? `${cov.sum_dkk.toLocaleString('da-DK')} kr`
+                        : da
+                          ? 'sum ikke angivet'
+                          : 'sum not stated'}
+                      {cov.deductible_dkk != null && (
+                        <span className="text-slate-400">
+                          {' '}
+                          · {da ? 'selvrisiko' : 'deductible'}{' '}
+                          {cov.deductible_dkk.toLocaleString('da-DK')} kr
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* BIZZ-1972: Info-label når forsikringsejer-niveau er foldet ind */}
           {foldedNote && group.gaps.length > 0 && (
             <div className="flex items-start gap-1.5 text-[11px] text-slate-400 bg-white/3 border border-white/8 rounded-lg px-2.5 py-1.5">
@@ -511,6 +571,15 @@ function UnifiedAnalyseView({
   // Build a policy lookup
   const policyById = new Map(policies.map((p) => [p.id, p]));
 
+  // BIZZ-2084: Aktive dækninger grupperet per police — til grøn "Dækket"-visning
+  const coveragesByPolicy = new Map<string, AnalyseCoverage[]>();
+  for (const cov of detail.coverages ?? []) {
+    if (!cov.is_covered) continue;
+    const list = coveragesByPolicy.get(cov.policy_id) ?? [];
+    list.push(cov);
+    coveragesByPolicy.set(cov.policy_id, list);
+  }
+
   // Group aktiver into PropertyGroups with their gaps — dedup by address
   const seenAddresses = new Set<string>();
   const allGroups: PropertyGroup[] = [];
@@ -547,6 +616,9 @@ function UnifiedAnalyseView({
         ? (policyById.get(aktiv.matched_policy_id) ?? null)
         : null,
       gaps: aktivGaps,
+      coverages: aktiv.matched_policy_id
+        ? (coveragesByPolicy.get(aktiv.matched_policy_id) ?? [])
+        : [],
     });
   }
 
@@ -3246,6 +3318,15 @@ function AnalyseDetailSection({
             []) as PolicyRow[];
           const polById = new Map(pols.map((p) => [p.id, p]));
 
+          // BIZZ-2084: Aktive dækninger per police — til grøn "Dækket"-visning
+          const covByPolicy = new Map<string, AnalyseCoverage[]>();
+          for (const cov of detail.coverages ?? []) {
+            if (!cov.is_covered) continue;
+            const list = covByPolicy.get(cov.policy_id) ?? [];
+            list.push(cov);
+            covByPolicy.set(cov.policy_id, list);
+          }
+
           // BIZZ-1792: Dedup gaps per check_id
           const dedupGaps = (rawGaps: typeof detail.gaps) => {
             const seen = new Set<string>();
@@ -3286,6 +3367,9 @@ function AnalyseDetailSection({
                 ? (polById.get(aktiv.matched_policy_id) ?? null)
                 : null,
               gaps: aktivGaps,
+              coverages: aktiv.matched_policy_id
+                ? (covByPolicy.get(aktiv.matched_policy_id) ?? [])
+                : [],
             };
           });
 

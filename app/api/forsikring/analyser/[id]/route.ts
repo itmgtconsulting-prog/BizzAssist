@@ -128,12 +128,27 @@ export async function GET(
       gaps = legacyGaps ?? [];
     }
 
+    // BIZZ-2084: Hent dækninger for de matchede policer, så UI'et kan vise
+    // med grønt hvad der ER dækket (inkl. dækningssum + selvrisiko) — ikke
+    // kun manglerne. Bruges til at reviewe dækningsniveauet med kunden.
+    let coverages: unknown[] = [];
+    if (matchedPolicyIds.length > 0) {
+      const { data: coverageRows } = await db
+        .from('forsikring_coverages')
+        .select('policy_id, coverage_code, coverage_label, is_covered, sum_dkk, deductible_dkk')
+        .in('policy_id', [...new Set(matchedPolicyIds)])
+        .eq('tenant_id', auth.tenantId)
+        .order('coverage_label', { ascending: true });
+      coverages = coverageRows ?? [];
+    }
+
     return NextResponse.json({
       analyse: analyseResult.data,
       aktiver: aktiverResult.data ?? [],
       gaps,
       documents,
       policies,
+      coverages,
     });
   } catch (err) {
     logger.error('[forsikring/analyser/[id]] Fejl:', err);

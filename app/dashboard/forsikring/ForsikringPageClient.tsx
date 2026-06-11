@@ -880,7 +880,11 @@ function AnalyseSection({
     /** BIZZ-1973: Policer der dækker en adresse uden for porteføljen */
     address_mismatches?: AddressMismatch[];
     /** BIZZ-2067: Sikrede-/korrespondance-adresser uden for porteføljen (info) */
-    sikrede_adresser_uden_for_portefoelje?: string[];
+    sikrede_adresser_uden_for_portefoelje?: Array<{
+      adresse: string;
+      dokument_navn: string | null;
+      policy_number: string | null;
+    }>;
     /** Advarsel når standard betingelser ikke matcher policens selskab */
     std_betingelser_advarsel?: string | null;
   } | null>(null);
@@ -2795,15 +2799,25 @@ function AnalyseSection({
             <div className="text-xs">
               <div className="text-sky-200 font-medium">
                 {da
-                  ? 'Policer er stilet til en adresse uden for porteføljen'
-                  : 'Policies are addressed to an address outside the portfolio'}
+                  ? 'Police indeholder en adresse uden for porteføljen'
+                  : 'Policy contains an address outside the portfolio'}
               </div>
+              {analyseResult.sikrede_adresser_uden_for_portefoelje.map((s, i) => (
+                <div key={`${s.adresse}-${i}`} className="text-slate-400 mt-0.5">
+                  {s.dokument_navn && (
+                    <span className="text-slate-300 font-medium">{s.dokument_navn}</span>
+                  )}
+                  {s.dokument_navn && ' — '}
+                  {da
+                    ? `policen indeholder ${s.adresse}, som ligger uden for porteføljen`
+                    : `the policy contains ${s.adresse}, which is outside the portfolio`}
+                  {s.policy_number && ` (police ${s.policy_number})`}
+                </div>
+              ))}
               <div className="text-slate-400 mt-0.5">
-                {analyseResult.sikrede_adresser_uden_for_portefoelje.join(' · ')}
-                {' — '}
                 {da
-                  ? 'adressen er forsikringstagers sikrede-/korrespondance-adresse (typisk lejet hovedkontor), ikke et forsikringssted, og ejes ikke af virksomheden.'
-                  : "this is the policyholder's correspondence address (typically a leased head office), not an insured location, and is not owned by the company."}
+                  ? 'Adressen er forsikringstagers sikrede-/korrespondance-adresse (typisk lejet hovedkontor), ikke et forsikringssted, og ejes ikke af virksomheden.'
+                  : "The address is the policyholder's correspondence address (typically a leased head office), not an insured location, and is not owned by the company."}
               </div>
             </div>
           </div>

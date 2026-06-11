@@ -251,16 +251,36 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // ikke ejet) — det er IKKE en fejl, men brugeren skal kunne se det i
     // rapporten, så adressen ikke forveksles med et forsikringssted. Vises
     // som info — blokerer ikke preflight og udløser ingen advarsel.
-    const sikredeAdresserUdenForPortefoelje = [
-      ...new Set(
-        policer
-          .filter((p) => p.policyholder_address && p.policyholder_address.trim().length > 0)
-          .filter(
-            (p) => !portefoeljeAdresser.some((addr) => addressesMatch(p.policyholder_address, addr))
-          )
-          .map((p) => p.policyholder_address!.trim())
-      ),
-    ];
+    // Follow-up: inkluder kildedokumentets filnavn pr. adresse, så brugeren
+    // kan se HVILKEN police der indeholder adressen uden for porteføljen.
+    const dokumentNavne = new Map<string, string>();
+    try {
+      for (const d of await insurance.documents.list()) {
+        dokumentNavne.set(d.id, d.original_name);
+      }
+    } catch {
+      // Filnavne er rent informative — analysen fortsætter uden dem.
+    }
+    const sikredeAdresseSet = new Set<string>();
+    const sikredeAdresserUdenForPortefoelje: Array<{
+      adresse: string;
+      dokument_navn: string | null;
+      policy_number: string | null;
+    }> = [];
+    for (const p of policer) {
+      const adresse = p.policyholder_address?.trim();
+      if (!adresse) continue;
+      if (portefoeljeAdresser.some((addr) => addressesMatch(adresse, addr))) continue;
+      const dokumentNavn = p.document_id ? (dokumentNavne.get(p.document_id) ?? null) : null;
+      const key = `${adresse.toLowerCase()}|${dokumentNavn ?? ''}`;
+      if (sikredeAdresseSet.has(key)) continue;
+      sikredeAdresseSet.add(key);
+      sikredeAdresserUdenForPortefoelje.push({
+        adresse,
+        dokument_navn: dokumentNavn,
+        policy_number: p.policy_number ?? null,
+      });
+    }
 
     // BIZZ-1973: Preflight — returnér kun mismatches, kør ikke gap-engine/persist.
     if (body.preflight) {

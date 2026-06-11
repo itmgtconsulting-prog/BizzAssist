@@ -493,9 +493,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
     }
 
+    // BIZZ-2071: Et policenummer kan optræde i flere dokumenter (fuld police +
+    // forsikringsoversigt). Kun én af rækkerne vinder bestMatch pr. aktiv, så
+    // uden merge ignoreres dækninger der kun står i det andet dokument (fx
+    // hus_grundejer_ansvar fra en oversigt) — et ekstra dokument ændrede
+    // dermed intet i analysen. Normalisér policenummeret (fjern whitespace)
+    // og saml dækninger fra alle policer i scope med samme nummer.
+    const normPolicyNo = (n: string | null | undefined): string => (n ?? '').replace(/\s+/g, '');
+
     for (const match of matches) {
       if (!match.bestMatch) continue;
-      const policyCoverages = coveragesByPolicy.get(match.bestMatch.policy.id) ?? [];
+      const bestPolicyNo = normPolicyNo(match.bestMatch.policy.policy_number);
+      const policyCoverages = policer
+        .filter(
+          (p) =>
+            p.id === match.bestMatch!.policy.id ||
+            (bestPolicyNo.length > 0 && normPolicyNo(p.policy_number) === bestPolicyNo)
+        )
+        .flatMap((p) => coveragesByPolicy.get(p.id) ?? []);
 
       // BIZZ-2047: Filtrer standard-betingelser til kun at matche policens selskab.
       // Topdanmark-vilkår skal ikke bruges som baseline for Alm. Brand policer osv.

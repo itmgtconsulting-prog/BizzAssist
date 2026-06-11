@@ -181,3 +181,43 @@ describe('canParseAsText', () => {
     expect(canParseAsText('msg')).toBe(false);
   });
 });
+
+// BIZZ-2081: Salvage af afkortet oversigt-JSON
+import { salvageTruncatedOversigt } from '@/app/lib/forsikring/jsonHelpers';
+
+describe('salvageTruncatedOversigt', () => {
+  const policy = (n: number) =>
+    `{"policy_number":"P${n}","insurer_name":"Tryg","coverages":[{"coverage_code":"brand_el","is_covered":true}]}`;
+
+  it('redder komplette policer fra afkortet JSON', () => {
+    const truncated = `{"policies":[${policy(1)},${policy(2)},{"policy_number":"P3","insurer_na`;
+    const result = salvageTruncatedOversigt(truncated);
+    expect(result).not.toBeNull();
+    expect(result!.policies).toHaveLength(2);
+    expect((result!.policies[0] as { policy_number: string }).policy_number).toBe('P1');
+    expect(result!.notes).toContain('for lang');
+  });
+
+  it('håndterer afkortning midt i en streng med escapes og brackets', () => {
+    const truncated = `{"policies":[${policy(1)}],"broker_name":"RTM \\"a{b[c`;
+    // policies-arrayet er lukket korrekt — depth går under 0 ved ']' og scanningen stopper
+    const result = salvageTruncatedOversigt(truncated);
+    expect(result).not.toBeNull();
+    expect(result!.policies).toHaveLength(1);
+  });
+
+  it('returnerer null når intet komplet objekt findes', () => {
+    expect(salvageTruncatedOversigt('{"policies":[{"policy_number":"P1')).toBeNull();
+  });
+
+  it('returnerer null uden policies-array', () => {
+    expect(salvageTruncatedOversigt('{"broker_name":"RTM"')).toBeNull();
+  });
+
+  it('ignorerer brackets inde i strenge', () => {
+    const truncated = `{"policies":[{"policy_number":"P1","notes":"adresse {with} [brackets]"},{"poli`;
+    const result = salvageTruncatedOversigt(truncated);
+    expect(result).not.toBeNull();
+    expect(result!.policies).toHaveLength(1);
+  });
+});

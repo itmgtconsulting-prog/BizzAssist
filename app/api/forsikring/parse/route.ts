@@ -75,8 +75,11 @@ function recordParseTokens(
   })();
 }
 
-/** Øget fra 60 → 120s — nogle policer kræver lang Claude-processing */
-export const maxDuration = 120;
+/**
+ * BIZZ-2081: Øget 120 → 300s — store forsikringsoversigter kan kræve op til
+ * 16k output-tokens fra Claude, hvilket ikke kan genereres på 120s.
+ */
+export const maxDuration = 300;
 
 interface ParseRequestBody {
   document_id?: unknown;

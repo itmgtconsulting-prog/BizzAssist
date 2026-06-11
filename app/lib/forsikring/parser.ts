@@ -25,7 +25,7 @@ import {
   type DocumentType,
   type DocumentTypeDetection,
 } from './types';
-import { stripMarkdownFences, canParseAsText } from './jsonHelpers';
+import { stripMarkdownFences, canParseAsText, salvageTruncatedOversigt } from './jsonHelpers';
 
 // Re-export for backwards compatibility — callers kan stadig importere fra parser.ts
 export { stripMarkdownFences, canParseAsText };
@@ -243,17 +243,22 @@ Returnér nu JSON for følgende forsikringsoversigt:`;
  * @returns OversightParseResult med array af policer
  */
 export async function parseOversigt(text: string, apiKey: string): Promise<OversightParseResult> {
-  const client = new Anthropic({ apiKey, timeout: 100_000 });
+  // BIZZ-2081: Streaming + 16k output-tokens — store oversigter (mange policer
+  // med coverages) genererer mere JSON end de tidligere 8k tokens, hvilket
+  // afkortede svaret midt i en streng og fik JSON.parse til at fejle.
+  const client = new Anthropic({ apiKey, timeout: 240_000 });
   const trimmedText = text.length > MAX_TEXT_CHARS ? text.slice(0, MAX_TEXT_CHARS) : text;
 
   let response: Anthropic.Message;
   try {
-    response = await client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 8000,
-      system: OVERSIGT_SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: trimmedText }],
-    });
+    response = await client.messages
+      .stream({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 16000,
+        system: OVERSIGT_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: trimmedText }],
+      })
+      .finalMessage();
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'unknown';
     logger.error('[forsikring/parser] Oversigt-parsing fejlede:', msg);
@@ -270,8 +275,19 @@ export async function parseOversigt(text: string, apiKey: string): Promise<Overs
   try {
     parsed = JSON.parse(cleaned);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'unknown';
-    return { ok: false, text, error: `Oversigt-output er ikke gyldig JSON: ${msg}` };
+    // BIZZ-2081: Salvage — hvis svaret blev afkortet ved max_tokens, red de
+    // komplette police-objekter i stedet for at fejle hele parsingen.
+    const salvaged =
+      response.stop_reason === 'max_tokens' ? salvageTruncatedOversigt(cleaned) : null;
+    if (salvaged) {
+      logger.warn(
+        `[forsikring/parser] Oversigt-JSON afkortet ved max_tokens — reddede ${salvaged.policies.length} komplette policer`
+      );
+      parsed = salvaged;
+    } else {
+      const msg = err instanceof Error ? err.message : 'unknown';
+      return { ok: false, text, error: `Oversigt-output er ikke gyldig JSON: ${msg}` };
+    }
   }
 
   const validation = ParsedOvesigtSchema.safeParse(parsed);

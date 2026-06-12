@@ -31,6 +31,11 @@ const BEGRUNDELSER: Record<string, Record<number, [string, string]>> = {
       'Vejnavn og husnummer matcher forsikringsstedet',
       'Street name and house number match the policy location',
     ],
+    // BIZZ-2096: nedarvet dækning via SFE-struktur (sfeStruktur.ts SFE_ARV_SCORE)
+    75: [
+      'Dækket via police på ejendommens SFE-adresse',
+      'Covered via policy on the property’s SFE address',
+    ],
     70: [
       'Vejnavn matcher — husnummeret matcher delvist',
       'Street name matches — house number partially matches',

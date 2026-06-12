@@ -297,6 +297,10 @@ function PropertyRow({
 }) {
   const [expanded, setExpanded] = useState(false);
   const isInsured = group.aktiv.matched_policy_id !== null;
+  /** BIZZ-2096: dækning nedarvet fra police på SFE-adressen (sat af sfeStruktur.ts) */
+  const daekketViaSfe =
+    (group.aktiv.raw_data as { daekket_via_sfe?: { sfe_adresse?: string } } | null)
+      ?.daekket_via_sfe ?? null;
   const gapCritical = group.gaps.filter((g) => g.severity === 'critical').length;
   const gapWarning = group.gaps.filter((g) => g.severity === 'warning').length;
 
@@ -343,6 +347,21 @@ function PropertyRow({
           {group.aktiv.type === 'ejendom' && group.aktiv.bfe != null && (
             <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-slate-500/20 text-slate-300 border border-slate-500/30 shrink-0">
               BFE {group.aktiv.bfe}
+            </span>
+          )}
+          {/* BIZZ-2096: Marker når dækningen er nedarvet fra en police på
+              SFE-adressen — antagelsen skal være transparent for rådgiveren. */}
+          {daekketViaSfe && (
+            <span
+              className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shrink-0 truncate max-w-[220px]"
+              title={
+                da
+                  ? `Police på SFE-adressen ${daekketViaSfe.sfe_adresse ?? ''} antages at dække hele strukturen`
+                  : `Policy on SFE address ${daekketViaSfe.sfe_adresse ?? ''} is assumed to cover the whole structure`
+              }
+            >
+              {da ? 'Dækket via SFE' : 'Covered via SFE'}
+              {daekketViaSfe.sfe_adresse ? ` ${daekketViaSfe.sfe_adresse}` : ''}
             </span>
           )}
           {/* BIZZ-2101: CVR-badge på virksomheds-rækker — virksomheder vises
@@ -1078,20 +1097,65 @@ function UnifiedAnalyseView({
     return [postnr, vejnavn.toLowerCase(), husnrNum, husnrSuffix.toLowerCase()];
   }
 
-  /** Sort properties: postnr ASC → vejnavn ASC → husnr ASC. Uforsikrede først inden for gruppen. */
+  /**
+   * Sammenlign to adresse-tupler fra parseAddrSort (postnr → vejnavn → husnr → suffix).
+   *
+   * @param a - Første tuple
+   * @param b - Anden tuple
+   * @returns Negativ/0/positiv som Array.sort-comparator
+   */
+  function cmpAddrTuple(a: [number, string, number, string], b: [number, string, number, string]) {
+    if (a[0] !== b[0]) return a[0] - b[0];
+    const vejCmp = a[1].localeCompare(b[1], 'da');
+    if (vejCmp !== 0) return vejCmp;
+    if (a[2] !== b[2]) return a[2] - b[2];
+    return a[3].localeCompare(b[3], 'da');
+  }
+
+  /** Læs SFE-BFE fra aktivets raw_data (BIZZ-2096, sat af sfeStruktur.ts) */
+  function sfeBfeOf(g: PropertyGroup): number | null {
+    return (g.aktiv.raw_data as { sfe_bfe?: number } | null)?.sfe_bfe ?? null;
+  }
+
+  /**
+   * Sort properties: postnr ASC → vejnavn ASC → husnr ASC. Uforsikrede først inden for gruppen.
+   *
+   * BIZZ-2096: Aktiver i samme SFE holdes samlet — alle medlemmer af en SFE
+   * sorteres på SFE-gruppens "anker" (laveste adresse i gruppen), med
+   * SFE-niveauet øverst i gruppen, så strukturen SFE → underliggende er synlig.
+   */
   function sortProperties(list: PropertyGroup[]): PropertyGroup[] {
+    // Anker pr. SFE-gruppe = laveste adresse-tuple blandt medlemmerne
+    const anchorBySfe = new Map<number, [number, string, number, string]>();
+    for (const g of list) {
+      const sfe = sfeBfeOf(g);
+      if (sfe == null) continue;
+      const t = parseAddrSort(g.aktiv.adresse);
+      const cur = anchorBySfe.get(sfe);
+      if (!cur || cmpAddrTuple(t, cur) < 0) anchorBySfe.set(sfe, t);
+    }
+
     return [...list].sort((a, b) => {
-      const [aPostnr, aVej, aHusnr, aSuf] = parseAddrSort(a.aktiv.adresse);
-      const [bPostnr, bVej, bHusnr, bSuf] = parseAddrSort(b.aktiv.adresse);
-      // Primary: postnr ascending
-      if (aPostnr !== bPostnr) return aPostnr - bPostnr;
-      // Secondary: vejnavn alphabetical (Danish locale)
-      const vejCmp = aVej.localeCompare(bVej, 'da');
-      if (vejCmp !== 0) return vejCmp;
-      // Tertiary: husnr numeric
-      if (aHusnr !== bHusnr) return aHusnr - bHusnr;
-      // Quaternary: husnr suffix (A, B, C...)
-      if (aSuf !== bSuf) return aSuf.localeCompare(bSuf, 'da');
+      const aT = parseAddrSort(a.aktiv.adresse);
+      const bT = parseAddrSort(b.aktiv.adresse);
+      const aSfe = sfeBfeOf(a);
+      const bSfe = sfeBfeOf(b);
+      // Primary: SFE-gruppens anker (eller egen adresse uden SFE-info)
+      const aKey = aSfe != null ? (anchorBySfe.get(aSfe) ?? aT) : aT;
+      const bKey = bSfe != null ? (anchorBySfe.get(bSfe) ?? bT) : bT;
+      const keyCmp = cmpAddrTuple(aKey, bKey);
+      if (keyCmp !== 0) return keyCmp;
+      // Inden for samme SFE-gruppe: SFE-niveauet øverst
+      if (aSfe != null && aSfe === bSfe) {
+        const aNiv =
+          (a.aktiv.raw_data as { sfe_niveau?: string } | null)?.sfe_niveau === 'sfe' ? 0 : 1;
+        const bNiv =
+          (b.aktiv.raw_data as { sfe_niveau?: string } | null)?.sfe_niveau === 'sfe' ? 0 : 1;
+        if (aNiv !== bNiv) return aNiv - bNiv;
+      }
+      // Secondary: egen adresse
+      const ownCmp = cmpAddrTuple(aT, bT);
+      if (ownCmp !== 0) return ownCmp;
       // Tiebreaker: uforsikrede først
       const aIns = a.aktiv.matched_policy_id ? 1 : 0;
       const bIns = b.aktiv.matched_policy_id ? 1 : 0;

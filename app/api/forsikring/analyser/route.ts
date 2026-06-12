@@ -16,6 +16,7 @@ import { getInsuranceApi } from '@/lib/db/insurance';
 import { walkKoncern } from '@/app/lib/forsikring/koncernWalk';
 import * as Sentry from '@sentry/nextjs';
 import { matchAssetsToPolicies, addressesMatch } from '@/app/lib/forsikring/assetMatcher';
+import { berigMedSfeStruktur } from '@/app/lib/forsikring/sfeStruktur';
 import {
   runGapEngine,
   computeRiskScore,
@@ -380,6 +381,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     const matches = matchAssetsToPolicies(aktiver, policer);
+
+    // BIZZ-2096: SFE-struktur-arv — en police på en SFE-adresse dækker som
+    // udgangspunkt alle underliggende ejendomme i strukturen. Umatchede
+    // aktiver i en dækket SFE får nedarvet match (score 75) + markering
+    // `daekket_via_sfe` i raw_data. Best-effort: DAWA-opslag må ikke vælte analysen.
+    try {
+      const inherited = await berigMedSfeStruktur(matches, policer);
+      if (inherited > 0) {
+        logger.log(`[forsikring/analyser] SFE-arv: ${inherited} aktiver dækket via SFE-struktur`);
+      }
+    } catch (err) {
+      logger.warn('[forsikring/analyser] SFE-struktur-berigelse fejlede (best-effort):', err);
+    }
+
     const insuredCount = matches.filter((m) => m.bestMatch !== null).length;
 
     // BIZZ-1492: Log match-resultater for debugging

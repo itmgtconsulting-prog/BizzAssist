@@ -149,6 +149,17 @@ interface AnalyseCoverage {
   deductible_dkk: number | null;
 }
 
+/** BIZZ-2099: Police fra analyse-detail API — bruges til "Fundne forsikringer" */
+interface AnalysePolicy {
+  id: string;
+  policy_number: string | null;
+  insurer_name: string | null;
+  business_activity: string | null;
+  property_address: string | null;
+  annual_premium_dkk: number | null;
+  sum_insured_dkk: number | null;
+}
+
 /** Full analyse-detail response */
 interface AnalyseDetail {
   analyse: {
@@ -170,6 +181,8 @@ interface AnalyseDetail {
   gaps: AnalyseGap[];
   /** BIZZ-2084: Dækninger for matchede policer — grøn "Dækket"-visning */
   coverages?: AnalyseCoverage[];
+  /** BIZZ-2099: Alle analysens policer — bruges til "Fundne forsikringer" */
+  policies?: AnalysePolicy[];
 }
 
 /** Property grouped with its matched policy and relevant gaps */
@@ -721,6 +734,210 @@ function DaekningVsRegnskab({ detail, da }: { detail: AnalyseDetail; da: boolean
 }
 
 /**
+ * BIZZ-2099: Kategori-mapping for dækningskoder — bruges til det samlede
+ * dækningsoverblik i "Fundne forsikringer". Koder uden mapping vises under
+ * 'andet'.
+ */
+const COVERAGE_KATEGORIER: Record<string, readonly string[]> = {
+  bygning: [
+    'brand_el',
+    'bygningskasko',
+    'udvidet_roerskade',
+    'glas',
+    'sanitet',
+    'insekt_svamp',
+    'restvaerdi',
+    'stikledning',
+    'jordskade',
+    'lovliggoerelse',
+    'haerverk',
+    'omstilling_laase',
+    'udvidet_vandskade',
+  ],
+  loesoere: ['loesoere', 'indbrudstyveri', 'ran_roeveri', 'oprydning', 'maskiner_itudstyr'],
+  driftstab: ['driftstab', 'leverandoer_aftager', 'huslejetab'],
+  ansvar: ['erhvervsansvar', 'hus_grundejer_ansvar', 'forurening'],
+  cyber: ['cyber', 'cyberdriftstab', 'notifikation', 'netbank', 'it_meromkostninger'],
+  kriminalitet: ['kriminalitet'],
+  transport: ['transport'],
+};
+
+/** BIZZ-2099: Danske/engelske labels for dæknings-kategorier */
+const KATEGORI_LABELS: Record<string, [string, string]> = {
+  bygning: ['Bygning', 'Building'],
+  loesoere: ['Løsøre', 'Contents'],
+  driftstab: ['Driftstab', 'Business interruption'],
+  ansvar: ['Ansvar', 'Liability'],
+  cyber: ['Cyber', 'Cyber'],
+  kriminalitet: ['Kriminalitet', 'Crime'],
+  transport: ['Transport', 'Transit'],
+  andet: ['Andet', 'Other'],
+};
+
+/**
+ * BIZZ-2099: "Fundne forsikringer" — grøn boks pr. police i analysen med alle
+ * dækninger (inkl. dækningssum + selvrisiko), så det der ER dækket vises
+ * eksplicit — ikke kun manglerne. Adresseløse virksomhedspolicer (Cyber,
+ * Netbank, Kriminalitet m.fl.) vises på lige fod med ejendomspolicer.
+ * Fravalgte dækninger (is_covered=false) vises som eksplicitte fravalg.
+ * Nederst et samlet dækningsoverblik grupperet pr. kategori.
+ *
+ * @param props.detail - Full analyse detail (policies + coverages fra API)
+ * @param props.da - Dansk sprogflag
+ */
+function FundneForsikringer({ detail, da }: { detail: AnalyseDetail; da: boolean }) {
+  const analysePolicies = detail.policies ?? [];
+  const allCoverages = detail.coverages ?? [];
+  if (analysePolicies.length === 0) return null;
+
+  // Gruppér dækninger pr. police
+  const covsByPolicy = new Map<string, AnalyseCoverage[]>();
+  for (const cov of allCoverages) {
+    const list = covsByPolicy.get(cov.policy_id) ?? [];
+    list.push(cov);
+    covsByPolicy.set(cov.policy_id, list);
+  }
+
+  /** Formatter beløb i hele kr */
+  const kr = (v: number) => `${v.toLocaleString('da-DK')} kr`;
+
+  // Samlet dækningsoverblik: aktive dækninger grupperet pr. kategori
+  const codeToKategori = new Map<string, string>();
+  for (const [kat, codes] of Object.entries(COVERAGE_KATEGORIER)) {
+    for (const code of codes) codeToKategori.set(code, kat);
+  }
+  const kategoriDaekninger = new Map<string, AnalyseCoverage[]>();
+  for (const cov of allCoverages) {
+    if (!cov.is_covered) continue;
+    const kat = codeToKategori.get(cov.coverage_code) ?? 'andet';
+    const list = kategoriDaekninger.get(kat) ?? [];
+    list.push(cov);
+    kategoriDaekninger.set(kat, list);
+  }
+  // Vis kategorier i fast rækkefølge (samme som KATEGORI_LABELS)
+  const kategoriRaekker = Object.keys(KATEGORI_LABELS)
+    .filter((k) => kategoriDaekninger.has(k))
+    .map((k) => [k, kategoriDaekninger.get(k)!] as const);
+
+  return (
+    <div className="bg-white/5 border border-white/8 rounded-xl p-4">
+      <div className="flex items-center gap-2 mb-2">
+        <ShieldCheck size={14} className="text-emerald-400" />
+        <h4 className="text-white text-sm font-semibold">
+          {da ? 'Fundne forsikringer' : 'Found insurance policies'}
+        </h4>
+        <span className="text-slate-400 text-[11px]">
+          {analysePolicies.length} {da ? 'policer' : 'policies'}
+        </span>
+      </div>
+      <p className="text-slate-400 text-[11px] mb-3">
+        {da
+          ? 'Alle policer fundet i analysens dokumenter — inkl. virksomhedsdækninger uden ejendomsadresse (Cyber, Netbank, Kriminalitet m.fl.).'
+          : 'All policies found in the analysed documents — incl. company-level covers without a property address (Cyber, Netbank, Crime etc.).'}
+      </p>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {analysePolicies.map((policy) => {
+          const covs = covsByPolicy.get(policy.id) ?? [];
+          const active = covs.filter((c) => c.is_covered);
+          const fravalgt = covs.filter((c) => !c.is_covered);
+          return (
+            <div
+              key={policy.id}
+              className="bg-emerald-500/10 border border-emerald-500/25 rounded-lg p-3"
+            >
+              <div className="flex items-start justify-between gap-2 mb-1">
+                <div className="min-w-0">
+                  <div className="text-emerald-200 text-xs font-semibold truncate">
+                    {policy.business_activity || (da ? 'Forsikring' : 'Insurance')}
+                  </div>
+                  <div className="text-slate-400 text-[11px] truncate">
+                    {[policy.insurer_name, policy.policy_number].filter(Boolean).join(' — ')}
+                  </div>
+                  {policy.property_address && (
+                    <div className="text-slate-400 text-[11px] truncate">
+                      {policy.property_address}
+                    </div>
+                  )}
+                </div>
+                <CheckCircle2 size={14} className="text-emerald-400 shrink-0 mt-0.5" />
+              </div>
+              {active.length > 0 && (
+                <div className="space-y-0.5 mt-2">
+                  {active.map((cov) => (
+                    <div
+                      key={`${cov.policy_id}-${cov.coverage_code}`}
+                      className="flex items-center justify-between gap-2 text-[11px]"
+                    >
+                      <span className="text-slate-300 truncate">✓ {cov.coverage_label}</span>
+                      <span className="text-emerald-300 shrink-0">
+                        {cov.sum_dkk != null && cov.sum_dkk > 0 ? kr(cov.sum_dkk) : ''}
+                        {cov.deductible_dkk != null && cov.deductible_dkk > 0 && (
+                          <span className="text-slate-400">
+                            {' '}
+                            ({da ? 'selvrisiko' : 'deductible'} {kr(cov.deductible_dkk)})
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* Fravalgte dækninger vises eksplicit — skjules ikke */}
+              {fravalgt.length > 0 && (
+                <div className="space-y-0.5 mt-1.5 border-t border-white/10 pt-1.5">
+                  {fravalgt.map((cov) => (
+                    <div
+                      key={`${cov.policy_id}-${cov.coverage_code}`}
+                      className="flex items-center gap-1.5 text-[11px]"
+                    >
+                      <XCircle size={11} className="text-slate-400 shrink-0" />
+                      <span className="text-slate-400 truncate">
+                        {cov.coverage_label} — {da ? 'fravalgt' : 'not selected'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {covs.length === 0 && (
+                <p className="text-slate-400 text-[11px] mt-1">
+                  {da ? 'Ingen dækningsdetaljer fundet.' : 'No coverage details found.'}
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Samlet dækningsoverblik pr. kategori */}
+      {kategoriRaekker.length > 0 && (
+        <div className="mt-3 border-t border-white/10 pt-3">
+          <div className="text-slate-400 text-[10px] uppercase tracking-wide mb-1.5">
+            {da ? 'Samlet dækningsoverblik' : 'Coverage overview'}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {kategoriRaekker.map(([kat, covs]) => {
+              const sum = covs.reduce((acc, c) => acc + (c.sum_dkk ?? 0), 0);
+              const [daLabel, enLabel] = KATEGORI_LABELS[kat];
+              return (
+                <div
+                  key={kat}
+                  className="bg-emerald-500/10 border border-emerald-500/25 rounded-md px-2.5 py-1.5 text-[11px]"
+                >
+                  <span className="text-emerald-200 font-medium">{da ? daLabel : enLabel}</span>
+                  <span className="text-slate-400"> · {covs.length}</span>
+                  {sum > 0 && <span className="text-emerald-300"> · {kr(sum)}</span>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * Unified analyse result view — BIZZ-1389.
  * Groups assets by property and shows merged gaps from both systems.
  *
@@ -1029,6 +1246,9 @@ function UnifiedAnalyseView({
       {/* BIZZ-2085: Dækningsniveau vs. seneste regnskab — egen kasse med
           regnskabstal længst til højre, så niveauet kan reviewes med kunden */}
       <DaekningVsRegnskab detail={detail} da={da} />
+
+      {/* BIZZ-2099: Fundne forsikringer — grønne bokse for alle analysens policer */}
+      <FundneForsikringer detail={detail} da={da} />
 
       {/* BIZZ-1941: Forsikringsejer-niveau — generelle findings for hele ejeren.
           Vises kun her, ikke gentaget under virksomhed/ejendom.
@@ -3538,6 +3758,9 @@ function AnalyseDetailSection({
 
       {/* BIZZ-2085: Dækningsniveau vs. seneste regnskab — også i historiske analyser */}
       <DaekningVsRegnskab detail={detail} da={da} />
+
+      {/* BIZZ-2099: Fundne forsikringer — grønne bokse for alle analysens policer */}
+      <FundneForsikringer detail={detail} da={da} />
 
       {/* Ejendomme-liste med expandable gaps (genbruger PropertyRow) */}
       <div className="space-y-2">

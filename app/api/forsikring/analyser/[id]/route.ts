@@ -128,15 +128,19 @@ export async function GET(
       gaps = legacyGaps ?? [];
     }
 
-    // BIZZ-2084: Hent dækninger for de matchede policer, så UI'et kan vise
-    // med grønt hvad der ER dækket (inkl. dækningssum + selvrisiko) — ikke
-    // kun manglerne. Bruges til at reviewe dækningsniveauet med kunden.
+    // BIZZ-2084: Hent dækninger så UI'et kan vise med grønt hvad der ER
+    // dækket (inkl. dækningssum + selvrisiko) — ikke kun manglerne.
+    // BIZZ-2099: Udvidet fra kun matchede policer til ALLE analysens policer,
+    // så adresseløse virksomhedspolicer (Cyber, Netbank, Kriminalitet m.fl.)
+    // også vises som grønne dæknings-bokse.
+    const analysePolicyIds = (policies as Array<{ id: string }>).map((p) => p.id);
+    const coveragePolicyIds = [...new Set([...matchedPolicyIds, ...analysePolicyIds])];
     let coverages: unknown[] = [];
-    if (matchedPolicyIds.length > 0) {
+    if (coveragePolicyIds.length > 0) {
       const { data: coverageRows } = await db
         .from('forsikring_coverages')
         .select('policy_id, coverage_code, coverage_label, is_covered, sum_dkk, deductible_dkk')
-        .in('policy_id', [...new Set(matchedPolicyIds)])
+        .in('policy_id', coveragePolicyIds)
         .eq('tenant_id', auth.tenantId)
         .order('coverage_label', { ascending: true });
       coverages = coverageRows ?? [];

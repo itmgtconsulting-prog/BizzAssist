@@ -9,7 +9,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { applySfeArv, SFE_ARV_SCORE, SFE_KAEDE_SCORE } from '@/app/lib/forsikring/sfeStruktur';
+import {
+  applySfeArv,
+  tilAdgangsadresse,
+  SFE_ARV_SCORE,
+  SFE_KAEDE_SCORE,
+} from '@/app/lib/forsikring/sfeStruktur';
 import type { AktivSfeMap, PolicySfeMap } from '@/app/lib/forsikring/sfeStruktur';
 import type { MatchResult } from '@/app/lib/forsikring/assetMatcher';
 import type { Aktiv } from '@/app/lib/forsikring/koncernWalk';
@@ -78,6 +83,42 @@ const EJERLAV = 2000652; // Helsingør Markjorder
 function policyEntry(policy: ForsikringPolicy, ejerlavKode: number | null = EJERLAV) {
   return { policy, sfeAdresse: 'Gefionsvej 47A, 3000 Helsingør', ejerlavKode };
 }
+
+describe('tilAdgangsadresse — BIZZ-2124', () => {
+  // Konkrete formater fra FAMILIEN PETERSEN-analysen (alle gav 0 DAWA-hits før fixet)
+  it.each([
+    ['Stjernegade 24H, 1 2, 3000 Helsingør', 'Stjernegade 24H, 3000 Helsingør'],
+    ['Stjernegade 24H, 2 tv, 3000 Helsingør', 'Stjernegade 24H, 3000 Helsingør'],
+    ['Stjernegade 24H, 2 mf, 3000 Helsingør', 'Stjernegade 24H, 3000 Helsingør'],
+    ['Stjernegade 24H, 2 th, 3000 Helsingør', 'Stjernegade 24H, 3000 Helsingør'],
+    ['Stjernegade 24G, 1., 3000 Helsingør', 'Stjernegade 24G, 3000 Helsingør'],
+    ['Torvegade 3B, 1 th, 3000 Helsingør', 'Torvegade 3B, 3000 Helsingør'],
+    ['Torvegade 3B, 3 1, 3000 Helsingør', 'Torvegade 3B, 3000 Helsingør'],
+    ['Torvegade 3A, st, 3000 Helsingør', 'Torvegade 3A, 3000 Helsingør'],
+    ['Torvegade 3A, st. tv, 3000 Helsingør', 'Torvegade 3A, 3000 Helsingør'],
+    ['Torvegade 3A, kl, 3000 Helsingør', 'Torvegade 3A, 3000 Helsingør'],
+  ])('stripper etage/dør: %s → %s', (input, expected) => {
+    expect(tilAdgangsadresse(input)).toBe(expected);
+  });
+
+  it('kollapser husnummer-mellemrum fra rå PDF-form ("Torvegade 3 A")', () => {
+    expect(tilAdgangsadresse('Torvegade 3 A, 3000 Helsingør')).toBe('Torvegade 3A, 3000 Helsingør');
+  });
+
+  it('rører ikke adresser uden etage/dør (postnr-segmentet bevares)', () => {
+    expect(tilAdgangsadresse('Gefionsvej 47A, 3000 Helsingør')).toBe(
+      'Gefionsvej 47A, 3000 Helsingør'
+    );
+    expect(tilAdgangsadresse('Fenrisvej 27B, 3000 Helsingør')).toBe(
+      'Fenrisvej 27B, 3000 Helsingør'
+    );
+  });
+
+  it('bevarer første segment selv hvis det ligner etage/dør (vejnavn husnr)', () => {
+    // Defensive: split må aldrig fjerne vejnavn-segmentet
+    expect(tilAdgangsadresse('st, 3000 Helsingør')).toBe('st, 3000 Helsingør');
+  });
+});
 
 describe('applySfeArv — BIZZ-2096', () => {
   it('nedarver dækning til umatchet aktiv i dækket SFE med score 75 og markering', () => {

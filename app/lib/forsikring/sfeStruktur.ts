@@ -23,8 +23,12 @@ import type { ForsikringPolicy } from './types';
 const DAWA = 'https://api.dataforsyningen.dk';
 const TIMEOUT_MS = 8000;
 
-/** Max antal unikke adresse-opslag pr. analyse (beskytter maxDuration=60) */
-const MAX_LOOKUPS = 40;
+/**
+ * Max antal unikke adresse-opslag pr. analyse (beskytter maxDuration=60).
+ * BIZZ-2124: hævet fra 40 — etage/dør-stripning gør at enheder på samme
+ * opgang deler cache-entry, så reelle netværkskald er langt færre.
+ */
+const MAX_LOOKUPS = 150;
 
 /** Parallelitet for DAWA-opslag */
 const BATCH_SIZE = 5;
@@ -71,20 +75,50 @@ async function fetchDawaJson(url: string): Promise<unknown | null> {
 }
 
 /**
+ * Normalisér en dansk adresse til adgangsadresse-form (BIZZ-2124).
+ *
+ * DAWA /adgangsadresser kender ikke etage/dør, og q-søgningen giver 0 hits når
+ * de medsendes ("Stjernegade 24H, 1 2, 3000 Helsingør" → ingen hit). Derfor:
+ * 1. Fjern etage/dør-segmenter (", 1 2", ", 2 tv", ", 1 th", ", 2 mf",
+ *    ", st", ", st. tv", ", kl", ", 1.") — kun "vejnavn husnr, postnr by" bevares
+ * 2. Kollaps husnummer-mellemrum ("Torvegade 3 A" → "Torvegade 3A") — den rå
+ *    PDF-form giver heller ingen DAWA-hit
+ *
+ * @param adresse - Fritekst-adresse, evt. med etage/dør
+ * @returns Adresse uden etage/dør-segmenter og med kollapset husnummer
+ */
+export function tilAdgangsadresse(adresse: string): string {
+  const dele = adresse
+    .split(',')
+    .map((d) => d.trim())
+    .filter(Boolean);
+  // Etage/dør-segment: etage = "st", "kl", "kl2", "1", "1." (1-2 cifre — postnr
+  // har 4 og rammes ikke); dør = "tv", "th", "mf" eller dørnummer
+  const erEtageDoer = (s: string) =>
+    /^(st|kl\d{0,2}|\d{1,2})\.?(\s+(tv|th|mf|\d{1,4})\.?)?$/i.test(s);
+  // Første segment er altid "vejnavn husnr" og bevares
+  const beholdte = dele.filter((d, i) => i === 0 || !erEtageDoer(d));
+  return beholdte.join(', ').replace(/\b(\d+)\s+([a-zæøå])\b/gi, '$1$2');
+}
+
+/**
  * Resolve SFE-opslag (SFE-BFE + ejerlavkode) for en dansk adresse via DAWA
- * (adgangsadresse → jordstykke → BFE).
+ * (adgangsadresse → jordstykke → BFE). Adressen normaliseres først med
+ * {@link tilAdgangsadresse} så ejerlejligheds-adresser med etage/dør resolver
+ * til samme SFE som basisadressen (BIZZ-2124).
  *
  * @param adresse - Fritekst-adresse, fx "Gefionsvej 47A, 3000 Helsingør"
  * @returns SFE-opslag eller null hvis adressen ikke kan resolves
  */
 export async function resolveSfeForAdresse(adresse: string): Promise<SfeOpslag | null> {
-  const key = adresse.toLowerCase().trim();
+  const normaliseret = tilAdgangsadresse(adresse);
+  const key = normaliseret.toLowerCase().trim();
   if (!key) return null;
   const cached = adresseSfeCache.get(key);
   if (cached !== undefined) return cached;
 
   const adresser = (await fetchDawaJson(
-    `${DAWA}/adgangsadresser?q=${encodeURIComponent(adresse)}&per_side=1`
+    `${DAWA}/adgangsadresser?q=${encodeURIComponent(normaliseret)}&per_side=1`
   )) as Array<{
     adressebetegnelse?: string;
     jordstykke?: { ejerlav?: { kode?: number }; matrikelnr?: string };
@@ -277,10 +311,16 @@ export async function berigMedSfeStruktur(
   matches: MatchResult[],
   policer: ForsikringPolicy[]
 ): Promise<SfeArvResultat> {
-  const ejendomIdx = matches
+  const alleEjendomIdx = matches
     .map((m, i) => ({ m, i }))
-    .filter(({ m }) => m.aktiv.type === 'ejendom' && (m.aktiv.adresse ?? '').trim().length > 0)
-    .slice(0, MAX_LOOKUPS);
+    .filter(({ m }) => m.aktiv.type === 'ejendom' && (m.aktiv.adresse ?? '').trim().length > 0);
+  // BIZZ-2124: log eksplicit når der cappes, så stille drop af aktiver opdages
+  if (alleEjendomIdx.length > MAX_LOOKUPS) {
+    console.warn(
+      `[sfeStruktur] ${alleEjendomIdx.length} ejendoms-aktiver overstiger MAX_LOOKUPS=${MAX_LOOKUPS} — ${alleEjendomIdx.length - MAX_LOOKUPS} springes over i SFE-arven`
+    );
+  }
+  const ejendomIdx = alleEjendomIdx.slice(0, MAX_LOOKUPS);
 
   const policerMedAdresse = policer.filter((p) => (p.property_address ?? '').trim().length > 0);
   if (ejendomIdx.length === 0 || policerMedAdresse.length === 0) {

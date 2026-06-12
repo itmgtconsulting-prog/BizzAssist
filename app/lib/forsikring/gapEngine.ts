@@ -1172,7 +1172,12 @@ const checkKollektivBygning: PortfolioCheckFn = ({ matches }) => {
  * GAP-063: Cyber-forsikring mangler.
  * Warning for virksomheder med lejerdata/betalingsinfo eller >5 ansatte.
  */
-const checkPortfolioCyber: PortfolioCheckFn = ({ policer, branche, aktiver }) => {
+const checkPortfolioCyber: PortfolioCheckFn = ({
+  policer,
+  branche,
+  aktiver,
+  coveragesByPolicy,
+}) => {
   if (!branche?.hovedbranche) return null;
 
   // Brancher der håndterer persondata: udlejning, sundhed, IT, detail, engros
@@ -1182,6 +1187,20 @@ const checkPortfolioCyber: PortfolioCheckFn = ({ policer, branche, aktiver }) =>
   if (!isDataRisiko) return null;
 
   const hasCyber = policer.some((p) => {
+    // BIZZ-2098: Tjek først de kanoniske coverage-koder — erhvervspolicer
+    // gemmer nu cyber-dækninger som cyber/cyberdriftstab/netbank-koder.
+    const covs = coveragesByPolicy.get(p.id) ?? [];
+    if (
+      covs.some(
+        (c) =>
+          c.is_covered &&
+          (c.coverage_code === 'cyber' ||
+            c.coverage_code === 'cyberdriftstab' ||
+            c.coverage_code === 'netbank')
+      )
+    ) {
+      return true;
+    }
     const text = [
       p.business_activity,
       p.raw_metadata?.type as string,
@@ -1366,10 +1385,9 @@ const _checkLavPraemie: PortfolioCheckFn = ({ policer, aktiver }) => {
  * CoverageCode. Bruges af GAP-067 til at verificere at de påkrævede
  * dækninger fra branchen faktisk er tilstede som coverage-rækker.
  *
- * Krav uden CoverageCode-modstykke (d&o, cyberforsikring, arbejdsskade,
- * all-risk, transportansvar, godsforsikring, maskinkasko, miljoeansvar,
- * professionelt_ansvar, behandlingsansvar, patientforsikring, indbrud,
- * rejsegods) tjekkes via policy-tekst i stedet.
+ * Krav uden CoverageCode-modstykke (d&o, arbejdsskade, all-risk,
+ * transportansvar, miljoeansvar, professionelt_ansvar, behandlingsansvar,
+ * patientforsikring, rejsegods) tjekkes via policy-tekst i stedet.
  */
 const KRAV_TO_COVERAGE_CODE: Record<string, CoverageCode> = {
   brand: 'brand_el',
@@ -1380,6 +1398,12 @@ const KRAV_TO_COVERAGE_CODE: Record<string, CoverageCode> = {
   driftstab: 'driftstab',
   forurening: 'forurening',
   produktansvar: 'erhvervsansvar', // produktansvar normaliseres til erhvervsansvar
+  // BIZZ-2098: Erhvervskoder — krav der nu HAR et kanonisk modstykke
+  cyberforsikring: 'cyber',
+  kriminalitet: 'kriminalitet',
+  indbrud: 'indbrudstyveri',
+  godsforsikring: 'transport',
+  maskinkasko: 'maskiner_itudstyr',
 };
 
 /**

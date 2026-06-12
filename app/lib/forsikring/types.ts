@@ -302,6 +302,22 @@ export const COVERAGE_CODES = [
   'driftstab',
   'erhvervsansvar',
   'udvidet_vandskade',
+  // BIZZ-2098: Erhvervskoder — løsøre-, kriminalitets-, cyber- og
+  // transportdækninger fra erhvervspolicer (fx Topdanmark erhvervsaftaler)
+  // kunne ikke repræsenteres og blev tvunget ind i forkerte bygningskoder.
+  'loesoere',
+  'indbrudstyveri',
+  'ran_roeveri',
+  'oprydning',
+  'cyber',
+  'cyberdriftstab',
+  'notifikation',
+  'netbank',
+  'kriminalitet',
+  'transport',
+  'maskiner_itudstyr',
+  'it_meromkostninger',
+  'leverandoer_aftager',
 ] as const;
 
 export type CoverageCode = (typeof COVERAGE_CODES)[number];
@@ -326,6 +342,20 @@ export const COVERAGE_LABELS_DA: Record<CoverageCode, string> = {
   driftstab: 'Driftstab',
   erhvervsansvar: 'Erhvervsansvar',
   udvidet_vandskade: 'Udvidet vandskade',
+  // BIZZ-2098: Erhvervskoder
+  loesoere: 'Erhvervsløsøre',
+  indbrudstyveri: 'Indbrudstyveri',
+  ran_roeveri: 'Ran og røveri',
+  oprydning: 'Oprydning',
+  cyber: 'Cyber',
+  cyberdriftstab: 'Cyber-driftstab',
+  notifikation: 'Notifikation (databrud)',
+  netbank: 'Netbank',
+  kriminalitet: 'Kriminalitet',
+  transport: 'Transport / varer under transport',
+  maskiner_itudstyr: 'Maskiner og IT-udstyr',
+  it_meromkostninger: 'IT-meromkostninger',
+  leverandoer_aftager: 'Leverandør-/aftagerdriftstab',
 };
 
 // ─── Parser output schema (Claude → JSON) ────────────────────────

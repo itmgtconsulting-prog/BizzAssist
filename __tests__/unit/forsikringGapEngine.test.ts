@@ -789,6 +789,46 @@ describe('runPortfolioChecks — GAP-063: Cyber-forsikring', () => {
     );
     expect(gaps.find((g) => g.check_id === 'GAP-063')).toBeUndefined();
   });
+
+  // BIZZ-2098: cyber-dækning gemt som kanonisk coverage-kode (cyber/
+  // cyberdriftstab/netbank) skal undertrykke GAP-063 — ikke kun policy-tekst.
+  it('flagger ikke når en police har cyber som coverage-kode', () => {
+    const pol = makePolicy();
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    coveragesByPolicy.set(pol.id, [makeCoverage('cyber')]);
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [pol],
+        coveragesByPolicy,
+        aktiver: [{ type: 'ejendom', label: 'BFE 1', bfe: 1 }],
+        branche: {
+          hovedbranche: '681020',
+          hovedbranche_tekst: 'Udlejning af erhvervsejendomme',
+          bibrancher: [],
+        },
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-063')).toBeUndefined();
+  });
+
+  it('flagger ikke når en police har netbank som coverage-kode', () => {
+    const pol = makePolicy();
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    coveragesByPolicy.set(pol.id, [makeCoverage('netbank')]);
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [pol],
+        coveragesByPolicy,
+        aktiver: [],
+        branche: {
+          hovedbranche: '681020',
+          hovedbranche_tekst: 'Udlejning af erhvervsejendomme',
+          bibrancher: [],
+        },
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-063')).toBeUndefined();
+  });
 });
 
 describe('runPortfolioChecks — GAP-064: Retshjælp', () => {

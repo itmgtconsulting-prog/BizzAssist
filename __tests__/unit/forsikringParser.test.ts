@@ -8,7 +8,12 @@
 import { describe, it, expect } from 'vitest';
 import { stripMarkdownFences, canParseAsText } from '@/app/lib/forsikring/jsonHelpers';
 import { oversigtEntryMatchesPolicy } from '@/app/lib/forsikring/parser';
-import { ParsedPolicySchema } from '@/app/lib/forsikring/types';
+import {
+  COVERAGE_CODES,
+  COVERAGE_LABELS_DA,
+  ParsedCoverageSchema,
+  ParsedPolicySchema,
+} from '@/app/lib/forsikring/types';
 
 describe('stripMarkdownFences', () => {
   it('returnerer ren JSON uændret', () => {
@@ -304,5 +309,57 @@ describe('oversigtEntryMatchesPolicy (BIZZ-2097)', () => {
         insurance_type: 'Cyberforsikring',
       })
     ).toBe(true);
+  });
+});
+
+// ─── BIZZ-2098: Erhvervs-taksonomi for dækningskoder ─────────────────
+
+describe('COVERAGE_CODES erhvervs-taksonomi (BIZZ-2098)', () => {
+  const erhvervskoder = [
+    'loesoere',
+    'indbrudstyveri',
+    'ran_roeveri',
+    'oprydning',
+    'cyber',
+    'cyberdriftstab',
+    'notifikation',
+    'netbank',
+    'kriminalitet',
+    'transport',
+    'maskiner_itudstyr',
+    'it_meromkostninger',
+    'leverandoer_aftager',
+  ] as const;
+
+  it('indeholder alle nye erhvervskoder', () => {
+    for (const code of erhvervskoder) {
+      expect(COVERAGE_CODES).toContain(code);
+    }
+  });
+
+  it('har en dansk label for hver kanonisk kode', () => {
+    for (const code of COVERAGE_CODES) {
+      expect(COVERAGE_LABELS_DA[code]).toBeTruthy();
+    }
+  });
+
+  it('ParsedCoverageSchema accepterer cyber-dækning med sum og selvrisiko', () => {
+    const result = ParsedCoverageSchema.safeParse({
+      coverage_code: 'cyber',
+      coverage_label: 'Cyber',
+      is_covered: true,
+      sum_dkk: 1116693,
+      deductible_dkk: 25000,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('ParsedCoverageSchema afviser ukendt kode', () => {
+    const result = ParsedCoverageSchema.safeParse({
+      coverage_code: 'rumrejseforsikring',
+      coverage_label: 'Rumrejse',
+      is_covered: true,
+    });
+    expect(result.success).toBe(false);
   });
 });

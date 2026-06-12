@@ -158,6 +158,15 @@ function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
   });
 }
 
+/** BIZZ-2095: Data parset fra et ejdsummarisk-svar */
+interface TLSummarisk {
+  bfe: number;
+  /** Kontant/i alt-købesum fra seneste skøde (DKK) */
+  koebspris: number | null;
+  /** Overtagelses- eller tinglysningsdato for skødet (ISO) */
+  koebsdato: string | null;
+}
+
 /**
  * BIZZ-2058: Henter det reelle BFE-nummer (BestemtFastEjendomNummer) for en
  * TL-ejendom via ejdsummarisk-opslag på dens uuid.
@@ -166,35 +175,55 @@ function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
  * ejdsummarisk-opslaget returnerer XML (EjendomSummariskHentResultat) hvor
  * <ns7:BestemtFastEjendomNummer> er det entydige BFE.
  *
+ * BIZZ-2095: Parser desuden skøde-købesum og overtagelsesdato fra samme
+ * svar (SkoedeKoebesum/KontantKoebesum + SkoedeOvertagelsesDato) — ingen
+ * ekstra kald, så hovedejendom-rækker kan vise købspris/-dato.
+ *
  * @param uuid - TL-objektets uuid fra søgesvaret
- * @returns BFE-nummer eller 0 hvis det ikke kunne hentes
+ * @returns Parsede summarisk-data eller null hvis opslaget fejlede
  */
-async function fetchBfeFromUuid(uuid: string): Promise<number> {
+async function fetchBfeFromUuid(uuid: string): Promise<TLSummarisk | null> {
   try {
     const res = await tlFetch(`/ejdsummarisk/${uuid}`);
-    if (res.status !== 200) return 0;
+    if (res.status !== 200) return null;
     const m = res.body.match(/BestemtFastEjendomNummer>\s*(\d+)/i);
-    return m ? parseInt(m[1], 10) : 0;
+    if (!m) return null;
+
+    // Skøde-købesum: foretrak kontant, fald tilbage til "i alt"
+    const koebesumMatch =
+      res.body.match(/KontantKoebesum>\s*([\d.]+)/i) ?? res.body.match(/IAltKoebesum>\s*([\d.]+)/i);
+    const koebspris = koebesumMatch ? parseInt(koebesumMatch[1].replace(/\./g, ''), 10) : null;
+
+    // Overtagelsesdato fra skødet (fald tilbage til tinglysningsdato)
+    const datoMatch =
+      res.body.match(/SkoedeOvertagelsesDato>\s*(\d{4}-\d{2}-\d{2})/i) ??
+      res.body.match(/TinglysningsDato>\s*(\d{4}-\d{2}-\d{2})/i);
+
+    return {
+      bfe: parseInt(m[1], 10),
+      koebspris: koebspris != null && Number.isFinite(koebspris) ? koebspris : null,
+      koebsdato: datoMatch ? datoMatch[1] : null,
+    };
   } catch {
-    return 0;
+    return null;
   }
 }
 
 /**
- * BIZZ-2058: Batch-resolver reelle BFE-numre for en liste af TL-uuid'er.
- * Kalder ejdsummarisk parallelt så vi får korrekt BFE for hver ejendom
- * frem for at fejltolke det kommunale ESR-nummer som BFE.
+ * BIZZ-2058: Batch-resolver reelle BFE-numre (+ købesum/dato, BIZZ-2095) for
+ * en liste af TL-uuid'er. Kalder ejdsummarisk parallelt så vi får korrekt BFE
+ * for hver ejendom frem for at fejltolke det kommunale ESR-nummer som BFE.
  *
  * @param uuids - TL-objekt-uuid'er
- * @returns Map fra uuid → reelt BFE (kun entries der kunne resolves)
+ * @returns Map fra uuid → summarisk-data (kun entries der kunne resolves)
  */
-async function fetchBfeBatch(uuids: string[]): Promise<Map<string, number>> {
-  const map = new Map<string, number>();
+async function fetchBfeBatch(uuids: string[]): Promise<Map<string, TLSummarisk>> {
+  const map = new Map<string, TLSummarisk>();
   const results = await Promise.all(
-    uuids.map(async (uuid) => ({ uuid, bfe: await fetchBfeFromUuid(uuid) }))
+    uuids.map(async (uuid) => ({ uuid, data: await fetchBfeFromUuid(uuid) }))
   );
-  for (const { uuid, bfe } of results) {
-    if (bfe > 0) map.set(uuid, bfe);
+  for (const { uuid, data } of results) {
+    if (data && data.bfe > 0) map.set(uuid, data);
   }
   return map;
 }
@@ -791,6 +820,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
       if (searchResults[0].status !== 200) {
         logger.error(`[ejendom-struktur] Tinglysning svarede ${searchResults[0].status}`);
       }
+      // BIZZ-2095: tomme/fejlede TL-svar må ikke caches — næste request skal prøve igen
       return NextResponse.json(
         {
           tree: null,
@@ -799,12 +829,16 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
               ? `Tinglysning svarede ${searchResults[0].status}`
               : null,
         },
-        { status: 200 }
+        { status: 200, headers: { 'Cache-Control': 'no-store' } }
       );
     }
 
     if (items.length === 0) {
-      return NextResponse.json({ tree: null, fejl: null }, { status: 200 });
+      // BIZZ-2095: tomt TL-svar caches ikke
+      return NextResponse.json(
+        { tree: null, fejl: null },
+        { status: 200, headers: { 'Cache-Control': 'no-store' } }
+      );
     }
 
     // Debug: log alle TL items for at forstå klassificering
@@ -829,10 +863,21 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
     // ── Trin 2: Klassificér alle items ──
     const classified = items.map((item) => {
       const niveau = klassificerItem(item);
-      const bfe = bfeMap.get(item.uuid) ?? 0;
+      const summarisk = bfeMap.get(item.uuid) ?? null;
+      const bfe = summarisk?.bfe ?? 0;
       const husnr = extractHusnr(item.adresse);
       const { etage, doer } = parseEtageDoer(item.adresse);
-      return { ...item, niveau, bfe, husnr, etage, doer };
+      return {
+        ...item,
+        niveau,
+        bfe,
+        husnr,
+        etage,
+        doer,
+        // BIZZ-2095: skøde-købesum/-dato fra samme ejdsummarisk-svar
+        koebspris: summarisk?.koebspris ?? null,
+        koebsdato: summarisk?.koebsdato ?? null,
+      };
     });
 
     logger.log(
@@ -921,8 +966,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
             vaerelser: null,
             ejer: null,
             ejertype: null,
-            koebspris: null,
-            koebsdato: null,
+            koebspris: ejl.koebspris,
+            koebsdato: ejl.koebsdato,
             children: [],
           };
         });
@@ -940,8 +985,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
         vaerelser: null,
         ejer: null,
         ejertype: null,
-        koebspris: null,
-        koebsdato: null,
+        // BIZZ-2095: skøde-købesum/-dato fra ejdsummarisk
+        koebspris: hej.koebspris,
+        koebsdato: hej.koebsdato,
         children,
       };
     });
@@ -996,8 +1042,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
           vaerelser: null,
           ejer: null,
           ejertype: null,
-          koebspris: null,
-          koebsdato: null,
+          koebspris: ejl.koebspris,
+          koebsdato: ejl.koebsdato,
           children: [],
         };
       });
@@ -1069,8 +1115,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
       vaerelser: null,
       ejer: null,
       ejertype: null,
-      koebspris: null,
-      koebsdato: null,
+      // BIZZ-2095: skøde-købesum/-dato fra ejdsummarisk
+      koebspris: sfeItem?.koebspris ?? null,
+      koebsdato: sfeItem?.koebsdato ?? null,
       children: [...hovedejendomNodes, ...virtualHovedNodes],
     };
 
@@ -1179,28 +1226,52 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
       }
     }
 
-    // ── BIZZ-2060: Berig ejerlejligheder med ejer-navne fra ejf_ejerskab ──
-    // Samler alle ejerlejligheds-BFE'er og henter ejerskab i ét batch-kald.
+    // ── BIZZ-2060/BIZZ-2095: Berig ALLE noder med ejer + areal i batch ──
+    // BIZZ-2060 ramte kun ejerlejligheder 2 niveauer nede — hovedejendom- og
+    // SFE-rækker fik aldrig ejer sat, selvom ejf_ejerskab har gældende ejere
+    // for dem. Nu walkes hele træet: ejer fra ejf_ejerskab (CVR-navne via
+    // cvr_virksomhed) og areal fra bbr_ejendom_status, begge i ét batch-kald.
     {
-      const ejlBfes: number[] = [];
-      for (const hej of root.children) {
-        for (const ejl of hej.children) {
-          if (ejl.bfe > 0) ejlBfes.push(ejl.bfe);
+      const alleNoder: StrukturNode[] = [];
+      /** Samler alle noder med reelt BFE rekursivt */
+      const collectNodes = (n: StrukturNode): void => {
+        if (n.bfe > 0) alleNoder.push(n);
+        n.children.forEach(collectNodes);
+      };
+      collectNodes(root);
+
+      if (alleNoder.length > 0) {
+        const alleBfes = [...new Set(alleNoder.map((n) => n.bfe))];
+        const supabase = createAdminClient();
+        const [ejerMap, arealRes] = await Promise.all([
+          fetchEjerskabBatch(alleBfes),
+          supabase
+            .from('bbr_ejendom_status')
+            .select('bfe_nummer, samlet_boligareal, samlet_erhvervsareal, bebygget_areal')
+            .in('bfe_nummer', alleBfes),
+        ]);
+        const arealMap = new Map<number, number>();
+        for (const r of (arealRes.data ?? []) as Array<{
+          bfe_nummer: number;
+          samlet_boligareal: number | null;
+          samlet_erhvervsareal: number | null;
+          bebygget_areal: number | null;
+        }>) {
+          const areal = r.samlet_boligareal ?? r.samlet_erhvervsareal ?? r.bebygget_areal;
+          if (areal != null && areal > 0) arealMap.set(r.bfe_nummer, areal);
         }
-      }
-      if (ejlBfes.length > 0) {
-        const ejerMap = await fetchEjerskabBatch(ejlBfes);
-        for (const hej of root.children) {
-          for (const ejl of hej.children) {
-            const ejerInfo = ejerMap.get(ejl.bfe);
-            if (ejerInfo) {
-              ejl.ejer = ejerInfo.ejerNavn;
-              ejl.ejertype = ejerInfo.ejerType;
-            }
+        for (const node of alleNoder) {
+          const ejerInfo = ejerMap.get(node.bfe);
+          if (ejerInfo && !node.ejer) {
+            node.ejer = ejerInfo.ejerNavn;
+            node.ejertype = ejerInfo.ejerType;
+          }
+          if (node.areal == null) {
+            node.areal = arealMap.get(node.bfe) ?? null;
           }
         }
         logger.log(
-          `[ejendom-struktur] Ejerskab berigelse: ${ejerMap.size}/${ejlBfes.length} BFE'er med ejer`
+          `[ejendom-struktur] Berigelse: ${ejerMap.size}/${alleBfes.length} med ejer, ${arealMap.size} med areal`
         );
       }
     }
@@ -1227,15 +1298,25 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
 
     logger.log(`[ejendom-struktur] Final tree: ${root.children.length} children`);
 
+    // BIZZ-2095: cache kun ikke-tomme træer — et tomt træ (fx TL-timeout undervejs)
+    // må ikke ligge 1 time i CDN-cachen og skjule data for efterfølgende besøg
     return NextResponse.json(
       { tree: root, fejl: null },
       {
         status: 200,
-        headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
+        headers: {
+          'Cache-Control':
+            root.children.length > 0
+              ? 'public, s-maxage=3600, stale-while-revalidate=600'
+              : 'no-store',
+        },
       }
     );
   } catch (err) {
     logger.error('[ejendom-struktur] Uventet fejl:', err);
-    return NextResponse.json({ tree: null, fejl: 'Ekstern API fejl' }, { status: 200 });
+    return NextResponse.json(
+      { tree: null, fejl: 'Ekstern API fejl' },
+      { status: 200, headers: { 'Cache-Control': 'no-store' } }
+    );
   }
 }

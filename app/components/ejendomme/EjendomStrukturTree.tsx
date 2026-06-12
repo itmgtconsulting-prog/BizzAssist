@@ -176,8 +176,9 @@ function TreeNode({ node, depth, lang, currentBfe, currentDawaId, showOwnership 
         )}
       </div>
 
-      {/* BIZZ-2060: Ejer + areal + købspris + købsdato for ejerlejligheder (ejerskab-mode). */}
-      {showOwnership && node.niveau === 'ejerlejlighed' && (
+      {/* BIZZ-2060: Ejer + areal + købspris + købsdato for ejerlejligheder (ejerskab-mode).
+          BIZZ-2095: også på hovedejendom-rækker, så ejer/areal/pris er synlige hele vejen op */}
+      {showOwnership && (node.niveau === 'ejerlejlighed' || node.niveau === 'hovedejendom') && (
         <div className="flex items-center shrink-0 text-[10px] tabular-nums">
           {/* BIZZ-2064: Venstrestillet + bredere ejer-kolonne med ombrydning,
               så det fulde ejernavn altid kan læses (før: 140px truncate) */}
@@ -221,8 +222,10 @@ function TreeNode({ node, depth, lang, currentBfe, currentDawaId, showOwnership 
         </div>
       )}
 
-      {/* Summeret areal + child count for hovedejendomme/SFE */}
-      {hasChildren && (
+      {/* Summeret areal + child count for hovedejendomme/SFE.
+          BIZZ-2095: skjules i ejerskab-mode for hovedejendomme, hvor ejer-kolonnerne
+          allerede viser areal — ellers står arealet dobbelt og kolonnerne skrider */}
+      {hasChildren && !(showOwnership && node.niveau === 'hovedejendom') && (
         <div className="flex items-center gap-2 shrink-0">
           {node.areal != null && node.areal > 0 && (
             <span className="text-slate-400 text-[10px] tabular-nums">

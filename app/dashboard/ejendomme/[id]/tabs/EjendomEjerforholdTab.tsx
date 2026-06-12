@@ -335,13 +335,16 @@ export default function EjendomEjerforholdTab({
                 // Gruppér per vejnavn+husnr
                 const groups = new Map<string, typeof unplaced>();
                 for (const l of unplaced) {
-                  const key =
+                  // BIZZ-2095: stryg etage/dør OG husnr fra vejnavnet, så
+                  // groupKey ikke dublerer husnr ("Gefionsvej 49 49")
+                  const street =
                     l.adresse
                       .split(',')[0]
                       ?.replace(/\s+\d+\..*/, '')
                       .trim() ?? 'Ukendt';
                   const husnr = extractHusnr(l.adresse);
-                  const groupKey = `${key} ${husnr}`;
+                  const vejnavn = street.replace(/\s+\d+\w*$/, '').trim() || street;
+                  const groupKey = husnr ? `${vejnavn} ${husnr}` : vejnavn;
                   if (!groups.has(groupKey)) groups.set(groupKey, []);
                   groups.get(groupKey)!.push(l);
                 }

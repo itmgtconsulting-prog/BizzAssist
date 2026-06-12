@@ -888,16 +888,61 @@ function UnifiedAnalyseView({
     ejendomme: PropertyGroup[];
   }
 
-  // Sortér virksomheder: hovedvirksomheden (flest egne ejendomme) først
-  const virksomhedsTraeer: VirksomhedsTree[] = virksomhedGroups
-    .map((v) => ({
-      // BIZZ-1972: I fold-casen får den eneste virksomhed forsikringsejer- og
-      // virksomheds-findings injiceret i sin egen række (så badge + collapse
-      // afspejler totalen) — i stedet for at vise dem i separate sektioner.
-      virksomhed: foldOwnerIntoCompany ? { ...v, gaps: [...ownerGaps, ...companyGaps] } : v,
-      ejendomme: sortProperties(ejendommeByCvr.get(v.aktiv.cvr ?? '') ?? []),
-    }))
-    .sort((a, b) => b.ejendomme.length - a.ejendomme.length);
+  // BIZZ-2102: Sortér virksomheder efter koncern-hierarki — holdingselskabet
+  // (depth 0) øverst, derefter datterselskaber DFS-ordnet efter parent_cvr.
+  // Ældre analyser uden depth/parent_cvr-metadata falder tilbage til den
+  // gamle sortering (flest egne ejendomme først).
+  const mappedTraeer: VirksomhedsTree[] = virksomhedGroups.map((v) => ({
+    // BIZZ-1972: I fold-casen får den eneste virksomhed forsikringsejer- og
+    // virksomheds-findings injiceret i sin egen række (så badge + collapse
+    // afspejler totalen) — i stedet for at vise dem i separate sektioner.
+    virksomhed: foldOwnerIntoCompany ? { ...v, gaps: [...ownerGaps, ...companyGaps] } : v,
+    ejendomme: sortProperties(ejendommeByCvr.get(v.aktiv.cvr ?? '') ?? []),
+  }));
+
+  /** Læs koncern-metadata fra aktivets raw_data (BIZZ-2102) */
+  function koncernMeta(t: VirksomhedsTree): { depth: number | null; parentCvr: string | null } {
+    const rd = t.virksomhed.aktiv.raw_data as { depth?: unknown; parent_cvr?: unknown } | null;
+    return {
+      depth: typeof rd?.depth === 'number' ? rd.depth : null,
+      parentCvr: typeof rd?.parent_cvr === 'string' ? rd.parent_cvr : null,
+    };
+  }
+
+  const hasHierarchy = mappedTraeer.some((t) => koncernMeta(t).depth !== null);
+  let virksomhedsTraeer: VirksomhedsTree[];
+  if (hasHierarchy) {
+    // DFS: rødder (depth 0 / uden parent) først, børn umiddelbart efter deres
+    // moderselskab. Søskende sorteres efter flest egne ejendomme.
+    const byParent = new Map<string, VirksomhedsTree[]>();
+    const roots: VirksomhedsTree[] = [];
+    const cvrSet = new Set(mappedTraeer.map((t) => t.virksomhed.aktiv.cvr ?? ''));
+    for (const t of mappedTraeer) {
+      const { parentCvr } = koncernMeta(t);
+      if (parentCvr && cvrSet.has(parentCvr)) {
+        const list = byParent.get(parentCvr) ?? [];
+        list.push(t);
+        byParent.set(parentCvr, list);
+      } else {
+        roots.push(t);
+      }
+    }
+    const byEjendomme = (a: VirksomhedsTree, b: VirksomhedsTree) =>
+      b.ejendomme.length - a.ejendomme.length;
+    const ordered: VirksomhedsTree[] = [];
+    const visit = (t: VirksomhedsTree) => {
+      ordered.push(t);
+      const children = (byParent.get(t.virksomhed.aktiv.cvr ?? '') ?? []).sort(byEjendomme);
+      for (const c of children) visit(c);
+    };
+    for (const r of [...roots].sort(
+      (a, b) => (koncernMeta(a).depth ?? 99) - (koncernMeta(b).depth ?? 99) || byEjendomme(a, b)
+    ))
+      visit(r);
+    virksomhedsTraeer = ordered;
+  } else {
+    virksomhedsTraeer = [...mappedTraeer].sort((a, b) => b.ejendomme.length - a.ejendomme.length);
+  }
 
   // Compute health score: 0-100 (higher = better)
   // BIZZ-1440: Brug dedupede groups i stedet for rå analyse-tal

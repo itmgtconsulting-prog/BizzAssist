@@ -255,6 +255,46 @@ describe('walkKoncern', () => {
     expect(cvrs).not.toContain('10000004'); // stale NULL-andel — ekskluderet
   });
 
+  it('BIZZ-2102: datterselskaber pushes kun én gang og får hierarki-metadata', async () => {
+    // Dublet-buggen: parent-loopet pushede datterselskabet OG walkVirksomhed's
+    // selv-push gjorde det også → samme CVR optrådte to gange i aktiver-listen.
+    let subCall = 0;
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'ejf_ejerskab') return mockQuery([]);
+      if (table === 'cvr_virksomhed_ejerskab') {
+        subCall++;
+        if (subCall === 1) return mockQuery([{ ejet_cvr: '55555555', ejerandel_min: 100 }]);
+        return mockQuery([]);
+      }
+      if (table === 'cvr_virksomhed')
+        return mockQuery([
+          { navn: 'Datter A/S', ansatte_aar: 7, branche_tekst: 'IT', ophoert: null },
+        ]);
+      if (table === 'cvr_deltagerrelation') return mockQuery([]);
+      return mockQuery([]);
+    });
+
+    const result = await walkKoncern('virksomhed', '41341009');
+
+    const datterAktiver = result.filter((a) => a.cvr === '55555555' && a.type === 'virksomhed');
+    // Præcis én række — ikke to (dublet-buggen)
+    expect(datterAktiver).toHaveLength(1);
+    // Hierarki-metadata til koncern-sortering i UI
+    const rd = datterAktiver[0].rawData as {
+      depth?: number;
+      parent_cvr?: string | null;
+      ejerandel_pct?: number | null;
+    };
+    expect(rd.depth).toBe(1);
+    expect(rd.parent_cvr).toBe('41341009');
+    expect(rd.ejerandel_pct).toBe(100);
+    // Roden har depth 0 og ingen parent
+    const rod = result.find((a) => a.cvr === '41341009' && a.type === 'virksomhed');
+    const rodRd = rod?.rawData as { depth?: number; parent_cvr?: string | null };
+    expect(rodRd.depth).toBe(0);
+    expect(rodRd.parent_cvr).toBeNull();
+  });
+
   it('caps at MAX_AKTIVER (500)', async () => {
     const manyProps = Array.from({ length: 600 }, (_, i) => ({
       bfe_nummer: 1000 + i,

@@ -116,6 +116,8 @@ export async function walkKoncern(
  * @param seenCvrs - Dedup + cyclic detection for virksomheder
  * @param depth - Rekursionsdybde (max 3)
  * @param asOfDate - BIZZ-1355: Snapshot-dato (null = aktuel)
+ * @param parentCvr - BIZZ-2102: CVR på moderselskabet (undefined for roden)
+ * @param ejerandelPct - BIZZ-2102: Moderselskabets ejerandel i procent (null = ukendt)
  */
 async function walkVirksomhed(
   admin: ReturnType<typeof createAdminClient>,
@@ -124,23 +126,46 @@ async function walkVirksomhed(
   seenBfes: Set<number>,
   seenCvrs: Set<string>,
   depth: number,
-  asOfDate: Date | null
+  asOfDate: Date | null,
+  parentCvr?: string,
+  ejerandelPct?: number | null
 ): Promise<void> {
   if (seenCvrs.has(cvr) || depth > 3 || aktiver.length >= MAX_AKTIVER) return;
   seenCvrs.add(cvr);
 
   // BIZZ-1443: Tilføj virksomheden selv som aktiv (for ansvarsforsikring-matching)
   // BIZZ-1840: Hent også virksomhedsform for FFO/andelsbolig-detection
+  // BIZZ-2102: Selv-pushet er nu det ENESTE sted virksomheds-aktiver oprettes —
+  // tidligere pushede parent-loopet OGSÅ datterselskabet (dublet-bug).
   const { data: virk } = await (admin as ReturnType<typeof createAdminClient>)
     .from('cvr_virksomhed')
-    .select('navn, branche_tekst, virksomhedsform')
+    .select('navn, ansatte_aar, branche_tekst, virksomhedsform, ophoert')
     .eq('cvr', cvr)
     .maybeSingle();
+
+  const virkRow = virk as {
+    navn?: string;
+    ansatte_aar?: number | null;
+    branche_tekst?: string | null;
+    virksomhedsform?: string;
+    ophoert?: string | null;
+  } | null;
+
+  // BIZZ-2101: Ophørte datterselskaber walkes ikke (kunden selv ved depth 0 vises altid)
+  if (depth > 0 && virkRow?.ophoert) return;
+
   aktiver.push({
     type: 'virksomhed',
-    label: (virk as { navn?: string } | null)?.navn ?? `CVR ${cvr}`,
+    label: virkRow?.navn ?? `CVR ${cvr}`,
     cvr,
-    rawData: { branche: (virk as { branche_tekst?: string } | null)?.branche_tekst ?? null },
+    ansatte: virkRow?.ansatte_aar ?? undefined,
+    rawData: {
+      branche: virkRow?.branche_tekst ?? null,
+      // BIZZ-2102: Hierarki-metadata til koncern-sortering i UI
+      depth,
+      parent_cvr: parentCvr ?? null,
+      ejerandel_pct: ejerandelPct ?? null,
+    },
   });
 
   // BIZZ-1646 + BIZZ-1840: Detect ejer-/andelsforening
@@ -546,33 +571,20 @@ async function walkVirksomhed(
     // minoritetsposter, hvis querien af en eller anden grund returnerer dem.
     if (sub.ejerandel_min == null || sub.ejerandel_min < KONCERN_EJERANDEL_MIN) continue;
 
-    // Hent virksomhedsinfo.
-    // BIZZ-2101: kolonnen hed tidligere 'ansatte' i select'en, men den findes
-    // ikke i cvr_virksomhed (skemaet har ansatte_aar + ansatte_kvartal_1..4).
-    // PostgREST afviste hele querien → virk=null → alle datterselskaber blev
-    // vist som nøgne "CVR x"-labels og ophoert-filtret virkede aldrig.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: virk } = await (admin as any)
-      .from('cvr_virksomhed')
-      .select('navn, ansatte_aar, branche_tekst, ophoert')
-      .eq('cvr', sub.ejet_cvr)
-      .maybeSingle();
-
-    if (virk?.ophoert) continue;
-
-    aktiver.push({
-      type: 'virksomhed',
-      label: virk?.navn ?? `CVR ${sub.ejet_cvr}`,
-      cvr: sub.ejet_cvr,
-      ansatte: virk?.ansatte_aar ?? undefined,
-      rawData: {
-        branche: virk?.branche_tekst,
-        ejerandel_pct: sub.ejerandel_min,
-      },
-    });
-
-    // Rekursivt walk datterselskabets ejendomme
-    await walkVirksomhed(admin, sub.ejet_cvr, aktiver, seenBfes, seenCvrs, depth + 1, asOfDate);
+    // BIZZ-2102: Rekursivt walk — walkVirksomhed laver selv-push med
+    // navn/ansatte/ophørt-filter (BIZZ-2101) og hierarki-metadata.
+    // Tidligere pushede vi datterselskabet HER også → dubletter i UI.
+    await walkVirksomhed(
+      admin,
+      sub.ejet_cvr,
+      aktiver,
+      seenBfes,
+      seenCvrs,
+      depth + 1,
+      asOfDate,
+      cvr,
+      sub.ejerandel_min
+    );
   }
 
   // Bestyrelsesposter (D&O detection)

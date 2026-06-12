@@ -383,6 +383,11 @@ async function fetchEjerskabBatch(bfeList: number[]): Promise<Map<number, EjerIn
       let navn: string;
       if (e.ejer_type === 'virksomhed' && e.ejer_cvr) {
         navn = cvrNavnMap.get(String(e.ejer_cvr)) ?? e.ejer_navn ?? `CVR ${e.ejer_cvr}`;
+      } else if (e.ejer_type === 'person' && !e.ejer_navn) {
+        // BIZZ-2111: person uden navn fra EJF = navne- og adressebeskyttet —
+        // vi kender ejertypen, kun navnet er beskyttet. GDPR: vis aldrig navnet
+        // fra andre kilder (fx tinglysnings-dokumenter) når EJF beskytter det.
+        navn = 'Navne- og adressebeskyttet';
       } else {
         navn = e.ejer_navn ?? 'Ukendt';
       }
@@ -1226,11 +1231,32 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
       }
     }
 
+    // ── BIZZ-2094: Søster-SFE'er — samme gældende ejer + samme ejerlav ──
+    // Resights' struktur omfatter hele vurderingsejendommen, som kan spænde
+    // over flere SFE'er (fx Fenrisvej 15/19 under Gefionsvej 47A). VUR
+    // eksponerer ikke koblingen, så vi bruger ticketens fallback: ejerens
+    // øvrige SFE'er i samme ejerlav vises som søster-SFE'er under root.
+    if (root.bfe > 0 && ejerlavKode) {
+      const inTree = new Set<number>();
+      /** Samler alle BFE'er der allerede er i træet */
+      const collectBfes = (n: StrukturNode): void => {
+        if (n.bfe > 0) inTree.add(n.bfe);
+        n.children.forEach(collectBfes);
+      };
+      collectBfes(root);
+      const soesterNodes = await fetchSoesterSfeNodes(root.bfe, ejerlavKode, inTree);
+      if (soesterNodes.length > 0) {
+        root.children.push(...soesterNodes);
+        logger.log(`[ejendom-struktur] ${soesterNodes.length} søster-SFE'er tilføjet (BIZZ-2094)`);
+      }
+    }
+
     // ── BIZZ-2060/BIZZ-2095: Berig ALLE noder med ejer + areal i batch ──
     // BIZZ-2060 ramte kun ejerlejligheder 2 niveauer nede — hovedejendom- og
     // SFE-rækker fik aldrig ejer sat, selvom ejf_ejerskab har gældende ejere
-    // for dem. Nu walkes hele træet: ejer fra ejf_ejerskab (CVR-navne via
-    // cvr_virksomhed) og areal fra bbr_ejendom_status, begge i ét batch-kald.
+    // for dem. Nu walkes hele træet (EFTER søster-SFE'er er tilføjet, så de
+    // også får areal): ejer fra ejf_ejerskab (CVR-navne via cvr_virksomhed)
+    // og areal fra bbr_ejendom_status, begge i ét batch-kald.
     {
       const alleNoder: StrukturNode[] = [];
       /** Samler alle noder med reelt BFE rekursivt */
@@ -1273,26 +1299,6 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
         logger.log(
           `[ejendom-struktur] Berigelse: ${ejerMap.size}/${alleBfes.length} med ejer, ${arealMap.size} med areal`
         );
-      }
-    }
-
-    // ── BIZZ-2094: Søster-SFE'er — samme gældende ejer + samme ejerlav ──
-    // Resights' struktur omfatter hele vurderingsejendommen, som kan spænde
-    // over flere SFE'er (fx Fenrisvej 15/19 under Gefionsvej 47A). VUR
-    // eksponerer ikke koblingen, så vi bruger ticketens fallback: ejerens
-    // øvrige SFE'er i samme ejerlav vises som søster-SFE'er under root.
-    if (root.bfe > 0 && ejerlavKode) {
-      const inTree = new Set<number>();
-      /** Samler alle BFE'er der allerede er i træet */
-      const collectBfes = (n: StrukturNode): void => {
-        if (n.bfe > 0) inTree.add(n.bfe);
-        n.children.forEach(collectBfes);
-      };
-      collectBfes(root);
-      const soesterNodes = await fetchSoesterSfeNodes(root.bfe, ejerlavKode, inTree);
-      if (soesterNodes.length > 0) {
-        root.children.push(...soesterNodes);
-        logger.log(`[ejendom-struktur] ${soesterNodes.length} søster-SFE'er tilføjet (BIZZ-2094)`);
       }
     }
 

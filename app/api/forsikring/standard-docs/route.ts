@@ -25,6 +25,13 @@ import {
   getUserAdminDomainIds,
   canModifyStandardDoc,
 } from '@/app/lib/forsikring/standardDocDomain';
+import {
+  vurderStandardDocAfvisning,
+  type StandardDocAiVurdering,
+} from '@/app/lib/forsikring/standardDocValidation';
+import Anthropic from '@anthropic-ai/sdk';
+import { assertAiAllowed } from '@/app/lib/aiGate';
+import { recordAiUsage } from '@/app/lib/aiTracking';
 import crypto from 'crypto';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
@@ -212,6 +219,66 @@ export async function GET(req: NextRequest) {
   }
 }
 
+/**
+ * AI-validerer rå tekst-indhold for et manuelt tilføjet standard-dokument
+ * (BIZZ-2105). Samme JSON-kontrakt som PDF-uploadens klassificering.
+ *
+ * @param rawContent - Dokumentets rå tekst (trunkeres til 60k tegn)
+ * @param userId - Bruger-id til AI-gate og forbrugslogning
+ * @param tenantId - Tenant-id til forbrugslogning
+ * @returns AI-vurderingen, eller null hvis valideringen ikke kunne køres
+ *   (AI-gate lukket eller kald fejlede) — kalderen skal behandle null fail-closed
+ */
+async function validerTekstIndhold(
+  rawContent: string,
+  userId: string,
+  tenantId: string
+): Promise<StandardDocAiVurdering | null> {
+  const aiBlocked = await assertAiAllowed(userId);
+  if (aiBlocked) return null;
+  try {
+    const anthropic = new Anthropic({ apiKey: process.env.BIZZASSIST_CLAUDE_KEY });
+    const resp = await anthropic.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 256,
+      messages: [
+        {
+          role: 'user',
+          content: `Analysér dette forsikringsdokument og returnér KUN JSON:
+{
+  "er_standard_betingelser": true/false,
+  "indeholder_persondata": true/false,
+  "begrundelse": "Kort forklaring"
+}
+
+VIGTIGT:
+- "er_standard_betingelser" = true HVIS dokumentet er generelle forsikringsbetingelser/vilkår for en forsikringstype (IKKE en individuel police, faktura, følgebrev eller kundespecifikt dokument)
+- "indeholder_persondata" = true HVIS dokumentet indeholder oplysninger om identificerbare enkeltpersoner eller konkrete kunder: navne, CPR-numre, kundenumre, policenumre knyttet til en person/virksomhedskunde, privatadresser, e-mails eller telefonnumre. Generiske eksempler ("forsikringstageren", "sikrede") er IKKE persondata.
+- Svar KUN med JSON.
+
+DOKUMENT:
+${rawContent.slice(0, 60_000)}`,
+        },
+      ],
+    });
+    const textContent = resp.content.find((b) => b.type === 'text');
+    await recordAiUsage({
+      userId,
+      tenantId,
+      route: 'ai.forsikring.std-link-validering',
+      inputTokens: resp.usage.input_tokens,
+      outputTokens: resp.usage.output_tokens,
+    });
+    if (textContent?.type === 'text') {
+      const jsonMatch = textContent.text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) return JSON.parse(jsonMatch[0]) as StandardDocAiVurdering;
+    }
+    return null;
+  } catch {
+    return null; // fail-closed hos kalderen
+  }
+}
+
 // ─── POST ────────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
@@ -239,6 +306,18 @@ export async function POST(req: NextRequest) {
       );
     }
     const { selskab, kategori, titel, source_url, raw_content, added_via } = parsed.data;
+
+    // BIZZ-2105: Manuelt tilføjede dokumenter med tekst-indhold valideres af AI
+    // FØR de gemmes — persondata og ikke-standard-dokumenter afvises (422),
+    // fail-closed hvis valideringen ikke kan køres. Docs deles i domains, så
+    // uvaliderede dokumenter må aldrig persisteres.
+    if (added_via === 'manual_link' && raw_content) {
+      const vurdering = await validerTekstIndhold(raw_content, user.id, auth.tenantId);
+      const afvisning = vurderStandardDocAfvisning(vurdering);
+      if (afvisning.afvist) {
+        return NextResponse.json({ error: afvisning.aarsag }, { status: 422 });
+      }
+    }
 
     // Content hash for dedup
     const hashInput = raw_content ?? source_url;

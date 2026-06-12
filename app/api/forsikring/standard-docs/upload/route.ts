@@ -5,6 +5,9 @@
  * og opretter en forsikring_standard_doc-post med metadata.
  *
  * BIZZ-1890: PDF-upload feature for standard betingelser.
+ * BIZZ-2105: AI-validering FØR persistering — dokumenter med persondata eller
+ * som ikke er ægte standard-betingelser afvises med 422 (fail-closed: kan
+ * valideringen ikke køres, afvises uploaden også, og intet gemmes).
  *
  * Body: multipart/form-data
  *   - file:     PDF-filen (max 20 MB)
@@ -25,6 +28,10 @@ import { logger } from '@/app/lib/logger';
 import { assertAiAllowed } from '@/app/lib/aiGate';
 import { recordAiUsage } from '@/app/lib/aiTracking';
 import { getUserDomainId } from '@/app/lib/forsikring/standardDocDomain';
+import {
+  vurderStandardDocAfvisning,
+  type StandardDocAiVurdering,
+} from '@/app/lib/forsikring/standardDocValidation';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -76,43 +83,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
   try {
-    // ── 1. Upload til Supabase Storage ──────────────────────────────────────
     const fileBytes = await file.arrayBuffer();
-    const safeFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 100);
-    const storagePath = `std-docs/${auth.tenantId}/${randomUUID()}-${safeFileName}`;
 
-    const { error: storageErr } = await serviceClient.storage
-      .from(BUCKET)
-      .upload(storagePath, fileBytes, {
-        contentType: 'application/pdf',
-        upsert: false,
-      });
-
-    if (storageErr) {
-      logger.error('std-doc upload storage error', { message: storageErr.message });
-      return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
-    }
-
-    // Generer signed URL (10 år = 315 360 000 sekunder)
-    const { data: signedData, error: signedErr } = await serviceClient.storage
-      .from(BUCKET)
-      .createSignedUrl(storagePath, 315_360_000);
-
-    if (signedErr || !signedData?.signedUrl) {
-      logger.error('std-doc signed URL error', { message: signedErr?.message });
-      return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
-    }
-
-    const sourceUrl = signedData.signedUrl;
-
-    // ── 2. AI-klassificering: selskab, område, gyldig_fra, validering ────────
+    // ── 1. AI-klassificering + validering FØR noget gemmes (BIZZ-2105) ──────
+    // Standard betingelser deles i domains, så dokumenter med persondata
+    // eller som ikke er ægte standard-betingelser AFVISES — fail-closed:
+    // kan AI-valideringen ikke køres, gemmes intet.
     let resolvedSelskab = selskabInput;
     let resolvedTitel = titelInput || file.name.replace(/\.pdf$/i, '');
     let resolvedOmraade: string | null = null;
     let resolvedGyldigFra: string | null = null;
     let resolvedSelskabNorm: string | null = null;
-    let isValidStandard = true;
     let aiMetadata: Record<string, unknown> = {};
+    /** null = validering kunne ikke gennemføres → fail-closed afvisning */
+    let aiVurdering: StandardDocAiVurdering | null = null;
 
     {
       const aiBlocked = await assertAiAllowed(auth.userId);
@@ -141,11 +125,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   "omraade": "ejendom|erhverv|ansvar|brand|motor|cyber|rejse|ulykke|sundhed|liv|andet",
   "gyldig_fra": "YYYY-MM-DD eller null hvis ukendt",
   "er_standard_betingelser": true/false,
+  "indeholder_persondata": true/false,
   "begrundelse": "Kort forklaring af klassificeringen"
 }
 
 VIGTIGT:
 - "er_standard_betingelser" = true HVIS dokumentet er generelle forsikringsbetingelser/vilkår der gælder for en forsikringstype (IKKE en individuel police, faktura, følgebrev eller kundespecifikt dokument)
+- "indeholder_persondata" = true HVIS dokumentet indeholder oplysninger om identificerbare enkeltpersoner eller konkrete kunder: navne, CPR-numre, kundenumre, policenumre knyttet til en person/virksomhedskunde, privatadresser, e-mails eller telefonnumre. Generiske eksempler ("forsikringstageren", "sikrede") er IKKE persondata.
 - "omraade" skal matche den forsikringstype betingelserne dækker
 - "gyldig_fra" er typisk på forsiden eller i en ikrafttrædelsesdato
 - Svar KUN med JSON — ingen markdown, ingen forklaring.`,
@@ -166,6 +152,7 @@ VIGTIGT:
                 omraade?: string;
                 gyldig_fra?: string | null;
                 er_standard_betingelser?: boolean;
+                indeholder_persondata?: boolean;
                 begrundelse?: string;
               };
               if (parsed.selskab && !selskabInput) resolvedSelskab = parsed.selskab;
@@ -173,8 +160,8 @@ VIGTIGT:
               if (parsed.titel && !titelInput) resolvedTitel = parsed.titel;
               if (parsed.omraade) resolvedOmraade = parsed.omraade;
               if (parsed.gyldig_fra) resolvedGyldigFra = parsed.gyldig_fra;
-              if (parsed.er_standard_betingelser === false) isValidStandard = false;
               aiMetadata = parsed;
+              aiVurdering = parsed;
             }
           }
 
@@ -191,14 +178,22 @@ VIGTIGT:
       }
     }
 
+    // ── 2. Afvisning (BIZZ-2105): persondata / ikke-standard / uvalideret ────
+    // Fail-closed: aiVurdering er null hvis AI-gaten var lukket eller kaldet
+    // fejlede — i begge tilfælde afvises uploaden uden at noget gemmes.
+    const afvisning = vurderStandardDocAfvisning(aiVurdering);
+    if (afvisning.afvist) {
+      return NextResponse.json({ error: afvisning.aarsag }, { status: 422 });
+    }
+
     if (!resolvedSelskab) resolvedSelskab = 'Ukendt';
 
-    // ── 2b. Content-hash for dedup (baseret på filnavn + størrelse + første bytes) ──
+    // ── 3. Content-hash for dedup (baseret på filnavn + størrelse + første bytes) ──
     const crypto = await import('node:crypto');
     const hashSource = `${file.name}|${file.size}|${Buffer.from(fileBytes.slice(0, 4096)).toString('base64')}`;
     const contentHash = crypto.createHash('sha256').update(hashSource).digest('hex');
 
-    // ── 3. Dedup-check: hvis content_hash allerede eksisterer, returner eksisterende ──
+    // ── 4. Dedup-check: hvis content_hash allerede eksisterer, returner eksisterende ──
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const svc = serviceClient as any;
 
@@ -217,7 +212,35 @@ VIGTIGT:
       });
     }
 
-    // ── 4. Opret forsikring_standard_doc post ────────────────────────────────
+    // ── 5. Upload til Supabase Storage (først EFTER validering er bestået) ──
+    const safeFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 100);
+    const storagePath = `std-docs/${auth.tenantId}/${randomUUID()}-${safeFileName}`;
+
+    const { error: storageErr } = await serviceClient.storage
+      .from(BUCKET)
+      .upload(storagePath, fileBytes, {
+        contentType: 'application/pdf',
+        upsert: false,
+      });
+
+    if (storageErr) {
+      logger.error('std-doc upload storage error', { message: storageErr.message });
+      return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
+    }
+
+    // Generer signed URL (10 år = 315 360 000 sekunder)
+    const { data: signedData, error: signedErr } = await serviceClient.storage
+      .from(BUCKET)
+      .createSignedUrl(storagePath, 315_360_000);
+
+    if (signedErr || !signedData?.signedUrl) {
+      logger.error('std-doc signed URL error', { message: signedErr?.message });
+      return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
+    }
+
+    const sourceUrl = signedData.signedUrl;
+
+    // ── 6. Opret forsikring_standard_doc post ────────────────────────────────
     // BIZZ-2104: Domain-medlemmer deler automatisk (visibility='domain' med
     // ÆGTE domain_id i added_by_domain — RLS matcher domain_member.domain_id);
     // standalone-brugere får private. Tidligere blev tenant_id gemt og
@@ -235,7 +258,7 @@ VIGTIGT:
         source_url: sourceUrl,
         content_hash: contentHash,
         gyldig_fra: resolvedGyldigFra,
-        is_valid_standard: isValidStandard,
+        is_valid_standard: true,
         ai_metadata: aiMetadata,
         added_via: 'pdf_upload',
         added_by_user: auth.userId,
@@ -256,7 +279,7 @@ VIGTIGT:
     return NextResponse.json({
       ...insertData,
       duplicate: false,
-      is_valid_standard: isValidStandard,
+      is_valid_standard: true,
     });
   } catch (err) {
     logger.error('std-doc upload unexpected error', { message: String(err) });

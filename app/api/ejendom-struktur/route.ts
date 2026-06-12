@@ -27,6 +27,7 @@ import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { fetchDawa } from '@/app/lib/dawa';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { hentBfeAdresser, formatBfeLabel } from '@/app/lib/bfeAdresse';
+import { fetchEjfEjereDirekt } from '@/app/lib/ejerskab/fetchEjfEjereDirekt';
 
 // ─── Query param validation ─────────────────────────────────────────────────
 
@@ -400,6 +401,43 @@ async function fetchEjerskabBatch(bfeList: number[]): Promise<Map<number, EjerIn
     }
   } catch (err) {
     logger.warn('[ejendom-struktur] Ejerskab batch fetch fejl:', err);
+  }
+
+  // BIZZ-2111 (reopen): BFE'er uden gældende cache-række — delta-syncen har
+  // historiske huller, og navnebeskyttede ejerskifter blev tidligere droppet
+  // helt af ingesten. Live EJF-opslag (capped, så trælatensen er bounded;
+  // routen er s-maxage-cachet) henter den aktuelle ejer. Gældende personejer
+  // med null navn = navne- og adressebeskyttet — labelen SKAL sættes her, så
+  // UI'et ikke viser tomt/historisk navn for en beskyttet persons ejendom.
+  const missing = bfeList.filter((b) => !result.has(b)).slice(0, 15);
+  const LIVE_CONCURRENCY = 5;
+  for (let i = 0; i < missing.length; i += LIVE_CONCURRENCY) {
+    const batch = missing.slice(i, i + LIVE_CONCURRENCY);
+    await Promise.allSettled(
+      batch.map(async (bfe) => {
+        try {
+          const { ejere } = await fetchEjfEjereDirekt(bfe);
+          const e = ejere[0];
+          if (!e) return;
+          const navn = e.personNavn ?? e.virksomhedsnavn ?? null;
+          if (navn || e.cvr) {
+            result.set(bfe, {
+              ejerNavn: navn ?? `CVR ${e.cvr}`,
+              ejerType:
+                e.ejertype === 'person'
+                  ? 'person'
+                  : e.ejertype === 'selskab'
+                    ? 'selskab'
+                    : 'ukendt',
+            });
+          } else if (e.ejertype === 'person') {
+            result.set(bfe, { ejerNavn: 'Navne- og adressebeskyttet', ejerType: 'person' });
+          }
+        } catch {
+          /* live-opslag non-fatal — node vises uden ejer */
+        }
+      })
+    );
   }
   return result;
 }

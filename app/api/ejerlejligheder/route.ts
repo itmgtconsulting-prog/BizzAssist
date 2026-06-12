@@ -809,11 +809,18 @@ async function resolveLejlighederViaBfeCache(
           try {
             const { ejere } = await fetchEjfEjereDirekt(bfe);
             const e = ejere[0];
-            // Kun brugbare resultater — EJF Begraenset kan returnere ejere
-            // uden navn (navnebeskyttelse); så skal historik-fallbacken
-            // nedenfor stadig have en chance.
-            const navn = e?.personNavn ?? e?.virksomhedsnavn ?? null;
-            if (!e || (!navn && !e.cvr)) return;
+            if (!e) return;
+            const navn = e.personNavn ?? e.virksomhedsnavn ?? null;
+            // BIZZ-2111: gældende personejer uden navn = navne- og adresse-
+            // beskyttelse. Den beskyttede label SKAL vinde over den historiske
+            // fallback nedenfor — ellers vises en tidligere (reel) ejer som
+            // gældende ejer for en beskyttet persons lejlighed.
+            if (!navn && !e.cvr) {
+              if (e.ejertype === 'person') {
+                ejerMap.set(bfe, { navn: 'Navne- og adressebeskyttet', type: 'person', cvr: null });
+              }
+              return;
+            }
             ejerMap.set(bfe, {
               navn: navn ?? `CVR ${e.cvr}`,
               type: e.ejertype,

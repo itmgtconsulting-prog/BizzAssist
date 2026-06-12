@@ -1814,8 +1814,12 @@ export async function darResolveAdresseId(input: {
   if (!postnrUuid) return null;
 
   // Step 3: Husnummer — match husnummertekst + postnr, then filter by vej-UUIDs
+  // BIZZ-2087: hent status og foretræk gældende ('3') — DAR kan indeholde
+  // henlagte/nedlagte records som DAWA ikke kender.
   const husnummerData = await darQuery<{
-    DAR_Husnummer: { nodes: Array<{ id_lokalId: string; navngivenVej: string }> };
+    DAR_Husnummer: {
+      nodes: Array<{ id_lokalId: string; navngivenVej: string; status?: string }>;
+    };
   }>(`{
     DAR_Husnummer(
       where: {
@@ -1825,11 +1829,13 @@ export async function darResolveAdresseId(input: {
       virkningstid: "${ts}"
       registreringstid: "${ts}"
       first: 20
-    ) { nodes { id_lokalId navngivenVej } }
+    ) { nodes { id_lokalId navngivenVej status } }
   }`);
-  const husnummerMatch = (husnummerData?.DAR_Husnummer?.nodes ?? []).find((h) =>
+  const husnummerKandidater = (husnummerData?.DAR_Husnummer?.nodes ?? []).filter((h) =>
     vejUuids.has(h.navngivenVej)
   );
+  const husnummerMatch =
+    husnummerKandidater.find((h) => h.status === '3') ?? husnummerKandidater[0];
   if (!husnummerMatch) return null;
 
   // Step 4: Adresse — composite match on husnummer + etage + dør.
@@ -1843,17 +1849,23 @@ export async function darResolveAdresseId(input: {
     adresseWhereParts.push(`doerbetegnelse: { eq: "${esc(input.doer)}" }`);
   }
 
+  // BIZZ-2087: first: 5 + status-præference i stedet for first: 1 uden filter.
+  // Uden status-check kunne et henlagt/ikke-gældende DAR-record returneres
+  // (fx Thorvald Bindesbølls Plads 22, 3. tv) — et id DAWA ikke kender, så
+  // navigation til /dashboard/ejendomme/[id] gav "Adresse ikke fundet".
   const adresseData = await darQuery<{
-    DAR_Adresse: { nodes: Array<{ id_lokalId: string }> };
+    DAR_Adresse: { nodes: Array<{ id_lokalId: string; status?: string }> };
   }>(`{
     DAR_Adresse(
       where: { ${adresseWhereParts.join(', ')} }
       virkningstid: "${ts}"
       registreringstid: "${ts}"
-      first: 1
-    ) { nodes { id_lokalId } }
+      first: 5
+    ) { nodes { id_lokalId status } }
   }`);
-  return adresseData?.DAR_Adresse?.nodes?.[0]?.id_lokalId ?? null;
+  const adresseKandidater = adresseData?.DAR_Adresse?.nodes ?? [];
+  const adresseMatch = adresseKandidater.find((a) => a.status === '3') ?? adresseKandidater[0];
+  return adresseMatch?.id_lokalId ?? null;
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

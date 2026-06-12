@@ -1193,8 +1193,28 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
               doer: doer ?? null,
             });
             if (darId) {
-              dawaIdMap.set(item.uuid, darId);
-              return;
+              // BIZZ-2087: Validér DAR-id'et mod DAWA før det bruges til
+              // navigation — ejendomssiden henter adressen fra DAWA, og et
+              // henlagt DAR-record giver hård "Adresse ikke fundet"-fejlside.
+              // Ved 404 falder vi videre til DAWA-søgningen nedenfor.
+              try {
+                const check = await fetchDawa(
+                  `https://api.dataforsyningen.dk/adresser/${darId}`,
+                  { signal: AbortSignal.timeout(5000) },
+                  { caller: 'ejerlejligheder.adresser.validate' }
+                );
+                if (check.ok) {
+                  dawaIdMap.set(item.uuid, darId);
+                  return;
+                }
+                logger.warn(
+                  `[ejerlejligheder] DAR-id ${darId} findes ikke i DAWA — falder tilbage til DAWA-søgning`
+                );
+              } catch {
+                // DAWA nede → stol på DAR-id'et frem for at miste navigation
+                dawaIdMap.set(item.uuid, darId);
+                return;
+              }
             }
 
             // Fallback — DAWA /adresser. Tagget så telemetri kan tælle

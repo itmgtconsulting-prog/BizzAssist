@@ -15,6 +15,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
 import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
+import { erVirksomhedsDeltager } from '@/app/lib/cvr/deltagerType';
 import type { DiagramNode, DiagramEdge, DiagramGraph } from '@/app/components/diagrams/DiagramData';
 
 /** Max ejendomme per ejer-node i initial graf */
@@ -1237,6 +1238,9 @@ async function resolvePropertyGraph(
     const CVR_ES_BASE = 'http://distribution.virk.dk/cvr-permanent';
     const CVR_ES_USER = process.env.CVR_ES_USER ?? '';
     const CVR_ES_PASS = process.env.CVR_ES_PASS ?? '';
+    // BIZZ-2086: enhedstype per deltager (populeres af Vrdeltagerperson-opslag
+    // nedenfor) — bruges til at konvertere virksomheds-deltagere til company-noder.
+    const enhedstypeMap = new Map<number, string | null>();
     const personsWithoutEn = nodes.filter(
       (n) => n.type === 'person' && !n.enhedsNummer && n.id.startsWith('person-')
     );
@@ -1359,7 +1363,14 @@ async function resolvePropertyGraph(
                 query: {
                   match: { 'Vrdeltagerperson.enhedsNummer': String(node.enhedsNummer) },
                 },
-                _source: ['Vrdeltagerperson.navne.navn'],
+                // BIZZ-2086: Vrdeltagerperson-indekset indeholder OGSÅ
+                // virksomheds-deltagere — hent enhedstype + forretningsnoegle
+                // (CVR-nr) så vi kan konvertere dem til company-noder.
+                _source: [
+                  'Vrdeltagerperson.navne.navn',
+                  'Vrdeltagerperson.enhedstype',
+                  'Vrdeltagerperson.forretningsnoegle',
+                ],
                 size: 1,
               }),
               signal: AbortSignal.timeout(5000),
@@ -1371,7 +1382,8 @@ async function resolvePropertyGraph(
         for (let i = 0; i < personsWithEnButPlaceholder.length; i++) {
           const result = results[i];
           if (result.status !== 'fulfilled' || !result.value) continue;
-          const navne = result.value?.hits?.hits?.[0]?._source?.Vrdeltagerperson?.navne;
+          const src = result.value?.hits?.hits?.[0]?._source?.Vrdeltagerperson;
+          const navne = src?.navne;
           // navne er typisk array af { navn, periode: { gyldigFra, gyldigTil } }
           let navn: string | undefined;
           if (Array.isArray(navne) && navne.length > 0) {
@@ -1382,12 +1394,33 @@ async function resolvePropertyGraph(
           if (!navn) continue;
           const node = personsWithEnButPlaceholder[i];
           node.label = navn;
-          // Writeback til cvr_deltager
+          // BIZZ-2086: Virksomheds-deltager? Konvertér til company-node i stedet
+          // for at lade den blive stående som person med virksomhedsnavn.
+          const esEnhedstype = typeof src?.enhedstype === 'string' ? src.enhedstype : null;
+          const fnoegle = src?.forretningsnoegle;
+          const fnoegleCvr =
+            typeof fnoegle === 'number' || typeof fnoegle === 'string' ? String(fnoegle) : null;
+          const erVirk = erVirksomhedsDeltager(esEnhedstype, navn);
+          if (erVirk && fnoegleCvr && /^\d{8}$/.test(fnoegleCvr)) {
+            node.type = 'company';
+            node.cvr = Number(fnoegleCvr);
+            node.link = `/dashboard/companies/${fnoegleCvr}`;
+          }
+          if (typeof node.enhedsNummer === 'number') {
+            enhedstypeMap.set(node.enhedsNummer, erVirk ? 'virksomhed' : 'person');
+          }
+          // Writeback til cvr_deltager — inkl. enhedstype (BIZZ-2086) så
+          // cachede virksomheds-deltagere aldrig igen bliver person-noder.
           try {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            await (admin as any)
-              .from('cvr_deltager')
-              .upsert({ enhedsnummer: node.enhedsNummer, navn }, { onConflict: 'enhedsnummer' });
+            await (admin as any).from('cvr_deltager').upsert(
+              {
+                enhedsnummer: node.enhedsNummer,
+                navn,
+                enhedstype: erVirk ? 'virksomhed' : 'person',
+              },
+              { onConflict: 'enhedsnummer' }
+            );
           } catch {
             /* writeback non-fatal */
           }
@@ -1409,8 +1442,16 @@ async function resolvePropertyGraph(
     // holdingselskaber registreret som ejere). Hvis Vrdeltagerperson ikke
     // matched, prøv Vrvirksomhed.enhedsNummer — hvis hit, konvertér noden
     // til company-type med korrekt CVR + navn + link.
+    // BIZZ-2086: Kører nu OGSÅ for person-noder med rigtigt navn, hvor cachen
+    // siger enhedstype='virksomhed' eller navnet ligner et selskab (fx
+    // "Selmont Holding ApS") — tidligere ramtes kun placeholder-navne, så
+    // virksomheds-deltagere med writebacket navn forblev person-noder.
     const stillPlaceholder = nodes.filter(
-      (n) => n.type === 'person' && typeof n.enhedsNummer === 'number' && isPlaceholderName(n.label)
+      (n) =>
+        n.type === 'person' &&
+        typeof n.enhedsNummer === 'number' &&
+        (isPlaceholderName(n.label) ||
+          erVirksomhedsDeltager(enhedstypeMap.get(n.enhedsNummer) ?? null, n.label))
     );
     if (stillPlaceholder.length > 0 && CVR_ES_USER && CVR_ES_PASS) {
       try {
@@ -1447,11 +1488,40 @@ async function resolvePropertyGraph(
           }
           if (!cvrNr || !navn) continue;
           const node = stillPlaceholder[i];
+          // BIZZ-2086: Hvis virksomheden allerede er i grafen som cvr-node,
+          // redirect edges dertil og fjern person-dubletten.
+          const existingCompanyId = `cvr-${cvrNr}`;
+          if (nodeIds.has(existingCompanyId)) {
+            for (const edge of edges) {
+              if (edge.from === node.id) edge.from = existingCompanyId;
+              if (edge.to === node.id) edge.to = existingCompanyId;
+            }
+            const idx = nodes.indexOf(node);
+            if (idx >= 0) nodes.splice(idx, 1);
+            nodeIds.delete(node.id);
+            converted++;
+            continue;
+          }
           node.label = navn;
           node.type = 'company';
           node.cvr = Number(cvrNr);
           node.link = `/dashboard/companies/${cvrNr}`;
           converted++;
+          // BIZZ-2086: Writeback enhedstype så cachen fremover klassificerer korrekt
+          if (typeof node.enhedsNummer === 'number') {
+            enhedstypeMap.set(node.enhedsNummer, 'virksomhed');
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              await (admin as any)
+                .from('cvr_deltager')
+                .upsert(
+                  { enhedsnummer: node.enhedsNummer, navn, enhedstype: 'virksomhed' },
+                  { onConflict: 'enhedsnummer' }
+                );
+            } catch {
+              /* writeback non-fatal */
+            }
+          }
         }
         if (converted > 0) {
           logger.log(
@@ -2461,8 +2531,46 @@ async function enrichVirksomhedFejlcacheNodes(graph: DiagramGraph): Promise<void
 
   const isPlaceholderLabel = (label: string): boolean => /^Ukendt ejer\s*\(en\s*\d+\)$/.test(label);
 
-  const placeholders = graph.nodes.filter(
-    (n) => n.type === 'person' && typeof n.enhedsNummer === 'number' && isPlaceholderLabel(n.label)
+  // BIZZ-2086: Fang OGSÅ person-noder med rigtigt navn hvor cvr_deltager-cachen
+  // siger enhedstype='virksomhed' eller navnet ligner et selskab (fx
+  // "Selmont Holding ApS"). Tidligere ramtes kun placeholder-labels, så
+  // virksomheds-deltagere med writebacket navn forblev person-noder for evigt.
+  const personNodes = graph.nodes.filter(
+    (n) => n.type === 'person' && typeof n.enhedsNummer === 'number'
+  );
+  const cachedEnhedstype = new Map<number, string | null>();
+  const heuristicCandidates = personNodes.filter(
+    (n) => !isPlaceholderLabel(n.label) && !erVirksomhedsDeltager(null, n.label)
+  );
+  if (heuristicCandidates.length > 0) {
+    try {
+      const admin = createAdminClient();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: typeRows } = await (admin as any)
+        .from('cvr_deltager')
+        .select('enhedsnummer, enhedstype')
+        .in(
+          'enhedsnummer',
+          heuristicCandidates.map((n) => n.enhedsNummer)
+        );
+      for (const r of (typeRows ?? []) as Array<{
+        enhedsnummer: number;
+        enhedstype: string | null;
+      }>) {
+        cachedEnhedstype.set(r.enhedsnummer, r.enhedstype);
+      }
+    } catch {
+      /* cache-opslag non-fatal — heuristikken dækker stadig */
+    }
+  }
+
+  const placeholders = personNodes.filter(
+    (n) =>
+      isPlaceholderLabel(n.label) ||
+      erVirksomhedsDeltager(
+        cachedEnhedstype.get(n.enhedsNummer as number) ?? null,
+        isPlaceholderLabel(n.label) ? null : n.label
+      )
   );
   if (placeholders.length === 0) return;
 
@@ -2500,11 +2608,39 @@ async function enrichVirksomhedFejlcacheNodes(graph: DiagramGraph): Promise<void
       }
       if (!cvrNr || !navn) continue;
       const node = placeholders[i];
+      // BIZZ-2086: Hvis virksomheden allerede er i grafen som cvr-node,
+      // redirect edges dertil og fjern person-dubletten.
+      const existingCompany = graph.nodes.find(
+        (n) => n.type === 'company' && n.cvr === Number(cvrNr) && n.id !== node.id
+      );
+      if (existingCompany) {
+        for (const edge of graph.edges) {
+          if (edge.from === node.id) edge.from = existingCompany.id;
+          if (edge.to === node.id) edge.to = existingCompany.id;
+        }
+        const idx = graph.nodes.indexOf(node);
+        if (idx >= 0) graph.nodes.splice(idx, 1);
+        converted++;
+        continue;
+      }
       node.label = navn;
       node.type = 'company';
       node.cvr = Number(cvrNr);
       node.link = `/dashboard/companies/${cvrNr}`;
       converted++;
+      // BIZZ-2086: Writeback enhedstype så cachen fremover klassificerer korrekt
+      try {
+        const admin = createAdminClient();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (admin as any)
+          .from('cvr_deltager')
+          .upsert(
+            { enhedsnummer: node.enhedsNummer, navn, enhedstype: 'virksomhed' },
+            { onConflict: 'enhedsnummer' }
+          );
+      } catch {
+        /* writeback non-fatal */
+      }
     }
     if (converted > 0) {
       logger.log(

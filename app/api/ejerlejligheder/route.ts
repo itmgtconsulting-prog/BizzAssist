@@ -697,6 +697,71 @@ async function resolveLejlighederViaBfeCache(
   );
   if (units.length === 0) return [];
 
+  // Trin 2b (BIZZ-2087): Reparér korrupte dawa_id'er fra cachen. Backfillen
+  // 2026-05-20 gav flere BFE'er samme dawa_id (typisk et henlagt DAR-id),
+  // hvilket sender alle rækker til samme "Adresse ikke fundet"-side. En
+  // enhedsadresse-id er pr. definition unik pr. enhed, så dubletter på
+  // tværs af enheder = korrupt cache. De berørte rækker re-resolves via
+  // DAWA (adgangsadresse + etage/dør → enhedsadresse-id) og skrives
+  // tilbage til bfe_adresse_cache, så cachen self-healer.
+  const dawaIdCount = new Map<string, number>();
+  for (const u of units) {
+    if (u.dawa_id) dawaIdCount.set(u.dawa_id, (dawaIdCount.get(u.dawa_id) ?? 0) + 1);
+  }
+  // Street ("Thorvald Bindesbølls Plads 16") → adgangsadresse-id
+  const adgIdByStreet = new Map<string, string>();
+  for (const adg of adgangsadresser) {
+    const street = adg.adressebetegnelse.split(',')[0].trim();
+    if (street && adg.id) adgIdByStreet.set(street, adg.id);
+  }
+  const corruptUnits = units.filter((u) => u.dawa_id && (dawaIdCount.get(u.dawa_id) ?? 0) > 1);
+  if (corruptUnits.length > 0) {
+    logger.warn(
+      `[ejerlejligheder] ${corruptUnits.length} cache-rækker deler dawa_id — re-resolver via DAWA (BIZZ-2087)`
+    );
+    const REPAIR_CONCURRENCY = 5;
+    for (let i = 0; i < corruptUnits.length; i += REPAIR_CONCURRENCY) {
+      const batch = corruptUnits.slice(i, i + REPAIR_CONCURRENCY);
+      await Promise.allSettled(
+        batch.map(async (u) => {
+          const adgId = adgIdByStreet.get(u.adresse);
+          if (!adgId) {
+            u.dawa_id = null;
+            return;
+          }
+          const params = new URLSearchParams({ adgangsadresseid: adgId });
+          if (u.etage) params.set('etage', u.etage);
+          if (u.doer) params.set('dør', u.doer);
+          try {
+            const res = await fetchDawa(
+              `https://api.dataforsyningen.dk/adresser?${params}`,
+              { signal: AbortSignal.timeout(5000) },
+              { caller: 'ejerlejligheder.bfe-cache.repair' }
+            );
+            if (!res.ok) {
+              u.dawa_id = null;
+              return;
+            }
+            const addrs = (await res.json()) as { id: string }[];
+            const nyId = addrs[0]?.id ?? null;
+            u.dawa_id = nyId;
+            if (nyId) {
+              // Writeback — self-heal cachen så næste opslag er korrekt
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              await (admin as any)
+                .from('bfe_adresse_cache')
+                .update({ dawa_id: nyId })
+                .eq('bfe_nummer', u.bfe_nummer);
+            }
+          } catch {
+            // DAWA-fejl → hellere ingen link end et dødt link
+            u.dawa_id = null;
+          }
+        })
+      );
+    }
+  }
+
   // Trin 3: ejer pr. BFE fra ejf_ejerskab (gældende). Første ejer pr. BFE.
   const bfes = [...new Set(units.map((u) => u.bfe_nummer))];
   const ejerMap = new Map<number, { navn: string; type: string; cvr: string | null }>();

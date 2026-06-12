@@ -809,9 +809,13 @@ async function resolveLejlighederViaBfeCache(
           try {
             const { ejere } = await fetchEjfEjereDirekt(bfe);
             const e = ejere[0];
-            if (!e) return;
+            // Kun brugbare resultater — EJF Begraenset kan returnere ejere
+            // uden navn (navnebeskyttelse); så skal historik-fallbacken
+            // nedenfor stadig have en chance.
+            const navn = e?.personNavn ?? e?.virksomhedsnavn ?? null;
+            if (!e || (!navn && !e.cvr)) return;
             ejerMap.set(bfe, {
-              navn: e.personNavn ?? e.virksomhedsnavn ?? (e.cvr ? `CVR ${e.cvr}` : ''),
+              navn: navn ?? `CVR ${e.cvr}`,
               type: e.ejertype,
               cvr: e.cvr ?? null,
             });

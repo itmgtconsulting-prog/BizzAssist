@@ -32,6 +32,7 @@ import {
   canParseAsText,
   parseWithTypeDetection,
   normalizePolicyNumber,
+  oversigtEntryMatchesPolicy,
   type MultiParseResult,
 } from '@/app/lib/forsikring/parser';
 import { runGapEngine } from '@/app/lib/forsikring/gapEngine';
@@ -233,12 +234,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       for (const entry of oversigt.policies) {
         // BIZZ-1395: Normalisér policenummer og skip duplikater
-        // BIZZ-1908 FIX: Dedup på policenr + adresse — same policenr kan have
-        // flere entries med forskellige forsikringstyper/adresser (fx ansvar +
-        // ejendom under same aftalenr). Kun skip hvis BÅDE nummer OG adresse matcher.
+        // BIZZ-1908: Same policenr kan have flere entries med forskellige
+        // forsikringstyper/adresser (fx ansvar + ejendom under same aftalenr).
+        // BIZZ-2097 FIX: Dedup på policenr + adresse + forsikringstype — adresseløse
+        // typer (Cyber, Netbank, Driftstab, Kriminalitet) under samme aftalenr blev
+        // kollapset af adresse-eneste sammenligningen (null === null). Sammenlign
+        // desuden mod ALLE eksisterende policer med nummeret, ikke kun den nyeste.
         const normalizedNum = normalizePolicyNumber(entry.policy_number);
-        const existing = await insurance.policies.findByNumber(normalizedNum);
-        if (existing && existing.property_address === (entry.property_address ?? null)) {
+        const existingAll = await insurance.policies.findAllByNumber(normalizedNum);
+        const existing = existingAll.find((p) => oversigtEntryMatchesPolicy(p, entry));
+        if (existing) {
           createdPolicies.push({ id: existing.id, policy_number: existing.policy_number });
           continue;
         }

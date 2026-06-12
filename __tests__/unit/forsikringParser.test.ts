@@ -7,6 +7,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { stripMarkdownFences, canParseAsText } from '@/app/lib/forsikring/jsonHelpers';
+import { oversigtEntryMatchesPolicy } from '@/app/lib/forsikring/parser';
 import { ParsedPolicySchema } from '@/app/lib/forsikring/types';
 
 describe('stripMarkdownFences', () => {
@@ -219,5 +220,89 @@ describe('salvageTruncatedOversigt', () => {
     const result = salvageTruncatedOversigt(truncated);
     expect(result).not.toBeNull();
     expect(result!.policies).toHaveLength(1);
+  });
+});
+
+describe('oversigtEntryMatchesPolicy (BIZZ-2097)', () => {
+  it('matcher når både adresse og forsikringstype er ens', () => {
+    expect(
+      oversigtEntryMatchesPolicy(
+        { property_address: 'Hovedgaden 1', business_activity: 'Erhvervsansvar' },
+        { property_address: 'Hovedgaden 1', insurance_type: 'Erhvervsansvar' }
+      )
+    ).toBe(true);
+  });
+
+  it('matcher IKKE adresseløse entries med forskellig forsikringstype (null === null bug)', () => {
+    expect(
+      oversigtEntryMatchesPolicy(
+        { property_address: null, business_activity: 'Cyberforsikring' },
+        { property_address: null, insurance_type: 'Netbankforsikring' }
+      )
+    ).toBe(false);
+  });
+
+  it('matcher IKKE når adressen er forskellig', () => {
+    expect(
+      oversigtEntryMatchesPolicy(
+        { property_address: 'Hovedgaden 1', business_activity: 'Bygningsforsikring' },
+        { property_address: 'Hovedgaden 2', insurance_type: 'Bygningsforsikring' }
+      )
+    ).toBe(false);
+  });
+
+  it('normaliserer case og whitespace', () => {
+    expect(
+      oversigtEntryMatchesPolicy(
+        { property_address: ' Hovedgaden 1 ', business_activity: 'cyberforsikring' },
+        { property_address: 'hovedgaden 1', insurance_type: 'Cyberforsikring ' }
+      )
+    ).toBe(true);
+  });
+
+  it('behandler tom streng som null', () => {
+    expect(
+      oversigtEntryMatchesPolicy(
+        { property_address: '', business_activity: 'Driftstab' },
+        { property_address: null, insurance_type: 'Driftstab' }
+      )
+    ).toBe(true);
+  });
+
+  it('regression: 9 entries under samme aftalenr giver 9 policer (Topdanmark-mønster)', () => {
+    // Simulerer oversigts-loopet: hver entry sammenlignes mod allerede oprettede
+    // policer med samme aftalenummer — ingen må kollapses
+    const entries = [
+      { property_address: 'Roholmsvej 19', insurance_type: 'Bygningsforsikring' },
+      { property_address: null, insurance_type: 'Erhvervsansvar' },
+      { property_address: null, insurance_type: 'Cyberforsikring' },
+      { property_address: null, insurance_type: 'Netbankforsikring' },
+      { property_address: null, insurance_type: 'Driftstabsforsikring' },
+      { property_address: null, insurance_type: 'Kriminalitetsforsikring' },
+      { property_address: null, insurance_type: 'Løsøreforsikring' },
+      { property_address: null, insurance_type: 'Transportforsikring' },
+      { property_address: null, insurance_type: 'Arbejdsskadeforsikring' },
+    ];
+    const created: Array<{ property_address: string | null; business_activity: string | null }> =
+      [];
+    for (const entry of entries) {
+      const existing = created.find((p) => oversigtEntryMatchesPolicy(p, entry));
+      if (existing) continue;
+      created.push({
+        property_address: entry.property_address,
+        business_activity: entry.insurance_type,
+      });
+    }
+    expect(created).toHaveLength(9);
+  });
+
+  it('regression: identisk entry parses to gange → kun 1 police (dedup virker stadig)', () => {
+    const policy = { property_address: null, business_activity: 'Cyberforsikring' };
+    expect(
+      oversigtEntryMatchesPolicy(policy, {
+        property_address: null,
+        insurance_type: 'Cyberforsikring',
+      })
+    ).toBe(true);
   });
 });

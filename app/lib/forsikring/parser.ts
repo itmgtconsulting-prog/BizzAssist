@@ -41,6 +41,34 @@ export function normalizePolicyNumber(policyNumber: string): string {
   return policyNumber.replace(/[\s-]+/g, '').replace(/^0+/, '') || policyNumber;
 }
 
+/**
+ * BIZZ-2097: Afgør om en oversigts-entry er en duplikat af en eksisterende police.
+ *
+ * Dedup-nøglen er adresse + forsikringstype (policenummeret er allerede matchet
+ * af kalderen). Flere forsikringstyper (fx Cyber, Netbank, Driftstab, Kriminalitet)
+ * kan ligge under samme aftalenummer UDEN adresse — de må ikke kollapses til én
+ * police, hvilket den gamle adresse-eneste sammenligning gjorde (null === null).
+ *
+ * @param policy - Eksisterende police (property_address + business_activity)
+ * @param entry - Oversigts-entry fra parseren (property_address + insurance_type)
+ * @returns true hvis entry'en repræsenterer samme police
+ */
+export function oversigtEntryMatchesPolicy(
+  policy: { property_address: string | null; business_activity: string | null },
+  entry: { property_address?: string | null; insurance_type?: string | null }
+): boolean {
+  // Normalisér til trimmet lowercase så whitespace/case-forskelle ikke
+  // skaber dubletter; tom streng behandles som null
+  const norm = (s: string | null | undefined): string | null => {
+    const t = s?.trim().toLowerCase();
+    return t ? t : null;
+  };
+  return (
+    norm(policy.property_address) === norm(entry.property_address) &&
+    norm(policy.business_activity) === norm(entry.insurance_type)
+  );
+}
+
 /** Maks tekst-input til Claude (≈40k tokens for sikkerhed). */
 const MAX_TEXT_CHARS = 120_000;
 

@@ -56,6 +56,33 @@ export async function getUserAdminDomainIds(userId: string): Promise<string[]> {
 }
 
 /**
+ * Tilbagekalder domain-deling af en brugers standard betingelser (BIZZ-2107).
+ *
+ * Når et medlem fjernes fra et domain skal delingen revokes BEGGE veje:
+ * RLS-policyen klarer selv retning 1 (den fjernede mister adgang til de
+ * øvriges docs, da domain_member-rækken er væk), men retning 2 kræver at den
+ * fjernedes egne docs demotes til private — ellers ser domainet dem fortsat.
+ *
+ * @param userId - Den fjernede brugers UUID
+ * @param domainId - Domainet brugeren fjernes fra
+ * @returns Antal docs der fik delingen tilbagekaldt
+ */
+export async function revokeStandardDocDomainSharing(
+  userId: string,
+  domainId: string
+): Promise<number> {
+  const admin = createAdminClient();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data } = await (admin as any)
+    .from('forsikring_standard_doc')
+    .update({ visibility: 'private', added_by_domain: null })
+    .eq('added_by_user', userId)
+    .eq('added_by_domain', domainId)
+    .select('id');
+  return ((data ?? []) as Array<{ id: string }>).length;
+}
+
+/**
  * Ren beslutningsfunktion: må brugeren slette/rette et standard-doc?
  *
  * Regel (BIZZ-2104): uploaderen selv må altid; derudover må en admin af

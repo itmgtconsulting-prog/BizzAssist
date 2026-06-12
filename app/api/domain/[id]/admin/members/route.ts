@@ -17,6 +17,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { assertDomainAdmin } from '@/app/lib/domainAuth';
 import { isDomainFeatureEnabled } from '@/app/lib/featureFlags';
+import { revokeStandardDocDomainSharing } from '@/app/lib/forsikring/standardDocDomain';
 import { logger } from '@/app/lib/logger';
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -313,6 +314,14 @@ export async function DELETE(request: NextRequest, context: RouteContext): Promi
     }
   }
 
+  // BIZZ-2107: Revoke domain-deling af den fjernedes standard betingelser —
+  // ellers ser domainets øvrige medlemmer fortsat den fjernedes docs.
+  // Køres FØR member-sletningen så antallet kan auditeres (DB-triggeren i
+  // migration 179 demoter ellers rækkerne under selve sletningen). Retning 1
+  // — at den fjernede mister adgang til de øvriges docs — klares automatisk
+  // af RLS når domain_member-rækken er væk.
+  const revokedDocs = await revokeStandardDocDomainSharing(targetUserId, domainId);
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { error } = await (admin as any)
     .from('domain_member')
@@ -332,7 +341,8 @@ export async function DELETE(request: NextRequest, context: RouteContext): Promi
     action: 'remove_member',
     target_type: 'user',
     target_id: targetUserId,
+    metadata: { revoked_standard_docs: revokedDocs },
   });
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, revokedStandardDocs: revokedDocs });
 }

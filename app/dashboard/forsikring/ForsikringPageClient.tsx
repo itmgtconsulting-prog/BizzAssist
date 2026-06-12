@@ -1589,6 +1589,10 @@ function AnalyseSection({
       is_valid_standard?: boolean;
       omraade?: string | null;
       gyldig_fra?: string | null;
+      /** BIZZ-2104: Uploaderens navn/email til "Uploadet af"-tag */
+      uploaded_by_name?: string | null;
+      /** BIZZ-2104: private | domain | curated — domain-badge */
+      visibility?: string | null;
     }>
   >([]);
   /** BIZZ-2078: Std betingelser tidligere brugt i analyser for den valgte kunde
@@ -3276,6 +3280,21 @@ function AnalyseSection({
                                         <span className="text-amber-400 text-[9px]">
                                           ⚠ {da ? 'Ikke standard' : 'Not standard'}
                                         </span>
+                                      )}
+                                      {/* BIZZ-2104: Uploader-tag + domain-badge så det er
+                                          synligt hvem der har delt dokumentet */}
+                                      {doc.uploaded_by_name && (
+                                        <div className="text-slate-400 text-[9px] mt-0.5 flex items-center gap-1">
+                                          <span>
+                                            {da ? 'Uploadet af' : 'Uploaded by'}{' '}
+                                            {doc.uploaded_by_name}
+                                          </span>
+                                          {doc.visibility === 'domain' && (
+                                            <span className="px-1 py-px bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 rounded text-[8px] uppercase tracking-wide">
+                                              Domain
+                                            </span>
+                                          )}
+                                        </div>
                                       )}
                                     </td>
                                     <td className="px-4 py-2.5">

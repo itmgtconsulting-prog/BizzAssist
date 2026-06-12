@@ -20,6 +20,11 @@ import { cookies } from 'next/headers';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
 import { getTenantSchemaName } from '@/lib/db/tenant';
+import {
+  getUserDomainId,
+  getUserAdminDomainIds,
+  canModifyStandardDoc,
+} from '@/app/lib/forsikring/standardDocDomain';
 import crypto from 'crypto';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
@@ -48,6 +53,10 @@ export interface StandardDocSummary {
   has_content: boolean;
   /** UUID af brugeren der tilføjede — til slet-kontrol */
   added_by_user: string | null;
+  /** BIZZ-2104: Uploaderens visningsnavn/email til "Uploadet af"-tag */
+  uploaded_by_name: string | null;
+  /** BIZZ-2104: private | domain | curated — domain-badge i Bibliotek */
+  visibility: string | null;
 }
 
 /**
@@ -137,23 +146,47 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
 
-    const result = (
-      (data ?? []) as Array<{
-        id: string;
-        selskab: string;
-        kategori: string;
-        titel: string;
-        source_url: string;
-        added_via: string;
-        verified: boolean;
-        created_at: string;
-        raw_content: string | null;
-        added_by_user: string | null;
-        omraade: string | null;
-        gyldig_fra: string | null;
-        is_valid_standard: boolean;
-      }>
-    ).map((d) => ({
+    const rows = (data ?? []) as Array<{
+      id: string;
+      selskab: string;
+      kategori: string;
+      titel: string;
+      source_url: string;
+      added_via: string;
+      verified: boolean;
+      created_at: string;
+      raw_content: string | null;
+      added_by_user: string | null;
+      omraade: string | null;
+      gyldig_fra: string | null;
+      is_valid_standard: boolean;
+      visibility: string | null;
+    }>;
+
+    // BIZZ-2104: Slå uploader-navn/email op til "Uploadet af"-tag i Biblioteket,
+    // så domain-delte dokumenter viser hvem der har delt dem. Batch pr. unik
+    // uploader (≤100 docs, typisk 1-3 uploadere).
+    const uploaderIds = [
+      ...new Set(rows.map((d) => d.added_by_user).filter((u): u is string => !!u)),
+    ];
+    const uploaderNames = new Map<string, string>();
+    if (uploaderIds.length > 0) {
+      const adminAuth = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+      await Promise.all(
+        uploaderIds.map(async (uid) => {
+          try {
+            const { data: u } = await adminAuth.auth.admin.getUserById(uid);
+            const meta = (u?.user?.user_metadata ?? {}) as { full_name?: string; name?: string };
+            const display = meta.full_name || meta.name || u?.user?.email || null;
+            if (display) uploaderNames.set(uid, display);
+          } catch {
+            /* uploader slettet — vis intet tag */
+          }
+        })
+      );
+    }
+
+    const result = rows.map((d) => ({
       id: d.id,
       selskab: d.selskab,
       kategori: d.kategori,
@@ -167,6 +200,9 @@ export async function GET(req: NextRequest) {
       omraade: d.omraade,
       gyldig_fra: d.gyldig_fra,
       is_valid_standard: d.is_valid_standard,
+      // BIZZ-2104: uploader-tag + domain-badge i Bibliotek
+      uploaded_by_name: d.added_by_user ? (uploaderNames.get(d.added_by_user) ?? null) : null,
+      visibility: d.visibility,
     }));
 
     return NextResponse.json(result);
@@ -210,24 +246,13 @@ export async function POST(req: NextRequest) {
 
     const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-    // BIZZ-1907: Sæt visibility baseret på domain-membership.
+    // BIZZ-1907/BIZZ-2104: Sæt visibility baseret på domain-membership.
     // Domain-members deler automatisk; standalone-users er private.
-    let visibility: 'private' | 'domain' = 'private';
-    if (auth.tenantId) {
-      // Check domain membership via raw SQL to avoid eslint domain_ restriction
-      const { createAdminClient: makeAdmin } = await import('@/lib/supabase/admin');
-      const adminC = makeAdmin();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any, no-restricted-syntax
-      const { data: dmRow } = await (adminC as any)
-        .from('domain_member')
-        .select('domain_id')
-        .eq('user_id', user.id)
-        .limit(1)
-        .maybeSingle();
-      if (dmRow?.domain_id) {
-        visibility = 'domain';
-      }
-    }
+    // VIGTIGT: added_by_domain skal være det ÆGTE domain_id fra domain_member
+    // (ikke tenant_id) — RLS-policyen i migration 164 matcher mod domain_id,
+    // så tenant_id i kolonnen gjorde at delingen aldrig virkede.
+    const domainId = await getUserDomainId(user.id);
+    const visibility: 'private' | 'domain' = domainId ? 'domain' : 'private';
 
     // Upsert — dedup via content_hash
     const { data, error } = await serviceClient
@@ -243,7 +268,7 @@ export async function POST(req: NextRequest) {
           parsed_at: raw_content ? new Date().toISOString() : null,
           added_via,
           added_by_user: user.id,
-          added_by_domain: auth.tenantId,
+          added_by_domain: domainId,
           visibility,
         },
         { onConflict: 'content_hash' }
@@ -293,12 +318,28 @@ export async function DELETE(req: NextRequest) {
 
     const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-    // Kun slet egne docs (added_by_user match) eller docs i eget domain
-    const { error } = await serviceClient
+    // BIZZ-2104: Kun uploaderen selv eller en admin af dokumentets domain må
+    // slette (tidligere scoping på added_by_domain=tenantId matchede aldrig,
+    // da kolonnen nu indeholder ægte domain_id).
+    const { data: doc } = await serviceClient
       .from('forsikring_standard_doc')
-      .delete()
+      .select('added_by_user, added_by_domain')
       .eq('id', docId)
-      .eq('added_by_domain', auth.tenantId);
+      .maybeSingle();
+    if (!doc) {
+      return NextResponse.json({ error: 'Dokument ikke fundet' }, { status: 404 });
+    }
+    const adminDomains = await getUserAdminDomainIds(user.id);
+    if (!canModifyStandardDoc(doc, user.id, adminDomains)) {
+      return NextResponse.json(
+        { error: 'Ingen adgang til at slette dette dokument' },
+        {
+          status: 403,
+        }
+      );
+    }
+
+    const { error } = await serviceClient.from('forsikring_standard_doc').delete().eq('id', docId);
 
     if (error) {
       logger.error('[standard-docs DELETE] error:', error.message);
@@ -347,13 +388,40 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: 'Ingen felter at opdatere' }, { status: 400 });
     }
 
+    const sessionClient = await getSessionClient();
+    const {
+      data: { user },
+    } = await sessionClient.auth.getUser();
+    if (!user) {
+      return NextResponse.json({ error: 'Ikke autoriseret' }, { status: 401 });
+    }
+
     const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+
+    // BIZZ-2104: Kun uploaderen selv eller en admin af dokumentets domain må
+    // rette (samme regel som DELETE).
+    const { data: doc } = await serviceClient
+      .from('forsikring_standard_doc')
+      .select('added_by_user, added_by_domain')
+      .eq('id', docId)
+      .maybeSingle();
+    if (!doc) {
+      return NextResponse.json({ error: 'Dokument ikke fundet' }, { status: 404 });
+    }
+    const adminDomains = await getUserAdminDomainIds(user.id);
+    if (!canModifyStandardDoc(doc, user.id, adminDomains)) {
+      return NextResponse.json(
+        { error: 'Ingen adgang til at rette dette dokument' },
+        {
+          status: 403,
+        }
+      );
+    }
 
     const { error } = await serviceClient
       .from('forsikring_standard_doc')
       .update(updates)
-      .eq('id', docId)
-      .eq('added_by_domain', auth.tenantId);
+      .eq('id', docId);
 
     if (error) {
       logger.error('[standard-docs PATCH] error:', error.message);

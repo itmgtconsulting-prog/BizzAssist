@@ -24,6 +24,7 @@ import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
 import { assertAiAllowed } from '@/app/lib/aiGate';
 import { recordAiUsage } from '@/app/lib/aiTracking';
+import { getUserDomainId } from '@/app/lib/forsikring/standardDocDomain';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -217,6 +218,12 @@ VIGTIGT:
     }
 
     // ── 4. Opret forsikring_standard_doc post ────────────────────────────────
+    // BIZZ-2104: Domain-medlemmer deler automatisk (visibility='domain' med
+    // ÆGTE domain_id i added_by_domain — RLS matcher domain_member.domain_id);
+    // standalone-brugere får private. Tidligere blev tenant_id gemt og
+    // visibility aldrig sat, så pdf-uploads var altid private-by-default.
+    const domainId = await getUserDomainId(auth.userId);
+
     const { data: insertData, error: insertErr } = await svc
       .from('forsikring_standard_doc')
       .insert({
@@ -232,7 +239,8 @@ VIGTIGT:
         ai_metadata: aiMetadata,
         added_via: 'pdf_upload',
         added_by_user: auth.userId,
-        added_by_domain: auth.tenantId,
+        added_by_domain: domainId,
+        visibility: domainId ? 'domain' : 'private',
         verified: false,
       })
       .select(

@@ -9,8 +9,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { createServerClient } from '@supabase/ssr';
+import { cookies } from 'next/headers';
 import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { filterAllowedStandardDocIds } from '@/app/lib/forsikring/standardDocVisibility';
 import { getTenantSchemaName } from '@/lib/db/tenant';
 import { getInsuranceApi } from '@/lib/db/insurance';
 import { walkKoncern } from '@/app/lib/forsikring/koncernWalk';
@@ -47,6 +50,32 @@ export const maxDuration = 60;
  * @param navn - Rå selskabsnavn fra police eller standard-betingelse
  * @returns Lowercase navn med ens bindestreger og kollapset whitespace
  */
+/**
+ * Returnerer Supabase server-client med cookie-baseret session (anon key).
+ *
+ * BIZZ-2106: Bruges til at slå standard_doc_ids fra request body op under
+ * brugerens egen RLS-kontekst (samme visibility-regler som BIZZ-1907), så
+ * fremmede tenants private betingelser ikke kan smugles ind i en analyse
+ * via service-role-clienten.
+ *
+ * @returns Supabase client med bruger-auth der respekterer RLS
+ */
+async function getSessionClient() {
+  const cookieStore = await cookies();
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL ?? '',
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '',
+    {
+      cookies: {
+        getAll: () => cookieStore.getAll(),
+        setAll: () => {
+          /* read-only i route handlers */
+        },
+      },
+    }
+  );
+}
+
 function normSelskab(navn: string): string {
   return navn
     .toLowerCase()
@@ -114,6 +143,36 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const schemaName = await getTenantSchemaName(auth.tenantId);
   if (!schemaName) {
     return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+  }
+
+  // BIZZ-2106: Validér standard_doc_ids mod brugerens RLS-synlighed FØR brug.
+  // Opslagene nedenfor sker med service-role (bypasser RLS), så uden dette
+  // filter kunne en bruger angive en fremmed tenants private doc-id og få
+  // indholdet anvendt i sin analyse. Ikke-synlige ids droppes med en advarsel
+  // i loggen (ingen 403 — analysen fortsætter med de tilladte betingelser).
+  let allowedStandardDocIds: string[] = [];
+  if (standard_doc_ids && standard_doc_ids.length > 0) {
+    const sessionClient = await getSessionClient();
+    const { data: visibleDocs, error: visErr } = await sessionClient
+      .from('forsikring_standard_doc')
+      .select('id')
+      .in('id', standard_doc_ids);
+    if (visErr) {
+      logger.warn(
+        '[forsikring/analyser] Visibility-opslag for standard docs fejlede:',
+        visErr.message
+      );
+    }
+    const { allowed, dropped } = filterAllowedStandardDocIds(
+      standard_doc_ids,
+      ((visibleDocs ?? []) as Array<{ id: string }>).map((d) => d.id)
+    );
+    allowedStandardDocIds = allowed;
+    if (dropped.length > 0) {
+      logger.warn(
+        `[forsikring/analyser] BIZZ-2106: Droppede ${dropped.length} standard_doc_ids uden for brugerens synlighed: ${dropped.join(', ')}`
+      );
+    }
   }
 
   try {
@@ -537,13 +596,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       selskab: string;
       krav: Array<{ omraade: string; beskrivelse: string; paakraevet: boolean }>;
     }> = [];
-    if (standard_doc_ids && standard_doc_ids.length > 0) {
+    if (allowedStandardDocIds.length > 0) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: stdDocs } = await (admin as any)
           .from('forsikring_standard_doc')
           .select('id, selskab, titel, raw_content, ai_metadata')
-          .in('id', standard_doc_ids);
+          .in('id', allowedStandardDocIds);
 
         for (const doc of (stdDocs ?? []) as Array<{
           id: string;
@@ -778,13 +837,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // 4a2. BIZZ-1890: Standard betingelser — hent metadata og tilføj INFO-gaps til analysen.
     // Hvert linked standard-betingelses-dokument genererer ét INFO-gap der vejleder
     // analytikeren om at sammenligne policens dækning med selskabets egne vilkår.
-    if (standard_doc_ids && standard_doc_ids.length > 0) {
+    if (allowedStandardDocIds.length > 0) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: stdDocs } = await (admin as any)
           .from('forsikring_standard_doc')
           .select('id, selskab, titel, source_url, kategori')
-          .in('id', standard_doc_ids);
+          .in('id', allowedStandardDocIds);
         // BIZZ-2072: Kobl hvert vilkårs INFO-gap til en police fra SAMME
         // selskab (normaliseret navnematch, jf. BIZZ-2047/2069) — ellers
         // endte fx Topdanmark-vilkår under en Alm. Brand-police, fordi de
@@ -1025,8 +1084,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // BIZZ-1833: Link standard betingelser til analysen (delt tabel, public schema)
-    if (standard_doc_ids && standard_doc_ids.length > 0) {
-      const stdLinks = standard_doc_ids.map((stdId) => ({
+    if (allowedStandardDocIds.length > 0) {
+      const stdLinks = allowedStandardDocIds.map((stdId) => ({
         analyse_id: analyse.id,
         standard_doc_id: stdId,
       }));

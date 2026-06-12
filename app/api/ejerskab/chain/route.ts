@@ -463,7 +463,11 @@ export async function GET(req: NextRequest) {
 
       for (const row of cachedEjere as Array<Record<string, unknown>>) {
         const cvr = row.ejer_cvr as string | null;
-        const rawNavn = (row.ejer_navn as string) ?? 'Ukendt';
+        // BIZZ-2111: person uden navn fra EJF = navne- og adressebeskyttet —
+        // ikke "Ukendt". GDPR: navnet må ikke hentes fra andre kilder.
+        const rawNavn =
+          (row.ejer_navn as string) ??
+          ((row.ejer_type as string) === 'person' ? 'Navne- og adressebeskyttet' : 'Ukendt');
         const navn = cvr ? (cvrNameMap.get(cvr) ?? rawNavn) : rawNavn;
         const type = (row.ejer_type as string) ?? 'ukendt';
         const t = row.ejerandel_taeller as number | null;
@@ -853,6 +857,32 @@ export async function GET(req: NextRequest) {
             edges.push({ from: id, to: mainId, ejerandel: andel });
             ejerDetaljer.push({
               navn: ejer.personNavn,
+              cvr: null,
+              enhedsNummer: null,
+              type: 'person',
+              andel: andel ?? null,
+              adresse: null,
+              overtagelsesdato: ejer.virkningFra ?? null,
+              adkomstType: null,
+              koebesum: null,
+            });
+          } else if (ejer.ejertype === 'person') {
+            // BIZZ-2111: personejer uden navn fra EJF = navne- og adressebeskyttet.
+            // Vi kender ejertype, andel og virkningsdato — kun navnet er beskyttet.
+            // GDPR: navnet må aldrig suppleres fra andre kilder (fx tinglysning).
+            const beskyttetLabel = 'Navne- og adressebeskyttet';
+            const id = `person-beskyttet-${nodes.length}`;
+            if (!seenIds.has(id)) {
+              seenIds.add(id);
+              nodes.push({
+                id,
+                label: beskyttetLabel,
+                type: 'person',
+              });
+            }
+            edges.push({ from: id, to: mainId, ejerandel: andel });
+            ejerDetaljer.push({
+              navn: beskyttetLabel,
               cvr: null,
               enhedsNummer: null,
               type: 'person',

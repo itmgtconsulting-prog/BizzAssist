@@ -918,6 +918,11 @@ async function resolveLejlighederViaBfeCache(
       if (isSelskab) {
         ejer = (ejerInfo.cvr && cvrNavnMap.get(ejerInfo.cvr)) || ejerInfo.navn || 'Ukendt';
         ejertype = 'selskab';
+      } else if (ejerInfo.type === 'person' && !ejerInfo.navn) {
+        // BIZZ-2111: person uden navn fra EJF = navne- og adressebeskyttet.
+        // GDPR: navnet må aldrig hentes fra andre kilder når EJF beskytter det.
+        ejer = 'Navne- og adressebeskyttet';
+        ejertype = 'person';
       } else {
         ejer = ejerInfo.navn || 'Ukendt';
         ejertype = ejerInfo.navn ? 'person' : 'ukendt';
@@ -1199,11 +1204,15 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
           .limit(200);
         for (const row of (ejfRows ?? []) as Array<{
           bfe_nummer: number;
-          ejer_navn: string;
+          ejer_navn: string | null;
           ejer_type: string;
         }>) {
           if (!ejfEjerMap.has(row.bfe_nummer)) {
-            ejfEjerMap.set(row.bfe_nummer, { navn: row.ejer_navn, type: row.ejer_type });
+            // BIZZ-2111: person uden navn = navne- og adressebeskyttet
+            const navn =
+              row.ejer_navn ??
+              (row.ejer_type === 'person' ? 'Navne- og adressebeskyttet' : 'Ukendt');
+            ejfEjerMap.set(row.bfe_nummer, { navn, type: row.ejer_type });
           }
         }
         logger.log(

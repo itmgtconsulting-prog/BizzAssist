@@ -48,7 +48,8 @@ export interface EjfRow {
   bfe_nummer: number;
   ejer_ejf_id: string;
   virkning_fra: string;
-  ejer_navn: string;
+  /** Null for personer med navne- og adressebeskyttelse (BIZZ-2111) */
+  ejer_navn: string | null;
   ejer_foedselsdato: string | null;
   ejer_cvr: string | null;
   ejer_type: 'person' | 'virksomhed';
@@ -111,9 +112,11 @@ export function mapNodeToRow(node: RawEjfNode): EjfRow | null {
 
   let ejerType: 'person' | 'virksomhed';
   let ejfId: string;
-  let navn: string;
+  let navn: string | null;
 
-  if (personId && personNavn) {
+  if (personId) {
+    // BIZZ-2111: null navn = person med navne- og adressebeskyttelse —
+    // rækken skal stadig gemmes, så gældende ejerskab ikke mangler i cachen
     ejerType = 'person';
     ejfId = personId;
     navn = personNavn;

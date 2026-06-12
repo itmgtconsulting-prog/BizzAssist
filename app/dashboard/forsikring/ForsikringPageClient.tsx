@@ -303,9 +303,10 @@ function PropertyRow({
 }) {
   const [expanded, setExpanded] = useState(false);
   const isInsured = group.aktiv.matched_policy_id !== null;
-  /** BIZZ-2096: dækning nedarvet fra police på SFE-adressen (sat af sfeStruktur.ts) */
+  /** BIZZ-2096: dækning nedarvet fra police på SFE-adressen (sat af sfeStruktur.ts).
+      BIZZ-2118: `kaede=true` når arven gik via en søster-SFE (SFE-kæden). */
   const daekketViaSfe =
-    (group.aktiv.raw_data as { daekket_via_sfe?: { sfe_adresse?: string } } | null)
+    (group.aktiv.raw_data as { daekket_via_sfe?: { sfe_adresse?: string; kaede?: boolean } } | null)
       ?.daekket_via_sfe ?? null;
   /** BIZZ-2108: moderselskabets ejerandel i procent (sat af koncernWalk, BIZZ-2102) */
   const ejerandelPctRaw = (
@@ -369,12 +370,22 @@ function PropertyRow({
             <span
               className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shrink-0 truncate max-w-[220px]"
               title={
-                da
-                  ? `Police på SFE-adressen ${daekketViaSfe.sfe_adresse ?? ''} antages at dække hele strukturen`
-                  : `Policy on SFE address ${daekketViaSfe.sfe_adresse ?? ''} is assumed to cover the whole structure`
+                daekketViaSfe.kaede
+                  ? da
+                    ? `Police på ${daekketViaSfe.sfe_adresse ?? ''} antages at dække søster-SFE'er i samme ejerlav med samme ejer (SFE-kæden)`
+                    : `Policy on ${daekketViaSfe.sfe_adresse ?? ''} is assumed to cover sister SFEs in the same cadastral district with the same owner (SFE chain)`
+                  : da
+                    ? `Police på SFE-adressen ${daekketViaSfe.sfe_adresse ?? ''} antages at dække hele strukturen`
+                    : `Policy on SFE address ${daekketViaSfe.sfe_adresse ?? ''} is assumed to cover the whole structure`
               }
             >
-              {da ? 'Dækket via SFE' : 'Covered via SFE'}
+              {daekketViaSfe.kaede
+                ? da
+                  ? 'Dækket via SFE-kæde'
+                  : 'Covered via SFE chain'
+                : da
+                  ? 'Dækket via SFE'
+                  : 'Covered via SFE'}
               {daekketViaSfe.sfe_adresse ? ` ${daekketViaSfe.sfe_adresse}` : ''}
             </span>
           )}

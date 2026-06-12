@@ -36,14 +36,23 @@ const BATCH_SIZE = 5;
  */
 export const SFE_ARV_SCORE = 75;
 
+/**
+ * BIZZ-2118: Score for dækning nedarvet via SFE-KÆDEN (søster-SFE i samme
+ * ejerlav med samme ejer, jf. BIZZ-2094-logikken på ejendomssiden). Lavere
+ * end direkte SFE-arv så de to arve-former kan skelnes i rapporten.
+ */
+export const SFE_KAEDE_SCORE = 72;
+
 /** SFE-tilhør for et aktiv eller en police-adresse */
 export interface SfeOpslag {
   /** SFE-BFE (samlet fast ejendom) som adressen ligger på */
   sfeBfe: number;
+  /** Ejerlavkode for adressens jordstykke — bruges til søster-SFE-kæden (BIZZ-2118) */
+  ejerlavKode: number | null;
 }
 
-/** Modul-level cache pr. lambda-instans: normaliseret adresse → SFE-BFE (null = opslag fejlede) */
-const adresseSfeCache = new Map<string, number | null>();
+/** Modul-level cache pr. lambda-instans: normaliseret adresse → SFE-opslag (null = opslag fejlede) */
+const adresseSfeCache = new Map<string, SfeOpslag | null>();
 
 /**
  * Hent JSON fra DAWA med timeout. Returnerer null ved enhver fejl (best-effort).
@@ -62,12 +71,13 @@ async function fetchDawaJson(url: string): Promise<unknown | null> {
 }
 
 /**
- * Resolve SFE-BFE for en dansk adresse via DAWA (adgangsadresse → jordstykke → BFE).
+ * Resolve SFE-opslag (SFE-BFE + ejerlavkode) for en dansk adresse via DAWA
+ * (adgangsadresse → jordstykke → BFE).
  *
  * @param adresse - Fritekst-adresse, fx "Gefionsvej 47A, 3000 Helsingør"
- * @returns SFE-BFE eller null hvis adressen ikke kan resolves
+ * @returns SFE-opslag eller null hvis adressen ikke kan resolves
  */
-export async function resolveSfeBfeForAdresse(adresse: string): Promise<number | null> {
+export async function resolveSfeForAdresse(adresse: string): Promise<SfeOpslag | null> {
   const key = adresse.toLowerCase().trim();
   if (!key) return null;
   const cached = adresseSfeCache.get(key);
@@ -100,61 +110,144 @@ export async function resolveSfeBfeForAdresse(adresse: string): Promise<number |
   )) as Array<{ bfenummer?: number }> | null;
 
   const sfeBfe = jordstykker?.[0]?.bfenummer ?? null;
-  adresseSfeCache.set(key, sfeBfe);
-  return sfeBfe;
+  const opslag: SfeOpslag | null = sfeBfe ? { sfeBfe, ejerlavKode: ejerlav } : null;
+  adresseSfeCache.set(key, opslag);
+  return opslag;
 }
 
 /** Police-dækning på SFE-niveau: SFE-BFE → police + den adresse der udløste dækningen */
-export type PolicySfeMap = Map<number, { policy: ForsikringPolicy; sfeAdresse: string }>;
+export type PolicySfeMap = Map<
+  number,
+  { policy: ForsikringPolicy; sfeAdresse: string; ejerlavKode: number | null }
+>;
 
-/** Aktiv-index (i matches-array) → SFE-BFE */
-export type AktivSfeMap = Map<number, number>;
+/** Aktiv-index (i matches-array) → SFE-opslag */
+export type AktivSfeMap = Map<number, SfeOpslag>;
+
+/** Resultat af SFE-berigelsen */
+export interface SfeArvResultat {
+  /** Antal aktiver der fik nedarvet dækning */
+  inherited: number;
+  /**
+   * BIZZ-2118: Policy-IDs hvis forsikringssted resolver til en SFE som
+   * porteføljens aktiver tilhører (direkte eller via søster-SFE-kæden).
+   * Bruges til at undertrykke "uden for porteføljen"-advarslen — en police
+   * der anvendes til SFE-arv kan ikke samtidig være uden for porteføljen.
+   */
+  portefoeljePolicyIds: Set<string>;
+}
+
+/**
+ * Læs ejer-CVR fra et aktivs koncernwalk-metadata.
+ *
+ * @param m - Match-resultat
+ * @returns Ejer-CVR eller null
+ */
+function ejerCvrAf(m: MatchResult): string | null {
+  const cvr = (m.aktiv.rawData as { ejer_cvr?: unknown } | undefined)?.ejer_cvr;
+  return typeof cvr === 'string' && cvr.length > 0 ? cvr : null;
+}
 
 /**
  * Ren arve-regel: annotér aktiver med SFE-struktur og nedarv dækning fra
- * policer på SFE-adresser til umatchede aktiver i samme SFE.
+ * policer på SFE-adresser til umatchede aktiver i samme SFE — eller i en
+ * søster-SFE i samme ejerlav med samme ejer (SFE-kæden, BIZZ-2118).
  *
  * Muterer matches in-place (samme konvention som route'ns øvrige berigelse):
  * - Alle ejendoms-aktiver med kendt SFE får `rawData.sfe_bfe` + `rawData.sfe_niveau`
  *   ('sfe' når aktivets eget BFE er SFE-BFE'et, ellers 'underliggende')
  * - Umatchede aktiver hvis SFE er dækket af en police får `bestMatch` med
  *   score {@link SFE_ARV_SCORE} og `rawData.daekket_via_sfe = { sfe_bfe, sfe_adresse }`
+ * - BIZZ-2118: Umatchede aktiver hvis SFE er en SØSTER-SFE (samme ejerlav,
+ *   samme ejer-CVR som aktiver forankret på policens SFE) får `bestMatch`
+ *   med score {@link SFE_KAEDE_SCORE} og `daekket_via_sfe.kaede = true`
  *
  * @param matches - Match-resultater fra matchAssetsToPolicies
- * @param aktivSfe - Aktiv-index → SFE-BFE (kun ejendoms-aktiver med opslag)
+ * @param aktivSfe - Aktiv-index → SFE-opslag (kun ejendoms-aktiver med opslag)
  * @param policySfe - SFE-BFE → dækkende police
- * @returns Antal aktiver der fik nedarvet dækning
+ * @returns Antal nedarvede dækninger + policy-IDs forankret i porteføljen
  */
 export function applySfeArv(
   matches: MatchResult[],
   aktivSfe: AktivSfeMap,
   policySfe: PolicySfeMap
-): number {
+): SfeArvResultat {
+  // BIZZ-2118: Ejere pr. SFE — aktiver forankret på en SFE (via adresse-opslag
+  // ELLER fordi aktivets eget BFE er SFE-BFE'et) bidrager med deres ejer-CVR.
+  const sfeEjere = new Map<number, Set<string>>();
+  const tilfoejEjer = (sfeBfe: number, cvr: string | null) => {
+    if (!cvr) return;
+    const set = sfeEjere.get(sfeBfe) ?? new Set<string>();
+    set.add(cvr);
+    sfeEjere.set(sfeBfe, set);
+  };
+  const forankredeSfeBfes = new Set<number>();
+  for (const [idx, opslag] of aktivSfe) {
+    const m = matches[idx];
+    if (!m || m.aktiv.type !== 'ejendom') continue;
+    forankredeSfeBfes.add(opslag.sfeBfe);
+    tilfoejEjer(opslag.sfeBfe, ejerCvrAf(m));
+  }
+  for (const m of matches) {
+    if (m.aktiv.type === 'ejendom' && m.aktiv.bfe) {
+      forankredeSfeBfes.add(m.aktiv.bfe);
+      tilfoejEjer(m.aktiv.bfe, ejerCvrAf(m));
+    }
+  }
+
+  // BIZZ-2118: Policer hvis SFE er forankret i porteføljen → må ikke flages
+  // "uden for porteføljen".
+  const portefoeljePolicyIds = new Set<string>();
+  for (const [sfeBfe, entry] of policySfe) {
+    if (forankredeSfeBfes.has(sfeBfe)) portefoeljePolicyIds.add(entry.policy.id);
+  }
+
   let inherited = 0;
-  for (const [idx, sfeBfe] of aktivSfe) {
+  for (const [idx, opslag] of aktivSfe) {
     const m = matches[idx];
     if (!m || m.aktiv.type !== 'ejendom') continue;
 
     // Strukturel annotering til UI-gruppering/sortering
     m.aktiv.rawData = {
       ...m.aktiv.rawData,
-      sfe_bfe: sfeBfe,
-      sfe_niveau: m.aktiv.bfe === sfeBfe ? 'sfe' : 'underliggende',
+      sfe_bfe: opslag.sfeBfe,
+      sfe_niveau: m.aktiv.bfe === opslag.sfeBfe ? 'sfe' : 'underliggende',
     };
 
     if (m.bestMatch) continue; // direkte match vinder altid over arv
 
-    const daekning = policySfe.get(sfeBfe);
-    if (!daekning) continue;
+    // 1) Direkte SFE-arv: policen er tegnet på aktivets egen SFE-adresse
+    const daekning = policySfe.get(opslag.sfeBfe);
+    if (daekning) {
+      m.bestMatch = { policy: daekning.policy, score: SFE_ARV_SCORE };
+      m.aktiv.rawData = {
+        ...m.aktiv.rawData,
+        daekket_via_sfe: { sfe_bfe: opslag.sfeBfe, sfe_adresse: daekning.sfeAdresse },
+      };
+      inherited++;
+      continue;
+    }
 
-    m.bestMatch = { policy: daekning.policy, score: SFE_ARV_SCORE };
-    m.aktiv.rawData = {
-      ...m.aktiv.rawData,
-      daekket_via_sfe: { sfe_bfe: sfeBfe, sfe_adresse: daekning.sfeAdresse },
-    };
-    inherited++;
+    // 2) BIZZ-2118: Søster-SFE-kæde — policens SFE ligger i SAMME ejerlav og
+    //    er forankret i porteføljen med SAMME ejer (jf. BIZZ-2094-logikken på
+    //    ejendomssiden). Konservativ: kræver kendt ejer-CVR på begge sider.
+    if (opslag.ejerlavKode == null) continue;
+    const aktivEjer = ejerCvrAf(m);
+    if (!aktivEjer) continue;
+    for (const [polSfeBfe, entry] of policySfe) {
+      if (entry.ejerlavKode !== opslag.ejerlavKode || polSfeBfe === opslag.sfeBfe) continue;
+      if (!sfeEjere.get(polSfeBfe)?.has(aktivEjer)) continue;
+      m.bestMatch = { policy: entry.policy, score: SFE_KAEDE_SCORE };
+      m.aktiv.rawData = {
+        ...m.aktiv.rawData,
+        daekket_via_sfe: { sfe_bfe: polSfeBfe, sfe_adresse: entry.sfeAdresse, kaede: true },
+      };
+      inherited++;
+      portefoeljePolicyIds.add(entry.policy.id);
+      break;
+    }
   }
-  return inherited;
+  return { inherited, portefoeljePolicyIds };
 }
 
 /**
@@ -178,28 +271,34 @@ async function runBatched(tasks: Array<() => Promise<void>>): Promise<void> {
  *
  * @param matches - Match-resultater fra matchAssetsToPolicies (muteres)
  * @param policer - Analysens policer
- * @returns Antal aktiver der fik nedarvet dækning via SFE
+ * @returns Antal nedarvede dækninger + policy-IDs forankret i porteføljen
  */
 export async function berigMedSfeStruktur(
   matches: MatchResult[],
   policer: ForsikringPolicy[]
-): Promise<number> {
+): Promise<SfeArvResultat> {
   const ejendomIdx = matches
     .map((m, i) => ({ m, i }))
     .filter(({ m }) => m.aktiv.type === 'ejendom' && (m.aktiv.adresse ?? '').trim().length > 0)
     .slice(0, MAX_LOOKUPS);
 
   const policerMedAdresse = policer.filter((p) => (p.property_address ?? '').trim().length > 0);
-  if (ejendomIdx.length === 0 || policerMedAdresse.length === 0) return 0;
+  if (ejendomIdx.length === 0 || policerMedAdresse.length === 0) {
+    return { inherited: 0, portefoeljePolicyIds: new Set() };
+  }
 
   // 1. SFE-opslag for police-forsikringssteder
   const policySfe: PolicySfeMap = new Map();
   await runBatched(
     policerMedAdresse.map((p) => async () => {
       const adresse = (p.property_address ?? '').trim();
-      const sfeBfe = await resolveSfeBfeForAdresse(adresse);
-      if (sfeBfe && !policySfe.has(sfeBfe)) {
-        policySfe.set(sfeBfe, { policy: p, sfeAdresse: adresse });
+      const opslag = await resolveSfeForAdresse(adresse);
+      if (opslag && !policySfe.has(opslag.sfeBfe)) {
+        policySfe.set(opslag.sfeBfe, {
+          policy: p,
+          sfeAdresse: adresse,
+          ejerlavKode: opslag.ejerlavKode,
+        });
       }
     })
   );
@@ -208,8 +307,8 @@ export async function berigMedSfeStruktur(
   const aktivSfe: AktivSfeMap = new Map();
   await runBatched(
     ejendomIdx.map(({ m, i }) => async () => {
-      const sfeBfe = await resolveSfeBfeForAdresse((m.aktiv.adresse ?? '').trim());
-      if (sfeBfe) aktivSfe.set(i, sfeBfe);
+      const opslag = await resolveSfeForAdresse((m.aktiv.adresse ?? '').trim());
+      if (opslag) aktivSfe.set(i, opslag);
     })
   );
 

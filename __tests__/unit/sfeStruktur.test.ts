@@ -1,13 +1,15 @@
 /**
- * Unit tests for sfeStruktur (BIZZ-2096) — SFE-struktur-arv af police-dækning.
+ * Unit tests for sfeStruktur (BIZZ-2096 + BIZZ-2118) — SFE-struktur-arv af police-dækning.
  *
  * Tester den rene arve-regel applySfeArv: aktiver i en SFE der er dækket af
  * en police på SFE-adressen får nedarvet match (score 75) + transparent
  * markering i rawData, mens direkte matches og fremmede SFE'er ikke røres.
+ * BIZZ-2118: søster-SFE'er i samme ejerlav med samme ejer arver via
+ * SFE-kæden (score 72, kaede=true).
  */
 
 import { describe, it, expect } from 'vitest';
-import { applySfeArv, SFE_ARV_SCORE } from '@/app/lib/forsikring/sfeStruktur';
+import { applySfeArv, SFE_ARV_SCORE, SFE_KAEDE_SCORE } from '@/app/lib/forsikring/sfeStruktur';
 import type { AktivSfeMap, PolicySfeMap } from '@/app/lib/forsikring/sfeStruktur';
 import type { MatchResult } from '@/app/lib/forsikring/assetMatcher';
 import type { Aktiv } from '@/app/lib/forsikring/koncernWalk';
@@ -53,8 +55,14 @@ function makePolicy(overrides: Partial<ForsikringPolicy> = {}): ForsikringPolicy
 }
 
 /** Ejendoms-aktiv fixture */
-function makeAktiv(bfe: number, adresse: string): Aktiv {
-  return { type: 'ejendom', label: adresse, bfe, adresse };
+function makeAktiv(bfe: number, adresse: string, ejerCvr?: string): Aktiv {
+  return {
+    type: 'ejendom',
+    label: adresse,
+    bfe,
+    adresse,
+    ...(ejerCvr ? { rawData: { ejer_cvr: ejerCvr } } : {}),
+  };
 }
 
 /** Umatchet MatchResult for et aktiv */
@@ -64,6 +72,12 @@ function unmatched(aktiv: Aktiv): MatchResult {
 
 const SFE_BFE = 5322356; // Gefionsvej 47A / Fenrisvej 27A-B (matrikel 65bp)
 const ANDEN_SFE = 5322351; // Fenrisvej 19 — egen SFE
+const EJERLAV = 2000652; // Helsingør Markjorder
+
+/** Police-entry med ejerlav (BIZZ-2118) */
+function policyEntry(policy: ForsikringPolicy, ejerlavKode: number | null = EJERLAV) {
+  return { policy, sfeAdresse: 'Gefionsvej 47A, 3000 Helsingør', ejerlavKode };
+}
 
 describe('applySfeArv — BIZZ-2096', () => {
   it('nedarver dækning til umatchet aktiv i dækket SFE med score 75 og markering', () => {
@@ -73,14 +87,12 @@ describe('applySfeArv — BIZZ-2096', () => {
       unmatched(makeAktiv(123456, 'Fenrisvej 27A, 3000 Helsingør')),
     ];
     const aktivSfe: AktivSfeMap = new Map([
-      [0, SFE_BFE],
-      [1, SFE_BFE],
+      [0, { sfeBfe: SFE_BFE, ejerlavKode: EJERLAV }],
+      [1, { sfeBfe: SFE_BFE, ejerlavKode: EJERLAV }],
     ]);
-    const policySfe: PolicySfeMap = new Map([
-      [SFE_BFE, { policy, sfeAdresse: 'Gefionsvej 47A, 3000 Helsingør' }],
-    ]);
+    const policySfe: PolicySfeMap = new Map([[SFE_BFE, policyEntry(policy)]]);
 
-    const inherited = applySfeArv(matches, aktivSfe, policySfe);
+    const { inherited } = applySfeArv(matches, aktivSfe, policySfe);
 
     expect(inherited).toBe(2);
     for (const m of matches) {
@@ -95,16 +107,14 @@ describe('applySfeArv — BIZZ-2096', () => {
     }
   });
 
-  it('nedarver IKKE til aktiv i en anden SFE (Fenrisvej 19 forbliver uforsikret)', () => {
+  it('nedarver IKKE til aktiv i en anden SFE uden kendt ejer (konservativ kæde)', () => {
     const matches: MatchResult[] = [
       unmatched(makeAktiv(ANDEN_SFE, 'Fenrisvej 19, 3000 Helsingør')),
     ];
-    const aktivSfe: AktivSfeMap = new Map([[0, ANDEN_SFE]]);
-    const policySfe: PolicySfeMap = new Map([
-      [SFE_BFE, { policy: makePolicy(), sfeAdresse: 'Gefionsvej 47A, 3000 Helsingør' }],
-    ]);
+    const aktivSfe: AktivSfeMap = new Map([[0, { sfeBfe: ANDEN_SFE, ejerlavKode: EJERLAV }]]);
+    const policySfe: PolicySfeMap = new Map([[SFE_BFE, policyEntry(makePolicy())]]);
 
-    const inherited = applySfeArv(matches, aktivSfe, policySfe);
+    const { inherited } = applySfeArv(matches, aktivSfe, policySfe);
 
     expect(inherited).toBe(0);
     expect(matches[0].bestMatch).toBeNull();
@@ -120,12 +130,10 @@ describe('applySfeArv — BIZZ-2096', () => {
         candidates: [],
       },
     ];
-    const aktivSfe: AktivSfeMap = new Map([[0, SFE_BFE]]);
-    const policySfe: PolicySfeMap = new Map([
-      [SFE_BFE, { policy: makePolicy(), sfeAdresse: 'Gefionsvej 47A, 3000 Helsingør' }],
-    ]);
+    const aktivSfe: AktivSfeMap = new Map([[0, { sfeBfe: SFE_BFE, ejerlavKode: EJERLAV }]]);
+    const policySfe: PolicySfeMap = new Map([[SFE_BFE, policyEntry(makePolicy())]]);
 
-    const inherited = applySfeArv(matches, aktivSfe, policySfe);
+    const { inherited } = applySfeArv(matches, aktivSfe, policySfe);
 
     expect(inherited).toBe(0);
     expect(matches[0].bestMatch?.policy.id).toBe('pol-direkte');
@@ -138,8 +146,8 @@ describe('applySfeArv — BIZZ-2096', () => {
       unmatched(makeAktiv(123456, 'Fenrisvej 27B, 3000 Helsingør')),
     ];
     const aktivSfe: AktivSfeMap = new Map([
-      [0, SFE_BFE],
-      [1, SFE_BFE],
+      [0, { sfeBfe: SFE_BFE, ejerlavKode: EJERLAV }],
+      [1, { sfeBfe: SFE_BFE, ejerlavKode: EJERLAV }],
     ]);
 
     applySfeArv(matches, aktivSfe, new Map());
@@ -153,12 +161,10 @@ describe('applySfeArv — BIZZ-2096', () => {
   it('springer ikke-ejendom-aktiver over selv ved SFE-opslag', () => {
     const virksomhed: Aktiv = { type: 'virksomhed', label: 'Belvedere', cvr: '24301117' };
     const matches: MatchResult[] = [{ aktiv: virksomhed, bestMatch: null, candidates: [] }];
-    const aktivSfe: AktivSfeMap = new Map([[0, SFE_BFE]]);
-    const policySfe: PolicySfeMap = new Map([
-      [SFE_BFE, { policy: makePolicy(), sfeAdresse: 'Gefionsvej 47A, 3000 Helsingør' }],
-    ]);
+    const aktivSfe: AktivSfeMap = new Map([[0, { sfeBfe: SFE_BFE, ejerlavKode: EJERLAV }]]);
+    const policySfe: PolicySfeMap = new Map([[SFE_BFE, policyEntry(makePolicy())]]);
 
-    expect(applySfeArv(matches, aktivSfe, policySfe)).toBe(0);
+    expect(applySfeArv(matches, aktivSfe, policySfe).inherited).toBe(0);
     expect(matches[0].bestMatch).toBeNull();
   });
 
@@ -166,14 +172,92 @@ describe('applySfeArv — BIZZ-2096', () => {
     const aktiv = makeAktiv(123456, 'Fenrisvej 27A, 3000 Helsingør');
     aktiv.rawData = { ejer_cvr: '24301117' };
     const matches: MatchResult[] = [unmatched(aktiv)];
-    const aktivSfe: AktivSfeMap = new Map([[0, SFE_BFE]]);
-    const policySfe: PolicySfeMap = new Map([
-      [SFE_BFE, { policy: makePolicy(), sfeAdresse: 'Gefionsvej 47A, 3000 Helsingør' }],
-    ]);
+    const aktivSfe: AktivSfeMap = new Map([[0, { sfeBfe: SFE_BFE, ejerlavKode: EJERLAV }]]);
+    const policySfe: PolicySfeMap = new Map([[SFE_BFE, policyEntry(makePolicy())]]);
 
     applySfeArv(matches, aktivSfe, policySfe);
 
     expect(matches[0].aktiv.rawData?.ejer_cvr).toBe('24301117');
     expect(matches[0].aktiv.rawData?.sfe_bfe).toBe(SFE_BFE);
+  });
+});
+
+describe('applySfeArv — SFE-kæde (BIZZ-2118)', () => {
+  const EJER = '24301117'; // BELVEDERE EJENDOMME A/S
+
+  it('nedarver til søster-SFE i samme ejerlav med samme ejer (score 72, kaede=true)', () => {
+    const policy = makePolicy();
+    const matches: MatchResult[] = [
+      // Aktiv forankret på policens SFE (ejer kendt)
+      unmatched(makeAktiv(123456, 'Fenrisvej 27A, 3000 Helsingør', EJER)),
+      // Søster-SFE: Fenrisvej 19 (egen SFE, samme ejerlav, samme ejer)
+      unmatched(makeAktiv(ANDEN_SFE, 'Fenrisvej 19, 3000 Helsingør', EJER)),
+    ];
+    const aktivSfe: AktivSfeMap = new Map([
+      [0, { sfeBfe: SFE_BFE, ejerlavKode: EJERLAV }],
+      [1, { sfeBfe: ANDEN_SFE, ejerlavKode: EJERLAV }],
+    ]);
+    const policySfe: PolicySfeMap = new Map([[SFE_BFE, policyEntry(policy)]]);
+
+    const { inherited, portefoeljePolicyIds } = applySfeArv(matches, aktivSfe, policySfe);
+
+    expect(inherited).toBe(2);
+    // Direkte SFE-arv
+    expect(matches[0].bestMatch?.score).toBe(SFE_ARV_SCORE);
+    // Søster-SFE-kæde
+    expect(matches[1].bestMatch?.policy.id).toBe('pol-1');
+    expect(matches[1].bestMatch?.score).toBe(SFE_KAEDE_SCORE);
+    expect((matches[1].aktiv.rawData?.daekket_via_sfe as { kaede?: boolean }).kaede).toBe(true);
+    expect(portefoeljePolicyIds.has('pol-1')).toBe(true);
+  });
+
+  it('nedarver IKKE via kæden når ejeren afviger', () => {
+    const matches: MatchResult[] = [
+      unmatched(makeAktiv(123456, 'Fenrisvej 27A, 3000 Helsingør', EJER)),
+      unmatched(makeAktiv(ANDEN_SFE, 'Fenrisvej 19, 3000 Helsingør', '99999999')),
+    ];
+    const aktivSfe: AktivSfeMap = new Map([
+      [0, { sfeBfe: SFE_BFE, ejerlavKode: EJERLAV }],
+      [1, { sfeBfe: ANDEN_SFE, ejerlavKode: EJERLAV }],
+    ]);
+    const policySfe: PolicySfeMap = new Map([[SFE_BFE, policyEntry(makePolicy())]]);
+
+    applySfeArv(matches, aktivSfe, policySfe);
+
+    expect(matches[1].bestMatch).toBeNull();
+  });
+
+  it('nedarver IKKE via kæden på tværs af ejerlav', () => {
+    const matches: MatchResult[] = [
+      unmatched(makeAktiv(123456, 'Fenrisvej 27A, 3000 Helsingør', EJER)),
+      unmatched(makeAktiv(ANDEN_SFE, 'Hovedgade 5, 8000 Aarhus', EJER)),
+    ];
+    const aktivSfe: AktivSfeMap = new Map([
+      [0, { sfeBfe: SFE_BFE, ejerlavKode: EJERLAV }],
+      [1, { sfeBfe: ANDEN_SFE, ejerlavKode: 1234567 }],
+    ]);
+    const policySfe: PolicySfeMap = new Map([[SFE_BFE, policyEntry(makePolicy())]]);
+
+    applySfeArv(matches, aktivSfe, policySfe);
+
+    expect(matches[1].bestMatch).toBeNull();
+  });
+
+  it('markerer police som portefølje-forankret når dens SFE rummer aktiver — også uden arv', () => {
+    const matches: MatchResult[] = [
+      // Direkte matchet aktiv på policens SFE — ingen arv nødvendig
+      {
+        aktiv: makeAktiv(123456, 'Fenrisvej 27A, 3000 Helsingør', EJER),
+        bestMatch: { policy: makePolicy({ id: 'pol-direkte' }), score: 90 },
+        candidates: [],
+      },
+    ];
+    const aktivSfe: AktivSfeMap = new Map([[0, { sfeBfe: SFE_BFE, ejerlavKode: EJERLAV }]]);
+    const policySfe: PolicySfeMap = new Map([[SFE_BFE, policyEntry(makePolicy())]]);
+
+    const { inherited, portefoeljePolicyIds } = applySfeArv(matches, aktivSfe, policySfe);
+
+    expect(inherited).toBe(0);
+    expect(portefoeljePolicyIds.has('pol-1')).toBe(true);
   });
 });

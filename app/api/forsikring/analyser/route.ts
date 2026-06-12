@@ -448,10 +448,29 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // BIZZ-1973: Preflight — returnér kun mismatches, kør ikke gap-engine/persist.
     if (body.preflight) {
+      // BIZZ-2118: Undertryk mismatches for policer hvis adresse resolver til
+      // en SFE som porteføljens aktiver tilhører (SFE-kæden) — en police der
+      // dækker porteføljen via SFE-arv er ikke "uden for porteføljen".
+      let preflightMismatches = addressMismatches;
+      if (preflightMismatches.length > 0) {
+        try {
+          const pseudoMatches = aktiver.map((a) => ({
+            aktiv: a,
+            bestMatch: null,
+            candidates: [],
+          }));
+          const { portefoeljePolicyIds } = await berigMedSfeStruktur(pseudoMatches, policer);
+          preflightMismatches = preflightMismatches.filter(
+            (m) => !portefoeljePolicyIds.has(m.policy_id)
+          );
+        } catch {
+          // Best-effort: DAWA-opslag må ikke vælte preflight.
+        }
+      }
       logger.log(
-        `[forsikring/analyser] Preflight: ${addressMismatches.length} adresse-mismatch(es) af ${policer.length} policer`
+        `[forsikring/analyser] Preflight: ${preflightMismatches.length} adresse-mismatch(es) af ${policer.length} policer`
       );
-      return NextResponse.json({ preflight: true, mismatches: addressMismatches });
+      return NextResponse.json({ preflight: true, mismatches: preflightMismatches });
     }
 
     // 3. Match aktiver mod policer
@@ -472,15 +491,27 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // BIZZ-2096: SFE-struktur-arv — en police på en SFE-adresse dækker som
     // udgangspunkt alle underliggende ejendomme i strukturen. Umatchede
     // aktiver i en dækket SFE får nedarvet match (score 75) + markering
-    // `daekket_via_sfe` i raw_data. Best-effort: DAWA-opslag må ikke vælte analysen.
+    // `daekket_via_sfe` i raw_data. BIZZ-2118: arv udvides til søster-SFE'er
+    // i samme ejerlav med samme ejer (score 72, `daekket_via_sfe.kaede`).
+    // Best-effort: DAWA-opslag må ikke vælte analysen.
+    let sfePortefoeljePolicyIds = new Set<string>();
     try {
-      const inherited = await berigMedSfeStruktur(matches, policer);
-      if (inherited > 0) {
-        logger.log(`[forsikring/analyser] SFE-arv: ${inherited} aktiver dækket via SFE-struktur`);
+      const sfeResultat = await berigMedSfeStruktur(matches, policer);
+      sfePortefoeljePolicyIds = sfeResultat.portefoeljePolicyIds;
+      if (sfeResultat.inherited > 0) {
+        logger.log(
+          `[forsikring/analyser] SFE-arv: ${sfeResultat.inherited} aktiver dækket via SFE-struktur/-kæde`
+        );
       }
     } catch (err) {
       logger.warn('[forsikring/analyser] SFE-struktur-berigelse fejlede (best-effort):', err);
     }
+
+    // BIZZ-2118: En police der anvendes til SFE-arv (eller hvis SFE er
+    // forankret i porteføljen) kan ikke samtidig være "uden for porteføljen".
+    const filtreredeMismatches = addressMismatches.filter(
+      (m) => !sfePortefoeljePolicyIds.has(m.policy_id)
+    );
 
     const insuredCount = matches.filter((m) => m.bestMatch !== null).length;
 
@@ -1038,7 +1069,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           as_of_date: as_of_date ?? null,
           // BIZZ-1973: Policer der dækker en adresse uden for porteføljen —
           // surfaces i rapport-banner + DOCX selv hvis brugeren valgte "fortsæt".
-          address_mismatches: addressMismatches,
+          address_mismatches: filtreredeMismatches,
           // BIZZ-2067: Sikrede-adresser uden for porteføljen (info, ikke advarsel)
           sikrede_adresser_uden_for_portefoelje: sikredeAdresserUdenForPortefoelje,
           // BIZZ-2120: Præmieopkrævninger uden dækningsdetaljer (advarsel)
@@ -1177,7 +1208,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       insured_count: insuredCount,
       gaps_count: allGaps.length,
       total_risk_score: totalRiskScore,
-      address_mismatches: addressMismatches,
+      address_mismatches: filtreredeMismatches,
       // BIZZ-2067: Sikrede-adresser uden for porteføljen (info, ikke advarsel)
       sikrede_adresser_uden_for_portefoelje: sikredeAdresserUdenForPortefoelje,
       std_betingelser_advarsel: stdBetingelserAdvarsel,

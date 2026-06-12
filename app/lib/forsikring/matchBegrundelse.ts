@@ -36,6 +36,12 @@ const BEGRUNDELSER: Record<string, Record<number, [string, string]>> = {
       'Dækket via police på ejendommens SFE-adresse',
       'Covered via policy on the property’s SFE address',
     ],
+    // BIZZ-2118: nedarvet dækning via søster-SFE i samme ejerlav med samme
+    // ejer (sfeStruktur.ts SFE_KAEDE_SCORE)
+    72: [
+      'Dækket via SFE-kæden — søster-SFE i samme ejerlav med samme ejer',
+      'Covered via the SFE chain — sister SFE in the same cadastral district with the same owner',
+    ],
     70: [
       'Vejnavn matcher — husnummeret matcher delvist',
       'Street name matches — house number partially matches',
@@ -43,6 +49,15 @@ const BEGRUNDELSER: Record<string, Record<number, [string, string]>> = {
   },
   virksomhed: {
     100: ['CVR-nummer matcher policens forsikringstager', 'CVR number matches the policyholder'],
+    // BIZZ-2120: selskabet står på policens parsede sikrede-liste
+    95: [
+      'CVR-nummer matcher policens sikrede-liste',
+      'CVR number matches the policy’s insured-companies list',
+    ],
+    85: [
+      'Selskabet står på policens sikrede-liste',
+      'The company appears on the policy’s insured-companies list',
+    ],
     75: ['Virksomhedsnavnet matcher forsikringstageren', 'Company name matches the policyholder'],
     70: [
       'Policen dækker erhvervsaktivitet (erhvervs-/ansvars-/driftspolice)',

@@ -51,6 +51,8 @@ import { getMatchBegrundelse } from '@/app/lib/forsikring/matchBegrundelse';
 
 interface PolicyRow {
   id: string;
+  /** BIZZ-2119: kildedokument — sat på policer fra analyse-detail API'et */
+  document_id?: string | null;
   policy_number: string;
   insurer_name: string;
   policyholder_name: string;
@@ -183,6 +185,8 @@ interface AnalyseDetail {
   coverages?: AnalyseCoverage[];
   /** BIZZ-2099: Alle analysens policer — bruges til "Fundne forsikringer" */
   policies?: AnalysePolicy[];
+  /** BIZZ-2119: Analysens dokumenter — bruges til kildedokument-visning ved matches */
+  documents?: Array<{ id: string; original_name: string }>;
 }
 
 /** Property grouped with its matched policy and relevant gaps */
@@ -192,6 +196,8 @@ interface PropertyGroup {
   gaps: AnalyseGap[];
   /** BIZZ-2084: Aktive dækninger (is_covered=true) på den matchede police */
   coverages: AnalyseCoverage[];
+  /** BIZZ-2119: Filnavn på den matchede polices kildedokument (hvis kendt) */
+  matchedDocName?: string | null;
 }
 
 // ─── BIZZ-1389: Samlet ejendomsvisning ──────────────────────────
@@ -489,6 +495,15 @@ function PropertyRow({
                 </Link>{' '}
                 ({group.matchedPolicy.insurer_name})
               </div>
+              {/* BIZZ-2119: vis hvilket dokument den matchede police stammer fra */}
+              {group.matchedDocName && (
+                <div>
+                  <span className="text-slate-400">
+                    {da ? 'Kildedokument:' : 'Source document:'}
+                  </span>{' '}
+                  {group.matchedDocName}
+                </div>
+              )}
               {group.matchedPolicy.annual_premium_dkk && (
                 <div>
                   <span className="text-slate-400">{da ? 'Præmie:' : 'Premium:'}</span>{' '}
@@ -1015,6 +1030,17 @@ function UnifiedAnalyseView({
   // Build a policy lookup
   const policyById = new Map(policies.map((p) => [p.id, p]));
 
+  // BIZZ-2119: Matchede policer kan ligge uden for tenant-listens scope (fx
+  // koncern-policer fra et andet dokument-scope). Detail-API'et returnerer dem
+  // nu eksplicit i detail.policies — supplér opslaget så UI'et altid kan vise
+  // selskab + policenummer i stedet for fallback-teksten.
+  for (const p of detail.policies ?? []) {
+    if (!policyById.has(p.id)) policyById.set(p.id, p as unknown as PolicyRow);
+  }
+
+  // BIZZ-2119: Kildedokument-navne til matchede policer
+  const docNameById = new Map((detail.documents ?? []).map((d) => [d.id, d.original_name]));
+
   // BIZZ-2084: Aktive dækninger grupperet per police — til grøn "Dækket"-visning
   const coveragesByPolicy = new Map<string, AnalyseCoverage[]>();
   for (const cov of detail.coverages ?? []) {
@@ -1054,15 +1080,20 @@ function UnifiedAnalyseView({
           )
         : [];
     const aktivGaps = dedupGaps(rawGaps);
+    const matchedPolicy = aktiv.matched_policy_id
+      ? (policyById.get(aktiv.matched_policy_id) ?? null)
+      : null;
     allGroups.push({
       aktiv,
-      matchedPolicy: aktiv.matched_policy_id
-        ? (policyById.get(aktiv.matched_policy_id) ?? null)
-        : null,
+      matchedPolicy,
       gaps: aktivGaps,
       coverages: aktiv.matched_policy_id
         ? (coveragesByPolicy.get(aktiv.matched_policy_id) ?? [])
         : [],
+      // BIZZ-2119: kildedokument-filnavn for den matchede police
+      matchedDocName: matchedPolicy?.document_id
+        ? (docNameById.get(matchedPolicy.document_id) ?? null)
+        : null,
     });
   }
 
@@ -3927,6 +3958,10 @@ function AnalyseDetailSection({
           const pols = ((detail as unknown as Record<string, unknown>).policies ??
             []) as PolicyRow[];
           const polById = new Map(pols.map((p) => [p.id, p]));
+          // BIZZ-2119: Kildedokument-navne til matchede policer
+          const docNameById2 = new Map(
+            (detail.documents ?? []).map((d) => [d.id, d.original_name])
+          );
 
           // BIZZ-2084: Aktive dækninger per police — til grøn "Dækket"-visning
           const covByPolicy = new Map<string, AnalyseCoverage[]>();
@@ -3971,15 +4006,20 @@ function AnalyseDetailSection({
                     )
                   )
                 : [];
+            const matchedPolicy = aktiv.matched_policy_id
+              ? (polById.get(aktiv.matched_policy_id) ?? null)
+              : null;
             return {
               aktiv,
-              matchedPolicy: aktiv.matched_policy_id
-                ? (polById.get(aktiv.matched_policy_id) ?? null)
-                : null,
+              matchedPolicy,
               gaps: aktivGaps,
               coverages: aktiv.matched_policy_id
                 ? (covByPolicy.get(aktiv.matched_policy_id) ?? [])
                 : [],
+              // BIZZ-2119: kildedokument-filnavn for den matchede police
+              matchedDocName: matchedPolicy?.document_id
+                ? (docNameById2.get(matchedPolicy.document_id) ?? null)
+                : null,
             };
           });
 

@@ -105,6 +105,48 @@ export async function GET(
       .map((a: { matched_policy_id: string | null }) => a.matched_policy_id)
       .filter(Boolean) as string[];
 
+    // BIZZ-2119: Matchede policer kan ligge uden for analysens dokument-scope
+    // (fx legacy-analyser uden junction-rækker eller delte koncern-policer).
+    // Hent de manglende police-rækker eksplicit, så UI'et altid kan vise
+    // selskab + policenummer for hvert match i stedet for en fallback-tekst.
+    const knownPolicyIds = new Set((policies as Array<{ id: string }>).map((p) => p.id));
+    const missingPolicyIds = [...new Set(matchedPolicyIds)].filter(
+      (pid) => !knownPolicyIds.has(pid)
+    );
+    if (missingPolicyIds.length > 0) {
+      const { data: extraPolicies } = await db
+        .from('forsikring_policies')
+        .select('*')
+        .in('id', missingPolicyIds)
+        .eq('tenant_id', auth.tenantId);
+      if (extraPolicies && extraPolicies.length > 0) {
+        policies = [...policies, ...extraPolicies];
+        // Hent også kildedokument-navne for de ekstra policer, så UI'et kan
+        // vise hvilket dokument matchet stammer fra.
+        const extraDocIds = [
+          ...new Set(
+            (extraPolicies as Array<{ document_id: string | null }>)
+              .map((p) => p.document_id)
+              .filter((d): d is string => Boolean(d) && !docIds.includes(d as string))
+          ),
+        ];
+        if (extraDocIds.length > 0) {
+          const { data: extraDocs } = await db
+            .from('forsikring_documents')
+            .select('id, original_name, parse_status, parse_error, created_at')
+            .in('id', extraDocIds)
+            .eq('tenant_id', auth.tenantId);
+          documents = [
+            ...documents,
+            ...(extraDocs ?? []).map((d: Record<string, unknown>) => ({
+              ...d,
+              source: 'matched',
+            })),
+          ];
+        }
+      }
+    }
+
     let gaps: unknown[] = [];
 
     // Først: prøv analyse-scoped gaps

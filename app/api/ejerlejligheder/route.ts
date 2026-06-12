@@ -24,6 +24,7 @@ import { darResolveAdresseId } from '@/app/lib/dar';
 import { resolveEnhedByDawaId } from '@/app/lib/fetchBbrData';
 import { fetchTinglysningPriceRowsByBfe } from '@/app/lib/tinglysningPrices';
 import { fetchMatEjerlejlighederByBfe } from '@/app/lib/matEjerlejlighed';
+import { fetchEjfEjereDirekt } from '@/app/lib/ejerskab/fetchEjfEjereDirekt';
 // EJF/Datafordeler er ikke nødvendig — alt data hentes fra tinglysning summarisk XML
 
 // ─── Query param validation ─────────────────────────────────────────────────
@@ -791,6 +792,76 @@ async function resolveLejlighederViaBfeCache(
     }
   } catch {
     /* ejer-opslag non-fatal — enheder returneres med 'Ukendt' */
+  }
+
+  // Trin 3b (BIZZ-2088): BFE'er uden gældende ejf_ejerskab-række. Delta-syncen
+  // har huller hvor det seneste ejerskifte aldrig kom ind — tabellen har kun
+  // historiske rækker. Live EJF-opslag (fetchEjfEjereDirekt) henter den
+  // aktuelle ejer; hvis EJF heller intet giver, vises nyeste historiske ejer
+  // som "seneste kendte ejer" frem for 'Ukendt'.
+  const missingBfes = bfes.filter((b) => !ejerMap.has(b));
+  if (missingBfes.length > 0) {
+    const EJER_CONCURRENCY = 5;
+    for (let i = 0; i < missingBfes.length; i += EJER_CONCURRENCY) {
+      const batch = missingBfes.slice(i, i + EJER_CONCURRENCY);
+      await Promise.allSettled(
+        batch.map(async (bfe) => {
+          try {
+            const { ejere } = await fetchEjfEjereDirekt(bfe);
+            const e = ejere[0];
+            if (!e) return;
+            ejerMap.set(bfe, {
+              navn: e.personNavn ?? e.virksomhedsnavn ?? (e.cvr ? `CVR ${e.cvr}` : ''),
+              type: e.ejertype,
+              cvr: e.cvr ?? null,
+            });
+          } catch {
+            /* live-opslag non-fatal */
+          }
+        })
+      );
+    }
+    // Historisk fallback for de BFE'er hvor live EJF heller intet gav
+    const stillMissing = missingBfes.filter((b) => !ejerMap.has(b));
+    if (stillMissing.length > 0) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: histRows } = (await (admin as any)
+          .from('ejf_ejerskab')
+          .select('bfe_nummer, ejer_navn, ejer_type, ejer_cvr, virkning_fra')
+          .in('bfe_nummer', stillMissing)
+          .order('virkning_fra', { ascending: false, nullsFirst: false })
+          .limit(1000)) as {
+          data: Array<{
+            bfe_nummer: number;
+            ejer_navn: string | null;
+            ejer_type: string | null;
+            ejer_cvr: string | null;
+          }> | null;
+        };
+        for (const row of histRows ?? []) {
+          // Nyeste-først — første række pr. BFE er seneste kendte ejer
+          if (!ejerMap.has(row.bfe_nummer)) {
+            ejerMap.set(row.bfe_nummer, {
+              navn: row.ejer_navn ?? '',
+              type: row.ejer_type ?? '',
+              cvr: row.ejer_cvr ?? null,
+            });
+          }
+        }
+      } catch {
+        /* historisk fallback non-fatal */
+      }
+    }
+  }
+
+  // BIZZ-2088: ejer_navn kan være rå "CVR NNNNNNNN" uden udfyldt ejer_cvr —
+  // udtræk CVR fra navnet så trin 4 kan resolve det rigtige virksomhedsnavn.
+  for (const e of ejerMap.values()) {
+    if (!e.cvr) {
+      const m = e.navn.match(/^CVR\s*(\d{8})$/i);
+      if (m) e.cvr = m[1];
+    }
   }
 
   // Trin 4: selskabsnavn for CVR-ejere (ejf_ejerskab.ejer_navn er typisk

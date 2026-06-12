@@ -107,54 +107,12 @@ export async function GET(request: NextRequest) {
 
         for (const bfe of missing) {
           try {
-            // Fallback 1: DAWA /bfe
-            const dawaRes = await fetchDawa(
-              `${DAWA_BASE_URL}/bfe/${bfe}`,
-              { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
-              { caller: 'cron.sync-bfe-adresse' }
-            );
+            // BIZZ-2092: Tidligere Fallback 1 (DAWA /bfe/{bfe}) er fjernet —
+            // endpointet er NEDLAGT og returnerer gateway-HTML, som fik
+            // json-parsing til at kaste og dermed sprang ALLE øvrige
+            // fallbacks over for den pågældende BFE.
 
-            if (dawaRes.ok) {
-              const json = await dawaRes.json();
-              const bel = (
-                json as {
-                  beliggenhedsadresse?: {
-                    vejnavn?: string;
-                    husnr?: string;
-                    etage?: string;
-                    dør?: string;
-                    postnr?: string;
-                    postnrnavn?: string;
-                    kommunenavn?: string;
-                    kommunekode?: string;
-                    id?: string;
-                  };
-                }
-              ).beliggenhedsadresse;
-              if (bel?.vejnavn) {
-                await admin.from('bfe_adresse_cache').upsert(
-                  {
-                    bfe_nummer: bfe,
-                    adresse: `${bel.vejnavn} ${bel.husnr ?? ''}`.trim(),
-                    etage: bel.etage ?? null,
-                    doer: bel.dør ?? null,
-                    postnr: bel.postnr ?? null,
-                    postnrnavn: bel.postnrnavn ?? null,
-                    kommune: bel.kommunenavn ?? null,
-                    kommune_kode: bel.kommunekode ?? null,
-                    dawa_id: bel.id ?? null,
-                    ejendomstype: (json as { ejendomstype?: string }).ejendomstype ?? null,
-                    kilde: 'cron_dawa',
-                    sidst_opdateret: new Date().toISOString(),
-                  },
-                  { onConflict: 'bfe_nummer' }
-                );
-                resolved++;
-                continue;
-              }
-            }
-
-            // Fallback 2: VP ES
+            // Fallback 1: VP ES
             const vpRes = await fetch(
               'https://api-fs.vurderingsportalen.dk/preliminaryproperties/_search',
               {
@@ -205,9 +163,11 @@ export async function GET(request: NextRequest) {
               }
             }
 
-            // Fallback 3: DAWA jordstykke — for SFE-BFE'er der ikke har
-            // beliggenhedsadresse (DAWA /bfe/ returnerer fejl for SFE'er).
-            // Via jordstykke finder vi matrikel → adresser → bruger første adresse.
+            // Fallback 2: DAWA jordstykke — for SFE-BFE'er. BIZZ-2092: Resolver
+            // ALTID pr. BFE via jordstykker?bfenummer (aldrig gruppens/SFE'ens
+            // hovedadresse på tværs af BFE'er). Adresse inkluderer husnr.
+            // Ubebyggede grunde (jordstykke uden adgangsadresser) gemmes med
+            // matrikelbetegnelse som adresse i stedet for en nabo-adresse.
             const jordRes = await fetchDawa(
               `${DAWA_BASE_URL}/jordstykker?bfenummer=${bfe}&format=json`,
               { signal: AbortSignal.timeout(8000) },
@@ -215,14 +175,15 @@ export async function GET(request: NextRequest) {
             );
             if (jordRes.ok) {
               const jordstykker = (await jordRes.json()) as Array<{
-                ejerlav?: { kode?: number };
+                ejerlav?: { kode?: number; navn?: string };
                 matrikelnr?: string;
               }>;
               const ejerlav = jordstykker[0]?.ejerlav?.kode;
+              const ejerlavNavn = jordstykker[0]?.ejerlav?.navn;
               const matr = jordstykker[0]?.matrikelnr;
               if (ejerlav && matr) {
                 const adrRes = await fetchDawa(
-                  `${DAWA_BASE_URL}/adresser?ejerlavkode=${ejerlav}&matrikelnr=${encodeURIComponent(matr)}&format=json&struktur=mini&per_side=1`,
+                  `${DAWA_BASE_URL}/adgangsadresser?ejerlavkode=${ejerlav}&matrikelnr=${encodeURIComponent(matr)}&format=json&struktur=mini&per_side=1`,
                   { signal: AbortSignal.timeout(8000) },
                   { caller: 'cron.sync-bfe-adresse.matrikel-adr' }
                 );
@@ -232,6 +193,7 @@ export async function GET(request: NextRequest) {
                     husnr?: string;
                     postnr?: string;
                     postnrnavn?: string;
+                    kommunekode?: string;
                     id?: string;
                   }>;
                   const a = adresser[0];
@@ -239,9 +201,10 @@ export async function GET(request: NextRequest) {
                     await admin.from('bfe_adresse_cache').upsert(
                       {
                         bfe_nummer: bfe,
-                        adresse: a.vejnavn,
+                        adresse: `${a.vejnavn} ${a.husnr ?? ''}`.trim(),
                         postnr: a.postnr,
                         postnrnavn: a.postnrnavn ?? null,
+                        kommune_kode: a.kommunekode ?? null,
                         dawa_id: a.id ?? null,
                         kilde: 'cron_jordstykke',
                         sidst_opdateret: new Date().toISOString(),
@@ -252,10 +215,24 @@ export async function GET(request: NextRequest) {
                     continue;
                   }
                 }
+                // Jordstykke fundet men ingen adgangsadresser → ubebygget grund.
+                // Gem matrikelbetegnelsen så vi aldrig viser en nabo-adresse.
+                await admin.from('bfe_adresse_cache').upsert(
+                  {
+                    bfe_nummer: bfe,
+                    adresse: `${matr} ${ejerlavNavn ?? ''}`.trim(),
+                    dawa_id: null,
+                    kilde: 'cron_grund',
+                    sidst_opdateret: new Date().toISOString(),
+                  },
+                  { onConflict: 'bfe_nummer' }
+                );
+                resolved++;
+                continue;
               }
             }
 
-            // Fallback 4: DAWA adgangsadresse via adresseId — for BFEs der har
+            // Fallback 3: DAWA adgangsadresse via adresseId — for BFEs der har
             // en adgangsadresse-id i ejf_ejerskab/ejf_administrator men ikke
             // en beliggenhedsadresse via /bfe/ endpoint.
             try {
@@ -304,10 +281,10 @@ export async function GET(request: NextRequest) {
                 }
               }
             } catch {
-              /* Fallback 4 non-fatal */
+              /* Fallback 3 non-fatal */
             }
 
-            // BIZZ-1850: Alle 4 fallbacks fejlede → marker som unresolvable så cron
+            // BIZZ-1850: Alle 3 fallbacks fejlede → marker som unresolvable så cron
             // ikke retry hver dag. next_retry_after = nu + 90 dage så datakilder kan
             // få nye data over tid.
             const retryAfter = new Date(

@@ -1120,6 +1120,84 @@ describe('runPortfolioChecks — GAP-067: Branchekrav-aggregat', () => {
     expect(manglende).not.toContain('huslejetab');
     expect(manglende).not.toContain('driftstab');
   });
+
+  // BIZZ-2122: Engroshandel (NACE 46) kræver vareforsikring ('transport'),
+  // IKKE 'transportansvar' (fragtførerens ansvar, NACE 49-53). Før fixet kunne
+  // kravet aldrig opfyldes af en transport-dækning → permanent rød finding.
+  it('BIZZ-2122: engroshandel med transport-coverage opfylder branchekravet', () => {
+    const pol = makePolicy({ business_activity: 'Engroshandel med telekommunikationsudstyr' });
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    coveragesByPolicy.set(pol.id, [
+      makeCoverage('erhvervsansvar'),
+      makeCoverage('brand_el'),
+      makeCoverage('transport'),
+      makeCoverage('driftstab'),
+    ]);
+
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [pol],
+        coveragesByPolicy,
+        branche: {
+          hovedbranche: '465220',
+          hovedbranche_tekst: 'Engroshandel med telekommunikationsudstyr',
+          bibrancher: [],
+        },
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-067')).toBeUndefined();
+  });
+
+  it('BIZZ-2122: transport-krav opfyldes via policy-tekst (DBRAMANTE-casen)', () => {
+    // Transport-delpolicens coverages er fejlkodet erhvervsansvar (BIZZ-2121),
+    // men business_activity "Transport" skal stadig opfylde kravet via
+    // tekst-fallback'en i isKravCovered.
+    const transportPol = makePolicy({ business_activity: 'Transport' });
+    const loesoerePol = makePolicy({ business_activity: 'Erhvervsløsøre - Indland' });
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    coveragesByPolicy.set(transportPol.id, [makeCoverage('erhvervsansvar')]);
+    coveragesByPolicy.set(loesoerePol.id, [
+      makeCoverage('erhvervsansvar'),
+      makeCoverage('brand_el'),
+      makeCoverage('driftstab'),
+    ]);
+
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [transportPol, loesoerePol],
+        coveragesByPolicy,
+        branche: {
+          hovedbranche: '465220',
+          hovedbranche_tekst: 'Engroshandel med telekommunikationsudstyr',
+          bibrancher: [],
+        },
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-067')).toBeUndefined();
+  });
+
+  it('BIZZ-2122: transportansvar kræves fortsat for landtransport (NACE 49)', () => {
+    const pol = makePolicy({ business_activity: 'Godskørsel' });
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    // Vareforsikring alene opfylder IKKE transportansvar-kravet
+    coveragesByPolicy.set(pol.id, [makeCoverage('transport')]);
+
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [pol],
+        coveragesByPolicy,
+        branche: {
+          hovedbranche: '494100',
+          hovedbranche_tekst: 'Vejgodstransport',
+          bibrancher: [],
+        },
+      })
+    );
+    const gap = gaps.find((g) => g.check_id === 'GAP-067');
+    expect(gap).toBeDefined();
+    const manglende = (gap?.source_data as { manglende_krav?: string[] }).manglende_krav ?? [];
+    expect(manglende).toContain('transportansvar');
+  });
 });
 
 describe('runGapEngine — GAP-STD-BASELINE coverage-alias (BIZZ-1939)', () => {

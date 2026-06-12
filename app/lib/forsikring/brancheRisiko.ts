@@ -392,7 +392,11 @@ const BRANCHE_KRAV: Array<{ prefix: string; krav: BrancheKrav }> = [
     krav: {
       kategori: 'hoejrisiko',
       label: 'Engroshandel',
-      kraevede_daekninger: ['erhvervsansvar', 'brand', 'transportansvar', 'driftstab'],
+      // BIZZ-2122: 'transport' (vareforsikring/gods) — IKKE 'transportansvar'.
+      // Transportansvar er fragtførerens ansvar (NACE 49-53); en engroshandel
+      // der sender egne varer skal have vareforsikring, og kravet kunne aldrig
+      // opfyldes af en transport-dækning → permanent rød finding.
+      kraevede_daekninger: ['erhvervsansvar', 'brand', 'transport', 'driftstab'],
     },
   },
   {

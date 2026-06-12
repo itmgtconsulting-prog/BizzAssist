@@ -1404,6 +1404,9 @@ const KRAV_TO_COVERAGE_CODE: Record<string, CoverageCode> = {
   indbrud: 'indbrudstyveri',
   godsforsikring: 'transport',
   maskinkasko: 'maskiner_itudstyr',
+  // BIZZ-2122: 'transport' = vareforsikring (varer under transport/gods) —
+  // krav for engros-/detailhandel der sender egne varer (NACE 46/47)
+  transport: 'transport',
 };
 
 /**
@@ -1433,6 +1436,7 @@ const KRAV_LABELS_DA: Record<string, string> = {
   rejsegods: 'Rejsegods',
   kasko: 'Kasko',
   kriminalitet: 'Kriminalitetsforsikring',
+  transport: 'Transport (vareforsikring)',
 };
 
 /**

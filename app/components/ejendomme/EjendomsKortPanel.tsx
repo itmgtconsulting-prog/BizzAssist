@@ -22,6 +22,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import Map, {
   Marker,
@@ -191,7 +192,11 @@ export default function EjendomsKortPanel({ items, lang, onClose }: Props) {
     </div>
   );
 
-  return (
+  // Portal til document.body: værts-siderne har transformerede/overflow-
+  // ancestors der ellers fanger fixed-elementet i en lavere stacking context
+  // (global topbar tegnede hen over panel-headeren). Komponenten loades med
+  // ssr:false, så document findes altid her.
+  return createPortal(
     <>
       {/* Dark theme på Mapbox-popup (default er hvid baggrund) */}
       <style>{`
@@ -349,6 +354,7 @@ export default function EjendomsKortPanel({ items, lang, onClose }: Props) {
           )}
         </div>
       </div>
-    </>
+    </>,
+    document.body
   );
 }

@@ -33,6 +33,7 @@ import {
   Scale,
   X,
   Newspaper,
+  MapPin,
   Globe,
   Sparkles,
   RefreshCw,
@@ -46,6 +47,8 @@ import type { RegnskabsAar } from '@/app/api/regnskab/xbrl/route';
 import type { RelateretVirksomhed } from '@/app/api/cvr-public/related/route';
 import type { CvrHandelData } from '@/app/api/salgshistorik/cvr/route';
 import type { EjendomSummary } from '@/app/api/ejendomme-by-owner/route';
+import type { DiagramNode } from '@/app/components/diagrams/DiagramData';
+import type { KortItem } from '@/app/lib/ejendomsKortGeokod';
 import CreateCaseModal from '@/app/components/sager/CreateCaseModal';
 import { useDomainMemberships } from '@/app/hooks/useDomainMemberships';
 import type { PersonbogHaeftelse, PersonbogDokument } from '@/app/api/tinglysning/personbog/route';
@@ -70,6 +73,10 @@ import VirksomhedTinglysningTab from './tabs/VirksomhedTinglysningTab';
 // prettier-ignore
 /** Diagram v2 — feature-flagged, kun synlig i dev/preview */
 const DiagramV2 = dynamic(() => import('@/app/components/diagrams/DiagramV2'), { ssr: false });
+/** BIZZ-2090: Ejendomskort-panel — Mapbox kræver browser, dynamic + ssr:false */
+const EjendomsKortPanel = dynamic(() => import('@/app/components/ejendomme/EjendomsKortPanel'), {
+  ssr: false,
+});
 
 import {
   erTrackedCompany,
@@ -413,6 +420,60 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   const [ejendommeTotalBfe, setEjendommeTotalBfe] = useState(0);
   /** BIZZ-455: Toggle for visning af tidligere ejede (solgte) ejendomme */
   const [visSolgte, setVisSolgte] = useState(false);
+
+  /** BIZZ-2090: Ejendomskort-panel åben/lukket */
+  const [kortPanelÅben, setKortPanelÅben] = useState(false);
+  /** BIZZ-2090: Property-noder fra den aktuelle diagram-graf (inkl. Udvid) */
+  const [diagramEjendomsNoder, setDiagramEjendomsNoder] = useState<DiagramNode[]>([]);
+
+  /** BIZZ-2090: Stabil callback til DiagramV2 → kort-panel node-lift */
+  const handleDiagramPropertyNodes = useCallback((nodes: DiagramNode[]) => {
+    setDiagramEjendomsNoder(nodes);
+  }, []);
+
+  /**
+   * BIZZ-2090: Ejendomme til kort-panelet afhængigt af aktiv tab:
+   * - Diagram-tab: property-noderne fra den aktuelle graf (inkl. Udvid).
+   *   dawaId udtrækkes fra node-linket når det er en DAWA-UUID (ejerlejlig-
+   *   heder linker med BFE i stedet — så bruges BFE/adresse til geokodning).
+   * - Ejendomme-tab (og øvrige tabs): porteføljelisten; fallback til
+   *   virksomhedens egen adresse hvis porteføljen er tom.
+   */
+  const kortItems = useMemo<KortItem[]>(() => {
+    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (aktivTab === 'diagram' && diagramEjendomsNoder.length > 0) {
+      return diagramEjendomsNoder.map((n) => {
+        const linkId = n.link?.split('/').pop() ?? '';
+        return {
+          bfe: n.bfeNummer ?? null,
+          adresse: n.label || null,
+          dawaId: uuidRe.test(linkId) ? linkId : null,
+        };
+      });
+    }
+    if (ejendommeData.length > 0) {
+      return ejendommeData
+        .filter((e) => e.aktiv !== false)
+        .map((e) => ({
+          bfe: e.bfeNummer,
+          adresse:
+            e.adresse && e.postnr ? `${e.adresse}, ${e.postnr} ${e.by ?? ''}`.trim() : e.adresse,
+          dawaId: e.dawaId,
+        }));
+    }
+    // Fallback: virksomhedens egen adresse (øvrige tabs / tom portefølje)
+    if (data?.address) {
+      return [
+        {
+          bfe: null,
+          adresse:
+            `${data.address}${data.zipcode ? `, ${data.zipcode} ${data.city ?? ''}` : ''}`.trim(),
+          label: data.name ?? undefined,
+        },
+      ];
+    }
+    return [];
+  }, [aktivTab, diagramEjendomsNoder, ejendommeData, data]);
   // diagramGraphStable fjernet — DiagramV2 erstatter det gamle DiagramForce
   /** Kommasepereret CVR-nøgle der sidst blev hentet — forhindrer duplicate-fetches */
   const ejendomFetchKeyRef = useRef('');
@@ -1590,6 +1651,23 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                 <Newspaper size={14} />
                 {lang === 'da' ? 'Medier' : 'Media'}
               </button>
+              {/* BIZZ-2090: Kort-knap — åbner EjendomsKortPanel */}
+              <button
+                onClick={() => setKortPanelÅben(true)}
+                disabled={kortItems.length === 0}
+                className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-sm transition-all ${
+                  kortPanelÅben
+                    ? 'bg-blue-600/20 hover:bg-blue-600/30 border-blue-500/40 text-blue-300'
+                    : kortItems.length === 0
+                      ? 'bg-slate-800/50 border-slate-700/40 text-slate-500 cursor-not-allowed'
+                      : 'bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300'
+                }`}
+                title={t.ejendomsKort.openMap}
+                aria-label={t.ejendomsKort.openMap}
+              >
+                <MapPin size={14} />
+                {lang === 'da' ? 'Kort' : 'Map'}
+              </button>
               {/* Følg button */}
               <button
                 onClick={async () => {
@@ -1768,6 +1846,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                 onDiagramReady={(base64) => {
                   setAICtx({ diagramBase64: base64 });
                 }}
+                onPropertyNodesChange={handleDiagramPropertyNodes}
               />
             </div>
           )}
@@ -2045,6 +2124,10 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           }}
           onClose={() => setOpretSagOpen(false)}
         />
+      )}
+      {/* BIZZ-2090: Ejendomskort-panel — diagram-noder eller portefølje på kort */}
+      {kortPanelÅben && (
+        <EjendomsKortPanel items={kortItems} lang={lang} onClose={() => setKortPanelÅben(false)} />
       )}
     </div>
   );

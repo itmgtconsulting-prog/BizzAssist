@@ -50,6 +50,12 @@ export interface DiagramV2Props {
   onDiagramReady?: (base64Png: string) => void;
   /** BIZZ-1143: Pre-fetched resolve data fra parent — bruger data direkte og skipper intern fetch */
   prefetchedGraph?: { graph: unknown } | null;
+  /**
+   * BIZZ-2090: Callback med grafens aktuelle property-noder (inkl. noder
+   * tilføjet via Udvid og minus collapsed). Bruges af værts-siden til at
+   * vise ejendommene på et kort (EjendomsKortPanel).
+   */
+  onPropertyNodesChange?: (nodes: DiagramNode[]) => void;
 }
 
 /**
@@ -69,6 +75,7 @@ export default function DiagramV2({
   onNodeClick,
   onDiagramReady,
   prefetchedGraph = null,
+  onPropertyNodesChange,
 }: DiagramV2Props) {
   const da = lang === 'da';
   const [graph, setGraph] = useState<DiagramGraph | null>(null);
@@ -84,6 +91,18 @@ export default function DiagramV2({
   const allNodesRef = useRef<Map<string, DiagramNode>>(new Map());
   const allBfesRef = useRef<Set<number>>(new Set());
 
+  /**
+   * BIZZ-2090: Meld grafens property-noder op til værts-siden (kort-panel).
+   * Kaldes efter initial graf, expand og collapse — overflow-noder uden
+   * bfeNummer kan ikke placeres på kortet og filtreres fra.
+   */
+  const emitPropertyNodes = useCallback(() => {
+    if (!onPropertyNodesChange) return;
+    onPropertyNodesChange(
+      [...allNodesRef.current.values()].filter((n) => n.type === 'property' && n.bfeNummer != null)
+    );
+  }, [onPropertyNodesChange]);
+
   /** Opdater refs når initial graf ændrer sig */
   useEffect(() => {
     if (!graph) return;
@@ -93,7 +112,8 @@ export default function DiagramV2({
     allBfesRef.current = new Set(
       graph.nodes.filter((n) => n.bfeNummer != null).map((n) => n.bfeNummer!)
     );
-  }, [graph]);
+    emitPropertyNodes();
+  }, [graph, emitPropertyNodes]);
 
   /** Hent initial graf fra /api/diagram/resolve (eller brug prefetched data fra parent) */
   useEffect(() => {
@@ -202,6 +222,8 @@ export default function DiagramV2({
           allNodesRef.current.set(n.id, n);
           if (n.bfeNummer != null) allBfesRef.current.add(n.bfeNummer);
         }
+        // BIZZ-2090: Udvid kan tilføje nye property-noder → opdater kort-panelet
+        emitPropertyNodes();
 
         // Returner altid data (selv tom) så DiagramForce markerer noden som
         // expanded og skjuler Udvid-knappen — ellers forbliver knappen synlig
@@ -211,20 +233,25 @@ export default function DiagramV2({
         return null;
       }
     },
-    [rootType]
+    [rootType, emitPropertyNodes]
   );
 
   /**
    * Collapse callback — ryd allNodesRef/allBfesRef for fjernede noder
    * så næste expand-kald ikke sender dem som "eksisterende".
    */
-  const handleCollapse = useCallback((removedNodeIds: string[]) => {
-    for (const id of removedNodeIds) {
-      const node = allNodesRef.current.get(id);
-      if (node?.bfeNummer != null) allBfesRef.current.delete(node.bfeNummer);
-      allNodesRef.current.delete(id);
-    }
-  }, []);
+  const handleCollapse = useCallback(
+    (removedNodeIds: string[]) => {
+      for (const id of removedNodeIds) {
+        const node = allNodesRef.current.get(id);
+        if (node?.bfeNummer != null) allBfesRef.current.delete(node.bfeNummer);
+        allNodesRef.current.delete(id);
+      }
+      // BIZZ-2090: Collapse kan fjerne property-noder → opdater kort-panelet
+      emitPropertyNodes();
+    },
+    [emitPropertyNodes]
+  );
 
   // BIZZ-1786: Synlig loading-state i stedet for blank skærm
   if (loading) {

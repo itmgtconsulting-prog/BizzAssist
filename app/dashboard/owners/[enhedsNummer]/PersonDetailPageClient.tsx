@@ -27,6 +27,7 @@ import {
   ChevronRight,
   User,
   Newspaper,
+  MapPin,
   Globe,
   Sparkles,
   Zap,
@@ -48,7 +49,8 @@ import PropertyOwnerCard from '@/app/components/ejendomme/PropertyOwnerCard';
 import { saveRecentPerson } from '@/app/lib/recentPersons';
 import { recordRecentVisit } from '@/app/lib/recordRecentVisit';
 // buildPersonDiagramGraph fjernet — DiagramV2 erstatter det gamle diagram
-import type { DiagramPropertySummary } from '@/app/components/diagrams/DiagramData';
+import type { DiagramPropertySummary, DiagramNode } from '@/app/components/diagrams/DiagramData';
+import type { KortItem } from '@/app/lib/ejendomsKortGeokod';
 // isDiagram2Enabled removed — v2 is now the default diagram
 import CreateCaseModal from '@/app/components/sager/CreateCaseModal';
 import { useDomainMemberships } from '@/app/hooks/useDomainMemberships';
@@ -62,6 +64,10 @@ import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
 
 /** DiagramV2 — erstatter det gamle DiagramForce på personsiden */
 const DiagramV2 = dynamic(() => import('@/app/components/diagrams/DiagramV2'), { ssr: false });
+/** BIZZ-2091: Ejendomskort-panel — Mapbox kræver browser, dynamic + ssr:false */
+const EjendomsKortPanel = dynamic(() => import('@/app/components/ejendomme/EjendomsKortPanel'), {
+  ssr: false,
+});
 
 // ─── Tab Types ──────────────────────────────────────────────────────────────
 
@@ -855,6 +861,60 @@ export default function PersonDetailPageClient({
    */
   const [personalBfes, setPersonalBfes] = useState<DiagramPropertySummary[]>([]);
   const personalBfesFetchedRef = useRef(false);
+
+  /** BIZZ-2091: Ejendomskort-panel åben/lukket */
+  const [kortPanelÅben, setKortPanelÅben] = useState(false);
+  /** BIZZ-2091: Property-noder fra det aktuelle person-diagram (inkl. Udvid) */
+  const [diagramEjendomsNoder, setDiagramEjendomsNoder] = useState<DiagramNode[]>([]);
+
+  /** BIZZ-2091: Stabil callback til DiagramV2 → kort-panel node-lift */
+  const handleDiagramPropertyNodes = useCallback((nodes: DiagramNode[]) => {
+    setDiagramEjendomsNoder(nodes);
+  }, []);
+
+  /**
+   * BIZZ-2091: Ejendomme til kort-panelet afhængigt af aktiv tab:
+   * - Diagram-tab (relations): property-noderne fra den aktuelle graf (inkl.
+   *   Udvid). dawaId udtrækkes fra node-linket når det er en DAWA-UUID.
+   * - Øvrige tabs: selskabs-ejendomme (ejendommeData) + personligt ejede
+   *   (personalBfes), dedup'et på BFE.
+   */
+  const kortItems = useMemo<KortItem[]>(() => {
+    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (aktivTab === 'relations' && diagramEjendomsNoder.length > 0) {
+      return diagramEjendomsNoder.map((n) => {
+        const linkId = n.link?.split('/').pop() ?? '';
+        return {
+          bfe: n.bfeNummer ?? null,
+          adresse: n.label || null,
+          dawaId: uuidRe.test(linkId) ? linkId : null,
+        };
+      });
+    }
+    const items: KortItem[] = [];
+    const set = new Set<number>();
+    for (const e of ejendommeData) {
+      if (e.aktiv === false || set.has(e.bfeNummer)) continue;
+      set.add(e.bfeNummer);
+      items.push({
+        bfe: e.bfeNummer,
+        adresse:
+          e.adresse && e.postnr ? `${e.adresse}, ${e.postnr} ${e.by ?? ''}`.trim() : e.adresse,
+        dawaId: e.dawaId,
+      });
+    }
+    for (const p of personalBfes) {
+      if (p.aktiv === false || set.has(p.bfeNummer)) continue;
+      set.add(p.bfeNummer);
+      items.push({
+        bfe: p.bfeNummer,
+        adresse:
+          p.adresse && p.postnr ? `${p.adresse}, ${p.postnr} ${p.by ?? ''}`.trim() : p.adresse,
+        dawaId: p.dawaId,
+      });
+    }
+    return items;
+  }, [aktivTab, diagramEjendomsNoder, ejendommeData, personalBfes]);
 
   /** Detekterer desktop vs. mobil — nyheder-panel vises som sidebar på desktop, overlay på mobil */
   const [isDesktop, setIsDesktop] = useState(true);
@@ -1956,6 +2016,23 @@ export default function PersonDetailPageClient({
                 <Newspaper size={14} />
                 {lang === 'da' ? 'Medier' : 'Media'}
               </button>
+              {/* BIZZ-2091: Kort-knap — åbner EjendomsKortPanel */}
+              <button
+                onClick={() => setKortPanelÅben(true)}
+                disabled={kortItems.length === 0}
+                className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-sm transition-all ${
+                  kortPanelÅben
+                    ? 'bg-blue-600/20 hover:bg-blue-600/30 border-blue-500/40 text-blue-300'
+                    : kortItems.length === 0
+                      ? 'bg-slate-800/50 border-slate-700/40 text-slate-500 cursor-not-allowed'
+                      : 'bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300'
+                }`}
+                title={translations[lang].ejendomsKort.openMap}
+                aria-label={translations[lang].ejendomsKort.openMap}
+              >
+                <MapPin size={14} />
+                {lang === 'da' ? 'Kort' : 'Map'}
+              </button>
               <button
                 disabled={foelgToggling}
                 onClick={async () => {
@@ -2475,6 +2552,7 @@ export default function PersonDetailPageClient({
                     window.location.href = node.link;
                   }
                 }}
+                onPropertyNodesChange={handleDiagramPropertyNodes}
               />
             </div>
           )}
@@ -3122,6 +3200,10 @@ export default function PersonDetailPageClient({
           }}
           onClose={() => setOpretSagOpen(false)}
         />
+      )}
+      {/* BIZZ-2091: Ejendomskort-panel — diagram-noder eller ejendomsliste på kort */}
+      {kortPanelÅben && (
+        <EjendomsKortPanel items={kortItems} lang={lang} onClose={() => setKortPanelÅben(false)} />
       )}
     </div>
   );

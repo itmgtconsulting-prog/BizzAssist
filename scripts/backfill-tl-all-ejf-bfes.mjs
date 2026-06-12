@@ -272,7 +272,8 @@ async function main() {
       SELECT e.bfe_nummer FROM ejf_bfes e
       LEFT JOIN tinglysning_haeftelse h ON h.bfe_nummer = e.bfe_nummer
       LEFT JOIN ejendomshandel d ON d.bfe_nummer = e.bfe_nummer AND d.kilde = 'tinglysning-summarisk'
-      WHERE h.bfe_nummer IS NULL AND d.bfe_nummer IS NULL
+      LEFT JOIN tinglysning_backfill_probed p ON p.bfe_nummer = e.bfe_nummer
+      WHERE h.bfe_nummer IS NULL AND d.bfe_nummer IS NULL AND p.bfe_nummer IS NULL
     )
     SELECT bfe_nummer FROM missing
     ORDER BY bfe_nummer
@@ -298,6 +299,19 @@ async function main() {
       else if (r.status === 'no-uuid') noUuid++;
       else if (r.status === 'no-tl-data') noTlData++;
       else errors++;
+      // BIZZ-1881: marker BFEen som probet ved terminale udfald (data ELLER no-data),
+      // så den falder permanent ud af kandidat-sættet og "missing" konvergerer mod 0.
+      // Transiente fejl (db-error/exception/http-*/429) markeres IKKE → de retry'es næste kørsel.
+      if (!DRY_RUN && (r.status === 'ok' || r.status === 'no-uuid' || r.status === 'no-tl-data')) {
+        try {
+          await pool.query(
+            `INSERT INTO tinglysning_backfill_probed (bfe_nummer, result)
+             VALUES ($1, $2)
+             ON CONFLICT (bfe_nummer) DO UPDATE SET probed_at = NOW(), result = EXCLUDED.result`,
+            [r.bfe, r.status]
+          );
+        } catch { /* probed-bogføring er non-fatal — BFEen genprobes næste kørsel */ }
+      }
     }
     if (processed % 100 === 0 || processed === bfes.length) {
       console.log(`[1881-all-ejf] processed=${processed}/${bfes.length}, ok=${ok}, no-uuid=${noUuid}, no-tl=${noTlData}, errors=${errors}, handler=${totalHandler}, haeftelser=${totalHaeftelser}, delay=${baseDelayMs}ms, 429s=${total429}`);

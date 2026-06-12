@@ -13,7 +13,9 @@ cd /root/BizzAssist || exit 1
 NODE=/usr/bin/node
 SCRIPT=scripts/backfill-tl-all-ejf-bfes.mjs
 LOG=/tmp/backfill-1881-resumed-20260601-1000.log
-OFFSET=833000
+OFFSET=0           # BIZZ-1881: probede BFEer falder nu ud af kandidat-sættet
+                   # (tinglysning_backfill_probed), så vi starter altid fra laveste
+                   # u-probede BFE i stedet for at springe et fast antal over.
 CONC=1
 DELAY_MS=800       # langsom start; scriptet hæver selv ved 429
 STALL_SECS=600     # 10 min uden log-vækst = stall. Med hård 45s fetch-timeout i scriptet

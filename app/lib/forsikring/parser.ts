@@ -150,7 +150,8 @@ Vigtige regler:
 4. Vær konservativ: ved tvivl mellem police og oversigt, check om der er flere policenumre.
 5. VIGTIGT: Mange forsikringsdokumenter STARTER med et følgebrev (fx "Kære kunde, her er jeres nye forsikringsaftale...") efterfulgt af den egentlige police. Klassificér ALTID baseret på HELE dokumentet — IKKE kun den første side. Hvis teksten indeholder policenummer, dækninger, præmier, selvrisiko osv. efter et følgebrev → det er en "police", IKKE "korrespondance".
 6. Forsikringspakker (følgebrev + police + dækningsoversigt i ét dokument) = "police".
-7. BIZZ-2083: En præmieopkrævning med policenummer, forsikringstager og præmiebeløb = "praemie" — IKKE "korrespondance", selvom den ligner en faktura/kvittering.`;
+7. BIZZ-2083: En præmieopkrævning med policenummer, forsikringstager og præmiebeløb = "praemie" — IKKE "korrespondance", selvom den ligner en faktura/kvittering.
+8. BIZZ-2121: En erhvervsforsikrings-AFTALE (fx "Forsikringsaftale" fra Topdanmark/Tryg) med en aftale-/dækningsoversigt der lister FLERE selvstændige forsikringer (fx Erhvervsløsøre, Driftstab, Netbank, Cyber, Kriminalitet, Maskiner, Transport) under ÉT fælles aftalenummer = "oversigt" med policy_count = antal selvstændige forsikringer — IKKE "police", selvom der kun optræder ét aftalenummer. Hver selvstændig forsikring i aftalen behandles som sin egen police.`;
 
 /**
  * BIZZ-1392: Trin 1 — Detektér dokumenttype via Claude.

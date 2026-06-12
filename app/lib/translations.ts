@@ -676,6 +676,17 @@ export const translations = {
       },
     },
 
+    /* ─── Ejendomskort-panel (BIZZ-2089) ───────────────────────────── */
+    ejendomsKort: {
+      title: 'Ejendomme på kort',
+      loading: 'Geokoder ejendomme…',
+      empty: 'Ingen ejendomme kunne placeres på kortet',
+      placed: 'placeret på kortet',
+      close: 'Luk kortpanel',
+      openProperty: 'Åbn ejendom',
+      openMap: 'Vis på kort',
+    },
+
     /* ─── GDPR / data portability ──────────────────────────────────── */
     gdpr: {
       sectionTitle: 'Mine data',
@@ -1365,6 +1376,17 @@ export const translations = {
         nedrivning: 'Demolition',
         uforsikret: 'Uninsured',
       },
+    },
+
+    /* ─── Property map panel (BIZZ-2089) ───────────────────────────── */
+    ejendomsKort: {
+      title: 'Properties on map',
+      loading: 'Geocoding properties…',
+      empty: 'No properties could be placed on the map',
+      placed: 'placed on the map',
+      close: 'Close map panel',
+      openProperty: 'Open property',
+      openMap: 'Show on map',
     },
 
     /* ─── GDPR / data portability ──────────────────────────────────── */

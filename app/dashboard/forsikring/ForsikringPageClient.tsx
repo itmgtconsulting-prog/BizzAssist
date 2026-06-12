@@ -3625,9 +3625,56 @@ function AnalyseDetailSection({
             return b.gaps.length - a.gaps.length;
           };
           orphans.sort(sortGrp);
-          const trees = virkGroups
-            .map((v) => ({ v, ejd: (ejdByCvr.get(v.aktiv.cvr ?? '') ?? []).sort(sortGrp) }))
-            .sort((a, b) => b.ejd.length - a.ejd.length);
+          const mappedTrees = virkGroups.map((v) => ({
+            v,
+            ejd: (ejdByCvr.get(v.aktiv.cvr ?? '') ?? []).sort(sortGrp),
+          }));
+          /**
+           * BIZZ-2102: Læser koncern-hierarki-metadata (depth/parent_cvr) fra
+           * virksomheds-aktivets raw_data — sat af koncernWalk ved analysen.
+           */
+          const treeMeta = (t: (typeof mappedTrees)[number]) => {
+            const rd = t.v.aktiv.raw_data as { depth?: number; parent_cvr?: string | null } | null;
+            return {
+              depth: typeof rd?.depth === 'number' ? rd.depth : null,
+              parentCvr: rd?.parent_cvr ?? null,
+            };
+          };
+          const treeHasHierarchy = mappedTrees.some((t) => treeMeta(t).depth !== null);
+          let trees: typeof mappedTrees;
+          if (treeHasHierarchy) {
+            // BIZZ-2102: DFS-sortering så holdingselskab står øverst og døtre
+            // følger umiddelbart efter deres ejer — konsistent med
+            // UnifiedAnalyseView-visningen.
+            const cvrSet = new Set(mappedTrees.map((t) => t.v.aktiv.cvr).filter(Boolean));
+            const byParentCvr = new Map<string, typeof mappedTrees>();
+            const roots: typeof mappedTrees = [];
+            for (const t of mappedTrees) {
+              const { depth, parentCvr } = treeMeta(t);
+              if (depth !== null && depth > 0 && parentCvr && cvrSet.has(parentCvr)) {
+                const list = byParentCvr.get(parentCvr) ?? [];
+                list.push(t);
+                byParentCvr.set(parentCvr, list);
+              } else {
+                roots.push(t);
+              }
+            }
+            const byEjd = (a: (typeof mappedTrees)[number], b: (typeof mappedTrees)[number]) =>
+              b.ejd.length - a.ejd.length;
+            const dfs = (list: typeof mappedTrees): typeof mappedTrees =>
+              list.flatMap((t) => [
+                t,
+                ...dfs((byParentCvr.get(t.v.aktiv.cvr ?? '') ?? []).sort(byEjd)),
+              ]);
+            trees = dfs(
+              roots.sort(
+                (a, b) => (treeMeta(a).depth ?? 99) - (treeMeta(b).depth ?? 99) || byEjd(a, b)
+              )
+            );
+          } else {
+            // Ældre analyser uden hierarki-metadata: behold ejendoms-count-sortering
+            trees = [...mappedTrees].sort((a, b) => b.ejd.length - a.ejd.length);
+          }
 
           // BIZZ-1972: Fold forsikringsejer-/virksomheds-findings ind under den
           // eneste virksomhed når den ER forsikringssejeren (samme entitet).

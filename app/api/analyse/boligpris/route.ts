@@ -127,9 +127,12 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const admin = createAdminClient() as any;
 
-    // BIZZ-2046: Postnr-filter — oversæt postnumre til kommune_koder via bfe_adresse_cache
+    // BIZZ-2046/BIZZ-2112: Postnr-filter — oversæt postnumre til kommune_koder via
+    // bfe_adresse_cache (kommune-prefilter afgrænser MV-index-scanningen), og send
+    // derudover selve postnumrene til RPC'en som eksakt efterfiltrering.
+    let postnrStrings: string[] | null = null;
     if (postnumre && postnumre.length > 0) {
-      const postnrStrings = postnumre.map((p) => String(p).padStart(4, '0'));
+      postnrStrings = postnumre.map((p) => String(p).padStart(4, '0'));
       // VIGTIGT: filtrér rækker med NULL kommune_kode fra i selve query'en.
       // bfe_adresse_cache har mange rækker uden kommune_kode (fx ~65% for postnr 2500),
       // og uden dette filter kunne .limit(1000) fyldes udelukkende med NULL-rækker →
@@ -141,12 +144,24 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
         .not('kommune_kode', 'is', null)
         .limit(1000);
       if (postnrRows && postnrRows.length > 0) {
-        const postnrKommuneSet = new Set<number>();
+        // BIZZ-2112: enkelte korrupte cache-rækker (forkert kommune_kode for et
+        // postnr) må ikke kunne trække en hel fremmed kommune ind i resultatet.
+        // Tæl forekomster pr. kommune og behold kun kommuner med ≥10 rækker —
+        // eller, hvis ingen når 10 (små samples), kun den hyppigste kommune.
+        const kommuneCounts = new Map<number, number>();
         for (const r of postnrRows) {
           const kk = Number((r as Record<string, unknown>).kommune_kode);
-          if (Number.isFinite(kk) && kk > 0) postnrKommuneSet.add(kk);
+          if (Number.isFinite(kk) && kk > 0) {
+            kommuneCounts.set(kk, (kommuneCounts.get(kk) ?? 0) + 1);
+          }
         }
-        const postnrKommuner = Array.from(postnrKommuneSet);
+        let postnrKommuner = Array.from(kommuneCounts.entries())
+          .filter(([, n]) => n >= 10)
+          .map(([kk]) => kk);
+        if (postnrKommuner.length === 0 && kommuneCounts.size > 0) {
+          const [topKommune] = Array.from(kommuneCounts.entries()).sort((a, b) => b[1] - a[1])[0];
+          postnrKommuner = [topKommune];
+        }
         // Merge med eventuelle eksisterende kommune-filtre
         kommuner = kommuner ? kommuner.filter((k) => postnrKommuner.includes(k)) : postnrKommuner;
       }
@@ -344,6 +359,10 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
             p_etager_max: etagerMax,
             p_vaerelser_min: vaerelserMin,
             p_vaerelser_max: vaerelserMax,
+            // BIZZ-2112: eksakt postnr-efterfiltrering i RPC'en (join mod
+            // bfe_adresse_cache) — kommune-prefiltret ovenfor afgrænser fortsat
+            // index-scanningen, men kun rækker med matchende postnr returneres.
+            p_postnumre: postnrStrings,
             p_limit: limit,
             p_offset: offset,
           });
@@ -364,6 +383,31 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
           // join-population som handler-MV'en → garanteret match på alle
           // granulariteter, og hurtigt.
           handlerTotal = noegletal.antal_handler;
+          // BIZZ-2112: når postnr-filter er aktivt er KPI'en kommune-bucketed og
+          // tæller HELE kommunen — brug i stedet capped count-RPC'en der tæller de
+          // faktisk postnr-filtrerede rækker, så badgen matcher listen.
+          if (postnrStrings) {
+            const { data: cntData, error: cntErr } = await admin.rpc('boligpris_handler_count', {
+              p_kommune_koder: kommuner ?? null,
+              p_boligtype_koder: boligtyper ?? null,
+              p_fra: fraMaaned,
+              p_til: tilMaanedSlut,
+              p_areal_min: arealMin,
+              p_areal_max: arealMax,
+              p_byggear_min: byggearMin,
+              p_byggear_max: byggearMax,
+              p_etager_min: etagerMin,
+              p_etager_max: etagerMax,
+              p_vaerelser_min: vaerelserMin,
+              p_vaerelser_max: vaerelserMax,
+              p_postnumre: postnrStrings,
+            });
+            if (!cntErr && typeof cntData === 'number') {
+              handlerTotal = cntData;
+            } else if (cntErr) {
+              logger.warn('[boligpris] count-RPC fejl (beholder KPI-total):', cntErr.message);
+            }
+          }
           handler = rows.map((h) => {
             const pris = Number(h.samlet_koebesum) || 0;
             const areal = Number(h.samlet_boligareal) || 0;

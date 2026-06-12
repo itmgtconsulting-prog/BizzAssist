@@ -146,6 +146,11 @@ const COMPANY_SCOPE_CHECKS = new Set<string>([
   'GAP-066', // lav præmie vs. portefølje
   'GAP-070', // dobbelt-forsikring (samme ejendom, 2+ policer)
   'GAP-071', // dæknings-overlap på tværs af policer
+  'GAP-072', // dækningsgradsanalyse — beregningsgrundlag (BIZZ-2100)
+  'GAP-073', // driftstab-underforsikring vs. bruttofortjeneste (BIZZ-2100)
+  'GAP-074', // varelager overstiger løsøre-/tyveridækning (BIZZ-2100)
+  'GAP-075', // likvider overstiger netbank-dækning (BIZZ-2100)
+  'GAP-076', // omsætning nærmer sig policens forudsætning (BIZZ-2100)
   'GAP-STD-BASELINE', // standard betingelser sammenligning
 ]);
 

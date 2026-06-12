@@ -16,7 +16,13 @@ import { getInsuranceApi } from '@/lib/db/insurance';
 import { walkKoncern } from '@/app/lib/forsikring/koncernWalk';
 import * as Sentry from '@sentry/nextjs';
 import { matchAssetsToPolicies, addressesMatch } from '@/app/lib/forsikring/assetMatcher';
-import { runGapEngine, computeRiskScore, runPortfolioChecks } from '@/app/lib/forsikring/gapEngine';
+import {
+  runGapEngine,
+  computeRiskScore,
+  runPortfolioChecks,
+  runDaekningsgradChecks,
+} from '@/app/lib/forsikring/gapEngine';
+import type { RegnskabsTalLite } from '@/app/lib/forsikring/gapEngine';
 import type { ForsikringCoverage } from '@/app/lib/forsikring/types';
 import {
   runBbrCrossCheck,
@@ -690,6 +696,69 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     logger.log(
       `[forsikring/analyser] Portefølje-checks: ${portfolioGaps.length} gaps (${portfolioGaps.filter((g) => g.severity === 'critical').length} kritiske)`
     );
+
+    // 4a3. BIZZ-2100: Dækningsgradsanalyse — valider dækningsSUMMER mod
+    // seneste regnskabstal (regnskab_cache i public-skemaet, samme kilde som
+    // /api/regnskab/xbrl). Mangler cachen springes checkene over — analysen
+    // må ikke fejle på et manglende regnskab.
+    const daekningsgradCvr = hovedCvr ?? virksomhedAktiver.find((a) => a.cvr)?.cvr ?? null;
+    if (daekningsgradCvr) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: regnskabCache } = await (admin as any)
+          .from('regnskab_cache')
+          .select('years')
+          .eq('cvr', daekningsgradCvr)
+          .maybeSingle();
+        const seneste = (
+          regnskabCache as {
+            years?: Array<{
+              aar: string;
+              resultat: { omsaetning: number | null; bruttofortjeneste: number | null };
+              balance: {
+                varelager: number | null;
+                likvideBeholdninger: number | null;
+                aktiverIAlt: number | null;
+              };
+            }>;
+          } | null
+        )?.years?.[0];
+        const regnskab: RegnskabsTalLite | null = seneste
+          ? {
+              aar: seneste.aar,
+              omsaetningTkr: seneste.resultat.omsaetning,
+              bruttofortjenesteTkr: seneste.resultat.bruttofortjeneste,
+              varelagerTkr: seneste.balance.varelager,
+              likvideBeholdningerTkr: seneste.balance.likvideBeholdninger,
+              aktiverIAltTkr: seneste.balance.aktiverIAlt,
+            }
+          : null;
+        const daekningsgradGaps = runDaekningsgradChecks({
+          policer,
+          coveragesByPolicy,
+          regnskab,
+        });
+        for (const gap of daekningsgradGaps) {
+          allGaps.push({
+            policyId: portfolioPolicyId,
+            checkId: gap.check_id,
+            category: gap.category,
+            severity: gap.severity,
+            title: gap.title,
+            description: gap.description,
+            recommendation: gap.recommendation,
+            estimatedImpactDkk: gap.estimated_impact_dkk,
+            sourceData: gap.source_data,
+            riskScore: computeRiskScore(gap),
+          });
+        }
+        logger.log(
+          `[forsikring/analyser] Dækningsgrads-checks: ${daekningsgradGaps.length} gaps (regnskab ${regnskab ? regnskab.aar : 'mangler'})`
+        );
+      } catch (err) {
+        logger.warn('[forsikring/analyser] Dækningsgrads-checks fejlede:', err);
+      }
+    }
 
     // 4a2. BIZZ-1890: Standard betingelser — hent metadata og tilføj INFO-gaps til analysen.
     // Hvert linked standard-betingelses-dokument genererer ét INFO-gap der vejleder

@@ -1700,3 +1700,280 @@ export function runPortfolioChecks(input: PortfolioCheckInput): DetectedGap[] {
   // BIZZ-1941: Stempl hierarki-scope ud fra check_id på hvert gap.
   return results.map((g) => ({ ...g, scope: gapScope(g.check_id) }));
 }
+
+// ─── BIZZ-2100: Dækningsgradsanalyse ─────────────────────────────
+
+/**
+ * Nøgletal fra seneste årsregnskab — alle beløb i t.kr (tusinde kroner),
+ * samme enhed som regnskab_cache.years gemmer XBRL-tallene i.
+ */
+export interface RegnskabsTalLite {
+  /** Regnskabsår, fx '2025' */
+  aar: string;
+  /** Nettoomsætning i t.kr (ofte null — mange ApS'er oplyser kun bruttofortjeneste) */
+  omsaetningTkr: number | null;
+  /** Bruttofortjeneste i t.kr — proxy for driftstabsinteresse */
+  bruttofortjenesteTkr: number | null;
+  /** Varelager i t.kr */
+  varelagerTkr: number | null;
+  /** Likvide beholdninger i t.kr */
+  likvideBeholdningerTkr: number | null;
+  /** Aktiver i alt i t.kr */
+  aktiverIAltTkr: number | null;
+}
+
+/** Input til dækningsgrads-checks (BIZZ-2100) */
+export interface DaekningsgradInput {
+  /** Alle policer i analysens scope */
+  policer: ForsikringPolicy[];
+  /** Dækninger per police-ID */
+  coveragesByPolicy: Map<string, ForsikringCoverage[]>;
+  /** Seneste regnskabstal — null når intet regnskab er tilgængeligt */
+  regnskab: RegnskabsTalLite | null;
+}
+
+/**
+ * Summér aktive dækningssummer for et sæt coverage-koder på tværs af alle
+ * policer. Returnerer 0 hvis ingen af koderne findes med en sum.
+ *
+ * @param coveragesByPolicy - Dækninger per police-ID
+ * @param codes - Coverage-koder der skal summeres
+ * @returns Samlet dækningssum i hele kr
+ */
+function sumDaekning(
+  coveragesByPolicy: Map<string, ForsikringCoverage[]>,
+  codes: readonly string[]
+): number {
+  let sum = 0;
+  for (const covs of coveragesByPolicy.values()) {
+    for (const c of covs) {
+      if (c.is_covered && codes.includes(c.coverage_code) && c.sum_dkk != null && c.sum_dkk > 0) {
+        sum += c.sum_dkk;
+      }
+    }
+  }
+  return sum;
+}
+
+/** Formatter hele kr til dansk visning, fx 9.150.000 kr */
+const fmtKr = (v: number): string => `${v.toLocaleString('da-DK')} kr`;
+
+/**
+ * Kør dækningsgrads-checks (BIZZ-2100): validerer at dækningsSUMMERNE er
+ * rimelige — krydstjekket mod nøgletal fra seneste årsregnskab. Supplerer
+ * de eksisterende checks der kun afgør OM en dækning findes.
+ *
+ * Checks:
+ * - GAP-072 (info): beregningsgrundlag — alle udførte sammenligninger vises
+ *   transparent ("Dækning X kr vs. regnskabstal Y kr")
+ * - GAP-073: driftstab-sum vs. bruttofortjeneste (underforsikring)
+ * - GAP-074: varelager vs. løsøre-/indbrudstyveridækning
+ * - GAP-075: likvide beholdninger vs. netbank-dækning
+ * - GAP-076: faktisk omsætning vs. policens omsætnings-forudsætning
+ *   (fx "omsætningen overstiger ikke 100.000.000 kr" i cyber-betingelser)
+ *
+ * Severity skaleres efter afvigelsens størrelse: dækningsgrad < 50 % →
+ * critical, < 90 % → warning.
+ *
+ * @param input - Policer, dækninger og seneste regnskabstal
+ * @returns Liste af detekterede dækningsgrads-gaps (tom uden regnskab)
+ */
+export function runDaekningsgradChecks(input: DaekningsgradInput): DetectedGap[] {
+  const { policer, coveragesByPolicy, regnskab } = input;
+  if (!regnskab) return [];
+
+  const results: DetectedGap[] = [];
+  /** Beregningsgrundlags-linjer til GAP-072 — én pr. udført sammenligning */
+  const grundlag: Array<{
+    check: string;
+    daekning_dkk: number;
+    regnskabstal_dkk: number;
+    kilde: string;
+  }> = [];
+
+  /**
+   * Severity ud fra dækningsgrad (dækning/behov): <50 % critical, <90 % warning.
+   * Returnerer null når dækningen er tilstrækkelig (ingen gap).
+   */
+  const severityForRatio = (ratio: number): 'critical' | 'warning' | null =>
+    ratio < 0.5 ? 'critical' : ratio < 0.9 ? 'warning' : null;
+
+  // ── GAP-073: Driftstab vs. bruttofortjeneste ──
+  // Driftstabsdækningen skal som minimum kunne erstatte 12 måneders
+  // bruttofortjeneste (standard dækningsperiode).
+  if (regnskab.bruttofortjenesteTkr != null && regnskab.bruttofortjenesteTkr > 0) {
+    const behovDkk = regnskab.bruttofortjenesteTkr * 1000;
+    const sumDkk = sumDaekning(coveragesByPolicy, ['driftstab', 'leverandoer_aftager']);
+    if (sumDkk > 0) {
+      grundlag.push({
+        check: 'driftstab',
+        daekning_dkk: sumDkk,
+        regnskabstal_dkk: behovDkk,
+        kilde: `bruttofortjeneste ${regnskab.aar}`,
+      });
+      const severity = severityForRatio(sumDkk / behovDkk);
+      if (severity) {
+        results.push({
+          check_id: 'GAP-073',
+          category: 'daekningsgrad',
+          severity,
+          title: 'Driftstabsdækning under seneste års bruttofortjeneste',
+          description:
+            `Driftstabsdækningen er ${fmtKr(sumDkk)}, men bruttofortjenesten i ${regnskab.aar} var ` +
+            `${fmtKr(behovDkk)}. Ved totalskade dækker policen dermed kun ` +
+            `${Math.round((sumDkk / behovDkk) * 100)} % af et års indtjeningstab (underforsikring).`,
+          recommendation:
+            'Forhøj driftstabssummen så den mindst svarer til 12 måneders bruttofortjeneste — og overvej 18-24 måneder ved lang genopbygningstid.',
+          estimated_impact_dkk: behovDkk - sumDkk,
+          source_data: { daekning_dkk: sumDkk, bruttofortjeneste_dkk: behovDkk, aar: regnskab.aar },
+        });
+      }
+    }
+  }
+
+  // ── GAP-074: Varelager vs. løsøre-/indbrudstyveridækning ──
+  if (regnskab.varelagerTkr != null && regnskab.varelagerTkr > 0) {
+    const varelagerDkk = regnskab.varelagerTkr * 1000;
+    const sumDkk = sumDaekning(coveragesByPolicy, ['loesoere', 'indbrudstyveri']);
+    grundlag.push({
+      check: 'varelager',
+      daekning_dkk: sumDkk,
+      regnskabstal_dkk: varelagerDkk,
+      kilde: `varelager ${regnskab.aar}`,
+    });
+    const severity = sumDkk === 0 ? 'warning' : severityForRatio(sumDkk / varelagerDkk);
+    if (severity) {
+      results.push({
+        check_id: 'GAP-074',
+        category: 'daekningsgrad',
+        severity,
+        title: 'Varelager overstiger løsøre-/tyveridækningen',
+        description:
+          sumDkk === 0
+            ? `Regnskabet ${regnskab.aar} viser et varelager på ${fmtKr(varelagerDkk)}, men der er ikke fundet nogen løsøre- eller indbrudstyveridækning med sum.`
+            : `Varelageret i ${regnskab.aar} var ${fmtKr(varelagerDkk)}, men løsøre-/indbrudstyveridækningen er kun ${fmtKr(sumDkk)}. Ved brand eller indbrud er differencen udækket.`,
+        recommendation:
+          'Forhøj løsøre-/varedækningen så den mindst svarer til varelagerets regnskabsmæssige værdi.',
+        estimated_impact_dkk: Math.max(0, varelagerDkk - sumDkk),
+        source_data: { daekning_dkk: sumDkk, varelager_dkk: varelagerDkk, aar: regnskab.aar },
+      });
+    }
+  }
+
+  // ── GAP-075: Likvide beholdninger vs. netbank-dækning ──
+  // Kun relevant når der FINDES en netbank-dækning — manglende netbank/cyber
+  // fanges af GAP-063. Her valideres alene at summen matcher likviderne.
+  {
+    const netbankDkk = sumDaekning(coveragesByPolicy, ['netbank']);
+    if (
+      netbankDkk > 0 &&
+      regnskab.likvideBeholdningerTkr != null &&
+      regnskab.likvideBeholdningerTkr > 0
+    ) {
+      const likviderDkk = regnskab.likvideBeholdningerTkr * 1000;
+      grundlag.push({
+        check: 'netbank',
+        daekning_dkk: netbankDkk,
+        regnskabstal_dkk: likviderDkk,
+        kilde: `likvide beholdninger ${regnskab.aar}`,
+      });
+      const severity = severityForRatio(netbankDkk / likviderDkk);
+      if (severity) {
+        results.push({
+          check_id: 'GAP-075',
+          category: 'daekningsgrad',
+          severity,
+          title: 'Netbank-dækning under de likvide beholdninger',
+          description:
+            `Netbank-dækningen er ${fmtKr(netbankDkk)}, men de likvide beholdninger i ${regnskab.aar} var ` +
+            `${fmtKr(likviderDkk)}. Ved netbankindbrud er differencen udækket.`,
+          recommendation:
+            'Forhøj netbank-dækningen så den matcher de typiske likvide beholdninger.',
+          estimated_impact_dkk: likviderDkk - netbankDkk,
+          source_data: { daekning_dkk: netbankDkk, likvider_dkk: likviderDkk, aar: regnskab.aar },
+        });
+      }
+    }
+  }
+
+  // ── GAP-076: Faktisk omsætning vs. policens omsætnings-forudsætning ──
+  // Policer angiver ofte en forudsætning som "omsætningen overstiger ikke
+  // 100.000.000 kr" — overskrides den, kan dækningen bortfalde. Forudsætningen
+  // udtrækkes fra policens rå tekst (business_activity + raw_metadata).
+  if (regnskab.omsaetningTkr != null && regnskab.omsaetningTkr > 0) {
+    const omsaetningDkk = regnskab.omsaetningTkr * 1000;
+    let forudsaetningDkk: number | null = null;
+    let forudsaetningPolice: string | null = null;
+    for (const p of policer) {
+      const text = [p.business_activity, JSON.stringify(p.raw_metadata ?? {})].join(' ');
+      // Match fx "omsætning overstiger ikke 100.000.000 kr" / "omsætning: 84.000.000"
+      const m = text.match(/oms[æa]tning[^0-9]{0,60}?([\d]{1,3}(?:\.[\d]{3}){2,})/i);
+      if (m) {
+        const val = parseInt(m[1].replace(/\./g, ''), 10);
+        if (Number.isFinite(val) && val > 100000) {
+          // Brug den laveste fundne forudsætning — den strammeste betingelse
+          if (forudsaetningDkk == null || val < forudsaetningDkk) {
+            forudsaetningDkk = val;
+            forudsaetningPolice = p.policy_number;
+          }
+        }
+      }
+    }
+    if (forudsaetningDkk != null) {
+      grundlag.push({
+        check: 'omsaetning',
+        daekning_dkk: forudsaetningDkk,
+        regnskabstal_dkk: omsaetningDkk,
+        kilde: `omsætning ${regnskab.aar} vs. policens forudsætning`,
+      });
+      // Flag når faktisk omsætning er over 80 % af forudsætningen — kunden
+      // skal nå at justere policen FØR betingelsen brydes.
+      if (omsaetningDkk >= forudsaetningDkk * 0.8) {
+        results.push({
+          check_id: 'GAP-076',
+          category: 'daekningsgrad',
+          severity: omsaetningDkk >= forudsaetningDkk ? 'critical' : 'warning',
+          title:
+            omsaetningDkk >= forudsaetningDkk
+              ? 'Omsætningen overstiger policens forudsætning'
+              : 'Omsætningen nærmer sig policens forudsætning',
+          description:
+            `Police ${forudsaetningPolice ?? ''} forudsætter en omsætning på højst ${fmtKr(forudsaetningDkk)}, ` +
+            `men regnskabet ${regnskab.aar} viser ${fmtKr(omsaetningDkk)} ` +
+            `(${Math.round((omsaetningDkk / forudsaetningDkk) * 100)} % af forudsætningen). ` +
+            `Brydes forudsætningen kan dækningen bortfalde eller blive reduceret.`,
+          recommendation:
+            'Oplys den aktuelle omsætning til forsikringsselskabet og få policens forudsætning justeret.',
+          estimated_impact_dkk: null,
+          source_data: {
+            forudsaetning_dkk: forudsaetningDkk,
+            omsaetning_dkk: omsaetningDkk,
+            police: forudsaetningPolice,
+            aar: regnskab.aar,
+          },
+        });
+      }
+    }
+  }
+
+  // ── GAP-072: Beregningsgrundlag (info) — transparens for alle checks ──
+  if (grundlag.length > 0) {
+    results.unshift({
+      check_id: 'GAP-072',
+      category: 'daekningsgrad',
+      severity: 'info',
+      title: `Dækningsgradsanalyse: ${grundlag.length} sammenligning${grundlag.length > 1 ? 'er' : ''} mod regnskab ${regnskab.aar}`,
+      description: grundlag
+        .map(
+          (g) =>
+            `${g.check}: dækning ${fmtKr(g.daekning_dkk)} vs. ${g.kilde} ${fmtKr(g.regnskabstal_dkk)}`
+        )
+        .join(' · '),
+      recommendation: null,
+      estimated_impact_dkk: null,
+      source_data: { grundlag, aar: regnskab.aar },
+    });
+  }
+
+  return results.map((g) => ({ ...g, scope: gapScope(g.check_id) }));
+}

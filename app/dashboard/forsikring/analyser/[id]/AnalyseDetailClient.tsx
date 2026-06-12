@@ -48,6 +48,8 @@ interface Aktiv {
   adresse: string | null;
   matched_policy_id: string | null;
   match_score: number | null;
+  /** BIZZ-2108: koncern-metadata fra koncernWalk (ejerandel_pct, minoritet) */
+  raw_data: { ejerandel_pct?: number | string | null; minoritet?: boolean } | null;
 }
 
 interface Gap {
@@ -365,27 +367,53 @@ export default function AnalyseDetailClient({ analyseId }: { analyseId: string }
                     </span>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-1.5">
-                    {items.map((a) => (
-                      <div
-                        key={a.id}
-                        className={`rounded-lg px-2.5 py-2 text-xs border ${
-                          a.matched_policy_id
-                            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-                            : 'bg-red-500/10 border-red-500/30 text-red-300'
-                        }`}
-                      >
-                        <div className="truncate font-medium">{a.label}</div>
-                        <div className="text-[10px] opacity-70 mt-0.5">
-                          {a.matched_policy_id
-                            ? da
-                              ? '✓ Forsikret'
-                              : '✓ Insured'
-                            : da
-                              ? '✗ Uforsikret'
-                              : '✗ Uninsured'}
+                    {items.map((a) => {
+                      // BIZZ-2108: Ejerandel-badge på virksomheder med < 100% —
+                      // minoritetsposter skal tydeligt adskilles fra døtre.
+                      const pctRaw = a.raw_data?.ejerandel_pct;
+                      const pct =
+                        a.type === 'virksomhed' &&
+                        pctRaw != null &&
+                        Number.isFinite(Number(pctRaw)) &&
+                        Number(pctRaw) < 100
+                          ? Number(pctRaw)
+                          : null;
+                      return (
+                        <div
+                          key={a.id}
+                          className={`rounded-lg px-2.5 py-2 text-xs border ${
+                            a.matched_policy_id
+                              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                              : 'bg-red-500/10 border-red-500/30 text-red-300'
+                          }`}
+                        >
+                          <div className="truncate font-medium">
+                            {a.label}
+                            {pct != null && (
+                              <span
+                                className="ml-1.5 text-[9px] px-1 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 align-middle"
+                                title={
+                                  da
+                                    ? 'Ejerandel — under 50% er en minoritetspost'
+                                    : 'Ownership share — below 50% is a minority stake'
+                                }
+                              >
+                                {pct}%
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] opacity-70 mt-0.5">
+                            {a.matched_policy_id
+                              ? da
+                                ? '✓ Forsikret'
+                                : '✓ Insured'
+                              : da
+                                ? '✗ Uforsikret'
+                                : '✗ Uninsured'}
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               );

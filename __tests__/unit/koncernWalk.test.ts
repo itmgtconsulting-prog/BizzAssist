@@ -24,6 +24,7 @@ function mockQuery(data: unknown[] | null) {
   chain.is = vi.fn().mockReturnValue(chain);
   chain.in = vi.fn().mockReturnValue(chain);
   chain.gte = vi.fn().mockReturnValue(chain);
+  chain.not = vi.fn().mockReturnValue(chain);
   chain.limit = vi.fn().mockReturnValue({ data, error: null });
   chain.maybeSingle = vi.fn().mockReturnValue({ data: data?.[0] ?? null, error: null });
   return chain;
@@ -221,14 +222,31 @@ describe('walkKoncern', () => {
     expect(result.some((a) => a.cvr === '22222222')).toBe(false);
   });
 
-  it('BIZZ-2103: ekskluderer stale rækker (andel null) og minoritetsposter (< 50%)', async () => {
+  it('BIZZ-2108: aktive minoritetsposter medtages uden videre walk; stale NULL-andele ekskluderes', async () => {
     // Parent "ejer" fire selskaber i cachen: 100% (reel datter), 50% (kontrol),
-    // 5% (minoritetspost, fx SKIINVEST) og NULL (stale række fra cron'en, fx
-    // RacingRoom solgt i 2020 hvor EJERANDEL_PROCENT-perioden er afsluttet).
-    // Kun >= 50% må walkes som koncern-selskaber.
+    // 5% (aktiv minoritetspost, fx SKIINVEST) og NULL (stale række fra cron'en,
+    // fx RacingRoom solgt i 2020 hvor EJERANDEL_PROCENT-perioden er afsluttet).
+    // BIZZ-2108: minoritetsposten skal MED i kæden (med markering) men dens
+    // egne aktiver må IKKE walkes; NULL-andele forbliver ekskluderet (BIZZ-2103).
     let subCall = 0;
     mockFrom.mockImplementation((table: string) => {
-      if (table === 'ejf_ejerskab') return mockQuery([]);
+      if (table === 'ejf_ejerskab') {
+        // Minoritets-selskabet HAR egne ejendomme — de må IKKE komme med
+        const chain = mockQuery([]);
+        let requestedCvr = '';
+        chain.eq = vi.fn().mockImplementation((col: string, val: string) => {
+          if (col === 'ejer_cvr') requestedCvr = val;
+          return chain;
+        });
+        chain.limit = vi.fn().mockImplementation(() => ({
+          data:
+            requestedCvr === '10000003'
+              ? [{ bfe_nummer: 999, ejerandel_taeller: 1, ejerandel_naevner: 1 }]
+              : [],
+          error: null,
+        }));
+        return chain;
+      }
       if (table === 'cvr_virksomhed_ejerskab') {
         subCall++;
         if (subCall === 1)
@@ -248,11 +266,26 @@ describe('walkKoncern', () => {
 
     const result = await walkKoncern('virksomhed', '28864973');
 
-    const cvrs = result.filter((a) => a.type === 'virksomhed').map((a) => a.cvr);
-    expect(cvrs).toContain('10000001'); // 100% — med
+    const virk = result.filter((a) => a.type === 'virksomhed');
+    const cvrs = virk.map((a) => a.cvr);
+    expect(cvrs).toContain('10000001'); // 100% — med, walkes
     expect(cvrs).toContain('10000002'); // 50% — med (kontrol-tærskel)
-    expect(cvrs).not.toContain('10000003'); // 5% minoritet — ekskluderet
+    expect(cvrs).toContain('10000003'); // 5% aktiv minoritet — MED (BIZZ-2108)
     expect(cvrs).not.toContain('10000004'); // stale NULL-andel — ekskluderet
+
+    // Minoritetsposten er markeret og bærer ejerandel til UI-badge
+    const minoritet = virk.find((a) => a.cvr === '10000003');
+    const rd = minoritet?.rawData as {
+      minoritet?: boolean;
+      ejerandel_pct?: number | null;
+      parent_cvr?: string | null;
+    };
+    expect(rd.minoritet).toBe(true);
+    expect(rd.ejerandel_pct).toBe(5);
+    expect(rd.parent_cvr).toBe('28864973');
+
+    // Ikke walket videre: minoritetsselskabets egne ejendomme er IKKE med
+    expect(result.some((a) => a.type === 'ejendom')).toBe(false);
   });
 
   it('BIZZ-2102: datterselskaber pushes kun én gang og får hierarki-metadata', async () => {

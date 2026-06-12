@@ -301,6 +301,14 @@ function PropertyRow({
   const daekketViaSfe =
     (group.aktiv.raw_data as { daekket_via_sfe?: { sfe_adresse?: string } } | null)
       ?.daekket_via_sfe ?? null;
+  /** BIZZ-2108: moderselskabets ejerandel i procent (sat af koncernWalk, BIZZ-2102) */
+  const ejerandelPctRaw = (
+    group.aktiv.raw_data as { ejerandel_pct?: number | string | null } | null
+  )?.ejerandel_pct;
+  const ejerandelPct =
+    ejerandelPctRaw != null && Number.isFinite(Number(ejerandelPctRaw))
+      ? Number(ejerandelPctRaw)
+      : null;
   const gapCritical = group.gaps.filter((g) => g.severity === 'critical').length;
   const gapWarning = group.gaps.filter((g) => g.severity === 'warning').length;
 
@@ -369,6 +377,29 @@ function PropertyRow({
           {group.aktiv.type === 'virksomhed' && group.aktiv.cvr && (
             <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/30 shrink-0">
               CVR {group.aktiv.cvr}
+            </span>
+          )}
+          {/* BIZZ-2108: Ejerandel-badge på virksomheds-rækker med < 100% —
+              minoritetsposter (< 50%) vises amber så det er tydeligt at
+              selskabet IKKE er et kontrolleret datterselskab. */}
+          {group.aktiv.type === 'virksomhed' && ejerandelPct != null && ejerandelPct < 100 && (
+            <span
+              className={`text-[9px] px-1.5 py-0.5 rounded-full border shrink-0 ${
+                ejerandelPct < 50
+                  ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                  : 'bg-slate-500/20 text-slate-300 border-slate-500/30'
+              }`}
+              title={
+                ejerandelPct < 50
+                  ? da
+                    ? 'Minoritetspost — ikke et kontrolleret datterselskab; selskabets egne aktiver indgår ikke i analysen'
+                    : 'Minority stake — not a controlled subsidiary; its own assets are not included in the analysis'
+                  : da
+                    ? 'Ejerandel'
+                    : 'Ownership share'
+              }
+            >
+              {ejerandelPct}%
             </span>
           )}
           {/* BIZZ-1829: AI-foreslået badge */}

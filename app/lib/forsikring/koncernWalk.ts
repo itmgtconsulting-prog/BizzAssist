@@ -40,10 +40,13 @@ export interface Aktiv {
 const MAX_AKTIVER = 500;
 
 /**
- * BIZZ-2103: Minimum ejerandel (%) for at et ejet selskab regnes som
- * koncern-selskab og walkes som datterselskab. Minoritetsposter (fx 5%)
- * og stale cache-rækker med ejerandel NULL må ikke trække en fuld
- * gap-analyse af et fremmed selskab ind i kundens koncern.
+ * BIZZ-2103 + BIZZ-2108: Minimum ejerandel (%) for at et ejet selskab
+ * regnes som KONTROLLERET datterselskab og walkes rekursivt (egne
+ * ejendomme + døtre medtages). Aktive minoritetsposter (< 50%, fx
+ * SKIINVEST 5%) medtages som virksomheds-aktiv i kæden med
+ * ejerandel-badge, men walkes IKKE videre — ellers eksploderer kæden
+ * med fremmede selskabers aktiver. Stale cache-rækker med ejerandel
+ * NULL ekskluderes fortsat helt.
  */
 const KONCERN_EJERANDEL_MIN = 50;
 
@@ -118,6 +121,8 @@ export async function walkKoncern(
  * @param asOfDate - BIZZ-1355: Snapshot-dato (null = aktuel)
  * @param parentCvr - BIZZ-2102: CVR på moderselskabet (undefined for roden)
  * @param ejerandelPct - BIZZ-2102: Moderselskabets ejerandel i procent (null = ukendt)
+ * @param minoritet - BIZZ-2108: true = aktiv minoritetspost (< 50%) — selskabet
+ *   medtages som virksomheds-aktiv i kæden, men dets ejendomme/døtre walkes IKKE
  */
 async function walkVirksomhed(
   admin: ReturnType<typeof createAdminClient>,
@@ -128,7 +133,8 @@ async function walkVirksomhed(
   depth: number,
   asOfDate: Date | null,
   parentCvr?: string,
-  ejerandelPct?: number | null
+  ejerandelPct?: number | null,
+  minoritet = false
 ): Promise<void> {
   if (seenCvrs.has(cvr) || depth > 3 || aktiver.length >= MAX_AKTIVER) return;
   seenCvrs.add(cvr);
@@ -165,8 +171,15 @@ async function walkVirksomhed(
       depth,
       parent_cvr: parentCvr ?? null,
       ejerandel_pct: ejerandelPct ?? null,
+      // BIZZ-2108: Markér aktive minoritetsposter så UI kan vise andel-badge
+      ...(minoritet ? { minoritet: true } : {}),
     },
   });
+
+  // BIZZ-2108: Minoritetsposter medtages KUN som virksomheds-aktiv —
+  // ingen ejendomme, datterselskaber eller bestyrelsesposter walkes,
+  // da selskabet ikke er kontrolleret af kunden.
+  if (minoritet) return;
 
   // BIZZ-1646 + BIZZ-1840: Detect ejer-/andelsforening
   // Matcher FFO-form, "forening" i virksomhedsform, og A/B i virksomhedsform
@@ -541,15 +554,16 @@ async function walkVirksomhed(
 
   // Hent datterselskaber via cvr_virksomhed_ejerskab cache
   // BIZZ-1355: Historisk filtrering på gyldig_fra/gyldig_til
-  // BIZZ-2103: Kun kontrollerende ejerskab (>= 50%) walkes som koncern —
-  // .gte ekskluderer samtidig rækker med ejerandel_min NULL (stale rækker
-  // fra cron'en uden aktiv EJERANDEL_PROCENT, fx historiske ejere).
+  // BIZZ-2108: ALLE aktive ejerandele med kendt procent medtages i kæden —
+  // .not(null) ekskluderer stale rækker uden aktiv EJERANDEL_PROCENT
+  // (fx historiske ejere som RacingRoom). 50%-tærsklen (BIZZ-2103) afgør
+  // kun om der walkes VIDERE ned i selskabet (se loop nedenfor).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let subQuery = (admin as any)
     .from('cvr_virksomhed_ejerskab')
     .select('ejet_cvr, ejerandel_min')
     .eq('ejer_cvr', cvr)
-    .gte('ejerandel_min', KONCERN_EJERANDEL_MIN);
+    .not('ejerandel_min', 'is', null);
 
   if (asOfDate) {
     const isoDate = asOfDate.toISOString().slice(0, 10);
@@ -567,9 +581,14 @@ async function walkVirksomhed(
     ejerandel_min: number | null;
   }>) {
     if (seenCvrs.has(sub.ejet_cvr) || aktiver.length >= MAX_AKTIVER) continue;
-    // BIZZ-2103: Defensiv guard mod stale cache-rækker (ejerandel NULL) og
-    // minoritetsposter, hvis querien af en eller anden grund returnerer dem.
-    if (sub.ejerandel_min == null || sub.ejerandel_min < KONCERN_EJERANDEL_MIN) continue;
+    // BIZZ-2103: Defensiv guard mod stale cache-rækker (ejerandel NULL),
+    // hvis querien af en eller anden grund returnerer dem.
+    if (sub.ejerandel_min == null) continue;
+
+    // BIZZ-2108: Aktive minoritetsposter (< 50%) medtages i kæden men
+    // walkes ikke videre — kun kontrollerede selskaber (>= 50%) walkes
+    // rekursivt med ejendomme og egne døtre (BIZZ-2103-tærsklen).
+    const erMinoritet = sub.ejerandel_min < KONCERN_EJERANDEL_MIN;
 
     // BIZZ-2102: Rekursivt walk — walkVirksomhed laver selv-push med
     // navn/ansatte/ophørt-filter (BIZZ-2101) og hierarki-metadata.
@@ -583,7 +602,8 @@ async function walkVirksomhed(
       depth + 1,
       asOfDate,
       cvr,
-      sub.ejerandel_min
+      sub.ejerandel_min,
+      erMinoritet
     );
   }
 

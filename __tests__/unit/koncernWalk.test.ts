@@ -334,6 +334,46 @@ describe('walkKoncern', () => {
     expect(rodRd.parent_cvr).toBeNull();
   });
 
+  it('BIZZ-2123: administrerede ejendomme medtages for ikke-FFO virksomhed på depth 0', async () => {
+    // N.E.J. Finans-casen: en ENK uden ejerskab i ejf_ejerskab administrerer
+    // 2 ejendomme via ejf_administrator. Før fixet var opslaget gated på
+    // isFFO (foreninger) → 0 ejendomme og falske "uforsikret"-gaps.
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'ejf_administrator')
+        return mockQuery([
+          { bfe_nummer: 3059155 },
+          { bfe_nummer: 8458141 },
+          { bfe_nummer: 700 }, // også ejet → dedup mod ejf_ejerskab
+        ]);
+      if (table === 'ejf_ejerskab')
+        return mockQuery([{ bfe_nummer: 700, ejerandel_taeller: 1, ejerandel_naevner: 1 }]);
+      if (table === 'cvr_virksomhed')
+        return mockQuery([
+          {
+            navn: 'N.E.J. Finans',
+            ansatte_aar: null,
+            branche_tekst: 'Anden finansiel formidling',
+            ophoert: null,
+          },
+        ]);
+      return mockQuery([]);
+    });
+
+    const result = await walkKoncern('virksomhed', '21179671');
+
+    const ejendomme = result.filter((a) => a.type === 'ejendom');
+    const administrerede = ejendomme.filter(
+      (a) => (a.rawData as { administreret?: boolean } | null)?.administreret
+    );
+    // 2 administrerede + 1 ejet (BFE 700 dedupes — kun én række)
+    expect(administrerede.map((a) => a.bfe).sort()).toEqual([3059155, 8458141]);
+    expect(ejendomme.filter((a) => a.bfe === 700)).toHaveLength(1);
+    expect(
+      (ejendomme.find((a) => a.bfe === 700)?.rawData as { administreret?: boolean } | null)
+        ?.administreret
+    ).toBeUndefined();
+  });
+
   it('caps at MAX_AKTIVER (500)', async () => {
     const manyProps = Array.from({ length: 600 }, (_, i) => ({
       bfe_nummer: 1000 + i,

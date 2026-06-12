@@ -49,7 +49,12 @@ interface Aktiv {
   matched_policy_id: string | null;
   match_score: number | null;
   /** BIZZ-2108: koncern-metadata fra koncernWalk (ejerandel_pct, minoritet) */
-  raw_data: { ejerandel_pct?: number | string | null; minoritet?: boolean } | null;
+  raw_data: {
+    ejerandel_pct?: number | string | null;
+    minoritet?: boolean;
+    /** BIZZ-2123: ejendommen er administreret (ejf_administrator), ikke ejet */
+    administreret?: boolean;
+  } | null;
 }
 
 interface Gap {
@@ -389,6 +394,19 @@ export default function AnalyseDetailClient({ analyseId }: { analyseId: string }
                         >
                           <div className="truncate font-medium">
                             {a.label}
+                            {/* BIZZ-2123: Markér administrerede (ikke-ejede) ejendomme */}
+                            {a.type === 'ejendom' && a.raw_data?.administreret && (
+                              <span
+                                className="ml-1.5 text-[9px] px-1 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 align-middle"
+                                title={
+                                  da
+                                    ? 'Kunden administrerer ejendommen uden at stå som ejer'
+                                    : 'The customer administers the property without being the owner'
+                                }
+                              >
+                                {da ? 'Administreret' : 'Administered'}
+                              </span>
+                            )}
                             {pct != null && (
                               <span
                                 className="ml-1.5 text-[9px] px-1 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 align-middle"

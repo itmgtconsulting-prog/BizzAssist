@@ -540,6 +540,37 @@ async function walkVirksomhed(
     });
   }
 
+  // BIZZ-2123: Administrerede ejendomme medtages for ALLE kunde-virksomheder
+  // på depth 0 — ikke kun foreninger. Fx N.E.J. Finans (ENK) administrerer
+  // ejendomme via ejf_administrator uden selv at stå som ejer i ejf_ejerskab.
+  // FFO-flowet ovenfor henter dem allerede, så her kun for ikke-FFO. Kører
+  // EFTER ejf_ejerskab-loopet så ejerskab vinder dedup'en for BFEs der både
+  // ejes og administreres.
+  if (depth === 0 && !isFFO) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: adminRows } = await (admin as any)
+        .from('ejf_administrator')
+        .select('bfe_nummer')
+        .eq('virksomhed_cvr', cvr)
+        .eq('status', 'gældende')
+        .limit(200);
+      for (const row of (adminRows ?? []) as Array<{ bfe_nummer: number }>) {
+        if (seenBfes.has(row.bfe_nummer) || aktiver.length >= MAX_AKTIVER) continue;
+        seenBfes.add(row.bfe_nummer);
+        aktiver.push({
+          type: 'ejendom',
+          // 'BFE '-prefix → adresse-berigelse via hentBfeAdresser i walkKoncern
+          label: `BFE ${row.bfe_nummer}`,
+          bfe: row.bfe_nummer,
+          rawData: { administreret: true },
+        });
+      }
+    } catch {
+      /* ejf_administrator-opslag er non-fatal */
+    }
+  }
+
   // Hent datterselskaber via cvr_virksomhed_ejerskab cache
   // BIZZ-1355: Historisk filtrering på gyldig_fra/gyldig_til
   // BIZZ-2108: ALLE aktive ejerandele med kendt procent medtages i kæden —

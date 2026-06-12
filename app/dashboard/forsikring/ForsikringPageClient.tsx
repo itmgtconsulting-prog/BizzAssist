@@ -364,6 +364,22 @@ function PropertyRow({
               BFE {group.aktiv.bfe}
             </span>
           )}
+          {/* BIZZ-2123: Ejendomme som kunden ADMINISTRERER (ejf_administrator)
+              uden selv at eje dem — markeres så rådgiveren ved at ansvaret er
+              administration, ikke ejerskab. */}
+          {group.aktiv.type === 'ejendom' &&
+            (group.aktiv.raw_data as { administreret?: boolean } | null)?.administreret && (
+              <span
+                className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 shrink-0"
+                title={
+                  da
+                    ? 'Kunden administrerer ejendommen (tinglyst administrator) uden at stå som ejer'
+                    : 'The customer administers the property (registered administrator) without being the owner'
+                }
+              >
+                {da ? 'Administreret' : 'Administered'}
+              </span>
+            )}
           {/* BIZZ-2096: Marker når dækningen er nedarvet fra en police på
               SFE-adressen — antagelsen skal være transparent for rådgiveren. */}
           {daekketViaSfe && (

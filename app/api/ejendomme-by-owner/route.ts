@@ -34,6 +34,7 @@ import {
   DAWA_BASE_URL,
 } from '@/app/lib/serviceEndpoints';
 import { fetchDawa } from '@/app/lib/dawa';
+import { hentBfeAdresse } from '@/app/lib/bfeAdresse';
 
 /** Zod schema for /api/ejendomme-by-owner query params */
 const _querySchema = z.object({
@@ -756,54 +757,35 @@ const _bfeFetchInFlight = new Map<number, Promise<DawaBfeAdresse>>();
  * @param bfe - BFE-nummer at slå op
  * @returns Adresseoplysninger og DAWA adgangsadresse-UUID
  */
-/**
- * Kilder i bfe_adresse_cache der IKKE kan stoles på pr. BFE:
- * - 'cache_dar': korrupt backfill 2026-05-20 der skrev SFE-gruppens hovedadresse
- *   til alle BFE'er i gruppen (BIZZ-2092) — repareres løbende af fix-script
- * - 'unresolvable': placeholder-rækker uden adresse
- */
-const UNTRUSTED_CACHE_KILDER = new Set(['cache_dar', 'unresolvable']);
-
 async function hentDawaBfeData(bfe: number): Promise<DawaBfeAdresse> {
   const cached = _bfeFetchInFlight.get(bfe);
   if (cached) return cached;
   const promise = (async (): Promise<DawaBfeAdresse> => {
-    // BIZZ-2092: Cache-first for verificerede pr-BFE-adresser. Live-kæden
-    // (VP/BBR) kan returnere SFE-gruppens hovedadresse for alle BFE'er i en
-    // gruppe (fx 4x "Gefionsvej 47A" på BELVEDERE), så en cache-række med
-    // troværdig kilde (jordstykke-resolvet, manuel, grund) skal vinde.
+    // BIZZ-2092/BIZZ-2093: Fælles resolver først — cache-first for troværdige
+    // pr-BFE-kilder + valideret jordstykke-baseret live-fallback. Live-kæden
+    // nedenfor (VP/BBR) kan returnere SFE-gruppens hovedadresse for alle
+    // BFE'er i en gruppe (fx 4x "Gefionsvej 47A" på BELVEDERE), så den
+    // fælles resolver skal vinde når den finder en adresse.
     try {
-      const admin = createAdminClient();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: row } = await (admin as any)
-        .from('bfe_adresse_cache')
-        .select(
-          'adresse, etage, doer, postnr, postnrnavn, kommune, kommune_kode, dawa_id, ejendomstype, kilde'
-        )
-        .eq('bfe_nummer', bfe)
-        .maybeSingle();
-      if (
-        row?.adresse &&
-        !/^BFE \d+$/.test(row.adresse) &&
-        !UNTRUSTED_CACHE_KILDER.has(row.kilde)
-      ) {
+      const faelles = await hentBfeAdresse(bfe);
+      if (faelles?.adresse) {
         return {
-          adresse: row.adresse,
-          postnr: row.postnr ?? null,
-          by: row.postnrnavn ?? null,
-          kommune: row.kommune ?? null,
-          kommuneKode: row.kommune_kode ?? null,
-          ejendomstype: row.ejendomstype ?? null,
-          dawaId: row.dawa_id ?? null,
-          etage: row.etage ?? null,
-          doer: row.doer ?? null,
+          adresse: faelles.adresse,
+          postnr: faelles.postnr,
+          by: faelles.by,
+          kommune: faelles.kommune,
+          kommuneKode: faelles.kommuneKode,
+          ejendomstype: faelles.ejendomstype,
+          dawaId: faelles.dawaId,
+          etage: faelles.etage,
+          doer: faelles.doer,
         };
       }
     } catch {
-      /* cache-first non-critical — fortsæt til live resolution */
+      /* fælles resolver non-critical — fortsæt til legacy-kæde */
     }
-    // Cache-miss eller utroværdig kilde → live resolution-kæde (DAWA → VP →
-    // BBR → cache som sidste udvej) med write-through af succesfulde resolves.
+    // Uresolvet → legacy-kæde (DAWA → VP → BBR → cache som sidste udvej)
+    // med write-through af succesfulde resolves.
     return _hentDawaBfeDataImpl(bfe).then(async (result) => {
       // BIZZ-450: If DAWA returned no address, try BBR GraphQL as fallback.
       // DAWA /bfe/{bfe} endpoint is being deprecated; BBR is the authoritative source.

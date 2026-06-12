@@ -26,6 +26,7 @@ import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { fetchDawa } from '@/app/lib/dawa';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { hentBfeAdresser, formatBfeLabel } from '@/app/lib/bfeAdresse';
 
 // ─── Query param validation ─────────────────────────────────────────────────
 
@@ -42,7 +43,7 @@ const strukturQuerySchema = z
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 /** Klassificering af en node i ejendomshierarkiet */
-export type StrukturNiveau = 'sfe' | 'hovedejendom' | 'ejerlejlighed';
+export type StrukturNiveau = 'sfe' | 'hovedejendom' | 'ejerlejlighed' | 'soester-sfe';
 
 /** En enkelt node i ejendomsstrukturtræet */
 export interface StrukturNode {
@@ -367,6 +368,135 @@ async function fetchEjerskabBatch(bfeList: number[]): Promise<Map<number, EjerIn
     logger.warn('[ejendom-struktur] Ejerskab batch fetch fejl:', err);
   }
   return result;
+}
+
+// ─── Søster-SFE'er (BIZZ-2094) ──────────────────────────────────────────────
+
+/**
+ * BIZZ-2094: Finder søster-SFE'er til root-SFE'en — separate SFE'er på
+ * nabo-matrikler i samme ejerlav med samme gældende ejer (ejf_ejerskab
+ * ejer_cvr). Resights grupperer pr. vurderingsejendom, som kan spænde over
+ * flere SFE'er; VUR GraphQL eksponerer ikke vurderingsejendom-koblingen
+ * (VUR_BFEKrydsreference har kun BFEnummer — probet 2026-06-12), så
+ * ejer+ejerlav-fallback er den dokumenterede strategi fra ticketen.
+ *
+ * Adresser resolves via den fælles BFE→adresse-lib (BIZZ-2093) med
+ * matrikelbetegnelse som fallback for ubebyggede grunde.
+ *
+ * @param rootBfe - Root-SFE'ens BFE-nummer
+ * @param ejerlavKode - Root-matriklens ejerlavkode (geografisk afgrænsning)
+ * @param excludeBfes - BFE'er der allerede er i træet
+ * @returns Søster-SFE-noder (tom liste ved person-ejer eller fejl)
+ */
+async function fetchSoesterSfeNodes(
+  rootBfe: number,
+  ejerlavKode: string,
+  excludeBfes: Set<number>
+): Promise<StrukturNode[]> {
+  try {
+    const supabase = createAdminClient();
+
+    // 1) Gældende virksomheds-ejere (CVR) for root-SFE'en
+    const { data: rootEjere } = await supabase
+      .from('ejf_ejerskab')
+      .select('ejer_cvr')
+      .eq('bfe_nummer', rootBfe)
+      .eq('status', 'gældende')
+      .not('ejer_cvr', 'is', null)
+      .limit(5);
+    const cvrs = [
+      ...new Set(
+        ((rootEjere ?? []) as Array<{ ejer_cvr: string | number | null }>)
+          .map((r) => String(r.ejer_cvr ?? ''))
+          .filter((c) => c.length > 0)
+      ),
+    ];
+    if (cvrs.length === 0) return [];
+
+    // 2) Ejerens øvrige gældende BFE'er (kandidater)
+    const { data: andre } = await supabase
+      .from('ejf_ejerskab')
+      .select('bfe_nummer')
+      .in('ejer_cvr', cvrs)
+      .eq('status', 'gældende')
+      .neq('bfe_nummer', rootBfe)
+      .limit(200);
+    const kandidater = [
+      ...new Set(((andre ?? []) as Array<{ bfe_nummer: number }>).map((r) => r.bfe_nummer)),
+    ]
+      .filter((b) => b > 0 && !excludeBfes.has(b))
+      .slice(0, 80);
+    if (kandidater.length === 0) return [];
+
+    // 3) Geografisk afgrænsning: kun BFE'er med jordstykke i samme ejerlav.
+    // DAWA-opslag pr. kandidat med begrænset parallelisme.
+    const matchende: Array<{ bfe: number; matrikelLabel: string }> = [];
+    const KONK = 8;
+    for (let i = 0; i < kandidater.length; i += KONK) {
+      const chunk = kandidater.slice(i, i + KONK);
+      const res = await Promise.all(
+        chunk.map(async (bfe) => {
+          try {
+            const r = await fetchDawa(
+              `https://api.dataforsyningen.dk/jordstykker?bfenummer=${bfe}&struktur=mini`,
+              { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+              { caller: 'ejendom-struktur.soester-ejerlav' }
+            );
+            if (!r.ok) return null;
+            const js = (await r.json()) as Array<{
+              ejerlavkode?: number;
+              ejerlavnavn?: string;
+              matrikelnr?: string;
+            }>;
+            const match = js.find((j) => String(j.ejerlavkode ?? '') === ejerlavKode);
+            if (!match) return null;
+            return {
+              bfe,
+              matrikelLabel: `${match.matrikelnr ?? ''} ${match.ejerlavnavn ?? ''}`.trim(),
+            };
+          } catch {
+            return null;
+          }
+        })
+      );
+      for (const m of res) if (m) matchende.push(m);
+    }
+    if (matchende.length === 0) return [];
+
+    // 4) Adresser (fælles lib, BIZZ-2093) + ejer-navne i batch
+    const soesterBfes = matchende.map((m) => m.bfe);
+    const [adresser, ejerMap] = await Promise.all([
+      hentBfeAdresser(soesterBfes),
+      fetchEjerskabBatch(soesterBfes),
+    ]);
+
+    const nodes: StrukturNode[] = matchende.map(({ bfe, matrikelLabel }) => {
+      const adr = adresser.get(bfe) ?? null;
+      const ejer = ejerMap.get(bfe);
+      return {
+        bfe,
+        adresse: formatBfeLabel(adr) ?? matrikelLabel ?? `BFE ${bfe}`,
+        niveau: 'soester-sfe' as const,
+        dawaId: adr?.dawaId ?? null,
+        ejendomsvaerdi: null,
+        grundvaerdi: null,
+        vurderingsaar: null,
+        tlVurdering: null,
+        areal: null,
+        vaerelser: null,
+        ejer: ejer?.ejerNavn ?? null,
+        ejertype: ejer?.ejerType ?? null,
+        koebspris: null,
+        koebsdato: null,
+        children: [],
+      };
+    });
+    nodes.sort((a, b) => a.adresse.localeCompare(b.adresse, 'da'));
+    return nodes;
+  } catch (err) {
+    logger.warn('[ejendom-struktur] søster-SFE opslag fejlede:', err);
+    return [];
+  }
 }
 
 // ─── DAWA adresse-resolver ──────────────────────────────────────────────────
@@ -1072,6 +1202,26 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
         logger.log(
           `[ejendom-struktur] Ejerskab berigelse: ${ejerMap.size}/${ejlBfes.length} BFE'er med ejer`
         );
+      }
+    }
+
+    // ── BIZZ-2094: Søster-SFE'er — samme gældende ejer + samme ejerlav ──
+    // Resights' struktur omfatter hele vurderingsejendommen, som kan spænde
+    // over flere SFE'er (fx Fenrisvej 15/19 under Gefionsvej 47A). VUR
+    // eksponerer ikke koblingen, så vi bruger ticketens fallback: ejerens
+    // øvrige SFE'er i samme ejerlav vises som søster-SFE'er under root.
+    if (root.bfe > 0 && ejerlavKode) {
+      const inTree = new Set<number>();
+      /** Samler alle BFE'er der allerede er i træet */
+      const collectBfes = (n: StrukturNode): void => {
+        if (n.bfe > 0) inTree.add(n.bfe);
+        n.children.forEach(collectBfes);
+      };
+      collectBfes(root);
+      const soesterNodes = await fetchSoesterSfeNodes(root.bfe, ejerlavKode, inTree);
+      if (soesterNodes.length > 0) {
+        root.children.push(...soesterNodes);
+        logger.log(`[ejendom-struktur] ${soesterNodes.length} søster-SFE'er tilføjet (BIZZ-2094)`);
       }
     }
 

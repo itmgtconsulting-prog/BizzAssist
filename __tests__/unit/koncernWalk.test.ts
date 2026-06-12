@@ -33,6 +33,12 @@ function mockQuery(data: unknown[] | null) {
 describe('walkKoncern', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // BIZZ-2093: adresse-berigelsen (hentBfeAdresser) live-resolver cache-misses
+    // via DAWA/VP — stub fetch så unit-testen aldrig rammer rigtigt netværk
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: false, status: 404, json: async () => null }))
+    );
   });
 
   it('returns ejendomme for a virksomhed via ejf_ejerskab', async () => {

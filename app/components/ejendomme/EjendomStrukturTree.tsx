@@ -39,6 +39,13 @@ const NIVEAU_STYLE: Record<
     bg: 'bg-emerald-500/10',
     badge: 'Ejerlejlighed',
   },
+  // BIZZ-2094: Separat SFE i samme ejerlav med samme ejer (vurderingsejendoms-gruppe)
+  'soester-sfe': {
+    Icon: Building2,
+    color: 'text-amber-400',
+    bg: 'bg-amber-500/10',
+    badge: 'Søster-SFE',
+  },
 };
 
 /**
@@ -92,9 +99,10 @@ function TreeNode({ node, depth, lang, currentBfe, currentDawaId, showOwnership 
     : currentBfe != null && node.bfe > 0 && node.bfe === currentBfe;
   // BIZZ-1821: SFE-noder linker via /dashboard/ejendomme/sfe/[bfe].
   // Hovedejendom + EL linker via dawaId eller BFE.
+  // BIZZ-2094: Søster-SFE'er linker som SFE'er via /dashboard/ejendomme/sfe/[bfe]
   const nodeHref = node.dawaId
     ? `/dashboard/ejendomme/${node.dawaId}`
-    : node.niveau === 'sfe' && node.bfe > 0
+    : (node.niveau === 'sfe' || node.niveau === 'soester-sfe') && node.bfe > 0
       ? `/dashboard/ejendomme/sfe/${node.bfe}`
       : node.bfe > 0
         ? `/dashboard/ejendomme/${node.bfe}`
@@ -140,6 +148,16 @@ function TreeNode({ node, depth, lang, currentBfe, currentDawaId, showOwnership 
             </span>
           )}
         </div>
+
+        {/* BIZZ-2094: Ejer inline for søster-SFE'er */}
+        {node.niveau === 'soester-sfe' && node.ejer && (
+          <div className="mt-0.5">
+            <span className="text-slate-400 text-[10px]">
+              {da ? 'Ejer' : 'Owner'}:{' '}
+              <span className="text-slate-200 font-medium">{node.ejer}</span>
+            </span>
+          </div>
+        )}
 
         {/* Vurdering inline for hovedejendomme */}
         {node.niveau === 'hovedejendom' && vurdering != null && vurdering > 0 && (

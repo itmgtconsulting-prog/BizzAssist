@@ -427,6 +427,22 @@ export const ParsedPolicySchema = z.object({
     .nullable()
     .optional(),
   coverages: z.array(ParsedCoverageSchema).max(50),
+  /**
+   * BIZZ-2120: Sikrede/medforsikrede virksomheder nævnt på policen (fx
+   * "ansvarsforsikringen dækker Racehall København A/S og Racehall Ejendomme
+   * ApS"). Bruges af assetMatcher til at matche virksomheds-aktiver pr. sikret
+   * selskab i stedet for bredt — så en anden kundes police aldrig "dækker".
+   */
+  insured_companies: z
+    .array(
+      z.object({
+        navn: z.string().min(1).max(200),
+        cvr: z.string().max(20).nullable().optional(),
+      })
+    )
+    .max(50)
+    .nullable()
+    .optional(),
   /** Frie noter fra parser (særlige forhold, besigtigelses-bemærkninger, etc.) */
   notes: z.string().max(5000).nullable().optional(),
 });

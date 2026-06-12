@@ -1534,6 +1534,8 @@ function AnalyseSection({
     }>;
     /** Advarsel når standard betingelser ikke matcher policens selskab */
     std_betingelser_advarsel?: string | null;
+    /** BIZZ-2120: Præmieopkrævninger uden dækningsdetaljer (advarsel) */
+    praemie_advarsler?: string[];
   } | null>(null);
   /**
    * BIZZ-1973: Preflight-advarsel — sættes når adresse-tjek finder policer der
@@ -3578,6 +3580,25 @@ function AnalyseSection({
             </div>
           </div>
         )}
+
+      {/* BIZZ-2120: Advarsel — præmieopkrævning uploadet i stedet for police */}
+      {analyseResult?.praemie_advarsler && analyseResult.praemie_advarsler.length > 0 && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 flex items-start gap-2">
+          <AlertTriangle size={15} className="text-amber-400 shrink-0 mt-0.5" />
+          <div className="text-xs">
+            <div className="text-amber-200 font-medium">
+              {da
+                ? 'Policedokument mangler — kun præmieopkrævning uploadet'
+                : 'Policy document missing — only premium invoice uploaded'}
+            </div>
+            {analyseResult.praemie_advarsler.map((a, i) => (
+              <p key={i} className="text-slate-400 mt-0.5">
+                {a}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Advarsel: standard betingelser matchede ikke policens selskab */}
       {analyseResult?.std_betingelser_advarsel && (

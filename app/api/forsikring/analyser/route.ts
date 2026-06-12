@@ -283,10 +283,38 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // BIZZ-1776: document_ids-feltet helt udeladt (legacy kald) OG der er
       // policer fra tidligere analyser — brug dem som fallback (backward
       // compat). Men log en warning — ideelt bør kalderen sende document_ids.
-      logger.warn(
-        `[forsikring/analyser] Ingen scopeDocIds — fallback til ${allPolicies.length} policer fra tidligere analyser`
+      // BIZZ-2120: Fallbacken må KUN bruge policer der hører til den
+      // analyserede kunde/koncern — tenant'en kan have policer fra ANDRE
+      // kunders dokumenter (fx DBRAMANTEs ansvarspolice der "dækkede"
+      // SKIINVEST). Tilhørsforhold = forsikringstager-CVR i koncern-kæden,
+      // forsikringstager-navn matcher en koncern-virksomhed, eller policens
+      // forsikringssted matcher en af kundens ejendomme.
+      const koncernCvrSet = new Set(
+        aktiver.filter((a) => a.type === 'virksomhed' && a.cvr).map((a) => a.cvr as string)
       );
-      policer = allPolicies;
+      if (kunde_type === 'virksomhed') koncernCvrSet.add(kunde_id);
+      const koncernNavne = aktiver
+        .filter((a) => a.type === 'virksomhed')
+        .map((a) => a.label.toLowerCase().trim())
+        .filter((n) => n.length > 0);
+      if (kunde_navn) koncernNavne.push(kunde_navn.toLowerCase().trim());
+      const aktivAdresser = aktiver
+        .filter((a) => a.type === 'ejendom' && a.adresse)
+        .map((a) => a.adresse as string);
+      const hoererTilKoncern = (p: (typeof allPolicies)[number]): boolean => {
+        if (p.policyholder_cvr && koncernCvrSet.has(p.policyholder_cvr)) return true;
+        const pn = (p.policyholder_name ?? '').toLowerCase().trim();
+        if (pn && koncernNavne.some((n) => pn === n || pn.includes(n) || n.includes(pn))) {
+          return true;
+        }
+        return (
+          !!p.property_address && aktivAdresser.some((a) => addressesMatch(p.property_address, a))
+        );
+      };
+      policer = allPolicies.filter(hoererTilKoncern);
+      logger.warn(
+        `[forsikring/analyser] Ingen scopeDocIds — fallback til ${policer.length} koncern-policer (${allPolicies.length - policer.length} fra andre kunder filtreret fra, BIZZ-2120)`
+      );
     } else {
       policer = [];
     }
@@ -589,6 +617,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       const results = await Promise.all(coveragePromises);
       for (const r of results) coveragesByPolicy.set(r.id, r.rows);
     }
+
+    // BIZZ-2120: Præmieopkrævninger uden dækningsdetaljer — dokumenttypen
+    // "praemie" parses som police (BIZZ-2083), men en ren opkrævning har
+    // hverken coverages eller forsikringsform. Uden advarsel ser brugeren
+    // bare "0 dækninger" og tror policen er analyseret. Vises som banner.
+    const praemieAdvarsler = policer
+      .filter((p) => (p.raw_metadata?.document_type as string | undefined) === 'praemie')
+      .filter((p) => (coveragesByPolicy.get(p.id) ?? []).length === 0 && !p.insurance_form)
+      .map(
+        (p) =>
+          `Policedokument mangler — kun præmieopkrævning uploadet for ${p.insurer_name} ${p.policy_number}. Opkrævningen indeholder ikke dækningsdetaljer, så policen kan ikke indgå i dækningsanalysen. Upload den fulde police.`
+      );
 
     // BIZZ-1902: Hent standard betingelsers dækningskrav for gap-engine baseline
     const standardBetingelserBaseline: Array<{
@@ -1001,6 +1041,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           address_mismatches: addressMismatches,
           // BIZZ-2067: Sikrede-adresser uden for porteføljen (info, ikke advarsel)
           sikrede_adresser_uden_for_portefoelje: sikredeAdresserUdenForPortefoelje,
+          // BIZZ-2120: Præmieopkrævninger uden dækningsdetaljer (advarsel)
+          praemie_advarsler: praemieAdvarsler,
         },
         created_by: auth.userId,
       })
@@ -1139,6 +1181,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // BIZZ-2067: Sikrede-adresser uden for porteføljen (info, ikke advarsel)
       sikrede_adresser_uden_for_portefoelje: sikredeAdresserUdenForPortefoelje,
       std_betingelser_advarsel: stdBetingelserAdvarsel,
+      // BIZZ-2120: Præmieopkrævninger uden dækningsdetaljer (advarsel)
+      praemie_advarsler: praemieAdvarsler,
     });
   } catch (err) {
     logger.error('[forsikring/analyser] Fejl:', err);

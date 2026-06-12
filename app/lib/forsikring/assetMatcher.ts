@@ -153,18 +153,70 @@ export function addressesMatch(
 }
 
 /**
+ * BIZZ-2120: Koncern-kontekst afledt af aktiverne i analysen. Bruges til at
+ * afvise policer tegnet af virksomheder uden for kundens koncern, så en anden
+ * kundes police i samme tenant aldrig kan "dække" et aktiv.
+ */
+interface KoncernKontekst {
+  /** CVR-numre for alle virksomheder i koncern-walket */
+  cvrs: Set<string>;
+  /** Normaliserede virksomhedsnavne for alle virksomheder i koncern-walket */
+  navne: string[];
+}
+
+/** Sikret/medforsikret virksomhed parsed fra policen (BIZZ-2120) */
+interface InsuredCompany {
+  navn: string;
+  cvr?: string | null;
+}
+
+/**
+ * BIZZ-2120: Læs policens parsede sikrede-virksomheds-liste fra raw_metadata.
+ *
+ * @param policy - Police fra DB
+ * @returns Liste af sikrede selskaber, eller null hvis ikke parsed
+ */
+function getInsuredCompanies(policy: ForsikringPolicy): InsuredCompany[] | null {
+  const raw = policy.raw_metadata?.insured_companies;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  return raw.filter((c): c is InsuredCompany => !!c && typeof c.navn === 'string');
+}
+
+/**
+ * BIZZ-2120: Afgør om policens forsikringstager hører til kundens koncern —
+ * via CVR-match eller normaliseret navnematch mod koncern-virksomhederne.
+ *
+ * @param policy - Police fra DB
+ * @param koncern - Koncern-kontekst fra aktiverne
+ * @returns true hvis forsikringstager er en del af koncernen
+ */
+function policyholderIKoncern(policy: ForsikringPolicy, koncern: KoncernKontekst): boolean {
+  if (policy.policyholder_cvr && koncern.cvrs.has(policy.policyholder_cvr)) return true;
+  const phNavn = normalize(policy.policyholder_name);
+  if (!phNavn) return false;
+  return koncern.navne.some(
+    (n) => n.length > 0 && (n === phNavn || n.includes(phNavn) || phNavn.includes(n))
+  );
+}
+
+/**
  * Beregn match-score mellem et aktiv og en police.
  *
  * @param aktiv - Aktiv fra koncern-walk
  * @param policy - Police fra DB
+ * @param koncern - BIZZ-2120: Koncern-kontekst for kryds-kunde-afvisning
  * @returns Score 0-100 (højere = bedre match)
  */
-function computeMatchScore(aktiv: Aktiv, policy: ForsikringPolicy): number {
+function computeMatchScore(
+  aktiv: Aktiv,
+  policy: ForsikringPolicy,
+  koncern: KoncernKontekst
+): number {
   switch (aktiv.type) {
     case 'ejendom':
       return scoreEjendom(aktiv, policy);
     case 'virksomhed':
-      return scoreVirksomhed(aktiv, policy);
+      return scoreVirksomhed(aktiv, policy, koncern);
     case 'bil':
       return scoreBil(aktiv, policy);
     case 'bestyrelsespost':
@@ -268,32 +320,56 @@ function scoreEjendom(aktiv: Aktiv, policy: ForsikringPolicy): number {
  * @param policy - Police
  * @returns Score 0-100
  */
-function scoreVirksomhed(aktiv: Aktiv, policy: ForsikringPolicy): number {
+function scoreVirksomhed(aktiv: Aktiv, policy: ForsikringPolicy, koncern: KoncernKontekst): number {
   // CVR-match (eksakt)
   if (aktiv.cvr && policy.policyholder_cvr && aktiv.cvr === policy.policyholder_cvr) {
     return 100;
+  }
+
+  const aktivNavn = normalize(aktiv.label);
+
+  // BIZZ-2120: Har policen en parsed sikrede-liste, matches PR. SIKRET SELSKAB
+  // — kun virksomheder på listen kan dækkes af policen, og den brede 70-regel
+  // nedenfor springes over (policen har eksplicit afgrænset hvem den dækker).
+  const insured = getInsuredCompanies(policy);
+  if (insured) {
+    for (const c of insured) {
+      if (aktiv.cvr && c.cvr && aktiv.cvr === c.cvr) return 95;
+      const cNavn = normalize(c.navn);
+      if (
+        aktivNavn &&
+        cNavn &&
+        (aktivNavn === cNavn || aktivNavn.includes(cNavn) || cNavn.includes(aktivNavn))
+      ) {
+        return 85;
+      }
+    }
+    return 0;
   }
 
   // BIZZ-1620: Koncern-policer dækker ofte hele virksomheden via moderselskabets
   // CVR eller en generel police-type. Match virksomheds-aktiv mod policer der
   // har coverage_type indeholdende "erhverv", "virksomhed", "ansvar", "drift"
   // eller "koncern" — disse dækker typisk virksomhedsaktiviteten.
+  // BIZZ-2120: KUN hvis forsikringstager selv hører til kundens koncern —
+  // ellers matchede enhver erhvervspolice i tenant'en (fx en anden kundes
+  // ansvarspolice) enhver virksomhed med score 70.
   const coverageText = normalize(
     [policy.insurance_form, policy.business_activity, policy.policyholder_name].join(' ')
   );
   if (
-    coverageText.includes('erhverv') ||
-    coverageText.includes('virksomhed') ||
-    coverageText.includes('ansvar') ||
-    coverageText.includes('drift') ||
-    coverageText.includes('koncern')
+    (coverageText.includes('erhverv') ||
+      coverageText.includes('virksomhed') ||
+      coverageText.includes('ansvar') ||
+      coverageText.includes('drift') ||
+      coverageText.includes('koncern')) &&
+    policyholderIKoncern(policy, koncern)
   ) {
     // Police dækker erhvervsaktivitet — score 70 (under eksakt CVR-match men over threshold)
     return 70;
   }
 
   // Navn-match
-  const aktivNavn = normalize(aktiv.label);
   const policyNavn = normalize(policy.policyholder_name);
   if (aktivNavn && policyNavn && aktivNavn === policyNavn) return 75;
 
@@ -363,9 +439,21 @@ export function matchAssetsToPolicies(
   aktiver: Aktiv[],
   policer: ForsikringPolicy[]
 ): MatchResult[] {
+  // BIZZ-2120: Koncern-kontekst = virksomhederne i koncern-walket. Bruges af
+  // scoreVirksomhed til at kræve at policens forsikringstager hører til
+  // kundens egen koncern før den brede erhvervsaktivitets-regel (70) anvendes.
+  const koncern: KoncernKontekst = {
+    cvrs: new Set(
+      aktiver.filter((a) => a.type === 'virksomhed' && a.cvr).map((a) => a.cvr as string)
+    ),
+    navne: aktiver
+      .filter((a) => a.type === 'virksomhed')
+      .map((a) => normalize(a.label))
+      .filter((n) => n.length > 0),
+  };
   return aktiver.map((aktiv) => {
     const candidates = policer
-      .map((policy) => ({ policy, score: computeMatchScore(aktiv, policy) }))
+      .map((policy) => ({ policy, score: computeMatchScore(aktiv, policy, koncern) }))
       .filter((c) => c.score > 0)
       .sort((a, b) => b.score - a.score);
 

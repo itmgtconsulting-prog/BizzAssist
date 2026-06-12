@@ -410,6 +410,12 @@ Din opgave er at uddrage strukturerede felter fra rå PDF-tekst og returnere ét
       "notes": string | null
     }
   ],
+  "insured_companies": [                      // BIZZ-2120: Sikrede/medforsikrede virksomheder
+    {
+      "navn": string,                         // Fx "Racehall København A/S"
+      "cvr": string | null                    // 8 cifre hvis nævnt
+    }
+  ] | null,
   "notes": string | null                      // Særlige forhold, besigtigelses-bemærkninger, krav (max 5000 tegn)
 }
 
@@ -425,7 +431,8 @@ REGLER:
 9. Hvis policen er en oversigt/sammenfatning af flere policer, vælg den FØRSTE police og parse den.
 10. notes-feltet bruges til "Særlige forhold", besigtigelses-bemærkninger og forudsætninger (fx "Uautoriserede el-installationer", "Fedthåndslukker påkrævet").
 11. En typisk dansk bygningsforsikrings-police har 8-15 dækninger. Hvis du finder færre end 5 coverages, gennemlæs dokumentet IGEN — du har sandsynligvis overset en dæknings-sektion.
-12. ADRESSE-KONTEKST (KRITISK): Vurdér i hvilken kontekst hver adresse i dokumentet nævnes. property_address må KUN indeholde forsikringsSTEDET — den adresse en dækning gælder for (typisk markeret "Forsikringssted", "Forsikret ejendom", "Beliggenhed"). Adresser der kun optræder som forsikringstagers virksomhedsadresse, kontaktadresse, cc-/adressat-adresse, mægler-adresse eller i brevhoved/følgebrev må ALDRIG bruges som property_address — forsikringstagerens egen adresse hører til i policyholder_address. Findes intet eksplicit forsikringssted, sæt property_address til null.
+12. SIKREDE VIRKSOMHEDER (BIZZ-2120): Udfyld insured_companies med ALLE virksomheder policen eksplicit dækker/sikrer — søg efter "Sikrede", "Medforsikrede", "Forsikringen dækker [selskab1] og [selskab2]", "Sikrede virksomheder". Inkludér forsikringstager selv hvis nævnt som sikret. Nævner policen ingen sikrede-liste, sæt insured_companies til null (IKKE en tom liste, og gæt ALDRIG).
+13. ADRESSE-KONTEKST (KRITISK): Vurdér i hvilken kontekst hver adresse i dokumentet nævnes. property_address må KUN indeholde forsikringsSTEDET — den adresse en dækning gælder for (typisk markeret "Forsikringssted", "Forsikret ejendom", "Beliggenhed"). Adresser der kun optræder som forsikringstagers virksomhedsadresse, kontaktadresse, cc-/adressat-adresse, mægler-adresse eller i brevhoved/følgebrev må ALDRIG bruges som property_address — forsikringstagerens egen adresse hører til i policyholder_address. Findes intet eksplicit forsikringssted, sæt property_address til null.
 
 Returnér nu JSON for følgende police-tekst:`;
 

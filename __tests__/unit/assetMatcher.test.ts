@@ -100,6 +100,88 @@ describe('matchAssetsToPolicies', () => {
     expect(results[0].bestMatch?.score).toBe(75);
   });
 
+  // ─── BIZZ-2120: kryds-kunde-match må aldrig ske ───────────────────────
+
+  it('BIZZ-2120: erhvervspolice fra fremmed kunde matcher IKKE (70-reglen kræver koncern-tilhørsforhold)', () => {
+    // SKIINVEST-scenariet: DBRAMANTEs erhvervsansvarspolice i samme tenant
+    const aktiver: Aktiv[] = [
+      { type: 'virksomhed', label: 'SKIINVEST A/S', cvr: '11111111' },
+      { type: 'virksomhed', label: 'RACEHALL Holding A/S', cvr: '22222222' },
+    ];
+    const policer = [
+      makePolicy({
+        policyholder_name: 'DBRAMANTE1928 ApS',
+        policyholder_cvr: '34601704',
+        business_activity: 'Erhvervsansvarsforsikring',
+        property_address: null,
+      }),
+    ];
+    const results = matchAssetsToPolicies(aktiver, policer);
+    expect(results[0].bestMatch).toBeNull();
+    expect(results[1].bestMatch).toBeNull();
+  });
+
+  it('BIZZ-2120: erhvervspolice fra koncernens eget selskab matcher fortsat (score 70)', () => {
+    const aktiver: Aktiv[] = [
+      { type: 'virksomhed', label: 'SKIINVEST A/S', cvr: '11111111' },
+      { type: 'virksomhed', label: 'RACEHALL Holding A/S', cvr: '22222222' },
+    ];
+    const policer = [
+      makePolicy({
+        policyholder_name: 'RACEHALL Holding A/S',
+        policyholder_cvr: '22222222',
+        business_activity: 'Erhvervsansvarsforsikring',
+        property_address: null,
+      }),
+    ];
+    const results = matchAssetsToPolicies(aktiver, policer);
+    // Datterselskab dækkes af koncern-policen via 70-reglen
+    expect(results[0].bestMatch?.score).toBe(70);
+    // Forsikringstager selv matcher via CVR (100)
+    expect(results[1].bestMatch?.score).toBe(100);
+  });
+
+  it('BIZZ-2120: parsed sikrede-liste afgrænser virksomheds-match pr. sikret selskab', () => {
+    const aktiver: Aktiv[] = [
+      { type: 'virksomhed', label: 'Racehall København A/S', cvr: '33333333' },
+      { type: 'virksomhed', label: 'SKIINVEST A/S', cvr: '11111111' },
+    ];
+    const policer = [
+      makePolicy({
+        policyholder_name: 'RACEHALL Holding A/S',
+        policyholder_cvr: '22222222',
+        business_activity: 'Erhvervsansvarsforsikring',
+        property_address: null,
+        raw_metadata: {
+          insured_companies: [
+            { navn: 'Racehall København A/S', cvr: null },
+            { navn: 'Racehall Ejendomme ApS', cvr: null },
+          ],
+        },
+      }),
+    ];
+    const results = matchAssetsToPolicies(aktiver, policer);
+    // Sikret selskab matcher via navn (85)
+    expect(results[0].bestMatch?.score).toBe(85);
+    // SKIINVEST står IKKE på sikrede-listen → intet match trods "ansvar"-tekst
+    expect(results[1].bestMatch).toBeNull();
+  });
+
+  it('BIZZ-2120: sikrede-liste med CVR-match scorer 95', () => {
+    const aktiver: Aktiv[] = [
+      { type: 'virksomhed', label: 'Racehall Ejendomme ApS', cvr: '44444444' },
+    ];
+    const policer = [
+      makePolicy({
+        policyholder_name: 'RACEHALL Holding A/S',
+        policyholder_cvr: null,
+        raw_metadata: { insured_companies: [{ navn: 'Racehall Ejendomme', cvr: '44444444' }] },
+      }),
+    ];
+    const results = matchAssetsToPolicies(aktiver, policer);
+    expect(results[0].bestMatch?.score).toBe(95);
+  });
+
   it('returns candidates sorted by score (highest first)', () => {
     const aktiver: Aktiv[] = [
       { type: 'ejendom', label: 'Stengade 7', bfe: 237451, adresse: 'Stengade 7, 3000 Helsingør' },

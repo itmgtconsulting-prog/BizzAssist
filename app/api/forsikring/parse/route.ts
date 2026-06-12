@@ -489,6 +489,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       raw_metadata: {
         document_type: result.documentType,
         notes: parsed.notes ?? null,
+        // BIZZ-2120: Sikrede/medforsikrede virksomheder fra policen — bruges
+        // af assetMatcher til pr.-selskab virksomheds-match (aldrig bredt).
+        insured_companies: parsed.insured_companies ?? null,
       },
       created_by: auth.userId,
       sag_id: docSagId,

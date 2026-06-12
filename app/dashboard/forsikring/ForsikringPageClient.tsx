@@ -160,6 +160,41 @@ interface AnalysePolicy {
   property_address: string | null;
   annual_premium_dkk: number | null;
   sum_insured_dkk: number | null;
+  /** BIZZ-2121: Forsikringstagers CVR — bruges til at aggregere alle kundens policer i "Dækket"-boksen */
+  policyholder_cvr?: string | null;
+}
+
+/**
+ * BIZZ-2121: Dækninger til den grønne "Dækket"-boks for et aktiv.
+ *
+ * Ejendoms-aktiver viser den matchede polices dækninger. Virksomheds-aktiver
+ * aggregerer dækninger fra ALLE analysens policer hvor virksomheden står som
+ * forsikringstager — en erhvervskunde har typisk flere delpolicer (løsøre,
+ * driftstab, cyber, kriminalitet, …) og kun én af dem er matched_policy_id,
+ * så matched-police-visningen alene underdriver dækningen groft (DBRAMANTE:
+ * "Dækket (3)" trods 30+ parsede dækninger på 6 delpolicer).
+ *
+ * @param aktiv - Analyse-aktivet (ejendom/virksomhed)
+ * @param analysePolicies - Alle analysens policer (detail.policies)
+ * @param covByPolicy - Aktive dækninger (is_covered=true) grupperet per policy_id
+ * @returns Dækninger der skal vises i "Dækket"-boksen, sorteret på label
+ */
+export function coveragesForAktiv(
+  aktiv: AnalyseAktiv,
+  analysePolicies: AnalysePolicy[],
+  covByPolicy: Map<string, AnalyseCoverage[]>
+): AnalyseCoverage[] {
+  const matched = aktiv.matched_policy_id ? (covByPolicy.get(aktiv.matched_policy_id) ?? []) : [];
+  if (aktiv.type !== 'virksomhed' || !aktiv.cvr) return matched;
+  const cvr = aktiv.cvr.replace(/\D/g, '');
+  const ids = new Set<string>(aktiv.matched_policy_id ? [aktiv.matched_policy_id] : []);
+  for (const p of analysePolicies) {
+    if ((p.policyholder_cvr ?? '').replace(/\D/g, '') === cvr) ids.add(p.id);
+  }
+  const out: AnalyseCoverage[] = [];
+  for (const id of ids) out.push(...(covByPolicy.get(id) ?? []));
+  if (out.length === 0) return matched;
+  return out.sort((a, b) => a.coverage_label.localeCompare(b.coverage_label, 'da'));
 }
 
 /** Full analyse-detail response */
@@ -594,9 +629,10 @@ function PropertyRow({
                 </span>
               </div>
               <div className="space-y-0.5">
-                {group.coverages.map((cov) => (
+                {group.coverages.map((cov, i) => (
                   <div
-                    key={`${cov.policy_id}-${cov.coverage_code}`}
+                    // BIZZ-2121: idx i key — samme police kan have samme kode flere gange (fx løsøre ×2)
+                    key={`${cov.policy_id}-${cov.coverage_code}-${i}`}
                     className="flex items-baseline justify-between gap-2 text-xs"
                   >
                     <span className="text-emerald-200">✓ {cov.coverage_label}</span>
@@ -1114,9 +1150,8 @@ function UnifiedAnalyseView({
       aktiv,
       matchedPolicy,
       gaps: aktivGaps,
-      coverages: aktiv.matched_policy_id
-        ? (coveragesByPolicy.get(aktiv.matched_policy_id) ?? [])
-        : [],
+      // BIZZ-2121: Virksomheds-aktiver aggregerer alle kundens policer
+      coverages: coveragesForAktiv(aktiv, detail.policies ?? [], coveragesByPolicy),
       // BIZZ-2119: kildedokument-filnavn for den matchede police
       matchedDocName: matchedPolicy?.document_id
         ? (docNameById.get(matchedPolicy.document_id) ?? null)
@@ -4040,9 +4075,8 @@ function AnalyseDetailSection({
               aktiv,
               matchedPolicy,
               gaps: aktivGaps,
-              coverages: aktiv.matched_policy_id
-                ? (covByPolicy.get(aktiv.matched_policy_id) ?? [])
-                : [],
+              // BIZZ-2121: Virksomheds-aktiver aggregerer alle kundens policer
+              coverages: coveragesForAktiv(aktiv, detail.policies ?? [], covByPolicy),
               // BIZZ-2119: kildedokument-filnavn for den matchede police
               matchedDocName: matchedPolicy?.document_id
                 ? (docNameById2.get(matchedPolicy.document_id) ?? null)

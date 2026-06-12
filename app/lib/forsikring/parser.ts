@@ -247,6 +247,11 @@ const ERHVERVS_MAPPING_REGEL =
   '"Maskinkasko / IT-udstyr All risks / Maskiner og IT-udstyr" → maskiner_itudstyr, ' +
   '"Meromkostninger IT / IT-meromkostninger" → it_meromkostninger, ' +
   '"Leverandørdriftstab / Aftagerdriftstab" → leverandoer_aftager. ' +
+  // BIZZ-2121: Fareafværgelse (ansvarsdækning) og IT-dækninger må ALDRIG ende
+  // som driftstab — det forurener dækningsgradsanalysen (GAP-073) med forkerte summer.
+  '"Fareafværgelse / Afværgelse af skade" → erhvervsansvar, "IT databærere / Databærere" → it_meromkostninger. ' +
+  'Kod ALDRIG Fareafværgelse, IT-meromkostninger eller IT-databærere som driftstab — ' +
+  'driftstab er KUN egentlig driftstabs-/avancetabsdækning (mistet bruttofortjeneste). ' +
   'Bevar ALTID dækningssum (sum_dkk) og selvrisiko (deductible_dkk) pr. dækning når de fremgår.';
 
 const OVERSIGT_SYSTEM_PROMPT = `Du er en specialist i danske forsikringsoversigter. En forsikringsoversigt er et dokument der opsummerer FLERE forsikringspolicer for en kunde.

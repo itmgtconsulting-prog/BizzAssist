@@ -394,6 +394,29 @@ export default function EjendomEjerforholdTab({
                       <EjerKort ejerDetaljer={chainEjerDetaljer} lang={lang} />
                     </>
                   )}
+                  {/* BIZZ-2109: Diagram FØR strukturtræet — strukturen kan fylde flere
+                      skærmhøjder, så diagrammet druknede nederst. Samme rækkefølge som
+                      for normale ejendomme (Ejer → Diagram → Struktur). */}
+                  {bfeForDiagram && chainEjerDetaljer.some((e) => e.type !== 'status') && (
+                    <>
+                      <SectionTitle title={da ? 'Ejerskabsdiagram' : 'Ownership diagram'} />
+                      {diagramResolveLoader ? (
+                        <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />
+                      ) : (
+                        <DiagramV2
+                          rootType="property"
+                          rootId={String(bfeForDiagram)}
+                          rootLabel={
+                            dawaAdresse
+                              ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
+                              : `BFE ${bfeForDiagram}`
+                          }
+                          lang={lang}
+                          prefetchedGraph={prefetchedDiagramGraph ?? undefined}
+                        />
+                      )}
+                    </>
+                  )}
                   <SectionTitle title={t.ownershipStructure} />
                   <EjendomStrukturTree
                     tree={enriched}
@@ -416,26 +439,6 @@ export default function EjendomEjerforholdTab({
                         : null
                     }
                   />
-                  {/* Diagram under strukturtræet */}
-                  {bfeForDiagram && chainEjerDetaljer.some((e) => e.type !== 'status') && (
-                    <>
-                      {diagramResolveLoader ? (
-                        <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />
-                      ) : (
-                        <DiagramV2
-                          rootType="property"
-                          rootId={String(bfeForDiagram)}
-                          rootLabel={
-                            dawaAdresse
-                              ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
-                              : `BFE ${bfeForDiagram}`
-                          }
-                          lang={lang}
-                          prefetchedGraph={prefetchedDiagramGraph ?? undefined}
-                        />
-                      )}
-                    </>
-                  )}
                 </div>
               );
             }

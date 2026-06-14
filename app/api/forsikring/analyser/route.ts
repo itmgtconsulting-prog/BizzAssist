@@ -448,9 +448,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // BIZZ-1973: Preflight — returnér kun mismatches, kør ikke gap-engine/persist.
     if (body.preflight) {
-      // BIZZ-2118: Undertryk mismatches for policer hvis adresse resolver til
-      // en SFE som porteføljens aktiver tilhører (SFE-kæden) — en police der
-      // dækker porteføljen via SFE-arv er ikke "uden for porteføljen".
+      // Undertryk mismatches for policer hvis adresse resolver til en SFE som
+      // porteføljens aktiver tilhører — en police der dækker porteføljen via
+      // (direkte) SFE-arv er ikke "uden for porteføljen".
       let preflightMismatches = addressMismatches;
       if (preflightMismatches.length > 0) {
         try {
@@ -491,8 +491,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // BIZZ-2096: SFE-struktur-arv — en police på en SFE-adresse dækker som
     // udgangspunkt alle underliggende ejendomme i strukturen. Umatchede
     // aktiver i en dækket SFE får nedarvet match (score 75) + markering
-    // `daekket_via_sfe` i raw_data. BIZZ-2118: arv udvides til søster-SFE'er
-    // i samme ejerlav med samme ejer (score 72, `daekket_via_sfe.kaede`).
+    // `daekket_via_sfe` i raw_data. BIZZ-2128: kun direkte arv inden for SAMME
+    // SFE-BFE — søster-SFE-kæden er fjernet (gav falsk dækning i by-ejerlav).
     // Best-effort: DAWA-opslag må ikke vælte analysen.
     let sfePortefoeljePolicyIds = new Set<string>();
     try {
@@ -500,7 +500,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       sfePortefoeljePolicyIds = sfeResultat.portefoeljePolicyIds;
       if (sfeResultat.inherited > 0) {
         logger.log(
-          `[forsikring/analyser] SFE-arv: ${sfeResultat.inherited} aktiver dækket via SFE-struktur/-kæde`
+          `[forsikring/analyser] SFE-arv: ${sfeResultat.inherited} aktiver dækket via SFE-struktur`
         );
       }
     } catch (err) {

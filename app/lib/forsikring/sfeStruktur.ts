@@ -40,18 +40,15 @@ const BATCH_SIZE = 5;
  */
 export const SFE_ARV_SCORE = 75;
 
-/**
- * BIZZ-2118: Score for dækning nedarvet via SFE-KÆDEN (søster-SFE i samme
- * ejerlav med samme ejer, jf. BIZZ-2094-logikken på ejendomssiden). Lavere
- * end direkte SFE-arv så de to arve-former kan skelnes i rapporten.
- */
-export const SFE_KAEDE_SCORE = 72;
-
 /** SFE-tilhør for et aktiv eller en police-adresse */
 export interface SfeOpslag {
   /** SFE-BFE (samlet fast ejendom) som adressen ligger på */
   sfeBfe: number;
-  /** Ejerlavkode for adressens jordstykke — bruges til søster-SFE-kæden (BIZZ-2118) */
+  /**
+   * Ejerlavkode for adressens jordstykke. BIZZ-2128: bruges ikke længere til
+   * arv (søster-SFE-kæden er fjernet, da den gav falsk dækning på tværs af
+   * matrikler i store by-ejerlav) — bevares som resolvet cadastral kontekst.
+   */
   ejerlavKode: number | null;
 }
 
@@ -172,29 +169,22 @@ export interface SfeArvResultat {
 }
 
 /**
- * Læs ejer-CVR fra et aktivs koncernwalk-metadata.
- *
- * @param m - Match-resultat
- * @returns Ejer-CVR eller null
- */
-function ejerCvrAf(m: MatchResult): string | null {
-  const cvr = (m.aktiv.rawData as { ejer_cvr?: unknown } | undefined)?.ejer_cvr;
-  return typeof cvr === 'string' && cvr.length > 0 ? cvr : null;
-}
-
-/**
  * Ren arve-regel: annotér aktiver med SFE-struktur og nedarv dækning fra
- * policer på SFE-adresser til umatchede aktiver i samme SFE — eller i en
- * søster-SFE i samme ejerlav med samme ejer (SFE-kæden, BIZZ-2118).
+ * policer på SFE-adresser til umatchede aktiver PÅ SAMME SFE.
+ *
+ * BIZZ-2128: Den tidligere søster-SFE-kæde (BIZZ-2118 — arv på tværs af
+ * forskellige SFE'er i samme ejerlav med samme ejer) er FJERNET. I store
+ * by-ejerlav (fx "Helsingør Bygrunde") var "samme ejerlav + samme ejer" alt
+ * for løst og gav falsk dækning: en enkelt bygningspolice på én adresse blev
+ * arvet til alle ejerens fysisk adskilte ejendomme i hele bymidten. Kun
+ * direkte arv inden for SAMME SFE-BFE bevares (det fysisk korrekte tilfælde,
+ * fx Gefionsvej 47A → Fenrisvej 27A/27B på samme matrikel).
  *
  * Muterer matches in-place (samme konvention som route'ns øvrige berigelse):
  * - Alle ejendoms-aktiver med kendt SFE får `rawData.sfe_bfe` + `rawData.sfe_niveau`
  *   ('sfe' når aktivets eget BFE er SFE-BFE'et, ellers 'underliggende')
  * - Umatchede aktiver hvis SFE er dækket af en police får `bestMatch` med
  *   score {@link SFE_ARV_SCORE} og `rawData.daekket_via_sfe = { sfe_bfe, sfe_adresse }`
- * - BIZZ-2118: Umatchede aktiver hvis SFE er en SØSTER-SFE (samme ejerlav,
- *   samme ejer-CVR som aktiver forankret på policens SFE) får `bestMatch`
- *   med score {@link SFE_KAEDE_SCORE} og `daekket_via_sfe.kaede = true`
  *
  * @param matches - Match-resultater fra matchAssetsToPolicies
  * @param aktivSfe - Aktiv-index → SFE-opslag (kun ejendoms-aktiver med opslag)
@@ -206,31 +196,22 @@ export function applySfeArv(
   aktivSfe: AktivSfeMap,
   policySfe: PolicySfeMap
 ): SfeArvResultat {
-  // BIZZ-2118: Ejere pr. SFE — aktiver forankret på en SFE (via adresse-opslag
-  // ELLER fordi aktivets eget BFE er SFE-BFE'et) bidrager med deres ejer-CVR.
-  const sfeEjere = new Map<number, Set<string>>();
-  const tilfoejEjer = (sfeBfe: number, cvr: string | null) => {
-    if (!cvr) return;
-    const set = sfeEjere.get(sfeBfe) ?? new Set<string>();
-    set.add(cvr);
-    sfeEjere.set(sfeBfe, set);
-  };
+  // Forankrede SFE-BFE'er: aktiver forankret på en SFE (via adresse-opslag
+  // ELLER fordi aktivets eget BFE er SFE-BFE'et). Bruges til at undertrykke
+  // "uden for porteføljen"-advarslen for policer hvis SFE rummer aktiver.
   const forankredeSfeBfes = new Set<number>();
   for (const [idx, opslag] of aktivSfe) {
     const m = matches[idx];
     if (!m || m.aktiv.type !== 'ejendom') continue;
     forankredeSfeBfes.add(opslag.sfeBfe);
-    tilfoejEjer(opslag.sfeBfe, ejerCvrAf(m));
   }
   for (const m of matches) {
     if (m.aktiv.type === 'ejendom' && m.aktiv.bfe) {
       forankredeSfeBfes.add(m.aktiv.bfe);
-      tilfoejEjer(m.aktiv.bfe, ejerCvrAf(m));
     }
   }
 
-  // BIZZ-2118: Policer hvis SFE er forankret i porteføljen → må ikke flages
-  // "uden for porteføljen".
+  // Policer hvis SFE er forankret i porteføljen → må ikke flages "uden for porteføljen".
   const portefoeljePolicyIds = new Set<string>();
   for (const [sfeBfe, entry] of policySfe) {
     if (forankredeSfeBfes.has(sfeBfe)) portefoeljePolicyIds.add(entry.policy.id);
@@ -250,7 +231,7 @@ export function applySfeArv(
 
     if (m.bestMatch) continue; // direkte match vinder altid over arv
 
-    // 1) Direkte SFE-arv: policen er tegnet på aktivets egen SFE-adresse
+    // Direkte SFE-arv: policen er tegnet på aktivets egen SFE-adresse
     const daekning = policySfe.get(opslag.sfeBfe);
     if (daekning) {
       m.bestMatch = { policy: daekning.policy, score: SFE_ARV_SCORE };
@@ -259,26 +240,6 @@ export function applySfeArv(
         daekket_via_sfe: { sfe_bfe: opslag.sfeBfe, sfe_adresse: daekning.sfeAdresse },
       };
       inherited++;
-      continue;
-    }
-
-    // 2) BIZZ-2118: Søster-SFE-kæde — policens SFE ligger i SAMME ejerlav og
-    //    er forankret i porteføljen med SAMME ejer (jf. BIZZ-2094-logikken på
-    //    ejendomssiden). Konservativ: kræver kendt ejer-CVR på begge sider.
-    if (opslag.ejerlavKode == null) continue;
-    const aktivEjer = ejerCvrAf(m);
-    if (!aktivEjer) continue;
-    for (const [polSfeBfe, entry] of policySfe) {
-      if (entry.ejerlavKode !== opslag.ejerlavKode || polSfeBfe === opslag.sfeBfe) continue;
-      if (!sfeEjere.get(polSfeBfe)?.has(aktivEjer)) continue;
-      m.bestMatch = { policy: entry.policy, score: SFE_KAEDE_SCORE };
-      m.aktiv.rawData = {
-        ...m.aktiv.rawData,
-        daekket_via_sfe: { sfe_bfe: polSfeBfe, sfe_adresse: entry.sfeAdresse, kaede: true },
-      };
-      inherited++;
-      portefoeljePolicyIds.add(entry.policy.id);
-      break;
     }
   }
   return { inherited, portefoeljePolicyIds };

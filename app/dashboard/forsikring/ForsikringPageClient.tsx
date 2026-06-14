@@ -162,6 +162,11 @@ interface AnalysePolicy {
   sum_insured_dkk: number | null;
   /** BIZZ-2121: Forsikringstagers CVR — bruges til at aggregere alle kundens policer i "Dækket"-boksen */
   policyholder_cvr?: string | null;
+  /**
+   * BIZZ-2129: Tilknytning til kunden. 'sikker' = bekræftet via CVR/aktiv-match/
+   * forsikringssted; 'tvivlsom' = kun fuzzy navne-match → vis gul advarsel.
+   */
+  attachment?: 'sikker' | 'tvivlsom';
 }
 
 /**
@@ -1044,17 +1049,25 @@ function FundneForsikringer({ detail, da }: { detail: AnalyseDetail; da: boolean
           const covs = covsByPolicy.get(policy.id) ?? [];
           const active = covs.filter((c) => c.is_covered);
           const fravalgt = covs.filter((c) => !c.is_covered);
+          // BIZZ-2129: Tvivlsom tilknytning → gul boks + advarsel i stedet for grøn.
+          const tvivlsom = policy.attachment === 'tvivlsom';
           return (
             <div
               key={policy.id}
-              className="bg-emerald-500/10 border border-emerald-500/25 rounded-lg p-3"
+              className={
+                tvivlsom
+                  ? 'bg-amber-500/10 border border-amber-500/30 rounded-lg p-3'
+                  : 'bg-emerald-500/10 border border-emerald-500/25 rounded-lg p-3'
+              }
             >
               <div className="flex items-start justify-between gap-2 mb-1">
                 <div className="min-w-0">
                   {/* BIZZ-2127: Titel = forsikringstype afledt af dækningerne
                       (fx bygningsdækninger → "Ejendomsforsikring"), ikke
                       business_activity som kan være bygningens anvendelse. */}
-                  <div className="text-emerald-200 text-xs font-semibold truncate">
+                  <div
+                    className={`text-xs font-semibold truncate ${tvivlsom ? 'text-amber-200' : 'text-emerald-200'}`}
+                  >
                     {forsikringTypeLabel(covs, policy.business_activity, da)}
                   </div>
                   <div className="text-slate-400 text-[11px] truncate">
@@ -1066,8 +1079,20 @@ function FundneForsikringer({ detail, da }: { detail: AnalyseDetail; da: boolean
                     </div>
                   )}
                 </div>
-                <CheckCircle2 size={14} className="text-emerald-400 shrink-0 mt-0.5" />
+                {tvivlsom ? (
+                  <AlertTriangle size={14} className="text-amber-400 shrink-0 mt-0.5" />
+                ) : (
+                  <CheckCircle2 size={14} className="text-emerald-400 shrink-0 mt-0.5" />
+                )}
               </div>
+              {/* BIZZ-2129: Advarsel når policens tilknytning til kunden er usikker */}
+              {tvivlsom && (
+                <div className="text-amber-300/90 text-[10px] mb-1.5">
+                  {da
+                    ? '⚠ Tvivlsom tilknytning — forsikringstageren kunne ikke bekræftes som denne kunde (kun navne-match). Verificér at policen hører til kunden.'
+                    : '⚠ Uncertain attachment — the policyholder could not be confirmed as this customer (name match only). Verify the policy belongs to the customer.'}
+                </div>
+              )}
               {active.length > 0 && (
                 <div className="space-y-0.5 mt-2">
                   {active.map((cov) => (

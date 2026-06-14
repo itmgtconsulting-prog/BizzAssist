@@ -242,7 +242,42 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         // desuden mod ALLE eksisterende policer med nummeret, ikke kun den nyeste.
         const normalizedNum = normalizePolicyNumber(entry.policy_number);
         const existingAll = await insurance.policies.findAllByNumber(normalizedNum);
-        const existing = existingAll.find((p) => oversigtEntryMatchesPolicy(p, entry));
+
+        // BIZZ-2129: Entry-dækninger udregnes her, så de kan bruges både til
+        // coverage-set-dedup nedenfor og til persisteringen længere nede.
+        const entryCoverages = (entry as Record<string, unknown>).coverages as
+          | Array<{
+              coverage_code: string;
+              coverage_label?: string;
+              is_covered: boolean;
+              sum_dkk?: number | null;
+              deductible_dkk?: number | null;
+            }>
+          | undefined;
+        const entryCodeSet = new Set((entryCoverages ?? []).map((c) => c.coverage_code));
+
+        // Primær dedup: samme adresse + forsikringstype (BIZZ-2097).
+        let existing = existingAll.find((p) => oversigtEntryMatchesPolicy(p, entry));
+        // BIZZ-2129: Sekundær dedup på DÆKNINGSSÆT — samme aftalenr + samme
+        // forsikringssted + identisk sæt af coverage_codes = duplikat, selv når
+        // type-labels varierer ("Erhvervsansvar" fra police-PDF vs
+        // "Ansvarsforsikring" fra oversigt-PDF). Cyber vs Netbank (forskellige
+        // dækninger) forbliver adskilt.
+        if (!existing && entryCodeSet.size > 0) {
+          const normA = (s: string | null | undefined) => s?.trim().toLowerCase() || null;
+          for (const p of existingAll) {
+            if (normA(p.property_address) !== normA(entry.property_address)) continue;
+            const exCovs = await insurance.coverages.listForPolicy(p.id);
+            const exCodes = new Set(exCovs.map((c) => c.coverage_code));
+            if (
+              exCodes.size === entryCodeSet.size &&
+              [...entryCodeSet].every((c) => exCodes.has(c))
+            ) {
+              existing = p;
+              break;
+            }
+          }
+        }
         if (existing) {
           createdPolicies.push({ id: existing.id, policy_number: existing.policy_number });
           continue;
@@ -284,16 +319,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           sag_id: docSagId,
         });
 
-        // Gem coverages fra oversigt (hvis AI returnerede dem)
-        const entryCoverages = (entry as Record<string, unknown>).coverages as
-          | Array<{
-              coverage_code: string;
-              coverage_label?: string;
-              is_covered: boolean;
-              sum_dkk?: number | null;
-              deductible_dkk?: number | null;
-            }>
-          | undefined;
+        // Gem coverages fra oversigt (hvis AI returnerede dem) — entryCoverages
+        // er udregnet ovenfor (BIZZ-2129).
         const coverageInputs = (entryCoverages ?? []).map((c) => ({
           policy_id: policy.id,
           coverage_code: c.coverage_code,

@@ -147,6 +147,92 @@ export async function GET(
       }
     }
 
+    // BIZZ-2129: Tilhørs-data til (a) at surface adresseløse koncern-policer og
+    // (c) klassificere hver polices tilknytning. Bygges fra de persisterede
+    // aktiver + analysens kunde-felter.
+    const analyseRow = analyseResult.data as {
+      kunde_type?: string;
+      kunde_id?: string;
+      kunde_navn?: string;
+    };
+    const aktiverData = (aktiverResult.data ?? []) as Array<{
+      type: string;
+      cvr: string | null;
+      adresse: string | null;
+      label: string;
+    }>;
+    const koncernCvrSet = new Set(
+      aktiverData.filter((a) => a.type === 'virksomhed' && a.cvr).map((a) => a.cvr as string)
+    );
+    if (analyseRow.kunde_type === 'virksomhed' && analyseRow.kunde_id) {
+      koncernCvrSet.add(analyseRow.kunde_id);
+    }
+    const koncernNavne = aktiverData
+      .filter((a) => a.type === 'virksomhed')
+      .map((a) => a.label.toLowerCase().trim())
+      .filter((n) => n.length > 0);
+    if (analyseRow.kunde_navn) koncernNavne.push(analyseRow.kunde_navn.toLowerCase().trim());
+    const normAdr = (s: string | null) => (s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const aktivAdrNorm = aktiverData
+      .filter((a) => a.type === 'ejendom' && a.adresse)
+      .map((a) => normAdr(a.adresse));
+    const adrMatcher = (addr: string | null) => {
+      const a = normAdr(addr);
+      if (!a) return false;
+      return aktivAdrNorm.some((x) => x === a || x.startsWith(a) || a.startsWith(x));
+    };
+
+    // (a) Når analysen mangler dokument-links (koncern-fallback) inkluderes
+    // kundens øvrige policer — også adresseløse (Ansvar, Cyber, Netbank,
+    // Kriminalitet) — efter samme tilhørs-logik som analysens fallback
+    // (BIZZ-2120). Ved eksplicit dokument-scope (junction populeret) holdes
+    // listen til scope'et.
+    if (docIds.length === 0) {
+      const haveIds = new Set((policies as Array<{ id: string }>).map((p) => p.id));
+      const { data: allTenantPolicies } = await db
+        .from('forsikring_policies')
+        .select('*')
+        .eq('tenant_id', auth.tenantId);
+      const hoererTilKoncern = (p: {
+        policyholder_cvr: string | null;
+        policyholder_name: string | null;
+        property_address: string | null;
+      }) => {
+        if (p.policyholder_cvr && koncernCvrSet.has(p.policyholder_cvr)) return true;
+        const pn = (p.policyholder_name ?? '').toLowerCase().trim();
+        if (pn && koncernNavne.some((n) => pn === n || pn.includes(n) || n.includes(pn)))
+          return true;
+        return adrMatcher(p.property_address);
+      };
+      for (const p of (allTenantPolicies ?? []) as Array<Record<string, unknown>>) {
+        if (haveIds.has(p.id as string)) continue;
+        if (
+          hoererTilKoncern(
+            p as {
+              policyholder_cvr: string | null;
+              policyholder_name: string | null;
+              property_address: string | null;
+            }
+          )
+        ) {
+          policies = [...policies, p];
+          haveIds.add(p.id as string);
+        }
+      }
+    }
+
+    // (c) Klassificér hver polices tilknytning: 'sikker' når den er bekræftet
+    // via forsikringstager-CVR, forsikringssted-match eller aktiv-match;
+    // ellers 'tvivlsom' (kun inkluderet via fuzzy navne-match) → UI viser gul
+    // advarsel.
+    const matchedSet = new Set(matchedPolicyIds);
+    policies = (policies as Array<Record<string, unknown>>).map((p) => {
+      const cvrOk = !!p.policyholder_cvr && koncernCvrSet.has(p.policyholder_cvr as string);
+      const adrOk = adrMatcher(p.property_address as string | null);
+      const aktivOk = matchedSet.has(p.id as string);
+      return { ...p, attachment: cvrOk || adrOk || aktivOk ? 'sikker' : 'tvivlsom' };
+    });
+
     let gaps: unknown[] = [];
 
     // Først: prøv analyse-scoped gaps

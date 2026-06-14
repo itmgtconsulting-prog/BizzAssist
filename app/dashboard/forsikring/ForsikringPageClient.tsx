@@ -338,11 +338,15 @@ function PropertyRow({
 }) {
   const [expanded, setExpanded] = useState(false);
   const isInsured = group.aktiv.matched_policy_id !== null;
-  /** BIZZ-2096: dækning nedarvet fra police på SFE-adressen (sat af sfeStruktur.ts).
-      BIZZ-2118: `kaede=true` når arven gik via en søster-SFE (SFE-kæden). */
+  /** BIZZ-2096: dækning nedarvet fra police på aktivets egen SFE-adresse (sat af sfeStruktur.ts). */
   const daekketViaSfe =
-    (group.aktiv.raw_data as { daekket_via_sfe?: { sfe_adresse?: string; kaede?: boolean } } | null)
+    (group.aktiv.raw_data as { daekket_via_sfe?: { sfe_adresse?: string } } | null)
       ?.daekket_via_sfe ?? null;
+  /** BIZZ-2130: søster-SFE-relation — aktivet ligger i samme ejerlav som en
+      dækket SFE (men er IKKE dækket af policen). Kun informativ. */
+  const soesterSfe =
+    (group.aktiv.raw_data as { soester_sfe?: { sfe_adresse?: string } } | null)?.soester_sfe ??
+    null;
   /** BIZZ-2108: moderselskabets ejerandel i procent (sat af koncernWalk, BIZZ-2102) */
   const ejerandelPctRaw = (
     group.aktiv.raw_data as { ejerandel_pct?: number | string | null } | null
@@ -416,28 +420,35 @@ function PropertyRow({
               </span>
             )}
           {/* BIZZ-2096: Marker når dækningen er nedarvet fra en police på
-              SFE-adressen — antagelsen skal være transparent for rådgiveren. */}
+              aktivets egen SFE-adresse — antagelsen skal være transparent. */}
           {daekketViaSfe && (
             <span
               className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shrink-0 truncate max-w-[220px]"
               title={
-                daekketViaSfe.kaede
-                  ? da
-                    ? `Police på ${daekketViaSfe.sfe_adresse ?? ''} antages at dække søster-SFE'er i samme ejerlav med samme ejer (SFE-kæden)`
-                    : `Policy on ${daekketViaSfe.sfe_adresse ?? ''} is assumed to cover sister SFEs in the same cadastral district with the same owner (SFE chain)`
-                  : da
-                    ? `Police på SFE-adressen ${daekketViaSfe.sfe_adresse ?? ''} antages at dække hele strukturen`
-                    : `Policy on SFE address ${daekketViaSfe.sfe_adresse ?? ''} is assumed to cover the whole structure`
+                da
+                  ? `Police på SFE-adressen ${daekketViaSfe.sfe_adresse ?? ''} antages at dække hele strukturen`
+                  : `Policy on SFE address ${daekketViaSfe.sfe_adresse ?? ''} is assumed to cover the whole structure`
               }
             >
-              {daekketViaSfe.kaede
-                ? da
-                  ? 'Dækket via SFE-kæde'
-                  : 'Covered via SFE chain'
-                : da
-                  ? 'Dækket via SFE'
-                  : 'Covered via SFE'}
+              {da ? 'Dækket via SFE' : 'Covered via SFE'}
               {daekketViaSfe.sfe_adresse ? ` ${daekketViaSfe.sfe_adresse}` : ''}
+            </span>
+          )}
+          {/* BIZZ-2130: Søster-SFE — aktivet ligger i samme ejerlav som en
+              dækket SFE men dækkes IKKE af policen. Gul badge så rådgiveren kan
+              vurdere om ejendommen skal medforsikres. Vises kun når aktivet
+              ikke selv er dækket. */}
+          {soesterSfe && !daekketViaSfe && !isInsured && (
+            <span
+              className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 shrink-0 truncate max-w-[240px]"
+              title={
+                da
+                  ? `Ligger i samme ejerlav/SFE-struktur som ${soesterSfe.sfe_adresse ?? ''}, der har en police — men dækkes IKKE af den. Vurder om ejendommen skal medforsikres.`
+                  : `In the same cadastral district/SFE structure as ${soesterSfe.sfe_adresse ?? ''}, which has a policy — but is NOT covered by it. Consider whether it should be co-insured.`
+              }
+            >
+              {da ? 'Søster-SFE til' : 'Sister SFE to'}
+              {soesterSfe.sfe_adresse ? ` ${soesterSfe.sfe_adresse}` : ''}
             </span>
           )}
           {/* BIZZ-2101: CVR-badge på virksomheds-rækker — virksomheder vises

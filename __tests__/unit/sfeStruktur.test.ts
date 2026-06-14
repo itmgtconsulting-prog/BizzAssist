@@ -218,13 +218,13 @@ describe('applySfeArv — BIZZ-2096', () => {
   });
 });
 
-describe('applySfeArv — søster-SFE-kæde fjernet (BIZZ-2128)', () => {
+describe('applySfeArv — søster-SFE (BIZZ-2128 fjerner dækning, BIZZ-2130 annoterer)', () => {
   const EJER = '24301117'; // BELVEDERE EJENDOMME A/S
 
-  it('regression: nedarver IKKE til søster-SFE i samme ejerlav (Bramstræde 5 → Stengade 8/48-casen)', () => {
+  it('søster-SFE: ingen dækning (BIZZ-2128) men annoteres med soester_sfe (BIZZ-2130)', () => {
     // Police på SFE_BFE; aktiv på ANDEN_SFE i samme ejerlav, samme ejer.
-    // Tidligere (BIZZ-2118) arvede dette via kæden — det var en falsk positiv
-    // i store by-ejerlav. Nu skal kun det direkte SFE-aktiv arve.
+    // Må IKKE arve dækning (BIZZ-2118-kæden fjernet), men SKAL annoteres som
+    // søster-SFE til policens forsikringssted (Bramstræde/Stengade-casen).
     const policy = makePolicy();
     const matches: MatchResult[] = [
       unmatched(makeAktiv(123456, 'Bramstræde 5, 3000 Helsingør', EJER)),
@@ -238,10 +238,49 @@ describe('applySfeArv — søster-SFE-kæde fjernet (BIZZ-2128)', () => {
 
     const { inherited } = applySfeArv(matches, aktivSfe, policySfe);
 
-    // Kun det direkte SFE-aktiv arver; søster-SFE'et forbliver umatchet
+    // Kun det direkte SFE-aktiv arver dækning
     expect(inherited).toBe(1);
     expect(matches[0].bestMatch?.score).toBe(SFE_ARV_SCORE);
+    // Søster-SFE'et: INGEN dækning, men annoteret med policens forsikringssted
     expect(matches[1].bestMatch).toBeNull();
+    const soester = matches[1].aktiv.rawData?.soester_sfe as
+      | { sfe_bfe: number; sfe_adresse: string }
+      | undefined;
+    expect(soester?.sfe_bfe).toBe(SFE_BFE);
+    expect(soester?.sfe_adresse).toBe('Gefionsvej 47A, 3000 Helsingør');
+    expect(matches[1].aktiv.rawData?.daekket_via_sfe).toBeUndefined();
+  });
+
+  it('annoterer IKKE søster-SFE når ejeren afviger', () => {
+    const matches: MatchResult[] = [
+      unmatched(makeAktiv(123456, 'Bramstræde 5, 3000 Helsingør', EJER)),
+      unmatched(makeAktiv(ANDEN_SFE, 'Stengade 8G, 3000 Helsingør', '99999999')),
+    ];
+    const aktivSfe: AktivSfeMap = new Map([
+      [0, { sfeBfe: SFE_BFE, ejerlavKode: EJERLAV }],
+      [1, { sfeBfe: ANDEN_SFE, ejerlavKode: EJERLAV }],
+    ]);
+    const policySfe: PolicySfeMap = new Map([[SFE_BFE, policyEntry(makePolicy())]]);
+
+    applySfeArv(matches, aktivSfe, policySfe);
+
+    expect(matches[1].aktiv.rawData?.soester_sfe).toBeUndefined();
+  });
+
+  it('annoterer IKKE søster-SFE på tværs af ejerlav', () => {
+    const matches: MatchResult[] = [
+      unmatched(makeAktiv(123456, 'Bramstræde 5, 3000 Helsingør', EJER)),
+      unmatched(makeAktiv(ANDEN_SFE, 'Hovedgade 5, 8000 Aarhus', EJER)),
+    ];
+    const aktivSfe: AktivSfeMap = new Map([
+      [0, { sfeBfe: SFE_BFE, ejerlavKode: EJERLAV }],
+      [1, { sfeBfe: ANDEN_SFE, ejerlavKode: 9999999 }],
+    ]);
+    const policySfe: PolicySfeMap = new Map([[SFE_BFE, policyEntry(makePolicy())]]);
+
+    applySfeArv(matches, aktivSfe, policySfe);
+
+    expect(matches[1].aktiv.rawData?.soester_sfe).toBeUndefined();
   });
 
   it('markerer police som portefølje-forankret når dens SFE rummer aktiver — også uden arv', () => {

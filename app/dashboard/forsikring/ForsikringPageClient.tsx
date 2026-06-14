@@ -903,6 +903,70 @@ const KATEGORI_LABELS: Record<string, [string, string]> = {
 };
 
 /**
+ * BIZZ-2127: Forsikringstype-labels afledt af den dominerende dækningskategori.
+ * Bruges som titel på police-boksen i "Fundne forsikringer", så en police
+ * kategoriseres efter HVAD den dækker — ikke efter business_activity (som for
+ * Alm. Brand-bygningspolicer er bygningens anvendelse, fx "Restaurant og café").
+ */
+const KATEGORI_FORSIKRINGSTYPE: Record<string, [string, string]> = {
+  bygning: ['Ejendomsforsikring', 'Property insurance'],
+  loesoere: ['Løsøreforsikring', 'Contents insurance'],
+  driftstab: ['Driftstabsforsikring', 'Business interruption insurance'],
+  ansvar: ['Ansvarsforsikring', 'Liability insurance'],
+  cyber: ['Cyberforsikring', 'Cyber insurance'],
+  kriminalitet: ['Kriminalitetsforsikring', 'Crime insurance'],
+  transport: ['Transportforsikring', 'Transit insurance'],
+};
+
+/** BIZZ-2127: Opslag fra dækningskode → kategori (afledt af COVERAGE_KATEGORIER). */
+const CODE_TO_KATEGORI: Map<string, string> = (() => {
+  const m = new Map<string, string>();
+  for (const [kat, codes] of Object.entries(COVERAGE_KATEGORIER)) {
+    for (const code of codes) m.set(code, kat);
+  }
+  return m;
+})();
+
+/**
+ * BIZZ-2127: Udled forsikringstype-titel fra policens dækninger.
+ *
+ * Tæller aktive (is_covered) dækninger pr. kategori og vælger den dominerende
+ * → fx en police med overvejende bygningsdækninger bliver "Ejendomsforsikring".
+ * Falder tilbage til business_activity (og derefter en generisk label) hvis
+ * policen ingen kategoriserbare dækninger har.
+ *
+ * @param coverages - Policens dækninger
+ * @param businessActivity - Policens business_activity (fallback)
+ * @param da - Dansk sprogflag
+ * @returns Forsikringstype-titel til visning
+ */
+export function forsikringTypeLabel(
+  coverages: AnalyseCoverage[],
+  businessActivity: string | null | undefined,
+  da: boolean
+): string {
+  const counts = new Map<string, number>();
+  for (const c of coverages) {
+    if (!c.is_covered) continue;
+    const kat = CODE_TO_KATEGORI.get(c.coverage_code);
+    if (!kat) continue;
+    counts.set(kat, (counts.get(kat) ?? 0) + 1);
+  }
+  let best: string | null = null;
+  let bestN = 0;
+  for (const [kat, n] of counts) {
+    if (n > bestN) {
+      best = kat;
+      bestN = n;
+    }
+  }
+  if (best && KATEGORI_FORSIKRINGSTYPE[best]) {
+    return KATEGORI_FORSIKRINGSTYPE[best][da ? 0 : 1];
+  }
+  return businessActivity || (da ? 'Forsikring' : 'Insurance');
+}
+
+/**
  * BIZZ-2099: "Fundne forsikringer" — grøn boks pr. police i analysen med alle
  * dækninger (inkl. dækningssum + selvrisiko), så det der ER dækket vises
  * eksplicit — ikke kun manglerne. Adresseløse virksomhedspolicer (Cyber,
@@ -976,8 +1040,11 @@ function FundneForsikringer({ detail, da }: { detail: AnalyseDetail; da: boolean
             >
               <div className="flex items-start justify-between gap-2 mb-1">
                 <div className="min-w-0">
+                  {/* BIZZ-2127: Titel = forsikringstype afledt af dækningerne
+                      (fx bygningsdækninger → "Ejendomsforsikring"), ikke
+                      business_activity som kan være bygningens anvendelse. */}
                   <div className="text-emerald-200 text-xs font-semibold truncate">
-                    {policy.business_activity || (da ? 'Forsikring' : 'Insurance')}
+                    {forsikringTypeLabel(covs, policy.business_activity, da)}
                   </div>
                   <div className="text-slate-400 text-[11px] truncate">
                     {[policy.insurer_name, policy.policy_number].filter(Boolean).join(' — ')}

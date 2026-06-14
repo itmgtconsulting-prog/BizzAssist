@@ -249,6 +249,16 @@ export async function getInsuranceApi(tenantId: string): Promise<InsuranceApi> {
         }
       },
       async delete(id) {
+        // BIZZ-2126: Cascade-slet dokumentets policer FØR selve dokumentet.
+        // FK'en er ON DELETE SET NULL, så uden dette efterlades policerne
+        // forældreløse (document_id=NULL) — de forgifter re-parse-dedup'en og
+        // er usynlige for analysen (som scoper på document_id). Coverages og
+        // gaps fjernes automatisk via deres egen ON DELETE CASCADE på policy_id.
+        await tenantDb(admin, schemaName)
+          .from('forsikring_policies')
+          .delete()
+          .eq('tenant_id', tenantId)
+          .eq('document_id', id);
         const { error } = await tenantDb(admin, schemaName)
           .from('forsikring_documents')
           .delete()
@@ -266,6 +276,12 @@ export async function getInsuranceApi(tenantId: string): Promise<InsuranceApi> {
           .map((d: { storage_path: string }) => d.storage_path)
           .filter(Boolean);
         if (ids.length > 0) {
+          // BIZZ-2126: Cascade-slet alle policer (de tilhører dokumenterne der
+          // slettes) før dokumenterne — ellers efterlades de forældreløse.
+          await tenantDb(admin, schemaName)
+            .from('forsikring_policies')
+            .delete()
+            .eq('tenant_id', tenantId);
           await tenantDb(admin, schemaName)
             .from('forsikring_documents')
             .delete()
@@ -299,6 +315,9 @@ export async function getInsuranceApi(tenantId: string): Promise<InsuranceApi> {
           .from('forsikring_policies')
           .select('*')
           .eq('tenant_id', tenantId)
+          // BIZZ-2126: Ignorér forældreløse policer (document_id=NULL fra slettede
+          // dokumenter) i dedup — ellers blokerer de gen-oprettelse ved re-parse.
+          .not('document_id', 'is', null)
           .or(
             `policy_number.eq.${normalized},policy_number.eq.0${normalized},policy_number.eq.00${normalized}`
           )
@@ -324,6 +343,9 @@ export async function getInsuranceApi(tenantId: string): Promise<InsuranceApi> {
           .from('forsikring_policies')
           .select('*')
           .eq('tenant_id', tenantId)
+          // BIZZ-2126: Ignorér forældreløse policer (document_id=NULL fra slettede
+          // dokumenter) i dedup — ellers blokerer de gen-oprettelse ved re-parse.
+          .not('document_id', 'is', null)
           .or(
             `policy_number.eq.${normalized},policy_number.eq.0${normalized},policy_number.eq.00${normalized}`
           )

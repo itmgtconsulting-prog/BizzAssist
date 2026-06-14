@@ -310,6 +310,29 @@ describe('oversigtEntryMatchesPolicy (BIZZ-2097)', () => {
       })
     ).toBe(true);
   });
+
+  it('BIZZ-2125: Ansvar (uden sted) + Ejendom (Stjernegade 17) under samme aftalenr giver 2 policer', () => {
+    // TOP-aftale 9417319074: en Ansvar-forsikring (virksomheden, ingen
+    // forsikringssted) + en Ejendom-forsikring (forsikringssted Stjernegade 17)
+    // må ALDRIG kollapses, selvom de deler aftalenummer — ellers tabes
+    // bygningsdækningen og ejendommen vises uforsikret.
+    const entries = [
+      { property_address: null, insurance_type: 'Erhvervsansvar' },
+      { property_address: 'Stjernegade 17, 3000 Helsingør', insurance_type: 'Ejendomsforsikring' },
+    ];
+    const created: Array<{ property_address: string | null; business_activity: string | null }> =
+      [];
+    for (const entry of entries) {
+      const existing = created.find((p) => oversigtEntryMatchesPolicy(p, entry));
+      if (existing) continue;
+      created.push({
+        property_address: entry.property_address,
+        business_activity: entry.insurance_type,
+      });
+    }
+    expect(created).toHaveLength(2);
+    expect(created[1].property_address).toBe('Stjernegade 17, 3000 Helsingør');
+  });
 });
 
 // ─── BIZZ-2098: Erhvervs-taksonomi for dækningskoder ─────────────────

@@ -4505,6 +4505,20 @@ export default function ForsikringPageClient(): React.ReactElement {
     []
   );
 
+  /** BIZZ-2131: Nulstil kort + analyse-detail når kunde skifter */
+  const handleCustomerSelect = useCallback(
+    (customer: { type: 'virksomhed' | 'person'; id: string; navn: string } | null) => {
+      setSelectedCustomer(customer);
+      // Nulstil kort-state så knappen ikke vises med gammel analyse
+      setAiAnalyseDetail(null);
+      setAiKundeNavn(null);
+      setKortÅben(false);
+      setGeoMarkers([]);
+      setGeoLoading(false);
+    },
+    []
+  );
+
   // ── BIZZ-2131: Kort-sidepanel state (side-niveau, fuld højde) ──
   const [kortÅben, setKortÅben] = useState(false);
   const [kortBredde, setKortBredde] = useState(420);
@@ -4704,86 +4718,86 @@ export default function ForsikringPageClient(): React.ReactElement {
   const _totals = data?.totals;
 
   return (
-    <div className="h-full bg-[#0a1020] text-slate-100 flex flex-col">
-      {/* Sticky header — altid synlig */}
-      <header className="flex-shrink-0 px-6 pt-4 pb-3 border-b border-white/5 flex items-center justify-between bg-[#0a1020] z-10">
-        <div className="space-y-0.5">
-          <h1 className="flex items-center gap-3 text-2xl font-semibold">
-            <ShieldCheck className="text-blue-400" size={28} />
-            {t.title}
-          </h1>
-          <div className="flex items-center gap-4">
-            <p className="text-sm text-slate-400">{t.subtitle}</p>
-            <TokenUsageBar className="max-w-xs" />
+    <div className={`h-full bg-[#0a1020] text-slate-100 ${kortÅben && isDesktop ? 'flex' : ''}`}>
+      {/* Scrollbart indhold (header + resten) */}
+      <div
+        className={`overflow-y-auto h-full ${kortÅben && isDesktop ? 'flex-1 min-w-0' : 'w-full'}`}
+      >
+        {/* Sticky header — altid synlig indenfor scroll-containeren */}
+        <header className="sticky top-0 px-6 pt-4 pb-3 border-b border-white/5 flex items-center justify-between bg-[#0a1020] z-10">
+          <div className="space-y-0.5">
+            <h1 className="flex items-center gap-3 text-2xl font-semibold">
+              <ShieldCheck className="text-blue-400" size={28} />
+              {t.title}
+            </h1>
+            <div className="flex items-center gap-4">
+              <p className="text-sm text-slate-400">{t.subtitle}</p>
+              <TokenUsageBar className="max-w-xs" />
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {/* BIZZ-2131: Kort-knap — kun synlig når analyse med ejendomme er kørt */}
+            </div>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
-            {/* BIZZ-2131: Kort-knap — kun synlig når analyse med ejendomme er kørt */}
-          </div>
-        </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          {/* BIZZ-2131: Kort-knap */}
-          {geoAnalyseId &&
-            aiAnalyseDetail &&
-            (aiAnalyseDetail.aktiver ?? []).some(
-              (a: { type: string; adresse?: string | null }) => a.type === 'ejendom' && a.adresse
-            ) && (
+            {/* BIZZ-2131: Kort-knap */}
+            {geoAnalyseId &&
+              aiAnalyseDetail &&
+              (aiAnalyseDetail.aktiver ?? []).some(
+                (a: { type: string; adresse?: string | null }) => a.type === 'ejendom' && a.adresse
+              ) && (
+                <button
+                  type="button"
+                  onClick={() => setKortÅben(!kortÅben)}
+                  className={`flex items-center gap-1.5 px-3 py-2 text-xs rounded-lg border transition-colors ${
+                    kortÅben
+                      ? 'bg-blue-600 border-blue-500 text-white'
+                      : 'bg-slate-800/80 border-slate-700/60 text-slate-300 hover:bg-slate-700/80'
+                  }`}
+                  aria-label={lang === 'da' ? 'Vis kort' : 'Show map'}
+                >
+                  <MapIcon size={14} />
+                  {lang === 'da' ? 'Kort' : 'Map'}
+                </button>
+              )}
+            {/* BIZZ-1397: Nulstil alt — kun synlig for admin */}
+            {isAdmin && (policies.length > 0 || documents.length > 0) && (
               <button
                 type="button"
-                onClick={() => setKortÅben(!kortÅben)}
-                className={`flex items-center gap-1.5 px-3 py-2 text-xs rounded-lg border transition-colors ${
-                  kortÅben
-                    ? 'bg-blue-600 border-blue-500 text-white'
-                    : 'bg-slate-800/80 border-slate-700/60 text-slate-300 hover:bg-slate-700/80'
-                }`}
-                aria-label={lang === 'da' ? 'Vis kort' : 'Show map'}
+                disabled={resetting}
+                onClick={async () => {
+                  const da = lang === 'da';
+                  if (
+                    !window.confirm(
+                      da
+                        ? 'Slet ALLE forsikringsdata? Alle policer, dokumenter, gaps og analyser slettes permanent. Denne handling kan ikke fortrydes.'
+                        : 'Delete ALL insurance data? All policies, documents, gaps and analyses will be permanently deleted. This action cannot be undone.'
+                    )
+                  )
+                    return;
+                  setResetting(true);
+                  try {
+                    const res = await fetch('/api/forsikring/reset', { method: 'DELETE' });
+                    if (res.ok) {
+                      setUploadJobs([]);
+                      await refresh();
+                    }
+                  } catch {
+                    // Handled silently
+                  } finally {
+                    setResetting(false);
+                  }
+                }}
+                className="flex items-center gap-2 px-3 py-2 text-xs rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors disabled:opacity-50"
               >
-                <MapIcon size={14} />
-                {lang === 'da' ? 'Kort' : 'Map'}
+                {resetting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                {lang === 'da' ? 'Nulstil alt' : 'Reset all'}
               </button>
             )}
-          {/* BIZZ-1397: Nulstil alt — kun synlig for admin */}
-          {isAdmin && (policies.length > 0 || documents.length > 0) && (
-            <button
-              type="button"
-              disabled={resetting}
-              onClick={async () => {
-                const da = lang === 'da';
-                if (
-                  !window.confirm(
-                    da
-                      ? 'Slet ALLE forsikringsdata? Alle policer, dokumenter, gaps og analyser slettes permanent. Denne handling kan ikke fortrydes.'
-                      : 'Delete ALL insurance data? All policies, documents, gaps and analyses will be permanently deleted. This action cannot be undone.'
-                  )
-                )
-                  return;
-                setResetting(true);
-                try {
-                  const res = await fetch('/api/forsikring/reset', { method: 'DELETE' });
-                  if (res.ok) {
-                    setUploadJobs([]);
-                    await refresh();
-                  }
-                } catch {
-                  // Handled silently
-                } finally {
-                  setResetting(false);
-                }
-              }}
-              className="flex items-center gap-2 px-3 py-2 text-xs rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors disabled:opacity-50"
-            >
-              {resetting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-              {lang === 'da' ? 'Nulstil alt' : 'Reset all'}
-            </button>
-          )}
-        </div>
-      </header>
+          </div>
+        </header>
 
-      {/* Indhold + kort i flex-row */}
-      <div className={`flex-1 min-h-0 ${kortÅben && isDesktop ? 'flex' : ''}`}>
-        {/* Scrollbart indhold */}
-        <div
-          className={`overflow-y-auto p-6 pb-16 space-y-6 h-full ${kortÅben && isDesktop ? 'flex-1 min-w-0' : 'w-full'}`}
-        >
+        {/* Side-indhold med padding */}
+        <div className="p-6 pb-16 space-y-6">
           {/* TRIN 1: Vælg kunde */}
           <AnalyseSection
             lang={lang}
@@ -4791,7 +4805,7 @@ export default function ForsikringPageClient(): React.ReactElement {
             onRefresh={refresh}
             onAnalyseDetail={handleAnalyseDetail}
             onSagChange={setActiveSagId}
-            onCustomerSelect={setSelectedCustomer}
+            onCustomerSelect={handleCustomerSelect}
             newDocumentIds={newDocumentIds}
             addTokenUsage={addTokenUsage}
           />

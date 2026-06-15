@@ -158,6 +158,19 @@ function StatusBadge({ marker, da }: { marker: ForsikringMarker; da: boolean }) 
  */
 function ForsikringMapInner({ markers, onMarkerClick, da = true }: ForsikringMapProps) {
   const mapRef = useRef<MapRef>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  /** ResizeObserver — trigger map.resize() når containeren ændrer størrelse (drag-divider) */
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      mapRef.current?.resize();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   const [mapStyle, setMapStyleState] = useState<MapStyle>(() => {
     if (typeof window === 'undefined') return 'dark';
     const saved = window.localStorage.getItem(STYLE_STORAGE_KEY) as MapStyle | null;
@@ -214,7 +227,7 @@ function ForsikringMapInner({ markers, onMarkerClick, da = true }: ForsikringMap
   const defaultLng = markers[0]?.lng ?? 12.57;
 
   return (
-    <div className="relative w-full h-full">
+    <div ref={containerRef} className="relative w-full h-full">
       <Map
         ref={mapRef}
         mapboxAccessToken={process.env.NEXT_PUBLIC_MAPBOX_TOKEN}

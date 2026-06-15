@@ -223,12 +223,9 @@ function ForsikringMapInner({
     setPopupMarker(m);
   }, [highlightedId, markers]);
 
-  /** Auto-fitBounds til alle markører ved load */
-  useEffect(() => {
+  /** Beregn bounding box og kør fitBounds */
+  const fitToMarkers = useCallback(() => {
     if (!mapRef.current || markers.length === 0) return;
-    const map = mapRef.current;
-
-    // Beregn bounding box
     let minLat = Infinity,
       maxLat = -Infinity,
       minLng = Infinity,
@@ -239,10 +236,8 @@ function ForsikringMapInner({
       if (m.lng < minLng) minLng = m.lng;
       if (m.lng > maxLng) maxLng = m.lng;
     }
-
-    // Tilpas viewport med padding
     if (minLat <= maxLat && minLng <= maxLng) {
-      map.fitBounds(
+      mapRef.current.fitBounds(
         [
           [minLng, minLat],
           [maxLng, maxLat],
@@ -251,6 +246,11 @@ function ForsikringMapInner({
       );
     }
   }, [markers]);
+
+  /** Auto-fitBounds når markers ændres */
+  useEffect(() => {
+    fitToMarkers();
+  }, [fitToMarkers]);
 
   /** Filtrerede markører */
   const visibleMarkers = markers.filter((m) => {
@@ -277,6 +277,7 @@ function ForsikringMapInner({
         maxZoom={20}
         style={{ width: '100%', height: '100%' }}
         onClick={() => setPopupMarker(null)}
+        onLoad={() => fitToMarkers()}
       >
         <NavigationControl position="top-right" showCompass={false} />
 

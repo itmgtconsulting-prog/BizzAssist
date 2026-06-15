@@ -173,11 +173,10 @@ interface AnalysePolicy {
  * BIZZ-2121: Dækninger til den grønne "Dækket"-boks for et aktiv.
  *
  * Ejendoms-aktiver viser den matchede polices dækninger. Virksomheds-aktiver
- * aggregerer dækninger fra ALLE analysens policer hvor virksomheden står som
- * forsikringstager — en erhvervskunde har typisk flere delpolicer (løsøre,
- * driftstab, cyber, kriminalitet, …) og kun én af dem er matched_policy_id,
- * så matched-police-visningen alene underdriver dækningen groft (DBRAMANTE:
- * "Dækket (3)" trods 30+ parsede dækninger på 6 delpolicer).
+ * aggregerer dækninger fra IKKE-ejendoms-policer (ansvar, drift, cyber,
+ * løsøre, kriminalitet, …) hvor virksomheden står som forsikringstager.
+ * Ejendomsforsikrings-dækninger (brand, bygningskasko, etc.) filtreres fra
+ * da de hører til de individuelle ejendomme, ikke virksomheden.
  *
  * @param aktiv - Analyse-aktivet (ejendom/virksomhed)
  * @param analysePolicies - Alle analysens policer (detail.policies)
@@ -192,9 +191,15 @@ export function coveragesForAktiv(
   const matched = aktiv.matched_policy_id ? (covByPolicy.get(aktiv.matched_policy_id) ?? []) : [];
   if (aktiv.type !== 'virksomhed' || !aktiv.cvr) return matched;
   const cvr = aktiv.cvr.replace(/\D/g, '');
+  // Saml kun policer der IKKE er ejendomsforsikringer — de hører til
+  // ejendommene ovenfor, ikke virksomheden. Ansvar, drift, cyber, løsøre
+  // etc. er virksomheds-relevante.
   const ids = new Set<string>(aktiv.matched_policy_id ? [aktiv.matched_policy_id] : []);
   for (const p of analysePolicies) {
-    if ((p.policyholder_cvr ?? '').replace(/\D/g, '') === cvr) ids.add(p.id);
+    if ((p.policyholder_cvr ?? '').replace(/\D/g, '') !== cvr) continue;
+    const ba = (p.business_activity ?? '').toLowerCase();
+    if (/ejendom/i.test(ba)) continue;
+    ids.add(p.id);
   }
   const out: AnalyseCoverage[] = [];
   for (const id of ids) out.push(...(covByPolicy.get(id) ?? []));

@@ -258,7 +258,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
         // Primær dedup: samme adresse + forsikringstype (BIZZ-2097).
         let existing = existingAll.find((p) => oversigtEntryMatchesPolicy(p, entry));
-        // BIZZ-2129: Sekundær dedup på DÆKNINGSSÆT — samme aftalenr + samme
+
+        // Sekundær dedup: ikke-ejendomsspecifikke policer (ansvar, drift, cyber
+        // etc.) er virksomheds-dækkende — match på forsikringstype alene uanset
+        // adresse. Ejendomsforsikringer er adresse-specifikke og kræver stadig
+        // adresse-match (håndteres af primær dedup ovenfor).
+        if (!existing) {
+          const normT = (s: string | null | undefined) => s?.trim().toLowerCase() || null;
+          const entryType = normT(entry.insurance_type);
+          const isPropertySpecific = entryType && /ejendom/i.test(entryType);
+          if (!isPropertySpecific && entryType) {
+            existing = existingAll.find((p) => normT(p.business_activity) === entryType) ?? null;
+          }
+        }
+
+        // BIZZ-2129: Tertiær dedup på DÆKNINGSSÆT — samme aftalenr + samme
         // forsikringssted + identisk sæt af coverage_codes = duplikat, selv når
         // type-labels varierer ("Erhvervsansvar" fra police-PDF vs
         // "Ansvarsforsikring" fra oversigt-PDF). Cyber vs Netbank (forskellige

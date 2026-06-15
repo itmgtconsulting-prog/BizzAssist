@@ -268,7 +268,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           const entryType = normT(entry.insurance_type);
           const isPropertySpecific = entryType && /ejendom/i.test(entryType);
           if (!isPropertySpecific && entryType) {
-            existing = existingAll.find((p) => normT(p.business_activity) === entryType) ?? null;
+            existing = existingAll.find((p) => normT(p.business_activity) === entryType);
           }
         }
 

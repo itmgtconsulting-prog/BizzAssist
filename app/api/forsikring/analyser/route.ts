@@ -36,8 +36,8 @@ import {
 import { logActivity } from '@/app/lib/activityLog';
 import { logger } from '@/app/lib/logger';
 
-/** BIZZ-2135: Øget 60 → 120s — store porteføljer med mange policer + SFE-opslag kræver mere tid */
-export const maxDuration = 120;
+/** Øget til 300s (Vercel Pro max) — store porteføljer (40+ aktiver, 9 docs, SFE-opslag) kræver mere tid */
+export const maxDuration = 300;
 
 /**
  * Normaliserer et forsikringsselskabs-navn til selskabs-sammenligning.

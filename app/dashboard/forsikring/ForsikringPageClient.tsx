@@ -2501,11 +2501,11 @@ function AnalyseSection({
                         /* non-fatal */
                       }
                     }}
-                    className="text-xs text-red-400 hover:text-red-300 underline"
+                    className="text-xs text-slate-400 hover:text-red-400 transition-colors"
                   >
                     {da
-                      ? `Slet alle ${deletableCount} dokumenter for ${selected.navn}`
-                      : `Delete all ${deletableCount} documents for ${selected.navn}`}
+                      ? `Slet dokumenter (${deletableCount})`
+                      : `Delete documents (${deletableCount})`}
                   </button>
                 );
               })()}

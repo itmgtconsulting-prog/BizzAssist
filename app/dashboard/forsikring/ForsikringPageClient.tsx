@@ -4704,9 +4704,11 @@ export default function ForsikringPageClient(): React.ReactElement {
   const _totals = data?.totals;
 
   return (
-    <div className={`${kortÅben && isDesktop ? 'flex' : ''} h-full bg-[#0a1020] text-slate-100`}>
+    <div className={`h-full bg-[#0a1020] text-slate-100 ${kortÅben && isDesktop ? 'flex' : ''}`}>
       {/* Hovedindhold — scrollbar, fuld højde */}
-      <div className="flex-1 overflow-y-auto p-6 pb-16 space-y-6 min-w-0 h-full">
+      <div
+        className={`overflow-y-auto p-6 pb-16 space-y-6 h-full ${kortÅben && isDesktop ? 'flex-1 min-w-0' : 'w-full'}`}
+      >
         {/* Heading + nulstil-knap + kort-knap */}
         <header className="flex items-start justify-between">
           <div className="space-y-1">
@@ -4719,22 +4721,26 @@ export default function ForsikringPageClient(): React.ReactElement {
             <TokenUsageBar className="mt-2 max-w-xs" />
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
-            {/* BIZZ-2131: Kort-knap — kun synlig når analyse er aktiv */}
-            {geoAnalyseId && (
-              <button
-                type="button"
-                onClick={() => setKortÅben(!kortÅben)}
-                className={`flex items-center gap-1.5 px-3 py-2 text-xs rounded-lg border transition-colors ${
-                  kortÅben
-                    ? 'bg-blue-600 border-blue-500 text-white'
-                    : 'bg-slate-800/80 border-slate-700/60 text-slate-300 hover:bg-slate-700/80'
-                }`}
-                aria-label={lang === 'da' ? 'Vis kort' : 'Show map'}
-              >
-                <MapIcon size={14} />
-                {lang === 'da' ? 'Kort' : 'Map'}
-              </button>
-            )}
+            {/* BIZZ-2131: Kort-knap — kun synlig når analyse med ejendomme er kørt */}
+            {geoAnalyseId &&
+              aiAnalyseDetail &&
+              (aiAnalyseDetail.aktiver ?? []).some(
+                (a: { type: string; adresse?: string | null }) => a.type === 'ejendom' && a.adresse
+              ) && (
+                <button
+                  type="button"
+                  onClick={() => setKortÅben(!kortÅben)}
+                  className={`flex items-center gap-1.5 px-3 py-2 text-xs rounded-lg border transition-colors ${
+                    kortÅben
+                      ? 'bg-blue-600 border-blue-500 text-white'
+                      : 'bg-slate-800/80 border-slate-700/60 text-slate-300 hover:bg-slate-700/80'
+                  }`}
+                  aria-label={lang === 'da' ? 'Vis kort' : 'Show map'}
+                >
+                  <MapIcon size={14} />
+                  {lang === 'da' ? 'Kort' : 'Map'}
+                </button>
+              )}
             {/* BIZZ-1397: Nulstil alt — kun synlig for admin */}
             {isAdmin && (policies.length > 0 || documents.length > 0) && (
               <button

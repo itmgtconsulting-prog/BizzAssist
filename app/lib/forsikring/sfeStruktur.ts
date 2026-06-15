@@ -108,7 +108,9 @@ export function tilAdgangsadresse(adresse: string): string {
  * @returns SFE-opslag eller null hvis adressen ikke kan resolves
  */
 export async function resolveSfeForAdresse(adresse: string): Promise<SfeOpslag | null> {
-  const normaliseret = tilAdgangsadresse(adresse);
+  let normaliseret = tilAdgangsadresse(adresse);
+  // BIZZ-2133: Range-adresser ("47A-51") → brug start-adressen ("47A") for DAWA-opslag
+  normaliseret = normaliseret.replace(/(\d+[A-Za-z]?)\s*-\s*\d+[A-Za-z]?/, '$1');
   const key = normaliseret.toLowerCase().trim();
   if (!key) return null;
   const cached = adresseSfeCache.get(key);

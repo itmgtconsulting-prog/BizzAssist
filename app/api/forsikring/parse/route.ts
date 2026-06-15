@@ -355,7 +355,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           is_covered: c.is_covered,
           sum_dkk: c.sum_dkk ?? null,
           deductible_dkk: c.deductible_dkk ?? null,
-          conditions_ref: null,
+          conditions_ref: ((c as Record<string, unknown>).conditions_ref as string | null) ?? null,
           notes: null,
         }));
         if (coverageInputs.length > 0) {

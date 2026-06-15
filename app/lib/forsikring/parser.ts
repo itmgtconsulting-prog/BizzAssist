@@ -280,9 +280,11 @@ Din opgave er at udtrække ALLE policer fra oversigten og returnere dem som JSON
           "coverage_label": string,
           "is_covered": boolean,
           "sum_dkk": number | null,
-          "deductible_dkk": number | null
+          "deductible_dkk": number | null,
+          "conditions_ref": string | null
         }
       ],
+      "conditions_ref": string | null,
       "notes": string | null
     }
   ],
@@ -303,6 +305,8 @@ REGLER:
 9. coverage_code skal matche én af de kanoniske koder ovenfor. Hvis en dækning ikke passer, brug den nærmeste — men tving ALDRIG en erhvervsdækning (løsøre, tyveri, cyber, transport, kriminalitet) ind i en bygningskode. Finder du færre end 5, gennemlæs dokumentet igen.
 10. ADRESSE-KONTEKST (KRITISK): property_address er forsikringsSTEDET for den enkelte police — den adresse policens dækning gælder for. Brug ALDRIG kundens generelle virksomheds-, kontakt-, cc- eller adressat-adresse fra oversigtens brevhoved som property_address. Kun adresser der i oversigten eksplicit er knyttet til den enkelte police som forsikringssted må bruges — ellers null. Forsikringstagerens egen adresse hører til i policyholder_address.
 11. MULTI-FORSIKRINGSTYPE-AFTALER (KRITISK — BIZZ-2125): Mange erhvervsaftaler (især Topdanmark/Tryg "Forsikringsaftale") har en "Aftaleoversigt"-/"Forsikringstype"-tabel der lister FLERE selvstændige forsikringstyper under ÉT fælles aftalenummer — fx "Ansvar", "Ejendom", "Bygning", "Løsøre", "Driftstab", "Cyber", "Netbank", "Kriminalitet". Hver enkelt forsikringstype i den tabel SKAL blive sin EGEN police-entry i policies[] — ALDRIG slået sammen til én, selvom de deler aftalenummer. Spring ALDRIG en forsikringstype fra aftaleoversigten over. For HVER forsikringstype: find dens tilhørende detalje-/dækningssektion længere nede i dokumentet (typisk en "Dækningsoversigt"/"Forsikringsoversigt"-blok pr. type) og ekstrahér netop DEN sektions dækninger til entry'ens coverages[]. En "Ejendom"-/"Bygning"-forsikringstype har sit eget forsikringssted (fx "Forsikringssted: Stjernegade 17") → sæt property_address til den adresse og medtag bygningsdækningerne (Brand, Storm, Rørskade, Glas, Jordskade, Huslejetab osv.). En "Ansvar"-/virksomhedsdækning uden forsikringssted får property_address=null. Resultat: en aftale med fx Ansvar + Ejendom giver PRÆCIS 2 entries med hver sine dækninger.
+12. CONDITIONS_REF: Hvis dokumentet nævner vilkårsnumre (fx "Vilkårsnr. DF20900-2, DF20904-2" for Topdanmark, eller "Betingelse 100.03, 230.02" for Alm. Brand), sæt conditions_ref på HVER police-entry til den relevante vilkårs-streng.
+13. TOPDANMARK DÆKNINGSFORMAT: Topdanmark-aftaler har typisk: (a) "Sådan er bygningen dækket" med Brand=Ja/Nej liste, og (b) "Dækningsoversigt" tabel med "Dækning / Højeste erstatning pr. år / Selvrisiko" beløb. BRUG BEGGE: Ja/Nej-listen fortæller HVAD der er dækket (is_covered), tabellen giver beløb (sum_dkk, deductible_dkk). OBS: Teksten kan have encoding-issues (ø→», å→}, æ→{) — ignorer det og parse indholdet alligevel.
 
 Returnér nu JSON for følgende forsikringsoversigt:`;
 

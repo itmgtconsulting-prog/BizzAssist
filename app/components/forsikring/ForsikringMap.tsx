@@ -77,9 +77,6 @@ const matrikelLineStyle: LineLayerSpecification = {
   paint: { 'line-color': '#60a5fa', 'line-width': 1.5, 'line-opacity': 0.6 },
 };
 
-/** Tom GeoJSON FeatureCollection */
-const EMPTY_FC = { type: 'FeatureCollection' as const, features: [] as GeoJSON.Feature[] };
-
 /**
  * Beregn markør-farve baseret på forsikringsstatus.
  *
@@ -177,14 +174,12 @@ function ForsikringMapInner({
   const [popupMarker, setPopupMarker] = useState<ForsikringMarker | null>(null);
   const [showEjendomme, setShowEjendomme] = useState(true);
   const [showVirksomheder, setShowVirksomheder] = useState(true);
-  const [matrikelGeoJson, setMatrikelGeoJson] = useState(EMPTY_FC);
-  const matrikelFetchedRef = useRef(false);
+  /** Matrikel bbox URL — Mapbox henter GeoJSON direkte via URL (bedre end 1MB+ i React state) */
+  const [matrikelUrl, setMatrikelUrl] = useState<string | null>(null);
 
-  /** Hent matrikelgrænser via GeoJSON bbox-endpoint baseret på markørernes udbredelse */
+  /** Beregn matrikel bbox URL fra markørernes udbredelse */
   useEffect(() => {
-    if (markers.length === 0 || matrikelFetchedRef.current) return;
-    matrikelFetchedRef.current = true;
-    // Beregn bounding box med margin
+    if (markers.length === 0) return;
     let minLat = Infinity,
       maxLat = -Infinity,
       minLng = Infinity,
@@ -195,17 +190,10 @@ function ForsikringMapInner({
       if (m.lng < minLng) minLng = m.lng;
       if (m.lng > maxLng) maxLng = m.lng;
     }
-    const margin = 0.005; // ~500m margin
-    fetch(
+    const margin = 0.005;
+    setMatrikelUrl(
       `/api/matrikel/bbox?w=${minLng - margin}&s=${minLat - margin}&e=${maxLng + margin}&n=${maxLat + margin}`
-    )
-      .then((r) => (r.ok ? r.json() : EMPTY_FC))
-      .then((json) => {
-        if (json?.type === 'FeatureCollection') setMatrikelGeoJson(json);
-        else if (Array.isArray(json))
-          setMatrikelGeoJson({ type: 'FeatureCollection', features: json });
-      })
-      .catch(() => {});
+    );
   }, [markers]);
 
   /** Skift kort-style og gem i localStorage */
@@ -282,10 +270,12 @@ function ForsikringMapInner({
         <NavigationControl position="top-right" showCompass={false} />
 
         {/* BIZZ-2131: Matrikelgrænser (GeoJSON fra /api/matrikel/bbox) */}
-        <Source id="forsikring-matrikel" type="geojson" data={matrikelGeoJson}>
-          <Layer {...matrikelFillStyle} />
-          <Layer {...matrikelLineStyle} />
-        </Source>
+        {matrikelUrl && (
+          <Source id="forsikring-matrikel" type="geojson" data={matrikelUrl}>
+            <Layer {...matrikelFillStyle} />
+            <Layer {...matrikelLineStyle} />
+          </Source>
+        )}
 
         {visibleMarkers.map((m) => {
           const husnr = extractHusnr(m.adresse);

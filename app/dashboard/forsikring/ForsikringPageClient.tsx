@@ -1237,51 +1237,6 @@ function UnifiedAnalyseView({
 }) {
   const { analyse: _analyse, aktiver, gaps } = detail;
 
-  // ── BIZZ-2131: Kort-sidepanel state ──
-  const [kortÅben, setKortÅben] = useState(false);
-  const [kortBredde, setKortBredde] = useState(420);
-  const [trækker, setTrækker] = useState(false);
-  const trækStart = useRef<{ x: number; bredde: number } | null>(null);
-  const [geoMarkers, setGeoMarkers] = useState<ForsikringMarker[]>([]);
-  const [geoLoading, setGeoLoading] = useState(false);
-
-  /** Hent geo-markører fra API ved første åbning */
-  useEffect(() => {
-    if (!kortÅben || geoMarkers.length > 0 || geoLoading) return;
-    setGeoLoading(true);
-    fetch(`/api/forsikring/analyser/${detail.analyse.id}/geo`)
-      .then((r) => (r.ok ? r.json() : { markers: [] }))
-      .then((d) => setGeoMarkers(d.markers ?? []))
-      .catch(() => setGeoMarkers([]))
-      .finally(() => setGeoLoading(false));
-  }, [kortÅben, geoMarkers.length, geoLoading, detail.analyse.id]);
-
-  /** Globale drag-handlers for resize-divider */
-  useEffect(() => {
-    if (!trækker) return;
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!trækStart.current) return;
-      const delta = trækStart.current.x - e.clientX;
-      setKortBredde(Math.min(900, Math.max(200, trækStart.current.bredde + delta)));
-    };
-    const handleMouseUp = () => {
-      setTrækker(false);
-      trækStart.current = null;
-    };
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [trækker]);
-
-  /** Scroll til aktiv i listen ved markør-klik */
-  const handleMarkerClick = useCallback((aktivId: string) => {
-    const el = document.getElementById(`aktiv-${aktivId}`);
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, []);
-
   // Build a policy lookup
   const policyById = new Map(policies.map((p) => [p.id, p]));
 
@@ -1556,283 +1511,187 @@ function UnifiedAnalyseView({
   const healthScore = Math.max(0, Math.min(100, healthBase - gapPenalty));
   const healthColor = healthScore >= 71 ? 'emerald' : healthScore >= 41 ? 'amber' : 'red';
 
-  /** Beregn om vi er desktop (≥768px) — bruges til kort-layout */
-  const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 768;
-
   return (
-    <div className={kortÅben && isDesktop ? 'flex gap-0' : ''}>
-      {/* Hovedindhold */}
-      <div className={`space-y-4 ${kortÅben && isDesktop ? 'flex-1 min-w-0' : ''}`}>
-        {/* Niveau 1: Kundeoverblik — én KPI-række */}
-        <div className="bg-white/5 border border-white/8 rounded-xl p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-white text-sm font-semibold">{kundeNavn}</h3>
-            <div className="flex items-center gap-2">
-              {/* BIZZ-2131: Kort-knap */}
-              <button
-                type="button"
-                onClick={() => setKortÅben(!kortÅben)}
-                className={`p-1.5 rounded-lg border text-xs transition-colors ${
-                  kortÅben
-                    ? 'bg-blue-600 border-blue-500 text-white'
-                    : 'bg-slate-800/80 border-slate-700/60 text-slate-300 hover:bg-slate-700/80'
-                }`}
-                aria-label={da ? 'Vis kort' : 'Show map'}
-              >
-                <MapIcon size={14} />
-              </button>
-              <span
-                className={`text-lg font-bold ${
-                  healthColor === 'emerald'
-                    ? 'text-emerald-400'
-                    : healthColor === 'amber'
-                      ? 'text-amber-400'
-                      : 'text-red-400'
-                }`}
-              >
-                {healthScore}/100
-              </span>
-            </div>
+    <div className="space-y-4">
+      {/* Niveau 1: Kundeoverblik — én KPI-række */}
+      <div className="bg-white/5 border border-white/8 rounded-xl p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-white text-sm font-semibold">{kundeNavn}</h3>
+          <span
+            className={`text-lg font-bold ${
+              healthColor === 'emerald'
+                ? 'text-emerald-400'
+                : healthColor === 'amber'
+                  ? 'text-amber-400'
+                  : 'text-red-400'
+            }`}
+          >
+            {healthScore}/100
+          </span>
+        </div>
+        <div className="grid grid-cols-5 gap-2">
+          <div className="text-center">
+            <div className="text-purple-300 text-xl font-bold">{virksomhedGroups.length}</div>
+            <div className="text-slate-400 text-[10px]">{da ? 'Virksomheder' : 'Companies'}</div>
           </div>
-          <div className="grid grid-cols-5 gap-2">
-            <div className="text-center">
-              <div className="text-purple-300 text-xl font-bold">{virksomhedGroups.length}</div>
-              <div className="text-slate-400 text-[10px]">{da ? 'Virksomheder' : 'Companies'}</div>
-            </div>
-            <div className="text-center">
-              <div className="text-blue-300 text-xl font-bold">{total}</div>
-              <div className="text-slate-400 text-[10px]">{da ? 'Ejendomme' : 'Properties'}</div>
-            </div>
-            <div className="text-center">
-              <div className="text-emerald-300 text-xl font-bold">{insured}</div>
-              <div className="text-slate-400 text-[10px]">{da ? 'Forsikrede' : 'Insured'}</div>
-            </div>
-            <div className="text-center">
-              <div className="text-red-300 text-xl font-bold">{total - insured}</div>
-              <div className="text-slate-400 text-[10px]">{da ? 'Uforsikrede' : 'Uninsured'}</div>
-            </div>
-            <div className="text-center">
-              <div
-                className={`text-xl font-bold ${
-                  healthColor === 'emerald'
-                    ? 'text-emerald-400'
-                    : healthColor === 'amber'
-                      ? 'text-amber-400'
-                      : 'text-red-400'
-                }`}
-              >
-                {healthScore}
-              </div>
-              <div className="text-slate-400 text-[10px]">
-                {da ? 'Sundhedsscore' : 'Health score'}
-              </div>
-            </div>
+          <div className="text-center">
+            <div className="text-blue-300 text-xl font-bold">{total}</div>
+            <div className="text-slate-400 text-[10px]">{da ? 'Ejendomme' : 'Properties'}</div>
           </div>
-          {/* Health bar */}
-          <div className="mt-3 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+          <div className="text-center">
+            <div className="text-emerald-300 text-xl font-bold">{insured}</div>
+            <div className="text-slate-400 text-[10px]">{da ? 'Forsikrede' : 'Insured'}</div>
+          </div>
+          <div className="text-center">
+            <div className="text-red-300 text-xl font-bold">{total - insured}</div>
+            <div className="text-slate-400 text-[10px]">{da ? 'Uforsikrede' : 'Uninsured'}</div>
+          </div>
+          <div className="text-center">
             <div
-              className={`h-full rounded-full transition-all ${
+              className={`text-xl font-bold ${
                 healthColor === 'emerald'
-                  ? 'bg-emerald-500'
+                  ? 'text-emerald-400'
                   : healthColor === 'amber'
-                    ? 'bg-amber-500'
-                    : 'bg-red-500'
+                    ? 'text-amber-400'
+                    : 'text-red-400'
               }`}
-              style={{ width: `${healthScore}%` }}
-            />
+            >
+              {healthScore}
+            </div>
+            <div className="text-slate-400 text-[10px]">
+              {da ? 'Sundhedsscore' : 'Health score'}
+            </div>
           </div>
         </div>
+        {/* Health bar */}
+        <div className="mt-3 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all ${
+              healthColor === 'emerald'
+                ? 'bg-emerald-500'
+                : healthColor === 'amber'
+                  ? 'bg-amber-500'
+                  : 'bg-red-500'
+            }`}
+            style={{ width: `${healthScore}%` }}
+          />
+        </div>
+      </div>
 
-        {/* BIZZ-2085: Dækningsniveau vs. seneste regnskab — egen kasse med
+      {/* BIZZ-2085: Dækningsniveau vs. seneste regnskab — egen kasse med
           regnskabstal længst til højre, så niveauet kan reviewes med kunden */}
-        <DaekningVsRegnskab detail={detail} da={da} />
+      <DaekningVsRegnskab detail={detail} da={da} />
 
-        {/* BIZZ-2099: Fundne forsikringer — grønne bokse for alle analysens policer */}
-        <FundneForsikringer detail={detail} da={da} />
+      {/* BIZZ-2099: Fundne forsikringer — grønne bokse for alle analysens policer */}
+      <FundneForsikringer detail={detail} da={da} />
 
-        {/* BIZZ-1941: Forsikringsejer-niveau — generelle findings for hele ejeren.
+      {/* BIZZ-1941: Forsikringsejer-niveau — generelle findings for hele ejeren.
           Vises kun her, ikke gentaget under virksomhed/ejendom.
           BIZZ-1972: Skjules når forsikringssejeren ER den eneste virksomhed —
           findings foldes da ind under virksomheds-rækken nedenfor. */}
-        {!foldOwnerIntoCompany && ownerGaps.length > 0 && (
-          <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
-            <div className="flex items-center gap-2">
-              <Briefcase size={14} className="text-purple-400" />
-              <h4 className="text-white text-sm font-semibold">
-                {da ? 'Forsikringsejer-niveau' : 'Insurance owner level'}
-              </h4>
-              <span className="text-slate-400 text-[11px]">
-                {da
-                  ? `${ownerGaps.length} generelle findings`
-                  : `${ownerGaps.length} general findings`}
-              </span>
-            </div>
-            <p className="text-slate-400 text-[11px]">
+      {!foldOwnerIntoCompany && ownerGaps.length > 0 && (
+        <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <Briefcase size={14} className="text-purple-400" />
+            <h4 className="text-white text-sm font-semibold">
+              {da ? 'Forsikringsejer-niveau' : 'Insurance owner level'}
+            </h4>
+            <span className="text-slate-400 text-[11px]">
               {da
-                ? 'Gælder hele forsikringsejeren — ikke en enkelt virksomhed eller ejendom.'
-                : 'Applies to the entire insurance owner — not a single company or property.'}
-            </p>
-            <GapList gaps={ownerGaps} da={da} />
+                ? `${ownerGaps.length} generelle findings`
+                : `${ownerGaps.length} general findings`}
+            </span>
           </div>
-        )}
-
-        {/* BIZZ-1941: Virksomheds-niveau — gælder porteføljen/virksomheden, ikke per ejendom.
-          BIZZ-1972: Skjules i fold-casen — findings foldes ind under virksomheds-rækken. */}
-        {!foldOwnerIntoCompany && companyGaps.length > 0 && (
-          <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
-            <div className="flex items-center gap-2">
-              <Building2 size={14} className="text-blue-400" />
-              <h4 className="text-white text-sm font-semibold">
-                {da ? 'Virksomheds-niveau' : 'Company level'}
-              </h4>
-              <span className="text-slate-400 text-[11px]">
-                {da ? `${companyGaps.length} findings` : `${companyGaps.length} findings`}
-              </span>
-            </div>
-            <p className="text-slate-400 text-[11px]">
-              {da
-                ? 'Dæknings-overlap, kollektiv forsikring og standard-betingelser — på tværs af policer.'
-                : 'Coverage overlap, collective insurance and standard terms — across policies.'}
-            </p>
-            <GapList gaps={companyGaps} da={da} />
-          </div>
-        )}
-
-        {/* Niveau 2: Virksomheds-træer med ejendomme grupperet under */}
-        <div className="space-y-4">
-          {virksomhedsTraeer.map((tree) => (
-            <div key={tree.virksomhed.aktiv.id} className="space-y-2">
-              {/* Virksomheds-række (header) */}
-              <PropertyRow group={tree.virksomhed} da={da} foldedNote={foldOwnerIntoCompany} />
-
-              {/* Ejendomme under denne virksomhed — indrykket */}
-              {tree.ejendomme.length > 0 && (
-                <div className="ml-6 pl-3 border-l border-white/8 space-y-2">
-                  <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
-                    {da
-                      ? `${tree.ejendomme.length} ${tree.ejendomme.length === 1 ? 'ejendom' : 'ejendomme'} ejet af ${tree.virksomhed.aktiv.label}`
-                      : `${tree.ejendomme.length} ${tree.ejendomme.length === 1 ? 'property' : 'properties'} owned by ${tree.virksomhed.aktiv.label}`}
-                  </div>
-                  {tree.ejendomme.map((eg) => (
-                    <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-
-          {/* Ejendomme uden ejer-virksomhed (orphans) — personligt ejede eller manglende kæde */}
-          {orphanEjendomme.length > 0 && (
-            <div className="space-y-2">
-              <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
-                {da
-                  ? `${orphanEjendomme.length} ${orphanEjendomme.length === 1 ? 'ejendom' : 'ejendomme'} uden virksomheds-tilknytning`
-                  : `${orphanEjendomme.length} ${orphanEjendomme.length === 1 ? 'property' : 'properties'} without company link`}
-              </div>
-              {sortProperties(orphanEjendomme).map((eg) => (
-                <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
-              ))}
-            </div>
-          )}
-
-          {/* Øvrige aktiver (bestyrelsesposter, biler) */}
-          {otherGroups.length > 0 && (
-            <div className="space-y-2">
-              <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
-                {da ? 'Øvrige aktiver' : 'Other assets'}
-              </div>
-              {otherGroups.map((eg) => (
-                <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
-              ))}
-            </div>
-          )}
+          <p className="text-slate-400 text-[11px]">
+            {da
+              ? 'Gælder hele forsikringsejeren — ikke en enkelt virksomhed eller ejendom.'
+              : 'Applies to the entire insurance owner — not a single company or property.'}
+          </p>
+          <GapList gaps={ownerGaps} da={da} />
         </div>
-
-        {/* Rapport-knap — direkte download som DOCX */}
-        <button
-          type="button"
-          onClick={() => onRapport()}
-          className="w-full bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
-        >
-          <FileText size={15} />
-          {da ? 'Download gap-rapport (Word)' : 'Download gap report (Word)'}
-        </button>
-      </div>
-      {/* slut hovedindhold */}
-
-      {/* BIZZ-2131: Desktop kort-sidepanel med resize-divider */}
-      {kortÅben && isDesktop && (
-        <>
-          {/* Resize-divider */}
-          <div
-            className={`w-1.5 flex-shrink-0 cursor-col-resize flex items-center justify-center group transition-colors ${trækker ? 'bg-blue-500/30' : 'bg-slate-800 hover:bg-blue-500/20'}`}
-            onMouseDown={(e) => {
-              e.preventDefault();
-              trækStart.current = { x: e.clientX, bredde: kortBredde };
-              setTrækker(true);
-            }}
-          >
-            <div
-              className={`w-0.5 h-10 rounded-full transition-colors ${trækker ? 'bg-blue-400' : 'bg-slate-600 group-hover:bg-blue-400'}`}
-            />
-          </div>
-          {/* Kort-panel */}
-          <div
-            className="relative flex-shrink-0 self-stretch"
-            style={{ width: kortBredde, minHeight: 400 }}
-          >
-            <div className="absolute inset-0 rounded-xl overflow-hidden border border-slate-700/40">
-              <Suspense
-                fallback={
-                  <div className="w-full h-full flex items-center justify-center bg-slate-900">
-                    <Loader2 size={20} className="animate-spin text-blue-400" />
-                  </div>
-                }
-              >
-                <ForsikringMap markers={geoMarkers} onMarkerClick={handleMarkerClick} da={da} />
-              </Suspense>
-            </div>
-          </div>
-        </>
       )}
 
-      {/* BIZZ-2131: Mobil kort-overlay (fullscreen via portal) */}
-      {kortÅben &&
-        !isDesktop &&
-        typeof document !== 'undefined' &&
-        createPortal(
-          <div className="fixed inset-0 z-50 flex flex-col bg-slate-950">
-            {/* Overlay-header */}
-            <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-700/50 flex-shrink-0">
-              <div className="flex items-center gap-2 min-w-0">
-                <MapIcon size={15} className="text-blue-400 flex-shrink-0" />
-                <span className="text-white text-sm font-medium truncate">
-                  {da ? 'Forsikringskort' : 'Insurance map'} — {kundeNavn}
-                </span>
+      {/* BIZZ-1941: Virksomheds-niveau — gælder porteføljen/virksomheden, ikke per ejendom.
+          BIZZ-1972: Skjules i fold-casen — findings foldes ind under virksomheds-rækken. */}
+      {!foldOwnerIntoCompany && companyGaps.length > 0 && (
+        <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <Building2 size={14} className="text-blue-400" />
+            <h4 className="text-white text-sm font-semibold">
+              {da ? 'Virksomheds-niveau' : 'Company level'}
+            </h4>
+            <span className="text-slate-400 text-[11px]">
+              {da ? `${companyGaps.length} findings` : `${companyGaps.length} findings`}
+            </span>
+          </div>
+          <p className="text-slate-400 text-[11px]">
+            {da
+              ? 'Dæknings-overlap, kollektiv forsikring og standard-betingelser — på tværs af policer.'
+              : 'Coverage overlap, collective insurance and standard terms — across policies.'}
+          </p>
+          <GapList gaps={companyGaps} da={da} />
+        </div>
+      )}
+
+      {/* Niveau 2: Virksomheds-træer med ejendomme grupperet under */}
+      <div className="space-y-4">
+        {virksomhedsTraeer.map((tree) => (
+          <div key={tree.virksomhed.aktiv.id} className="space-y-2">
+            {/* Virksomheds-række (header) */}
+            <PropertyRow group={tree.virksomhed} da={da} foldedNote={foldOwnerIntoCompany} />
+
+            {/* Ejendomme under denne virksomhed — indrykket */}
+            {tree.ejendomme.length > 0 && (
+              <div className="ml-6 pl-3 border-l border-white/8 space-y-2">
+                <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
+                  {da
+                    ? `${tree.ejendomme.length} ${tree.ejendomme.length === 1 ? 'ejendom' : 'ejendomme'} ejet af ${tree.virksomhed.aktiv.label}`
+                    : `${tree.ejendomme.length} ${tree.ejendomme.length === 1 ? 'property' : 'properties'} owned by ${tree.virksomhed.aktiv.label}`}
+                </div>
+                {tree.ejendomme.map((eg) => (
+                  <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
+                ))}
               </div>
-              <button
-                onClick={() => setKortÅben(false)}
-                className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
-                aria-label={da ? 'Luk kort' : 'Close map'}
-              >
-                <X size={18} />
-              </button>
+            )}
+          </div>
+        ))}
+
+        {/* Ejendomme uden ejer-virksomhed (orphans) — personligt ejede eller manglende kæde */}
+        {orphanEjendomme.length > 0 && (
+          <div className="space-y-2">
+            <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
+              {da
+                ? `${orphanEjendomme.length} ${orphanEjendomme.length === 1 ? 'ejendom' : 'ejendomme'} uden virksomheds-tilknytning`
+                : `${orphanEjendomme.length} ${orphanEjendomme.length === 1 ? 'property' : 'properties'} without company link`}
             </div>
-            {/* Kort (fylder resten af skærmen) */}
-            <div className="flex-1 relative">
-              <Suspense
-                fallback={
-                  <div className="w-full h-full flex items-center justify-center bg-slate-900">
-                    <Loader2 size={20} className="animate-spin text-blue-400" />
-                  </div>
-                }
-              >
-                <ForsikringMap markers={geoMarkers} onMarkerClick={handleMarkerClick} da={da} />
-              </Suspense>
-            </div>
-          </div>,
-          document.body
+            {sortProperties(orphanEjendomme).map((eg) => (
+              <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
+            ))}
+          </div>
         )}
+
+        {/* Øvrige aktiver (bestyrelsesposter, biler) */}
+        {otherGroups.length > 0 && (
+          <div className="space-y-2">
+            <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
+              {da ? 'Øvrige aktiver' : 'Other assets'}
+            </div>
+            {otherGroups.map((eg) => (
+              <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Rapport-knap — direkte download som DOCX */}
+      <button
+        type="button"
+        onClick={() => onRapport()}
+        className="w-full bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
+      >
+        <FileText size={15} />
+        {da ? 'Download gap-rapport (Word)' : 'Download gap report (Word)'}
+      </button>
     </div>
   );
 }
@@ -4646,6 +4505,57 @@ export default function ForsikringPageClient(): React.ReactElement {
     []
   );
 
+  // ── BIZZ-2131: Kort-sidepanel state (side-niveau, fuld højde) ──
+  const [kortÅben, setKortÅben] = useState(false);
+  const [kortBredde, setKortBredde] = useState(420);
+  const [trækker, setTrækker] = useState(false);
+  const trækStart = useRef<{ x: number; bredde: number } | null>(null);
+  const [geoMarkers, setGeoMarkers] = useState<ForsikringMarker[]>([]);
+  const [geoLoading, setGeoLoading] = useState(false);
+  /** Analyse-ID for geo-fetch — opdateres når ny analyse køres */
+  const geoAnalyseId = aiAnalyseDetail?.analyse?.id ?? null;
+
+  /** Hent geo-markører når kort åbnes og en analyse er aktiv */
+  useEffect(() => {
+    if (!kortÅben || !geoAnalyseId || geoLoading) return;
+    setGeoLoading(true);
+    setGeoMarkers([]);
+    fetch(`/api/forsikring/analyser/${geoAnalyseId}/geo`)
+      .then((r) => (r.ok ? r.json() : { markers: [] }))
+      .then((d) => setGeoMarkers(d.markers ?? []))
+      .catch(() => setGeoMarkers([]))
+      .finally(() => setGeoLoading(false));
+  }, [kortÅben, geoAnalyseId, geoLoading]);
+
+  /** Globale drag-handlers for resize-divider */
+  useEffect(() => {
+    if (!trækker) return;
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!trækStart.current) return;
+      const delta = trækStart.current.x - e.clientX;
+      setKortBredde(Math.min(900, Math.max(200, trækStart.current.bredde + delta)));
+    };
+    const handleMouseUp = () => {
+      setTrækker(false);
+      trækStart.current = null;
+    };
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [trækker]);
+
+  /** Scroll til aktiv i listen ved markør-klik */
+  const handleMarkerClick = useCallback((aktivId: string) => {
+    const el = document.getElementById(`aktiv-${aktivId}`);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, []);
+
+  /** Desktop-detection for kort-layout */
+  const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 768;
+
   /** BIZZ-1388: Sæt AI-kontekst med forsikringsdata + gaps så chat kan generere rapporter */
   useEffect(() => {
     if (!data) return;
@@ -4794,369 +4704,473 @@ export default function ForsikringPageClient(): React.ReactElement {
   const _totals = data?.totals;
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 pb-16 space-y-6 bg-[#0a1020] text-slate-100 h-full">
-      {/* Heading + nulstil-knap */}
-      <header className="flex items-start justify-between">
-        <div className="space-y-1">
-          <h1 className="flex items-center gap-3 text-2xl font-semibold">
-            <ShieldCheck className="text-blue-400" size={28} />
-            {t.title}
-          </h1>
-          <p className="text-sm text-slate-400">{t.subtitle}</p>
-          {/* BIZZ-1447: Token-forbrug bar */}
-          <TokenUsageBar className="mt-2 max-w-xs" />
-        </div>
-        {/* BIZZ-1397: Nulstil alt — kun synlig for admin */}
-        {isAdmin && (policies.length > 0 || documents.length > 0) && (
-          <button
-            type="button"
-            disabled={resetting}
-            onClick={async () => {
-              const da = lang === 'da';
-              if (
-                !window.confirm(
-                  da
-                    ? 'Slet ALLE forsikringsdata? Alle policer, dokumenter, gaps og analyser slettes permanent. Denne handling kan ikke fortrydes.'
-                    : 'Delete ALL insurance data? All policies, documents, gaps and analyses will be permanently deleted. This action cannot be undone.'
-                )
-              )
-                return;
-              setResetting(true);
-              try {
-                const res = await fetch('/api/forsikring/reset', { method: 'DELETE' });
-                if (res.ok) {
-                  setUploadJobs([]);
-                  await refresh();
-                }
-              } catch {
-                // Handled silently
-              } finally {
-                setResetting(false);
-              }
-            }}
-            className="flex items-center gap-2 px-3 py-2 text-xs rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors disabled:opacity-50"
-          >
-            {resetting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-            {lang === 'da' ? 'Nulstil alt' : 'Reset all'}
-          </button>
-        )}
-      </header>
-
-      {/* TRIN 1: Vælg kunde */}
-      <AnalyseSection
-        lang={lang}
-        policies={policies}
-        onRefresh={refresh}
-        onAnalyseDetail={handleAnalyseDetail}
-        onSagChange={setActiveSagId}
-        onCustomerSelect={setSelectedCustomer}
-        newDocumentIds={newDocumentIds}
-        addTokenUsage={addTokenUsage}
-      />
-
-      {/* BIZZ-1404: Analyse-historik for valgt kunde */}
-      {selectedCustomer && analyseHistorik.length > 0 && !activeAnalyseId && (
-        <section className="bg-white/5 border border-white/8 rounded-2xl p-4">
-          <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
-            <FileText size={16} className="text-blue-400" />
-            {lang === 'da'
-              ? `Tidligere analyser for ${selectedCustomer.navn}`
-              : `Previous analyses for ${selectedCustomer.navn}`}
-          </h3>
-          <div className="space-y-2">
-            {analyseHistorik.map((a) => {
-              const gapCount = (a.summary as Record<string, number> | null)?.gaps_count ?? 0;
-              const pct =
-                a.total_aktiver > 0 ? Math.round((a.insured_count / a.total_aktiver) * 100) : 0;
-              return (
-                <button
-                  key={a.id}
-                  type="button"
-                  onClick={() => setActiveAnalyseId(a.id)}
-                  className="w-full text-left px-4 py-3 bg-white/3 hover:bg-white/5 rounded-xl flex items-center justify-between transition-colors"
-                >
-                  <div>
-                    <div className="text-white text-sm font-medium">
-                      {new Date(a.created_at).toLocaleDateString('da-DK', {
-                        day: 'numeric',
-                        month: 'short',
-                        year: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </div>
-                    <div className="text-slate-400 text-xs mt-0.5">
-                      {a.total_aktiver} {lang === 'da' ? 'ejendomme' : 'properties'} ·{' '}
-                      {a.insured_count} {lang === 'da' ? 'forsikrede' : 'insured'} · {gapCount} gaps
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span
-                      className={`text-lg font-bold ${
-                        pct >= 71
-                          ? 'text-emerald-400'
-                          : pct >= 41
-                            ? 'text-amber-400'
-                            : 'text-red-400'
-                      }`}
-                    >
-                      {pct}%
-                    </span>
-                    <ChevronRight size={16} className="text-slate-400" />
-                  </div>
-                </button>
-              );
-            })}
+    <div className="flex h-full bg-[#0a1020] text-slate-100">
+      {/* Hovedindhold — scrollbar, fuld højde */}
+      <div className="flex-1 overflow-y-auto p-6 pb-16 space-y-6 min-w-0">
+        {/* Heading + nulstil-knap + kort-knap */}
+        <header className="flex items-start justify-between">
+          <div className="space-y-1">
+            <h1 className="flex items-center gap-3 text-2xl font-semibold">
+              <ShieldCheck className="text-blue-400" size={28} />
+              {t.title}
+            </h1>
+            <p className="text-sm text-slate-400">{t.subtitle}</p>
+            {/* BIZZ-1447: Token-forbrug bar */}
+            <TokenUsageBar className="mt-2 max-w-xs" />
           </div>
-        </section>
-      )}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {/* BIZZ-2131: Kort-knap — kun synlig når analyse er aktiv */}
+            {geoAnalyseId && (
+              <button
+                type="button"
+                onClick={() => setKortÅben(!kortÅben)}
+                className={`flex items-center gap-1.5 px-3 py-2 text-xs rounded-lg border transition-colors ${
+                  kortÅben
+                    ? 'bg-blue-600 border-blue-500 text-white'
+                    : 'bg-slate-800/80 border-slate-700/60 text-slate-300 hover:bg-slate-700/80'
+                }`}
+                aria-label={lang === 'da' ? 'Vis kort' : 'Show map'}
+              >
+                <MapIcon size={14} />
+                {lang === 'da' ? 'Kort' : 'Map'}
+              </button>
+            )}
+            {/* BIZZ-1397: Nulstil alt — kun synlig for admin */}
+            {isAdmin && (policies.length > 0 || documents.length > 0) && (
+              <button
+                type="button"
+                disabled={resetting}
+                onClick={async () => {
+                  const da = lang === 'da';
+                  if (
+                    !window.confirm(
+                      da
+                        ? 'Slet ALLE forsikringsdata? Alle policer, dokumenter, gaps og analyser slettes permanent. Denne handling kan ikke fortrydes.'
+                        : 'Delete ALL insurance data? All policies, documents, gaps and analyses will be permanently deleted. This action cannot be undone.'
+                    )
+                  )
+                    return;
+                  setResetting(true);
+                  try {
+                    const res = await fetch('/api/forsikring/reset', { method: 'DELETE' });
+                    if (res.ok) {
+                      setUploadJobs([]);
+                      await refresh();
+                    }
+                  } catch {
+                    // Handled silently
+                  } finally {
+                    setResetting(false);
+                  }
+                }}
+                className="flex items-center gap-2 px-3 py-2 text-xs rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors disabled:opacity-50"
+              >
+                {resetting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                {lang === 'da' ? 'Nulstil alt' : 'Reset all'}
+              </button>
+            )}
+          </div>
+        </header>
 
-      {/* BIZZ-1440: Analyse-detalje visning når man klikker en historik-række */}
-      {activeAnalyseId && selectedCustomer && (
-        <AnalyseDetailSection
-          analyseId={activeAnalyseId}
-          kundeNavn={selectedCustomer.navn}
+        {/* TRIN 1: Vælg kunde */}
+        <AnalyseSection
           lang={lang}
-          onBack={() => setActiveAnalyseId(null)}
+          policies={policies}
+          onRefresh={refresh}
+          onAnalyseDetail={handleAnalyseDetail}
+          onSagChange={setActiveSagId}
+          onCustomerSelect={setSelectedCustomer}
+          newDocumentIds={newDocumentIds}
+          addTokenUsage={addTokenUsage}
         />
-      )}
 
-      {/* BIZZ-1439: Global upload + police-tabel FJERNET — al data vises kun i analyse-kontekst */}
-      {/* Legacy trin 2+3 skjult — erstattet af wizard-upload i AnalyseSection */}
-      {false && selectedCustomer && (
-        <>
-          <div className="flex items-center gap-2 text-sm font-semibold text-white">
-            <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">
-              2
-            </span>
-            {lang === 'da' ? 'Upload forsikringsdokumenter' : 'Upload insurance documents'}
-          </div>
-          <section
-            onDragOver={onDragOver}
-            onDragLeave={onDragLeave}
-            onDrop={onDrop}
-            className={`rounded-2xl border-2 border-dashed transition-colors p-8 text-center cursor-pointer ${
-              dragOver
-                ? 'border-blue-400 bg-blue-500/5'
-                : 'border-white/10 bg-white/5 hover:border-blue-500/40'
-            }`}
-            onClick={() => fileInputRef.current?.click()}
-            role="button"
-            tabIndex={0}
-            aria-label={t.uploadCta}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                fileInputRef.current?.click();
-              }
-            }}
-          >
-            <Upload className="mx-auto text-blue-400 mb-2" size={28} />
-            <div className="font-medium">{t.uploadCta}</div>
-            <div className="text-sm text-slate-400 mt-1">{t.uploadHelp}</div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".pdf,.docx,.xlsx,.xls,.pptx,.rtf,.txt,.md,.html,.csv,.tsv,.json,.xml,.yaml,.eml,.png,.jpg,.jpeg,.gif,.webp,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-excel,image/*,text/*,application/json,application/xml,message/rfc822"
-              multiple
-              className="hidden"
-              aria-hidden="true"
-              onChange={(e) => {
-                handleFiles(e.target.files);
-                // reset så samme fil kan vælges igen
-                e.target.value = '';
-              }}
-            />
-          </section>
-
-          {/* Upload-jobs (live status) */}
-          {uploadJobs.length > 0 && (
-            <section className="bg-white/5 border border-white/8 rounded-2xl divide-y divide-white/5">
-              {uploadJobs.map((job) => (
-                <div key={job.id} className="flex items-center gap-3 p-3 text-sm">
-                  {job.status === 'uploading' && (
-                    <Loader2 size={16} className="animate-spin text-blue-400" />
-                  )}
-                  {job.status === 'parsing' && (
-                    <Loader2 size={16} className="animate-spin text-amber-400" />
-                  )}
-                  {job.status === 'done' && <CheckCircle2 size={16} className="text-emerald-400" />}
-                  {job.status === 'failed' && <XCircle size={16} className="text-red-400" />}
-                  <span className="font-medium">{job.fileName}</span>
-                  <span className="text-slate-400 text-xs">
-                    {job.status === 'uploading' && t.uploading}
-                    {job.status === 'parsing' && t.parsing}
-                    {job.status === 'done' &&
-                      (job.documentType === 'oversigt'
-                        ? `✓ Oversigt → ${job.policiesCount ?? '?'} policer`
-                        : job.documentType === 'tillaeg'
-                          ? '✓ Tillæg'
-                          : '✓')}
-                    {job.status === 'failed' && (
-                      <span className="text-red-400" title={job.error ?? t.parseFailed}>
-                        {job.error ?? t.parseFailed}
+        {/* BIZZ-1404: Analyse-historik for valgt kunde */}
+        {selectedCustomer && analyseHistorik.length > 0 && !activeAnalyseId && (
+          <section className="bg-white/5 border border-white/8 rounded-2xl p-4">
+            <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+              <FileText size={16} className="text-blue-400" />
+              {lang === 'da'
+                ? `Tidligere analyser for ${selectedCustomer.navn}`
+                : `Previous analyses for ${selectedCustomer.navn}`}
+            </h3>
+            <div className="space-y-2">
+              {analyseHistorik.map((a) => {
+                const gapCount = (a.summary as Record<string, number> | null)?.gaps_count ?? 0;
+                const pct =
+                  a.total_aktiver > 0 ? Math.round((a.insured_count / a.total_aktiver) * 100) : 0;
+                return (
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => setActiveAnalyseId(a.id)}
+                    className="w-full text-left px-4 py-3 bg-white/3 hover:bg-white/5 rounded-xl flex items-center justify-between transition-colors"
+                  >
+                    <div>
+                      <div className="text-white text-sm font-medium">
+                        {new Date(a.created_at).toLocaleDateString('da-DK', {
+                          day: 'numeric',
+                          month: 'short',
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </div>
+                      <div className="text-slate-400 text-xs mt-0.5">
+                        {a.total_aktiver} {lang === 'da' ? 'ejendomme' : 'properties'} ·{' '}
+                        {a.insured_count} {lang === 'da' ? 'forsikrede' : 'insured'} · {gapCount}{' '}
+                        gaps
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span
+                        className={`text-lg font-bold ${
+                          pct >= 71
+                            ? 'text-emerald-400'
+                            : pct >= 41
+                              ? 'text-amber-400'
+                              : 'text-red-400'
+                        }`}
+                      >
+                        {pct}%
                       </span>
-                    )}
-                  </span>
-                </div>
-              ))}
-            </section>
-          )}
+                      <ChevronRight size={16} className="text-slate-400" />
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        )}
 
-          {/* Pending documents (server-side) */}
-          {documents.length > 0 && (
-            <section className="bg-white/5 border border-white/8 rounded-2xl">
-              <header className="px-4 py-3 border-b border-white/5 text-sm font-medium text-slate-300 flex items-center gap-2">
-                <FileText size={16} />
-                {t.pendingDocuments} ({documents.length})
-              </header>
-              <div className="divide-y divide-white/5 text-sm">
-                {documents.map((doc) => (
-                  <div key={doc.id} className="px-4 py-2 flex items-center gap-3">
-                    <FileText size={14} className="text-slate-400" />
-                    <span>{doc.original_name}</span>
-                    <span
-                      className={`text-xs ml-auto max-w-[300px] truncate ${doc.parse_status === 'failed' ? 'text-red-400' : 'text-slate-400'}`}
-                      title={
-                        doc.parse_status === 'failed'
-                          ? (doc.parse_error ?? t.parseFailed)
-                          : doc.parse_status
-                      }
-                    >
-                      {doc.parse_status === 'failed'
-                        ? (doc.parse_error ?? t.parseFailed)
-                        : doc.parse_status}
+        {/* BIZZ-1440: Analyse-detalje visning når man klikker en historik-række */}
+        {activeAnalyseId && selectedCustomer && (
+          <AnalyseDetailSection
+            analyseId={activeAnalyseId}
+            kundeNavn={selectedCustomer.navn}
+            lang={lang}
+            onBack={() => setActiveAnalyseId(null)}
+          />
+        )}
+
+        {/* BIZZ-1439: Global upload + police-tabel FJERNET — al data vises kun i analyse-kontekst */}
+        {/* Legacy trin 2+3 skjult — erstattet af wizard-upload i AnalyseSection */}
+        {false && selectedCustomer && (
+          <>
+            <div className="flex items-center gap-2 text-sm font-semibold text-white">
+              <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">
+                2
+              </span>
+              {lang === 'da' ? 'Upload forsikringsdokumenter' : 'Upload insurance documents'}
+            </div>
+            <section
+              onDragOver={onDragOver}
+              onDragLeave={onDragLeave}
+              onDrop={onDrop}
+              className={`rounded-2xl border-2 border-dashed transition-colors p-8 text-center cursor-pointer ${
+                dragOver
+                  ? 'border-blue-400 bg-blue-500/5'
+                  : 'border-white/10 bg-white/5 hover:border-blue-500/40'
+              }`}
+              onClick={() => fileInputRef.current?.click()}
+              role="button"
+              tabIndex={0}
+              aria-label={t.uploadCta}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  fileInputRef.current?.click();
+                }
+              }}
+            >
+              <Upload className="mx-auto text-blue-400 mb-2" size={28} />
+              <div className="font-medium">{t.uploadCta}</div>
+              <div className="text-sm text-slate-400 mt-1">{t.uploadHelp}</div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.docx,.xlsx,.xls,.pptx,.rtf,.txt,.md,.html,.csv,.tsv,.json,.xml,.yaml,.eml,.png,.jpg,.jpeg,.gif,.webp,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-excel,image/*,text/*,application/json,application/xml,message/rfc822"
+                multiple
+                className="hidden"
+                aria-hidden="true"
+                onChange={(e) => {
+                  handleFiles(e.target.files);
+                  // reset så samme fil kan vælges igen
+                  e.target.value = '';
+                }}
+              />
+            </section>
+
+            {/* Upload-jobs (live status) */}
+            {uploadJobs.length > 0 && (
+              <section className="bg-white/5 border border-white/8 rounded-2xl divide-y divide-white/5">
+                {uploadJobs.map((job) => (
+                  <div key={job.id} className="flex items-center gap-3 p-3 text-sm">
+                    {job.status === 'uploading' && (
+                      <Loader2 size={16} className="animate-spin text-blue-400" />
+                    )}
+                    {job.status === 'parsing' && (
+                      <Loader2 size={16} className="animate-spin text-amber-400" />
+                    )}
+                    {job.status === 'done' && (
+                      <CheckCircle2 size={16} className="text-emerald-400" />
+                    )}
+                    {job.status === 'failed' && <XCircle size={16} className="text-red-400" />}
+                    <span className="font-medium">{job.fileName}</span>
+                    <span className="text-slate-400 text-xs">
+                      {job.status === 'uploading' && t.uploading}
+                      {job.status === 'parsing' && t.parsing}
+                      {job.status === 'done' &&
+                        (job.documentType === 'oversigt'
+                          ? `✓ Oversigt → ${job.policiesCount ?? '?'} policer`
+                          : job.documentType === 'tillaeg'
+                            ? '✓ Tillæg'
+                            : '✓')}
+                      {job.status === 'failed' && (
+                        <span className="text-red-400" title={job.error ?? t.parseFailed}>
+                          {job.error ?? t.parseFailed}
+                        </span>
+                      )}
                     </span>
-                    {/* BIZZ-1397: Slet individuelt dokument */}
-                    <button
-                      type="button"
-                      aria-label={
-                        lang === 'da' ? `Slet ${doc.original_name}` : `Delete ${doc.original_name}`
-                      }
-                      onClick={async () => {
-                        try {
-                          const res = await fetch(`/api/forsikring/documents/${doc.id}`, {
-                            method: 'DELETE',
-                          });
-                          if (res.ok) await refresh();
-                        } catch {
-                          // Handled silently
-                        }
-                      }}
-                      className="p-1 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors shrink-0"
-                    >
-                      <XCircle size={14} />
-                    </button>
                   </div>
                 ))}
-              </div>
-            </section>
-          )}
+              </section>
+            )}
 
-          {/* Uploadede policer — compact header med rapport-link */}
-          {policies.length > 0 && (
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">
-                  3
-                </span>
-                {lang === 'da'
-                  ? `${policies.length} policer — ${(data?.totals?.gaps_critical ?? 0) + (data?.totals?.gaps_warning ?? 0)} gaps fundet`
-                  : `${policies.length} policies — ${(data?.totals?.gaps_critical ?? 0) + (data?.totals?.gaps_warning ?? 0)} gaps found`}
-              </div>
-            </div>
-          )}
+            {/* Pending documents (server-side) */}
+            {documents.length > 0 && (
+              <section className="bg-white/5 border border-white/8 rounded-2xl">
+                <header className="px-4 py-3 border-b border-white/5 text-sm font-medium text-slate-300 flex items-center gap-2">
+                  <FileText size={16} />
+                  {t.pendingDocuments} ({documents.length})
+                </header>
+                <div className="divide-y divide-white/5 text-sm">
+                  {documents.map((doc) => (
+                    <div key={doc.id} className="px-4 py-2 flex items-center gap-3">
+                      <FileText size={14} className="text-slate-400" />
+                      <span>{doc.original_name}</span>
+                      <span
+                        className={`text-xs ml-auto max-w-[300px] truncate ${doc.parse_status === 'failed' ? 'text-red-400' : 'text-slate-400'}`}
+                        title={
+                          doc.parse_status === 'failed'
+                            ? (doc.parse_error ?? t.parseFailed)
+                            : doc.parse_status
+                        }
+                      >
+                        {doc.parse_status === 'failed'
+                          ? (doc.parse_error ?? t.parseFailed)
+                          : doc.parse_status}
+                      </span>
+                      {/* BIZZ-1397: Slet individuelt dokument */}
+                      <button
+                        type="button"
+                        aria-label={
+                          lang === 'da'
+                            ? `Slet ${doc.original_name}`
+                            : `Delete ${doc.original_name}`
+                        }
+                        onClick={async () => {
+                          try {
+                            const res = await fetch(`/api/forsikring/documents/${doc.id}`, {
+                              method: 'DELETE',
+                            });
+                            if (res.ok) await refresh();
+                          } catch {
+                            // Handled silently
+                          }
+                        }}
+                        className="p-1 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors shrink-0"
+                      >
+                        <XCircle size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
 
-          {/* Error banner */}
-          {error && (
-            <div className="rounded-xl bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-red-200 flex items-center gap-2">
-              <AlertCircle size={16} />
-              {error}
-            </div>
-          )}
-
-          {/* Loading state */}
-          {loading && !data && (
-            <div className="text-sm text-slate-400">{translations[lang].common.loading}</div>
-          )}
-
-          {/* Empty state — kun når ingen policer OG ingen dokumenter */}
-          {!loading &&
-            policies.length === 0 &&
-            documents.length === 0 &&
-            uploadJobs.length === 0 && (
-              <div className="bg-white/5 border border-white/8 rounded-2xl p-10 text-center">
-                <Building2 className="mx-auto text-slate-400 mb-3" size={36} />
-                <h2 className="text-lg font-medium mb-1">{t.noPolicies}</h2>
-                <p className="text-sm text-slate-400">{t.noPoliciesDesc}</p>
+            {/* Uploadede policer — compact header med rapport-link */}
+            {policies.length > 0 && (
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">
+                    3
+                  </span>
+                  {lang === 'da'
+                    ? `${policies.length} policer — ${(data?.totals?.gaps_critical ?? 0) + (data?.totals?.gaps_warning ?? 0)} gaps fundet`
+                    : `${policies.length} policies — ${(data?.totals?.gaps_critical ?? 0) + (data?.totals?.gaps_warning ?? 0)} gaps found`}
+                </div>
               </div>
             )}
 
-          {/* Police-tabel */}
-          {policies.length > 0 && (
-            <section className="bg-white/5 border border-white/8 rounded-2xl overflow-hidden">
-              <table className="w-full text-sm">
-                <thead className="bg-slate-900/40 text-slate-400 text-xs uppercase tracking-wide">
-                  <tr>
-                    <th className="text-left px-4 py-3">{t.colPolicy}</th>
-                    <th className="text-left px-4 py-3">{t.colInsurer}</th>
-                    <th className="text-left px-4 py-3">{t.colHolder}</th>
-                    <th className="text-left px-4 py-3">{t.colAddress}</th>
-                    <th className="text-right px-4 py-3">{t.colPremium}</th>
-                    <th className="text-left px-4 py-3">{t.colExpires}</th>
-                    <th className="text-center px-4 py-3">{t.colGaps}</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {policies.map((p) => (
-                    <tr key={p.id} className="hover:bg-white/5 transition-colors">
-                      <td className="px-4 py-3">
-                        <Link
-                          href={`/dashboard/forsikring/${p.id}`}
-                          className="text-blue-300 hover:text-blue-200 font-medium"
-                        >
-                          {p.policy_number}
-                        </Link>
-                      </td>
-                      <td className="px-4 py-3 text-slate-300">{p.insurer_name}</td>
-                      <td className="px-4 py-3 text-slate-300">{p.policyholder_name}</td>
-                      <td className="px-4 py-3 text-slate-300">{p.property_address ?? '—'}</td>
-                      <td className="px-4 py-3 text-right text-slate-300">
-                        {formatDkk(p.annual_premium_dkk)}
-                      </td>
-                      <td className="px-4 py-3 text-slate-300">{formatDate(p.effective_to)}</td>
-                      <td className="px-4 py-3 text-center">
-                        <div className="inline-flex items-center gap-1 text-xs">
-                          {p.gap_counts.critical > 0 && (
-                            <span className="px-1.5 py-0.5 rounded bg-red-500/20 text-red-300">
-                              {p.gap_counts.critical}
-                            </span>
-                          )}
-                          {p.gap_counts.warning > 0 && (
-                            <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">
-                              {p.gap_counts.warning}
-                            </span>
-                          )}
-                          {p.gap_counts.info > 0 && (
-                            <span className="px-1.5 py-0.5 rounded bg-slate-500/20 text-slate-300">
-                              {p.gap_counts.info}
-                            </span>
-                          )}
-                          {p.gap_counts.critical === 0 &&
-                            p.gap_counts.warning === 0 &&
-                            p.gap_counts.info === 0 && (
-                              <CheckCircle2 size={14} className="text-emerald-400" />
-                            )}
-                        </div>
-                      </td>
+            {/* Error banner */}
+            {error && (
+              <div className="rounded-xl bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-red-200 flex items-center gap-2">
+                <AlertCircle size={16} />
+                {error}
+              </div>
+            )}
+
+            {/* Loading state */}
+            {loading && !data && (
+              <div className="text-sm text-slate-400">{translations[lang].common.loading}</div>
+            )}
+
+            {/* Empty state — kun når ingen policer OG ingen dokumenter */}
+            {!loading &&
+              policies.length === 0 &&
+              documents.length === 0 &&
+              uploadJobs.length === 0 && (
+                <div className="bg-white/5 border border-white/8 rounded-2xl p-10 text-center">
+                  <Building2 className="mx-auto text-slate-400 mb-3" size={36} />
+                  <h2 className="text-lg font-medium mb-1">{t.noPolicies}</h2>
+                  <p className="text-sm text-slate-400">{t.noPoliciesDesc}</p>
+                </div>
+              )}
+
+            {/* Police-tabel */}
+            {policies.length > 0 && (
+              <section className="bg-white/5 border border-white/8 rounded-2xl overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-900/40 text-slate-400 text-xs uppercase tracking-wide">
+                    <tr>
+                      <th className="text-left px-4 py-3">{t.colPolicy}</th>
+                      <th className="text-left px-4 py-3">{t.colInsurer}</th>
+                      <th className="text-left px-4 py-3">{t.colHolder}</th>
+                      <th className="text-left px-4 py-3">{t.colAddress}</th>
+                      <th className="text-right px-4 py-3">{t.colPremium}</th>
+                      <th className="text-left px-4 py-3">{t.colExpires}</th>
+                      <th className="text-center px-4 py-3">{t.colGaps}</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </section>
-          )}
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {policies.map((p) => (
+                      <tr key={p.id} className="hover:bg-white/5 transition-colors">
+                        <td className="px-4 py-3">
+                          <Link
+                            href={`/dashboard/forsikring/${p.id}`}
+                            className="text-blue-300 hover:text-blue-200 font-medium"
+                          >
+                            {p.policy_number}
+                          </Link>
+                        </td>
+                        <td className="px-4 py-3 text-slate-300">{p.insurer_name}</td>
+                        <td className="px-4 py-3 text-slate-300">{p.policyholder_name}</td>
+                        <td className="px-4 py-3 text-slate-300">{p.property_address ?? '—'}</td>
+                        <td className="px-4 py-3 text-right text-slate-300">
+                          {formatDkk(p.annual_premium_dkk)}
+                        </td>
+                        <td className="px-4 py-3 text-slate-300">{formatDate(p.effective_to)}</td>
+                        <td className="px-4 py-3 text-center">
+                          <div className="inline-flex items-center gap-1 text-xs">
+                            {p.gap_counts.critical > 0 && (
+                              <span className="px-1.5 py-0.5 rounded bg-red-500/20 text-red-300">
+                                {p.gap_counts.critical}
+                              </span>
+                            )}
+                            {p.gap_counts.warning > 0 && (
+                              <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">
+                                {p.gap_counts.warning}
+                              </span>
+                            )}
+                            {p.gap_counts.info > 0 && (
+                              <span className="px-1.5 py-0.5 rounded bg-slate-500/20 text-slate-300">
+                                {p.gap_counts.info}
+                              </span>
+                            )}
+                            {p.gap_counts.critical === 0 &&
+                              p.gap_counts.warning === 0 &&
+                              p.gap_counts.info === 0 && (
+                                <CheckCircle2 size={14} className="text-emerald-400" />
+                              )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </section>
+            )}
+          </>
+        )}
+      </div>
+      {/* slut scrollbar hovedindhold */}
+
+      {/* BIZZ-2131: Desktop kort-sidepanel med resize-divider — fuld højde */}
+      {kortÅben && isDesktop && (
+        <>
+          {/* Resize-divider */}
+          <div
+            className={`w-1.5 flex-shrink-0 cursor-col-resize flex items-center justify-center group transition-colors ${trækker ? 'bg-blue-500/30' : 'bg-slate-800 hover:bg-blue-500/20'}`}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              trækStart.current = { x: e.clientX, bredde: kortBredde };
+              setTrækker(true);
+            }}
+          >
+            <div
+              className={`w-0.5 h-10 rounded-full transition-colors ${trækker ? 'bg-blue-400' : 'bg-slate-600 group-hover:bg-blue-400'}`}
+            />
+          </div>
+          {/* Kort-panel — fuld højde */}
+          <div className="relative flex-shrink-0" style={{ width: kortBredde }}>
+            <div className="absolute inset-0">
+              <Suspense
+                fallback={
+                  <div className="w-full h-full flex items-center justify-center bg-slate-900">
+                    <Loader2 size={20} className="animate-spin text-blue-400" />
+                  </div>
+                }
+              >
+                <ForsikringMap
+                  markers={geoMarkers}
+                  onMarkerClick={handleMarkerClick}
+                  da={lang === 'da'}
+                />
+              </Suspense>
+            </div>
+          </div>
         </>
       )}
+
+      {/* BIZZ-2131: Mobil kort-overlay (fullscreen via portal) */}
+      {kortÅben &&
+        !isDesktop &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex flex-col bg-slate-950">
+            <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-700/50 flex-shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <MapIcon size={15} className="text-blue-400 flex-shrink-0" />
+                <span className="text-white text-sm font-medium truncate">
+                  {lang === 'da' ? 'Forsikringskort' : 'Insurance map'}
+                </span>
+              </div>
+              <button
+                onClick={() => setKortÅben(false)}
+                className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
+                aria-label={lang === 'da' ? 'Luk kort' : 'Close map'}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex-1 relative">
+              <Suspense
+                fallback={
+                  <div className="w-full h-full flex items-center justify-center bg-slate-900">
+                    <Loader2 size={20} className="animate-spin text-blue-400" />
+                  </div>
+                }
+              >
+                <ForsikringMap
+                  markers={geoMarkers}
+                  onMarkerClick={handleMarkerClick}
+                  da={lang === 'da'}
+                />
+              </Suspense>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

@@ -36,7 +36,8 @@ import {
 import { logActivity } from '@/app/lib/activityLog';
 import { logger } from '@/app/lib/logger';
 
-export const maxDuration = 60;
+/** BIZZ-2135: Øget 60 → 120s — store porteføljer med mange policer + SFE-opslag kræver mere tid */
+export const maxDuration = 120;
 
 /**
  * Normaliserer et forsikringsselskabs-navn til selskabs-sammenligning.

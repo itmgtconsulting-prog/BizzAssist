@@ -55,6 +55,8 @@ interface ForsikringMapProps {
   markers: ForsikringMarker[];
   /** Callback når bruger klikker en markør — scroller til aktiv i listen */
   onMarkerClick?: (aktivId: string) => void;
+  /** Aktiv-ID der skal highlightes (klikket i listen) */
+  highlightedId?: string | null;
   /** Sprog (dansk/engelsk) */
   da?: boolean;
 }
@@ -156,7 +158,12 @@ function StatusBadge({ marker, da }: { marker: ForsikringMarker; da: boolean }) 
  *
  * @param props - Markører, klik-handler, sprog
  */
-function ForsikringMapInner({ markers, onMarkerClick, da = true }: ForsikringMapProps) {
+function ForsikringMapInner({
+  markers,
+  onMarkerClick,
+  highlightedId,
+  da = true,
+}: ForsikringMapProps) {
   const mapRef = useRef<MapRef>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -185,6 +192,15 @@ function ForsikringMapInner({ markers, onMarkerClick, da = true }: ForsikringMap
     setMapStyleState(style);
     window.localStorage.setItem(STYLE_STORAGE_KEY, style);
   }, []);
+
+  /** Fly til highlighted markør når bruger klikker i listen */
+  useEffect(() => {
+    if (!highlightedId || !mapRef.current) return;
+    const m = markers.find((x) => x.id === highlightedId);
+    if (!m) return;
+    mapRef.current.flyTo({ center: [m.lng, m.lat], zoom: 16, duration: 800 });
+    setPopupMarker(m);
+  }, [highlightedId, markers]);
 
   /** Auto-fitBounds til alle markører ved load */
   useEffect(() => {
@@ -264,8 +280,12 @@ function ForsikringMapInner({ markers, onMarkerClick, da = true }: ForsikringMap
               <div
                 className={`${markerColor(m)} flex items-center justify-center shadow-lg cursor-pointer hover:scale-110 transition-transform ${
                   husnr
-                    ? 'rounded-md px-1.5 py-0.5 border border-white/30 min-w-[24px]'
-                    : 'w-6 h-6 rounded-full border-2 border-white/30'
+                    ? 'rounded-md px-1.5 py-0.5 border min-w-[24px]'
+                    : 'w-6 h-6 rounded-full border-2'
+                } ${
+                  highlightedId === m.id
+                    ? 'border-white ring-2 ring-white/60 scale-125 z-10'
+                    : 'border-white/30'
                 }`}
                 title={m.label}
               >

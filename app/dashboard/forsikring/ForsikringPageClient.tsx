@@ -428,7 +428,13 @@ function PropertyRow({
       {/* Header row — klikbar for toggle */}
       <button
         type="button"
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => {
+          setExpanded(!expanded);
+          // BIZZ-2131: Highlight aktiv på kortet via custom event
+          window.dispatchEvent(
+            new CustomEvent('forsikring-aktiv-click', { detail: group.aktiv.id })
+          );
+        }}
         className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-white/3 transition-colors"
         aria-expanded={expanded}
         aria-label={`${expanded ? (da ? 'Luk' : 'Collapse') : da ? 'Udvid' : 'Expand'} ${group.aktiv.label}`}
@@ -4526,6 +4532,8 @@ export default function ForsikringPageClient(): React.ReactElement {
   const trækStart = useRef<{ x: number; bredde: number } | null>(null);
   const [geoMarkers, setGeoMarkers] = useState<ForsikringMarker[]>([]);
   const [geoLoading, setGeoLoading] = useState(false);
+  /** Aktiv-ID highlightet på kortet (klikket i ejendomslisten) */
+  const [highlightedAktivId, setHighlightedAktivId] = useState<string | null>(null);
   /** Analyse-ID for geo-fetch — opdateres når ny analyse køres */
   const geoAnalyseId = aiAnalyseDetail?.analyse?.id ?? null;
 
@@ -4563,9 +4571,20 @@ export default function ForsikringPageClient(): React.ReactElement {
 
   /** Scroll til aktiv i listen ved markør-klik */
   const handleMarkerClick = useCallback((aktivId: string) => {
+    setHighlightedAktivId(aktivId);
     const el = document.getElementById(`aktiv-${aktivId}`);
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, []);
+
+  /** Highlight aktiv på kortet ved klik i listen (custom event fra PropertyRow) */
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const aktivId = (e as CustomEvent).detail as string;
+      if (kortÅben && aktivId) setHighlightedAktivId(aktivId);
+    };
+    window.addEventListener('forsikring-aktiv-click', handler);
+    return () => window.removeEventListener('forsikring-aktiv-click', handler);
+  }, [kortÅben]);
 
   /** Desktop-detection for kort-layout */
   const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 768;
@@ -5157,6 +5176,7 @@ export default function ForsikringPageClient(): React.ReactElement {
                   <ForsikringMap
                     markers={geoMarkers}
                     onMarkerClick={handleMarkerClick}
+                    highlightedId={highlightedAktivId}
                     da={lang === 'da'}
                   />
                 </Suspense>

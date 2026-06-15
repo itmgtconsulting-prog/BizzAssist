@@ -923,6 +923,57 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
       };
     });
 
+    // BIZZ-2132: Ejerlejligheder med SFE-BFE → resolve til individuel BFE
+    // via bfe_adresse_cache (adresse + etage + dør match). TL's ejdsummarisk
+    // returnerer SFE-BFE for ejerlejligheder i stedet for den individuelle.
+    if (sfeBfe) {
+      const sfeBfeNum = typeof sfeBfe === 'number' ? sfeBfe : parseInt(String(sfeBfe), 10);
+      const needsResolve = classified.filter(
+        (c) => c.niveau === 'ejerlejlighed' && c.bfe === sfeBfeNum
+      );
+      if (needsResolve.length > 0) {
+        try {
+          // Hent alle ejerlejligheder i bfe_adresse_cache der matcher SFE'ens postnr
+          const firstPostnr = needsResolve[0].adresse?.match(/\b(\d{4})\b/)?.[1];
+          if (firstPostnr) {
+            const { data: cacheRows } = await admin
+              .from('bfe_adresse_cache')
+              .select('bfe_nummer, adresse, etage, doer')
+              .eq('postnr', firstPostnr)
+              .eq('ejendomstype', 'Ejerlejlighed')
+              .limit(500);
+            if (cacheRows && cacheRows.length > 0) {
+              const normAddr = (s: string | null) =>
+                (s ?? '').toLowerCase().replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim();
+              for (const item of needsResolve) {
+                // Match på adresse-tekst + etage + dør
+                const itemAddr = normAddr(item.adresse);
+                const match = (
+                  cacheRows as Array<{
+                    bfe_nummer: number;
+                    adresse: string | null;
+                    etage: string | null;
+                    doer: string | null;
+                  }>
+                ).find((r) => {
+                  const fullAddr = `${r.adresse ?? ''} ${r.etage ?? ''} ${r.doer ?? ''}`;
+                  return normAddr(fullAddr) === itemAddr || itemAddr.includes(normAddr(r.adresse));
+                });
+                if (match) {
+                  (item as { bfe: number }).bfe = match.bfe_nummer;
+                }
+              }
+              logger.log(
+                `[ejendom-struktur] BIZZ-2132: resolved ${needsResolve.filter((i) => i.bfe !== sfeBfeNum).length}/${needsResolve.length} ejerlejlighed-BFEs fra cache`
+              );
+            }
+          }
+        } catch {
+          // Best-effort — analysen fortsætter med SFE-BFE
+        }
+      }
+    }
+
     logger.log(
       `[ejendom-struktur] klassificering:`,
       classified.map((c) => `${c.adresse} → ${c.niveau} (husnr=${c.husnr}, bfe=${c.bfe})`)

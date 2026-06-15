@@ -332,34 +332,30 @@ function ForsikringMapInner({
         </div>
       )}
 
-      {/* Style toggle */}
-      <div className="absolute top-3 left-3 z-10 flex gap-1">
-        {!popupMarker && (
-          <>
-            <button
-              onClick={() => setMapStyle('dark')}
-              className={`p-1.5 rounded-lg border transition-colors ${
-                mapStyle === 'dark'
-                  ? 'bg-blue-600 border-blue-500 text-white'
-                  : 'bg-slate-800/80 border-slate-700/60 text-slate-300 hover:bg-slate-700/80'
-              }`}
-              aria-label={da ? 'Gadekort' : 'Street map'}
-            >
-              <MapIcon size={14} />
-            </button>
-            <button
-              onClick={() => setMapStyle('satellite')}
-              className={`p-1.5 rounded-lg border transition-colors ${
-                mapStyle === 'satellite'
-                  ? 'bg-blue-600 border-blue-500 text-white'
-                  : 'bg-slate-800/80 border-slate-700/60 text-slate-300 hover:bg-slate-700/80'
-              }`}
-              aria-label={da ? 'Luftfoto' : 'Satellite'}
-            >
-              <Satellite size={14} />
-            </button>
-          </>
-        )}
+      {/* Style toggle — altid synlig, rykker ned når popup er åben */}
+      <div className={`absolute z-10 flex gap-1 ${popupMarker ? 'top-16 left-3' : 'top-3 left-3'}`}>
+        <button
+          onClick={() => setMapStyle('dark')}
+          className={`p-1.5 rounded-lg border transition-colors ${
+            mapStyle === 'dark'
+              ? 'bg-blue-600 border-blue-500 text-white'
+              : 'bg-slate-800/80 border-slate-700/60 text-slate-300 hover:bg-slate-700/80'
+          }`}
+          aria-label={da ? 'Gadekort' : 'Street map'}
+        >
+          <MapIcon size={14} />
+        </button>
+        <button
+          onClick={() => setMapStyle('satellite')}
+          className={`p-1.5 rounded-lg border transition-colors ${
+            mapStyle === 'satellite'
+              ? 'bg-blue-600 border-blue-500 text-white'
+              : 'bg-slate-800/80 border-slate-700/60 text-slate-300 hover:bg-slate-700/80'
+          }`}
+          aria-label={da ? 'Luftfoto' : 'Satellite'}
+        >
+          <Satellite size={14} />
+        </button>
       </div>
 
       {/* Legende + filtre */}

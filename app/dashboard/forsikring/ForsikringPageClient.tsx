@@ -14,8 +14,10 @@
  * for hvert dokument. Status vises pr. dokument under upload.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, Suspense } from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { useSetAIPageContext } from '@/app/context/AIPageContext';
 import {
   ShieldCheck,
@@ -39,6 +41,8 @@ import {
   ScanSearch,
   BookOpen,
   Info,
+  Map as MapIcon,
+  X,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { useSubscription } from '@/app/context/SubscriptionContext';
@@ -46,6 +50,14 @@ import { translations } from '@/app/lib/translations';
 import TokenUsageBar from '@/app/components/TokenUsageBar';
 import { gapScope, shouldFoldOwnerIntoCompany } from '@/app/lib/forsikring/types';
 import { getMatchBegrundelse } from '@/app/lib/forsikring/matchBegrundelse';
+import type { ForsikringMarker } from '@/app/components/forsikring/ForsikringMap';
+
+/**
+ * BIZZ-2131: Mapbox-kort loaded dynamisk (browser-only, ~200KB).
+ * ssr: false undgår mapbox-gl server-side bundling.
+ */
+// prettier-ignore
+const ForsikringMap = dynamic(() => import('@/app/components/forsikring/ForsikringMap'), { ssr: false, loading: () => (<div className="w-full h-full bg-slate-800/50 flex items-center justify-center"><Loader2 size={20} className="animate-spin text-blue-400" /><span className="text-slate-400 text-xs ml-2">Indlæser kort...</span></div>) });
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -382,6 +394,7 @@ function PropertyRow({
 
   return (
     <div
+      id={`aktiv-${group.aktiv.id}`}
       className={`border rounded-xl overflow-hidden ${
         isInsured ? 'border-white/8 bg-white/3' : 'border-red-500/30 bg-red-500/5'
       }`}
@@ -1198,6 +1211,51 @@ function UnifiedAnalyseView({
 }) {
   const { analyse: _analyse, aktiver, gaps } = detail;
 
+  // ── BIZZ-2131: Kort-sidepanel state ──
+  const [kortÅben, setKortÅben] = useState(false);
+  const [kortBredde, setKortBredde] = useState(420);
+  const [trækker, setTrækker] = useState(false);
+  const trækStart = useRef<{ x: number; bredde: number } | null>(null);
+  const [geoMarkers, setGeoMarkers] = useState<ForsikringMarker[]>([]);
+  const [geoLoading, setGeoLoading] = useState(false);
+
+  /** Hent geo-markører fra API ved første åbning */
+  useEffect(() => {
+    if (!kortÅben || geoMarkers.length > 0 || geoLoading) return;
+    setGeoLoading(true);
+    fetch(`/api/forsikring/analyser/${detail.analyse.id}/geo`)
+      .then((r) => (r.ok ? r.json() : { markers: [] }))
+      .then((d) => setGeoMarkers(d.markers ?? []))
+      .catch(() => setGeoMarkers([]))
+      .finally(() => setGeoLoading(false));
+  }, [kortÅben, geoMarkers.length, geoLoading, detail.analyse.id]);
+
+  /** Globale drag-handlers for resize-divider */
+  useEffect(() => {
+    if (!trækker) return;
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!trækStart.current) return;
+      const delta = trækStart.current.x - e.clientX;
+      setKortBredde(Math.min(900, Math.max(200, trækStart.current.bredde + delta)));
+    };
+    const handleMouseUp = () => {
+      setTrækker(false);
+      trækStart.current = null;
+    };
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [trækker]);
+
+  /** Scroll til aktiv i listen ved markør-klik */
+  const handleMarkerClick = useCallback((aktivId: string) => {
+    const el = document.getElementById(`aktiv-${aktivId}`);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, []);
+
   // Build a policy lookup
   const policyById = new Map(policies.map((p) => [p.id, p]));
 
@@ -1472,187 +1530,283 @@ function UnifiedAnalyseView({
   const healthScore = Math.max(0, Math.min(100, healthBase - gapPenalty));
   const healthColor = healthScore >= 71 ? 'emerald' : healthScore >= 41 ? 'amber' : 'red';
 
+  /** Beregn om vi er desktop (≥768px) — bruges til kort-layout */
+  const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 768;
+
   return (
-    <div className="space-y-4">
-      {/* Niveau 1: Kundeoverblik — én KPI-række */}
-      <div className="bg-white/5 border border-white/8 rounded-xl p-4">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-white text-sm font-semibold">{kundeNavn}</h3>
-          <span
-            className={`text-lg font-bold ${
-              healthColor === 'emerald'
-                ? 'text-emerald-400'
-                : healthColor === 'amber'
-                  ? 'text-amber-400'
-                  : 'text-red-400'
-            }`}
-          >
-            {healthScore}/100
-          </span>
-        </div>
-        <div className="grid grid-cols-5 gap-2">
-          <div className="text-center">
-            <div className="text-purple-300 text-xl font-bold">{virksomhedGroups.length}</div>
-            <div className="text-slate-400 text-[10px]">{da ? 'Virksomheder' : 'Companies'}</div>
+    <div className={kortÅben && isDesktop ? 'flex gap-0' : ''}>
+      {/* Hovedindhold */}
+      <div className={`space-y-4 ${kortÅben && isDesktop ? 'flex-1 min-w-0' : ''}`}>
+        {/* Niveau 1: Kundeoverblik — én KPI-række */}
+        <div className="bg-white/5 border border-white/8 rounded-xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-white text-sm font-semibold">{kundeNavn}</h3>
+            <div className="flex items-center gap-2">
+              {/* BIZZ-2131: Kort-knap */}
+              <button
+                type="button"
+                onClick={() => setKortÅben(!kortÅben)}
+                className={`p-1.5 rounded-lg border text-xs transition-colors ${
+                  kortÅben
+                    ? 'bg-blue-600 border-blue-500 text-white'
+                    : 'bg-slate-800/80 border-slate-700/60 text-slate-300 hover:bg-slate-700/80'
+                }`}
+                aria-label={da ? 'Vis kort' : 'Show map'}
+              >
+                <MapIcon size={14} />
+              </button>
+              <span
+                className={`text-lg font-bold ${
+                  healthColor === 'emerald'
+                    ? 'text-emerald-400'
+                    : healthColor === 'amber'
+                      ? 'text-amber-400'
+                      : 'text-red-400'
+                }`}
+              >
+                {healthScore}/100
+              </span>
+            </div>
           </div>
-          <div className="text-center">
-            <div className="text-blue-300 text-xl font-bold">{total}</div>
-            <div className="text-slate-400 text-[10px]">{da ? 'Ejendomme' : 'Properties'}</div>
+          <div className="grid grid-cols-5 gap-2">
+            <div className="text-center">
+              <div className="text-purple-300 text-xl font-bold">{virksomhedGroups.length}</div>
+              <div className="text-slate-400 text-[10px]">{da ? 'Virksomheder' : 'Companies'}</div>
+            </div>
+            <div className="text-center">
+              <div className="text-blue-300 text-xl font-bold">{total}</div>
+              <div className="text-slate-400 text-[10px]">{da ? 'Ejendomme' : 'Properties'}</div>
+            </div>
+            <div className="text-center">
+              <div className="text-emerald-300 text-xl font-bold">{insured}</div>
+              <div className="text-slate-400 text-[10px]">{da ? 'Forsikrede' : 'Insured'}</div>
+            </div>
+            <div className="text-center">
+              <div className="text-red-300 text-xl font-bold">{total - insured}</div>
+              <div className="text-slate-400 text-[10px]">{da ? 'Uforsikrede' : 'Uninsured'}</div>
+            </div>
+            <div className="text-center">
+              <div
+                className={`text-xl font-bold ${
+                  healthColor === 'emerald'
+                    ? 'text-emerald-400'
+                    : healthColor === 'amber'
+                      ? 'text-amber-400'
+                      : 'text-red-400'
+                }`}
+              >
+                {healthScore}
+              </div>
+              <div className="text-slate-400 text-[10px]">
+                {da ? 'Sundhedsscore' : 'Health score'}
+              </div>
+            </div>
           </div>
-          <div className="text-center">
-            <div className="text-emerald-300 text-xl font-bold">{insured}</div>
-            <div className="text-slate-400 text-[10px]">{da ? 'Forsikrede' : 'Insured'}</div>
-          </div>
-          <div className="text-center">
-            <div className="text-red-300 text-xl font-bold">{total - insured}</div>
-            <div className="text-slate-400 text-[10px]">{da ? 'Uforsikrede' : 'Uninsured'}</div>
-          </div>
-          <div className="text-center">
+          {/* Health bar */}
+          <div className="mt-3 h-1.5 bg-slate-800 rounded-full overflow-hidden">
             <div
-              className={`text-xl font-bold ${
+              className={`h-full rounded-full transition-all ${
                 healthColor === 'emerald'
-                  ? 'text-emerald-400'
+                  ? 'bg-emerald-500'
                   : healthColor === 'amber'
-                    ? 'text-amber-400'
-                    : 'text-red-400'
+                    ? 'bg-amber-500'
+                    : 'bg-red-500'
               }`}
-            >
-              {healthScore}
-            </div>
-            <div className="text-slate-400 text-[10px]">
-              {da ? 'Sundhedsscore' : 'Health score'}
-            </div>
+              style={{ width: `${healthScore}%` }}
+            />
           </div>
         </div>
-        {/* Health bar */}
-        <div className="mt-3 h-1.5 bg-slate-800 rounded-full overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all ${
-              healthColor === 'emerald'
-                ? 'bg-emerald-500'
-                : healthColor === 'amber'
-                  ? 'bg-amber-500'
-                  : 'bg-red-500'
-            }`}
-            style={{ width: `${healthScore}%` }}
-          />
-        </div>
-      </div>
 
-      {/* BIZZ-2085: Dækningsniveau vs. seneste regnskab — egen kasse med
+        {/* BIZZ-2085: Dækningsniveau vs. seneste regnskab — egen kasse med
           regnskabstal længst til højre, så niveauet kan reviewes med kunden */}
-      <DaekningVsRegnskab detail={detail} da={da} />
+        <DaekningVsRegnskab detail={detail} da={da} />
 
-      {/* BIZZ-2099: Fundne forsikringer — grønne bokse for alle analysens policer */}
-      <FundneForsikringer detail={detail} da={da} />
+        {/* BIZZ-2099: Fundne forsikringer — grønne bokse for alle analysens policer */}
+        <FundneForsikringer detail={detail} da={da} />
 
-      {/* BIZZ-1941: Forsikringsejer-niveau — generelle findings for hele ejeren.
+        {/* BIZZ-1941: Forsikringsejer-niveau — generelle findings for hele ejeren.
           Vises kun her, ikke gentaget under virksomhed/ejendom.
           BIZZ-1972: Skjules når forsikringssejeren ER den eneste virksomhed —
           findings foldes da ind under virksomheds-rækken nedenfor. */}
-      {!foldOwnerIntoCompany && ownerGaps.length > 0 && (
-        <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
-          <div className="flex items-center gap-2">
-            <Briefcase size={14} className="text-purple-400" />
-            <h4 className="text-white text-sm font-semibold">
-              {da ? 'Forsikringsejer-niveau' : 'Insurance owner level'}
-            </h4>
-            <span className="text-slate-400 text-[11px]">
+        {!foldOwnerIntoCompany && ownerGaps.length > 0 && (
+          <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <Briefcase size={14} className="text-purple-400" />
+              <h4 className="text-white text-sm font-semibold">
+                {da ? 'Forsikringsejer-niveau' : 'Insurance owner level'}
+              </h4>
+              <span className="text-slate-400 text-[11px]">
+                {da
+                  ? `${ownerGaps.length} generelle findings`
+                  : `${ownerGaps.length} general findings`}
+              </span>
+            </div>
+            <p className="text-slate-400 text-[11px]">
               {da
-                ? `${ownerGaps.length} generelle findings`
-                : `${ownerGaps.length} general findings`}
-            </span>
+                ? 'Gælder hele forsikringsejeren — ikke en enkelt virksomhed eller ejendom.'
+                : 'Applies to the entire insurance owner — not a single company or property.'}
+            </p>
+            <GapList gaps={ownerGaps} da={da} />
           </div>
-          <p className="text-slate-400 text-[11px]">
-            {da
-              ? 'Gælder hele forsikringsejeren — ikke en enkelt virksomhed eller ejendom.'
-              : 'Applies to the entire insurance owner — not a single company or property.'}
-          </p>
-          <GapList gaps={ownerGaps} da={da} />
-        </div>
-      )}
+        )}
 
-      {/* BIZZ-1941: Virksomheds-niveau — gælder porteføljen/virksomheden, ikke per ejendom.
+        {/* BIZZ-1941: Virksomheds-niveau — gælder porteføljen/virksomheden, ikke per ejendom.
           BIZZ-1972: Skjules i fold-casen — findings foldes ind under virksomheds-rækken. */}
-      {!foldOwnerIntoCompany && companyGaps.length > 0 && (
-        <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
-          <div className="flex items-center gap-2">
-            <Building2 size={14} className="text-blue-400" />
-            <h4 className="text-white text-sm font-semibold">
-              {da ? 'Virksomheds-niveau' : 'Company level'}
-            </h4>
-            <span className="text-slate-400 text-[11px]">
-              {da ? `${companyGaps.length} findings` : `${companyGaps.length} findings`}
-            </span>
+        {!foldOwnerIntoCompany && companyGaps.length > 0 && (
+          <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <Building2 size={14} className="text-blue-400" />
+              <h4 className="text-white text-sm font-semibold">
+                {da ? 'Virksomheds-niveau' : 'Company level'}
+              </h4>
+              <span className="text-slate-400 text-[11px]">
+                {da ? `${companyGaps.length} findings` : `${companyGaps.length} findings`}
+              </span>
+            </div>
+            <p className="text-slate-400 text-[11px]">
+              {da
+                ? 'Dæknings-overlap, kollektiv forsikring og standard-betingelser — på tværs af policer.'
+                : 'Coverage overlap, collective insurance and standard terms — across policies.'}
+            </p>
+            <GapList gaps={companyGaps} da={da} />
           </div>
-          <p className="text-slate-400 text-[11px]">
-            {da
-              ? 'Dæknings-overlap, kollektiv forsikring og standard-betingelser — på tværs af policer.'
-              : 'Coverage overlap, collective insurance and standard terms — across policies.'}
-          </p>
-          <GapList gaps={companyGaps} da={da} />
+        )}
+
+        {/* Niveau 2: Virksomheds-træer med ejendomme grupperet under */}
+        <div className="space-y-4">
+          {virksomhedsTraeer.map((tree) => (
+            <div key={tree.virksomhed.aktiv.id} className="space-y-2">
+              {/* Virksomheds-række (header) */}
+              <PropertyRow group={tree.virksomhed} da={da} foldedNote={foldOwnerIntoCompany} />
+
+              {/* Ejendomme under denne virksomhed — indrykket */}
+              {tree.ejendomme.length > 0 && (
+                <div className="ml-6 pl-3 border-l border-white/8 space-y-2">
+                  <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
+                    {da
+                      ? `${tree.ejendomme.length} ${tree.ejendomme.length === 1 ? 'ejendom' : 'ejendomme'} ejet af ${tree.virksomhed.aktiv.label}`
+                      : `${tree.ejendomme.length} ${tree.ejendomme.length === 1 ? 'property' : 'properties'} owned by ${tree.virksomhed.aktiv.label}`}
+                  </div>
+                  {tree.ejendomme.map((eg) => (
+                    <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+
+          {/* Ejendomme uden ejer-virksomhed (orphans) — personligt ejede eller manglende kæde */}
+          {orphanEjendomme.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
+                {da
+                  ? `${orphanEjendomme.length} ${orphanEjendomme.length === 1 ? 'ejendom' : 'ejendomme'} uden virksomheds-tilknytning`
+                  : `${orphanEjendomme.length} ${orphanEjendomme.length === 1 ? 'property' : 'properties'} without company link`}
+              </div>
+              {sortProperties(orphanEjendomme).map((eg) => (
+                <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
+              ))}
+            </div>
+          )}
+
+          {/* Øvrige aktiver (bestyrelsesposter, biler) */}
+          {otherGroups.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
+                {da ? 'Øvrige aktiver' : 'Other assets'}
+              </div>
+              {otherGroups.map((eg) => (
+                <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
+              ))}
+            </div>
+          )}
         </div>
+
+        {/* Rapport-knap — direkte download som DOCX */}
+        <button
+          type="button"
+          onClick={() => onRapport()}
+          className="w-full bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
+        >
+          <FileText size={15} />
+          {da ? 'Download gap-rapport (Word)' : 'Download gap report (Word)'}
+        </button>
+      </div>
+      {/* slut hovedindhold */}
+
+      {/* BIZZ-2131: Desktop kort-sidepanel med resize-divider */}
+      {kortÅben && isDesktop && (
+        <>
+          {/* Resize-divider */}
+          <div
+            className={`w-1.5 flex-shrink-0 cursor-col-resize flex items-center justify-center group transition-colors ${trækker ? 'bg-blue-500/30' : 'bg-slate-800 hover:bg-blue-500/20'}`}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              trækStart.current = { x: e.clientX, bredde: kortBredde };
+              setTrækker(true);
+            }}
+          >
+            <div
+              className={`w-0.5 h-10 rounded-full transition-colors ${trækker ? 'bg-blue-400' : 'bg-slate-600 group-hover:bg-blue-400'}`}
+            />
+          </div>
+          {/* Kort-panel */}
+          <div
+            className="relative flex-shrink-0 self-stretch"
+            style={{ width: kortBredde, minHeight: 400 }}
+          >
+            <div className="absolute inset-0 rounded-xl overflow-hidden border border-slate-700/40">
+              <Suspense
+                fallback={
+                  <div className="w-full h-full flex items-center justify-center bg-slate-900">
+                    <Loader2 size={20} className="animate-spin text-blue-400" />
+                  </div>
+                }
+              >
+                <ForsikringMap markers={geoMarkers} onMarkerClick={handleMarkerClick} da={da} />
+              </Suspense>
+            </div>
+          </div>
+        </>
       )}
 
-      {/* Niveau 2: Virksomheds-træer med ejendomme grupperet under */}
-      <div className="space-y-4">
-        {virksomhedsTraeer.map((tree) => (
-          <div key={tree.virksomhed.aktiv.id} className="space-y-2">
-            {/* Virksomheds-række (header) */}
-            <PropertyRow group={tree.virksomhed} da={da} foldedNote={foldOwnerIntoCompany} />
-
-            {/* Ejendomme under denne virksomhed — indrykket */}
-            {tree.ejendomme.length > 0 && (
-              <div className="ml-6 pl-3 border-l border-white/8 space-y-2">
-                <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
-                  {da
-                    ? `${tree.ejendomme.length} ${tree.ejendomme.length === 1 ? 'ejendom' : 'ejendomme'} ejet af ${tree.virksomhed.aktiv.label}`
-                    : `${tree.ejendomme.length} ${tree.ejendomme.length === 1 ? 'property' : 'properties'} owned by ${tree.virksomhed.aktiv.label}`}
-                </div>
-                {tree.ejendomme.map((eg) => (
-                  <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
-                ))}
+      {/* BIZZ-2131: Mobil kort-overlay (fullscreen via portal) */}
+      {kortÅben &&
+        !isDesktop &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex flex-col bg-slate-950">
+            {/* Overlay-header */}
+            <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-700/50 flex-shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <MapIcon size={15} className="text-blue-400 flex-shrink-0" />
+                <span className="text-white text-sm font-medium truncate">
+                  {da ? 'Forsikringskort' : 'Insurance map'} — {kundeNavn}
+                </span>
               </div>
-            )}
-          </div>
-        ))}
-
-        {/* Ejendomme uden ejer-virksomhed (orphans) — personligt ejede eller manglende kæde */}
-        {orphanEjendomme.length > 0 && (
-          <div className="space-y-2">
-            <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
-              {da
-                ? `${orphanEjendomme.length} ${orphanEjendomme.length === 1 ? 'ejendom' : 'ejendomme'} uden virksomheds-tilknytning`
-                : `${orphanEjendomme.length} ${orphanEjendomme.length === 1 ? 'property' : 'properties'} without company link`}
+              <button
+                onClick={() => setKortÅben(false)}
+                className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
+                aria-label={da ? 'Luk kort' : 'Close map'}
+              >
+                <X size={18} />
+              </button>
             </div>
-            {sortProperties(orphanEjendomme).map((eg) => (
-              <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
-            ))}
-          </div>
-        )}
-
-        {/* Øvrige aktiver (bestyrelsesposter, biler) */}
-        {otherGroups.length > 0 && (
-          <div className="space-y-2">
-            <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
-              {da ? 'Øvrige aktiver' : 'Other assets'}
+            {/* Kort (fylder resten af skærmen) */}
+            <div className="flex-1 relative">
+              <Suspense
+                fallback={
+                  <div className="w-full h-full flex items-center justify-center bg-slate-900">
+                    <Loader2 size={20} className="animate-spin text-blue-400" />
+                  </div>
+                }
+              >
+                <ForsikringMap markers={geoMarkers} onMarkerClick={handleMarkerClick} da={da} />
+              </Suspense>
             </div>
-            {otherGroups.map((eg) => (
-              <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
-            ))}
-          </div>
+          </div>,
+          document.body
         )}
-      </div>
-
-      {/* Rapport-knap — direkte download som DOCX */}
-      <button
-        type="button"
-        onClick={() => onRapport()}
-        className="w-full bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
-      >
-        <FileText size={15} />
-        {da ? 'Download gap-rapport (Word)' : 'Download gap report (Word)'}
-      </button>
     </div>
   );
 }

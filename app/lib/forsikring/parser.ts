@@ -377,7 +377,7 @@ export async function parseOversigt(text: string, apiKey: string): Promise<Overs
  * System-prompt til Claude. Beskriver opgaven, forventet schema og
  * regler for hvordan parser skal håndtere uklarheder.
  */
-const SYSTEM_PROMPT = `Du er en specialiseret parser af danske bygnings-forsikringspolicer (Alm. Brand, Topdanmark, Tryg, Codan, Gjensidige, If, etc.).
+const SYSTEM_PROMPT = `Du er en specialiseret parser af danske forsikringspolicer (bygning, erhverv, ansvar, bil, løsøre) fra Alm. Brand, Topdanmark, Tryg, Codan, Gjensidige, If, etc.
 
 Din opgave er at uddrage strukturerede felter fra rå PDF-tekst og returnere ét gyldigt JSON-objekt der følger dette schema EKSAKT:
 
@@ -392,7 +392,7 @@ Din opgave er at uddrage strukturerede felter fra rå PDF-tekst og returnere ét
   "property_address": string | null,          // Forsikringsstedet
   "property_matrikel": string | null,         // Fx "498 A, Helsingør Bygrunde"
   "property_bfe": string | null,              // BFE-nummer hvis nævnt
-  "business_activity": string | null,         // Fx "Restaurant og café"
+  "business_activity": string | null,         // FORSIKRINGSTYPE fra policens titel: "Ejendomsforsikring", "Erhvervsforsikring", "Bilforsikring", "Ansvarsforsikring", "Bygningsforsikring". Brug ALTID policens egen betegnelse (fx "Police - Erhvervsforsikring" → "Erhvervsforsikring", "Police - Bilforsikring" → "Bilforsikring")
   "building_use": string | null,              // Fx "Hotel" eller "Værksted"
   "building_area_m2": number | null,          // Bebygget areal
   "building_floors": number | null,
@@ -438,6 +438,8 @@ REGLER:
 8. coverage_code skal være ÉN af de kanoniske koder ovenfor — map den danske beskrivelse til den nærmeste kode, men tving ALDRIG en erhvervsdækning (løsøre, tyveri, cyber, transport, kriminalitet) ind i en bygningskode.
 9. Hvis policen er en oversigt/sammenfatning af flere policer, vælg den FØRSTE police og parse den.
 10. notes-feltet bruges til "Særlige forhold", besigtigelses-bemærkninger og forudsætninger (fx "Uautoriserede el-installationer", "Fedthåndslukker påkrævet").
+11. KRITISK — BUSINESS_ACTIVITY: Sæt business_activity til forsikringstypen fra policens TITEL. "Police - Erhvervsforsikring" → "Erhvervsforsikring", "Police - Bilforsikring" → "Bilforsikring", "Police - Bygningsforsikring" / ejendomsforsikring → "Ejendomsforsikring", "Police - Ansvarsforsikring" → "Ansvarsforsikring". Tving ALDRIG en erhvervs- eller bilforsikring til "Ejendomsforsikring".
+12. BILFORSIKRING: "Police - Bilforsikring" med bilmærke, registreringsnummer, Kasko, Ansvar, Førerulykke = bilforsikring. Dækninger mappes til: ansvar → erhvervsansvar, kasko → cyber (placeholder), førerulykke → notifikation (placeholder). business_activity SKAL være "Bilforsikring".
 11. En typisk dansk bygningsforsikrings-police har 8-15 dækninger. Hvis du finder færre end 5 coverages, gennemlæs dokumentet IGEN — du har sandsynligvis overset en dæknings-sektion.
 12. SIKREDE VIRKSOMHEDER (BIZZ-2120): Udfyld insured_companies med ALLE virksomheder policen eksplicit dækker/sikrer — søg efter "Sikrede", "Medforsikrede", "Forsikringen dækker [selskab1] og [selskab2]", "Sikrede virksomheder". Inkludér forsikringstager selv hvis nævnt som sikret. Nævner policen ingen sikrede-liste, sæt insured_companies til null (IKKE en tom liste, og gæt ALDRIG).
 13. ADRESSE-KONTEKST (KRITISK): Vurdér i hvilken kontekst hver adresse i dokumentet nævnes. property_address må KUN indeholde forsikringsSTEDET — den adresse en dækning gælder for (typisk markeret "Forsikringssted", "Forsikret ejendom", "Beliggenhed"). Adresser der kun optræder som forsikringstagers virksomhedsadresse, kontaktadresse, cc-/adressat-adresse, mægler-adresse eller i brevhoved/følgebrev må ALDRIG bruges som property_address — forsikringstagerens egen adresse hører til i policyholder_address. Findes intet eksplicit forsikringssted, sæt property_address til null.

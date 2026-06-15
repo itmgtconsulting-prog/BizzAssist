@@ -161,6 +161,15 @@ interface AnalyseCoverage {
   is_covered: boolean;
   sum_dkk: number | null;
   deductible_dkk: number | null;
+  conditions_ref?: string | null;
+}
+
+/** BIZZ-2135: Refereret standardbetingelse fra police-dækninger */
+interface ReferencedCondition {
+  ref: string;
+  selskab: string | null;
+  policyNumber: string | null;
+  uploaded: boolean;
 }
 
 /** BIZZ-2099: Police fra analyse-detail API — bruges til "Fundne forsikringer" */
@@ -270,6 +279,8 @@ interface AnalyseDetail {
   policies?: AnalysePolicy[];
   /** BIZZ-2119: Analysens dokumenter — bruges til kildedokument-visning ved matches */
   documents?: Array<{ id: string; original_name: string }>;
+  /** BIZZ-2135: Refererede standardbetingelser fra policernes dækninger */
+  referencedConditions?: ReferencedCondition[];
 }
 
 /** Property grouped with its matched policy and relevant gaps */
@@ -1590,6 +1601,56 @@ function UnifiedAnalyseView({
 
       {/* BIZZ-2099: Fundne forsikringer — grønne bokse for alle analysens policer */}
       <FundneForsikringer detail={detail} da={da} />
+
+      {/* BIZZ-2135: Refererede standardbetingelser — vis hvilke der mangler */}
+      {(detail.referencedConditions ?? []).length > 0 &&
+        (() => {
+          const conds = detail.referencedConditions!;
+          const uploaded = conds.filter((c) => c.uploaded).length;
+          const missing = conds.length - uploaded;
+          return (
+            <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-white text-sm font-semibold flex items-center gap-2">
+                  <BookOpen size={14} className="text-blue-400" />
+                  {da ? 'Refererede standardbetingelser' : 'Referenced standard conditions'}
+                </h4>
+                <span className="text-slate-400 text-[10px]">
+                  {uploaded}/{conds.length} {da ? 'uploaded' : 'uploaded'}
+                </span>
+              </div>
+              {missing > 0 && (
+                <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 text-amber-300 text-xs">
+                  {da
+                    ? `${missing} af ${conds.length} refererede betingelser mangler — gap-analysen er ufuldstændig. Upload de manglende betingelser for en komplet analyse.`
+                    : `${missing} of ${conds.length} referenced conditions are missing — the gap analysis is incomplete. Upload the missing conditions for a complete analysis.`}
+                </div>
+              )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                {conds.map((c) => (
+                  <div
+                    key={c.ref}
+                    className="flex items-center gap-2 px-2.5 py-1.5 bg-white/3 rounded-lg text-xs"
+                  >
+                    {c.uploaded ? (
+                      <CheckCircle2 size={12} className="text-emerald-400 shrink-0" />
+                    ) : (
+                      <AlertCircle size={12} className="text-amber-400 shrink-0" />
+                    )}
+                    <span className={c.uploaded ? 'text-slate-300' : 'text-white font-medium'}>
+                      {c.ref}
+                    </span>
+                    {c.selskab && (
+                      <span className="text-slate-500 text-[10px] truncate ml-auto">
+                        {c.selskab}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
 
       {/* BIZZ-1941: Forsikringsejer-niveau — generelle findings for hele ejeren.
           Vises kun her, ikke gentaget under virksomhed/ejendom.

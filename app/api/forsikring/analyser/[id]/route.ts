@@ -267,12 +267,70 @@ export async function GET(
     if (coveragePolicyIds.length > 0) {
       const { data: coverageRows } = await db
         .from('forsikring_coverages')
-        .select('policy_id, coverage_code, coverage_label, is_covered, sum_dkk, deductible_dkk')
+        .select(
+          'policy_id, coverage_code, coverage_label, is_covered, sum_dkk, deductible_dkk, conditions_ref'
+        )
         .in('policy_id', coveragePolicyIds)
         .eq('tenant_id', auth.tenantId)
         .order('coverage_label', { ascending: true });
       coverages = coverageRows ?? [];
     }
+
+    // BIZZ-2135: Aggregér refererede standardbetingelser fra coverages
+    const conditionsMap = new Map<
+      string,
+      { ref: string; selskab: string | null; policyNumber: string | null }
+    >();
+    for (const cov of coverages as Array<{ policy_id: string; conditions_ref?: string | null }>) {
+      if (!cov.conditions_ref) continue;
+      // Split på komma/semikolon (flere refs per coverage)
+      for (const rawRef of cov.conditions_ref
+        .split(/[,;]/)
+        .map((s: string) => s.trim())
+        .filter(Boolean)) {
+        if (!conditionsMap.has(rawRef)) {
+          const pol = (
+            policies as Array<{
+              id: string;
+              insurer_name: string | null;
+              policy_number: string | null;
+            }>
+          ).find((p) => p.id === cov.policy_id);
+          conditionsMap.set(rawRef, {
+            ref: rawRef,
+            selskab: pol?.insurer_name ?? null,
+            policyNumber: pol?.policy_number ?? null,
+          });
+        }
+      }
+    }
+
+    // Match mod uploaded standard-betingelser i forsikring_standard_doc
+    const uploadedRefs = new Set<string>();
+    if (conditionsMap.size > 0) {
+      try {
+        const { data: stdDocs } = await admin
+          .from('forsikring_standard_doc')
+          .select('titel')
+          .limit(200);
+        if (stdDocs) {
+          // Match titel mod betingelses-ref (fuzzy: titel indeholder ref-nummeret)
+          for (const doc of stdDocs as Array<{ titel: string }>) {
+            const titelLower = doc.titel.toLowerCase();
+            for (const ref of conditionsMap.keys()) {
+              if (titelLower.includes(ref.toLowerCase())) uploadedRefs.add(ref);
+            }
+          }
+        }
+      } catch {
+        // Non-fatal — standard-docs check
+      }
+    }
+
+    const referencedConditions = [...conditionsMap.values()].map((c) => ({
+      ...c,
+      uploaded: uploadedRefs.has(c.ref),
+    }));
 
     return NextResponse.json({
       analyse: analyseResult.data,
@@ -281,6 +339,7 @@ export async function GET(
       documents,
       policies,
       coverages,
+      referencedConditions,
     });
   } catch (err) {
     logger.error('[forsikring/analyser/[id]] Fejl:', err);

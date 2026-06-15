@@ -267,4 +267,25 @@ describe('addressesMatch (BIZZ-1973)', () => {
     expect(addressesMatch(null, 'Stengade 7')).toBe(false);
     expect(addressesMatch('Stengade 7', '')).toBe(false);
   });
+
+  it('matcher husnummer-range mod enkelt-adresse (47A-51 → 47A, 49)', () => {
+    expect(
+      addressesMatch('Gefionsvej 47A-51, 3000 Helsingør', 'Gefionsvej 47A, 3000 Helsingør')
+    ).toBe(true);
+    expect(
+      addressesMatch('Gefionsvej 47A-51, 3000 Helsingør', 'Gefionsvej 49, 3000 Helsingør')
+    ).toBe(true);
+    expect(
+      addressesMatch('Gefionsvej 47A-51, 3000 Helsingør', 'Gefionsvej 51, 3000 Helsingør')
+    ).toBe(true);
+  });
+
+  it('range-match returnerer false for adresser uden for ranget', () => {
+    expect(
+      addressesMatch('Gefionsvej 47A-51, 3000 Helsingør', 'Gefionsvej 53, 3000 Helsingør')
+    ).toBe(false);
+    expect(
+      addressesMatch('Gefionsvej 47A-51, 3000 Helsingør', 'Gefionsvej 45, 3000 Helsingør')
+    ).toBe(false);
+  });
 });

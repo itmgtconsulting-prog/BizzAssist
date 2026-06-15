@@ -86,9 +86,13 @@ function stripFloorDoor(addr: string): string {
  * @param norm - Allerede normaliseret adresse (via normalize())
  * @returns Strukturerede dele, eller null hvis vejnavn+husnr ikke kunne udledes
  */
-function parseStreetAddr(
-  norm: string
-): { vejnavn: string; husnr: string; postnr: string | null } | null {
+function parseStreetAddr(norm: string): {
+  vejnavn: string;
+  husnr: string;
+  /** Slut-husnr ved range-adresse ("47a-51" → husnrTil="51"), ellers null */
+  husnrTil: string | null;
+  postnr: string | null;
+} | null {
   const tokens = norm.split(' ').filter(Boolean);
   // Husnummer = første token der starter med et ciffer (evt. efterfulgt af bogstav)
   let husnrIdx = -1;
@@ -102,15 +106,29 @@ function parseStreetAddr(
   if (husnrIdx <= 0) return null;
   const vejnavn = tokens.slice(0, husnrIdx).join(' ');
   const husnr = tokens[husnrIdx].replace(/[a-z]+$/, ''); // strip bogstav → kun nummer
-  // Postnummer = et 4-cifret token efter husnummeret
+  // Range-detektion: næste token er et 1-3 cifret tal (normalize erstatter "-"
+  // med mellemrum, så "47a-51" → "47a 51" → tokens ["47a", "51"]). 4-cifrede
+  // tokens er postnumre, ikke slut-husnumre.
+  let husnrTil: string | null = null;
+  const nextIdx = husnrIdx + 1;
+  if (nextIdx < tokens.length && /^\d{1,3}[a-z]?$/.test(tokens[nextIdx])) {
+    const candidate = parseInt(tokens[nextIdx].replace(/[a-z]+$/, ''), 10);
+    const start = parseInt(husnr, 10);
+    // Kun et range hvis slut > start og forskellen er rimelig (maks 100)
+    if (!isNaN(candidate) && !isNaN(start) && candidate > start && candidate - start <= 100) {
+      husnrTil = tokens[nextIdx].replace(/[a-z]+$/, '');
+    }
+  }
+  // Postnummer = et 4-cifret token efter husnummeret (og evt. range-slut)
   let postnr: string | null = null;
-  for (let i = husnrIdx + 1; i < tokens.length; i++) {
+  const searchFrom = husnrTil ? nextIdx + 1 : nextIdx;
+  for (let i = searchFrom; i < tokens.length; i++) {
     if (/^\d{4}$/.test(tokens[i])) {
       postnr = tokens[i];
       break;
     }
   }
-  return { vejnavn, husnr, postnr };
+  return { vejnavn, husnr, husnrTil, postnr };
 }
 
 /**
@@ -121,6 +139,9 @@ function parseStreetAddr(
  * Matchet er husnummer-bogstav-agnostisk ("Stjernegade 17" = "Stjernegade 17A")
  * jf. BIZZ-1908, og kræver at postnummeret matcher når begge adresser har et
  * (så "Hovedgade 5" i to forskellige byer ikke fejlmatcher).
+ *
+ * Forstår husnummer-ranges ("Gefionsvej 47A-51" matcher "Gefionsvej 49")
+ * — typisk for forsikringspolicer der dækker flere bygninger på samme vej.
  *
  * @param a - Første adresse (rå streng, fx police.property_address)
  * @param b - Anden adresse (rå streng, fx en porteføljeejendoms adresse)
@@ -146,10 +167,30 @@ export function addressesMatch(
   const pb = parseStreetAddr(baseB || nb);
   if (!pa || !pb) return false;
   if (pa.vejnavn !== pb.vejnavn) return false;
-  if (pa.husnr !== pb.husnr) return false;
   // Postnr skal matche når begge har et — ellers er gade+husnr nok
   if (pa.postnr && pb.postnr && pa.postnr !== pb.postnr) return false;
-  return true;
+  // Eksakt husnr-match
+  if (pa.husnr === pb.husnr) return true;
+  // Range-match: "47a-51" matcher alle husnumre i [47..51]
+  if (pa.husnrTil || pb.husnrTil) {
+    const inRange = (single: string, fra: string, til: string): boolean => {
+      const n = parseInt(single, 10);
+      const f = parseInt(fra, 10);
+      const t = parseInt(til, 10);
+      return !isNaN(n) && !isNaN(f) && !isNaN(t) && n >= f && n <= t;
+    };
+    if (pa.husnrTil && !pb.husnrTil) return inRange(pb.husnr, pa.husnr, pa.husnrTil);
+    if (pb.husnrTil && !pa.husnrTil) return inRange(pa.husnr, pb.husnr, pb.husnrTil);
+    // Begge er ranges — check overlap
+    if (pa.husnrTil && pb.husnrTil) {
+      const af = parseInt(pa.husnr, 10),
+        at = parseInt(pa.husnrTil, 10);
+      const bf = parseInt(pb.husnr, 10),
+        bt = parseInt(pb.husnrTil, 10);
+      return !isNaN(af) && !isNaN(at) && !isNaN(bf) && !isNaN(bt) && af <= bt && bf <= at;
+    }
+  }
+  return false;
 }
 
 /**

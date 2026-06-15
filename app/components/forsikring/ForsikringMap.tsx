@@ -259,6 +259,13 @@ function ForsikringMapInner({
         maxZoom={20}
         style={{ width: '100%', height: '100%' }}
         onClick={() => setPopupMarker(null)}
+        transformRequest={(url) => {
+          // Send cookies med WMS-proxy requests (same-origin /api/wms)
+          if (url.startsWith('/api/wms') || url.startsWith(window.location.origin + '/api/wms')) {
+            return { url, credentials: 'include' as const };
+          }
+          return { url };
+        }}
       >
         <NavigationControl position="top-right" showCompass={false} />
 

@@ -4704,439 +4704,453 @@ export default function ForsikringPageClient(): React.ReactElement {
   const _totals = data?.totals;
 
   return (
-    <div className={`h-full bg-[#0a1020] text-slate-100 ${kortÅben && isDesktop ? 'flex' : ''}`}>
-      {/* Hovedindhold — scrollbar, fuld højde */}
-      <div
-        className={`overflow-y-auto p-6 pb-16 space-y-6 h-full ${kortÅben && isDesktop ? 'flex-1 min-w-0' : 'w-full'}`}
-      >
-        {/* Heading + nulstil-knap + kort-knap */}
-        <header className="flex items-start justify-between">
-          <div className="space-y-1">
-            <h1 className="flex items-center gap-3 text-2xl font-semibold">
-              <ShieldCheck className="text-blue-400" size={28} />
-              {t.title}
-            </h1>
+    <div className="h-full bg-[#0a1020] text-slate-100 flex flex-col">
+      {/* Sticky header — altid synlig */}
+      <header className="flex-shrink-0 px-6 pt-4 pb-3 border-b border-white/5 flex items-center justify-between bg-[#0a1020] z-10">
+        <div className="space-y-0.5">
+          <h1 className="flex items-center gap-3 text-2xl font-semibold">
+            <ShieldCheck className="text-blue-400" size={28} />
+            {t.title}
+          </h1>
+          <div className="flex items-center gap-4">
             <p className="text-sm text-slate-400">{t.subtitle}</p>
-            {/* BIZZ-1447: Token-forbrug bar */}
-            <TokenUsageBar className="mt-2 max-w-xs" />
+            <TokenUsageBar className="max-w-xs" />
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
             {/* BIZZ-2131: Kort-knap — kun synlig når analyse med ejendomme er kørt */}
-            {geoAnalyseId &&
-              aiAnalyseDetail &&
-              (aiAnalyseDetail.aktiver ?? []).some(
-                (a: { type: string; adresse?: string | null }) => a.type === 'ejendom' && a.adresse
-              ) && (
-                <button
-                  type="button"
-                  onClick={() => setKortÅben(!kortÅben)}
-                  className={`flex items-center gap-1.5 px-3 py-2 text-xs rounded-lg border transition-colors ${
-                    kortÅben
-                      ? 'bg-blue-600 border-blue-500 text-white'
-                      : 'bg-slate-800/80 border-slate-700/60 text-slate-300 hover:bg-slate-700/80'
-                  }`}
-                  aria-label={lang === 'da' ? 'Vis kort' : 'Show map'}
-                >
-                  <MapIcon size={14} />
-                  {lang === 'da' ? 'Kort' : 'Map'}
-                </button>
-              )}
-            {/* BIZZ-1397: Nulstil alt — kun synlig for admin */}
-            {isAdmin && (policies.length > 0 || documents.length > 0) && (
+          </div>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {/* BIZZ-2131: Kort-knap */}
+          {geoAnalyseId &&
+            aiAnalyseDetail &&
+            (aiAnalyseDetail.aktiver ?? []).some(
+              (a: { type: string; adresse?: string | null }) => a.type === 'ejendom' && a.adresse
+            ) && (
               <button
                 type="button"
-                disabled={resetting}
-                onClick={async () => {
-                  const da = lang === 'da';
-                  if (
-                    !window.confirm(
-                      da
-                        ? 'Slet ALLE forsikringsdata? Alle policer, dokumenter, gaps og analyser slettes permanent. Denne handling kan ikke fortrydes.'
-                        : 'Delete ALL insurance data? All policies, documents, gaps and analyses will be permanently deleted. This action cannot be undone.'
-                    )
-                  )
-                    return;
-                  setResetting(true);
-                  try {
-                    const res = await fetch('/api/forsikring/reset', { method: 'DELETE' });
-                    if (res.ok) {
-                      setUploadJobs([]);
-                      await refresh();
-                    }
-                  } catch {
-                    // Handled silently
-                  } finally {
-                    setResetting(false);
-                  }
-                }}
-                className="flex items-center gap-2 px-3 py-2 text-xs rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors disabled:opacity-50"
+                onClick={() => setKortÅben(!kortÅben)}
+                className={`flex items-center gap-1.5 px-3 py-2 text-xs rounded-lg border transition-colors ${
+                  kortÅben
+                    ? 'bg-blue-600 border-blue-500 text-white'
+                    : 'bg-slate-800/80 border-slate-700/60 text-slate-300 hover:bg-slate-700/80'
+                }`}
+                aria-label={lang === 'da' ? 'Vis kort' : 'Show map'}
               >
-                {resetting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                {lang === 'da' ? 'Nulstil alt' : 'Reset all'}
+                <MapIcon size={14} />
+                {lang === 'da' ? 'Kort' : 'Map'}
               </button>
             )}
-          </div>
-        </header>
-
-        {/* TRIN 1: Vælg kunde */}
-        <AnalyseSection
-          lang={lang}
-          policies={policies}
-          onRefresh={refresh}
-          onAnalyseDetail={handleAnalyseDetail}
-          onSagChange={setActiveSagId}
-          onCustomerSelect={setSelectedCustomer}
-          newDocumentIds={newDocumentIds}
-          addTokenUsage={addTokenUsage}
-        />
-
-        {/* BIZZ-1404: Analyse-historik for valgt kunde */}
-        {selectedCustomer && analyseHistorik.length > 0 && !activeAnalyseId && (
-          <section className="bg-white/5 border border-white/8 rounded-2xl p-4">
-            <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
-              <FileText size={16} className="text-blue-400" />
-              {lang === 'da'
-                ? `Tidligere analyser for ${selectedCustomer.navn}`
-                : `Previous analyses for ${selectedCustomer.navn}`}
-            </h3>
-            <div className="space-y-2">
-              {analyseHistorik.map((a) => {
-                const gapCount = (a.summary as Record<string, number> | null)?.gaps_count ?? 0;
-                const pct =
-                  a.total_aktiver > 0 ? Math.round((a.insured_count / a.total_aktiver) * 100) : 0;
-                return (
-                  <button
-                    key={a.id}
-                    type="button"
-                    onClick={() => setActiveAnalyseId(a.id)}
-                    className="w-full text-left px-4 py-3 bg-white/3 hover:bg-white/5 rounded-xl flex items-center justify-between transition-colors"
-                  >
-                    <div>
-                      <div className="text-white text-sm font-medium">
-                        {new Date(a.created_at).toLocaleDateString('da-DK', {
-                          day: 'numeric',
-                          month: 'short',
-                          year: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </div>
-                      <div className="text-slate-400 text-xs mt-0.5">
-                        {a.total_aktiver} {lang === 'da' ? 'ejendomme' : 'properties'} ·{' '}
-                        {a.insured_count} {lang === 'da' ? 'forsikrede' : 'insured'} · {gapCount}{' '}
-                        gaps
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span
-                        className={`text-lg font-bold ${
-                          pct >= 71
-                            ? 'text-emerald-400'
-                            : pct >= 41
-                              ? 'text-amber-400'
-                              : 'text-red-400'
-                        }`}
-                      >
-                        {pct}%
-                      </span>
-                      <ChevronRight size={16} className="text-slate-400" />
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-        )}
-
-        {/* BIZZ-1440: Analyse-detalje visning når man klikker en historik-række */}
-        {activeAnalyseId && selectedCustomer && (
-          <AnalyseDetailSection
-            analyseId={activeAnalyseId}
-            kundeNavn={selectedCustomer.navn}
-            lang={lang}
-            onBack={() => setActiveAnalyseId(null)}
-          />
-        )}
-
-        {/* BIZZ-1439: Global upload + police-tabel FJERNET — al data vises kun i analyse-kontekst */}
-        {/* Legacy trin 2+3 skjult — erstattet af wizard-upload i AnalyseSection */}
-        {false && selectedCustomer && (
-          <>
-            <div className="flex items-center gap-2 text-sm font-semibold text-white">
-              <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">
-                2
-              </span>
-              {lang === 'da' ? 'Upload forsikringsdokumenter' : 'Upload insurance documents'}
-            </div>
-            <section
-              onDragOver={onDragOver}
-              onDragLeave={onDragLeave}
-              onDrop={onDrop}
-              className={`rounded-2xl border-2 border-dashed transition-colors p-8 text-center cursor-pointer ${
-                dragOver
-                  ? 'border-blue-400 bg-blue-500/5'
-                  : 'border-white/10 bg-white/5 hover:border-blue-500/40'
-              }`}
-              onClick={() => fileInputRef.current?.click()}
-              role="button"
-              tabIndex={0}
-              aria-label={t.uploadCta}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  fileInputRef.current?.click();
+          {/* BIZZ-1397: Nulstil alt — kun synlig for admin */}
+          {isAdmin && (policies.length > 0 || documents.length > 0) && (
+            <button
+              type="button"
+              disabled={resetting}
+              onClick={async () => {
+                const da = lang === 'da';
+                if (
+                  !window.confirm(
+                    da
+                      ? 'Slet ALLE forsikringsdata? Alle policer, dokumenter, gaps og analyser slettes permanent. Denne handling kan ikke fortrydes.'
+                      : 'Delete ALL insurance data? All policies, documents, gaps and analyses will be permanently deleted. This action cannot be undone.'
+                  )
+                )
+                  return;
+                setResetting(true);
+                try {
+                  const res = await fetch('/api/forsikring/reset', { method: 'DELETE' });
+                  if (res.ok) {
+                    setUploadJobs([]);
+                    await refresh();
+                  }
+                } catch {
+                  // Handled silently
+                } finally {
+                  setResetting(false);
                 }
               }}
+              className="flex items-center gap-2 px-3 py-2 text-xs rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors disabled:opacity-50"
             >
-              <Upload className="mx-auto text-blue-400 mb-2" size={28} />
-              <div className="font-medium">{t.uploadCta}</div>
-              <div className="text-sm text-slate-400 mt-1">{t.uploadHelp}</div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".pdf,.docx,.xlsx,.xls,.pptx,.rtf,.txt,.md,.html,.csv,.tsv,.json,.xml,.yaml,.eml,.png,.jpg,.jpeg,.gif,.webp,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-excel,image/*,text/*,application/json,application/xml,message/rfc822"
-                multiple
-                className="hidden"
-                aria-hidden="true"
-                onChange={(e) => {
-                  handleFiles(e.target.files);
-                  // reset så samme fil kan vælges igen
-                  e.target.value = '';
-                }}
-              />
-            </section>
+              {resetting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+              {lang === 'da' ? 'Nulstil alt' : 'Reset all'}
+            </button>
+          )}
+        </div>
+      </header>
 
-            {/* Upload-jobs (live status) */}
-            {uploadJobs.length > 0 && (
-              <section className="bg-white/5 border border-white/8 rounded-2xl divide-y divide-white/5">
-                {uploadJobs.map((job) => (
-                  <div key={job.id} className="flex items-center gap-3 p-3 text-sm">
-                    {job.status === 'uploading' && (
-                      <Loader2 size={16} className="animate-spin text-blue-400" />
-                    )}
-                    {job.status === 'parsing' && (
-                      <Loader2 size={16} className="animate-spin text-amber-400" />
-                    )}
-                    {job.status === 'done' && (
-                      <CheckCircle2 size={16} className="text-emerald-400" />
-                    )}
-                    {job.status === 'failed' && <XCircle size={16} className="text-red-400" />}
-                    <span className="font-medium">{job.fileName}</span>
-                    <span className="text-slate-400 text-xs">
-                      {job.status === 'uploading' && t.uploading}
-                      {job.status === 'parsing' && t.parsing}
-                      {job.status === 'done' &&
-                        (job.documentType === 'oversigt'
-                          ? `✓ Oversigt → ${job.policiesCount ?? '?'} policer`
-                          : job.documentType === 'tillaeg'
-                            ? '✓ Tillæg'
-                            : '✓')}
-                      {job.status === 'failed' && (
-                        <span className="text-red-400" title={job.error ?? t.parseFailed}>
-                          {job.error ?? t.parseFailed}
+      {/* Indhold + kort i flex-row */}
+      <div className={`flex-1 min-h-0 ${kortÅben && isDesktop ? 'flex' : ''}`}>
+        {/* Scrollbart indhold */}
+        <div
+          className={`overflow-y-auto p-6 pb-16 space-y-6 h-full ${kortÅben && isDesktop ? 'flex-1 min-w-0' : 'w-full'}`}
+        >
+          {/* TRIN 1: Vælg kunde */}
+          <AnalyseSection
+            lang={lang}
+            policies={policies}
+            onRefresh={refresh}
+            onAnalyseDetail={handleAnalyseDetail}
+            onSagChange={setActiveSagId}
+            onCustomerSelect={setSelectedCustomer}
+            newDocumentIds={newDocumentIds}
+            addTokenUsage={addTokenUsage}
+          />
+
+          {/* BIZZ-1404: Analyse-historik for valgt kunde */}
+          {selectedCustomer && analyseHistorik.length > 0 && !activeAnalyseId && (
+            <section className="bg-white/5 border border-white/8 rounded-2xl p-4">
+              <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+                <FileText size={16} className="text-blue-400" />
+                {lang === 'da'
+                  ? `Tidligere analyser for ${selectedCustomer.navn}`
+                  : `Previous analyses for ${selectedCustomer.navn}`}
+              </h3>
+              <div className="space-y-2">
+                {analyseHistorik.map((a) => {
+                  const gapCount = (a.summary as Record<string, number> | null)?.gaps_count ?? 0;
+                  const pct =
+                    a.total_aktiver > 0 ? Math.round((a.insured_count / a.total_aktiver) * 100) : 0;
+                  return (
+                    <button
+                      key={a.id}
+                      type="button"
+                      onClick={() => setActiveAnalyseId(a.id)}
+                      className="w-full text-left px-4 py-3 bg-white/3 hover:bg-white/5 rounded-xl flex items-center justify-between transition-colors"
+                    >
+                      <div>
+                        <div className="text-white text-sm font-medium">
+                          {new Date(a.created_at).toLocaleDateString('da-DK', {
+                            day: 'numeric',
+                            month: 'short',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </div>
+                        <div className="text-slate-400 text-xs mt-0.5">
+                          {a.total_aktiver} {lang === 'da' ? 'ejendomme' : 'properties'} ·{' '}
+                          {a.insured_count} {lang === 'da' ? 'forsikrede' : 'insured'} · {gapCount}{' '}
+                          gaps
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span
+                          className={`text-lg font-bold ${
+                            pct >= 71
+                              ? 'text-emerald-400'
+                              : pct >= 41
+                                ? 'text-amber-400'
+                                : 'text-red-400'
+                          }`}
+                        >
+                          {pct}%
                         </span>
-                      )}
-                    </span>
-                  </div>
-                ))}
-              </section>
-            )}
+                        <ChevronRight size={16} className="text-slate-400" />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          )}
 
-            {/* Pending documents (server-side) */}
-            {documents.length > 0 && (
-              <section className="bg-white/5 border border-white/8 rounded-2xl">
-                <header className="px-4 py-3 border-b border-white/5 text-sm font-medium text-slate-300 flex items-center gap-2">
-                  <FileText size={16} />
-                  {t.pendingDocuments} ({documents.length})
-                </header>
-                <div className="divide-y divide-white/5 text-sm">
-                  {documents.map((doc) => (
-                    <div key={doc.id} className="px-4 py-2 flex items-center gap-3">
-                      <FileText size={14} className="text-slate-400" />
-                      <span>{doc.original_name}</span>
-                      <span
-                        className={`text-xs ml-auto max-w-[300px] truncate ${doc.parse_status === 'failed' ? 'text-red-400' : 'text-slate-400'}`}
-                        title={
-                          doc.parse_status === 'failed'
-                            ? (doc.parse_error ?? t.parseFailed)
-                            : doc.parse_status
-                        }
-                      >
-                        {doc.parse_status === 'failed'
-                          ? (doc.parse_error ?? t.parseFailed)
-                          : doc.parse_status}
+          {/* BIZZ-1440: Analyse-detalje visning når man klikker en historik-række */}
+          {activeAnalyseId && selectedCustomer && (
+            <AnalyseDetailSection
+              analyseId={activeAnalyseId}
+              kundeNavn={selectedCustomer.navn}
+              lang={lang}
+              onBack={() => setActiveAnalyseId(null)}
+            />
+          )}
+
+          {/* BIZZ-1439: Global upload + police-tabel FJERNET — al data vises kun i analyse-kontekst */}
+          {/* Legacy trin 2+3 skjult — erstattet af wizard-upload i AnalyseSection */}
+          {false && selectedCustomer && (
+            <>
+              <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">
+                  2
+                </span>
+                {lang === 'da' ? 'Upload forsikringsdokumenter' : 'Upload insurance documents'}
+              </div>
+              <section
+                onDragOver={onDragOver}
+                onDragLeave={onDragLeave}
+                onDrop={onDrop}
+                className={`rounded-2xl border-2 border-dashed transition-colors p-8 text-center cursor-pointer ${
+                  dragOver
+                    ? 'border-blue-400 bg-blue-500/5'
+                    : 'border-white/10 bg-white/5 hover:border-blue-500/40'
+                }`}
+                onClick={() => fileInputRef.current?.click()}
+                role="button"
+                tabIndex={0}
+                aria-label={t.uploadCta}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    fileInputRef.current?.click();
+                  }
+                }}
+              >
+                <Upload className="mx-auto text-blue-400 mb-2" size={28} />
+                <div className="font-medium">{t.uploadCta}</div>
+                <div className="text-sm text-slate-400 mt-1">{t.uploadHelp}</div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,.docx,.xlsx,.xls,.pptx,.rtf,.txt,.md,.html,.csv,.tsv,.json,.xml,.yaml,.eml,.png,.jpg,.jpeg,.gif,.webp,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-excel,image/*,text/*,application/json,application/xml,message/rfc822"
+                  multiple
+                  className="hidden"
+                  aria-hidden="true"
+                  onChange={(e) => {
+                    handleFiles(e.target.files);
+                    // reset så samme fil kan vælges igen
+                    e.target.value = '';
+                  }}
+                />
+              </section>
+
+              {/* Upload-jobs (live status) */}
+              {uploadJobs.length > 0 && (
+                <section className="bg-white/5 border border-white/8 rounded-2xl divide-y divide-white/5">
+                  {uploadJobs.map((job) => (
+                    <div key={job.id} className="flex items-center gap-3 p-3 text-sm">
+                      {job.status === 'uploading' && (
+                        <Loader2 size={16} className="animate-spin text-blue-400" />
+                      )}
+                      {job.status === 'parsing' && (
+                        <Loader2 size={16} className="animate-spin text-amber-400" />
+                      )}
+                      {job.status === 'done' && (
+                        <CheckCircle2 size={16} className="text-emerald-400" />
+                      )}
+                      {job.status === 'failed' && <XCircle size={16} className="text-red-400" />}
+                      <span className="font-medium">{job.fileName}</span>
+                      <span className="text-slate-400 text-xs">
+                        {job.status === 'uploading' && t.uploading}
+                        {job.status === 'parsing' && t.parsing}
+                        {job.status === 'done' &&
+                          (job.documentType === 'oversigt'
+                            ? `✓ Oversigt → ${job.policiesCount ?? '?'} policer`
+                            : job.documentType === 'tillaeg'
+                              ? '✓ Tillæg'
+                              : '✓')}
+                        {job.status === 'failed' && (
+                          <span className="text-red-400" title={job.error ?? t.parseFailed}>
+                            {job.error ?? t.parseFailed}
+                          </span>
+                        )}
                       </span>
-                      {/* BIZZ-1397: Slet individuelt dokument */}
-                      <button
-                        type="button"
-                        aria-label={
-                          lang === 'da'
-                            ? `Slet ${doc.original_name}`
-                            : `Delete ${doc.original_name}`
-                        }
-                        onClick={async () => {
-                          try {
-                            const res = await fetch(`/api/forsikring/documents/${doc.id}`, {
-                              method: 'DELETE',
-                            });
-                            if (res.ok) await refresh();
-                          } catch {
-                            // Handled silently
-                          }
-                        }}
-                        className="p-1 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors shrink-0"
-                      >
-                        <XCircle size={14} />
-                      </button>
                     </div>
                   ))}
-                </div>
-              </section>
-            )}
+                </section>
+              )}
 
-            {/* Uploadede policer — compact header med rapport-link */}
-            {policies.length > 0 && (
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                  <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">
-                    3
-                  </span>
-                  {lang === 'da'
-                    ? `${policies.length} policer — ${(data?.totals?.gaps_critical ?? 0) + (data?.totals?.gaps_warning ?? 0)} gaps fundet`
-                    : `${policies.length} policies — ${(data?.totals?.gaps_critical ?? 0) + (data?.totals?.gaps_warning ?? 0)} gaps found`}
-                </div>
-              </div>
-            )}
+              {/* Pending documents (server-side) */}
+              {documents.length > 0 && (
+                <section className="bg-white/5 border border-white/8 rounded-2xl">
+                  <header className="px-4 py-3 border-b border-white/5 text-sm font-medium text-slate-300 flex items-center gap-2">
+                    <FileText size={16} />
+                    {t.pendingDocuments} ({documents.length})
+                  </header>
+                  <div className="divide-y divide-white/5 text-sm">
+                    {documents.map((doc) => (
+                      <div key={doc.id} className="px-4 py-2 flex items-center gap-3">
+                        <FileText size={14} className="text-slate-400" />
+                        <span>{doc.original_name}</span>
+                        <span
+                          className={`text-xs ml-auto max-w-[300px] truncate ${doc.parse_status === 'failed' ? 'text-red-400' : 'text-slate-400'}`}
+                          title={
+                            doc.parse_status === 'failed'
+                              ? (doc.parse_error ?? t.parseFailed)
+                              : doc.parse_status
+                          }
+                        >
+                          {doc.parse_status === 'failed'
+                            ? (doc.parse_error ?? t.parseFailed)
+                            : doc.parse_status}
+                        </span>
+                        {/* BIZZ-1397: Slet individuelt dokument */}
+                        <button
+                          type="button"
+                          aria-label={
+                            lang === 'da'
+                              ? `Slet ${doc.original_name}`
+                              : `Delete ${doc.original_name}`
+                          }
+                          onClick={async () => {
+                            try {
+                              const res = await fetch(`/api/forsikring/documents/${doc.id}`, {
+                                method: 'DELETE',
+                              });
+                              if (res.ok) await refresh();
+                            } catch {
+                              // Handled silently
+                            }
+                          }}
+                          className="p-1 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors shrink-0"
+                        >
+                          <XCircle size={14} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
 
-            {/* Error banner */}
-            {error && (
-              <div className="rounded-xl bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-red-200 flex items-center gap-2">
-                <AlertCircle size={16} />
-                {error}
-              </div>
-            )}
-
-            {/* Loading state */}
-            {loading && !data && (
-              <div className="text-sm text-slate-400">{translations[lang].common.loading}</div>
-            )}
-
-            {/* Empty state — kun når ingen policer OG ingen dokumenter */}
-            {!loading &&
-              policies.length === 0 &&
-              documents.length === 0 &&
-              uploadJobs.length === 0 && (
-                <div className="bg-white/5 border border-white/8 rounded-2xl p-10 text-center">
-                  <Building2 className="mx-auto text-slate-400 mb-3" size={36} />
-                  <h2 className="text-lg font-medium mb-1">{t.noPolicies}</h2>
-                  <p className="text-sm text-slate-400">{t.noPoliciesDesc}</p>
+              {/* Uploadede policer — compact header med rapport-link */}
+              {policies.length > 0 && (
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                    <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">
+                      3
+                    </span>
+                    {lang === 'da'
+                      ? `${policies.length} policer — ${(data?.totals?.gaps_critical ?? 0) + (data?.totals?.gaps_warning ?? 0)} gaps fundet`
+                      : `${policies.length} policies — ${(data?.totals?.gaps_critical ?? 0) + (data?.totals?.gaps_warning ?? 0)} gaps found`}
+                  </div>
                 </div>
               )}
 
-            {/* Police-tabel */}
-            {policies.length > 0 && (
-              <section className="bg-white/5 border border-white/8 rounded-2xl overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead className="bg-slate-900/40 text-slate-400 text-xs uppercase tracking-wide">
-                    <tr>
-                      <th className="text-left px-4 py-3">{t.colPolicy}</th>
-                      <th className="text-left px-4 py-3">{t.colInsurer}</th>
-                      <th className="text-left px-4 py-3">{t.colHolder}</th>
-                      <th className="text-left px-4 py-3">{t.colAddress}</th>
-                      <th className="text-right px-4 py-3">{t.colPremium}</th>
-                      <th className="text-left px-4 py-3">{t.colExpires}</th>
-                      <th className="text-center px-4 py-3">{t.colGaps}</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {policies.map((p) => (
-                      <tr key={p.id} className="hover:bg-white/5 transition-colors">
-                        <td className="px-4 py-3">
-                          <Link
-                            href={`/dashboard/forsikring/${p.id}`}
-                            className="text-blue-300 hover:text-blue-200 font-medium"
-                          >
-                            {p.policy_number}
-                          </Link>
-                        </td>
-                        <td className="px-4 py-3 text-slate-300">{p.insurer_name}</td>
-                        <td className="px-4 py-3 text-slate-300">{p.policyholder_name}</td>
-                        <td className="px-4 py-3 text-slate-300">{p.property_address ?? '—'}</td>
-                        <td className="px-4 py-3 text-right text-slate-300">
-                          {formatDkk(p.annual_premium_dkk)}
-                        </td>
-                        <td className="px-4 py-3 text-slate-300">{formatDate(p.effective_to)}</td>
-                        <td className="px-4 py-3 text-center">
-                          <div className="inline-flex items-center gap-1 text-xs">
-                            {p.gap_counts.critical > 0 && (
-                              <span className="px-1.5 py-0.5 rounded bg-red-500/20 text-red-300">
-                                {p.gap_counts.critical}
-                              </span>
-                            )}
-                            {p.gap_counts.warning > 0 && (
-                              <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">
-                                {p.gap_counts.warning}
-                              </span>
-                            )}
-                            {p.gap_counts.info > 0 && (
-                              <span className="px-1.5 py-0.5 rounded bg-slate-500/20 text-slate-300">
-                                {p.gap_counts.info}
-                              </span>
-                            )}
-                            {p.gap_counts.critical === 0 &&
-                              p.gap_counts.warning === 0 &&
-                              p.gap_counts.info === 0 && (
-                                <CheckCircle2 size={14} className="text-emerald-400" />
-                              )}
-                          </div>
-                        </td>
+              {/* Error banner */}
+              {error && (
+                <div className="rounded-xl bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-red-200 flex items-center gap-2">
+                  <AlertCircle size={16} />
+                  {error}
+                </div>
+              )}
+
+              {/* Loading state */}
+              {loading && !data && (
+                <div className="text-sm text-slate-400">{translations[lang].common.loading}</div>
+              )}
+
+              {/* Empty state — kun når ingen policer OG ingen dokumenter */}
+              {!loading &&
+                policies.length === 0 &&
+                documents.length === 0 &&
+                uploadJobs.length === 0 && (
+                  <div className="bg-white/5 border border-white/8 rounded-2xl p-10 text-center">
+                    <Building2 className="mx-auto text-slate-400 mb-3" size={36} />
+                    <h2 className="text-lg font-medium mb-1">{t.noPolicies}</h2>
+                    <p className="text-sm text-slate-400">{t.noPoliciesDesc}</p>
+                  </div>
+                )}
+
+              {/* Police-tabel */}
+              {policies.length > 0 && (
+                <section className="bg-white/5 border border-white/8 rounded-2xl overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-900/40 text-slate-400 text-xs uppercase tracking-wide">
+                      <tr>
+                        <th className="text-left px-4 py-3">{t.colPolicy}</th>
+                        <th className="text-left px-4 py-3">{t.colInsurer}</th>
+                        <th className="text-left px-4 py-3">{t.colHolder}</th>
+                        <th className="text-left px-4 py-3">{t.colAddress}</th>
+                        <th className="text-right px-4 py-3">{t.colPremium}</th>
+                        <th className="text-left px-4 py-3">{t.colExpires}</th>
+                        <th className="text-center px-4 py-3">{t.colGaps}</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </section>
-            )}
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {policies.map((p) => (
+                        <tr key={p.id} className="hover:bg-white/5 transition-colors">
+                          <td className="px-4 py-3">
+                            <Link
+                              href={`/dashboard/forsikring/${p.id}`}
+                              className="text-blue-300 hover:text-blue-200 font-medium"
+                            >
+                              {p.policy_number}
+                            </Link>
+                          </td>
+                          <td className="px-4 py-3 text-slate-300">{p.insurer_name}</td>
+                          <td className="px-4 py-3 text-slate-300">{p.policyholder_name}</td>
+                          <td className="px-4 py-3 text-slate-300">{p.property_address ?? '—'}</td>
+                          <td className="px-4 py-3 text-right text-slate-300">
+                            {formatDkk(p.annual_premium_dkk)}
+                          </td>
+                          <td className="px-4 py-3 text-slate-300">{formatDate(p.effective_to)}</td>
+                          <td className="px-4 py-3 text-center">
+                            <div className="inline-flex items-center gap-1 text-xs">
+                              {p.gap_counts.critical > 0 && (
+                                <span className="px-1.5 py-0.5 rounded bg-red-500/20 text-red-300">
+                                  {p.gap_counts.critical}
+                                </span>
+                              )}
+                              {p.gap_counts.warning > 0 && (
+                                <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">
+                                  {p.gap_counts.warning}
+                                </span>
+                              )}
+                              {p.gap_counts.info > 0 && (
+                                <span className="px-1.5 py-0.5 rounded bg-slate-500/20 text-slate-300">
+                                  {p.gap_counts.info}
+                                </span>
+                              )}
+                              {p.gap_counts.critical === 0 &&
+                                p.gap_counts.warning === 0 &&
+                                p.gap_counts.info === 0 && (
+                                  <CheckCircle2 size={14} className="text-emerald-400" />
+                                )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </section>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* BIZZ-2131: Desktop kort-sidepanel med resize-divider — fuld højde */}
+        {kortÅben && isDesktop && (
+          <>
+            {/* Resize-divider */}
+            <div
+              className={`w-1.5 flex-shrink-0 cursor-col-resize flex items-center justify-center group transition-colors ${trækker ? 'bg-blue-500/30' : 'bg-slate-800 hover:bg-blue-500/20'}`}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                trækStart.current = { x: e.clientX, bredde: kortBredde };
+                setTrækker(true);
+              }}
+            >
+              <div
+                className={`w-0.5 h-10 rounded-full transition-colors ${trækker ? 'bg-blue-400' : 'bg-slate-600 group-hover:bg-blue-400'}`}
+              />
+            </div>
+            {/* Kort-panel — fuld højde */}
+            <div className="relative flex-shrink-0 h-full" style={{ width: kortBredde }}>
+              {/* Luk-knap */}
+              <button
+                onClick={() => setKortÅben(false)}
+                className="absolute top-2 left-2 z-20 p-1.5 rounded-lg bg-slate-900/90 border border-slate-700/60 text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+                aria-label={lang === 'da' ? 'Luk kort' : 'Close map'}
+              >
+                <X size={16} />
+              </button>
+              <div className="absolute inset-0">
+                <Suspense
+                  fallback={
+                    <div className="w-full h-full flex items-center justify-center bg-slate-900">
+                      <Loader2 size={20} className="animate-spin text-blue-400" />
+                    </div>
+                  }
+                >
+                  <ForsikringMap
+                    markers={geoMarkers}
+                    onMarkerClick={handleMarkerClick}
+                    da={lang === 'da'}
+                  />
+                </Suspense>
+              </div>
+            </div>
           </>
         )}
       </div>
-      {/* slut scrollbar hovedindhold */}
-
-      {/* BIZZ-2131: Desktop kort-sidepanel med resize-divider — fuld højde */}
-      {kortÅben && isDesktop && (
-        <>
-          {/* Resize-divider */}
-          <div
-            className={`w-1.5 flex-shrink-0 cursor-col-resize flex items-center justify-center group transition-colors ${trækker ? 'bg-blue-500/30' : 'bg-slate-800 hover:bg-blue-500/20'}`}
-            onMouseDown={(e) => {
-              e.preventDefault();
-              trækStart.current = { x: e.clientX, bredde: kortBredde };
-              setTrækker(true);
-            }}
-          >
-            <div
-              className={`w-0.5 h-10 rounded-full transition-colors ${trækker ? 'bg-blue-400' : 'bg-slate-600 group-hover:bg-blue-400'}`}
-            />
-          </div>
-          {/* Kort-panel — fuld højde */}
-          <div className="relative flex-shrink-0" style={{ width: kortBredde }}>
-            <div className="absolute inset-0">
-              <Suspense
-                fallback={
-                  <div className="w-full h-full flex items-center justify-center bg-slate-900">
-                    <Loader2 size={20} className="animate-spin text-blue-400" />
-                  </div>
-                }
-              >
-                <ForsikringMap
-                  markers={geoMarkers}
-                  onMarkerClick={handleMarkerClick}
-                  da={lang === 'da'}
-                />
-              </Suspense>
-            </div>
-          </div>
-        </>
-      )}
 
       {/* BIZZ-2131: Mobil kort-overlay (fullscreen via portal) */}
       {kortÅben &&

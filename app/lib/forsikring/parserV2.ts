@@ -184,7 +184,7 @@ ${markdown.slice(0, 30000)}`,
     logger.log(
       `[parserV2] Step 1: ${Array.isArray(result) ? result.length : 0} forsikringstyper identificeret`
     );
-    return Array.isArray(result) ? result : [];
+    return (Array.isArray(result) ? result : []) as never[];
   } catch {
     logger.error('[parserV2] Step 1 JSON parse fejl:', text.slice(0, 200));
     return [];
@@ -253,7 +253,7 @@ ${markdown.slice(0, 30000)}`,
     logger.log(
       `[parserV2] Step 2 (${insurance.type}): ${Array.isArray(result) ? result.length : 0} enheder`
     );
-    return Array.isArray(result) ? result : [];
+    return (Array.isArray(result) ? result : []) as never[];
   } catch {
     logger.error('[parserV2] Step 2 JSON parse fejl:', text.slice(0, 200));
     return [];
@@ -326,7 +326,7 @@ ${markdown.slice(0, 30000)}`,
     logger.log(
       `[parserV2] Step 3 (${entity.label}): ${Array.isArray(result) ? result.length : 0} dækninger`
     );
-    return Array.isArray(result) ? result : [];
+    return (Array.isArray(result) ? result : []) as never[];
   } catch {
     logger.error('[parserV2] Step 3 JSON parse fejl:', text.slice(0, 200));
     return [];
@@ -392,7 +392,7 @@ ${markdown.slice(0, 30000)}`,
     logger.log(
       `[parserV2] Step 4: ${Array.isArray(result) ? result.length : 0} betingelsesreferencer`
     );
-    return Array.isArray(result) ? result : [];
+    return (Array.isArray(result) ? result : []) as never[];
   } catch {
     logger.error('[parserV2] Step 4 JSON parse fejl:', text.slice(0, 200));
     return [];

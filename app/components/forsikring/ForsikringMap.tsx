@@ -78,8 +78,11 @@ function buildWmsUrl(service: 'plandata' | 'geodanmark', layers: string): string
   );
 }
 
-/** Matrikelgrænser WMS-lag — jordstykker fra GeoDanmark */
-const matrikelWmsUrl = buildWmsUrl('geodanmark', 'JORDSTYKKE');
+/** Matrikelgrænser WMS-lag — jordstykker fra GeoDanmark (512px for skarpere tiles) */
+const matrikelWmsUrl = buildWmsUrl('geodanmark', 'JORDSTYKKE').replace(
+  'WIDTH=256&HEIGHT=256',
+  'WIDTH=512&HEIGHT=512'
+);
 
 /** Raster-lag style for matrikelgrænser */
 const matrikelLayerStyle: RasterLayerSpecification = {
@@ -253,13 +256,20 @@ function ForsikringMapInner({
           zoom: 7,
         }}
         mapStyle={STYLES[mapStyle]}
+        maxZoom={20}
         style={{ width: '100%', height: '100%' }}
         onClick={() => setPopupMarker(null)}
       >
         <NavigationControl position="top-right" showCompass={false} />
 
         {/* BIZZ-2131: Matrikelgrænser WMS-lag */}
-        <Source id="forsikring-matrikel" type="raster" tiles={[matrikelWmsUrl]} tileSize={256}>
+        <Source
+          id="forsikring-matrikel"
+          type="raster"
+          tiles={[matrikelWmsUrl]}
+          tileSize={512}
+          maxzoom={20}
+        >
           <Layer {...matrikelLayerStyle} />
         </Source>
 
@@ -302,9 +312,9 @@ function ForsikringMapInner({
         })}
       </Map>
 
-      {/* Popup overlay */}
+      {/* Popup overlay — over legenden i bunden */}
       {popupMarker && (
-        <div className="absolute top-3 left-3 right-3 bg-slate-900/95 backdrop-blur-sm border border-slate-700/60 rounded-lg p-3 z-10">
+        <div className="absolute bottom-12 left-3 right-3 bg-slate-900/95 backdrop-blur-sm border border-slate-700/60 rounded-lg p-3 z-10">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <p className="text-white text-xs font-medium truncate">{popupMarker.label}</p>
@@ -332,8 +342,8 @@ function ForsikringMapInner({
         </div>
       )}
 
-      {/* Style toggle — altid synlig, rykker ned når popup er åben */}
-      <div className={`absolute z-10 flex gap-1 ${popupMarker ? 'top-16 left-3' : 'top-3 left-3'}`}>
+      {/* Style toggle */}
+      <div className="absolute top-3 left-3 z-10 flex gap-1">
         <button
           onClick={() => setMapStyle('dark')}
           className={`p-1.5 rounded-lg border transition-colors ${

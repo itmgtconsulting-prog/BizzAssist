@@ -90,6 +90,34 @@ async function geokodDawaId(dawaId: string): Promise<{ lat: number; lng: number 
   return null;
 }
 
+/**
+ * Geokod via BFE → DAWA jordstykker visueltcenter.
+ * Fallback for ubebyggede grunde (markjorder) uden adgangsadresse.
+ *
+ * @param bfe - BFE-nummer
+ * @returns { lat, lng } eller null
+ */
+async function geokodViaBfe(bfe: number): Promise<{ lat: number; lng: number } | null> {
+  try {
+    const res = await fetch(`${DAWA_BASE}/jordstykker?bfenummer=${bfe}&format=geojson`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    const geojson = (await res.json()) as {
+      features?: Array<{
+        properties?: { visueltcenter_x?: number; visueltcenter_y?: number };
+      }>;
+    };
+    const props = geojson.features?.[0]?.properties;
+    if (typeof props?.visueltcenter_x === 'number' && typeof props?.visueltcenter_y === 'number') {
+      return { lat: props.visueltcenter_y, lng: props.visueltcenter_x };
+    }
+  } catch {
+    /* opslag fejlede */
+  }
+  return null;
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -176,10 +204,12 @@ export async function GET(
         chunk.map(async (aktiv) => {
           let coords: { lat: number; lng: number } | null = null;
 
-          // Prioritet: dawa_id fra cache → adresse-tekst → skip
+          // Prioritet: dawa_id fra cache → BFE jordstykke → adresse-tekst → skip
           if (aktiv.type === 'ejendom' && aktiv.bfe) {
             const dawaId = bfeDawaMap.get(aktiv.bfe);
             if (dawaId) coords = await geokodDawaId(dawaId);
+            // Fallback for ubebyggede grunde (markjorder) uden adgangsadresse
+            if (!coords) coords = await geokodViaBfe(aktiv.bfe);
           }
           if (!coords && aktiv.adresse) {
             coords = await geokodAdresse(aktiv.adresse);

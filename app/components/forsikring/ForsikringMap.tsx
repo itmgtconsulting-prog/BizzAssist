@@ -14,7 +14,7 @@
 
 import React, { useState, useCallback, useRef, useEffect, memo } from 'react';
 import Map, { Marker, Source, Layer, NavigationControl, type MapRef } from 'react-map-gl/mapbox';
-import type { RasterLayerSpecification } from 'mapbox-gl';
+import type { LineLayerSpecification, FillLayerSpecification } from 'mapbox-gl';
 import {
   Satellite,
   Map as MapIcon,
@@ -61,36 +61,24 @@ interface ForsikringMapProps {
   da?: boolean;
 }
 
-/**
- * WMS tile-URL via server-side proxy (undgår CORS).
- *
- * @param service - WMS-service-nøgle
- * @param layers - WMS LAYERS parameter
- * @returns Tile URL med {bbox-epsg-3857} placeholder
- */
-function buildWmsUrl(service: 'plandata' | 'geodanmark', layers: string): string {
-  return (
-    `/api/wms?service=${service}` +
-    `&SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap` +
-    `&LAYERS=${encodeURIComponent(layers)}` +
-    `&STYLES=&FORMAT=image%2Fpng&TRANSPARENT=true` +
-    `&WIDTH=256&HEIGHT=256&BBOX={bbox-epsg-3857}&SRS=EPSG:3857`
-  );
-}
-
-/** Matrikelgrænser WMS-lag — jordstykker fra GeoDanmark (512px for skarpere tiles) */
-const matrikelWmsUrl = buildWmsUrl('geodanmark', 'JORDSTYKKE').replace(
-  'WIDTH=256&HEIGHT=256',
-  'WIDTH=512&HEIGHT=512'
-);
-
-/** Raster-lag style for matrikelgrænser */
-const matrikelLayerStyle: RasterLayerSpecification = {
-  id: 'forsikring-matrikel-wms',
-  type: 'raster',
+/** GeoJSON matrikel-grænser: fyld-lag (transparent blåt) */
+const matrikelFillStyle: FillLayerSpecification = {
+  id: 'forsikring-matrikel-fill',
+  type: 'fill',
   source: 'forsikring-matrikel',
-  paint: { 'raster-opacity': 0.5 },
+  paint: { 'fill-color': '#3b82f6', 'fill-opacity': 0.08 },
 };
+
+/** GeoJSON matrikel-grænser: kant-lag (synlig linje) */
+const matrikelLineStyle: LineLayerSpecification = {
+  id: 'forsikring-matrikel-line',
+  type: 'line',
+  source: 'forsikring-matrikel',
+  paint: { 'line-color': '#60a5fa', 'line-width': 1.5, 'line-opacity': 0.6 },
+};
+
+/** Tom GeoJSON FeatureCollection */
+const EMPTY_FC = { type: 'FeatureCollection' as const, features: [] as GeoJSON.Feature[] };
 
 /**
  * Beregn markør-farve baseret på forsikringsstatus.
@@ -189,6 +177,36 @@ function ForsikringMapInner({
   const [popupMarker, setPopupMarker] = useState<ForsikringMarker | null>(null);
   const [showEjendomme, setShowEjendomme] = useState(true);
   const [showVirksomheder, setShowVirksomheder] = useState(true);
+  const [matrikelGeoJson, setMatrikelGeoJson] = useState(EMPTY_FC);
+  const matrikelFetchedRef = useRef(false);
+
+  /** Hent matrikelgrænser via GeoJSON bbox-endpoint baseret på markørernes udbredelse */
+  useEffect(() => {
+    if (markers.length === 0 || matrikelFetchedRef.current) return;
+    matrikelFetchedRef.current = true;
+    // Beregn bounding box med margin
+    let minLat = Infinity,
+      maxLat = -Infinity,
+      minLng = Infinity,
+      maxLng = -Infinity;
+    for (const m of markers) {
+      if (m.lat < minLat) minLat = m.lat;
+      if (m.lat > maxLat) maxLat = m.lat;
+      if (m.lng < minLng) minLng = m.lng;
+      if (m.lng > maxLng) maxLng = m.lng;
+    }
+    const margin = 0.005; // ~500m margin
+    fetch(
+      `/api/matrikel/bbox?w=${minLng - margin}&s=${minLat - margin}&e=${maxLng + margin}&n=${maxLat + margin}`
+    )
+      .then((r) => (r.ok ? r.json() : EMPTY_FC))
+      .then((json) => {
+        if (json?.type === 'FeatureCollection') setMatrikelGeoJson(json);
+        else if (Array.isArray(json))
+          setMatrikelGeoJson({ type: 'FeatureCollection', features: json });
+      })
+      .catch(() => {});
+  }, [markers]);
 
   /** Skift kort-style og gem i localStorage */
   const setMapStyle = useCallback((style: MapStyle) => {
@@ -259,25 +277,13 @@ function ForsikringMapInner({
         maxZoom={20}
         style={{ width: '100%', height: '100%' }}
         onClick={() => setPopupMarker(null)}
-        transformRequest={(url) => {
-          // Send cookies med WMS-proxy requests (same-origin /api/wms)
-          if (url.startsWith('/api/wms') || url.startsWith(window.location.origin + '/api/wms')) {
-            return { url, credentials: 'include' as const };
-          }
-          return { url };
-        }}
       >
         <NavigationControl position="top-right" showCompass={false} />
 
-        {/* BIZZ-2131: Matrikelgrænser WMS-lag */}
-        <Source
-          id="forsikring-matrikel"
-          type="raster"
-          tiles={[matrikelWmsUrl]}
-          tileSize={512}
-          maxzoom={20}
-        >
-          <Layer {...matrikelLayerStyle} />
+        {/* BIZZ-2131: Matrikelgrænser (GeoJSON fra /api/matrikel/bbox) */}
+        <Source id="forsikring-matrikel" type="geojson" data={matrikelGeoJson}>
+          <Layer {...matrikelFillStyle} />
+          <Layer {...matrikelLineStyle} />
         </Source>
 
         {visibleMarkers.map((m) => {

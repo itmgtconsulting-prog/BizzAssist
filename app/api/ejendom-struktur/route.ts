@@ -937,7 +937,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
           // Hent alle ejerlejligheder i bfe_adresse_cache der matcher SFE'ens postnr
           const firstPostnr = needsResolve[0].adresse?.match(/\b(\d{4})\b/)?.[1];
           if (firstPostnr) {
-            const { data: cacheRows } = await admin
+            const { data: cacheRows } = await createAdminClient()
               .from('bfe_adresse_cache')
               .select('bfe_nummer, adresse, etage, doer')
               .eq('postnr', firstPostnr)

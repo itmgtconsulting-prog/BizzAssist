@@ -18,6 +18,44 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { logger } from '@/app/lib/logger';
 
+/**
+ * Robust JSON array extraction — finder JSON-array uanset om Claude
+ * returnerer forklarende tekst, code blocks, eller ren JSON.
+ */
+function extractJsonArray(text: string): unknown[] {
+  // 1. Prøv ren JSON parse
+  try {
+    const trimmed = text.trim();
+    if (trimmed.startsWith('[')) return JSON.parse(trimmed);
+  } catch {
+    /* not pure JSON */
+  }
+
+  // 2. Fjern markdown code blocks og prøv igen
+  try {
+    const cleaned = text
+      .replace(/```json\n?/g, '')
+      .replace(/```\n?/g, '')
+      .trim();
+    if (cleaned.startsWith('[')) return JSON.parse(cleaned);
+  } catch {
+    /* not in code block */
+  }
+
+  // 3. Find første [ ... ] i teksten (håndterer forklarende tekst foran)
+  const start = text.indexOf('[');
+  const end = text.lastIndexOf(']');
+  if (start >= 0 && end > start) {
+    try {
+      return JSON.parse(text.slice(start, end + 1));
+    } catch {
+      /* malformed JSON */
+    }
+  }
+
+  return [];
+}
+
 // ─── Step 0: PDF → Markdown ────────────────────────────────────────
 
 /**
@@ -142,11 +180,7 @@ ${markdown.slice(0, 30000)}`,
 
   const text = response.content.find((b) => b.type === 'text')?.text ?? '[]';
   try {
-    const cleaned = text
-      .replace(/```json\n?/g, '')
-      .replace(/```\n?/g, '')
-      .trim();
-    const result = JSON.parse(cleaned);
+    const result = extractJsonArray(text) as unknown[];
     logger.log(
       `[parserV2] Step 1: ${Array.isArray(result) ? result.length : 0} forsikringstyper identificeret`
     );
@@ -215,11 +249,7 @@ ${markdown.slice(0, 30000)}`,
 
   const text = response.content.find((b) => b.type === 'text')?.text ?? '[]';
   try {
-    const cleaned = text
-      .replace(/```json\n?/g, '')
-      .replace(/```\n?/g, '')
-      .trim();
-    const result = JSON.parse(cleaned);
+    const result = extractJsonArray(text) as unknown[];
     logger.log(
       `[parserV2] Step 2 (${insurance.type}): ${Array.isArray(result) ? result.length : 0} enheder`
     );
@@ -292,11 +322,7 @@ ${markdown.slice(0, 30000)}`,
 
   const text = response.content.find((b) => b.type === 'text')?.text ?? '[]';
   try {
-    const cleaned = text
-      .replace(/```json\n?/g, '')
-      .replace(/```\n?/g, '')
-      .trim();
-    const result = JSON.parse(cleaned);
+    const result = extractJsonArray(text) as unknown[];
     logger.log(
       `[parserV2] Step 3 (${entity.label}): ${Array.isArray(result) ? result.length : 0} dækninger`
     );
@@ -362,11 +388,7 @@ ${markdown.slice(0, 30000)}`,
 
   const text = response.content.find((b) => b.type === 'text')?.text ?? '[]';
   try {
-    const cleaned = text
-      .replace(/```json\n?/g, '')
-      .replace(/```\n?/g, '')
-      .trim();
-    const result = JSON.parse(cleaned);
+    const result = extractJsonArray(text) as unknown[];
     logger.log(
       `[parserV2] Step 4: ${Array.isArray(result) ? result.length : 0} betingelsesreferencer`
     );

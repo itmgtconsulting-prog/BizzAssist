@@ -4704,9 +4704,9 @@ export default function ForsikringPageClient(): React.ReactElement {
   const _totals = data?.totals;
 
   return (
-    <div className="flex h-full bg-[#0a1020] text-slate-100">
+    <div className={`${kortÅben && isDesktop ? 'flex' : ''} h-full bg-[#0a1020] text-slate-100`}>
       {/* Hovedindhold — scrollbar, fuld højde */}
-      <div className="flex-1 overflow-y-auto p-6 pb-16 space-y-6 min-w-0">
+      <div className="flex-1 overflow-y-auto p-6 pb-16 space-y-6 min-w-0 h-full">
         {/* Heading + nulstil-knap + kort-knap */}
         <header className="flex items-start justify-between">
           <div className="space-y-1">

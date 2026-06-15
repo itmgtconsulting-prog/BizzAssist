@@ -13,12 +13,12 @@
  */
 
 import React, { useState, useCallback, useRef, useEffect, memo } from 'react';
-import Map, { Marker, NavigationControl, type MapRef } from 'react-map-gl/mapbox';
+import Map, { Marker, Source, Layer, NavigationControl, type MapRef } from 'react-map-gl/mapbox';
+import type { RasterLayerSpecification } from 'mapbox-gl';
 import {
   Satellite,
   Map as MapIcon,
   Building2,
-  Home,
   X,
   Shield,
   ShieldAlert,
@@ -60,6 +60,34 @@ interface ForsikringMapProps {
 }
 
 /**
+ * WMS tile-URL via server-side proxy (undgår CORS).
+ *
+ * @param service - WMS-service-nøgle
+ * @param layers - WMS LAYERS parameter
+ * @returns Tile URL med {bbox-epsg-3857} placeholder
+ */
+function buildWmsUrl(service: 'plandata' | 'geodanmark', layers: string): string {
+  return (
+    `/api/wms?service=${service}` +
+    `&SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap` +
+    `&LAYERS=${encodeURIComponent(layers)}` +
+    `&STYLES=&FORMAT=image%2Fpng&TRANSPARENT=true` +
+    `&WIDTH=256&HEIGHT=256&BBOX={bbox-epsg-3857}&SRS=EPSG:3857`
+  );
+}
+
+/** Matrikelgrænser WMS-lag — jordstykker fra GeoDanmark */
+const matrikelWmsUrl = buildWmsUrl('geodanmark', 'JORDSTYKKE');
+
+/** Raster-lag style for matrikelgrænser */
+const matrikelLayerStyle: RasterLayerSpecification = {
+  id: 'forsikring-matrikel-wms',
+  type: 'raster',
+  source: 'forsikring-matrikel',
+  paint: { 'raster-opacity': 0.5 },
+};
+
+/**
  * Beregn markør-farve baseret på forsikringsstatus.
  *
  * @param marker - Markør-data
@@ -73,17 +101,15 @@ function markerColor(marker: ForsikringMarker): string {
 }
 
 /**
- * Markør-ikon baseret på type.
+ * Uddrag husnummer fra adresse — "Gefionsvej 47A, 3000 Helsingør" → "47A".
  *
- * @param type - Aktiv-type
- * @returns Lucide ikon-komponent
+ * @param adresse - Fuld adressestreng
+ * @returns Husnummer eller null
  */
-function MarkerIcon({ type }: { type: 'ejendom' | 'virksomhed' }) {
-  return type === 'virksomhed' ? (
-    <Building2 size={12} className="text-white" />
-  ) : (
-    <Home size={12} className="text-white" />
-  );
+function extractHusnr(adresse: string | null): string | null {
+  if (!adresse) return null;
+  const m = adresse.match(/\b(\d+[A-Za-z]?)\s*[,-]/);
+  return m ? m[1] : null;
 }
 
 /**
@@ -203,26 +229,44 @@ function ForsikringMapInner({ markers, onMarkerClick, da = true }: ForsikringMap
       >
         <NavigationControl position="top-right" showCompass={false} />
 
-        {visibleMarkers.map((m) => (
-          <Marker
-            key={m.id}
-            latitude={m.lat}
-            longitude={m.lng}
-            anchor="center"
-            onClick={(e) => {
-              e.originalEvent.stopPropagation();
-              setPopupMarker(m);
-              onMarkerClick?.(m.id);
-            }}
-          >
-            <div
-              className={`w-6 h-6 rounded-full ${markerColor(m)} flex items-center justify-center shadow-lg border-2 border-white/30 cursor-pointer hover:scale-110 transition-transform`}
-              title={m.label}
+        {/* BIZZ-2131: Matrikelgrænser WMS-lag */}
+        <Source id="forsikring-matrikel" type="raster" tiles={[matrikelWmsUrl]} tileSize={256}>
+          <Layer {...matrikelLayerStyle} />
+        </Source>
+
+        {visibleMarkers.map((m) => {
+          const husnr = extractHusnr(m.adresse);
+          return (
+            <Marker
+              key={m.id}
+              latitude={m.lat}
+              longitude={m.lng}
+              anchor="center"
+              onClick={(e) => {
+                e.originalEvent.stopPropagation();
+                setPopupMarker(m);
+                onMarkerClick?.(m.id);
+              }}
             >
-              <MarkerIcon type={m.type} />
-            </div>
-          </Marker>
-        ))}
+              <div
+                className={`${markerColor(m)} flex items-center justify-center shadow-lg cursor-pointer hover:scale-110 transition-transform ${
+                  husnr
+                    ? 'rounded-md px-1.5 py-0.5 border border-white/30 min-w-[24px]'
+                    : 'w-6 h-6 rounded-full border-2 border-white/30'
+                }`}
+                title={m.label}
+              >
+                {husnr ? (
+                  <span className="text-white text-[9px] font-bold leading-none">{husnr}</span>
+                ) : m.type === 'virksomhed' ? (
+                  <Building2 size={12} className="text-white" />
+                ) : (
+                  <span className="text-white text-[9px] font-bold">?</span>
+                )}
+              </div>
+            </Marker>
+          );
+        })}
       </Map>
 
       {/* Popup overlay */}

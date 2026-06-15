@@ -1994,7 +1994,14 @@ function AnalyseSection({
     if (!selected) return;
     fetch(`/api/forsikring/standard-docs?kunde_id=${encodeURIComponent(selected.id)}`)
       .then((r) => (r.ok ? r.json() : []))
-      .then((data) => setStdKundeUsed(Array.isArray(data) ? data : []))
+      .then((data) => {
+        const list = Array.isArray(data) ? data : [];
+        setStdKundeUsed(list);
+        // BIZZ-2137: Auto-select betingelser der tidligere er brugt for denne kunde
+        if (list.length > 0) {
+          setStdSelectedIds(new Set(list.map((d: { source_url: string }) => d.source_url)));
+        }
+      })
       .catch(() => {
         /* non-fatal — sektionen forbliver blank */
       });

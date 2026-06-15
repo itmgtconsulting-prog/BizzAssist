@@ -98,8 +98,12 @@ function markerColor(marker: ForsikringMarker): string {
  */
 function extractHusnr(adresse: string | null): string | null {
   if (!adresse) return null;
+  // Standard husnummer: "47A," eller "123A,"
   const m = adresse.match(/\b(\d+[A-Za-z]?)\s*[,-]/);
-  return m ? m[1] : null;
+  if (m) return m[1];
+  // Matrikel-reference: "65bi Helsingør" → "65bi"
+  const mat = adresse.match(/^(\d+\w+)\s/);
+  return mat ? mat[1] : null;
 }
 
 /**

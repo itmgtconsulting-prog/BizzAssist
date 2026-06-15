@@ -4531,15 +4531,21 @@ export default function ForsikringPageClient(): React.ReactElement {
   const [trækker, setTrækker] = useState(false);
   const trækStart = useRef<{ x: number; bredde: number } | null>(null);
   const [geoMarkers, setGeoMarkers] = useState<ForsikringMarker[]>([]);
-  const [geoLoading, setGeoLoading] = useState(false);
+  const [_geoLoading, setGeoLoading] = useState(false);
   /** Aktiv-ID highlightet på kortet (klikket i ejendomslisten) */
   const [highlightedAktivId, setHighlightedAktivId] = useState<string | null>(null);
   /** Analyse-ID for geo-fetch — opdateres når ny analyse køres */
   const geoAnalyseId = aiAnalyseDetail?.analyse?.id ?? null;
 
+  /** Track hvilket analyse-ID geo-data er hentet for (undgå re-fetch) */
+  const geoFetchedForId = useRef<string | null>(null);
+
   /** Hent geo-markører når kort åbnes og en analyse er aktiv */
   useEffect(() => {
-    if (!kortÅben || !geoAnalyseId || geoLoading) return;
+    if (!kortÅben || !geoAnalyseId) return;
+    // Undgå re-fetch hvis allerede hentet for dette analyse-ID
+    if (geoFetchedForId.current === geoAnalyseId && geoMarkers.length > 0) return;
+    geoFetchedForId.current = geoAnalyseId;
     setGeoLoading(true);
     setGeoMarkers([]);
     fetch(`/api/forsikring/analyser/${geoAnalyseId}/geo`)
@@ -4547,7 +4553,7 @@ export default function ForsikringPageClient(): React.ReactElement {
       .then((d) => setGeoMarkers(d.markers ?? []))
       .catch(() => setGeoMarkers([]))
       .finally(() => setGeoLoading(false));
-  }, [kortÅben, geoAnalyseId, geoLoading]);
+  }, [kortÅben, geoAnalyseId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Globale drag-handlers for resize-divider */
   useEffect(() => {

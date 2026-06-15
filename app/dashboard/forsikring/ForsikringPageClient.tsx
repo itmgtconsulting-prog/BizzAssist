@@ -4576,12 +4576,16 @@ export default function ForsikringPageClient(): React.ReactElement {
   const handleCustomerSelect = useCallback(
     (customer: { type: 'virksomhed' | 'person'; id: string; navn: string } | null) => {
       setSelectedCustomer(customer);
-      // Nulstil kort-state så knappen ikke vises med gammel analyse
+      // Nulstil AL state fra forrige kunde — forhindrer data-leak mellem kunder
       setAiAnalyseDetail(null);
       setAiKundeNavn(null);
       setKortÅben(false);
       setGeoMarkers([]);
       setGeoLoading(false);
+      setNewDocumentIds([]);
+      setActiveAnalyseId(null);
+      setAnalyseHistorik([]);
+      setUploadJobs([]);
     },
     []
   );

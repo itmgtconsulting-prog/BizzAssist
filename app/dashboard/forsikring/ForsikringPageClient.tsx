@@ -4737,7 +4737,9 @@ export default function ForsikringPageClient(): React.ReactElement {
   const _totals = data?.totals;
 
   return (
-    <div className={`h-full bg-[#0a1020] text-slate-100 ${kortÅben && isDesktop ? 'flex' : ''}`}>
+    <div
+      className={`flex-1 h-full bg-[#0a1020] text-slate-100 ${kortÅben && isDesktop ? 'flex' : ''}`}
+    >
       {/* Scrollbart indhold (header + resten) */}
       <div
         className={`overflow-y-auto h-full ${kortÅben && isDesktop ? 'flex-1 min-w-0' : 'w-full'}`}

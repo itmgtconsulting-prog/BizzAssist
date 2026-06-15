@@ -164,6 +164,27 @@ interface AnalyseCoverage {
   conditions_ref?: string | null;
 }
 
+/**
+ * BIZZ-2135: Kendte betingelses-numre → menneskelige navne.
+ * Bruges til at vise "100.03 — Brand" i stedet for bare "100.03".
+ */
+const CONDITION_NAMES: Record<string, string> = {
+  // Alm. Brand
+  '100.03': 'Brand',
+  '230.02': 'Bygningskasko',
+  '450.02': 'Insekt og svamp',
+  '470.02': 'Rørskade',
+  '645.02': 'Restværdi',
+  '850.02': 'Hus- og grundejeransvar',
+  '870.02': 'Stikledning',
+  '4301': 'Bygningsforsikring — Erhverv',
+  // Topdanmark
+  'DF20900-2': 'Erhvervsforsikring (generelle vilkår)',
+  'DF20903-2': 'Ansvarsforsikring (erhverv)',
+  'DF20904-2': 'Bygningsforsikring (erhverv)',
+  'DF20910-2': 'Løsøreforsikring (erhverv)',
+};
+
 /** BIZZ-2135: Refereret standardbetingelse fra police-dækninger */
 interface ReferencedCondition {
   ref: string;
@@ -1640,6 +1661,9 @@ function UnifiedAnalyseView({
                     <span className={c.uploaded ? 'text-slate-300' : 'text-white font-medium'}>
                       {c.ref}
                     </span>
+                    {CONDITION_NAMES[c.ref] && (
+                      <span className="text-slate-400 text-[10px]">— {CONDITION_NAMES[c.ref]}</span>
+                    )}
                     {c.selskab && (
                       <span className="text-slate-500 text-[10px] truncate ml-auto">
                         {c.selskab}

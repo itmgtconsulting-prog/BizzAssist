@@ -460,7 +460,8 @@ async function fetchEjerskabBatch(bfeList: number[]): Promise<Map<number, EjerIn
  * @param excludeBfes - BFE'er der allerede er i træet
  * @returns Søster-SFE-noder (tom liste ved person-ejer eller fejl)
  */
-async function fetchSoesterSfeNodes(
+// BIZZ-2134: Deaktiveret — se kommentar ved linje 1336
+async function _fetchSoesterSfeNodes(
   rootBfe: number,
   ejerlavKode: string,
   excludeBfes: Set<number>
@@ -1333,11 +1334,12 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
         n.children.forEach(collectBfes);
       };
       collectBfes(root);
-      const soesterNodes = await fetchSoesterSfeNodes(root.bfe, ejerlavKode, inTree);
-      if (soesterNodes.length > 0) {
-        root.children.push(...soesterNodes);
-        logger.log(`[ejendom-struktur] ${soesterNodes.length} søster-SFE'er tilføjet (BIZZ-2094)`);
-      }
+      // BIZZ-2134: Søster-SFE deaktiveret — bruger for brede kriterier (ejer_cvr
+      // + ejerlav) og viser ALLE matrikler selskabet ejer i ejerlav, ikke kun
+      // strukturelt relaterede. Skaber støj for store ejendomsselskaber.
+      // Ejerskab-overblik hører til på virksomhedssiden, ikke i ejendomsstrukturen.
+      // const soesterNodes = await fetchSoesterSfeNodes(root.bfe, ejerlavKode, inTree);
+      void inTree; // suppress unused
     }
 
     // ── BIZZ-2060/BIZZ-2095: Berig ALLE noder med ejer + areal i batch ──

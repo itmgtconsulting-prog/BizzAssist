@@ -36,6 +36,7 @@ import {
   type MultiParseResult,
 } from '@/app/lib/forsikring/parser';
 import { runGapEngine } from '@/app/lib/forsikring/gapEngine';
+import { addressesMatch } from '@/app/lib/forsikring/assetMatcher';
 import {
   COVERAGE_LABELS_DA,
   type CoverageCode,
@@ -270,6 +271,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           if (!isPropertySpecific && entryType) {
             existing = existingAll.find((p) => normT(p.business_activity) === entryType);
           }
+        }
+
+        // Adresse-range dedup: samme policenummer + overlappende adresser
+        // ("Gefionsvej 47A" vs "Gefionsvej 47A-51" er samme ejendomspolice).
+        // Bruger addressesMatch som forstår husnummer-ranges.
+        if (!existing && entry.property_address) {
+          existing = existingAll.find(
+            (p) => p.property_address && addressesMatch(p.property_address, entry.property_address)
+          );
         }
 
         // BIZZ-2129: Tertiær dedup på DÆKNINGSSÆT — samme aftalenr + samme

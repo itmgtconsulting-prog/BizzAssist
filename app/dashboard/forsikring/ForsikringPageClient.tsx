@@ -5170,7 +5170,7 @@ export default function ForsikringPageClient(): React.ReactElement {
             {/* Luk-knap */}
             <button
               onClick={() => setKortÅben(false)}
-              className="absolute top-2 left-2 z-20 p-1.5 rounded-lg bg-slate-900/90 border border-slate-700/60 text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+              className="absolute top-2 right-12 z-20 p-1.5 rounded-lg bg-slate-900/90 border border-slate-700/60 text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
               aria-label={lang === 'da' ? 'Luk kort' : 'Close map'}
             >
               <X size={16} />

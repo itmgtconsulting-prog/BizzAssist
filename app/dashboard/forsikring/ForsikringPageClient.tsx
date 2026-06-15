@@ -185,16 +185,40 @@ interface AnalysePolicy {
  * BIZZ-2121: Dækninger til den grønne "Dækket"-boks for et aktiv.
  *
  * Ejendoms-aktiver viser den matchede polices dækninger. Virksomheds-aktiver
- * aggregerer dækninger fra IKKE-ejendoms-policer (ansvar, drift, cyber,
- * løsøre, kriminalitet, …) hvor virksomheden står som forsikringstager.
- * Ejendomsforsikrings-dækninger (brand, bygningskasko, etc.) filtreres fra
- * da de hører til de individuelle ejendomme, ikke virksomheden.
+ * aggregerer dækninger fra ALLE analysens policer med CVR-match, men filtrerer
+ * bygnings-specifikke coverage_codes fra (brand, bygningskasko, glas, etc.).
+ * En samlet erhvervsaftale indeholder typisk både bygnings- og ansvarsdækninger
+ * — kun erhvervs-relevante koder (ansvar, drift, cyber, løsøre) vises under
+ * virksomheden. Bygningsdækninger hører under de individuelle ejendomme.
  *
  * @param aktiv - Analyse-aktivet (ejendom/virksomhed)
  * @param analysePolicies - Alle analysens policer (detail.policies)
  * @param covByPolicy - Aktive dækninger (is_covered=true) grupperet per policy_id
  * @returns Dækninger der skal vises i "Dækket"-boksen, sorteret på label
  */
+/**
+ * Bygnings-/ejendomsspecifikke dækningskoder der KUN hører til under
+ * ejendomsrækker. Filtreres fra i virksomheds-dækningsboksen, da de
+ * vedrører fysiske bygninger — ikke virksomheden som forretningsenhed.
+ */
+const BYGNINGS_COVERAGE_CODES = new Set([
+  'brand_el',
+  'bygningskasko',
+  'udvidet_roerskade',
+  'glas',
+  'sanitet',
+  'insekt_svamp',
+  'restvaerdi',
+  'stikledning',
+  'jordskade',
+  'lovliggoerelse',
+  'huslejetab',
+  'hus_grundejer_ansvar',
+  'udvidet_vandskade',
+  'haerverk',
+  'omstilling_laase',
+]);
+
 export function coveragesForAktiv(
   aktiv: AnalyseAktiv,
   analysePolicies: AnalysePolicy[],
@@ -203,18 +227,20 @@ export function coveragesForAktiv(
   const matched = aktiv.matched_policy_id ? (covByPolicy.get(aktiv.matched_policy_id) ?? []) : [];
   if (aktiv.type !== 'virksomhed' || !aktiv.cvr) return matched;
   const cvr = aktiv.cvr.replace(/\D/g, '');
-  // Saml kun policer der IKKE er ejendomsforsikringer — de hører til
-  // ejendommene ovenfor, ikke virksomheden. Ansvar, drift, cyber, løsøre
-  // etc. er virksomheds-relevante.
+  // Saml dækninger fra ALLE kundens policer — men filtrér bygnings-
+  // specifikke dækningskoder fra. En samlet erhvervsaftale (fx Topdanmark)
+  // indeholder både ejendoms- og ansvarsdækninger; kun sidstnævnte er
+  // relevante for virksomheden som forretningsenhed.
   const ids = new Set<string>(aktiv.matched_policy_id ? [aktiv.matched_policy_id] : []);
   for (const p of analysePolicies) {
-    if ((p.policyholder_cvr ?? '').replace(/\D/g, '') !== cvr) continue;
-    const ba = (p.business_activity ?? '').toLowerCase();
-    if (/ejendom/i.test(ba)) continue;
-    ids.add(p.id);
+    if ((p.policyholder_cvr ?? '').replace(/\D/g, '') === cvr) ids.add(p.id);
   }
   const out: AnalyseCoverage[] = [];
-  for (const id of ids) out.push(...(covByPolicy.get(id) ?? []));
+  for (const id of ids) {
+    for (const cov of covByPolicy.get(id) ?? []) {
+      if (!BYGNINGS_COVERAGE_CODES.has(cov.coverage_code)) out.push(cov);
+    }
+  }
   if (out.length === 0) return matched;
   return out.sort((a, b) => a.coverage_label.localeCompare(b.coverage_label, 'da'));
 }

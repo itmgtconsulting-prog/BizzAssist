@@ -59,6 +59,7 @@ import { translations } from '@/app/lib/translations';
 import TokenUsageBar from '@/app/components/TokenUsageBar';
 import { gapScope, shouldFoldOwnerIntoCompany } from '@/app/lib/forsikring/types';
 import { getMatchBegrundelse } from '@/app/lib/forsikring/matchBegrundelse';
+import { erEjendomUdenAdresse, visAktivLabel } from '@/app/lib/forsikring/aktivLabel';
 import type { ForsikringMarker } from '@/app/components/forsikring/ForsikringMap';
 
 /**
@@ -503,6 +504,13 @@ function PropertyRow({
         ? `/dashboard/companies/${group.aktiv.cvr}`
         : null;
 
+  // BIZZ-2150: Ejendomme uden resolvet adresse beholder koncernWalk-labelet
+  // "BFE xxx". Vis i stedet "Ukendt adresse (BFE xxx)" + en gul "Ingen
+  // adresse"-badge, så rådgiveren tydeligt ser at adressen mangler i stedet
+  // for at læse det bare BFE-nummer som en adresse.
+  const ejendomUdenAdresse = erEjendomUdenAdresse(group.aktiv);
+  const visLabel = visAktivLabel(group.aktiv, da);
+
   /** Toggle expand + highlight aktiv på kortet (delt mellem navn- og chevron-knap). */
   const handleToggle = () => {
     setExpanded(!expanded);
@@ -538,7 +546,7 @@ function PropertyRow({
           onClick={handleToggle}
           className="flex items-center gap-3 min-w-0 flex-1 text-left"
           aria-expanded={expanded}
-          aria-label={`${expanded ? (da ? 'Luk' : 'Collapse') : da ? 'Udvid' : 'Expand'} ${group.aktiv.label}`}
+          aria-label={`${expanded ? (da ? 'Luk' : 'Collapse') : da ? 'Udvid' : 'Expand'} ${visLabel}`}
         >
           {/* Status ikon */}
           {isInsured ? (
@@ -550,13 +558,28 @@ function PropertyRow({
           {/* Type ikon + label */}
           <div className="flex items-center gap-2 min-w-0 flex-1">
             {typeIcon}
-            <span className="text-white text-sm font-medium truncate">{group.aktiv.label}</span>
+            <span className="text-white text-sm font-medium truncate">{visLabel}</span>
             {/* BIZZ-2068: BFE-badge på ejendoms-aktiver — to reelle ejendomme kan
               dele adresse (fx Gefionsvej 47A = BFE 5322356 + 5322350), og uden
-              BFE-nummeret ligner rækkerne duplikater. */}
-            {group.aktiv.type === 'ejendom' && group.aktiv.bfe != null && (
+              BFE-nummeret ligner rækkerne duplikater. BIZZ-2150: skjul her når
+              adressen mangler — labelet viser allerede "(BFE xxx)". */}
+            {group.aktiv.type === 'ejendom' && group.aktiv.bfe != null && !ejendomUdenAdresse && (
               <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-slate-500/20 text-slate-300 border border-slate-500/30 shrink-0">
                 BFE {group.aktiv.bfe}
+              </span>
+            )}
+            {/* BIZZ-2150: Gul badge når ejendommen ikke har en resolvet adresse
+              i bfe_adresse_cache — gør manglende adresse tydelig for rådgiveren. */}
+            {ejendomUdenAdresse && (
+              <span
+                className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 shrink-0"
+                title={
+                  da
+                    ? 'Ingen adresse fundet i adresseregistret for denne ejendom'
+                    : 'No address found in the address registry for this property'
+                }
+              >
+                {da ? 'Ingen adresse' : 'No address'}
               </span>
             )}
             {/* BIZZ-2123: Ejendomme som kunden ADMINISTRERER (ejf_administrator)
@@ -740,7 +763,7 @@ function PropertyRow({
           type="button"
           onClick={handleToggle}
           className="shrink-0"
-          aria-label={`${expanded ? (da ? 'Luk' : 'Collapse') : da ? 'Udvid' : 'Expand'} ${group.aktiv.label}`}
+          aria-label={`${expanded ? (da ? 'Luk' : 'Collapse') : da ? 'Udvid' : 'Expand'} ${visLabel}`}
         >
           {expanded ? (
             <ChevronDown size={14} className="text-slate-400" />

@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { getMatchBegrundelse } from '@/app/lib/forsikring/matchBegrundelse';
+import { erEjendomUdenAdresse, visAktivLabel } from '@/app/lib/forsikring/aktivLabel';
 
 interface Analyse {
   id: string;
@@ -259,7 +260,17 @@ export default function AnalyseDetailClient({ analyseId }: { analyseId: string }
                   {typeIcon(a.type)}
                   <span className="text-slate-400 text-xs capitalize">{a.type}</span>
                 </td>
-                <td className="px-4 py-2.5 text-white">{a.label}</td>
+                <td className="px-4 py-2.5 text-white">
+                  <span className="inline-flex items-center gap-1.5">
+                    {visAktivLabel(a, da)}
+                    {/* BIZZ-2150: gul badge når ejendommen mangler adresse */}
+                    {erEjendomUdenAdresse(a) && (
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 shrink-0">
+                        {da ? 'Ingen adresse' : 'No address'}
+                      </span>
+                    )}
+                  </span>
+                </td>
                 <td className="px-4 py-2.5 text-slate-400">{a.adresse ?? a.cvr ?? a.bfe ?? '—'}</td>
                 <td className="px-4 py-2.5 text-center">
                   {/* BIZZ-2080: Vis match-begrundelse + score så brugeren kan

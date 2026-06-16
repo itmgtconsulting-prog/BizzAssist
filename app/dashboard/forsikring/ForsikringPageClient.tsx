@@ -60,6 +60,7 @@ import TokenUsageBar from '@/app/components/TokenUsageBar';
 import { gapScope, shouldFoldOwnerIntoCompany } from '@/app/lib/forsikring/types';
 import { getMatchBegrundelse } from '@/app/lib/forsikring/matchBegrundelse';
 import { erEjendomUdenAdresse, visAktivLabel } from '@/app/lib/forsikring/aktivLabel';
+import { formatParseTimestamp } from '@/app/lib/forsikring/parseTimestamp';
 import type { ForsikringMarker } from '@/app/components/forsikring/ForsikringMap';
 
 /**
@@ -2177,7 +2178,14 @@ function AnalyseSection({
   /** BIZZ-1404: Dokument-genbrug wizard state */
   const [showDocPicker, setShowDocPicker] = useState(false);
   const [previousDocs, setPreviousDocs] = useState<
-    Array<{ id: string; original_name: string; created_at: string; from_analyse_id: string }>
+    Array<{
+      id: string;
+      original_name: string;
+      created_at: string;
+      // BIZZ-2156: parse-tidspunkt (updated_at bumpes når parse afsluttes)
+      updated_at?: string;
+      from_analyse_id: string;
+    }>
   >([]);
   const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
   /** BIZZ-1439: Upload-state inde i wizard */
@@ -2999,6 +3007,8 @@ function AnalyseSection({
                     name: d.original_name,
                     source: 'previous' as const,
                     done: true,
+                    // BIZZ-2156: parse-tidspunkt vises i stedet for "tidligere"
+                    parsedAt: d.updated_at ?? null,
                   })),
                   ...wizardUploads
                     .filter((u) => u.status === 'done' && u.docId)
@@ -3007,6 +3017,7 @@ function AnalyseSection({
                       name: u.fileName,
                       source: 'new' as const,
                       done: true,
+                      parsedAt: null,
                     })),
                 ];
                 // Dedup by id
@@ -3095,17 +3106,27 @@ function AnalyseSection({
                               {da ? 'adresse-mismatch' : 'address mismatch'}
                             </span>
                           )}
-                          <span
-                            className={`text-[10px] shrink-0 ${doc.source === 'new' ? 'text-emerald-400' : 'text-slate-400'}`}
-                          >
-                            {doc.source === 'new'
-                              ? da
-                                ? 'ny'
-                                : 'new'
-                              : da
-                                ? 'tidligere'
-                                : 'previous'}
-                          </span>
+                          {/* BIZZ-2156: nye docs → "ny"-badge; tidligere docs →
+                          relativt parse-tidsstempel ("Parset 3t siden") med
+                          præcist tidspunkt i tooltip. */}
+                          {(() => {
+                            if (doc.source === 'new') {
+                              return (
+                                <span className="text-[10px] shrink-0 text-emerald-400">
+                                  {da ? 'ny' : 'new'}
+                                </span>
+                              );
+                            }
+                            const parse = formatParseTimestamp(doc.parsedAt, da);
+                            return (
+                              <span
+                                className="text-[10px] shrink-0 text-slate-400"
+                                title={parse?.tooltip}
+                              >
+                                {parse ? parse.label : da ? 'tidligere' : 'previous'}
+                              </span>
+                            );
+                          })()}
                           {/* Slet permanent fra system */}
                           <button
                             type="button"

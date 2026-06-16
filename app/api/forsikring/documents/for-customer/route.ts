@@ -47,7 +47,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       const { data } = await (admin as any)
         .schema(schemaName)
         .from('forsikring_documents')
-        .select('id, original_name, parse_status, created_at')
+        .select('id, original_name, parse_status, created_at, updated_at')
         .eq('kunde_id', kundeId)
         .eq('uploaded_by', auth.userId)
         .order('created_at', { ascending: false })
@@ -62,6 +62,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       original_name: string;
       parse_status: string;
       created_at: string;
+      // BIZZ-2156: parse-tidspunkt (updated_at bumpes når parse afsluttes)
+      updated_at: string;
       from_analyse_id?: string;
     }> = [];
 
@@ -74,6 +76,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         original_name: d.original_name,
         parse_status: d.parse_status,
         created_at: d.created_at,
+        updated_at: d.updated_at,
         from_analyse_id: d.from_analyse_id,
       });
     }
@@ -88,6 +91,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         original_name: d.original_name as string,
         parse_status: d.parse_status as string,
         created_at: d.created_at as string,
+        updated_at: d.updated_at as string,
       });
     }
 

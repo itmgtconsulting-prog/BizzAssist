@@ -272,7 +272,15 @@ export function coveragesForAktiv(
     }
   }
   if (out.length === 0) return matched;
-  return out.sort((a, b) => a.coverage_label.localeCompare(b.coverage_label, 'da'));
+  // Dedup på coverage_label (samme dækning fra flere policer vises kun én gang)
+  const seen = new Set<string>();
+  const deduped = out.filter((c) => {
+    const key = c.coverage_label.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return deduped.sort((a, b) => a.coverage_label.localeCompare(b.coverage_label, 'da'));
 }
 
 /** Full analyse-detail response */

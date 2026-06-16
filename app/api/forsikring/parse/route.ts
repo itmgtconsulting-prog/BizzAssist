@@ -246,12 +246,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       transport: 'transport',
       'maskiner og it-udstyr': 'maskiner_itudstyr',
       ansvar: 'erhvervsansvar',
-      kasko: 'bygningskasko',
       fareafværgelse: 'forurening',
       'fareafværgelse (erhvervs- og produktansvar)': 'forurening',
       retshjælp: 'kriminalitet',
-      førerulykke: 'notifikation',
       'pludselig skade': 'brand_el',
+      // BIZZ-2154: Motor-/køretøjsdækninger — egne koder så bilpolicer ikke
+      // fejlklassificeres som ejendomsforsikring. "kasko" alene = motorkasko
+      // ("bygningskasko" matches eksakt ovenfor og rammes ikke her).
+      kasko: 'motorkasko',
+      'kasko (bil)': 'motorkasko',
+      førerulykke: 'foererulykke',
+      friskade: 'friskade',
+      'redning i udlandet': 'redning_udland',
+      redning: 'redning_udland',
+      'eftermonteret tilbehør': 'eftermonteret_udstyr',
+      'eftermonteret udstyr': 'eftermonteret_udstyr',
     };
 
     /** Map et dæknings-navn til nærmeste coverage_code */

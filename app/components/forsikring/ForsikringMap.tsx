@@ -130,31 +130,31 @@ function extractHusnr(adresse: string | null): string | null {
 function StatusBadge({ marker, da }: { marker: ForsikringMarker; da: boolean }) {
   if (marker.gapCritical > 0) {
     return (
-      <span className="flex items-center gap-1 text-red-400 text-[10px]">
-        <ShieldX size={10} />
+      <span className="flex items-center gap-1 text-red-400 text-xs">
+        <ShieldX size={12} />
         {marker.gapCritical} {da ? 'kritiske' : 'critical'}
       </span>
     );
   }
   if (marker.gapWarning > 0) {
     return (
-      <span className="flex items-center gap-1 text-amber-400 text-[10px]">
-        <ShieldAlert size={10} />
+      <span className="flex items-center gap-1 text-amber-400 text-xs">
+        <ShieldAlert size={12} />
         {marker.gapWarning} {da ? 'advarsler' : 'warnings'}
       </span>
     );
   }
   if (!marker.isInsured) {
     return (
-      <span className="flex items-center gap-1 text-red-400 text-[10px]">
-        <ShieldX size={10} />
+      <span className="flex items-center gap-1 text-red-400 text-xs">
+        <ShieldX size={12} />
         {da ? 'Uforsikret' : 'Uninsured'}
       </span>
     );
   }
   return (
-    <span className="flex items-center gap-1 text-emerald-400 text-[10px]">
-      <Shield size={10} />
+    <span className="flex items-center gap-1 text-emerald-400 text-xs">
+      <Shield size={12} />
       {da ? 'Forsikret' : 'Insured'}
     </span>
   );
@@ -338,15 +338,15 @@ function ForsikringMapInner({
         <div className="absolute bottom-12 left-3 right-3 bg-slate-900/95 backdrop-blur-sm border border-slate-700/60 rounded-lg p-3 z-10">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <p className="text-white text-xs font-medium truncate">{popupMarker.label}</p>
+              <p className="text-white text-sm font-semibold truncate">{popupMarker.label}</p>
               {popupMarker.adresse && (
-                <p className="text-slate-400 text-[10px] truncate mt-0.5">{popupMarker.adresse}</p>
+                <p className="text-slate-400 text-xs truncate mt-0.5">{popupMarker.adresse}</p>
               )}
               <div className="mt-1.5">
                 <StatusBadge marker={popupMarker} da={da} />
               </div>
               {popupMarker.gapCritical + popupMarker.gapWarning > 0 && (
-                <p className="text-slate-400 text-[10px] mt-1">
+                <p className="text-slate-400 text-xs mt-1">
                   {popupMarker.gapCritical + popupMarker.gapWarning}{' '}
                   {da ? 'forsikringshuller' : 'gaps'}
                 </p>
@@ -355,7 +355,7 @@ function ForsikringMapInner({
               {(popupMarker.bbr || popupMarker.policeBygninger) && (
                 <div className="mt-2 border-t border-slate-700/50 pt-1.5 space-y-1">
                   {popupMarker.bbr && (
-                    <div className="text-[9px]">
+                    <div className="text-xs">
                       <span className="text-blue-400 font-medium">BBR:</span>
                       <span className="text-slate-300 ml-1">
                         {popupMarker.bbr.bebygget_areal
@@ -371,7 +371,7 @@ function ForsikringMapInner({
                     </div>
                   )}
                   {popupMarker.policeBygninger?.map((b, i) => (
-                    <div key={i} className="text-[9px]">
+                    <div key={i} className="text-xs">
                       <span className="text-emerald-400 font-medium">
                         {da ? 'Police' : 'Policy'}:
                       </span>
@@ -392,7 +392,7 @@ function ForsikringMapInner({
                       const pct = (Math.abs(bbrAreal - polAreal) / bbrAreal) * 100;
                       if (pct > 15)
                         return (
-                          <div className="text-[9px] text-amber-400 font-medium">
+                          <div className="text-xs text-amber-400 font-medium">
                             ⚠ {da ? 'Areal-afvigelse' : 'Area mismatch'}: BBR {bbrAreal}m² vs Police{' '}
                             {polAreal}m² ({pct.toFixed(0)}%)
                           </div>

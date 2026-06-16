@@ -268,6 +268,49 @@ function computeMatchScore(
 }
 
 /**
+ * BIZZ-2153: Parse en normaliseret adresse til vejnavn + husnr + husbogstav,
+ * inkl. et evt. bogstav-interval. En police tegnet på "Stjernegade 24 A-H"
+ * normaliseres til "stjernegade 24a h ..." — dvs. husnr-tokenet bærer
+ * start-bogstavet ("24a") og det efterfølgende ensomme bogstav-token ("h")
+ * angiver intervallets slut.
+ *
+ * @param norm - Allerede normaliseret adresse (via normalize())
+ * @returns { vejnavn, husnr, bogstav, til, postnr } eller null
+ */
+function parseHusbogstav(norm: string): {
+  vejnavn: string;
+  husnr: string;
+  bogstav: string | null;
+  /** Slut-bogstav ved interval ("24 A-H" → til="h"), ellers null */
+  til: string | null;
+  postnr: string | null;
+} | null {
+  const tokens = norm.split(' ').filter(Boolean);
+  // Husnummer = første token der starter med et ciffer (evt. efterfulgt af bogstav)
+  let idx = -1;
+  for (let i = 0; i < tokens.length; i++) {
+    if (/^\d+[a-z]?$/.test(tokens[i])) {
+      idx = i;
+      break;
+    }
+  }
+  // Kræv mindst ét vejnavn-token før husnummeret
+  if (idx <= 0) return null;
+  const m = tokens[idx].match(/^(\d+)([a-z])?$/)!;
+  const husnr = m[1];
+  const bogstav = m[2] ?? null;
+  // Interval-slut: et ensomt enkelt-bogstav-token umiddelbart efter, større end start
+  let til: string | null = null;
+  const next = tokens[idx + 1];
+  if (bogstav && next && /^[a-z]$/.test(next) && next > bogstav) {
+    til = next;
+  }
+  // Postnummer = første 4-cifrede token efter husnummeret
+  const postnr = tokens.slice(idx + 1).find((t) => /^\d{4}$/.test(t)) ?? null;
+  return { vejnavn: tokens.slice(0, idx).join(' '), husnr, bogstav, til, postnr };
+}
+
+/**
  * Score ejendom ↔ police match.
  * BFE-match = 100, adresse-match = 90, delvis adresse = 60.
  *
@@ -321,6 +364,27 @@ function scoreEjendom(aktiv: Aktiv, policy: ForsikringPolicy): number {
     (aktivBase === policyBase || aktivBase.includes(policyBase) || policyBase.includes(aktivBase))
   ) {
     return 82;
+  }
+
+  // BIZZ-2153: Bogstav-interval — en police tegnet på "Stjernegade 24 A-H"
+  // dækker hele opgangsrækken 24A..24H. normalize() splitter intervallet
+  // ("24 A-H" → "24a h"), så uden dette matcher kun 24A (intervallets start)
+  // direkte, mens 24B-H falder igennem til svagere SFE-arv.
+  const pPol = parseHusbogstav(policyAddr);
+  const pAk = parseHusbogstav(aktivAddr);
+  if (
+    pPol &&
+    pAk &&
+    pPol.til &&
+    pPol.bogstav &&
+    pAk.bogstav &&
+    pPol.vejnavn === pAk.vejnavn &&
+    pPol.husnr === pAk.husnr &&
+    (!pPol.postnr || !pAk.postnr || pPol.postnr === pAk.postnr) &&
+    pAk.bogstav >= pPol.bogstav &&
+    pAk.bogstav <= pPol.til
+  ) {
+    return 80;
   }
 
   // Delvis match: vejnavn + husnr

@@ -73,6 +73,26 @@ describe('matchAssetsToPolicies', () => {
     expect(results[0].bestMatch?.score).toBe(70);
   });
 
+  it('BIZZ-2153: police på "Stjernegade 24 A-H" dækker hele opgangsrækken 24A..24H direkte (score 80)', () => {
+    const policer = [makePolicy({ property_address: 'Stjernegade 24 A-H, 3000 Helsingør' })];
+    // Både intervallets start (24A) og en midter-opgang (24F) skal matche direkte
+    for (const adr of ['Stjernegade 24A, 3000 Helsingør', 'Stjernegade 24F, 3000 Helsingør']) {
+      const results = matchAssetsToPolicies(
+        [{ type: 'ejendom', label: adr, adresse: adr }],
+        policer
+      );
+      expect(results[0].bestMatch?.score).toBe(80);
+    }
+  });
+
+  it('BIZZ-2153: bogstav uden for intervallet matcher ikke (24K på 24 A-H → uforsikret)', () => {
+    const policer = [makePolicy({ property_address: 'Stjernegade 24 A-H, 3000 Helsingør' })];
+    const adr = 'Stjernegade 24K, 3000 Helsingør';
+    const results = matchAssetsToPolicies([{ type: 'ejendom', label: adr, adresse: adr }], policer);
+    // 24K er uden for A-H → ingen bogstav-/prefix-match, falder under tærsklen
+    expect(results[0].bestMatch).toBeNull();
+  });
+
   it('returns null bestMatch for uforsikret (score < 50)', () => {
     const aktiver: Aktiv[] = [
       { type: 'ejendom', label: 'Ukendt vej 99', adresse: 'Ukendt vej 99, 9999 Ingensteds' },

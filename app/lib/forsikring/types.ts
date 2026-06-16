@@ -323,6 +323,15 @@ export const COVERAGE_CODES = [
   'maskiner_itudstyr',
   'it_meromkostninger',
   'leverandoer_aftager',
+  // BIZZ-2154: Motor-/køretøjsdækninger — biler tegnes ofte på samme aftale
+  // som ejendomspolicer (fx Topdanmark erhvervsaftaler). Uden egne koder blev
+  // Kasko/Førerulykke tvunget ind i bygningskoder, så bilpolicer fejlagtigt
+  // blev klassificeret som "Ejendomsforsikring".
+  'motorkasko',
+  'foererulykke',
+  'redning_udland',
+  'eftermonteret_udstyr',
+  'friskade',
 ] as const;
 
 export type CoverageCode = (typeof COVERAGE_CODES)[number];
@@ -361,6 +370,12 @@ export const COVERAGE_LABELS_DA: Record<CoverageCode, string> = {
   maskiner_itudstyr: 'Maskiner og IT-udstyr',
   it_meromkostninger: 'IT-meromkostninger',
   leverandoer_aftager: 'Leverandør-/aftagerdriftstab',
+  // BIZZ-2154: Motor-/køretøjsdækninger
+  motorkasko: 'Kasko',
+  foererulykke: 'Førerulykke',
+  redning_udland: 'Redning i udlandet',
+  eftermonteret_udstyr: 'Eftermonteret tilbehør',
+  friskade: 'Friskade',
 };
 
 // ─── Parser output schema (Claude → JSON) ────────────────────────

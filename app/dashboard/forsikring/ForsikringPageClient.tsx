@@ -1047,6 +1047,8 @@ const COVERAGE_KATEGORIER: Record<string, readonly string[]> = {
   cyber: ['cyber', 'cyberdriftstab', 'notifikation', 'netbank', 'it_meromkostninger'],
   kriminalitet: ['kriminalitet'],
   transport: ['transport'],
+  // BIZZ-2154: Motor-/køretøjsdækninger → "Bilforsikring"
+  bil: ['motorkasko', 'foererulykke', 'redning_udland', 'eftermonteret_udstyr', 'friskade'],
 };
 
 /** BIZZ-2099: Danske/engelske labels for dæknings-kategorier */
@@ -1058,6 +1060,7 @@ const KATEGORI_LABELS: Record<string, [string, string]> = {
   cyber: ['Cyber', 'Cyber'],
   kriminalitet: ['Kriminalitet', 'Crime'],
   transport: ['Transport', 'Transit'],
+  bil: ['Bil/motor', 'Vehicle'],
   andet: ['Andet', 'Other'],
 };
 
@@ -1075,6 +1078,7 @@ const KATEGORI_FORSIKRINGSTYPE: Record<string, [string, string]> = {
   cyber: ['Cyberforsikring', 'Cyber insurance'],
   kriminalitet: ['Kriminalitetsforsikring', 'Crime insurance'],
   transport: ['Transportforsikring', 'Transit insurance'],
+  bil: ['Bilforsikring', 'Motor insurance'],
 };
 
 /** BIZZ-2127: Opslag fra dækningskode → kategori (afledt af COVERAGE_KATEGORIER). */
@@ -1149,6 +1153,20 @@ function FundneForsikringer({ detail, da }: { detail: AnalyseDetail; da: boolean
     covsByPolicy.set(cov.policy_id, list);
   }
 
+  // BIZZ-2152: Samlet police = ét policenummer med flere forsikringssteder.
+  // Hver forsikringssted ligger som sin egen police-row i analysen (et
+  // property_address pr. row). Vis dem som ÉN kasse med policenummeret som
+  // overskrift og hvert forsikringssted som under-sektion — i stedet for én
+  // løsreven kasse pr. adresse.
+  const policyGroups = new Map<string, AnalysePolicy[]>();
+  for (const p of analysePolicies) {
+    const key = p.policy_number || p.id;
+    const list = policyGroups.get(key) ?? [];
+    list.push(p);
+    policyGroups.set(key, list);
+  }
+  const groupedPolicies = [...policyGroups.values()];
+
   /** Formatter beløb i hele kr */
   const kr = (v: number) => `${v.toLocaleString('da-DK')} kr`;
 
@@ -1188,15 +1206,17 @@ function FundneForsikringer({ detail, da }: { detail: AnalyseDetail; da: boolean
       </p>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {analysePolicies.map((policy) => {
-          const covs = covsByPolicy.get(policy.id) ?? [];
-          const active = covs.filter((c) => c.is_covered);
-          const fravalgt = covs.filter((c) => !c.is_covered);
-          // BIZZ-2129: Tvivlsom tilknytning → gul boks + advarsel i stedet for grøn.
-          const tvivlsom = policy.attachment === 'tvivlsom';
+        {groupedPolicies.map((group) => {
+          // Samlede dækninger på tværs af gruppens forsikringssteder — bruges
+          // til at udlede én forsikringstype-titel for hele policen.
+          const groupCovs = group.flatMap((p) => covsByPolicy.get(p.id) ?? []);
+          // BIZZ-2129: Tvivlsom hvis hele policen kun er fuzzy navne-matchet.
+          const tvivlsom = group.every((p) => p.attachment === 'tvivlsom');
+          const first = group[0];
+          const flereSteder = group.length > 1;
           return (
             <div
-              key={policy.id}
+              key={first.policy_number || first.id}
               className={
                 tvivlsom
                   ? 'bg-amber-500/10 border border-amber-500/30 rounded-lg p-3'
@@ -1211,14 +1231,21 @@ function FundneForsikringer({ detail, da }: { detail: AnalyseDetail; da: boolean
                   <div
                     className={`text-xs font-semibold truncate ${tvivlsom ? 'text-amber-200' : 'text-emerald-200'}`}
                   >
-                    {forsikringTypeLabel(covs, policy.business_activity, da)}
+                    {forsikringTypeLabel(groupCovs, first.business_activity, da)}
                   </div>
                   <div className="text-slate-400 text-[11px] truncate">
-                    {[policy.insurer_name, policy.policy_number].filter(Boolean).join(' — ')}
+                    {[first.insurer_name, first.policy_number].filter(Boolean).join(' — ')}
                   </div>
-                  {policy.property_address && (
+                  {/* BIZZ-2152: Antal forsikringssteder når policen dækker flere */}
+                  {flereSteder && (
+                    <div className="text-slate-400 text-[11px]">
+                      {group.length} {da ? 'forsikringssteder' : 'insured locations'}
+                    </div>
+                  )}
+                  {/* Enkelt forsikringssted vises direkte under policenummeret */}
+                  {!flereSteder && first.property_address && (
                     <div className="text-slate-400 text-[11px] truncate">
-                      {policy.property_address}
+                      {first.property_address}
                     </div>
                   )}
                 </div>
@@ -1236,48 +1263,68 @@ function FundneForsikringer({ detail, da }: { detail: AnalyseDetail; da: boolean
                     : '⚠ Uncertain attachment — the policyholder could not be confirmed as this customer (name match only). Verify the policy belongs to the customer.'}
                 </div>
               )}
-              {active.length > 0 && (
-                <div className="space-y-0.5 mt-2">
-                  {active.map((cov) => (
-                    <div
-                      key={`${cov.policy_id}-${cov.coverage_code}`}
-                      className="flex items-center justify-between gap-2 text-[11px]"
-                    >
-                      <span className="text-slate-300 truncate">✓ {cov.coverage_label}</span>
-                      <span className="text-emerald-300 shrink-0">
-                        {cov.sum_dkk != null && cov.sum_dkk > 0 ? kr(cov.sum_dkk) : ''}
-                        {cov.deductible_dkk != null && cov.deductible_dkk > 0 && (
-                          <span className="text-slate-400">
-                            {' '}
-                            ({da ? 'selvrisiko' : 'deductible'} {kr(cov.deductible_dkk)})
-                          </span>
-                        )}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {/* Fravalgte dækninger vises eksplicit — skjules ikke */}
-              {fravalgt.length > 0 && (
-                <div className="space-y-0.5 mt-1.5 border-t border-white/10 pt-1.5">
-                  {fravalgt.map((cov) => (
-                    <div
-                      key={`${cov.policy_id}-${cov.coverage_code}`}
-                      className="flex items-center gap-1.5 text-[11px]"
-                    >
-                      <XCircle size={11} className="text-slate-400 shrink-0" />
-                      <span className="text-slate-400 truncate">
-                        {cov.coverage_label} — {da ? 'fravalgt' : 'not selected'}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {covs.length === 0 && (
-                <p className="text-slate-400 text-[11px] mt-1">
-                  {da ? 'Ingen dækningsdetaljer fundet.' : 'No coverage details found.'}
-                </p>
-              )}
+              {/* Hvert forsikringssted som under-sektion */}
+              {group.map((policy) => {
+                const covs = covsByPolicy.get(policy.id) ?? [];
+                const active = covs.filter((c) => c.is_covered);
+                const fravalgt = covs.filter((c) => !c.is_covered);
+                return (
+                  <div
+                    key={policy.id}
+                    className={flereSteder ? 'mt-2 border-t border-white/10 pt-2' : ''}
+                  >
+                    {/* Forsikringssted-overskrift kun ved samlet police */}
+                    {flereSteder && (
+                      <div className="text-slate-300 text-[11px] font-medium truncate mb-1">
+                        {policy.property_address ||
+                          (da ? 'Uden specifik adresse' : 'No specific address')}
+                      </div>
+                    )}
+                    {active.length > 0 && (
+                      <div className="space-y-0.5">
+                        {active.map((cov) => (
+                          <div
+                            key={`${cov.policy_id}-${cov.coverage_code}`}
+                            className="flex items-center justify-between gap-2 text-[11px]"
+                          >
+                            <span className="text-slate-300 truncate">✓ {cov.coverage_label}</span>
+                            <span className="text-emerald-300 shrink-0">
+                              {cov.sum_dkk != null && cov.sum_dkk > 0 ? kr(cov.sum_dkk) : ''}
+                              {cov.deductible_dkk != null && cov.deductible_dkk > 0 && (
+                                <span className="text-slate-400">
+                                  {' '}
+                                  ({da ? 'selvrisiko' : 'deductible'} {kr(cov.deductible_dkk)})
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {/* Fravalgte dækninger vises eksplicit — skjules ikke */}
+                    {fravalgt.length > 0 && (
+                      <div className="space-y-0.5 mt-1.5 border-t border-white/10 pt-1.5">
+                        {fravalgt.map((cov) => (
+                          <div
+                            key={`${cov.policy_id}-${cov.coverage_code}`}
+                            className="flex items-center gap-1.5 text-[11px]"
+                          >
+                            <XCircle size={11} className="text-slate-400 shrink-0" />
+                            <span className="text-slate-400 truncate">
+                              {cov.coverage_label} — {da ? 'fravalgt' : 'not selected'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {covs.length === 0 && (
+                      <p className="text-slate-400 text-[11px]">
+                        {da ? 'Ingen dækningsdetaljer fundet.' : 'No coverage details found.'}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           );
         })}

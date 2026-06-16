@@ -2147,6 +2147,7 @@ function AnalyseSection({
   onCustomerSelect,
   newDocumentIds,
   addTokenUsage,
+  initialCustomer,
 }: {
   lang: string;
   policies: PolicyRow[];
@@ -2163,6 +2164,8 @@ function AnalyseSection({
   newDocumentIds: string[];
   /** BIZZ-1447: Token usage callback */
   addTokenUsage: (tokens: number) => void;
+  /** BIZZ-2148: Kunde genskabt fra URL ved mount — auto-vælg + åbn doc-picker */
+  initialCustomer: { type: 'virksomhed' | 'person'; id: string; navn: string } | null;
 }) {
   const da = lang === 'da';
   const [query, setQuery] = useState('');
@@ -2391,6 +2394,20 @@ function AnalyseSection({
       })
       .catch(() => setPreviousDocs([]));
   }, [showDocPicker, selected]);
+
+  /**
+   * BIZZ-2148: Genskab valgt kunde fra URL ved mount — sætter selected + åbner
+   * doc-picker automatisk, så browser-back/genbesøg ikke nulstiller modulet.
+   * Kører kun én gang ved mount (tom dep-array bevidst).
+   */
+  useEffect(() => {
+    if (initialCustomer && !selected) {
+      setSelected(initialCustomer);
+      setShowDocPicker(true);
+      onCustomerSelect(initialCustomer);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /** BIZZ-1439: Upload filer inde i wizard — tracker doc IDs */
   const onWizardUpload = useCallback(
@@ -4968,6 +4985,36 @@ export default function ForsikringPageClient(): React.ReactElement {
   >([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  /**
+   * BIZZ-2148: Genskab valgt kunde + analyse fra URL ved mount, så browser-back
+   * eller genbesøg ikke nulstiller forsikringsmodulet. Læses kun én gang (lazy
+   * initializer) fra window.location — ingen Suspense-afhængighed.
+   */
+  const [initialUrlState] = useState<{
+    customer: { type: 'virksomhed' | 'person'; id: string; navn: string } | null;
+    analyse: string | null;
+  }>(() => {
+    if (typeof window === 'undefined') return { customer: null, analyse: null };
+    const p = new URLSearchParams(window.location.search);
+    const id = p.get('kunde');
+    const type = p.get('type');
+    const gyldig = !!id && (type === 'virksomhed' || type === 'person');
+    return {
+      customer: gyldig
+        ? {
+            type: type as 'virksomhed' | 'person',
+            id: id as string,
+            navn: p.get('navn') ?? (id as string),
+          }
+        : null,
+      analyse: p.get('analyse'),
+    };
+  });
+  /** BIZZ-2148: Analyse-ID der skal genskabes når kunden er sat (anvendes én gang) */
+  const restoreAnalyseRef = useRef<string | null>(initialUrlState.analyse);
+  /** BIZZ-2148: Springer første URL-synk over når der er en kunde at genskabe */
+  const didInitUrlSyncRef = useRef(false);
+
   /** Fetch list data from API */
   const refresh = useCallback(async () => {
     setError(null);
@@ -5041,6 +5088,45 @@ export default function ForsikringPageClient(): React.ReactElement {
     },
     []
   );
+
+  /**
+   * BIZZ-2148: Når kunden er genskabt fra URL, genskab også den åbne analyse.
+   * handleCustomerSelect nulstiller activeAnalyseId, så vi sætter det igen her
+   * (kun én gang via restoreAnalyseRef).
+   */
+  useEffect(() => {
+    if (selectedCustomer && restoreAnalyseRef.current) {
+      setActiveAnalyseId(restoreAnalyseRef.current);
+      restoreAnalyseRef.current = null;
+    }
+  }, [selectedCustomer]);
+
+  /**
+   * BIZZ-2148: Synk valgt kunde + åben analyse til URL'en (replaceState, ingen
+   * history-spam), så tilstanden kan genskabes ved browser-back eller genbesøg.
+   * Første kørsel springes over hvis der er en kunde at genskabe — ellers ville
+   * den tomme start-state overskrive params før de er anvendt.
+   */
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!didInitUrlSyncRef.current) {
+      didInitUrlSyncRef.current = true;
+      if (initialUrlState.customer) return;
+    }
+    const p = new URLSearchParams();
+    if (selectedCustomer) {
+      p.set('kunde', selectedCustomer.id);
+      p.set('type', selectedCustomer.type);
+      p.set('navn', selectedCustomer.navn);
+    }
+    if (activeAnalyseId) p.set('analyse', activeAnalyseId);
+    const qs = p.toString();
+    window.history.replaceState(
+      null,
+      '',
+      qs ? `${window.location.pathname}?${qs}` : window.location.pathname
+    );
+  }, [selectedCustomer, activeAnalyseId, initialUrlState.customer]);
 
   // ── BIZZ-2131: Kort-sidepanel state (side-niveau, fuld højde) ──
   const [kortÅben, setKortÅben] = useState(false);
@@ -5349,6 +5435,7 @@ export default function ForsikringPageClient(): React.ReactElement {
             onCustomerSelect={handleCustomerSelect}
             newDocumentIds={newDocumentIds}
             addTokenUsage={addTokenUsage}
+            initialCustomer={initialUrlState.customer}
           />
 
           {/* BIZZ-1404: Analyse-historik for valgt kunde */}

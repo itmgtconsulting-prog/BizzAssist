@@ -298,6 +298,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           );
         }
 
+        // BIZZ-2154: Ryd op i duplikerede police-rækker for SAMME forsikringssted.
+        // Tidligere dobbelt-parsninger kunne efterlade to rækker med samme
+        // policenummer og samme sted (fx en bilpolice uden adresse), hvor den
+        // ene beholdt forældede dækningskoder. Det forurener forsikringstype-
+        // udledningen (bil-police vist som ejendomsforsikring). Behold den
+        // matchede række og slet øvrige rækker der dækker præcis samme sted.
+        // Multi-forsikringssteder (samme nr., FORSKELLIG adresse) bevares.
+        if (existing) {
+          const samePlace = (p: { property_address: string | null }) =>
+            ent.entity.adresse
+              ? addressesMatch(p.property_address, ent.entity.adresse)
+              : !p.property_address;
+          for (const dup of existingAll) {
+            if (dup.id !== existing.id && samePlace(dup)) {
+              await insurance.policies.delete(dup.id).catch(() => {});
+            }
+          }
+        }
+
         if (existing && ent.coverages.length === 0) {
           createdPolicies.push({ id: existing.id, policy_number: existing.policy_number });
           continue;

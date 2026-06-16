@@ -63,6 +63,28 @@ interface DawaMini {
   adressebetegnelse?: string;
 }
 
+/** BIZZ-2147: Relevante felter fra cvr_virksomhed.adresse_json */
+interface CvrAdresse {
+  vejnavn?: string | null;
+  husnummerFra?: number | null;
+  bogstavFra?: string | null;
+  postnummer?: number | null;
+  postdistrikt?: string | null;
+}
+
+/**
+ * BIZZ-2147: Byg en geokodbar adressestreng fra en CVR-virksomheds adresse_json.
+ *
+ * @param adr - adresse_json fra public.cvr_virksomhed
+ * @returns Adressestreng ("Torvegade 5A, 3000 Helsingør") eller null
+ */
+function byggCvrAdresse(adr: CvrAdresse | null): string | null {
+  if (!adr || !adr.vejnavn || adr.husnummerFra == null) return null;
+  const husnr = `${adr.husnummerFra}${adr.bogstavFra ?? ''}`;
+  const post = adr.postnummer && adr.postdistrikt ? `, ${adr.postnummer} ${adr.postdistrikt}` : '';
+  return `${adr.vejnavn} ${husnr}${post}`;
+}
+
 /**
  * Geokod en adressetekst via DAWA fuzzy søgning.
  *
@@ -261,6 +283,27 @@ export async function GET(
       }
     }
 
+    // BIZZ-2147: Virksomheds-aktiver har ofte adresse=null (kun CVR kendt), så de
+    // aldrig blev geokodet og derfor ikke vist på kortet. Slå adressen op via
+    // public.cvr_virksomhed.adresse_json så de kan placeres.
+    const virkCvrs = aktiver
+      .filter((a) => a.type === 'virksomhed' && a.cvr && !a.adresse)
+      .map((a) => a.cvr!);
+    const cvrAdresseMap = new Map<string, string>();
+    if (virkCvrs.length > 0) {
+      const { data: cvrRows } = await admin
+        .from('cvr_virksomhed')
+        .select('cvr, adresse_json')
+        .in('cvr', [...new Set(virkCvrs)]);
+      for (const row of (cvrRows ?? []) as Array<{
+        cvr: string;
+        adresse_json: CvrAdresse | null;
+      }>) {
+        const adr = byggCvrAdresse(row.adresse_json);
+        if (adr) cvrAdresseMap.set(row.cvr, adr);
+      }
+    }
+
     // Geokod alle aktiver (maks 10 parallelt for at skåne DAWA)
     const markers: ForsikringMarker[] = [];
     for (let i = 0; i < aktiver.length; i += 10) {
@@ -279,6 +322,15 @@ export async function GET(
           if (!coords && aktiv.adresse) {
             coords = await geokodAdresse(aktiv.adresse);
           }
+          // BIZZ-2147: Virksomhed uden adresse → geokod via CVR-opslået adresse
+          let visAdresse = aktiv.adresse;
+          if (!coords && aktiv.type === 'virksomhed' && aktiv.cvr) {
+            const cvrAdr = cvrAdresseMap.get(aktiv.cvr);
+            if (cvrAdr) {
+              coords = await geokodAdresse(cvrAdr);
+              if (!visAdresse) visAdresse = cvrAdr;
+            }
+          }
           if (!coords) return null;
 
           const gaps = gapsByAktiv.get(aktiv.id);
@@ -290,7 +342,7 @@ export async function GET(
             lng: coords.lng,
             bfe: aktiv.bfe,
             cvr: aktiv.cvr,
-            adresse: aktiv.adresse,
+            adresse: visAdresse,
             isInsured: !!aktiv.matched_policy_id,
             gapCritical: gaps?.critical ?? 0,
             gapWarning: gaps?.warning ?? 0,

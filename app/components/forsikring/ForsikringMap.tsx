@@ -13,6 +13,7 @@
  */
 
 import React, { useState, useCallback, useRef, useEffect, memo } from 'react';
+import Link from 'next/link';
 import Map, { Marker, Source, Layer, NavigationControl, type MapRef } from 'react-map-gl/mapbox';
 import type { LineLayerSpecification, FillLayerSpecification } from 'mapbox-gl';
 import {
@@ -23,7 +24,23 @@ import {
   Shield,
   ShieldAlert,
   ShieldX,
+  ExternalLink,
 } from 'lucide-react';
+
+/**
+ * BIZZ-2147: Byg link til detaljeside for en markør.
+ *
+ * Ejendomme åbnes via BFE (`/dashboard/ejendomme/[bfe]`), virksomheder via CVR
+ * (`/dashboard/companies/[cvr]`). Returnerer null hvis nøglen mangler.
+ *
+ * @param marker - Markør-data
+ * @returns Intern sti til detaljesiden, eller null
+ */
+function detaljeHref(marker: ForsikringMarker): string | null {
+  if (marker.type === 'ejendom' && marker.bfe) return `/dashboard/ejendomme/${marker.bfe}`;
+  if (marker.type === 'virksomhed' && marker.cvr) return `/dashboard/companies/${marker.cvr}`;
+  return null;
+}
 
 /** Basekort-styles (dark + satellite) */
 const STYLES = {
@@ -461,6 +478,26 @@ function ForsikringMapInner({
                     })()}
                 </div>
               )}
+              {/* BIZZ-2147: Link til detaljeside (ejendom via BFE, virksomhed via CVR) */}
+              {(() => {
+                const href = detaljeHref(popupMarker);
+                if (!href) return null;
+                return (
+                  <Link
+                    href={href}
+                    className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-blue-400 hover:text-blue-300 transition-colors"
+                  >
+                    <ExternalLink size={12} />
+                    {popupMarker.type === 'virksomhed'
+                      ? da
+                        ? 'Åbn virksomhed'
+                        : 'Open company'
+                      : da
+                        ? 'Åbn ejendom'
+                        : 'Open property'}
+                  </Link>
+                );
+              })()}
             </div>
             <button
               onClick={() => setPopupMarker(null)}

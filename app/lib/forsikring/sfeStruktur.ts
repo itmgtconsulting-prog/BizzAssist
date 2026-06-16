@@ -414,11 +414,30 @@ export async function berigMedSfeStruktur(
     })
   );
 
-  // 2. SFE-opslag for ejendoms-aktiver
+  // 2. SFE-opslag for ejendoms-aktiver (adresse → DAWA, fallback: BFE → jordstykke)
   const aktivSfe: AktivSfeMap = new Map();
   await runBatched(
     ejendomIdx.map(({ m, i }) => async () => {
-      const opslag = await resolveSfeForAdresse((m.aktiv.adresse ?? '').trim());
+      let opslag = await resolveSfeForAdresse((m.aktiv.adresse ?? '').trim());
+      // Fallback for markjorder/grunde uden adgangsadresse: BFE → DAWA jordstykke
+      if (!opslag && m.aktiv.bfe) {
+        try {
+          const jord = (await fetchDawaJson(
+            `${DAWA}/jordstykker?bfenummer=${m.aktiv.bfe}&format=json`
+          )) as Array<{
+            bfenummer?: number;
+            sfeejendomsnr?: number;
+            ejerlav?: { kode?: number };
+          }> | null;
+          if (jord?.[0]) {
+            const sfeBfe = jord[0].sfeejendomsnr ?? jord[0].bfenummer;
+            const ejerlavKode = jord[0].ejerlav?.kode ?? null;
+            if (sfeBfe) opslag = { sfeBfe, ejerlavKode };
+          }
+        } catch {
+          /* best-effort */
+        }
+      }
       if (opslag) aktivSfe.set(i, opslag);
     })
   );

@@ -1902,6 +1902,9 @@ function AnalyseSection({
   const stdSelskabRef = useRef<HTMLInputElement>(null);
   /** BIZZ-1890: PDF-upload af standard betingelser */
   const [stdPdfUploading, setStdPdfUploading] = useState(false);
+  /** BIZZ-2141: Re-parse progress */
+  const [reparsing, setReparsing] = useState(false);
+  const [reparseProgress, setReparseProgress] = useState('');
   /** BIZZ-1932: Upload-progress (filnavn + status) */
   const [stdUploadProgress, setStdUploadProgress] = useState<string | null>(null);
   /** BIZZ-1932: Senest uploaded standard betingelse (til bekræftelse) */
@@ -2606,6 +2609,7 @@ function AnalyseSection({
               {previousDocs.length > 0 && (
                 <button
                   type="button"
+                  disabled={reparsing}
                   onClick={async () => {
                     if (
                       !window.confirm(
@@ -2615,24 +2619,33 @@ function AnalyseSection({
                       )
                     )
                       return;
-                    for (const doc of previousDocs) {
+                    setReparsing(true);
+                    for (let i = 0; i < previousDocs.length; i++) {
+                      setReparseProgress(`${i + 1}/${previousDocs.length}`);
                       try {
                         await fetch('/api/forsikring/parse', {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ document_id: doc.id }),
+                          body: JSON.stringify({ document_id: previousDocs[i].id }),
                         });
                       } catch {
-                        /* continue with next */
+                        /* continue */
                       }
                     }
+                    setReparsing(false);
+                    setReparseProgress('');
                     onRefresh();
                   }}
-                  className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                  className="text-xs text-blue-400 hover:text-blue-300 transition-colors disabled:opacity-50 flex items-center gap-1.5"
                 >
-                  {da
-                    ? `Re-parse alle (${previousDocs.length})`
-                    : `Re-parse all (${previousDocs.length})`}
+                  {reparsing && <Loader2 size={10} className="animate-spin" />}
+                  {reparsing
+                    ? da
+                      ? `Re-parser ${reparseProgress}...`
+                      : `Re-parsing ${reparseProgress}...`
+                    : da
+                      ? `Re-parse alle (${previousDocs.length})`
+                      : `Re-parse all (${previousDocs.length})`}
                 </button>
               )}
 

@@ -165,6 +165,12 @@ For HVER forsikringstype, angiv:
 - forsikringstager: Navn på forsikringstager
 - forsikringstager_cvr: CVR-nummer (8 cifre) hvis nævnt
 
+KRITISK — sæt "type" ud fra policens EGEN titel/betegnelse, ikke ud fra branchekode eller bygningens anvendelse (BIZZ-2138):
+- "Police - Erhvervsforsikring" / betingelser nr. 2502 / løsøre-dækninger (Brand, Tyveri, Vand for varer/inventar/løsøre), Ran/røveri → "Erhvervsforsikring" (IKKE "Ejendomsforsikring").
+- "Police - Bilforsikring" / Kasko / Førerulykke / registreringsnummer → "Bilforsikring".
+- "Police - Ejendomsforsikring" / "Bygningsforsikring" / dækning AF selve bygningen (Brand, Storm, Rørskade, Svamp, Insekt på bygningen) → "Ejendomsforsikring".
+- Skeln bygningsforsikring (dækker bygningen) fra erhvervsforsikring (dækker løsøre/inventar/varer): en police med løsøre-/inventar-/vare-dækninger er erhverv, ikke ejendom — også selv om der står en adresse.
+
 Returnér KUN gyldig JSON — et array af objekter:
 [{"type": "...", "selskab": "...", "policenummer": "...", "forsikringstager": "...", "forsikringstager_cvr": "..."}]
 
@@ -501,6 +507,57 @@ export function korrigerBilforsikring(result: V2ParseResult): V2ParseResult {
 }
 
 /**
+ * BIZZ-2138: Afgør deterministisk om et dokument er en erhvervsforsikring ud fra
+ * præcise signaler i teksten — bruges til at fange policer som LLM'en (Step 1)
+ * fejlagtigt klassificerer som "Ejendomsforsikring" fordi forsikringsstedet har
+ * en adresse, selvom dækningen er løsøre/inventar/varer (ikke selve bygningen).
+ *
+ * Signalerne er bevidst snævre for at undgå falske positiver:
+ *  - "Police - Erhvervsforsikring"-titel, eller
+ *  - reference til Alm. Brands erhvervs-betingelser nr. 2502.
+ *
+ * @param markdown - Dokumentets råtekst (Step 0-output)
+ * @returns true hvis dokumentet entydigt er en erhvervsforsikring
+ */
+export function erErhvervsforsikringDokument(markdown: string): boolean {
+  const policeTitel = /police[\s\-–—]*erhvervsforsikring/i.test(markdown);
+  const betingelser2502 = /betingelser?\s*(nr\.?)?\s*2502/i.test(markdown);
+  return policeTitel || betingelser2502;
+}
+
+/**
+ * BIZZ-2138: Deterministisk efter-korrektion af erhvervsforsikringer.
+ *
+ * Police 60792275 (Alm. Brand Erhvervsforsikring, løsøre: Brand/Tyveri/Vand +
+ * Ran/røveri + Retshjælp, betingelser nr. 2502) blev af Step 1 klassificeret
+ * som "Ejendomsforsikring" fordi forsikringsstedet har en adresse. En
+ * løsøre-/erhvervsforsikring dækker varer/inventar — ikke selve bygningen — og
+ * skal klassificeres som erhverv.
+ *
+ * Reglen er snæver for at beskytte ægte ejendomspolicer: den kører kun på
+ * enkelt-police-dokumenter (hvor der ikke er en separat, ægte ejendomsdel) der
+ * entydigt er erhvervsforsikringer jf. {@link erErhvervsforsikringDokument},
+ * og rører hverken bilforsikringer eller policer der allerede har en ikke-
+ * bygnings-type.
+ *
+ * @param result - v2-parse-resultat (typisk efter {@link korrigerBilforsikring})
+ * @returns Samme resultat med fejlklassificerede erhvervspolicer korrigeret
+ */
+export function korrigerErhvervsforsikring(result: V2ParseResult): V2ParseResult {
+  if (result.insurances.length !== 1) return result;
+  if (!erErhvervsforsikringDokument(result.markdown)) return result;
+
+  const ins = result.insurances[0];
+  const type = ins.identification.type ?? '';
+  // Rør ikke biler (håndteres separat) — flip kun en bygnings-/ejendomstype.
+  if (/bil|auto/i.test(type)) return result;
+  if (/ejendom|bygning/i.test(type)) {
+    ins.identification.type = 'Erhvervsforsikring';
+  }
+  return result;
+}
+
+/**
  * Kør hele v2-pipeline: Step 0 → 1 → 2 → 3 → 4.
  *
  * @param pdfBuffer - PDF-bytes
@@ -543,7 +600,8 @@ export async function parseV2(pdfBuffer: Buffer, apiKey: string): Promise<V2Pars
       `${conditions.length} betingelser`
   );
 
-  // BIZZ-2157: Deterministisk korrektion af fejlklassificerede bilforsikringer
-  // (type → "Bilforsikring", forsikringssted → null, reg.nr udfyldt).
-  return korrigerBilforsikring({ markdown, insurances, conditions });
+  // BIZZ-2157/2138: Deterministisk korrektion af fejlklassificerede policer —
+  // bilforsikringer (type → "Bilforsikring", forsikringssted → null, reg.nr
+  // udfyldt) og erhvervsforsikringer (løsøre-policer fejlmærket som ejendom).
+  return korrigerErhvervsforsikring(korrigerBilforsikring({ markdown, insurances, conditions }));
 }

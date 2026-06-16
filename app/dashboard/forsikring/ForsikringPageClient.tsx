@@ -1280,12 +1280,56 @@ const CODE_TO_KATEGORI: Map<string, string> = (() => {
 })();
 
 /**
+ * BIZZ-2138: Kendte, eksplicitte forsikringstyper i business_activity. parserV2
+ * sætter denne deterministisk ud fra policens titel/betingelser (fx
+ * "Erhvervsforsikring" via betingelser nr. 2502), hvilket er en stærkere kilde
+ * end dæknings-heuristikken. En blandet erhvervspolice (løsøre + bygnings-nære
+ * dækninger som brand/rørskade) tipper ellers heuristikken til
+ * "Ejendomsforsikring". Bygnings-ANVENDELSE ("Restaurant og café") matcher IKKE
+ * her og falder derfor korrekt videre til dæknings-heuristikken.
+ */
+const EKSPLICIT_FORSIKRINGSTYPE: ReadonlyArray<readonly [RegExp, readonly [string, string]]> = [
+  [/\berhvervsforsikring\b/i, ['Erhvervsforsikring', 'Commercial insurance']],
+  [/\b(?:ejendoms|bygnings)forsikring\b/i, ['Ejendomsforsikring', 'Property insurance']],
+  [/\b(?:løsøre|loesoere)forsikring\b/i, ['Løsøreforsikring', 'Contents insurance']],
+  [/\bbilforsikring\b/i, ['Bilforsikring', 'Motor insurance']],
+  [/\bansvarsforsikring\b/i, ['Ansvarsforsikring', 'Liability insurance']],
+  [/\bcyberforsikring\b/i, ['Cyberforsikring', 'Cyber insurance']],
+  [/\bdriftstabsforsikring\b/i, ['Driftstabsforsikring', 'Business interruption insurance']],
+  [/\btransportforsikring\b/i, ['Transportforsikring', 'Transit insurance']],
+  [/\bkriminalitetsforsikring\b/i, ['Kriminalitetsforsikring', 'Crime insurance']],
+];
+
+/**
+ * BIZZ-2138: Mappér en eksplicit forsikringstype i business_activity til en
+ * lokaliseret titel. Returnerer null for bygnings-anvendelse og ukendte
+ * strenge, så kalderen kan falde tilbage til dæknings-heuristikken.
+ *
+ * @param businessActivity - Policens business_activity
+ * @param da - Dansk sprogflag
+ * @returns Lokaliseret forsikringstype-titel, eller null hvis ikke genkendt
+ */
+export function eksplicitForsikringstype(
+  businessActivity: string | null | undefined,
+  da: boolean
+): string | null {
+  if (!businessActivity) return null;
+  for (const [re, labels] of EKSPLICIT_FORSIKRINGSTYPE) {
+    if (re.test(businessActivity)) return labels[da ? 0 : 1];
+  }
+  return null;
+}
+
+/**
  * BIZZ-2127: Udled forsikringstype-titel fra policens dækninger.
  *
  * Tæller aktive (is_covered) dækninger pr. kategori og vælger den dominerende
  * → fx en police med overvejende bygningsdækninger bliver "Ejendomsforsikring".
- * Falder tilbage til business_activity (og derefter en generisk label) hvis
- * policen ingen kategoriserbare dækninger har.
+ * BIZZ-2138: En eksplicit forsikringstype i business_activity (sat
+ * deterministisk af parserV2 ud fra policens titel/betingelser) vinder dog over
+ * heuristikken — ellers fejlvises en blandet erhvervspolice som
+ * "Ejendomsforsikring". Falder tilbage til business_activity (og derefter en
+ * generisk label) hvis policen ingen kategoriserbare dækninger har.
  *
  * @param coverages - Policens dækninger
  * @param businessActivity - Policens business_activity (fallback)
@@ -1297,6 +1341,10 @@ export function forsikringTypeLabel(
   businessActivity: string | null | undefined,
   da: boolean
 ): string {
+  // BIZZ-2138: Stol på en eksplicit forsikringstype før dæknings-heuristikken.
+  const eksplicit = eksplicitForsikringstype(businessActivity, da);
+  if (eksplicit) return eksplicit;
+
   const counts = new Map<string, number>();
   for (const c of coverages) {
     if (!c.is_covered) continue;

@@ -37,3 +37,59 @@ export function visAktivLabel(aktiv: AktivLabelInput, da: boolean): string {
   if (!erEjendomUdenAdresse(aktiv)) return label;
   return da ? `Ukendt adresse (${label})` : `Unknown address (${label})`;
 }
+
+/** Aktiv-form til adresse-disambiguering — behøver også BFE for at skelne ejerlejligheder. */
+interface AktivDisambInput extends AktivLabelInput {
+  bfe?: number | null;
+}
+
+/**
+ * Find resolvede adresse-labels der deles af flere DISTINKTE ejendomme.
+ *
+ * BIZZ-2149: Ejerlejligheder kan dele samme gade-adresse men have forskellige
+ * BFE-numre (fx "Stjernegade 24A" = BFE 244640 + 244655). De er separate
+ * forsikrings-aktiver og må IKKE flettes — men i en flad tabel ser de ens ud.
+ * Returnerer de adresse-labels der optræder på mere end ét BFE, så de kan
+ * disambigueres med et BFE-suffix.
+ *
+ * @param aktiver - Alle aktiver i analysen
+ * @param da - true for dansk, false for engelsk (matcher visAktivLabel)
+ * @returns Set af labels der deles af ≥2 distinkte ejendoms-BFE'er
+ */
+export function findDelteAdresser(aktiver: AktivDisambInput[], da: boolean): Set<string> {
+  const bfePerLabel = new Map<string, Set<number>>();
+  for (const a of aktiver) {
+    // Kun resolvede ejendomme — adresseløse ("BFE xxx") håndteres af visAktivLabel.
+    if (a.type !== 'ejendom' || a.bfe == null || erEjendomUdenAdresse(a)) continue;
+    const label = visAktivLabel(a, da);
+    if (!bfePerLabel.has(label)) bfePerLabel.set(label, new Set());
+    bfePerLabel.get(label)!.add(a.bfe);
+  }
+  const delte = new Set<string>();
+  for (const [label, bfeSet] of bfePerLabel) {
+    if (bfeSet.size > 1) delte.add(label);
+  }
+  return delte;
+}
+
+/**
+ * Som visAktivLabel, men tilføjer "(BFE xxx)" når adressen deles af flere
+ * distinkte ejendomme, så ejerlejligheder med samme adresse kan skelnes uden
+ * at blive flettet sammen.
+ *
+ * @param aktiv - Aktiv med type + label + bfe
+ * @param da - true for dansk, false for engelsk
+ * @param delteAdresser - Resultatet af findDelteAdresser for hele listen
+ * @returns Disambigueret label
+ */
+export function visAktivLabelDisambig(
+  aktiv: AktivDisambInput,
+  da: boolean,
+  delteAdresser: Set<string>
+): string {
+  const base = visAktivLabel(aktiv, da);
+  if (aktiv.type === 'ejendom' && aktiv.bfe != null && delteAdresser.has(base)) {
+    return `${base} (BFE ${aktiv.bfe})`;
+  }
+  return base;
+}

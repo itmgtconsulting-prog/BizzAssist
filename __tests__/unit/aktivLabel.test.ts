@@ -7,7 +7,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { erEjendomUdenAdresse, visAktivLabel } from '@/app/lib/forsikring/aktivLabel';
+import {
+  erEjendomUdenAdresse,
+  visAktivLabel,
+  findDelteAdresser,
+  visAktivLabelDisambig,
+} from '@/app/lib/forsikring/aktivLabel';
 
 describe('erEjendomUdenAdresse', () => {
   it('true for ejendom med rå BFE-label', () => {
@@ -50,5 +55,77 @@ describe('visAktivLabel', () => {
     expect(visAktivLabel({ type: 'virksomhed', label: 'FAMILIEN PETERSEN A/S' }, true)).toBe(
       'FAMILIEN PETERSEN A/S'
     );
+  });
+});
+
+describe('findDelteAdresser', () => {
+  // BIZZ-2149: to ejerlejligheder med samme adresse men forskellige BFE.
+  const stjernegade = [
+    { type: 'ejendom', label: 'Stjernegade 24A, 3000 Helsingør', bfe: 244640 },
+    { type: 'ejendom', label: 'Stjernegade 24A, 3000 Helsingør', bfe: 244655 },
+    { type: 'ejendom', label: 'Torvegade 5A, 3000 Helsingør', bfe: 5319041 },
+  ];
+
+  it('finder adresse delt af to distinkte BFE', () => {
+    const delte = findDelteAdresser(stjernegade, true);
+    expect(delte.has('Stjernegade 24A, 3000 Helsingør')).toBe(true);
+    expect(delte.has('Torvegade 5A, 3000 Helsingør')).toBe(false);
+  });
+
+  it('samme BFE to gange tæller ikke som delt', () => {
+    const delte = findDelteAdresser(
+      [
+        { type: 'ejendom', label: 'Stengade 10A', bfe: 5319420 },
+        { type: 'ejendom', label: 'Stengade 10A', bfe: 5319420 },
+      ],
+      true
+    );
+    expect(delte.size).toBe(0);
+  });
+
+  it('ignorerer virksomheder og adresseløse ejendomme', () => {
+    const delte = findDelteAdresser(
+      [
+        { type: 'virksomhed', label: 'A/S X', bfe: null },
+        { type: 'ejendom', label: 'BFE 100563298', bfe: 100563298 },
+        { type: 'ejendom', label: 'BFE 100563299', bfe: 100563299 },
+      ],
+      true
+    );
+    expect(delte.size).toBe(0);
+  });
+});
+
+describe('visAktivLabelDisambig', () => {
+  const delte = new Set(['Stjernegade 24A, 3000 Helsingør']);
+
+  it('tilføjer BFE-suffix på delt adresse', () => {
+    expect(
+      visAktivLabelDisambig(
+        { type: 'ejendom', label: 'Stjernegade 24A, 3000 Helsingør', bfe: 244640 },
+        true,
+        delte
+      )
+    ).toBe('Stjernegade 24A, 3000 Helsingør (BFE 244640)');
+  });
+
+  it('bevarer unik adresse uændret', () => {
+    expect(
+      visAktivLabelDisambig(
+        { type: 'ejendom', label: 'Torvegade 5A, 3000 Helsingør', bfe: 5319041 },
+        true,
+        delte
+      )
+    ).toBe('Torvegade 5A, 3000 Helsingør');
+  });
+
+  it('adresseløs ejendom beholder Ukendt adresse-label', () => {
+    expect(
+      visAktivLabelDisambig(
+        { type: 'ejendom', label: 'BFE 100563298', bfe: 100563298 },
+        true,
+        delte
+      )
+    ).toBe('Ukendt adresse (BFE 100563298)');
   });
 });

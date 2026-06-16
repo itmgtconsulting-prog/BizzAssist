@@ -263,6 +263,37 @@ function ForsikringMapInner({
     return true;
   });
 
+  // BIZZ-2149: Ejerlejligheder med samme adresse (fx "Stjernegade 24A" = BFE
+  // 244640 + 244655) har identiske koordinater og stables til én klikbar pin.
+  // Vi spreder pins med samme koordinat let radialt, så hver distinkt ejendom
+  // får sin egen klikbare markør (rå koordinater bevares til fitBounds ovenfor).
+  // Bemærk: identifikatoren `Map` er react-map-gl-komponenten her, så vi bruger
+  // et almindeligt objekt som koordinat→markører-opslag.
+  const coordGroups: Record<string, ForsikringMarker[]> = {};
+  for (const m of visibleMarkers) {
+    const key = `${m.lat.toFixed(5)},${m.lng.toFixed(5)}`;
+    if (coordGroups[key]) coordGroups[key].push(m);
+    else coordGroups[key] = [m];
+  }
+  /**
+   * Beregn vise-koordinat for en markør — spreder overlappende pins i en cirkel.
+   *
+   * @param m - Markøren der skal placeres
+   * @returns Forskudt {lat, lng} hvis koordinatet deles, ellers den rå position
+   */
+  const displayPos = (m: ForsikringMarker): { lat: number; lng: number } => {
+    const key = `${m.lat.toFixed(5)},${m.lng.toFixed(5)}`;
+    const grp = coordGroups[key];
+    if (!grp || grp.length < 2) return { lat: m.lat, lng: m.lng };
+    const i = grp.indexOf(m);
+    const radius = 0.00012; // ~13 m radial spredning
+    const angle = (2 * Math.PI * i) / grp.length;
+    return {
+      lat: m.lat + radius * Math.cos(angle),
+      lng: m.lng + (radius * Math.sin(angle)) / Math.cos((m.lat * Math.PI) / 180),
+    };
+  };
+
   // Default center (Danmark) hvis ingen markører
   const defaultLat = markers[0]?.lat ?? 55.68;
   const defaultLng = markers[0]?.lng ?? 12.57;
@@ -296,11 +327,12 @@ function ForsikringMapInner({
 
         {visibleMarkers.map((m) => {
           const husnr = extractHusnr(m.adresse);
+          const pos = displayPos(m);
           return (
             <Marker
               key={m.id}
-              latitude={m.lat}
-              longitude={m.lng}
+              latitude={pos.lat}
+              longitude={pos.lng}
               anchor="center"
               onClick={(e) => {
                 e.originalEvent.stopPropagation();

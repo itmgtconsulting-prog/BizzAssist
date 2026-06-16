@@ -9,7 +9,7 @@
  * @param props.analyseId - Analyse UUID
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowLeft,
@@ -25,7 +25,11 @@ import {
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { getMatchBegrundelse } from '@/app/lib/forsikring/matchBegrundelse';
-import { erEjendomUdenAdresse, visAktivLabel } from '@/app/lib/forsikring/aktivLabel';
+import {
+  erEjendomUdenAdresse,
+  findDelteAdresser,
+  visAktivLabelDisambig,
+} from '@/app/lib/forsikring/aktivLabel';
 
 interface Analyse {
   id: string;
@@ -94,6 +98,10 @@ export default function AnalyseDetailClient({ analyseId }: { analyseId: string }
       })
       .finally(() => setLoading(false));
   }, [analyseId]);
+
+  // BIZZ-2149: Adresser delt af flere distinkte ejendoms-BFE'er (ejerlejligheder
+  // med samme gade-adresse) disambigueres med et BFE-suffix i tabellen.
+  const delteAdresser = useMemo(() => findDelteAdresser(aktiver, da), [aktiver, da]);
 
   if (loading) {
     return (
@@ -262,7 +270,7 @@ export default function AnalyseDetailClient({ analyseId }: { analyseId: string }
                 </td>
                 <td className="px-4 py-2.5 text-white">
                   <span className="inline-flex items-center gap-1.5">
-                    {visAktivLabel(a, da)}
+                    {visAktivLabelDisambig(a, da, delteAdresser)}
                     {/* BIZZ-2150: gul badge når ejendommen mangler adresse */}
                     {erEjendomUdenAdresse(a) && (
                       <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 shrink-0">

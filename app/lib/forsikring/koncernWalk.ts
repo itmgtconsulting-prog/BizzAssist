@@ -141,6 +141,7 @@ export async function walkKoncern(
               aktiver.push({
                 type: 'ejendom',
                 label: adr.adressebetegnelse,
+                adresse: adr.adressebetegnelse,
                 bfe: aktiv.bfe,
                 rawData: { ...aktiv.rawData, secondary_address: true },
               });

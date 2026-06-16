@@ -223,6 +223,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           > = await addrRes.json();
           for (const aktiv of aktiver) {
             if (aktiv.type === 'ejendom' && aktiv.bfe) {
+              // BIZZ-2151: Sekundære adgangsadresser (fra koncernWalk) har
+              // allerede korrekt adresse/label — overskrivning med den
+              // primære BFE-adresse ville fjerne den sekundære adresse.
+              if (aktiv.rawData?.secondary_address) continue;
               const info = addrData[String(aktiv.bfe)];
               if (info?.adresse) {
                 // BIZZ-1441: Inkluder etage/dør i adresse for ejerlejligheder

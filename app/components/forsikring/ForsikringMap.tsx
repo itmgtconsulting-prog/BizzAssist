@@ -35,6 +35,24 @@ type MapStyle = keyof typeof STYLES;
 
 const STYLE_STORAGE_KEY = 'bizzassist-forsikring-map-style';
 
+/**
+ * BIZZ-2142: Logger WebGL/render-fejl fra Mapbox uden PII.
+ *
+ * Edge/Safari kan fejle WebGL-context-oprettelse (sort canvas). Vi logger en
+ * generisk besked til konsollen så fejlen kan diagnosticeres uden at lække
+ * koordinater, adresser eller andre persondata til loggen.
+ *
+ * @param e - Mapbox error-event (kan indeholde et Error-objekt)
+ */
+function logMapWebglError(e: { error?: Error } | unknown): void {
+  const msg =
+    e && typeof e === 'object' && 'error' in e && (e as { error?: Error }).error
+      ? (e as { error: Error }).error.message
+      : 'ukendt render-fejl';
+
+  console.warn('[ForsikringMap] WebGL/render-fejl:', msg);
+}
+
 /** Markør-data fra geo-endpointet */
 export interface ForsikringMarker {
   id: string;
@@ -311,6 +329,15 @@ function ForsikringMapInner({
         mapStyle={STYLES[mapStyle]}
         maxZoom={20}
         style={{ width: '100%', height: '100%' }}
+        // BIZZ-2142: Edge renderer kortet som sort flade (kun pins synlige) pga.
+        // WebGL-context/compositing-forskelle. preserveDrawingBuffer beholder
+        // canvas-bufferen mellem frames, antialias:false sænker GPU-kravet, og
+        // failIfMajorPerformanceCaveat:false tillader software-rendering-fallback
+        // på integrerede Intel-GPU'er — sammen løser de sort-canvas i Edge/Safari.
+        preserveDrawingBuffer
+        antialias={false}
+        failIfMajorPerformanceCaveat={false}
+        onError={(e) => logMapWebglError(e)}
         onClick={() => setPopupMarker(null)}
         onLoad={() => fitToMarkers()}
         onMoveEnd={() => updateMatrikelForViewport()}

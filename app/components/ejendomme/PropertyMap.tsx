@@ -1188,6 +1188,13 @@ function PropertyMap({
         style={MAP_STYLE}
         mapStyle={STYLES[mapStyle]}
         attributionControl={false}
+        // BIZZ-2142: Edge/Safari renderer kortet som sort flade pga. WebGL-
+        // context/compositing-forskelle. preserveDrawingBuffer beholder canvas-
+        // bufferen mellem frames, antialias:false sænker GPU-kravet og
+        // failIfMajorPerformanceCaveat:false tillader software-rendering-fallback.
+        preserveDrawingBuffer
+        antialias={false}
+        failIfMajorPerformanceCaveat={false}
         onLoad={handleMapLoad}
         onClick={onAdresseValgt ? handleKlik : undefined}
         onMouseMove={onAdresseValgt ? handleMouseMove : undefined}

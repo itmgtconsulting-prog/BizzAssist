@@ -193,6 +193,17 @@ ${markdown.slice(0, 30000)}`,
 
 // ─── Step 2: Enheder per forsikringstype ───────────────────────────
 
+/** Bygningsdata fra police (BIZZ-2145) */
+export interface BuildingData {
+  navn: string | null;
+  anvendelse: string | null;
+  bebygget_areal_m2: number | null;
+  antal_etager: number | null;
+  kaelder: boolean | null;
+  opfoert_aar: number | null;
+  forsikringsform: string | null;
+}
+
 /** Forsikret enhed (ejendom, bil, virksomhed) */
 export interface InsuredEntity {
   type: 'ejendom' | 'bil' | 'virksomhed' | 'person' | 'andet';
@@ -201,6 +212,8 @@ export interface InsuredEntity {
   bfe: string | null;
   cvr: string | null;
   registreringsnummer: string | null;
+  /** BIZZ-2145: Bygningsdata fra policen */
+  bygninger?: BuildingData[];
 }
 
 /**
@@ -236,8 +249,11 @@ For HVER enhed, angiv:
 - cvr: CVR-nummer hvis relevant (null ellers)
 - registreringsnummer: Bilens regnr hvis relevant (null ellers)
 
+For ejendomme: inkludér bygningsdata hvis nævnt:
+- bygninger: array af bygninger med: navn (fx "Bygning 1 - Beboelse"), anvendelse (fx "Restaurant og café"), bebygget_areal_m2, antal_etager, kaelder (true/false), opfoert_aar, forsikringsform (fx "Nyværdi")
+
 Returnér KUN gyldig JSON array:
-[{"type": "...", "label": "...", "adresse": "...", "bfe": null, "cvr": null, "registreringsnummer": null}]
+[{"type": "...", "label": "...", "adresse": "...", "bfe": null, "cvr": null, "registreringsnummer": null, "bygninger": [{"navn": "Bygning 1", "anvendelse": "Beboelse", "bebygget_areal_m2": 249, "antal_etager": 4, "kaelder": true, "opfoert_aar": 1850, "forsikringsform": "Nyværdi"}]}]
 
 OBS: Teksten kan have encoding-issues (ø→», å→}, æ→{) — ignorer det og parse indholdet.
 

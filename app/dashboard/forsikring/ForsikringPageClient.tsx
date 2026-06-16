@@ -1614,16 +1614,11 @@ function UnifiedAnalyseView({
   for (const aktiv of aktiver) {
     // BIZZ-1439: Dedup — skip duplikerede adresser (ejerskab kan have flere rækker per BFE)
     // Dedup via BFE (unikt per ejendom) — IKKE adresse (ejerlejligheder har samme adresse men forskellig etage/dør)
-    // BIZZ-2151: Sekundære adgangsadresser (koncernWalk markerer dem med
-    // raw_data.secondary_address) deler ét SFE-BFE men er distinkte adresser
-    // (fx Stengade 10A/B/C på samme matrikel). De må IKKE kollapse til én række,
-    // så for dem nøgles der på BFE + adresse i stedet for kun BFE.
-    const isSecondary =
-      (aktiv.raw_data as { secondary_address?: boolean } | null)?.secondary_address === true;
+    // BIZZ-2158: Sekundære adgangsadresser på samme SFE-BFE gemmes nu som
+    // secondaryAddresses-metadata på det primære aktiv (koncernWalk) — IKKE som
+    // egne aktiver — så ét BFE giver netop ét kort.
     const addrKey = aktiv.bfe
-      ? isSecondary
-        ? `${aktiv.bfe}|${(aktiv.adresse ?? aktiv.label).toLowerCase().trim()}`
-        : String(aktiv.bfe)
+      ? String(aktiv.bfe)
       : aktiv.type === 'virksomhed' && aktiv.cvr
         ? `cvr:${aktiv.cvr}`
         : aktiv.id;
@@ -4568,19 +4563,12 @@ function AnalyseDetailSection({
   }
 
   // Dedup aktiver
-  // BIZZ-2151: Sekundære adgangsadresser (koncernWalk markerer dem med
-  // raw_data.secondary_address) deler ét SFE-BFE men er distinkte adresser
-  // (fx Stengade 10A/B/C på samme matrikel). De må IKKE kollapse til én række,
-  // så for dem nøgles der på BFE + adresse i stedet for kun BFE.
+  // BIZZ-2158: Sekundære adgangsadresser på samme SFE-BFE gemmes som
+  // secondaryAddresses-metadata på det primære aktiv (koncernWalk) — IKKE som
+  // egne aktiver — så ét BFE giver netop én række.
   const seenBfe = new Set<string>();
   const uniqueAktiver = detail.aktiver.filter((a) => {
-    const isSecondary =
-      (a.raw_data as { secondary_address?: boolean } | null)?.secondary_address === true;
-    const key = a.bfe
-      ? isSecondary
-        ? `${a.bfe}|${(a.adresse ?? a.label).toLowerCase().trim()}`
-        : String(a.bfe)
-      : a.id;
+    const key = a.bfe ? String(a.bfe) : a.id;
     if (seenBfe.has(key)) return false;
     seenBfe.add(key);
     return true;

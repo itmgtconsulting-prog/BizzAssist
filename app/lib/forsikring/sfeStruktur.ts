@@ -19,6 +19,56 @@
 
 import type { MatchResult } from './assetMatcher';
 import type { ForsikringPolicy } from './types';
+import { logger } from '@/app/lib/logger';
+
+/**
+ * BIZZ-2134: Check om to jordstykke-polygoner er tilstødende (deler matrikelgrænse).
+ * Beregner mindste afstand mellem polygon-punkter — < 2m = tilstødende.
+ */
+function arePolygonsAdjacent(
+  poly1: Array<[number, number]>,
+  poly2: Array<[number, number]>
+): boolean {
+  const THRESHOLD_M = 2;
+  const COS_LAT = Math.cos((56 * Math.PI) / 180);
+  for (const p1 of poly1) {
+    for (const p2 of poly2) {
+      const dx = (p1[0] - p2[0]) * 111000 * COS_LAT;
+      const dy = (p1[1] - p2[1]) * 111000;
+      if (dx * dx + dy * dy < THRESHOLD_M * THRESHOLD_M) return true;
+    }
+  }
+  return false;
+}
+
+/** Cache for jordstykke-polygoner (BFE → polygon coords) */
+const polygonCache = new Map<number, Array<[number, number]> | null>();
+
+/**
+ * Hent jordstykke-polygon for et BFE fra DAWA (cached).
+ */
+async function fetchPolygon(bfe: number): Promise<Array<[number, number]> | null> {
+  if (polygonCache.has(bfe)) return polygonCache.get(bfe) ?? null;
+  try {
+    const r = await fetch(
+      `https://api.dataforsyningen.dk/jordstykker?bfenummer=${bfe}&format=geojson`,
+      { signal: AbortSignal.timeout(5000) }
+    );
+    if (!r.ok) {
+      polygonCache.set(bfe, null);
+      return null;
+    }
+    const gj = (await r.json()) as {
+      features?: Array<{ geometry?: { coordinates?: Array<Array<[number, number]>> } }>;
+    };
+    const poly = gj.features?.[0]?.geometry?.coordinates?.[0] ?? null;
+    polygonCache.set(bfe, poly);
+    return poly;
+  } catch {
+    polygonCache.set(bfe, null);
+    return null;
+  }
+}
 
 const DAWA = 'https://api.dataforsyningen.dk';
 const TIMEOUT_MS = 8000;
@@ -210,11 +260,11 @@ function ejerCvrAf(m: MatchResult): string | null {
  * @param policySfe - SFE-BFE → dækkende police
  * @returns Antal nedarvede dækninger + policy-IDs forankret i porteføljen
  */
-export function applySfeArv(
+export async function applySfeArv(
   matches: MatchResult[],
   aktivSfe: AktivSfeMap,
   policySfe: PolicySfeMap
-): SfeArvResultat {
+): Promise<SfeArvResultat> {
   // BIZZ-2130: Ejere pr. SFE — til søster-SFE-annoteringen kræves samme ejer
   // på begge sider (ellers ville hele ejerlav-fæller blive flaget).
   const sfeEjere = new Map<number, Set<string>>();
@@ -273,19 +323,32 @@ export function applySfeArv(
       continue;
     }
 
-    // 2) BIZZ-2130: Søster-SFE — aktivets SFE ligger i SAMME ejerlav som en
-    //    dækket SFE (forskellig SFE-BFE) med samme ejer. ANNOTÉR kun (ingen
-    //    dækning) så relationen er synlig og aktivet forbliver uforsikret.
+    // 2) BIZZ-2130 + BIZZ-2134: Søster-SFE — aktivets SFE ligger i SAMME ejerlav
+    //    som en dækket SFE, med SAMME ejer, OG matrikler der er fysisk tilstødende
+    //    (deler matrikelgrænse, ikke adskilt af vej). ANNOTÉR kun (ingen dækning).
     if (opslag.ejerlavKode == null) continue;
     const aktivEjer = ejerCvrAf(m);
     if (!aktivEjer) continue;
     for (const [polSfeBfe, entry] of policySfe) {
       if (entry.ejerlavKode !== opslag.ejerlavKode || polSfeBfe === opslag.sfeBfe) continue;
       if (!sfeEjere.get(polSfeBfe)?.has(aktivEjer)) continue;
+
+      // BIZZ-2134: Polygon adjacency check — kun tilstødende matrikler
+      try {
+        const [polyAktiv, polyPol] = await Promise.all([
+          fetchPolygon(opslag.sfeBfe),
+          fetchPolygon(polSfeBfe),
+        ]);
+        if (!polyAktiv || !polyPol || !arePolygonsAdjacent(polyAktiv, polyPol)) continue;
+      } catch {
+        continue; // Ved fejl: skip (konservativt)
+      }
+
       m.aktiv.rawData = {
         ...m.aktiv.rawData,
         soester_sfe: { sfe_bfe: polSfeBfe, sfe_adresse: entry.sfeAdresse },
       };
+      logger.log(`[sfeStruktur] Søster-SFE: ${m.aktiv.adresse} tilstødende ${entry.sfeAdresse}`);
       break;
     }
   }
@@ -361,5 +424,5 @@ export async function berigMedSfeStruktur(
   );
 
   // 3. Ren arve-regel
-  return applySfeArv(matches, aktivSfe, policySfe);
+  return await applySfeArv(matches, aktivSfe, policySfe);
 }

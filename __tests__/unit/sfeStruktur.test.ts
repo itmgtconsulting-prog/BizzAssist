@@ -96,11 +96,11 @@ describe('tilAdgangsadresse — BIZZ-2124', () => {
     expect(tilAdgangsadresse(input)).toBe(expected);
   });
 
-  it('kollapser husnummer-mellemrum fra rå PDF-form ("Torvegade 3 A")', () => {
+  it('kollapser husnummer-mellemrum fra rå PDF-form ("Torvegade 3 A")', async () => {
     expect(tilAdgangsadresse('Torvegade 3 A, 3000 Helsingør')).toBe('Torvegade 3A, 3000 Helsingør');
   });
 
-  it('rører ikke adresser uden etage/dør (postnr-segmentet bevares)', () => {
+  it('rører ikke adresser uden etage/dør (postnr-segmentet bevares)', async () => {
     expect(tilAdgangsadresse('Gefionsvej 47A, 3000 Helsingør')).toBe(
       'Gefionsvej 47A, 3000 Helsingør'
     );
@@ -109,14 +109,14 @@ describe('tilAdgangsadresse — BIZZ-2124', () => {
     );
   });
 
-  it('bevarer første segment selv hvis det ligner etage/dør (vejnavn husnr)', () => {
+  it('bevarer første segment selv hvis det ligner etage/dør (vejnavn husnr)', async () => {
     // Defensive: split må aldrig fjerne vejnavn-segmentet
     expect(tilAdgangsadresse('st, 3000 Helsingør')).toBe('st, 3000 Helsingør');
   });
 });
 
 describe('applySfeArv — BIZZ-2096', () => {
-  it('nedarver dækning til umatchet aktiv i dækket SFE med score 75 og markering', () => {
+  it('nedarver dækning til umatchet aktiv i dækket SFE med score 75 og markering', async () => {
     const policy = makePolicy();
     const matches: MatchResult[] = [
       unmatched(makeAktiv(SFE_BFE, 'Gefionsvej 47A, 3000 Helsingør')),
@@ -128,7 +128,7 @@ describe('applySfeArv — BIZZ-2096', () => {
     ]);
     const policySfe: PolicySfeMap = new Map([[SFE_BFE, policyEntry(policy)]]);
 
-    const { inherited } = applySfeArv(matches, aktivSfe, policySfe);
+    const { inherited } = await applySfeArv(matches, aktivSfe, policySfe);
 
     expect(inherited).toBe(2);
     for (const m of matches) {
@@ -143,21 +143,21 @@ describe('applySfeArv — BIZZ-2096', () => {
     }
   });
 
-  it('nedarver IKKE til aktiv i en anden SFE uden kendt ejer (konservativ kæde)', () => {
+  it('nedarver IKKE til aktiv i en anden SFE uden kendt ejer (konservativ kæde)', async () => {
     const matches: MatchResult[] = [
       unmatched(makeAktiv(ANDEN_SFE, 'Fenrisvej 19, 3000 Helsingør')),
     ];
     const aktivSfe: AktivSfeMap = new Map([[0, { sfeBfe: ANDEN_SFE, ejerlavKode: EJERLAV }]]);
     const policySfe: PolicySfeMap = new Map([[SFE_BFE, policyEntry(makePolicy())]]);
 
-    const { inherited } = applySfeArv(matches, aktivSfe, policySfe);
+    const { inherited } = await applySfeArv(matches, aktivSfe, policySfe);
 
     expect(inherited).toBe(0);
     expect(matches[0].bestMatch).toBeNull();
     expect(matches[0].aktiv.rawData?.daekket_via_sfe).toBeUndefined();
   });
 
-  it('rører ikke direkte matches — direkte match vinder over arv', () => {
+  it('rører ikke direkte matches — direkte match vinder over arv', async () => {
     const direktePolicy = makePolicy({ id: 'pol-direkte' });
     const matches: MatchResult[] = [
       {
@@ -169,14 +169,14 @@ describe('applySfeArv — BIZZ-2096', () => {
     const aktivSfe: AktivSfeMap = new Map([[0, { sfeBfe: SFE_BFE, ejerlavKode: EJERLAV }]]);
     const policySfe: PolicySfeMap = new Map([[SFE_BFE, policyEntry(makePolicy())]]);
 
-    const { inherited } = applySfeArv(matches, aktivSfe, policySfe);
+    const { inherited } = await applySfeArv(matches, aktivSfe, policySfe);
 
     expect(inherited).toBe(0);
     expect(matches[0].bestMatch?.policy.id).toBe('pol-direkte');
     expect(matches[0].bestMatch?.score).toBe(90);
   });
 
-  it('annoterer alle aktiver med sfe_bfe + sfe_niveau til UI-gruppering', () => {
+  it('annoterer alle aktiver med sfe_bfe + sfe_niveau til UI-gruppering', async () => {
     const matches: MatchResult[] = [
       unmatched(makeAktiv(SFE_BFE, 'Gefionsvej 47A, 3000 Helsingør')),
       unmatched(makeAktiv(123456, 'Fenrisvej 27B, 3000 Helsingør')),
@@ -194,17 +194,17 @@ describe('applySfeArv — BIZZ-2096', () => {
     expect(matches[1].aktiv.rawData?.sfe_niveau).toBe('underliggende');
   });
 
-  it('springer ikke-ejendom-aktiver over selv ved SFE-opslag', () => {
+  it('springer ikke-ejendom-aktiver over selv ved SFE-opslag', async () => {
     const virksomhed: Aktiv = { type: 'virksomhed', label: 'Belvedere', cvr: '24301117' };
     const matches: MatchResult[] = [{ aktiv: virksomhed, bestMatch: null, candidates: [] }];
     const aktivSfe: AktivSfeMap = new Map([[0, { sfeBfe: SFE_BFE, ejerlavKode: EJERLAV }]]);
     const policySfe: PolicySfeMap = new Map([[SFE_BFE, policyEntry(makePolicy())]]);
 
-    expect(applySfeArv(matches, aktivSfe, policySfe).inherited).toBe(0);
+    expect((await applySfeArv(matches, aktivSfe, policySfe)).inherited).toBe(0);
     expect(matches[0].bestMatch).toBeNull();
   });
 
-  it('bevarer eksisterende rawData ved annotering', () => {
+  it('bevarer eksisterende rawData ved annotering', async () => {
     const aktiv = makeAktiv(123456, 'Fenrisvej 27A, 3000 Helsingør');
     aktiv.rawData = { ejer_cvr: '24301117' };
     const matches: MatchResult[] = [unmatched(aktiv)];
@@ -221,7 +221,7 @@ describe('applySfeArv — BIZZ-2096', () => {
 describe('applySfeArv — søster-SFE (BIZZ-2128 fjerner dækning, BIZZ-2130 annoterer)', () => {
   const EJER = '24301117'; // BELVEDERE EJENDOMME A/S
 
-  it('søster-SFE: ingen dækning (BIZZ-2128) men annoteres med soester_sfe (BIZZ-2130)', () => {
+  it('søster-SFE: ingen dækning (BIZZ-2128) men annoteres med soester_sfe (BIZZ-2130)', async () => {
     // Police på SFE_BFE; aktiv på ANDEN_SFE i samme ejerlav, samme ejer.
     // Må IKKE arve dækning (BIZZ-2118-kæden fjernet), men SKAL annoteres som
     // søster-SFE til policens forsikringssted (Bramstræde/Stengade-casen).
@@ -236,7 +236,7 @@ describe('applySfeArv — søster-SFE (BIZZ-2128 fjerner dækning, BIZZ-2130 ann
     ]);
     const policySfe: PolicySfeMap = new Map([[SFE_BFE, policyEntry(policy)]]);
 
-    const { inherited } = applySfeArv(matches, aktivSfe, policySfe);
+    const { inherited } = await applySfeArv(matches, aktivSfe, policySfe);
 
     // Kun det direkte SFE-aktiv arver dækning
     expect(inherited).toBe(1);
@@ -251,7 +251,7 @@ describe('applySfeArv — søster-SFE (BIZZ-2128 fjerner dækning, BIZZ-2130 ann
     expect(matches[1].aktiv.rawData?.daekket_via_sfe).toBeUndefined();
   });
 
-  it('annoterer IKKE søster-SFE når ejeren afviger', () => {
+  it('annoterer IKKE søster-SFE når ejeren afviger', async () => {
     const matches: MatchResult[] = [
       unmatched(makeAktiv(123456, 'Bramstræde 5, 3000 Helsingør', EJER)),
       unmatched(makeAktiv(ANDEN_SFE, 'Stengade 8G, 3000 Helsingør', '99999999')),
@@ -267,7 +267,7 @@ describe('applySfeArv — søster-SFE (BIZZ-2128 fjerner dækning, BIZZ-2130 ann
     expect(matches[1].aktiv.rawData?.soester_sfe).toBeUndefined();
   });
 
-  it('annoterer IKKE søster-SFE på tværs af ejerlav', () => {
+  it('annoterer IKKE søster-SFE på tværs af ejerlav', async () => {
     const matches: MatchResult[] = [
       unmatched(makeAktiv(123456, 'Bramstræde 5, 3000 Helsingør', EJER)),
       unmatched(makeAktiv(ANDEN_SFE, 'Hovedgade 5, 8000 Aarhus', EJER)),
@@ -283,7 +283,7 @@ describe('applySfeArv — søster-SFE (BIZZ-2128 fjerner dækning, BIZZ-2130 ann
     expect(matches[1].aktiv.rawData?.soester_sfe).toBeUndefined();
   });
 
-  it('markerer police som portefølje-forankret når dens SFE rummer aktiver — også uden arv', () => {
+  it('markerer police som portefølje-forankret når dens SFE rummer aktiver — også uden arv', async () => {
     const matches: MatchResult[] = [
       // Direkte matchet aktiv på policens SFE — ingen arv nødvendig
       {
@@ -295,7 +295,7 @@ describe('applySfeArv — søster-SFE (BIZZ-2128 fjerner dækning, BIZZ-2130 ann
     const aktivSfe: AktivSfeMap = new Map([[0, { sfeBfe: SFE_BFE, ejerlavKode: EJERLAV }]]);
     const policySfe: PolicySfeMap = new Map([[SFE_BFE, policyEntry(makePolicy())]]);
 
-    const { inherited, portefoeljePolicyIds } = applySfeArv(matches, aktivSfe, policySfe);
+    const { inherited, portefoeljePolicyIds } = await applySfeArv(matches, aktivSfe, policySfe);
 
     expect(inherited).toBe(0);
     expect(portefoeljePolicyIds.has('pol-1')).toBe(true);

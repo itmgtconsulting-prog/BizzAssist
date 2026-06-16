@@ -346,6 +346,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
               source_type: 'v2',
               insurance_type: ins.identification.type,
               bygninger: ent.entity.bygninger ?? null,
+              // BIZZ-2144: Gem reg.nr fra bilpolicer så UI kan linke til
+              // motorregisterets åbne opslag.
+              registreringsnummer: ent.entity.registreringsnummer ?? null,
             },
             created_by: auth.userId,
             sag_id: docSagId,

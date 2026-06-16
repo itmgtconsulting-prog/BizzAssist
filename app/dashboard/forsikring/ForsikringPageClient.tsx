@@ -50,6 +50,7 @@ import {
   BookOpen,
   Info,
   Map as MapIcon,
+  Car,
   X,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
@@ -217,6 +218,8 @@ interface AnalysePolicy {
    * forsikringssted; 'tvivlsom' = kun fuzzy navne-match → vis gul advarsel.
    */
   attachment?: 'sikker' | 'tvivlsom';
+  /** BIZZ-2144: Rå metadata fra parseren — bl.a. bilers registreringsnummer. */
+  raw_metadata?: { registreringsnummer?: string | null } | null;
 }
 
 /**
@@ -1292,6 +1295,21 @@ export function forsikringTypeLabel(
 }
 
 /**
+ * BIZZ-2144: Byg link til Motorstyrelsens åbne motorregister-opslag for et
+ * registreringsnummer. Det officielle DMR-selvbetjeningssøg tager reg.nr som
+ * fritekst-query, så brugeren lander direkte på køretøjets oplysninger.
+ *
+ * @param regnr - Registreringsnummer (fx "CE18728")
+ * @returns Absolut URL til motorregisterets offentlige opslag
+ */
+export function motorRegisterUrl(regnr: string): string {
+  const clean = regnr.replace(/\s+/g, '').toUpperCase();
+  return `https://motorregister.skat.dk/dmr-kerne/koeretoejdetaljerfraadmr/visKoeretoej?soegekriterie=${encodeURIComponent(
+    clean
+  )}`;
+}
+
+/**
  * BIZZ-2099: "Fundne forsikringer" — grøn boks pr. police i analysen med alle
  * dækninger (inkl. dækningssum + selvrisiko), så det der ER dækket vises
  * eksplicit — ikke kun manglerne. Adresseløse virksomhedspolicer (Cyber,
@@ -1376,6 +1394,9 @@ function FundneForsikringer({ detail, da }: { detail: AnalyseDetail; da: boolean
           const tvivlsom = group.every((p) => p.attachment === 'tvivlsom');
           const first = group[0];
           const flereSteder = group.length > 1;
+          // BIZZ-2144: Reg.nr fra bilpolicer → link til motorregisterets opslag
+          const regnr =
+            group.map((p) => p.raw_metadata?.registreringsnummer).find((r) => !!r) ?? null;
           return (
             <div
               key={first.policy_number || first.id}
@@ -1398,6 +1419,25 @@ function FundneForsikringer({ detail, da }: { detail: AnalyseDetail; da: boolean
                   <div className="text-slate-400 text-[11px] truncate">
                     {[first.insurer_name, first.policy_number].filter(Boolean).join(' — ')}
                   </div>
+                  {/* BIZZ-2144: Bilpolice → link til motorregisterets åbne opslag */}
+                  {regnr && (
+                    <a
+                      href={motorRegisterUrl(regnr)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-white/10 bg-white/5 text-slate-300 hover:text-white hover:border-white/20 hover:bg-white/10 transition-colors text-[10px] font-medium"
+                      aria-label={`${da ? 'Slå op i motorregisteret' : 'Look up in motor register'}: ${regnr}`}
+                      title={
+                        da
+                          ? 'Slå køretøjet op i motorregisteret'
+                          : 'Look up the vehicle in the motor register'
+                      }
+                    >
+                      <Car size={11} className="shrink-0" />
+                      <span className="font-mono tracking-wide">{regnr.toUpperCase()}</span>
+                      <ExternalLink size={10} className="shrink-0" />
+                    </a>
+                  )}
                   {/* BIZZ-2152: Antal forsikringssteder når policen dækker flere */}
                   {flereSteder && (
                     <div className="text-slate-400 text-[11px]">

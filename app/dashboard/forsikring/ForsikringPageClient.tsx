@@ -2602,6 +2602,40 @@ function AnalyseSection({
                 );
               })()}
 
+              {/* BIZZ-2141: Re-parse alle dokumenter med v2-pipeline */}
+              {previousDocs.length > 0 && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (
+                      !window.confirm(
+                        da
+                          ? `Re-parse alle ${previousDocs.length} dokumenter med den nyeste parser? Det kan tage flere minutter.`
+                          : `Re-parse all ${previousDocs.length} documents with the latest parser? This may take several minutes.`
+                      )
+                    )
+                      return;
+                    for (const doc of previousDocs) {
+                      try {
+                        await fetch('/api/forsikring/parse', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ document_id: doc.id }),
+                        });
+                      } catch {
+                        /* continue with next */
+                      }
+                    }
+                    onRefresh();
+                  }}
+                  className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                >
+                  {da
+                    ? `Re-parse alle (${previousDocs.length})`
+                    : `Re-parse all (${previousDocs.length})`}
+                </button>
+              )}
+
               {/* BIZZ-1442: Samlet doc-liste — alle docs med checkboxes */}
               {(() => {
                 // Merge previous docs + wizard uploads til én liste

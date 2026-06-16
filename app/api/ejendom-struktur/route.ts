@@ -460,8 +460,54 @@ async function fetchEjerskabBatch(bfeList: number[]): Promise<Map<number, EjerIn
  * @param excludeBfes - BFE'er der allerede er i træet
  * @returns Søster-SFE-noder (tom liste ved person-ejer eller fejl)
  */
-// BIZZ-2134: Deaktiveret — se kommentar ved linje 1336
-async function _fetchSoesterSfeNodes(
+/**
+ * Check om to jordstykke-polygoner er tilstødende (deler matrikelgrænse).
+ * Beregner mindste afstand mellem polygon-punkter — < 2m = tilstødende.
+ *
+ * @param poly1 - GeoJSON koordinater [lng, lat][]
+ * @param poly2 - GeoJSON koordinater [lng, lat][]
+ * @returns true hvis polyonerne deler en grænse
+ */
+function _arePolygonsAdjacent(
+  poly1: Array<[number, number]>,
+  poly2: Array<[number, number]>
+): boolean {
+  const THRESHOLD_M = 2; // 2 meter = deler grænse
+  const COS_LAT = Math.cos((56 * Math.PI) / 180); // ~Helsingør breddegrad
+  for (const p1 of poly1) {
+    for (const p2 of poly2) {
+      const dx = (p1[0] - p2[0]) * 111000 * COS_LAT;
+      const dy = (p1[1] - p2[1]) * 111000;
+      if (dx * dx + dy * dy < THRESHOLD_M * THRESHOLD_M) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Hent jordstykke-polygon for et BFE fra DAWA.
+ *
+ * @param bfe - BFE-nummer
+ * @returns Polygon-koordinater eller null
+ */
+async function _fetchJordstykkePolygon(bfe: number): Promise<Array<[number, number]> | null> {
+  try {
+    const r = await fetchDawa(
+      `https://api.dataforsyningen.dk/jordstykker?bfenummer=${bfe}&format=geojson`,
+      { signal: AbortSignal.timeout(5000) },
+      { caller: 'ejendom-struktur.polygon' }
+    );
+    if (!r.ok) return null;
+    const gj = (await r.json()) as {
+      features?: Array<{ geometry?: { coordinates?: Array<Array<[number, number]>> } }>;
+    };
+    return gj.features?.[0]?.geometry?.coordinates?.[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function _fetchSoesterSfeNodes2(
   rootBfe: number,
   ejerlavKode: string,
   excludeBfes: Set<number>

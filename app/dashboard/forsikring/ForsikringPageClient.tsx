@@ -716,6 +716,59 @@ function PropertyRow({
             </div>
           )}
 
+          {/* BIZZ-2145: Bygningsdata fra policen */}
+          {group.matchedPolicy &&
+            (() => {
+              const bygninger = (
+                group.matchedPolicy as unknown as {
+                  raw_metadata?: {
+                    bygninger?: Array<{
+                      navn: string | null;
+                      anvendelse: string | null;
+                      bebygget_areal_m2: number | null;
+                      antal_etager: number | null;
+                      kaelder: boolean | null;
+                      opfoert_aar: number | null;
+                      forsikringsform: string | null;
+                    }>;
+                  };
+                }
+              ).raw_metadata?.bygninger;
+              if (!bygninger || bygninger.length === 0) return null;
+              return (
+                <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg px-3 py-2 mb-2">
+                  <span className="text-blue-300 text-xs font-medium">
+                    {da ? 'Bygninger i policen' : 'Buildings in policy'} ({bygninger.length})
+                  </span>
+                  <div className="mt-1 space-y-1">
+                    {bygninger.map((b, i) => (
+                      <div key={i} className="text-[10px] text-slate-300 flex flex-wrap gap-x-3">
+                        <span className="text-white font-medium">
+                          {b.navn || `Bygning ${i + 1}`}
+                        </span>
+                        {b.anvendelse && <span>{b.anvendelse}</span>}
+                        {b.bebygget_areal_m2 && <span>{b.bebygget_areal_m2} m²</span>}
+                        {b.antal_etager && (
+                          <span>
+                            {b.antal_etager} {da ? 'etager' : 'floors'}
+                          </span>
+                        )}
+                        {b.opfoert_aar && (
+                          <span>
+                            {da ? 'opført' : 'built'} {b.opfoert_aar}
+                          </span>
+                        )}
+                        {b.kaelder && <span>{da ? 'kælder' : 'basement'}</span>}
+                        {b.forsikringsform && (
+                          <span className="text-blue-300">{b.forsikringsform}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
           {/* BIZZ-2084: Grøn "Dækket"-sektion — vis hvad der ER dækket inkl.
               dækningssum + selvrisiko, så dækningsniveauet kan reviewes med kunden */}
           {group.coverages.length > 0 && (

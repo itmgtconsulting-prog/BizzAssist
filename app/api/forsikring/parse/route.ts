@@ -315,12 +315,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             property_bfe: ent.entity.bfe ?? null,
             property_entity_id: null,
             business_activity: ins.identification.type ?? null,
-            building_use: null,
-            building_area_m2: null,
-            building_floors: null,
-            building_year_built: null,
-            building_has_basement: null,
-            insurance_form: null,
+            building_use: ent.entity.bygninger?.[0]?.anvendelse ?? null,
+            building_area_m2: ent.entity.bygninger?.[0]?.bebygget_areal_m2 ?? null,
+            building_floors: ent.entity.bygninger?.[0]?.antal_etager ?? null,
+            building_year_built: ent.entity.bygninger?.[0]?.opfoert_aar ?? null,
+            building_has_basement: ent.entity.bygninger?.[0]?.kaelder ?? null,
+            insurance_form:
+              ent.entity.bygninger?.[0]?.forsikringsform === 'Nyværdi'
+                ? ('nyvaerdi' as const)
+                : ent.entity.bygninger?.[0]?.forsikringsform === 'Sum'
+                  ? ('sum' as const)
+                  : null,
             sum_insured_dkk: null,
             annual_premium_dkk: null,
             general_deductible_dkk: null,
@@ -328,7 +333,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             effective_to: null,
             main_renewal_date: null,
             policy_issued_date: null,
-            raw_metadata: { source_type: 'v2', insurance_type: ins.identification.type },
+            raw_metadata: {
+              source_type: 'v2',
+              insurance_type: ins.identification.type,
+              bygninger: ent.entity.bygninger ?? null,
+            },
             created_by: auth.userId,
             sag_id: docSagId,
           });

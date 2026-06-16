@@ -770,22 +770,49 @@ function PropertyRow({
 
           {/* BIZZ-2145/2155: Bygningsdata — police vs. BBR side om side */}
           {(() => {
-            const bygninger =
-              (
-                group.matchedPolicy as unknown as {
-                  raw_metadata?: {
-                    bygninger?: Array<{
-                      navn: string | null;
-                      anvendelse: string | null;
-                      bebygget_areal_m2: number | null;
-                      antal_etager: number | null;
-                      kaelder: boolean | null;
-                      opfoert_aar: number | null;
-                      forsikringsform: string | null;
-                    }>;
-                  };
-                } | null
-              )?.raw_metadata?.bygninger ?? [];
+            type PolBygning = {
+              navn: string | null;
+              anvendelse: string | null;
+              bebygget_areal_m2: number | null;
+              antal_etager: number | null;
+              kaelder: boolean | null;
+              opfoert_aar: number | null;
+              forsikringsform: string | null;
+            };
+            const mp = group.matchedPolicy as unknown as {
+              raw_metadata?: { bygninger?: PolBygning[] };
+              building_use?: string | null;
+              building_area_m2?: number | null;
+              building_floors?: number | null;
+              building_year_built?: number | null;
+              building_has_basement?: boolean | null;
+            } | null;
+            const rawBygninger = mp?.raw_metadata?.bygninger ?? [];
+            // raw_metadata.bygninger er ofte tom selv når policen har bygningsdata
+            // (parseren gemmer arealet i de flade building_*-kolonner). Falder
+            // tilbage til disse, så police-arealet kan sammenholdes med BBR.
+            const harFladeFelter =
+              mp != null &&
+              (mp.building_area_m2 != null ||
+                mp.building_year_built != null ||
+                mp.building_floors != null ||
+                (mp.building_use ?? null) != null);
+            const bygninger: PolBygning[] =
+              rawBygninger.length > 0
+                ? rawBygninger
+                : harFladeFelter
+                  ? [
+                      {
+                        navn: null,
+                        anvendelse: mp!.building_use ?? null,
+                        bebygget_areal_m2: mp!.building_area_m2 ?? null,
+                        antal_etager: mp!.building_floors ?? null,
+                        kaelder: mp!.building_has_basement ?? null,
+                        opfoert_aar: mp!.building_year_built ?? null,
+                        forsikringsform: null,
+                      },
+                    ]
+                  : [];
             // Vis intet hvis hverken police- eller BBR-bygningsdata findes.
             if (bygninger.length === 0 && !aktivBbr) return null;
 

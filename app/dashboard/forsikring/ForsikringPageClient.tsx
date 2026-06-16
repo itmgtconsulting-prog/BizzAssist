@@ -1614,8 +1614,16 @@ function UnifiedAnalyseView({
   for (const aktiv of aktiver) {
     // BIZZ-1439: Dedup — skip duplikerede adresser (ejerskab kan have flere rækker per BFE)
     // Dedup via BFE (unikt per ejendom) — IKKE adresse (ejerlejligheder har samme adresse men forskellig etage/dør)
+    // BIZZ-2151: Sekundære adgangsadresser (koncernWalk markerer dem med
+    // raw_data.secondary_address) deler ét SFE-BFE men er distinkte adresser
+    // (fx Stengade 10A/B/C på samme matrikel). De må IKKE kollapse til én række,
+    // så for dem nøgles der på BFE + adresse i stedet for kun BFE.
+    const isSecondary =
+      (aktiv.raw_data as { secondary_address?: boolean } | null)?.secondary_address === true;
     const addrKey = aktiv.bfe
-      ? String(aktiv.bfe)
+      ? isSecondary
+        ? `${aktiv.bfe}|${(aktiv.adresse ?? aktiv.label).toLowerCase().trim()}`
+        : String(aktiv.bfe)
       : aktiv.type === 'virksomhed' && aktiv.cvr
         ? `cvr:${aktiv.cvr}`
         : aktiv.id;

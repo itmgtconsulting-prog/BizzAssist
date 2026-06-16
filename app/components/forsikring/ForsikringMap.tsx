@@ -48,6 +48,21 @@ export interface ForsikringMarker {
   isInsured: boolean;
   gapCritical: number;
   gapWarning: number;
+  /** BIZZ-2145: BBR bygningsdata */
+  bbr?: {
+    bebygget_areal: number | null;
+    antal_etager: number | null;
+    opfoerelsesaar: number | null;
+    anvendelse: string | null;
+  } | null;
+  /** BIZZ-2145: Police bygningsdata */
+  policeBygninger?: Array<{
+    navn: string | null;
+    anvendelse: string | null;
+    bebygget_areal_m2: number | null;
+    antal_etager: number | null;
+    opfoert_aar: number | null;
+  }> | null;
 }
 
 interface ForsikringMapProps {
@@ -335,6 +350,56 @@ function ForsikringMapInner({
                   {popupMarker.gapCritical + popupMarker.gapWarning}{' '}
                   {da ? 'forsikringshuller' : 'gaps'}
                 </p>
+              )}
+              {/* BIZZ-2145: BBR vs Police bygningsdata */}
+              {(popupMarker.bbr || popupMarker.policeBygninger) && (
+                <div className="mt-2 border-t border-slate-700/50 pt-1.5 space-y-1">
+                  {popupMarker.bbr && (
+                    <div className="text-[9px]">
+                      <span className="text-blue-400 font-medium">BBR:</span>
+                      <span className="text-slate-300 ml-1">
+                        {popupMarker.bbr.bebygget_areal
+                          ? `${popupMarker.bbr.bebygget_areal} m²`
+                          : ''}
+                        {popupMarker.bbr.antal_etager
+                          ? ` · ${popupMarker.bbr.antal_etager} et.`
+                          : ''}
+                        {popupMarker.bbr.opfoerelsesaar
+                          ? ` · ${popupMarker.bbr.opfoerelsesaar}`
+                          : ''}
+                      </span>
+                    </div>
+                  )}
+                  {popupMarker.policeBygninger?.map((b, i) => (
+                    <div key={i} className="text-[9px]">
+                      <span className="text-emerald-400 font-medium">
+                        {da ? 'Police' : 'Policy'}:
+                      </span>
+                      <span className="text-slate-300 ml-1">
+                        {b.bebygget_areal_m2 ? `${b.bebygget_areal_m2} m²` : ''}
+                        {b.antal_etager ? ` · ${b.antal_etager} et.` : ''}
+                        {b.opfoert_aar ? ` · ${b.opfoert_aar}` : ''}
+                        {b.anvendelse ? ` · ${b.anvendelse}` : ''}
+                      </span>
+                    </div>
+                  ))}
+                  {/* Advarsel ved areal-afvigelse > 15% */}
+                  {popupMarker.bbr?.bebygget_areal &&
+                    popupMarker.policeBygninger?.[0]?.bebygget_areal_m2 &&
+                    (() => {
+                      const bbrAreal = popupMarker.bbr!.bebygget_areal!;
+                      const polAreal = popupMarker.policeBygninger![0].bebygget_areal_m2!;
+                      const pct = (Math.abs(bbrAreal - polAreal) / bbrAreal) * 100;
+                      if (pct > 15)
+                        return (
+                          <div className="text-[9px] text-amber-400 font-medium">
+                            ⚠ {da ? 'Areal-afvigelse' : 'Area mismatch'}: BBR {bbrAreal}m² vs Police{' '}
+                            {polAreal}m² ({pct.toFixed(0)}%)
+                          </div>
+                        );
+                      return null;
+                    })()}
+                </div>
               )}
             </div>
             <button

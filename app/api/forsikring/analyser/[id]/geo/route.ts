@@ -19,6 +19,23 @@ import { logger } from '@/app/lib/logger';
 const DAWA_BASE = 'https://api.dataforsyningen.dk';
 
 /** Markør-type returneret til klienten */
+/** BIZZ-2145: Bygningsdata fra BBR */
+interface BbrData {
+  bebygget_areal: number | null;
+  antal_etager: number | null;
+  opfoerelsesaar: number | null;
+  anvendelse: string | null;
+}
+
+/** BIZZ-2145: Bygningsdata fra police */
+interface PoliceBygning {
+  navn: string | null;
+  anvendelse: string | null;
+  bebygget_areal_m2: number | null;
+  antal_etager: number | null;
+  opfoert_aar: number | null;
+}
+
 interface ForsikringMarker {
   id: string;
   type: 'ejendom' | 'virksomhed';
@@ -31,6 +48,10 @@ interface ForsikringMarker {
   isInsured: boolean;
   gapCritical: number;
   gapWarning: number;
+  /** BIZZ-2145: BBR bygningsdata */
+  bbr?: BbrData | null;
+  /** BIZZ-2145: Police bygningsdata */
+  policeBygninger?: PoliceBygning[] | null;
 }
 
 /** DAWA mini-struktur svar */
@@ -196,6 +217,50 @@ export async function GET(
       }
     }
 
+    // BIZZ-2145: Hent BBR-data for alle BFE'er
+    const bbrMap = new Map<number, BbrData>();
+    if (bfeNrs.length > 0) {
+      const { data: bbrRows } = await admin
+        .from('bbr_ejendom_status')
+        .select('bfe_nummer, bebygget_areal, antal_etager, opfoerelsesaar, byg021_anvendelse')
+        .in('bfe_nummer', bfeNrs);
+      for (const row of (bbrRows ?? []) as Array<{
+        bfe_nummer: number;
+        bebygget_areal: number | null;
+        antal_etager: number | null;
+        opfoerelsesaar: number | null;
+        byg021_anvendelse: string | null;
+      }>) {
+        bbrMap.set(row.bfe_nummer, {
+          bebygget_areal: row.bebygget_areal,
+          antal_etager: row.antal_etager,
+          opfoerelsesaar: row.opfoerelsesaar,
+          anvendelse: row.byg021_anvendelse,
+        });
+      }
+    }
+
+    // BIZZ-2145: Hent police-bygningsdata via matched_policy_id → raw_metadata.bygninger
+    const policeBygningerMap = new Map<string, PoliceBygning[]>();
+    const matchedPolicyIds = aktiver
+      .filter((a) => a.matched_policy_id)
+      .map((a) => a.matched_policy_id!);
+    if (matchedPolicyIds.length > 0) {
+      const { data: policyRows } = await db
+        .from('forsikring_policies')
+        .select('id, raw_metadata')
+        .in('id', [...new Set(matchedPolicyIds)])
+        .eq('tenant_id', auth.tenantId);
+      for (const row of (policyRows ?? []) as Array<{
+        id: string;
+        raw_metadata: { bygninger?: PoliceBygning[] } | null;
+      }>) {
+        if (row.raw_metadata?.bygninger) {
+          policeBygningerMap.set(row.id, row.raw_metadata.bygninger);
+        }
+      }
+    }
+
     // Geokod alle aktiver (maks 10 parallelt for at skåne DAWA)
     const markers: ForsikringMarker[] = [];
     for (let i = 0; i < aktiver.length; i += 10) {
@@ -229,6 +294,10 @@ export async function GET(
             isInsured: !!aktiv.matched_policy_id,
             gapCritical: gaps?.critical ?? 0,
             gapWarning: gaps?.warning ?? 0,
+            bbr: aktiv.bfe ? (bbrMap.get(aktiv.bfe) ?? null) : null,
+            policeBygninger: aktiv.matched_policy_id
+              ? (policeBygningerMap.get(aktiv.matched_policy_id) ?? null)
+              : null,
           } satisfies ForsikringMarker;
         })
       );

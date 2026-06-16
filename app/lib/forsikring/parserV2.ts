@@ -431,6 +431,76 @@ export interface V2ParseResult {
 }
 
 /**
+ * BIZZ-2157: Udtræk et dansk registreringsnummer fra police-tekst.
+ *
+ * Danske nummerplader er 2 bogstaver + 5 cifre (fx "CE 18728" / "CE18728").
+ * Kaldes kun når dokumentet allerede er identificeret som en bilforsikring, så
+ * et tilfældigt 2+5-mønster i en ejendomspolice ikke fejltolkes som reg.nr.
+ *
+ * @param tekst - Markdown-tekst fra policen
+ * @returns Registreringsnummer uden mellemrum (versaler), eller null
+ */
+export function extractRegistreringsnummer(tekst: string): string | null {
+  const m = tekst.match(/\b([A-ZÆØÅ]{2})\s?(\d{5})\b/);
+  return m ? `${m[1]}${m[2]}` : null;
+}
+
+/**
+ * BIZZ-2157: Deterministisk efter-korrektion af bilforsikringer.
+ *
+ * LLM'en (Step 1) klassificerer indimellem en bilpolice som "Ejendomsforsikring"
+ * — typisk fordi forsikringstageren er et ejendomsselskab — og sætter samtidig
+ * et forsikringssted (Step 2), selvom en bilforsikring aldrig har et
+ * forsikringssted. Police 172 265 995 (Alm. Brand Bilforsikring, VW Caddy
+ * CE18728) er det kanoniske eksempel.
+ *
+ * Reglerne her er rent deterministiske og kører efter pipelinen:
+ *  - En forsikring er en bilforsikring hvis dens type allerede nævner bil/auto,
+ *    hvis en af dens enheder har et registreringsnummer, ELLER hvis dokumentet
+ *    er en enkelt-police der eksplicit hedder "Bilforsikring"/"Autoforsikring"
+ *    og indeholder et registreringsnummer.
+ *  - For en bilforsikring tvinges type til "Bilforsikring", og hver enhed får
+ *    adresse=null (intet forsikringssted) + type='bil' + reg.nr udfyldt fra
+ *    dokumentet hvis det manglede.
+ *  - Uafhængigt heraf: enhver enhed der HAR et registreringsnummer får
+ *    adresse=null — et køretøj har aldrig et forsikringssted.
+ *
+ * @param result - Råt v2-parse-resultat
+ * @returns Samme resultat med bilforsikringer korrigeret in-place
+ */
+export function korrigerBilforsikring(result: V2ParseResult): V2ParseResult {
+  const markdownBil = /bilforsikring|autoforsikring/i.test(result.markdown);
+  const docRegnr = markdownBil ? extractRegistreringsnummer(result.markdown) : null;
+  const enkeltPolice = result.insurances.length === 1;
+
+  for (const ins of result.insurances) {
+    const typeErBil = /bil|auto|motorkøretøj|motorkoeretoej/i.test(ins.identification.type ?? '');
+    const enhedHarRegnr = ins.entities.some((e) => !!e.entity.registreringsnummer);
+    const erBil = typeErBil || enhedHarRegnr || (markdownBil && !!docRegnr && enkeltPolice);
+
+    if (erBil) {
+      ins.identification.type = 'Bilforsikring';
+      for (const e of ins.entities) {
+        e.entity.type = 'bil';
+        e.entity.adresse = null;
+        e.entity.bfe = null;
+        e.entity.bygninger = undefined;
+        if (!e.entity.registreringsnummer && docRegnr) {
+          e.entity.registreringsnummer = docRegnr;
+        }
+      }
+    } else {
+      // Køretøjs-enheder i blandede aftaler: et reg.nr betyder intet forsikringssted.
+      for (const e of ins.entities) {
+        if (e.entity.registreringsnummer) e.entity.adresse = null;
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
  * Kør hele v2-pipeline: Step 0 → 1 → 2 → 3 → 4.
  *
  * @param pdfBuffer - PDF-bytes
@@ -473,5 +543,7 @@ export async function parseV2(pdfBuffer: Buffer, apiKey: string): Promise<V2Pars
       `${conditions.length} betingelser`
   );
 
-  return { markdown, insurances, conditions };
+  // BIZZ-2157: Deterministisk korrektion af fejlklassificerede bilforsikringer
+  // (type → "Bilforsikring", forsikringssted → null, reg.nr udfyldt).
+  return korrigerBilforsikring({ markdown, insurances, conditions });
 }

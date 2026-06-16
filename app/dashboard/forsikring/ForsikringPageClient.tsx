@@ -4568,9 +4568,19 @@ function AnalyseDetailSection({
   }
 
   // Dedup aktiver
+  // BIZZ-2151: Sekundære adgangsadresser (koncernWalk markerer dem med
+  // raw_data.secondary_address) deler ét SFE-BFE men er distinkte adresser
+  // (fx Stengade 10A/B/C på samme matrikel). De må IKKE kollapse til én række,
+  // så for dem nøgles der på BFE + adresse i stedet for kun BFE.
   const seenBfe = new Set<string>();
   const uniqueAktiver = detail.aktiver.filter((a) => {
-    const key = a.bfe ? String(a.bfe) : a.id;
+    const isSecondary =
+      (a.raw_data as { secondary_address?: boolean } | null)?.secondary_address === true;
+    const key = a.bfe
+      ? isSecondary
+        ? `${a.bfe}|${(a.adresse ?? a.label).toLowerCase().trim()}`
+        : String(a.bfe)
+      : a.id;
     if (seenBfe.has(key)) return false;
     seenBfe.add(key);
     return true;

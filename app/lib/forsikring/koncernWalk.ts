@@ -94,10 +94,11 @@ export async function walkKoncern(
     }
   }
 
-  // BIZZ-2151: Find sekundære adgangsadresser på samme matrikel.
+  // BIZZ-2151 / BIZZ-2158: Find sekundære adgangsadresser på samme matrikel.
   // En SFE kan have flere adgangsadresser (fx Gyldenstræde 8A + Stengade 10A
-  // på matrikel 519). Uden dette vises kun den primære adresse, og policer
-  // tegnet på sekundære adresser kan ikke matches.
+  // på matrikel 519). Sekundære adresser gemmes som metadata på det
+  // eksisterende aktiv (secondaryAddresses) — IKKE som separate aktiver.
+  // De bruges kun til police-matching i assetMatcher.
   try {
     const ejendomAktiver = aktiver.filter((a) => a.type === 'ejendom' && a.bfe);
     const BATCH = 5;
@@ -130,21 +131,17 @@ export async function walkKoncern(
               adressebetegnelse?: string;
             }>;
 
-            // Den primære adresse er allerede i aktiver — tilføj kun sekundære
+            // Gem sekundære adresser som metadata — IKKE som separate aktiver.
+            // assetMatcher bruger secondaryAddresses til police-matching.
             const primLabel = aktiv.label.toLowerCase();
+            const secondary: string[] = [];
             for (const adr of adresser) {
               if (!adr.adressebetegnelse) continue;
               if (adr.adressebetegnelse.toLowerCase() === primLabel) continue;
-              // Check om allerede tilføjet
-              if (aktiver.some((a) => a.label === adr.adressebetegnelse)) continue;
-              if (aktiver.length >= MAX_AKTIVER) break;
-              aktiver.push({
-                type: 'ejendom',
-                label: adr.adressebetegnelse,
-                adresse: adr.adressebetegnelse,
-                bfe: aktiv.bfe,
-                rawData: { ...aktiv.rawData, secondary_address: true },
-              });
+              secondary.push(adr.adressebetegnelse);
+            }
+            if (secondary.length > 0) {
+              aktiv.rawData = { ...aktiv.rawData, secondaryAddresses: secondary };
             }
           } catch {
             /* best-effort */

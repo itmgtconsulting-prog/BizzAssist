@@ -387,6 +387,28 @@ function scoreEjendom(aktiv: Aktiv, policy: ForsikringPolicy): number {
     return 80;
   }
 
+  // BIZZ-2158: Sekundære adgangsadresser — en SFE kan have flere adresser
+  // (fx Gyldenstræde 8A + Stengade 10A på matrikel 519). Policer tegnet på
+  // sekundære adresser skal matche det primære aktiv.
+  const secondaryAddresses = (aktiv.rawData as Record<string, unknown> | undefined)
+    ?.secondaryAddresses as string[] | undefined;
+  if (secondaryAddresses) {
+    for (const secAddr of secondaryAddresses) {
+      const normSec = normalize(secAddr);
+      if (!normSec) continue;
+      if (normSec === policyAddr) return 88;
+      if (normSec.includes(policyAddr) || policyAddr.includes(normSec)) return 83;
+      const secBase = stripFloorDoor(normSec);
+      if (
+        secBase &&
+        policyBase &&
+        (secBase === policyBase || secBase.includes(policyBase) || policyBase.includes(secBase))
+      ) {
+        return 80;
+      }
+    }
+  }
+
   // Delvis match: vejnavn + husnr
   const aktivParts = aktivAddr.split(' ');
   const policyParts = policyAddr.split(' ');

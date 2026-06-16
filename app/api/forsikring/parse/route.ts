@@ -309,6 +309,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
         if (existing) {
           policy = { id: existing.id, policy_number: existing.policy_number };
+          // BIZZ-2144: Policen dedup-genbruges, men metadata skal opdateres med
+          // nyeste parse — ellers mangler fx registreringsnummer på bilpolicer
+          // der blev parset før reg.nr-feltet blev gemt.
+          await insurance.policies.updateRawMetadata(existing.id, {
+            source_type: 'v2',
+            insurance_type: ins.identification.type,
+            bygninger: ent.entity.bygninger ?? null,
+            registreringsnummer: ent.entity.registreringsnummer ?? null,
+          });
         } else {
           policy = await insurance.policies.create({
             document_id: doc.id,

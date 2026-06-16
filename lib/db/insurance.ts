@@ -149,6 +149,12 @@ export interface InsuranceApi {
     findAllByNumber(policyNumber: string): Promise<ForsikringPolicy[]>;
     /** Opret ny police */
     create(input: CreatePolicyInput): Promise<ForsikringPolicy>;
+    /**
+     * BIZZ-2144: Opdatér en eksisterende polices raw_metadata. Bruges ved
+     * re-parse, hvor policen dedup-genbruges men metadata (fx
+     * registreringsnummer fra bilpolicer) skal opdateres med nyeste parse.
+     */
+    updateRawMetadata(id: string, rawMetadata: Record<string, unknown>): Promise<void>;
     /** Slet en police (cascade-sletter coverages og gaps) */
     delete(id: string): Promise<void>;
   };
@@ -371,6 +377,14 @@ export async function getInsuranceApi(tenantId: string): Promise<InsuranceApi> {
           .single();
         if (error) throw new Error(`forsikring_policies.create: ${error.message}`);
         return data as ForsikringPolicy;
+      },
+      async updateRawMetadata(id, rawMetadata) {
+        const { error } = await tenantDb(admin, schemaName)
+          .from('forsikring_policies')
+          .update({ raw_metadata: rawMetadata })
+          .eq('id', id)
+          .eq('tenant_id', tenantId);
+        if (error) throw new Error(`forsikring_policies.updateRawMetadata: ${error.message}`);
       },
       async delete(id) {
         const { error } = await tenantDb(admin, schemaName)

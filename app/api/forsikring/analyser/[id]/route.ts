@@ -284,10 +284,13 @@ export async function GET(
     for (const cov of coverages as Array<{ policy_id: string; conditions_ref?: string | null }>) {
       if (!cov.conditions_ref) continue;
       // Split på komma/semikolon (flere refs per coverage)
-      for (const rawRef of cov.conditions_ref
+      for (let rawRef of cov.conditions_ref
         .split(/[,;]/)
         .map((s: string) => s.trim())
         .filter(Boolean)) {
+        // Rens: fjern "afsnit", "Se betingelsesafsnit", "Se vilkår" etc.
+        rawRef = rawRef.replace(/^(se\s+)?(betingelses)?afsnit\s*/i, '').trim();
+        if (!rawRef || /^se\s+vilk/i.test(rawRef) || rawRef.length < 2) continue;
         if (!conditionsMap.has(rawRef)) {
           const pol = (
             policies as Array<{

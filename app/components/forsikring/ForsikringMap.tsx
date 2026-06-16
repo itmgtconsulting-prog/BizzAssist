@@ -178,27 +178,24 @@ function ForsikringMapInner({
   const [popupMarker, setPopupMarker] = useState<ForsikringMarker | null>(null);
   const [showEjendomme, setShowEjendomme] = useState(true);
   const [showVirksomheder, setShowVirksomheder] = useState(true);
-  /** Matrikel bbox URL — Mapbox henter GeoJSON direkte via URL (bedre end 1MB+ i React state) */
+  /** Matrikel bbox URL — opdateres dynamisk ved zoom ≥ 15 */
   const [matrikelUrl, setMatrikelUrl] = useState<string | null>(null);
 
-  /** Beregn matrikel bbox URL fra markørernes udbredelse */
-  useEffect(() => {
-    if (markers.length === 0) return;
-    let minLat = Infinity,
-      maxLat = -Infinity,
-      minLng = Infinity,
-      maxLng = -Infinity;
-    for (const m of markers) {
-      if (m.lat < minLat) minLat = m.lat;
-      if (m.lat > maxLat) maxLat = m.lat;
-      if (m.lng < minLng) minLng = m.lng;
-      if (m.lng > maxLng) maxLng = m.lng;
+  /** Opdater matrikelgrænser baseret på kortets aktuelle viewport (zoom ≥ 15) */
+  const updateMatrikelForViewport = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const zoom = map.getZoom();
+    if (zoom < 15) {
+      setMatrikelUrl(null); // Skjul matrikel ved lavt zoom
+      return;
     }
-    const margin = 0.005;
-    setMatrikelUrl(
-      `/api/matrikel/bbox?w=${minLng - margin}&s=${minLat - margin}&e=${maxLng + margin}&n=${maxLat + margin}`
-    );
-  }, [markers]);
+    const bounds = map.getBounds();
+    if (!bounds) return;
+    const sw = bounds.getSouthWest();
+    const ne = bounds.getNorthEast();
+    setMatrikelUrl(`/api/matrikel/bbox?w=${sw.lng}&s=${sw.lat}&e=${ne.lng}&n=${ne.lat}`);
+  }, []);
 
   /** Skift kort-style og gem i localStorage */
   const setMapStyle = useCallback((style: MapStyle) => {
@@ -270,6 +267,7 @@ function ForsikringMapInner({
         style={{ width: '100%', height: '100%' }}
         onClick={() => setPopupMarker(null)}
         onLoad={() => fitToMarkers()}
+        onMoveEnd={() => updateMatrikelForViewport()}
       >
         <NavigationControl position="top-right" showCompass={false} />
 

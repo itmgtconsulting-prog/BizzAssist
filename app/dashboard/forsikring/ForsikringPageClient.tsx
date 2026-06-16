@@ -490,6 +490,23 @@ function PropertyRow({
   const gapCritical = group.gaps.filter((g) => g.severity === 'critical').length;
   const gapWarning = group.gaps.filter((g) => g.severity === 'warning').length;
 
+  // BIZZ-2147: Direkte link til aktivets egen detaljeside — ejendom → BFE-side,
+  // virksomhed → CVR-side. Gør det muligt at åbne entiteten på dens egen side
+  // uden at forlade forsikringsanalysen.
+  const entityHref =
+    group.aktiv.type === 'ejendom' && group.aktiv.bfe != null
+      ? `/dashboard/ejendomme/${group.aktiv.bfe}`
+      : group.aktiv.type === 'virksomhed' && group.aktiv.cvr
+        ? `/dashboard/companies/${group.aktiv.cvr}`
+        : null;
+
+  /** Toggle expand + highlight aktiv på kortet (delt mellem navn- og chevron-knap). */
+  const handleToggle = () => {
+    setExpanded(!expanded);
+    // BIZZ-2131: Highlight aktiv på kortet via custom event
+    window.dispatchEvent(new CustomEvent('forsikring-aktiv-click', { detail: group.aktiv.id }));
+  };
+
   /** Ikon for aktiv-type */
   const typeIcon =
     group.aktiv.type === 'ejendom' ? (
@@ -510,123 +527,155 @@ function PropertyRow({
       }`}
     >
       {/* Header row — klikbar for toggle */}
-      <button
-        type="button"
-        onClick={() => {
-          setExpanded(!expanded);
-          // BIZZ-2131: Highlight aktiv på kortet via custom event
-          window.dispatchEvent(
-            new CustomEvent('forsikring-aktiv-click', { detail: group.aktiv.id })
-          );
-        }}
-        className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-white/3 transition-colors"
-        aria-expanded={expanded}
-        aria-label={`${expanded ? (da ? 'Luk' : 'Collapse') : da ? 'Udvid' : 'Expand'} ${group.aktiv.label}`}
-      >
-        {/* Status ikon */}
-        {isInsured ? (
-          <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
-        ) : (
-          <XCircle size={16} className="text-red-400 shrink-0" />
-        )}
+      <div className="w-full px-4 py-3 flex items-center gap-3 hover:bg-white/3 transition-colors">
+        {/* BIZZ-2147: navn-/badge-området er toggle-knap (chevron nederst toggler
+            også). Adskilt fra entitets-linket, så et <a> ikke nestes i <button>. */}
+        <button
+          type="button"
+          onClick={handleToggle}
+          className="flex items-center gap-3 min-w-0 flex-1 text-left"
+          aria-expanded={expanded}
+          aria-label={`${expanded ? (da ? 'Luk' : 'Collapse') : da ? 'Udvid' : 'Expand'} ${group.aktiv.label}`}
+        >
+          {/* Status ikon */}
+          {isInsured ? (
+            <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
+          ) : (
+            <XCircle size={16} className="text-red-400 shrink-0" />
+          )}
 
-        {/* Type ikon + label */}
-        <div className="flex items-center gap-2 min-w-0 flex-1">
-          {typeIcon}
-          <span className="text-white text-sm font-medium truncate">{group.aktiv.label}</span>
-          {/* BIZZ-2068: BFE-badge på ejendoms-aktiver — to reelle ejendomme kan
+          {/* Type ikon + label */}
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            {typeIcon}
+            <span className="text-white text-sm font-medium truncate">{group.aktiv.label}</span>
+            {/* BIZZ-2068: BFE-badge på ejendoms-aktiver — to reelle ejendomme kan
               dele adresse (fx Gefionsvej 47A = BFE 5322356 + 5322350), og uden
               BFE-nummeret ligner rækkerne duplikater. */}
-          {group.aktiv.type === 'ejendom' && group.aktiv.bfe != null && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-slate-500/20 text-slate-300 border border-slate-500/30 shrink-0">
-              BFE {group.aktiv.bfe}
-            </span>
-          )}
-          {/* BIZZ-2123: Ejendomme som kunden ADMINISTRERER (ejf_administrator)
-              uden selv at eje dem — markeres så rådgiveren ved at ansvaret er
-              administration, ikke ejerskab. */}
-          {group.aktiv.type === 'ejendom' &&
-            (group.aktiv.raw_data as { administreret?: boolean } | null)?.administreret && (
-              <span
-                className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 shrink-0"
-                title={
-                  da
-                    ? 'Kunden administrerer ejendommen (tinglyst administrator) uden at stå som ejer'
-                    : 'The customer administers the property (registered administrator) without being the owner'
-                }
-              >
-                {da ? 'Administreret' : 'Administered'}
+            {group.aktiv.type === 'ejendom' && group.aktiv.bfe != null && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-slate-500/20 text-slate-300 border border-slate-500/30 shrink-0">
+                BFE {group.aktiv.bfe}
               </span>
             )}
-          {/* BIZZ-2096: Marker når dækningen er nedarvet fra en police på
+            {/* BIZZ-2123: Ejendomme som kunden ADMINISTRERER (ejf_administrator)
+              uden selv at eje dem — markeres så rådgiveren ved at ansvaret er
+              administration, ikke ejerskab. */}
+            {group.aktiv.type === 'ejendom' &&
+              (group.aktiv.raw_data as { administreret?: boolean } | null)?.administreret && (
+                <span
+                  className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 shrink-0"
+                  title={
+                    da
+                      ? 'Kunden administrerer ejendommen (tinglyst administrator) uden at stå som ejer'
+                      : 'The customer administers the property (registered administrator) without being the owner'
+                  }
+                >
+                  {da ? 'Administreret' : 'Administered'}
+                </span>
+              )}
+            {/* BIZZ-2096: Marker når dækningen er nedarvet fra en police på
               aktivets egen SFE-adresse — antagelsen skal være transparent. */}
-          {daekketViaSfe && (
-            <span
-              className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shrink-0 truncate max-w-[220px]"
-              title={
-                da
-                  ? `Police på SFE-adressen ${daekketViaSfe.sfe_adresse ?? ''} antages at dække hele strukturen`
-                  : `Policy on SFE address ${daekketViaSfe.sfe_adresse ?? ''} is assumed to cover the whole structure`
-              }
-            >
-              {da ? 'Dækket via SFE' : 'Covered via SFE'}
-              {daekketViaSfe.sfe_adresse ? ` ${daekketViaSfe.sfe_adresse}` : ''}
-            </span>
-          )}
-          {/* BIZZ-2130: Søster-SFE — aktivet ligger i samme ejerlav som en
+            {daekketViaSfe && (
+              <span
+                className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shrink-0 truncate max-w-[220px]"
+                title={
+                  da
+                    ? `Police på SFE-adressen ${daekketViaSfe.sfe_adresse ?? ''} antages at dække hele strukturen`
+                    : `Policy on SFE address ${daekketViaSfe.sfe_adresse ?? ''} is assumed to cover the whole structure`
+                }
+              >
+                {da ? 'Dækket via SFE' : 'Covered via SFE'}
+                {daekketViaSfe.sfe_adresse ? ` ${daekketViaSfe.sfe_adresse}` : ''}
+              </span>
+            )}
+            {/* BIZZ-2130: Søster-SFE — aktivet ligger i samme ejerlav som en
               dækket SFE men dækkes IKKE af policen. Gul badge så rådgiveren kan
               vurdere om ejendommen skal medforsikres. Vises kun når aktivet
               ikke selv er dækket. */}
-          {soesterSfe && !daekketViaSfe && !isInsured && (
-            <span
-              className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 shrink-0 truncate max-w-[240px]"
-              title={
-                da
-                  ? `Ligger i samme ejerlav/SFE-struktur som ${soesterSfe.sfe_adresse ?? ''}, der har en police — men dækkes IKKE af den. Vurder om ejendommen skal medforsikres.`
-                  : `In the same cadastral district/SFE structure as ${soesterSfe.sfe_adresse ?? ''}, which has a policy — but is NOT covered by it. Consider whether it should be co-insured.`
-              }
-            >
-              {da ? 'Søster-SFE til' : 'Sister SFE to'}
-              {soesterSfe.sfe_adresse ? ` ${soesterSfe.sfe_adresse}` : ''}
-            </span>
-          )}
-          {/* BIZZ-2101: CVR-badge på virksomheds-rækker — virksomheder vises
+            {soesterSfe && !daekketViaSfe && !isInsured && (
+              <span
+                className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 shrink-0 truncate max-w-[240px]"
+                title={
+                  da
+                    ? `Ligger i samme ejerlav/SFE-struktur som ${soesterSfe.sfe_adresse ?? ''}, der har en police — men dækkes IKKE af den. Vurder om ejendommen skal medforsikres.`
+                    : `In the same cadastral district/SFE structure as ${soesterSfe.sfe_adresse ?? ''}, which has a policy — but is NOT covered by it. Consider whether it should be co-insured.`
+                }
+              >
+                {da ? 'Søster-SFE til' : 'Sister SFE to'}
+                {soesterSfe.sfe_adresse ? ` ${soesterSfe.sfe_adresse}` : ''}
+              </span>
+            )}
+            {/* BIZZ-2101: CVR-badge på virksomheds-rækker — virksomheder vises
               altid med både navn og CVR (analogt til BFE-badgen ovenfor). */}
-          {group.aktiv.type === 'virksomhed' && group.aktiv.cvr && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/30 shrink-0">
-              CVR {group.aktiv.cvr}
-            </span>
-          )}
-          {/* BIZZ-2108: Ejerandel-badge på virksomheds-rækker med < 100% —
+            {group.aktiv.type === 'virksomhed' && group.aktiv.cvr && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/30 shrink-0">
+                CVR {group.aktiv.cvr}
+              </span>
+            )}
+            {/* BIZZ-2108: Ejerandel-badge på virksomheds-rækker med < 100% —
               minoritetsposter (< 50%) vises amber så det er tydeligt at
               selskabet IKKE er et kontrolleret datterselskab. */}
-          {group.aktiv.type === 'virksomhed' && ejerandelPct != null && ejerandelPct < 100 && (
-            <span
-              className={`text-[9px] px-1.5 py-0.5 rounded-full border shrink-0 ${
-                ejerandelPct < 50
-                  ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
-                  : 'bg-slate-500/20 text-slate-300 border-slate-500/30'
-              }`}
-              title={
-                ejerandelPct < 50
-                  ? da
-                    ? 'Minoritetspost — ikke et kontrolleret datterselskab; selskabets egne aktiver indgår ikke i analysen'
-                    : 'Minority stake — not a controlled subsidiary; its own assets are not included in the analysis'
-                  : da
-                    ? 'Ejerandel'
-                    : 'Ownership share'
-              }
-            >
-              {ejerandelPct}%
+            {group.aktiv.type === 'virksomhed' && ejerandelPct != null && ejerandelPct < 100 && (
+              <span
+                className={`text-[9px] px-1.5 py-0.5 rounded-full border shrink-0 ${
+                  ejerandelPct < 50
+                    ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                    : 'bg-slate-500/20 text-slate-300 border-slate-500/30'
+                }`}
+                title={
+                  ejerandelPct < 50
+                    ? da
+                      ? 'Minoritetspost — ikke et kontrolleret datterselskab; selskabets egne aktiver indgår ikke i analysen'
+                      : 'Minority stake — not a controlled subsidiary; its own assets are not included in the analysis'
+                    : da
+                      ? 'Ejerandel'
+                      : 'Ownership share'
+                }
+              >
+                {ejerandelPct}%
+              </span>
+            )}
+            {/* BIZZ-1829: AI-foreslået badge */}
+            {!!(group.aktiv.raw_data as Record<string, unknown> | null)?.aiForeslaaet && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">
+                AI
+              </span>
+            )}
+          </div>
+        </button>
+
+        {/* BIZZ-2147: Lille link-boks der åbner aktivets egen detaljeside
+            (ejendoms- eller virksomhedsside) i analysen. */}
+        {entityHref && (
+          <Link
+            href={entityHref}
+            className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-md border border-white/10 bg-white/5 text-slate-300 hover:text-white hover:border-white/20 hover:bg-white/10 transition-colors text-[10px]"
+            aria-label={
+              group.aktiv.type === 'ejendom'
+                ? `${da ? 'Åbn ejendomsside' : 'Open property page'}: ${group.aktiv.label}`
+                : `${da ? 'Åbn virksomhedsside' : 'Open company page'}: ${group.aktiv.label}`
+            }
+            title={
+              group.aktiv.type === 'ejendom'
+                ? da
+                  ? 'Åbn ejendommen'
+                  : 'Open property'
+                : da
+                  ? 'Åbn virksomheden'
+                  : 'Open company'
+            }
+          >
+            <ExternalLink size={11} className="shrink-0" />
+            <span className="hidden sm:inline">
+              {group.aktiv.type === 'ejendom'
+                ? da
+                  ? 'Ejendom'
+                  : 'Property'
+                : da
+                  ? 'Virksomhed'
+                  : 'Company'}
             </span>
-          )}
-          {/* BIZZ-1829: AI-foreslået badge */}
-          {!!(group.aktiv.raw_data as Record<string, unknown> | null)?.aiForeslaaet && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">
-              AI
-            </span>
-          )}
-        </div>
+          </Link>
+        )}
 
         {/* Police-info hvis matchet */}
         {group.matchedPolicy && (
@@ -683,13 +732,20 @@ function PropertyRow({
           </span>
         )}
 
-        {/* Chevron */}
-        {expanded ? (
-          <ChevronDown size={14} className="text-slate-400 shrink-0" />
-        ) : (
-          <ChevronRight size={14} className="text-slate-400 shrink-0" />
-        )}
-      </button>
+        {/* Chevron — toggler også (delt handler) */}
+        <button
+          type="button"
+          onClick={handleToggle}
+          className="shrink-0"
+          aria-label={`${expanded ? (da ? 'Luk' : 'Collapse') : da ? 'Udvid' : 'Expand'} ${group.aktiv.label}`}
+        >
+          {expanded ? (
+            <ChevronDown size={14} className="text-slate-400" />
+          ) : (
+            <ChevronRight size={14} className="text-slate-400" />
+          )}
+        </button>
+      </div>
 
       {/* Expanded detail */}
       {expanded && (

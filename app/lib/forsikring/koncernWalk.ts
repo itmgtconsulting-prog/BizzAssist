@@ -94,6 +94,67 @@ export async function walkKoncern(
     }
   }
 
+  // BIZZ-2151: Find sekundære adgangsadresser på samme matrikel.
+  // En SFE kan have flere adgangsadresser (fx Gyldenstræde 8A + Stengade 10A
+  // på matrikel 519). Uden dette vises kun den primære adresse, og policer
+  // tegnet på sekundære adresser kan ikke matches.
+  try {
+    const ejendomAktiver = aktiver.filter((a) => a.type === 'ejendom' && a.bfe);
+    const BATCH = 5;
+    for (let i = 0; i < ejendomAktiver.length && aktiver.length < MAX_AKTIVER; i += BATCH) {
+      const chunk = ejendomAktiver.slice(i, i + BATCH);
+      await Promise.all(
+        chunk.map(async (aktiv) => {
+          try {
+            // Hent jordstykke for BFE → ejerlav + matrikelnr
+            const jordRes = await fetch(
+              `https://api.dataforsyningen.dk/jordstykker?bfenummer=${aktiv.bfe}&format=json`,
+              { signal: AbortSignal.timeout(5000) }
+            );
+            if (!jordRes.ok) return;
+            const jord = (await jordRes.json()) as Array<{
+              ejerlav?: { kode?: number };
+              matrikelnr?: string;
+            }>;
+            const ejerlav = jord[0]?.ejerlav?.kode;
+            const matrikel = jord[0]?.matrikelnr;
+            if (!ejerlav || !matrikel) return;
+
+            // Hent alle adgangsadresser på denne matrikel
+            const adrRes = await fetch(
+              `https://api.dataforsyningen.dk/adgangsadresser?ejerlavkode=${ejerlav}&matrikelnr=${encodeURIComponent(matrikel)}&per_side=20`,
+              { signal: AbortSignal.timeout(5000) }
+            );
+            if (!adrRes.ok) return;
+            const adresser = (await adrRes.json()) as Array<{
+              adressebetegnelse?: string;
+            }>;
+
+            // Den primære adresse er allerede i aktiver — tilføj kun sekundære
+            const primLabel = aktiv.label.toLowerCase();
+            for (const adr of adresser) {
+              if (!adr.adressebetegnelse) continue;
+              if (adr.adressebetegnelse.toLowerCase() === primLabel) continue;
+              // Check om allerede tilføjet
+              if (aktiver.some((a) => a.label === adr.adressebetegnelse)) continue;
+              if (aktiver.length >= MAX_AKTIVER) break;
+              aktiver.push({
+                type: 'ejendom',
+                label: adr.adressebetegnelse,
+                bfe: aktiv.bfe,
+                rawData: { ...aktiv.rawData, secondary_address: true },
+              });
+            }
+          } catch {
+            /* best-effort */
+          }
+        })
+      );
+    }
+  } catch {
+    /* sekundære adresser er non-fatal */
+  }
+
   return aktiver.slice(0, MAX_AKTIVER);
 }
 

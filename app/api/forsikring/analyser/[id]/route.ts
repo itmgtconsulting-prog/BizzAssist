@@ -335,6 +335,46 @@ export async function GET(
       uploaded: uploadedRefs.has(c.ref),
     }));
 
+    // BIZZ-2155: BBR-bygningsdata pr. BFE, så UI'et kan vise police-arealet
+    // side om side med BBR-arealet under hver ejendom (areal-/etage-/årgangs-
+    // sammenligning). Data ligger i den globale bbr_ejendom_status-tabel.
+    const bbrByBfe: Record<
+      string,
+      {
+        bebygget_areal: number | null;
+        antal_etager: number | null;
+        opfoerelsesaar: number | null;
+        anvendelse: string | null;
+      }
+    > = {};
+    const ejendomBfer = [
+      ...new Set(
+        (aktiverResult.data ?? [])
+          .filter((a: { type: string; bfe: number | null }) => a.type === 'ejendom' && a.bfe)
+          .map((a: { bfe: number | null }) => a.bfe as number)
+      ),
+    ];
+    if (ejendomBfer.length > 0) {
+      const { data: bbrRows } = await admin
+        .from('bbr_ejendom_status')
+        .select('bfe_nummer, bebygget_areal, antal_etager, opfoerelsesaar, byg021_anvendelse')
+        .in('bfe_nummer', ejendomBfer);
+      for (const row of (bbrRows ?? []) as Array<{
+        bfe_nummer: number;
+        bebygget_areal: number | null;
+        antal_etager: number | null;
+        opfoerelsesaar: number | null;
+        byg021_anvendelse: string | null;
+      }>) {
+        bbrByBfe[String(row.bfe_nummer)] = {
+          bebygget_areal: row.bebygget_areal,
+          antal_etager: row.antal_etager,
+          opfoerelsesaar: row.opfoerelsesaar,
+          anvendelse: row.byg021_anvendelse,
+        };
+      }
+    }
+
     return NextResponse.json({
       analyse: analyseResult.data,
       aktiver: aktiverResult.data ?? [],
@@ -343,6 +383,7 @@ export async function GET(
       policies,
       coverages,
       referencedConditions,
+      bbrByBfe,
     });
   } catch (err) {
     logger.error('[forsikring/analyser/[id]] Fejl:', err);

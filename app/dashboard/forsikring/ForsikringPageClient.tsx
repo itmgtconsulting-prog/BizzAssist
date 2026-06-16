@@ -14,7 +14,15 @@
  * for hvert dokument. Status vises pr. dokument under upload.
  */
 
-import { useCallback, useEffect, useRef, useState, Suspense } from 'react';
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  createContext,
+  Suspense,
+} from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
@@ -310,6 +318,20 @@ interface AnalyseDetail {
   documents?: Array<{ id: string; original_name: string }>;
   /** BIZZ-2135: Refererede standardbetingelser fra policernes dækninger */
   referencedConditions?: ReferencedCondition[];
+  /**
+   * BIZZ-2155: BBR-bygningsdata pr. BFE-nummer (nøgle = BFE som streng).
+   * Bruges til at vise police-arealet side om side med BBR-arealet under
+   * hver ejendom, så afvigelser kan reviewes med kunden.
+   */
+  bbrByBfe?: Record<
+    string,
+    {
+      bebygget_areal: number | null;
+      antal_etager: number | null;
+      opfoerelsesaar: number | null;
+      anvendelse: string | null;
+    }
+  >;
 }
 
 /** Property grouped with its matched policy and relevant gaps */
@@ -415,6 +437,21 @@ function GapList({ gaps, da }: { gaps: AnalyseGap[]; da: boolean }) {
  *   forsikringsejer-/virksomheds-niveau-findings ind (sejeren ER den eneste
  *   virksomhed). Viser et samlet findings-badge + en info-label i collapse.
  */
+/** BIZZ-2155: BBR-bygningsdata pr. ejendom (en post) */
+interface BbrBygningsdata {
+  bebygget_areal: number | null;
+  antal_etager: number | null;
+  opfoerelsesaar: number | null;
+  anvendelse: string | null;
+}
+
+/**
+ * BIZZ-2155: BBR-bygningsdata pr. BFE for den aktuelle analyse. Stilles til
+ * rådighed af analyse-visningerne, så PropertyRow kan vise police-arealet ved
+ * siden af BBR-arealet uden at tråde en prop gennem alle render-niveauer.
+ */
+const BbrContext = createContext<Record<string, BbrBygningsdata> | undefined>(undefined);
+
 function PropertyRow({
   group,
   da,
@@ -425,6 +462,13 @@ function PropertyRow({
   foldedNote?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  // BIZZ-2155: BBR-data for denne ejendom (matches på BFE) — bruges til
+  // police-vs-BBR areal-/etage-/årgangs-sammenligning.
+  const bbrMap = useContext(BbrContext);
+  const aktivBbr =
+    group.aktiv.type === 'ejendom' && group.aktiv.bfe != null
+      ? bbrMap?.[String(group.aktiv.bfe)]
+      : undefined;
   const isInsured = group.aktiv.matched_policy_id !== null;
   /** BIZZ-2096: dækning nedarvet fra police på aktivets egen SFE-adresse (sat af sfeStruktur.ts). */
   const daekketViaSfe =
@@ -724,10 +768,10 @@ function PropertyRow({
             </div>
           )}
 
-          {/* BIZZ-2145: Bygningsdata fra policen */}
-          {group.matchedPolicy &&
-            (() => {
-              const bygninger = (
+          {/* BIZZ-2145/2155: Bygningsdata — police vs. BBR side om side */}
+          {(() => {
+            const bygninger =
+              (
                 group.matchedPolicy as unknown as {
                   raw_metadata?: {
                     bygninger?: Array<{
@@ -740,42 +784,77 @@ function PropertyRow({
                       forsikringsform: string | null;
                     }>;
                   };
-                }
-              ).raw_metadata?.bygninger;
-              if (!bygninger || bygninger.length === 0) return null;
-              return (
-                <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg px-3 py-2 mb-2">
-                  <span className="text-blue-300 text-xs font-medium">
-                    {da ? 'Bygninger i policen' : 'Buildings in policy'} ({bygninger.length})
-                  </span>
-                  <div className="mt-1 space-y-1">
-                    {bygninger.map((b, i) => (
-                      <div key={i} className="text-[10px] text-slate-300 flex flex-wrap gap-x-3">
-                        <span className="text-white font-medium">
-                          {b.navn || `Bygning ${i + 1}`}
+                } | null
+              )?.raw_metadata?.bygninger ?? [];
+            // Vis intet hvis hverken police- eller BBR-bygningsdata findes.
+            if (bygninger.length === 0 && !aktivBbr) return null;
+
+            // BIZZ-2155: Areal-afvigelse police vs. BBR (> 15% flagges).
+            const polAreal = bygninger.find((b) => b.bebygget_areal_m2)?.bebygget_areal_m2 ?? null;
+            const bbrAreal = aktivBbr?.bebygget_areal ?? null;
+            const afvigelsePct =
+              polAreal && bbrAreal ? (Math.abs(bbrAreal - polAreal) / bbrAreal) * 100 : null;
+
+            return (
+              <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg px-3 py-2 mb-2">
+                <span className="text-blue-300 text-xs font-medium">
+                  {da ? 'Bygningsdata' : 'Building data'}
+                </span>
+                <div className="mt-1 space-y-1">
+                  {/* BBR-linje (kilde: BBR) — så police kan sammenholdes med register */}
+                  {aktivBbr && (
+                    <div className="text-[11px] text-slate-300 flex flex-wrap gap-x-3">
+                      <span className="text-blue-300 font-medium">BBR</span>
+                      {aktivBbr.bebygget_areal != null && <span>{aktivBbr.bebygget_areal} m²</span>}
+                      {aktivBbr.antal_etager != null && (
+                        <span>
+                          {aktivBbr.antal_etager} {da ? 'etager' : 'floors'}
                         </span>
-                        {b.anvendelse && <span>{b.anvendelse}</span>}
-                        {b.bebygget_areal_m2 && <span>{b.bebygget_areal_m2} m²</span>}
-                        {b.antal_etager && (
-                          <span>
-                            {b.antal_etager} {da ? 'etager' : 'floors'}
-                          </span>
-                        )}
-                        {b.opfoert_aar && (
-                          <span>
-                            {da ? 'opført' : 'built'} {b.opfoert_aar}
-                          </span>
-                        )}
-                        {b.kaelder && <span>{da ? 'kælder' : 'basement'}</span>}
-                        {b.forsikringsform && (
-                          <span className="text-blue-300">{b.forsikringsform}</span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
+                      )}
+                      {aktivBbr.opfoerelsesaar != null && (
+                        <span>
+                          {da ? 'opført' : 'built'} {aktivBbr.opfoerelsesaar}
+                        </span>
+                      )}
+                      {aktivBbr.anvendelse && <span>{aktivBbr.anvendelse}</span>}
+                    </div>
+                  )}
+                  {/* Police-bygninger (kilde: police) */}
+                  {bygninger.map((b, i) => (
+                    <div key={i} className="text-[11px] text-slate-300 flex flex-wrap gap-x-3">
+                      <span className="text-emerald-300 font-medium">
+                        {da ? 'Police' : 'Policy'}
+                        {bygninger.length > 1 ? ` · ${b.navn || `Bygning ${i + 1}`}` : ''}
+                      </span>
+                      {b.anvendelse && <span>{b.anvendelse}</span>}
+                      {b.bebygget_areal_m2 && <span>{b.bebygget_areal_m2} m²</span>}
+                      {b.antal_etager && (
+                        <span>
+                          {b.antal_etager} {da ? 'etager' : 'floors'}
+                        </span>
+                      )}
+                      {b.opfoert_aar && (
+                        <span>
+                          {da ? 'opført' : 'built'} {b.opfoert_aar}
+                        </span>
+                      )}
+                      {b.kaelder && <span>{da ? 'kælder' : 'basement'}</span>}
+                      {b.forsikringsform && (
+                        <span className="text-blue-300">{b.forsikringsform}</span>
+                      )}
+                    </div>
+                  ))}
+                  {/* Areal-afvigelse: police-areal afviger > 15% fra BBR */}
+                  {afvigelsePct != null && afvigelsePct > 15 && (
+                    <div className="text-[11px] text-amber-400 font-medium">
+                      ⚠ {da ? 'Areal-afvigelse' : 'Area mismatch'}: BBR {bbrAreal} m²{' '}
+                      {da ? 'vs. police' : 'vs. policy'} {polAreal} m² ({afvigelsePct.toFixed(0)}%)
+                    </div>
+                  )}
                 </div>
-              );
-            })()}
+              </div>
+            );
+          })()}
 
           {/* BIZZ-2084: Grøn "Dækket"-sektion — vis hvad der ER dækket inkl.
               dækningssum + selvrisiko, så dækningsniveauet kan reviewes med kunden */}
@@ -1658,43 +1737,15 @@ function UnifiedAnalyseView({
   const healthColor = healthScore >= 71 ? 'emerald' : healthScore >= 41 ? 'amber' : 'red';
 
   return (
-    <div className="space-y-4">
-      {/* Niveau 1: Kundeoverblik — én KPI-række */}
-      <div className="bg-white/5 border border-white/8 rounded-xl p-4">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-white text-sm font-semibold">{kundeNavn}</h3>
-          <span
-            className={`text-lg font-bold ${
-              healthColor === 'emerald'
-                ? 'text-emerald-400'
-                : healthColor === 'amber'
-                  ? 'text-amber-400'
-                  : 'text-red-400'
-            }`}
-          >
-            {healthScore}/100
-          </span>
-        </div>
-        <div className="grid grid-cols-5 gap-2">
-          <div className="text-center">
-            <div className="text-purple-300 text-xl font-bold">{virksomhedGroups.length}</div>
-            <div className="text-slate-400 text-[10px]">{da ? 'Virksomheder' : 'Companies'}</div>
-          </div>
-          <div className="text-center">
-            <div className="text-blue-300 text-xl font-bold">{total}</div>
-            <div className="text-slate-400 text-[10px]">{da ? 'Ejendomme' : 'Properties'}</div>
-          </div>
-          <div className="text-center">
-            <div className="text-emerald-300 text-xl font-bold">{insured}</div>
-            <div className="text-slate-400 text-[10px]">{da ? 'Forsikrede' : 'Insured'}</div>
-          </div>
-          <div className="text-center">
-            <div className="text-red-300 text-xl font-bold">{total - insured}</div>
-            <div className="text-slate-400 text-[10px]">{da ? 'Uforsikrede' : 'Uninsured'}</div>
-          </div>
-          <div className="text-center">
-            <div
-              className={`text-xl font-bold ${
+    // BIZZ-2155: Stil BBR-bygningsdata til rådighed for alle PropertyRow'er
+    <BbrContext.Provider value={detail.bbrByBfe}>
+      <div className="space-y-4">
+        {/* Niveau 1: Kundeoverblik — én KPI-række */}
+        <div className="bg-white/5 border border-white/8 rounded-xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-white text-sm font-semibold">{kundeNavn}</h3>
+            <span
+              className={`text-lg font-bold ${
                 healthColor === 'emerald'
                   ? 'text-emerald-400'
                   : healthColor === 'amber'
@@ -1702,196 +1753,229 @@ function UnifiedAnalyseView({
                     : 'text-red-400'
               }`}
             >
-              {healthScore}
+              {healthScore}/100
+            </span>
+          </div>
+          <div className="grid grid-cols-5 gap-2">
+            <div className="text-center">
+              <div className="text-purple-300 text-xl font-bold">{virksomhedGroups.length}</div>
+              <div className="text-slate-400 text-[10px]">{da ? 'Virksomheder' : 'Companies'}</div>
             </div>
-            <div className="text-slate-400 text-[10px]">
-              {da ? 'Sundhedsscore' : 'Health score'}
+            <div className="text-center">
+              <div className="text-blue-300 text-xl font-bold">{total}</div>
+              <div className="text-slate-400 text-[10px]">{da ? 'Ejendomme' : 'Properties'}</div>
+            </div>
+            <div className="text-center">
+              <div className="text-emerald-300 text-xl font-bold">{insured}</div>
+              <div className="text-slate-400 text-[10px]">{da ? 'Forsikrede' : 'Insured'}</div>
+            </div>
+            <div className="text-center">
+              <div className="text-red-300 text-xl font-bold">{total - insured}</div>
+              <div className="text-slate-400 text-[10px]">{da ? 'Uforsikrede' : 'Uninsured'}</div>
+            </div>
+            <div className="text-center">
+              <div
+                className={`text-xl font-bold ${
+                  healthColor === 'emerald'
+                    ? 'text-emerald-400'
+                    : healthColor === 'amber'
+                      ? 'text-amber-400'
+                      : 'text-red-400'
+                }`}
+              >
+                {healthScore}
+              </div>
+              <div className="text-slate-400 text-[10px]">
+                {da ? 'Sundhedsscore' : 'Health score'}
+              </div>
             </div>
           </div>
+          {/* Health bar */}
+          <div className="mt-3 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all ${
+                healthColor === 'emerald'
+                  ? 'bg-emerald-500'
+                  : healthColor === 'amber'
+                    ? 'bg-amber-500'
+                    : 'bg-red-500'
+              }`}
+              style={{ width: `${healthScore}%` }}
+            />
+          </div>
         </div>
-        {/* Health bar */}
-        <div className="mt-3 h-1.5 bg-slate-800 rounded-full overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all ${
-              healthColor === 'emerald'
-                ? 'bg-emerald-500'
-                : healthColor === 'amber'
-                  ? 'bg-amber-500'
-                  : 'bg-red-500'
-            }`}
-            style={{ width: `${healthScore}%` }}
-          />
-        </div>
-      </div>
 
-      {/* BIZZ-2085: Dækningsniveau vs. seneste regnskab — egen kasse med
+        {/* BIZZ-2085: Dækningsniveau vs. seneste regnskab — egen kasse med
           regnskabstal længst til højre, så niveauet kan reviewes med kunden */}
-      <DaekningVsRegnskab detail={detail} da={da} />
+        <DaekningVsRegnskab detail={detail} da={da} />
 
-      {/* BIZZ-2099: Fundne forsikringer — grønne bokse for alle analysens policer */}
-      <FundneForsikringer detail={detail} da={da} />
+        {/* BIZZ-2099: Fundne forsikringer — grønne bokse for alle analysens policer */}
+        <FundneForsikringer detail={detail} da={da} />
 
-      {/* BIZZ-2135: Refererede standardbetingelser — vis hvilke der mangler */}
-      {(detail.referencedConditions ?? []).length > 0 &&
-        (() => {
-          const conds = detail.referencedConditions!;
-          const uploaded = conds.filter((c) => c.uploaded).length;
-          const missing = conds.length - uploaded;
-          return (
-            <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <h4 className="text-white text-sm font-semibold flex items-center gap-2">
-                  <BookOpen size={14} className="text-blue-400" />
-                  {da ? 'Refererede standardbetingelser' : 'Referenced standard conditions'}
-                </h4>
-                <span className="text-slate-400 text-[10px]">
-                  {uploaded}/{conds.length} {da ? 'uploaded' : 'uploaded'}
-                </span>
-              </div>
-              {missing > 0 && (
-                <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 text-amber-300 text-xs">
-                  {da
-                    ? `${missing} af ${conds.length} refererede betingelser mangler — gap-analysen er ufuldstændig. Upload de manglende betingelser for en komplet analyse.`
-                    : `${missing} of ${conds.length} referenced conditions are missing — the gap analysis is incomplete. Upload the missing conditions for a complete analysis.`}
+        {/* BIZZ-2135: Refererede standardbetingelser — vis hvilke der mangler */}
+        {(detail.referencedConditions ?? []).length > 0 &&
+          (() => {
+            const conds = detail.referencedConditions!;
+            const uploaded = conds.filter((c) => c.uploaded).length;
+            const missing = conds.length - uploaded;
+            return (
+              <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-white text-sm font-semibold flex items-center gap-2">
+                    <BookOpen size={14} className="text-blue-400" />
+                    {da ? 'Refererede standardbetingelser' : 'Referenced standard conditions'}
+                  </h4>
+                  <span className="text-slate-400 text-[10px]">
+                    {uploaded}/{conds.length} {da ? 'uploaded' : 'uploaded'}
+                  </span>
                 </div>
-              )}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                {conds.map((c) => (
-                  <div
-                    key={c.ref}
-                    className="flex items-center gap-2 px-2.5 py-1.5 bg-white/3 rounded-lg text-xs"
-                  >
-                    {c.uploaded ? (
-                      <CheckCircle2 size={12} className="text-emerald-400 shrink-0" />
-                    ) : (
-                      <AlertCircle size={12} className="text-amber-400 shrink-0" />
-                    )}
-                    <span className={c.uploaded ? 'text-slate-300' : 'text-white font-medium'}>
-                      {c.ref}
-                    </span>
-                    {CONDITION_NAMES[c.ref] && (
-                      <span className="text-slate-400 text-[10px]">— {CONDITION_NAMES[c.ref]}</span>
-                    )}
-                    {c.selskab && (
-                      <span className="text-slate-500 text-[10px] truncate ml-auto">
-                        {c.selskab}
-                      </span>
-                    )}
+                {missing > 0 && (
+                  <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 text-amber-300 text-xs">
+                    {da
+                      ? `${missing} af ${conds.length} refererede betingelser mangler — gap-analysen er ufuldstændig. Upload de manglende betingelser for en komplet analyse.`
+                      : `${missing} of ${conds.length} referenced conditions are missing — the gap analysis is incomplete. Upload the missing conditions for a complete analysis.`}
                   </div>
-                ))}
+                )}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                  {conds.map((c) => (
+                    <div
+                      key={c.ref}
+                      className="flex items-center gap-2 px-2.5 py-1.5 bg-white/3 rounded-lg text-xs"
+                    >
+                      {c.uploaded ? (
+                        <CheckCircle2 size={12} className="text-emerald-400 shrink-0" />
+                      ) : (
+                        <AlertCircle size={12} className="text-amber-400 shrink-0" />
+                      )}
+                      <span className={c.uploaded ? 'text-slate-300' : 'text-white font-medium'}>
+                        {c.ref}
+                      </span>
+                      {CONDITION_NAMES[c.ref] && (
+                        <span className="text-slate-400 text-[10px]">
+                          — {CONDITION_NAMES[c.ref]}
+                        </span>
+                      )}
+                      {c.selskab && (
+                        <span className="text-slate-500 text-[10px] truncate ml-auto">
+                          {c.selskab}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-          );
-        })()}
+            );
+          })()}
 
-      {/* BIZZ-1941: Forsikringsejer-niveau — generelle findings for hele ejeren.
+        {/* BIZZ-1941: Forsikringsejer-niveau — generelle findings for hele ejeren.
           Vises kun her, ikke gentaget under virksomhed/ejendom.
           BIZZ-1972: Skjules når forsikringssejeren ER den eneste virksomhed —
           findings foldes da ind under virksomheds-rækken nedenfor. */}
-      {!foldOwnerIntoCompany && ownerGaps.length > 0 && (
-        <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
-          <div className="flex items-center gap-2">
-            <Briefcase size={14} className="text-purple-400" />
-            <h4 className="text-white text-sm font-semibold">
-              {da ? 'Forsikringsejer-niveau' : 'Insurance owner level'}
-            </h4>
-            <span className="text-slate-400 text-[11px]">
+        {!foldOwnerIntoCompany && ownerGaps.length > 0 && (
+          <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <Briefcase size={14} className="text-purple-400" />
+              <h4 className="text-white text-sm font-semibold">
+                {da ? 'Forsikringsejer-niveau' : 'Insurance owner level'}
+              </h4>
+              <span className="text-slate-400 text-[11px]">
+                {da
+                  ? `${ownerGaps.length} generelle findings`
+                  : `${ownerGaps.length} general findings`}
+              </span>
+            </div>
+            <p className="text-slate-400 text-[11px]">
               {da
-                ? `${ownerGaps.length} generelle findings`
-                : `${ownerGaps.length} general findings`}
-            </span>
+                ? 'Gælder hele forsikringsejeren — ikke en enkelt virksomhed eller ejendom.'
+                : 'Applies to the entire insurance owner — not a single company or property.'}
+            </p>
+            <GapList gaps={ownerGaps} da={da} />
           </div>
-          <p className="text-slate-400 text-[11px]">
-            {da
-              ? 'Gælder hele forsikringsejeren — ikke en enkelt virksomhed eller ejendom.'
-              : 'Applies to the entire insurance owner — not a single company or property.'}
-          </p>
-          <GapList gaps={ownerGaps} da={da} />
-        </div>
-      )}
+        )}
 
-      {/* BIZZ-1941: Virksomheds-niveau — gælder porteføljen/virksomheden, ikke per ejendom.
+        {/* BIZZ-1941: Virksomheds-niveau — gælder porteføljen/virksomheden, ikke per ejendom.
           BIZZ-1972: Skjules i fold-casen — findings foldes ind under virksomheds-rækken. */}
-      {!foldOwnerIntoCompany && companyGaps.length > 0 && (
-        <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
-          <div className="flex items-center gap-2">
-            <Building2 size={14} className="text-blue-400" />
-            <h4 className="text-white text-sm font-semibold">
-              {da ? 'Virksomheds-niveau' : 'Company level'}
-            </h4>
-            <span className="text-slate-400 text-[11px]">
-              {da ? `${companyGaps.length} findings` : `${companyGaps.length} findings`}
-            </span>
-          </div>
-          <p className="text-slate-400 text-[11px]">
-            {da
-              ? 'Dæknings-overlap, kollektiv forsikring og standard-betingelser — på tværs af policer.'
-              : 'Coverage overlap, collective insurance and standard terms — across policies.'}
-          </p>
-          <GapList gaps={companyGaps} da={da} />
-        </div>
-      )}
-
-      {/* Niveau 2: Virksomheds-træer med ejendomme grupperet under */}
-      <div className="space-y-4">
-        {virksomhedsTraeer.map((tree) => (
-          <div key={tree.virksomhed.aktiv.id} className="space-y-2">
-            {/* Virksomheds-række (header) */}
-            <PropertyRow group={tree.virksomhed} da={da} foldedNote={foldOwnerIntoCompany} />
-
-            {/* Ejendomme under denne virksomhed — indrykket */}
-            {tree.ejendomme.length > 0 && (
-              <div className="ml-6 pl-3 border-l border-white/8 space-y-2">
-                <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
-                  {da
-                    ? `${tree.ejendomme.length} ${tree.ejendomme.length === 1 ? 'ejendom' : 'ejendomme'} ejet af ${tree.virksomhed.aktiv.label}`
-                    : `${tree.ejendomme.length} ${tree.ejendomme.length === 1 ? 'property' : 'properties'} owned by ${tree.virksomhed.aktiv.label}`}
-                </div>
-                {tree.ejendomme.map((eg) => (
-                  <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
-
-        {/* Ejendomme uden ejer-virksomhed (orphans) — personligt ejede eller manglende kæde */}
-        {orphanEjendomme.length > 0 && (
-          <div className="space-y-2">
-            <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
+        {!foldOwnerIntoCompany && companyGaps.length > 0 && (
+          <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <Building2 size={14} className="text-blue-400" />
+              <h4 className="text-white text-sm font-semibold">
+                {da ? 'Virksomheds-niveau' : 'Company level'}
+              </h4>
+              <span className="text-slate-400 text-[11px]">
+                {da ? `${companyGaps.length} findings` : `${companyGaps.length} findings`}
+              </span>
+            </div>
+            <p className="text-slate-400 text-[11px]">
               {da
-                ? `${orphanEjendomme.length} ${orphanEjendomme.length === 1 ? 'ejendom' : 'ejendomme'} uden virksomheds-tilknytning`
-                : `${orphanEjendomme.length} ${orphanEjendomme.length === 1 ? 'property' : 'properties'} without company link`}
-            </div>
-            {sortProperties(orphanEjendomme).map((eg) => (
-              <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
-            ))}
+                ? 'Dæknings-overlap, kollektiv forsikring og standard-betingelser — på tværs af policer.'
+                : 'Coverage overlap, collective insurance and standard terms — across policies.'}
+            </p>
+            <GapList gaps={companyGaps} da={da} />
           </div>
         )}
 
-        {/* Øvrige aktiver (bestyrelsesposter, biler) */}
-        {otherGroups.length > 0 && (
-          <div className="space-y-2">
-            <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
-              {da ? 'Øvrige aktiver' : 'Other assets'}
+        {/* Niveau 2: Virksomheds-træer med ejendomme grupperet under */}
+        <div className="space-y-4">
+          {virksomhedsTraeer.map((tree) => (
+            <div key={tree.virksomhed.aktiv.id} className="space-y-2">
+              {/* Virksomheds-række (header) */}
+              <PropertyRow group={tree.virksomhed} da={da} foldedNote={foldOwnerIntoCompany} />
+
+              {/* Ejendomme under denne virksomhed — indrykket */}
+              {tree.ejendomme.length > 0 && (
+                <div className="ml-6 pl-3 border-l border-white/8 space-y-2">
+                  <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
+                    {da
+                      ? `${tree.ejendomme.length} ${tree.ejendomme.length === 1 ? 'ejendom' : 'ejendomme'} ejet af ${tree.virksomhed.aktiv.label}`
+                      : `${tree.ejendomme.length} ${tree.ejendomme.length === 1 ? 'property' : 'properties'} owned by ${tree.virksomhed.aktiv.label}`}
+                  </div>
+                  {tree.ejendomme.map((eg) => (
+                    <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
+                  ))}
+                </div>
+              )}
             </div>
-            {otherGroups.map((eg) => (
-              <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
-            ))}
-          </div>
-        )}
+          ))}
+
+          {/* Ejendomme uden ejer-virksomhed (orphans) — personligt ejede eller manglende kæde */}
+          {orphanEjendomme.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
+                {da
+                  ? `${orphanEjendomme.length} ${orphanEjendomme.length === 1 ? 'ejendom' : 'ejendomme'} uden virksomheds-tilknytning`
+                  : `${orphanEjendomme.length} ${orphanEjendomme.length === 1 ? 'property' : 'properties'} without company link`}
+              </div>
+              {sortProperties(orphanEjendomme).map((eg) => (
+                <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
+              ))}
+            </div>
+          )}
+
+          {/* Øvrige aktiver (bestyrelsesposter, biler) */}
+          {otherGroups.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
+                {da ? 'Øvrige aktiver' : 'Other assets'}
+              </div>
+              {otherGroups.map((eg) => (
+                <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Rapport-knap — direkte download som DOCX */}
+        <button
+          type="button"
+          onClick={() => onRapport()}
+          className="w-full bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
+        >
+          <FileText size={15} />
+          {da ? 'Download gap-rapport (Word)' : 'Download gap report (Word)'}
+        </button>
       </div>
-
-      {/* Rapport-knap — direkte download som DOCX */}
-      <button
-        type="button"
-        onClick={() => onRapport()}
-        className="w-full bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
-      >
-        <FileText size={15} />
-        {da ? 'Download gap-rapport (Word)' : 'Download gap report (Word)'}
-      </button>
-    </div>
+    </BbrContext.Provider>
   );
 }
 
@@ -4414,223 +4498,231 @@ function AnalyseDetailSection({
       <FundneForsikringer detail={detail} da={da} />
 
       {/* Ejendomme-liste med expandable gaps (genbruger PropertyRow) */}
-      <div className="space-y-2">
-        {(() => {
-          // Byg policy lookup fra detail.policies (returneret fra analyser/[id])
-          const pols = ((detail as unknown as Record<string, unknown>).policies ??
-            []) as PolicyRow[];
-          const polById = new Map(pols.map((p) => [p.id, p]));
-          // BIZZ-2119: Kildedokument-navne til matchede policer
-          const docNameById2 = new Map(
-            (detail.documents ?? []).map((d) => [d.id, d.original_name])
-          );
+      {/* BIZZ-2155: Stil BBR-bygningsdata til rådighed for PropertyRow'erne */}
+      <BbrContext.Provider value={detail.bbrByBfe}>
+        <div className="space-y-2">
+          {(() => {
+            // Byg policy lookup fra detail.policies (returneret fra analyser/[id])
+            const pols = ((detail as unknown as Record<string, unknown>).policies ??
+              []) as PolicyRow[];
+            const polById = new Map(pols.map((p) => [p.id, p]));
+            // BIZZ-2119: Kildedokument-navne til matchede policer
+            const docNameById2 = new Map(
+              (detail.documents ?? []).map((d) => [d.id, d.original_name])
+            );
 
-          // BIZZ-2084: Aktive dækninger per police — til grøn "Dækket"-visning
-          const covByPolicy = new Map<string, AnalyseCoverage[]>();
-          for (const cov of detail.coverages ?? []) {
-            if (!cov.is_covered) continue;
-            const list = covByPolicy.get(cov.policy_id) ?? [];
-            list.push(cov);
-            covByPolicy.set(cov.policy_id, list);
-          }
-
-          // BIZZ-1792: Dedup gaps per check_id
-          const dedupGaps = (rawGaps: typeof detail.gaps) => {
-            const seen = new Set<string>();
-            return rawGaps.filter((g) => {
-              const key = g.check_id ?? g.title;
-              if (seen.has(key)) return false;
-              seen.add(key);
-              return true;
-            });
-          };
-
-          // BIZZ-1941: Forsikringsejer-/virksomheds-gaps løftes op i dedikerede
-          // sektioner; ejendomsrækker viser kun ejendomsspecifikke gaps (scope='property').
-          const ownerGaps = dedupGaps(detail.gaps.filter((g) => gapScope(g.check_id) === 'owner'));
-          const companyGaps = dedupGaps(
-            detail.gaps.filter((g) => gapScope(g.check_id) === 'company')
-          );
-
-          // Byg PropertyGroups
-          // BIZZ-1957: Bygnings-/ejendomsspecifikke gaps (scope='property') må kun
-          // hænge under ejendoms-aktiver — ikke under virksomheds-aktivet, selv om
-          // policen tilfældigvis også er matchet dertil. Ellers lækker fx 'Udvidet
-          // vandskade' op på virksomheds-niveau.
-          const groups: PropertyGroup[] = uniqueAktiver.map((aktiv) => {
-            const aktivGaps =
-              aktiv.matched_policy_id && aktiv.type === 'ejendom'
-                ? dedupGaps(
-                    detail.gaps.filter(
-                      (g) =>
-                        g.policy_id === aktiv.matched_policy_id &&
-                        gapScope(g.check_id) === 'property'
-                    )
-                  )
-                : [];
-            const matchedPolicy = aktiv.matched_policy_id
-              ? (polById.get(aktiv.matched_policy_id) ?? null)
-              : null;
-            return {
-              aktiv,
-              matchedPolicy,
-              gaps: aktivGaps,
-              // BIZZ-2121: Virksomheds-aktiver aggregerer alle kundens policer
-              coverages: coveragesForAktiv(aktiv, detail.policies ?? [], covByPolicy),
-              // BIZZ-2119: kildedokument-filnavn for den matchede police
-              matchedDocName: matchedPolicy?.document_id
-                ? (docNameById2.get(matchedPolicy.document_id) ?? null)
-                : null,
-            };
-          });
-
-          // BIZZ-1802: Hierarkisk layout — virksomheder → ejendomme → gaps
-          const virkGroups = groups.filter((g) => g.aktiv.type === 'virksomhed');
-          const ejdGroups = groups.filter((g) => g.aktiv.type === 'ejendom');
-          const ejdByCvr = new Map<string, PropertyGroup[]>();
-          const orphans: PropertyGroup[] = [];
-          for (const eg of ejdGroups) {
-            const cvr = (eg.aktiv.raw_data as { ejer_cvr?: string } | null)?.ejer_cvr;
-            if (cvr && virkGroups.some((v) => v.aktiv.cvr === cvr)) {
-              const list = ejdByCvr.get(cvr) ?? [];
-              list.push(eg);
-              ejdByCvr.set(cvr, list);
-            } else {
-              orphans.push(eg);
+            // BIZZ-2084: Aktive dækninger per police — til grøn "Dækket"-visning
+            const covByPolicy = new Map<string, AnalyseCoverage[]>();
+            for (const cov of detail.coverages ?? []) {
+              if (!cov.is_covered) continue;
+              const list = covByPolicy.get(cov.policy_id) ?? [];
+              list.push(cov);
+              covByPolicy.set(cov.policy_id, list);
             }
-          }
-          // Sortér: flest gaps/uforsikrede først
-          const sortGrp = (a: PropertyGroup, b: PropertyGroup) => {
-            const aI = a.aktiv.matched_policy_id ? 1 : 0;
-            const bI = b.aktiv.matched_policy_id ? 1 : 0;
-            if (aI !== bI) return aI - bI;
-            return b.gaps.length - a.gaps.length;
-          };
-          orphans.sort(sortGrp);
-          const mappedTrees = virkGroups.map((v) => ({
-            v,
-            ejd: (ejdByCvr.get(v.aktiv.cvr ?? '') ?? []).sort(sortGrp),
-          }));
-          /**
-           * BIZZ-2102: Læser koncern-hierarki-metadata (depth/parent_cvr) fra
-           * virksomheds-aktivets raw_data — sat af koncernWalk ved analysen.
-           */
-          const treeMeta = (t: (typeof mappedTrees)[number]) => {
-            const rd = t.v.aktiv.raw_data as { depth?: number; parent_cvr?: string | null } | null;
-            return {
-              depth: typeof rd?.depth === 'number' ? rd.depth : null,
-              parentCvr: rd?.parent_cvr ?? null,
+
+            // BIZZ-1792: Dedup gaps per check_id
+            const dedupGaps = (rawGaps: typeof detail.gaps) => {
+              const seen = new Set<string>();
+              return rawGaps.filter((g) => {
+                const key = g.check_id ?? g.title;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+              });
             };
-          };
-          const treeHasHierarchy = mappedTrees.some((t) => treeMeta(t).depth !== null);
-          let trees: typeof mappedTrees;
-          if (treeHasHierarchy) {
-            // BIZZ-2102: DFS-sortering så holdingselskab står øverst og døtre
-            // følger umiddelbart efter deres ejer — konsistent med
-            // UnifiedAnalyseView-visningen.
-            const cvrSet = new Set(mappedTrees.map((t) => t.v.aktiv.cvr).filter(Boolean));
-            const byParentCvr = new Map<string, typeof mappedTrees>();
-            const roots: typeof mappedTrees = [];
-            for (const t of mappedTrees) {
-              const { depth, parentCvr } = treeMeta(t);
-              if (depth !== null && depth > 0 && parentCvr && cvrSet.has(parentCvr)) {
-                const list = byParentCvr.get(parentCvr) ?? [];
-                list.push(t);
-                byParentCvr.set(parentCvr, list);
+
+            // BIZZ-1941: Forsikringsejer-/virksomheds-gaps løftes op i dedikerede
+            // sektioner; ejendomsrækker viser kun ejendomsspecifikke gaps (scope='property').
+            const ownerGaps = dedupGaps(
+              detail.gaps.filter((g) => gapScope(g.check_id) === 'owner')
+            );
+            const companyGaps = dedupGaps(
+              detail.gaps.filter((g) => gapScope(g.check_id) === 'company')
+            );
+
+            // Byg PropertyGroups
+            // BIZZ-1957: Bygnings-/ejendomsspecifikke gaps (scope='property') må kun
+            // hænge under ejendoms-aktiver — ikke under virksomheds-aktivet, selv om
+            // policen tilfældigvis også er matchet dertil. Ellers lækker fx 'Udvidet
+            // vandskade' op på virksomheds-niveau.
+            const groups: PropertyGroup[] = uniqueAktiver.map((aktiv) => {
+              const aktivGaps =
+                aktiv.matched_policy_id && aktiv.type === 'ejendom'
+                  ? dedupGaps(
+                      detail.gaps.filter(
+                        (g) =>
+                          g.policy_id === aktiv.matched_policy_id &&
+                          gapScope(g.check_id) === 'property'
+                      )
+                    )
+                  : [];
+              const matchedPolicy = aktiv.matched_policy_id
+                ? (polById.get(aktiv.matched_policy_id) ?? null)
+                : null;
+              return {
+                aktiv,
+                matchedPolicy,
+                gaps: aktivGaps,
+                // BIZZ-2121: Virksomheds-aktiver aggregerer alle kundens policer
+                coverages: coveragesForAktiv(aktiv, detail.policies ?? [], covByPolicy),
+                // BIZZ-2119: kildedokument-filnavn for den matchede police
+                matchedDocName: matchedPolicy?.document_id
+                  ? (docNameById2.get(matchedPolicy.document_id) ?? null)
+                  : null,
+              };
+            });
+
+            // BIZZ-1802: Hierarkisk layout — virksomheder → ejendomme → gaps
+            const virkGroups = groups.filter((g) => g.aktiv.type === 'virksomhed');
+            const ejdGroups = groups.filter((g) => g.aktiv.type === 'ejendom');
+            const ejdByCvr = new Map<string, PropertyGroup[]>();
+            const orphans: PropertyGroup[] = [];
+            for (const eg of ejdGroups) {
+              const cvr = (eg.aktiv.raw_data as { ejer_cvr?: string } | null)?.ejer_cvr;
+              if (cvr && virkGroups.some((v) => v.aktiv.cvr === cvr)) {
+                const list = ejdByCvr.get(cvr) ?? [];
+                list.push(eg);
+                ejdByCvr.set(cvr, list);
               } else {
-                roots.push(t);
+                orphans.push(eg);
               }
             }
-            const byEjd = (a: (typeof mappedTrees)[number], b: (typeof mappedTrees)[number]) =>
-              b.ejd.length - a.ejd.length;
-            const dfs = (list: typeof mappedTrees): typeof mappedTrees =>
-              list.flatMap((t) => [
-                t,
-                ...dfs((byParentCvr.get(t.v.aktiv.cvr ?? '') ?? []).sort(byEjd)),
-              ]);
-            trees = dfs(
-              roots.sort(
-                (a, b) => (treeMeta(a).depth ?? 99) - (treeMeta(b).depth ?? 99) || byEjd(a, b)
-              )
+            // Sortér: flest gaps/uforsikrede først
+            const sortGrp = (a: PropertyGroup, b: PropertyGroup) => {
+              const aI = a.aktiv.matched_policy_id ? 1 : 0;
+              const bI = b.aktiv.matched_policy_id ? 1 : 0;
+              if (aI !== bI) return aI - bI;
+              return b.gaps.length - a.gaps.length;
+            };
+            orphans.sort(sortGrp);
+            const mappedTrees = virkGroups.map((v) => ({
+              v,
+              ejd: (ejdByCvr.get(v.aktiv.cvr ?? '') ?? []).sort(sortGrp),
+            }));
+            /**
+             * BIZZ-2102: Læser koncern-hierarki-metadata (depth/parent_cvr) fra
+             * virksomheds-aktivets raw_data — sat af koncernWalk ved analysen.
+             */
+            const treeMeta = (t: (typeof mappedTrees)[number]) => {
+              const rd = t.v.aktiv.raw_data as {
+                depth?: number;
+                parent_cvr?: string | null;
+              } | null;
+              return {
+                depth: typeof rd?.depth === 'number' ? rd.depth : null,
+                parentCvr: rd?.parent_cvr ?? null,
+              };
+            };
+            const treeHasHierarchy = mappedTrees.some((t) => treeMeta(t).depth !== null);
+            let trees: typeof mappedTrees;
+            if (treeHasHierarchy) {
+              // BIZZ-2102: DFS-sortering så holdingselskab står øverst og døtre
+              // følger umiddelbart efter deres ejer — konsistent med
+              // UnifiedAnalyseView-visningen.
+              const cvrSet = new Set(mappedTrees.map((t) => t.v.aktiv.cvr).filter(Boolean));
+              const byParentCvr = new Map<string, typeof mappedTrees>();
+              const roots: typeof mappedTrees = [];
+              for (const t of mappedTrees) {
+                const { depth, parentCvr } = treeMeta(t);
+                if (depth !== null && depth > 0 && parentCvr && cvrSet.has(parentCvr)) {
+                  const list = byParentCvr.get(parentCvr) ?? [];
+                  list.push(t);
+                  byParentCvr.set(parentCvr, list);
+                } else {
+                  roots.push(t);
+                }
+              }
+              const byEjd = (a: (typeof mappedTrees)[number], b: (typeof mappedTrees)[number]) =>
+                b.ejd.length - a.ejd.length;
+              const dfs = (list: typeof mappedTrees): typeof mappedTrees =>
+                list.flatMap((t) => [
+                  t,
+                  ...dfs((byParentCvr.get(t.v.aktiv.cvr ?? '') ?? []).sort(byEjd)),
+                ]);
+              trees = dfs(
+                roots.sort(
+                  (a, b) => (treeMeta(a).depth ?? 99) - (treeMeta(b).depth ?? 99) || byEjd(a, b)
+                )
+              );
+            } else {
+              // Ældre analyser uden hierarki-metadata: behold ejendoms-count-sortering
+              trees = [...mappedTrees].sort((a, b) => b.ejd.length - a.ejd.length);
+            }
+
+            // BIZZ-1972: Fold forsikringsejer-/virksomheds-findings ind under den
+            // eneste virksomhed når den ER forsikringssejeren (samme entitet).
+            const foldOwnerIntoCompany = shouldFoldOwnerIntoCompany(
+              detail.analyse.kunde_type,
+              detail.analyse.kunde_id,
+              virkGroups.map((v) => v.aktiv.cvr)
             );
-          } else {
-            // Ældre analyser uden hierarki-metadata: behold ejendoms-count-sortering
-            trees = [...mappedTrees].sort((a, b) => b.ejd.length - a.ejd.length);
-          }
 
-          // BIZZ-1972: Fold forsikringsejer-/virksomheds-findings ind under den
-          // eneste virksomhed når den ER forsikringssejeren (samme entitet).
-          const foldOwnerIntoCompany = shouldFoldOwnerIntoCompany(
-            detail.analyse.kunde_type,
-            detail.analyse.kunde_id,
-            virkGroups.map((v) => v.aktiv.cvr)
-          );
-
-          return (
-            <>
-              {/* BIZZ-1941: Forsikringsejer-niveau — vises kun her, ikke per ejendom.
+            return (
+              <>
+                {/* BIZZ-1941: Forsikringsejer-niveau — vises kun her, ikke per ejendom.
                   BIZZ-1972: Skjult i fold-casen (foldet ind under virksomheden). */}
-              {!foldOwnerIntoCompany && ownerGaps.length > 0 && (
-                <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Briefcase size={14} className="text-purple-400" />
-                    <h4 className="text-white text-sm font-semibold">
-                      {da ? 'Forsikringsejer-niveau' : 'Insurance owner level'}
-                    </h4>
-                    <span className="text-slate-400 text-[11px]">
-                      {da
-                        ? `${ownerGaps.length} generelle findings`
-                        : `${ownerGaps.length} general findings`}
-                    </span>
-                  </div>
-                  <GapList gaps={ownerGaps} da={da} />
-                </div>
-              )}
-
-              {/* BIZZ-1941: Virksomheds-niveau — gælder porteføljen, ikke per ejendom.
-                  BIZZ-1972: Skjult i fold-casen (foldet ind under virksomheden). */}
-              {!foldOwnerIntoCompany && companyGaps.length > 0 && (
-                <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Building2 size={14} className="text-blue-400" />
-                    <h4 className="text-white text-sm font-semibold">
-                      {da ? 'Virksomheds-niveau' : 'Company level'}
-                    </h4>
-                    <span className="text-slate-400 text-[11px]">
-                      {companyGaps.length} findings
-                    </span>
-                  </div>
-                  <GapList gaps={companyGaps} da={da} />
-                </div>
-              )}
-
-              {trees.map((tree) => (
-                <div key={tree.v.aktiv.id} className="space-y-2">
-                  <PropertyRow
-                    group={
-                      foldOwnerIntoCompany
-                        ? { ...tree.v, gaps: [...ownerGaps, ...companyGaps] }
-                        : tree.v
-                    }
-                    da={da}
-                    foldedNote={foldOwnerIntoCompany}
-                  />
-                  {tree.ejd.length > 0 && (
-                    <div className="ml-6 pl-3 border-l border-white/8 space-y-2">
-                      {tree.ejd.map((eg) => (
-                        <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
-                      ))}
+                {!foldOwnerIntoCompany && ownerGaps.length > 0 && (
+                  <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Briefcase size={14} className="text-purple-400" />
+                      <h4 className="text-white text-sm font-semibold">
+                        {da ? 'Forsikringsejer-niveau' : 'Insurance owner level'}
+                      </h4>
+                      <span className="text-slate-400 text-[11px]">
+                        {da
+                          ? `${ownerGaps.length} generelle findings`
+                          : `${ownerGaps.length} general findings`}
+                      </span>
                     </div>
-                  )}
-                </div>
-              ))}
-              {orphans.map((g) => (
-                <PropertyRow key={g.aktiv.id} group={g} da={da} />
-              ))}
-            </>
-          );
-        })()}
-      </div>
+                    <GapList gaps={ownerGaps} da={da} />
+                  </div>
+                )}
+
+                {/* BIZZ-1941: Virksomheds-niveau — gælder porteføljen, ikke per ejendom.
+                  BIZZ-1972: Skjult i fold-casen (foldet ind under virksomheden). */}
+                {!foldOwnerIntoCompany && companyGaps.length > 0 && (
+                  <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Building2 size={14} className="text-blue-400" />
+                      <h4 className="text-white text-sm font-semibold">
+                        {da ? 'Virksomheds-niveau' : 'Company level'}
+                      </h4>
+                      <span className="text-slate-400 text-[11px]">
+                        {companyGaps.length} findings
+                      </span>
+                    </div>
+                    <GapList gaps={companyGaps} da={da} />
+                  </div>
+                )}
+
+                {trees.map((tree) => (
+                  <div key={tree.v.aktiv.id} className="space-y-2">
+                    <PropertyRow
+                      group={
+                        foldOwnerIntoCompany
+                          ? { ...tree.v, gaps: [...ownerGaps, ...companyGaps] }
+                          : tree.v
+                      }
+                      da={da}
+                      foldedNote={foldOwnerIntoCompany}
+                    />
+                    {tree.ejd.length > 0 && (
+                      <div className="ml-6 pl-3 border-l border-white/8 space-y-2">
+                        {tree.ejd.map((eg) => (
+                          <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {orphans.map((g) => (
+                  <PropertyRow key={g.aktiv.id} group={g} da={da} />
+                ))}
+              </>
+            );
+          })()}
+        </div>
+      </BbrContext.Provider>
 
       {/* Download rapport */}
       <button

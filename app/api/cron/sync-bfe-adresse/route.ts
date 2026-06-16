@@ -112,6 +112,73 @@ export async function GET(request: NextRequest) {
             // json-parsing til at kaste og dermed sprang ALLE øvrige
             // fallbacks over for den pågældende BFE.
 
+            // Fallback 0 (BIZZ-2159): BBRs officielle beliggenhedsadresse.
+            // En SFE med flere adgangsadresser på samme matrikel (fx hjørne-
+            // bygning) får ellers en VILKÅRLIG adresse fra jordstykke-opslaget.
+            // bbr_ejendom_status.adgangsadresse_id peger på den primære adresse.
+            // Gated på at BFE'en har et jordstykke (grund/bygning) så vi IKKE
+            // overskriver ejerlejligheders specifikke etage/dør-adresse fra VP.
+            let bbrAdgangsadresseId: string | null = null;
+            try {
+              const { data: bbrRow } = await admin
+                .from('bbr_ejendom_status')
+                .select('adgangsadresse_id')
+                .eq('bfe_nummer', bfe)
+                .maybeSingle();
+              bbrAdgangsadresseId =
+                (bbrRow as { adgangsadresse_id?: string | null } | null)?.adgangsadresse_id ?? null;
+            } catch {
+              /* BBR-opslag non-fatal */
+            }
+            if (bbrAdgangsadresseId) {
+              const jordCheck = await fetchDawa(
+                `${DAWA_BASE_URL}/jordstykker?bfenummer=${bfe}&format=json`,
+                { signal: AbortSignal.timeout(8000) },
+                { caller: 'cron.sync-bfe-adresse.bbr-jordcheck' }
+              );
+              let harJordstykke = false;
+              if (jordCheck.ok) {
+                const js = (await jordCheck.json()) as unknown[];
+                harJordstykke = Array.isArray(js) && js.length > 0;
+              }
+              if (harJordstykke) {
+                const bbrAdrRes = await fetchDawa(
+                  `${DAWA_BASE_URL}/adgangsadresser/${encodeURIComponent(bbrAdgangsadresseId)}?struktur=mini`,
+                  { signal: AbortSignal.timeout(8000) },
+                  { caller: 'cron.sync-bfe-adresse.bbr-beliggenhed' }
+                );
+                if (bbrAdrRes.ok) {
+                  const a = (await bbrAdrRes.json()) as {
+                    id?: string;
+                    vejnavn?: string;
+                    husnr?: string;
+                    postnr?: string | number;
+                    postnrnavn?: string;
+                    kommunekode?: string | number;
+                  };
+                  if (a?.vejnavn && a?.postnr != null) {
+                    await admin.from('bfe_adresse_cache').upsert(
+                      {
+                        bfe_nummer: bfe,
+                        adresse: `${a.vejnavn} ${a.husnr ?? ''}`.trim(),
+                        postnr: String(a.postnr),
+                        postnrnavn: a.postnrnavn ?? null,
+                        kommune_kode: a.kommunekode != null ? String(a.kommunekode) : null,
+                        dawa_id: a.id ?? bbrAdgangsadresseId,
+                        etage: null,
+                        doer: null,
+                        kilde: 'cron_bbr_beliggenhed',
+                        sidst_opdateret: new Date().toISOString(),
+                      },
+                      { onConflict: 'bfe_nummer' }
+                    );
+                    resolved++;
+                    continue;
+                  }
+                }
+              }
+            }
+
             // Fallback 1: VP ES
             const vpRes = await fetch(
               'https://api-fs.vurderingsportalen.dk/preliminaryproperties/_search',

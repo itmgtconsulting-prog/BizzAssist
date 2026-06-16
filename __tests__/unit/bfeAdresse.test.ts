@@ -16,16 +16,33 @@ vi.mock('@/lib/supabase/admin', () => ({
 const { hentBfeAdresser, hentBfeAdresse, formatBfeLabel, erTrovaerdigCacheRaekke } =
   await import('@/app/lib/bfeAdresse');
 
-/** Helper: mock cache-tabellens query chain + upsert-spy */
-function mockCache(rows: unknown[]) {
+/**
+ * Helper: mock query-chains dispatchet pr. tabel-navn.
+ * - bfe_adresse_cache: select().in() → rows, upsert-spy
+ * - bbr_ejendom_status (BIZZ-2159): select().eq().maybeSingle() → adgangsadresse_id
+ *
+ * @param rows - Cache-rækker der returneres af cache-queryen
+ * @param opts.bbrAdgangsadresseId - Officiel BBR-adgangsadresse-UUID (eller null)
+ */
+function mockCache(rows: unknown[], opts: { bbrAdgangsadresseId?: string | null } = {}) {
   const upsert = vi.fn().mockResolvedValue({ data: null, error: null });
-  const chain = {
+  const cacheChain = {
     select: vi.fn().mockReturnThis(),
     in: vi.fn().mockResolvedValue({ data: rows, error: null }),
     upsert,
   };
-  mockFrom.mockReturnValue(chain);
-  return { chain, upsert };
+  const bbrChain = {
+    select: vi.fn().mockReturnThis(),
+    eq: vi.fn().mockReturnThis(),
+    maybeSingle: vi.fn().mockResolvedValue({
+      data: opts.bbrAdgangsadresseId ? { adgangsadresse_id: opts.bbrAdgangsadresseId } : null,
+      error: null,
+    }),
+  };
+  mockFrom.mockImplementation((table: string) =>
+    table === 'bbr_ejendom_status' ? bbrChain : cacheChain
+  );
+  return { chain: cacheChain, upsert, bbrChain };
 }
 
 /** Helper: mock fetch der svarer pr. URL-mønster */
@@ -142,6 +159,73 @@ describe('hentBfeAdresser', () => {
       adresse: 'Fenrisvej 19',
       kilde: 'auto_jordstykke',
     });
+  });
+
+  it('foretrækker BBR-beliggenhedsadresse over jordstykkets vilkårlige valg (BIZZ-2159)', async () => {
+    // Cache-miss → live: jordstykke giver "Gyldenstræde 8A", men BBR har den
+    // officielle beliggenhedsadresse "Stengade 10A" → BBR vinder.
+    const { upsert } = mockCache([], { bbrAdgangsadresseId: 'bbr-uuid-stengade' });
+    mockFetch((url) => {
+      if (url.includes('/jordstykker'))
+        return [{ matrikelnr: '519', ejerlav: { kode: 100453, navn: 'Helsingør Bygrunde' } }];
+      if (url.includes('/adgangsadresser/bbr-uuid-stengade'))
+        return {
+          id: 'bbr-uuid-stengade',
+          vejnavn: 'Stengade',
+          husnr: '10A',
+          postnr: '3000',
+          postnrnavn: 'Helsingør',
+          kommunekode: '0217',
+        };
+      if (url.includes('/adgangsadresser'))
+        return [
+          {
+            id: 'jord-uuid-gyldenstraede',
+            vejnavn: 'Gyldenstræde',
+            husnr: '8A',
+            postnr: '3000',
+            postnrnavn: 'Helsingør',
+            kommunekode: '0217',
+          },
+        ];
+      return null;
+    });
+
+    const res = await hentBfeAdresser([5319420]);
+    expect(res.get(5319420)?.adresse).toBe('Stengade 10A');
+    expect(res.get(5319420)?.kilde).toBe('bbr_beliggenhed');
+    expect(res.get(5319420)?.dawaId).toBe('bbr-uuid-stengade');
+    expect(upsert).toHaveBeenCalledTimes(1);
+    expect(upsert.mock.calls[0][0]).toMatchObject({
+      bfe_nummer: 5319420,
+      adresse: 'Stengade 10A',
+      kilde: 'bbr_beliggenhed',
+    });
+  });
+
+  it('bevarer jordstykke-adresse når BFE ikke har en BBR-beliggenhed (BIZZ-2159)', async () => {
+    // Ingen BBR-row → jordstykkets adresse bevares uændret.
+    mockCache([], { bbrAdgangsadresseId: null });
+    mockFetch((url) => {
+      if (url.includes('/jordstykker'))
+        return [{ matrikelnr: '65bd', ejerlav: { kode: 980553, navn: 'Helsingør Markjorder' } }];
+      if (url.includes('/adgangsadresser'))
+        return [
+          {
+            id: 'jord-uuid',
+            vejnavn: 'Fenrisvej',
+            husnr: '19',
+            postnr: '3000',
+            postnrnavn: 'Helsingør',
+            kommunekode: '0217',
+          },
+        ];
+      return null;
+    });
+
+    const res = await hentBfeAdresser([101]);
+    expect(res.get(101)?.adresse).toBe('Fenrisvej 19');
+    expect(res.get(101)?.kilde).toBe('auto_jordstykke');
   });
 
   it('giver ubebyggede grunde matrikelbetegnelse med dawaId=null', async () => {

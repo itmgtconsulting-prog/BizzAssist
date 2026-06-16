@@ -5,21 +5,27 @@
  * via /api/bfe-addresses, ejendomme-tab via /api/ejendomme-by-owner og
  * forsikrings-gab via koncernWalk) så samme BFE altid viser samme adresse-label.
  *
- * Strategi (valideret i BIZZ-2092):
+ * Strategi (valideret i BIZZ-2092, udvidet i BIZZ-2159):
  *   1. Cache-first fra bfe_adresse_cache — men KUN rækker med troværdig kilde.
  *      'cache_dar' (korrupt backfill 2026-05-20 der skrev SFE-gruppens hoved-
  *      adresse til alle BFE'er i gruppen) og 'unresolvable' (placeholder)
  *      behandles som cache-miss.
  *   2. Live fallback pr. BFE: DAWA /jordstykker?bfenummer → /adgangsadresser?
- *      ejerlavkode&matrikelnr — giver den KORREKTE pr-BFE-adresse (modsat
- *      VP/BBR som returnerer SFE-gruppens hovedadresse).
- *   3. Jordstykke uden adgangsadresser = ubebygget grund → matrikelbetegnelse
+ *      ejerlavkode&matrikelnr — giver en pr-BFE-adresse, men når en SFE har
+ *      FLERE adgangsadresser på samme matrikel vælger jordstykke-opslaget en
+ *      VILKÅRLIG adresse (BIZZ-2159).
+ *   3. BIZZ-2159: For grund-/bygnings-BFE'er (jordstykke fundet) foretrækkes
+ *      BBRs officielle beliggenhedsadresse (bbr_ejendom_status.adgangsadresse_id
+ *      → DAWA) over jordstykkets vilkårlige valg. Kilde 'bbr_beliggenhed'.
+ *      Ejerlejligheder (intet jordstykke) rører vi IKKE — VP har den specifikke
+ *      lejligheds-adresse inkl. etage/dør.
+ *   4. Jordstykke uden adgangsadresser = ubebygget grund → matrikelbetegnelse
  *      (fx "65ce Helsingør Markjorder") som adresse, dawaId=null.
- *   4. Intet jordstykke (typisk ejerlejlighed) → VP-fallback som har den
+ *   5. Intet jordstykke (typisk ejerlejlighed) → VP-fallback som har den
  *      specifikke lejligheds-adresse inkl. etage/dør.
- *   5. Writeback: succesfulde live-resolves gemmes med troværdig kilde
- *      ('auto_jordstykke' / 'auto_grund' / 'auto_vp') så næste opslag er
- *      cache-hit. Troværdige rækker overskrives ALDRIG.
+ *   6. Writeback: succesfulde live-resolves gemmes med troværdig kilde
+ *      ('bbr_beliggenhed' / 'auto_jordstykke' / 'auto_grund' / 'auto_vp') så
+ *      næste opslag er cache-hit. Troværdige rækker overskrives ALDRIG.
  *
  * Data-retention: bfe_adresse_cache indeholder kun offentlige ejendomsdata
  * (ingen PII) — ingen retention-grænse påkrævet.
@@ -259,15 +265,83 @@ async function resolveViaVP(bfe: number): Promise<BfeAdresse | null> {
 }
 
 /**
- * Live-resolve én BFE: jordstykke-kæden først (pr-BFE-korrekt), VP som
- * fallback for ejerlejligheder. Returnerer null hvis intet findes.
+ * BIZZ-2159: Resolve én BFE via BBRs officielle beliggenhedsadresse.
+ *
+ * En SFE kan dække flere adgangsadresser på samme matrikel (fx hjørne-
+ * bygningen Gyldenstræde 8 / Stengade 10 på matrikel 519). DAWA-jordstykke-
+ * opslaget vælger en vilkårlig af dem, mens bbr_ejendom_status.adgangsadresse_id
+ * peger på den officielle/primære adresse. Denne kilde har derfor forrang for
+ * grund-/bygnings-BFE'er.
  *
  * @param bfe - BFE-nummer
+ * @param admin - Supabase admin-klient (til public.bbr_ejendom_status)
+ * @returns BfeAdresse med kilde='bbr_beliggenhed', eller null hvis BFE'en ikke
+ *   har en BBR-beliggenhedsadresse eller DAWA ikke kan resolve den
+ */
+async function resolveViaBbrBeliggenhed(
+  bfe: number,
+  admin: ReturnType<typeof createAdminClient>
+): Promise<BfeAdresse | null> {
+  let adgangsadresseId: string | null = null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (admin as any)
+      .from('bbr_ejendom_status')
+      .select('adgangsadresse_id')
+      .eq('bfe_nummer', bfe)
+      .maybeSingle();
+    adgangsadresseId = (data?.adgangsadresse_id as string | null) ?? null;
+  } catch {
+    return null;
+  }
+  if (!adgangsadresseId) return null;
+
+  const a = (await dawaJson(
+    `${DAWA_BASE_URL}/adgangsadresser/${encodeURIComponent(adgangsadresseId)}?struktur=mini`
+  )) as {
+    id?: string;
+    vejnavn?: string;
+    husnr?: string;
+    postnr?: string | number;
+    postnrnavn?: string;
+    kommunekode?: string | number;
+  } | null;
+  if (!a?.vejnavn || a?.postnr == null) return null;
+  return {
+    adresse: [a.vejnavn, a.husnr].filter(Boolean).join(' '),
+    postnr: String(a.postnr),
+    by: a.postnrnavn ?? null,
+    kommune: null,
+    kommuneKode: a.kommunekode != null ? String(a.kommunekode) : null,
+    ejendomstype: null,
+    dawaId: a.id ?? adgangsadresseId,
+    etage: null,
+    doer: null,
+    kilde: 'bbr_beliggenhed',
+  };
+}
+
+/**
+ * Live-resolve én BFE: jordstykke-kæden først (afgør om det er en grund-/
+ * bygnings-BFE), og foretræk dér BBRs officielle beliggenhedsadresse over
+ * jordstykkets vilkårlige valg (BIZZ-2159). VP som fallback for ejerlejligheder
+ * (intet jordstykke) — VP har den specifikke lejligheds-adresse inkl. etage/dør,
+ * som BBR-beliggenhed ikke har, så ejerlejligheder rører vi ikke. Returnerer
+ * null hvis intet findes.
+ *
+ * @param bfe - BFE-nummer
+ * @param admin - Supabase admin-klient (til BBR-beliggenhed-opslag)
  * @returns BfeAdresse eller null
  */
-async function resolveLive(bfe: number): Promise<BfeAdresse | null> {
+async function resolveLive(
+  bfe: number,
+  admin: ReturnType<typeof createAdminClient>
+): Promise<BfeAdresse | null> {
   const viaJord = await resolveViaJordstykke(bfe);
-  if (viaJord) return viaJord;
+  if (viaJord) {
+    const viaBbr = await resolveViaBbrBeliggenhed(bfe, admin);
+    return viaBbr ?? viaJord;
+  }
   return resolveViaVP(bfe);
 }
 
@@ -327,7 +401,7 @@ export async function hentBfeAdresser(bfes: number[]): Promise<Map<number, BfeAd
   for (let i = 0; i < misses.length; i += LIVE_CONCURRENCY) {
     const chunk = misses.slice(i, i + LIVE_CONCURRENCY);
     const results = await Promise.all(
-      chunk.map(async (bfe) => ({ bfe, res: await resolveLive(bfe) }))
+      chunk.map(async (bfe) => ({ bfe, res: await resolveLive(bfe, admin) }))
     );
     for (const { bfe, res } of results) {
       if (!res?.adresse) continue;

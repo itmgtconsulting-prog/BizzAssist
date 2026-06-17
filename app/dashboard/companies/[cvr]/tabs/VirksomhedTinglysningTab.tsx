@@ -969,6 +969,8 @@ export default function VirksomhedTinglysningTab({
               </span>
             </button>
           </div>
+          {/* BIZZ-2143 — Altid synlig forklaring: bilbogen viser tinglyste hæftelser, ikke ejede køretøjer */}
+          <p className="px-4 pb-2 text-slate-400 text-xs">{c.bilbogForklaring}</p>
           {bilbogOpen && bilbogData.length > 0 && (
             <div className="border-t border-slate-700/20 bg-slate-900/30 px-4 py-3 space-y-3">
               {bilbogFejl && <div className="text-xs text-red-400">{bilbogFejl}</div>}

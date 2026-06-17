@@ -524,6 +524,9 @@ export const translations = {
       bilbogRegnr: 'Reg.nr.',
       bilbogAargang: 'Årgang',
       bilbogIngenHaeftelser: 'Ingen hæftelser',
+      // BIZZ-2143 — Forklaring: bilbogen viser kun tinglyste hæftelser, ikke ejede køretøjer
+      bilbogForklaring:
+        'Viser tinglyste hæftelser (pant, leasing, ejendomsforbehold) — ikke en komplet liste over ejede køretøjer.',
       // BIZZ-530 — Andelsbog sektion på Tinglysning-tab
       andelsbogError: 'Kunne ikke hente andelsbogsdata',
       andelsbogEmpty: 'Ingen tinglyste andele fundet',
@@ -1226,6 +1229,9 @@ export const translations = {
       bilbogRegnr: 'Reg. no.',
       bilbogAargang: 'Year',
       bilbogIngenHaeftelser: 'No liens',
+      // BIZZ-2143 — Clarify: the car book shows registered liens, not owned vehicles
+      bilbogForklaring:
+        'Shows registered liens (mortgages, leasing, retention of title) — not a complete list of owned vehicles.',
       // BIZZ-530 — Cooperative register section on Tinglysning tab
       andelsbogError: 'Could not load cooperative register data',
       andelsbogEmpty: 'No registered cooperative units found',

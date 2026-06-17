@@ -108,16 +108,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   // Cleanup stuck "parsing" docs (Vercel timeout dræber processen uden at
   // catch-blokken kører → status forbliver "parsing" permanent).
-  // Reset docs der har været "parsing" i >3 min til "failed".
+  //
+  // BIZZ-2163: Tærsklen SKAL være større end maxDuration (300s). Tidligere
+  // 3-minutters tærskel var KORTERE end funktionens egen max-køretid, så en
+  // stor forsikringsoversigt der lovligt stadig parses efter 3 min blev
+  // fejlagtigt markeret "failed" af det NÆSTE uploads cleanup-pass — under
+  // batch-upload af mange PDF'er gav det "alle uploads fejler", selvom de
+  // reelt fuldførte bagefter. Vi nulstiller derfor kun parses der har
+  // overskredet serverless-loftet (300s) + en margin → 6 min.
+  const STUCK_PARSE_MS = 6 * 60 * 1000;
   try {
     const allDocs = await insurance.documents.list();
     const now = Date.now();
     for (const d of allDocs) {
       if (d.parse_status === 'parsing' && d.created_at) {
         const age = now - new Date(d.created_at).getTime();
-        if (age > 3 * 60 * 1000) {
+        if (age > STUCK_PARSE_MS) {
           await insurance.documents.updateParseStatus(d.id, 'failed', {
-            error: `Timeout: parsing brugte mere end 3 minutter (sandsynligvis Vercel serverless timeout)`,
+            error: `Timeout: parsing overskred serverless-loftet (>5 min) og blev afbrudt`,
           });
           logger.warn(
             `[forsikring/parse] Reset stuck doc "${d.original_name}" (${d.id}) fra parsing → failed`

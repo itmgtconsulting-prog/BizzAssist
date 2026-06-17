@@ -16,16 +16,23 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { getTenantSchemaName } from '@/lib/db/tenant';
 import { logger } from '@/app/lib/logger';
 import { resolveSfeForAdresse } from '@/app/lib/forsikring/sfeStruktur';
+import { bygAnvendelseTekst } from '@/app/lib/bbrKoder';
 
 const DAWA_BASE = 'https://api.dataforsyningen.dk';
 
 /** Markør-type returneret til klienten */
-/** BIZZ-2145: Bygningsdata fra BBR */
+/** BIZZ-2145 / BIZZ-2168: Bygningsdata fra BBR (forklarende labels, kode-oversættelse) */
 interface BbrData {
   bebygget_areal: number | null;
+  /** BIZZ-2168: Samlet bolig/erhvervs-areal — bruges når bebygget_areal mangler */
+  samlet_boligareal: number | null;
+  samlet_erhvervsareal: number | null;
   antal_etager: number | null;
   opfoerelsesaar: number | null;
+  /** BIZZ-2168: Læsbar anvendelse oversat fra BBR byg021_anvendelse-kode */
   anvendelse: string | null;
+  /** BIZZ-2168: Normaliseret ejendomstype (parcelhus/ejerlejlighed/erhverv …) */
+  ejendomstype: string | null;
 }
 
 /** BIZZ-2145: Bygningsdata fra police */
@@ -84,6 +91,27 @@ function byggCvrAdresse(adr: CvrAdresse | null): string | null {
   const husnr = `${adr.husnummerFra}${adr.bogstavFra ?? ''}`;
   const post = adr.postnummer && adr.postdistrikt ? `, ${adr.postnummer} ${adr.postdistrikt}` : '';
   return `${adr.vejnavn} ${husnr}${post}`;
+}
+
+/**
+ * BIZZ-2168: Afgør om en BBR-række indeholder reel data. Mange ejerlejligheds-
+ * BFE'er har en række i bbr_ejendom_status, men alle bygningsfelter er NULL —
+ * disse skal falde tilbage på den samlede faste ejendoms (SFE) BBR-data.
+ *
+ * @param b - BBR-data-objekt
+ * @returns true hvis mindst ét bygningsfelt er udfyldt
+ */
+function bbrHasData(b: BbrData | null | undefined): boolean {
+  if (!b) return false;
+  return (
+    b.bebygget_areal != null ||
+    b.samlet_boligareal != null ||
+    b.samlet_erhvervsareal != null ||
+    b.antal_etager != null ||
+    b.opfoerelsesaar != null ||
+    b.anvendelse != null ||
+    b.ejendomstype != null
+  );
 }
 
 /**
@@ -190,7 +218,7 @@ export async function GET(
     const [aktiverResult, gapsResult] = await Promise.all([
       db
         .from('forsikring_aktiver')
-        .select('id, type, label, bfe, cvr, adresse, matched_policy_id')
+        .select('id, type, label, bfe, cvr, adresse, matched_policy_id, raw_data')
         .eq('analyse_id', id)
         .eq('tenant_id', auth.tenantId)
         .in('type', ['ejendom', 'virksomhed']),
@@ -209,7 +237,17 @@ export async function GET(
       cvr: string | null;
       adresse: string | null;
       matched_policy_id: string | null;
+      raw_data: { sfe_bfe?: number | string | null } | null;
     }>;
+
+    // BIZZ-2168: Resolve SFE-moder-BFE pr. aktiv så ejerlejligheder (hvis egen
+    // BFE mangler BBR-data) kan arve den samlede faste ejendoms bygningsdata.
+    const sfeBfeByAktiv = new Map<string, number>();
+    for (const a of aktiver) {
+      const raw = a.raw_data?.sfe_bfe;
+      const n = raw == null ? NaN : Number(raw);
+      if (Number.isFinite(n) && n !== a.bfe) sfeBfeByAktiv.set(a.id, n);
+    }
 
     // Aggregér gaps per aktiv
     const gapsByAktiv = new Map<string, { critical: number; warning: number }>();
@@ -240,25 +278,37 @@ export async function GET(
       }
     }
 
-    // BIZZ-2145: Hent BBR-data for alle BFE'er
+    // BIZZ-2145 / BIZZ-2168: Hent BBR-data for alle aktiv-BFE'er OG deres
+    // SFE-moder-BFE'er (så ejerlejligheder uden egen BBR kan arve SFE-data).
     const bbrMap = new Map<number, BbrData>();
-    if (bfeNrs.length > 0) {
+    const bbrBfeNrs = [...new Set([...bfeNrs, ...sfeBfeByAktiv.values()])];
+    if (bbrBfeNrs.length > 0) {
       const { data: bbrRows } = await admin
         .from('bbr_ejendom_status')
-        .select('bfe_nummer, bebygget_areal, antal_etager, opfoerelsesaar, byg021_anvendelse')
-        .in('bfe_nummer', bfeNrs);
+        .select(
+          'bfe_nummer, bebygget_areal, samlet_boligareal, samlet_erhvervsareal, antal_etager, opfoerelsesaar, byg021_anvendelse, ejendomstype_norm'
+        )
+        .in('bfe_nummer', bbrBfeNrs);
       for (const row of (bbrRows ?? []) as Array<{
         bfe_nummer: number;
         bebygget_areal: number | null;
+        samlet_boligareal: number | null;
+        samlet_erhvervsareal: number | null;
         antal_etager: number | null;
         opfoerelsesaar: number | null;
-        byg021_anvendelse: string | null;
+        byg021_anvendelse: number | null;
+        ejendomstype_norm: string | null;
       }>) {
         bbrMap.set(row.bfe_nummer, {
           bebygget_areal: row.bebygget_areal,
+          samlet_boligareal: row.samlet_boligareal,
+          samlet_erhvervsareal: row.samlet_erhvervsareal,
           antal_etager: row.antal_etager,
           opfoerelsesaar: row.opfoerelsesaar,
-          anvendelse: row.byg021_anvendelse,
+          // BIZZ-2168: oversæt anvendelseskode → læsbar tekst
+          anvendelse:
+            row.byg021_anvendelse != null ? bygAnvendelseTekst(row.byg021_anvendelse) : null,
+          ejendomstype: row.ejendomstype_norm,
         });
       }
     }
@@ -359,6 +409,14 @@ export async function GET(
           if (!coords) return null;
 
           const gaps = gapsByAktiv.get(aktiv.id);
+          // BIZZ-2168: Brug aktivets egen BBR hvis den har data; ellers arv den
+          // samlede faste ejendoms (SFE-moder) BBR-data — typisk for ejerlejligheder.
+          let bbr = aktiv.bfe ? (bbrMap.get(aktiv.bfe) ?? null) : null;
+          if (!bbrHasData(bbr)) {
+            const sfeBfe = sfeBfeByAktiv.get(aktiv.id);
+            const sfeBbr = sfeBfe ? bbrMap.get(sfeBfe) : null;
+            if (bbrHasData(sfeBbr)) bbr = sfeBbr ?? null;
+          }
           return {
             id: aktiv.id,
             type: aktiv.type,
@@ -371,7 +429,7 @@ export async function GET(
             isInsured: !!aktiv.matched_policy_id,
             gapCritical: gaps?.critical ?? 0,
             gapWarning: gaps?.warning ?? 0,
-            bbr: aktiv.bfe ? (bbrMap.get(aktiv.bfe) ?? null) : null,
+            bbr,
             policeBygninger: aktiv.matched_policy_id
               ? (policeBygningerMap.get(aktiv.matched_policy_id) ?? null)
               : null,

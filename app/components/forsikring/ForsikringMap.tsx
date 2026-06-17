@@ -83,12 +83,15 @@ export interface ForsikringMarker {
   isInsured: boolean;
   gapCritical: number;
   gapWarning: number;
-  /** BIZZ-2145: BBR bygningsdata */
+  /** BIZZ-2145 / BIZZ-2168: BBR bygningsdata (med forklarende felter + labels) */
   bbr?: {
     bebygget_areal: number | null;
+    samlet_boligareal: number | null;
+    samlet_erhvervsareal: number | null;
     antal_etager: number | null;
     opfoerelsesaar: number | null;
     anvendelse: string | null;
+    ejendomstype: string | null;
   } | null;
   /** BIZZ-2145: Police bygningsdata */
   policeBygninger?: Array<{
@@ -428,56 +431,106 @@ function ForsikringMapInner({
                   {da ? 'forsikringshuller' : 'gaps'}
                 </p>
               )}
-              {/* BIZZ-2145: BBR vs Police bygningsdata */}
-              {(popupMarker.bbr || popupMarker.policeBygninger) && (
-                <div className="mt-2 border-t border-slate-700/50 pt-1.5 space-y-1">
-                  {popupMarker.bbr && (
-                    <div className="text-xs">
-                      <span className="text-blue-400 font-medium">BBR:</span>
-                      <span className="text-slate-300 ml-1">
-                        {popupMarker.bbr.bebygget_areal
-                          ? `${popupMarker.bbr.bebygget_areal} m²`
-                          : ''}
-                        {popupMarker.bbr.antal_etager
-                          ? ` · ${popupMarker.bbr.antal_etager} et.`
-                          : ''}
-                        {popupMarker.bbr.opfoerelsesaar
-                          ? ` · ${popupMarker.bbr.opfoerelsesaar}`
-                          : ''}
-                      </span>
+              {/* BIZZ-2145 / BIZZ-2168: BBR vs Police bygningsdata med forklarende labels */}
+              {(() => {
+                const bbr = popupMarker.bbr;
+                // BIZZ-2168: Effektivt areal — bebygget_areal mangler ofte; brug
+                // samlet bolig-/erhvervsareal som fallback med tydelig kilde-label.
+                const arealM2 = bbr
+                  ? (bbr.bebygget_areal ?? bbr.samlet_boligareal ?? bbr.samlet_erhvervsareal)
+                  : null;
+                const arealKilde = bbr
+                  ? bbr.bebygget_areal != null
+                    ? da
+                      ? 'bebygget'
+                      : 'footprint'
+                    : bbr.samlet_boligareal != null
+                      ? da
+                        ? 'bolig'
+                        : 'residential'
+                      : bbr.samlet_erhvervsareal != null
+                        ? da
+                          ? 'erhverv'
+                          : 'commercial'
+                        : ''
+                  : '';
+                const anvendelse =
+                  bbr?.anvendelse && bbr.anvendelse !== '–' && !bbr.anvendelse.startsWith('Ukendt')
+                    ? bbr.anvendelse
+                    : null;
+                const ejendomstype = bbr?.ejendomstype
+                  ? bbr.ejendomstype.charAt(0).toUpperCase() + bbr.ejendomstype.slice(1)
+                  : null;
+                const bbrHasData =
+                  arealM2 != null ||
+                  anvendelse != null ||
+                  ejendomstype != null ||
+                  (bbr?.antal_etager ?? null) != null ||
+                  (bbr?.opfoerelsesaar ?? null) != null;
+                const hasPolice = !!popupMarker.policeBygninger?.length;
+                if (!bbrHasData && !hasPolice) return null;
+
+                /** Én label/værdi-række i bygningsdata-blokken */
+                const Row = ({ label, value }: { label: string; value: string | number | null }) =>
+                  value == null || value === '' ? null : (
+                    <div className="flex justify-between gap-2 text-xs">
+                      <span className="text-slate-400">{label}</span>
+                      <span className="text-slate-200 text-right truncate">{value}</span>
                     </div>
-                  )}
-                  {popupMarker.policeBygninger?.map((b, i) => (
-                    <div key={i} className="text-xs">
-                      <span className="text-emerald-400 font-medium">
-                        {da ? 'Police' : 'Policy'}:
-                      </span>
-                      <span className="text-slate-300 ml-1">
-                        {b.bebygget_areal_m2 ? `${b.bebygget_areal_m2} m²` : ''}
-                        {b.antal_etager ? ` · ${b.antal_etager} et.` : ''}
-                        {b.opfoert_aar ? ` · ${b.opfoert_aar}` : ''}
-                        {b.anvendelse ? ` · ${b.anvendelse}` : ''}
-                      </span>
-                    </div>
-                  ))}
-                  {/* Advarsel ved areal-afvigelse > 15% */}
-                  {popupMarker.bbr?.bebygget_areal &&
-                    popupMarker.policeBygninger?.[0]?.bebygget_areal_m2 &&
-                    (() => {
-                      const bbrAreal = popupMarker.bbr!.bebygget_areal!;
-                      const polAreal = popupMarker.policeBygninger![0].bebygget_areal_m2!;
-                      const pct = (Math.abs(bbrAreal - polAreal) / bbrAreal) * 100;
-                      if (pct > 15)
-                        return (
-                          <div className="text-xs text-amber-400 font-medium">
-                            ⚠ {da ? 'Areal-afvigelse' : 'Area mismatch'}: BBR {bbrAreal}m² vs Police{' '}
-                            {polAreal}m² ({pct.toFixed(0)}%)
-                          </div>
-                        );
-                      return null;
-                    })()}
-                </div>
-              )}
+                  );
+
+                return (
+                  <div className="mt-2 border-t border-slate-700/50 pt-1.5 space-y-1.5">
+                    {bbrHasData && (
+                      <div className="space-y-0.5">
+                        <p className="text-blue-400 font-medium text-xs">BBR</p>
+                        <Row
+                          label={da ? 'Areal' : 'Area'}
+                          value={
+                            arealM2 != null
+                              ? `${arealM2} m²${arealKilde ? ` (${arealKilde})` : ''}`
+                              : null
+                          }
+                        />
+                        <Row label={da ? 'Anvendelse' : 'Use'} value={anvendelse} />
+                        <Row label={da ? 'Type' : 'Type'} value={ejendomstype} />
+                        <Row label={da ? 'Etager' : 'Floors'} value={bbr?.antal_etager ?? null} />
+                        <Row label={da ? 'Opført' : 'Built'} value={bbr?.opfoerelsesaar ?? null} />
+                      </div>
+                    )}
+                    {popupMarker.policeBygninger?.map((b, i) => (
+                      <div key={i} className="space-y-0.5">
+                        <p className="text-emerald-400 font-medium text-xs">
+                          {da ? 'Police' : 'Policy'}
+                          {b.navn ? ` · ${b.navn}` : ''}
+                        </p>
+                        <Row
+                          label={da ? 'Areal' : 'Area'}
+                          value={b.bebygget_areal_m2 != null ? `${b.bebygget_areal_m2} m²` : null}
+                        />
+                        <Row label={da ? 'Anvendelse' : 'Use'} value={b.anvendelse} />
+                        <Row label={da ? 'Etager' : 'Floors'} value={b.antal_etager} />
+                        <Row label={da ? 'Opført' : 'Built'} value={b.opfoert_aar} />
+                      </div>
+                    ))}
+                    {/* BIZZ-2168: Areal-afvigelse > 15% (BBR effektivt areal vs police) */}
+                    {arealM2 != null &&
+                      popupMarker.policeBygninger?.[0]?.bebygget_areal_m2 != null &&
+                      (() => {
+                        const polAreal = popupMarker.policeBygninger![0].bebygget_areal_m2!;
+                        const pct = (Math.abs(arealM2 - polAreal) / arealM2) * 100;
+                        if (pct > 15)
+                          return (
+                            <div className="text-xs text-amber-400 font-medium">
+                              ⚠ {da ? 'Areal-afvigelse' : 'Area mismatch'}: BBR {arealM2}m² vs
+                              Police {polAreal}m² ({pct.toFixed(0)}%)
+                            </div>
+                          );
+                        return null;
+                      })()}
+                  </div>
+                );
+              })()}
               {/* BIZZ-2147: Link til detaljeside (ejendom via BFE, virksomhed via CVR) */}
               {(() => {
                 const href = detaljeHref(popupMarker);

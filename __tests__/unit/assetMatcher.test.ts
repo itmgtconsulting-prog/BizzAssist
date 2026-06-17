@@ -141,7 +141,11 @@ describe('matchAssetsToPolicies', () => {
     expect(results[1].bestMatch).toBeNull();
   });
 
-  it('BIZZ-2120: erhvervspolice fra koncernens eget selskab matcher fortsat (score 70)', () => {
+  it('BIZZ-2164: erhvervspolice dækker forsikringstageren (100) men IKKE en ikke-navngiven søster', () => {
+    // RACEHALL-fejlen: en ansvarspolice tegnet af ét koncern-selskab dækker kun
+    // forsikringstageren + navngivne medforsikrede — ikke alle søsterselskaber.
+    // SKIINVEST står ikke som sikret → må ikke markeres forsikret (kun svag
+    // kandidat, score 45 < threshold), mens forsikringstageren matcher via CVR.
     const aktiver: Aktiv[] = [
       { type: 'virksomhed', label: 'SKIINVEST A/S', cvr: '11111111' },
       { type: 'virksomhed', label: 'RACEHALL Holding A/S', cvr: '22222222' },
@@ -155,8 +159,9 @@ describe('matchAssetsToPolicies', () => {
       }),
     ];
     const results = matchAssetsToPolicies(aktiver, policer);
-    // Datterselskab dækkes af koncern-policen via 70-reglen
-    expect(results[0].bestMatch?.score).toBe(70);
+    // Ikke-navngiven søster: kun kandidat (45), tæller ikke som forsikret
+    expect(results[0].bestMatch).toBeNull();
+    expect(results[0].candidates[0]?.score).toBe(45);
     // Forsikringstager selv matcher via CVR (100)
     expect(results[1].bestMatch?.score).toBe(100);
   });

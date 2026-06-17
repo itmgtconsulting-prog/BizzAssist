@@ -474,13 +474,29 @@ function scoreVirksomhed(aktiv: Aktiv, policy: ForsikringPolicy, koncern: Koncer
     return 0;
   }
 
-  // BIZZ-1620: Koncern-policer dækker ofte hele virksomheden via moderselskabets
-  // CVR eller en generel police-type. Match virksomheds-aktiv mod policer der
-  // har coverage_type indeholdende "erhverv", "virksomhed", "ansvar", "drift"
-  // eller "koncern" — disse dækker typisk virksomhedsaktiviteten.
-  // BIZZ-2120: KUN hvis forsikringstager selv hører til kundens koncern —
-  // ellers matchede enhver erhvervspolice i tenant'en (fx en anden kundes
-  // ansvarspolice) enhver virksomhed med score 70.
+  // Navn-match mod forsikringstager (policen er tegnet AF dette selskab)
+  const policyNavn = normalize(policy.policyholder_name);
+  if (aktivNavn && policyNavn && aktivNavn === policyNavn) return 75;
+
+  // Delvis navne-match (indeholder hinanden)
+  if (aktivNavn && policyNavn) {
+    if (aktivNavn.includes(policyNavn) || policyNavn.includes(aktivNavn)) return 60;
+  }
+
+  // BIZZ-2164: En koncern-erhvervs-/ansvarspolice dækker IKKE automatisk alle
+  // søsterselskaber — kun forsikringstageren (matchet ovenfor via CVR/navn) og
+  // de NAVNGIVNE medforsikrede (insured_companies, håndteret ovenfor). RACEHALL-
+  // fejlen: ansvarspolicen RPXDK40.000244 (tegnet af Racehall København) dækker
+  // kun Racehall København + de medforsikrede Racehall Ejendomme/Aarhus — IKKE
+  // SKIINVEST eller Racehall Holding. Den tidligere BIZZ-1620-regel gav alle
+  // koncern-selskaber score 70 (= dækket), hvilket fejlagtigt markerede ikke-
+  // navngivne søstre som forsikrede og skjulte et reelt dækningshul.
+  //
+  // Når policen mangler en parsed sikrede-liste kan vi ikke fastslå at en søster
+  // er dækket, så et erhvervs-/ansvars-policematch vises nu kun som svag KANDIDAT
+  // (score 45 < MATCH_THRESHOLD) — synlig i candidates til mægler-gennemgang, men
+  // tæller ikke som forsikret. Upload den fulde police (med medforsikrede) for at
+  // få de navngivne datterselskaber korrekt markeret som dækket (score 85/95).
   const coverageText = normalize(
     [policy.insurance_form, policy.business_activity, policy.policyholder_name].join(' ')
   );
@@ -492,17 +508,7 @@ function scoreVirksomhed(aktiv: Aktiv, policy: ForsikringPolicy, koncern: Koncer
       coverageText.includes('koncern')) &&
     policyholderIKoncern(policy, koncern)
   ) {
-    // Police dækker erhvervsaktivitet — score 70 (under eksakt CVR-match men over threshold)
-    return 70;
-  }
-
-  // Navn-match
-  const policyNavn = normalize(policy.policyholder_name);
-  if (aktivNavn && policyNavn && aktivNavn === policyNavn) return 75;
-
-  // Delvis navne-match (indeholder hinanden)
-  if (aktivNavn && policyNavn) {
-    if (aktivNavn.includes(policyNavn) || policyNavn.includes(aktivNavn)) return 60;
+    return 45;
   }
 
   return 0;

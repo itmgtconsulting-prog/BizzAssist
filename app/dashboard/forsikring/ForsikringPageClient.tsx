@@ -4796,11 +4796,18 @@ function AnalyseDetailSection({
   kundeNavn,
   lang,
   onBack,
+  onDetail,
 }: {
   analyseId: string;
   kundeNavn: string;
   lang: string;
   onBack: () => void;
+  /**
+   * BIZZ-2167: Propagerer den hentede analyse-detalje op til parent, så
+   * aiAnalyseDetail/geoAnalyseId sættes og Kort-knappen vises også når en
+   * gammel analyse åbnes fra historik (ikke kun for nye analyser).
+   */
+  onDetail: (detail: AnalyseDetail | null, kundeNavn: string | null) => void;
 }) {
   const da = lang === 'da';
   const [detail, setDetail] = useState<AnalyseDetail | null>(null);
@@ -4811,10 +4818,16 @@ function AnalyseDetailSection({
     fetch(`/api/forsikring/analyser/${analyseId}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (d) setDetail(d);
+        if (d) {
+          setDetail(d);
+          // BIZZ-2167: send detaljen op til parent (driver Kort-knappen)
+          onDetail(d, kundeNavn);
+        }
       })
       .catch(() => {})
       .finally(() => setLoading(false));
+    // kundeNavn/onDetail er stabile for en given analyseId; kun analyseId trigger re-fetch
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analyseId]);
 
   if (loading) {
@@ -5822,7 +5835,15 @@ export default function ForsikringPageClient(): React.ReactElement {
               analyseId={activeAnalyseId}
               kundeNavn={selectedCustomer.navn}
               lang={lang}
-              onBack={() => setActiveAnalyseId(null)}
+              onBack={() => {
+                // BIZZ-2167: ryd analyse-detalje + kort når man går tilbage til
+                // historik-listen, så Kort-knappen ikke peger på en lukket analyse
+                setActiveAnalyseId(null);
+                setAiAnalyseDetail(null);
+                setAiKundeNavn(null);
+                setKortÅben(false);
+              }}
+              onDetail={handleAnalyseDetail}
             />
           )}
 

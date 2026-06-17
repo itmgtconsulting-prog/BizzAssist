@@ -41,7 +41,7 @@ export function tenantSchemaName(userEmail: string): string {
  * (saved_entities, notifications, property_snapshots, recent_entities), exposes
  * the schema to PostgREST, and provisions ALL feature tables (ai_chat,
  * ai_feedback/notification, forsikring chain, vurderingsrapport) via the
- * public.provision_tenant_all_features orchestrator (BIZZ-2166).
+ * public.provision_tenant_all_features orchestrator (BIZZ-2165).
  *
  * Idempotent-ish: if the user already has a membership, it is a no-op that
  * returns the existing tenant id (so re-running for an admin-created user that
@@ -240,7 +240,7 @@ export async function provisionTenantForUser(
       logger.error('[provisionTenant] PostgREST config update error:', pgrstErr);
     }
 
-    // 5. Provision ALL feature tables (BIZZ-2166). A single idempotent
+    // 5. Provision ALL feature tables (BIZZ-2165). A single idempotent
     // orchestrator, public.provision_tenant_all_features, creates the full
     // feature-table chain (ai_chat, ai_feedback/notification, the forsikring
     // chain in FK order, and vurderingsrapport). Previously this step only ran

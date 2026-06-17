@@ -1,5 +1,5 @@
 -- ============================================================
--- Migration 183: Master tenant-provisioning orchestrator (BIZZ-2166)
+-- Migration 183: Master tenant-provisioning orchestrator (BIZZ-2165)
 -- ============================================================
 -- Rod-årsag: provisionTenantForUser (lib/tenant/provisionTenant.ts) oprettede
 -- kun base-tabeller + ai_chat ved signup. Forsikring-, vurdering- og øvrige
@@ -277,11 +277,24 @@ BEGIN
   -- Vurderingsrapport (mig 146)
   BEGIN PERFORM public.provision_tenant_vurdering_sager(p_schema_name, p_tenant_id);
   EXCEPTION WHEN OTHERS THEN RAISE WARNING 'all_features vurdering %: %', p_schema_name, SQLERRM; END;
+
+  -- KRITISK (BIZZ-2165): SECURITY DEFINER-funktionerne opretter tabeller ejet af
+  -- function-owneren (postgres). PostgREST forbinder som authenticator og skifter
+  -- til service_role/authenticated, der har brug for eksplicit GRANT — ellers
+  -- fejler enhver .schema(...).from(...) med 42501 "permission denied for table".
+  -- Base-provisioneringen GRANT'er kun de tabeller der fandtes paa det tidspunkt,
+  -- saa feature-tabeller skabt her SKAL grantes til sidst. Uden dette kunne nye
+  -- brugere ikke uploade policer (slj@rtm.dk: forsikring_documents 42501).
+  BEGIN
+    EXECUTE format('GRANT USAGE ON SCHEMA %I TO authenticated, service_role', p_schema_name);
+    EXECUTE format('GRANT ALL ON ALL TABLES IN SCHEMA %I TO authenticated, service_role', p_schema_name);
+    EXECUTE format('GRANT ALL ON ALL SEQUENCES IN SCHEMA %I TO authenticated, service_role', p_schema_name);
+  EXCEPTION WHEN OTHERS THEN RAISE WARNING 'all_features grants %: %', p_schema_name, SQLERRM; END;
 END;
 $$;
 
 COMMENT ON FUNCTION public.provision_tenant_all_features(text, uuid) IS
-  'BIZZ-2166: Single idempotent entry point that provisions the full feature-table '
+  'BIZZ-2165: Single idempotent entry point that provisions the full feature-table '
   'chain (ai_chat, ai_tables, forsikring, vurdering) for a tenant schema. Called by '
   'provisionTenantForUser at signup and used to backfill existing tenants.';
 

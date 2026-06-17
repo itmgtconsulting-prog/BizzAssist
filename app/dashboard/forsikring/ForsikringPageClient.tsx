@@ -2528,6 +2528,19 @@ function AnalyseSection({
   }, [showDocPicker, selected]);
 
   /**
+   * BIZZ-2166: Ryd friske wizard-uploads når forsikringsejeren skifter.
+   * wizardUploads holder de netop-uploadede dokumenter ("ny"-badge) for den
+   * aktuelt valgte kunde. Uden denne nulstilling forblev en tidligere
+   * forsikringsejers dokumenter synlige (og kunne blandes ind i) en ny
+   * forsikringsejers analyse — kritisk databrud på tværs af kunder.
+   * Effekten kører KUN når kunde-identiteten (selected?.id) faktisk ændrer sig
+   * — ikke ved doc-picker-toggle eller under upload, hvor selected er uændret.
+   */
+  useEffect(() => {
+    setWizardUploads([]);
+  }, [selected?.id]);
+
+  /**
    * BIZZ-2148: Genskab valgt kunde fra URL ved mount — sætter selected + åbner
    * doc-picker automatisk, så browser-back/genbesøg ikke nulstiller modulet.
    * Kører kun én gang ved mount (tom dep-array bevidst).

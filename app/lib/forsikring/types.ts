@@ -15,6 +15,7 @@
  */
 
 import { z } from 'zod';
+import type { DmrData } from './dmr';
 
 // ─── BIZZ-1392: Dokumenttype-detektion ──────────────────────────
 
@@ -528,6 +529,12 @@ export interface GapEngineInput {
     matchScore?: number;
     virksomhedsform?: string;
   };
+  /**
+   * BIZZ-2144: DMR-data (tjekbil.dk) for en bilpolice. Sat når policens
+   * raw_metadata indeholder et gyldigt registreringsnummer. null = opslag
+   * fejlede/ingen data; undefined = ikke en bilpolice / ikke slået op.
+   */
+  dmr?: DmrData | null;
 }
 
 /**

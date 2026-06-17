@@ -936,6 +936,155 @@ export function runVaerdiChecks(input: VaerdiCheckInput): DetectedGap[] {
 }
 
 /**
+ * Normalisér et forsikringsselskabsnavn til sammenligning: lowercase, fjern
+ * selskabsformer (a/s, aps, forsikring, group osv.) og ikke-alfanumeriske tegn.
+ * Bruges til at afgøre om policens selskab og DMR's selskab reelt er samme.
+ *
+ * @param s - Selskabsnavn
+ * @returns Normaliseret kerne-navn
+ */
+function normalizeSelskab(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/\b(a\/s|aps|p\/s|i\/s|forsikring(en)?|group|gensidige?|gjensidige)\b/g, '')
+    .replace(/[^a-z0-9æøå]/g, '')
+    .trim();
+}
+
+/**
+ * GAP-BIL-AFMELDT: Køretøjet er afmeldt i DMR, men der betales stadig for en
+ * aktiv bilforsikring. Tegn på at bilen er solgt/skrottet uden at policen er
+ * opsagt. Severity: warning (spildt præmie, ikke akut risiko).
+ *
+ * @param input - GapEngineInput med dmr-data
+ * @returns DetectedGap eller null
+ */
+function checkBilAfmeldt(input: GapEngineInput): DetectedGap | null {
+  const dmr = input.dmr;
+  if (!dmr || !dmr.status) return null;
+  if (!/afmeldt/i.test(dmr.status)) return null;
+  const bil = [dmr.maerke, dmr.model].filter(Boolean).join(' ') || dmr.regNr;
+  return {
+    check_id: 'GAP-BIL-AFMELDT',
+    category: 'uforsikret',
+    severity: 'warning',
+    title: 'Bil afmeldt i Motorregistret',
+    description: `${bil} (${dmr.regNr}) står som "${dmr.status}" i DMR, men policen er stadig aktiv. Bilen kan være solgt eller skrottet uden at forsikringen er opsagt.`,
+    recommendation:
+      'Bekræft om køretøjet stadig ejes. Er det solgt/skrottet, bør policen opsiges for at undgå spildt præmie.',
+    estimated_impact_dkk: null,
+    source_data: { regnr: dmr.regNr, status: dmr.status, maerke: dmr.maerke, model: dmr.model },
+  };
+}
+
+/**
+ * GAP-BIL-FORSIKRING-OPHOERT: DMR angiver at den lovpligtige ansvarsforsikring
+ * er ophørt, mens køretøjet stadig er indregistreret. Bilen kører potentielt
+ * uforsikret. Severity: critical (lovpligtig dækning mangler).
+ *
+ * @param input - GapEngineInput med dmr-data
+ * @returns DetectedGap eller null
+ */
+function checkBilForsikringOphoert(input: GapEngineInput): DetectedGap | null {
+  const dmr = input.dmr;
+  if (!dmr || !dmr.forsikringStatus) return null;
+  // Kun relevant hvis bilen stadig er registreret (afmeldt dækkes af GAP-BIL-AFMELDT)
+  if (dmr.status && /afmeldt/i.test(dmr.status)) return null;
+  if (!/ophør|ophoer|annull|udløb|udloeb/i.test(dmr.forsikringStatus)) return null;
+  const bil = [dmr.maerke, dmr.model].filter(Boolean).join(' ') || dmr.regNr;
+  return {
+    check_id: 'GAP-BIL-FORSIKRING-OPHOERT',
+    category: 'uforsikret',
+    severity: 'critical',
+    title: 'Lovpligtig bilforsikring ophørt',
+    description: `${bil} (${dmr.regNr}) er stadig indregistreret, men DMR angiver forsikringsstatus "${dmr.forsikringStatus}". Køretøjet kører potentielt uden lovpligtig ansvarsforsikring.`,
+    recommendation:
+      'Tegn lovpligtig ansvarsforsikring straks, eller afmeld køretøjet hvis det ikke længere benyttes.',
+    estimated_impact_dkk: null,
+    source_data: {
+      regnr: dmr.regNr,
+      forsikring_status: dmr.forsikringStatus,
+      registrering_status: dmr.status,
+    },
+  };
+}
+
+/**
+ * GAP-BIL-FORSIKRING-MISMATCH: DMR's registrerede forsikringsselskab afviger
+ * fra policens selskab. Tegn på at bilen er forsikret hos et andet selskab end
+ * den fremlagte police (police forældet/forkert bil). Severity: warning.
+ *
+ * @param input - GapEngineInput med dmr-data
+ * @returns DetectedGap eller null
+ */
+function checkBilForsikringMismatch(input: GapEngineInput): DetectedGap | null {
+  const dmr = input.dmr;
+  if (!dmr || !dmr.forsikringSelskab) return null;
+  // Hopper over hvis dækning er ophørt (dækkes af OPHOERT) eller bil afmeldt
+  if (dmr.forsikringStatus && /ophør|ophoer|annull/i.test(dmr.forsikringStatus)) return null;
+  if (dmr.status && /afmeldt/i.test(dmr.status)) return null;
+  const policySelskab = input.policy.insurer_name;
+  if (!policySelskab) return null;
+  const a = normalizeSelskab(policySelskab);
+  const b = normalizeSelskab(dmr.forsikringSelskab);
+  if (!a || !b) return null;
+  // Match hvis det ene navn indeholder det andet (fx "tryg" ⊂ "trygforsikring")
+  if (a === b || a.includes(b) || b.includes(a)) return null;
+  return {
+    check_id: 'GAP-BIL-FORSIKRING-MISMATCH',
+    category: 'daekningsgab',
+    severity: 'warning',
+    title: 'Bilforsikring hos andet selskab end policen',
+    description: `Policen er udstedt af ${policySelskab}, men DMR registrerer bilen (${dmr.regNr}) forsikret hos "${dmr.forsikringSelskab}". Policen kan være forældet eller dække en anden bil.`,
+    recommendation:
+      'Kontrollér at den fremlagte police er gældende for køretøjet — DMR peger på et andet selskab.',
+    estimated_impact_dkk: null,
+    source_data: {
+      regnr: dmr.regNr,
+      police_selskab: policySelskab,
+      dmr_selskab: dmr.forsikringSelskab,
+    },
+  };
+}
+
+/**
+ * GAP-BIL-SYN-UDLOEBET: Seneste periodiske syn er mere end 2 år gammelt (eller
+ * mangler). Et udløbet syn kan medføre at køretøjet ikke lovligt må benyttes og
+ * påvirke forsikringsdækning ved skade. Severity: warning.
+ *
+ * @param input - GapEngineInput med dmr-data
+ * @returns DetectedGap eller null
+ */
+function checkBilSynUdloebet(input: GapEngineInput): DetectedGap | null {
+  const dmr = input.dmr;
+  if (!dmr) return null;
+  // Kun relevant for registrerede køretøjer
+  if (dmr.status && /afmeldt/i.test(dmr.status)) return null;
+  const synISO = dmr.sidsteSyn?.synsdato;
+  if (!synISO) return null;
+  const synDato = new Date(synISO);
+  if (Number.isNaN(synDato.getTime())) return null;
+  const aarSiden = (input.asOfDate.getTime() - synDato.getTime()) / (365.25 * 24 * 3600 * 1000);
+  if (aarSiden <= 2) return null;
+  const bil = [dmr.maerke, dmr.model].filter(Boolean).join(' ') || dmr.regNr;
+  return {
+    check_id: 'GAP-BIL-SYN-UDLOEBET',
+    category: 'daekningsgab',
+    severity: 'warning',
+    title: 'Bilsyn forældet',
+    description: `Seneste registrerede syn af ${bil} (${dmr.regNr}) var ${synISO} — over ${Math.floor(aarSiden)} år siden. Et udløbet periodisk syn kan påvirke både lovlig brug og forsikringsdækning ved skade.`,
+    recommendation: 'Kontrollér om køretøjet skal til periodisk syn og at synet er gyldigt.',
+    estimated_impact_dkk: null,
+    source_data: {
+      regnr: dmr.regNr,
+      sidste_syn: synISO,
+      synsresultat: dmr.sidsteSyn?.synsresultat ?? null,
+      aar_siden: Math.round(aarSiden * 10) / 10,
+    },
+  };
+}
+
+/**
  * Rækkefølge afspejler præsentations-prioritet i UI:
  *   1. Kritiske kontrakt-risici (areal, anvendelse)
  *   2. Manglende dækninger (kritisk → warning → info)
@@ -978,6 +1127,11 @@ const CHECKS: readonly CheckFn[] = [
   checkExpiry,
   checkRenewalUpcoming,
   checkPolicyholderCvrMatch,
+  // BIZZ-2144: DMR-berigelse af bilforsikringspolicer (tjekbil.dk)
+  checkBilAfmeldt,
+  checkBilForsikringOphoert,
+  checkBilForsikringMismatch,
+  checkBilSynUdloebet,
 ];
 
 /**

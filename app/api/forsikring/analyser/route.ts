@@ -28,6 +28,7 @@ import {
   runVaerdiChecks,
 } from '@/app/lib/forsikring/gapEngine';
 import type { RegnskabsTalLite } from '@/app/lib/forsikring/gapEngine';
+import { fetchDmrByRegnr } from '@/app/lib/forsikring/dmr';
 import type { ForsikringCoverage } from '@/app/lib/forsikring/types';
 import {
   runBbrCrossCheck,
@@ -865,6 +866,14 @@ export async function POST(request: NextRequest): Promise<Response> {
               )
             : [];
 
+        // BIZZ-2144: For bil-aktiver berig med DMR-data (tjekbil.dk) så
+        // gap-motoren kan opdage afmeldt/uforsikret/selskabsskift/forældet syn.
+        // Fail-soft: opslag-fejl giver dmr=null og springer DMR-checks over.
+        const dmr =
+          match.aktiv.type === 'bil' && match.aktiv.regnr
+            ? await fetchDmrByRegnr(match.aktiv.regnr)
+            : undefined;
+
         const gaps = runGapEngine({
           policy: match.bestMatch.policy,
           coverages: policyCoverages,
@@ -872,6 +881,7 @@ export async function POST(request: NextRequest): Promise<Response> {
           asOfDate: new Date(),
           standardBetingelser: matchedStdBetingelser.length > 0 ? matchedStdBetingelser : undefined,
           branche: brancheData,
+          dmr,
           asset: {
             type: match.aktiv.type,
             vaerdiDkk: match.aktiv.vaerdiDkk,

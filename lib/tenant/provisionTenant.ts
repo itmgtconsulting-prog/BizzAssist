@@ -39,7 +39,9 @@ export function tenantSchemaName(userEmail: string): string {
  * Provisions a full, dedicated tenant for a user.
  * Creates: tenant record, membership (tenant_admin), and all core tables
  * (saved_entities, notifications, property_snapshots, recent_entities), exposes
- * the schema to PostgREST, and provisions the ai_chat tables.
+ * the schema to PostgREST, and provisions ALL feature tables (ai_chat,
+ * ai_feedback/notification, forsikring chain, vurderingsrapport) via the
+ * public.provision_tenant_all_features orchestrator (BIZZ-2166).
  *
  * Idempotent-ish: if the user already has a membership, it is a no-op that
  * returns the existing tenant id (so re-running for an admin-created user that
@@ -238,22 +240,36 @@ export async function provisionTenantForUser(
       logger.error('[provisionTenant] PostgREST config update error:', pgrstErr);
     }
 
-    // 5. Provision ai_chat tables (BIZZ-1206). The trg_auto_provision_ai_chat
-    // trigger fires on tenant INSERT, but the schema doesn't exist yet at that
-    // point so it skips. Run provision_ai_chat_tables explicitly after DDL.
+    // 5. Provision ALL feature tables (BIZZ-2166). A single idempotent
+    // orchestrator, public.provision_tenant_all_features, creates the full
+    // feature-table chain (ai_chat, ai_feedback/notification, the forsikring
+    // chain in FK order, and vurderingsrapport). Previously this step only ran
+    // provision_ai_chat_tables, so new users were left without forsikring /
+    // vurdering tables and could not upload policies (e.g. slj@rtm.dk). The
+    // orchestrator wraps each feature in its own exception block so one failing
+    // module never blocks the others.
     try {
-      const chatSql = `SELECT public.provision_ai_chat_tables('${schemaName}', '${tenantId}'::uuid)`;
-      await fetch(`https://api.supabase.com/v1/projects/${projectRef}/database/query`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ query: chatSql }),
-        signal: AbortSignal.timeout(10000),
-      });
-    } catch (chatErr) {
-      logger.error('[provisionTenant] ai_chat provisioning error:', chatErr);
+      const featureSql = `SELECT public.provision_tenant_all_features('${schemaName}', '${tenantId}'::uuid)`;
+      const featureRes = await fetch(
+        `https://api.supabase.com/v1/projects/${projectRef}/database/query`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ query: featureSql }),
+          signal: AbortSignal.timeout(30000),
+        }
+      );
+      if (!featureRes.ok) {
+        logger.error(
+          '[provisionTenant] feature provisioning failed:',
+          (await featureRes.text()).substring(0, 300)
+        );
+      }
+    } catch (featureErr) {
+      logger.error('[provisionTenant] feature provisioning error:', featureErr);
     }
 
     return tenantId;

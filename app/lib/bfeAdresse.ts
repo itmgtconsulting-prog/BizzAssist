@@ -58,8 +58,17 @@ export interface BfeAdresse {
  * - 'cache_dar': korrupt backfill 2026-05-20 (SFE-gruppens hovedadresse
  *   skrevet til alle BFE'er i gruppen)
  * - 'unresolvable': placeholder-rækker uden reel adresse
+ * - 'backfill_1831_cvr_addr' (BIZZ-2162): korrupt backfill der skrev
+ *   virksomhedens CVR-hovedkontoradresse som ejendomsadresse for BFE'er ejet/
+ *   administreret af virksomheden (fx "Torvegade 5A" på 2 forskellige Helsingør-
+ *   matrikler, "Prinsens Alle 5" på 189 BFE'er). Virksomhedsadressen er IKKE
+ *   ejendomsadressen — behandles som cache-miss så resolveren re-resolver pr. BFE.
  */
-export const UNTRUSTED_CACHE_KILDER = new Set(['cache_dar', 'unresolvable']);
+export const UNTRUSTED_CACHE_KILDER = new Set([
+  'cache_dar',
+  'unresolvable',
+  'backfill_1831_cvr_addr',
+]);
 
 /** Maks samtidige live-opslag mod DAWA/VP */
 const LIVE_CONCURRENCY = 5;

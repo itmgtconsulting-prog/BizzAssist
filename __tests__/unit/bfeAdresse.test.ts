@@ -83,6 +83,13 @@ describe('erTrovaerdigCacheRaekke', () => {
     expect(erTrovaerdigCacheRaekke({ adresse: 'X', kilde: 'unresolvable' })).toBe(false);
   });
 
+  it('afviser backfill_1831_cvr_addr (virksomhedsadresse-poisoning, BIZZ-2162)', () => {
+    // CVR-hovedkontoradresse skrevet som ejendomsadresse → må aldrig stoles på
+    expect(
+      erTrovaerdigCacheRaekke({ adresse: 'Torvegade 5A', kilde: 'backfill_1831_cvr_addr' })
+    ).toBe(false);
+  });
+
   it('afviser placeholder-adresser og null', () => {
     expect(erTrovaerdigCacheRaekke({ adresse: 'BFE 12345', kilde: 'manual' })).toBe(false);
     expect(erTrovaerdigCacheRaekke({ adresse: null, kilde: 'manual' })).toBe(false);

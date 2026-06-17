@@ -779,6 +779,162 @@ function checkMissingDnO(input: GapEngineInput): DetectedGap | null {
   };
 }
 
+// ─── BIZZ-2170: Værdi-baserede checks (forsikret sum vs købspris/vurdering) ───
+
+/**
+ * Input til værdi-baserede gap-checks (BIZZ-2170).
+ * Samler forsikret sum + ejendommens faktiske værdi-indikatorer.
+ * Holdt adskilt fra GapEngineInput fordi data kommer fra eksterne
+ * cross-checks (TL købspris + VUR vurdering), ikke fra policen selv.
+ */
+export interface VaerdiCheckInput {
+  /** BFE-nummer (til source_data + UI-link) */
+  bfe: number;
+  /** Police-ID som gap'et tilknyttes */
+  policyId: string;
+  /** Ejendommens adresse (til læsbar gap-tekst) */
+  adresse: string | null;
+  /** Forsikret sum fra policen (sum_insured_dkk) */
+  sumInsuredDkk: number | null;
+  /** Offentlig ejendomsvurdering (VUR ejendomsværdi) */
+  vurderingDkk: number | null;
+  /** Vurderingsår (VUR) */
+  vurderingsAar: number | null;
+  /** Seneste tinglyste købspris (TL ejdsummarisk) */
+  koebsprisDkk: number | null;
+  /** Seneste købsdato (ISO, TL ejdsummarisk) */
+  koebsDato: string | null;
+  /** Analyse-dato (til alders-beregning af købsdato) */
+  asOfDate: Date;
+}
+
+/** Nyværdi-nuance der vedlægges alle værdi-gaps (BIZZ-2170 acceptance) */
+const VAERDI_NYVAERDI_NOTE =
+  'Bemærk: bygningsforsikring tegnes typisk til nyværdi (genopførelsesværdi), ' +
+  'som lovligt kan afvige fra både købspris (grund+bygning) og offentlig vurdering.';
+
+/** Formatér DKK-beløb læsbart (fx 15.000.000 kr) */
+function formatDkk(n: number): string {
+  return `${Math.round(n).toLocaleString('da-DK')} kr`;
+}
+
+/**
+ * BIZZ-2170: Kør værdi-baserede checks for én ejendom.
+ *
+ * Sammenligner forsikret sum mod seneste købspris (primær reference) og
+ * offentlig vurdering (sekundær reference). Resultatet er ALDRIG critical —
+ * kun warning/info — fordi nyværdi lovligt kan afvige fra købspris/markedsværdi.
+ *
+ * @param input - Forsikret sum + værdi-indikatorer for ejendommen
+ * @returns Liste af GAP-VAERDI-* gaps (kan være tom)
+ */
+export function runVaerdiChecks(input: VaerdiCheckInput): DetectedGap[] {
+  const gaps: DetectedGap[] = [];
+  const { sumInsuredDkk, vurderingDkk, koebsprisDkk, koebsDato, adresse, bfe } = input;
+  const adresseLabel = adresse ?? `BFE ${bfe}`;
+
+  // GAP-VAERDI-INGEN-SUM: policen mangler forsikringssum → kan ikke verificeres
+  if (!sumInsuredDkk || sumInsuredDkk <= 0) {
+    gaps.push({
+      check_id: 'GAP-VAERDI-INGEN-SUM',
+      category: 'underforsikret',
+      severity: 'info',
+      title: 'Ingen forsikringssum oplyst',
+      description: `Policen for ${adresseLabel} har ingen forsikringssum. Forsikringsværdien kan ikke sammenlignes med købspris eller offentlig vurdering.`,
+      recommendation:
+        'Indhent forsikringssummen fra policen for at kunne vurdere under-/overforsikring.',
+      estimated_impact_dkk: null,
+      source_data: { bfe, adresse },
+    });
+    return gaps;
+  }
+
+  // Referenceværdi: faktisk handelspris (købspris) foretrukket, ellers vurdering.
+  const harKoebspris = !!(koebsprisDkk && koebsprisDkk > 0);
+  const refDkk = harKoebspris
+    ? koebsprisDkk!
+    : vurderingDkk && vurderingDkk > 0
+      ? vurderingDkk
+      : null;
+  const refKilde = harKoebspris ? 'købspris' : 'offentlig vurdering';
+
+  if (refDkk) {
+    if (sumInsuredDkk < refDkk * 0.7) {
+      // GAP-VAERDI-UNDER: forsikret sum mere end 30% under reference → warning
+      const pctUnder = Math.round((1 - sumInsuredDkk / refDkk) * 100);
+      gaps.push({
+        check_id: 'GAP-VAERDI-UNDER',
+        category: 'underforsikret',
+        severity: 'warning',
+        title: 'Mulig underforsikring',
+        description: `${adresseLabel} har ${refKilde} ${formatDkk(refDkk)} men er forsikret til ${formatDkk(sumInsuredDkk)} (${pctUnder}% under ${refKilde}). ${VAERDI_NYVAERDI_NOTE}`,
+        recommendation:
+          'Verificér at forsikringssummen afspejler bygningens nyværdi (genopførelsesværdi) — kontakt forsikringsmægler ved tvivl.',
+        estimated_impact_dkk: refDkk - sumInsuredDkk,
+        source_data: {
+          bfe,
+          adresse,
+          sum_insured: sumInsuredDkk,
+          reference: refDkk,
+          reference_kilde: refKilde,
+          pct_under: pctUnder,
+        },
+      });
+    } else if (harKoebspris && sumInsuredDkk > koebsprisDkk! * 1.5) {
+      // GAP-VAERDI-OVER: forsikret sum mere end 50% over købspris → info
+      const pctOver = Math.round((sumInsuredDkk / koebsprisDkk! - 1) * 100);
+      gaps.push({
+        check_id: 'GAP-VAERDI-OVER',
+        category: 'overforsikret',
+        severity: 'info',
+        title: 'Mulig overforsikring',
+        description: `${adresseLabel} er forsikret til ${formatDkk(sumInsuredDkk)} — ${pctOver}% over seneste købspris (${formatDkk(koebsprisDkk!)}). En højere sum kan være korrekt hvis den afspejler genopførelsesværdi. ${VAERDI_NYVAERDI_NOTE}`,
+        recommendation:
+          'Verificér at den forsikrede sum afspejler genopførelsesværdien og ikke giver unødigt høj præmie.',
+        estimated_impact_dkk: null,
+        source_data: {
+          bfe,
+          adresse,
+          sum_insured: sumInsuredDkk,
+          koebspris: koebsprisDkk,
+          pct_over: pctOver,
+        },
+      });
+    }
+  }
+
+  // GAP-VAERDI-GAMMEL-KOEB: købsdato >10 år gammel — værdien kan være steget.
+  // Springes over hvis vi allerede har flaget underforsikring (samme handling).
+  const underFlaget = gaps.some((g) => g.check_id === 'GAP-VAERDI-UNDER');
+  if (koebsDato && !underFlaget) {
+    const koebAar = new Date(koebsDato).getFullYear();
+    if (Number.isFinite(koebAar)) {
+      const alderAar = input.asOfDate.getFullYear() - koebAar;
+      if (alderAar > 10) {
+        gaps.push({
+          check_id: 'GAP-VAERDI-GAMMEL-KOEB',
+          category: 'underforsikret',
+          severity: 'info',
+          title: 'Gammelt købstidspunkt',
+          description: `${adresseLabel} blev købt for ${alderAar} år siden (${koebAar})${harKoebspris ? ` for ${formatDkk(koebsprisDkk!)}` : ''}. Ejendomsværdien kan være steget markant siden — kontrollér at forsikringssummen er opdateret.`,
+          recommendation:
+            'Gennemgå om forsikringssummen er indeksreguleret og afspejler nuværende genopførelsesværdi.',
+          estimated_impact_dkk: null,
+          source_data: {
+            bfe,
+            adresse,
+            koebs_aar: koebAar,
+            alder_aar: alderAar,
+            koebspris: koebsprisDkk,
+          },
+        });
+      }
+    }
+  }
+
+  return gaps.map((g) => ({ ...g, scope: gapScope(g.check_id) }));
+}
+
 /**
  * Rækkefølge afspejler præsentations-prioritet i UI:
  *   1. Kritiske kontrakt-risici (areal, anvendelse)
@@ -930,6 +1086,11 @@ const GAP_BASE_SCORES: Record<string, number> = {
   'GAP-065': 55, // driftstab mangler
   'GAP-066': 50, // lav præmie
   'GAP-067': 65, // branchekrav aggregat
+  // BIZZ-2170: Værdi-baserede checks
+  'GAP-VAERDI-UNDER': 40, // forsikret sum >30% under købspris/vurdering
+  'GAP-VAERDI-OVER': 15, // forsikret sum >50% over købspris
+  'GAP-VAERDI-GAMMEL-KOEB': 15, // købsdato >10 år gammel
+  'GAP-VAERDI-INGEN-SUM': 10, // ingen forsikringssum oplyst
 };
 
 /**

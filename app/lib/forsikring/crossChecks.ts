@@ -158,9 +158,15 @@ export async function runTinglysningCrossCheck(
   matches: MatchResult[],
   host: string,
   cookie: string
-): Promise<{ gaps: CrossCheckResult['gaps']; haeftelserByBfe: Map<number, number> }> {
+): Promise<{
+  gaps: CrossCheckResult['gaps'];
+  haeftelserByBfe: Map<number, number>;
+  koebsprisByBfe: Map<number, { pris: number | null; dato: string | null }>;
+}> {
   const gaps: CrossCheckResult['gaps'] = [];
   const haeftelserByBfe = new Map<number, number>();
+  // BIZZ-2170: Seneste tinglyste købspris + dato pr. BFE (til værdi-checks)
+  const koebsprisByBfe = new Map<number, { pris: number | null; dato: string | null }>();
 
   const ejendomMatches = matches.filter(
     (m) => m.aktiv.type === 'ejendom' && m.aktiv.bfe && m.bestMatch
@@ -178,6 +184,19 @@ export async function runTinglysningCrossCheck(
       if (!res.ok) continue;
 
       const data = await res.json();
+
+      // BIZZ-2170: Capturer seneste købspris/dato (best-effort — kun reelle
+      // TL-svar, ikke test-fallback). testFallback markerer mock-data.
+      if (
+        !data?.testFallback &&
+        (data?.senesteKoebspris != null || data?.senesteKoebsdato != null)
+      ) {
+        koebsprisByBfe.set(bfe, {
+          pris: typeof data.senesteKoebspris === 'number' ? data.senesteKoebspris : null,
+          dato: typeof data.senesteKoebsdato === 'string' ? data.senesteKoebsdato : null,
+        });
+      }
+
       const haeftelser = data?.haeftelser ?? [];
       const totalHaeftelser = haeftelser.reduce(
         (sum: number, h: { beloeb?: number }) => sum + (h.beloeb ?? 0),
@@ -208,7 +227,7 @@ export async function runTinglysningCrossCheck(
     }
   }
 
-  return { gaps, haeftelserByBfe };
+  return { gaps, haeftelserByBfe, koebsprisByBfe };
 }
 
 /**
@@ -224,9 +243,17 @@ export async function runVurCrossCheck(
   matches: MatchResult[],
   host: string,
   cookie: string
-): Promise<{ gaps: CrossCheckResult['gaps']; vurderingByBfe: Map<number, number> }> {
+): Promise<{
+  gaps: CrossCheckResult['gaps'];
+  vurderingByBfe: Map<number, number>;
+  vurderingsAarByBfe: Map<number, number>;
+}> {
+  // BIZZ-2170: GAP-104 (vurdering > sum × 1.5) er flyttet til runVaerdiChecks
+  // som GAP-VAERDI-UNDER (warning) — denne funktion henter nu kun vurderings-
+  // data til værdi-checks + UI, og producerer ingen egne gaps.
   const gaps: CrossCheckResult['gaps'] = [];
   const vurderingByBfe = new Map<number, number>();
+  const vurderingsAarByBfe = new Map<number, number>();
 
   const ejendomMatches = matches.filter(
     (m) => m.aktiv.type === 'ejendom' && m.aktiv.bfe && m.bestMatch
@@ -234,7 +261,6 @@ export async function runVurCrossCheck(
 
   for (const match of ejendomMatches.slice(0, 10)) {
     const bfe = match.aktiv.bfe!;
-    const policy = match.bestMatch!.policy;
 
     try {
       const res = await fetch(`${host}/api/vurdering?bfeNummer=${bfe}`, {
@@ -245,32 +271,18 @@ export async function runVurCrossCheck(
 
       const data = await res.json();
       const vurdering = data?.vurdering?.ejendomsvaerdi ?? null;
+      const aar = data?.vurdering?.aar ?? null;
 
       if (vurdering && vurdering > 0) {
         vurderingByBfe.set(bfe, vurdering);
-
-        // Flag hvis vurdering > police × 1.5
-        if (policy.sum_insured_dkk && vurdering > policy.sum_insured_dkk * 1.5) {
-          gaps.push({
-            check_id: 'GAP-104',
-            category: 'underforsikret',
-            severity: 'info',
-            title: 'Offentlig vurdering væsentligt højere end forsikringssum',
-            description: `Ejendomsvurdering (${Math.round(vurdering / 1000)}k DKK) er over 50% højere end forsikringssummen (${Math.round(policy.sum_insured_dkk / 1000)}k DKK). Mulig underforsikring.`,
-            recommendation: 'Verificér at forsikringssummen matcher ejendommens reelle nyværdi.',
-            estimated_impact_dkk: vurdering - policy.sum_insured_dkk,
-            source_data: { bfe, vurdering, insured: policy.sum_insured_dkk },
-            riskScore: 25,
-            policyId: policy.id,
-          });
-        }
+        if (typeof aar === 'number' && aar > 0) vurderingsAarByBfe.set(bfe, aar);
       }
     } catch (err) {
       logger.warn(`[crossChecks] VUR for BFE ${bfe} fejlede:`, err);
     }
   }
 
-  return { gaps, vurderingByBfe };
+  return { gaps, vurderingByBfe, vurderingsAarByBfe };
 }
 
 /**

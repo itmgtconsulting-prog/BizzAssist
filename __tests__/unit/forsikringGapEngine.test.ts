@@ -18,6 +18,7 @@ import {
   riskLabel,
   runPortfolioChecks,
   runDaekningsgradChecks,
+  runVaerdiChecks,
 } from '@/app/lib/forsikring/gapEngine';
 import type { PortfolioCheckInput, RegnskabsTalLite } from '@/app/lib/forsikring/gapEngine';
 import { gapScope, shouldFoldOwnerIntoCompany } from '@/app/lib/forsikring/types';
@@ -1549,5 +1550,105 @@ describe('runDaekningsgradChecks — BIZZ-2100', () => {
     });
     expect(gaps.length).toBeGreaterThan(0);
     for (const g of gaps) expect(g.scope).toBe('company');
+  });
+});
+
+describe('runVaerdiChecks — BIZZ-2170 værdi-baserede checks', () => {
+  const base = {
+    bfe: 5319038,
+    policyId: 'pol-1',
+    adresse: 'Bramstræde 5, 3000 Helsingør',
+    vurderingsAar: 2020,
+    asOfDate: new Date('2026-06-17'),
+  };
+
+  it('GAP-VAERDI-INGEN-SUM når policen mangler forsikringssum', () => {
+    const gaps = runVaerdiChecks({
+      ...base,
+      sumInsuredDkk: null,
+      vurderingDkk: 7_200_000,
+      koebsprisDkk: null,
+      koebsDato: null,
+    });
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].check_id).toBe('GAP-VAERDI-INGEN-SUM');
+    expect(gaps[0].severity).toBe('info');
+  });
+
+  it('GAP-VAERDI-UNDER (warning) når sum >30% under vurdering', () => {
+    const gaps = runVaerdiChecks({
+      ...base,
+      sumInsuredDkk: 3_000_000, // < 0.7 × 7.2M
+      vurderingDkk: 7_200_000,
+      koebsprisDkk: null,
+      koebsDato: null,
+    });
+    const g = gaps.find((x) => x.check_id === 'GAP-VAERDI-UNDER');
+    expect(g).toBeDefined();
+    expect(g!.severity).toBe('warning');
+    expect(g!.description).toContain('offentlig vurdering');
+    expect(g!.estimated_impact_dkk).toBe(4_200_000);
+  });
+
+  it('foretrækker købspris over vurdering som reference', () => {
+    const gaps = runVaerdiChecks({
+      ...base,
+      sumInsuredDkk: 5_000_000,
+      vurderingDkk: 7_200_000, // ville ikke trigge (5M > 0.7×7.2M=5.04M? nej 5M<5.04M)
+      koebsprisDkk: 15_000_000, // 5M < 0.7×15M=10.5M → trigger vs købspris
+      koebsDato: '2024-01-01',
+    });
+    const g = gaps.find((x) => x.check_id === 'GAP-VAERDI-UNDER');
+    expect(g).toBeDefined();
+    expect(g!.description).toContain('købspris');
+    expect(g!.source_data.reference_kilde).toBe('købspris');
+  });
+
+  it('GAP-VAERDI-OVER (info) når sum >50% over købspris', () => {
+    const gaps = runVaerdiChecks({
+      ...base,
+      sumInsuredDkk: 20_000_000,
+      vurderingDkk: null,
+      koebsprisDkk: 10_000_000,
+      koebsDato: '2023-01-01',
+    });
+    const g = gaps.find((x) => x.check_id === 'GAP-VAERDI-OVER');
+    expect(g).toBeDefined();
+    expect(g!.severity).toBe('info');
+  });
+
+  it('GAP-VAERDI-GAMMEL-KOEB (info) ved købsdato >10 år når ikke underforsikret', () => {
+    const gaps = runVaerdiChecks({
+      ...base,
+      sumInsuredDkk: 9_000_000, // tæt på købspris, ingen under/over
+      vurderingDkk: null,
+      koebsprisDkk: 10_000_000,
+      koebsDato: '2010-05-01',
+    });
+    const g = gaps.find((x) => x.check_id === 'GAP-VAERDI-GAMMEL-KOEB');
+    expect(g).toBeDefined();
+    expect(g!.severity).toBe('info');
+  });
+
+  it('ingen værdi-gaps når sum er rimelig og handel er ny', () => {
+    const gaps = runVaerdiChecks({
+      ...base,
+      sumInsuredDkk: 9_500_000,
+      vurderingDkk: 7_200_000,
+      koebsprisDkk: 10_000_000,
+      koebsDato: '2024-01-01',
+    });
+    expect(gaps).toHaveLength(0);
+  });
+
+  it('aldrig critical severity', () => {
+    const gaps = runVaerdiChecks({
+      ...base,
+      sumInsuredDkk: 100_000,
+      vurderingDkk: 50_000_000,
+      koebsprisDkk: 60_000_000,
+      koebsDato: '2005-01-01',
+    });
+    for (const g of gaps) expect(g.severity).not.toBe('critical');
   });
 });

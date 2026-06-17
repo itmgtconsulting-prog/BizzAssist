@@ -25,6 +25,7 @@ import {
   computeRiskScore,
   runPortfolioChecks,
   runDaekningsgradChecks,
+  runVaerdiChecks,
 } from '@/app/lib/forsikring/gapEngine';
 import type { RegnskabsTalLite } from '@/app/lib/forsikring/gapEngine';
 import type { ForsikringCoverage } from '@/app/lib/forsikring/types';
@@ -1134,6 +1135,55 @@ export async function POST(request: NextRequest): Promise<Response> {
           }
           logger.log(`[forsikring/analyser] VUR cross-check: ${vurResult.value.gaps.length} gaps`);
         }
+
+        // BIZZ-2170: Værdi-baserede checks — sammenlign forsikret sum mod
+        // seneste købspris (TL) og offentlig vurdering (VUR). Bruger data
+        // hentet af cross-checks ovenfor (ingen ekstra I/O). Aldrig critical.
+        const koebsprisByBfe =
+          tlResult.status === 'fulfilled' ? tlResult.value.koebsprisByBfe : new Map();
+        const vurderingByBfe =
+          vurResult.status === 'fulfilled' ? vurResult.value.vurderingByBfe : new Map();
+        const vurderingsAarByBfe =
+          vurResult.status === 'fulfilled' ? vurResult.value.vurderingsAarByBfe : new Map();
+        const asOfDate = new Date();
+        let vaerdiGapCount = 0;
+        for (const match of matches) {
+          if (match.aktiv.type !== 'ejendom' || !match.aktiv.bfe || !match.bestMatch) continue;
+          const bfe = match.aktiv.bfe;
+          const koebs = koebsprisByBfe.get(bfe) as
+            | { pris: number | null; dato: string | null }
+            | undefined;
+          const vaerdiGaps = runVaerdiChecks({
+            bfe,
+            policyId: match.bestMatch.policy.id,
+            adresse: match.aktiv.adresse ?? null,
+            sumInsuredDkk: match.bestMatch.policy.sum_insured_dkk ?? null,
+            vurderingDkk: vurderingByBfe.get(bfe) ?? null,
+            vurderingsAar: vurderingsAarByBfe.get(bfe) ?? null,
+            koebsprisDkk: koebs?.pris ?? null,
+            koebsDato: koebs?.dato ?? null,
+            asOfDate,
+          });
+          for (const gap of vaerdiGaps) {
+            vaerdiGapCount++;
+            allGaps.push({
+              policyId: match.bestMatch.policy.id,
+              checkId: gap.check_id,
+              category: gap.category,
+              severity: gap.severity,
+              title: gap.title,
+              description: gap.description,
+              recommendation: gap.recommendation,
+              estimatedImpactDkk: gap.estimated_impact_dkk,
+              sourceData: gap.source_data,
+              riskScore: computeRiskScore(gap, {
+                type: 'ejendom',
+                vaerdiDkk: vurderingByBfe.get(bfe) ?? undefined,
+              }),
+            });
+          }
+        }
+        logger.log(`[forsikring/analyser] Værdi-checks: ${vaerdiGapCount} gaps`);
       } catch (err) {
         logger.warn('[forsikring/analyser] Cross-checks fejlede (best-effort):', err);
       }

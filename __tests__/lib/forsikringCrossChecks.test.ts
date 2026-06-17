@@ -138,12 +138,14 @@ describe('runVurCrossCheck', () => {
     global.fetch = originalFetch;
   });
 
-  it('flagger GAP-104 når vurdering > police × 1.5', async () => {
-    global.fetch = vi
-      .fn()
-      .mockResolvedValue(
-        new Response(JSON.stringify({ vurdering: { ejendomsvaerdi: 10_000_000 } }), { status: 200 })
-      ) as never;
+  // BIZZ-2170: GAP-104 er flyttet til runVaerdiChecks (GAP-VAERDI-UNDER).
+  // runVurCrossCheck producerer nu ingen gaps — kun vurdering + år til UI/værdi-checks.
+  it('returnerer vurdering + år uden at producere gaps', async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ vurdering: { ejendomsvaerdi: 10_000_000, aar: 2021 } }), {
+        status: 200,
+      })
+    ) as never;
     const matches: MatchResult[] = [
       mkMatch(
         { type: 'ejendom', bfe: 100 },
@@ -151,9 +153,9 @@ describe('runVurCrossCheck', () => {
       ),
     ];
     const r = await runVurCrossCheck(matches, 'http://h', 'c=1');
-    expect(r.gaps).toHaveLength(1);
-    expect(r.gaps[0].check_id).toBe('GAP-104');
+    expect(r.gaps).toEqual([]);
     expect(r.vurderingByBfe.get(100)).toBe(10_000_000);
+    expect(r.vurderingsAarByBfe.get(100)).toBe(2021);
   });
 
   it('ingen gap hvis vurdering ≤ police × 1.5', async () => {

@@ -118,6 +118,13 @@ export async function GET(request: NextRequest) {
             // bbr_ejendom_status.adgangsadresse_id peger på den primære adresse.
             // Gated på at BFE'en har et jordstykke (grund/bygning) så vi IKKE
             // overskriver ejerlejligheders specifikke etage/dør-adresse fra VP.
+            //
+            // BIZZ-2092: BBR-adressen accepteres KUN hvis den ligger på BFE'ens
+            // EGEN matrikel. For nogle SFE-grupper peger adgangsadresse_id for
+            // alle gruppens BFE'er på SFE-hovedadressen (fx "Gefionsvej 47A" på
+            // matr 65bp delt ud over 65bi/65bk/65bl) — den hører ikke til de
+            // øvrige BFE'er og ville give 4× samme adresse. Verificér derfor
+            // adressens eget jordstykke-matrikel mod BFE'ens jordstykke-matrikel.
             let bbrAdgangsadresseId: string | null = null;
             try {
               const { data: bbrRow } = await admin
@@ -136,34 +143,53 @@ export async function GET(request: NextRequest) {
                 { signal: AbortSignal.timeout(8000) },
                 { caller: 'cron.sync-bfe-adresse.bbr-jordcheck' }
               );
-              let harJordstykke = false;
+              let bfeMatr: string | undefined;
+              let bfeEjerlav: number | undefined;
               if (jordCheck.ok) {
-                const js = (await jordCheck.json()) as unknown[];
-                harJordstykke = Array.isArray(js) && js.length > 0;
+                const js = (await jordCheck.json()) as Array<{
+                  matrikelnr?: string;
+                  ejerlav?: { kode?: number };
+                }>;
+                if (Array.isArray(js) && js.length > 0) {
+                  bfeMatr = js[0]?.matrikelnr;
+                  bfeEjerlav = js[0]?.ejerlav?.kode;
+                }
               }
-              if (harJordstykke) {
+              if (bfeMatr && bfeEjerlav) {
+                // Fuld struktur (ikke mini) — vi har brug for adressens eget
+                // jordstykke for matrikel-verifikationen (BIZZ-2092).
                 const bbrAdrRes = await fetchDawa(
-                  `${DAWA_BASE_URL}/adgangsadresser/${encodeURIComponent(bbrAdgangsadresseId)}?struktur=mini`,
+                  `${DAWA_BASE_URL}/adgangsadresser/${encodeURIComponent(bbrAdgangsadresseId)}`,
                   { signal: AbortSignal.timeout(8000) },
                   { caller: 'cron.sync-bfe-adresse.bbr-beliggenhed' }
                 );
                 if (bbrAdrRes.ok) {
                   const a = (await bbrAdrRes.json()) as {
                     id?: string;
-                    vejnavn?: string;
                     husnr?: string;
-                    postnr?: string | number;
-                    postnrnavn?: string;
-                    kommunekode?: string | number;
+                    vejstykke?: { navn?: string };
+                    postnummer?: { nr?: string | number; navn?: string };
+                    kommune?: { kode?: string | number };
+                    jordstykke?: { matrikelnr?: string; ejerlav?: { kode?: number } };
                   };
-                  if (a?.vejnavn && a?.postnr != null) {
+                  const vejnavn = a?.vejstykke?.navn;
+                  const postnr = a?.postnummer?.nr;
+                  const bbrMatr = a?.jordstykke?.matrikelnr;
+                  const bbrEjerlav = a?.jordstykke?.ejerlav?.kode;
+                  // Kun hvis adressen ligger på BFE'ens egen matrikel.
+                  if (
+                    vejnavn &&
+                    postnr != null &&
+                    bbrMatr === bfeMatr &&
+                    bbrEjerlav === bfeEjerlav
+                  ) {
                     await admin.from('bfe_adresse_cache').upsert(
                       {
                         bfe_nummer: bfe,
-                        adresse: `${a.vejnavn} ${a.husnr ?? ''}`.trim(),
-                        postnr: String(a.postnr),
-                        postnrnavn: a.postnrnavn ?? null,
-                        kommune_kode: a.kommunekode != null ? String(a.kommunekode) : null,
+                        adresse: `${vejnavn} ${a.husnr ?? ''}`.trim(),
+                        postnr: String(postnr),
+                        postnrnavn: a.postnummer?.navn ?? null,
+                        kommune_kode: a.kommune?.kode != null ? String(a.kommune.kode) : null,
                         dawa_id: a.id ?? bbrAdgangsadresseId,
                         etage: null,
                         doer: null,

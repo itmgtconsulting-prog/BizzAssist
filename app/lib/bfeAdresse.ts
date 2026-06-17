@@ -19,6 +19,10 @@
  *      → DAWA) over jordstykkets vilkårlige valg. Kilde 'bbr_beliggenhed'.
  *      Ejerlejligheder (intet jordstykke) rører vi IKKE — VP har den specifikke
  *      lejligheds-adresse inkl. etage/dør.
+ *      BIZZ-2092: BBR-adressen accepteres KUN hvis den ligger på BFE'ens egen
+ *      matrikel. For nogle SFE-grupper peger adgangsadresse_id for alle gruppens
+ *      BFE'er på SFE-hovedadressen (fx "Gefionsvej 47A" på matr 65bp delt ud
+ *      over 65bi/65bk/65bl) — den afvises og jordstykke-resolutionen bevares.
  *   4. Jordstykke uden adgangsadresser = ubebygget grund → matrikelbetegnelse
  *      (fx "65ce Helsingør Markjorder") som adresse, dawaId=null.
  *   5. Intet jordstykke (typisk ejerlejlighed) → VP-fallback som har den
@@ -141,13 +145,26 @@ async function dawaJson(url: string): Promise<unknown> {
 }
 
 /**
+ * Resultat af jordstykke-resolution: adressen plus BFE'ens egen matrikel-
+ * identitet (matrikelnr + ejerlavkode), så BBR-beliggenhed kan verificeres mod
+ * den (BIZZ-2092).
+ */
+interface JordstykkeResolved {
+  adr: BfeAdresse;
+  matrikelnr: string;
+  ejerlavKode: number;
+}
+
+/**
  * Live-resolve én BFE via DAWA jordstykke→adgangsadresse (pr-BFE-korrekt).
  * Ubebyggede grunde (jordstykke uden adgangsadresser) får matrikelbetegnelse.
+ * Returnerer også BFE'ens matrikel-identitet, så BBR-beliggenhedsadressen kan
+ * verificeres mod den (BIZZ-2092).
  *
  * @param bfe - BFE-nummer
- * @returns BfeAdresse eller null hvis BFE'en ikke har et jordstykke
+ * @returns JordstykkeResolved eller null hvis BFE'en ikke har et jordstykke
  */
-async function resolveViaJordstykke(bfe: number): Promise<BfeAdresse | null> {
+async function resolveViaJordstykke(bfe: number): Promise<JordstykkeResolved | null> {
   const jord = (await dawaJson(
     `${DAWA_BASE_URL}/jordstykker?bfenummer=${bfe}&format=json`
   )) as Array<{
@@ -174,30 +191,38 @@ async function resolveViaJordstykke(bfe: number): Promise<BfeAdresse | null> {
   const a = Array.isArray(adr) ? adr[0] : null;
   if (a?.vejnavn && a?.postnr) {
     return {
-      adresse: [a.vejnavn, a.husnr].filter(Boolean).join(' '),
-      postnr: String(a.postnr),
-      by: a.postnrnavn ?? null,
-      kommune: null,
-      kommuneKode: a.kommunekode != null ? String(a.kommunekode) : null,
-      ejendomstype: null,
-      dawaId: a.id ?? null,
-      etage: null,
-      doer: null,
-      kilde: 'auto_jordstykke',
+      adr: {
+        adresse: [a.vejnavn, a.husnr].filter(Boolean).join(' '),
+        postnr: String(a.postnr),
+        by: a.postnrnavn ?? null,
+        kommune: null,
+        kommuneKode: a.kommunekode != null ? String(a.kommunekode) : null,
+        ejendomstype: null,
+        dawaId: a.id ?? null,
+        etage: null,
+        doer: null,
+        kilde: 'auto_jordstykke',
+      },
+      matrikelnr,
+      ejerlavKode,
     };
   }
   // Ubebygget grund — matrikelbetegnelse i stedet for nabo-adresse
   return {
-    adresse: `${matrikelnr} ${j?.ejerlav?.navn ?? ''}`.trim(),
-    postnr: null,
-    by: null,
-    kommune: j?.kommune?.navn ?? null,
-    kommuneKode: j?.kommune?.kode != null ? String(j.kommune.kode) : null,
-    ejendomstype: null,
-    dawaId: null,
-    etage: null,
-    doer: null,
-    kilde: 'auto_grund',
+    adr: {
+      adresse: `${matrikelnr} ${j?.ejerlav?.navn ?? ''}`.trim(),
+      postnr: null,
+      by: null,
+      kommune: j?.kommune?.navn ?? null,
+      kommuneKode: j?.kommune?.kode != null ? String(j.kommune.kode) : null,
+      ejendomstype: null,
+      dawaId: null,
+      etage: null,
+      doer: null,
+      kilde: 'auto_grund',
+    },
+    matrikelnr,
+    ejerlavKode,
   };
 }
 
@@ -274,22 +299,34 @@ async function resolveViaVP(bfe: number): Promise<BfeAdresse | null> {
 }
 
 /**
- * BIZZ-2159: Resolve én BFE via BBRs officielle beliggenhedsadresse.
+ * BIZZ-2159 + BIZZ-2092: Resolve én BFE via BBRs officielle beliggenhedsadresse,
+ * men KUN hvis adressen ligger på BFE'ens egen matrikel.
  *
  * En SFE kan dække flere adgangsadresser på samme matrikel (fx hjørne-
  * bygningen Gyldenstræde 8 / Stengade 10 på matrikel 519). DAWA-jordstykke-
  * opslaget vælger en vilkårlig af dem, mens bbr_ejendom_status.adgangsadresse_id
- * peger på den officielle/primære adresse. Denne kilde har derfor forrang for
- * grund-/bygnings-BFE'er.
+ * peger på den officielle/primære adresse — derfor forrang (BIZZ-2159).
+ *
+ * MEN: for nogle SFE-grupper peger bbr_ejendom_status.adgangsadresse_id for ALLE
+ * gruppens BFE'er på SFE-hovedadressen (fx "Gefionsvej 47A" på matrikel 65bp delt
+ * ud over de selvstændige matrikler 65bi/65bk/65bl). Den hører ikke til de øvrige
+ * BFE'er. Derfor verificeres adressens egen matrikel mod BFE'ens jordstykke-
+ * matrikel: matcher de ikke, afvises BBR-adressen og jordstykke-resolutionen
+ * (pr-BFE-korrekt) bevares (BIZZ-2092).
  *
  * @param bfe - BFE-nummer
  * @param admin - Supabase admin-klient (til public.bbr_ejendom_status)
+ * @param bfeMatrikel - BFE'ens egen matrikelnr (fra jordstykke-opslaget)
+ * @param bfeEjerlav - BFE'ens egen ejerlavkode (fra jordstykke-opslaget)
  * @returns BfeAdresse med kilde='bbr_beliggenhed', eller null hvis BFE'en ikke
- *   har en BBR-beliggenhedsadresse eller DAWA ikke kan resolve den
+ *   har en BBR-beliggenhedsadresse, DAWA ikke kan resolve den, eller adressen
+ *   ligger på en anden matrikel end BFE'ens egen (delt SFE-hovedadresse)
  */
 async function resolveViaBbrBeliggenhed(
   bfe: number,
-  admin: ReturnType<typeof createAdminClient>
+  admin: ReturnType<typeof createAdminClient>,
+  bfeMatrikel: string,
+  bfeEjerlav: number
 ): Promise<BfeAdresse | null> {
   let adgangsadresseId: string | null = null;
   try {
@@ -305,25 +342,36 @@ async function resolveViaBbrBeliggenhed(
   }
   if (!adgangsadresseId) return null;
 
+  // Fuld struktur (ikke mini) — vi har brug for adressens eget jordstykke for at
+  // verificere at den ligger på BFE'ens egen matrikel (BIZZ-2092).
   const a = (await dawaJson(
-    `${DAWA_BASE_URL}/adgangsadresser/${encodeURIComponent(adgangsadresseId)}?struktur=mini`
+    `${DAWA_BASE_URL}/adgangsadresser/${encodeURIComponent(adgangsadresseId)}`
   )) as {
     id?: string;
-    vejnavn?: string;
     husnr?: string;
-    postnr?: string | number;
-    postnrnavn?: string;
-    kommunekode?: string | number;
+    vejstykke?: { navn?: string };
+    postnummer?: { nr?: string | number; navn?: string };
+    kommune?: { kode?: string | number };
+    jordstykke?: { matrikelnr?: string; ejerlav?: { kode?: number } };
   } | null;
-  if (!a?.vejnavn || a?.postnr == null) return null;
+  const vejnavn = a?.vejstykke?.navn;
+  const postnr = a?.postnummer?.nr;
+  if (!vejnavn || postnr == null) return null;
+
+  // BIZZ-2092: afvis hvis BBR-adressen ligger på en anden matrikel end BFE'ens
+  // egen — det er SFE-gruppens delte hovedadresse, ikke denne BFE's adresse.
+  const bbrMatrikel = a?.jordstykke?.matrikelnr;
+  const bbrEjerlav = a?.jordstykke?.ejerlav?.kode;
+  if (bbrMatrikel !== bfeMatrikel || bbrEjerlav !== bfeEjerlav) return null;
+
   return {
-    adresse: [a.vejnavn, a.husnr].filter(Boolean).join(' '),
-    postnr: String(a.postnr),
-    by: a.postnrnavn ?? null,
+    adresse: [vejnavn, a?.husnr].filter(Boolean).join(' '),
+    postnr: String(postnr),
+    by: a?.postnummer?.navn ?? null,
     kommune: null,
-    kommuneKode: a.kommunekode != null ? String(a.kommunekode) : null,
+    kommuneKode: a?.kommune?.kode != null ? String(a.kommune.kode) : null,
     ejendomstype: null,
-    dawaId: a.id ?? adgangsadresseId,
+    dawaId: a?.id ?? adgangsadresseId,
     etage: null,
     doer: null,
     kilde: 'bbr_beliggenhed',
@@ -348,8 +396,13 @@ async function resolveLive(
 ): Promise<BfeAdresse | null> {
   const viaJord = await resolveViaJordstykke(bfe);
   if (viaJord) {
-    const viaBbr = await resolveViaBbrBeliggenhed(bfe, admin);
-    return viaBbr ?? viaJord;
+    const viaBbr = await resolveViaBbrBeliggenhed(
+      bfe,
+      admin,
+      viaJord.matrikelnr,
+      viaJord.ejerlavKode
+    );
+    return viaBbr ?? viaJord.adr;
   }
   return resolveViaVP(bfe);
 }

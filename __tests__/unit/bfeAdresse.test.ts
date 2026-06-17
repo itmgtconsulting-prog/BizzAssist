@@ -168,21 +168,23 @@ describe('hentBfeAdresser', () => {
     });
   });
 
-  it('foretrækker BBR-beliggenhedsadresse over jordstykkets vilkårlige valg (BIZZ-2159)', async () => {
-    // Cache-miss → live: jordstykke giver "Gyldenstræde 8A", men BBR har den
-    // officielle beliggenhedsadresse "Stengade 10A" → BBR vinder.
+  it('foretrækker BBR-beliggenhedsadresse over jordstykkets vilkårlige valg når den ligger på samme matrikel (BIZZ-2159)', async () => {
+    // Cache-miss → live: jordstykke (matr 519) giver "Gyldenstræde 8A", men BBR
+    // har den officielle beliggenhedsadresse "Stengade 10A" PÅ SAMME matrikel 519
+    // → BBR vinder.
     const { upsert } = mockCache([], { bbrAdgangsadresseId: 'bbr-uuid-stengade' });
     mockFetch((url) => {
       if (url.includes('/jordstykker'))
         return [{ matrikelnr: '519', ejerlav: { kode: 100453, navn: 'Helsingør Bygrunde' } }];
       if (url.includes('/adgangsadresser/bbr-uuid-stengade'))
+        // Fuld struktur — adressens eget jordstykke ligger på matr 519 (= BFE'ens).
         return {
           id: 'bbr-uuid-stengade',
-          vejnavn: 'Stengade',
           husnr: '10A',
-          postnr: '3000',
-          postnrnavn: 'Helsingør',
-          kommunekode: '0217',
+          vejstykke: { navn: 'Stengade' },
+          postnummer: { nr: '3000', navn: 'Helsingør' },
+          kommune: { kode: '0217' },
+          jordstykke: { matrikelnr: '519', ejerlav: { kode: 100453 } },
         };
       if (url.includes('/adgangsadresser'))
         return [
@@ -207,6 +209,49 @@ describe('hentBfeAdresser', () => {
       bfe_nummer: 5319420,
       adresse: 'Stengade 10A',
       kilde: 'bbr_beliggenhed',
+    });
+  });
+
+  it('afviser BBR-beliggenhedsadresse på en anden matrikel (delt SFE-hovedadresse, BIZZ-2092)', async () => {
+    // BFE'ens eget jordstykke er matr 65bk → "Fenrisvej 19". BBR's
+    // adgangsadresse_id peger på SFE-gruppens hovedadresse "Gefionsvej 47A" som
+    // ligger på matr 65bp (en ANDEN matrikel) → afvises, jordstykke bevares.
+    const { upsert } = mockCache([], { bbrAdgangsadresseId: 'bbr-uuid-gefionsvej' });
+    mockFetch((url) => {
+      if (url.includes('/jordstykker'))
+        return [{ matrikelnr: '65bk', ejerlav: { kode: 2000652, navn: 'Helsingør Markjorder' } }];
+      if (url.includes('/adgangsadresser/bbr-uuid-gefionsvej'))
+        return {
+          id: 'bbr-uuid-gefionsvej',
+          husnr: '47A',
+          vejstykke: { navn: 'Gefionsvej' },
+          postnummer: { nr: '3000', navn: 'Helsingør' },
+          kommune: { kode: '0217' },
+          // Hovedadressen ligger på matr 65bp — ikke BFE'ens egen 65bk.
+          jordstykke: { matrikelnr: '65bp', ejerlav: { kode: 2000652 } },
+        };
+      if (url.includes('/adgangsadresser'))
+        return [
+          {
+            id: 'jord-uuid-fenrisvej',
+            vejnavn: 'Fenrisvej',
+            husnr: '19',
+            postnr: '3000',
+            postnrnavn: 'Helsingør',
+            kommunekode: '0217',
+          },
+        ];
+      return null;
+    });
+
+    const res = await hentBfeAdresser([5322351]);
+    expect(res.get(5322351)?.adresse).toBe('Fenrisvej 19');
+    expect(res.get(5322351)?.kilde).toBe('auto_jordstykke');
+    expect(upsert).toHaveBeenCalledTimes(1);
+    expect(upsert.mock.calls[0][0]).toMatchObject({
+      bfe_nummer: 5322351,
+      adresse: 'Fenrisvej 19',
+      kilde: 'auto_jordstykke',
     });
   });
 

@@ -350,6 +350,100 @@ interface PropertyGroup {
   matchedDocName?: string | null;
 }
 
+// ─── BIZZ-2140: Analyse-progress (SSE) ──────────────────────────
+
+/** Status for et enkelt analyse-trin i progress-checklisten. */
+type AnalyseStepStatus = 'pending' | 'running' | 'done' | 'slow' | 'error';
+
+/** Et trin i analyse-progress-checklisten. */
+interface AnalyseStepDef {
+  id: string;
+  label: string;
+}
+
+/**
+ * BIZZ-2140: De fem trin analyse-routen rapporterer via SSE. Rækkefølge og
+ * id'er skal matche ANALYSE_STEPS i app/api/forsikring/analyser/route.ts, så
+ * step-events kan mappes 1:1 mod checklisten i UI'et.
+ */
+const ANALYSE_STEP_DEFS: readonly AnalyseStepDef[] = [
+  { id: 'aktiver', label: 'Henter aktiver fra koncern' },
+  { id: 'match', label: 'Matcher policer mod ejendomme' },
+  { id: 'daekning', label: 'Henter dækninger & branchedata' },
+  { id: 'gap', label: 'Kører gap-engine' },
+  { id: 'gem', label: 'Gemmer resultater' },
+] as const;
+
+/** Resultat-payload fra analyse-routen (matcher analyseResult-state). */
+interface AnalyseResultPayload {
+  analyse_id: string;
+  total_aktiver: number;
+  insured_count: number;
+  gaps_count: number;
+  total_risk_score: number;
+  address_mismatches?: AddressMismatch[];
+  sikrede_adresser_uden_for_portefoelje?: Array<{
+    adresse: string;
+    dokument_navn: string | null;
+    policy_number: string | null;
+  }>;
+  std_betingelser_advarsel?: string | null;
+  praemie_advarsler?: string[];
+}
+
+/** Et event modtaget fra analyse-SSE-strømmen. */
+interface AnalyseStreamEvent {
+  type: 'step' | 'slow' | 'error' | 'done';
+  id?: string;
+  status?: AnalyseStepStatus;
+  step?: string;
+}
+
+/**
+ * BIZZ-2140: Læs en analyse-SSE-strøm, kald onEvent for hvert step/slow/error
+ * event, og returnér resultat-objektet fra det afsluttende `done`-event. Hvis
+ * strømmen lukker uden et done-event returneres null (kalderen falder tilbage).
+ *
+ * @param body - ReadableStream fra fetch-responsen (text/event-stream)
+ * @param onEvent - Callback for hvert step/slow/error-event undervejs
+ * @returns Resultat-objektet fra serveren (analyse_id m.m.) eller null
+ */
+async function consumeAnalyseStream<T extends { analyse_id?: string }>(
+  body: ReadableStream<Uint8Array>,
+  onEvent: (ev: AnalyseStreamEvent) => void
+): Promise<T | null> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let result: T | null = null;
+  // SSE-frames adskilles af blanke linjer; vi samler hele frames inden parse.
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nlIdx: number;
+    while ((nlIdx = buffer.indexOf('\n')) !== -1) {
+      const line = buffer.slice(0, nlIdx).trimEnd();
+      buffer = buffer.slice(nlIdx + 1);
+      if (!line.startsWith('data:')) continue;
+      const payload = line.slice(5).trim();
+      if (!payload) continue;
+      let parsed: AnalyseStreamEvent & { result?: T };
+      try {
+        parsed = JSON.parse(payload);
+      } catch {
+        continue;
+      }
+      if (parsed.type === 'done') {
+        result = parsed.result ?? null;
+      } else {
+        onEvent(parsed);
+      }
+    }
+  }
+  return result;
+}
+
 // ─── BIZZ-1389: Samlet ejendomsvisning ──────────────────────────
 
 /**
@@ -2226,6 +2320,14 @@ function AnalyseSection({
     navn: string;
   } | null>(null);
   const [running, setRunning] = useState(false);
+  /**
+   * BIZZ-2140: Progress-steps fra analyse-SSE. Hvert trin har en status
+   * (pending/running/done/slow/error) så UI'et kan vise en checklist i stedet
+   * for en tavs spinner under store analyser.
+   */
+  const [analyseSteps, setAnalyseSteps] = useState<
+    Array<{ id: string; label: string; status: 'pending' | 'running' | 'done' | 'slow' | 'error' }>
+  >([]);
   /** BIZZ-1404: Dokument-genbrug wizard state */
   const [showDocPicker, setShowDocPicker] = useState(false);
   const [previousDocs, setPreviousDocs] = useState<
@@ -2249,25 +2351,7 @@ function AnalyseSection({
       docId?: string;
     }>
   >([]);
-  const [analyseResult, setAnalyseResult] = useState<{
-    analyse_id: string;
-    total_aktiver: number;
-    insured_count: number;
-    gaps_count: number;
-    total_risk_score: number;
-    /** BIZZ-1973: Policer der dækker en adresse uden for porteføljen */
-    address_mismatches?: AddressMismatch[];
-    /** BIZZ-2067: Sikrede-/korrespondance-adresser uden for porteføljen (info) */
-    sikrede_adresser_uden_for_portefoelje?: Array<{
-      adresse: string;
-      dokument_navn: string | null;
-      policy_number: string | null;
-    }>;
-    /** Advarsel når standard betingelser ikke matcher policens selskab */
-    std_betingelser_advarsel?: string | null;
-    /** BIZZ-2120: Præmieopkrævninger uden dækningsdetaljer (advarsel) */
-    praemie_advarsler?: string[];
-  } | null>(null);
+  const [analyseResult, setAnalyseResult] = useState<AnalyseResultPayload | null>(null);
   /**
    * BIZZ-1973: Preflight-advarsel — sættes når adresse-tjek finder policer der
    * dækker en ejendom uden for kundens portefølje. Vises som modal med 3 valg.
@@ -2745,9 +2829,13 @@ function AnalyseSection({
           if (sagData.sag?.id) onSagChange(sagData.sag.id);
         }
 
+        // BIZZ-2140: Initialisér progress-steps og bed om SSE-streaming, så
+        // store analyser viser hvilket trin der kører (i stedet for en tavs
+        // spinner). Falder tilbage til JSON hvis serveren ikke streamer.
+        setAnalyseSteps(ANALYSE_STEP_DEFS.map((s) => ({ ...s, status: 'pending' })));
         const res = await fetch('/api/forsikring/analyser', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
           body: JSON.stringify({
             kunde_type: selected.type,
             kunde_id: selected.id,
@@ -2761,25 +2849,46 @@ function AnalyseSection({
           }),
         });
         if (res.ok) {
-          const result = await res.json();
-          setAnalyseResult(result);
-          // BIZZ-1389: Fetch full detail for unified property view
-          try {
-            const detailRes = await fetch(`/api/forsikring/analyser/${result.analyse_id}`);
-            if (detailRes.ok) {
-              const detail = await detailRes.json();
-              setAnalyseDetail(detail);
-              // Notify parent to update AI context with gaps
-              onAnalyseDetail(detail, selected?.navn ?? null);
-            }
-          } catch {
-            // Best-effort — fallback to old view if detail fails
+          // BIZZ-2140: Konsumér SSE-strøm hvis serveren streamer; ellers JSON.
+          const isSse = (res.headers.get('content-type') ?? '').includes('text/event-stream');
+          let result: AnalyseResultPayload | null = null;
+          if (isSse && res.body) {
+            result = await consumeAnalyseStream<AnalyseResultPayload>(res.body, (ev) => {
+              if (ev.type === 'step' && ev.id) {
+                setAnalyseSteps((prev) =>
+                  prev.map((s) =>
+                    s.id === ev.id ? { ...s, status: ev.status as typeof s.status } : s
+                  )
+                );
+              } else if (ev.type === 'error' && ev.step) {
+                setAnalyseSteps((prev) =>
+                  prev.map((s) => (s.id === ev.step ? { ...s, status: 'error' } : s))
+                );
+              }
+            });
+          } else {
+            result = await res.json();
           }
-          // Refresh sagsliste
-          fetch('/api/forsikring/sager')
-            .then((r) => (r.ok ? r.json() : { sager: [] }))
-            .then((d) => setSager(d.sager ?? []))
-            .catch(() => {});
+          if (result?.analyse_id) {
+            setAnalyseResult(result);
+            // BIZZ-1389: Fetch full detail for unified property view
+            try {
+              const detailRes = await fetch(`/api/forsikring/analyser/${result.analyse_id}`);
+              if (detailRes.ok) {
+                const detail = await detailRes.json();
+                setAnalyseDetail(detail);
+                // Notify parent to update AI context with gaps
+                onAnalyseDetail(detail, selected?.navn ?? null);
+              }
+            } catch {
+              // Best-effort — fallback to old view if detail fails
+            }
+            // Refresh sagsliste
+            fetch('/api/forsikring/sager')
+              .then((r) => (r.ok ? r.json() : { sager: [] }))
+              .then((d) => setSager(d.sager ?? []))
+              .catch(() => {});
+          }
         }
       } catch {
         // Handled silently
@@ -4231,6 +4340,54 @@ function AnalyseSection({
               )}
             </button>
           )}
+        </div>
+      )}
+
+      {/* BIZZ-2140: Progress-checklist under analyse — viser hvilket trin der
+          kører, så store porteføljer ikke bare ser en tavs spinner. Trinene
+          fodres af SSE-events fra /api/forsikring/analyser. */}
+      {running && analyseSteps.length > 0 && (
+        <div
+          className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2"
+          role="status"
+          aria-live="polite"
+        >
+          <p className="text-slate-300 text-xs font-medium mb-1">
+            {da ? 'Analyse i gang' : 'Analysis in progress'}
+          </p>
+          <ul className="space-y-1.5">
+            {analyseSteps.map((step) => (
+              <li key={step.id} className="flex items-center gap-2 text-xs">
+                {step.status === 'done' ? (
+                  <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
+                ) : step.status === 'error' ? (
+                  <XCircle size={14} className="text-red-400 shrink-0" />
+                ) : step.status === 'running' || step.status === 'slow' ? (
+                  <Loader2 size={14} className="animate-spin text-blue-400 shrink-0" />
+                ) : (
+                  <span className="w-3.5 h-3.5 rounded-full border border-slate-500 shrink-0" />
+                )}
+                <span
+                  className={
+                    step.status === 'done'
+                      ? 'text-slate-300'
+                      : step.status === 'error'
+                        ? 'text-red-400'
+                        : step.status === 'running' || step.status === 'slow'
+                          ? 'text-white'
+                          : 'text-slate-400'
+                  }
+                >
+                  {step.label}
+                  {step.status === 'slow' && (
+                    <span className="text-amber-400 ml-1.5">
+                      {da ? '(tager længere tid…)' : '(taking longer…)'}
+                    </span>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

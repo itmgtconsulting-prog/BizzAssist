@@ -15,6 +15,7 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getTenantSchemaName } from '@/lib/db/tenant';
 import { logger } from '@/app/lib/logger';
+import { resolveSfeForAdresse } from '@/app/lib/forsikring/sfeStruktur';
 
 const DAWA_BASE = 'https://api.dataforsyningen.dk';
 
@@ -304,6 +305,17 @@ export async function GET(
       }
     }
 
+    // BIZZ-2161: Memoisér jordstykke-centroide pr. BFE inden for requestet —
+    // mange ejerlejligheder deler samme SFE-BFE og skal ikke slå det op hver.
+    const bfeCentroidCache = new Map<number, { lat: number; lng: number } | null>();
+    const centroidForBfe = async (bfe: number): Promise<{ lat: number; lng: number } | null> => {
+      const cached = bfeCentroidCache.get(bfe);
+      if (cached !== undefined) return cached;
+      const coords = await geokodViaBfe(bfe);
+      bfeCentroidCache.set(bfe, coords);
+      return coords;
+    };
+
     // Geokod alle aktiver (maks 10 parallelt for at skåne DAWA)
     const markers: ForsikringMarker[] = [];
     for (let i = 0; i < aktiver.length; i += 10) {
@@ -312,12 +324,25 @@ export async function GET(
         chunk.map(async (aktiv) => {
           let coords: { lat: number; lng: number } | null = null;
 
-          // Prioritet: dawa_id fra cache → BFE jordstykke → adresse-tekst → skip
-          if (aktiv.type === 'ejendom' && aktiv.bfe) {
-            const dawaId = bfeDawaMap.get(aktiv.bfe);
-            if (dawaId) coords = await geokodDawaId(dawaId);
-            // Fallback for ubebyggede grunde (markjorder) uden adgangsadresse
-            if (!coords) coords = await geokodViaBfe(aktiv.bfe);
+          // BIZZ-2161: Prioritér matrikel-centroide (jordstykke visueltcenter)
+          // over DAWA-adgangspunktet. Adgangspunktet ligger ved fortovskant/
+          // indgang — i tætbebyggede bymidter 10-30 m fra matriklen, så pins
+          // landede på nabomatriklen eller ude på gaden. visueltcenter ligger
+          // altid inde i matriklen.
+          if (aktiv.type === 'ejendom') {
+            // 1) Eget jordstykke (SFE/bygning med egen matrikel)
+            if (aktiv.bfe) coords = await centroidForBfe(aktiv.bfe);
+            // 2) Ejerlejlighed uden eget jordstykke → resolve SFE-BFE og brug
+            //    DEN samlede faste ejendoms matrikel-centroide
+            if (!coords && aktiv.adresse) {
+              const sfe = await resolveSfeForAdresse(aktiv.adresse);
+              if (sfe?.sfeBfe) coords = await centroidForBfe(sfe.sfeBfe);
+            }
+            // 3) Adgangspunkt (fortovskant) som sidste struktur-fallback
+            if (!coords && aktiv.bfe) {
+              const dawaId = bfeDawaMap.get(aktiv.bfe);
+              if (dawaId) coords = await geokodDawaId(dawaId);
+            }
           }
           if (!coords && aktiv.adresse) {
             coords = await geokodAdresse(aktiv.adresse);

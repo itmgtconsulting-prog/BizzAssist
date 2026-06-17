@@ -4,12 +4,19 @@
  * Fixture: BELVEDERE EJENDOMME A/S (CVR 24301117) — SFE-gruppen i Helsingør
  * Markjorder hvor den korrupte cache-backfill (BIZZ-2092) gav alle BFE'er
  * gruppens hovedadresse ("Gefionsvej 47A" ×4). Ground truth verificeret mod
- * DAWA jordstykker pr. BFE 2026-06-12 — matrikulære adresser ændrer sig ikke:
- *   5322351 → Fenrisvej 19      (bebygget)
- *   5322352 → Fenrisvej 15      (bebygget)
- *   5322356 → Fenrisvej 27A     (bebygget)
+ * DAWA jordstykker + BBR-beliggenhed pr. BFE 2026-06-17 — matrikulære adresser
+ * ændrer sig ikke:
+ *   5322351 → Fenrisvej 19      (bebygget, jordstykke matr 65bk)
+ *   5322352 → Fenrisvej 15      (bebygget, jordstykke matr 65bl)
+ *   5322356 → Gefionsvej 47A    (bebygget, jordstykke matr 65bp)
  *   5322350 → 65bi Helsingør Markjorder (ubebygget grund — matrikelbetegnelse)
  *   5322372 → 65ce Helsingør Markjorder (ubebygget grund — matrikelbetegnelse)
+ *
+ * BIZZ-2092/2159: alle 4 SFE-BFE'er deler bbr_ejendom_status.adgangsadresse_id
+ * = "Gefionsvej 47A" (på matr 65bp). KUN 5322356 ligger selv på 65bp, så
+ * matrikel-guarden beholder BBR-beliggenhedsadressen dér (BIZZ-2159 vinder over
+ * jordstykkets alfabetisk-første "Fenrisvej 27A"). For 65bi/65bk/65bl afvises
+ * den delte hovedadresse og pr-BFE-jordstykke-resolutionen bevares.
  *
  * De tre flader der skal vise samme adresse pr. BFE:
  *   1. /api/bfe-addresses (diagram-berigelse)
@@ -32,7 +39,9 @@ const EXPECTED: Record<number, string> = {
   5322350: '65bi Helsingør Markjorder',
   5322351: 'Fenrisvej 19',
   5322352: 'Fenrisvej 15',
-  5322356: 'Fenrisvej 27A',
+  // BBR-beliggenhedsadressen ligger på 5322356's egen matrikel 65bp → beholdes
+  // (BIZZ-2159 forrang over jordstykkets vilkårlige valg; matrikel-guard OK).
+  5322356: 'Gefionsvej 47A',
   5322372: '65ce Helsingør Markjorder',
 };
 
@@ -64,10 +73,12 @@ test.describe('BFE→adresse paritet på tværs af flader (BIZZ-2093)', () => {
     for (const [bfe, exp] of Object.entries(EXPECTED)) {
       expect(data[bfe]?.adresse, `BFE ${bfe}`).toBe(exp);
     }
-    // Regression BIZZ-2092: ingen to BFE'er må dele adresse
+    // Regression BIZZ-2092: ingen to BFE'er må dele adresse (den delte SFE-
+    // hovedadresse "Gefionsvej 47A" må kun forekomme for 5322356 — dens egen
+    // matrikel — og aldrig blive smurt ud over de øvrige BFE'er igen).
     const adresser = BFES.map((b) => data[String(b)]?.adresse).filter(Boolean);
     expect(new Set(adresser).size).toBe(adresser.length);
-    expect(adresser).not.toContain('Gefionsvej 47A');
+    expect(adresser.filter((a) => a === 'Gefionsvej 47A').length).toBeLessThanOrEqual(1);
   });
 
   test('ejendomme-by-owner viser samme adresser som bfe-addresses', async ({ request }) => {

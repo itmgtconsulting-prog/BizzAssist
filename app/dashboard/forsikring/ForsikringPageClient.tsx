@@ -5154,6 +5154,18 @@ function AnalyseDetailSection({
 
 // ─── Component ───────────────────────────────────────────────────
 
+/**
+ * BIZZ-2160: sessionStorage-nøgler til at genskabe analyse-tilstand når brugeren
+ * ankommer til /dashboard/forsikring uden URL-params (fx via analyse-modulkortet,
+ * der linker til den bare sti). URL-state (BIZZ-2148) dækker browser-back/genindlæs;
+ * disse nøgler dækker bar-sti-navigation + scroll-position. Per-tab, transient
+ * (ryddes når fanen lukkes) — godkendt undtagelse fra State Management-reglen,
+ * dokumenteret i CLAUDE.md. Supabase er ikke relevant: dette er flygtig
+ * navigations-UI-tilstand, ikke data der skal overleve på tværs af enheder.
+ */
+const FORSIKRING_STATE_KEY = 'bizzassist-forsikring-analyse-state';
+const FORSIKRING_SCROLL_KEY = 'bizzassist-forsikring-scroll-top';
+
 export default function ForsikringPageClient(): React.ReactElement {
   const { lang } = useLanguage();
   const t = translations[lang].forsikring;
@@ -5204,19 +5216,60 @@ export default function ForsikringPageClient(): React.ReactElement {
     const id = p.get('kunde');
     const type = p.get('type');
     const gyldig = !!id && (type === 'virksomhed' || type === 'person');
-    return {
-      customer: gyldig
-        ? {
-            type: type as 'virksomhed' | 'person',
-            id: id as string,
-            navn: p.get('navn') ?? (id as string),
-          }
-        : null,
-      analyse: p.get('analyse'),
-    };
+    if (gyldig) {
+      return {
+        customer: {
+          type: type as 'virksomhed' | 'person',
+          id: id as string,
+          navn: p.get('navn') ?? (id as string),
+        },
+        analyse: p.get('analyse'),
+      };
+    }
+    // BIZZ-2160: Bar URL (fx ankomst via analyse-modulkortet → /dashboard/forsikring
+    // uden params). Fald tilbage til sessionStorage så seneste analyse genskabes i
+    // stedet for en blank start-skærm. URL-sync-effekten skriver derefter params
+    // tilbage i URL'en, så tilstanden igen bliver bookmark-bar (AC#2).
+    try {
+      const raw = window.sessionStorage.getItem(FORSIKRING_STATE_KEY);
+      if (raw) {
+        const s = JSON.parse(raw) as {
+          customer?: { type?: string; id?: string; navn?: string };
+          analyse?: string | null;
+        };
+        const c = s.customer;
+        if (c?.id && (c.type === 'virksomhed' || c.type === 'person')) {
+          return {
+            customer: { type: c.type, id: c.id, navn: c.navn ?? c.id },
+            analyse: s.analyse ?? null,
+          };
+        }
+      }
+    } catch {
+      // Korrupt/utilgængelig sessionStorage — ignorér, start blank.
+    }
+    return { customer: null, analyse: null };
   });
   /** BIZZ-2148: Analyse-ID der skal genskabes når kunden er sat (anvendes én gang) */
   const restoreAnalyseRef = useRef<string | null>(initialUrlState.analyse);
+  /**
+   * BIZZ-2160: Scroll-position der skal gendannes når analyse-indholdet er hydreret.
+   * Læses fra sessionStorage ved mount; anvendes én gang (didRestoreScrollRef).
+   */
+  const restoreScrollRef = useRef<number>(
+    (() => {
+      if (typeof window === 'undefined') return 0;
+      try {
+        return Number(window.sessionStorage.getItem(FORSIKRING_SCROLL_KEY)) || 0;
+      } catch {
+        return 0;
+      }
+    })()
+  );
+  const didRestoreScrollRef = useRef(false);
+  /** BIZZ-2160: Ref til den scrollbare container (gem/gendan scroll-position) */
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const scrollSaveRafRef = useRef<number | null>(null);
   /** BIZZ-2148: Springer første URL-synk over når der er en kunde at genskabe */
   const didInitUrlSyncRef = useRef(false);
 
@@ -5331,7 +5384,54 @@ export default function ForsikringPageClient(): React.ReactElement {
       '',
       qs ? `${window.location.pathname}?${qs}` : window.location.pathname
     );
+    // BIZZ-2160: Spejl tilstanden til sessionStorage så bar-sti-navigation (analyse-
+    // modulkortet) også kan genskabe. Når kunden ryddes ('vælg ny forsikringsejer')
+    // fjernes nøglerne, så en gammel analyse ikke genopstår.
+    try {
+      if (selectedCustomer) {
+        window.sessionStorage.setItem(
+          FORSIKRING_STATE_KEY,
+          JSON.stringify({ customer: selectedCustomer, analyse: activeAnalyseId ?? null })
+        );
+      } else {
+        window.sessionStorage.removeItem(FORSIKRING_STATE_KEY);
+        window.sessionStorage.removeItem(FORSIKRING_SCROLL_KEY);
+      }
+    } catch {
+      // sessionStorage utilgængelig (privat tilstand m.m.) — URL-state er stadig aktiv.
+    }
   }, [selectedCustomer, activeAnalyseId, initialUrlState.customer]);
+
+  /**
+   * BIZZ-2160: Gendan scroll-position når analyse-indholdet er hydreret (aiAnalyseDetail
+   * sat giver nok højde til at scrolle). Køres kun én gang per mount.
+   */
+  useEffect(() => {
+    if (didRestoreScrollRef.current) return;
+    if (!aiAnalyseDetail) return;
+    const top = restoreScrollRef.current;
+    if (top > 0 && scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = top;
+    }
+    didRestoreScrollRef.current = true;
+  }, [aiAnalyseDetail]);
+
+  /**
+   * BIZZ-2160: Gem scroll-position (throttlet via rAF) så den kan gendannes ved
+   * tilbagevenden. Skrives kun når en kunde er valgt — ellers er der intet at gendanne.
+   */
+  const handleScrollPersist = useCallback(() => {
+    if (scrollSaveRafRef.current != null) return;
+    scrollSaveRafRef.current = requestAnimationFrame(() => {
+      scrollSaveRafRef.current = null;
+      try {
+        const top = scrollContainerRef.current?.scrollTop ?? 0;
+        window.sessionStorage.setItem(FORSIKRING_SCROLL_KEY, String(top));
+      } catch {
+        // sessionStorage utilgængelig — ignorér.
+      }
+    });
+  }, []);
 
   // ── BIZZ-2131: Kort-sidepanel state (side-niveau, fuld højde) ──
   const [kortÅben, setKortÅben] = useState(false);
@@ -5553,6 +5653,8 @@ export default function ForsikringPageClient(): React.ReactElement {
     >
       {/* Scrollbart indhold (header + resten) */}
       <div
+        ref={scrollContainerRef}
+        onScroll={handleScrollPersist}
         className={`overflow-y-auto h-full ${kortÅben && isDesktop ? 'flex-1 min-w-0' : 'w-full'}`}
       >
         {/* Sticky header — altid synlig indenfor scroll-containeren */}

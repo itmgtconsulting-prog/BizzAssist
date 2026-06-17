@@ -2507,6 +2507,36 @@ function AnalyseSection({
     }>
   >([]);
 
+  /**
+   * BIZZ-2137: Auto-match standardbetingelser fra biblioteket mod de valgte
+   * policers conditions_ref. Kaldes når dokumenter indlæses/uploades — matchende
+   * biblioteks-docs unioneres ind i stdSelectedIds (fjerner aldrig manuelle valg).
+   * Dette dækker første-gangs-analyser, hvor kunden ingen historik har
+   * (BIZZ-2078 dækker kun genvalg af tidligere brugte betingelser).
+   *
+   * @param docIds - Dokument-ID'er der skal matches (de valgte policer)
+   */
+  const autoMatchConditions = useCallback(async (docIds: string[]) => {
+    if (docIds.length === 0) return;
+    try {
+      const res = await fetch('/api/forsikring/standard-docs/auto-match', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ document_ids: docIds }),
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        matched?: Array<{ source_url: string }>;
+      };
+      const urls = (data.matched ?? []).map((m) => m.source_url).filter(Boolean);
+      if (urls.length > 0) {
+        setStdSelectedIds((prev) => new Set([...prev, ...urls]));
+      }
+    } catch {
+      /* non-fatal — pre-select springes bare over */
+    }
+  }, []);
+
   /** BIZZ-1404: Hent tidligere dokumenter for genbrug-picker */
   useEffect(() => {
     // BIZZ-1631: Nulstil state STRAKS ved kundeskift — forhindrer at forrige
@@ -2522,10 +2552,13 @@ function AnalyseSection({
         const docs = d.documents ?? [];
         setPreviousDocs(docs);
         // BIZZ-1442: Auto-check alle tidligere docs som default
-        setSelectedDocIds(new Set(docs.map((doc: { id: string }) => doc.id)));
+        const docIds = docs.map((doc: { id: string }) => doc.id);
+        setSelectedDocIds(new Set(docIds));
+        // BIZZ-2137: Pre-select biblioteks-betingelser policerne refererer til
+        autoMatchConditions(docIds);
       })
       .catch(() => setPreviousDocs([]));
-  }, [showDocPicker, selected]);
+  }, [showDocPicker, selected, autoMatchConditions]);
 
   /**
    * BIZZ-2166: Ryd friske wizard-uploads når forsikringsejeren skifter.
@@ -2643,6 +2676,9 @@ function AnalyseSection({
               );
               // BIZZ-1442: Auto-check nye uploads
               setSelectedDocIds((prev) => new Set([...prev, uploadedId]));
+              // BIZZ-2137: Pre-select biblioteks-betingelser den nye police
+              // refererer til (første-gangs-analyse uden kunde-historik).
+              autoMatchConditions([uploadedId]);
             } catch {
               setWizardUploads((prev) =>
                 prev.map((j) => (j.id === jobId ? { ...j, status: 'failed', docId } : j))
@@ -2652,7 +2688,7 @@ function AnalyseSection({
       );
       onRefresh();
     },
-    [onRefresh, previousDocs]
+    [onRefresh, previousDocs, autoMatchConditions]
   );
 
   /** Hent sagsliste ved mount */

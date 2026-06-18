@@ -106,9 +106,10 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
       .slice(0, 10);
     const wantHandler = sp.get('handler') === 'true';
     // Export-mode: hent alle matchende rækker (op til 20000) så Excel-eksport
-    // matcher KPI-antal handler. Normal paginering capper ved 500.
+    // matcher KPI-antal handler. Samme loft gælder "Vis alle" fra paginerings-
+    // dropdownen (limit = handlerTotal); default-siden er fortsat 50.
     const wantExport = sp.get('export') === 'true';
-    const maxLimit = wantExport ? 20000 : 500;
+    const maxLimit = 20000;
     const defaultLimit = wantExport ? 20000 : 50;
     const limit = Math.min(Math.max(Number(sp.get('limit')) || defaultLimit, 1), maxLimit);
     const offset = wantExport ? 0 : Math.max(Number(sp.get('offset')) || 0, 0);
@@ -396,33 +397,56 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
         // ægte fejl.
         let hData: unknown = null;
         let hErr: { message: string } | null = null;
-        for (let attempt = 1; attempt <= 3; attempt++) {
-          const res = await admin.rpc('boligpris_handler', {
-            p_kommune_koder: kommuner ?? null,
-            p_boligtype_koder: boligtyper ?? null,
-            p_fra: fraMaaned,
-            p_til: tilMaanedSlut,
-            p_areal_min: arealMin,
-            p_areal_max: arealMax,
-            p_byggear_min: byggearMin,
-            p_byggear_max: byggearMax,
-            p_etager_min: etagerMin,
-            p_etager_max: etagerMax,
-            p_vaerelser_min: vaerelserMin,
-            p_vaerelser_max: vaerelserMax,
-            // BIZZ-2112: eksakt postnr-efterfiltrering i RPC'en (join mod
-            // bfe_adresse_cache) — kommune-prefiltret ovenfor afgrænser fortsat
-            // index-scanningen, men kun rækker med matchende postnr returneres.
-            p_postnumre: postnrStrings,
-            p_limit: limit,
-            p_offset: offset,
-          });
-          hData = res.data;
-          hErr = res.error;
-          if (!hErr) break;
-          logger.warn(`[boligpris] RPC handler fejl (forsøg ${attempt}/3):`, hErr.message);
-          if (attempt < 3) await new Promise((r) => setTimeout(r, 200 * attempt));
+        // PostgREST capper RPC-resultater til 1000 rækker uanset p_limit. For
+        // "Vis alle"/eksport (limit op til 20000) henter vi derfor i 1000-bidder
+        // og akkumulerer. Normal paginering (limit ≤ 100) kører ét kald.
+        const PG_CAP = 1000;
+        const baseRpcParams = {
+          p_kommune_koder: kommuner ?? null,
+          p_boligtype_koder: boligtyper ?? null,
+          p_fra: fraMaaned,
+          p_til: tilMaanedSlut,
+          p_areal_min: arealMin,
+          p_areal_max: arealMax,
+          p_byggear_min: byggearMin,
+          p_byggear_max: byggearMax,
+          p_etager_min: etagerMin,
+          p_etager_max: etagerMax,
+          p_vaerelser_min: vaerelserMin,
+          p_vaerelser_max: vaerelserMax,
+          // BIZZ-2112: eksakt postnr-efterfiltrering i RPC'en (join mod
+          // bfe_adresse_cache) — kommune-prefiltret ovenfor afgrænser fortsat
+          // index-scanningen, men kun rækker med matchende postnr returneres.
+          p_postnumre: postnrStrings,
+        };
+        const accumulated: Array<Record<string, unknown>> = [];
+        for (let fetched = 0; fetched < limit; ) {
+          const pageLimit = Math.min(PG_CAP, limit - fetched);
+          let chunk: Array<Record<string, unknown>> | null = null;
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            const res = await admin.rpc('boligpris_handler', {
+              ...baseRpcParams,
+              p_limit: pageLimit,
+              p_offset: offset + fetched,
+            });
+            if (!res.error) {
+              chunk = (res.data ?? []) as Array<Record<string, unknown>>;
+              hErr = null;
+              break;
+            }
+            hErr = res.error as { message: string };
+            logger.warn(`[boligpris] RPC handler fejl (forsøg ${attempt}/3):`, hErr.message);
+            if (attempt < 3) await new Promise((r) => setTimeout(r, 200 * attempt));
+          }
+          if (chunk === null) break; // bidet fejlede efter 3 forsøg
+          accumulated.push(...chunk);
+          fetched += chunk.length;
+          if (chunk.length < pageLimit) break; // ingen flere rækker at hente
         }
+        hData = accumulated;
+        // Delvist hentede rækker er stadig brugbare — kun en tom akkumulering
+        // efter fejl skal behandles som fejl nedenfor.
+        if (accumulated.length > 0) hErr = null;
         if (hErr) {
           logger.warn('[boligpris] RPC handler opgivet efter 3 forsøg:', hErr.message);
         } else {

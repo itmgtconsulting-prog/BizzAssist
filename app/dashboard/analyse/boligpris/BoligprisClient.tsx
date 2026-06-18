@@ -210,6 +210,18 @@ export default function BoligprisClient(): React.ReactElement {
     return { fra: fraDate.toISOString().slice(0, 10), til: tilStr };
   }, [periodeIdx, customFra, customTil]);
 
+  /* --- Dynamiske side-størrelser til "Vis"-dropdownen ---
+     Standard-trin tilbydes kun når de er mindre end det totale antal handler,
+     og der tilføjes altid en "Alle (N)"-mulighed (capped til 20000, som er
+     route'ens hårde loft for handler-eksport). Dermed slipper brugeren for at
+     paginere gennem fx 745 Valby-handler manuelt. */
+  const pageSizeOptions = useMemo(() => {
+    const total = data?.handlerTotal ?? 0;
+    const alle = Math.min(total, 20000);
+    const opts = [10, 50, 100, 250, 500, 1000].filter((s) => s < alle);
+    return { opts, alle };
+  }, [data?.handlerTotal]);
+
   /* --- Fetch data --- */
   const fetchData = useCallback(
     async (includeHandler = true, offset = 0, limit = 50) => {
@@ -893,7 +905,11 @@ export default function BoligprisClient(): React.ReactElement {
                       </button>
                       <span className="text-sm text-slate-400">Vis:</span>
                       <select
-                        value={handlerPageSize}
+                        value={
+                          pageSizeOptions.alle > 0 && handlerPageSize > pageSizeOptions.alle
+                            ? pageSizeOptions.alle
+                            : handlerPageSize
+                        }
                         onChange={(e) => {
                           setHandlerPageSize(Number(e.target.value));
                           setHandlerPage(0);
@@ -901,9 +917,16 @@ export default function BoligprisClient(): React.ReactElement {
                         className="bg-slate-700/60 text-slate-200 text-sm rounded-lg px-2 py-1 border border-slate-600/50"
                         aria-label="Antal handler per side"
                       >
-                        <option value={10}>10</option>
-                        <option value={50}>50</option>
-                        <option value={100}>100</option>
+                        {pageSizeOptions.opts.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                        {pageSizeOptions.alle > 0 && (
+                          <option value={pageSizeOptions.alle}>
+                            Alle ({pageSizeOptions.alle.toLocaleString('da-DK')})
+                          </option>
+                        )}
                       </select>
                     </div>
                   </div>

@@ -2906,7 +2906,16 @@ function AnalyseSection({
       }
 
       setRunning(true);
+      // BIZZ-2178: Nulstil progress-steps + tidligere analyse-data ØJEBLIKKELIGT
+      // sammen med running=true. Tidligere blev steps først nulstillet efter
+      // preflight- og sag-oprettelses-kaldene (~1-2 s), så de grønne checkmarks
+      // fra forrige kørsel hang i progress-sektionen og gav indtryk af at
+      // systemet var langsomt/gået i stå. Nu ser brugeren straks en frisk
+      // analyse med alle trin i 'pending' (grå).
       setAnalyseResult(null);
+      setAnalyseDetail(null);
+      onAnalyseDetail(null, null);
+      setAnalyseSteps(ANALYSE_STEP_DEFS.map((s) => ({ ...s, status: 'pending' })));
       try {
         // BIZZ-1440: Samle ALLE doc IDs (genbrugte + wizard-uploads + parent-uploads).
         // Dedup via Set så samme doc_id ikke sendes to gange — duplikat-detektion
@@ -2980,10 +2989,10 @@ function AnalyseSection({
           if (sagData.sag?.id) onSagChange(sagData.sag.id);
         }
 
-        // BIZZ-2140: Initialisér progress-steps og bed om SSE-streaming, så
-        // store analyser viser hvilket trin der kører (i stedet for en tavs
-        // spinner). Falder tilbage til JSON hvis serveren ikke streamer.
-        setAnalyseSteps(ANALYSE_STEP_DEFS.map((s) => ({ ...s, status: 'pending' })));
+        // BIZZ-2140: Bed om SSE-streaming, så store analyser viser hvilket trin
+        // der kører (i stedet for en tavs spinner). Falder tilbage til JSON hvis
+        // serveren ikke streamer. Progress-steps blev allerede nulstillet til
+        // 'pending' ved analyse-start (BIZZ-2178).
         const res = await fetch('/api/forsikring/analyser', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },

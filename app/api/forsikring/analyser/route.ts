@@ -26,6 +26,7 @@ import {
   runPortfolioChecks,
   runDaekningsgradChecks,
   runVaerdiChecks,
+  highestBuildingCoverageSum,
 } from '@/app/lib/forsikring/gapEngine';
 import type { RegnskabsTalLite } from '@/app/lib/forsikring/gapEngine';
 import { fetchDmrByRegnr } from '@/app/lib/forsikring/dmr';
@@ -1164,23 +1165,13 @@ export async function POST(request: NextRequest): Promise<Response> {
         // bestMatch.sum_insured_dkk, rapporteres "Ingen forsikringssum" selv om
         // bygningen er fuldt forsikret. Vi aggregerer derfor den HØJESTE
         // bygnings-dækningssum på tværs af ALLE matchede policer (score ≥ 50)
-        // for samme BFE. En dækning regnes som bygningsværdi hvis koden er
-        // 'bygningskasko' eller 'brand_el' med "bygning" i labelen (så fx
-        // ansvarspolicens "Varetægt" (brand_el) ikke tæller med).
-        const isBuildingCoverage = (c: ForsikringCoverage): boolean =>
-          c.is_covered &&
-          (c.sum_dkk ?? 0) > 0 &&
-          (c.coverage_code === 'bygningskasko' ||
-            (c.coverage_code === 'brand_el' && /bygning/i.test(c.coverage_label ?? '')));
+        // for samme BFE via highestBuildingCoverageSum (testet i gapEngine).
         const buildingSumForMatch = (m: (typeof matches)[number]): number | null => {
           let best: number | null = null;
           for (const cand of m.candidates) {
             if (cand.score < 50) continue;
-            for (const c of coveragesByPolicy.get(cand.policy.id) ?? []) {
-              if (isBuildingCoverage(c) && (best === null || c.sum_dkk! > best)) {
-                best = c.sum_dkk!;
-              }
-            }
+            const sum = highestBuildingCoverageSum(coveragesByPolicy.get(cand.policy.id) ?? []);
+            if (sum !== null && (best === null || sum > best)) best = sum;
           }
           return best;
         };

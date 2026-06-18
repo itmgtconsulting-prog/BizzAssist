@@ -19,6 +19,8 @@ import {
   runPortfolioChecks,
   runDaekningsgradChecks,
   runVaerdiChecks,
+  highestBuildingCoverageSum,
+  isBuildingValueCoverage,
 } from '@/app/lib/forsikring/gapEngine';
 import type { PortfolioCheckInput, RegnskabsTalLite } from '@/app/lib/forsikring/gapEngine';
 import { gapScope, shouldFoldOwnerIntoCompany } from '@/app/lib/forsikring/types';
@@ -1668,6 +1670,105 @@ describe('runVaerdiChecks — BIZZ-2170 værdi-baserede checks', () => {
       koebsprisDkk: 60_000_000,
       koebsDato: '2005-01-01',
     });
+    for (const g of gaps) expect(g.severity).not.toBe('critical');
+  });
+});
+
+describe('highestBuildingCoverageSum — BIZZ-2175 bygningssum pr. police', () => {
+  // Reelle dækninger fra RACEHALL-ejendomspolicen (Bondehøjvej 20) i test-DB:
+  // bygningssummen ligger på "Bygningsbrand mv." (brand_el) = 113.860.000.
+  const ejendomsCoverages = [
+    {
+      coverage_code: 'brand_el',
+      coverage_label: 'Bygningsbrand mv.',
+      is_covered: true,
+      sum_dkk: 113_860_000,
+    },
+    {
+      coverage_code: 'huslejetab',
+      coverage_label: 'Huslejetab',
+      is_covered: true,
+      sum_dkk: 7_465_911,
+    },
+    {
+      coverage_code: 'brand_el',
+      coverage_label: 'Genfremstillingsomkostninger',
+      is_covered: true,
+      sum_dkk: 2_000_000,
+    },
+    {
+      coverage_code: 'brand_el',
+      coverage_label: 'Kortslutning',
+      is_covered: true,
+      sum_dkk: 500_000,
+    },
+    {
+      coverage_code: 'glas',
+      coverage_label: 'Glas og Sanitet',
+      is_covered: true,
+      sum_dkk: 100_000,
+    },
+  ];
+  // Ansvarspolicen: "Varetægt" har brand_el-kode men er IKKE en bygningssum.
+  const ansvarCoverages = [
+    {
+      coverage_code: 'erhvervsansvar',
+      coverage_label: 'Erhvervsansvar',
+      is_covered: true,
+      sum_dkk: 10_000_000,
+    },
+    { coverage_code: 'brand_el', coverage_label: 'Varetægt', is_covered: true, sum_dkk: 1_000_000 },
+  ];
+
+  it('finder bygnings-summen (113.860.000) på ejendomspolicen', () => {
+    expect(highestBuildingCoverageSum(ejendomsCoverages)).toBe(113_860_000);
+  });
+
+  it('ignorerer ansvarspolicens brand_el "Varetægt" (ikke bygning)', () => {
+    expect(highestBuildingCoverageSum(ansvarCoverages)).toBeNull();
+  });
+
+  it('isBuildingValueCoverage: bygningskasko tæller, ikke-dækket gør ikke', () => {
+    expect(
+      isBuildingValueCoverage({
+        coverage_code: 'bygningskasko',
+        coverage_label: 'Bygningskasko',
+        is_covered: true,
+        sum_dkk: 50_000_000,
+      })
+    ).toBe(true);
+    expect(
+      isBuildingValueCoverage({
+        coverage_code: 'brand_el',
+        coverage_label: 'Bygningsbrand mv.',
+        is_covered: false,
+        sum_dkk: 113_860_000,
+      })
+    ).toBe(false);
+  });
+
+  it('end-to-end: bygningssummen fjerner INGEN-SUM og giver en værdi-sammenligning', () => {
+    // Aggregér på tværs af ejendoms- + ansvarspolice (som route.ts gør)
+    const buildingSum = Math.max(
+      highestBuildingCoverageSum(ejendomsCoverages) ?? 0,
+      highestBuildingCoverageSum(ansvarCoverages) ?? 0
+    );
+    expect(buildingSum).toBe(113_860_000);
+    const gaps = runVaerdiChecks({
+      bfe: 100157965,
+      policyId: 'pol-ejendom',
+      adresse: 'Bondehøjvej 20, 2630 Taastrup',
+      sumInsuredDkk: buildingSum,
+      vurderingDkk: 93_000_000,
+      vurderingsAar: 2024,
+      koebsprisDkk: 15_000_000,
+      koebsDato: '2018-11-15',
+      asOfDate: new Date('2026-06-18'),
+    });
+    // Den oprindelige bug-finding må IKKE længere fyre
+    expect(gaps.find((g) => g.check_id === 'GAP-VAERDI-INGEN-SUM')).toBeUndefined();
+    // I stedet sammenlignes 113.86M mod referenceværdi (info/warning, aldrig critical)
+    expect(gaps.length).toBeGreaterThan(0);
     for (const g of gaps) expect(g.severity).not.toBe('critical');
   });
 });

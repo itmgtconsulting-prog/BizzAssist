@@ -819,6 +819,47 @@ function formatDkk(n: number): string {
 }
 
 /**
+ * BIZZ-2175: Afgør om en dækning repræsenterer bygningens forsikringsværdi.
+ *
+ * Bygningsbrand/-kasko bærer bygningens nyværdi, mens fx ansvarspolicens
+ * "Varetægt" (også brand_el-kode) IKKE er en bygningssum. Vi inkluderer
+ * derfor 'bygningskasko' altid, og 'brand_el' kun når labelen nævner
+ * "bygning" (fx "Bygningsbrand mv.").
+ *
+ * @param c - Dækning fra en police
+ * @returns true hvis dækningen bærer en bygnings-forsikringssum
+ */
+export function isBuildingValueCoverage(
+  c: Pick<ForsikringCoverage, 'coverage_code' | 'coverage_label' | 'is_covered' | 'sum_dkk'>
+): boolean {
+  if (!c.is_covered || !c.sum_dkk || c.sum_dkk <= 0) return false;
+  if (c.coverage_code === 'bygningskasko') return true;
+  return c.coverage_code === 'brand_el' && /bygning/i.test(c.coverage_label ?? '');
+}
+
+/**
+ * BIZZ-2175: Find den højeste bygnings-forsikringssum blandt en polices
+ * dækninger. Bygningssummen ligger ofte på dæknings-niveau (fx
+ * "Bygningsbrand mv.") snarere end på policens sum_insured_dkk.
+ *
+ * @param coverages - Dækninger for én police
+ * @returns Højeste bygnings-dækningssum, eller null hvis ingen findes
+ */
+export function highestBuildingCoverageSum(
+  coverages: Array<
+    Pick<ForsikringCoverage, 'coverage_code' | 'coverage_label' | 'is_covered' | 'sum_dkk'>
+  >
+): number | null {
+  let best: number | null = null;
+  for (const c of coverages) {
+    if (isBuildingValueCoverage(c) && (best === null || c.sum_dkk! > best)) {
+      best = c.sum_dkk!;
+    }
+  }
+  return best;
+}
+
+/**
  * BIZZ-2170: Kør værdi-baserede checks for én ejendom.
  *
  * Sammenligner forsikret sum mod seneste købspris (primær reference) og

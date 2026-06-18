@@ -1608,6 +1608,13 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     }
   } // end !cacheFullHit
 
+  // BIZZ-1814: Snapshot af de BFE'er virksomheden selv EJER (fra ejf_ejerskab),
+  // taget FØR administrator-/verifikations-blokkene tilføjer flere. Bruges til at
+  // sikre at "ejet" status altid vinder over "administreret" — en ejerlejlighed
+  // virksomheden ejer må ikke reklassificeres som kun-administreret, blot fordi
+  // dens forælder-SFE også administreres (ellers forsvinder den fra ejet-listen).
+  const ejetBfeSet = new Set<number>(bfeTilCvr.keys());
+
   // BIZZ-1672: Administrerede ejendomme fra ejf_administrator.
   // For ejerforeninger (og andre virksomheder) — tilføj BFE'er de administrerer.
   const administreretByBfe = new Set<number>();
@@ -1705,6 +1712,14 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     } catch {
       /* AI-verified lookup non-fatal */
     }
+  }
+
+  // BIZZ-1814: Ejet status vinder over administreret. Fjern enhver ejet BFE fra
+  // administreret-sættet, så ejerlejligheder virksomheden selv ejer bliver i
+  // ejet-listen — selv hvis de også er børn af en administreret SFE (fx Familien
+  // Petersen, der ejer Strandgade-lejlighederne OG administrerer deres SFE).
+  for (const bfe of ejetBfeSet) {
+    administreretByBfe.delete(bfe);
   }
 
   try {

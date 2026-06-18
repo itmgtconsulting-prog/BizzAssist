@@ -835,16 +835,38 @@ export function runVaerdiChecks(input: VaerdiCheckInput): DetectedGap[] {
 
   // GAP-VAERDI-INGEN-SUM: policen mangler forsikringssum → kan ikke verificeres
   if (!sumInsuredDkk || sumInsuredDkk <= 0) {
+    // BIZZ-2175: selv uden forsikringssum oplyser vi de kendte
+    // referenceværdier (seneste tinglyste købspris / offentlig vurdering),
+    // så mægleren har et udgangspunkt for hvad bygningen bør forsikres til.
+    const refDele: string[] = [];
+    if (koebsprisDkk && koebsprisDkk > 0) {
+      const koebAar = koebsDato ? new Date(koebsDato).getFullYear() : null;
+      refDele.push(
+        `seneste tinglyste handel var ${formatDkk(koebsprisDkk)}${
+          koebAar && Number.isFinite(koebAar) ? ` (${koebAar})` : ''
+        }`
+      );
+    }
+    if (vurderingDkk && vurderingDkk > 0) {
+      refDele.push(`offentlig vurdering er ${formatDkk(vurderingDkk)}`);
+    }
+    const refTekst = refDele.length > 0 ? ` Til reference: ${refDele.join(', og ')}.` : '';
     gaps.push({
       check_id: 'GAP-VAERDI-INGEN-SUM',
       category: 'underforsikret',
       severity: 'info',
       title: 'Ingen forsikringssum oplyst',
-      description: `Policen for ${adresseLabel} har ingen forsikringssum. Forsikringsværdien kan ikke sammenlignes med købspris eller offentlig vurdering.`,
+      description: `Policen for ${adresseLabel} har ingen forsikringssum. Forsikringsværdien kan ikke sammenlignes med købspris eller offentlig vurdering.${refTekst}`,
       recommendation:
         'Indhent forsikringssummen fra policen for at kunne vurdere under-/overforsikring.',
       estimated_impact_dkk: null,
-      source_data: { bfe, adresse },
+      source_data: {
+        bfe,
+        adresse,
+        koebspris: koebsprisDkk ?? null,
+        koebs_dato: koebsDato ?? null,
+        vurdering: vurderingDkk ?? null,
+      },
     });
     return gaps;
   }

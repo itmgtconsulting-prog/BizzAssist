@@ -1575,6 +1575,25 @@ describe('runVaerdiChecks — BIZZ-2170 værdi-baserede checks', () => {
     expect(gaps[0].severity).toBe('info');
   });
 
+  it('GAP-VAERDI-INGEN-SUM oplyser seneste handel + vurdering når kendt (BIZZ-2175)', () => {
+    const gaps = runVaerdiChecks({
+      ...base,
+      sumInsuredDkk: null,
+      vurderingDkk: 93_000_000,
+      koebsprisDkk: 15_000_000,
+      koebsDato: '2018-11-15',
+    });
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].check_id).toBe('GAP-VAERDI-INGEN-SUM');
+    expect(gaps[0].description).toContain('seneste tinglyste handel');
+    expect(gaps[0].description).toContain('15.000.000 kr');
+    expect(gaps[0].description).toContain('2018');
+    expect(gaps[0].description).toContain('93.000.000 kr');
+    const sd = gaps[0].source_data as Record<string, unknown>;
+    expect(sd.koebspris).toBe(15_000_000);
+    expect(sd.vurdering).toBe(93_000_000);
+  });
+
   it('GAP-VAERDI-UNDER (warning) når sum >30% under vurdering', () => {
     const gaps = runVaerdiChecks({
       ...base,

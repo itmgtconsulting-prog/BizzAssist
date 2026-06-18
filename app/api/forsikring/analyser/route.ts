@@ -1156,6 +1156,35 @@ export async function POST(request: NextRequest): Promise<Response> {
         const vurderingsAarByBfe =
           vurResult.status === 'fulfilled' ? vurResult.value.vurderingsAarByBfe : new Map();
         const asOfDate = new Date();
+
+        // BIZZ-2175: Bygningens forsikringssum ligger ofte på dæknings-niveau
+        // (fx "Bygningsbrand mv." = 113.860.000) på ejendomspolicen — IKKE på
+        // policens sum_insured_dkk, og ikke nødvendigvis på bestMatch (en
+        // ansvarspolice på samme adresse kan vinde matchet). Læser vi kun
+        // bestMatch.sum_insured_dkk, rapporteres "Ingen forsikringssum" selv om
+        // bygningen er fuldt forsikret. Vi aggregerer derfor den HØJESTE
+        // bygnings-dækningssum på tværs af ALLE matchede policer (score ≥ 50)
+        // for samme BFE. En dækning regnes som bygningsværdi hvis koden er
+        // 'bygningskasko' eller 'brand_el' med "bygning" i labelen (så fx
+        // ansvarspolicens "Varetægt" (brand_el) ikke tæller med).
+        const isBuildingCoverage = (c: ForsikringCoverage): boolean =>
+          c.is_covered &&
+          (c.sum_dkk ?? 0) > 0 &&
+          (c.coverage_code === 'bygningskasko' ||
+            (c.coverage_code === 'brand_el' && /bygning/i.test(c.coverage_label ?? '')));
+        const buildingSumForMatch = (m: (typeof matches)[number]): number | null => {
+          let best: number | null = null;
+          for (const cand of m.candidates) {
+            if (cand.score < 50) continue;
+            for (const c of coveragesByPolicy.get(cand.policy.id) ?? []) {
+              if (isBuildingCoverage(c) && (best === null || c.sum_dkk! > best)) {
+                best = c.sum_dkk!;
+              }
+            }
+          }
+          return best;
+        };
+
         let vaerdiGapCount = 0;
         for (const match of matches) {
           if (match.aktiv.type !== 'ejendom' || !match.aktiv.bfe || !match.bestMatch) continue;
@@ -1163,11 +1192,16 @@ export async function POST(request: NextRequest): Promise<Response> {
           const koebs = koebsprisByBfe.get(bfe) as
             | { pris: number | null; dato: string | null }
             | undefined;
+          // Effektiv forsikringssum: højeste af bestMatch-policens sum_insured
+          // og den aggregerede bygnings-dækningssum på tværs af policer.
+          const buildingSum = buildingSumForMatch(match);
+          const effectiveSum =
+            Math.max(buildingSum ?? 0, match.bestMatch.policy.sum_insured_dkk ?? 0) || null;
           const vaerdiGaps = runVaerdiChecks({
             bfe,
             policyId: match.bestMatch.policy.id,
             adresse: match.aktiv.adresse ?? null,
-            sumInsuredDkk: match.bestMatch.policy.sum_insured_dkk ?? null,
+            sumInsuredDkk: effectiveSum,
             vurderingDkk: vurderingByBfe.get(bfe) ?? null,
             vurderingsAar: vurderingsAarByBfe.get(bfe) ?? null,
             koebsprisDkk: koebs?.pris ?? null,

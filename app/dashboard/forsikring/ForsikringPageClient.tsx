@@ -332,6 +332,8 @@ interface AnalyseDetail {
     string,
     {
       bebygget_areal: number | null;
+      samlet_boligareal: number | null;
+      samlet_erhvervsareal: number | null;
       antal_etager: number | null;
       opfoerelsesaar: number | null;
       anvendelse: string | null;
@@ -539,6 +541,8 @@ function GapList({ gaps, da }: { gaps: AnalyseGap[]; da: boolean }) {
 /** BIZZ-2155: BBR-bygningsdata pr. ejendom (en post) */
 interface BbrBygningsdata {
   bebygget_areal: number | null;
+  samlet_boligareal: number | null;
+  samlet_erhvervsareal: number | null;
   antal_etager: number | null;
   opfoerelsesaar: number | null;
   anvendelse: string | null;
@@ -1024,7 +1028,21 @@ function PropertyRow({
                   {aktivBbr && (
                     <div className="text-[11px] text-slate-300 flex flex-wrap gap-x-3">
                       <span className="text-blue-300 font-medium">BBR</span>
-                      {aktivBbr.bebygget_areal != null && <span>{aktivBbr.bebygget_areal} m²</span>}
+                      {/* BIZZ-2172: vis bebygget_areal hvis sat; ellers fald tilbage
+                          til samlet bolig-/erhvervsareal med eksplicit type-label,
+                          så ejendomme uden bebygget_areal ikke fremstår areal-løse. */}
+                      {aktivBbr.bebygget_areal != null ? (
+                        <span>{aktivBbr.bebygget_areal} m²</span>
+                      ) : aktivBbr.samlet_boligareal != null ? (
+                        <span>
+                          {da ? 'Boligareal' : 'Residential area'}: {aktivBbr.samlet_boligareal} m²
+                        </span>
+                      ) : aktivBbr.samlet_erhvervsareal != null ? (
+                        <span>
+                          {da ? 'Erhvervsareal' : 'Commercial area'}:{' '}
+                          {aktivBbr.samlet_erhvervsareal} m²
+                        </span>
+                      ) : null}
                       {aktivBbr.antal_etager != null && (
                         <span>
                           {aktivBbr.antal_etager} {da ? 'etager' : 'floors'}
@@ -1035,7 +1053,13 @@ function PropertyRow({
                           {da ? 'opført' : 'built'} {aktivBbr.opfoerelsesaar}
                         </span>
                       )}
-                      {aktivBbr.anvendelse && <span>{aktivBbr.anvendelse}</span>}
+                      {/* BIZZ-2172: anvendelse med eksplicit label, så det ikke
+                          forveksles med et areal-/måltal. */}
+                      {aktivBbr.anvendelse && (
+                        <span>
+                          {da ? 'Anvendelse' : 'Use'}: {aktivBbr.anvendelse}
+                        </span>
+                      )}
                     </div>
                   )}
                   {/* Police-bygninger (kilde: police) */}
@@ -1058,8 +1082,13 @@ function PropertyRow({
                         </span>
                       )}
                       {b.kaelder && <span>{da ? 'kælder' : 'basement'}</span>}
+                      {/* BIZZ-2172: forsikringsform vises med police-farve (emerald)
+                          + eksplicit label, så "Nyværdi" ikke forveksles med
+                          BBR-kildedata (blå). */}
                       {b.forsikringsform && (
-                        <span className="text-blue-300">{b.forsikringsform}</span>
+                        <span className="text-emerald-300">
+                          {da ? 'Forsikringsform' : 'Insurance basis'}: {b.forsikringsform}
+                        </span>
                       )}
                     </div>
                   ))}

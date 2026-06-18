@@ -12,6 +12,7 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getTenantSchemaName } from '@/lib/db/tenant';
 import { logger } from '@/app/lib/logger';
+import { bygAnvendelseTekst } from '@/app/lib/bbrKoder';
 
 /**
  * GET /api/forsikring/analyser/[id]
@@ -342,6 +343,8 @@ export async function GET(
       string,
       {
         bebygget_areal: number | null;
+        samlet_boligareal: number | null;
+        samlet_erhvervsareal: number | null;
         antal_etager: number | null;
         opfoerelsesaar: number | null;
         anvendelse: string | null;
@@ -357,20 +360,29 @@ export async function GET(
     if (ejendomBfer.length > 0) {
       const { data: bbrRows } = await admin
         .from('bbr_ejendom_status')
-        .select('bfe_nummer, bebygget_areal, antal_etager, opfoerelsesaar, byg021_anvendelse')
+        .select(
+          'bfe_nummer, bebygget_areal, samlet_boligareal, samlet_erhvervsareal, antal_etager, opfoerelsesaar, byg021_anvendelse'
+        )
         .in('bfe_nummer', ejendomBfer);
       for (const row of (bbrRows ?? []) as Array<{
         bfe_nummer: number;
         bebygget_areal: number | null;
+        samlet_boligareal: number | null;
+        samlet_erhvervsareal: number | null;
         antal_etager: number | null;
         opfoerelsesaar: number | null;
-        byg021_anvendelse: string | null;
+        byg021_anvendelse: number | null;
       }>) {
         bbrByBfe[String(row.bfe_nummer)] = {
           bebygget_areal: row.bebygget_areal,
+          samlet_boligareal: row.samlet_boligareal,
+          samlet_erhvervsareal: row.samlet_erhvervsareal,
           antal_etager: row.antal_etager,
           opfoerelsesaar: row.opfoerelsesaar,
-          anvendelse: row.byg021_anvendelse,
+          // BIZZ-2172: oversæt rå BBR-anvendelseskode (fx 320) til læsbar tekst
+          // ("Kontor, handel, lager") så brugeren ikke ser et nøgent kodenummer.
+          anvendelse:
+            row.byg021_anvendelse != null ? bygAnvendelseTekst(row.byg021_anvendelse) : null,
         };
       }
     }

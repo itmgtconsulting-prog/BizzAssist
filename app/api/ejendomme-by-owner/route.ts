@@ -934,6 +934,108 @@ async function pMap<T, R>(
   return results;
 }
 
+// ─── BIZZ-1814: Admin-SFE → child-ejerlejlighed ekspansion ──────────────────
+
+/** Max antal admin-SFE'er der ekspanderes pr. request (beskytter maxDuration). */
+const MAX_ADMIN_SFE_EXPAND = 25;
+/** Max antal child-ejerlejligheder der tilføjes pr. admin-SFE. */
+const MAX_CHILDREN_PER_SFE = 300;
+
+/**
+ * BIZZ-1814: Find child-ejerlejligheder for en administreret SFE.
+ *
+ * `ejf_administrator` registrerer administration på SFE-niveau (fx en
+ * ejerforening på SFE-BFE 100077625). De underliggende ejerlejligheder vises
+ * ikke, fordi de har egne BFE'er uden FK til SFE'en. Vi resolver dem via:
+ *   SFE-BFE → DAWA jordstykke (ejerlavkode + matrikelnr)
+ *           → DAWA adgangsadresser på matriklen (vejnavn + husnr)
+ *           → bfe_adresse_cache rækker med etage/dør på de adresser = ejerlejligheder
+ *
+ * Rent DB-/DAWA-baseret (ingen mTLS-Tinglysning), så routens cache-model og
+ * 30s-budget bevares. Degraderer roligt: SFE'er hvor cachen mangler
+ * ejerlejligheder giver tom liste — aldrig dårligere end nuværende adfærd.
+ *
+ * @param sfeBfe - Den administrerede SFE's BFE-nummer
+ * @returns Liste af child-ejerlejligheds-BFE'er (ekskl. SFE'en selv), tom ved fejl
+ */
+async function hentAdminSfeChildren(sfeBfe: number): Promise<number[]> {
+  try {
+    // 1) SFE → matrikler (ejerlavkode + matrikelnr). En SFE kan spænde flere.
+    const jordRes = await fetchDawa(
+      `https://api.dataforsyningen.dk/jordstykker?bfenummer=${sfeBfe}&format=json`,
+      { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+      { caller: 'ejendomme-by-owner.admin-sfe-jordstykke' }
+    );
+    if (!jordRes.ok) return [];
+    const jordstykker = (await jordRes.json()) as Array<{
+      bfenummer?: number;
+      sfeejendomsnr?: number | string;
+      matrikelnr?: string;
+      ejerlav?: { kode?: number };
+    }>;
+    // Bekræft at BFE'en faktisk ER en SFE (ikke en enkelt ejerlejlighed):
+    // jordstykkets sfeejendomsnr/bfenummer skal pege på selve BFE'en.
+    const erSfe = jordstykker.some(
+      (j) => Number(j.sfeejendomsnr) === sfeBfe || j.bfenummer === sfeBfe
+    );
+    if (!erSfe) return [];
+
+    const matrikler = jordstykker
+      .map((j) => ({ ejerlavKode: j.ejerlav?.kode, matrikelnr: j.matrikelnr }))
+      .filter((m): m is { ejerlavKode: number; matrikelnr: string } =>
+        Boolean(m.ejerlavKode && m.matrikelnr)
+      );
+    if (matrikler.length === 0) return [];
+
+    // 2) Matrikler → adgangsadresser (vejnavn + husnr + postnr).
+    const adresser = new Set<string>();
+    const postnumre = new Set<string>();
+    for (const m of matrikler) {
+      const adgRes = await fetchDawa(
+        `https://api.dataforsyningen.dk/adgangsadresser?ejerlavkode=${m.ejerlavKode}&matrikelnr=${encodeURIComponent(m.matrikelnr)}&per_side=100&struktur=mini`,
+        { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+        { caller: 'ejendomme-by-owner.admin-sfe-adgangsadresse' }
+      );
+      if (!adgRes.ok) continue;
+      const adg = (await adgRes.json()) as Array<{
+        vejnavn?: string;
+        husnr?: string;
+        postnr?: string;
+      }>;
+      for (const a of adg) {
+        if (a.vejnavn && a.husnr) adresser.add(`${a.vejnavn} ${a.husnr}`);
+        if (a.postnr) postnumre.add(a.postnr);
+      }
+    }
+    if (adresser.size === 0) return [];
+
+    // 3) Adresser → ejerlejligheds-BFE'er via bfe_adresse_cache (etage/dør = enhed).
+    const admin = createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let query = (admin as any)
+      .from('bfe_adresse_cache')
+      .select('bfe_nummer')
+      .in('adresse', [...adresser])
+      .not('etage', 'is', null)
+      .neq('bfe_nummer', sfeBfe)
+      .limit(MAX_CHILDREN_PER_SFE);
+    if (postnumre.size > 0) query = query.in('postnr', [...postnumre]);
+    const { data: rows } = await query;
+
+    const børn = [
+      ...new Set(
+        ((rows ?? []) as Array<{ bfe_nummer: number }>)
+          .map((r) => r.bfe_nummer)
+          .filter((b) => b > 0)
+      ),
+    ];
+    return børn;
+  } catch {
+    /* best-effort — ekspansion er additiv, fejl må ikke vælte porteføljen */
+    return [];
+  }
+}
+
 // ─── Route handler ───────────────────────────────────────────────────────────
 
 /**
@@ -1537,6 +1639,35 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         if (addedCount > 0) {
           logger.log(
             `[ejendomme-by-owner] ejf_administrator: ${addedCount} administrerede BFE tilføjet`
+          );
+        }
+
+        // BIZZ-1814: Administration registreres på SFE-niveau — ekspandér hver
+        // administreret SFE til dens underliggende ejerlejligheder, så hele
+        // ejendommen vises i ejendomme-tabben (ikke kun SFE-rækken).
+        const adminSfeBfes = [
+          ...new Set((adminRows as Array<{ bfe_nummer: number }>).map((r) => r.bfe_nummer)),
+        ].slice(0, MAX_ADMIN_SFE_EXPAND);
+        let childCount = 0;
+        const childrenPerSfe = await pMap(adminSfeBfes, 5, async (sfeBfe) => ({
+          sfeBfe,
+          children: await hentAdminSfeChildren(sfeBfe),
+        }));
+        for (const { sfeBfe, children } of childrenPerSfe) {
+          const cvr = bfeTilCvr.get(sfeBfe);
+          if (!cvr) continue;
+          for (const childBfe of children) {
+            administreretByBfe.add(childBfe);
+            if (!bfeTilCvr.has(childBfe)) {
+              bfeTilCvr.set(childBfe, cvr);
+              aktivByBfe.set(childBfe, true);
+              childCount++;
+            }
+          }
+        }
+        if (childCount > 0) {
+          logger.log(
+            `[ejendomme-by-owner] BIZZ-1814: ${childCount} child-ejerlejligheder tilføjet under administrerede SFE'er`
           );
         }
       }

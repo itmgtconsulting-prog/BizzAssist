@@ -167,29 +167,80 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
       }
     }
 
-    // --- Tidsserier fra MV (pagineret — PostgREST capper ved 1000 rows) ---
+    // BIZZ-2171: når et BBR-filter (areal/byggeår/etager/værelser) eller det
+    // eksakte postnr-filter er aktivt, KAN KPI/graf/kommune-breakdown ikke komme
+    // fra mv_boligpris_maaned — den er kun aggregeret på (maaned, kommune_kode,
+    // byg021_anvendelse) og kender hverken BBR-dimensioner eller postnr. Brugte vi
+    // den, ville KPI'erne ignorere filtrene og divergere fra "Seneste handler"-
+    // listen (fx "Antal handler 347" mens listen var tom for værelser=2). Når et
+    // sådant filter er aktivt henter vi i stedet aggregeret fra PRÆCIS samme
+    // filtrerede handler-population som listen via boligpris_aggregat-RPC'en.
+    const bbrFilterActive =
+      arealMin !== 0 ||
+      arealMax !== 0 ||
+      byggearMin !== 0 ||
+      byggearMax !== 0 ||
+      etagerMin !== 0 ||
+      etagerMax !== 0 ||
+      vaerelserMin !== 0 ||
+      vaerelserMax !== 0;
+    const useAggregat = bbrFilterActive || (postnrStrings !== null && postnrStrings.length > 0);
+
+    // --- Tidsserier (pagineret — PostgREST capper ved 1000 rows) ---
     const PAGE_SIZE = 1000;
     const mvData: Array<Record<string, unknown>> = [];
     let mvOffset = 0;
 
     while (true) {
-      let mvQuery = admin
-        .from('mv_boligpris_maaned')
-        .select(
-          'kommune_kode, boligtype_kode, maaned, antal_handler, avg_pris, median_pris, avg_m2_pris'
-        )
-        .gte('maaned', fraMaaned)
-        .lte('maaned', tilMaanedSlut)
-        .order('maaned', { ascending: true })
-        .range(mvOffset, mvOffset + PAGE_SIZE - 1);
+      let page: Array<Record<string, unknown>> | null;
+      if (useAggregat) {
+        // Aggregeret over den filtrerede handler-population. Rækkerne har samme
+        // form som mv_boligpris_maaned (kommune_kode, maaned, antal_handler,
+        // avg_pris, avg_m2_pris), så den efterfølgende aggregering er uændret.
+        const { data, error: aggErr } = await admin
+          .rpc('boligpris_aggregat', {
+            p_kommune_koder: kommuner ?? null,
+            p_boligtype_koder: boligtyper ?? null,
+            p_fra: fraMaaned,
+            p_til: tilMaanedSlut,
+            p_areal_min: arealMin,
+            p_areal_max: arealMax,
+            p_byggear_min: byggearMin,
+            p_byggear_max: byggearMax,
+            p_etager_min: etagerMin,
+            p_etager_max: etagerMax,
+            p_vaerelser_min: vaerelserMin,
+            p_vaerelser_max: vaerelserMax,
+            p_postnumre: postnrStrings,
+          })
+          .order('maaned', { ascending: true })
+          .order('kommune_kode', { ascending: true })
+          .range(mvOffset, mvOffset + PAGE_SIZE - 1);
+        if (aggErr) {
+          logger.error('[boligpris] aggregat RPC fejl:', aggErr.message);
+          return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
+        }
+        page = data;
+      } else {
+        let mvQuery = admin
+          .from('mv_boligpris_maaned')
+          .select(
+            'kommune_kode, boligtype_kode, maaned, antal_handler, avg_pris, median_pris, avg_m2_pris'
+          )
+          .gte('maaned', fraMaaned)
+          .lte('maaned', tilMaanedSlut)
+          .order('maaned', { ascending: true })
+          .range(mvOffset, mvOffset + PAGE_SIZE - 1);
 
-      if (kommuner) mvQuery = mvQuery.in('kommune_kode', kommuner);
-      if (boligtyper) mvQuery = mvQuery.in('boligtype_kode', boligtyper);
+        if (kommuner) mvQuery = mvQuery.in('kommune_kode', kommuner);
+        if (boligtyper) mvQuery = mvQuery.in('boligtype_kode', boligtyper);
 
-      const { data: page, error: mvErr } = await mvQuery;
-      if (mvErr) {
-        logger.error('[boligpris] MV query fejl:', mvErr.message);
-        return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
+        const { data, error: mvErr } = await mvQuery;
+        if (mvErr) {
+          logger.error('[boligpris] MV query fejl:', mvErr.message);
+          return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
+        }
+        page = data;
       }
       if (!page || page.length === 0) break;
       mvData.push(...page);

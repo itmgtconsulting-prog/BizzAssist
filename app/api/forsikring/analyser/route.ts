@@ -1084,6 +1084,20 @@ export async function POST(request: NextRequest): Promise<Response> {
         }
       }
 
+      // BIZZ-2175: Værdi-data pr. BFE (seneste handel, off. vurdering, forsikret
+      // bygningssum) opsamles under cross-checks og persisteres på aktivet, så
+      // UI'et kan vise en Værdi-sektion uden at gen-hente TL/VUR ved visning.
+      const vaerdiByBfe = new Map<
+        number,
+        {
+          koebspris: number | null;
+          koebs_dato: string | null;
+          vurdering: number | null;
+          vurderings_aar: number | null;
+          forsikret_sum: number | null;
+        }
+      >();
+
       // 4b. BIZZ-1356: Auto-trigger eksterne cross-checks (best-effort, parallel)
       try {
         const [bbrResult, tlResult, vurResult] = await Promise.allSettled([
@@ -1188,6 +1202,14 @@ export async function POST(request: NextRequest): Promise<Response> {
           const buildingSum = buildingSumForMatch(match);
           const effectiveSum =
             Math.max(buildingSum ?? 0, match.bestMatch.policy.sum_insured_dkk ?? 0) || null;
+          // BIZZ-2175: gem værdi-data så UI'et kan vise Værdi-sektionen.
+          vaerdiByBfe.set(bfe, {
+            koebspris: koebs?.pris ?? null,
+            koebs_dato: koebs?.dato ?? null,
+            vurdering: vurderingByBfe.get(bfe) ?? null,
+            vurderings_aar: vurderingsAarByBfe.get(bfe) ?? null,
+            forsikret_sum: effectiveSum,
+          });
           const vaerdiGaps = runVaerdiChecks({
             bfe,
             policyId: match.bestMatch.policy.id,
@@ -1286,7 +1308,12 @@ export async function POST(request: NextRequest): Promise<Response> {
           adresse: m.aktiv.adresse ?? null,
           matched_policy_id: m.bestMatch?.policy.id ?? null,
           match_score: m.bestMatch?.score ?? null,
-          raw_data: m.aktiv.rawData ?? null,
+          // BIZZ-2175: vedhæft værdi-data (handel/vurdering/forsikret sum) på
+          // ejendoms-aktiver, så UI'et kan vise Værdi-sektionen.
+          raw_data:
+            m.aktiv.type === 'ejendom' && m.aktiv.bfe != null && vaerdiByBfe.has(m.aktiv.bfe)
+              ? { ...(m.aktiv.rawData ?? {}), vaerdi: vaerdiByBfe.get(m.aktiv.bfe) }
+              : (m.aktiv.rawData ?? null),
         }));
 
         const { error: aktivErr } = await db.from('forsikring_aktiver').insert(aktivRows);

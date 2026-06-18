@@ -586,6 +586,21 @@ function PropertyRow({
     ejerandelPctRaw != null && Number.isFinite(Number(ejerandelPctRaw))
       ? Number(ejerandelPctRaw)
       : null;
+  /** BIZZ-2175: værdi-data (seneste handel, off. vurdering, forsikret sum) sat
+      af analyser/route.ts, så vi kan vise en Værdi-sektion til under-/over-
+      forsikrings-vurdering. */
+  const aktivVaerdi =
+    (
+      group.aktiv.raw_data as {
+        vaerdi?: {
+          koebspris: number | null;
+          koebs_dato: string | null;
+          vurdering: number | null;
+          vurderings_aar: number | null;
+          forsikret_sum: number | null;
+        };
+      } | null
+    )?.vaerdi ?? null;
   const gapCritical = group.gaps.filter((g) => g.severity === 'critical').length;
   const gapWarning = group.gaps.filter((g) => g.severity === 'warning').length;
 
@@ -1059,6 +1074,64 @@ function PropertyRow({
               </div>
             );
           })()}
+
+          {/* BIZZ-2175: Værdi-sektion — seneste handel + off. vurdering +
+              forsikret sum, så under-/overforsikring kan vurderes visuelt. */}
+          {aktivVaerdi &&
+            (aktivVaerdi.koebspris != null ||
+              aktivVaerdi.vurdering != null ||
+              aktivVaerdi.forsikret_sum != null) &&
+            (() => {
+              const fmt = (n: number) => `${Math.round(n).toLocaleString('da-DK')} kr`;
+              const ref = aktivVaerdi.koebspris ?? aktivVaerdi.vurdering ?? null;
+              const sum = aktivVaerdi.forsikret_sum;
+              // Forsikret sum: rød hvis mangler, gul hvis >30% under reference,
+              // grøn ellers (nyværdi kan lovligt ligge over købspris/vurdering).
+              const sumClass =
+                sum == null
+                  ? 'text-red-400 font-medium'
+                  : ref != null && sum < ref * 0.7
+                    ? 'text-amber-400 font-medium'
+                    : 'text-emerald-300 font-medium';
+              const aar = (iso: string | null) => (iso ? new Date(iso).getFullYear() : null);
+              return (
+                <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg px-3 py-2 mb-2">
+                  <span className="text-blue-300 text-xs font-medium">
+                    {da ? 'Værdi' : 'Value'}
+                  </span>
+                  <div className="mt-1 space-y-0.5 text-[11px]">
+                    <div className="flex justify-between gap-3">
+                      <span className="text-slate-400">{da ? 'Seneste handel' : 'Last sale'}</span>
+                      <span className="text-slate-200">
+                        {aktivVaerdi.koebspris != null
+                          ? `${fmt(aktivVaerdi.koebspris)}${
+                              aktivVaerdi.koebs_dato ? ` (${aar(aktivVaerdi.koebs_dato)})` : ''
+                            }`
+                          : '–'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span className="text-slate-400">
+                        {da ? 'Off. vurdering' : 'Public valuation'}
+                      </span>
+                      <span className="text-slate-200">
+                        {aktivVaerdi.vurdering != null
+                          ? `${fmt(aktivVaerdi.vurdering)}${
+                              aktivVaerdi.vurderings_aar ? ` (${aktivVaerdi.vurderings_aar})` : ''
+                            }`
+                          : '–'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span className="text-slate-400">{da ? 'Forsikret sum' : 'Insured sum'}</span>
+                      <span className={sumClass}>
+                        {sum != null ? fmt(sum) : da ? 'Ikke angivet' : 'Not stated'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
           {/* BIZZ-2084: Grøn "Dækket"-sektion — vis hvad der ER dækket inkl.
               dækningssum + selvrisiko, så dækningsniveauet kan reviewes med kunden */}

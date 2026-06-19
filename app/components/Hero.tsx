@@ -59,12 +59,20 @@ function HeroSearch({ lang }: { lang: 'da' | 'en' }) {
         if (dawaRes?.ok) {
           const dawaData = await dawaRes.json();
           for (const r of (
-            dawaData as Array<{ tekst: string; data?: { id?: string }; type?: string }>
+            dawaData as Array<{
+              tekst: string;
+              adresse?: { id?: string };
+              type?: string;
+              bfe?: number;
+            }>
           ).slice(0, 5)) {
             if (r.type === 'vejnavn') continue;
-            const id = r.data?.id;
-            if (!id) continue;
-            /* Generer SEO-slug fra adresse-tekst */
+            // Den offentlige SEO-side (/ejendom/[slug]/[bfe]) slår alle data op
+            // på BFE-nummeret. Autocomplete beriger adgangsadresser med et BFE
+            // fra bbr_ejendom_status; uden BFE giver linket en "ikke fundet"-side,
+            // så vi springer adresser uden opløst BFE over.
+            if (!r.bfe) continue;
+            /* Generer SEO-slug fra adresse-tekst (dekorativ — kun BFE bruges til opslag) */
             const slug = r.tekst
               .toLowerCase()
               .replace(/[^a-z0-9æøå]+/g, '-')
@@ -73,7 +81,7 @@ function HeroSearch({ lang }: { lang: 'da' | 'en' }) {
               type: 'address',
               label: r.tekst,
               sublabel: da ? 'Ejendom' : 'Property',
-              href: `/ejendom/${slug}/0`,
+              href: `/ejendom/${slug}/${r.bfe}`,
             });
           }
         }
@@ -114,6 +122,13 @@ function HeroSearch({ lang }: { lang: 'da' | 'en' }) {
           onChange={(e) => handleSearch(e.target.value)}
           onFocus={() => results.length > 0 && setOpen(true)}
           onBlur={() => setTimeout(() => setOpen(false), 200)}
+          onKeyDown={(e) => {
+            // Enter navigerer til det øverste søgeresultat (adresse eller virksomhed)
+            if (e.key === 'Enter' && results.length > 0) {
+              e.preventDefault();
+              router.push(results[0].href);
+            }
+          }}
           placeholder={
             da ? 'Søg adresse, CVR eller virksomhed...' : 'Search address, CVR or company...'
           }

@@ -88,6 +88,12 @@ export default function BoligprisChart({ tidsserier }: Props): React.ReactElemen
     [tidsserier]
   );
 
+  // BIZZ-2182: ved sparsomme/korte perioder (fx filtre der kun rammer få
+  // måneder) skal hvert datapunkt vises som en prik — ellers er et enkelt
+  // datapunkt usynligt (en linje med kun ét punkt har ingen længde) og grafen
+  // ser tom ud. Ved lange serier skjules prikkerne for et renere forløb.
+  const showDots = chartData.length <= 24;
+
   return (
     <ResponsiveContainer width="100%" height={350}>
       <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
@@ -138,7 +144,7 @@ export default function BoligprisChart({ tidsserier }: Props): React.ReactElemen
           name="Gns. pris"
           stroke="#34d399"
           strokeWidth={2}
-          dot={false}
+          dot={showDots ? { r: 3, fill: '#34d399' } : false}
           activeDot={{ r: 4 }}
         />
         <Line
@@ -148,7 +154,7 @@ export default function BoligprisChart({ tidsserier }: Props): React.ReactElemen
           name="m²-pris"
           stroke="#60a5fa"
           strokeWidth={2}
-          dot={false}
+          dot={showDots ? { r: 3, fill: '#60a5fa' } : false}
           activeDot={{ r: 4 }}
         />
       </LineChart>

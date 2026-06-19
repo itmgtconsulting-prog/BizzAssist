@@ -826,9 +826,17 @@ export default function BoligprisClient(): React.ReactElement {
                       : '–'
                   }
                   color={
-                    data.noegletal.yoy_pct !== null && data.noegletal.yoy_pct >= 0
-                      ? 'emerald'
-                      : 'red'
+                    data.noegletal.yoy_pct === null
+                      ? 'blue'
+                      : data.noegletal.yoy_pct >= 0
+                        ? 'emerald'
+                        : 'red'
+                  }
+                  // BIZZ-2182: forklar hvorfor YoY mangler i stedet for bare en streg
+                  hint={
+                    data.noegletal.yoy_pct === null
+                      ? 'For få handler til YoY-sammenligning'
+                      : undefined
                   }
                 />
               </div>
@@ -1124,6 +1132,8 @@ interface KpiCardProps {
   label: string;
   value: string;
   color: 'blue' | 'emerald' | 'amber' | 'red';
+  /** Valgfri forklarende undertekst (fx hvorfor en værdi mangler). */
+  hint?: string;
 }
 
 const COLOR_MAP: Record<string, string> = {
@@ -1136,9 +1146,9 @@ const COLOR_MAP: Record<string, string> = {
 /**
  * KPI summary card med ikon og farvet accent.
  *
- * @param props - Ikon, label, formateret værdi og farve
+ * @param props - Ikon, label, formateret værdi, farve og valgfri hint-tekst
  */
-function KpiCard({ icon, label, value, color }: KpiCardProps) {
+function KpiCard({ icon, label, value, color, hint }: KpiCardProps) {
   const cls = COLOR_MAP[color] ?? COLOR_MAP.blue;
   return (
     <div className="bg-slate-800/40 rounded-xl p-4 flex items-start gap-3">
@@ -1146,6 +1156,7 @@ function KpiCard({ icon, label, value, color }: KpiCardProps) {
       <div>
         <p className="text-slate-400 text-xs uppercase tracking-wider">{label}</p>
         <p className="text-white text-lg font-semibold mt-0.5">{value}</p>
+        {hint && <p className="text-slate-400 text-xs mt-0.5 leading-tight">{hint}</p>}
       </div>
     </div>
   );

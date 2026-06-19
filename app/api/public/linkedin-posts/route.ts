@@ -20,7 +20,7 @@ export async function GET(): Promise<NextResponse> {
     const admin = createAdminClient() as any;
     const { data, error } = await admin
       .from('linkedin_featured_posts')
-      .select('id, post_url, image_url, excerpt_da, excerpt_en, published_at')
+      .select('id, post_url, image_url, embed_url, excerpt_da, excerpt_en, published_at')
       .eq('active', true)
       .order('sort_order', { ascending: true })
       .order('published_at', { ascending: false })

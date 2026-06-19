@@ -188,6 +188,12 @@ function DanishPrivacy() {
             bilens registreringsnummer (køretøjsdata, ikke personoplysninger om dig). Ingen
             tredjelands-overførsel.
           </li>
+          <li>
+            <strong className="text-white">LinkedIn Ireland Unlimited Company (Microsoft)</strong>{' '}
+            (Irland, EU) — Indlejrede LinkedIn-opslag på forsiden. Indlæses kun efter dit
+            cookie-samtykke; LinkedIn kan da sætte cookies og behandle din IP-adresse og
+            browseroplysninger. Overførsel sker på grundlag af standardkontraktbestemmelser (SCC).
+          </li>
         </ul>
         <p>
           Der er indgået databehandleraftaler med alle tredjeparts databehandlere i overensstemmelse
@@ -433,6 +439,12 @@ function EnglishPrivacy() {
             — Vehicle data lookup from the Danish Motor Register (DMR) during insurance analysis.
             Processes: only the vehicle registration number (vehicle data, not personal data about
             you). No third-country transfer.
+          </li>
+          <li>
+            <strong className="text-white">LinkedIn Ireland Unlimited Company (Microsoft)</strong>{' '}
+            (Ireland, EU) — Embedded LinkedIn posts on the homepage. Loaded only after your cookie
+            consent; LinkedIn may then set cookies and process your IP address and browser details.
+            Transfer is based on Standard Contractual Clauses (SCC).
           </li>
         </ul>
         <p>

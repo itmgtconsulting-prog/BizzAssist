@@ -91,7 +91,9 @@
     "xml-crypto": "^6.1.2"
   },
   "overrides": {
-    "serialize-javascript": "^7.0.5"
+    "serialize-javascript": "^7.0.5",
+    "nodemailer": "^9.0.1",
+    "d3-color": "^3.1.0"
   },
   "devDependencies": {
     "@commitlint/cli": "^20.5.0",

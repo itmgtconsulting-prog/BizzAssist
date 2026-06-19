@@ -9,7 +9,8 @@
  *   Or: npm run test:rls:script
  *
  * Does NOT require a build — uses ESM imports directly from node_modules.
- * Credentials are for the dev Supabase project only (non-production).
+ * Credentials are loaded from .env.local (dev Supabase project only,
+ * non-production) — never hardcoded.
  *
  * Architecture note:
  *   Per-tenant tables live in isolated PostgreSQL schemas (tenant_jakob_dev,
@@ -39,21 +40,31 @@
  */
 
 import { createClient } from '@supabase/supabase-js';
+import { config } from 'dotenv';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+// Load dev-project credentials from .env.local — never hardcode secrets (ISO 27001 A.9).
+config({ path: join(dirname(fileURLToPath(import.meta.url)), '..', '.env.local') });
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
-const SUPABASE_URL = 'https://wkzwxfhyfmvglrqtmebw.supabase.co';
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const ANON_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indrend4Zmh5Zm12Z2xycXRtZWJ3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2NjY1NzUsImV4cCI6MjA5MTI0MjU3NX0.X27mMiNGMCXr7O7mM6ANrueTRafW8NXp6oWokh3JbPQ';
-
-const SERVICE_ROLE_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indrend4Zmh5Zm12Z2xycXRtZWJ3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTY2NjU3NSwiZXhwIjoyMDkxMjQyNTc1fQ.j9McWuGVDL9gDN9ZebjOqQOd89E7m4CA1AMqnmy5Je0';
+if (!SUPABASE_URL || !ANON_KEY || !SERVICE_ROLE_KEY) {
+  console.error(
+    'Missing Supabase env vars — set NEXT_PUBLIC_SUPABASE_URL, ' +
+      'NEXT_PUBLIC_SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY in .env.local',
+  );
+  process.exit(1);
+}
 
 /** Tenant A — existing dev tenant (jjrchefen@hotmail.com) */
 const TENANT_A = {
-  email: 'jjrchefen@hotmail.com',
-  password: 'Kongen72',
+  email: process.env.RLS_TEST_TENANT_A_EMAIL ?? 'jjrchefen@hotmail.com',
+  password: process.env.E2E_TEST_PASS,
   tenantId: 'de24c450-9181-43f5-b93b-69eee7519988',
   userId: 'ce8cb5f8-32ed-475d-a742-f9f26c898218',
   schemaName: 'tenant_jakob_dev',
@@ -62,11 +73,19 @@ const TENANT_A = {
 /** Tenant B — isolated test tenant provisioned for RLS tests */
 const TENANT_B = {
   email: 'rls-test-tenant-b@bizzassist-test.internal',
-  password: 'RlsTest2026!',
+  password: process.env.RLS_TEST_TENANT_B_PASS,
   tenantId: 'fef40549-ce5c-4d3f-baeb-3207ae140504',
   userId: 'f9bfebf3-1dcb-4b58-9134-ccf345b7fdc4',
   schemaName: 'tenant_rls_test_b',
 };
+
+if (!TENANT_A.password || !TENANT_B.password) {
+  console.error(
+    'Missing RLS test credentials — set E2E_TEST_PASS and ' +
+      'RLS_TEST_TENANT_B_PASS in .env.local',
+  );
+  process.exit(1);
+}
 
 /** Entity ID in public.recent_entities seeded for tenant B user */
 const SEED_RECENT_B_ID = 'rls-test-recent-b-only';

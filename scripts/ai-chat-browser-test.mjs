@@ -11,10 +11,15 @@
  */
 
 import { chromium } from 'playwright';
+import { config } from 'dotenv';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+config({ path: join(dirname(fileURLToPath(import.meta.url)), '..', '.env.local') });
 
 const BASE_URL = 'https://test.bizzassist.dk';
-const EMAIL = 'jjrchefen@gmail.com';
-const PASSWORD = 'Kongen72';
+const EMAIL = process.env.E2E_TEST_EMAIL;
+const PASSWORD = process.env.E2E_TEST_PASS;
 
 const TESTS = [
   {

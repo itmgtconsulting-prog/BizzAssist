@@ -9,6 +9,7 @@
  */
 
 import { createAdminClient } from '@/lib/supabase/admin';
+import { hentBfeAdresser, formatBfeLabel } from '@/app/lib/bfeAdresse';
 
 /** Et opdaget aktiv fra koncern-walk */
 export interface Aktiv {
@@ -40,6 +41,17 @@ export interface Aktiv {
 const MAX_AKTIVER = 500;
 
 /**
+ * BIZZ-2103 + BIZZ-2108: Minimum ejerandel (%) for at et ejet selskab
+ * regnes som KONTROLLERET datterselskab og walkes rekursivt (egne
+ * ejendomme + døtre medtages). Aktive minoritetsposter (< 50%, fx
+ * SKIINVEST 5%) medtages som virksomheds-aktiv i kæden med
+ * ejerandel-badge, men walkes IKKE videre — ellers eksploderer kæden
+ * med fremmede selskabers aktiver. Stale cache-rækker med ejerandel
+ * NULL ekskluderes fortsat helt.
+ */
+const KONCERN_EJERANDEL_MIN = 50;
+
+/**
  * Walk koncern-struktur og saml aktiver.
  *
  * @param kundeType - 'virksomhed' eller 'person'
@@ -63,36 +75,82 @@ export async function walkKoncern(
     await walkPerson(admin, kundeId, aktiver, seenBfes, seenCvrs);
   }
 
-  // BIZZ-1775: Berig ejendoms-labels med adresser fra bfe_adresse_cache
+  // BIZZ-1775/BIZZ-2093: Berig ejendoms-labels via den fælles BFE→adresse-
+  // resolver (cache-first med troværdig kilde + valideret live-fallback) så
+  // forsikrings-gab viser samme adresser som diagram og ejendomme-tab.
   const bfeAktiver = aktiver.filter(
     (a) => a.type === 'ejendom' && a.bfe && a.label.startsWith('BFE ')
   );
   if (bfeAktiver.length > 0) {
     try {
-      const bfes = bfeAktiver.map((a) => a.bfe!);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: adresser } = await (admin as any)
-        .from('bfe_adresse_cache')
-        .select('bfe_nummer, adresse, etage, doer, postnr, postnrnavn')
-        .in('bfe_nummer', bfes.slice(0, 100));
-      if (adresser) {
-        const addrMap = new Map(
-          (adresser as Array<Record<string, unknown>>).map((a) => {
-            const parts = [a.adresse as string];
-            if (a.etage) parts.push(`${a.etage}.`);
-            if (a.doer) parts[parts.length - 1] += ` ${a.doer}`;
-            if (a.postnr) parts.push(`${a.postnr} ${a.postnrnavn ?? ''}`);
-            return [a.bfe_nummer as number, parts.join(', ').trim()];
-          })
-        );
-        for (const a of bfeAktiver) {
-          const addr = addrMap.get(a.bfe!);
-          if (addr) a.label = addr;
-        }
+      const bfes = bfeAktiver.map((a) => a.bfe!).slice(0, 100);
+      const adresser = await hentBfeAdresser(bfes);
+      for (const a of bfeAktiver) {
+        const label = formatBfeLabel(adresser.get(a.bfe!));
+        if (label) a.label = label;
       }
     } catch {
       /* address enrichment non-fatal */
     }
+  }
+
+  // BIZZ-2151 / BIZZ-2158: Find sekundære adgangsadresser på samme matrikel.
+  // En SFE kan have flere adgangsadresser (fx Gyldenstræde 8A + Stengade 10A
+  // på matrikel 519). Sekundære adresser gemmes som metadata på det
+  // eksisterende aktiv (secondaryAddresses) — IKKE som separate aktiver.
+  // De bruges kun til police-matching i assetMatcher.
+  try {
+    const ejendomAktiver = aktiver.filter((a) => a.type === 'ejendom' && a.bfe);
+    const BATCH = 5;
+    for (let i = 0; i < ejendomAktiver.length && aktiver.length < MAX_AKTIVER; i += BATCH) {
+      const chunk = ejendomAktiver.slice(i, i + BATCH);
+      await Promise.all(
+        chunk.map(async (aktiv) => {
+          try {
+            // Hent jordstykke for BFE → ejerlav + matrikelnr
+            const jordRes = await fetch(
+              `https://api.dataforsyningen.dk/jordstykker?bfenummer=${aktiv.bfe}&format=json`,
+              { signal: AbortSignal.timeout(5000) }
+            );
+            if (!jordRes.ok) return;
+            const jord = (await jordRes.json()) as Array<{
+              ejerlav?: { kode?: number };
+              matrikelnr?: string;
+            }>;
+            const ejerlav = jord[0]?.ejerlav?.kode;
+            const matrikel = jord[0]?.matrikelnr;
+            if (!ejerlav || !matrikel) return;
+
+            // Hent alle adgangsadresser på denne matrikel
+            const adrRes = await fetch(
+              `https://api.dataforsyningen.dk/adgangsadresser?ejerlavkode=${ejerlav}&matrikelnr=${encodeURIComponent(matrikel)}&per_side=20`,
+              { signal: AbortSignal.timeout(5000) }
+            );
+            if (!adrRes.ok) return;
+            const adresser = (await adrRes.json()) as Array<{
+              adressebetegnelse?: string;
+            }>;
+
+            // Gem sekundære adresser som metadata — IKKE som separate aktiver.
+            // assetMatcher bruger secondaryAddresses til police-matching.
+            const primLabel = aktiv.label.toLowerCase();
+            const secondary: string[] = [];
+            for (const adr of adresser) {
+              if (!adr.adressebetegnelse) continue;
+              if (adr.adressebetegnelse.toLowerCase() === primLabel) continue;
+              secondary.push(adr.adressebetegnelse);
+            }
+            if (secondary.length > 0) {
+              aktiv.rawData = { ...aktiv.rawData, secondaryAddresses: secondary };
+            }
+          } catch {
+            /* best-effort */
+          }
+        })
+      );
+    }
+  } catch {
+    /* sekundære adresser er non-fatal */
   }
 
   return aktiver.slice(0, MAX_AKTIVER);
@@ -108,6 +166,10 @@ export async function walkKoncern(
  * @param seenCvrs - Dedup + cyclic detection for virksomheder
  * @param depth - Rekursionsdybde (max 3)
  * @param asOfDate - BIZZ-1355: Snapshot-dato (null = aktuel)
+ * @param parentCvr - BIZZ-2102: CVR på moderselskabet (undefined for roden)
+ * @param ejerandelPct - BIZZ-2102: Moderselskabets ejerandel i procent (null = ukendt)
+ * @param minoritet - BIZZ-2108: true = aktiv minoritetspost (< 50%) — selskabet
+ *   medtages som virksomheds-aktiv i kæden, men dets ejendomme/døtre walkes IKKE
  */
 async function walkVirksomhed(
   admin: ReturnType<typeof createAdminClient>,
@@ -116,24 +178,55 @@ async function walkVirksomhed(
   seenBfes: Set<number>,
   seenCvrs: Set<string>,
   depth: number,
-  asOfDate: Date | null
+  asOfDate: Date | null,
+  parentCvr?: string,
+  ejerandelPct?: number | null,
+  minoritet = false
 ): Promise<void> {
   if (seenCvrs.has(cvr) || depth > 3 || aktiver.length >= MAX_AKTIVER) return;
   seenCvrs.add(cvr);
 
   // BIZZ-1443: Tilføj virksomheden selv som aktiv (for ansvarsforsikring-matching)
   // BIZZ-1840: Hent også virksomhedsform for FFO/andelsbolig-detection
+  // BIZZ-2102: Selv-pushet er nu det ENESTE sted virksomheds-aktiver oprettes —
+  // tidligere pushede parent-loopet OGSÅ datterselskabet (dublet-bug).
   const { data: virk } = await (admin as ReturnType<typeof createAdminClient>)
     .from('cvr_virksomhed')
-    .select('navn, branche_tekst, virksomhedsform')
+    .select('navn, ansatte_aar, branche_tekst, virksomhedsform, ophoert')
     .eq('cvr', cvr)
     .maybeSingle();
+
+  const virkRow = virk as {
+    navn?: string;
+    ansatte_aar?: number | null;
+    branche_tekst?: string | null;
+    virksomhedsform?: string;
+    ophoert?: string | null;
+  } | null;
+
+  // BIZZ-2101: Ophørte datterselskaber walkes ikke (kunden selv ved depth 0 vises altid)
+  if (depth > 0 && virkRow?.ophoert) return;
+
   aktiver.push({
     type: 'virksomhed',
-    label: (virk as { navn?: string } | null)?.navn ?? `CVR ${cvr}`,
+    label: virkRow?.navn ?? `CVR ${cvr}`,
     cvr,
-    rawData: { branche: (virk as { branche_tekst?: string } | null)?.branche_tekst ?? null },
+    ansatte: virkRow?.ansatte_aar ?? undefined,
+    rawData: {
+      branche: virkRow?.branche_tekst ?? null,
+      // BIZZ-2102: Hierarki-metadata til koncern-sortering i UI
+      depth,
+      parent_cvr: parentCvr ?? null,
+      ejerandel_pct: ejerandelPct ?? null,
+      // BIZZ-2108: Markér aktive minoritetsposter så UI kan vise andel-badge
+      ...(minoritet ? { minoritet: true } : {}),
+    },
   });
+
+  // BIZZ-2108: Minoritetsposter medtages KUN som virksomheds-aktiv —
+  // ingen ejendomme, datterselskaber eller bestyrelsesposter walkes,
+  // da selskabet ikke er kontrolleret af kunden.
+  if (minoritet) return;
 
   // BIZZ-1646 + BIZZ-1840: Detect ejer-/andelsforening
   // Matcher FFO-form, "forening" i virksomhedsform, og A/B i virksomhedsform
@@ -506,13 +599,49 @@ async function walkVirksomhed(
     });
   }
 
+  // BIZZ-2123: Administrerede ejendomme medtages for ALLE kunde-virksomheder
+  // på depth 0 — ikke kun foreninger. Fx N.E.J. Finans (ENK) administrerer
+  // ejendomme via ejf_administrator uden selv at stå som ejer i ejf_ejerskab.
+  // FFO-flowet ovenfor henter dem allerede, så her kun for ikke-FFO. Kører
+  // EFTER ejf_ejerskab-loopet så ejerskab vinder dedup'en for BFEs der både
+  // ejes og administreres.
+  if (depth === 0 && !isFFO) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: adminRows } = await (admin as any)
+        .from('ejf_administrator')
+        .select('bfe_nummer')
+        .eq('virksomhed_cvr', cvr)
+        .eq('status', 'gældende')
+        .limit(200);
+      for (const row of (adminRows ?? []) as Array<{ bfe_nummer: number }>) {
+        if (seenBfes.has(row.bfe_nummer) || aktiver.length >= MAX_AKTIVER) continue;
+        seenBfes.add(row.bfe_nummer);
+        aktiver.push({
+          type: 'ejendom',
+          // 'BFE '-prefix → adresse-berigelse via hentBfeAdresser i walkKoncern
+          label: `BFE ${row.bfe_nummer}`,
+          bfe: row.bfe_nummer,
+          rawData: { administreret: true },
+        });
+      }
+    } catch {
+      /* ejf_administrator-opslag er non-fatal */
+    }
+  }
+
   // Hent datterselskaber via cvr_virksomhed_ejerskab cache
   // BIZZ-1355: Historisk filtrering på gyldig_fra/gyldig_til
+  // BIZZ-2108: ALLE aktive ejerandele med kendt procent medtages i kæden —
+  // .not(null) ekskluderer stale rækker uden aktiv EJERANDEL_PROCENT
+  // (fx historiske ejere som RacingRoom). 50%-tærsklen (BIZZ-2103) afgør
+  // kun om der walkes VIDERE ned i selskabet (se loop nedenfor).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let subQuery = (admin as any)
     .from('cvr_virksomhed_ejerskab')
     .select('ejet_cvr, ejerandel_min')
-    .eq('ejer_cvr', cvr);
+    .eq('ejer_cvr', cvr)
+    .not('ejerandel_min', 'is', null);
 
   if (asOfDate) {
     const isoDate = asOfDate.toISOString().slice(0, 10);
@@ -530,30 +659,30 @@ async function walkVirksomhed(
     ejerandel_min: number | null;
   }>) {
     if (seenCvrs.has(sub.ejet_cvr) || aktiver.length >= MAX_AKTIVER) continue;
+    // BIZZ-2103: Defensiv guard mod stale cache-rækker (ejerandel NULL),
+    // hvis querien af en eller anden grund returnerer dem.
+    if (sub.ejerandel_min == null) continue;
 
-    // Hent virksomhedsinfo
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: virk } = await (admin as any)
-      .from('cvr_virksomhed')
-      .select('navn, ansatte, branche_tekst, ophoert')
-      .eq('cvr', sub.ejet_cvr)
-      .maybeSingle();
+    // BIZZ-2108: Aktive minoritetsposter (< 50%) medtages i kæden men
+    // walkes ikke videre — kun kontrollerede selskaber (>= 50%) walkes
+    // rekursivt med ejendomme og egne døtre (BIZZ-2103-tærsklen).
+    const erMinoritet = sub.ejerandel_min < KONCERN_EJERANDEL_MIN;
 
-    if (virk?.ophoert) continue;
-
-    aktiver.push({
-      type: 'virksomhed',
-      label: virk?.navn ?? `CVR ${sub.ejet_cvr}`,
-      cvr: sub.ejet_cvr,
-      ansatte: virk?.ansatte ?? undefined,
-      rawData: {
-        branche: virk?.branche_tekst,
-        ejerandel_pct: sub.ejerandel_min,
-      },
-    });
-
-    // Rekursivt walk datterselskabets ejendomme
-    await walkVirksomhed(admin, sub.ejet_cvr, aktiver, seenBfes, seenCvrs, depth + 1, asOfDate);
+    // BIZZ-2102: Rekursivt walk — walkVirksomhed laver selv-push med
+    // navn/ansatte/ophørt-filter (BIZZ-2101) og hierarki-metadata.
+    // Tidligere pushede vi datterselskabet HER også → dubletter i UI.
+    await walkVirksomhed(
+      admin,
+      sub.ejet_cvr,
+      aktiver,
+      seenBfes,
+      seenCvrs,
+      depth + 1,
+      asOfDate,
+      cvr,
+      sub.ejerandel_min,
+      erMinoritet
+    );
   }
 
   // Bestyrelsesposter (D&O detection)

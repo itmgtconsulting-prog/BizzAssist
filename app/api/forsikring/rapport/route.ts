@@ -88,14 +88,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       annual_premium_dkk: number | null;
       effective_to: string | null;
       sum_insured_dkk: number | null;
+      building_use?: string | null;
+      building_area_m2?: number | null;
+      building_floors?: number | null;
+      building_year_built?: number | null;
+      building_has_basement?: boolean | null;
+      insurance_form?: string | null;
+      business_activity?: string | null;
     }> = [];
 
     if (docIds.length > 0) {
+      // BIZZ-2169: select('*') så bygnings-felter (building_use/_area_m2/_floors/
+      // _year_built) kommer med til BBR-vs-police-sammenligningen i rapporten.
       const { data: polRows } = await db
         .from('forsikring_policies')
-        .select(
-          'id, policy_number, insurer_name, property_address, annual_premium_dkk, effective_to, sum_insured_dkk'
-        )
+        .select('*')
         .in('document_id', docIds)
         .eq('tenant_id', auth.tenantId);
       policies = polRows ?? [];
@@ -152,6 +159,117 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       gaps = data ?? [];
     }
 
+    // BIZZ-2169: Berig med samme data som detalje-skærmen (coverages,
+    // refererede standardbetingelser, BBR-bygningsdata) så rapporten
+    // afspejler det fulde analyse-billede brugeren ser på skærmen.
+    const analysePolicyIds = policies.map((p) => p.id);
+    const coveragePolicyIds = [...new Set([...matchedPolicyIds, ...analysePolicyIds])];
+    let coverages: Array<{
+      policy_id: string;
+      coverage_code: string;
+      coverage_label: string;
+      is_covered: boolean;
+      sum_dkk: number | null;
+      deductible_dkk: number | null;
+      conditions_ref?: string | null;
+    }> = [];
+    if (coveragePolicyIds.length > 0) {
+      const { data: coverageRows } = await db
+        .from('forsikring_coverages')
+        .select(
+          'policy_id, coverage_code, coverage_label, is_covered, sum_dkk, deductible_dkk, conditions_ref'
+        )
+        .in('policy_id', coveragePolicyIds)
+        .eq('tenant_id', auth.tenantId)
+        .order('coverage_label', { ascending: true });
+      coverages = coverageRows ?? [];
+    }
+
+    // BIZZ-2135: Aggregér refererede standardbetingelser fra coverages
+    const conditionsMap = new Map<
+      string,
+      { ref: string; selskab: string | null; policyNumber: string | null }
+    >();
+    for (const cov of coverages) {
+      if (!cov.conditions_ref) continue;
+      for (let rawRef of cov.conditions_ref
+        .split(/[,;]/)
+        .map((s: string) => s.trim())
+        .filter(Boolean)) {
+        rawRef = rawRef.replace(/^(se\s+)?(betingelses)?afsnit\s*/i, '').trim();
+        if (!rawRef || /^se\s+vilk/i.test(rawRef) || rawRef.length < 2) continue;
+        if (!conditionsMap.has(rawRef)) {
+          const pol = policies.find((p) => p.id === cov.policy_id);
+          conditionsMap.set(rawRef, {
+            ref: rawRef,
+            selskab: pol?.insurer_name ?? null,
+            policyNumber: pol?.policy_number ?? null,
+          });
+        }
+      }
+    }
+    const uploadedRefs = new Set<string>();
+    if (conditionsMap.size > 0) {
+      try {
+        const { data: stdDocs } = await admin
+          .from('forsikring_standard_doc')
+          .select('titel')
+          .limit(200);
+        if (stdDocs) {
+          for (const doc of stdDocs as Array<{ titel: string }>) {
+            const titelLower = doc.titel.toLowerCase();
+            for (const ref of conditionsMap.keys()) {
+              if (titelLower.includes(ref.toLowerCase())) uploadedRefs.add(ref);
+            }
+          }
+        }
+      } catch {
+        // Non-fatal — standard-docs check
+      }
+    }
+    const referencedConditions = [...conditionsMap.values()].map((c) => ({
+      ...c,
+      uploaded: uploadedRefs.has(c.ref),
+    }));
+
+    // BIZZ-2155: BBR-bygningsdata pr. BFE til BBR-vs-police-sammenligning
+    const bbrByBfe: Record<
+      string,
+      {
+        bebygget_areal: number | null;
+        antal_etager: number | null;
+        opfoerelsesaar: number | null;
+        anvendelse: string | null;
+      }
+    > = {};
+    const ejendomBfer = [
+      ...new Set(
+        (aktiverRes.data ?? [])
+          .filter((a: { type: string; bfe: number | null }) => a.type === 'ejendom' && a.bfe)
+          .map((a: { bfe: number | null }) => a.bfe as number)
+      ),
+    ];
+    if (ejendomBfer.length > 0) {
+      const { data: bbrRows } = await admin
+        .from('bbr_ejendom_status')
+        .select('bfe_nummer, bebygget_areal, antal_etager, opfoerelsesaar, byg021_anvendelse')
+        .in('bfe_nummer', ejendomBfer);
+      for (const row of (bbrRows ?? []) as Array<{
+        bfe_nummer: number;
+        bebygget_areal: number | null;
+        antal_etager: number | null;
+        opfoerelsesaar: number | null;
+        byg021_anvendelse: string | null;
+      }>) {
+        bbrByBfe[String(row.bfe_nummer)] = {
+          bebygget_areal: row.bebygget_areal,
+          antal_etager: row.antal_etager,
+          opfoerelsesaar: row.opfoerelsesaar,
+          anvendelse: row.byg021_anvendelse,
+        };
+      }
+    }
+
     // Build DOCX
     const docxBuffer = await buildGapRapportDocx({
       kundeNavn: kunde_navn || 'Ukendt kunde',
@@ -166,8 +284,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         type: string;
         label: string;
         adresse: string | null;
+        bfe?: number | null;
+        cvr?: string | null;
         matched_policy_id: string | null;
         match_score: number | null;
+        raw_data?: {
+          ejer_cvr?: string;
+          ejerandel_pct?: number | string | null;
+          minoritet?: boolean;
+          administreret?: boolean;
+          daekket_via_sfe?: { sfe_adresse?: string } | null;
+          soester_sfe?: { sfe_adresse?: string } | null;
+        } | null;
       }>,
       policies: policies.map((p) => ({
         id: p.id,
@@ -177,6 +305,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         annual_premium_dkk: p.annual_premium_dkk,
         effective_to: p.effective_to,
         sum_insured_dkk: p.sum_insured_dkk,
+        building_use: p.building_use ?? null,
+        building_area_m2: p.building_area_m2 ?? null,
+        building_floors: p.building_floors ?? null,
+        building_year_built: p.building_year_built ?? null,
+        building_has_basement: p.building_has_basement ?? null,
+        insurance_form: p.insurance_form ?? null,
+        business_activity: p.business_activity ?? null,
       })),
       gaps: gaps.map((g) => ({
         policy_id: g.policy_id,
@@ -184,7 +319,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         title: g.title,
         description: g.description,
         recommendation: g.recommendation,
+        check_id: g.check_id,
       })),
+      coverages,
+      referencedConditions,
+      bbrByBfe,
     });
 
     logger.log(`[forsikring/rapport] Genereret rapport for ${kunde_navn}: ${docxBuffer.length}B`);

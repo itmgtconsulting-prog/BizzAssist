@@ -182,6 +182,12 @@ function DanishPrivacy() {
             state og kortvarig cache. Behandler: IP-adresse og bruger-ID til request-throttling.
             Data opbevares i EU-region; overførselsgrundlag SCC for US-entiteten.
           </li>
+          <li>
+            <strong className="text-white">tjekbil.dk (Bilbasen / Schibsted)</strong> (Danmark, EU)
+            — Opslag af køretøjsdata fra Motorregistret (DMR) ved forsikringsanalyse. Behandler: kun
+            bilens registreringsnummer (køretøjsdata, ikke personoplysninger om dig). Ingen
+            tredjelands-overførsel.
+          </li>
         </ul>
         <p>
           Der er indgået databehandleraftaler med alle tredjeparts databehandlere i overensstemmelse
@@ -421,6 +427,12 @@ function EnglishPrivacy() {
             <strong className="text-white">Upstash Inc.</strong> (USA, GCP eu-west) — Rate-limit
             state and short-lived cache. Processes: IP address and user ID for request throttling.
             Data stored in EU region; transfer basis SCC for the US entity.
+          </li>
+          <li>
+            <strong className="text-white">tjekbil.dk (Bilbasen / Schibsted)</strong> (Denmark, EU)
+            — Vehicle data lookup from the Danish Motor Register (DMR) during insurance analysis.
+            Processes: only the vehicle registration number (vehicle data, not personal data about
+            you). No third-country transfer.
           </li>
         </ul>
         <p>

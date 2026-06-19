@@ -96,23 +96,22 @@ async function processBatch(enheder) {
   // Batch UPDATE: build CASE WHEN ... THEN ... END
   const client = await pool.connect();
   try {
+    // INSERT ... ON CONFLICT DO UPDATE: handles both "missing row" og "row with placeholder"
+    const placeholders = [];
     const params = [];
-    const cases = [];
     let p = 1;
-    const enhederUpd = [];
     for (const [enhed, navn] of names) {
-      cases.push(`WHEN $${p++} THEN $${p++}::text`);
+      placeholders.push(`($${p++}::bigint, $${p++})`);
       params.push(enhed, navn);
-      enhederUpd.push(enhed);
     }
-    // Add enheder array as last param
-    const enhederParam = `$${p++}`;
-    params.push(enhederUpd);
     const sql = `
-      UPDATE cvr_deltager SET navn = CASE enhedsnummer::text ${cases.join(' ')} END,
-        sidst_opdateret = now()
-      WHERE enhedsnummer::text = ANY(${enhederParam}::text[])
-        AND (navn IS NULL OR navn = '' OR navn LIKE 'Ukendt ejer%')
+      INSERT INTO cvr_deltager (enhedsnummer, navn)
+      VALUES ${placeholders.join(',')}
+      ON CONFLICT (enhedsnummer) DO UPDATE
+        SET navn = EXCLUDED.navn, sidst_opdateret = now()
+        WHERE cvr_deltager.navn IS NULL
+           OR cvr_deltager.navn = ''
+           OR cvr_deltager.navn LIKE 'Ukendt ejer%'
     `;
     const r = await client.query(sql, params);
     return { tried: enheder.length, updated: r.rowCount };
@@ -130,6 +129,8 @@ async function main() {
     console.log(`[1945] using --enheder: ${enheder.length}`);
   } else {
     console.time('[1945] cvr enheder list');
+    // Distinct enheder fra MV der har placeholder/NULL navn.
+    // INSERT ON CONFLICT håndterer både "missing row" og "row with placeholder".
     const { rows } = await pool.query(`
       SELECT DISTINCT m.deltager_enhedsnummer FROM mv_virksomhedshandel_kandidater m
       WHERE m.deltager_navn IS NULL OR m.deltager_navn LIKE 'Ukendt ejer%'

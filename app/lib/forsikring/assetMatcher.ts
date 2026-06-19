@@ -86,9 +86,13 @@ function stripFloorDoor(addr: string): string {
  * @param norm - Allerede normaliseret adresse (via normalize())
  * @returns Strukturerede dele, eller null hvis vejnavn+husnr ikke kunne udledes
  */
-function parseStreetAddr(
-  norm: string
-): { vejnavn: string; husnr: string; postnr: string | null } | null {
+function parseStreetAddr(norm: string): {
+  vejnavn: string;
+  husnr: string;
+  /** Slut-husnr ved range-adresse ("47a-51" → husnrTil="51"), ellers null */
+  husnrTil: string | null;
+  postnr: string | null;
+} | null {
   const tokens = norm.split(' ').filter(Boolean);
   // Husnummer = første token der starter med et ciffer (evt. efterfulgt af bogstav)
   let husnrIdx = -1;
@@ -102,15 +106,29 @@ function parseStreetAddr(
   if (husnrIdx <= 0) return null;
   const vejnavn = tokens.slice(0, husnrIdx).join(' ');
   const husnr = tokens[husnrIdx].replace(/[a-z]+$/, ''); // strip bogstav → kun nummer
-  // Postnummer = et 4-cifret token efter husnummeret
+  // Range-detektion: næste token er et 1-3 cifret tal (normalize erstatter "-"
+  // med mellemrum, så "47a-51" → "47a 51" → tokens ["47a", "51"]). 4-cifrede
+  // tokens er postnumre, ikke slut-husnumre.
+  let husnrTil: string | null = null;
+  const nextIdx = husnrIdx + 1;
+  if (nextIdx < tokens.length && /^\d{1,3}[a-z]?$/.test(tokens[nextIdx])) {
+    const candidate = parseInt(tokens[nextIdx].replace(/[a-z]+$/, ''), 10);
+    const start = parseInt(husnr, 10);
+    // Kun et range hvis slut > start og forskellen er rimelig (maks 100)
+    if (!isNaN(candidate) && !isNaN(start) && candidate > start && candidate - start <= 100) {
+      husnrTil = tokens[nextIdx].replace(/[a-z]+$/, '');
+    }
+  }
+  // Postnummer = et 4-cifret token efter husnummeret (og evt. range-slut)
   let postnr: string | null = null;
-  for (let i = husnrIdx + 1; i < tokens.length; i++) {
+  const searchFrom = husnrTil ? nextIdx + 1 : nextIdx;
+  for (let i = searchFrom; i < tokens.length; i++) {
     if (/^\d{4}$/.test(tokens[i])) {
       postnr = tokens[i];
       break;
     }
   }
-  return { vejnavn, husnr, postnr };
+  return { vejnavn, husnr, husnrTil, postnr };
 }
 
 /**
@@ -121,6 +139,9 @@ function parseStreetAddr(
  * Matchet er husnummer-bogstav-agnostisk ("Stjernegade 17" = "Stjernegade 17A")
  * jf. BIZZ-1908, og kræver at postnummeret matcher når begge adresser har et
  * (så "Hovedgade 5" i to forskellige byer ikke fejlmatcher).
+ *
+ * Forstår husnummer-ranges ("Gefionsvej 47A-51" matcher "Gefionsvej 49")
+ * — typisk for forsikringspolicer der dækker flere bygninger på samme vej.
  *
  * @param a - Første adresse (rå streng, fx police.property_address)
  * @param b - Anden adresse (rå streng, fx en porteføljeejendoms adresse)
@@ -146,10 +167,77 @@ export function addressesMatch(
   const pb = parseStreetAddr(baseB || nb);
   if (!pa || !pb) return false;
   if (pa.vejnavn !== pb.vejnavn) return false;
-  if (pa.husnr !== pb.husnr) return false;
   // Postnr skal matche når begge har et — ellers er gade+husnr nok
   if (pa.postnr && pb.postnr && pa.postnr !== pb.postnr) return false;
-  return true;
+  // Eksakt husnr-match
+  if (pa.husnr === pb.husnr) return true;
+  // Range-match: "47a-51" matcher alle husnumre i [47..51]
+  if (pa.husnrTil || pb.husnrTil) {
+    const inRange = (single: string, fra: string, til: string): boolean => {
+      const n = parseInt(single, 10);
+      const f = parseInt(fra, 10);
+      const t = parseInt(til, 10);
+      return !isNaN(n) && !isNaN(f) && !isNaN(t) && n >= f && n <= t;
+    };
+    if (pa.husnrTil && !pb.husnrTil) return inRange(pb.husnr, pa.husnr, pa.husnrTil);
+    if (pb.husnrTil && !pa.husnrTil) return inRange(pa.husnr, pb.husnr, pb.husnrTil);
+    // Begge er ranges — check overlap
+    if (pa.husnrTil && pb.husnrTil) {
+      const af = parseInt(pa.husnr, 10),
+        at = parseInt(pa.husnrTil, 10);
+      const bf = parseInt(pb.husnr, 10),
+        bt = parseInt(pb.husnrTil, 10);
+      return !isNaN(af) && !isNaN(at) && !isNaN(bf) && !isNaN(bt) && af <= bt && bf <= at;
+    }
+  }
+  return false;
+}
+
+/**
+ * BIZZ-2120: Koncern-kontekst afledt af aktiverne i analysen. Bruges til at
+ * afvise policer tegnet af virksomheder uden for kundens koncern, så en anden
+ * kundes police i samme tenant aldrig kan "dække" et aktiv.
+ */
+interface KoncernKontekst {
+  /** CVR-numre for alle virksomheder i koncern-walket */
+  cvrs: Set<string>;
+  /** Normaliserede virksomhedsnavne for alle virksomheder i koncern-walket */
+  navne: string[];
+}
+
+/** Sikret/medforsikret virksomhed parsed fra policen (BIZZ-2120) */
+interface InsuredCompany {
+  navn: string;
+  cvr?: string | null;
+}
+
+/**
+ * BIZZ-2120: Læs policens parsede sikrede-virksomheds-liste fra raw_metadata.
+ *
+ * @param policy - Police fra DB
+ * @returns Liste af sikrede selskaber, eller null hvis ikke parsed
+ */
+function getInsuredCompanies(policy: ForsikringPolicy): InsuredCompany[] | null {
+  const raw = policy.raw_metadata?.insured_companies;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  return raw.filter((c): c is InsuredCompany => !!c && typeof c.navn === 'string');
+}
+
+/**
+ * BIZZ-2120: Afgør om policens forsikringstager hører til kundens koncern —
+ * via CVR-match eller normaliseret navnematch mod koncern-virksomhederne.
+ *
+ * @param policy - Police fra DB
+ * @param koncern - Koncern-kontekst fra aktiverne
+ * @returns true hvis forsikringstager er en del af koncernen
+ */
+function policyholderIKoncern(policy: ForsikringPolicy, koncern: KoncernKontekst): boolean {
+  if (policy.policyholder_cvr && koncern.cvrs.has(policy.policyholder_cvr)) return true;
+  const phNavn = normalize(policy.policyholder_name);
+  if (!phNavn) return false;
+  return koncern.navne.some(
+    (n) => n.length > 0 && (n === phNavn || n.includes(phNavn) || phNavn.includes(n))
+  );
 }
 
 /**
@@ -157,14 +245,19 @@ export function addressesMatch(
  *
  * @param aktiv - Aktiv fra koncern-walk
  * @param policy - Police fra DB
+ * @param koncern - BIZZ-2120: Koncern-kontekst for kryds-kunde-afvisning
  * @returns Score 0-100 (højere = bedre match)
  */
-function computeMatchScore(aktiv: Aktiv, policy: ForsikringPolicy): number {
+function computeMatchScore(
+  aktiv: Aktiv,
+  policy: ForsikringPolicy,
+  koncern: KoncernKontekst
+): number {
   switch (aktiv.type) {
     case 'ejendom':
       return scoreEjendom(aktiv, policy);
     case 'virksomhed':
-      return scoreVirksomhed(aktiv, policy);
+      return scoreVirksomhed(aktiv, policy, koncern);
     case 'bil':
       return scoreBil(aktiv, policy);
     case 'bestyrelsespost':
@@ -172,6 +265,49 @@ function computeMatchScore(aktiv: Aktiv, policy: ForsikringPolicy): number {
     default:
       return 0;
   }
+}
+
+/**
+ * BIZZ-2153: Parse en normaliseret adresse til vejnavn + husnr + husbogstav,
+ * inkl. et evt. bogstav-interval. En police tegnet på "Stjernegade 24 A-H"
+ * normaliseres til "stjernegade 24a h ..." — dvs. husnr-tokenet bærer
+ * start-bogstavet ("24a") og det efterfølgende ensomme bogstav-token ("h")
+ * angiver intervallets slut.
+ *
+ * @param norm - Allerede normaliseret adresse (via normalize())
+ * @returns { vejnavn, husnr, bogstav, til, postnr } eller null
+ */
+function parseHusbogstav(norm: string): {
+  vejnavn: string;
+  husnr: string;
+  bogstav: string | null;
+  /** Slut-bogstav ved interval ("24 A-H" → til="h"), ellers null */
+  til: string | null;
+  postnr: string | null;
+} | null {
+  const tokens = norm.split(' ').filter(Boolean);
+  // Husnummer = første token der starter med et ciffer (evt. efterfulgt af bogstav)
+  let idx = -1;
+  for (let i = 0; i < tokens.length; i++) {
+    if (/^\d+[a-z]?$/.test(tokens[i])) {
+      idx = i;
+      break;
+    }
+  }
+  // Kræv mindst ét vejnavn-token før husnummeret
+  if (idx <= 0) return null;
+  const m = tokens[idx].match(/^(\d+)([a-z])?$/)!;
+  const husnr = m[1];
+  const bogstav = m[2] ?? null;
+  // Interval-slut: et ensomt enkelt-bogstav-token umiddelbart efter, større end start
+  let til: string | null = null;
+  const next = tokens[idx + 1];
+  if (bogstav && next && /^[a-z]$/.test(next) && next > bogstav) {
+    til = next;
+  }
+  // Postnummer = første 4-cifrede token efter husnummeret
+  const postnr = tokens.slice(idx + 1).find((t) => /^\d{4}$/.test(t)) ?? null;
+  return { vejnavn: tokens.slice(0, idx).join(' '), husnr, bogstav, til, postnr };
 }
 
 /**
@@ -230,6 +366,49 @@ function scoreEjendom(aktiv: Aktiv, policy: ForsikringPolicy): number {
     return 82;
   }
 
+  // BIZZ-2153: Bogstav-interval — en police tegnet på "Stjernegade 24 A-H"
+  // dækker hele opgangsrækken 24A..24H. normalize() splitter intervallet
+  // ("24 A-H" → "24a h"), så uden dette matcher kun 24A (intervallets start)
+  // direkte, mens 24B-H falder igennem til svagere SFE-arv.
+  const pPol = parseHusbogstav(policyAddr);
+  const pAk = parseHusbogstav(aktivAddr);
+  if (
+    pPol &&
+    pAk &&
+    pPol.til &&
+    pPol.bogstav &&
+    pAk.bogstav &&
+    pPol.vejnavn === pAk.vejnavn &&
+    pPol.husnr === pAk.husnr &&
+    (!pPol.postnr || !pAk.postnr || pPol.postnr === pAk.postnr) &&
+    pAk.bogstav >= pPol.bogstav &&
+    pAk.bogstav <= pPol.til
+  ) {
+    return 80;
+  }
+
+  // BIZZ-2158: Sekundære adgangsadresser — en SFE kan have flere adresser
+  // (fx Gyldenstræde 8A + Stengade 10A på matrikel 519). Policer tegnet på
+  // sekundære adresser skal matche det primære aktiv.
+  const secondaryAddresses = (aktiv.rawData as Record<string, unknown> | undefined)
+    ?.secondaryAddresses as string[] | undefined;
+  if (secondaryAddresses) {
+    for (const secAddr of secondaryAddresses) {
+      const normSec = normalize(secAddr);
+      if (!normSec) continue;
+      if (normSec === policyAddr) return 88;
+      if (normSec.includes(policyAddr) || policyAddr.includes(normSec)) return 83;
+      const secBase = stripFloorDoor(normSec);
+      if (
+        secBase &&
+        policyBase &&
+        (secBase === policyBase || secBase.includes(policyBase) || policyBase.includes(secBase))
+      ) {
+        return 80;
+      }
+    }
+  }
+
   // Delvis match: vejnavn + husnr
   const aktivParts = aktivAddr.split(' ');
   const policyParts = policyAddr.split(' ');
@@ -268,38 +447,68 @@ function scoreEjendom(aktiv: Aktiv, policy: ForsikringPolicy): number {
  * @param policy - Police
  * @returns Score 0-100
  */
-function scoreVirksomhed(aktiv: Aktiv, policy: ForsikringPolicy): number {
+function scoreVirksomhed(aktiv: Aktiv, policy: ForsikringPolicy, koncern: KoncernKontekst): number {
   // CVR-match (eksakt)
   if (aktiv.cvr && policy.policyholder_cvr && aktiv.cvr === policy.policyholder_cvr) {
     return 100;
   }
 
-  // BIZZ-1620: Koncern-policer dækker ofte hele virksomheden via moderselskabets
-  // CVR eller en generel police-type. Match virksomheds-aktiv mod policer der
-  // har coverage_type indeholdende "erhverv", "virksomhed", "ansvar", "drift"
-  // eller "koncern" — disse dækker typisk virksomhedsaktiviteten.
-  const coverageText = normalize(
-    [policy.insurance_form, policy.business_activity, policy.policyholder_name].join(' ')
-  );
-  if (
-    coverageText.includes('erhverv') ||
-    coverageText.includes('virksomhed') ||
-    coverageText.includes('ansvar') ||
-    coverageText.includes('drift') ||
-    coverageText.includes('koncern')
-  ) {
-    // Police dækker erhvervsaktivitet — score 70 (under eksakt CVR-match men over threshold)
-    return 70;
+  const aktivNavn = normalize(aktiv.label);
+
+  // BIZZ-2120: Har policen en parsed sikrede-liste, matches PR. SIKRET SELSKAB
+  // — kun virksomheder på listen kan dækkes af policen, og den brede 70-regel
+  // nedenfor springes over (policen har eksplicit afgrænset hvem den dækker).
+  const insured = getInsuredCompanies(policy);
+  if (insured) {
+    for (const c of insured) {
+      if (aktiv.cvr && c.cvr && aktiv.cvr === c.cvr) return 95;
+      const cNavn = normalize(c.navn);
+      if (
+        aktivNavn &&
+        cNavn &&
+        (aktivNavn === cNavn || aktivNavn.includes(cNavn) || cNavn.includes(aktivNavn))
+      ) {
+        return 85;
+      }
+    }
+    return 0;
   }
 
-  // Navn-match
-  const aktivNavn = normalize(aktiv.label);
+  // Navn-match mod forsikringstager (policen er tegnet AF dette selskab)
   const policyNavn = normalize(policy.policyholder_name);
   if (aktivNavn && policyNavn && aktivNavn === policyNavn) return 75;
 
   // Delvis navne-match (indeholder hinanden)
   if (aktivNavn && policyNavn) {
     if (aktivNavn.includes(policyNavn) || policyNavn.includes(aktivNavn)) return 60;
+  }
+
+  // BIZZ-2164: En koncern-erhvervs-/ansvarspolice dækker IKKE automatisk alle
+  // søsterselskaber — kun forsikringstageren (matchet ovenfor via CVR/navn) og
+  // de NAVNGIVNE medforsikrede (insured_companies, håndteret ovenfor). RACEHALL-
+  // fejlen: ansvarspolicen RPXDK40.000244 (tegnet af Racehall København) dækker
+  // kun Racehall København + de medforsikrede Racehall Ejendomme/Aarhus — IKKE
+  // SKIINVEST eller Racehall Holding. Den tidligere BIZZ-1620-regel gav alle
+  // koncern-selskaber score 70 (= dækket), hvilket fejlagtigt markerede ikke-
+  // navngivne søstre som forsikrede og skjulte et reelt dækningshul.
+  //
+  // Når policen mangler en parsed sikrede-liste kan vi ikke fastslå at en søster
+  // er dækket, så et erhvervs-/ansvars-policematch vises nu kun som svag KANDIDAT
+  // (score 45 < MATCH_THRESHOLD) — synlig i candidates til mægler-gennemgang, men
+  // tæller ikke som forsikret. Upload den fulde police (med medforsikrede) for at
+  // få de navngivne datterselskaber korrekt markeret som dækket (score 85/95).
+  const coverageText = normalize(
+    [policy.insurance_form, policy.business_activity, policy.policyholder_name].join(' ')
+  );
+  if (
+    (coverageText.includes('erhverv') ||
+      coverageText.includes('virksomhed') ||
+      coverageText.includes('ansvar') ||
+      coverageText.includes('drift') ||
+      coverageText.includes('koncern')) &&
+    policyholderIKoncern(policy, koncern)
+  ) {
+    return 45;
   }
 
   return 0;
@@ -363,9 +572,21 @@ export function matchAssetsToPolicies(
   aktiver: Aktiv[],
   policer: ForsikringPolicy[]
 ): MatchResult[] {
+  // BIZZ-2120: Koncern-kontekst = virksomhederne i koncern-walket. Bruges af
+  // scoreVirksomhed til at kræve at policens forsikringstager hører til
+  // kundens egen koncern før den brede erhvervsaktivitets-regel (70) anvendes.
+  const koncern: KoncernKontekst = {
+    cvrs: new Set(
+      aktiver.filter((a) => a.type === 'virksomhed' && a.cvr).map((a) => a.cvr as string)
+    ),
+    navne: aktiver
+      .filter((a) => a.type === 'virksomhed')
+      .map((a) => normalize(a.label))
+      .filter((n) => n.length > 0),
+  };
   return aktiver.map((aktiv) => {
     const candidates = policer
-      .map((policy) => ({ policy, score: computeMatchScore(aktiv, policy) }))
+      .map((policy) => ({ policy, score: computeMatchScore(aktiv, policy, koncern) }))
       .filter((c) => c.score > 0)
       .sort((a, b) => b.score - a.score);
 

@@ -1,11 +1,11 @@
 /**
  * GET /api/matrikel
  *
- * Henter matrikeldata (Samlet Fast Ejendom + jordstykker) fra Datafordeler MAT GraphQL v1.
+ * Henter matrikeldata (Samlet Fast Ejendom + jordstykker) fra Datafordeler MAT GraphQL v2.
  *
  * Flow:
  *   1. Validerer bfeNummer query-param
- *   2. Sender GraphQL-forespørgsel til MAT/v1 med bitemporale parametre
+ *   2. Sender GraphQL-forespørgsel til MAT/v2 med bitemporale parametre
  *   3. Prøver fuld query med fredskov/strandbeskyttelse/klitfredning/jordrente —
  *      falder tilbage til simpel query hvis skemaet ikke understøtter disse felter
  *   4. Mapper rå MAT-data til klient-venligt MatrikelResponse
@@ -25,6 +25,7 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { MAT_GQL_ENDPOINT } from '@/app/lib/serviceEndpoints';
 
 /** Zod schema for /api/matrikel query parameters */
 const matrikelQuerySchema = z.object({
@@ -97,7 +98,8 @@ interface RawSamletFastEjendom {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const MAT_GQL_URL = 'https://graphql.datafordeler.dk/MAT/v1';
+// BIZZ-2062: MAT GraphQL v1 er nedlagt (HTTP 404) — brug v2 via serviceEndpoints.
+const MAT_GQL_URL = MAT_GQL_ENDPOINT;
 const DF_API_KEY = process.env.DATAFORDELER_API_KEY ?? '';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -123,7 +125,7 @@ function nowISOTimestamp(): string {
 }
 
 /**
- * Sender en GraphQL-forespørgsel til Datafordeler MAT/v1 med API-nøgle.
+ * Sender en GraphQL-forespørgsel til Datafordeler MAT/v2 med API-nøgle.
  * Returnerer det rå data-objekt, eller null ved fejl/GraphQL-errors.
  *
  * @param query - GraphQL query streng
@@ -308,7 +310,7 @@ function mapEjendom(
 /**
  * GET /api/matrikel?bfeNummer=XXXX
  *
- * Henter matrikeldata for en Samlet Fast Ejendom fra Datafordeler MAT/v1.
+ * Henter matrikeldata for en Samlet Fast Ejendom fra Datafordeler MAT/v2.
  *
  * @param request - Next.js request med bfeNummer query-param
  * @returns MatrikelResponse med matrikeldata eller fejlbesked

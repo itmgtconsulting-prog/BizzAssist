@@ -108,7 +108,7 @@ export default function BoligprisChart({ tidsserier }: Props): React.ReactElemen
             value: 'Gns. pris (kr)',
             angle: -90,
             position: 'insideLeft',
-            fill: '#64748b',
+            fill: '#34d399',
             fontSize: 11,
             offset: -5,
           }}
@@ -124,7 +124,7 @@ export default function BoligprisChart({ tidsserier }: Props): React.ReactElemen
             value: 'm²-pris (kr/m²)',
             angle: 90,
             position: 'insideRight',
-            fill: '#64748b',
+            fill: '#60a5fa',
             fontSize: 11,
             offset: -5,
           }}

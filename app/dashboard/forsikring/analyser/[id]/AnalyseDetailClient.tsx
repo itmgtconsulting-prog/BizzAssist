@@ -9,7 +9,7 @@
  * @param props.analyseId - Analyse UUID
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowLeft,
@@ -24,6 +24,12 @@ import {
   Download,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { getMatchBegrundelse } from '@/app/lib/forsikring/matchBegrundelse';
+import {
+  erEjendomUdenAdresse,
+  findDelteAdresser,
+  visAktivLabelDisambig,
+} from '@/app/lib/forsikring/aktivLabel';
 
 interface Analyse {
   id: string;
@@ -47,6 +53,13 @@ interface Aktiv {
   adresse: string | null;
   matched_policy_id: string | null;
   match_score: number | null;
+  /** BIZZ-2108: koncern-metadata fra koncernWalk (ejerandel_pct, minoritet) */
+  raw_data: {
+    ejerandel_pct?: number | string | null;
+    minoritet?: boolean;
+    /** BIZZ-2123: ejendommen er administreret (ejf_administrator), ikke ejet */
+    administreret?: boolean;
+  } | null;
 }
 
 interface Gap {
@@ -85,6 +98,10 @@ export default function AnalyseDetailClient({ analyseId }: { analyseId: string }
       })
       .finally(() => setLoading(false));
   }, [analyseId]);
+
+  // BIZZ-2149: Adresser delt af flere distinkte ejendoms-BFE'er (ejerlejligheder
+  // med samme gade-adresse) disambigueres med et BFE-suffix i tabellen.
+  const delteAdresser = useMemo(() => findDelteAdresser(aktiver, da), [aktiver, da]);
 
   if (loading) {
     return (
@@ -251,13 +268,37 @@ export default function AnalyseDetailClient({ analyseId }: { analyseId: string }
                   {typeIcon(a.type)}
                   <span className="text-slate-400 text-xs capitalize">{a.type}</span>
                 </td>
-                <td className="px-4 py-2.5 text-white">{a.label}</td>
+                <td className="px-4 py-2.5 text-white">
+                  <span className="inline-flex items-center gap-1.5">
+                    {visAktivLabelDisambig(a, da, delteAdresser)}
+                    {/* BIZZ-2150: gul badge når ejendommen mangler adresse */}
+                    {erEjendomUdenAdresse(a) && (
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 shrink-0">
+                        {da ? 'Ingen adresse' : 'No address'}
+                      </span>
+                    )}
+                  </span>
+                </td>
                 <td className="px-4 py-2.5 text-slate-400">{a.adresse ?? a.cvr ?? a.bfe ?? '—'}</td>
                 <td className="px-4 py-2.5 text-center">
+                  {/* BIZZ-2080: Vis match-begrundelse + score så brugeren kan
+                      vurdere om police→aktiv-koblingen er rigtig */}
                   {a.matched_policy_id ? (
-                    <CheckCircle2 size={14} className="text-emerald-400 mx-auto" />
+                    <div className="flex flex-col items-center gap-0.5">
+                      <CheckCircle2 size={14} className="text-emerald-400" />
+                      {a.match_score != null && (
+                        <span className="text-[10px] text-slate-400">
+                          {getMatchBegrundelse(a.type, a.match_score, da)} ({a.match_score}/100)
+                        </span>
+                      )}
+                    </div>
                   ) : (
-                    <AlertCircle size={14} className="text-red-400 mx-auto" />
+                    <div className="flex flex-col items-center gap-0.5">
+                      <AlertCircle size={14} className="text-red-400" />
+                      <span className="text-[10px] text-slate-400">
+                        {da ? 'Ingen police matchet' : 'No policy matched'}
+                      </span>
+                    </div>
                   )}
                 </td>
               </tr>
@@ -350,27 +391,66 @@ export default function AnalyseDetailClient({ analyseId }: { analyseId: string }
                     </span>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-1.5">
-                    {items.map((a) => (
-                      <div
-                        key={a.id}
-                        className={`rounded-lg px-2.5 py-2 text-xs border ${
-                          a.matched_policy_id
-                            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-                            : 'bg-red-500/10 border-red-500/30 text-red-300'
-                        }`}
-                      >
-                        <div className="truncate font-medium">{a.label}</div>
-                        <div className="text-[10px] opacity-70 mt-0.5">
-                          {a.matched_policy_id
-                            ? da
-                              ? '✓ Forsikret'
-                              : '✓ Insured'
-                            : da
-                              ? '✗ Uforsikret'
-                              : '✗ Uninsured'}
+                    {items.map((a) => {
+                      // BIZZ-2108: Ejerandel-badge på virksomheder med < 100% —
+                      // minoritetsposter skal tydeligt adskilles fra døtre.
+                      const pctRaw = a.raw_data?.ejerandel_pct;
+                      const pct =
+                        a.type === 'virksomhed' &&
+                        pctRaw != null &&
+                        Number.isFinite(Number(pctRaw)) &&
+                        Number(pctRaw) < 100
+                          ? Number(pctRaw)
+                          : null;
+                      return (
+                        <div
+                          key={a.id}
+                          className={`rounded-lg px-2.5 py-2 text-xs border ${
+                            a.matched_policy_id
+                              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                              : 'bg-red-500/10 border-red-500/30 text-red-300'
+                          }`}
+                        >
+                          <div className="truncate font-medium">
+                            {a.label}
+                            {/* BIZZ-2123: Markér administrerede (ikke-ejede) ejendomme */}
+                            {a.type === 'ejendom' && a.raw_data?.administreret && (
+                              <span
+                                className="ml-1.5 text-[9px] px-1 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 align-middle"
+                                title={
+                                  da
+                                    ? 'Kunden administrerer ejendommen uden at stå som ejer'
+                                    : 'The customer administers the property without being the owner'
+                                }
+                              >
+                                {da ? 'Administreret' : 'Administered'}
+                              </span>
+                            )}
+                            {pct != null && (
+                              <span
+                                className="ml-1.5 text-[9px] px-1 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 align-middle"
+                                title={
+                                  da
+                                    ? 'Ejerandel — under 50% er en minoritetspost'
+                                    : 'Ownership share — below 50% is a minority stake'
+                                }
+                              >
+                                {pct}%
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] opacity-70 mt-0.5">
+                            {a.matched_policy_id
+                              ? da
+                                ? '✓ Forsikret'
+                                : '✓ Insured'
+                              : da
+                                ? '✗ Uforsikret'
+                                : '✗ Uninsured'}
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               );

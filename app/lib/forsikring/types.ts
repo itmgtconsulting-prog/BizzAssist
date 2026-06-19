@@ -15,6 +15,7 @@
  */
 
 import { z } from 'zod';
+import type { DmrData } from './dmr';
 
 // ─── BIZZ-1392: Dokumenttype-detektion ──────────────────────────
 
@@ -25,6 +26,7 @@ import { z } from 'zod';
  * - oversigt: forsikringsoversigt med flere policer → split til N policer
  * - tillaeg: tillæg/ændring til eksisterende police → match + opdatér
  * - tilbud: fornyelsestilbud → udtrák info til notes
+ * - praemie: præmieopkrævning/faktura for eksisterende police → parse som police (BIZZ-2083)
  * - korrespondance: brev/email → udtrák info til notes
  * - ukendt: kan ikke klassificeres → vis advarsel
  */
@@ -33,6 +35,7 @@ export type DocumentType =
   | 'oversigt'
   | 'tillaeg'
   | 'tilbud'
+  | 'praemie'
   | 'korrespondance'
   | 'ukendt';
 
@@ -144,6 +147,11 @@ const COMPANY_SCOPE_CHECKS = new Set<string>([
   'GAP-066', // lav præmie vs. portefølje
   'GAP-070', // dobbelt-forsikring (samme ejendom, 2+ policer)
   'GAP-071', // dæknings-overlap på tværs af policer
+  'GAP-072', // dækningsgradsanalyse — beregningsgrundlag (BIZZ-2100)
+  'GAP-073', // driftstab-underforsikring vs. bruttofortjeneste (BIZZ-2100)
+  'GAP-074', // varelager overstiger løsøre-/tyveridækning (BIZZ-2100)
+  'GAP-075', // likvider overstiger netbank-dækning (BIZZ-2100)
+  'GAP-076', // omsætning nærmer sig policens forudsætning (BIZZ-2100)
   'GAP-STD-BASELINE', // standard betingelser sammenligning
 ]);
 
@@ -300,6 +308,31 @@ export const COVERAGE_CODES = [
   'driftstab',
   'erhvervsansvar',
   'udvidet_vandskade',
+  // BIZZ-2098: Erhvervskoder — løsøre-, kriminalitets-, cyber- og
+  // transportdækninger fra erhvervspolicer (fx Topdanmark erhvervsaftaler)
+  // kunne ikke repræsenteres og blev tvunget ind i forkerte bygningskoder.
+  'loesoere',
+  'indbrudstyveri',
+  'ran_roeveri',
+  'oprydning',
+  'cyber',
+  'cyberdriftstab',
+  'notifikation',
+  'netbank',
+  'kriminalitet',
+  'transport',
+  'maskiner_itudstyr',
+  'it_meromkostninger',
+  'leverandoer_aftager',
+  // BIZZ-2154: Motor-/køretøjsdækninger — biler tegnes ofte på samme aftale
+  // som ejendomspolicer (fx Topdanmark erhvervsaftaler). Uden egne koder blev
+  // Kasko/Førerulykke tvunget ind i bygningskoder, så bilpolicer fejlagtigt
+  // blev klassificeret som "Ejendomsforsikring".
+  'motorkasko',
+  'foererulykke',
+  'redning_udland',
+  'eftermonteret_udstyr',
+  'friskade',
 ] as const;
 
 export type CoverageCode = (typeof COVERAGE_CODES)[number];
@@ -324,6 +357,26 @@ export const COVERAGE_LABELS_DA: Record<CoverageCode, string> = {
   driftstab: 'Driftstab',
   erhvervsansvar: 'Erhvervsansvar',
   udvidet_vandskade: 'Udvidet vandskade',
+  // BIZZ-2098: Erhvervskoder
+  loesoere: 'Erhvervsløsøre',
+  indbrudstyveri: 'Indbrudstyveri',
+  ran_roeveri: 'Ran og røveri',
+  oprydning: 'Oprydning',
+  cyber: 'Cyber',
+  cyberdriftstab: 'Cyber-driftstab',
+  notifikation: 'Notifikation (databrud)',
+  netbank: 'Netbank',
+  kriminalitet: 'Kriminalitet',
+  transport: 'Transport / varer under transport',
+  maskiner_itudstyr: 'Maskiner og IT-udstyr',
+  it_meromkostninger: 'IT-meromkostninger',
+  leverandoer_aftager: 'Leverandør-/aftagerdriftstab',
+  // BIZZ-2154: Motor-/køretøjsdækninger
+  motorkasko: 'Kasko',
+  foererulykke: 'Førerulykke',
+  redning_udland: 'Redning i udlandet',
+  eftermonteret_udstyr: 'Eftermonteret tilbehør',
+  friskade: 'Friskade',
 };
 
 // ─── Parser output schema (Claude → JSON) ────────────────────────
@@ -390,6 +443,22 @@ export const ParsedPolicySchema = z.object({
     .nullable()
     .optional(),
   coverages: z.array(ParsedCoverageSchema).max(50),
+  /**
+   * BIZZ-2120: Sikrede/medforsikrede virksomheder nævnt på policen (fx
+   * "ansvarsforsikringen dækker Racehall København A/S og Racehall Ejendomme
+   * ApS"). Bruges af assetMatcher til at matche virksomheds-aktiver pr. sikret
+   * selskab i stedet for bredt — så en anden kundes police aldrig "dækker".
+   */
+  insured_companies: z
+    .array(
+      z.object({
+        navn: z.string().min(1).max(200),
+        cvr: z.string().max(20).nullable().optional(),
+      })
+    )
+    .max(50)
+    .nullable()
+    .optional(),
   /** Frie noter fra parser (særlige forhold, besigtigelses-bemærkninger, etc.) */
   notes: z.string().max(5000).nullable().optional(),
 });
@@ -460,6 +529,12 @@ export interface GapEngineInput {
     matchScore?: number;
     virksomhedsform?: string;
   };
+  /**
+   * BIZZ-2144: DMR-data (tjekbil.dk) for en bilpolice. Sat når policens
+   * raw_metadata indeholder et gyldigt registreringsnummer. null = opslag
+   * fejlede/ingen data; undefined = ikke en bilpolice / ikke slået op.
+   */
+  dmr?: DmrData | null;
 }
 
 /**

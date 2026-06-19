@@ -25,6 +25,9 @@ import { parseQuery } from '@/app/lib/validate';
 import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { fetchDawa } from '@/app/lib/dawa';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { hentBfeAdresser, formatBfeLabel } from '@/app/lib/bfeAdresse';
+import { fetchEjfEjereDirekt } from '@/app/lib/ejerskab/fetchEjfEjereDirekt';
 
 // ─── Query param validation ─────────────────────────────────────────────────
 
@@ -41,7 +44,7 @@ const strukturQuerySchema = z
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 /** Klassificering af en node i ejendomshierarkiet */
-export type StrukturNiveau = 'sfe' | 'hovedejendom' | 'ejerlejlighed';
+export type StrukturNiveau = 'sfe' | 'hovedejendom' | 'ejerlejlighed' | 'soester-sfe';
 
 /** En enkelt node i ejendomsstrukturtræet */
 export interface StrukturNode {
@@ -98,6 +101,11 @@ interface TLSearchItem {
   ejendomsVurdering: number | null;
   grundVaerdi: number | null;
   vurderingsDato: string | null;
+  /**
+   * BIZZ-2058: Dette er det KOMMUNALE ESR-ejendomsnummer (entydigt KUN sammen
+   * med kommuneNummer), IKKE et BFE-nummer. Må aldrig bruges som BFE — det
+   * reelle BFE (BestemtFastEjendomNummer) hentes via ejdsummarisk-opslag på uuid.
+   */
   ejendomsnummer: string | null;
   kommuneNummer: string | null;
 }
@@ -149,6 +157,76 @@ function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
     });
     req.end();
   });
+}
+
+/** BIZZ-2095: Data parset fra et ejdsummarisk-svar */
+interface TLSummarisk {
+  bfe: number;
+  /** Kontant/i alt-købesum fra seneste skøde (DKK) */
+  koebspris: number | null;
+  /** Overtagelses- eller tinglysningsdato for skødet (ISO) */
+  koebsdato: string | null;
+}
+
+/**
+ * BIZZ-2058: Henter det reelle BFE-nummer (BestemtFastEjendomNummer) for en
+ * TL-ejendom via ejdsummarisk-opslag på dens uuid.
+ *
+ * TL-søgesvar indeholder kun det kommunale ESR-ejendomsnummer, ikke BFE.
+ * ejdsummarisk-opslaget returnerer XML (EjendomSummariskHentResultat) hvor
+ * <ns7:BestemtFastEjendomNummer> er det entydige BFE.
+ *
+ * BIZZ-2095: Parser desuden skøde-købesum og overtagelsesdato fra samme
+ * svar (SkoedeKoebesum/KontantKoebesum + SkoedeOvertagelsesDato) — ingen
+ * ekstra kald, så hovedejendom-rækker kan vise købspris/-dato.
+ *
+ * @param uuid - TL-objektets uuid fra søgesvaret
+ * @returns Parsede summarisk-data eller null hvis opslaget fejlede
+ */
+async function fetchBfeFromUuid(uuid: string): Promise<TLSummarisk | null> {
+  try {
+    const res = await tlFetch(`/ejdsummarisk/${uuid}`);
+    if (res.status !== 200) return null;
+    const m = res.body.match(/BestemtFastEjendomNummer>\s*(\d+)/i);
+    if (!m) return null;
+
+    // Skøde-købesum: foretrak kontant, fald tilbage til "i alt"
+    const koebesumMatch =
+      res.body.match(/KontantKoebesum>\s*([\d.]+)/i) ?? res.body.match(/IAltKoebesum>\s*([\d.]+)/i);
+    const koebspris = koebesumMatch ? parseInt(koebesumMatch[1].replace(/\./g, ''), 10) : null;
+
+    // Overtagelsesdato fra skødet (fald tilbage til tinglysningsdato)
+    const datoMatch =
+      res.body.match(/SkoedeOvertagelsesDato>\s*(\d{4}-\d{2}-\d{2})/i) ??
+      res.body.match(/TinglysningsDato>\s*(\d{4}-\d{2}-\d{2})/i);
+
+    return {
+      bfe: parseInt(m[1], 10),
+      koebspris: koebspris != null && Number.isFinite(koebspris) ? koebspris : null,
+      koebsdato: datoMatch ? datoMatch[1] : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * BIZZ-2058: Batch-resolver reelle BFE-numre (+ købesum/dato, BIZZ-2095) for
+ * en liste af TL-uuid'er. Kalder ejdsummarisk parallelt så vi får korrekt BFE
+ * for hver ejendom frem for at fejltolke det kommunale ESR-nummer som BFE.
+ *
+ * @param uuids - TL-objekt-uuid'er
+ * @returns Map fra uuid → summarisk-data (kun entries der kunne resolves)
+ */
+async function fetchBfeBatch(uuids: string[]): Promise<Map<string, TLSummarisk>> {
+  const map = new Map<string, TLSummarisk>();
+  const results = await Promise.all(
+    uuids.map(async (uuid) => ({ uuid, data: await fetchBfeFromUuid(uuid) }))
+  );
+  for (const { uuid, data } of results) {
+    if (data && data.bfe > 0) map.set(uuid, data);
+  }
+  return map;
 }
 
 // ─── VUR GraphQL helper ─────────────────────────────────────────────────────
@@ -237,6 +315,307 @@ async function fetchVurderingBatch(bfeList: number[]): Promise<Map<number, VurRe
     logger.warn(`[ejendom-struktur] VUR batch fetch fejl:`, err);
   }
   return result;
+}
+
+// ─── Ejerskabs-berigelse fra ejf_ejerskab ─────────────────────────────────
+
+/** Ejerskabsdata per BFE */
+interface EjerInfo {
+  ejerNavn: string;
+  ejerType: 'person' | 'selskab' | 'ukendt';
+}
+
+/**
+ * BIZZ-2060: Batch-henter ejerskabsdata fra ejf_ejerskab for en liste af BFE'er.
+ * Returnerer Map fra BFE → ejer-info (kun gældende ejerskifter).
+ * Slår CVR-navne op i cvr_virksomhed for virksomhedsejere.
+ *
+ * @param bfeList - Array af BFE-numre
+ * @returns Map fra BFE → EjerInfo
+ */
+async function fetchEjerskabBatch(bfeList: number[]): Promise<Map<number, EjerInfo>> {
+  const result = new Map<number, EjerInfo>();
+  if (bfeList.length === 0) return result;
+
+  try {
+    const supabase = createAdminClient();
+
+    // Hent gældende ejerskaber for alle BFE'er
+    const { data: rawEjerskaber } = await supabase
+      .from('ejf_ejerskab')
+      .select('bfe_nummer, ejer_navn, ejer_cvr, ejer_type')
+      .in('bfe_nummer', bfeList)
+      .eq('status', 'gældende')
+      .order('virkning_fra', { ascending: false });
+
+    const ejerskaber = (rawEjerskaber ?? []) as Array<{
+      bfe_nummer: number;
+      ejer_navn: string | null;
+      ejer_cvr: number | null;
+      ejer_type: string | null;
+    }>;
+    if (ejerskaber.length === 0) return result;
+
+    // Saml CVR-numre der skal resolves til navne
+    const cvrSet = new Set<string>();
+    for (const e of ejerskaber) {
+      if (e.ejer_cvr && e.ejer_type === 'virksomhed') {
+        cvrSet.add(String(e.ejer_cvr));
+      }
+    }
+
+    // Batch-hent CVR-navne fra cvr_virksomhed
+    const cvrNavnMap = new Map<string, string>();
+    if (cvrSet.size > 0) {
+      const { data: rawVirksomheder } = await supabase
+        .from('cvr_virksomhed')
+        .select('cvr, navn')
+        .in('cvr', Array.from(cvrSet));
+
+      for (const v of (rawVirksomheder ?? []) as Array<{ cvr: string; navn: string }>) {
+        if (v.cvr && v.navn) cvrNavnMap.set(String(v.cvr), v.navn);
+      }
+    }
+
+    // Map til resultat — kun første (nyeste) ejer per BFE
+    for (const e of ejerskaber) {
+      if (result.has(e.bfe_nummer)) continue; // allerede sat (nyeste virkning_fra først)
+
+      let navn: string;
+      if (e.ejer_type === 'virksomhed' && e.ejer_cvr) {
+        navn = cvrNavnMap.get(String(e.ejer_cvr)) ?? e.ejer_navn ?? `CVR ${e.ejer_cvr}`;
+      } else if (e.ejer_type === 'person' && !e.ejer_navn) {
+        // BIZZ-2111: person uden navn fra EJF = navne- og adressebeskyttet —
+        // vi kender ejertypen, kun navnet er beskyttet. GDPR: vis aldrig navnet
+        // fra andre kilder (fx tinglysnings-dokumenter) når EJF beskytter det.
+        navn = 'Navne- og adressebeskyttet';
+      } else {
+        navn = e.ejer_navn ?? 'Ukendt';
+      }
+
+      result.set(e.bfe_nummer, {
+        ejerNavn: navn,
+        ejerType:
+          e.ejer_type === 'virksomhed' ? 'selskab' : e.ejer_type === 'person' ? 'person' : 'ukendt',
+      });
+    }
+  } catch (err) {
+    logger.warn('[ejendom-struktur] Ejerskab batch fetch fejl:', err);
+  }
+
+  // BIZZ-2111 (reopen): BFE'er uden gældende cache-række — delta-syncen har
+  // historiske huller, og navnebeskyttede ejerskifter blev tidligere droppet
+  // helt af ingesten. Live EJF-opslag (capped, så trælatensen er bounded;
+  // routen er s-maxage-cachet) henter den aktuelle ejer. Gældende personejer
+  // med null navn = navne- og adressebeskyttet — labelen SKAL sættes her, så
+  // UI'et ikke viser tomt/historisk navn for en beskyttet persons ejendom.
+  const missing = bfeList.filter((b) => !result.has(b)).slice(0, 15);
+  const LIVE_CONCURRENCY = 5;
+  for (let i = 0; i < missing.length; i += LIVE_CONCURRENCY) {
+    const batch = missing.slice(i, i + LIVE_CONCURRENCY);
+    await Promise.allSettled(
+      batch.map(async (bfe) => {
+        try {
+          const { ejere } = await fetchEjfEjereDirekt(bfe);
+          const e = ejere[0];
+          if (!e) return;
+          const navn = e.personNavn ?? e.virksomhedsnavn ?? null;
+          if (navn || e.cvr) {
+            result.set(bfe, {
+              ejerNavn: navn ?? `CVR ${e.cvr}`,
+              ejerType:
+                e.ejertype === 'person'
+                  ? 'person'
+                  : e.ejertype === 'selskab'
+                    ? 'selskab'
+                    : 'ukendt',
+            });
+          } else if (e.ejertype === 'person') {
+            result.set(bfe, { ejerNavn: 'Navne- og adressebeskyttet', ejerType: 'person' });
+          }
+        } catch {
+          /* live-opslag non-fatal — node vises uden ejer */
+        }
+      })
+    );
+  }
+  return result;
+}
+
+// ─── Søster-SFE'er (BIZZ-2094) ──────────────────────────────────────────────
+
+/**
+ * BIZZ-2094: Finder søster-SFE'er til root-SFE'en — separate SFE'er på
+ * nabo-matrikler i samme ejerlav med samme gældende ejer (ejf_ejerskab
+ * ejer_cvr). Resights grupperer pr. vurderingsejendom, som kan spænde over
+ * flere SFE'er; VUR GraphQL eksponerer ikke vurderingsejendom-koblingen
+ * (VUR_BFEKrydsreference har kun BFEnummer — probet 2026-06-12), så
+ * ejer+ejerlav-fallback er den dokumenterede strategi fra ticketen.
+ *
+ * Adresser resolves via den fælles BFE→adresse-lib (BIZZ-2093) med
+ * matrikelbetegnelse som fallback for ubebyggede grunde.
+ *
+ * @param rootBfe - Root-SFE'ens BFE-nummer
+ * @param ejerlavKode - Root-matriklens ejerlavkode (geografisk afgrænsning)
+ * @param excludeBfes - BFE'er der allerede er i træet
+ * @returns Søster-SFE-noder (tom liste ved person-ejer eller fejl)
+ */
+/**
+ * Check om to jordstykke-polygoner er tilstødende (deler matrikelgrænse).
+ * Beregner mindste afstand mellem polygon-punkter — < 2m = tilstødende.
+ *
+ * @param poly1 - GeoJSON koordinater [lng, lat][]
+ * @param poly2 - GeoJSON koordinater [lng, lat][]
+ * @returns true hvis polyonerne deler en grænse
+ */
+function _arePolygonsAdjacent(
+  poly1: Array<[number, number]>,
+  poly2: Array<[number, number]>
+): boolean {
+  const THRESHOLD_M = 2; // 2 meter = deler grænse
+  const COS_LAT = Math.cos((56 * Math.PI) / 180); // ~Helsingør breddegrad
+  for (const p1 of poly1) {
+    for (const p2 of poly2) {
+      const dx = (p1[0] - p2[0]) * 111000 * COS_LAT;
+      const dy = (p1[1] - p2[1]) * 111000;
+      if (dx * dx + dy * dy < THRESHOLD_M * THRESHOLD_M) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Hent jordstykke-polygon for et BFE fra DAWA.
+ *
+ * @param bfe - BFE-nummer
+ * @returns Polygon-koordinater eller null
+ */
+async function _fetchJordstykkePolygon(bfe: number): Promise<Array<[number, number]> | null> {
+  try {
+    const r = await fetchDawa(
+      `https://api.dataforsyningen.dk/jordstykker?bfenummer=${bfe}&format=geojson`,
+      { signal: AbortSignal.timeout(5000) },
+      { caller: 'ejendom-struktur.polygon' }
+    );
+    if (!r.ok) return null;
+    const gj = (await r.json()) as {
+      features?: Array<{ geometry?: { coordinates?: Array<Array<[number, number]>> } }>;
+    };
+    return gj.features?.[0]?.geometry?.coordinates?.[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function _fetchSoesterSfeNodes2(
+  rootBfe: number,
+  ejerlavKode: string,
+  excludeBfes: Set<number>
+): Promise<StrukturNode[]> {
+  try {
+    const supabase = createAdminClient();
+
+    // 1) Gældende virksomheds-ejere (CVR) for root-SFE'en
+    const { data: rootEjere } = await supabase
+      .from('ejf_ejerskab')
+      .select('ejer_cvr')
+      .eq('bfe_nummer', rootBfe)
+      .eq('status', 'gældende')
+      .not('ejer_cvr', 'is', null)
+      .limit(5);
+    const cvrs = [
+      ...new Set(
+        ((rootEjere ?? []) as Array<{ ejer_cvr: string | number | null }>)
+          .map((r) => String(r.ejer_cvr ?? ''))
+          .filter((c) => c.length > 0)
+      ),
+    ];
+    if (cvrs.length === 0) return [];
+
+    // 2) Ejerens øvrige gældende BFE'er (kandidater)
+    const { data: andre } = await supabase
+      .from('ejf_ejerskab')
+      .select('bfe_nummer')
+      .in('ejer_cvr', cvrs)
+      .eq('status', 'gældende')
+      .neq('bfe_nummer', rootBfe)
+      .limit(200);
+    const kandidater = [
+      ...new Set(((andre ?? []) as Array<{ bfe_nummer: number }>).map((r) => r.bfe_nummer)),
+    ]
+      .filter((b) => b > 0 && !excludeBfes.has(b))
+      .slice(0, 80);
+    if (kandidater.length === 0) return [];
+
+    // 3) Geografisk afgrænsning: kun BFE'er med jordstykke i samme ejerlav.
+    // DAWA-opslag pr. kandidat med begrænset parallelisme.
+    const matchende: Array<{ bfe: number; matrikelLabel: string }> = [];
+    const KONK = 8;
+    for (let i = 0; i < kandidater.length; i += KONK) {
+      const chunk = kandidater.slice(i, i + KONK);
+      const res = await Promise.all(
+        chunk.map(async (bfe) => {
+          try {
+            const r = await fetchDawa(
+              `https://api.dataforsyningen.dk/jordstykker?bfenummer=${bfe}&struktur=mini`,
+              { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+              { caller: 'ejendom-struktur.soester-ejerlav' }
+            );
+            if (!r.ok) return null;
+            const js = (await r.json()) as Array<{
+              ejerlavkode?: number;
+              ejerlavnavn?: string;
+              matrikelnr?: string;
+            }>;
+            const match = js.find((j) => String(j.ejerlavkode ?? '') === ejerlavKode);
+            if (!match) return null;
+            return {
+              bfe,
+              matrikelLabel: `${match.matrikelnr ?? ''} ${match.ejerlavnavn ?? ''}`.trim(),
+            };
+          } catch {
+            return null;
+          }
+        })
+      );
+      for (const m of res) if (m) matchende.push(m);
+    }
+    if (matchende.length === 0) return [];
+
+    // 4) Adresser (fælles lib, BIZZ-2093) + ejer-navne i batch
+    const soesterBfes = matchende.map((m) => m.bfe);
+    const [adresser, ejerMap] = await Promise.all([
+      hentBfeAdresser(soesterBfes),
+      fetchEjerskabBatch(soesterBfes),
+    ]);
+
+    const nodes: StrukturNode[] = matchende.map(({ bfe, matrikelLabel }) => {
+      const adr = adresser.get(bfe) ?? null;
+      const ejer = ejerMap.get(bfe);
+      return {
+        bfe,
+        adresse: formatBfeLabel(adr) ?? matrikelLabel ?? `BFE ${bfe}`,
+        niveau: 'soester-sfe' as const,
+        dawaId: adr?.dawaId ?? null,
+        ejendomsvaerdi: null,
+        grundvaerdi: null,
+        vurderingsaar: null,
+        tlVurdering: null,
+        areal: null,
+        vaerelser: null,
+        ejer: ejer?.ejerNavn ?? null,
+        ejertype: ejer?.ejerType ?? null,
+        koebspris: null,
+        koebsdato: null,
+        children: [],
+      };
+    });
+    nodes.sort((a, b) => a.adresse.localeCompare(b.adresse, 'da'));
+    return nodes;
+  } catch (err) {
+    logger.warn('[ejendom-struktur] søster-SFE opslag fejlede:', err);
+    return [];
+  }
 }
 
 // ─── DAWA adresse-resolver ──────────────────────────────────────────────────
@@ -531,6 +910,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
       if (searchResults[0].status !== 200) {
         logger.error(`[ejendom-struktur] Tinglysning svarede ${searchResults[0].status}`);
       }
+      // BIZZ-2095: tomme/fejlede TL-svar må ikke caches — næste request skal prøve igen
       return NextResponse.json(
         {
           tree: null,
@@ -539,12 +919,16 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
               ? `Tinglysning svarede ${searchResults[0].status}`
               : null,
         },
-        { status: 200 }
+        { status: 200, headers: { 'Cache-Control': 'no-store' } }
       );
     }
 
     if (items.length === 0) {
-      return NextResponse.json({ tree: null, fejl: null }, { status: 200 });
+      // BIZZ-2095: tomt TL-svar caches ikke
+      return NextResponse.json(
+        { tree: null, fejl: null },
+        { status: 200, headers: { 'Cache-Control': 'no-store' } }
+      );
     }
 
     // Debug: log alle TL items for at forstå klassificering
@@ -553,19 +937,89 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
       items.map((i) => ({
         adresse: i.adresse,
         vedroerende: i.vedroerende,
-        bfe: i.ejendomsnummer,
+        esr: i.ejendomsnummer,
         vurdering: i.ejendomsVurdering,
       }))
     );
 
+    // ── BIZZ-2058: Hent reelle BFE-numre via ejdsummarisk ──
+    // TL-søgesvaret indeholder kun det kommunale ESR-ejendomsnummer, IKKE BFE.
+    // Tidligere blev ESR fejltolket som BFE (parseInt(ejendomsnummer)), hvilket
+    // gav links til vilkårlige forkerte ejendomme (fx ESR 134971 → BFE 134971 =
+    // Cumberlandsgade 2 i stedet for Hammerholmen 44, 1.). Vi slår derfor det
+    // reelle BFE op pr. uuid.
+    const bfeMap = await fetchBfeBatch(items.map((i) => i.uuid));
+
     // ── Trin 2: Klassificér alle items ──
     const classified = items.map((item) => {
       const niveau = klassificerItem(item);
-      const bfe = item.ejendomsnummer ? parseInt(item.ejendomsnummer, 10) : 0;
+      const summarisk = bfeMap.get(item.uuid) ?? null;
+      const bfe = summarisk?.bfe ?? 0;
       const husnr = extractHusnr(item.adresse);
       const { etage, doer } = parseEtageDoer(item.adresse);
-      return { ...item, niveau, bfe, husnr, etage, doer };
+      return {
+        ...item,
+        niveau,
+        bfe,
+        husnr,
+        etage,
+        doer,
+        // BIZZ-2095: skøde-købesum/-dato fra samme ejdsummarisk-svar
+        koebspris: summarisk?.koebspris ?? null,
+        koebsdato: summarisk?.koebsdato ?? null,
+      };
     });
+
+    // BIZZ-2132: Ejerlejligheder med SFE-BFE → resolve til individuel BFE
+    // via bfe_adresse_cache (adresse + etage + dør match). TL's ejdsummarisk
+    // returnerer SFE-BFE for ejerlejligheder i stedet for den individuelle.
+    if (sfeBfe) {
+      const sfeBfeNum = typeof sfeBfe === 'number' ? sfeBfe : parseInt(String(sfeBfe), 10);
+      const needsResolve = classified.filter(
+        (c) => c.niveau === 'ejerlejlighed' && c.bfe === sfeBfeNum
+      );
+      if (needsResolve.length > 0) {
+        try {
+          // Hent alle ejerlejligheder i bfe_adresse_cache der matcher SFE'ens postnr
+          const firstPostnr = needsResolve[0].adresse?.match(/\b(\d{4})\b/)?.[1];
+          if (firstPostnr) {
+            const { data: cacheRows } = await createAdminClient()
+              .from('bfe_adresse_cache')
+              .select('bfe_nummer, adresse, etage, doer')
+              .eq('postnr', firstPostnr)
+              .eq('ejendomstype', 'Ejerlejlighed')
+              .limit(500);
+            if (cacheRows && cacheRows.length > 0) {
+              const normAddr = (s: string | null) =>
+                (s ?? '').toLowerCase().replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim();
+              for (const item of needsResolve) {
+                // Match på adresse-tekst + etage + dør
+                const itemAddr = normAddr(item.adresse);
+                const match = (
+                  cacheRows as Array<{
+                    bfe_nummer: number;
+                    adresse: string | null;
+                    etage: string | null;
+                    doer: string | null;
+                  }>
+                ).find((r) => {
+                  const fullAddr = `${r.adresse ?? ''} ${r.etage ?? ''} ${r.doer ?? ''}`;
+                  return normAddr(fullAddr) === itemAddr || itemAddr.includes(normAddr(r.adresse));
+                });
+                if (match) {
+                  (item as { bfe: number }).bfe = match.bfe_nummer;
+                }
+              }
+              logger.log(
+                `[ejendom-struktur] BIZZ-2132: resolved ${needsResolve.filter((i) => i.bfe !== sfeBfeNum).length}/${needsResolve.length} ejerlejlighed-BFEs fra cache`
+              );
+            }
+          }
+        } catch {
+          // Best-effort — analysen fortsætter med SFE-BFE
+        }
+      }
+    }
 
     logger.log(
       `[ejendom-struktur] klassificering:`,
@@ -653,8 +1107,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
             vaerelser: null,
             ejer: null,
             ejertype: null,
-            koebspris: null,
-            koebsdato: null,
+            koebspris: ejl.koebspris,
+            koebsdato: ejl.koebsdato,
             children: [],
           };
         });
@@ -672,8 +1126,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
         vaerelser: null,
         ejer: null,
         ejertype: null,
-        koebspris: null,
-        koebsdato: null,
+        // BIZZ-2095: skøde-købesum/-dato fra ejdsummarisk
+        koebspris: hej.koebspris,
+        koebsdato: hej.koebsdato,
         children,
       };
     });
@@ -728,8 +1183,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
           vaerelser: null,
           ejer: null,
           ejertype: null,
-          koebspris: null,
-          koebsdato: null,
+          koebspris: ejl.koebspris,
+          koebsdato: ejl.koebsdato,
           children: [],
         };
       });
@@ -801,8 +1256,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
       vaerelser: null,
       ejer: null,
       ejertype: null,
-      koebspris: null,
-      koebsdato: null,
+      // BIZZ-2095: skøde-købesum/-dato fra ejdsummarisk
+      koebspris: sfeItem?.koebspris ?? null,
+      koebsdato: sfeItem?.koebsdato ?? null,
       children: [...hovedejendomNodes, ...virtualHovedNodes],
     };
 
@@ -911,17 +1367,99 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
       }
     }
 
+    // ── BIZZ-2094: Søster-SFE'er — samme gældende ejer + samme ejerlav ──
+    // Resights' struktur omfatter hele vurderingsejendommen, som kan spænde
+    // over flere SFE'er (fx Fenrisvej 15/19 under Gefionsvej 47A). VUR
+    // eksponerer ikke koblingen, så vi bruger ticketens fallback: ejerens
+    // øvrige SFE'er i samme ejerlav vises som søster-SFE'er under root.
+    if (root.bfe > 0 && ejerlavKode) {
+      const inTree = new Set<number>();
+      /** Samler alle BFE'er der allerede er i træet */
+      const collectBfes = (n: StrukturNode): void => {
+        if (n.bfe > 0) inTree.add(n.bfe);
+        n.children.forEach(collectBfes);
+      };
+      collectBfes(root);
+      // BIZZ-2134: Søster-SFE deaktiveret — bruger for brede kriterier (ejer_cvr
+      // + ejerlav) og viser ALLE matrikler selskabet ejer i ejerlav, ikke kun
+      // strukturelt relaterede. Skaber støj for store ejendomsselskaber.
+      // Ejerskab-overblik hører til på virksomhedssiden, ikke i ejendomsstrukturen.
+      // const soesterNodes = await fetchSoesterSfeNodes(root.bfe, ejerlavKode, inTree);
+      void inTree; // suppress unused
+    }
+
+    // ── BIZZ-2060/BIZZ-2095: Berig ALLE noder med ejer + areal i batch ──
+    // BIZZ-2060 ramte kun ejerlejligheder 2 niveauer nede — hovedejendom- og
+    // SFE-rækker fik aldrig ejer sat, selvom ejf_ejerskab har gældende ejere
+    // for dem. Nu walkes hele træet (EFTER søster-SFE'er er tilføjet, så de
+    // også får areal): ejer fra ejf_ejerskab (CVR-navne via cvr_virksomhed)
+    // og areal fra bbr_ejendom_status, begge i ét batch-kald.
+    {
+      const alleNoder: StrukturNode[] = [];
+      /** Samler alle noder med reelt BFE rekursivt */
+      const collectNodes = (n: StrukturNode): void => {
+        if (n.bfe > 0) alleNoder.push(n);
+        n.children.forEach(collectNodes);
+      };
+      collectNodes(root);
+
+      if (alleNoder.length > 0) {
+        const alleBfes = [...new Set(alleNoder.map((n) => n.bfe))];
+        const supabase = createAdminClient();
+        const [ejerMap, arealRes] = await Promise.all([
+          fetchEjerskabBatch(alleBfes),
+          supabase
+            .from('bbr_ejendom_status')
+            .select('bfe_nummer, samlet_boligareal, samlet_erhvervsareal, bebygget_areal')
+            .in('bfe_nummer', alleBfes),
+        ]);
+        const arealMap = new Map<number, number>();
+        for (const r of (arealRes.data ?? []) as Array<{
+          bfe_nummer: number;
+          samlet_boligareal: number | null;
+          samlet_erhvervsareal: number | null;
+          bebygget_areal: number | null;
+        }>) {
+          const areal = r.samlet_boligareal ?? r.samlet_erhvervsareal ?? r.bebygget_areal;
+          if (areal != null && areal > 0) arealMap.set(r.bfe_nummer, areal);
+        }
+        for (const node of alleNoder) {
+          const ejerInfo = ejerMap.get(node.bfe);
+          if (ejerInfo && !node.ejer) {
+            node.ejer = ejerInfo.ejerNavn;
+            node.ejertype = ejerInfo.ejerType;
+          }
+          if (node.areal == null) {
+            node.areal = arealMap.get(node.bfe) ?? null;
+          }
+        }
+        logger.log(
+          `[ejendom-struktur] Berigelse: ${ejerMap.size}/${alleBfes.length} med ejer, ${arealMap.size} med areal`
+        );
+      }
+    }
+
     logger.log(`[ejendom-struktur] Final tree: ${root.children.length} children`);
 
+    // BIZZ-2095: cache kun ikke-tomme træer — et tomt træ (fx TL-timeout undervejs)
+    // må ikke ligge 1 time i CDN-cachen og skjule data for efterfølgende besøg
     return NextResponse.json(
       { tree: root, fejl: null },
       {
         status: 200,
-        headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
+        headers: {
+          'Cache-Control':
+            root.children.length > 0
+              ? 'public, s-maxage=3600, stale-while-revalidate=600'
+              : 'no-store',
+        },
       }
     );
   } catch (err) {
     logger.error('[ejendom-struktur] Uventet fejl:', err);
-    return NextResponse.json({ tree: null, fejl: 'Ekstern API fejl' }, { status: 200 });
+    return NextResponse.json(
+      { tree: null, fejl: 'Ekstern API fejl' },
+      { status: 200, headers: { 'Cache-Control': 'no-store' } }
+    );
   }
 }

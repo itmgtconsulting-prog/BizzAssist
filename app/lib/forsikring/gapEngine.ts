@@ -779,6 +779,374 @@ function checkMissingDnO(input: GapEngineInput): DetectedGap | null {
   };
 }
 
+// ─── BIZZ-2170: Værdi-baserede checks (forsikret sum vs købspris/vurdering) ───
+
+/**
+ * Input til værdi-baserede gap-checks (BIZZ-2170).
+ * Samler forsikret sum + ejendommens faktiske værdi-indikatorer.
+ * Holdt adskilt fra GapEngineInput fordi data kommer fra eksterne
+ * cross-checks (TL købspris + VUR vurdering), ikke fra policen selv.
+ */
+export interface VaerdiCheckInput {
+  /** BFE-nummer (til source_data + UI-link) */
+  bfe: number;
+  /** Police-ID som gap'et tilknyttes */
+  policyId: string;
+  /** Ejendommens adresse (til læsbar gap-tekst) */
+  adresse: string | null;
+  /** Forsikret sum fra policen (sum_insured_dkk) */
+  sumInsuredDkk: number | null;
+  /** Offentlig ejendomsvurdering (VUR ejendomsværdi) */
+  vurderingDkk: number | null;
+  /** Vurderingsår (VUR) */
+  vurderingsAar: number | null;
+  /** Seneste tinglyste købspris (TL ejdsummarisk) */
+  koebsprisDkk: number | null;
+  /** Seneste købsdato (ISO, TL ejdsummarisk) */
+  koebsDato: string | null;
+  /** Analyse-dato (til alders-beregning af købsdato) */
+  asOfDate: Date;
+}
+
+/** Nyværdi-nuance der vedlægges alle værdi-gaps (BIZZ-2170 acceptance) */
+const VAERDI_NYVAERDI_NOTE =
+  'Bemærk: bygningsforsikring tegnes typisk til nyværdi (genopførelsesværdi), ' +
+  'som lovligt kan afvige fra både købspris (grund+bygning) og offentlig vurdering.';
+
+/** Formatér DKK-beløb læsbart (fx 15.000.000 kr) */
+function formatDkk(n: number): string {
+  return `${Math.round(n).toLocaleString('da-DK')} kr`;
+}
+
+/**
+ * BIZZ-2175: Afgør om en dækning repræsenterer bygningens forsikringsværdi.
+ *
+ * Bygningsbrand/-kasko bærer bygningens nyværdi, mens fx ansvarspolicens
+ * "Varetægt" (også brand_el-kode) IKKE er en bygningssum. Vi inkluderer
+ * derfor 'bygningskasko' altid, og 'brand_el' kun når labelen nævner
+ * "bygning" (fx "Bygningsbrand mv.").
+ *
+ * @param c - Dækning fra en police
+ * @returns true hvis dækningen bærer en bygnings-forsikringssum
+ */
+export function isBuildingValueCoverage(
+  c: Pick<ForsikringCoverage, 'coverage_code' | 'coverage_label' | 'is_covered' | 'sum_dkk'>
+): boolean {
+  if (!c.is_covered || !c.sum_dkk || c.sum_dkk <= 0) return false;
+  if (c.coverage_code === 'bygningskasko') return true;
+  return c.coverage_code === 'brand_el' && /bygning/i.test(c.coverage_label ?? '');
+}
+
+/**
+ * BIZZ-2175: Find den højeste bygnings-forsikringssum blandt en polices
+ * dækninger. Bygningssummen ligger ofte på dæknings-niveau (fx
+ * "Bygningsbrand mv.") snarere end på policens sum_insured_dkk.
+ *
+ * @param coverages - Dækninger for én police
+ * @returns Højeste bygnings-dækningssum, eller null hvis ingen findes
+ */
+export function highestBuildingCoverageSum(
+  coverages: Array<
+    Pick<ForsikringCoverage, 'coverage_code' | 'coverage_label' | 'is_covered' | 'sum_dkk'>
+  >
+): number | null {
+  let best: number | null = null;
+  for (const c of coverages) {
+    if (isBuildingValueCoverage(c) && (best === null || c.sum_dkk! > best)) {
+      best = c.sum_dkk!;
+    }
+  }
+  return best;
+}
+
+/**
+ * BIZZ-2170: Kør værdi-baserede checks for én ejendom.
+ *
+ * Sammenligner forsikret sum mod seneste købspris (primær reference) og
+ * offentlig vurdering (sekundær reference). Resultatet er ALDRIG critical —
+ * kun warning/info — fordi nyværdi lovligt kan afvige fra købspris/markedsværdi.
+ *
+ * @param input - Forsikret sum + værdi-indikatorer for ejendommen
+ * @returns Liste af GAP-VAERDI-* gaps (kan være tom)
+ */
+export function runVaerdiChecks(input: VaerdiCheckInput): DetectedGap[] {
+  const gaps: DetectedGap[] = [];
+  const { sumInsuredDkk, vurderingDkk, koebsprisDkk, koebsDato, adresse, bfe } = input;
+  const adresseLabel = adresse ?? `BFE ${bfe}`;
+
+  // GAP-VAERDI-INGEN-SUM: policen mangler forsikringssum → kan ikke verificeres
+  if (!sumInsuredDkk || sumInsuredDkk <= 0) {
+    // BIZZ-2175: selv uden forsikringssum oplyser vi de kendte
+    // referenceværdier (seneste tinglyste købspris / offentlig vurdering),
+    // så mægleren har et udgangspunkt for hvad bygningen bør forsikres til.
+    const refDele: string[] = [];
+    if (koebsprisDkk && koebsprisDkk > 0) {
+      const koebAar = koebsDato ? new Date(koebsDato).getFullYear() : null;
+      refDele.push(
+        `seneste tinglyste handel var ${formatDkk(koebsprisDkk)}${
+          koebAar && Number.isFinite(koebAar) ? ` (${koebAar})` : ''
+        }`
+      );
+    }
+    if (vurderingDkk && vurderingDkk > 0) {
+      refDele.push(`offentlig vurdering er ${formatDkk(vurderingDkk)}`);
+    }
+    const refTekst = refDele.length > 0 ? ` Til reference: ${refDele.join(', og ')}.` : '';
+    gaps.push({
+      check_id: 'GAP-VAERDI-INGEN-SUM',
+      category: 'underforsikret',
+      severity: 'info',
+      title: 'Ingen forsikringssum oplyst',
+      description: `Policen for ${adresseLabel} har ingen forsikringssum. Forsikringsværdien kan ikke sammenlignes med købspris eller offentlig vurdering.${refTekst}`,
+      recommendation:
+        'Indhent forsikringssummen fra policen for at kunne vurdere under-/overforsikring.',
+      estimated_impact_dkk: null,
+      source_data: {
+        bfe,
+        adresse,
+        koebspris: koebsprisDkk ?? null,
+        koebs_dato: koebsDato ?? null,
+        vurdering: vurderingDkk ?? null,
+      },
+    });
+    return gaps;
+  }
+
+  // Referenceværdi: faktisk handelspris (købspris) foretrukket, ellers vurdering.
+  const harKoebspris = !!(koebsprisDkk && koebsprisDkk > 0);
+  const refDkk = harKoebspris
+    ? koebsprisDkk!
+    : vurderingDkk && vurderingDkk > 0
+      ? vurderingDkk
+      : null;
+  const refKilde = harKoebspris ? 'købspris' : 'offentlig vurdering';
+
+  if (refDkk) {
+    if (sumInsuredDkk < refDkk * 0.7) {
+      // GAP-VAERDI-UNDER: forsikret sum mere end 30% under reference → warning
+      const pctUnder = Math.round((1 - sumInsuredDkk / refDkk) * 100);
+      gaps.push({
+        check_id: 'GAP-VAERDI-UNDER',
+        category: 'underforsikret',
+        severity: 'warning',
+        title: 'Mulig underforsikring',
+        description: `${adresseLabel} har ${refKilde} ${formatDkk(refDkk)} men er forsikret til ${formatDkk(sumInsuredDkk)} (${pctUnder}% under ${refKilde}). ${VAERDI_NYVAERDI_NOTE}`,
+        recommendation:
+          'Verificér at forsikringssummen afspejler bygningens nyværdi (genopførelsesværdi) — kontakt forsikringsmægler ved tvivl.',
+        estimated_impact_dkk: refDkk - sumInsuredDkk,
+        source_data: {
+          bfe,
+          adresse,
+          sum_insured: sumInsuredDkk,
+          reference: refDkk,
+          reference_kilde: refKilde,
+          pct_under: pctUnder,
+        },
+      });
+    } else if (harKoebspris && sumInsuredDkk > koebsprisDkk! * 1.5) {
+      // GAP-VAERDI-OVER: forsikret sum mere end 50% over købspris → info
+      const pctOver = Math.round((sumInsuredDkk / koebsprisDkk! - 1) * 100);
+      gaps.push({
+        check_id: 'GAP-VAERDI-OVER',
+        category: 'overforsikret',
+        severity: 'info',
+        title: 'Mulig overforsikring',
+        description: `${adresseLabel} er forsikret til ${formatDkk(sumInsuredDkk)} — ${pctOver}% over seneste købspris (${formatDkk(koebsprisDkk!)}). En højere sum kan være korrekt hvis den afspejler genopførelsesværdi. ${VAERDI_NYVAERDI_NOTE}`,
+        recommendation:
+          'Verificér at den forsikrede sum afspejler genopførelsesværdien og ikke giver unødigt høj præmie.',
+        estimated_impact_dkk: null,
+        source_data: {
+          bfe,
+          adresse,
+          sum_insured: sumInsuredDkk,
+          koebspris: koebsprisDkk,
+          pct_over: pctOver,
+        },
+      });
+    }
+  }
+
+  // GAP-VAERDI-GAMMEL-KOEB: købsdato >10 år gammel — værdien kan være steget.
+  // Springes over hvis vi allerede har flaget underforsikring (samme handling).
+  const underFlaget = gaps.some((g) => g.check_id === 'GAP-VAERDI-UNDER');
+  if (koebsDato && !underFlaget) {
+    const koebAar = new Date(koebsDato).getFullYear();
+    if (Number.isFinite(koebAar)) {
+      const alderAar = input.asOfDate.getFullYear() - koebAar;
+      if (alderAar > 10) {
+        gaps.push({
+          check_id: 'GAP-VAERDI-GAMMEL-KOEB',
+          category: 'underforsikret',
+          severity: 'info',
+          title: 'Gammelt købstidspunkt',
+          description: `${adresseLabel} blev købt for ${alderAar} år siden (${koebAar})${harKoebspris ? ` for ${formatDkk(koebsprisDkk!)}` : ''}. Ejendomsværdien kan være steget markant siden — kontrollér at forsikringssummen er opdateret.`,
+          recommendation:
+            'Gennemgå om forsikringssummen er indeksreguleret og afspejler nuværende genopførelsesværdi.',
+          estimated_impact_dkk: null,
+          source_data: {
+            bfe,
+            adresse,
+            koebs_aar: koebAar,
+            alder_aar: alderAar,
+            koebspris: koebsprisDkk,
+          },
+        });
+      }
+    }
+  }
+
+  return gaps.map((g) => ({ ...g, scope: gapScope(g.check_id) }));
+}
+
+/**
+ * Normalisér et forsikringsselskabsnavn til sammenligning: lowercase, fjern
+ * selskabsformer (a/s, aps, forsikring, group osv.) og ikke-alfanumeriske tegn.
+ * Bruges til at afgøre om policens selskab og DMR's selskab reelt er samme.
+ *
+ * @param s - Selskabsnavn
+ * @returns Normaliseret kerne-navn
+ */
+function normalizeSelskab(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/\b(a\/s|aps|p\/s|i\/s|forsikring(en)?|group|gensidige?|gjensidige)\b/g, '')
+    .replace(/[^a-z0-9æøå]/g, '')
+    .trim();
+}
+
+/**
+ * GAP-BIL-AFMELDT: Køretøjet er afmeldt i DMR, men der betales stadig for en
+ * aktiv bilforsikring. Tegn på at bilen er solgt/skrottet uden at policen er
+ * opsagt. Severity: warning (spildt præmie, ikke akut risiko).
+ *
+ * @param input - GapEngineInput med dmr-data
+ * @returns DetectedGap eller null
+ */
+function checkBilAfmeldt(input: GapEngineInput): DetectedGap | null {
+  const dmr = input.dmr;
+  if (!dmr || !dmr.status) return null;
+  if (!/afmeldt/i.test(dmr.status)) return null;
+  const bil = [dmr.maerke, dmr.model].filter(Boolean).join(' ') || dmr.regNr;
+  return {
+    check_id: 'GAP-BIL-AFMELDT',
+    category: 'uforsikret',
+    severity: 'warning',
+    title: 'Bil afmeldt i Motorregistret',
+    description: `${bil} (${dmr.regNr}) står som "${dmr.status}" i DMR, men policen er stadig aktiv. Bilen kan være solgt eller skrottet uden at forsikringen er opsagt.`,
+    recommendation:
+      'Bekræft om køretøjet stadig ejes. Er det solgt/skrottet, bør policen opsiges for at undgå spildt præmie.',
+    estimated_impact_dkk: null,
+    source_data: { regnr: dmr.regNr, status: dmr.status, maerke: dmr.maerke, model: dmr.model },
+  };
+}
+
+/**
+ * GAP-BIL-FORSIKRING-OPHOERT: DMR angiver at den lovpligtige ansvarsforsikring
+ * er ophørt, mens køretøjet stadig er indregistreret. Bilen kører potentielt
+ * uforsikret. Severity: critical (lovpligtig dækning mangler).
+ *
+ * @param input - GapEngineInput med dmr-data
+ * @returns DetectedGap eller null
+ */
+function checkBilForsikringOphoert(input: GapEngineInput): DetectedGap | null {
+  const dmr = input.dmr;
+  if (!dmr || !dmr.forsikringStatus) return null;
+  // Kun relevant hvis bilen stadig er registreret (afmeldt dækkes af GAP-BIL-AFMELDT)
+  if (dmr.status && /afmeldt/i.test(dmr.status)) return null;
+  if (!/ophør|ophoer|annull|udløb|udloeb/i.test(dmr.forsikringStatus)) return null;
+  const bil = [dmr.maerke, dmr.model].filter(Boolean).join(' ') || dmr.regNr;
+  return {
+    check_id: 'GAP-BIL-FORSIKRING-OPHOERT',
+    category: 'uforsikret',
+    severity: 'critical',
+    title: 'Lovpligtig bilforsikring ophørt',
+    description: `${bil} (${dmr.regNr}) er stadig indregistreret, men DMR angiver forsikringsstatus "${dmr.forsikringStatus}". Køretøjet kører potentielt uden lovpligtig ansvarsforsikring.`,
+    recommendation:
+      'Tegn lovpligtig ansvarsforsikring straks, eller afmeld køretøjet hvis det ikke længere benyttes.',
+    estimated_impact_dkk: null,
+    source_data: {
+      regnr: dmr.regNr,
+      forsikring_status: dmr.forsikringStatus,
+      registrering_status: dmr.status,
+    },
+  };
+}
+
+/**
+ * GAP-BIL-FORSIKRING-MISMATCH: DMR's registrerede forsikringsselskab afviger
+ * fra policens selskab. Tegn på at bilen er forsikret hos et andet selskab end
+ * den fremlagte police (police forældet/forkert bil). Severity: warning.
+ *
+ * @param input - GapEngineInput med dmr-data
+ * @returns DetectedGap eller null
+ */
+function checkBilForsikringMismatch(input: GapEngineInput): DetectedGap | null {
+  const dmr = input.dmr;
+  if (!dmr || !dmr.forsikringSelskab) return null;
+  // Hopper over hvis dækning er ophørt (dækkes af OPHOERT) eller bil afmeldt
+  if (dmr.forsikringStatus && /ophør|ophoer|annull/i.test(dmr.forsikringStatus)) return null;
+  if (dmr.status && /afmeldt/i.test(dmr.status)) return null;
+  const policySelskab = input.policy.insurer_name;
+  if (!policySelskab) return null;
+  const a = normalizeSelskab(policySelskab);
+  const b = normalizeSelskab(dmr.forsikringSelskab);
+  if (!a || !b) return null;
+  // Match hvis det ene navn indeholder det andet (fx "tryg" ⊂ "trygforsikring")
+  if (a === b || a.includes(b) || b.includes(a)) return null;
+  return {
+    check_id: 'GAP-BIL-FORSIKRING-MISMATCH',
+    category: 'daekningsgab',
+    severity: 'warning',
+    title: 'Bilforsikring hos andet selskab end policen',
+    description: `Policen er udstedt af ${policySelskab}, men DMR registrerer bilen (${dmr.regNr}) forsikret hos "${dmr.forsikringSelskab}". Policen kan være forældet eller dække en anden bil.`,
+    recommendation:
+      'Kontrollér at den fremlagte police er gældende for køretøjet — DMR peger på et andet selskab.',
+    estimated_impact_dkk: null,
+    source_data: {
+      regnr: dmr.regNr,
+      police_selskab: policySelskab,
+      dmr_selskab: dmr.forsikringSelskab,
+    },
+  };
+}
+
+/**
+ * GAP-BIL-SYN-UDLOEBET: Seneste periodiske syn er mere end 2 år gammelt (eller
+ * mangler). Et udløbet syn kan medføre at køretøjet ikke lovligt må benyttes og
+ * påvirke forsikringsdækning ved skade. Severity: warning.
+ *
+ * @param input - GapEngineInput med dmr-data
+ * @returns DetectedGap eller null
+ */
+function checkBilSynUdloebet(input: GapEngineInput): DetectedGap | null {
+  const dmr = input.dmr;
+  if (!dmr) return null;
+  // Kun relevant for registrerede køretøjer
+  if (dmr.status && /afmeldt/i.test(dmr.status)) return null;
+  const synISO = dmr.sidsteSyn?.synsdato;
+  if (!synISO) return null;
+  const synDato = new Date(synISO);
+  if (Number.isNaN(synDato.getTime())) return null;
+  const aarSiden = (input.asOfDate.getTime() - synDato.getTime()) / (365.25 * 24 * 3600 * 1000);
+  if (aarSiden <= 2) return null;
+  const bil = [dmr.maerke, dmr.model].filter(Boolean).join(' ') || dmr.regNr;
+  return {
+    check_id: 'GAP-BIL-SYN-UDLOEBET',
+    category: 'daekningsgab',
+    severity: 'warning',
+    title: 'Bilsyn forældet',
+    description: `Seneste registrerede syn af ${bil} (${dmr.regNr}) var ${synISO} — over ${Math.floor(aarSiden)} år siden. Et udløbet periodisk syn kan påvirke både lovlig brug og forsikringsdækning ved skade.`,
+    recommendation: 'Kontrollér om køretøjet skal til periodisk syn og at synet er gyldigt.',
+    estimated_impact_dkk: null,
+    source_data: {
+      regnr: dmr.regNr,
+      sidste_syn: synISO,
+      synsresultat: dmr.sidsteSyn?.synsresultat ?? null,
+      aar_siden: Math.round(aarSiden * 10) / 10,
+    },
+  };
+}
+
 /**
  * Rækkefølge afspejler præsentations-prioritet i UI:
  *   1. Kritiske kontrakt-risici (areal, anvendelse)
@@ -822,6 +1190,11 @@ const CHECKS: readonly CheckFn[] = [
   checkExpiry,
   checkRenewalUpcoming,
   checkPolicyholderCvrMatch,
+  // BIZZ-2144: DMR-berigelse af bilforsikringspolicer (tjekbil.dk)
+  checkBilAfmeldt,
+  checkBilForsikringOphoert,
+  checkBilForsikringMismatch,
+  checkBilSynUdloebet,
 ];
 
 /**
@@ -930,6 +1303,11 @@ const GAP_BASE_SCORES: Record<string, number> = {
   'GAP-065': 55, // driftstab mangler
   'GAP-066': 50, // lav præmie
   'GAP-067': 65, // branchekrav aggregat
+  // BIZZ-2170: Værdi-baserede checks
+  'GAP-VAERDI-UNDER': 40, // forsikret sum >30% under købspris/vurdering
+  'GAP-VAERDI-OVER': 15, // forsikret sum >50% over købspris
+  'GAP-VAERDI-GAMMEL-KOEB': 15, // købsdato >10 år gammel
+  'GAP-VAERDI-INGEN-SUM': 10, // ingen forsikringssum oplyst
 };
 
 /**
@@ -1172,7 +1550,12 @@ const checkKollektivBygning: PortfolioCheckFn = ({ matches }) => {
  * GAP-063: Cyber-forsikring mangler.
  * Warning for virksomheder med lejerdata/betalingsinfo eller >5 ansatte.
  */
-const checkPortfolioCyber: PortfolioCheckFn = ({ policer, branche, aktiver }) => {
+const checkPortfolioCyber: PortfolioCheckFn = ({
+  policer,
+  branche,
+  aktiver,
+  coveragesByPolicy,
+}) => {
   if (!branche?.hovedbranche) return null;
 
   // Brancher der håndterer persondata: udlejning, sundhed, IT, detail, engros
@@ -1182,6 +1565,20 @@ const checkPortfolioCyber: PortfolioCheckFn = ({ policer, branche, aktiver }) =>
   if (!isDataRisiko) return null;
 
   const hasCyber = policer.some((p) => {
+    // BIZZ-2098: Tjek først de kanoniske coverage-koder — erhvervspolicer
+    // gemmer nu cyber-dækninger som cyber/cyberdriftstab/netbank-koder.
+    const covs = coveragesByPolicy.get(p.id) ?? [];
+    if (
+      covs.some(
+        (c) =>
+          c.is_covered &&
+          (c.coverage_code === 'cyber' ||
+            c.coverage_code === 'cyberdriftstab' ||
+            c.coverage_code === 'netbank')
+      )
+    ) {
+      return true;
+    }
     const text = [
       p.business_activity,
       p.raw_metadata?.type as string,
@@ -1366,10 +1763,9 @@ const _checkLavPraemie: PortfolioCheckFn = ({ policer, aktiver }) => {
  * CoverageCode. Bruges af GAP-067 til at verificere at de påkrævede
  * dækninger fra branchen faktisk er tilstede som coverage-rækker.
  *
- * Krav uden CoverageCode-modstykke (d&o, cyberforsikring, arbejdsskade,
- * all-risk, transportansvar, godsforsikring, maskinkasko, miljoeansvar,
- * professionelt_ansvar, behandlingsansvar, patientforsikring, indbrud,
- * rejsegods) tjekkes via policy-tekst i stedet.
+ * Krav uden CoverageCode-modstykke (d&o, arbejdsskade, all-risk,
+ * transportansvar, miljoeansvar, professionelt_ansvar, behandlingsansvar,
+ * patientforsikring, rejsegods) tjekkes via policy-tekst i stedet.
  */
 const KRAV_TO_COVERAGE_CODE: Record<string, CoverageCode> = {
   brand: 'brand_el',
@@ -1380,6 +1776,15 @@ const KRAV_TO_COVERAGE_CODE: Record<string, CoverageCode> = {
   driftstab: 'driftstab',
   forurening: 'forurening',
   produktansvar: 'erhvervsansvar', // produktansvar normaliseres til erhvervsansvar
+  // BIZZ-2098: Erhvervskoder — krav der nu HAR et kanonisk modstykke
+  cyberforsikring: 'cyber',
+  kriminalitet: 'kriminalitet',
+  indbrud: 'indbrudstyveri',
+  godsforsikring: 'transport',
+  maskinkasko: 'maskiner_itudstyr',
+  // BIZZ-2122: 'transport' = vareforsikring (varer under transport/gods) —
+  // krav for engros-/detailhandel der sender egne varer (NACE 46/47)
+  transport: 'transport',
 };
 
 /**
@@ -1409,6 +1814,7 @@ const KRAV_LABELS_DA: Record<string, string> = {
   rejsegods: 'Rejsegods',
   kasko: 'Kasko',
   kriminalitet: 'Kriminalitetsforsikring',
+  transport: 'Transport (vareforsikring)',
 };
 
 /**
@@ -1674,5 +2080,282 @@ export function runPortfolioChecks(input: PortfolioCheckInput): DetectedGap[] {
     }
   }
   // BIZZ-1941: Stempl hierarki-scope ud fra check_id på hvert gap.
+  return results.map((g) => ({ ...g, scope: gapScope(g.check_id) }));
+}
+
+// ─── BIZZ-2100: Dækningsgradsanalyse ─────────────────────────────
+
+/**
+ * Nøgletal fra seneste årsregnskab — alle beløb i t.kr (tusinde kroner),
+ * samme enhed som regnskab_cache.years gemmer XBRL-tallene i.
+ */
+export interface RegnskabsTalLite {
+  /** Regnskabsår, fx '2025' */
+  aar: string;
+  /** Nettoomsætning i t.kr (ofte null — mange ApS'er oplyser kun bruttofortjeneste) */
+  omsaetningTkr: number | null;
+  /** Bruttofortjeneste i t.kr — proxy for driftstabsinteresse */
+  bruttofortjenesteTkr: number | null;
+  /** Varelager i t.kr */
+  varelagerTkr: number | null;
+  /** Likvide beholdninger i t.kr */
+  likvideBeholdningerTkr: number | null;
+  /** Aktiver i alt i t.kr */
+  aktiverIAltTkr: number | null;
+}
+
+/** Input til dækningsgrads-checks (BIZZ-2100) */
+export interface DaekningsgradInput {
+  /** Alle policer i analysens scope */
+  policer: ForsikringPolicy[];
+  /** Dækninger per police-ID */
+  coveragesByPolicy: Map<string, ForsikringCoverage[]>;
+  /** Seneste regnskabstal — null når intet regnskab er tilgængeligt */
+  regnskab: RegnskabsTalLite | null;
+}
+
+/**
+ * Summér aktive dækningssummer for et sæt coverage-koder på tværs af alle
+ * policer. Returnerer 0 hvis ingen af koderne findes med en sum.
+ *
+ * @param coveragesByPolicy - Dækninger per police-ID
+ * @param codes - Coverage-koder der skal summeres
+ * @returns Samlet dækningssum i hele kr
+ */
+function sumDaekning(
+  coveragesByPolicy: Map<string, ForsikringCoverage[]>,
+  codes: readonly string[]
+): number {
+  let sum = 0;
+  for (const covs of coveragesByPolicy.values()) {
+    for (const c of covs) {
+      if (c.is_covered && codes.includes(c.coverage_code) && c.sum_dkk != null && c.sum_dkk > 0) {
+        sum += c.sum_dkk;
+      }
+    }
+  }
+  return sum;
+}
+
+/** Formatter hele kr til dansk visning, fx 9.150.000 kr */
+const fmtKr = (v: number): string => `${v.toLocaleString('da-DK')} kr`;
+
+/**
+ * Kør dækningsgrads-checks (BIZZ-2100): validerer at dækningsSUMMERNE er
+ * rimelige — krydstjekket mod nøgletal fra seneste årsregnskab. Supplerer
+ * de eksisterende checks der kun afgør OM en dækning findes.
+ *
+ * Checks:
+ * - GAP-072 (info): beregningsgrundlag — alle udførte sammenligninger vises
+ *   transparent ("Dækning X kr vs. regnskabstal Y kr")
+ * - GAP-073: driftstab-sum vs. bruttofortjeneste (underforsikring)
+ * - GAP-074: varelager vs. løsøre-/indbrudstyveridækning
+ * - GAP-075: likvide beholdninger vs. netbank-dækning
+ * - GAP-076: faktisk omsætning vs. policens omsætnings-forudsætning
+ *   (fx "omsætningen overstiger ikke 100.000.000 kr" i cyber-betingelser)
+ *
+ * Severity skaleres efter afvigelsens størrelse: dækningsgrad < 50 % →
+ * critical, < 90 % → warning.
+ *
+ * @param input - Policer, dækninger og seneste regnskabstal
+ * @returns Liste af detekterede dækningsgrads-gaps (tom uden regnskab)
+ */
+export function runDaekningsgradChecks(input: DaekningsgradInput): DetectedGap[] {
+  const { policer, coveragesByPolicy, regnskab } = input;
+  if (!regnskab) return [];
+
+  const results: DetectedGap[] = [];
+  /** Beregningsgrundlags-linjer til GAP-072 — én pr. udført sammenligning */
+  const grundlag: Array<{
+    check: string;
+    daekning_dkk: number;
+    regnskabstal_dkk: number;
+    kilde: string;
+  }> = [];
+
+  /**
+   * Severity ud fra dækningsgrad (dækning/behov): <50 % critical, <90 % warning.
+   * Returnerer null når dækningen er tilstrækkelig (ingen gap).
+   */
+  const severityForRatio = (ratio: number): 'critical' | 'warning' | null =>
+    ratio < 0.5 ? 'critical' : ratio < 0.9 ? 'warning' : null;
+
+  // ── GAP-073: Driftstab vs. bruttofortjeneste ──
+  // Driftstabsdækningen skal som minimum kunne erstatte 12 måneders
+  // bruttofortjeneste (standard dækningsperiode).
+  if (regnskab.bruttofortjenesteTkr != null && regnskab.bruttofortjenesteTkr > 0) {
+    const behovDkk = regnskab.bruttofortjenesteTkr * 1000;
+    const sumDkk = sumDaekning(coveragesByPolicy, ['driftstab', 'leverandoer_aftager']);
+    if (sumDkk > 0) {
+      grundlag.push({
+        check: 'driftstab',
+        daekning_dkk: sumDkk,
+        regnskabstal_dkk: behovDkk,
+        kilde: `bruttofortjeneste ${regnskab.aar}`,
+      });
+      const severity = severityForRatio(sumDkk / behovDkk);
+      if (severity) {
+        results.push({
+          check_id: 'GAP-073',
+          category: 'daekningsgrad',
+          severity,
+          title: 'Driftstabsdækning under seneste års bruttofortjeneste',
+          description:
+            `Driftstabsdækningen er ${fmtKr(sumDkk)}, men bruttofortjenesten i ${regnskab.aar} var ` +
+            `${fmtKr(behovDkk)}. Ved totalskade dækker policen dermed kun ` +
+            `${Math.round((sumDkk / behovDkk) * 100)} % af et års indtjeningstab (underforsikring).`,
+          recommendation:
+            'Forhøj driftstabssummen så den mindst svarer til 12 måneders bruttofortjeneste — og overvej 18-24 måneder ved lang genopbygningstid.',
+          estimated_impact_dkk: behovDkk - sumDkk,
+          source_data: { daekning_dkk: sumDkk, bruttofortjeneste_dkk: behovDkk, aar: regnskab.aar },
+        });
+      }
+    }
+  }
+
+  // ── GAP-074: Varelager vs. løsøre-/indbrudstyveridækning ──
+  if (regnskab.varelagerTkr != null && regnskab.varelagerTkr > 0) {
+    const varelagerDkk = regnskab.varelagerTkr * 1000;
+    const sumDkk = sumDaekning(coveragesByPolicy, ['loesoere', 'indbrudstyveri']);
+    grundlag.push({
+      check: 'varelager',
+      daekning_dkk: sumDkk,
+      regnskabstal_dkk: varelagerDkk,
+      kilde: `varelager ${regnskab.aar}`,
+    });
+    const severity = sumDkk === 0 ? 'warning' : severityForRatio(sumDkk / varelagerDkk);
+    if (severity) {
+      results.push({
+        check_id: 'GAP-074',
+        category: 'daekningsgrad',
+        severity,
+        title: 'Varelager overstiger løsøre-/tyveridækningen',
+        description:
+          sumDkk === 0
+            ? `Regnskabet ${regnskab.aar} viser et varelager på ${fmtKr(varelagerDkk)}, men der er ikke fundet nogen løsøre- eller indbrudstyveridækning med sum.`
+            : `Varelageret i ${regnskab.aar} var ${fmtKr(varelagerDkk)}, men løsøre-/indbrudstyveridækningen er kun ${fmtKr(sumDkk)}. Ved brand eller indbrud er differencen udækket.`,
+        recommendation:
+          'Forhøj løsøre-/varedækningen så den mindst svarer til varelagerets regnskabsmæssige værdi.',
+        estimated_impact_dkk: Math.max(0, varelagerDkk - sumDkk),
+        source_data: { daekning_dkk: sumDkk, varelager_dkk: varelagerDkk, aar: regnskab.aar },
+      });
+    }
+  }
+
+  // ── GAP-075: Likvide beholdninger vs. netbank-dækning ──
+  // Kun relevant når der FINDES en netbank-dækning — manglende netbank/cyber
+  // fanges af GAP-063. Her valideres alene at summen matcher likviderne.
+  {
+    const netbankDkk = sumDaekning(coveragesByPolicy, ['netbank']);
+    if (
+      netbankDkk > 0 &&
+      regnskab.likvideBeholdningerTkr != null &&
+      regnskab.likvideBeholdningerTkr > 0
+    ) {
+      const likviderDkk = regnskab.likvideBeholdningerTkr * 1000;
+      grundlag.push({
+        check: 'netbank',
+        daekning_dkk: netbankDkk,
+        regnskabstal_dkk: likviderDkk,
+        kilde: `likvide beholdninger ${regnskab.aar}`,
+      });
+      const severity = severityForRatio(netbankDkk / likviderDkk);
+      if (severity) {
+        results.push({
+          check_id: 'GAP-075',
+          category: 'daekningsgrad',
+          severity,
+          title: 'Netbank-dækning under de likvide beholdninger',
+          description:
+            `Netbank-dækningen er ${fmtKr(netbankDkk)}, men de likvide beholdninger i ${regnskab.aar} var ` +
+            `${fmtKr(likviderDkk)}. Ved netbankindbrud er differencen udækket.`,
+          recommendation:
+            'Forhøj netbank-dækningen så den matcher de typiske likvide beholdninger.',
+          estimated_impact_dkk: likviderDkk - netbankDkk,
+          source_data: { daekning_dkk: netbankDkk, likvider_dkk: likviderDkk, aar: regnskab.aar },
+        });
+      }
+    }
+  }
+
+  // ── GAP-076: Faktisk omsætning vs. policens omsætnings-forudsætning ──
+  // Policer angiver ofte en forudsætning som "omsætningen overstiger ikke
+  // 100.000.000 kr" — overskrides den, kan dækningen bortfalde. Forudsætningen
+  // udtrækkes fra policens rå tekst (business_activity + raw_metadata).
+  if (regnskab.omsaetningTkr != null && regnskab.omsaetningTkr > 0) {
+    const omsaetningDkk = regnskab.omsaetningTkr * 1000;
+    let forudsaetningDkk: number | null = null;
+    let forudsaetningPolice: string | null = null;
+    for (const p of policer) {
+      const text = [p.business_activity, JSON.stringify(p.raw_metadata ?? {})].join(' ');
+      // Match fx "omsætning overstiger ikke 100.000.000 kr" / "omsætning: 84.000.000"
+      const m = text.match(/oms[æa]tning[^0-9]{0,60}?([\d]{1,3}(?:\.[\d]{3}){2,})/i);
+      if (m) {
+        const val = parseInt(m[1].replace(/\./g, ''), 10);
+        if (Number.isFinite(val) && val > 100000) {
+          // Brug den laveste fundne forudsætning — den strammeste betingelse
+          if (forudsaetningDkk == null || val < forudsaetningDkk) {
+            forudsaetningDkk = val;
+            forudsaetningPolice = p.policy_number;
+          }
+        }
+      }
+    }
+    if (forudsaetningDkk != null) {
+      grundlag.push({
+        check: 'omsaetning',
+        daekning_dkk: forudsaetningDkk,
+        regnskabstal_dkk: omsaetningDkk,
+        kilde: `omsætning ${regnskab.aar} vs. policens forudsætning`,
+      });
+      // Flag når faktisk omsætning er over 80 % af forudsætningen — kunden
+      // skal nå at justere policen FØR betingelsen brydes.
+      if (omsaetningDkk >= forudsaetningDkk * 0.8) {
+        results.push({
+          check_id: 'GAP-076',
+          category: 'daekningsgrad',
+          severity: omsaetningDkk >= forudsaetningDkk ? 'critical' : 'warning',
+          title:
+            omsaetningDkk >= forudsaetningDkk
+              ? 'Omsætningen overstiger policens forudsætning'
+              : 'Omsætningen nærmer sig policens forudsætning',
+          description:
+            `Police ${forudsaetningPolice ?? ''} forudsætter en omsætning på højst ${fmtKr(forudsaetningDkk)}, ` +
+            `men regnskabet ${regnskab.aar} viser ${fmtKr(omsaetningDkk)} ` +
+            `(${Math.round((omsaetningDkk / forudsaetningDkk) * 100)} % af forudsætningen). ` +
+            `Brydes forudsætningen kan dækningen bortfalde eller blive reduceret.`,
+          recommendation:
+            'Oplys den aktuelle omsætning til forsikringsselskabet og få policens forudsætning justeret.',
+          estimated_impact_dkk: null,
+          source_data: {
+            forudsaetning_dkk: forudsaetningDkk,
+            omsaetning_dkk: omsaetningDkk,
+            police: forudsaetningPolice,
+            aar: regnskab.aar,
+          },
+        });
+      }
+    }
+  }
+
+  // ── GAP-072: Beregningsgrundlag (info) — transparens for alle checks ──
+  if (grundlag.length > 0) {
+    results.unshift({
+      check_id: 'GAP-072',
+      category: 'daekningsgrad',
+      severity: 'info',
+      title: `Dækningsgradsanalyse: ${grundlag.length} sammenligning${grundlag.length > 1 ? 'er' : ''} mod regnskab ${regnskab.aar}`,
+      description: grundlag
+        .map(
+          (g) =>
+            `${g.check}: dækning ${fmtKr(g.daekning_dkk)} vs. ${g.kilde} ${fmtKr(g.regnskabstal_dkk)}`
+        )
+        .join(' · '),
+      recommendation: null,
+      estimated_impact_dkk: null,
+      source_data: { grundlag, aar: regnskab.aar },
+    });
+  }
+
   return results.map((g) => ({ ...g, scope: gapScope(g.check_id) }));
 }

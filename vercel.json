@@ -149,6 +149,10 @@
       "schedule": "30 4 * * *"
     },
     {
+      "path": "/api/cron/backfill-ejerskifte-handel",
+      "schedule": "50 4 * * *"
+    },
+    {
       "path": "/api/cron/sync-tinglysning-detail",
       "schedule": "45 3 * * *"
     },

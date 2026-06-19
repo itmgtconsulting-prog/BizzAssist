@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { resolveTenantId } from '@/lib/api/auth';
 import { isDomainFeatureEnabled } from '@/app/lib/featureFlags';
+import { revokeStandardDocDomainSharing } from '@/app/lib/forsikring/standardDocDomain';
 import { logger } from '@/app/lib/logger';
 
 /** Validates super-admin access. */
@@ -189,6 +190,12 @@ export async function DELETE(request: NextRequest, context: RouteContext): Promi
 
   const admin = createAdminClient();
 
+  // BIZZ-2107: Revoke domain-deling af den fjernedes standard betingelser —
+  // ellers ser domainets øvrige medlemmer fortsat den fjernedes docs. Køres
+  // FØR member-sletningen så antallet kan auditeres (DB-triggeren i migration
+  // 179 demoter ellers rækkerne under selve sletningen).
+  const revokedDocs = await revokeStandardDocDomainSharing(targetUserId, domainId);
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { error } = await (admin as any)
     .from('domain_member')
@@ -206,6 +213,7 @@ export async function DELETE(request: NextRequest, context: RouteContext): Promi
     action: 'remove_member',
     target_type: 'user',
     target_id: targetUserId,
+    metadata: { revoked_standard_docs: revokedDocs },
   });
 
   return NextResponse.json({ ok: true });

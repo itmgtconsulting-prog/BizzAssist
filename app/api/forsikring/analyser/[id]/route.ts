@@ -12,6 +12,7 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getTenantSchemaName } from '@/lib/db/tenant';
 import { logger } from '@/app/lib/logger';
+import { bygAnvendelseTekst } from '@/app/lib/bbrKoder';
 
 /**
  * GET /api/forsikring/analyser/[id]
@@ -105,6 +106,134 @@ export async function GET(
       .map((a: { matched_policy_id: string | null }) => a.matched_policy_id)
       .filter(Boolean) as string[];
 
+    // BIZZ-2119: Matchede policer kan ligge uden for analysens dokument-scope
+    // (fx legacy-analyser uden junction-rækker eller delte koncern-policer).
+    // Hent de manglende police-rækker eksplicit, så UI'et altid kan vise
+    // selskab + policenummer for hvert match i stedet for en fallback-tekst.
+    const knownPolicyIds = new Set((policies as Array<{ id: string }>).map((p) => p.id));
+    const missingPolicyIds = [...new Set(matchedPolicyIds)].filter(
+      (pid) => !knownPolicyIds.has(pid)
+    );
+    if (missingPolicyIds.length > 0) {
+      const { data: extraPolicies } = await db
+        .from('forsikring_policies')
+        .select('*')
+        .in('id', missingPolicyIds)
+        .eq('tenant_id', auth.tenantId);
+      if (extraPolicies && extraPolicies.length > 0) {
+        policies = [...policies, ...extraPolicies];
+        // Hent også kildedokument-navne for de ekstra policer, så UI'et kan
+        // vise hvilket dokument matchet stammer fra.
+        const extraDocIds = [
+          ...new Set(
+            (extraPolicies as Array<{ document_id: string | null }>)
+              .map((p) => p.document_id)
+              .filter((d): d is string => Boolean(d) && !docIds.includes(d as string))
+          ),
+        ];
+        if (extraDocIds.length > 0) {
+          const { data: extraDocs } = await db
+            .from('forsikring_documents')
+            .select('id, original_name, parse_status, parse_error, created_at')
+            .in('id', extraDocIds)
+            .eq('tenant_id', auth.tenantId);
+          documents = [
+            ...documents,
+            ...(extraDocs ?? []).map((d: Record<string, unknown>) => ({
+              ...d,
+              source: 'matched',
+            })),
+          ];
+        }
+      }
+    }
+
+    // BIZZ-2129: Tilhørs-data til (a) at surface adresseløse koncern-policer og
+    // (c) klassificere hver polices tilknytning. Bygges fra de persisterede
+    // aktiver + analysens kunde-felter.
+    const analyseRow = analyseResult.data as {
+      kunde_type?: string;
+      kunde_id?: string;
+      kunde_navn?: string;
+    };
+    const aktiverData = (aktiverResult.data ?? []) as Array<{
+      type: string;
+      cvr: string | null;
+      adresse: string | null;
+      label: string;
+    }>;
+    const koncernCvrSet = new Set(
+      aktiverData.filter((a) => a.type === 'virksomhed' && a.cvr).map((a) => a.cvr as string)
+    );
+    if (analyseRow.kunde_type === 'virksomhed' && analyseRow.kunde_id) {
+      koncernCvrSet.add(analyseRow.kunde_id);
+    }
+    const koncernNavne = aktiverData
+      .filter((a) => a.type === 'virksomhed')
+      .map((a) => a.label.toLowerCase().trim())
+      .filter((n) => n.length > 0);
+    if (analyseRow.kunde_navn) koncernNavne.push(analyseRow.kunde_navn.toLowerCase().trim());
+    const normAdr = (s: string | null) => (s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const aktivAdrNorm = aktiverData
+      .filter((a) => a.type === 'ejendom' && a.adresse)
+      .map((a) => normAdr(a.adresse));
+    const adrMatcher = (addr: string | null) => {
+      const a = normAdr(addr);
+      if (!a) return false;
+      return aktivAdrNorm.some((x) => x === a || x.startsWith(a) || a.startsWith(x));
+    };
+
+    // (a) Når analysen mangler dokument-links (koncern-fallback) inkluderes
+    // kundens øvrige policer — også adresseløse (Ansvar, Cyber, Netbank,
+    // Kriminalitet) — efter samme tilhørs-logik som analysens fallback
+    // (BIZZ-2120). Ved eksplicit dokument-scope (junction populeret) holdes
+    // listen til scope'et.
+    if (docIds.length === 0) {
+      const haveIds = new Set((policies as Array<{ id: string }>).map((p) => p.id));
+      const { data: allTenantPolicies } = await db
+        .from('forsikring_policies')
+        .select('*')
+        .eq('tenant_id', auth.tenantId);
+      const hoererTilKoncern = (p: {
+        policyholder_cvr: string | null;
+        policyholder_name: string | null;
+        property_address: string | null;
+      }) => {
+        if (p.policyholder_cvr && koncernCvrSet.has(p.policyholder_cvr)) return true;
+        const pn = (p.policyholder_name ?? '').toLowerCase().trim();
+        if (pn && koncernNavne.some((n) => pn === n || pn.includes(n) || n.includes(pn)))
+          return true;
+        return adrMatcher(p.property_address);
+      };
+      for (const p of (allTenantPolicies ?? []) as Array<Record<string, unknown>>) {
+        if (haveIds.has(p.id as string)) continue;
+        if (
+          hoererTilKoncern(
+            p as {
+              policyholder_cvr: string | null;
+              policyholder_name: string | null;
+              property_address: string | null;
+            }
+          )
+        ) {
+          policies = [...policies, p];
+          haveIds.add(p.id as string);
+        }
+      }
+    }
+
+    // (c) Klassificér hver polices tilknytning: 'sikker' når den er bekræftet
+    // via forsikringstager-CVR, forsikringssted-match eller aktiv-match;
+    // ellers 'tvivlsom' (kun inkluderet via fuzzy navne-match) → UI viser gul
+    // advarsel.
+    const matchedSet = new Set(matchedPolicyIds);
+    policies = (policies as Array<Record<string, unknown>>).map((p) => {
+      const cvrOk = !!p.policyholder_cvr && koncernCvrSet.has(p.policyholder_cvr as string);
+      const adrOk = adrMatcher(p.property_address as string | null);
+      const aktivOk = matchedSet.has(p.id as string);
+      return { ...p, attachment: cvrOk || adrOk || aktivOk ? 'sikker' : 'tvivlsom' };
+    });
+
     let gaps: unknown[] = [];
 
     // Først: prøv analyse-scoped gaps
@@ -128,12 +257,145 @@ export async function GET(
       gaps = legacyGaps ?? [];
     }
 
+    // BIZZ-2084: Hent dækninger så UI'et kan vise med grønt hvad der ER
+    // dækket (inkl. dækningssum + selvrisiko) — ikke kun manglerne.
+    // BIZZ-2099: Udvidet fra kun matchede policer til ALLE analysens policer,
+    // så adresseløse virksomhedspolicer (Cyber, Netbank, Kriminalitet m.fl.)
+    // også vises som grønne dæknings-bokse.
+    const analysePolicyIds = (policies as Array<{ id: string }>).map((p) => p.id);
+    const coveragePolicyIds = [...new Set([...matchedPolicyIds, ...analysePolicyIds])];
+    let coverages: unknown[] = [];
+    if (coveragePolicyIds.length > 0) {
+      const { data: coverageRows } = await db
+        .from('forsikring_coverages')
+        .select(
+          'policy_id, coverage_code, coverage_label, is_covered, sum_dkk, deductible_dkk, conditions_ref'
+        )
+        .in('policy_id', coveragePolicyIds)
+        .eq('tenant_id', auth.tenantId)
+        .order('coverage_label', { ascending: true });
+      coverages = coverageRows ?? [];
+    }
+
+    // BIZZ-2135: Aggregér refererede standardbetingelser fra coverages
+    const conditionsMap = new Map<
+      string,
+      { ref: string; selskab: string | null; policyNumber: string | null }
+    >();
+    for (const cov of coverages as Array<{ policy_id: string; conditions_ref?: string | null }>) {
+      if (!cov.conditions_ref) continue;
+      // Split på komma/semikolon (flere refs per coverage)
+      for (let rawRef of cov.conditions_ref
+        .split(/[,;]/)
+        .map((s: string) => s.trim())
+        .filter(Boolean)) {
+        // Rens: fjern "afsnit", "Se betingelsesafsnit", "Se vilkår" etc.
+        rawRef = rawRef.replace(/^(se\s+)?(betingelses)?afsnit\s*/i, '').trim();
+        if (!rawRef || /^se\s+vilk/i.test(rawRef) || rawRef.length < 2) continue;
+        if (!conditionsMap.has(rawRef)) {
+          const pol = (
+            policies as Array<{
+              id: string;
+              insurer_name: string | null;
+              policy_number: string | null;
+            }>
+          ).find((p) => p.id === cov.policy_id);
+          conditionsMap.set(rawRef, {
+            ref: rawRef,
+            selskab: pol?.insurer_name ?? null,
+            policyNumber: pol?.policy_number ?? null,
+          });
+        }
+      }
+    }
+
+    // Match mod uploaded standard-betingelser i forsikring_standard_doc
+    const uploadedRefs = new Set<string>();
+    if (conditionsMap.size > 0) {
+      try {
+        const { data: stdDocs } = await admin
+          .from('forsikring_standard_doc')
+          .select('titel')
+          .limit(200);
+        if (stdDocs) {
+          // Match titel mod betingelses-ref (fuzzy: titel indeholder ref-nummeret)
+          for (const doc of stdDocs as Array<{ titel: string }>) {
+            const titelLower = doc.titel.toLowerCase();
+            for (const ref of conditionsMap.keys()) {
+              if (titelLower.includes(ref.toLowerCase())) uploadedRefs.add(ref);
+            }
+          }
+        }
+      } catch {
+        // Non-fatal — standard-docs check
+      }
+    }
+
+    const referencedConditions = [...conditionsMap.values()].map((c) => ({
+      ...c,
+      uploaded: uploadedRefs.has(c.ref),
+    }));
+
+    // BIZZ-2155: BBR-bygningsdata pr. BFE, så UI'et kan vise police-arealet
+    // side om side med BBR-arealet under hver ejendom (areal-/etage-/årgangs-
+    // sammenligning). Data ligger i den globale bbr_ejendom_status-tabel.
+    const bbrByBfe: Record<
+      string,
+      {
+        bebygget_areal: number | null;
+        samlet_boligareal: number | null;
+        samlet_erhvervsareal: number | null;
+        antal_etager: number | null;
+        opfoerelsesaar: number | null;
+        anvendelse: string | null;
+      }
+    > = {};
+    const ejendomBfer = [
+      ...new Set(
+        (aktiverResult.data ?? [])
+          .filter((a: { type: string; bfe: number | null }) => a.type === 'ejendom' && a.bfe)
+          .map((a: { bfe: number | null }) => a.bfe as number)
+      ),
+    ];
+    if (ejendomBfer.length > 0) {
+      const { data: bbrRows } = await admin
+        .from('bbr_ejendom_status')
+        .select(
+          'bfe_nummer, bebygget_areal, samlet_boligareal, samlet_erhvervsareal, antal_etager, opfoerelsesaar, byg021_anvendelse'
+        )
+        .in('bfe_nummer', ejendomBfer);
+      for (const row of (bbrRows ?? []) as Array<{
+        bfe_nummer: number;
+        bebygget_areal: number | null;
+        samlet_boligareal: number | null;
+        samlet_erhvervsareal: number | null;
+        antal_etager: number | null;
+        opfoerelsesaar: number | null;
+        byg021_anvendelse: number | null;
+      }>) {
+        bbrByBfe[String(row.bfe_nummer)] = {
+          bebygget_areal: row.bebygget_areal,
+          samlet_boligareal: row.samlet_boligareal,
+          samlet_erhvervsareal: row.samlet_erhvervsareal,
+          antal_etager: row.antal_etager,
+          opfoerelsesaar: row.opfoerelsesaar,
+          // BIZZ-2172: oversæt rå BBR-anvendelseskode (fx 320) til læsbar tekst
+          // ("Kontor, handel, lager") så brugeren ikke ser et nøgent kodenummer.
+          anvendelse:
+            row.byg021_anvendelse != null ? bygAnvendelseTekst(row.byg021_anvendelse) : null,
+        };
+      }
+    }
+
     return NextResponse.json({
       analyse: analyseResult.data,
       aktiver: aktiverResult.data ?? [],
       gaps,
       documents,
       policies,
+      coverages,
+      referencedConditions,
+      bbrByBfe,
     });
   } catch (err) {
     logger.error('[forsikring/analyser/[id]] Fejl:', err);

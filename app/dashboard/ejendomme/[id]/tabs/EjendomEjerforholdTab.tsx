@@ -238,13 +238,21 @@ export default function EjendomEjerforholdTab({
               function enrichWithOwnership(node: StrukturNode): StrukturNode {
                 // Ejerlejlighed: berig med ejer/pris/dato fra lejligheder-match
                 if (node.niveau === 'ejerlejlighed') {
-                  // Match via BFE (primær) eller eksakt vejnavn+husnr (fallback)
+                  // Match via BFE (primær), dawaId (sekundær) eller eksakt
+                  // vejnavn+husnr (fallback — KUN for noder uden BFE).
+                  // BIZZ-2061: vejnavn-fallback på en node MED BFE viste en
+                  // søster-enheds data når nodens egen række manglede i listen.
                   const nodeStreet = node.adresse.split(',')[0].trim().toLowerCase();
-                  const match = lejligheder!.find(
-                    (l) =>
-                      (node.bfe > 0 && l.bfe === node.bfe) ||
-                      l.adresse.split(',')[0].trim().toLowerCase() === nodeStreet
-                  );
+                  const match =
+                    (node.bfe > 0 ? lejligheder!.find((l) => l.bfe === node.bfe) : undefined) ??
+                    (node.dawaId
+                      ? lejligheder!.find((l) => l.dawaId === node.dawaId)
+                      : undefined) ??
+                    (node.bfe > 0
+                      ? undefined
+                      : lejligheder!.find(
+                          (l) => l.adresse.split(',')[0].trim().toLowerCase() === nodeStreet
+                        ));
                   if (match) {
                     const etageDoer = match.adresse.split(',')[1]?.trim().toLowerCase() ?? '';
                     const bbrMatch = (bbrEnheder ?? []).find((e) => {
@@ -327,13 +335,16 @@ export default function EjendomEjerforholdTab({
                 // Gruppér per vejnavn+husnr
                 const groups = new Map<string, typeof unplaced>();
                 for (const l of unplaced) {
-                  const key =
+                  // BIZZ-2095: stryg etage/dør OG husnr fra vejnavnet, så
+                  // groupKey ikke dublerer husnr ("Gefionsvej 49 49")
+                  const street =
                     l.adresse
                       .split(',')[0]
                       ?.replace(/\s+\d+\..*/, '')
                       .trim() ?? 'Ukendt';
                   const husnr = extractHusnr(l.adresse);
-                  const groupKey = `${key} ${husnr}`;
+                  const vejnavn = street.replace(/\s+\d+\w*$/, '').trim() || street;
+                  const groupKey = husnr ? `${vejnavn} ${husnr}` : vejnavn;
                   if (!groups.has(groupKey)) groups.set(groupKey, []);
                   groups.get(groupKey)!.push(l);
                 }
@@ -383,6 +394,29 @@ export default function EjendomEjerforholdTab({
                       <EjerKort ejerDetaljer={chainEjerDetaljer} lang={lang} />
                     </>
                   )}
+                  {/* BIZZ-2109: Diagram FØR strukturtræet — strukturen kan fylde flere
+                      skærmhøjder, så diagrammet druknede nederst. Samme rækkefølge som
+                      for normale ejendomme (Ejer → Diagram → Struktur). */}
+                  {bfeForDiagram && chainEjerDetaljer.some((e) => e.type !== 'status') && (
+                    <>
+                      <SectionTitle title={da ? 'Ejerskabsdiagram' : 'Ownership diagram'} />
+                      {diagramResolveLoader ? (
+                        <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />
+                      ) : (
+                        <DiagramV2
+                          rootType="property"
+                          rootId={String(bfeForDiagram)}
+                          rootLabel={
+                            dawaAdresse
+                              ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
+                              : `BFE ${bfeForDiagram}`
+                          }
+                          lang={lang}
+                          prefetchedGraph={prefetchedDiagramGraph ?? undefined}
+                        />
+                      )}
+                    </>
+                  )}
                   <SectionTitle title={t.ownershipStructure} />
                   <EjendomStrukturTree
                     tree={enriched}
@@ -405,26 +439,6 @@ export default function EjendomEjerforholdTab({
                         : null
                     }
                   />
-                  {/* Diagram under strukturtræet */}
-                  {bfeForDiagram && chainEjerDetaljer.some((e) => e.type !== 'status') && (
-                    <>
-                      {diagramResolveLoader ? (
-                        <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />
-                      ) : (
-                        <DiagramV2
-                          rootType="property"
-                          rootId={String(bfeForDiagram)}
-                          rootLabel={
-                            dawaAdresse
-                              ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
-                              : `BFE ${bfeForDiagram}`
-                          }
-                          lang={lang}
-                          prefetchedGraph={prefetchedDiagramGraph ?? undefined}
-                        />
-                      )}
-                    </>
-                  )}
                 </div>
               );
             }
@@ -720,11 +734,20 @@ export default function EjendomEjerforholdTab({
                   function enrichNode(node: StrukturNode): StrukturNode {
                     if (node.niveau === 'ejerlejlighed') {
                       const nodeStreet = node.adresse.split(',')[0].trim().toLowerCase();
-                      const match = lejligheder!.find(
-                        (l) =>
-                          (node.bfe > 0 && l.bfe === node.bfe) ||
-                          l.adresse.split(',')[0].trim().toLowerCase() === nodeStreet
-                      );
+                      // BIZZ-2061: Eksakt BFE-match (primær), dawaId (sekundær),
+                      // vejnavn-fallback KUN for noder uden BFE — fallback på en
+                      // node MED BFE viste en søster-enheds data når nodens egen
+                      // række manglede i listen.
+                      const match =
+                        (node.bfe > 0 ? lejligheder!.find((l) => l.bfe === node.bfe) : undefined) ??
+                        (node.dawaId
+                          ? lejligheder!.find((l) => l.dawaId === node.dawaId)
+                          : undefined) ??
+                        (node.bfe > 0
+                          ? undefined
+                          : lejligheder!.find(
+                              (l) => l.adresse.split(',')[0].trim().toLowerCase() === nodeStreet
+                            ));
                       // BBR-match for værelser
                       const addrParts = node.adresse.split(',').map((s) => s.trim());
                       const etageDoer = (addrParts[1] ?? '').toLowerCase();

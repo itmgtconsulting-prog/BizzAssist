@@ -26,21 +26,10 @@ import { assertAiAllowed } from '@/app/lib/aiGate';
 import { logger } from '@/app/lib/logger';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getInsuranceApi } from '@/lib/db/insurance';
-import { getTenantContext, getTenantSchemaName } from '@/lib/db/tenant';
-import {
-  parsePolicyImage,
-  canParseAsText,
-  parseWithTypeDetection,
-  normalizePolicyNumber,
-  type MultiParseResult,
-} from '@/app/lib/forsikring/parser';
-import { runGapEngine } from '@/app/lib/forsikring/gapEngine';
-import {
-  COVERAGE_LABELS_DA,
-  type CoverageCode,
-  type ForsikringCoverage,
-  type ParsedPolicy,
-} from '@/app/lib/forsikring/types';
+import { getTenantSchemaName } from '@/lib/db/tenant';
+import { normalizePolicyNumber } from '@/app/lib/forsikring/parser';
+import { addressesMatch } from '@/app/lib/forsikring/assetMatcher';
+import { parseV2, type V2ParseResult } from '@/app/lib/forsikring/parserV2';
 import { resolveFileType } from '@/app/lib/domainFileTypes';
 
 /** Storage bucket name (matcher upload-route) */
@@ -75,25 +64,14 @@ function recordParseTokens(
   })();
 }
 
-/** Øget fra 60 → 120s — nogle policer kræver lang Claude-processing */
-export const maxDuration = 120;
+/**
+ * BIZZ-2081: Øget 120 → 300s — store forsikringsoversigter kan kræve op til
+ * 16k output-tokens fra Claude, hvilket ikke kan genereres på 120s.
+ */
+export const maxDuration = 300;
 
 interface ParseRequestBody {
   document_id?: unknown;
-}
-
-/**
- * Udled billed-subtype fra MIME-type. Bruges af Claude vision-routing.
- *
- * @param mime - Fuld MIME-type fra dokument-row (fx "image/jpeg")
- * @returns Subtype-streng ("jpg", "png", ...) eller "png" som default
- */
-function imageSubtypeFromMime(mime: string): string {
-  if (!mime) return 'png';
-  const sub = mime.split('/')[1]?.toLowerCase() ?? 'png';
-  // Normalisér aliaser
-  if (sub === 'jpeg') return 'jpg';
-  return sub;
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
@@ -130,16 +108,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   // Cleanup stuck "parsing" docs (Vercel timeout dræber processen uden at
   // catch-blokken kører → status forbliver "parsing" permanent).
-  // Reset docs der har været "parsing" i >3 min til "failed".
+  //
+  // BIZZ-2163: Tærsklen SKAL være større end maxDuration (300s). Tidligere
+  // 3-minutters tærskel var KORTERE end funktionens egen max-køretid, så en
+  // stor forsikringsoversigt der lovligt stadig parses efter 3 min blev
+  // fejlagtigt markeret "failed" af det NÆSTE uploads cleanup-pass — under
+  // batch-upload af mange PDF'er gav det "alle uploads fejler", selvom de
+  // reelt fuldførte bagefter. Vi nulstiller derfor kun parses der har
+  // overskredet serverless-loftet (300s) + en margin → 6 min.
+  const STUCK_PARSE_MS = 6 * 60 * 1000;
   try {
     const allDocs = await insurance.documents.list();
     const now = Date.now();
     for (const d of allDocs) {
       if (d.parse_status === 'parsing' && d.created_at) {
         const age = now - new Date(d.created_at).getTime();
-        if (age > 3 * 60 * 1000) {
+        if (age > STUCK_PARSE_MS) {
           await insurance.documents.updateParseStatus(d.id, 'failed', {
-            error: `Timeout: parsing brugte mere end 3 minutter (sandsynligvis Vercel serverless timeout)`,
+            error: `Timeout: parsing overskred serverless-loftet (>5 min) og blev afbrudt`,
           });
           logger.warn(
             `[forsikring/parse] Reset stuck doc "${d.original_name}" (${d.id}) fra parsing → failed`
@@ -193,380 +179,265 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       `[forsikring/parse] Filtype="${fileType}" for "${doc.original_name}" (${buffer.length} bytes) — sender til Claude`
     );
 
-    // BIZZ-1392: 2-trins pipeline — detektér dokumenttype, derefter parse
-    let result: MultiParseResult;
+    // BIZZ-2141: v2 multi-step pipeline erstatter v1
     const parseStart = Date.now();
-    if (fileType === 'image') {
-      // Billeder kan ikke gennemgå trin 1 — parse direkte som police
-      result = await parsePolicyImage(buffer, imageSubtypeFromMime(doc.mime_type), apiKey);
-    } else if (canParseAsText(fileType)) {
-      result = await parseWithTypeDetection(buffer, fileType, apiKey);
-    } else {
-      result = { ok: false, text: null, error: `Filtype ${fileType} understøttes ikke endnu` };
+    let v2Result: V2ParseResult;
+    try {
+      v2Result = await parseV2(buffer, apiKey);
+    } catch (err) {
+      const detail = `v2 parse fejlede: ${err instanceof Error ? err.message : 'unknown'}`;
+      await insurance.documents.updateParseStatus(doc.id, 'failed', { error: detail });
+      logger.error(`[forsikring/parse] v2 FEJL "${doc.original_name}": ${detail}`);
+      return NextResponse.json({ error: detail }, { status: 422 });
     }
     const parseMs = Date.now() - parseStart;
 
-    if (!result.ok) {
-      const detail = `Parse fejlede efter ${parseMs}ms: ${result.error}`;
+    if (v2Result.insurances.length === 0) {
+      const detail = `Ingen forsikringstyper fundet i dokumentet (${parseMs}ms)`;
       await insurance.documents.updateParseStatus(doc.id, 'failed', {
         error: detail,
-        extractedText: result.text ?? undefined,
+        extractedText: v2Result.markdown.slice(0, 5000),
       });
-      logger.error(
-        `[forsikring/parse] FEJL "${doc.original_name}" (${parseMs}ms): ${result.error}`
-      );
-      return NextResponse.json({ error: result.error, detail }, { status: 422 });
+      return NextResponse.json({ error: detail }, { status: 422 });
     }
+
     logger.log(
-      `[forsikring/parse] OK "${doc.original_name}" parsed i ${parseMs}ms — type=${'oversigt' in result ? 'oversigt' : result.documentType}`
+      `[forsikring/parse] v2 OK "${doc.original_name}" (${parseMs}ms): ` +
+        `${v2Result.insurances.length} typer, ` +
+        `${v2Result.insurances.reduce((s, i) => s + i.entities.length, 0)} enheder, ` +
+        `${v2Result.insurances.reduce((s, i) => s + i.entities.reduce((s2, e) => s2 + e.coverages.length, 0), 0)} dækninger`
     );
 
-    // BIZZ-1392: Håndtér baseret på dokumenttype
-    if ('oversigt' in result) {
-      // ─── Oversigt: opret N policer fra ét dokument ───────────
-      const { oversigt } = result;
-      const createdPolicies: Array<{ id: string; policy_number: string }> = [];
-      let totalGaps = 0;
+    // ─── Map v2-output til policer + coverages ─────────────────
+    const createdPolicies: Array<{ id: string; policy_number: string }> = [];
+    const totalGaps = 0;
+    const COVERAGE_CODE_MAP: Record<string, string> = {
+      brand: 'brand_el',
+      'brand inkl. el-skade': 'brand_el',
+      'el-skade': 'brand_el',
+      bygningskasko: 'bygningskasko',
+      'storm og nedbør': 'bygningskasko',
+      storm: 'bygningskasko',
+      'udstrømning af vand': 'udvidet_roerskade',
+      rørskade: 'udvidet_roerskade',
+      vand: 'udvidet_roerskade',
+      glas: 'glas',
+      sanitet: 'sanitet',
+      insekt: 'insekt_svamp',
+      svamp: 'insekt_svamp',
+      'insekt og svamp': 'insekt_svamp',
+      restværdi: 'restvaerdi',
+      stikledning: 'stikledning',
+      jordskade: 'jordskade',
+      lovliggørelse: 'lovliggoerelse',
+      huslejetab: 'huslejetab',
+      hærværk: 'haerverk',
+      'omstilling af låse': 'omstilling_laase',
+      låseomstilling: 'omstilling_laase',
+      'hus- og grundejeransvar': 'hus_grundejer_ansvar',
+      grundejeransvar: 'hus_grundejer_ansvar',
+      forurening: 'forurening',
+      'forurening (fra forsikringsstedet)': 'forurening',
+      driftstab: 'driftstab',
+      erhvervsansvar: 'erhvervsansvar',
+      'udvidet vandskade': 'udvidet_vandskade',
+      løsøre: 'loesoere',
+      erhvervsløsøre: 'loesoere',
+      indbrud: 'indbrudstyveri',
+      tyveri: 'indbrudstyveri',
+      indbrudstyveri: 'indbrudstyveri',
+      'ran og røveri': 'ran_roeveri',
+      oprydning: 'oprydning',
+      cyber: 'cyber',
+      netbank: 'netbank',
+      kriminalitet: 'kriminalitet',
+      transport: 'transport',
+      'maskiner og it-udstyr': 'maskiner_itudstyr',
+      ansvar: 'erhvervsansvar',
+      fareafværgelse: 'forurening',
+      'fareafværgelse (erhvervs- og produktansvar)': 'forurening',
+      retshjælp: 'kriminalitet',
+      'pludselig skade': 'brand_el',
+      // BIZZ-2154: Motor-/køretøjsdækninger — egne koder så bilpolicer ikke
+      // fejlklassificeres som ejendomsforsikring. "kasko" alene = motorkasko
+      // ("bygningskasko" matches eksakt ovenfor og rammes ikke her).
+      kasko: 'motorkasko',
+      'kasko (bil)': 'motorkasko',
+      førerulykke: 'foererulykke',
+      friskade: 'friskade',
+      'redning i udlandet': 'redning_udland',
+      redning: 'redning_udland',
+      'eftermonteret tilbehør': 'eftermonteret_udstyr',
+      'eftermonteret udstyr': 'eftermonteret_udstyr',
+    };
 
-      for (const entry of oversigt.policies) {
-        // BIZZ-1395: Normalisér policenummer og skip duplikater
-        // BIZZ-1908 FIX: Dedup på policenr + adresse — same policenr kan have
-        // flere entries med forskellige forsikringstyper/adresser (fx ansvar +
-        // ejendom under same aftalenr). Kun skip hvis BÅDE nummer OG adresse matcher.
-        const normalizedNum = normalizePolicyNumber(entry.policy_number);
-        const existing = await insurance.policies.findByNumber(normalizedNum);
-        if (existing && existing.property_address === (entry.property_address ?? null)) {
+    /** Map et dæknings-navn til nærmeste coverage_code */
+    function mapCoverageCode(navn: string): string {
+      const lower = navn.toLowerCase().trim();
+      // Eksakt match
+      if (COVERAGE_CODE_MAP[lower]) return COVERAGE_CODE_MAP[lower];
+      // Partial match
+      for (const [key, code] of Object.entries(COVERAGE_CODE_MAP)) {
+        if (lower.includes(key) || key.includes(lower)) return code;
+      }
+      // Default baseret på type
+      if (lower.includes('brand') || lower.includes('el-skade')) return 'brand_el';
+      if (lower.includes('storm') || lower.includes('nedbør')) return 'bygningskasko';
+      if (lower.includes('vand') || lower.includes('rør')) return 'udvidet_roerskade';
+      if (lower.includes('ansvar')) return 'erhvervsansvar';
+      if (lower.includes('tyveri') || lower.includes('indbrud')) return 'indbrudstyveri';
+      return 'brand_el'; // fallback
+    }
+
+    for (const ins of v2Result.insurances) {
+      const policyNumber = normalizePolicyNumber(ins.identification.policenummer ?? '0');
+
+      for (const ent of ins.entities) {
+        // Check for existing policy (dedup)
+        const existingAll = await insurance.policies.findAllByNumber(policyNumber);
+        let existing = existingAll.find((p) =>
+          ent.entity.adresse ? addressesMatch(p.property_address, ent.entity.adresse) : false
+        );
+        // Fallback: match on insurance type alone for non-property types
+        if (!existing && !ent.entity.adresse) {
+          const normType = ins.identification.type.toLowerCase();
+          existing = existingAll.find((p) =>
+            (p.business_activity ?? '').toLowerCase().includes(normType.split('forsikring')[0])
+          );
+        }
+
+        // BIZZ-2154: Ryd op i duplikerede police-rækker for SAMME forsikringssted.
+        // Tidligere dobbelt-parsninger kunne efterlade to rækker med samme
+        // policenummer og samme sted (fx en bilpolice uden adresse), hvor den
+        // ene beholdt forældede dækningskoder. Det forurener forsikringstype-
+        // udledningen (bil-police vist som ejendomsforsikring). Behold den
+        // matchede række og slet øvrige rækker der dækker præcis samme sted.
+        // Multi-forsikringssteder (samme nr., FORSKELLIG adresse) bevares.
+        if (existing) {
+          const samePlace = (p: { property_address: string | null }) =>
+            ent.entity.adresse
+              ? addressesMatch(p.property_address, ent.entity.adresse)
+              : !p.property_address;
+          for (const dup of existingAll) {
+            if (dup.id !== existing.id && samePlace(dup)) {
+              await insurance.policies.delete(dup.id).catch(() => {});
+            }
+          }
+        }
+
+        if (existing && ent.coverages.length === 0) {
           createdPolicies.push({ id: existing.id, policy_number: existing.policy_number });
           continue;
         }
 
-        const policy = await insurance.policies.create({
-          document_id: doc.id,
-          policy_number: normalizedNum,
-          insurer_name: entry.insurer_name,
-          insurer_cvr: entry.insurer_cvr ?? null,
-          broker_name: oversigt.broker_name ?? null,
-          policyholder_name: entry.policyholder_name,
-          policyholder_cvr: entry.policyholder_cvr ?? null,
-          policyholder_address: null,
-          property_address: entry.property_address ?? null,
-          property_matrikel: null,
-          property_bfe: null,
-          property_entity_id: null,
-          business_activity: entry.insurance_type ?? null,
-          building_use: null,
-          building_area_m2: null,
-          building_floors: null,
-          building_year_built: null,
-          building_has_basement: null,
-          insurance_form: null,
-          sum_insured_dkk: entry.sum_insured_dkk ?? null,
-          annual_premium_dkk: entry.annual_premium_dkk ?? null,
-          general_deductible_dkk: null,
-          effective_from: entry.effective_from ?? null,
-          effective_to: entry.effective_to ?? null,
-          main_renewal_date: null,
-          policy_issued_date: null,
-          raw_metadata: {
-            source_type: 'oversigt',
-            notes: entry.notes ?? null,
-            overview_notes: oversigt.notes ?? null,
-          },
-          created_by: auth.userId,
-          sag_id: docSagId,
-        });
+        // Opret eller opdater police
+        const policyId = existing?.id;
+        let policy: { id: string; policy_number: string };
 
-        // Gem coverages fra oversigt (hvis AI returnerede dem)
-        const entryCoverages = (entry as Record<string, unknown>).coverages as
-          | Array<{
-              coverage_code: string;
-              coverage_label?: string;
-              is_covered: boolean;
-              sum_dkk?: number | null;
-              deductible_dkk?: number | null;
-            }>
-          | undefined;
-        const coverageInputs = (entryCoverages ?? []).map((c) => ({
-          policy_id: policy.id,
-          coverage_code: c.coverage_code,
-          coverage_label:
-            c.coverage_label ||
-            COVERAGE_LABELS_DA[c.coverage_code as CoverageCode] ||
-            c.coverage_code,
-          is_covered: c.is_covered,
-          sum_dkk: c.sum_dkk ?? null,
-          deductible_dkk: c.deductible_dkk ?? null,
-          conditions_ref: null,
-          notes: null,
-        }));
-        if (coverageInputs.length > 0) {
-          await insurance.coverages.bulkCreate(coverageInputs);
+        if (existing) {
+          policy = { id: existing.id, policy_number: existing.policy_number };
+          // BIZZ-2144: Policen dedup-genbruges, men metadata skal opdateres med
+          // nyeste parse — ellers mangler fx registreringsnummer på bilpolicer
+          // der blev parset før reg.nr-feltet blev gemt.
+          await insurance.policies.updateRawMetadata(existing.id, {
+            source_type: 'v2',
+            insurance_type: ins.identification.type,
+            bygninger: ent.entity.bygninger ?? null,
+            registreringsnummer: ent.entity.registreringsnummer ?? null,
+          });
+        } else {
+          policy = await insurance.policies.create({
+            document_id: doc.id,
+            policy_number: policyNumber,
+            insurer_name: ins.identification.selskab ?? 'Ukendt',
+            insurer_cvr: null,
+            broker_name: null,
+            policyholder_name: ins.identification.forsikringstager ?? 'Ukendt',
+            policyholder_cvr: ins.identification.forsikringstager_cvr ?? null,
+            policyholder_address: null,
+            property_address: ent.entity.adresse ?? null,
+            property_matrikel: null,
+            property_bfe: ent.entity.bfe ?? null,
+            property_entity_id: null,
+            business_activity: ins.identification.type ?? null,
+            building_use: ent.entity.bygninger?.[0]?.anvendelse ?? null,
+            building_area_m2: ent.entity.bygninger?.[0]?.bebygget_areal_m2 ?? null,
+            building_floors: ent.entity.bygninger?.[0]?.antal_etager ?? null,
+            building_year_built: ent.entity.bygninger?.[0]?.opfoert_aar ?? null,
+            building_has_basement: ent.entity.bygninger?.[0]?.kaelder ?? null,
+            insurance_form:
+              ent.entity.bygninger?.[0]?.forsikringsform === 'Nyværdi'
+                ? ('nyvaerdi' as const)
+                : ent.entity.bygninger?.[0]?.forsikringsform === 'Sum'
+                  ? ('sum' as const)
+                  : null,
+            sum_insured_dkk: null,
+            annual_premium_dkk: null,
+            general_deductible_dkk: null,
+            effective_from: null,
+            effective_to: null,
+            main_renewal_date: null,
+            policy_issued_date: null,
+            raw_metadata: {
+              source_type: 'v2',
+              insurance_type: ins.identification.type,
+              bygninger: ent.entity.bygninger ?? null,
+              // BIZZ-2144: Gem reg.nr fra bilpolicer så UI kan linke til
+              // motorregisterets åbne opslag.
+              registreringsnummer: ent.entity.registreringsnummer ?? null,
+            },
+            created_by: auth.userId,
+            sag_id: docSagId,
+          });
         }
 
-        // Kør gap-engine med dækningsdata fra oversigt
-        await insurance.gaps.deleteForPolicy(policy.id);
-        const detectedGaps = runGapEngine({
-          policy,
-          coverages: coverageInputs as unknown as ForsikringCoverage[],
-          bbr: null,
-          asOfDate: new Date(),
-        });
-        if (detectedGaps.length > 0) {
-          await insurance.gaps.bulkCreate(
-            detectedGaps.map((g) => ({
-              policy_id: policy.id,
-              check_id: g.check_id,
-              category: g.category,
-              severity: g.severity,
-              title: g.title,
-              description: g.description,
-              recommendation: g.recommendation,
-              estimated_impact_dkk: g.estimated_impact_dkk,
-              source_data: g.source_data,
-            }))
-          );
-          totalGaps += detectedGaps.length;
+        // Gem coverages
+        if (ent.coverages.length > 0) {
+          // Slet eksisterende coverages hvis vi opdaterer
+          if (policyId) {
+            try {
+              await insurance.coverages.deleteForPolicy(policyId);
+            } catch {
+              /* ignore */
+            }
+          }
+
+          const coverageInputs = ent.coverages.map((c) => ({
+            policy_id: policy.id,
+            coverage_code: mapCoverageCode(c.navn),
+            coverage_label: c.navn,
+            is_covered: c.er_daekket,
+            sum_dkk: c.sum_dkk ?? null,
+            deductible_dkk: c.selvrisiko_dkk ?? null,
+            conditions_ref: c.betingelsesref ?? null,
+            notes: c.noter ?? null,
+          }));
+
+          await insurance.coverages.bulkCreate(coverageInputs);
         }
 
         createdPolicies.push({ id: policy.id, policy_number: policy.policy_number });
       }
-
-      // Markér dokument som parsed (link til første police)
-      await insurance.documents.updateParseStatus(doc.id, 'parsed', {
-        extractedText: result.text,
-        policyId: createdPolicies[0]?.id,
-      });
-
-      // Audit log
-      const ctx = await getTenantContext(auth.tenantId);
-      await ctx.auditLog.write({
-        action: 'forsikring.oversigt.parsed',
-        resource_type: 'forsikring_document',
-        resource_id: doc.id,
-        metadata: {
-          document_type: 'oversigt',
-          policies_created: createdPolicies.length,
-          total_gaps: totalGaps,
-        },
-      });
-
-      // BIZZ-1404: Registrer AI token-forbrug
-      if (result.tokenUsage) {
-        recordParseTokens(
-          auth.tenantId,
-          auth.userId,
-          result.tokenUsage.input,
-          result.tokenUsage.output
-        );
-      }
-
-      return NextResponse.json({
-        document_type: 'oversigt',
-        policies: createdPolicies,
-        policies_count: createdPolicies.length,
-        gaps_count: totalGaps,
-        tokenUsage: result.tokenUsage ?? null,
-      });
     }
 
-    // ─── Individuel police (police/tillaeg/ukendt) ─────────────
-    const parsed: ParsedPolicy = result.policy;
-    // BIZZ-1395: Normalisér policenummer og dedup mod eksisterende
-    const normalizedPolicyNum = normalizePolicyNumber(parsed.policy_number);
-    const existingPolicy = await insurance.policies.findByNumber(normalizedPolicyNum);
-    if (existingPolicy) {
-      // Police eksisterer allerede — link dokumentet og TILFØJ coverages
-      // hvis det nye dokument har dækningsdata (typisk detaljeret police vs oversigt)
-      let addedCoverages = 0;
-      if (parsed.coverages && parsed.coverages.length > 0) {
-        // Slet gamle (tomme) coverages og indsæt nye fra det detaljerede dokument
-        await insurance.coverages.deleteForPolicy(existingPolicy.id);
-        const coverageInputs = parsed.coverages.map(
-          (c: {
-            coverage_code: string;
-            coverage_label?: string;
-            is_covered: boolean;
-            sum_dkk?: number | null;
-            deductible_dkk?: number | null;
-            conditions_ref?: string | null;
-            notes?: string | null;
-          }) => ({
-            policy_id: existingPolicy.id,
-            coverage_code: c.coverage_code,
-            coverage_label:
-              c.coverage_label ||
-              COVERAGE_LABELS_DA[c.coverage_code as CoverageCode] ||
-              c.coverage_code,
-            is_covered: c.is_covered,
-            sum_dkk: c.sum_dkk ?? null,
-            deductible_dkk: c.deductible_dkk ?? null,
-            conditions_ref: c.conditions_ref ?? null,
-            notes: c.notes ?? null,
-          })
-        );
-        await insurance.coverages.bulkCreate(coverageInputs);
-        addedCoverages = coverageInputs.length;
-
-        // Re-kør gap-engine med dækningsdata
-        await insurance.gaps.deleteForPolicy(existingPolicy.id);
-        const detectedGaps = runGapEngine({
-          policy: existingPolicy,
-          coverages: coverageInputs as unknown as ForsikringCoverage[],
-          bbr: null,
-          asOfDate: new Date(),
-        });
-        if (detectedGaps.length > 0) {
-          await insurance.gaps.bulkCreate(
-            detectedGaps.map((g) => ({
-              policy_id: existingPolicy.id,
-              check_id: g.check_id,
-              category: g.category,
-              severity: g.severity,
-              title: g.title,
-              description: g.description,
-              recommendation: g.recommendation,
-              estimated_impact_dkk: g.estimated_impact_dkk,
-              source_data: g.source_data,
-            }))
-          );
-        }
-      }
-
-      await insurance.documents.updateParseStatus(doc.id, 'parsed', {
-        extractedText: result.text,
-        policyId: existingPolicy.id,
-      });
-      return NextResponse.json({
-        document_type: result.documentType,
-        policy: {
-          id: existingPolicy.id,
-          policy_number: existingPolicy.policy_number,
-          insurer_name: existingPolicy.insurer_name,
-          policyholder_name: existingPolicy.policyholder_name,
-          property_address: existingPolicy.property_address,
-        },
-        deduplicated: true,
-        coverages_count: addedCoverages,
-        gaps_count: 0,
-      });
+    // Gem betingelsesreferencer i metadata (for betingelses-tracker)
+    if (v2Result.conditions.length > 0) {
+      logger.log(
+        `[forsikring/parse] v2 betingelser: ${v2Result.conditions.map((c) => c.ref).join(', ')}`
+      );
     }
 
-    const policy = await insurance.policies.create({
-      document_id: doc.id,
-      policy_number: normalizedPolicyNum,
-      insurer_name: parsed.insurer_name,
-      insurer_cvr: parsed.insurer_cvr ?? null,
-      broker_name: parsed.broker_name ?? null,
-      policyholder_name: parsed.policyholder_name,
-      policyholder_cvr: parsed.policyholder_cvr ?? null,
-      policyholder_address: parsed.policyholder_address ?? null,
-      property_address: parsed.property_address ?? null,
-      property_matrikel: parsed.property_matrikel ?? null,
-      property_bfe: parsed.property_bfe ?? null,
-      property_entity_id: null,
-      business_activity: parsed.business_activity ?? null,
-      building_use: parsed.building_use ?? null,
-      building_area_m2: parsed.building_area_m2 ?? null,
-      building_floors: parsed.building_floors ?? null,
-      building_year_built: parsed.building_year_built ?? null,
-      building_has_basement: parsed.building_has_basement ?? null,
-      insurance_form: parsed.insurance_form ?? null,
-      sum_insured_dkk: parsed.sum_insured_dkk ?? null,
-      annual_premium_dkk: parsed.annual_premium_dkk ?? null,
-      general_deductible_dkk: parsed.general_deductible_dkk ?? null,
-      effective_from: parsed.effective_from ?? null,
-      effective_to: parsed.effective_to ?? null,
-      main_renewal_date: parsed.main_renewal_date ?? null,
-      policy_issued_date: parsed.policy_issued_date ?? null,
-      raw_metadata: {
-        document_type: result.documentType,
-        notes: parsed.notes ?? null,
-      },
-      created_by: auth.userId,
-      sag_id: docSagId,
-    });
+    // Token usage tracking
+    recordParseTokens(auth.tenantId, auth.userId, v2Result.markdown.length, 0);
 
-    // Persistér dækninger (også eksplicit ekskluderede med is_covered=false)
-    const coverageInputs = parsed.coverages.map((c) => ({
-      policy_id: policy.id,
-      coverage_code: c.coverage_code,
-      coverage_label:
-        c.coverage_label || COVERAGE_LABELS_DA[c.coverage_code as CoverageCode] || c.coverage_code,
-      is_covered: c.is_covered,
-      sum_dkk: c.sum_dkk ?? null,
-      deductible_dkk: c.deductible_dkk ?? null,
-      conditions_ref: c.conditions_ref ?? null,
-      notes: c.notes ?? null,
-    }));
-    const coverages = await insurance.coverages.bulkCreate(coverageInputs);
-
-    // Markér dokument som parsed + link til police
     await insurance.documents.updateParseStatus(doc.id, 'parsed', {
-      extractedText: result.text,
-      policyId: policy.id,
+      extractedText: v2Result.markdown.slice(0, 5000),
     });
-
-    // Kør gap-engine v1 (BBR-frit — kun coverage og dato-baserede checks)
-    // BIZZ-1391: Slet eksisterende gaps for policen før re-indsættelse (dedup)
-    await insurance.gaps.deleteForPolicy(policy.id);
-    const detectedGaps = runGapEngine({
-      policy,
-      coverages,
-      bbr: null,
-      asOfDate: new Date(),
-    });
-    if (detectedGaps.length > 0) {
-      await insurance.gaps.bulkCreate(
-        detectedGaps.map((g) => ({
-          policy_id: policy.id,
-          check_id: g.check_id,
-          category: g.category,
-          severity: g.severity,
-          title: g.title,
-          description: g.description,
-          recommendation: g.recommendation,
-          estimated_impact_dkk: g.estimated_impact_dkk,
-          source_data: g.source_data,
-        }))
-      );
-    }
-
-    // Audit log
-    const ctx = await getTenantContext(auth.tenantId);
-    await ctx.auditLog.write({
-      action: 'forsikring.policy.parsed',
-      resource_type: 'forsikring_policy',
-      resource_id: policy.id,
-      metadata: {
-        document_id: doc.id,
-        document_type: result.documentType,
-        coverage_count: coverages.length,
-        gap_count: detectedGaps.length,
-      },
-    });
-
-    // BIZZ-1404: Registrer AI token-forbrug
-    if (result.tokenUsage) {
-      recordParseTokens(
-        auth.tenantId,
-        auth.userId,
-        result.tokenUsage.input,
-        result.tokenUsage.output
-      );
-    }
 
     return NextResponse.json({
-      document_type: result.documentType,
-      policy: {
-        id: policy.id,
-        policy_number: policy.policy_number,
-        insurer_name: policy.insurer_name,
-        policyholder_name: policy.policyholder_name,
-        property_address: policy.property_address,
-      },
-      coverages_count: coverages.length,
-      gaps_count: detectedGaps.length,
-      tokenUsage: result.tokenUsage ?? null,
+      policies_count: createdPolicies.length,
+      document_type: 'v2',
+      gaps_count: totalGaps,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

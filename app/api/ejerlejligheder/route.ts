@@ -23,6 +23,8 @@ import { fetchDawa } from '@/app/lib/dawa';
 import { darResolveAdresseId } from '@/app/lib/dar';
 import { resolveEnhedByDawaId } from '@/app/lib/fetchBbrData';
 import { fetchTinglysningPriceRowsByBfe } from '@/app/lib/tinglysningPrices';
+import { fetchMatEjerlejlighederByBfe } from '@/app/lib/matEjerlejlighed';
+import { fetchEjfEjereDirekt } from '@/app/lib/ejerskab/fetchEjfEjereDirekt';
 // EJF/Datafordeler er ikke nødvendig — alt data hentes fra tinglysning summarisk XML
 
 // ─── Query param validation ─────────────────────────────────────────────────
@@ -102,6 +104,11 @@ interface TLSearchItem {
   ejendomsVurdering: number | null;
   grundVaerdi: number | null;
   vurderingsDato: string | null;
+  /**
+   * BIZZ-2057: KOMMUNALT ESR-ejendomsnummer (entydigt KUN sammen med
+   * kommuneNummer), IKKE et BFE-nummer. Må aldrig bruges som BFE — det reelle
+   * BFE (BestemtFastEjendomNummer) hentes via ejdsummarisk-opslag på uuid.
+   */
   ejendomsnummer: string | null;
   kommuneNummer: string | null;
 }
@@ -157,6 +164,46 @@ function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
     });
     req.end();
   });
+}
+
+// ─── BFE-opslag ─────────────────────────────────────────────────────────────
+
+/**
+ * BIZZ-2057: Udtrækker det reelle BFE (BestemtFastEjendomNummer) fra en
+ * ejdsummarisk-XML-respons. TL-søgesvar indeholder kun det kommunale ESR-nummer.
+ *
+ * @param xml - ejdsummarisk XML-body
+ * @returns BFE-nummer eller 0 hvis ikke fundet
+ */
+function parseBfeFromSummarisk(xml: string): number {
+  const m = xml.match(/BestemtFastEjendomNummer>\s*(\d+)/i);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+/**
+ * BIZZ-2057: Batch-resolver reelle BFE-numre for TL-uuid'er via ejdsummarisk.
+ * Kører i CONCURRENCY-batcher så vi ikke overbelaster TL med N parallelle kald.
+ *
+ * @param uuids - TL-objekt-uuid'er
+ * @param concurrency - antal parallelle kald pr. batch
+ * @returns Map fra uuid → reelt BFE (kun entries der kunne resolves)
+ */
+async function fetchBfeBatch(uuids: string[], concurrency = 3): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  for (let i = 0; i < uuids.length; i += concurrency) {
+    const batch = uuids.slice(i, i + concurrency);
+    const results = await Promise.allSettled(
+      batch.map(async (uuid) => {
+        const res = await tlFetch(`/ejdsummarisk/${uuid}`);
+        if (res.status !== 200 || !res.body) return { uuid, bfe: 0 };
+        return { uuid, bfe: parseBfeFromSummarisk(res.body) };
+      })
+    );
+    for (const r of results) {
+      if (r.status === 'fulfilled' && r.value.bfe > 0) map.set(r.value.uuid, r.value.bfe);
+    }
+  }
+  return map;
 }
 
 // ─── Etage/dør parsing ──────────────────────────────────────────────────────
@@ -336,14 +383,15 @@ async function resolveLejlighederViaDawa(
           items.find((it) => !/hovedejendom/i.test(it.vedroerende)) ??
           items[0];
         if (!tlItem) return;
-        // ejendomsnummer is the unit-specific BFE
-        const bfe = tlItem.ejendomsnummer ? parseInt(tlItem.ejendomsnummer, 10) : 0;
-        if (bfe > 0) lej.bfe = bfe;
 
-        // Fetch summarisk XML → areal + købspris + købsdato + ejer-navn
+        // Fetch summarisk XML → reelt BFE + areal + købspris + købsdato + ejer-navn
         const sumRes = await tlFetch(`/ejdsummarisk/${tlItem.uuid}`);
         if (sumRes.status === 200 && sumRes.body) {
           const xml = sumRes.body;
+          // BIZZ-2057: reelt BFE (BestemtFastEjendomNummer) — ALDRIG det
+          // kommunale ESR-ejendomsnummer fra TL-søgesvaret.
+          const bfe = parseBfeFromSummarisk(xml);
+          if (bfe > 0) lej.bfe = bfe;
           // Ejerlejlighedens areal (primær) eller generisk areal
           const ejlAreal = xml.match(
             /[Ee]jerlejlighedens\s+tinglyste?\s+areal[^<]*<[^>]*>[^<]*<[^>]*>(\d+)\s*kvm/i
@@ -546,6 +594,444 @@ async function resolveLejlighederViaDawa(
   return lejligheder;
 }
 
+/**
+ * BIZZ-2057 / BIZZ-2060: Autoritativ cache-first resolver for ejerlejligheder.
+ *
+ * Tinglysningens matrikelsøgning kollapser alle ejerlejligheder under én
+ * hovedejendoms-UUID til ÉT BFE (ejdsummarisk returnerer kun ét
+ * BestemtFastEjendomNummer pr. UUID). Det gav forkert individuel BFE og
+ * forkert/"ukendt" ejer for hver enhed på multi-unit-matrikler (fx
+ * Hammerholmen 44-48 hvor 18 enheder kollapsede til moderejendommens BFE).
+ *
+ * Denne resolver bygger den korrekte enhedsliste direkte fra eksisterende
+ * cache-tabeller (ingen nye tabeller):
+ *   1. DAWA /adgangsadresser → matriklens vejnavn+husnr-sæt
+ *   2. bfe_adresse_cache → individuel BFE pr. (adresse, etage, dør)
+ *   3. ejf_ejerskab (status='gældende') → ejer pr. BFE
+ *   4. cvr_virksomhed → selskabsnavn for CVR-ejere
+ *   5. MAT_Ejerlejlighed (Matriklen v2) → tinglyst areal + ejerlejlighedsnr
+ *   6. ejerskifte_historik → seneste handel (pris + dato), med
+ *      fetchTinglysningPriceRowsByBfe som fallback pr. BFE
+ *
+ * Falder igennem (returnerer []) når cachen ikke dækker matriklen, så
+ * GET-handleren bruger den eksisterende TL/DAWA-flow uændret — ingen
+ * regression for matrikler uden cache-dækning.
+ *
+ * @param ejerlavKode - Landsejerlav-kode (DAWA ejerlavkode)
+ * @param matrikelnr - Matrikelnummer på ejerlavet
+ * @param moderBfe - SFE/hovedejendoms-BFE der udelades fra enhedslisten
+ * @returns Ejerlejlighed[] med korrekt individuel BFE + ejer, eller [] ved cache-miss
+ */
+async function resolveLejlighederViaBfeCache(
+  ejerlavKode: string,
+  matrikelnr: string,
+  moderBfe?: number
+): Promise<Ejerlejlighed[]> {
+  const DAWA_BASE = 'https://dawa.aws.dk';
+
+  // Trin 1: Matriklens adgangsadresser → sæt af "Vejnavn Husnr" + postnr.
+  // Samme matrikel-scoping som den eksisterende DAWA-resolver, så vi kun
+  // henter enheder der faktisk ligger på denne matrikel.
+  const adgRes = await fetchDawa(
+    `${DAWA_BASE}/adgangsadresser?ejerlavkode=${ejerlavKode}&matrikelnr=${encodeURIComponent(matrikelnr)}&per_side=100`,
+    { signal: AbortSignal.timeout(8000), next: { revalidate: 86400 } },
+    { caller: 'ejerlejligheder.bfe-cache' }
+  );
+  if (!adgRes.ok) return [];
+  const adgangsadresser = (await adgRes.json()) as Array<{
+    id: string;
+    adressebetegnelse: string;
+  }>;
+  if (adgangsadresser.length === 0) return [];
+
+  // adressebetegnelse: "Hammerholmen 46A, 2650 Hvidovre" → adresse "Hammerholmen 46A"
+  const adresseSet = new Set<string>();
+  const postnrSet = new Set<string>();
+  // BIZZ-2061: Adgangsadresse-id-sæt bruges til at frasortere SFE-cache-rækker.
+  // SFE'ens bfe_adresse_cache-række (kilde 'cache_dar') har dawa_id = en
+  // ADGANGSADRESSE-id, mens ejerlejligheds-rækker har enhedsadresse-ids.
+  // Uden filteret lækkede SFE-BFE'en (fx 2160256) ind som "Ukendt"-enhed
+  // når klienten ikke sender moderBfe (SFE-siden gør det ikke).
+  const adgIdSet = new Set<string>();
+  for (const adg of adgangsadresser) {
+    if (adg.id) adgIdSet.add(adg.id);
+    const street = adg.adressebetegnelse.split(',')[0].trim();
+    if (street) adresseSet.add(street);
+    const post = adg.adressebetegnelse.match(/(\d{4})/);
+    if (post) postnrSet.add(post[1]);
+  }
+  if (adresseSet.size === 0) return [];
+
+  const admin = createAdminClient();
+
+  // Trin 2: bfe_adresse_cache → én række pr. individuel ejerlejlighed-BFE.
+  // Adresse-sættet kommer fra denne matrikels DAWA-svar, så scoping er korrekt.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let cacheQuery = (admin as any)
+    .from('bfe_adresse_cache')
+    .select('bfe_nummer, adresse, etage, doer, postnr, postnrnavn, dawa_id')
+    .in('adresse', [...adresseSet]);
+  if (postnrSet.size > 0) cacheQuery = cacheQuery.in('postnr', [...postnrSet]);
+  const { data: cacheRows } = (await cacheQuery.limit(500)) as {
+    data: Array<{
+      bfe_nummer: number;
+      adresse: string;
+      etage: string | null;
+      doer: string | null;
+      postnr: string | null;
+      postnrnavn: string | null;
+      dawa_id: string | null;
+    }> | null;
+  };
+  const units = (cacheRows ?? []).filter(
+    (r) =>
+      r.bfe_nummer > 0 &&
+      // BIZZ-2061: SFE-rækken har en adgangsadresse-id som dawa_id — udelad
+      !(r.dawa_id && adgIdSet.has(r.dawa_id)) &&
+      // BIZZ-2061: moderBfe-rækken udelades KUN når den ikke har sin egen
+      // enhedsadresse (dawa_id). Klienten sender bbrData.ejerlejlighedBfe som
+      // moderBfe — på adgangsadresse-niveau kan det være en ÆGTE leaf-enhed
+      // (fx Hammerholmen 44 → BFE 221045). Uden dette mistede enheden sin
+      // egen række, BFE-match fejlede i UI'et og vejnavn-fallback viste en
+      // søster-enheds data. SFE/moder-selvrækker fanges af adgIdSet-filteret.
+      (moderBfe == null || r.bfe_nummer !== moderBfe || !!r.dawa_id)
+  );
+  if (units.length === 0) return [];
+
+  // Trin 2b (BIZZ-2087): Reparér korrupte dawa_id'er fra cachen. Backfillen
+  // 2026-05-20 gav flere BFE'er samme dawa_id (typisk et henlagt DAR-id),
+  // hvilket sender alle rækker til samme "Adresse ikke fundet"-side. En
+  // enhedsadresse-id er pr. definition unik pr. enhed, så dubletter på
+  // tværs af enheder = korrupt cache. De berørte rækker re-resolves via
+  // DAWA (adgangsadresse + etage/dør → enhedsadresse-id) og skrives
+  // tilbage til bfe_adresse_cache, så cachen self-healer.
+  const dawaIdCount = new Map<string, number>();
+  for (const u of units) {
+    if (u.dawa_id) dawaIdCount.set(u.dawa_id, (dawaIdCount.get(u.dawa_id) ?? 0) + 1);
+  }
+  // Street ("Thorvald Bindesbølls Plads 16") → adgangsadresse-id
+  const adgIdByStreet = new Map<string, string>();
+  for (const adg of adgangsadresser) {
+    const street = adg.adressebetegnelse.split(',')[0].trim();
+    if (street && adg.id) adgIdByStreet.set(street, adg.id);
+  }
+  const corruptUnits = units.filter((u) => u.dawa_id && (dawaIdCount.get(u.dawa_id) ?? 0) > 1);
+  if (corruptUnits.length > 0) {
+    logger.warn(
+      `[ejerlejligheder] ${corruptUnits.length} cache-rækker deler dawa_id — re-resolver via DAWA (BIZZ-2087)`
+    );
+    const REPAIR_CONCURRENCY = 5;
+    for (let i = 0; i < corruptUnits.length; i += REPAIR_CONCURRENCY) {
+      const batch = corruptUnits.slice(i, i + REPAIR_CONCURRENCY);
+      await Promise.allSettled(
+        batch.map(async (u) => {
+          const adgId = adgIdByStreet.get(u.adresse);
+          if (!adgId) {
+            u.dawa_id = null;
+            return;
+          }
+          const params = new URLSearchParams({ adgangsadresseid: adgId });
+          if (u.etage) params.set('etage', u.etage);
+          if (u.doer) params.set('dør', u.doer);
+          try {
+            const res = await fetchDawa(
+              `https://api.dataforsyningen.dk/adresser?${params}`,
+              { signal: AbortSignal.timeout(5000) },
+              { caller: 'ejerlejligheder.bfe-cache.repair' }
+            );
+            if (!res.ok) {
+              u.dawa_id = null;
+              return;
+            }
+            const addrs = (await res.json()) as { id: string }[];
+            const nyId = addrs[0]?.id ?? null;
+            u.dawa_id = nyId;
+            if (nyId) {
+              // Writeback — self-heal cachen så næste opslag er korrekt
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              await (admin as any)
+                .from('bfe_adresse_cache')
+                .update({ dawa_id: nyId })
+                .eq('bfe_nummer', u.bfe_nummer);
+            }
+          } catch {
+            // DAWA-fejl → hellere ingen link end et dødt link
+            u.dawa_id = null;
+          }
+        })
+      );
+    }
+  }
+
+  // Trin 3: ejer pr. BFE fra ejf_ejerskab (gældende). Første ejer pr. BFE.
+  const bfes = [...new Set(units.map((u) => u.bfe_nummer))];
+  const ejerMap = new Map<number, { navn: string; type: string; cvr: string | null }>();
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: ejfRows } = (await (admin as any)
+      .from('ejf_ejerskab')
+      .select('bfe_nummer, ejer_navn, ejer_type, ejer_cvr')
+      .in('bfe_nummer', bfes)
+      .eq('status', 'gældende')
+      .limit(1000)) as {
+      data: Array<{
+        bfe_nummer: number;
+        ejer_navn: string | null;
+        ejer_type: string | null;
+        ejer_cvr: string | null;
+      }> | null;
+    };
+    for (const row of ejfRows ?? []) {
+      if (!ejerMap.has(row.bfe_nummer)) {
+        ejerMap.set(row.bfe_nummer, {
+          navn: row.ejer_navn ?? '',
+          type: row.ejer_type ?? '',
+          cvr: row.ejer_cvr ?? null,
+        });
+      }
+    }
+  } catch {
+    /* ejer-opslag non-fatal — enheder returneres med 'Ukendt' */
+  }
+
+  // Trin 3b (BIZZ-2088): BFE'er uden gældende ejf_ejerskab-række. Delta-syncen
+  // har huller hvor det seneste ejerskifte aldrig kom ind — tabellen har kun
+  // historiske rækker. Live EJF-opslag (fetchEjfEjereDirekt) henter den
+  // aktuelle ejer; hvis EJF heller intet giver, vises nyeste historiske ejer
+  // som "seneste kendte ejer" frem for 'Ukendt'.
+  const missingBfes = bfes.filter((b) => !ejerMap.has(b));
+  if (missingBfes.length > 0) {
+    const EJER_CONCURRENCY = 5;
+    for (let i = 0; i < missingBfes.length; i += EJER_CONCURRENCY) {
+      const batch = missingBfes.slice(i, i + EJER_CONCURRENCY);
+      await Promise.allSettled(
+        batch.map(async (bfe) => {
+          try {
+            const { ejere } = await fetchEjfEjereDirekt(bfe);
+            const e = ejere[0];
+            if (!e) return;
+            const navn = e.personNavn ?? e.virksomhedsnavn ?? null;
+            // BIZZ-2111: gældende personejer uden navn = navne- og adresse-
+            // beskyttelse. Den beskyttede label SKAL vinde over den historiske
+            // fallback nedenfor — ellers vises en tidligere (reel) ejer som
+            // gældende ejer for en beskyttet persons lejlighed.
+            if (!navn && !e.cvr) {
+              if (e.ejertype === 'person') {
+                ejerMap.set(bfe, { navn: 'Navne- og adressebeskyttet', type: 'person', cvr: null });
+              }
+              return;
+            }
+            ejerMap.set(bfe, {
+              navn: navn ?? `CVR ${e.cvr}`,
+              type: e.ejertype,
+              cvr: e.cvr ?? null,
+            });
+          } catch {
+            /* live-opslag non-fatal */
+          }
+        })
+      );
+    }
+    // Historisk fallback for de BFE'er hvor live EJF heller intet gav
+    const stillMissing = missingBfes.filter((b) => !ejerMap.has(b));
+    if (stillMissing.length > 0) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: histRows } = (await (admin as any)
+          .from('ejf_ejerskab')
+          .select('bfe_nummer, ejer_navn, ejer_type, ejer_cvr, virkning_fra')
+          .in('bfe_nummer', stillMissing)
+          .order('virkning_fra', { ascending: false, nullsFirst: false })
+          .limit(1000)) as {
+          data: Array<{
+            bfe_nummer: number;
+            ejer_navn: string | null;
+            ejer_type: string | null;
+            ejer_cvr: string | null;
+          }> | null;
+        };
+        for (const row of histRows ?? []) {
+          // Nyeste-først — første række pr. BFE er seneste kendte ejer
+          if (!ejerMap.has(row.bfe_nummer)) {
+            ejerMap.set(row.bfe_nummer, {
+              navn: row.ejer_navn ?? '',
+              type: row.ejer_type ?? '',
+              cvr: row.ejer_cvr ?? null,
+            });
+          }
+        }
+      } catch {
+        /* historisk fallback non-fatal */
+      }
+    }
+  }
+
+  // BIZZ-2088: ejer_navn kan være rå "CVR NNNNNNNN" uden udfyldt ejer_cvr —
+  // udtræk CVR fra navnet så trin 4 kan resolve det rigtige virksomhedsnavn.
+  for (const e of ejerMap.values()) {
+    if (!e.cvr) {
+      const m = e.navn.match(/^CVR\s*(\d{8})$/i);
+      if (m) e.cvr = m[1];
+    }
+  }
+
+  // Trin 4: selskabsnavn for CVR-ejere (ejf_ejerskab.ejer_navn er typisk
+  // "CVR 12345678" for selskaber — vi foretrækker det rigtige firmanavn).
+  const cvrSet = [
+    ...new Set([...ejerMap.values()].map((e) => e.cvr).filter((c): c is string => !!c)),
+  ];
+  const cvrNavnMap = new Map<string, string>();
+  if (cvrSet.length > 0) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: cvrRows } = (await (admin as any)
+        .from('cvr_virksomhed')
+        .select('cvr, navn')
+        .in('cvr', cvrSet)
+        .limit(1000)) as { data: Array<{ cvr: string; navn: string | null }> | null };
+      for (const row of cvrRows ?? []) {
+        if (row.navn) cvrNavnMap.set(row.cvr, row.navn);
+      }
+    } catch {
+      /* CVR-navn non-fatal */
+    }
+  }
+
+  // Trin 4b (BIZZ-2061, Resights-paritet): tinglyst areal pr. BFE fra
+  // Matriklen. Erhvervs-ejerlejligheder findes typisk ikke i BBR_Enhed,
+  // så MAT_Ejerlejlighed.samletAreal er den autoritative areal-kilde.
+  // Ét batch-kald for alle BFE'er; non-fatal (areal forbliver null).
+  let matMap = new Map<number, { areal: number | null; ejerlejlighedsnummer: string | null }>();
+  try {
+    matMap = await fetchMatEjerlejlighederByBfe(bfes);
+  } catch {
+    /* areal-berigelse non-fatal */
+  }
+
+  // Trin 5: byg Ejerlejlighed-liste med korrekt individuel BFE + ejer
+  const lejligheder: Ejerlejlighed[] = units.map((u) => {
+    const etage = u.etage && u.etage !== '' ? u.etage : null;
+    const doer = u.doer && u.doer !== '' ? u.doer : null;
+    const loc = [etage ? `${etage}.` : null, doer].filter(Boolean).join(' ');
+    const postSuffix = u.postnr ? `, ${u.postnr}${u.postnrnavn ? ' ' + u.postnrnavn : ''}` : '';
+    const adresse = `${u.adresse}${loc ? ', ' + loc : ''}${postSuffix}`;
+
+    const ejerInfo = ejerMap.get(u.bfe_nummer);
+    let ejer = 'Ukendt';
+    let ejertype: 'person' | 'selskab' | 'ukendt' = 'ukendt';
+    if (ejerInfo) {
+      const isSelskab =
+        ejerInfo.type === 'virksomhed' || ejerInfo.type === 'selskab' || !!ejerInfo.cvr;
+      if (isSelskab) {
+        ejer = (ejerInfo.cvr && cvrNavnMap.get(ejerInfo.cvr)) || ejerInfo.navn || 'Ukendt';
+        ejertype = 'selskab';
+      } else if (ejerInfo.type === 'person' && !ejerInfo.navn) {
+        // BIZZ-2111: person uden navn fra EJF = navne- og adressebeskyttet.
+        // GDPR: navnet må aldrig hentes fra andre kilder når EJF beskytter det.
+        ejer = 'Navne- og adressebeskyttet';
+        ejertype = 'person';
+      } else {
+        ejer = ejerInfo.navn || 'Ukendt';
+        ejertype = ejerInfo.navn ? 'person' : 'ukendt';
+      }
+    }
+
+    const matInfo = matMap.get(u.bfe_nummer);
+    return {
+      bfe: u.bfe_nummer,
+      adresse,
+      etage,
+      doer,
+      beskrivelse: matInfo?.ejerlejlighedsnummer
+        ? `Ejerlejlighed nr. ${matInfo.ejerlejlighedsnummer}`
+        : 'Ejerlejlighed',
+      ejer,
+      ejertype,
+      areal: matInfo?.areal ?? null,
+      koebspris: null,
+      koebsdato: null,
+      dawaId: u.dawa_id ?? null,
+      udfaset: null,
+      bygningId: null,
+      bygningBetegnelse: null,
+    };
+  });
+
+  // Trin 6 (BIZZ-2061, Resights-paritet): seneste handel pr. BFE.
+  // Primær kilde er ejerskifte_historik (ét batch-opslag) — den bærer den
+  // reelle SkoedeOvertagelsesDato + KontantKoebesum/IAltKoebesum fra adkomst-
+  // dokumentet. ejendomshandel-tabellen (som fetchTinglysningPriceRowsByBfe
+  // tjekker først) har for flere backfillede BFE'er tinglysningsdato som
+  // 'dato' og en afvigende sum (fx 221037: 973.000/1988-05-03 mod adkomstens
+  // 784.128/1988-01-17) — derfor foretrækkes historik-rækken når den findes.
+  // Dato-præference koebsaftale → overtagelse matcher branchekonvention.
+  const handelMap = new Map<number, { pris: number | null; dato: string | null }>();
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: histRows } = (await (admin as any)
+      .from('ejerskifte_historik')
+      .select('bfe_nummer, overtagelsesdato, koebsaftale_dato, kontant_koebesum, i_alt_koebesum')
+      .in('bfe_nummer', bfes)
+      .order('overtagelsesdato', { ascending: false, nullsFirst: false })
+      .limit(1000)) as {
+      data: Array<{
+        bfe_nummer: number;
+        overtagelsesdato: string | null;
+        koebsaftale_dato: string | null;
+        kontant_koebesum: number | null;
+        i_alt_koebesum: number | null;
+      }> | null;
+    };
+    for (const row of histRows ?? []) {
+      // Rækker er sorteret nyeste-først — første række pr. BFE er seneste handel
+      if (handelMap.has(row.bfe_nummer)) continue;
+      const pris = row.kontant_koebesum ?? row.i_alt_koebesum ?? null;
+      const dato = row.koebsaftale_dato ?? row.overtagelsesdato ?? null;
+      if (pris == null && dato == null) continue;
+      handelMap.set(row.bfe_nummer, { pris, dato });
+    }
+  } catch {
+    /* historik-opslag non-fatal — fallback dækker */
+  }
+
+  // Fallback pr. enhed uden historik-række: eksisterende cache-first kæde
+  // (ejendomshandel → live e-TL). Non-fatal pr. enhed.
+  await Promise.all(
+    lejligheder.map(async (lej) => {
+      const handel = handelMap.get(lej.bfe);
+      if (handel) {
+        lej.koebspris = handel.pris;
+        lej.koebsdato = handel.dato;
+        return;
+      }
+      try {
+        const priceRows = await fetchTinglysningPriceRowsByBfe(lej.bfe);
+        if (priceRows.length > 0) {
+          const latest = priceRows[0];
+          lej.koebspris = latest.kontantKoebesum ?? latest.iAltKoebesum ?? null;
+          lej.koebsdato =
+            latest.overtagelsesdato ?? latest.koebsaftaleDato ?? latest.tinglysningsdato ?? null;
+        }
+      } catch {
+        /* pris-berigelse non-fatal */
+      }
+    })
+  );
+
+  // Sort: adresse → etage → dør (samme orden som de øvrige resolvere)
+  lejligheder.sort((a, b) => {
+    const addrA = a.adresse.split(',')[0].trim();
+    const addrB = b.adresse.split(',')[0].trim();
+    if (addrA !== addrB) return addrA.localeCompare(addrB, 'da');
+    const etageA = parseEtageSortValue(a.etage);
+    const etageB = parseEtageSortValue(b.etage);
+    if (etageA !== etageB) return etageA - etageB;
+    return parseDoerSortValue(a.doer) - parseDoerSortValue(b.doer);
+  });
+
+  return lejligheder;
+}
+
 // ─── Route handler ──────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest): Promise<NextResponse<EjerlejlighederResponse>> {
@@ -567,6 +1053,40 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
   }
 
   try {
+    // ── Trin 0 (BIZZ-2057/2060): Autoritativ cache-first resolver ──
+    // bfe_adresse_cache + ejf_ejerskab(gældende) + cvr_virksomhed giver den
+    // korrekte individuelle BFE + ejer pr. enhed. TL-matrikelsøgningen
+    // kollapser multi-unit-hovedejendomme til ét BFE → forkert ejer. Når
+    // cachen dækker matriklen bruger vi den; ellers falder vi igennem til
+    // den eksisterende TL/DAWA-flow uændret (ingen regression).
+    try {
+      const cacheLejligheder = await resolveLejlighederViaBfeCache(
+        ejerlavKode,
+        matrikelnr,
+        moderBfe
+      );
+      if (cacheLejligheder.length > 0) {
+        logger.log(
+          `[ejerlejligheder] BFE-cache resolver: ${cacheLejligheder.length} lejligheder for ejerlav ${ejerlavKode} matr. ${matrikelnr}`
+        );
+        const filtered = includeUdfasede
+          ? cacheLejligheder
+          : cacheLejligheder.filter((l) => l.udfaset !== true);
+        return NextResponse.json(
+          { lejligheder: filtered, fejl: null },
+          {
+            status: 200,
+            headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
+          }
+        );
+      }
+    } catch (cacheErr) {
+      logger.warn(
+        '[ejerlejligheder] BFE-cache resolver fejlede (non-fatal, falder tilbage til TL):',
+        cacheErr instanceof Error ? cacheErr.message : cacheErr
+      );
+    }
+
     // ── Trin 1: Søg alle ejendomme på matriklen via Tinglysningsrettens HTTP API ──
     // Matrikelsøgning returnerer ALLE ejendomme inkl. ejerlejligheder på tværs af opgange
     const searchPath = `/ejendom/landsejerlavmatrikel?landsejerlavid=${encodeURIComponent(ejerlavKode)}&matrikelnr=${encodeURIComponent(matrikelnr)}`;
@@ -658,6 +1178,13 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
       `[ejerlejligheder] ${lejlighedItems.length} lejligheder fundet via tinglysning for ejerlav ${ejerlavKode} matr. ${matrikelnr}`
     );
 
+    // ── Trin 1b: Resolve reelle BFE-numre (BIZZ-2057) ──
+    // TL-søgesvaret indeholder kun det kommunale ESR-ejendomsnummer. Tidligere
+    // blev ESR fejltolket som BFE, så lejligheder fik forkert BFE → forkerte
+    // links, forkert/tom ejer (EJF-opslag ramte SFE-BFE) og forkert vurdering.
+    // Vi slår det reelle BFE op pr. uuid via ejdsummarisk for ALLE lejligheder.
+    const bfeByUuid = await fetchBfeBatch(lejlighedItems.map((it) => it.uuid));
+
     // ── Trin 2: Hent summarisk data (areal + ejer + køb) for hver lejlighed ──
     // Alt data hentes fra tinglysning ejdsummarisk XML — kræver ingen EJF
     interface SummariskData {
@@ -672,9 +1199,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
     // i stedet for at kalde TL for hver enkelt. Meget hurtigere + ingen cap.
     const ejfEjerMap = new Map<number, { navn: string; type: string }>();
     try {
-      const bfes = lejlighedItems
-        .map((it) => parseInt(it.ejendomsnummer ?? '0', 10))
-        .filter((b) => b > 0);
+      const bfes = lejlighedItems.map((it) => bfeByUuid.get(it.uuid) ?? 0).filter((b) => b > 0);
       if (bfes.length > 0) {
         const admin = createAdminClient();
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -686,11 +1211,15 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
           .limit(200);
         for (const row of (ejfRows ?? []) as Array<{
           bfe_nummer: number;
-          ejer_navn: string;
+          ejer_navn: string | null;
           ejer_type: string;
         }>) {
           if (!ejfEjerMap.has(row.bfe_nummer)) {
-            ejfEjerMap.set(row.bfe_nummer, { navn: row.ejer_navn, type: row.ejer_type });
+            // BIZZ-2111: person uden navn = navne- og adressebeskyttet
+            const navn =
+              row.ejer_navn ??
+              (row.ejer_type === 'person' ? 'Navne- og adressebeskyttet' : 'Ukendt');
+            ejfEjerMap.set(row.bfe_nummer, { navn, type: row.ejer_type });
           }
         }
         logger.log(
@@ -820,8 +1349,28 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
               doer: doer ?? null,
             });
             if (darId) {
-              dawaIdMap.set(item.uuid, darId);
-              return;
+              // BIZZ-2087: Validér DAR-id'et mod DAWA før det bruges til
+              // navigation — ejendomssiden henter adressen fra DAWA, og et
+              // henlagt DAR-record giver hård "Adresse ikke fundet"-fejlside.
+              // Ved 404 falder vi videre til DAWA-søgningen nedenfor.
+              try {
+                const check = await fetchDawa(
+                  `https://api.dataforsyningen.dk/adresser/${darId}`,
+                  { signal: AbortSignal.timeout(5000) },
+                  { caller: 'ejerlejligheder.adresser.validate' }
+                );
+                if (check.ok) {
+                  dawaIdMap.set(item.uuid, darId);
+                  return;
+                }
+                logger.warn(
+                  `[ejerlejligheder] DAR-id ${darId} findes ikke i DAWA — falder tilbage til DAWA-søgning`
+                );
+              } catch {
+                // DAWA nede → stol på DAR-id'et frem for at miste navigation
+                dawaIdMap.set(item.uuid, darId);
+                return;
+              }
             }
 
             // Fallback — DAWA /adresser. Tagget så telemetri kan tælle
@@ -851,7 +1400,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
     const lejligheder: Ejerlejlighed[] = lejlighedItems
       .map((item) => {
         const { etage, doer } = parseEtageDoer(item.adresse);
-        const bfe = item.ejendomsnummer ? parseInt(item.ejendomsnummer, 10) : 0;
+        // BIZZ-2057: reelt BFE fra ejdsummarisk — ALDRIG det kommunale ESR-nummer.
+        const bfe = bfeByUuid.get(item.uuid) ?? 0;
         const sum = summariskMap.get(item.uuid);
 
         // BIZZ-784: heuristic — Tinglysning doesn't expose an explicit

@@ -14,8 +14,18 @@
  * for hvert dokument. Status vises pr. dokument under upload.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  createContext,
+  Suspense,
+} from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { useSetAIPageContext } from '@/app/context/AIPageContext';
 import {
   ShieldCheck,
@@ -38,17 +48,34 @@ import {
   FilePlus,
   ScanSearch,
   BookOpen,
+  Info,
+  Map as MapIcon,
+  Car,
+  X,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { useSubscription } from '@/app/context/SubscriptionContext';
 import { translations } from '@/app/lib/translations';
 import TokenUsageBar from '@/app/components/TokenUsageBar';
 import { gapScope, shouldFoldOwnerIntoCompany } from '@/app/lib/forsikring/types';
+import { getMatchBegrundelse } from '@/app/lib/forsikring/matchBegrundelse';
+import { erEjendomUdenAdresse, visAktivLabel } from '@/app/lib/forsikring/aktivLabel';
+import { formatParseTimestamp } from '@/app/lib/forsikring/parseTimestamp';
+import type { ForsikringMarker } from '@/app/components/forsikring/ForsikringMap';
+
+/**
+ * BIZZ-2131: Mapbox-kort loaded dynamisk (browser-only, ~200KB).
+ * ssr: false undgår mapbox-gl server-side bundling.
+ */
+// prettier-ignore
+const ForsikringMap = dynamic(() => import('@/app/components/forsikring/ForsikringMap'), { ssr: false, loading: () => (<div className="w-full h-full bg-slate-800/50 flex items-center justify-center"><Loader2 size={20} className="animate-spin text-blue-400" /><span className="text-slate-400 text-xs ml-2">Indlæser kort...</span></div>) });
 
 // ─── Types ───────────────────────────────────────────────────────
 
 interface PolicyRow {
   id: string;
+  /** BIZZ-2119: kildedokument — sat på policer fra analyse-detail API'et */
+  document_id?: string | null;
   policy_number: string;
   insurer_name: string;
   policyholder_name: string;
@@ -137,6 +164,138 @@ interface AnalyseGap {
   source_data?: Record<string, string> | null;
 }
 
+/** BIZZ-2084: Dækning fra analyse-detail API — bruges til grøn "Dækket"-visning */
+interface AnalyseCoverage {
+  policy_id: string;
+  coverage_code: string;
+  coverage_label: string;
+  is_covered: boolean;
+  sum_dkk: number | null;
+  deductible_dkk: number | null;
+  conditions_ref?: string | null;
+}
+
+/**
+ * BIZZ-2135: Kendte betingelses-numre → menneskelige navne.
+ * Bruges til at vise "100.03 — Brand" i stedet for bare "100.03".
+ */
+const CONDITION_NAMES: Record<string, string> = {
+  // Alm. Brand
+  '100.03': 'Brand',
+  '230.02': 'Bygningskasko',
+  '450.02': 'Insekt og svamp',
+  '470.02': 'Rørskade',
+  '645.02': 'Restværdi',
+  '850.02': 'Hus- og grundejeransvar',
+  '870.02': 'Stikledning',
+  '4301': 'Bygningsforsikring — Erhverv',
+  // Topdanmark
+  'DF20900-2': 'Erhvervsforsikring (generelle vilkår)',
+  'DF20903-2': 'Ansvarsforsikring (erhverv)',
+  'DF20904-2': 'Bygningsforsikring (erhverv)',
+  'DF20910-2': 'Løsøreforsikring (erhverv)',
+};
+
+/** BIZZ-2135: Refereret standardbetingelse fra police-dækninger */
+interface ReferencedCondition {
+  ref: string;
+  selskab: string | null;
+  policyNumber: string | null;
+  uploaded: boolean;
+}
+
+/** BIZZ-2099: Police fra analyse-detail API — bruges til "Fundne forsikringer" */
+interface AnalysePolicy {
+  id: string;
+  policy_number: string | null;
+  insurer_name: string | null;
+  business_activity: string | null;
+  property_address: string | null;
+  annual_premium_dkk: number | null;
+  sum_insured_dkk: number | null;
+  /** BIZZ-2121: Forsikringstagers CVR — bruges til at aggregere alle kundens policer i "Dækket"-boksen */
+  policyholder_cvr?: string | null;
+  /**
+   * BIZZ-2129: Tilknytning til kunden. 'sikker' = bekræftet via CVR/aktiv-match/
+   * forsikringssted; 'tvivlsom' = kun fuzzy navne-match → vis gul advarsel.
+   */
+  attachment?: 'sikker' | 'tvivlsom';
+  /** BIZZ-2144: Rå metadata fra parseren — bl.a. bilers registreringsnummer. */
+  raw_metadata?: { registreringsnummer?: string | null } | null;
+}
+
+/**
+ * BIZZ-2121: Dækninger til den grønne "Dækket"-boks for et aktiv.
+ *
+ * Ejendoms-aktiver viser den matchede polices dækninger. Virksomheds-aktiver
+ * aggregerer dækninger fra ALLE analysens policer med CVR-match, men filtrerer
+ * bygnings-specifikke coverage_codes fra (brand, bygningskasko, glas, etc.).
+ * En samlet erhvervsaftale indeholder typisk både bygnings- og ansvarsdækninger
+ * — kun erhvervs-relevante koder (ansvar, drift, cyber, løsøre) vises under
+ * virksomheden. Bygningsdækninger hører under de individuelle ejendomme.
+ *
+ * @param aktiv - Analyse-aktivet (ejendom/virksomhed)
+ * @param analysePolicies - Alle analysens policer (detail.policies)
+ * @param covByPolicy - Aktive dækninger (is_covered=true) grupperet per policy_id
+ * @returns Dækninger der skal vises i "Dækket"-boksen, sorteret på label
+ */
+/**
+ * Bygnings-/ejendomsspecifikke dækningskoder der KUN hører til under
+ * ejendomsrækker. Filtreres fra i virksomheds-dækningsboksen, da de
+ * vedrører fysiske bygninger — ikke virksomheden som forretningsenhed.
+ */
+const BYGNINGS_COVERAGE_CODES = new Set([
+  'brand_el',
+  'bygningskasko',
+  'udvidet_roerskade',
+  'glas',
+  'sanitet',
+  'insekt_svamp',
+  'restvaerdi',
+  'stikledning',
+  'jordskade',
+  'lovliggoerelse',
+  'huslejetab',
+  'hus_grundejer_ansvar',
+  'udvidet_vandskade',
+  'haerverk',
+  'omstilling_laase',
+]);
+
+export function coveragesForAktiv(
+  aktiv: AnalyseAktiv,
+  analysePolicies: AnalysePolicy[],
+  covByPolicy: Map<string, AnalyseCoverage[]>
+): AnalyseCoverage[] {
+  const matched = aktiv.matched_policy_id ? (covByPolicy.get(aktiv.matched_policy_id) ?? []) : [];
+  if (aktiv.type !== 'virksomhed' || !aktiv.cvr) return matched;
+  const cvr = aktiv.cvr.replace(/\D/g, '');
+  // Saml dækninger fra ALLE kundens policer — men filtrér bygnings-
+  // specifikke dækningskoder fra. En samlet erhvervsaftale (fx Topdanmark)
+  // indeholder både ejendoms- og ansvarsdækninger; kun sidstnævnte er
+  // relevante for virksomheden som forretningsenhed.
+  const ids = new Set<string>(aktiv.matched_policy_id ? [aktiv.matched_policy_id] : []);
+  for (const p of analysePolicies) {
+    if ((p.policyholder_cvr ?? '').replace(/\D/g, '') === cvr) ids.add(p.id);
+  }
+  const out: AnalyseCoverage[] = [];
+  for (const id of ids) {
+    for (const cov of covByPolicy.get(id) ?? []) {
+      if (!BYGNINGS_COVERAGE_CODES.has(cov.coverage_code)) out.push(cov);
+    }
+  }
+  if (out.length === 0) return matched;
+  // Dedup på coverage_label (samme dækning fra flere policer vises kun én gang)
+  const seen = new Set<string>();
+  const deduped = out.filter((c) => {
+    const key = c.coverage_label.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return deduped.sort((a, b) => a.coverage_label.localeCompare(b.coverage_label, 'da'));
+}
+
 /** Full analyse-detail response */
 interface AnalyseDetail {
   analyse: {
@@ -156,6 +315,30 @@ interface AnalyseDetail {
   };
   aktiver: AnalyseAktiv[];
   gaps: AnalyseGap[];
+  /** BIZZ-2084: Dækninger for matchede policer — grøn "Dækket"-visning */
+  coverages?: AnalyseCoverage[];
+  /** BIZZ-2099: Alle analysens policer — bruges til "Fundne forsikringer" */
+  policies?: AnalysePolicy[];
+  /** BIZZ-2119: Analysens dokumenter — bruges til kildedokument-visning ved matches */
+  documents?: Array<{ id: string; original_name: string }>;
+  /** BIZZ-2135: Refererede standardbetingelser fra policernes dækninger */
+  referencedConditions?: ReferencedCondition[];
+  /**
+   * BIZZ-2155: BBR-bygningsdata pr. BFE-nummer (nøgle = BFE som streng).
+   * Bruges til at vise police-arealet side om side med BBR-arealet under
+   * hver ejendom, så afvigelser kan reviewes med kunden.
+   */
+  bbrByBfe?: Record<
+    string,
+    {
+      bebygget_areal: number | null;
+      samlet_boligareal: number | null;
+      samlet_erhvervsareal: number | null;
+      antal_etager: number | null;
+      opfoerelsesaar: number | null;
+      anvendelse: string | null;
+    }
+  >;
 }
 
 /** Property grouped with its matched policy and relevant gaps */
@@ -163,6 +346,104 @@ interface PropertyGroup {
   aktiv: AnalyseAktiv;
   matchedPolicy: PolicyRow | null;
   gaps: AnalyseGap[];
+  /** BIZZ-2084: Aktive dækninger (is_covered=true) på den matchede police */
+  coverages: AnalyseCoverage[];
+  /** BIZZ-2119: Filnavn på den matchede polices kildedokument (hvis kendt) */
+  matchedDocName?: string | null;
+}
+
+// ─── BIZZ-2140: Analyse-progress (SSE) ──────────────────────────
+
+/** Status for et enkelt analyse-trin i progress-checklisten. */
+type AnalyseStepStatus = 'pending' | 'running' | 'done' | 'slow' | 'error';
+
+/** Et trin i analyse-progress-checklisten. */
+interface AnalyseStepDef {
+  id: string;
+  label: string;
+}
+
+/**
+ * BIZZ-2140: De fem trin analyse-routen rapporterer via SSE. Rækkefølge og
+ * id'er skal matche ANALYSE_STEPS i app/api/forsikring/analyser/route.ts, så
+ * step-events kan mappes 1:1 mod checklisten i UI'et.
+ */
+const ANALYSE_STEP_DEFS: readonly AnalyseStepDef[] = [
+  { id: 'aktiver', label: 'Henter aktiver fra koncern' },
+  { id: 'match', label: 'Matcher policer mod ejendomme' },
+  { id: 'daekning', label: 'Henter dækninger & branchedata' },
+  { id: 'gap', label: 'Kører gap-engine' },
+  { id: 'gem', label: 'Gemmer resultater' },
+] as const;
+
+/** Resultat-payload fra analyse-routen (matcher analyseResult-state). */
+interface AnalyseResultPayload {
+  analyse_id: string;
+  total_aktiver: number;
+  insured_count: number;
+  gaps_count: number;
+  total_risk_score: number;
+  address_mismatches?: AddressMismatch[];
+  sikrede_adresser_uden_for_portefoelje?: Array<{
+    adresse: string;
+    dokument_navn: string | null;
+    policy_number: string | null;
+  }>;
+  std_betingelser_advarsel?: string | null;
+  praemie_advarsler?: string[];
+}
+
+/** Et event modtaget fra analyse-SSE-strømmen. */
+interface AnalyseStreamEvent {
+  type: 'step' | 'slow' | 'error' | 'done';
+  id?: string;
+  status?: AnalyseStepStatus;
+  step?: string;
+}
+
+/**
+ * BIZZ-2140: Læs en analyse-SSE-strøm, kald onEvent for hvert step/slow/error
+ * event, og returnér resultat-objektet fra det afsluttende `done`-event. Hvis
+ * strømmen lukker uden et done-event returneres null (kalderen falder tilbage).
+ *
+ * @param body - ReadableStream fra fetch-responsen (text/event-stream)
+ * @param onEvent - Callback for hvert step/slow/error-event undervejs
+ * @returns Resultat-objektet fra serveren (analyse_id m.m.) eller null
+ */
+async function consumeAnalyseStream<T extends { analyse_id?: string }>(
+  body: ReadableStream<Uint8Array>,
+  onEvent: (ev: AnalyseStreamEvent) => void
+): Promise<T | null> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let result: T | null = null;
+  // SSE-frames adskilles af blanke linjer; vi samler hele frames inden parse.
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nlIdx: number;
+    while ((nlIdx = buffer.indexOf('\n')) !== -1) {
+      const line = buffer.slice(0, nlIdx).trimEnd();
+      buffer = buffer.slice(nlIdx + 1);
+      if (!line.startsWith('data:')) continue;
+      const payload = line.slice(5).trim();
+      if (!payload) continue;
+      let parsed: AnalyseStreamEvent & { result?: T };
+      try {
+        parsed = JSON.parse(payload);
+      } catch {
+        continue;
+      }
+      if (parsed.type === 'done') {
+        result = parsed.result ?? null;
+      } else {
+        onEvent(parsed);
+      }
+    }
+  }
+  return result;
 }
 
 // ─── BIZZ-1389: Samlet ejendomsvisning ──────────────────────────
@@ -257,6 +538,23 @@ function GapList({ gaps, da }: { gaps: AnalyseGap[]; da: boolean }) {
  *   forsikringsejer-/virksomheds-niveau-findings ind (sejeren ER den eneste
  *   virksomhed). Viser et samlet findings-badge + en info-label i collapse.
  */
+/** BIZZ-2155: BBR-bygningsdata pr. ejendom (en post) */
+interface BbrBygningsdata {
+  bebygget_areal: number | null;
+  samlet_boligareal: number | null;
+  samlet_erhvervsareal: number | null;
+  antal_etager: number | null;
+  opfoerelsesaar: number | null;
+  anvendelse: string | null;
+}
+
+/**
+ * BIZZ-2155: BBR-bygningsdata pr. BFE for den aktuelle analyse. Stilles til
+ * rådighed af analyse-visningerne, så PropertyRow kan vise police-arealet ved
+ * siden af BBR-arealet uden at tråde en prop gennem alle render-niveauer.
+ */
+const BbrContext = createContext<Record<string, BbrBygningsdata> | undefined>(undefined);
+
 function PropertyRow({
   group,
   da,
@@ -267,9 +565,72 @@ function PropertyRow({
   foldedNote?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  // BIZZ-2155: BBR-data for denne ejendom (matches på BFE) — bruges til
+  // police-vs-BBR areal-/etage-/årgangs-sammenligning.
+  const bbrMap = useContext(BbrContext);
+  const aktivBbr =
+    group.aktiv.type === 'ejendom' && group.aktiv.bfe != null
+      ? bbrMap?.[String(group.aktiv.bfe)]
+      : undefined;
   const isInsured = group.aktiv.matched_policy_id !== null;
+  /** BIZZ-2096: dækning nedarvet fra police på aktivets egen SFE-adresse (sat af sfeStruktur.ts). */
+  const daekketViaSfe =
+    (group.aktiv.raw_data as { daekket_via_sfe?: { sfe_adresse?: string } } | null)
+      ?.daekket_via_sfe ?? null;
+  /** BIZZ-2130: søster-SFE-relation — aktivet ligger i samme ejerlav som en
+      dækket SFE (men er IKKE dækket af policen). Kun informativ. */
+  const soesterSfe =
+    (group.aktiv.raw_data as { soester_sfe?: { sfe_adresse?: string } } | null)?.soester_sfe ??
+    null;
+  /** BIZZ-2108: moderselskabets ejerandel i procent (sat af koncernWalk, BIZZ-2102) */
+  const ejerandelPctRaw = (
+    group.aktiv.raw_data as { ejerandel_pct?: number | string | null } | null
+  )?.ejerandel_pct;
+  const ejerandelPct =
+    ejerandelPctRaw != null && Number.isFinite(Number(ejerandelPctRaw))
+      ? Number(ejerandelPctRaw)
+      : null;
+  /** BIZZ-2175: værdi-data (seneste handel, off. vurdering, forsikret sum) sat
+      af analyser/route.ts, så vi kan vise en Værdi-sektion til under-/over-
+      forsikrings-vurdering. */
+  const aktivVaerdi =
+    (
+      group.aktiv.raw_data as {
+        vaerdi?: {
+          koebspris: number | null;
+          koebs_dato: string | null;
+          vurdering: number | null;
+          vurderings_aar: number | null;
+          forsikret_sum: number | null;
+        };
+      } | null
+    )?.vaerdi ?? null;
   const gapCritical = group.gaps.filter((g) => g.severity === 'critical').length;
   const gapWarning = group.gaps.filter((g) => g.severity === 'warning').length;
+
+  // BIZZ-2147: Direkte link til aktivets egen detaljeside — ejendom → BFE-side,
+  // virksomhed → CVR-side. Gør det muligt at åbne entiteten på dens egen side
+  // uden at forlade forsikringsanalysen.
+  const entityHref =
+    group.aktiv.type === 'ejendom' && group.aktiv.bfe != null
+      ? `/dashboard/ejendomme/${group.aktiv.bfe}`
+      : group.aktiv.type === 'virksomhed' && group.aktiv.cvr
+        ? `/dashboard/companies/${group.aktiv.cvr}`
+        : null;
+
+  // BIZZ-2150: Ejendomme uden resolvet adresse beholder koncernWalk-labelet
+  // "BFE xxx". Vis i stedet "Ukendt adresse (BFE xxx)" + en gul "Ingen
+  // adresse"-badge, så rådgiveren tydeligt ser at adressen mangler i stedet
+  // for at læse det bare BFE-nummer som en adresse.
+  const ejendomUdenAdresse = erEjendomUdenAdresse(group.aktiv);
+  const visLabel = visAktivLabel(group.aktiv, da);
+
+  /** Toggle expand + highlight aktiv på kortet (delt mellem navn- og chevron-knap). */
+  const handleToggle = () => {
+    setExpanded(!expanded);
+    // BIZZ-2131: Highlight aktiv på kortet via custom event
+    window.dispatchEvent(new CustomEvent('forsikring-aktiv-click', { detail: group.aktiv.id }));
+  };
 
   /** Ikon for aktiv-type */
   const typeIcon =
@@ -285,36 +646,176 @@ function PropertyRow({
 
   return (
     <div
+      id={`aktiv-${group.aktiv.id}`}
       className={`border rounded-xl overflow-hidden ${
         isInsured ? 'border-white/8 bg-white/3' : 'border-red-500/30 bg-red-500/5'
       }`}
     >
       {/* Header row — klikbar for toggle */}
-      <button
-        type="button"
-        onClick={() => setExpanded(!expanded)}
-        className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-white/3 transition-colors"
-        aria-expanded={expanded}
-        aria-label={`${expanded ? (da ? 'Luk' : 'Collapse') : da ? 'Udvid' : 'Expand'} ${group.aktiv.label}`}
-      >
-        {/* Status ikon */}
-        {isInsured ? (
-          <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
-        ) : (
-          <XCircle size={16} className="text-red-400 shrink-0" />
-        )}
-
-        {/* Type ikon + label */}
-        <div className="flex items-center gap-2 min-w-0 flex-1">
-          {typeIcon}
-          <span className="text-white text-sm font-medium truncate">{group.aktiv.label}</span>
-          {/* BIZZ-1829: AI-foreslået badge */}
-          {!!(group.aktiv.raw_data as Record<string, unknown> | null)?.aiForeslaaet && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">
-              AI
-            </span>
+      <div className="w-full px-4 py-3 flex items-center gap-3 hover:bg-white/3 transition-colors">
+        {/* BIZZ-2147: navn-/badge-området er toggle-knap (chevron nederst toggler
+            også). Adskilt fra entitets-linket, så et <a> ikke nestes i <button>. */}
+        <button
+          type="button"
+          onClick={handleToggle}
+          className="flex items-center gap-3 min-w-0 flex-1 text-left"
+          aria-expanded={expanded}
+          aria-label={`${expanded ? (da ? 'Luk' : 'Collapse') : da ? 'Udvid' : 'Expand'} ${visLabel}`}
+        >
+          {/* Status ikon */}
+          {isInsured ? (
+            <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
+          ) : (
+            <XCircle size={16} className="text-red-400 shrink-0" />
           )}
-        </div>
+
+          {/* Type ikon + label */}
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            {typeIcon}
+            <span className="text-white text-sm font-medium truncate">{visLabel}</span>
+            {/* BIZZ-2068: BFE-badge på ejendoms-aktiver — to reelle ejendomme kan
+              dele adresse (fx Gefionsvej 47A = BFE 5322356 + 5322350), og uden
+              BFE-nummeret ligner rækkerne duplikater. BIZZ-2150: skjul her når
+              adressen mangler — labelet viser allerede "(BFE xxx)". */}
+            {group.aktiv.type === 'ejendom' && group.aktiv.bfe != null && !ejendomUdenAdresse && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-slate-500/20 text-slate-300 border border-slate-500/30 shrink-0">
+                BFE {group.aktiv.bfe}
+              </span>
+            )}
+            {/* BIZZ-2150: Gul badge når ejendommen ikke har en resolvet adresse
+              i bfe_adresse_cache — gør manglende adresse tydelig for rådgiveren. */}
+            {ejendomUdenAdresse && (
+              <span
+                className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 shrink-0"
+                title={
+                  da
+                    ? 'Ingen adresse fundet i adresseregistret for denne ejendom'
+                    : 'No address found in the address registry for this property'
+                }
+              >
+                {da ? 'Ingen adresse' : 'No address'}
+              </span>
+            )}
+            {/* BIZZ-2123: Ejendomme som kunden ADMINISTRERER (ejf_administrator)
+              uden selv at eje dem — markeres så rådgiveren ved at ansvaret er
+              administration, ikke ejerskab. */}
+            {group.aktiv.type === 'ejendom' &&
+              (group.aktiv.raw_data as { administreret?: boolean } | null)?.administreret && (
+                <span
+                  className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 shrink-0"
+                  title={
+                    da
+                      ? 'Kunden administrerer ejendommen (tinglyst administrator) uden at stå som ejer'
+                      : 'The customer administers the property (registered administrator) without being the owner'
+                  }
+                >
+                  {da ? 'Administreret' : 'Administered'}
+                </span>
+              )}
+            {/* BIZZ-2096: Marker når dækningen er nedarvet fra en police på
+              aktivets egen SFE-adresse — antagelsen skal være transparent. */}
+            {daekketViaSfe && (
+              <span
+                className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shrink-0 truncate max-w-[220px]"
+                title={
+                  da
+                    ? `Police på SFE-adressen ${daekketViaSfe.sfe_adresse ?? ''} antages at dække hele strukturen`
+                    : `Policy on SFE address ${daekketViaSfe.sfe_adresse ?? ''} is assumed to cover the whole structure`
+                }
+              >
+                {da ? 'Dækket via SFE' : 'Covered via SFE'}
+                {daekketViaSfe.sfe_adresse ? ` ${daekketViaSfe.sfe_adresse}` : ''}
+              </span>
+            )}
+            {/* BIZZ-2130: Søster-SFE — aktivet ligger i samme ejerlav som en
+              dækket SFE men dækkes IKKE af policen. Gul badge så rådgiveren kan
+              vurdere om ejendommen skal medforsikres. Vises kun når aktivet
+              ikke selv er dækket. */}
+            {soesterSfe && !daekketViaSfe && !isInsured && (
+              <span
+                className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 shrink-0 truncate max-w-[240px]"
+                title={
+                  da
+                    ? `Ligger i samme ejerlav/SFE-struktur som ${soesterSfe.sfe_adresse ?? ''}, der har en police — men dækkes IKKE af den. Vurder om ejendommen skal medforsikres.`
+                    : `In the same cadastral district/SFE structure as ${soesterSfe.sfe_adresse ?? ''}, which has a policy — but is NOT covered by it. Consider whether it should be co-insured.`
+                }
+              >
+                {da ? 'Søster-SFE til' : 'Sister SFE to'}
+                {soesterSfe.sfe_adresse ? ` ${soesterSfe.sfe_adresse}` : ''}
+              </span>
+            )}
+            {/* BIZZ-2101: CVR-badge på virksomheds-rækker — virksomheder vises
+              altid med både navn og CVR (analogt til BFE-badgen ovenfor). */}
+            {group.aktiv.type === 'virksomhed' && group.aktiv.cvr && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/30 shrink-0">
+                CVR {group.aktiv.cvr}
+              </span>
+            )}
+            {/* BIZZ-2108: Ejerandel-badge på virksomheds-rækker med < 100% —
+              minoritetsposter (< 50%) vises amber så det er tydeligt at
+              selskabet IKKE er et kontrolleret datterselskab. */}
+            {group.aktiv.type === 'virksomhed' && ejerandelPct != null && ejerandelPct < 100 && (
+              <span
+                className={`text-[9px] px-1.5 py-0.5 rounded-full border shrink-0 ${
+                  ejerandelPct < 50
+                    ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                    : 'bg-slate-500/20 text-slate-300 border-slate-500/30'
+                }`}
+                title={
+                  ejerandelPct < 50
+                    ? da
+                      ? 'Minoritetspost — ikke et kontrolleret datterselskab; selskabets egne aktiver indgår ikke i analysen'
+                      : 'Minority stake — not a controlled subsidiary; its own assets are not included in the analysis'
+                    : da
+                      ? 'Ejerandel'
+                      : 'Ownership share'
+                }
+              >
+                {ejerandelPct}%
+              </span>
+            )}
+            {/* BIZZ-1829: AI-foreslået badge */}
+            {!!(group.aktiv.raw_data as Record<string, unknown> | null)?.aiForeslaaet && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">
+                AI
+              </span>
+            )}
+          </div>
+        </button>
+
+        {/* BIZZ-2147: Lille link-boks der åbner aktivets egen detaljeside
+            (ejendoms- eller virksomhedsside) i analysen. */}
+        {entityHref && (
+          <Link
+            href={entityHref}
+            className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-md border border-white/10 bg-white/5 text-slate-300 hover:text-white hover:border-white/20 hover:bg-white/10 transition-colors text-[10px]"
+            aria-label={
+              group.aktiv.type === 'ejendom'
+                ? `${da ? 'Åbn ejendomsside' : 'Open property page'}: ${group.aktiv.label}`
+                : `${da ? 'Åbn virksomhedsside' : 'Open company page'}: ${group.aktiv.label}`
+            }
+            title={
+              group.aktiv.type === 'ejendom'
+                ? da
+                  ? 'Åbn ejendommen'
+                  : 'Open property'
+                : da
+                  ? 'Åbn virksomheden'
+                  : 'Open company'
+            }
+          >
+            <ExternalLink size={11} className="shrink-0" />
+            <span className="hidden sm:inline">
+              {group.aktiv.type === 'ejendom'
+                ? da
+                  ? 'Ejendom'
+                  : 'Property'
+                : da
+                  ? 'Virksomhed'
+                  : 'Company'}
+            </span>
+          </Link>
+        )}
 
         {/* Police-info hvis matchet */}
         {group.matchedPolicy && (
@@ -340,8 +841,17 @@ function PropertyRow({
                 {group.gaps.length} {da ? 'findings' : 'findings'}
               </span>
             )
-          : (gapCritical > 0 || gapWarning > 0) && (
+          : (gapCritical > 0 || gapWarning > 0 || group.coverages.length > 0) && (
               <div className="flex items-center gap-1 shrink-0">
+                {/* BIZZ-2084: Grøn pille = antal aktive dækninger på matchet police */}
+                {group.coverages.length > 0 && (
+                  <span
+                    className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/20 text-emerald-300"
+                    title={da ? 'Aktive dækninger' : 'Active coverages'}
+                  >
+                    {group.coverages.length}
+                  </span>
+                )}
                 {gapCritical > 0 && (
                   <span className="px-1.5 py-0.5 rounded text-[10px] bg-red-500/20 text-red-300">
                     {gapCritical}
@@ -362,13 +872,20 @@ function PropertyRow({
           </span>
         )}
 
-        {/* Chevron */}
-        {expanded ? (
-          <ChevronDown size={14} className="text-slate-400 shrink-0" />
-        ) : (
-          <ChevronRight size={14} className="text-slate-400 shrink-0" />
-        )}
-      </button>
+        {/* Chevron — toggler også (delt handler) */}
+        <button
+          type="button"
+          onClick={handleToggle}
+          className="shrink-0"
+          aria-label={`${expanded ? (da ? 'Luk' : 'Collapse') : da ? 'Udvid' : 'Expand'} ${visLabel}`}
+        >
+          {expanded ? (
+            <ChevronDown size={14} className="text-slate-400" />
+          ) : (
+            <ChevronRight size={14} className="text-slate-400" />
+          )}
+        </button>
+      </div>
 
       {/* Expanded detail */}
       {expanded && (
@@ -386,6 +903,15 @@ function PropertyRow({
                 </Link>{' '}
                 ({group.matchedPolicy.insurer_name})
               </div>
+              {/* BIZZ-2119: vis hvilket dokument den matchede police stammer fra */}
+              {group.matchedDocName && (
+                <div>
+                  <span className="text-slate-400">
+                    {da ? 'Kildedokument:' : 'Source document:'}
+                  </span>{' '}
+                  {group.matchedDocName}
+                </div>
+              )}
               {group.matchedPolicy.annual_premium_dkk && (
                 <div>
                   <span className="text-slate-400">{da ? 'Præmie:' : 'Premium:'}</span>{' '}
@@ -402,6 +928,275 @@ function PropertyRow({
                   })}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* BIZZ-2080: Match-begrundelse — vis HVORFOR policen blev koblet til
+              aktivet, så brugeren kan vurdere om konklusionen er rigtig.
+              Baseret på matched_policy_id (ikke matchedPolicy-objektet), da
+              policen kan være matchet i analysen uden at indgå i den aktuelt
+              indlæste police-liste. */}
+          {group.aktiv.matched_policy_id && group.aktiv.match_score != null && (
+            <div className="text-xs">
+              <span className="text-slate-400">{da ? 'Match:' : 'Match:'}</span>{' '}
+              <span className="text-slate-300">
+                {getMatchBegrundelse(group.aktiv.type, group.aktiv.match_score, da)}
+              </span>{' '}
+              <span className="text-slate-400">({group.aktiv.match_score}/100)</span>
+              {!group.matchedPolicy && (
+                <span className="text-slate-400">
+                  {' '}
+                  —{' '}
+                  {da
+                    ? 'matchet police indgår ikke i den viste police-liste'
+                    : 'matched policy is not in the displayed policy list'}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* BIZZ-2080: Eksplicit forklaring når INGEN police er matchet */}
+          {!group.aktiv.matched_policy_id && (
+            <div className="text-xs text-slate-400">
+              {da
+                ? 'Ingen police matchet — aktivet fremgår ikke af de parsede policers BFE-numre, adresser eller CVR/forsikringstager.'
+                : 'No policy matched — the asset does not appear in the parsed policies (BFE, address or CVR/policyholder).'}
+            </div>
+          )}
+
+          {/* BIZZ-2145/2155: Bygningsdata — police vs. BBR side om side */}
+          {(() => {
+            type PolBygning = {
+              navn: string | null;
+              anvendelse: string | null;
+              bebygget_areal_m2: number | null;
+              antal_etager: number | null;
+              kaelder: boolean | null;
+              opfoert_aar: number | null;
+              forsikringsform: string | null;
+            };
+            const mp = group.matchedPolicy as unknown as {
+              raw_metadata?: { bygninger?: PolBygning[] };
+              building_use?: string | null;
+              building_area_m2?: number | null;
+              building_floors?: number | null;
+              building_year_built?: number | null;
+              building_has_basement?: boolean | null;
+            } | null;
+            const rawBygninger = mp?.raw_metadata?.bygninger ?? [];
+            // raw_metadata.bygninger er ofte tom selv når policen har bygningsdata
+            // (parseren gemmer arealet i de flade building_*-kolonner). Falder
+            // tilbage til disse, så police-arealet kan sammenholdes med BBR.
+            const harFladeFelter =
+              mp != null &&
+              (mp.building_area_m2 != null ||
+                mp.building_year_built != null ||
+                mp.building_floors != null ||
+                (mp.building_use ?? null) != null);
+            const bygninger: PolBygning[] =
+              rawBygninger.length > 0
+                ? rawBygninger
+                : harFladeFelter
+                  ? [
+                      {
+                        navn: null,
+                        anvendelse: mp!.building_use ?? null,
+                        bebygget_areal_m2: mp!.building_area_m2 ?? null,
+                        antal_etager: mp!.building_floors ?? null,
+                        kaelder: mp!.building_has_basement ?? null,
+                        opfoert_aar: mp!.building_year_built ?? null,
+                        forsikringsform: null,
+                      },
+                    ]
+                  : [];
+            // Vis intet hvis hverken police- eller BBR-bygningsdata findes.
+            if (bygninger.length === 0 && !aktivBbr) return null;
+
+            // BIZZ-2155: Areal-afvigelse police vs. BBR (> 15% flagges).
+            const polAreal = bygninger.find((b) => b.bebygget_areal_m2)?.bebygget_areal_m2 ?? null;
+            const bbrAreal = aktivBbr?.bebygget_areal ?? null;
+            const afvigelsePct =
+              polAreal && bbrAreal ? (Math.abs(bbrAreal - polAreal) / bbrAreal) * 100 : null;
+
+            return (
+              <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg px-3 py-2 mb-2">
+                <span className="text-blue-300 text-xs font-medium">
+                  {da ? 'Bygningsdata' : 'Building data'}
+                </span>
+                <div className="mt-1 space-y-1">
+                  {/* BBR-linje (kilde: BBR) — så police kan sammenholdes med register */}
+                  {aktivBbr && (
+                    <div className="text-[11px] text-slate-300 flex flex-wrap gap-x-3">
+                      <span className="text-blue-300 font-medium">BBR</span>
+                      {/* BIZZ-2172: vis bebygget_areal hvis sat; ellers fald tilbage
+                          til samlet bolig-/erhvervsareal med eksplicit type-label,
+                          så ejendomme uden bebygget_areal ikke fremstår areal-løse. */}
+                      {aktivBbr.bebygget_areal != null ? (
+                        <span>{aktivBbr.bebygget_areal} m²</span>
+                      ) : aktivBbr.samlet_boligareal != null ? (
+                        <span>
+                          {da ? 'Boligareal' : 'Residential area'}: {aktivBbr.samlet_boligareal} m²
+                        </span>
+                      ) : aktivBbr.samlet_erhvervsareal != null ? (
+                        <span>
+                          {da ? 'Erhvervsareal' : 'Commercial area'}:{' '}
+                          {aktivBbr.samlet_erhvervsareal} m²
+                        </span>
+                      ) : null}
+                      {aktivBbr.antal_etager != null && (
+                        <span>
+                          {aktivBbr.antal_etager} {da ? 'etager' : 'floors'}
+                        </span>
+                      )}
+                      {aktivBbr.opfoerelsesaar != null && (
+                        <span>
+                          {da ? 'opført' : 'built'} {aktivBbr.opfoerelsesaar}
+                        </span>
+                      )}
+                      {/* BIZZ-2172: anvendelse med eksplicit label, så det ikke
+                          forveksles med et areal-/måltal. */}
+                      {aktivBbr.anvendelse && (
+                        <span>
+                          {da ? 'Anvendelse' : 'Use'}: {aktivBbr.anvendelse}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {/* Police-bygninger (kilde: police) */}
+                  {bygninger.map((b, i) => (
+                    <div key={i} className="text-[11px] text-slate-300 flex flex-wrap gap-x-3">
+                      <span className="text-emerald-300 font-medium">
+                        {da ? 'Police' : 'Policy'}
+                        {bygninger.length > 1 ? ` · ${b.navn || `Bygning ${i + 1}`}` : ''}
+                      </span>
+                      {b.anvendelse && <span>{b.anvendelse}</span>}
+                      {b.bebygget_areal_m2 && <span>{b.bebygget_areal_m2} m²</span>}
+                      {b.antal_etager && (
+                        <span>
+                          {b.antal_etager} {da ? 'etager' : 'floors'}
+                        </span>
+                      )}
+                      {b.opfoert_aar && (
+                        <span>
+                          {da ? 'opført' : 'built'} {b.opfoert_aar}
+                        </span>
+                      )}
+                      {b.kaelder && <span>{da ? 'kælder' : 'basement'}</span>}
+                      {/* BIZZ-2172: forsikringsform vises med police-farve (emerald)
+                          + eksplicit label, så "Nyværdi" ikke forveksles med
+                          BBR-kildedata (blå). */}
+                      {b.forsikringsform && (
+                        <span className="text-emerald-300">
+                          {da ? 'Forsikringsform' : 'Insurance basis'}: {b.forsikringsform}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                  {/* Areal-afvigelse: police-areal afviger > 15% fra BBR */}
+                  {afvigelsePct != null && afvigelsePct > 15 && (
+                    <div className="text-[11px] text-amber-400 font-medium">
+                      ⚠ {da ? 'Areal-afvigelse' : 'Area mismatch'}: BBR {bbrAreal} m²{' '}
+                      {da ? 'vs. police' : 'vs. policy'} {polAreal} m² ({afvigelsePct.toFixed(0)}%)
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* BIZZ-2175: Værdi-sektion — seneste handel + off. vurdering +
+              forsikret sum, så under-/overforsikring kan vurderes visuelt. */}
+          {aktivVaerdi &&
+            (aktivVaerdi.koebspris != null ||
+              aktivVaerdi.vurdering != null ||
+              aktivVaerdi.forsikret_sum != null) &&
+            (() => {
+              const fmt = (n: number) => `${Math.round(n).toLocaleString('da-DK')} kr`;
+              const ref = aktivVaerdi.koebspris ?? aktivVaerdi.vurdering ?? null;
+              const sum = aktivVaerdi.forsikret_sum;
+              // Forsikret sum: rød hvis mangler, gul hvis >30% under reference,
+              // grøn ellers (nyværdi kan lovligt ligge over købspris/vurdering).
+              const sumClass =
+                sum == null
+                  ? 'text-red-400 font-medium'
+                  : ref != null && sum < ref * 0.7
+                    ? 'text-amber-400 font-medium'
+                    : 'text-emerald-300 font-medium';
+              const aar = (iso: string | null) => (iso ? new Date(iso).getFullYear() : null);
+              return (
+                <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg px-3 py-2 mb-2">
+                  <span className="text-blue-300 text-xs font-medium">
+                    {da ? 'Værdi' : 'Value'}
+                  </span>
+                  <div className="mt-1 space-y-0.5 text-[11px]">
+                    <div className="flex justify-between gap-3">
+                      <span className="text-slate-400">{da ? 'Seneste handel' : 'Last sale'}</span>
+                      <span className="text-slate-200">
+                        {aktivVaerdi.koebspris != null
+                          ? `${fmt(aktivVaerdi.koebspris)}${
+                              aktivVaerdi.koebs_dato ? ` (${aar(aktivVaerdi.koebs_dato)})` : ''
+                            }`
+                          : '–'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span className="text-slate-400">
+                        {da ? 'Off. vurdering' : 'Public valuation'}
+                      </span>
+                      <span className="text-slate-200">
+                        {aktivVaerdi.vurdering != null
+                          ? `${fmt(aktivVaerdi.vurdering)}${
+                              aktivVaerdi.vurderings_aar ? ` (${aktivVaerdi.vurderings_aar})` : ''
+                            }`
+                          : '–'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span className="text-slate-400">{da ? 'Forsikret sum' : 'Insured sum'}</span>
+                      <span className={sumClass}>
+                        {sum != null ? fmt(sum) : da ? 'Ikke angivet' : 'Not stated'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+          {/* BIZZ-2084: Grøn "Dækket"-sektion — vis hvad der ER dækket inkl.
+              dækningssum + selvrisiko, så dækningsniveauet kan reviewes med kunden */}
+          {group.coverages.length > 0 && (
+            <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-2">
+              <div className="flex items-center gap-1.5 mb-1">
+                <CheckCircle2 size={12} className="text-emerald-400 shrink-0" />
+                <span className="text-emerald-300 text-xs font-medium">
+                  {da ? 'Dækket' : 'Covered'} ({group.coverages.length})
+                </span>
+              </div>
+              <div className="space-y-0.5">
+                {group.coverages.map((cov, i) => (
+                  <div
+                    // BIZZ-2121: idx i key — samme police kan have samme kode flere gange (fx løsøre ×2)
+                    key={`${cov.policy_id}-${cov.coverage_code}-${i}`}
+                    className="flex items-baseline justify-between gap-2 text-xs"
+                  >
+                    <span className="text-emerald-200">✓ {cov.coverage_label}</span>
+                    <span className="text-slate-300 shrink-0">
+                      {cov.sum_dkk != null
+                        ? `${cov.sum_dkk.toLocaleString('da-DK')} kr`
+                        : da
+                          ? 'sum ikke angivet'
+                          : 'sum not stated'}
+                      {cov.deductible_dkk != null && (
+                        <span className="text-slate-400">
+                          {' '}
+                          · {da ? 'selvrisiko' : 'deductible'}{' '}
+                          {cov.deductible_dkk.toLocaleString('da-DK')} kr
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -441,6 +1236,599 @@ function PropertyRow({
 }
 
 /**
+ * BIZZ-2085: Seneste regnskabsår (minimal udsnit) fra /api/regnskab/xbrl.
+ * Værdier er T DKK-normaliserede (samme konvention som RegnskabstalTable).
+ */
+interface RegnskabsAarLite {
+  aar: number;
+  resultat: {
+    omsaetning: number | null;
+    bruttofortjeneste: number | null;
+    aaretsResultat: number | null;
+  };
+  balance: {
+    egenkapital: number | null;
+    aktiverIAlt: number | null;
+  };
+}
+
+/**
+ * BIZZ-2085: Dækningsniveau vs. seneste regnskab.
+ *
+ * Viser de fundne dækningssummer (fra matchede policers aktive dækninger) i
+ * en dedikeret kasse og holder dem op imod nøgletal fra kundens seneste
+ * tilgængelige årsregnskab. Regnskabstallene vises længst til højre i kassen,
+ * så dækningsniveauet kan reviewes sammen med kunden.
+ *
+ * Regnskabet hentes klient-side via /api/regnskab/xbrl (cachet server-side i
+ * regnskab_cache, T DKK-normaliseret) for forsikringssejerens CVR — kunde_id
+ * når kunde_type='virksomhed', ellers første virksomheds-aktiv i analysen.
+ *
+ * @param props.detail - Fuld analyse-detail (coverages + aktiver + kunde-id)
+ * @param props.da - Dansk sprogflag
+ */
+function DaekningVsRegnskab({ detail, da }: { detail: AnalyseDetail; da: boolean }) {
+  // Find kunde-CVR: forsikringsejeren selv, ellers første virksomheds-aktiv
+  const kundeId = detail.analyse.kunde_id ?? '';
+  const cvr =
+    detail.analyse.kunde_type === 'virksomhed' && /^\d{8}$/.test(kundeId)
+      ? kundeId
+      : (detail.aktiver.find((a) => a.type === 'virksomhed' && a.cvr)?.cvr ?? null);
+
+  const [regnskab, setRegnskab] = useState<RegnskabsAarLite | null>(null);
+  const [regnskabLoading, setRegnskabLoading] = useState(false);
+
+  // Hent seneste regnskab for kundens CVR — API'et cacher selv i regnskab_cache,
+  // så gentagne åbninger af analysen er billige.
+  useEffect(() => {
+    if (!cvr) return;
+    let cancelled = false;
+    setRegnskabLoading(true);
+    fetch(`/api/regnskab/xbrl?cvr=${cvr}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { years?: RegnskabsAarLite[] } | null) => {
+        if (!cancelled) setRegnskab(d?.years?.[0] ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setRegnskab(null);
+      })
+      .finally(() => {
+        if (!cancelled) setRegnskabLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cvr]);
+
+  // Aggregér dækningssummer per dækningsnavn på tværs af matchede policer.
+  // Samme dækning på flere policer summeres — det er det samlede dækningsniveau
+  // for porteføljen der skal holdes op imod regnskabet.
+  const sumByLabel = new Map<string, number>();
+  for (const cov of detail.coverages ?? []) {
+    if (!cov.is_covered || cov.sum_dkk == null || cov.sum_dkk <= 0) continue;
+    sumByLabel.set(cov.coverage_label, (sumByLabel.get(cov.coverage_label) ?? 0) + cov.sum_dkk);
+  }
+  const daekningsRaekker = [...sumByLabel.entries()].sort((a, b) => b[1] - a[1]);
+  const totalDaekning = daekningsRaekker.reduce((acc, [, v]) => acc + v, 0);
+
+  // Skjul kassen helt når der hverken er dækningssummer eller regnskab
+  if (daekningsRaekker.length === 0 && !regnskab && !regnskabLoading) return null;
+
+  /** Formatter T DKK-værdi fra XBRL-API'et (vises som t.kr — platform-konvention) */
+  const tkr = (v: number | null) =>
+    v == null ? (da ? 'ikke oplyst' : 'n/a') : `${v.toLocaleString('da-DK')} t.kr`;
+  /** Formatter dækningssum i hele kr */
+  const kr = (v: number) => `${v.toLocaleString('da-DK')} kr`;
+
+  const regnskabsTal: Array<[string, number | null]> = regnskab
+    ? [
+        [da ? 'Omsætning' : 'Revenue', regnskab.resultat.omsaetning],
+        [da ? 'Bruttofortjeneste' : 'Gross profit', regnskab.resultat.bruttofortjeneste],
+        [da ? 'Årets resultat' : 'Net result', regnskab.resultat.aaretsResultat],
+        [da ? 'Egenkapital' : 'Equity', regnskab.balance.egenkapital],
+        [da ? 'Aktiver i alt' : 'Total assets', regnskab.balance.aktiverIAlt],
+      ]
+    : [];
+
+  return (
+    <div className="bg-white/5 border border-white/8 rounded-xl p-4">
+      <div className="flex items-center gap-2 mb-2">
+        <ShieldCheck size={14} className="text-emerald-400" />
+        <h4 className="text-white text-sm font-semibold">
+          {da ? 'Dækningsniveau vs. seneste regnskab' : 'Coverage level vs. latest financials'}
+        </h4>
+      </div>
+      <p className="text-slate-400 text-[11px] mb-3">
+        {da
+          ? 'Fundne dækningssummer holdt op imod nøgletal fra kundens seneste tilgængelige årsregnskab.'
+          : "Detected coverage sums compared against key figures from the customer's latest available annual report."}
+      </p>
+      <div className="flex flex-col sm:flex-row gap-4">
+        {/* Venstre: dækningssummer fra de matchede policer */}
+        <div className="flex-1 min-w-0">
+          <div className="text-slate-400 text-[10px] uppercase tracking-wide mb-1.5">
+            {da ? 'Dækningssummer' : 'Coverage sums'}
+          </div>
+          {daekningsRaekker.length === 0 ? (
+            <p className="text-slate-400 text-xs">
+              {da
+                ? 'Ingen dækningssummer fundet i de matchede policer.'
+                : 'No coverage sums found in the matched policies.'}
+            </p>
+          ) : (
+            <div className="space-y-1">
+              {daekningsRaekker.map(([label, sum]) => (
+                <div key={label} className="flex items-center justify-between gap-2 text-xs">
+                  <span className="text-slate-300 truncate">{label}</span>
+                  <span className="text-emerald-300 font-medium shrink-0">{kr(sum)}</span>
+                </div>
+              ))}
+              <div className="flex items-center justify-between gap-2 text-xs border-t border-white/10 pt-1 mt-1">
+                <span className="text-white font-medium">
+                  {da ? 'Samlet dækning' : 'Total coverage'}
+                </span>
+                <span className="text-emerald-300 font-semibold shrink-0">{kr(totalDaekning)}</span>
+              </div>
+            </div>
+          )}
+        </div>
+        {/* Højre — længst til højre i kassen: regnskabstal fra seneste årsrapport */}
+        <div className="sm:w-64 shrink-0 sm:border-l sm:border-white/10 sm:pl-4">
+          <div className="text-slate-400 text-[10px] uppercase tracking-wide mb-1.5">
+            {regnskab
+              ? da
+                ? `Seneste regnskab (${regnskab.aar})`
+                : `Latest financials (${regnskab.aar})`
+              : da
+                ? 'Seneste regnskab'
+                : 'Latest financials'}
+          </div>
+          {regnskabLoading ? (
+            <Loader2 size={14} className="animate-spin text-blue-400" />
+          ) : !regnskab ? (
+            <p className="text-slate-400 text-xs">
+              {da ? 'Intet regnskab tilgængeligt.' : 'No financials available.'}
+            </p>
+          ) : (
+            <div className="space-y-1">
+              {regnskabsTal.map(([label, value]) => (
+                <div key={label} className="flex items-center justify-between gap-2 text-xs">
+                  <span className="text-slate-300">{label}</span>
+                  <span className="text-blue-300 font-medium shrink-0">{tkr(value)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * BIZZ-2099: Kategori-mapping for dækningskoder — bruges til det samlede
+ * dækningsoverblik i "Fundne forsikringer". Koder uden mapping vises under
+ * 'andet'.
+ */
+const COVERAGE_KATEGORIER: Record<string, readonly string[]> = {
+  bygning: [
+    'brand_el',
+    'bygningskasko',
+    'udvidet_roerskade',
+    'glas',
+    'sanitet',
+    'insekt_svamp',
+    'restvaerdi',
+    'stikledning',
+    'jordskade',
+    'lovliggoerelse',
+    'haerverk',
+    'omstilling_laase',
+    'udvidet_vandskade',
+  ],
+  loesoere: ['loesoere', 'indbrudstyveri', 'ran_roeveri', 'oprydning', 'maskiner_itudstyr'],
+  driftstab: ['driftstab', 'leverandoer_aftager', 'huslejetab'],
+  ansvar: ['erhvervsansvar', 'hus_grundejer_ansvar', 'forurening'],
+  cyber: ['cyber', 'cyberdriftstab', 'notifikation', 'netbank', 'it_meromkostninger'],
+  kriminalitet: ['kriminalitet'],
+  transport: ['transport'],
+  // BIZZ-2154: Motor-/køretøjsdækninger → "Bilforsikring"
+  bil: ['motorkasko', 'foererulykke', 'redning_udland', 'eftermonteret_udstyr', 'friskade'],
+};
+
+/** BIZZ-2099: Danske/engelske labels for dæknings-kategorier */
+const KATEGORI_LABELS: Record<string, [string, string]> = {
+  bygning: ['Bygning', 'Building'],
+  loesoere: ['Løsøre', 'Contents'],
+  driftstab: ['Driftstab', 'Business interruption'],
+  ansvar: ['Ansvar', 'Liability'],
+  cyber: ['Cyber', 'Cyber'],
+  kriminalitet: ['Kriminalitet', 'Crime'],
+  transport: ['Transport', 'Transit'],
+  bil: ['Bil/motor', 'Vehicle'],
+  andet: ['Andet', 'Other'],
+};
+
+/**
+ * BIZZ-2127: Forsikringstype-labels afledt af den dominerende dækningskategori.
+ * Bruges som titel på police-boksen i "Fundne forsikringer", så en police
+ * kategoriseres efter HVAD den dækker — ikke efter business_activity (som for
+ * Alm. Brand-bygningspolicer er bygningens anvendelse, fx "Restaurant og café").
+ */
+const KATEGORI_FORSIKRINGSTYPE: Record<string, [string, string]> = {
+  bygning: ['Ejendomsforsikring', 'Property insurance'],
+  loesoere: ['Løsøreforsikring', 'Contents insurance'],
+  driftstab: ['Driftstabsforsikring', 'Business interruption insurance'],
+  ansvar: ['Ansvarsforsikring', 'Liability insurance'],
+  cyber: ['Cyberforsikring', 'Cyber insurance'],
+  kriminalitet: ['Kriminalitetsforsikring', 'Crime insurance'],
+  transport: ['Transportforsikring', 'Transit insurance'],
+  bil: ['Bilforsikring', 'Motor insurance'],
+};
+
+/** BIZZ-2127: Opslag fra dækningskode → kategori (afledt af COVERAGE_KATEGORIER). */
+const CODE_TO_KATEGORI: Map<string, string> = (() => {
+  const m = new Map<string, string>();
+  for (const [kat, codes] of Object.entries(COVERAGE_KATEGORIER)) {
+    for (const code of codes) m.set(code, kat);
+  }
+  return m;
+})();
+
+/**
+ * BIZZ-2138: Kendte, eksplicitte forsikringstyper i business_activity. parserV2
+ * sætter denne deterministisk ud fra policens titel/betingelser (fx
+ * "Erhvervsforsikring" via betingelser nr. 2502), hvilket er en stærkere kilde
+ * end dæknings-heuristikken. En blandet erhvervspolice (løsøre + bygnings-nære
+ * dækninger som brand/rørskade) tipper ellers heuristikken til
+ * "Ejendomsforsikring". Bygnings-ANVENDELSE ("Restaurant og café") matcher IKKE
+ * her og falder derfor korrekt videre til dæknings-heuristikken.
+ */
+const EKSPLICIT_FORSIKRINGSTYPE: ReadonlyArray<readonly [RegExp, readonly [string, string]]> = [
+  [/\berhvervsforsikring\b/i, ['Erhvervsforsikring', 'Commercial insurance']],
+  [/\b(?:ejendoms|bygnings)forsikring\b/i, ['Ejendomsforsikring', 'Property insurance']],
+  [/\b(?:løsøre|loesoere)forsikring\b/i, ['Løsøreforsikring', 'Contents insurance']],
+  [/\bbilforsikring\b/i, ['Bilforsikring', 'Motor insurance']],
+  [/\bansvarsforsikring\b/i, ['Ansvarsforsikring', 'Liability insurance']],
+  [/\bcyberforsikring\b/i, ['Cyberforsikring', 'Cyber insurance']],
+  [/\bdriftstabsforsikring\b/i, ['Driftstabsforsikring', 'Business interruption insurance']],
+  [/\btransportforsikring\b/i, ['Transportforsikring', 'Transit insurance']],
+  [/\bkriminalitetsforsikring\b/i, ['Kriminalitetsforsikring', 'Crime insurance']],
+];
+
+/**
+ * BIZZ-2138: Mappér en eksplicit forsikringstype i business_activity til en
+ * lokaliseret titel. Returnerer null for bygnings-anvendelse og ukendte
+ * strenge, så kalderen kan falde tilbage til dæknings-heuristikken.
+ *
+ * @param businessActivity - Policens business_activity
+ * @param da - Dansk sprogflag
+ * @returns Lokaliseret forsikringstype-titel, eller null hvis ikke genkendt
+ */
+export function eksplicitForsikringstype(
+  businessActivity: string | null | undefined,
+  da: boolean
+): string | null {
+  if (!businessActivity) return null;
+  for (const [re, labels] of EKSPLICIT_FORSIKRINGSTYPE) {
+    if (re.test(businessActivity)) return labels[da ? 0 : 1];
+  }
+  return null;
+}
+
+/**
+ * BIZZ-2127: Udled forsikringstype-titel fra policens dækninger.
+ *
+ * Tæller aktive (is_covered) dækninger pr. kategori og vælger den dominerende
+ * → fx en police med overvejende bygningsdækninger bliver "Ejendomsforsikring".
+ * BIZZ-2138: En eksplicit forsikringstype i business_activity (sat
+ * deterministisk af parserV2 ud fra policens titel/betingelser) vinder dog over
+ * heuristikken — ellers fejlvises en blandet erhvervspolice som
+ * "Ejendomsforsikring". Falder tilbage til business_activity (og derefter en
+ * generisk label) hvis policen ingen kategoriserbare dækninger har.
+ *
+ * @param coverages - Policens dækninger
+ * @param businessActivity - Policens business_activity (fallback)
+ * @param da - Dansk sprogflag
+ * @returns Forsikringstype-titel til visning
+ */
+export function forsikringTypeLabel(
+  coverages: AnalyseCoverage[],
+  businessActivity: string | null | undefined,
+  da: boolean
+): string {
+  // BIZZ-2138: Stol på en eksplicit forsikringstype før dæknings-heuristikken.
+  const eksplicit = eksplicitForsikringstype(businessActivity, da);
+  if (eksplicit) return eksplicit;
+
+  const counts = new Map<string, number>();
+  for (const c of coverages) {
+    if (!c.is_covered) continue;
+    const kat = CODE_TO_KATEGORI.get(c.coverage_code);
+    if (!kat) continue;
+    counts.set(kat, (counts.get(kat) ?? 0) + 1);
+  }
+  let best: string | null = null;
+  let bestN = 0;
+  for (const [kat, n] of counts) {
+    if (n > bestN) {
+      best = kat;
+      bestN = n;
+    }
+  }
+  if (best && KATEGORI_FORSIKRINGSTYPE[best]) {
+    return KATEGORI_FORSIKRINGSTYPE[best][da ? 0 : 1];
+  }
+  return businessActivity || (da ? 'Forsikring' : 'Insurance');
+}
+
+/**
+ * BIZZ-2144: Byg link til Motorstyrelsens åbne motorregister-opslag for et
+ * registreringsnummer. Det officielle DMR-selvbetjeningssøg tager reg.nr som
+ * fritekst-query, så brugeren lander direkte på køretøjets oplysninger.
+ *
+ * @param regnr - Registreringsnummer (fx "CE18728")
+ * @returns Absolut URL til motorregisterets offentlige opslag
+ */
+export function motorRegisterUrl(regnr: string): string {
+  const clean = regnr.replace(/\s+/g, '').toUpperCase();
+  return `https://motorregister.skat.dk/dmr-kerne/koeretoejdetaljerfraadmr/visKoeretoej?soegekriterie=${encodeURIComponent(
+    clean
+  )}`;
+}
+
+/**
+ * BIZZ-2099: "Fundne forsikringer" — grøn boks pr. police i analysen med alle
+ * dækninger (inkl. dækningssum + selvrisiko), så det der ER dækket vises
+ * eksplicit — ikke kun manglerne. Adresseløse virksomhedspolicer (Cyber,
+ * Netbank, Kriminalitet m.fl.) vises på lige fod med ejendomspolicer.
+ * Fravalgte dækninger (is_covered=false) vises som eksplicitte fravalg.
+ * Nederst et samlet dækningsoverblik grupperet pr. kategori.
+ *
+ * @param props.detail - Full analyse detail (policies + coverages fra API)
+ * @param props.da - Dansk sprogflag
+ */
+function FundneForsikringer({ detail, da }: { detail: AnalyseDetail; da: boolean }) {
+  const analysePolicies = detail.policies ?? [];
+  const allCoverages = detail.coverages ?? [];
+  if (analysePolicies.length === 0) return null;
+
+  // Gruppér dækninger pr. police
+  const covsByPolicy = new Map<string, AnalyseCoverage[]>();
+  for (const cov of allCoverages) {
+    const list = covsByPolicy.get(cov.policy_id) ?? [];
+    list.push(cov);
+    covsByPolicy.set(cov.policy_id, list);
+  }
+
+  // BIZZ-2152: Samlet police = ét policenummer med flere forsikringssteder.
+  // Hver forsikringssted ligger som sin egen police-row i analysen (et
+  // property_address pr. row). Vis dem som ÉN kasse med policenummeret som
+  // overskrift og hvert forsikringssted som under-sektion — i stedet for én
+  // løsreven kasse pr. adresse.
+  const policyGroups = new Map<string, AnalysePolicy[]>();
+  for (const p of analysePolicies) {
+    const key = p.policy_number || p.id;
+    const list = policyGroups.get(key) ?? [];
+    list.push(p);
+    policyGroups.set(key, list);
+  }
+  const groupedPolicies = [...policyGroups.values()];
+
+  /** Formatter beløb i hele kr */
+  const kr = (v: number) => `${v.toLocaleString('da-DK')} kr`;
+
+  // Samlet dækningsoverblik: aktive dækninger grupperet pr. kategori
+  const codeToKategori = new Map<string, string>();
+  for (const [kat, codes] of Object.entries(COVERAGE_KATEGORIER)) {
+    for (const code of codes) codeToKategori.set(code, kat);
+  }
+  const kategoriDaekninger = new Map<string, AnalyseCoverage[]>();
+  for (const cov of allCoverages) {
+    if (!cov.is_covered) continue;
+    const kat = codeToKategori.get(cov.coverage_code) ?? 'andet';
+    const list = kategoriDaekninger.get(kat) ?? [];
+    list.push(cov);
+    kategoriDaekninger.set(kat, list);
+  }
+  // Vis kategorier i fast rækkefølge (samme som KATEGORI_LABELS)
+  const kategoriRaekker = Object.keys(KATEGORI_LABELS)
+    .filter((k) => kategoriDaekninger.has(k))
+    .map((k) => [k, kategoriDaekninger.get(k)!] as const);
+
+  return (
+    <div className="bg-white/5 border border-white/8 rounded-xl p-4">
+      <div className="flex items-center gap-2 mb-2">
+        <ShieldCheck size={14} className="text-emerald-400" />
+        <h4 className="text-white text-sm font-semibold">
+          {da ? 'Fundne forsikringer' : 'Found insurance policies'}
+        </h4>
+        <span className="text-slate-400 text-[11px]">
+          {analysePolicies.length} {da ? 'policer' : 'policies'}
+        </span>
+      </div>
+      <p className="text-slate-400 text-[11px] mb-3">
+        {da
+          ? 'Alle policer fundet i analysens dokumenter — inkl. virksomhedsdækninger uden ejendomsadresse (Cyber, Netbank, Kriminalitet m.fl.).'
+          : 'All policies found in the analysed documents — incl. company-level covers without a property address (Cyber, Netbank, Crime etc.).'}
+      </p>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {groupedPolicies.map((group) => {
+          // Samlede dækninger på tværs af gruppens forsikringssteder — bruges
+          // til at udlede én forsikringstype-titel for hele policen.
+          const groupCovs = group.flatMap((p) => covsByPolicy.get(p.id) ?? []);
+          // BIZZ-2129: Tvivlsom hvis hele policen kun er fuzzy navne-matchet.
+          const tvivlsom = group.every((p) => p.attachment === 'tvivlsom');
+          const first = group[0];
+          const flereSteder = group.length > 1;
+          // BIZZ-2144: Reg.nr fra bilpolicer → link til motorregisterets opslag
+          const regnr =
+            group.map((p) => p.raw_metadata?.registreringsnummer).find((r) => !!r) ?? null;
+          return (
+            <div
+              key={first.policy_number || first.id}
+              className={
+                tvivlsom
+                  ? 'bg-amber-500/10 border border-amber-500/30 rounded-lg p-3'
+                  : 'bg-emerald-500/10 border border-emerald-500/25 rounded-lg p-3'
+              }
+            >
+              <div className="flex items-start justify-between gap-2 mb-1">
+                <div className="min-w-0">
+                  {/* BIZZ-2127: Titel = forsikringstype afledt af dækningerne
+                      (fx bygningsdækninger → "Ejendomsforsikring"), ikke
+                      business_activity som kan være bygningens anvendelse. */}
+                  <div
+                    className={`text-xs font-semibold truncate ${tvivlsom ? 'text-amber-200' : 'text-emerald-200'}`}
+                  >
+                    {forsikringTypeLabel(groupCovs, first.business_activity, da)}
+                  </div>
+                  <div className="text-slate-400 text-[11px] truncate">
+                    {[first.insurer_name, first.policy_number].filter(Boolean).join(' — ')}
+                  </div>
+                  {/* BIZZ-2144: Bilpolice → link til motorregisterets åbne opslag */}
+                  {regnr && (
+                    <a
+                      href={motorRegisterUrl(regnr)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-white/10 bg-white/5 text-slate-300 hover:text-white hover:border-white/20 hover:bg-white/10 transition-colors text-[10px] font-medium"
+                      aria-label={`${da ? 'Slå op i motorregisteret' : 'Look up in motor register'}: ${regnr}`}
+                      title={
+                        da
+                          ? 'Slå køretøjet op i motorregisteret'
+                          : 'Look up the vehicle in the motor register'
+                      }
+                    >
+                      <Car size={11} className="shrink-0" />
+                      <span className="font-mono tracking-wide">{regnr.toUpperCase()}</span>
+                      <ExternalLink size={10} className="shrink-0" />
+                    </a>
+                  )}
+                  {/* BIZZ-2152: Antal forsikringssteder når policen dækker flere */}
+                  {flereSteder && (
+                    <div className="text-slate-400 text-[11px]">
+                      {group.length} {da ? 'forsikringssteder' : 'insured locations'}
+                    </div>
+                  )}
+                  {/* Enkelt forsikringssted vises direkte under policenummeret */}
+                  {!flereSteder && first.property_address && (
+                    <div className="text-slate-400 text-[11px] truncate">
+                      {first.property_address}
+                    </div>
+                  )}
+                </div>
+                {tvivlsom ? (
+                  <AlertTriangle size={14} className="text-amber-400 shrink-0 mt-0.5" />
+                ) : (
+                  <CheckCircle2 size={14} className="text-emerald-400 shrink-0 mt-0.5" />
+                )}
+              </div>
+              {/* BIZZ-2129: Advarsel når policens tilknytning til kunden er usikker */}
+              {tvivlsom && (
+                <div className="text-amber-300/90 text-[10px] mb-1.5">
+                  {da
+                    ? '⚠ Tvivlsom tilknytning — forsikringstageren kunne ikke bekræftes som denne kunde (kun navne-match). Verificér at policen hører til kunden.'
+                    : '⚠ Uncertain attachment — the policyholder could not be confirmed as this customer (name match only). Verify the policy belongs to the customer.'}
+                </div>
+              )}
+              {/* Hvert forsikringssted som under-sektion */}
+              {group.map((policy) => {
+                const covs = covsByPolicy.get(policy.id) ?? [];
+                const active = covs.filter((c) => c.is_covered);
+                const fravalgt = covs.filter((c) => !c.is_covered);
+                return (
+                  <div
+                    key={policy.id}
+                    className={flereSteder ? 'mt-2 border-t border-white/10 pt-2' : ''}
+                  >
+                    {/* Forsikringssted-overskrift kun ved samlet police */}
+                    {flereSteder && (
+                      <div className="text-slate-300 text-[11px] font-medium truncate mb-1">
+                        {policy.property_address ||
+                          (da ? 'Uden specifik adresse' : 'No specific address')}
+                      </div>
+                    )}
+                    {active.length > 0 && (
+                      <div className="space-y-0.5">
+                        {active.map((cov) => (
+                          <div
+                            key={`${cov.policy_id}-${cov.coverage_code}`}
+                            className="flex items-center justify-between gap-2 text-[11px]"
+                          >
+                            <span className="text-slate-300 truncate">✓ {cov.coverage_label}</span>
+                            <span className="text-emerald-300 shrink-0">
+                              {cov.sum_dkk != null && cov.sum_dkk > 0 ? kr(cov.sum_dkk) : ''}
+                              {cov.deductible_dkk != null && cov.deductible_dkk > 0 && (
+                                <span className="text-slate-400">
+                                  {' '}
+                                  ({da ? 'selvrisiko' : 'deductible'} {kr(cov.deductible_dkk)})
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {/* Fravalgte dækninger vises eksplicit — skjules ikke */}
+                    {fravalgt.length > 0 && (
+                      <div className="space-y-0.5 mt-1.5 border-t border-white/10 pt-1.5">
+                        {fravalgt.map((cov) => (
+                          <div
+                            key={`${cov.policy_id}-${cov.coverage_code}`}
+                            className="flex items-center gap-1.5 text-[11px]"
+                          >
+                            <XCircle size={11} className="text-slate-400 shrink-0" />
+                            <span className="text-slate-400 truncate">
+                              {cov.coverage_label} — {da ? 'fravalgt' : 'not selected'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {covs.length === 0 && (
+                      <p className="text-slate-400 text-[11px]">
+                        {da ? 'Ingen dækningsdetaljer fundet.' : 'No coverage details found.'}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Samlet dækningsoverblik pr. kategori */}
+      {kategoriRaekker.length > 0 && (
+        <div className="mt-3 border-t border-white/10 pt-3">
+          <div className="text-slate-400 text-[10px] uppercase tracking-wide mb-1.5">
+            {da ? 'Samlet dækningsoverblik' : 'Coverage overview'}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {kategoriRaekker.map(([kat, covs]) => {
+              const sum = covs.reduce((acc, c) => acc + (c.sum_dkk ?? 0), 0);
+              const [daLabel, enLabel] = KATEGORI_LABELS[kat];
+              return (
+                <div
+                  key={kat}
+                  className="bg-emerald-500/10 border border-emerald-500/25 rounded-md px-2.5 py-1.5 text-[11px]"
+                >
+                  <span className="text-emerald-200 font-medium">{da ? daLabel : enLabel}</span>
+                  <span className="text-slate-400"> · {covs.length}</span>
+                  {sum > 0 && <span className="text-emerald-300"> · {kr(sum)}</span>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * Unified analyse result view — BIZZ-1389.
  * Groups assets by property and shows merged gaps from both systems.
  *
@@ -468,12 +1856,35 @@ function UnifiedAnalyseView({
   // Build a policy lookup
   const policyById = new Map(policies.map((p) => [p.id, p]));
 
+  // BIZZ-2119: Matchede policer kan ligge uden for tenant-listens scope (fx
+  // koncern-policer fra et andet dokument-scope). Detail-API'et returnerer dem
+  // nu eksplicit i detail.policies — supplér opslaget så UI'et altid kan vise
+  // selskab + policenummer i stedet for fallback-teksten.
+  for (const p of detail.policies ?? []) {
+    if (!policyById.has(p.id)) policyById.set(p.id, p as unknown as PolicyRow);
+  }
+
+  // BIZZ-2119: Kildedokument-navne til matchede policer
+  const docNameById = new Map((detail.documents ?? []).map((d) => [d.id, d.original_name]));
+
+  // BIZZ-2084: Aktive dækninger grupperet per police — til grøn "Dækket"-visning
+  const coveragesByPolicy = new Map<string, AnalyseCoverage[]>();
+  for (const cov of detail.coverages ?? []) {
+    if (!cov.is_covered) continue;
+    const list = coveragesByPolicy.get(cov.policy_id) ?? [];
+    list.push(cov);
+    coveragesByPolicy.set(cov.policy_id, list);
+  }
+
   // Group aktiver into PropertyGroups with their gaps — dedup by address
   const seenAddresses = new Set<string>();
   const allGroups: PropertyGroup[] = [];
   for (const aktiv of aktiver) {
     // BIZZ-1439: Dedup — skip duplikerede adresser (ejerskab kan have flere rækker per BFE)
     // Dedup via BFE (unikt per ejendom) — IKKE adresse (ejerlejligheder har samme adresse men forskellig etage/dør)
+    // BIZZ-2158: Sekundære adgangsadresser på samme SFE-BFE gemmes nu som
+    // secondaryAddresses-metadata på det primære aktiv (koncernWalk) — IKKE som
+    // egne aktiver — så ét BFE giver netop ét kort.
     const addrKey = aktiv.bfe
       ? String(aktiv.bfe)
       : aktiv.type === 'virksomhed' && aktiv.cvr
@@ -498,12 +1909,19 @@ function UnifiedAnalyseView({
           )
         : [];
     const aktivGaps = dedupGaps(rawGaps);
+    const matchedPolicy = aktiv.matched_policy_id
+      ? (policyById.get(aktiv.matched_policy_id) ?? null)
+      : null;
     allGroups.push({
       aktiv,
-      matchedPolicy: aktiv.matched_policy_id
-        ? (policyById.get(aktiv.matched_policy_id) ?? null)
-        : null,
+      matchedPolicy,
       gaps: aktivGaps,
+      // BIZZ-2121: Virksomheds-aktiver aggregerer alle kundens policer
+      coverages: coveragesForAktiv(aktiv, detail.policies ?? [], coveragesByPolicy),
+      // BIZZ-2119: kildedokument-filnavn for den matchede police
+      matchedDocName: matchedPolicy?.document_id
+        ? (docNameById.get(matchedPolicy.document_id) ?? null)
+        : null,
     });
   }
 
@@ -569,20 +1987,65 @@ function UnifiedAnalyseView({
     return [postnr, vejnavn.toLowerCase(), husnrNum, husnrSuffix.toLowerCase()];
   }
 
-  /** Sort properties: postnr ASC → vejnavn ASC → husnr ASC. Uforsikrede først inden for gruppen. */
+  /**
+   * Sammenlign to adresse-tupler fra parseAddrSort (postnr → vejnavn → husnr → suffix).
+   *
+   * @param a - Første tuple
+   * @param b - Anden tuple
+   * @returns Negativ/0/positiv som Array.sort-comparator
+   */
+  function cmpAddrTuple(a: [number, string, number, string], b: [number, string, number, string]) {
+    if (a[0] !== b[0]) return a[0] - b[0];
+    const vejCmp = a[1].localeCompare(b[1], 'da');
+    if (vejCmp !== 0) return vejCmp;
+    if (a[2] !== b[2]) return a[2] - b[2];
+    return a[3].localeCompare(b[3], 'da');
+  }
+
+  /** Læs SFE-BFE fra aktivets raw_data (BIZZ-2096, sat af sfeStruktur.ts) */
+  function sfeBfeOf(g: PropertyGroup): number | null {
+    return (g.aktiv.raw_data as { sfe_bfe?: number } | null)?.sfe_bfe ?? null;
+  }
+
+  /**
+   * Sort properties: postnr ASC → vejnavn ASC → husnr ASC. Uforsikrede først inden for gruppen.
+   *
+   * BIZZ-2096: Aktiver i samme SFE holdes samlet — alle medlemmer af en SFE
+   * sorteres på SFE-gruppens "anker" (laveste adresse i gruppen), med
+   * SFE-niveauet øverst i gruppen, så strukturen SFE → underliggende er synlig.
+   */
   function sortProperties(list: PropertyGroup[]): PropertyGroup[] {
+    // Anker pr. SFE-gruppe = laveste adresse-tuple blandt medlemmerne
+    const anchorBySfe = new Map<number, [number, string, number, string]>();
+    for (const g of list) {
+      const sfe = sfeBfeOf(g);
+      if (sfe == null) continue;
+      const t = parseAddrSort(g.aktiv.adresse);
+      const cur = anchorBySfe.get(sfe);
+      if (!cur || cmpAddrTuple(t, cur) < 0) anchorBySfe.set(sfe, t);
+    }
+
     return [...list].sort((a, b) => {
-      const [aPostnr, aVej, aHusnr, aSuf] = parseAddrSort(a.aktiv.adresse);
-      const [bPostnr, bVej, bHusnr, bSuf] = parseAddrSort(b.aktiv.adresse);
-      // Primary: postnr ascending
-      if (aPostnr !== bPostnr) return aPostnr - bPostnr;
-      // Secondary: vejnavn alphabetical (Danish locale)
-      const vejCmp = aVej.localeCompare(bVej, 'da');
-      if (vejCmp !== 0) return vejCmp;
-      // Tertiary: husnr numeric
-      if (aHusnr !== bHusnr) return aHusnr - bHusnr;
-      // Quaternary: husnr suffix (A, B, C...)
-      if (aSuf !== bSuf) return aSuf.localeCompare(bSuf, 'da');
+      const aT = parseAddrSort(a.aktiv.adresse);
+      const bT = parseAddrSort(b.aktiv.adresse);
+      const aSfe = sfeBfeOf(a);
+      const bSfe = sfeBfeOf(b);
+      // Primary: SFE-gruppens anker (eller egen adresse uden SFE-info)
+      const aKey = aSfe != null ? (anchorBySfe.get(aSfe) ?? aT) : aT;
+      const bKey = bSfe != null ? (anchorBySfe.get(bSfe) ?? bT) : bT;
+      const keyCmp = cmpAddrTuple(aKey, bKey);
+      if (keyCmp !== 0) return keyCmp;
+      // Inden for samme SFE-gruppe: SFE-niveauet øverst
+      if (aSfe != null && aSfe === bSfe) {
+        const aNiv =
+          (a.aktiv.raw_data as { sfe_niveau?: string } | null)?.sfe_niveau === 'sfe' ? 0 : 1;
+        const bNiv =
+          (b.aktiv.raw_data as { sfe_niveau?: string } | null)?.sfe_niveau === 'sfe' ? 0 : 1;
+        if (aNiv !== bNiv) return aNiv - bNiv;
+      }
+      // Secondary: egen adresse
+      const ownCmp = cmpAddrTuple(aT, bT);
+      if (ownCmp !== 0) return ownCmp;
       // Tiebreaker: uforsikrede først
       const aIns = a.aktiv.matched_policy_id ? 1 : 0;
       const bIns = b.aktiv.matched_policy_id ? 1 : 0;
@@ -596,16 +2059,61 @@ function UnifiedAnalyseView({
     ejendomme: PropertyGroup[];
   }
 
-  // Sortér virksomheder: hovedvirksomheden (flest egne ejendomme) først
-  const virksomhedsTraeer: VirksomhedsTree[] = virksomhedGroups
-    .map((v) => ({
-      // BIZZ-1972: I fold-casen får den eneste virksomhed forsikringsejer- og
-      // virksomheds-findings injiceret i sin egen række (så badge + collapse
-      // afspejler totalen) — i stedet for at vise dem i separate sektioner.
-      virksomhed: foldOwnerIntoCompany ? { ...v, gaps: [...ownerGaps, ...companyGaps] } : v,
-      ejendomme: sortProperties(ejendommeByCvr.get(v.aktiv.cvr ?? '') ?? []),
-    }))
-    .sort((a, b) => b.ejendomme.length - a.ejendomme.length);
+  // BIZZ-2102: Sortér virksomheder efter koncern-hierarki — holdingselskabet
+  // (depth 0) øverst, derefter datterselskaber DFS-ordnet efter parent_cvr.
+  // Ældre analyser uden depth/parent_cvr-metadata falder tilbage til den
+  // gamle sortering (flest egne ejendomme først).
+  const mappedTraeer: VirksomhedsTree[] = virksomhedGroups.map((v) => ({
+    // BIZZ-1972: I fold-casen får den eneste virksomhed forsikringsejer- og
+    // virksomheds-findings injiceret i sin egen række (så badge + collapse
+    // afspejler totalen) — i stedet for at vise dem i separate sektioner.
+    virksomhed: foldOwnerIntoCompany ? { ...v, gaps: [...ownerGaps, ...companyGaps] } : v,
+    ejendomme: sortProperties(ejendommeByCvr.get(v.aktiv.cvr ?? '') ?? []),
+  }));
+
+  /** Læs koncern-metadata fra aktivets raw_data (BIZZ-2102) */
+  function koncernMeta(t: VirksomhedsTree): { depth: number | null; parentCvr: string | null } {
+    const rd = t.virksomhed.aktiv.raw_data as { depth?: unknown; parent_cvr?: unknown } | null;
+    return {
+      depth: typeof rd?.depth === 'number' ? rd.depth : null,
+      parentCvr: typeof rd?.parent_cvr === 'string' ? rd.parent_cvr : null,
+    };
+  }
+
+  const hasHierarchy = mappedTraeer.some((t) => koncernMeta(t).depth !== null);
+  let virksomhedsTraeer: VirksomhedsTree[];
+  if (hasHierarchy) {
+    // DFS: rødder (depth 0 / uden parent) først, børn umiddelbart efter deres
+    // moderselskab. Søskende sorteres efter flest egne ejendomme.
+    const byParent = new Map<string, VirksomhedsTree[]>();
+    const roots: VirksomhedsTree[] = [];
+    const cvrSet = new Set(mappedTraeer.map((t) => t.virksomhed.aktiv.cvr ?? ''));
+    for (const t of mappedTraeer) {
+      const { parentCvr } = koncernMeta(t);
+      if (parentCvr && cvrSet.has(parentCvr)) {
+        const list = byParent.get(parentCvr) ?? [];
+        list.push(t);
+        byParent.set(parentCvr, list);
+      } else {
+        roots.push(t);
+      }
+    }
+    const byEjendomme = (a: VirksomhedsTree, b: VirksomhedsTree) =>
+      b.ejendomme.length - a.ejendomme.length;
+    const ordered: VirksomhedsTree[] = [];
+    const visit = (t: VirksomhedsTree) => {
+      ordered.push(t);
+      const children = (byParent.get(t.virksomhed.aktiv.cvr ?? '') ?? []).sort(byEjendomme);
+      for (const c of children) visit(c);
+    };
+    for (const r of [...roots].sort(
+      (a, b) => (koncernMeta(a).depth ?? 99) - (koncernMeta(b).depth ?? 99) || byEjendomme(a, b)
+    ))
+      visit(r);
+    virksomhedsTraeer = ordered;
+  } else {
+    virksomhedsTraeer = [...mappedTraeer].sort((a, b) => b.ejendomme.length - a.ejendomme.length);
+  }
 
   // Compute health score: 0-100 (higher = better)
   // BIZZ-1440: Brug dedupede groups i stedet for rå analyse-tal
@@ -623,43 +2131,15 @@ function UnifiedAnalyseView({
   const healthColor = healthScore >= 71 ? 'emerald' : healthScore >= 41 ? 'amber' : 'red';
 
   return (
-    <div className="space-y-4">
-      {/* Niveau 1: Kundeoverblik — én KPI-række */}
-      <div className="bg-white/5 border border-white/8 rounded-xl p-4">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-white text-sm font-semibold">{kundeNavn}</h3>
-          <span
-            className={`text-lg font-bold ${
-              healthColor === 'emerald'
-                ? 'text-emerald-400'
-                : healthColor === 'amber'
-                  ? 'text-amber-400'
-                  : 'text-red-400'
-            }`}
-          >
-            {healthScore}/100
-          </span>
-        </div>
-        <div className="grid grid-cols-5 gap-2">
-          <div className="text-center">
-            <div className="text-purple-300 text-xl font-bold">{virksomhedGroups.length}</div>
-            <div className="text-slate-400 text-[10px]">{da ? 'Virksomheder' : 'Companies'}</div>
-          </div>
-          <div className="text-center">
-            <div className="text-blue-300 text-xl font-bold">{total}</div>
-            <div className="text-slate-400 text-[10px]">{da ? 'Ejendomme' : 'Properties'}</div>
-          </div>
-          <div className="text-center">
-            <div className="text-emerald-300 text-xl font-bold">{insured}</div>
-            <div className="text-slate-400 text-[10px]">{da ? 'Forsikrede' : 'Insured'}</div>
-          </div>
-          <div className="text-center">
-            <div className="text-red-300 text-xl font-bold">{total - insured}</div>
-            <div className="text-slate-400 text-[10px]">{da ? 'Uforsikrede' : 'Uninsured'}</div>
-          </div>
-          <div className="text-center">
-            <div
-              className={`text-xl font-bold ${
+    // BIZZ-2155: Stil BBR-bygningsdata til rådighed for alle PropertyRow'er
+    <BbrContext.Provider value={detail.bbrByBfe}>
+      <div className="space-y-4">
+        {/* Niveau 1: Kundeoverblik — én KPI-række */}
+        <div className="bg-white/5 border border-white/8 rounded-xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-white text-sm font-semibold">{kundeNavn}</h3>
+            <span
+              className={`text-lg font-bold ${
                 healthColor === 'emerald'
                   ? 'text-emerald-400'
                   : healthColor === 'amber'
@@ -667,136 +2147,229 @@ function UnifiedAnalyseView({
                     : 'text-red-400'
               }`}
             >
-              {healthScore}
+              {healthScore}/100
+            </span>
+          </div>
+          <div className="grid grid-cols-5 gap-2">
+            <div className="text-center">
+              <div className="text-purple-300 text-xl font-bold">{virksomhedGroups.length}</div>
+              <div className="text-slate-400 text-[10px]">{da ? 'Virksomheder' : 'Companies'}</div>
             </div>
-            <div className="text-slate-400 text-[10px]">
-              {da ? 'Sundhedsscore' : 'Health score'}
+            <div className="text-center">
+              <div className="text-blue-300 text-xl font-bold">{total}</div>
+              <div className="text-slate-400 text-[10px]">{da ? 'Ejendomme' : 'Properties'}</div>
+            </div>
+            <div className="text-center">
+              <div className="text-emerald-300 text-xl font-bold">{insured}</div>
+              <div className="text-slate-400 text-[10px]">{da ? 'Forsikrede' : 'Insured'}</div>
+            </div>
+            <div className="text-center">
+              <div className="text-red-300 text-xl font-bold">{total - insured}</div>
+              <div className="text-slate-400 text-[10px]">{da ? 'Uforsikrede' : 'Uninsured'}</div>
+            </div>
+            <div className="text-center">
+              <div
+                className={`text-xl font-bold ${
+                  healthColor === 'emerald'
+                    ? 'text-emerald-400'
+                    : healthColor === 'amber'
+                      ? 'text-amber-400'
+                      : 'text-red-400'
+                }`}
+              >
+                {healthScore}
+              </div>
+              <div className="text-slate-400 text-[10px]">
+                {da ? 'Sundhedsscore' : 'Health score'}
+              </div>
             </div>
           </div>
+          {/* Health bar */}
+          <div className="mt-3 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all ${
+                healthColor === 'emerald'
+                  ? 'bg-emerald-500'
+                  : healthColor === 'amber'
+                    ? 'bg-amber-500'
+                    : 'bg-red-500'
+              }`}
+              style={{ width: `${healthScore}%` }}
+            />
+          </div>
         </div>
-        {/* Health bar */}
-        <div className="mt-3 h-1.5 bg-slate-800 rounded-full overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all ${
-              healthColor === 'emerald'
-                ? 'bg-emerald-500'
-                : healthColor === 'amber'
-                  ? 'bg-amber-500'
-                  : 'bg-red-500'
-            }`}
-            style={{ width: `${healthScore}%` }}
-          />
-        </div>
-      </div>
 
-      {/* BIZZ-1941: Forsikringsejer-niveau — generelle findings for hele ejeren.
+        {/* BIZZ-2085: Dækningsniveau vs. seneste regnskab — egen kasse med
+          regnskabstal længst til højre, så niveauet kan reviewes med kunden */}
+        <DaekningVsRegnskab detail={detail} da={da} />
+
+        {/* BIZZ-2099: Fundne forsikringer — grønne bokse for alle analysens policer */}
+        <FundneForsikringer detail={detail} da={da} />
+
+        {/* BIZZ-2135: Refererede standardbetingelser — vis hvilke der mangler */}
+        {(detail.referencedConditions ?? []).length > 0 &&
+          (() => {
+            const conds = detail.referencedConditions!;
+            const uploaded = conds.filter((c) => c.uploaded).length;
+            const missing = conds.length - uploaded;
+            return (
+              <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-white text-sm font-semibold flex items-center gap-2">
+                    <BookOpen size={14} className="text-blue-400" />
+                    {da ? 'Refererede standardbetingelser' : 'Referenced standard conditions'}
+                  </h4>
+                  <span className="text-slate-400 text-[10px]">
+                    {uploaded}/{conds.length} {da ? 'uploaded' : 'uploaded'}
+                  </span>
+                </div>
+                {missing > 0 && (
+                  <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 text-amber-300 text-xs">
+                    {da
+                      ? `${missing} af ${conds.length} refererede betingelser mangler — gap-analysen er ufuldstændig. Upload de manglende betingelser for en komplet analyse.`
+                      : `${missing} of ${conds.length} referenced conditions are missing — the gap analysis is incomplete. Upload the missing conditions for a complete analysis.`}
+                  </div>
+                )}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                  {conds.map((c) => (
+                    <div
+                      key={c.ref}
+                      className="flex items-center gap-2 px-2.5 py-1.5 bg-white/3 rounded-lg text-xs"
+                    >
+                      {c.uploaded ? (
+                        <CheckCircle2 size={12} className="text-emerald-400 shrink-0" />
+                      ) : (
+                        <AlertCircle size={12} className="text-amber-400 shrink-0" />
+                      )}
+                      <span className={c.uploaded ? 'text-slate-300' : 'text-white font-medium'}>
+                        {c.ref}
+                      </span>
+                      {CONDITION_NAMES[c.ref] && (
+                        <span className="text-slate-400 text-[10px]">
+                          — {CONDITION_NAMES[c.ref]}
+                        </span>
+                      )}
+                      {c.selskab && (
+                        <span className="text-slate-500 text-[10px] truncate ml-auto">
+                          {c.selskab}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+        {/* BIZZ-1941: Forsikringsejer-niveau — generelle findings for hele ejeren.
           Vises kun her, ikke gentaget under virksomhed/ejendom.
           BIZZ-1972: Skjules når forsikringssejeren ER den eneste virksomhed —
           findings foldes da ind under virksomheds-rækken nedenfor. */}
-      {!foldOwnerIntoCompany && ownerGaps.length > 0 && (
-        <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
-          <div className="flex items-center gap-2">
-            <Briefcase size={14} className="text-purple-400" />
-            <h4 className="text-white text-sm font-semibold">
-              {da ? 'Forsikringsejer-niveau' : 'Insurance owner level'}
-            </h4>
-            <span className="text-slate-400 text-[11px]">
+        {!foldOwnerIntoCompany && ownerGaps.length > 0 && (
+          <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <Briefcase size={14} className="text-purple-400" />
+              <h4 className="text-white text-sm font-semibold">
+                {da ? 'Forsikringsejer-niveau' : 'Insurance owner level'}
+              </h4>
+              <span className="text-slate-400 text-[11px]">
+                {da
+                  ? `${ownerGaps.length} generelle findings`
+                  : `${ownerGaps.length} general findings`}
+              </span>
+            </div>
+            <p className="text-slate-400 text-[11px]">
               {da
-                ? `${ownerGaps.length} generelle findings`
-                : `${ownerGaps.length} general findings`}
-            </span>
+                ? 'Gælder hele forsikringsejeren — ikke en enkelt virksomhed eller ejendom.'
+                : 'Applies to the entire insurance owner — not a single company or property.'}
+            </p>
+            <GapList gaps={ownerGaps} da={da} />
           </div>
-          <p className="text-slate-400 text-[11px]">
-            {da
-              ? 'Gælder hele forsikringsejeren — ikke en enkelt virksomhed eller ejendom.'
-              : 'Applies to the entire insurance owner — not a single company or property.'}
-          </p>
-          <GapList gaps={ownerGaps} da={da} />
-        </div>
-      )}
+        )}
 
-      {/* BIZZ-1941: Virksomheds-niveau — gælder porteføljen/virksomheden, ikke per ejendom.
+        {/* BIZZ-1941: Virksomheds-niveau — gælder porteføljen/virksomheden, ikke per ejendom.
           BIZZ-1972: Skjules i fold-casen — findings foldes ind under virksomheds-rækken. */}
-      {!foldOwnerIntoCompany && companyGaps.length > 0 && (
-        <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
-          <div className="flex items-center gap-2">
-            <Building2 size={14} className="text-blue-400" />
-            <h4 className="text-white text-sm font-semibold">
-              {da ? 'Virksomheds-niveau' : 'Company level'}
-            </h4>
-            <span className="text-slate-400 text-[11px]">
-              {da ? `${companyGaps.length} findings` : `${companyGaps.length} findings`}
-            </span>
-          </div>
-          <p className="text-slate-400 text-[11px]">
-            {da
-              ? 'Dæknings-overlap, kollektiv forsikring og standard-betingelser — på tværs af policer.'
-              : 'Coverage overlap, collective insurance and standard terms — across policies.'}
-          </p>
-          <GapList gaps={companyGaps} da={da} />
-        </div>
-      )}
-
-      {/* Niveau 2: Virksomheds-træer med ejendomme grupperet under */}
-      <div className="space-y-4">
-        {virksomhedsTraeer.map((tree) => (
-          <div key={tree.virksomhed.aktiv.id} className="space-y-2">
-            {/* Virksomheds-række (header) */}
-            <PropertyRow group={tree.virksomhed} da={da} foldedNote={foldOwnerIntoCompany} />
-
-            {/* Ejendomme under denne virksomhed — indrykket */}
-            {tree.ejendomme.length > 0 && (
-              <div className="ml-6 pl-3 border-l border-white/8 space-y-2">
-                <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
-                  {da
-                    ? `${tree.ejendomme.length} ${tree.ejendomme.length === 1 ? 'ejendom' : 'ejendomme'} ejet af ${tree.virksomhed.aktiv.label}`
-                    : `${tree.ejendomme.length} ${tree.ejendomme.length === 1 ? 'property' : 'properties'} owned by ${tree.virksomhed.aktiv.label}`}
-                </div>
-                {tree.ejendomme.map((eg) => (
-                  <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
-
-        {/* Ejendomme uden ejer-virksomhed (orphans) — personligt ejede eller manglende kæde */}
-        {orphanEjendomme.length > 0 && (
-          <div className="space-y-2">
-            <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
+        {!foldOwnerIntoCompany && companyGaps.length > 0 && (
+          <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <Building2 size={14} className="text-blue-400" />
+              <h4 className="text-white text-sm font-semibold">
+                {da ? 'Virksomheds-niveau' : 'Company level'}
+              </h4>
+              <span className="text-slate-400 text-[11px]">
+                {da ? `${companyGaps.length} findings` : `${companyGaps.length} findings`}
+              </span>
+            </div>
+            <p className="text-slate-400 text-[11px]">
               {da
-                ? `${orphanEjendomme.length} ${orphanEjendomme.length === 1 ? 'ejendom' : 'ejendomme'} uden virksomheds-tilknytning`
-                : `${orphanEjendomme.length} ${orphanEjendomme.length === 1 ? 'property' : 'properties'} without company link`}
-            </div>
-            {sortProperties(orphanEjendomme).map((eg) => (
-              <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
-            ))}
+                ? 'Dæknings-overlap, kollektiv forsikring og standard-betingelser — på tværs af policer.'
+                : 'Coverage overlap, collective insurance and standard terms — across policies.'}
+            </p>
+            <GapList gaps={companyGaps} da={da} />
           </div>
         )}
 
-        {/* Øvrige aktiver (bestyrelsesposter, biler) */}
-        {otherGroups.length > 0 && (
-          <div className="space-y-2">
-            <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
-              {da ? 'Øvrige aktiver' : 'Other assets'}
+        {/* Niveau 2: Virksomheds-træer med ejendomme grupperet under */}
+        <div className="space-y-4">
+          {virksomhedsTraeer.map((tree) => (
+            <div key={tree.virksomhed.aktiv.id} className="space-y-2">
+              {/* Virksomheds-række (header) */}
+              <PropertyRow group={tree.virksomhed} da={da} foldedNote={foldOwnerIntoCompany} />
+
+              {/* Ejendomme under denne virksomhed — indrykket */}
+              {tree.ejendomme.length > 0 && (
+                <div className="ml-6 pl-3 border-l border-white/8 space-y-2">
+                  <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
+                    {da
+                      ? `${tree.ejendomme.length} ${tree.ejendomme.length === 1 ? 'ejendom' : 'ejendomme'} ejet af ${tree.virksomhed.aktiv.label}`
+                      : `${tree.ejendomme.length} ${tree.ejendomme.length === 1 ? 'property' : 'properties'} owned by ${tree.virksomhed.aktiv.label}`}
+                  </div>
+                  {tree.ejendomme.map((eg) => (
+                    <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
+                  ))}
+                </div>
+              )}
             </div>
-            {otherGroups.map((eg) => (
-              <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
-            ))}
-          </div>
-        )}
+          ))}
+
+          {/* Ejendomme uden ejer-virksomhed (orphans) — personligt ejede eller manglende kæde */}
+          {orphanEjendomme.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
+                {da
+                  ? `${orphanEjendomme.length} ${orphanEjendomme.length === 1 ? 'ejendom' : 'ejendomme'} uden virksomheds-tilknytning`
+                  : `${orphanEjendomme.length} ${orphanEjendomme.length === 1 ? 'property' : 'properties'} without company link`}
+              </div>
+              {sortProperties(orphanEjendomme).map((eg) => (
+                <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
+              ))}
+            </div>
+          )}
+
+          {/* Øvrige aktiver (bestyrelsesposter, biler) */}
+          {otherGroups.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-slate-400 text-[11px] uppercase tracking-wide py-1">
+                {da ? 'Øvrige aktiver' : 'Other assets'}
+              </div>
+              {otherGroups.map((eg) => (
+                <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Rapport-knap — direkte download som DOCX */}
+        <button
+          type="button"
+          onClick={() => onRapport()}
+          className="w-full bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
+        >
+          <FileText size={15} />
+          {da ? 'Download gap-rapport (Word)' : 'Download gap report (Word)'}
+        </button>
       </div>
-
-      {/* Rapport-knap — direkte download som DOCX */}
-      <button
-        type="button"
-        onClick={() => onRapport()}
-        className="w-full bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
-      >
-        <FileText size={15} />
-        {da ? 'Download gap-rapport (Word)' : 'Download gap report (Word)'}
-      </button>
-    </div>
+    </BbrContext.Provider>
   );
 }
 
@@ -818,6 +2391,7 @@ function AnalyseSection({
   onCustomerSelect,
   newDocumentIds,
   addTokenUsage,
+  initialCustomer,
 }: {
   lang: string;
   policies: PolicyRow[];
@@ -834,6 +2408,8 @@ function AnalyseSection({
   newDocumentIds: string[];
   /** BIZZ-1447: Token usage callback */
   addTokenUsage: (tokens: number) => void;
+  /** BIZZ-2148: Kunde genskabt fra URL ved mount — auto-vælg + åbn doc-picker */
+  initialCustomer: { type: 'virksomhed' | 'person'; id: string; navn: string } | null;
 }) {
   const da = lang === 'da';
   const [query, setQuery] = useState('');
@@ -846,10 +2422,25 @@ function AnalyseSection({
     navn: string;
   } | null>(null);
   const [running, setRunning] = useState(false);
+  /**
+   * BIZZ-2140: Progress-steps fra analyse-SSE. Hvert trin har en status
+   * (pending/running/done/slow/error) så UI'et kan vise en checklist i stedet
+   * for en tavs spinner under store analyser.
+   */
+  const [analyseSteps, setAnalyseSteps] = useState<
+    Array<{ id: string; label: string; status: 'pending' | 'running' | 'done' | 'slow' | 'error' }>
+  >([]);
   /** BIZZ-1404: Dokument-genbrug wizard state */
   const [showDocPicker, setShowDocPicker] = useState(false);
   const [previousDocs, setPreviousDocs] = useState<
-    Array<{ id: string; original_name: string; created_at: string; from_analyse_id: string }>
+    Array<{
+      id: string;
+      original_name: string;
+      created_at: string;
+      // BIZZ-2156: parse-tidspunkt (updated_at bumpes når parse afsluttes)
+      updated_at?: string;
+      from_analyse_id: string;
+    }>
   >([]);
   const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
   /** BIZZ-1439: Upload-state inde i wizard */
@@ -862,17 +2453,7 @@ function AnalyseSection({
       docId?: string;
     }>
   >([]);
-  const [analyseResult, setAnalyseResult] = useState<{
-    analyse_id: string;
-    total_aktiver: number;
-    insured_count: number;
-    gaps_count: number;
-    total_risk_score: number;
-    /** BIZZ-1973: Policer der dækker en adresse uden for porteføljen */
-    address_mismatches?: AddressMismatch[];
-    /** Advarsel når standard betingelser ikke matcher policens selskab */
-    std_betingelser_advarsel?: string | null;
-  } | null>(null);
+  const [analyseResult, setAnalyseResult] = useState<AnalyseResultPayload | null>(null);
   /**
    * BIZZ-1973: Preflight-advarsel — sættes når adresse-tjek finder policer der
    * dækker en ejendom uden for kundens portefølje. Vises som modal med 3 valg.
@@ -907,15 +2488,41 @@ function AnalyseSection({
   const stdSelskabRef = useRef<HTMLInputElement>(null);
   /** BIZZ-1890: PDF-upload af standard betingelser */
   const [stdPdfUploading, setStdPdfUploading] = useState(false);
+  /** BIZZ-2141: Re-parse progress */
+  const [reparsing, setReparsing] = useState(false);
+  const [reparseProgress, setReparseProgress] = useState('');
   /** BIZZ-1932: Upload-progress (filnavn + status) */
   const [stdUploadProgress, setStdUploadProgress] = useState<string | null>(null);
   /** BIZZ-1932: Senest uploaded standard betingelse (til bekræftelse) */
   const [stdUploadDone, setStdUploadDone] = useState<string | null>(null);
+  /** BIZZ-2105: Afvisningsbesked fra serveren (persondata / ikke-standard) */
+  const [stdUploadError, setStdUploadError] = useState<string | null>(null);
   const stdPdfRef = useRef<HTMLInputElement>(null);
   /** BIZZ-1890: AI auto-detektion fra police-dokumenter */
   const [stdDetecting, setStdDetecting] = useState(false);
   /** BIZZ-1919: Tidligere gemte standard betingelser (delt i domain) */
   const [stdSavedLibrary, setStdSavedLibrary] = useState<
+    Array<{
+      id: string;
+      titel: string;
+      source_url: string;
+      selskab: string;
+      kategori: string;
+      added_via: string;
+      added_by_user: string | null;
+      is_valid_standard?: boolean;
+      omraade?: string | null;
+      gyldig_fra?: string | null;
+      /** BIZZ-2104: Uploaderens navn/email til "Uploadet af"-tag */
+      uploaded_by_name?: string | null;
+      /** BIZZ-2104: private | domain | curated — domain-badge */
+      visibility?: string | null;
+    }>
+  >([]);
+  /** BIZZ-2078: Std betingelser tidligere brugt i analyser for den valgte kunde
+   *  — inline-listen viser KUN disse (blank for ny kunde uden analyser);
+   *  hele biblioteket er fortsat tilgængeligt via Bibliotek-modalen. */
+  const [stdKundeUsed, setStdKundeUsed] = useState<
     Array<{
       id: string;
       titel: string;
@@ -964,6 +2571,30 @@ function AnalyseSection({
         /* non-fatal */
       });
   }, []);
+
+  // BIZZ-2078: Ved kundeskift nulstilles std-valg, og inline-listen genindlæses
+  // med kun de betingelser der tidligere er brugt i analyser for denne kunde.
+  // En ny kunde uden analyser får en blank sektion — betingelser tilvælges via
+  // Bibliotek-knappen i stedet for at hele domain-biblioteket vises som default.
+  useEffect(() => {
+    setStdKundeUsed([]);
+    setStdSelectedIds(new Set());
+    setStdDiscovered([]);
+    if (!selected) return;
+    fetch(`/api/forsikring/standard-docs?kunde_id=${encodeURIComponent(selected.id)}`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => {
+        const list = Array.isArray(data) ? data : [];
+        setStdKundeUsed(list);
+        // BIZZ-2137: Auto-select betingelser der tidligere er brugt for denne kunde
+        if (list.length > 0) {
+          setStdSelectedIds(new Set(list.map((d: { source_url: string }) => d.source_url)));
+        }
+      })
+      .catch(() => {
+        /* non-fatal — sektionen forbliver blank */
+      });
+  }, [selected]);
   /** BIZZ-1384: Sagsliste */
   const [sager, setSager] = useState<
     Array<{
@@ -977,6 +2608,36 @@ function AnalyseSection({
       updated_at: string;
     }>
   >([]);
+
+  /**
+   * BIZZ-2137: Auto-match standardbetingelser fra biblioteket mod de valgte
+   * policers conditions_ref. Kaldes når dokumenter indlæses/uploades — matchende
+   * biblioteks-docs unioneres ind i stdSelectedIds (fjerner aldrig manuelle valg).
+   * Dette dækker første-gangs-analyser, hvor kunden ingen historik har
+   * (BIZZ-2078 dækker kun genvalg af tidligere brugte betingelser).
+   *
+   * @param docIds - Dokument-ID'er der skal matches (de valgte policer)
+   */
+  const autoMatchConditions = useCallback(async (docIds: string[]) => {
+    if (docIds.length === 0) return;
+    try {
+      const res = await fetch('/api/forsikring/standard-docs/auto-match', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ document_ids: docIds }),
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        matched?: Array<{ source_url: string }>;
+      };
+      const urls = (data.matched ?? []).map((m) => m.source_url).filter(Boolean);
+      if (urls.length > 0) {
+        setStdSelectedIds((prev) => new Set([...prev, ...urls]));
+      }
+    } catch {
+      /* non-fatal — pre-select springes bare over */
+    }
+  }, []);
 
   /** BIZZ-1404: Hent tidligere dokumenter for genbrug-picker */
   useEffect(() => {
@@ -993,10 +2654,40 @@ function AnalyseSection({
         const docs = d.documents ?? [];
         setPreviousDocs(docs);
         // BIZZ-1442: Auto-check alle tidligere docs som default
-        setSelectedDocIds(new Set(docs.map((doc: { id: string }) => doc.id)));
+        const docIds = docs.map((doc: { id: string }) => doc.id);
+        setSelectedDocIds(new Set(docIds));
+        // BIZZ-2137: Pre-select biblioteks-betingelser policerne refererer til
+        autoMatchConditions(docIds);
       })
       .catch(() => setPreviousDocs([]));
-  }, [showDocPicker, selected]);
+  }, [showDocPicker, selected, autoMatchConditions]);
+
+  /**
+   * BIZZ-2166: Ryd friske wizard-uploads når forsikringsejeren skifter.
+   * wizardUploads holder de netop-uploadede dokumenter ("ny"-badge) for den
+   * aktuelt valgte kunde. Uden denne nulstilling forblev en tidligere
+   * forsikringsejers dokumenter synlige (og kunne blandes ind i) en ny
+   * forsikringsejers analyse — kritisk databrud på tværs af kunder.
+   * Effekten kører KUN når kunde-identiteten (selected?.id) faktisk ændrer sig
+   * — ikke ved doc-picker-toggle eller under upload, hvor selected er uændret.
+   */
+  useEffect(() => {
+    setWizardUploads([]);
+  }, [selected?.id]);
+
+  /**
+   * BIZZ-2148: Genskab valgt kunde fra URL ved mount — sætter selected + åbner
+   * doc-picker automatisk, så browser-back/genbesøg ikke nulstiller modulet.
+   * Kører kun én gang ved mount (tom dep-array bevidst).
+   */
+  useEffect(() => {
+    if (initialCustomer && !selected) {
+      setSelected(initialCustomer);
+      setShowDocPicker(true);
+      onCustomerSelect(initialCustomer);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /** BIZZ-1439: Upload filer inde i wizard — tracker doc IDs */
   const onWizardUpload = useCallback(
@@ -1042,6 +2733,10 @@ function AnalyseSection({
         jobs
           .filter((j) => !j.skipped)
           .map(async ({ jobId, file }) => {
+            // BIZZ-2076: docId løftes ud af try, så et parse-fejlet dokument
+            // (upload OK, parse fejlet) stadig tæller med i "Slet alle"-antallet
+            // — dokumentet eksisterer i DB og slettes af bulk-delete.
+            let docId: string | undefined;
             try {
               const formData = new FormData();
               formData.append('file', file);
@@ -1053,7 +2748,8 @@ function AnalyseSection({
               });
               if (!upRes.ok) throw new Error('Upload failed');
               const upJson = (await upRes.json()) as { document: { id: string } };
-              const docId = upJson.document.id;
+              const uploadedId = upJson.document.id;
+              docId = uploadedId;
 
               setWizardUploads((prev) =>
                 prev.map((j) => (j.id === jobId ? { ...j, status: 'parsing' } : j))
@@ -1078,20 +2774,23 @@ function AnalyseSection({
               }
 
               setWizardUploads((prev) =>
-                prev.map((j) => (j.id === jobId ? { ...j, status: 'done', docId } : j))
+                prev.map((j) => (j.id === jobId ? { ...j, status: 'done', docId: uploadedId } : j))
               );
               // BIZZ-1442: Auto-check nye uploads
-              setSelectedDocIds((prev) => new Set([...prev, docId]));
+              setSelectedDocIds((prev) => new Set([...prev, uploadedId]));
+              // BIZZ-2137: Pre-select biblioteks-betingelser den nye police
+              // refererer til (første-gangs-analyse uden kunde-historik).
+              autoMatchConditions([uploadedId]);
             } catch {
               setWizardUploads((prev) =>
-                prev.map((j) => (j.id === jobId ? { ...j, status: 'failed' } : j))
+                prev.map((j) => (j.id === jobId ? { ...j, status: 'failed', docId } : j))
               );
             }
           })
       );
       onRefresh();
     },
-    [onRefresh, previousDocs]
+    [onRefresh, previousDocs, autoMatchConditions]
   );
 
   /** Hent sagsliste ved mount */
@@ -1207,7 +2906,16 @@ function AnalyseSection({
       }
 
       setRunning(true);
+      // BIZZ-2178: Nulstil progress-steps + tidligere analyse-data ØJEBLIKKELIGT
+      // sammen med running=true. Tidligere blev steps først nulstillet efter
+      // preflight- og sag-oprettelses-kaldene (~1-2 s), så de grønne checkmarks
+      // fra forrige kørsel hang i progress-sektionen og gav indtryk af at
+      // systemet var langsomt/gået i stå. Nu ser brugeren straks en frisk
+      // analyse med alle trin i 'pending' (grå).
       setAnalyseResult(null);
+      setAnalyseDetail(null);
+      onAnalyseDetail(null, null);
+      setAnalyseSteps(ANALYSE_STEP_DEFS.map((s) => ({ ...s, status: 'pending' })));
       try {
         // BIZZ-1440: Samle ALLE doc IDs (genbrugte + wizard-uploads + parent-uploads).
         // Dedup via Set så samme doc_id ikke sendes to gange — duplikat-detektion
@@ -1222,8 +2930,11 @@ function AnalyseSection({
         const allDocIds = Array.from(
           new Set<string>([...reusedDocIds, ...wizardDocIds, ...newDocumentIds])
         );
-        // Hvis wizard er åben, send altid scoped doc IDs — aldrig fald tilbage til alle policer
-        const hasAnyDocs = allDocIds.length > 0;
+        // BIZZ-2065: Send ALTID document_ids — også som tom liste. En tom
+        // liste betyder "brugeren har fravalgt alle dokumenter" og skal give
+        // 0 policer i analysen. Udelades feltet, falder backend tilbage til
+        // alle policer fra tidligere analyser (BIZZ-1776), hvilket fejlagtigt
+        // viste dækning selvom 0/3 dokumenter var valgt.
         // BIZZ-1833: Saml standard doc DB-IDs for valgte standard-betingelser
         const stdDocIds = [...stdSelectedIds]
           .map((url) => stdSavedIds.get(url))
@@ -1241,7 +2952,7 @@ function AnalyseSection({
                 kunde_id: selected.id,
                 kunde_navn: selected.navn,
                 ...(asOfDate ? { as_of_date: asOfDate } : {}),
-                ...(hasAnyDocs ? { document_ids: allDocIds } : {}),
+                document_ids: allDocIds,
                 preflight: true,
               }),
             });
@@ -1278,41 +2989,66 @@ function AnalyseSection({
           if (sagData.sag?.id) onSagChange(sagData.sag.id);
         }
 
+        // BIZZ-2140: Bed om SSE-streaming, så store analyser viser hvilket trin
+        // der kører (i stedet for en tavs spinner). Falder tilbage til JSON hvis
+        // serveren ikke streamer. Progress-steps blev allerede nulstillet til
+        // 'pending' ved analyse-start (BIZZ-2178).
         const res = await fetch('/api/forsikring/analyser', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
           body: JSON.stringify({
             kunde_type: selected.type,
             kunde_id: selected.id,
             kunde_navn: selected.navn,
             ...(asOfDate ? { as_of_date: asOfDate } : {}),
             // BIZZ-1443: Send alle valgte doc IDs samlet — reused + nye, dedupet
-            // Hvis ingen er valgt, send IKKE document_ids → backend bruger alle policer
-            ...(hasAnyDocs ? { document_ids: allDocIds } : {}),
+            // BIZZ-2065: Send altid (også tom) — tom liste = bevidst fravalg
+            document_ids: allDocIds,
             // BIZZ-1833: Standard betingelser
             ...(stdDocIds.length > 0 ? { standard_doc_ids: stdDocIds } : {}),
           }),
         });
         if (res.ok) {
-          const result = await res.json();
-          setAnalyseResult(result);
-          // BIZZ-1389: Fetch full detail for unified property view
-          try {
-            const detailRes = await fetch(`/api/forsikring/analyser/${result.analyse_id}`);
-            if (detailRes.ok) {
-              const detail = await detailRes.json();
-              setAnalyseDetail(detail);
-              // Notify parent to update AI context with gaps
-              onAnalyseDetail(detail, selected?.navn ?? null);
-            }
-          } catch {
-            // Best-effort — fallback to old view if detail fails
+          // BIZZ-2140: Konsumér SSE-strøm hvis serveren streamer; ellers JSON.
+          const isSse = (res.headers.get('content-type') ?? '').includes('text/event-stream');
+          let result: AnalyseResultPayload | null = null;
+          if (isSse && res.body) {
+            result = await consumeAnalyseStream<AnalyseResultPayload>(res.body, (ev) => {
+              if (ev.type === 'step' && ev.id) {
+                setAnalyseSteps((prev) =>
+                  prev.map((s) =>
+                    s.id === ev.id ? { ...s, status: ev.status as typeof s.status } : s
+                  )
+                );
+              } else if (ev.type === 'error' && ev.step) {
+                setAnalyseSteps((prev) =>
+                  prev.map((s) => (s.id === ev.step ? { ...s, status: 'error' } : s))
+                );
+              }
+            });
+          } else {
+            result = await res.json();
           }
-          // Refresh sagsliste
-          fetch('/api/forsikring/sager')
-            .then((r) => (r.ok ? r.json() : { sager: [] }))
-            .then((d) => setSager(d.sager ?? []))
-            .catch(() => {});
+          if (result?.analyse_id) {
+            setAnalyseResult(result);
+            // BIZZ-1389: Fetch full detail for unified property view
+            try {
+              const detailRes = await fetch(`/api/forsikring/analyser/${result.analyse_id}`);
+              if (detailRes.ok) {
+                const detail = await detailRes.json();
+                setAnalyseDetail(detail);
+                // Notify parent to update AI context with gaps
+                onAnalyseDetail(detail, selected?.navn ?? null);
+              }
+            } catch {
+              // Best-effort — fallback to old view if detail fails
+            }
+            // Refresh sagsliste
+            fetch('/api/forsikring/sager')
+              .then((r) => (r.ok ? r.json() : { sager: [] }))
+              .then((d) => setSager(d.sager ?? []))
+              .catch(() => {});
+          }
         }
       } catch {
         // Handled silently
@@ -1502,38 +3238,97 @@ function AnalyseSection({
           {/* BIZZ-1833: 2-kolonne grid — dokumenter (venstre) + standard betingelser (højre) */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className="space-y-3">
-              {/* BIZZ-1632: Slet alle dokumenter for denne kunde */}
+              {/* BIZZ-1632: Slet alle dokumenter for denne kunde.
+                  BIZZ-2076: Tæl unikke docs fra previousDocs + nye wizard-uploads
+                  (samme merge som dokumentlisten), så antallet opdaterer når der
+                  uploades flere filer i samme session. */}
+              {(() => {
+                // Tæl alle uploads med docId — også parse-fejlede, da dokumentet
+                // findes i DB (og slettes af bulk-delete) selvom parsing fejlede.
+                const deletableCount = new Set([
+                  ...previousDocs.map((d) => d.id),
+                  ...wizardUploads.filter((u) => u.docId).map((u) => u.docId!),
+                ]).size;
+                if (deletableCount === 0) return null;
+                return (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (
+                        !selected?.id ||
+                        !confirm(
+                          da
+                            ? `Slet alle ${deletableCount} dokumenter for ${selected.navn}?`
+                            : `Delete all ${deletableCount} documents for ${selected.navn}?`
+                        )
+                      )
+                        return;
+                      try {
+                        const r = await fetch(
+                          `/api/forsikring/documents/bulk?kunde_id=${encodeURIComponent(selected.id)}`,
+                          { method: 'DELETE' }
+                        );
+                        if (r.ok) {
+                          setPreviousDocs([]);
+                          // Server-sletningen rammer ALLE kundens docs — ryd også
+                          // wizard-uploads så listen ikke viser slettede filer
+                          setWizardUploads([]);
+                          setSelectedDocIds(new Set());
+                        }
+                      } catch {
+                        /* non-fatal */
+                      }
+                    }}
+                    className="text-xs text-slate-400 hover:text-red-400 transition-colors"
+                  >
+                    {da
+                      ? `Slet dokumenter (${deletableCount})`
+                      : `Delete documents (${deletableCount})`}
+                  </button>
+                );
+              })()}
+
+              {/* BIZZ-2141: Re-parse alle dokumenter med v2-pipeline */}
               {previousDocs.length > 0 && (
                 <button
                   type="button"
+                  disabled={reparsing}
                   onClick={async () => {
                     if (
-                      !selected?.id ||
-                      !confirm(
+                      !window.confirm(
                         da
-                          ? `Slet alle ${previousDocs.length} dokumenter for ${selected.navn}?`
-                          : `Delete all ${previousDocs.length} documents for ${selected.navn}?`
+                          ? `Re-parse alle ${previousDocs.length} dokumenter med den nyeste parser? Det kan tage flere minutter.`
+                          : `Re-parse all ${previousDocs.length} documents with the latest parser? This may take several minutes.`
                       )
                     )
                       return;
-                    try {
-                      const r = await fetch(
-                        `/api/forsikring/documents/bulk?kunde_id=${encodeURIComponent(selected.id)}`,
-                        { method: 'DELETE' }
-                      );
-                      if (r.ok) {
-                        setPreviousDocs([]);
-                        setSelectedDocIds(new Set());
+                    setReparsing(true);
+                    for (let i = 0; i < previousDocs.length; i++) {
+                      setReparseProgress(`${i + 1}/${previousDocs.length}`);
+                      try {
+                        await fetch('/api/forsikring/parse', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ document_id: previousDocs[i].id }),
+                        });
+                      } catch {
+                        /* continue */
                       }
-                    } catch {
-                      /* non-fatal */
                     }
+                    setReparsing(false);
+                    setReparseProgress('');
+                    onRefresh();
                   }}
-                  className="text-xs text-red-400 hover:text-red-300 underline"
+                  className="text-xs text-blue-400 hover:text-blue-300 transition-colors disabled:opacity-50 flex items-center gap-1.5"
                 >
-                  {da
-                    ? `Slet alle ${previousDocs.length} dokumenter for ${selected.navn}`
-                    : `Delete all ${previousDocs.length} documents for ${selected.navn}`}
+                  {reparsing && <Loader2 size={10} className="animate-spin" />}
+                  {reparsing
+                    ? da
+                      ? `Re-parser ${reparseProgress}...`
+                      : `Re-parsing ${reparseProgress}...`
+                    : da
+                      ? `Re-parse alle (${previousDocs.length})`
+                      : `Re-parse all (${previousDocs.length})`}
                 </button>
               )}
 
@@ -1546,6 +3341,8 @@ function AnalyseSection({
                     name: d.original_name,
                     source: 'previous' as const,
                     done: true,
+                    // BIZZ-2156: parse-tidspunkt vises i stedet for "tidligere"
+                    parsedAt: d.updated_at ?? null,
                   })),
                   ...wizardUploads
                     .filter((u) => u.status === 'done' && u.docId)
@@ -1554,6 +3351,7 @@ function AnalyseSection({
                       name: u.fileName,
                       source: 'new' as const,
                       done: true,
+                      parsedAt: null,
                     })),
                 ];
                 // Dedup by id
@@ -1642,17 +3440,27 @@ function AnalyseSection({
                               {da ? 'adresse-mismatch' : 'address mismatch'}
                             </span>
                           )}
-                          <span
-                            className={`text-[10px] shrink-0 ${doc.source === 'new' ? 'text-emerald-400' : 'text-slate-400'}`}
-                          >
-                            {doc.source === 'new'
-                              ? da
-                                ? 'ny'
-                                : 'new'
-                              : da
-                                ? 'tidligere'
-                                : 'previous'}
-                          </span>
+                          {/* BIZZ-2156: nye docs → "ny"-badge; tidligere docs →
+                          relativt parse-tidsstempel ("Parset 3t siden") med
+                          præcist tidspunkt i tooltip. */}
+                          {(() => {
+                            if (doc.source === 'new') {
+                              return (
+                                <span className="text-[10px] shrink-0 text-emerald-400">
+                                  {da ? 'ny' : 'new'}
+                                </span>
+                              );
+                            }
+                            const parse = formatParseTimestamp(doc.parsedAt, da);
+                            return (
+                              <span
+                                className="text-[10px] shrink-0 text-slate-400"
+                                title={parse?.tooltip}
+                              >
+                                {parse ? parse.label : da ? 'tidligere' : 'previous'}
+                              </span>
+                            );
+                          })()}
                           {/* Slet permanent fra system */}
                           <button
                             type="button"
@@ -1815,16 +3623,18 @@ function AnalyseSection({
                   : 'Add general terms from the insurance company to the analysis. AI can find them automatically.'}
               </p>
 
-              {/* BIZZ-1919: Gemte betingelser fra domain-biblioteket */}
-              {stdSavedLibrary.length > 0 && (
+              {/* BIZZ-1919: Gemte betingelser — BIZZ-2078: kun betingelser
+                  tidligere brugt i analyser for den valgte kunde. Ny kunde =
+                  blank sektion; hele biblioteket findes i Bibliotek-modalen. */}
+              {stdKundeUsed.length > 0 && (
                 <div className="space-y-1">
                   <div className="text-slate-400 text-[10px] mb-1">
                     {da
-                      ? `${stdSavedLibrary.length} tidligere gemte betingelser:`
-                      : `${stdSavedLibrary.length} previously saved terms:`}
+                      ? `${stdKundeUsed.length} betingelser tidligere brugt for denne kunde:`
+                      : `${stdKundeUsed.length} terms previously used for this customer:`}
                   </div>
                   <div className="max-h-32 overflow-y-auto space-y-0.5">
-                    {stdSavedLibrary.map((doc) => {
+                    {stdKundeUsed.map((doc) => {
                       const isSelected = stdSelectedIds.has(doc.source_url);
                       const alreadyInDiscovered = stdDiscovered.some(
                         (d) => d.source_url === doc.source_url
@@ -2075,66 +3885,77 @@ function AnalyseSection({
                 </button>
               )}
 
-              {/* Discovered docs list */}
-              {stdDiscovered.length > 0 && (
+              {/* Discovered docs list.
+                  BIZZ-2073: Gemte betingelser tilføjes til stdDiscovered når de
+                  vælges (eller genfindes via AI), men de vises allerede i
+                  "tidligere brugt for denne kunde"-listen ovenfor — filtrér dem
+                  fra her så samme vilkår ikke renderes dobbelt. Valg-state deles
+                  via stdSelectedIds (source_url), så checkboxen ovenfor virker.
+                  BIZZ-2078: dedup mod stdKundeUsed (ikke hele biblioteket) så
+                  Bibliotek-valg for en ny kunde stadig vises her. */}
+              {stdDiscovered.some(
+                (d) => !stdKundeUsed.some((s) => s.source_url === d.source_url)
+              ) && (
                 <div className="space-y-1">
-                  {stdDiscovered.map((doc) => {
-                    const isSelected = stdSelectedIds.has(doc.source_url);
-                    return (
-                      <label
-                        key={doc.source_url}
-                        className={`flex items-start gap-2 px-2.5 py-2 rounded-lg cursor-pointer transition-colors ${
-                          isSelected
-                            ? 'bg-teal-600/15 border border-teal-500/30'
-                            : 'bg-white/3 border border-white/5 hover:bg-white/5'
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={(e) => {
-                            setStdSelectedIds((prev) => {
-                              const next = new Set(prev);
-                              if (e.target.checked) next.add(doc.source_url);
-                              else next.delete(doc.source_url);
-                              return next;
-                            });
-                          }}
-                          className="mt-0.5 accent-teal-500 shrink-0"
-                        />
-                        <div className="flex-1 min-w-0">
-                          <div className="text-white text-[11px] font-medium truncate">
-                            {doc.titel}
+                  {stdDiscovered
+                    .filter((d) => !stdKundeUsed.some((s) => s.source_url === d.source_url))
+                    .map((doc) => {
+                      const isSelected = stdSelectedIds.has(doc.source_url);
+                      return (
+                        <label
+                          key={doc.source_url}
+                          className={`flex items-start gap-2 px-2.5 py-2 rounded-lg cursor-pointer transition-colors ${
+                            isSelected
+                              ? 'bg-teal-600/15 border border-teal-500/30'
+                              : 'bg-white/3 border border-white/5 hover:bg-white/5'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => {
+                              setStdSelectedIds((prev) => {
+                                const next = new Set(prev);
+                                if (e.target.checked) next.add(doc.source_url);
+                                else next.delete(doc.source_url);
+                                return next;
+                              });
+                            }}
+                            className="mt-0.5 accent-teal-500 shrink-0"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="text-white text-[11px] font-medium truncate">
+                              {doc.titel}
+                            </div>
+                            <div className="flex items-center gap-1 mt-0.5">
+                              <a
+                                href={doc.source_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-blue-400 text-[10px] hover:underline truncate flex items-center gap-0.5"
+                              >
+                                <ExternalLink size={9} />
+                                {doc.source_url.length > 50
+                                  ? doc.source_url.slice(0, 50) + '…'
+                                  : doc.source_url}
+                              </a>
+                              <span
+                                className={`shrink-0 text-[9px] px-1 py-0.5 rounded-full ${
+                                  doc.confidence === 'high'
+                                    ? 'bg-emerald-500/20 text-emerald-300'
+                                    : doc.confidence === 'medium'
+                                      ? 'bg-amber-500/20 text-amber-300'
+                                      : 'bg-slate-600/30 text-slate-400'
+                                }`}
+                              >
+                                {doc.confidence}
+                              </span>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-1 mt-0.5">
-                            <a
-                              href={doc.source_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="text-blue-400 text-[10px] hover:underline truncate flex items-center gap-0.5"
-                            >
-                              <ExternalLink size={9} />
-                              {doc.source_url.length > 50
-                                ? doc.source_url.slice(0, 50) + '…'
-                                : doc.source_url}
-                            </a>
-                            <span
-                              className={`shrink-0 text-[9px] px-1 py-0.5 rounded-full ${
-                                doc.confidence === 'high'
-                                  ? 'bg-emerald-500/20 text-emerald-300'
-                                  : doc.confidence === 'medium'
-                                    ? 'bg-amber-500/20 text-amber-300'
-                                    : 'bg-slate-600/30 text-slate-400'
-                              }`}
-                            >
-                              {doc.confidence}
-                            </span>
-                          </div>
-                        </div>
-                      </label>
-                    );
-                  })}
+                        </label>
+                      );
+                    })}
                 </div>
               )}
 
@@ -2266,6 +4087,7 @@ function AnalyseSection({
                       e.target.value = '';
                       setStdPdfUploading(true);
                       setStdUploadDone(null);
+                      setStdUploadError(null);
                       try {
                         const selskab = stdSelskabRef.current?.value?.trim();
                         let lastTitle = '';
@@ -2320,6 +4142,19 @@ function AnalyseSection({
                               ]);
                               lastTitle = data.titel!;
                             }
+                          } else {
+                            // BIZZ-2105: Serveren afviser dokumenter med persondata
+                            // eller som ikke er standard-betingelser (422) — vis
+                            // den danske begrundelse til brugeren.
+                            const errBody = (await res.json().catch(() => null)) as {
+                              error?: string;
+                            } | null;
+                            setStdUploadError(
+                              errBody?.error ??
+                                (da
+                                  ? `Upload af ${file.name} fejlede`
+                                  : `Upload of ${file.name} failed`)
+                            );
                           }
                         }
                         if (lastTitle) {
@@ -2350,6 +4185,13 @@ function AnalyseSection({
                   <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-900/20 border border-emerald-500/20 text-xs text-emerald-300">
                     <CheckCircle2 size={11} className="shrink-0" />
                     {stdUploadDone}
+                  </div>
+                )}
+                {/* BIZZ-2105: Afvisningsbesked (persondata / ikke-standard) */}
+                {stdUploadError && (
+                  <div className="flex items-start gap-2 px-3 py-1.5 rounded-lg bg-red-900/20 border border-red-500/20 text-xs text-red-300">
+                    <AlertTriangle size={11} className="shrink-0 mt-0.5" />
+                    <span>{stdUploadError}</span>
                   </div>
                 )}
 
@@ -2545,6 +4387,21 @@ function AnalyseSection({
                                           ⚠ {da ? 'Ikke standard' : 'Not standard'}
                                         </span>
                                       )}
+                                      {/* BIZZ-2104: Uploader-tag + domain-badge så det er
+                                          synligt hvem der har delt dokumentet */}
+                                      {doc.uploaded_by_name && (
+                                        <div className="text-slate-400 text-[9px] mt-0.5 flex items-center gap-1">
+                                          <span>
+                                            {da ? 'Uploadet af' : 'Uploaded by'}{' '}
+                                            {doc.uploaded_by_name}
+                                          </span>
+                                          {doc.visibility === 'domain' && (
+                                            <span className="px-1 py-px bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 rounded text-[8px] uppercase tracking-wide">
+                                              Domain
+                                            </span>
+                                          )}
+                                        </div>
+                                      )}
                                     </td>
                                     <td className="px-4 py-2.5">
                                       <span className="text-slate-400 px-1.5 py-0.5 bg-slate-700/40 rounded text-[10px]">
@@ -2643,6 +4500,54 @@ function AnalyseSection({
               )}
             </button>
           )}
+        </div>
+      )}
+
+      {/* BIZZ-2140: Progress-checklist under analyse — viser hvilket trin der
+          kører, så store porteføljer ikke bare ser en tavs spinner. Trinene
+          fodres af SSE-events fra /api/forsikring/analyser. */}
+      {running && analyseSteps.length > 0 && (
+        <div
+          className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2"
+          role="status"
+          aria-live="polite"
+        >
+          <p className="text-slate-300 text-xs font-medium mb-1">
+            {da ? 'Analyse i gang' : 'Analysis in progress'}
+          </p>
+          <ul className="space-y-1.5">
+            {analyseSteps.map((step) => (
+              <li key={step.id} className="flex items-center gap-2 text-xs">
+                {step.status === 'done' ? (
+                  <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
+                ) : step.status === 'error' ? (
+                  <XCircle size={14} className="text-red-400 shrink-0" />
+                ) : step.status === 'running' || step.status === 'slow' ? (
+                  <Loader2 size={14} className="animate-spin text-blue-400 shrink-0" />
+                ) : (
+                  <span className="w-3.5 h-3.5 rounded-full border border-slate-500 shrink-0" />
+                )}
+                <span
+                  className={
+                    step.status === 'done'
+                      ? 'text-slate-300'
+                      : step.status === 'error'
+                        ? 'text-red-400'
+                        : step.status === 'running' || step.status === 'slow'
+                          ? 'text-white'
+                          : 'text-slate-400'
+                  }
+                >
+                  {step.label}
+                  {step.status === 'slow' && (
+                    <span className="text-amber-400 ml-1.5">
+                      {da ? '(tager længere tid…)' : '(taking longer…)'}
+                    </span>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -2767,6 +4672,59 @@ function AnalyseSection({
                 .filter(Boolean)
                 .join(' · ')}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* BIZZ-2067: Info — policer stilet til en adresse uden for porteføljen.
+          Det er typisk virksomhedens lejede hovedkontor (sikrede-/korrespondance-
+          adresse, ikke et forsikringssted) — vises som info, ikke advarsel. */}
+      {analyseResult?.sikrede_adresser_uden_for_portefoelje &&
+        analyseResult.sikrede_adresser_uden_for_portefoelje.length > 0 && (
+          <div className="bg-sky-500/10 border border-sky-500/30 rounded-lg p-3 flex items-start gap-2">
+            <Info size={15} className="text-sky-400 shrink-0 mt-0.5" />
+            <div className="text-xs">
+              <div className="text-sky-200 font-medium">
+                {da
+                  ? 'Police indeholder en adresse uden for porteføljen'
+                  : 'Policy contains an address outside the portfolio'}
+              </div>
+              {analyseResult.sikrede_adresser_uden_for_portefoelje.map((s, i) => (
+                <div key={`${s.adresse}-${i}`} className="text-slate-400 mt-0.5">
+                  {s.dokument_navn && (
+                    <span className="text-slate-300 font-medium">{s.dokument_navn}</span>
+                  )}
+                  {s.dokument_navn && ' — '}
+                  {da
+                    ? `policen indeholder ${s.adresse}, som ligger uden for porteføljen`
+                    : `the policy contains ${s.adresse}, which is outside the portfolio`}
+                  {s.policy_number && ` (police ${s.policy_number})`}
+                </div>
+              ))}
+              <div className="text-slate-400 mt-0.5">
+                {da
+                  ? 'Adressen er forsikringstagers sikrede-/korrespondance-adresse (typisk lejet hovedkontor), ikke et forsikringssted, og ejes ikke af virksomheden.'
+                  : "The address is the policyholder's correspondence address (typically a leased head office), not an insured location, and is not owned by the company."}
+              </div>
+            </div>
+          </div>
+        )}
+
+      {/* BIZZ-2120: Advarsel — præmieopkrævning uploadet i stedet for police */}
+      {analyseResult?.praemie_advarsler && analyseResult.praemie_advarsler.length > 0 && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 flex items-start gap-2">
+          <AlertTriangle size={15} className="text-amber-400 shrink-0 mt-0.5" />
+          <div className="text-xs">
+            <div className="text-amber-200 font-medium">
+              {da
+                ? 'Policedokument mangler — kun præmieopkrævning uploadet'
+                : 'Policy document missing — only premium invoice uploaded'}
+            </div>
+            {analyseResult.praemie_advarsler.map((a, i) => (
+              <p key={i} className="text-slate-400 mt-0.5">
+                {a}
+              </p>
+            ))}
           </div>
         </div>
       )}
@@ -2985,11 +4943,18 @@ function AnalyseDetailSection({
   kundeNavn,
   lang,
   onBack,
+  onDetail,
 }: {
   analyseId: string;
   kundeNavn: string;
   lang: string;
   onBack: () => void;
+  /**
+   * BIZZ-2167: Propagerer den hentede analyse-detalje op til parent, så
+   * aiAnalyseDetail/geoAnalyseId sættes og Kort-knappen vises også når en
+   * gammel analyse åbnes fra historik (ikke kun for nye analyser).
+   */
+  onDetail: (detail: AnalyseDetail | null, kundeNavn: string | null) => void;
 }) {
   const da = lang === 'da';
   const [detail, setDetail] = useState<AnalyseDetail | null>(null);
@@ -3000,10 +4965,16 @@ function AnalyseDetailSection({
     fetch(`/api/forsikring/analyser/${analyseId}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (d) setDetail(d);
+        if (d) {
+          setDetail(d);
+          // BIZZ-2167: send detaljen op til parent (driver Kort-knappen)
+          onDetail(d, kundeNavn);
+        }
       })
       .catch(() => {})
       .finally(() => setLoading(false));
+    // kundeNavn/onDetail er stabile for en given analyseId; kun analyseId trigger re-fetch
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analyseId]);
 
   if (loading) {
@@ -3031,6 +5002,9 @@ function AnalyseDetailSection({
   }
 
   // Dedup aktiver
+  // BIZZ-2158: Sekundære adgangsadresser på samme SFE-BFE gemmes som
+  // secondaryAddresses-metadata på det primære aktiv (koncernWalk) — IKKE som
+  // egne aktiver — så ét BFE giver netop én række.
   const seenBfe = new Set<string>();
   const uniqueAktiver = detail.aktiver.filter((a) => {
     const key = a.bfe ? String(a.bfe) : a.id;
@@ -3085,157 +5059,238 @@ function AnalyseDetailSection({
         </div>
       </div>
 
+      {/* BIZZ-2085: Dækningsniveau vs. seneste regnskab — også i historiske analyser */}
+      <DaekningVsRegnskab detail={detail} da={da} />
+
+      {/* BIZZ-2099: Fundne forsikringer — grønne bokse for alle analysens policer */}
+      <FundneForsikringer detail={detail} da={da} />
+
       {/* Ejendomme-liste med expandable gaps (genbruger PropertyRow) */}
-      <div className="space-y-2">
-        {(() => {
-          // Byg policy lookup fra detail.policies (returneret fra analyser/[id])
-          const pols = ((detail as unknown as Record<string, unknown>).policies ??
-            []) as PolicyRow[];
-          const polById = new Map(pols.map((p) => [p.id, p]));
+      {/* BIZZ-2155: Stil BBR-bygningsdata til rådighed for PropertyRow'erne */}
+      <BbrContext.Provider value={detail.bbrByBfe}>
+        <div className="space-y-2">
+          {(() => {
+            // Byg policy lookup fra detail.policies (returneret fra analyser/[id])
+            const pols = ((detail as unknown as Record<string, unknown>).policies ??
+              []) as PolicyRow[];
+            const polById = new Map(pols.map((p) => [p.id, p]));
+            // BIZZ-2119: Kildedokument-navne til matchede policer
+            const docNameById2 = new Map(
+              (detail.documents ?? []).map((d) => [d.id, d.original_name])
+            );
 
-          // BIZZ-1792: Dedup gaps per check_id
-          const dedupGaps = (rawGaps: typeof detail.gaps) => {
-            const seen = new Set<string>();
-            return rawGaps.filter((g) => {
-              const key = g.check_id ?? g.title;
-              if (seen.has(key)) return false;
-              seen.add(key);
-              return true;
-            });
-          };
-
-          // BIZZ-1941: Forsikringsejer-/virksomheds-gaps løftes op i dedikerede
-          // sektioner; ejendomsrækker viser kun ejendomsspecifikke gaps (scope='property').
-          const ownerGaps = dedupGaps(detail.gaps.filter((g) => gapScope(g.check_id) === 'owner'));
-          const companyGaps = dedupGaps(
-            detail.gaps.filter((g) => gapScope(g.check_id) === 'company')
-          );
-
-          // Byg PropertyGroups
-          // BIZZ-1957: Bygnings-/ejendomsspecifikke gaps (scope='property') må kun
-          // hænge under ejendoms-aktiver — ikke under virksomheds-aktivet, selv om
-          // policen tilfældigvis også er matchet dertil. Ellers lækker fx 'Udvidet
-          // vandskade' op på virksomheds-niveau.
-          const groups: PropertyGroup[] = uniqueAktiver.map((aktiv) => {
-            const aktivGaps =
-              aktiv.matched_policy_id && aktiv.type === 'ejendom'
-                ? dedupGaps(
-                    detail.gaps.filter(
-                      (g) =>
-                        g.policy_id === aktiv.matched_policy_id &&
-                        gapScope(g.check_id) === 'property'
-                    )
-                  )
-                : [];
-            return {
-              aktiv,
-              matchedPolicy: aktiv.matched_policy_id
-                ? (polById.get(aktiv.matched_policy_id) ?? null)
-                : null,
-              gaps: aktivGaps,
-            };
-          });
-
-          // BIZZ-1802: Hierarkisk layout — virksomheder → ejendomme → gaps
-          const virkGroups = groups.filter((g) => g.aktiv.type === 'virksomhed');
-          const ejdGroups = groups.filter((g) => g.aktiv.type === 'ejendom');
-          const ejdByCvr = new Map<string, PropertyGroup[]>();
-          const orphans: PropertyGroup[] = [];
-          for (const eg of ejdGroups) {
-            const cvr = (eg.aktiv.raw_data as { ejer_cvr?: string } | null)?.ejer_cvr;
-            if (cvr && virkGroups.some((v) => v.aktiv.cvr === cvr)) {
-              const list = ejdByCvr.get(cvr) ?? [];
-              list.push(eg);
-              ejdByCvr.set(cvr, list);
-            } else {
-              orphans.push(eg);
+            // BIZZ-2084: Aktive dækninger per police — til grøn "Dækket"-visning
+            const covByPolicy = new Map<string, AnalyseCoverage[]>();
+            for (const cov of detail.coverages ?? []) {
+              if (!cov.is_covered) continue;
+              const list = covByPolicy.get(cov.policy_id) ?? [];
+              list.push(cov);
+              covByPolicy.set(cov.policy_id, list);
             }
-          }
-          // Sortér: flest gaps/uforsikrede først
-          const sortGrp = (a: PropertyGroup, b: PropertyGroup) => {
-            const aI = a.aktiv.matched_policy_id ? 1 : 0;
-            const bI = b.aktiv.matched_policy_id ? 1 : 0;
-            if (aI !== bI) return aI - bI;
-            return b.gaps.length - a.gaps.length;
-          };
-          orphans.sort(sortGrp);
-          const trees = virkGroups
-            .map((v) => ({ v, ejd: (ejdByCvr.get(v.aktiv.cvr ?? '') ?? []).sort(sortGrp) }))
-            .sort((a, b) => b.ejd.length - a.ejd.length);
 
-          // BIZZ-1972: Fold forsikringsejer-/virksomheds-findings ind under den
-          // eneste virksomhed når den ER forsikringssejeren (samme entitet).
-          const foldOwnerIntoCompany = shouldFoldOwnerIntoCompany(
-            detail.analyse.kunde_type,
-            detail.analyse.kunde_id,
-            virkGroups.map((v) => v.aktiv.cvr)
-          );
+            // BIZZ-1792: Dedup gaps per check_id
+            const dedupGaps = (rawGaps: typeof detail.gaps) => {
+              const seen = new Set<string>();
+              return rawGaps.filter((g) => {
+                const key = g.check_id ?? g.title;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+              });
+            };
 
-          return (
-            <>
-              {/* BIZZ-1941: Forsikringsejer-niveau — vises kun her, ikke per ejendom.
+            // BIZZ-1941: Forsikringsejer-/virksomheds-gaps løftes op i dedikerede
+            // sektioner; ejendomsrækker viser kun ejendomsspecifikke gaps (scope='property').
+            const ownerGaps = dedupGaps(
+              detail.gaps.filter((g) => gapScope(g.check_id) === 'owner')
+            );
+            const companyGaps = dedupGaps(
+              detail.gaps.filter((g) => gapScope(g.check_id) === 'company')
+            );
+
+            // Byg PropertyGroups
+            // BIZZ-1957: Bygnings-/ejendomsspecifikke gaps (scope='property') må kun
+            // hænge under ejendoms-aktiver — ikke under virksomheds-aktivet, selv om
+            // policen tilfældigvis også er matchet dertil. Ellers lækker fx 'Udvidet
+            // vandskade' op på virksomheds-niveau.
+            const groups: PropertyGroup[] = uniqueAktiver.map((aktiv) => {
+              const aktivGaps =
+                aktiv.matched_policy_id && aktiv.type === 'ejendom'
+                  ? dedupGaps(
+                      detail.gaps.filter(
+                        (g) =>
+                          g.policy_id === aktiv.matched_policy_id &&
+                          gapScope(g.check_id) === 'property'
+                      )
+                    )
+                  : [];
+              const matchedPolicy = aktiv.matched_policy_id
+                ? (polById.get(aktiv.matched_policy_id) ?? null)
+                : null;
+              return {
+                aktiv,
+                matchedPolicy,
+                gaps: aktivGaps,
+                // BIZZ-2121: Virksomheds-aktiver aggregerer alle kundens policer
+                coverages: coveragesForAktiv(aktiv, detail.policies ?? [], covByPolicy),
+                // BIZZ-2119: kildedokument-filnavn for den matchede police
+                matchedDocName: matchedPolicy?.document_id
+                  ? (docNameById2.get(matchedPolicy.document_id) ?? null)
+                  : null,
+              };
+            });
+
+            // BIZZ-1802: Hierarkisk layout — virksomheder → ejendomme → gaps
+            const virkGroups = groups.filter((g) => g.aktiv.type === 'virksomhed');
+            const ejdGroups = groups.filter((g) => g.aktiv.type === 'ejendom');
+            const ejdByCvr = new Map<string, PropertyGroup[]>();
+            const orphans: PropertyGroup[] = [];
+            for (const eg of ejdGroups) {
+              const cvr = (eg.aktiv.raw_data as { ejer_cvr?: string } | null)?.ejer_cvr;
+              if (cvr && virkGroups.some((v) => v.aktiv.cvr === cvr)) {
+                const list = ejdByCvr.get(cvr) ?? [];
+                list.push(eg);
+                ejdByCvr.set(cvr, list);
+              } else {
+                orphans.push(eg);
+              }
+            }
+            // Sortér: flest gaps/uforsikrede først
+            const sortGrp = (a: PropertyGroup, b: PropertyGroup) => {
+              const aI = a.aktiv.matched_policy_id ? 1 : 0;
+              const bI = b.aktiv.matched_policy_id ? 1 : 0;
+              if (aI !== bI) return aI - bI;
+              return b.gaps.length - a.gaps.length;
+            };
+            orphans.sort(sortGrp);
+            const mappedTrees = virkGroups.map((v) => ({
+              v,
+              ejd: (ejdByCvr.get(v.aktiv.cvr ?? '') ?? []).sort(sortGrp),
+            }));
+            /**
+             * BIZZ-2102: Læser koncern-hierarki-metadata (depth/parent_cvr) fra
+             * virksomheds-aktivets raw_data — sat af koncernWalk ved analysen.
+             */
+            const treeMeta = (t: (typeof mappedTrees)[number]) => {
+              const rd = t.v.aktiv.raw_data as {
+                depth?: number;
+                parent_cvr?: string | null;
+              } | null;
+              return {
+                depth: typeof rd?.depth === 'number' ? rd.depth : null,
+                parentCvr: rd?.parent_cvr ?? null,
+              };
+            };
+            const treeHasHierarchy = mappedTrees.some((t) => treeMeta(t).depth !== null);
+            let trees: typeof mappedTrees;
+            if (treeHasHierarchy) {
+              // BIZZ-2102: DFS-sortering så holdingselskab står øverst og døtre
+              // følger umiddelbart efter deres ejer — konsistent med
+              // UnifiedAnalyseView-visningen.
+              const cvrSet = new Set(mappedTrees.map((t) => t.v.aktiv.cvr).filter(Boolean));
+              const byParentCvr = new Map<string, typeof mappedTrees>();
+              const roots: typeof mappedTrees = [];
+              for (const t of mappedTrees) {
+                const { depth, parentCvr } = treeMeta(t);
+                if (depth !== null && depth > 0 && parentCvr && cvrSet.has(parentCvr)) {
+                  const list = byParentCvr.get(parentCvr) ?? [];
+                  list.push(t);
+                  byParentCvr.set(parentCvr, list);
+                } else {
+                  roots.push(t);
+                }
+              }
+              const byEjd = (a: (typeof mappedTrees)[number], b: (typeof mappedTrees)[number]) =>
+                b.ejd.length - a.ejd.length;
+              const dfs = (list: typeof mappedTrees): typeof mappedTrees =>
+                list.flatMap((t) => [
+                  t,
+                  ...dfs((byParentCvr.get(t.v.aktiv.cvr ?? '') ?? []).sort(byEjd)),
+                ]);
+              trees = dfs(
+                roots.sort(
+                  (a, b) => (treeMeta(a).depth ?? 99) - (treeMeta(b).depth ?? 99) || byEjd(a, b)
+                )
+              );
+            } else {
+              // Ældre analyser uden hierarki-metadata: behold ejendoms-count-sortering
+              trees = [...mappedTrees].sort((a, b) => b.ejd.length - a.ejd.length);
+            }
+
+            // BIZZ-1972: Fold forsikringsejer-/virksomheds-findings ind under den
+            // eneste virksomhed når den ER forsikringssejeren (samme entitet).
+            const foldOwnerIntoCompany = shouldFoldOwnerIntoCompany(
+              detail.analyse.kunde_type,
+              detail.analyse.kunde_id,
+              virkGroups.map((v) => v.aktiv.cvr)
+            );
+
+            return (
+              <>
+                {/* BIZZ-1941: Forsikringsejer-niveau — vises kun her, ikke per ejendom.
                   BIZZ-1972: Skjult i fold-casen (foldet ind under virksomheden). */}
-              {!foldOwnerIntoCompany && ownerGaps.length > 0 && (
-                <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Briefcase size={14} className="text-purple-400" />
-                    <h4 className="text-white text-sm font-semibold">
-                      {da ? 'Forsikringsejer-niveau' : 'Insurance owner level'}
-                    </h4>
-                    <span className="text-slate-400 text-[11px]">
-                      {da
-                        ? `${ownerGaps.length} generelle findings`
-                        : `${ownerGaps.length} general findings`}
-                    </span>
-                  </div>
-                  <GapList gaps={ownerGaps} da={da} />
-                </div>
-              )}
-
-              {/* BIZZ-1941: Virksomheds-niveau — gælder porteføljen, ikke per ejendom.
-                  BIZZ-1972: Skjult i fold-casen (foldet ind under virksomheden). */}
-              {!foldOwnerIntoCompany && companyGaps.length > 0 && (
-                <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Building2 size={14} className="text-blue-400" />
-                    <h4 className="text-white text-sm font-semibold">
-                      {da ? 'Virksomheds-niveau' : 'Company level'}
-                    </h4>
-                    <span className="text-slate-400 text-[11px]">
-                      {companyGaps.length} findings
-                    </span>
-                  </div>
-                  <GapList gaps={companyGaps} da={da} />
-                </div>
-              )}
-
-              {trees.map((tree) => (
-                <div key={tree.v.aktiv.id} className="space-y-2">
-                  <PropertyRow
-                    group={
-                      foldOwnerIntoCompany
-                        ? { ...tree.v, gaps: [...ownerGaps, ...companyGaps] }
-                        : tree.v
-                    }
-                    da={da}
-                    foldedNote={foldOwnerIntoCompany}
-                  />
-                  {tree.ejd.length > 0 && (
-                    <div className="ml-6 pl-3 border-l border-white/8 space-y-2">
-                      {tree.ejd.map((eg) => (
-                        <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
-                      ))}
+                {!foldOwnerIntoCompany && ownerGaps.length > 0 && (
+                  <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Briefcase size={14} className="text-purple-400" />
+                      <h4 className="text-white text-sm font-semibold">
+                        {da ? 'Forsikringsejer-niveau' : 'Insurance owner level'}
+                      </h4>
+                      <span className="text-slate-400 text-[11px]">
+                        {da
+                          ? `${ownerGaps.length} generelle findings`
+                          : `${ownerGaps.length} general findings`}
+                      </span>
                     </div>
-                  )}
-                </div>
-              ))}
-              {orphans.map((g) => (
-                <PropertyRow key={g.aktiv.id} group={g} da={da} />
-              ))}
-            </>
-          );
-        })()}
-      </div>
+                    <GapList gaps={ownerGaps} da={da} />
+                  </div>
+                )}
+
+                {/* BIZZ-1941: Virksomheds-niveau — gælder porteføljen, ikke per ejendom.
+                  BIZZ-1972: Skjult i fold-casen (foldet ind under virksomheden). */}
+                {!foldOwnerIntoCompany && companyGaps.length > 0 && (
+                  <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Building2 size={14} className="text-blue-400" />
+                      <h4 className="text-white text-sm font-semibold">
+                        {da ? 'Virksomheds-niveau' : 'Company level'}
+                      </h4>
+                      <span className="text-slate-400 text-[11px]">
+                        {companyGaps.length} findings
+                      </span>
+                    </div>
+                    <GapList gaps={companyGaps} da={da} />
+                  </div>
+                )}
+
+                {trees.map((tree) => (
+                  <div key={tree.v.aktiv.id} className="space-y-2">
+                    <PropertyRow
+                      group={
+                        foldOwnerIntoCompany
+                          ? { ...tree.v, gaps: [...ownerGaps, ...companyGaps] }
+                          : tree.v
+                      }
+                      da={da}
+                      foldedNote={foldOwnerIntoCompany}
+                    />
+                    {tree.ejd.length > 0 && (
+                      <div className="ml-6 pl-3 border-l border-white/8 space-y-2">
+                        {tree.ejd.map((eg) => (
+                          <PropertyRow key={eg.aktiv.id} group={eg} da={da} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {orphans.map((g) => (
+                  <PropertyRow key={g.aktiv.id} group={g} da={da} />
+                ))}
+              </>
+            );
+          })()}
+        </div>
+      </BbrContext.Provider>
 
       {/* Download rapport */}
       <button
@@ -3272,6 +5327,18 @@ function AnalyseDetailSection({
 
 // ─── Component ───────────────────────────────────────────────────
 
+/**
+ * BIZZ-2160: sessionStorage-nøgler til at genskabe analyse-tilstand når brugeren
+ * ankommer til /dashboard/forsikring uden URL-params (fx via analyse-modulkortet,
+ * der linker til den bare sti). URL-state (BIZZ-2148) dækker browser-back/genindlæs;
+ * disse nøgler dækker bar-sti-navigation + scroll-position. Per-tab, transient
+ * (ryddes når fanen lukkes) — godkendt undtagelse fra State Management-reglen,
+ * dokumenteret i CLAUDE.md. Supabase er ikke relevant: dette er flygtig
+ * navigations-UI-tilstand, ikke data der skal overleve på tværs af enheder.
+ */
+const FORSIKRING_STATE_KEY = 'bizzassist-forsikring-analyse-state';
+const FORSIKRING_SCROLL_KEY = 'bizzassist-forsikring-scroll-top';
+
 export default function ForsikringPageClient(): React.ReactElement {
   const { lang } = useLanguage();
   const t = translations[lang].forsikring;
@@ -3307,6 +5374,77 @@ export default function ForsikringPageClient(): React.ReactElement {
     }>
   >([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  /**
+   * BIZZ-2148: Genskab valgt kunde + analyse fra URL ved mount, så browser-back
+   * eller genbesøg ikke nulstiller forsikringsmodulet. Læses kun én gang (lazy
+   * initializer) fra window.location — ingen Suspense-afhængighed.
+   */
+  const [initialUrlState] = useState<{
+    customer: { type: 'virksomhed' | 'person'; id: string; navn: string } | null;
+    analyse: string | null;
+  }>(() => {
+    if (typeof window === 'undefined') return { customer: null, analyse: null };
+    const p = new URLSearchParams(window.location.search);
+    const id = p.get('kunde');
+    const type = p.get('type');
+    const gyldig = !!id && (type === 'virksomhed' || type === 'person');
+    if (gyldig) {
+      return {
+        customer: {
+          type: type as 'virksomhed' | 'person',
+          id: id as string,
+          navn: p.get('navn') ?? (id as string),
+        },
+        analyse: p.get('analyse'),
+      };
+    }
+    // BIZZ-2160: Bar URL (fx ankomst via analyse-modulkortet → /dashboard/forsikring
+    // uden params). Fald tilbage til sessionStorage så seneste analyse genskabes i
+    // stedet for en blank start-skærm. URL-sync-effekten skriver derefter params
+    // tilbage i URL'en, så tilstanden igen bliver bookmark-bar (AC#2).
+    try {
+      const raw = window.sessionStorage.getItem(FORSIKRING_STATE_KEY);
+      if (raw) {
+        const s = JSON.parse(raw) as {
+          customer?: { type?: string; id?: string; navn?: string };
+          analyse?: string | null;
+        };
+        const c = s.customer;
+        if (c?.id && (c.type === 'virksomhed' || c.type === 'person')) {
+          return {
+            customer: { type: c.type, id: c.id, navn: c.navn ?? c.id },
+            analyse: s.analyse ?? null,
+          };
+        }
+      }
+    } catch {
+      // Korrupt/utilgængelig sessionStorage — ignorér, start blank.
+    }
+    return { customer: null, analyse: null };
+  });
+  /** BIZZ-2148: Analyse-ID der skal genskabes når kunden er sat (anvendes én gang) */
+  const restoreAnalyseRef = useRef<string | null>(initialUrlState.analyse);
+  /**
+   * BIZZ-2160: Scroll-position der skal gendannes når analyse-indholdet er hydreret.
+   * Læses fra sessionStorage ved mount; anvendes én gang (didRestoreScrollRef).
+   */
+  const restoreScrollRef = useRef<number>(
+    (() => {
+      if (typeof window === 'undefined') return 0;
+      try {
+        return Number(window.sessionStorage.getItem(FORSIKRING_SCROLL_KEY)) || 0;
+      } catch {
+        return 0;
+      }
+    })()
+  );
+  const didRestoreScrollRef = useRef(false);
+  /** BIZZ-2160: Ref til den scrollbare container (gem/gendan scroll-position) */
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const scrollSaveRafRef = useRef<number | null>(null);
+  /** BIZZ-2148: Springer første URL-synk over når der er en kunde at genskabe */
+  const didInitUrlSyncRef = useRef(false);
 
   /** Fetch list data from API */
   const refresh = useCallback(async () => {
@@ -3362,6 +5500,178 @@ export default function ForsikringPageClient(): React.ReactElement {
     },
     []
   );
+
+  /** BIZZ-2131: Nulstil kort + analyse-detail når kunde skifter */
+  const handleCustomerSelect = useCallback(
+    (customer: { type: 'virksomhed' | 'person'; id: string; navn: string } | null) => {
+      setSelectedCustomer(customer);
+      // Nulstil AL state fra forrige kunde — forhindrer data-leak mellem kunder
+      setAiAnalyseDetail(null);
+      setAiKundeNavn(null);
+      setKortÅben(false);
+      setGeoMarkers([]);
+      setGeoLoading(false);
+      setHighlightedAktivId(null);
+      setNewDocumentIds([]);
+      setActiveAnalyseId(null);
+      setAnalyseHistorik([]);
+      setUploadJobs([]);
+    },
+    []
+  );
+
+  /**
+   * BIZZ-2148: Når kunden er genskabt fra URL, genskab også den åbne analyse.
+   * handleCustomerSelect nulstiller activeAnalyseId, så vi sætter det igen her
+   * (kun én gang via restoreAnalyseRef).
+   */
+  useEffect(() => {
+    if (selectedCustomer && restoreAnalyseRef.current) {
+      setActiveAnalyseId(restoreAnalyseRef.current);
+      restoreAnalyseRef.current = null;
+    }
+  }, [selectedCustomer]);
+
+  /**
+   * BIZZ-2148: Synk valgt kunde + åben analyse til URL'en (replaceState, ingen
+   * history-spam), så tilstanden kan genskabes ved browser-back eller genbesøg.
+   * Første kørsel springes over hvis der er en kunde at genskabe — ellers ville
+   * den tomme start-state overskrive params før de er anvendt.
+   */
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!didInitUrlSyncRef.current) {
+      didInitUrlSyncRef.current = true;
+      if (initialUrlState.customer) return;
+    }
+    const p = new URLSearchParams();
+    if (selectedCustomer) {
+      p.set('kunde', selectedCustomer.id);
+      p.set('type', selectedCustomer.type);
+      p.set('navn', selectedCustomer.navn);
+    }
+    if (activeAnalyseId) p.set('analyse', activeAnalyseId);
+    const qs = p.toString();
+    window.history.replaceState(
+      null,
+      '',
+      qs ? `${window.location.pathname}?${qs}` : window.location.pathname
+    );
+    // BIZZ-2160: Spejl tilstanden til sessionStorage så bar-sti-navigation (analyse-
+    // modulkortet) også kan genskabe. Når kunden ryddes ('vælg ny forsikringsejer')
+    // fjernes nøglerne, så en gammel analyse ikke genopstår.
+    try {
+      if (selectedCustomer) {
+        window.sessionStorage.setItem(
+          FORSIKRING_STATE_KEY,
+          JSON.stringify({ customer: selectedCustomer, analyse: activeAnalyseId ?? null })
+        );
+      } else {
+        window.sessionStorage.removeItem(FORSIKRING_STATE_KEY);
+        window.sessionStorage.removeItem(FORSIKRING_SCROLL_KEY);
+      }
+    } catch {
+      // sessionStorage utilgængelig (privat tilstand m.m.) — URL-state er stadig aktiv.
+    }
+  }, [selectedCustomer, activeAnalyseId, initialUrlState.customer]);
+
+  /**
+   * BIZZ-2160: Gendan scroll-position når analyse-indholdet er hydreret (aiAnalyseDetail
+   * sat giver nok højde til at scrolle). Køres kun én gang per mount.
+   */
+  useEffect(() => {
+    if (didRestoreScrollRef.current) return;
+    if (!aiAnalyseDetail) return;
+    const top = restoreScrollRef.current;
+    if (top > 0 && scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = top;
+    }
+    didRestoreScrollRef.current = true;
+  }, [aiAnalyseDetail]);
+
+  /**
+   * BIZZ-2160: Gem scroll-position (throttlet via rAF) så den kan gendannes ved
+   * tilbagevenden. Skrives kun når en kunde er valgt — ellers er der intet at gendanne.
+   */
+  const handleScrollPersist = useCallback(() => {
+    if (scrollSaveRafRef.current != null) return;
+    scrollSaveRafRef.current = requestAnimationFrame(() => {
+      scrollSaveRafRef.current = null;
+      try {
+        const top = scrollContainerRef.current?.scrollTop ?? 0;
+        window.sessionStorage.setItem(FORSIKRING_SCROLL_KEY, String(top));
+      } catch {
+        // sessionStorage utilgængelig — ignorér.
+      }
+    });
+  }, []);
+
+  // ── BIZZ-2131: Kort-sidepanel state (side-niveau, fuld højde) ──
+  const [kortÅben, setKortÅben] = useState(false);
+  const [kortBredde, setKortBredde] = useState(420);
+  const [trækker, setTrækker] = useState(false);
+  const trækStart = useRef<{ x: number; bredde: number } | null>(null);
+  const [geoMarkers, setGeoMarkers] = useState<ForsikringMarker[]>([]);
+  const [_geoLoading, setGeoLoading] = useState(false);
+  /** Aktiv-ID highlightet på kortet (klikket i ejendomslisten) */
+  const [highlightedAktivId, setHighlightedAktivId] = useState<string | null>(null);
+  /** Analyse-ID for geo-fetch — opdateres når ny analyse køres */
+  const geoAnalyseId = aiAnalyseDetail?.analyse?.id ?? null;
+
+  /** Hent geo-markører når kort åbnes og en analyse er aktiv */
+  const prevGeoIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!kortÅben || !geoAnalyseId) return;
+    // Allerede hentet for dette ID og har data
+    if (prevGeoIdRef.current === geoAnalyseId && geoMarkers.length > 0) return;
+    prevGeoIdRef.current = geoAnalyseId;
+    setGeoLoading(true);
+    fetch(`/api/forsikring/analyser/${geoAnalyseId}/geo`)
+      .then((r) => (r.ok ? r.json() : { markers: [] }))
+      .then((d) => setGeoMarkers(d.markers ?? []))
+      .catch(() => setGeoMarkers([]))
+      .finally(() => setGeoLoading(false));
+  }, [kortÅben, geoAnalyseId, geoMarkers.length]);
+
+  /** Globale drag-handlers for resize-divider */
+  useEffect(() => {
+    if (!trækker) return;
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!trækStart.current) return;
+      const delta = trækStart.current.x - e.clientX;
+      setKortBredde(Math.min(900, Math.max(200, trækStart.current.bredde + delta)));
+    };
+    const handleMouseUp = () => {
+      setTrækker(false);
+      trækStart.current = null;
+    };
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [trækker]);
+
+  /** Scroll til aktiv i listen ved markør-klik */
+  const handleMarkerClick = useCallback((aktivId: string) => {
+    setHighlightedAktivId(aktivId);
+    const el = document.getElementById(`aktiv-${aktivId}`);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, []);
+
+  /** Highlight aktiv på kortet ved klik i listen (custom event fra PropertyRow) */
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const aktivId = (e as CustomEvent).detail as string;
+      if (kortÅben && aktivId) setHighlightedAktivId(aktivId);
+    };
+    window.addEventListener('forsikring-aktiv-click', handler);
+    return () => window.removeEventListener('forsikring-aktiv-click', handler);
+  }, [kortÅben]);
+
+  /** Desktop-detection for kort-layout */
+  const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 768;
 
   /** BIZZ-1388: Sæt AI-kontekst med forsikringsdata + gaps så chat kan generere rapporter */
   useEffect(() => {
@@ -3511,369 +5821,508 @@ export default function ForsikringPageClient(): React.ReactElement {
   const _totals = data?.totals;
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 pb-16 space-y-6 bg-[#0a1020] text-slate-100 h-full">
-      {/* Heading + nulstil-knap */}
-      <header className="flex items-start justify-between">
-        <div className="space-y-1">
-          <h1 className="flex items-center gap-3 text-2xl font-semibold">
-            <ShieldCheck className="text-blue-400" size={28} />
-            {t.title}
-          </h1>
-          <p className="text-sm text-slate-400">{t.subtitle}</p>
-          {/* BIZZ-1447: Token-forbrug bar */}
-          <TokenUsageBar className="mt-2 max-w-xs" />
-        </div>
-        {/* BIZZ-1397: Nulstil alt — kun synlig for admin */}
-        {isAdmin && (policies.length > 0 || documents.length > 0) && (
-          <button
-            type="button"
-            disabled={resetting}
-            onClick={async () => {
-              const da = lang === 'da';
-              if (
-                !window.confirm(
-                  da
-                    ? 'Slet ALLE forsikringsdata? Alle policer, dokumenter, gaps og analyser slettes permanent. Denne handling kan ikke fortrydes.'
-                    : 'Delete ALL insurance data? All policies, documents, gaps and analyses will be permanently deleted. This action cannot be undone.'
-                )
-              )
-                return;
-              setResetting(true);
-              try {
-                const res = await fetch('/api/forsikring/reset', { method: 'DELETE' });
-                if (res.ok) {
-                  setUploadJobs([]);
-                  await refresh();
-                }
-              } catch {
-                // Handled silently
-              } finally {
-                setResetting(false);
-              }
-            }}
-            className="flex items-center gap-2 px-3 py-2 text-xs rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors disabled:opacity-50"
-          >
-            {resetting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-            {lang === 'da' ? 'Nulstil alt' : 'Reset all'}
-          </button>
-        )}
-      </header>
-
-      {/* TRIN 1: Vælg kunde */}
-      <AnalyseSection
-        lang={lang}
-        policies={policies}
-        onRefresh={refresh}
-        onAnalyseDetail={handleAnalyseDetail}
-        onSagChange={setActiveSagId}
-        onCustomerSelect={setSelectedCustomer}
-        newDocumentIds={newDocumentIds}
-        addTokenUsage={addTokenUsage}
-      />
-
-      {/* BIZZ-1404: Analyse-historik for valgt kunde */}
-      {selectedCustomer && analyseHistorik.length > 0 && !activeAnalyseId && (
-        <section className="bg-white/5 border border-white/8 rounded-2xl p-4">
-          <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
-            <FileText size={16} className="text-blue-400" />
-            {lang === 'da'
-              ? `Tidligere analyser for ${selectedCustomer.navn}`
-              : `Previous analyses for ${selectedCustomer.navn}`}
-          </h3>
-          <div className="space-y-2">
-            {analyseHistorik.map((a) => {
-              const gapCount = (a.summary as Record<string, number> | null)?.gaps_count ?? 0;
-              const pct =
-                a.total_aktiver > 0 ? Math.round((a.insured_count / a.total_aktiver) * 100) : 0;
-              return (
+    <div
+      className={`flex-1 h-full bg-[#0a1020] text-slate-100 ${kortÅben && isDesktop ? 'flex' : ''}`}
+    >
+      {/* Scrollbart indhold (header + resten) */}
+      <div
+        ref={scrollContainerRef}
+        onScroll={handleScrollPersist}
+        className={`overflow-y-auto h-full ${kortÅben && isDesktop ? 'flex-1 min-w-0' : 'w-full'}`}
+      >
+        {/* Sticky header — altid synlig indenfor scroll-containeren */}
+        <header className="sticky top-0 px-6 pt-4 pb-3 border-b border-white/5 flex items-center justify-between bg-[#0a1020] z-10">
+          <div className="space-y-0.5">
+            <h1 className="flex items-center gap-3 text-2xl font-semibold">
+              <ShieldCheck className="text-blue-400" size={28} />
+              {t.title}
+            </h1>
+            <div className="flex items-center gap-4">
+              <p className="text-sm text-slate-400">{t.subtitle}</p>
+              <TokenUsageBar className="max-w-xs" />
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {/* BIZZ-2131: Kort-knap — kun synlig når analyse med ejendomme er kørt */}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {/* BIZZ-2131: Kort-knap */}
+            {geoAnalyseId &&
+              aiAnalyseDetail &&
+              (aiAnalyseDetail.aktiver ?? []).some(
+                (a: { type: string; adresse?: string | null }) => a.type === 'ejendom' && a.adresse
+              ) && (
                 <button
-                  key={a.id}
                   type="button"
-                  onClick={() => setActiveAnalyseId(a.id)}
-                  className="w-full text-left px-4 py-3 bg-white/3 hover:bg-white/5 rounded-xl flex items-center justify-between transition-colors"
+                  onClick={() => setKortÅben(!kortÅben)}
+                  className={`flex items-center gap-1.5 px-3 py-2 text-xs rounded-lg border transition-colors ${
+                    kortÅben
+                      ? 'bg-blue-600 border-blue-500 text-white'
+                      : 'bg-slate-800/80 border-slate-700/60 text-slate-300 hover:bg-slate-700/80'
+                  }`}
+                  aria-label={lang === 'da' ? 'Vis kort' : 'Show map'}
                 >
-                  <div>
-                    <div className="text-white text-sm font-medium">
-                      {new Date(a.created_at).toLocaleDateString('da-DK', {
-                        day: 'numeric',
-                        month: 'short',
-                        year: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </div>
-                    <div className="text-slate-400 text-xs mt-0.5">
-                      {a.total_aktiver} {lang === 'da' ? 'ejendomme' : 'properties'} ·{' '}
-                      {a.insured_count} {lang === 'da' ? 'forsikrede' : 'insured'} · {gapCount} gaps
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span
-                      className={`text-lg font-bold ${
-                        pct >= 71
-                          ? 'text-emerald-400'
-                          : pct >= 41
-                            ? 'text-amber-400'
-                            : 'text-red-400'
-                      }`}
-                    >
-                      {pct}%
-                    </span>
-                    <ChevronRight size={16} className="text-slate-400" />
-                  </div>
+                  <MapIcon size={14} />
+                  {lang === 'da' ? 'Kort' : 'Map'}
                 </button>
-              );
-            })}
+              )}
+            {/* BIZZ-1397: Nulstil alt — kun synlig for admin */}
+            {isAdmin && (policies.length > 0 || documents.length > 0) && (
+              <button
+                type="button"
+                disabled={resetting}
+                onClick={async () => {
+                  const da = lang === 'da';
+                  if (
+                    !window.confirm(
+                      da
+                        ? 'Slet ALLE forsikringsdata? Alle policer, dokumenter, gaps og analyser slettes permanent. Denne handling kan ikke fortrydes.'
+                        : 'Delete ALL insurance data? All policies, documents, gaps and analyses will be permanently deleted. This action cannot be undone.'
+                    )
+                  )
+                    return;
+                  setResetting(true);
+                  try {
+                    const res = await fetch('/api/forsikring/reset', { method: 'DELETE' });
+                    if (res.ok) {
+                      setUploadJobs([]);
+                      await refresh();
+                    }
+                  } catch {
+                    // Handled silently
+                  } finally {
+                    setResetting(false);
+                  }
+                }}
+                className="flex items-center gap-2 px-3 py-2 text-xs rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors disabled:opacity-50"
+              >
+                {resetting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                {lang === 'da' ? 'Nulstil alt' : 'Reset all'}
+              </button>
+            )}
           </div>
-        </section>
-      )}
+        </header>
 
-      {/* BIZZ-1440: Analyse-detalje visning når man klikker en historik-række */}
-      {activeAnalyseId && selectedCustomer && (
-        <AnalyseDetailSection
-          analyseId={activeAnalyseId}
-          kundeNavn={selectedCustomer.navn}
-          lang={lang}
-          onBack={() => setActiveAnalyseId(null)}
-        />
-      )}
+        {/* Side-indhold med padding */}
+        <div className="p-6 pb-16 space-y-6">
+          {/* TRIN 1: Vælg kunde */}
+          <AnalyseSection
+            lang={lang}
+            policies={policies}
+            onRefresh={refresh}
+            onAnalyseDetail={handleAnalyseDetail}
+            onSagChange={setActiveSagId}
+            onCustomerSelect={handleCustomerSelect}
+            newDocumentIds={newDocumentIds}
+            addTokenUsage={addTokenUsage}
+            initialCustomer={initialUrlState.customer}
+          />
 
-      {/* BIZZ-1439: Global upload + police-tabel FJERNET — al data vises kun i analyse-kontekst */}
-      {/* Legacy trin 2+3 skjult — erstattet af wizard-upload i AnalyseSection */}
-      {false && selectedCustomer && (
-        <>
-          <div className="flex items-center gap-2 text-sm font-semibold text-white">
-            <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">
-              2
-            </span>
-            {lang === 'da' ? 'Upload forsikringsdokumenter' : 'Upload insurance documents'}
-          </div>
-          <section
-            onDragOver={onDragOver}
-            onDragLeave={onDragLeave}
-            onDrop={onDrop}
-            className={`rounded-2xl border-2 border-dashed transition-colors p-8 text-center cursor-pointer ${
-              dragOver
-                ? 'border-blue-400 bg-blue-500/5'
-                : 'border-white/10 bg-white/5 hover:border-blue-500/40'
-            }`}
-            onClick={() => fileInputRef.current?.click()}
-            role="button"
-            tabIndex={0}
-            aria-label={t.uploadCta}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                fileInputRef.current?.click();
-              }
-            }}
-          >
-            <Upload className="mx-auto text-blue-400 mb-2" size={28} />
-            <div className="font-medium">{t.uploadCta}</div>
-            <div className="text-sm text-slate-400 mt-1">{t.uploadHelp}</div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".pdf,.docx,.xlsx,.xls,.pptx,.rtf,.txt,.md,.html,.csv,.tsv,.json,.xml,.yaml,.eml,.png,.jpg,.jpeg,.gif,.webp,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-excel,image/*,text/*,application/json,application/xml,message/rfc822"
-              multiple
-              className="hidden"
-              aria-hidden="true"
-              onChange={(e) => {
-                handleFiles(e.target.files);
-                // reset så samme fil kan vælges igen
-                e.target.value = '';
-              }}
-            />
-          </section>
-
-          {/* Upload-jobs (live status) */}
-          {uploadJobs.length > 0 && (
-            <section className="bg-white/5 border border-white/8 rounded-2xl divide-y divide-white/5">
-              {uploadJobs.map((job) => (
-                <div key={job.id} className="flex items-center gap-3 p-3 text-sm">
-                  {job.status === 'uploading' && (
-                    <Loader2 size={16} className="animate-spin text-blue-400" />
-                  )}
-                  {job.status === 'parsing' && (
-                    <Loader2 size={16} className="animate-spin text-amber-400" />
-                  )}
-                  {job.status === 'done' && <CheckCircle2 size={16} className="text-emerald-400" />}
-                  {job.status === 'failed' && <XCircle size={16} className="text-red-400" />}
-                  <span className="font-medium">{job.fileName}</span>
-                  <span className="text-slate-400 text-xs">
-                    {job.status === 'uploading' && t.uploading}
-                    {job.status === 'parsing' && t.parsing}
-                    {job.status === 'done' &&
-                      (job.documentType === 'oversigt'
-                        ? `✓ Oversigt → ${job.policiesCount ?? '?'} policer`
-                        : job.documentType === 'tillaeg'
-                          ? '✓ Tillæg'
-                          : '✓')}
-                    {job.status === 'failed' && (
-                      <span className="text-red-400" title={job.error ?? t.parseFailed}>
-                        {job.error ?? t.parseFailed}
-                      </span>
-                    )}
-                  </span>
-                </div>
-              ))}
-            </section>
-          )}
-
-          {/* Pending documents (server-side) */}
-          {documents.length > 0 && (
-            <section className="bg-white/5 border border-white/8 rounded-2xl">
-              <header className="px-4 py-3 border-b border-white/5 text-sm font-medium text-slate-300 flex items-center gap-2">
-                <FileText size={16} />
-                {t.pendingDocuments} ({documents.length})
-              </header>
-              <div className="divide-y divide-white/5 text-sm">
-                {documents.map((doc) => (
-                  <div key={doc.id} className="px-4 py-2 flex items-center gap-3">
-                    <FileText size={14} className="text-slate-400" />
-                    <span>{doc.original_name}</span>
-                    <span
-                      className={`text-xs ml-auto max-w-[300px] truncate ${doc.parse_status === 'failed' ? 'text-red-400' : 'text-slate-400'}`}
-                      title={
-                        doc.parse_status === 'failed'
-                          ? (doc.parse_error ?? t.parseFailed)
-                          : doc.parse_status
-                      }
-                    >
-                      {doc.parse_status === 'failed'
-                        ? (doc.parse_error ?? t.parseFailed)
-                        : doc.parse_status}
-                    </span>
-                    {/* BIZZ-1397: Slet individuelt dokument */}
+          {/* BIZZ-1404: Analyse-historik for valgt kunde */}
+          {selectedCustomer && analyseHistorik.length > 0 && !activeAnalyseId && (
+            <section className="bg-white/5 border border-white/8 rounded-2xl p-4">
+              <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+                <FileText size={16} className="text-blue-400" />
+                {lang === 'da'
+                  ? `Tidligere analyser for ${selectedCustomer.navn}`
+                  : `Previous analyses for ${selectedCustomer.navn}`}
+              </h3>
+              <div className="space-y-2">
+                {analyseHistorik.map((a) => {
+                  const gapCount = (a.summary as Record<string, number> | null)?.gaps_count ?? 0;
+                  const pct =
+                    a.total_aktiver > 0 ? Math.round((a.insured_count / a.total_aktiver) * 100) : 0;
+                  return (
                     <button
+                      key={a.id}
                       type="button"
-                      aria-label={
-                        lang === 'da' ? `Slet ${doc.original_name}` : `Delete ${doc.original_name}`
-                      }
-                      onClick={async () => {
-                        try {
-                          const res = await fetch(`/api/forsikring/documents/${doc.id}`, {
-                            method: 'DELETE',
-                          });
-                          if (res.ok) await refresh();
-                        } catch {
-                          // Handled silently
-                        }
-                      }}
-                      className="p-1 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors shrink-0"
+                      onClick={() => setActiveAnalyseId(a.id)}
+                      className="w-full text-left px-4 py-3 bg-white/3 hover:bg-white/5 rounded-xl flex items-center justify-between transition-colors"
                     >
-                      <XCircle size={14} />
+                      <div>
+                        <div className="text-white text-sm font-medium">
+                          {new Date(a.created_at).toLocaleDateString('da-DK', {
+                            day: 'numeric',
+                            month: 'short',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </div>
+                        <div className="text-slate-400 text-xs mt-0.5">
+                          {a.total_aktiver} {lang === 'da' ? 'ejendomme' : 'properties'} ·{' '}
+                          {a.insured_count} {lang === 'da' ? 'forsikrede' : 'insured'} · {gapCount}{' '}
+                          gaps
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span
+                          className={`text-lg font-bold ${
+                            pct >= 71
+                              ? 'text-emerald-400'
+                              : pct >= 41
+                                ? 'text-amber-400'
+                                : 'text-red-400'
+                          }`}
+                        >
+                          {pct}%
+                        </span>
+                        <ChevronRight size={16} className="text-slate-400" />
+                      </div>
                     </button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </section>
           )}
 
-          {/* Uploadede policer — compact header med rapport-link */}
-          {policies.length > 0 && (
-            <div className="flex items-center justify-between">
+          {/* BIZZ-1440: Analyse-detalje visning når man klikker en historik-række */}
+          {activeAnalyseId && selectedCustomer && (
+            <AnalyseDetailSection
+              analyseId={activeAnalyseId}
+              kundeNavn={selectedCustomer.navn}
+              lang={lang}
+              onBack={() => {
+                // BIZZ-2167: ryd analyse-detalje + kort når man går tilbage til
+                // historik-listen, så Kort-knappen ikke peger på en lukket analyse
+                setActiveAnalyseId(null);
+                setAiAnalyseDetail(null);
+                setAiKundeNavn(null);
+                setKortÅben(false);
+              }}
+              onDetail={handleAnalyseDetail}
+            />
+          )}
+
+          {/* BIZZ-1439: Global upload + police-tabel FJERNET — al data vises kun i analyse-kontekst */}
+          {/* Legacy trin 2+3 skjult — erstattet af wizard-upload i AnalyseSection */}
+          {false && selectedCustomer && (
+            <>
               <div className="flex items-center gap-2 text-sm font-semibold text-white">
                 <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">
-                  3
+                  2
                 </span>
-                {lang === 'da'
-                  ? `${policies.length} policer — ${(data?.totals?.gaps_critical ?? 0) + (data?.totals?.gaps_warning ?? 0)} gaps fundet`
-                  : `${policies.length} policies — ${(data?.totals?.gaps_critical ?? 0) + (data?.totals?.gaps_warning ?? 0)} gaps found`}
+                {lang === 'da' ? 'Upload forsikringsdokumenter' : 'Upload insurance documents'}
               </div>
-            </div>
-          )}
+              <section
+                onDragOver={onDragOver}
+                onDragLeave={onDragLeave}
+                onDrop={onDrop}
+                className={`rounded-2xl border-2 border-dashed transition-colors p-8 text-center cursor-pointer ${
+                  dragOver
+                    ? 'border-blue-400 bg-blue-500/5'
+                    : 'border-white/10 bg-white/5 hover:border-blue-500/40'
+                }`}
+                onClick={() => fileInputRef.current?.click()}
+                role="button"
+                tabIndex={0}
+                aria-label={t.uploadCta}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    fileInputRef.current?.click();
+                  }
+                }}
+              >
+                <Upload className="mx-auto text-blue-400 mb-2" size={28} />
+                <div className="font-medium">{t.uploadCta}</div>
+                <div className="text-sm text-slate-400 mt-1">{t.uploadHelp}</div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,.docx,.xlsx,.xls,.pptx,.rtf,.txt,.md,.html,.csv,.tsv,.json,.xml,.yaml,.eml,.png,.jpg,.jpeg,.gif,.webp,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-excel,image/*,text/*,application/json,application/xml,message/rfc822"
+                  multiple
+                  className="hidden"
+                  aria-hidden="true"
+                  onChange={(e) => {
+                    handleFiles(e.target.files);
+                    // reset så samme fil kan vælges igen
+                    e.target.value = '';
+                  }}
+                />
+              </section>
 
-          {/* Error banner */}
-          {error && (
-            <div className="rounded-xl bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-red-200 flex items-center gap-2">
-              <AlertCircle size={16} />
-              {error}
-            </div>
-          )}
-
-          {/* Loading state */}
-          {loading && !data && (
-            <div className="text-sm text-slate-400">{translations[lang].common.loading}</div>
-          )}
-
-          {/* Empty state — kun når ingen policer OG ingen dokumenter */}
-          {!loading &&
-            policies.length === 0 &&
-            documents.length === 0 &&
-            uploadJobs.length === 0 && (
-              <div className="bg-white/5 border border-white/8 rounded-2xl p-10 text-center">
-                <Building2 className="mx-auto text-slate-400 mb-3" size={36} />
-                <h2 className="text-lg font-medium mb-1">{t.noPolicies}</h2>
-                <p className="text-sm text-slate-400">{t.noPoliciesDesc}</p>
-              </div>
-            )}
-
-          {/* Police-tabel */}
-          {policies.length > 0 && (
-            <section className="bg-white/5 border border-white/8 rounded-2xl overflow-hidden">
-              <table className="w-full text-sm">
-                <thead className="bg-slate-900/40 text-slate-400 text-xs uppercase tracking-wide">
-                  <tr>
-                    <th className="text-left px-4 py-3">{t.colPolicy}</th>
-                    <th className="text-left px-4 py-3">{t.colInsurer}</th>
-                    <th className="text-left px-4 py-3">{t.colHolder}</th>
-                    <th className="text-left px-4 py-3">{t.colAddress}</th>
-                    <th className="text-right px-4 py-3">{t.colPremium}</th>
-                    <th className="text-left px-4 py-3">{t.colExpires}</th>
-                    <th className="text-center px-4 py-3">{t.colGaps}</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {policies.map((p) => (
-                    <tr key={p.id} className="hover:bg-white/5 transition-colors">
-                      <td className="px-4 py-3">
-                        <Link
-                          href={`/dashboard/forsikring/${p.id}`}
-                          className="text-blue-300 hover:text-blue-200 font-medium"
-                        >
-                          {p.policy_number}
-                        </Link>
-                      </td>
-                      <td className="px-4 py-3 text-slate-300">{p.insurer_name}</td>
-                      <td className="px-4 py-3 text-slate-300">{p.policyholder_name}</td>
-                      <td className="px-4 py-3 text-slate-300">{p.property_address ?? '—'}</td>
-                      <td className="px-4 py-3 text-right text-slate-300">
-                        {formatDkk(p.annual_premium_dkk)}
-                      </td>
-                      <td className="px-4 py-3 text-slate-300">{formatDate(p.effective_to)}</td>
-                      <td className="px-4 py-3 text-center">
-                        <div className="inline-flex items-center gap-1 text-xs">
-                          {p.gap_counts.critical > 0 && (
-                            <span className="px-1.5 py-0.5 rounded bg-red-500/20 text-red-300">
-                              {p.gap_counts.critical}
-                            </span>
-                          )}
-                          {p.gap_counts.warning > 0 && (
-                            <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">
-                              {p.gap_counts.warning}
-                            </span>
-                          )}
-                          {p.gap_counts.info > 0 && (
-                            <span className="px-1.5 py-0.5 rounded bg-slate-500/20 text-slate-300">
-                              {p.gap_counts.info}
-                            </span>
-                          )}
-                          {p.gap_counts.critical === 0 &&
-                            p.gap_counts.warning === 0 &&
-                            p.gap_counts.info === 0 && (
-                              <CheckCircle2 size={14} className="text-emerald-400" />
-                            )}
-                        </div>
-                      </td>
-                    </tr>
+              {/* Upload-jobs (live status) */}
+              {uploadJobs.length > 0 && (
+                <section className="bg-white/5 border border-white/8 rounded-2xl divide-y divide-white/5">
+                  {uploadJobs.map((job) => (
+                    <div key={job.id} className="flex items-center gap-3 p-3 text-sm">
+                      {job.status === 'uploading' && (
+                        <Loader2 size={16} className="animate-spin text-blue-400" />
+                      )}
+                      {job.status === 'parsing' && (
+                        <Loader2 size={16} className="animate-spin text-amber-400" />
+                      )}
+                      {job.status === 'done' && (
+                        <CheckCircle2 size={16} className="text-emerald-400" />
+                      )}
+                      {job.status === 'failed' && <XCircle size={16} className="text-red-400" />}
+                      <span className="font-medium">{job.fileName}</span>
+                      <span className="text-slate-400 text-xs">
+                        {job.status === 'uploading' && t.uploading}
+                        {job.status === 'parsing' && t.parsing}
+                        {job.status === 'done' &&
+                          (job.documentType === 'oversigt'
+                            ? `✓ Oversigt → ${job.policiesCount ?? '?'} policer`
+                            : job.documentType === 'tillaeg'
+                              ? '✓ Tillæg'
+                              : '✓')}
+                        {job.status === 'failed' && (
+                          <span className="text-red-400" title={job.error ?? t.parseFailed}>
+                            {job.error ?? t.parseFailed}
+                          </span>
+                        )}
+                      </span>
+                    </div>
                   ))}
-                </tbody>
-              </table>
-            </section>
+                </section>
+              )}
+
+              {/* Pending documents (server-side) */}
+              {documents.length > 0 && (
+                <section className="bg-white/5 border border-white/8 rounded-2xl">
+                  <header className="px-4 py-3 border-b border-white/5 text-sm font-medium text-slate-300 flex items-center gap-2">
+                    <FileText size={16} />
+                    {t.pendingDocuments} ({documents.length})
+                  </header>
+                  <div className="divide-y divide-white/5 text-sm">
+                    {documents.map((doc) => (
+                      <div key={doc.id} className="px-4 py-2 flex items-center gap-3">
+                        <FileText size={14} className="text-slate-400" />
+                        <span>{doc.original_name}</span>
+                        <span
+                          className={`text-xs ml-auto max-w-[300px] truncate ${doc.parse_status === 'failed' ? 'text-red-400' : 'text-slate-400'}`}
+                          title={
+                            doc.parse_status === 'failed'
+                              ? (doc.parse_error ?? t.parseFailed)
+                              : doc.parse_status
+                          }
+                        >
+                          {doc.parse_status === 'failed'
+                            ? (doc.parse_error ?? t.parseFailed)
+                            : doc.parse_status}
+                        </span>
+                        {/* BIZZ-1397: Slet individuelt dokument */}
+                        <button
+                          type="button"
+                          aria-label={
+                            lang === 'da'
+                              ? `Slet ${doc.original_name}`
+                              : `Delete ${doc.original_name}`
+                          }
+                          onClick={async () => {
+                            try {
+                              const res = await fetch(`/api/forsikring/documents/${doc.id}`, {
+                                method: 'DELETE',
+                              });
+                              if (res.ok) await refresh();
+                            } catch {
+                              // Handled silently
+                            }
+                          }}
+                          className="p-1 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors shrink-0"
+                        >
+                          <XCircle size={14} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* Uploadede policer — compact header med rapport-link */}
+              {policies.length > 0 && (
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                    <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">
+                      3
+                    </span>
+                    {lang === 'da'
+                      ? `${policies.length} policer — ${(data?.totals?.gaps_critical ?? 0) + (data?.totals?.gaps_warning ?? 0)} gaps fundet`
+                      : `${policies.length} policies — ${(data?.totals?.gaps_critical ?? 0) + (data?.totals?.gaps_warning ?? 0)} gaps found`}
+                  </div>
+                </div>
+              )}
+
+              {/* Error banner */}
+              {error && (
+                <div className="rounded-xl bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-red-200 flex items-center gap-2">
+                  <AlertCircle size={16} />
+                  {error}
+                </div>
+              )}
+
+              {/* Loading state */}
+              {loading && !data && (
+                <div className="text-sm text-slate-400">{translations[lang].common.loading}</div>
+              )}
+
+              {/* Empty state — kun når ingen policer OG ingen dokumenter */}
+              {!loading &&
+                policies.length === 0 &&
+                documents.length === 0 &&
+                uploadJobs.length === 0 && (
+                  <div className="bg-white/5 border border-white/8 rounded-2xl p-10 text-center">
+                    <Building2 className="mx-auto text-slate-400 mb-3" size={36} />
+                    <h2 className="text-lg font-medium mb-1">{t.noPolicies}</h2>
+                    <p className="text-sm text-slate-400">{t.noPoliciesDesc}</p>
+                  </div>
+                )}
+
+              {/* Police-tabel */}
+              {policies.length > 0 && (
+                <section className="bg-white/5 border border-white/8 rounded-2xl overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-900/40 text-slate-400 text-xs uppercase tracking-wide">
+                      <tr>
+                        <th className="text-left px-4 py-3">{t.colPolicy}</th>
+                        <th className="text-left px-4 py-3">{t.colInsurer}</th>
+                        <th className="text-left px-4 py-3">{t.colHolder}</th>
+                        <th className="text-left px-4 py-3">{t.colAddress}</th>
+                        <th className="text-right px-4 py-3">{t.colPremium}</th>
+                        <th className="text-left px-4 py-3">{t.colExpires}</th>
+                        <th className="text-center px-4 py-3">{t.colGaps}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {policies.map((p) => (
+                        <tr key={p.id} className="hover:bg-white/5 transition-colors">
+                          <td className="px-4 py-3">
+                            <Link
+                              href={`/dashboard/forsikring/${p.id}`}
+                              className="text-blue-300 hover:text-blue-200 font-medium"
+                            >
+                              {p.policy_number}
+                            </Link>
+                          </td>
+                          <td className="px-4 py-3 text-slate-300">{p.insurer_name}</td>
+                          <td className="px-4 py-3 text-slate-300">{p.policyholder_name}</td>
+                          <td className="px-4 py-3 text-slate-300">{p.property_address ?? '—'}</td>
+                          <td className="px-4 py-3 text-right text-slate-300">
+                            {formatDkk(p.annual_premium_dkk)}
+                          </td>
+                          <td className="px-4 py-3 text-slate-300">{formatDate(p.effective_to)}</td>
+                          <td className="px-4 py-3 text-center">
+                            <div className="inline-flex items-center gap-1 text-xs">
+                              {p.gap_counts.critical > 0 && (
+                                <span className="px-1.5 py-0.5 rounded bg-red-500/20 text-red-300">
+                                  {p.gap_counts.critical}
+                                </span>
+                              )}
+                              {p.gap_counts.warning > 0 && (
+                                <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">
+                                  {p.gap_counts.warning}
+                                </span>
+                              )}
+                              {p.gap_counts.info > 0 && (
+                                <span className="px-1.5 py-0.5 rounded bg-slate-500/20 text-slate-300">
+                                  {p.gap_counts.info}
+                                </span>
+                              )}
+                              {p.gap_counts.critical === 0 &&
+                                p.gap_counts.warning === 0 &&
+                                p.gap_counts.info === 0 && (
+                                  <CheckCircle2 size={14} className="text-emerald-400" />
+                                )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </section>
+              )}
+            </>
           )}
+        </div>
+      </div>
+      {/* slut scroll-container */}
+
+      {/* BIZZ-2131: Desktop kort-sidepanel med resize-divider — fuld højde */}
+      {kortÅben && isDesktop && (
+        <>
+          {/* Resize-divider */}
+          <div
+            className={`w-1.5 flex-shrink-0 cursor-col-resize flex items-center justify-center group transition-colors ${trækker ? 'bg-blue-500/30' : 'bg-slate-800 hover:bg-blue-500/20'}`}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              trækStart.current = { x: e.clientX, bredde: kortBredde };
+              setTrækker(true);
+            }}
+          >
+            <div
+              className={`w-0.5 h-10 rounded-full transition-colors ${trækker ? 'bg-blue-400' : 'bg-slate-600 group-hover:bg-blue-400'}`}
+            />
+          </div>
+          {/* Kort-panel — fuld højde */}
+          <div className="relative flex-shrink-0 h-full" style={{ width: kortBredde }}>
+            {/* Luk-knap */}
+            <button
+              onClick={() => setKortÅben(false)}
+              className="absolute top-2 right-12 z-20 p-1.5 rounded-lg bg-slate-900/90 border border-slate-700/60 text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+              aria-label={lang === 'da' ? 'Luk kort' : 'Close map'}
+            >
+              <X size={16} />
+            </button>
+            <div className="absolute inset-0">
+              <Suspense
+                fallback={
+                  <div className="w-full h-full flex items-center justify-center bg-slate-900">
+                    <Loader2 size={20} className="animate-spin text-blue-400" />
+                  </div>
+                }
+              >
+                <ForsikringMap
+                  markers={geoMarkers}
+                  onMarkerClick={handleMarkerClick}
+                  highlightedId={highlightedAktivId}
+                  da={lang === 'da'}
+                />
+              </Suspense>
+            </div>
+          </div>
         </>
       )}
+
+      {/* BIZZ-2131: Mobil kort-overlay (fullscreen via portal) */}
+      {kortÅben &&
+        !isDesktop &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex flex-col bg-slate-950">
+            <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-700/50 flex-shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <MapIcon size={15} className="text-blue-400 flex-shrink-0" />
+                <span className="text-white text-sm font-medium truncate">
+                  {lang === 'da' ? 'Forsikringskort' : 'Insurance map'}
+                </span>
+              </div>
+              <button
+                onClick={() => setKortÅben(false)}
+                className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
+                aria-label={lang === 'da' ? 'Luk kort' : 'Close map'}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex-1 relative">
+              <Suspense
+                fallback={
+                  <div className="w-full h-full flex items-center justify-center bg-slate-900">
+                    <Loader2 size={20} className="animate-spin text-blue-400" />
+                  </div>
+                }
+              >
+                <ForsikringMap
+                  markers={geoMarkers}
+                  onMarkerClick={handleMarkerClick}
+                  da={lang === 'da'}
+                />
+              </Suspense>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

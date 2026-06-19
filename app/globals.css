@@ -27,19 +27,30 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* BIZZ-2074: Bredere og lysere global scrollbar — 6px med mørk thumb var
+   svær at se og ramme på dark theme. Firefox-fallback scopes via @supports,
+   da scrollbar-color i Chromium 121+ ellers deaktiverer ::-webkit-scrollbar. */
+@supports not selector(::-webkit-scrollbar) {
+  html {
+    scrollbar-width: auto;
+    scrollbar-color: #64748b #1e293b;
+  }
+}
 ::-webkit-scrollbar {
-  width: 6px;
+  width: 12px;
+  height: 12px;
 }
 ::-webkit-scrollbar-track {
   background: #1e293b;
 }
 /* BIZZ-1771: Øget scrollbar kontrast for dark theme */
 ::-webkit-scrollbar-thumb {
-  background: #475569;
-  border-radius: 3px;
+  background: #64748b;
+  border-radius: 6px;
+  border: 2px solid #1e293b;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #64748b;
+  background: #94a3b8;
 }
 
 /* Tydeligere scrollbar på brede data-tabeller (fx M&A-radar) så den

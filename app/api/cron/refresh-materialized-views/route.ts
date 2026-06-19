@@ -45,6 +45,10 @@ const VIEWS = [
   'mv_virksomhed_portefolje',
   'mv_kommune_statistik',
   'mv_boligpris_maaned',
+  // BIZZ-2056: flad handler-MV bag boligpris-tabellen. Skal refreshes dagligt
+  // sammen med KPI-MV'en så tabellens rækker matcher KPI-tallet. Whitelistet i
+  // refresh_materialized_view() RPC i migration 173.
+  'mv_boligpris_handler',
   // BIZZ-2054: M&A-radarens kandidat-MV. Lå tidligere ikke på nogen
   // refresh-sti → radaren frøs på sidste manuelle refresh. Whitelistet i
   // refresh_materialized_view() RPC i migration 170.

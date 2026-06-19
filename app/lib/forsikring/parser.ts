@@ -18,6 +18,7 @@ import { logger } from '@/app/lib/logger';
 import { extractTextFromBuffer } from '@/app/lib/domainTextExtraction';
 import type { NormalizedFileType } from '@/app/lib/domainFileTypes';
 import {
+  COVERAGE_CODES,
   ParsedPolicySchema,
   ParsedOvesigtSchema,
   type ParsedPolicy,
@@ -25,7 +26,7 @@ import {
   type DocumentType,
   type DocumentTypeDetection,
 } from './types';
-import { stripMarkdownFences, canParseAsText } from './jsonHelpers';
+import { stripMarkdownFences, canParseAsText, salvageTruncatedOversigt } from './jsonHelpers';
 
 // Re-export for backwards compatibility — callers kan stadig importere fra parser.ts
 export { stripMarkdownFences, canParseAsText };
@@ -39,6 +40,34 @@ export { stripMarkdownFences, canParseAsText };
  */
 export function normalizePolicyNumber(policyNumber: string): string {
   return policyNumber.replace(/[\s-]+/g, '').replace(/^0+/, '') || policyNumber;
+}
+
+/**
+ * BIZZ-2097: Afgør om en oversigts-entry er en duplikat af en eksisterende police.
+ *
+ * Dedup-nøglen er adresse + forsikringstype (policenummeret er allerede matchet
+ * af kalderen). Flere forsikringstyper (fx Cyber, Netbank, Driftstab, Kriminalitet)
+ * kan ligge under samme aftalenummer UDEN adresse — de må ikke kollapses til én
+ * police, hvilket den gamle adresse-eneste sammenligning gjorde (null === null).
+ *
+ * @param policy - Eksisterende police (property_address + business_activity)
+ * @param entry - Oversigts-entry fra parseren (property_address + insurance_type)
+ * @returns true hvis entry'en repræsenterer samme police
+ */
+export function oversigtEntryMatchesPolicy(
+  policy: { property_address: string | null; business_activity: string | null },
+  entry: { property_address?: string | null; insurance_type?: string | null }
+): boolean {
+  // Normalisér til trimmet lowercase så whitespace/case-forskelle ikke
+  // skaber dubletter; tom streng behandles som null
+  const norm = (s: string | null | undefined): string | null => {
+    const t = s?.trim().toLowerCase();
+    return t ? t : null;
+  };
+  return (
+    norm(policy.property_address) === norm(entry.property_address) &&
+    norm(policy.business_activity) === norm(entry.insurance_type)
+  );
 }
 
 /** Maks tekst-input til Claude (≈40k tokens for sikkerhed). */
@@ -100,12 +129,13 @@ const DOC_TYPE_SYSTEM_PROMPT = `Du er en specialist i danske forsikringsdokument
 - "oversigt": En forsikringsoversigt/sammenfatning der lister FLERE policer. Typisk fra mægler eller selskab. Indeholder en tabel/liste med policenumre, selskaber, adresser, præmier for flere ejendomme.
 - "tillaeg": Et tillæg, ændring eller endorsement til en eksisterende police. Refererer til et eksisterende policenummer og ændrer dækninger/betingelser.
 - "tilbud": Et fornyelsestilbud, pristilbud eller forsikringstilbud. Endnu ikke accepteret police.
+- "praemie": En præmieopkrævning/præmiefaktura for en EKSISTERENDE police. Indeholder policenummer, forsikringstager, produkt/forsikringstype, periode og præmiebeløb — men ingen dækningsdetaljer eller betingelser. Typiske kendetegn: "Præmieopkrævning", "Fakturadetaljer", betalingsoplysninger (IBAN/betalingsreference).
 - "korrespondance": Brev, email, følgebrev, kvittering eller administrativ kommunikation. Ingen police-data.
 - "ukendt": Kan ikke klassificeres som noget af ovenstående.
 
 Returnér KUN gyldig JSON:
 {
-  "type": "police" | "oversigt" | "tillaeg" | "tilbud" | "korrespondance" | "ukendt",
+  "type": "police" | "oversigt" | "tillaeg" | "tilbud" | "praemie" | "korrespondance" | "ukendt",
   "confidence": 0.0-1.0,
   "reason": "Kort begrundelse (max 100 tegn)",
   "policy_count": number | null
@@ -119,7 +149,9 @@ Vigtige regler:
 3. Hvis dokumentet handler om ÉN specifik police med dækninger/betingelser → "police".
 4. Vær konservativ: ved tvivl mellem police og oversigt, check om der er flere policenumre.
 5. VIGTIGT: Mange forsikringsdokumenter STARTER med et følgebrev (fx "Kære kunde, her er jeres nye forsikringsaftale...") efterfulgt af den egentlige police. Klassificér ALTID baseret på HELE dokumentet — IKKE kun den første side. Hvis teksten indeholder policenummer, dækninger, præmier, selvrisiko osv. efter et følgebrev → det er en "police", IKKE "korrespondance".
-6. Forsikringspakker (følgebrev + police + dækningsoversigt i ét dokument) = "police".`;
+6. Forsikringspakker (følgebrev + police + dækningsoversigt i ét dokument) = "police".
+7. BIZZ-2083: En præmieopkrævning med policenummer, forsikringstager og præmiebeløb = "praemie" — IKKE "korrespondance", selvom den ligner en faktura/kvittering.
+8. BIZZ-2121: En erhvervsforsikrings-AFTALE (fx "Forsikringsaftale" fra Topdanmark/Tryg) med en aftale-/dækningsoversigt der lister FLERE selvstændige forsikringer (fx Erhvervsløsøre, Driftstab, Netbank, Cyber, Kriminalitet, Maskiner, Transport) under ÉT fælles aftalenummer = "oversigt" med policy_count = antal selvstændige forsikringer — IKKE "police", selvom der kun optræder ét aftalenummer. Hver selvstændig forsikring i aftalen behandles som sin egen police.`;
 
 /**
  * BIZZ-1392: Trin 1 — Detektér dokumenttype via Claude.
@@ -158,7 +190,15 @@ export async function detectDocumentType(
       policy_count?: number;
     };
 
-    const validTypes = ['police', 'oversigt', 'tillaeg', 'tilbud', 'korrespondance', 'ukendt'];
+    const validTypes = [
+      'police',
+      'oversigt',
+      'tillaeg',
+      'tilbud',
+      'praemie',
+      'korrespondance',
+      'ukendt',
+    ];
     const docType = validTypes.includes(parsed.type ?? '')
       ? (parsed.type as DocumentType)
       : 'ukendt';
@@ -185,6 +225,36 @@ export async function detectDocumentType(
  * System-prompt til oversigt-parsing. Returnerer array af policer fra
  * en forsikringsoversigt.
  */
+/**
+ * BIZZ-2098: Union-streng af alle kanoniske dækningskoder til prompterne —
+ * afledt af COVERAGE_CODES så prompt og Zod-schema aldrig driver fra hinanden.
+ */
+const COVERAGE_CODE_UNION = COVERAGE_CODES.map((c) => `"${c}"`).join(' | ');
+
+/**
+ * BIZZ-2098: Fælles mapping-vejledning for erhvervsdækninger — bruges i både
+ * oversigt- og police-prompten så Claude mapper løsøre/kriminalitet/cyber/
+ * transport til de nye kanoniske koder i stedet for at tvinge dem ind i
+ * bygningskoder (fx "Indbrudstyveri"→udvidet_vandskade-fejlen).
+ */
+const ERHVERVS_MAPPING_REGEL =
+  'ERHVERVSDÆKNINGER: "Erhvervsløsøre / Løsøre / Inventar / Varer" → loesoere, ' +
+  '"Indbrudstyveri / Tyveri" → indbrudstyveri, "Ran og røveri" → ran_roeveri, ' +
+  '"Oprydning / Oprydningsomkostninger" → oprydning, "Cyber / Cyberforsikring / Datalæk / Ransomware" → cyber, ' +
+  '"Cyberdriftstab / Driftstab efter cyberhændelse" → cyberdriftstab, ' +
+  '"Notifikation / Notifikationsomkostninger (databrud)" → notifikation, ' +
+  '"Netbank / Netbankforsikring" → netbank, "Kriminalitet / Underslæb / Bedrageri" → kriminalitet, ' +
+  '"Transport / Varer under transport / Gods" → transport, ' +
+  '"Maskinkasko / IT-udstyr All risks / Maskiner og IT-udstyr" → maskiner_itudstyr, ' +
+  '"Meromkostninger IT / IT-meromkostninger" → it_meromkostninger, ' +
+  '"Leverandørdriftstab / Aftagerdriftstab" → leverandoer_aftager. ' +
+  // BIZZ-2121: Fareafværgelse (ansvarsdækning) og IT-dækninger må ALDRIG ende
+  // som driftstab — det forurener dækningsgradsanalysen (GAP-073) med forkerte summer.
+  '"Fareafværgelse / Afværgelse af skade" → erhvervsansvar, "IT databærere / Databærere" → it_meromkostninger. ' +
+  'Kod ALDRIG Fareafværgelse, IT-meromkostninger eller IT-databærere som driftstab — ' +
+  'driftstab er KUN egentlig driftstabs-/avancetabsdækning (mistet bruttofortjeneste). ' +
+  'Bevar ALTID dækningssum (sum_dkk) og selvrisiko (deductible_dkk) pr. dækning når de fremgår.';
+
 const OVERSIGT_SYSTEM_PROMPT = `Du er en specialist i danske forsikringsoversigter. En forsikringsoversigt er et dokument der opsummerer FLERE forsikringspolicer for en kunde.
 
 Din opgave er at udtrække ALLE policer fra oversigten og returnere dem som JSON:
@@ -206,13 +276,15 @@ Din opgave er at udtrække ALLE policer fra oversigten og returnere dem som JSON
       "general_deductible_dkk": number | null,
       "coverages": [
         {
-          "coverage_code": "brand_el" | "bygningskasko" | "udvidet_roerskade" | "glas" | "sanitet" | "insekt_svamp" | "restvaerdi" | "stikledning" | "jordskade" | "lovliggoerelse" | "huslejetab" | "haerverk" | "omstilling_laase" | "hus_grundejer_ansvar" | "forurening" | "driftstab" | "erhvervsansvar" | "udvidet_vandskade",
+          "coverage_code": ${COVERAGE_CODE_UNION},
           "coverage_label": string,
           "is_covered": boolean,
           "sum_dkk": number | null,
-          "deductible_dkk": number | null
+          "deductible_dkk": number | null,
+          "conditions_ref": string | null
         }
       ],
+      "conditions_ref": string | null,
       "notes": string | null
     }
   ],
@@ -229,8 +301,12 @@ REGLER:
 5. Hvis en police har flere adresser, opret én entry per adresse med samme policenummer.
 6. insurance_type: fx "Bygningsforsikring", "Erhvervsansvar", "Løsøre", etc.
 7. Hvis policyholder er den samme for alle policer, gentag navnet i hver entry.
-8. KRITISK — DÆKNINGER: Scan HELE dokumentet for dæknings-sektioner ("Sådan er bygningen dækket", "Dækninger og dækningssummer", "Forsikringsdækninger"). Ekstraher ALLE dækninger som coverages[]. En typisk police har 8-15 dækninger. Mapping: "Brand/Pludselig skade"→brand_el, "Storm/Nedbør"→bygningskasko, "Udstrømning af vand/Rørskade"→udvidet_roerskade, "Glas"→glas, "Sanitet"→sanitet, "Svamp/Insekt"→insekt_svamp, "Restværdi"→restvaerdi, "Stikledning"→stikledning, "Jordskade"→jordskade, "Huslejetab"→huslejetab, "Hærværk"→haerverk, "Omstilling af låse"→omstilling_laase, "Hus-/Grundejeransvar"→hus_grundejer_ansvar, "Udvidet vandskade"→udvidet_vandskade.
-9. coverage_code skal matche én af de 18 kanoniske koder. Hvis en dækning ikke passer, brug den nærmeste. Finder du færre end 5, gennemlæs dokumentet igen.
+8. KRITISK — DÆKNINGER: Scan HELE dokumentet for dæknings-sektioner ("Sådan er bygningen dækket", "Dækninger og dækningssummer", "Forsikringsdækninger"). Ekstraher ALLE dækninger som coverages[]. En typisk police har 8-15 dækninger. Mapping: "Brand/Pludselig skade"→brand_el, "Storm/Nedbør"→bygningskasko, "Udstrømning af vand/Rørskade"→udvidet_roerskade, "Glas"→glas, "Sanitet"→sanitet, "Svamp/Insekt"→insekt_svamp, "Restværdi"→restvaerdi, "Stikledning"→stikledning, "Jordskade"→jordskade, "Huslejetab"→huslejetab, "Hærværk"→haerverk, "Omstilling af låse"→omstilling_laase, "Hus-/Grundejeransvar"→hus_grundejer_ansvar, "Udvidet vandskade"→udvidet_vandskade. ${ERHVERVS_MAPPING_REGEL}
+9. coverage_code skal matche én af de kanoniske koder ovenfor. Hvis en dækning ikke passer, brug den nærmeste — men tving ALDRIG en erhvervsdækning (løsøre, tyveri, cyber, transport, kriminalitet) ind i en bygningskode. Finder du færre end 5, gennemlæs dokumentet igen.
+10. ADRESSE-KONTEKST (KRITISK): property_address er forsikringsSTEDET for den enkelte police — den adresse policens dækning gælder for. Brug ALDRIG kundens generelle virksomheds-, kontakt-, cc- eller adressat-adresse fra oversigtens brevhoved som property_address. Kun adresser der i oversigten eksplicit er knyttet til den enkelte police som forsikringssted må bruges — ellers null. Forsikringstagerens egen adresse hører til i policyholder_address.
+11. MULTI-FORSIKRINGSTYPE-AFTALER (KRITISK — BIZZ-2125): Mange erhvervsaftaler (især Topdanmark/Tryg "Forsikringsaftale") har en "Aftaleoversigt"-/"Forsikringstype"-tabel der lister FLERE selvstændige forsikringstyper under ÉT fælles aftalenummer — fx "Ansvar", "Ejendom", "Bygning", "Løsøre", "Driftstab", "Cyber", "Netbank", "Kriminalitet". Hver enkelt forsikringstype i den tabel SKAL blive sin EGEN police-entry i policies[] — ALDRIG slået sammen til én, selvom de deler aftalenummer. Spring ALDRIG en forsikringstype fra aftaleoversigten over. For HVER forsikringstype: find dens tilhørende detalje-/dækningssektion længere nede i dokumentet (typisk en "Dækningsoversigt"/"Forsikringsoversigt"-blok pr. type) og ekstrahér netop DEN sektions dækninger til entry'ens coverages[]. En "Ejendom"-/"Bygning"-forsikringstype har sit eget forsikringssted (fx "Forsikringssted: Stjernegade 17") → sæt property_address til den adresse og medtag bygningsdækningerne (Brand, Storm, Rørskade, Glas, Jordskade, Huslejetab osv.). En "Ansvar"-/virksomhedsdækning uden forsikringssted får property_address=null. Resultat: en aftale med fx Ansvar + Ejendom giver PRÆCIS 2 entries med hver sine dækninger.
+12. CONDITIONS_REF: Hvis dokumentet nævner vilkårsnumre (fx "Vilkårsnr. DF20900-2, DF20904-2" for Topdanmark, eller "Betingelse 100.03, 230.02" for Alm. Brand), sæt conditions_ref på HVER police-entry til den relevante vilkårs-streng.
+13. TOPDANMARK DÆKNINGSFORMAT: Topdanmark-aftaler har typisk: (a) "Sådan er bygningen dækket" med Brand=Ja/Nej liste, og (b) "Dækningsoversigt" tabel med "Dækning / Højeste erstatning pr. år / Selvrisiko" beløb. BRUG BEGGE: Ja/Nej-listen fortæller HVAD der er dækket (is_covered), tabellen giver beløb (sum_dkk, deductible_dkk). OBS: Teksten kan have encoding-issues (ø→», å→}, æ→{) — ignorer det og parse indholdet alligevel.
 
 Returnér nu JSON for følgende forsikringsoversigt:`;
 
@@ -242,17 +318,22 @@ Returnér nu JSON for følgende forsikringsoversigt:`;
  * @returns OversightParseResult med array af policer
  */
 export async function parseOversigt(text: string, apiKey: string): Promise<OversightParseResult> {
-  const client = new Anthropic({ apiKey, timeout: 100_000 });
+  // BIZZ-2081: Streaming + 16k output-tokens — store oversigter (mange policer
+  // med coverages) genererer mere JSON end de tidligere 8k tokens, hvilket
+  // afkortede svaret midt i en streng og fik JSON.parse til at fejle.
+  const client = new Anthropic({ apiKey, timeout: 240_000 });
   const trimmedText = text.length > MAX_TEXT_CHARS ? text.slice(0, MAX_TEXT_CHARS) : text;
 
   let response: Anthropic.Message;
   try {
-    response = await client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 8000,
-      system: OVERSIGT_SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: trimmedText }],
-    });
+    response = await client.messages
+      .stream({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 16000,
+        system: OVERSIGT_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: trimmedText }],
+      })
+      .finalMessage();
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'unknown';
     logger.error('[forsikring/parser] Oversigt-parsing fejlede:', msg);
@@ -269,8 +350,19 @@ export async function parseOversigt(text: string, apiKey: string): Promise<Overs
   try {
     parsed = JSON.parse(cleaned);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'unknown';
-    return { ok: false, text, error: `Oversigt-output er ikke gyldig JSON: ${msg}` };
+    // BIZZ-2081: Salvage — hvis svaret blev afkortet ved max_tokens, red de
+    // komplette police-objekter i stedet for at fejle hele parsingen.
+    const salvaged =
+      response.stop_reason === 'max_tokens' ? salvageTruncatedOversigt(cleaned) : null;
+    if (salvaged) {
+      logger.warn(
+        `[forsikring/parser] Oversigt-JSON afkortet ved max_tokens — reddede ${salvaged.policies.length} komplette policer`
+      );
+      parsed = salvaged;
+    } else {
+      const msg = err instanceof Error ? err.message : 'unknown';
+      return { ok: false, text, error: `Oversigt-output er ikke gyldig JSON: ${msg}` };
+    }
   }
 
   const validation = ParsedOvesigtSchema.safeParse(parsed);
@@ -289,7 +381,7 @@ export async function parseOversigt(text: string, apiKey: string): Promise<Overs
  * System-prompt til Claude. Beskriver opgaven, forventet schema og
  * regler for hvordan parser skal håndtere uklarheder.
  */
-const SYSTEM_PROMPT = `Du er en specialiseret parser af danske bygnings-forsikringspolicer (Alm. Brand, Topdanmark, Tryg, Codan, Gjensidige, If, etc.).
+const SYSTEM_PROMPT = `Du er en specialiseret parser af danske forsikringspolicer (bygning, erhverv, ansvar, bil, løsøre) fra Alm. Brand, Topdanmark, Tryg, Codan, Gjensidige, If, etc.
 
 Din opgave er at uddrage strukturerede felter fra rå PDF-tekst og returnere ét gyldigt JSON-objekt der følger dette schema EKSAKT:
 
@@ -304,7 +396,7 @@ Din opgave er at uddrage strukturerede felter fra rå PDF-tekst og returnere ét
   "property_address": string | null,          // Forsikringsstedet
   "property_matrikel": string | null,         // Fx "498 A, Helsingør Bygrunde"
   "property_bfe": string | null,              // BFE-nummer hvis nævnt
-  "business_activity": string | null,         // Fx "Restaurant og café"
+  "business_activity": string | null,         // FORSIKRINGSTYPE fra policens titel: "Ejendomsforsikring", "Erhvervsforsikring", "Bilforsikring", "Ansvarsforsikring", "Bygningsforsikring". Brug ALTID policens egen betegnelse (fx "Police - Erhvervsforsikring" → "Erhvervsforsikring", "Police - Bilforsikring" → "Bilforsikring")
   "building_use": string | null,              // Fx "Hotel" eller "Værksted"
   "building_area_m2": number | null,          // Bebygget areal
   "building_floors": number | null,
@@ -320,7 +412,7 @@ Din opgave er at uddrage strukturerede felter fra rå PDF-tekst og returnere ét
   "policy_issued_date": string | null,        // YYYY-MM-DD (police-tegningsdato)
   "coverages": [
     {
-      "coverage_code": "brand_el" | "bygningskasko" | "udvidet_roerskade" | "glas" | "sanitet" | "insekt_svamp" | "restvaerdi" | "stikledning" | "jordskade" | "lovliggoerelse" | "huslejetab" | "haerverk" | "omstilling_laase" | "hus_grundejer_ansvar" | "forurening" | "driftstab" | "erhvervsansvar" | "udvidet_vandskade",
+      "coverage_code": ${COVERAGE_CODE_UNION},
       "coverage_label": string,               // Original tekst fra policen
       "is_covered": boolean,                  // false hvis explicit ekskluderet
       "sum_dkk": number | null,
@@ -329,6 +421,12 @@ Din opgave er at uddrage strukturerede felter fra rå PDF-tekst og returnere ét
       "notes": string | null
     }
   ],
+  "insured_companies": [                      // BIZZ-2120: Sikrede/medforsikrede virksomheder
+    {
+      "navn": string,                         // Fx "Racehall København A/S"
+      "cvr": string | null                    // 8 cifre hvis nævnt
+    }
+  ] | null,
   "notes": string | null                      // Særlige forhold, besigtigelses-bemærkninger, krav (max 5000 tegn)
 }
 
@@ -337,13 +435,18 @@ REGLER:
 2. Hvis et felt ikke kan findes i teksten, sæt det til null (ikke "ukendt" eller tom streng).
 3. Belob: udregn til hele DKK uden punktum eller komma (fx "33.998 kr" → 33998).
 4. Datoer: konverter "8. juli 2022" → "2022-07-08", "1. april" → brug indeværende eller næste år som passende.
-5. KRITISK — DÆKNINGER: Du SKAL scanne HELE dokumentet fra start til slut for dækninger. Søg specifikt efter sektioner med overskrifter som "Sådan er bygningen dækket", "Dækninger og dækningssummer", "Forsikringsdækninger", "Dækningsoversigt", "Bygningsforsikring dækker" — disse ligger typisk MIDT eller SIDST i dokumentet (side 4-8), IKKE i starten. Inkludér ALLE fundne dækninger — både aktive (is_covered:true) OG eksplicit ekskluderede (is_covered:false).
-6. MAPPING-EKSEMPLER: "Brand inkl. pludselig skade" → brand_el, "Storm og nedbør" → bygningskasko, "Udstrømning af vand / Rørskade" → udvidet_roerskade, "Glas" → glas, "Sanitet" → sanitet, "Svamp / Insekt" → insekt_svamp, "Restværdi" → restvaerdi, "Stikledning" → stikledning, "Jordskade / Grundejerskade" → jordskade, "Lovliggørelse" → lovliggoerelse, "Huslejetab" → huslejetab, "Hærværk" → haerverk, "Omstilling af låse" → omstilling_laase, "Husejer- / Grundejeransvar" → hus_grundejer_ansvar, "Forurening" → forurening, "Driftstab" → driftstab, "Erhvervsansvar" → erhvervsansvar, "Udvidet vandskade / Oversvømmelse" → udvidet_vandskade.
+5. KRITISK — DÆKNINGER: Du SKAL scanne HELE dokumentet fra start til slut for dækninger. Søg specifikt efter sektioner med overskrifter som "Sådan er bygningen dækket", "Dækninger og dækningssummer", "Forsikringsdækninger", "Dækningsoversigt", "Bygningsforsikring dækker", "Dækning * / Højeste erstatning / Selvrisiko" — disse ligger typisk MIDT eller SIDST i dokumentet. TOPDANMARK-FORMAT: Topdanmark policer har en tabel med kolonner "Dækning" + "Højeste erstatning pr. år" + "Selvrisiko" — HVER række er en dækning (Brand, Jordskade, Restværdi, Oprydning, El-skade, Storm og nedbør, etc.). Erstatningsbeløb → sum_dkk, Selvrisiko → deductible_dkk. Inkludér ALLE fundne dækninger — både aktive (is_covered:true) OG eksplicit ekskluderede (is_covered:false).
+5b. CONDITIONS_REF: Hvis policen nævner vilkårsnumre (fx "Vilkårsnr. DF20900-2, DF20904-2" for Topdanmark, eller "Betingelse 100.03, 230.02" for Alm. Brand), sæt conditions_ref på HVER coverage-row til det relevante vilkårsnummer. For Topdanmark-policer: sæt conditions_ref til den kommaseparerede liste af DF-numre (fx "DF20900-2, DF20904-2").
+6. MAPPING-EKSEMPLER: "Brand inkl. pludselig skade" → brand_el, "Storm og nedbør" → bygningskasko, "Udstrømning af vand / Rørskade" → udvidet_roerskade, "Glas" → glas, "Sanitet" → sanitet, "Svamp / Insekt" → insekt_svamp, "Restværdi" → restvaerdi, "Stikledning" → stikledning, "Jordskade / Grundejerskade" → jordskade, "Lovliggørelse" → lovliggoerelse, "Huslejetab" → huslejetab, "Hærværk" → haerverk, "Omstilling af låse" → omstilling_laase, "Husejer- / Grundejeransvar" → hus_grundejer_ansvar, "Forurening" → forurening, "Driftstab" → driftstab, "Erhvervsansvar" → erhvervsansvar, "Udvidet vandskade / Oversvømmelse" → udvidet_vandskade. ${ERHVERVS_MAPPING_REGEL}
 7. Hvis policen kun viser en dækning som tekst uden detaljer, sæt sum_dkk og deductible_dkk til null.
-8. coverage_code skal være ÉN af de 18 kanoniske koder ovenfor — map den danske beskrivelse til den nærmeste kode.
+8. coverage_code skal være ÉN af de kanoniske koder ovenfor — map den danske beskrivelse til den nærmeste kode, men tving ALDRIG en erhvervsdækning (løsøre, tyveri, cyber, transport, kriminalitet) ind i en bygningskode.
 9. Hvis policen er en oversigt/sammenfatning af flere policer, vælg den FØRSTE police og parse den.
 10. notes-feltet bruges til "Særlige forhold", besigtigelses-bemærkninger og forudsætninger (fx "Uautoriserede el-installationer", "Fedthåndslukker påkrævet").
+11. KRITISK — BUSINESS_ACTIVITY: Sæt business_activity til forsikringstypen fra policens TITEL. "Police - Erhvervsforsikring" → "Erhvervsforsikring", "Police - Bilforsikring" → "Bilforsikring", "Police - Bygningsforsikring" / ejendomsforsikring → "Ejendomsforsikring", "Police - Ansvarsforsikring" → "Ansvarsforsikring". Tving ALDRIG en erhvervs- eller bilforsikring til "Ejendomsforsikring".
+12. BILFORSIKRING: "Police - Bilforsikring" med bilmærke, registreringsnummer, Kasko, Ansvar, Førerulykke = bilforsikring. Dækninger mappes til: ansvar → erhvervsansvar, kasko → cyber (placeholder), førerulykke → notifikation (placeholder). business_activity SKAL være "Bilforsikring".
 11. En typisk dansk bygningsforsikrings-police har 8-15 dækninger. Hvis du finder færre end 5 coverages, gennemlæs dokumentet IGEN — du har sandsynligvis overset en dæknings-sektion.
+12. SIKREDE VIRKSOMHEDER (BIZZ-2120): Udfyld insured_companies med ALLE virksomheder policen eksplicit dækker/sikrer — søg efter "Sikrede", "Medforsikrede", "Forsikringen dækker [selskab1] og [selskab2]", "Sikrede virksomheder". Inkludér forsikringstager selv hvis nævnt som sikret. Nævner policen ingen sikrede-liste, sæt insured_companies til null (IKKE en tom liste, og gæt ALDRIG).
+13. ADRESSE-KONTEKST (KRITISK): Vurdér i hvilken kontekst hver adresse i dokumentet nævnes. property_address må KUN indeholde forsikringsSTEDET — den adresse en dækning gælder for (typisk markeret "Forsikringssted", "Forsikret ejendom", "Beliggenhed"). Adresser der kun optræder som forsikringstagers virksomhedsadresse, kontaktadresse, cc-/adressat-adresse, mægler-adresse eller i brevhoved/følgebrev må ALDRIG bruges som property_address — forsikringstagerens egen adresse hører til i policyholder_address. Findes intet eksplicit forsikringssted, sæt property_address til null.
 
 Returnér nu JSON for følgende police-tekst:`;
 
@@ -641,8 +744,12 @@ export async function parseWithTypeDetection(
       return parseOversigt(text, apiKey);
     }
     case 'police':
-    case 'tillaeg': {
-      // Parse som individuel police (tillæg parses som police — caller kan matche)
+    case 'tillaeg':
+    case 'praemie': {
+      // Parse som individuel police (tillæg parses som police — caller kan matche).
+      // BIZZ-2083: Præmieopkrævninger indeholder policenummer, forsikringstager,
+      // produkt, periode og præmie — nok til at policen kan indgå i gap-analysen.
+      // Manglende dækningsdetaljer parses som null.
       const trimmedText = text.length > MAX_TEXT_CHARS ? text.slice(0, MAX_TEXT_CHARS) : text;
       if (!apiKey) {
         return { ok: false, text, error: 'Anthropic API-key mangler' };
@@ -723,6 +830,18 @@ export async function parseWithTypeDetection(
         'forsikringen g{lder',
       ];
       const lowerText = text.toLowerCase();
+      // BIZZ-2083: Præmieopkrævninger er korte (ofte <1000 tegn) men indeholder
+      // policenummer + forsikringstager + præmie. Fang dem her hvis
+      // klassifikationen alligevel valgte korrespondance.
+      const erPraemieopkraevning =
+        (lowerText.includes('præmieopkrævning') || lowerText.includes('pr{mieopkr{vning')) &&
+        (lowerText.includes('policenummer') || lowerText.includes('policenr'));
+      if (erPraemieopkraevning) {
+        logger.log(
+          '[forsikring/parser] Korrespondance ligner præmieopkrævning → fallback til police-parsing'
+        );
+        return parsePolicyFile(fileBuffer, fileType, apiKey);
+      }
       const matchCount = policyKeywords.filter((kw) => lowerText.includes(kw)).length;
       if (matchCount >= 2 && text.length > 3000) {
         logger.log(

@@ -54,6 +54,10 @@ export interface TinglysningData {
   ejendomsnummer: string | null;
   /** Kommunenummer */
   kommuneNummer: string | null;
+  /** BIZZ-2170: Seneste tinglyste købspris i DKK (KontantKoebesum/IAltKoebesum) */
+  senesteKoebspris: number | null;
+  /** BIZZ-2170: Dato for seneste skøde-overtagelse (ISO) */
+  senesteKoebsdato: string | null;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -86,6 +90,21 @@ function parseEjdsummariskXml(xml: string): Partial<TinglysningData> {
       naevner: parseInt(naevnerMatch[1], 10),
     };
   }
+
+  // BIZZ-2170: Seneste købspris — KontantKoebesum foretrukket, ellers IAltKoebesum.
+  // Tusind-separatorer (punktum) fjernes før parsing.
+  const koebMatch =
+    xml.match(/KontantKoebesum[^>]*>([\d.,]+)/) ?? xml.match(/IAltKoebesum[^>]*>([\d.,]+)/);
+  if (koebMatch) {
+    const pris = parseInt(koebMatch[1].replace(/[.,]/g, ''), 10);
+    if (Number.isFinite(pris) && pris > 0) result.senesteKoebspris = pris;
+  }
+
+  // BIZZ-2170: Seneste købsdato — skøde-overtagelse foretrukket, ellers tinglysningsdato
+  const datoMatch =
+    xml.match(/SkoedeOvertagelsesDato[^>]*>(\d{4}-\d{2}-\d{2})/) ??
+    xml.match(/TinglysningsDato[^>]*>(\d{4}-\d{2}-\d{2})/);
+  if (datoMatch) result.senesteKoebsdato = datoMatch[1];
 
   return result;
 }
@@ -271,6 +290,8 @@ export async function GET(req: NextRequest) {
       vurderingsDato: (item.vurderingsDato as string) ?? null,
       ejendomsnummer: (item.ejendomsnummer as string) ?? null,
       kommuneNummer: (item.kommuneNummer as string) ?? null,
+      senesteKoebspris: extraData.senesteKoebspris ?? null,
+      senesteKoebsdato: extraData.senesteKoebsdato ?? null,
       ...(erTestFallback && { testFallback: true }),
     };
 

@@ -19,6 +19,7 @@ import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
+import { MAT_GQL_ENDPOINT } from '@/app/lib/serviceEndpoints';
 
 export const maxDuration = 300;
 
@@ -28,8 +29,11 @@ const MAX_PER_RUN = 500;
 /** Delay mellem Datafordeler kald */
 const FETCH_DELAY_MS = 200;
 
-/** Datafordeler MAT GraphQL endpoint */
-const MAT_GQL_URL = 'https://graphql.datafordeler.dk/MAT/v1';
+/**
+ * Datafordeler MAT GraphQL endpoint.
+ * BIZZ-2062: v1 er nedlagt (HTTP 404) — brug v2 via serviceEndpoints.
+ */
+const MAT_GQL_URL = MAT_GQL_ENDPOINT;
 
 /**
  * Verify CRON_SECRET bearer + x-vercel-cron in production.
@@ -61,11 +65,18 @@ async function fetchMatrikelForBfe(
   try {
     const now = new Date().toISOString();
 
-    // Query SamletFastEjendom
+    // Query SamletFastEjendom.
+    // BIZZ-2062: MAT/v2 understøtter ikke v1's direkte argumenter
+    // (BFEnummer:/status:/virkningFra:...) — brug where: + bitemporale
+    // virkningstid/registreringstid-parametre, og auth via ?apiKey= (v2
+    // afviser ?username= med 401).
     const ejendomQuery = `{
-      MAT_SamletFastEjendom(BFEnummer: "${bfe}", status: "Gældende",
-        virkningFra: "${now}", virkningTil: "${now}",
-        registreringFra: "${now}", registreringTil: "${now}") {
+      MAT_SamletFastEjendom(
+        first: 1
+        virkningstid: "${now}"
+        registreringstid: "${now}"
+        where: { BFEnummer: { eq: ${bfe} } }
+      ) {
         nodes {
           BFEnummer status erFaelleslod landbrugsnotering
           hovedejendomOpdeltIEjerlejligh arbejderbolig udskiltVej
@@ -73,13 +84,13 @@ async function fetchMatrikelForBfe(
       }
     }`;
 
-    const url = proxyUrl(MAT_GQL_URL);
+    const url = proxyUrl(`${MAT_GQL_URL}?apiKey=${apiKey}`);
     const headers = {
       ...proxyHeaders(),
       'Content-Type': 'application/json',
     };
 
-    const ejendomRes = await fetch(`${url}?username=${apiKey}`, {
+    const ejendomRes = await fetch(url, {
       method: 'POST',
       headers,
       body: JSON.stringify({ query: ejendomQuery }),
@@ -91,11 +102,14 @@ async function fetchMatrikelForBfe(
     const ejendomNodes = ejendomData?.data?.MAT_SamletFastEjendom?.nodes;
     if (!ejendomNodes?.length) return null;
 
-    // Query Jordstykker
+    // Query Jordstykker (v2 where:-stil, jf. ovenfor)
     const jordstykkeQuery = `{
-      MAT_Jordstykke(samletFastEjendomLokalId: "${bfe}", status: "Gældende",
-        virkningFra: "${now}", virkningTil: "${now}",
-        registreringFra: "${now}", registreringTil: "${now}") {
+      MAT_Jordstykke(
+        first: 100
+        virkningstid: "${now}"
+        registreringstid: "${now}"
+        where: { samletFastEjendomLokalId: { eq: "${bfe}" } }
+      ) {
         nodes {
           id_lokalId matrikelnummer registreretAreal arealtype
           vejareal faelleslod ejerlavLokalId
@@ -103,7 +117,7 @@ async function fetchMatrikelForBfe(
       }
     }`;
 
-    const jordRes = await fetch(`${url}?username=${apiKey}`, {
+    const jordRes = await fetch(url, {
       method: 'POST',
       headers,
       body: JSON.stringify({ query: jordstykkeQuery }),

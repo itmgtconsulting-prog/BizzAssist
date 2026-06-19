@@ -16,6 +16,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   sanitizeFilename,
+  storageSafeFilename,
   escapeFormula,
   generateXlsx,
   generateCsv,
@@ -54,6 +55,36 @@ describe('sanitizeFilename', () => {
   it('returns "file" for empty result', () => {
     expect(sanitizeFilename('')).toBe('file');
     expect(sanitizeFilename('\x00\x00')).toBe('file');
+  });
+});
+
+// BIZZ-2075: storage keys skal være ASCII — Supabase afviser æ/ø/å
+describe('storageSafeFilename', () => {
+  it('transliterates danish letters', () => {
+    expect(storageSafeFilename('Bramstræde 5.pdf')).toBe('Bramstraede 5.pdf');
+    expect(storageSafeFilename('Søndergade ÅRHUS Æble.pdf')).toBe('Soendergade AaRHUS Aeble.pdf');
+  });
+
+  it('decomposes other diacritics to ascii', () => {
+    expect(storageSafeFilename('café résumé.pdf')).toBe('cafe resume.pdf');
+  });
+
+  it('replaces remaining non-ascii with underscore', () => {
+    expect(storageSafeFilename('文件 ☂.pdf')).toBe('__ _.pdf');
+  });
+
+  it('keeps safe ascii untouched', () => {
+    expect(storageSafeFilename('Police (2025) v1.2-final.pdf')).toBe(
+      'Police (2025) v1.2-final.pdf'
+    );
+  });
+
+  it('strips path traversal like sanitizeFilename', () => {
+    expect(storageSafeFilename('../../hemmeligt.pdf')).not.toContain('..');
+  });
+
+  it('returns "file" for empty result', () => {
+    expect(storageSafeFilename('')).toBe('file');
   });
 });
 

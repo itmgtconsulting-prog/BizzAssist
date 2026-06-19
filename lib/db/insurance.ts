@@ -145,8 +145,16 @@ export interface InsuranceApi {
     get(id: string): Promise<ForsikringPolicy | null>;
     /** BIZZ-1395: Find eksisterende police by normaliseret policenummer (dedup) */
     findByNumber(policyNumber: string): Promise<ForsikringPolicy | null>;
+    /** BIZZ-2097: Find ALLE policer med samme normaliserede policenummer (multi-type aftaler) */
+    findAllByNumber(policyNumber: string): Promise<ForsikringPolicy[]>;
     /** Opret ny police */
     create(input: CreatePolicyInput): Promise<ForsikringPolicy>;
+    /**
+     * BIZZ-2144: Opdatér en eksisterende polices raw_metadata. Bruges ved
+     * re-parse, hvor policen dedup-genbruges men metadata (fx
+     * registreringsnummer fra bilpolicer) skal opdateres med nyeste parse.
+     */
+    updateRawMetadata(id: string, rawMetadata: Record<string, unknown>): Promise<void>;
     /** Slet en police (cascade-sletter coverages og gaps) */
     delete(id: string): Promise<void>;
   };
@@ -247,6 +255,16 @@ export async function getInsuranceApi(tenantId: string): Promise<InsuranceApi> {
         }
       },
       async delete(id) {
+        // BIZZ-2126: Cascade-slet dokumentets policer FØR selve dokumentet.
+        // FK'en er ON DELETE SET NULL, så uden dette efterlades policerne
+        // forældreløse (document_id=NULL) — de forgifter re-parse-dedup'en og
+        // er usynlige for analysen (som scoper på document_id). Coverages og
+        // gaps fjernes automatisk via deres egen ON DELETE CASCADE på policy_id.
+        await tenantDb(admin, schemaName)
+          .from('forsikring_policies')
+          .delete()
+          .eq('tenant_id', tenantId)
+          .eq('document_id', id);
         const { error } = await tenantDb(admin, schemaName)
           .from('forsikring_documents')
           .delete()
@@ -264,6 +282,12 @@ export async function getInsuranceApi(tenantId: string): Promise<InsuranceApi> {
           .map((d: { storage_path: string }) => d.storage_path)
           .filter(Boolean);
         if (ids.length > 0) {
+          // BIZZ-2126: Cascade-slet alle policer (de tilhører dokumenterne der
+          // slettes) før dokumenterne — ellers efterlades de forældreløse.
+          await tenantDb(admin, schemaName)
+            .from('forsikring_policies')
+            .delete()
+            .eq('tenant_id', tenantId);
           await tenantDb(admin, schemaName)
             .from('forsikring_documents')
             .delete()
@@ -297,6 +321,9 @@ export async function getInsuranceApi(tenantId: string): Promise<InsuranceApi> {
           .from('forsikring_policies')
           .select('*')
           .eq('tenant_id', tenantId)
+          // BIZZ-2126: Ignorér forældreløse policer (document_id=NULL fra slettede
+          // dokumenter) i dedup — ellers blokerer de gen-oprettelse ved re-parse.
+          .not('document_id', 'is', null)
           .or(
             `policy_number.eq.${normalized},policy_number.eq.0${normalized},policy_number.eq.00${normalized}`
           )
@@ -305,6 +332,32 @@ export async function getInsuranceApi(tenantId: string): Promise<InsuranceApi> {
           .maybeSingle();
         if (error) return null;
         return data as ForsikringPolicy | null;
+      },
+      /**
+       * BIZZ-2097: Find ALLE policer med samme normaliserede policenummer.
+       * Flere forsikringstyper kan dele aftalenummer (fx Topdanmark-aftaler med
+       * Cyber + Netbank + Driftstab) — dedup skal sammenligne mod dem alle,
+       * ikke kun den senest oprettede.
+       *
+       * @param policyNumber - Normaliseret policenummer (uden ledende nuller)
+       * @returns Alle eksisterende policer med det nummer (nyeste først)
+       */
+      async findAllByNumber(policyNumber: string) {
+        // Normalisér: fjern ledende nuller og mellemrum
+        const normalized = policyNumber.replace(/^0+/, '').replace(/\s+/g, '');
+        const { data, error } = await tenantDb(admin, schemaName)
+          .from('forsikring_policies')
+          .select('*')
+          .eq('tenant_id', tenantId)
+          // BIZZ-2126: Ignorér forældreløse policer (document_id=NULL fra slettede
+          // dokumenter) i dedup — ellers blokerer de gen-oprettelse ved re-parse.
+          .not('document_id', 'is', null)
+          .or(
+            `policy_number.eq.${normalized},policy_number.eq.0${normalized},policy_number.eq.00${normalized}`
+          )
+          .order('created_at', { ascending: false });
+        if (error) return [];
+        return (data ?? []) as ForsikringPolicy[];
       },
       async get(id) {
         const { data, error } = await tenantDb(admin, schemaName)
@@ -324,6 +377,14 @@ export async function getInsuranceApi(tenantId: string): Promise<InsuranceApi> {
           .single();
         if (error) throw new Error(`forsikring_policies.create: ${error.message}`);
         return data as ForsikringPolicy;
+      },
+      async updateRawMetadata(id, rawMetadata) {
+        const { error } = await tenantDb(admin, schemaName)
+          .from('forsikring_policies')
+          .update({ raw_metadata: rawMetadata })
+          .eq('id', id)
+          .eq('tenant_id', tenantId);
+        if (error) throw new Error(`forsikring_policies.updateRawMetadata: ${error.message}`);
       },
       async delete(id) {
         const { error } = await tenantDb(admin, schemaName)

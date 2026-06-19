@@ -91,8 +91,14 @@ const TABLE_DEFS = {
   },
   ejf_ejerskifte: {
     pk: 'id_lokal_id',
-    orderBy: 'id_lokal_id',
+    orderBy: 'bfe_nummer',
     columns: 'id_lokal_id, bfe_nummer, overdragelsesmaade, overtagelsesdato, handelsoplysninger_lokal_id, virkning_fra, virkning_til, status, registrering_fra, registrering_til, sidst_opdateret',
+    conflict: 'ON CONFLICT (id_lokal_id) DO NOTHING',
+  },
+  ejf_administrator: {
+    pk: 'id_lokal_id',
+    orderBy: 'id_lokal_id',
+    columns: 'id_lokal_id, bfe_nummer, administrator_type, virksomhed_cvr, person_navn, person_lokal_id, virkning_fra, virkning_til, status, sidst_opdateret',
     conflict: 'ON CONFLICT (id_lokal_id) DO NOTHING',
   },
   ejf_handelsoplysninger: {
@@ -171,16 +177,46 @@ async function syncTable(tableName) {
   }
 
   const cols = def.columns.split(',').map(c => c.trim());
-  let offset = 0;
+  const orderCols = def.orderBy.split(',').map(c => c.trim());
   let inserted = 0;
   let errors = 0;
+  let fetched = 0;
   const startTime = Date.now();
 
+  // Build cursor WHERE clause from last row
+  let cursorWhere = '';
+
   while (true) {
-    // Read batch from PROD
-    const rows = await runSql(`SELECT ${def.columns} FROM ${tableName} ORDER BY ${def.orderBy} OFFSET ${offset} LIMIT ${BATCH_SIZE}`, SOURCE_REF);
+    // Read batch from PROD using cursor-based pagination (no OFFSET)
+    let readSql;
+    if (cursorWhere) {
+      readSql = `SELECT ${def.columns} FROM ${tableName} WHERE ${cursorWhere} ORDER BY ${def.orderBy} LIMIT ${BATCH_SIZE}`;
+    } else {
+      readSql = `SELECT ${def.columns} FROM ${tableName} ORDER BY ${def.orderBy} LIMIT ${BATCH_SIZE}`;
+    }
+
+    const rows = await runSql(readSql, SOURCE_REF);
+
+    if (rows?.message) {
+      errors++;
+      if (errors <= 5) console.error(`  [READ ERR]: ${rows.message.substring(0, 100)}`);
+      await new Promise(r => setTimeout(r, 5000));
+      continue;
+    }
 
     if (!Array.isArray(rows) || rows.length === 0) break;
+
+    // Update cursor from last row
+    const lastRow = rows[rows.length - 1];
+    if (orderCols.length === 1) {
+      const col = orderCols[0];
+      const val = escVal(lastRow[col]);
+      cursorWhere = `${col} > ${val}`;
+    } else {
+      // Composite key — use row-value comparison
+      const vals = orderCols.map(c => escVal(lastRow[c]));
+      cursorWhere = `(${orderCols.join(', ')}) > (${vals.join(', ')})`;
+    }
 
     // Build INSERT
     const values = rows.map(row => {
@@ -193,21 +229,21 @@ async function syncTable(tableName) {
     const result = await runSql(insertSql, TARGET_REF);
     if (result?.message) {
       errors++;
-      if (errors <= 3) console.error(`  [ERR] offset=${offset}: ${result.message.substring(0, 150)}`);
+      if (errors <= 5) console.error(`  [INSERT ERR]: ${result.message.substring(0, 150)}`);
     } else {
       inserted += rows.length;
     }
 
-    offset += rows.length;
-    if (offset % (BATCH_SIZE * 5) === 0 || rows.length < BATCH_SIZE) {
+    fetched += rows.length;
+    if (fetched % (BATCH_SIZE * 5) === 0 || rows.length < BATCH_SIZE) {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
-      const rate = (offset / ((Date.now() - startTime) / 1000)).toFixed(0);
-      console.log(`  [${offset}/${sourceCount}] inserted=${inserted} errors=${errors} ${rate} rows/s (${elapsed}s)`);
+      const rate = (fetched / ((Date.now() - startTime) / 1000)).toFixed(0);
+      console.log(`  [${fetched}/${sourceCount}] inserted=${inserted} errors=${errors} ${rate} rows/s (${elapsed}s)`);
     }
 
     if (rows.length < BATCH_SIZE) break;
 
-    // Rate limit — 1 read + 1 write per iteration, keep under 10 req/s
+    // Rate limit
     await new Promise(r => setTimeout(r, 300));
   }
 

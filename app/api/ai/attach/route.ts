@@ -24,7 +24,7 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { checkRateLimit, aiRateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { sanitizeFilename } from '@/app/lib/aiFileGeneration';
+import { sanitizeFilename, storageSafeFilename } from '@/app/lib/aiFileGeneration';
 
 /** 20 MB cap on any single attachment — keeps extraction snappy and bounds
  * how much context can be shoved into a single chat turn. */
@@ -85,8 +85,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // tool-call (BIZZ-813 generate_document) kan fill template'et.
     // Best-effort: hvis upload/DB-insert fejler, loger vi men fortsætter
     // med status quo (kun tekst-injection) så chat-flow ikke blokeres.
+    // BIZZ-2075: storage path kræver ASCII-sikkert navn (æ/ø/å afvises af
+    // Supabase Storage) — file_name til visning bevarer sanitizeFilename.
     const safeName = sanitizeFilename(file.name);
-    const storagePath = `${auth.userId}/${randomUUID()}-${safeName}`;
+    const storagePath = `${auth.userId}/${randomUUID()}-${storageSafeFilename(file.name)}`;
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     let fileId: string | null = null;
     try {

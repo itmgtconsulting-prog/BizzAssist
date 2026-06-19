@@ -22,7 +22,14 @@ import {
   Ruler,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
+  ChevronDown,
+  ChevronsUpDown,
   MapPin,
+  Download,
+  Calendar,
+  Layers,
+  BedDouble,
 } from 'lucide-react';
 
 import ResizableDivider from '@/app/components/ResizableDivider';
@@ -32,9 +39,12 @@ const BoligprisChart = dynamic(() => import('./BoligprisChart'), { ssr: false })
 const KommuneKort = dynamic(() => import('./KommuneKort'), { ssr: false });
 
 /** Kort-panel bredde (default/min/max) */
-const MAP_DEFAULT_WIDTH = 420;
+const MAP_DEFAULT_WIDTH = 760;
 const MAP_MIN_WIDTH = 300;
-const MAP_MAX_WIDTH = 700;
+const MAP_MAX_WIDTH = 1000;
+
+/** Sorterbare kolonner i handler-tabellen */
+type HandlerSortKey = 'dato' | 'adresse' | 'boligtype' | 'areal' | 'pris' | 'm2_pris' | 'kommune';
 
 /* ---------- Typer ---------- */
 
@@ -82,13 +92,49 @@ interface ApiResponse {
 
 /* ---------- Boligtype-chips ---------- */
 
+/** Erhverv-chippens samlede kode-bundt (alle erhvervs-anvendelseskoder). */
+const ERHVERV_KODE = '210,220,230,290,310,320,323,330';
+
 const BOLIGTYPER = [
   { kode: '110,120', label: 'Enfamiliehus' },
   { kode: '130,131,132', label: 'Rækkehus' },
   { kode: '140', label: 'Etagebolig / Lejlighed' },
-  { kode: '210,220,230,290,310,320,323,330', label: 'Erhverv' },
+  { kode: ERHVERV_KODE, label: 'Erhverv' },
   { kode: '410,510,520,530,540,585,590', label: 'Fritidshus / Kolonihave' },
 ];
+
+/** Under-typer for Erhverv — lader brugeren indsnævre fx kun Detailhandel/Industri. */
+const ERHVERV_SUB = [
+  { kode: '210', label: 'Kontor' },
+  { kode: '220', label: 'Detailhandel' },
+  { kode: '230', label: 'Lager' },
+  { kode: '320', label: 'Industri' },
+  { kode: '310', label: 'Transport' },
+  { kode: '330', label: 'Landbrug' },
+  { kode: '290', label: 'Øvrig erhverv' },
+  { kode: '323', label: 'Kraftværk' },
+];
+
+/**
+ * Bygger den flade boligtype-kodeliste til API'et. Når Erhverv-chippen er valgt
+ * og der er valgt en eller flere erhvervs-undertyper, erstattes hele erhvervs-
+ * bundtet med kun de valgte undertyper — ellers bruges chippens fulde kodeliste.
+ *
+ * @param selectedTypes - Valgte boligtype-chips (komma-separerede kode-strenge)
+ * @param erhvervSub - Valgte erhvervs-undertyper (enkeltkoder)
+ * @returns Komma-separeret CSV af anvendelseskoder (tom streng hvis intet valgt)
+ */
+function buildBoligtyperParam(selectedTypes: Set<string>, erhvervSub: Set<string>): string {
+  const codes: string[] = [];
+  for (const t of selectedTypes) {
+    if (t === ERHVERV_KODE && erhvervSub.size > 0) {
+      codes.push(...Array.from(erhvervSub));
+    } else {
+      codes.push(...t.split(','));
+    }
+  }
+  return codes.join(',');
+}
 
 /* ---------- Tidsperioder ---------- */
 
@@ -125,13 +171,21 @@ function fmtDato(iso: string): string {
 export default function BoligprisClient(): React.ReactElement {
   /* --- State --- */
   const [selectedTypes, setSelectedTypes] = useState<Set<string>>(new Set());
+  const [selectedErhvervSub, setSelectedErhvervSub] = useState<Set<string>>(new Set());
   const [selectedKommuner, setSelectedKommuner] = useState<Set<number>>(new Set());
   const [periodeIdx, setPeriodeIdx] = useState(0);
+  const [customFra, setCustomFra] = useState('');
+  const [customTil, setCustomTil] = useState('');
   const [postnr, setPostnr] = useState('');
   const [arealMin, setArealMin] = useState('');
   const [arealMax, setArealMax] = useState('');
   const [byggearMin, setByggearMin] = useState('');
   const [byggearMax, setByggearMax] = useState('');
+  // BIZZ-2070: etager/værelser-filtre (data backfillet via BBR v2-pipeline)
+  const [etagerMin, setEtagerMin] = useState('');
+  const [etagerMax, setEtagerMax] = useState('');
+  const [vaerelserMin, setVaerelserMin] = useState('');
+  const [vaerelserMax, setVaerelserMax] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ApiResponse | null>(null);
@@ -139,16 +193,34 @@ export default function BoligprisClient(): React.ReactElement {
   const [handlerPageSize, setHandlerPageSize] = useState(50);
   const [mapWidth, setMapWidth] = useState(MAP_DEFAULT_WIDTH);
   const [kommuneNavne, setKommuneNavne] = useState<Record<number, string>>({});
+  const [sortKey, setSortKey] = useState<HandlerSortKey>('dato');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [exporting, setExporting] = useState(false);
 
-  /* --- Dato-beregning baseret på valgt periode --- */
+  /* --- Dato-beregning: brugerdefineret interval har forrang over preset --- */
+  const customActive = customFra !== '' && customTil !== '';
   const { fra, til } = useMemo(() => {
+    // Når brugeren har sat begge datoer, vinder det manuelle interval.
+    if (customFra && customTil) return { fra: customFra, til: customTil };
     const now = new Date();
     const tilStr = now.toISOString().slice(0, 10);
     const months = PERIODER[periodeIdx].months;
     if (months === 0) return { fra: '2000-01-01', til: tilStr };
     const fraDate = new Date(now.getFullYear(), now.getMonth() - months, 1);
     return { fra: fraDate.toISOString().slice(0, 10), til: tilStr };
-  }, [periodeIdx]);
+  }, [periodeIdx, customFra, customTil]);
+
+  /* --- Dynamiske side-størrelser til "Vis"-dropdownen ---
+     Standard-trin tilbydes kun når de er mindre end det totale antal handler,
+     og der tilføjes altid en "Alle (N)"-mulighed (capped til 20000, som er
+     route'ens hårde loft for handler-eksport). Dermed slipper brugeren for at
+     paginere gennem fx 745 Valby-handler manuelt. */
+  const pageSizeOptions = useMemo(() => {
+    const total = data?.handlerTotal ?? 0;
+    const alle = Math.min(total, 20000);
+    const opts = [10, 50, 100, 250, 500, 1000].filter((s) => s < alle);
+    return { opts, alle };
+  }, [data?.handlerTotal]);
 
   /* --- Fetch data --- */
   const fetchData = useCallback(
@@ -160,7 +232,7 @@ export default function BoligprisClient(): React.ReactElement {
         params.set('fra', fra);
         params.set('til', til);
         if (selectedTypes.size > 0) {
-          params.set('boligtyper', Array.from(selectedTypes).join(','));
+          params.set('boligtyper', buildBoligtyperParam(selectedTypes, selectedErhvervSub));
         }
         if (selectedKommuner.size > 0) {
           params.set('kommuner', Array.from(selectedKommuner).join(','));
@@ -172,6 +244,10 @@ export default function BoligprisClient(): React.ReactElement {
         if (arealMax) params.set('areal_max', arealMax);
         if (byggearMin) params.set('byggear_min', byggearMin);
         if (byggearMax) params.set('byggear_max', byggearMax);
+        if (etagerMin) params.set('etager_min', etagerMin);
+        if (etagerMax) params.set('etager_max', etagerMax);
+        if (vaerelserMin) params.set('vaerelser_min', vaerelserMin);
+        if (vaerelserMax) params.set('vaerelser_max', vaerelserMax);
         if (includeHandler) {
           params.set('handler', 'true');
           params.set('limit', String(limit));
@@ -192,7 +268,22 @@ export default function BoligprisClient(): React.ReactElement {
         setLoading(false);
       }
     },
-    [fra, til, selectedTypes, selectedKommuner, postnr, arealMin, arealMax, byggearMin, byggearMax]
+    [
+      fra,
+      til,
+      selectedTypes,
+      selectedErhvervSub,
+      selectedKommuner,
+      postnr,
+      arealMin,
+      arealMax,
+      byggearMin,
+      byggearMax,
+      etagerMin,
+      etagerMax,
+      vaerelserMin,
+      vaerelserMax,
+    ]
   );
 
   /* Auto-fetch ved filter-ændring (debounced for postnr-input) */
@@ -207,6 +298,31 @@ export default function BoligprisClient(): React.ReactElement {
     return () => clearTimeout(timer);
   }, [fetchData, handlerPageSize, postnr]);
 
+  /* Kommune-navne hentes direkte fra GeoJSON ved mount — UAFHÆNGIGT af om
+     WebGL-kortet rendrer. Tidligere kom navnene kun via KommuneKort's
+     onNamesLoaded (map.on('load')), så hvis kortet ikke kunne tegnes (fx WebGL
+     deaktiveret i browseren) faldt "Top kommuner" tilbage til at vise rå
+     kommune-koder i stedet for navne. */
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/geo/kommuner.geojson')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((geojson) => {
+        if (cancelled || !geojson?.features) return;
+        const navne: Record<number, string> = {};
+        for (const f of geojson.features) {
+          navne[Number(f.properties.kode)] = f.properties.navn;
+        }
+        setKommuneNavne(navne);
+      })
+      .catch(() => {
+        /* Stille fallback — tabellen viser koder hvis GeoJSON ikke kan hentes. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   /* --- Toggle kommune (fra kort) --- */
   const toggleKommune = useCallback((kode: number) => {
     setSelectedKommuner((prev) => {
@@ -220,6 +336,18 @@ export default function BoligprisClient(): React.ReactElement {
   /* --- Toggle boligtype chip --- */
   const toggleType = useCallback((kode: string) => {
     setSelectedTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(kode)) next.delete(kode);
+      else next.add(kode);
+      return next;
+    });
+    // Erhverv-chippen nulstiller sit under-filter når den slås til/fra.
+    if (kode === ERHVERV_KODE) setSelectedErhvervSub(new Set());
+  }, []);
+
+  /* --- Toggle erhvervs-undertype --- */
+  const toggleErhvervSub = useCallback((kode: string) => {
+    setSelectedErhvervSub((prev) => {
       const next = new Set(prev);
       if (next.has(kode)) next.delete(kode);
       else next.add(kode);
@@ -241,6 +369,135 @@ export default function BoligprisClient(): React.ReactElement {
   // gav 0 resultater for mange kombinationer og skabte mere forvirring.
   const filteredHandler = data?.handler;
 
+  /* --- Sortering af handler-tabel (default dato faldende; klikbare overskrifter) --- */
+  const sortedHandler = useMemo(() => {
+    if (!filteredHandler) return filteredHandler;
+    const dir = sortDir === 'asc' ? 1 : -1;
+    // Numeriske kolonner sammenlignes som tal, øvrige som streng/dato
+    const numeric: Set<HandlerSortKey> = new Set(['areal', 'pris', 'm2_pris']);
+    return [...filteredHandler].sort((a, b) => {
+      if (sortKey === 'dato') {
+        return (
+          ((a.dato ?? '') < (b.dato ?? '') ? -1 : (a.dato ?? '') > (b.dato ?? '') ? 1 : 0) * dir
+        );
+      }
+      if (numeric.has(sortKey)) {
+        const av = Number(a[sortKey]) || 0;
+        const bv = Number(b[sortKey]) || 0;
+        return (av - bv) * dir;
+      }
+      const av = String(a[sortKey] ?? '');
+      const bv = String(b[sortKey] ?? '');
+      return av.localeCompare(bv, 'da-DK') * dir;
+    });
+  }, [filteredHandler, sortKey, sortDir]);
+
+  /* --- Skift sortering: samme kolonne vender retning, ny kolonne nulstiller --- */
+  const toggleSort = useCallback((key: HandlerSortKey) => {
+    setSortKey((prevKey) => {
+      if (prevKey === key) {
+        // Samme kolonne: vend retning
+        setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+        return prevKey;
+      }
+      // Ny kolonne: dato/tal starter faldende, tekst stigende
+      setSortDir(
+        key === 'dato' || key === 'areal' || key === 'pris' || key === 'm2_pris' ? 'desc' : 'asc'
+      );
+      return key;
+    });
+  }, []);
+
+  /* --- Excel-eksport (CSV med semikolon + UTF-8 BOM) --- */
+  const handleExport = useCallback(async () => {
+    setExporting(true);
+    try {
+      // Hent ALLE matchende rækker (op til 20000) så eksporterede linjer matcher
+      // de aktive filtre — ingen række-markering, hele resultatet eksporteres.
+      const params = new URLSearchParams();
+      params.set('fra', fra);
+      params.set('til', til);
+      if (selectedTypes.size > 0)
+        params.set('boligtyper', buildBoligtyperParam(selectedTypes, selectedErhvervSub));
+      if (selectedKommuner.size > 0) params.set('kommuner', Array.from(selectedKommuner).join(','));
+      if (postnr.trim()) params.set('postnumre', postnr.trim());
+      if (arealMin) params.set('areal_min', arealMin);
+      if (arealMax) params.set('areal_max', arealMax);
+      if (byggearMin) params.set('byggear_min', byggearMin);
+      if (byggearMax) params.set('byggear_max', byggearMax);
+      if (etagerMin) params.set('etager_min', etagerMin);
+      if (etagerMax) params.set('etager_max', etagerMax);
+      if (vaerelserMin) params.set('vaerelser_min', vaerelserMin);
+      if (vaerelserMax) params.set('vaerelser_max', vaerelserMax);
+      params.set('handler', 'true');
+      params.set('export', 'true');
+      const res = await fetch(`/api/analyse/boligpris?${params.toString()}`);
+      if (!res.ok) throw new Error('Eksport fejlede');
+      const json: ApiResponse = await res.json();
+      const rows: HandelRow[] = json.handler ?? [];
+
+      // Byg CSV — semikolon-separeret, UTF-8 BOM (Excel-kompatibel dansk)
+      const esc = (v: string | number | null): string => {
+        const s = v === null || v === undefined ? '' : String(v);
+        return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const header = [
+        'Dato',
+        'Adresse',
+        'Type',
+        'Areal (m²)',
+        'Pris (kr)',
+        'm²-pris (kr)',
+        'Kommune',
+        'BFE',
+      ];
+      const lines = [header.join(';')];
+      for (const h of rows) {
+        lines.push(
+          [
+            esc(h.dato ?? ''),
+            esc(h.adresse ?? ''),
+            esc(h.boligtype ?? ''),
+            esc(h.areal ?? ''),
+            esc(h.pris ?? ''),
+            esc(h.m2_pris ?? ''),
+            esc(h.kommune ?? ''),
+            esc(h.bfe_nummer ?? ''),
+          ].join(';')
+        );
+      }
+      const csv = '\uFEFF' + lines.join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `boligpris-handler-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Eksport fejlede');
+    } finally {
+      setExporting(false);
+    }
+  }, [
+    fra,
+    til,
+    selectedTypes,
+    selectedErhvervSub,
+    selectedKommuner,
+    postnr,
+    arealMin,
+    arealMax,
+    byggearMin,
+    byggearMax,
+    etagerMin,
+    etagerMax,
+    vaerelserMin,
+    vaerelserMax,
+  ]);
+
   return (
     <div className="flex-1 bg-[#0a1628] min-h-screen">
       {/* Header */}
@@ -257,7 +514,7 @@ export default function BoligprisClient(): React.ReactElement {
       {/* Split layout: venstre data + højre kort */}
       <div className="flex items-stretch" style={{ height: 'calc(100vh - 140px)' }}>
         {/* VENSTRE: Data-panel */}
-        <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-6 space-y-6">
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-32 space-y-6">
           {/* Filtre: boligtype chips + periode */}
           <div className="flex flex-wrap items-center gap-3">
             {/* Boligtype chips */}
@@ -286,9 +543,14 @@ export default function BoligprisClient(): React.ReactElement {
               {PERIODER.map((p, idx) => (
                 <button
                   key={p.label}
-                  onClick={() => setPeriodeIdx(idx)}
+                  onClick={() => {
+                    setPeriodeIdx(idx);
+                    // Preset rydder et evt. brugerdefineret interval.
+                    setCustomFra('');
+                    setCustomTil('');
+                  }}
                   className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                    periodeIdx === idx
+                    periodeIdx === idx && !customActive
                       ? 'bg-blue-500/20 text-blue-300 ring-1 ring-blue-500/40'
                       : 'bg-slate-800/60 text-slate-300 hover:bg-slate-700/60'
                   }`}
@@ -296,6 +558,44 @@ export default function BoligprisClient(): React.ReactElement {
                   {p.label}
                 </button>
               ))}
+            </div>
+
+            {/* Brugerdefineret dato-interval — vinder over preset når begge er sat */}
+            <div
+              className={`flex items-center gap-1.5 text-xs rounded-lg px-2 py-1 transition-colors ${
+                customActive ? 'ring-1 ring-blue-500/40 bg-blue-500/10' : ''
+              }`}
+            >
+              <Calendar className="w-3.5 h-3.5 text-slate-400" />
+              <input
+                type="date"
+                value={customFra}
+                max={customTil || undefined}
+                onChange={(e) => setCustomFra(e.target.value)}
+                className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-2 py-1.5 text-sm text-slate-200 [color-scheme:dark] w-36"
+                aria-label="Fra-dato (brugerdefineret interval)"
+              />
+              <span className="text-slate-400">–</span>
+              <input
+                type="date"
+                value={customTil}
+                min={customFra || undefined}
+                onChange={(e) => setCustomTil(e.target.value)}
+                className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-2 py-1.5 text-sm text-slate-200 [color-scheme:dark] w-36"
+                aria-label="Til-dato (brugerdefineret interval)"
+              />
+              {customActive && (
+                <button
+                  onClick={() => {
+                    setCustomFra('');
+                    setCustomTil('');
+                  }}
+                  className="text-slate-400 hover:text-slate-200 transition-colors px-1"
+                  aria-label="Ryd brugerdefineret dato-interval"
+                >
+                  ✕
+                </button>
+              )}
             </div>
 
             {/* Separator */}
@@ -373,7 +673,79 @@ export default function BoligprisClient(): React.ReactElement {
                 aria-label="Maksimum byggeår"
               />
             </div>
+            {/* BIZZ-2070: etager + værelser filtre */}
+            <div className="flex items-center gap-1.5 text-xs">
+              <Layers className="w-3.5 h-3.5 text-slate-400" />
+              <input
+                type="number"
+                value={etagerMin}
+                onChange={(e) => setEtagerMin(e.target.value)}
+                placeholder="Etager min"
+                className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-2 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 w-24"
+                aria-label="Minimum antal etager"
+              />
+              <span className="text-slate-500">–</span>
+              <input
+                type="number"
+                value={etagerMax}
+                onChange={(e) => setEtagerMax(e.target.value)}
+                placeholder="Etager max"
+                className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-2 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 w-24"
+                aria-label="Maksimum antal etager"
+              />
+            </div>
+            <div className="flex items-center gap-1.5 text-xs">
+              <BedDouble className="w-3.5 h-3.5 text-slate-400" />
+              <input
+                type="number"
+                value={vaerelserMin}
+                onChange={(e) => setVaerelserMin(e.target.value)}
+                placeholder="Værelser min"
+                className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-2 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 w-28"
+                aria-label="Minimum antal værelser"
+              />
+              <span className="text-slate-500">–</span>
+              <input
+                type="number"
+                value={vaerelserMax}
+                onChange={(e) => setVaerelserMax(e.target.value)}
+                placeholder="Værelser max"
+                className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-2 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 w-28"
+                aria-label="Maksimum antal værelser"
+              />
+            </div>
           </div>
+
+          {/* Erhverv-underfilter — vises kun når Erhverv-chippen er valgt.
+              Lader brugeren indsnævre til fx kun Detailhandel eller Industri. */}
+          {selectedTypes.has(ERHVERV_KODE) && (
+            <div className="flex flex-wrap items-center gap-2 -mt-2">
+              <span className="text-xs font-medium text-slate-400">Erhverv:</span>
+              {ERHVERV_SUB.map((s) => (
+                <button
+                  key={s.kode}
+                  onClick={() => toggleErhvervSub(s.kode)}
+                  aria-pressed={selectedErhvervSub.has(s.kode)}
+                  className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                    selectedErhvervSub.has(s.kode)
+                      ? 'bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/40'
+                      : 'bg-slate-800/60 text-slate-300 hover:bg-slate-700/60'
+                  }`}
+                >
+                  {s.label}
+                </button>
+              ))}
+              {selectedErhvervSub.size > 0 && (
+                <button
+                  onClick={() => setSelectedErhvervSub(new Set())}
+                  className="text-xs text-slate-400 hover:text-slate-200 transition-colors px-1"
+                  aria-label="Ryd erhvervs-underfilter"
+                >
+                  Ryd
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Loading / Error */}
           {loading && !data && (
@@ -383,15 +755,33 @@ export default function BoligprisClient(): React.ReactElement {
             </div>
           )}
 
+          {/* Opdaterings-indikator ved filter-ændring (synlig i venstre datapanel,
+              ikke skjult bag kortet) — viser tydeligt at dashboardet "tænker". */}
+          {loading && data && (
+            <div
+              className="flex items-center gap-2.5 rounded-lg bg-blue-500/10 border border-blue-500/30 px-4 py-2.5"
+              role="status"
+              aria-live="polite"
+            >
+              <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+              <span className="text-sm font-medium text-blue-200">Opdaterer resultater…</span>
+            </div>
+          )}
+
           {error && (
             <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 text-red-300">
               {error}
             </div>
           )}
 
-          {/* Resultater */}
+          {/* Resultater — dæmpes mens nye data hentes, så det er tydeligt at
+              de viste tal er ved at blive opdateret. */}
           {data && (
-            <>
+            <div
+              className={`space-y-6 transition-opacity duration-200 ${
+                loading ? 'opacity-50' : 'opacity-100'
+              }`}
+            >
               {/* KPI Cards */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <KpiCard
@@ -493,16 +883,33 @@ export default function BoligprisClient(): React.ReactElement {
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-3">
                       <h2 className="text-lg font-semibold text-white">Seneste handler</h2>
-                      {filteredHandler && (
+                      {data.handlerTotal !== undefined && (
                         <span className="text-xs text-slate-400 bg-slate-700/40 px-2 py-0.5 rounded-full">
-                          {filteredHandler.length.toLocaleString('da-DK')} i alt
+                          {data.handlerTotal.toLocaleString('da-DK')} i alt
                         </span>
                       )}
                     </div>
                     <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleExport}
+                        disabled={exporting || !data.handlerTotal}
+                        className="flex items-center gap-1.5 bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40 text-sm font-medium rounded-lg px-3 py-1 hover:bg-emerald-500/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        aria-label="Eksportér handler til Excel"
+                      >
+                        {exporting ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Download className="w-4 h-4" />
+                        )}
+                        Eksportér alle til Excel
+                      </button>
                       <span className="text-sm text-slate-400">Vis:</span>
                       <select
-                        value={handlerPageSize}
+                        value={
+                          pageSizeOptions.alle > 0 && handlerPageSize > pageSizeOptions.alle
+                            ? pageSizeOptions.alle
+                            : handlerPageSize
+                        }
                         onChange={(e) => {
                           setHandlerPageSize(Number(e.target.value));
                           setHandlerPage(0);
@@ -510,9 +917,16 @@ export default function BoligprisClient(): React.ReactElement {
                         className="bg-slate-700/60 text-slate-200 text-sm rounded-lg px-2 py-1 border border-slate-600/50"
                         aria-label="Antal handler per side"
                       >
-                        <option value={10}>10</option>
-                        <option value={50}>50</option>
-                        <option value={100}>100</option>
+                        {pageSizeOptions.opts.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                        {pageSizeOptions.alle > 0 && (
+                          <option value={pageSizeOptions.alle}>
+                            Alle ({pageSizeOptions.alle.toLocaleString('da-DK')})
+                          </option>
+                        )}
                       </select>
                     </div>
                   </div>
@@ -521,49 +935,107 @@ export default function BoligprisClient(): React.ReactElement {
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="text-slate-400 border-b border-slate-700/50">
-                          <th className="text-left py-2 pr-4">Dato</th>
-                          <th className="text-left py-2 px-4">Adresse</th>
-                          <th className="text-left py-2 px-4">Type</th>
-                          <th className="text-right py-2 px-4">Areal</th>
-                          <th className="text-right py-2 px-4">Pris</th>
-                          <th className="text-right py-2 px-4">m²-pris</th>
-                          <th className="text-left py-2 pl-4">Kommune</th>
+                          <SortHeader
+                            label="Dato"
+                            sortKey="dato"
+                            align="left"
+                            className="pr-4"
+                            activeKey={sortKey}
+                            dir={sortDir}
+                            onSort={toggleSort}
+                          />
+                          <SortHeader
+                            label="Adresse"
+                            sortKey="adresse"
+                            align="left"
+                            className="px-4"
+                            activeKey={sortKey}
+                            dir={sortDir}
+                            onSort={toggleSort}
+                          />
+                          <SortHeader
+                            label="Type"
+                            sortKey="boligtype"
+                            align="left"
+                            className="px-4"
+                            activeKey={sortKey}
+                            dir={sortDir}
+                            onSort={toggleSort}
+                          />
+                          <SortHeader
+                            label="Areal"
+                            sortKey="areal"
+                            align="right"
+                            className="px-4"
+                            activeKey={sortKey}
+                            dir={sortDir}
+                            onSort={toggleSort}
+                          />
+                          <SortHeader
+                            label="Pris"
+                            sortKey="pris"
+                            align="right"
+                            className="px-4"
+                            activeKey={sortKey}
+                            dir={sortDir}
+                            onSort={toggleSort}
+                          />
+                          <SortHeader
+                            label="m²-pris"
+                            sortKey="m2_pris"
+                            align="right"
+                            className="px-4"
+                            activeKey={sortKey}
+                            dir={sortDir}
+                            onSort={toggleSort}
+                          />
+                          <SortHeader
+                            label="Kommune"
+                            sortKey="kommune"
+                            align="left"
+                            className="pl-4"
+                            activeKey={sortKey}
+                            dir={sortDir}
+                            onSort={toggleSort}
+                          />
                         </tr>
                       </thead>
                       <tbody>
-                        {(filteredHandler ?? []).map((h, idx) => (
-                          <tr
-                            key={`${h.bfe_nummer}-${idx}`}
-                            className="border-b border-slate-700/20 hover:bg-slate-700/20 cursor-pointer"
-                            onClick={() =>
-                              window.open(`/dashboard/ejendomme/${h.bfe_nummer}`, '_blank')
-                            }
-                            role="link"
-                            tabIndex={0}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter')
-                                window.open(`/dashboard/ejendomme/${h.bfe_nummer}`, '_blank');
-                            }}
-                          >
-                            <td className="py-2 pr-4 text-slate-300 whitespace-nowrap">
-                              {h.dato ? fmtDato(h.dato) : '–'}
-                            </td>
-                            <td className="py-2 px-4 text-slate-200 max-w-[250px] truncate">
-                              {h.adresse ?? '–'}
-                            </td>
-                            <td className="py-2 px-4 text-slate-300">{h.boligtype ?? '–'}</td>
-                            <td className="py-2 px-4 text-right text-slate-300">
-                              {h.areal ? `${h.areal} m²` : '–'}
-                            </td>
-                            <td className="py-2 px-4 text-right text-slate-200 font-medium">
-                              {fmtDkk(h.pris)} kr.
-                            </td>
-                            <td className="py-2 px-4 text-right text-slate-300">
-                              {h.m2_pris ? `${h.m2_pris.toLocaleString('da-DK')} kr/m²` : '–'}
-                            </td>
-                            <td className="py-2 pl-4 text-slate-300">{h.kommune ?? '–'}</td>
-                          </tr>
-                        ))}
+                        {(sortedHandler ?? []).map((h, idx) => {
+                          return (
+                            <tr
+                              key={`${h.bfe_nummer}-${idx}`}
+                              className="border-b border-slate-700/20 hover:bg-slate-700/20 cursor-pointer"
+                              onClick={() =>
+                                window.open(`/dashboard/ejendomme/${h.bfe_nummer}`, '_blank')
+                              }
+                              role="link"
+                              tabIndex={0}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter')
+                                  window.open(`/dashboard/ejendomme/${h.bfe_nummer}`, '_blank');
+                              }}
+                            >
+                              <td className="py-2 pr-4 text-slate-300 whitespace-nowrap">
+                                {h.dato ? fmtDato(h.dato) : '–'}
+                              </td>
+                              <td className="py-2 px-4 text-slate-200 max-w-[250px] truncate">
+                                {h.adresse ?? '–'}
+                              </td>
+                              <td className="py-2 px-4 text-slate-300">{h.boligtype ?? '–'}</td>
+                              <td className="py-2 px-4 text-right text-slate-300">
+                                {h.areal ? `${h.areal} m²` : '–'}
+                              </td>
+                              <td className="py-2 px-4 text-right text-slate-200 font-medium">
+                                {fmtDkk(h.pris)} kr.
+                              </td>
+                              <td className="py-2 px-4 text-right text-slate-300">
+                                {h.m2_pris ? `${h.m2_pris.toLocaleString('da-DK')} kr/m²` : '–'}
+                              </td>
+                              <td className="py-2 pl-4 text-slate-300">{h.kommune ?? '–'}</td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -598,15 +1070,7 @@ export default function BoligprisClient(): React.ReactElement {
                   )}
                 </div>
               )}
-
-              {/* Loading overlay ved filter-ændring */}
-              {loading && (
-                <div className="fixed bottom-6 right-6 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 flex items-center gap-2 shadow-xl">
-                  <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
-                  <span className="text-sm text-slate-300">Opdaterer…</span>
-                </div>
-              )}
-            </>
+            </div>
           )}
         </div>
 
@@ -673,5 +1137,63 @@ function KpiCard({ icon, label, value, color }: KpiCardProps) {
         <p className="text-white text-lg font-semibold mt-0.5">{value}</p>
       </div>
     </div>
+  );
+}
+
+/* ---------- Sorterbar kolonne-overskrift ---------- */
+
+/** Props for SortHeader. */
+interface SortHeaderProps {
+  label: string;
+  sortKey: HandlerSortKey;
+  align: 'left' | 'right';
+  className?: string;
+  activeKey: HandlerSortKey;
+  dir: 'asc' | 'desc';
+  onSort: (key: HandlerSortKey) => void;
+}
+
+/**
+ * Klikbar tabel-overskrift der sorterer handler-tabellen på den angivne kolonne.
+ * Viser pil-ikon for aktiv sortering og dobbeltpil for inaktive kolonner.
+ *
+ * @param props - Label, sorteringsnøgle, justering og aktuel sorteringstilstand
+ * @returns th-element med sorteringsknap
+ */
+function SortHeader({ label, sortKey, align, className, activeKey, dir, onSort }: SortHeaderProps) {
+  const active = activeKey === sortKey;
+  const justify = align === 'right' ? 'justify-end' : 'justify-start';
+  const textAlign = align === 'right' ? 'text-right' : 'text-left';
+  return (
+    <th
+      className={`${textAlign} py-2 ${className ?? ''}`}
+      aria-sort={active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className={`flex items-center gap-1 ${justify} w-full font-medium transition-colors hover:text-slate-200 ${active ? 'text-slate-200' : 'text-slate-400'}`}
+        aria-label={`Sortér efter ${label}`}
+      >
+        {align === 'right' && <SortIcon active={active} dir={dir} />}
+        {label}
+        {align === 'left' && <SortIcon active={active} dir={dir} />}
+      </button>
+    </th>
+  );
+}
+
+/**
+ * Sorterings-indikator: aktiv kolonne viser op/ned-pil, inaktiv viser dobbeltpil.
+ *
+ * @param props - Om kolonnen er aktiv og sorteringsretning
+ * @returns Lucide-ikon
+ */
+function SortIcon({ active, dir }: { active: boolean; dir: 'asc' | 'desc' }) {
+  if (!active) return <ChevronsUpDown className="w-3.5 h-3.5 opacity-50" />;
+  return dir === 'asc' ? (
+    <ChevronUp className="w-3.5 h-3.5" />
+  ) : (
+    <ChevronDown className="w-3.5 h-3.5" />
   );
 }

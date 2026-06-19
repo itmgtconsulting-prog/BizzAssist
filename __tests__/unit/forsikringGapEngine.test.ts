@@ -17,8 +17,12 @@ import {
   computeRiskScore,
   riskLabel,
   runPortfolioChecks,
+  runDaekningsgradChecks,
+  runVaerdiChecks,
+  highestBuildingCoverageSum,
+  isBuildingValueCoverage,
 } from '@/app/lib/forsikring/gapEngine';
-import type { PortfolioCheckInput } from '@/app/lib/forsikring/gapEngine';
+import type { PortfolioCheckInput, RegnskabsTalLite } from '@/app/lib/forsikring/gapEngine';
 import { gapScope, shouldFoldOwnerIntoCompany } from '@/app/lib/forsikring/types';
 import type {
   BbrPropertyFacts,
@@ -789,6 +793,46 @@ describe('runPortfolioChecks — GAP-063: Cyber-forsikring', () => {
     );
     expect(gaps.find((g) => g.check_id === 'GAP-063')).toBeUndefined();
   });
+
+  // BIZZ-2098: cyber-dækning gemt som kanonisk coverage-kode (cyber/
+  // cyberdriftstab/netbank) skal undertrykke GAP-063 — ikke kun policy-tekst.
+  it('flagger ikke når en police har cyber som coverage-kode', () => {
+    const pol = makePolicy();
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    coveragesByPolicy.set(pol.id, [makeCoverage('cyber')]);
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [pol],
+        coveragesByPolicy,
+        aktiver: [{ type: 'ejendom', label: 'BFE 1', bfe: 1 }],
+        branche: {
+          hovedbranche: '681020',
+          hovedbranche_tekst: 'Udlejning af erhvervsejendomme',
+          bibrancher: [],
+        },
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-063')).toBeUndefined();
+  });
+
+  it('flagger ikke når en police har netbank som coverage-kode', () => {
+    const pol = makePolicy();
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    coveragesByPolicy.set(pol.id, [makeCoverage('netbank')]);
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [pol],
+        coveragesByPolicy,
+        aktiver: [],
+        branche: {
+          hovedbranche: '681020',
+          hovedbranche_tekst: 'Udlejning af erhvervsejendomme',
+          bibrancher: [],
+        },
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-063')).toBeUndefined();
+  });
 });
 
 describe('runPortfolioChecks — GAP-064: Retshjælp', () => {
@@ -1079,6 +1123,84 @@ describe('runPortfolioChecks — GAP-067: Branchekrav-aggregat', () => {
     expect(manglende).not.toContain('huslejetab');
     expect(manglende).not.toContain('driftstab');
   });
+
+  // BIZZ-2122: Engroshandel (NACE 46) kræver vareforsikring ('transport'),
+  // IKKE 'transportansvar' (fragtførerens ansvar, NACE 49-53). Før fixet kunne
+  // kravet aldrig opfyldes af en transport-dækning → permanent rød finding.
+  it('BIZZ-2122: engroshandel med transport-coverage opfylder branchekravet', () => {
+    const pol = makePolicy({ business_activity: 'Engroshandel med telekommunikationsudstyr' });
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    coveragesByPolicy.set(pol.id, [
+      makeCoverage('erhvervsansvar'),
+      makeCoverage('brand_el'),
+      makeCoverage('transport'),
+      makeCoverage('driftstab'),
+    ]);
+
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [pol],
+        coveragesByPolicy,
+        branche: {
+          hovedbranche: '465220',
+          hovedbranche_tekst: 'Engroshandel med telekommunikationsudstyr',
+          bibrancher: [],
+        },
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-067')).toBeUndefined();
+  });
+
+  it('BIZZ-2122: transport-krav opfyldes via policy-tekst (DBRAMANTE-casen)', () => {
+    // Transport-delpolicens coverages er fejlkodet erhvervsansvar (BIZZ-2121),
+    // men business_activity "Transport" skal stadig opfylde kravet via
+    // tekst-fallback'en i isKravCovered.
+    const transportPol = makePolicy({ business_activity: 'Transport' });
+    const loesoerePol = makePolicy({ business_activity: 'Erhvervsløsøre - Indland' });
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    coveragesByPolicy.set(transportPol.id, [makeCoverage('erhvervsansvar')]);
+    coveragesByPolicy.set(loesoerePol.id, [
+      makeCoverage('erhvervsansvar'),
+      makeCoverage('brand_el'),
+      makeCoverage('driftstab'),
+    ]);
+
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [transportPol, loesoerePol],
+        coveragesByPolicy,
+        branche: {
+          hovedbranche: '465220',
+          hovedbranche_tekst: 'Engroshandel med telekommunikationsudstyr',
+          bibrancher: [],
+        },
+      })
+    );
+    expect(gaps.find((g) => g.check_id === 'GAP-067')).toBeUndefined();
+  });
+
+  it('BIZZ-2122: transportansvar kræves fortsat for landtransport (NACE 49)', () => {
+    const pol = makePolicy({ business_activity: 'Godskørsel' });
+    const coveragesByPolicy = new Map<string, ForsikringCoverage[]>();
+    // Vareforsikring alene opfylder IKKE transportansvar-kravet
+    coveragesByPolicy.set(pol.id, [makeCoverage('transport')]);
+
+    const gaps = runPortfolioChecks(
+      makePortfolioInput({
+        policer: [pol],
+        coveragesByPolicy,
+        branche: {
+          hovedbranche: '494100',
+          hovedbranche_tekst: 'Vejgodstransport',
+          bibrancher: [],
+        },
+      })
+    );
+    const gap = gaps.find((g) => g.check_id === 'GAP-067');
+    expect(gap).toBeDefined();
+    const manglende = (gap?.source_data as { manglende_krav?: string[] }).manglende_krav ?? [];
+    expect(manglende).toContain('transportansvar');
+  });
 });
 
 describe('runGapEngine — GAP-STD-BASELINE coverage-alias (BIZZ-1939)', () => {
@@ -1290,5 +1412,363 @@ describe('shouldFoldOwnerIntoCompany — BIZZ-1972 fold-beslutning', () => {
     expect(shouldFoldOwnerIntoCompany('virksomhed', undefined, ['24301117'])).toBe(false);
     expect(shouldFoldOwnerIntoCompany('virksomhed', '24301117', [])).toBe(false);
     expect(shouldFoldOwnerIntoCompany(undefined, '24301117', ['24301117'])).toBe(false);
+  });
+});
+
+// ─── BIZZ-2100: Dækningsgradsanalyse ─────────────────────────────
+
+describe('runDaekningsgradChecks — BIZZ-2100', () => {
+  /** Helper: coverage med sum i hele kr */
+  const covMedSum = (code: string, sumDkk: number): ForsikringCoverage => ({
+    ...makeCoverage(code),
+    sum_dkk: sumDkk,
+  });
+
+  /** Standard regnskab (alle beløb i t.kr): bruttofortjeneste 4.844.000 kr osv. */
+  const regnskab: RegnskabsTalLite = {
+    aar: '2025',
+    omsaetningTkr: null,
+    bruttofortjenesteTkr: 4844,
+    varelagerTkr: null,
+    likvideBeholdningerTkr: 64,
+    aktiverIAltTkr: 18204,
+  };
+
+  it('returnerer tomt uden regnskab', () => {
+    const gaps = runDaekningsgradChecks({
+      policer: [makePolicy()],
+      coveragesByPolicy: new Map([['pol-1', [covMedSum('driftstab', 1000)]]]),
+      regnskab: null,
+    });
+    expect(gaps).toEqual([]);
+  });
+
+  it('GAP-073: flagger driftstab-underforsikring når summen er under bruttofortjenesten', () => {
+    // Driftstab 2.000.000 kr vs bruttofortjeneste 4.844.000 kr → 41 % → critical
+    const gaps = runDaekningsgradChecks({
+      policer: [makePolicy()],
+      coveragesByPolicy: new Map([['pol-1', [covMedSum('driftstab', 2000000)]]]),
+      regnskab,
+    });
+    const g73 = gaps.find((g) => g.check_id === 'GAP-073');
+    expect(g73).toBeDefined();
+    expect(g73!.severity).toBe('critical');
+    expect(g73!.estimated_impact_dkk).toBe(4844000 - 2000000);
+    // Beregningsgrundlag (GAP-072) skal altid medfølge
+    const g72 = gaps.find((g) => g.check_id === 'GAP-072');
+    expect(g72).toBeDefined();
+    expect(g72!.description).toContain('4.844.000 kr');
+  });
+
+  it('GAP-073: ingen gap når driftstabssummen dækker bruttofortjenesten', () => {
+    const gaps = runDaekningsgradChecks({
+      policer: [makePolicy()],
+      coveragesByPolicy: new Map([['pol-1', [covMedSum('driftstab', 9150000)]]]),
+      regnskab,
+    });
+    expect(gaps.find((g) => g.check_id === 'GAP-073')).toBeUndefined();
+    // Men beregningsgrundlaget vises stadig
+    expect(gaps.find((g) => g.check_id === 'GAP-072')).toBeDefined();
+  });
+
+  it('GAP-074: flagger når varelager overstiger løsøre-/tyveridækningen', () => {
+    const gaps = runDaekningsgradChecks({
+      policer: [makePolicy()],
+      coveragesByPolicy: new Map([['pol-1', [covMedSum('loesoere', 1000000)]]]),
+      regnskab: { ...regnskab, varelagerTkr: 35083 }, // 35.083.000 kr varelager
+    });
+    const g74 = gaps.find((g) => g.check_id === 'GAP-074');
+    expect(g74).toBeDefined();
+    expect(g74!.severity).toBe('critical'); // 1M/35M ≈ 3 %
+  });
+
+  it('GAP-074: warning når varelager findes men ingen løsøredækning med sum', () => {
+    const gaps = runDaekningsgradChecks({
+      policer: [makePolicy()],
+      coveragesByPolicy: new Map(),
+      regnskab: { ...regnskab, varelagerTkr: 500 },
+    });
+    const g74 = gaps.find((g) => g.check_id === 'GAP-074');
+    expect(g74).toBeDefined();
+    expect(g74!.severity).toBe('warning');
+  });
+
+  it('GAP-075: flagger netbank-dækning under likvide beholdninger', () => {
+    // Netbank 1.000.000 kr vs likvider 5.175.000 kr → critical
+    const gaps = runDaekningsgradChecks({
+      policer: [makePolicy()],
+      coveragesByPolicy: new Map([['pol-1', [covMedSum('netbank', 1000000)]]]),
+      regnskab: { ...regnskab, likvideBeholdningerTkr: 5175 },
+    });
+    const g75 = gaps.find((g) => g.check_id === 'GAP-075');
+    expect(g75).toBeDefined();
+    expect(g75!.severity).toBe('critical');
+  });
+
+  it('GAP-075: springes over når der ingen netbank-dækning findes (GAP-063 ejer den mangel)', () => {
+    const gaps = runDaekningsgradChecks({
+      policer: [makePolicy()],
+      coveragesByPolicy: new Map(),
+      regnskab: { ...regnskab, likvideBeholdningerTkr: 5175 },
+    });
+    expect(gaps.find((g) => g.check_id === 'GAP-075')).toBeUndefined();
+  });
+
+  it('GAP-076: flagger når omsætningen overstiger policens forudsætning', () => {
+    const policy = makePolicy({
+      raw_metadata: {
+        betingelser: 'Det forudsættes at omsætningen ikke overstiger 100.000.000 kr',
+      },
+    });
+    const gaps = runDaekningsgradChecks({
+      policer: [policy],
+      coveragesByPolicy: new Map(),
+      regnskab: { ...regnskab, omsaetningTkr: 110000 }, // 110.000.000 kr
+    });
+    const g76 = gaps.find((g) => g.check_id === 'GAP-076');
+    expect(g76).toBeDefined();
+    expect(g76!.severity).toBe('critical');
+  });
+
+  it('GAP-076: warning når omsætningen nærmer sig forudsætningen (>=80 %)', () => {
+    const policy = makePolicy({
+      raw_metadata: { betingelser: 'omsætning overstiger ikke 100.000.000 kr' },
+    });
+    const gaps = runDaekningsgradChecks({
+      policer: [policy],
+      coveragesByPolicy: new Map(),
+      regnskab: { ...regnskab, omsaetningTkr: 84000 }, // 84.000.000 kr → 84 %
+    });
+    const g76 = gaps.find((g) => g.check_id === 'GAP-076');
+    expect(g76).toBeDefined();
+    expect(g76!.severity).toBe('warning');
+  });
+
+  it('alle dækningsgrads-gaps har company-scope', () => {
+    const gaps = runDaekningsgradChecks({
+      policer: [makePolicy()],
+      coveragesByPolicy: new Map([['pol-1', [covMedSum('driftstab', 1000000)]]]),
+      regnskab,
+    });
+    expect(gaps.length).toBeGreaterThan(0);
+    for (const g of gaps) expect(g.scope).toBe('company');
+  });
+});
+
+describe('runVaerdiChecks — BIZZ-2170 værdi-baserede checks', () => {
+  const base = {
+    bfe: 5319038,
+    policyId: 'pol-1',
+    adresse: 'Bramstræde 5, 3000 Helsingør',
+    vurderingsAar: 2020,
+    asOfDate: new Date('2026-06-17'),
+  };
+
+  it('GAP-VAERDI-INGEN-SUM når policen mangler forsikringssum', () => {
+    const gaps = runVaerdiChecks({
+      ...base,
+      sumInsuredDkk: null,
+      vurderingDkk: 7_200_000,
+      koebsprisDkk: null,
+      koebsDato: null,
+    });
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].check_id).toBe('GAP-VAERDI-INGEN-SUM');
+    expect(gaps[0].severity).toBe('info');
+  });
+
+  it('GAP-VAERDI-INGEN-SUM oplyser seneste handel + vurdering når kendt (BIZZ-2175)', () => {
+    const gaps = runVaerdiChecks({
+      ...base,
+      sumInsuredDkk: null,
+      vurderingDkk: 93_000_000,
+      koebsprisDkk: 15_000_000,
+      koebsDato: '2018-11-15',
+    });
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].check_id).toBe('GAP-VAERDI-INGEN-SUM');
+    expect(gaps[0].description).toContain('seneste tinglyste handel');
+    expect(gaps[0].description).toContain('15.000.000 kr');
+    expect(gaps[0].description).toContain('2018');
+    expect(gaps[0].description).toContain('93.000.000 kr');
+    const sd = gaps[0].source_data as Record<string, unknown>;
+    expect(sd.koebspris).toBe(15_000_000);
+    expect(sd.vurdering).toBe(93_000_000);
+  });
+
+  it('GAP-VAERDI-UNDER (warning) når sum >30% under vurdering', () => {
+    const gaps = runVaerdiChecks({
+      ...base,
+      sumInsuredDkk: 3_000_000, // < 0.7 × 7.2M
+      vurderingDkk: 7_200_000,
+      koebsprisDkk: null,
+      koebsDato: null,
+    });
+    const g = gaps.find((x) => x.check_id === 'GAP-VAERDI-UNDER');
+    expect(g).toBeDefined();
+    expect(g!.severity).toBe('warning');
+    expect(g!.description).toContain('offentlig vurdering');
+    expect(g!.estimated_impact_dkk).toBe(4_200_000);
+  });
+
+  it('foretrækker købspris over vurdering som reference', () => {
+    const gaps = runVaerdiChecks({
+      ...base,
+      sumInsuredDkk: 5_000_000,
+      vurderingDkk: 7_200_000, // ville ikke trigge (5M > 0.7×7.2M=5.04M? nej 5M<5.04M)
+      koebsprisDkk: 15_000_000, // 5M < 0.7×15M=10.5M → trigger vs købspris
+      koebsDato: '2024-01-01',
+    });
+    const g = gaps.find((x) => x.check_id === 'GAP-VAERDI-UNDER');
+    expect(g).toBeDefined();
+    expect(g!.description).toContain('købspris');
+    expect(g!.source_data.reference_kilde).toBe('købspris');
+  });
+
+  it('GAP-VAERDI-OVER (info) når sum >50% over købspris', () => {
+    const gaps = runVaerdiChecks({
+      ...base,
+      sumInsuredDkk: 20_000_000,
+      vurderingDkk: null,
+      koebsprisDkk: 10_000_000,
+      koebsDato: '2023-01-01',
+    });
+    const g = gaps.find((x) => x.check_id === 'GAP-VAERDI-OVER');
+    expect(g).toBeDefined();
+    expect(g!.severity).toBe('info');
+  });
+
+  it('GAP-VAERDI-GAMMEL-KOEB (info) ved købsdato >10 år når ikke underforsikret', () => {
+    const gaps = runVaerdiChecks({
+      ...base,
+      sumInsuredDkk: 9_000_000, // tæt på købspris, ingen under/over
+      vurderingDkk: null,
+      koebsprisDkk: 10_000_000,
+      koebsDato: '2010-05-01',
+    });
+    const g = gaps.find((x) => x.check_id === 'GAP-VAERDI-GAMMEL-KOEB');
+    expect(g).toBeDefined();
+    expect(g!.severity).toBe('info');
+  });
+
+  it('ingen værdi-gaps når sum er rimelig og handel er ny', () => {
+    const gaps = runVaerdiChecks({
+      ...base,
+      sumInsuredDkk: 9_500_000,
+      vurderingDkk: 7_200_000,
+      koebsprisDkk: 10_000_000,
+      koebsDato: '2024-01-01',
+    });
+    expect(gaps).toHaveLength(0);
+  });
+
+  it('aldrig critical severity', () => {
+    const gaps = runVaerdiChecks({
+      ...base,
+      sumInsuredDkk: 100_000,
+      vurderingDkk: 50_000_000,
+      koebsprisDkk: 60_000_000,
+      koebsDato: '2005-01-01',
+    });
+    for (const g of gaps) expect(g.severity).not.toBe('critical');
+  });
+});
+
+describe('highestBuildingCoverageSum — BIZZ-2175 bygningssum pr. police', () => {
+  // Reelle dækninger fra RACEHALL-ejendomspolicen (Bondehøjvej 20) i test-DB:
+  // bygningssummen ligger på "Bygningsbrand mv." (brand_el) = 113.860.000.
+  const ejendomsCoverages = [
+    {
+      coverage_code: 'brand_el',
+      coverage_label: 'Bygningsbrand mv.',
+      is_covered: true,
+      sum_dkk: 113_860_000,
+    },
+    {
+      coverage_code: 'huslejetab',
+      coverage_label: 'Huslejetab',
+      is_covered: true,
+      sum_dkk: 7_465_911,
+    },
+    {
+      coverage_code: 'brand_el',
+      coverage_label: 'Genfremstillingsomkostninger',
+      is_covered: true,
+      sum_dkk: 2_000_000,
+    },
+    {
+      coverage_code: 'brand_el',
+      coverage_label: 'Kortslutning',
+      is_covered: true,
+      sum_dkk: 500_000,
+    },
+    {
+      coverage_code: 'glas',
+      coverage_label: 'Glas og Sanitet',
+      is_covered: true,
+      sum_dkk: 100_000,
+    },
+  ];
+  // Ansvarspolicen: "Varetægt" har brand_el-kode men er IKKE en bygningssum.
+  const ansvarCoverages = [
+    {
+      coverage_code: 'erhvervsansvar',
+      coverage_label: 'Erhvervsansvar',
+      is_covered: true,
+      sum_dkk: 10_000_000,
+    },
+    { coverage_code: 'brand_el', coverage_label: 'Varetægt', is_covered: true, sum_dkk: 1_000_000 },
+  ];
+
+  it('finder bygnings-summen (113.860.000) på ejendomspolicen', () => {
+    expect(highestBuildingCoverageSum(ejendomsCoverages)).toBe(113_860_000);
+  });
+
+  it('ignorerer ansvarspolicens brand_el "Varetægt" (ikke bygning)', () => {
+    expect(highestBuildingCoverageSum(ansvarCoverages)).toBeNull();
+  });
+
+  it('isBuildingValueCoverage: bygningskasko tæller, ikke-dækket gør ikke', () => {
+    expect(
+      isBuildingValueCoverage({
+        coverage_code: 'bygningskasko',
+        coverage_label: 'Bygningskasko',
+        is_covered: true,
+        sum_dkk: 50_000_000,
+      })
+    ).toBe(true);
+    expect(
+      isBuildingValueCoverage({
+        coverage_code: 'brand_el',
+        coverage_label: 'Bygningsbrand mv.',
+        is_covered: false,
+        sum_dkk: 113_860_000,
+      })
+    ).toBe(false);
+  });
+
+  it('end-to-end: bygningssummen fjerner INGEN-SUM og giver en værdi-sammenligning', () => {
+    // Aggregér på tværs af ejendoms- + ansvarspolice (som route.ts gør)
+    const buildingSum = Math.max(
+      highestBuildingCoverageSum(ejendomsCoverages) ?? 0,
+      highestBuildingCoverageSum(ansvarCoverages) ?? 0
+    );
+    expect(buildingSum).toBe(113_860_000);
+    const gaps = runVaerdiChecks({
+      bfe: 100157965,
+      policyId: 'pol-ejendom',
+      adresse: 'Bondehøjvej 20, 2630 Taastrup',
+      sumInsuredDkk: buildingSum,
+      vurderingDkk: 93_000_000,
+      vurderingsAar: 2024,
+      koebsprisDkk: 15_000_000,
+      koebsDato: '2018-11-15',
+      asOfDate: new Date('2026-06-18'),
+    });
+    // Den oprindelige bug-finding må IKKE længere fyre
+    expect(gaps.find((g) => g.check_id === 'GAP-VAERDI-INGEN-SUM')).toBeUndefined();
+    // I stedet sammenlignes 113.86M mod referenceværdi (info/warning, aldrig critical)
+    expect(gaps.length).toBeGreaterThan(0);
+    for (const g of gaps) expect(g.severity).not.toBe('critical');
   });
 });

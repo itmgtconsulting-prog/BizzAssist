@@ -195,7 +195,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<HealthStat
       const apiProbes = await Promise.all([
         probeApi('bbr', 'https://graphql.datafordeler.dk/BBR/v2', gqlIntrospect),
         probeApi('dar', 'https://graphql.datafordeler.dk/DAR/v1', gqlIntrospect),
-        probeApi('mat', 'https://graphql.datafordeler.dk/MAT/v1', gqlIntrospect),
+        // BIZZ-2062: MAT/v1 er nedlagt (404) — probe v2 (svarer 401 uden
+        // apiKey, hvilket probeApi tæller som reachable).
+        probeApi('mat', 'https://graphql.datafordeler.dk/MAT/v2', gqlIntrospect),
         probeApi('vur', 'https://graphql.datafordeler.dk/VUR/v2', gqlIntrospect),
         probeApi('cvr_es', 'http://distribution.virk.dk/cvr-permanent/virksomhed/_search', {
           method: 'POST',

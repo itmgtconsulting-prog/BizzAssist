@@ -16,7 +16,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { getTenantSchemaName } from '@/lib/db/tenant';
 import { assertAiAllowed } from '@/app/lib/aiGate';
 import { logger } from '@/app/lib/logger';
-import { sanitizeFilename } from '@/app/lib/aiFileGeneration';
+import { storageSafeFilename } from '@/app/lib/aiFileGeneration';
 import { resolveFileType } from '@/app/lib/domainFileTypes';
 import { extractTextFromBuffer } from '@/app/lib/domainTextExtraction';
 
@@ -103,7 +103,8 @@ export async function POST(
 
     // Upload til storage
     const buffer = Buffer.from(await file.arrayBuffer());
-    const storagePath = `${auth.tenantId}/vr/${sagId}/${randomUUID()}-${sanitizeFilename(file.name)}`;
+    // BIZZ-2075: storage-sikkert navn — Supabase Storage afviser æ/ø/å i keys
+    const storagePath = `${auth.tenantId}/vr/${sagId}/${randomUUID()}-${storageSafeFilename(file.name)}`;
     const { error: uploadErr } = await admin.storage.from(BUCKET).upload(storagePath, buffer, {
       contentType: mime,
       upsert: false,

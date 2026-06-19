@@ -39,6 +39,13 @@ const NIVEAU_STYLE: Record<
     bg: 'bg-emerald-500/10',
     badge: 'Ejerlejlighed',
   },
+  // BIZZ-2094: Separat SFE i samme ejerlav med samme ejer (vurderingsejendoms-gruppe)
+  'soester-sfe': {
+    Icon: Building2,
+    color: 'text-amber-400',
+    bg: 'bg-amber-500/10',
+    badge: 'Søster-SFE',
+  },
 };
 
 /**
@@ -92,9 +99,10 @@ function TreeNode({ node, depth, lang, currentBfe, currentDawaId, showOwnership 
     : currentBfe != null && node.bfe > 0 && node.bfe === currentBfe;
   // BIZZ-1821: SFE-noder linker via /dashboard/ejendomme/sfe/[bfe].
   // Hovedejendom + EL linker via dawaId eller BFE.
+  // BIZZ-2094: Søster-SFE'er linker som SFE'er via /dashboard/ejendomme/sfe/[bfe]
   const nodeHref = node.dawaId
     ? `/dashboard/ejendomme/${node.dawaId}`
-    : node.niveau === 'sfe' && node.bfe > 0
+    : (node.niveau === 'sfe' || node.niveau === 'soester-sfe') && node.bfe > 0
       ? `/dashboard/ejendomme/sfe/${node.bfe}`
       : node.bfe > 0
         ? `/dashboard/ejendomme/${node.bfe}`
@@ -113,8 +121,9 @@ function TreeNode({ node, depth, lang, currentBfe, currentDawaId, showOwnership 
         <Icon size={14} className={isCurrent ? 'text-blue-400' : style.color} />
       </div>
 
-      {/* Adresse + badge */}
-      <div className="flex-1 min-w-0">
+      {/* Adresse + badge. BIZZ-2064: overflow-hidden så shrink-0 børn (badge/
+          BFE) ikke maler ind over ejer-kolonnen på smalle viewports */}
+      <div className="flex-1 min-w-0 overflow-hidden">
         <div className="flex items-center gap-2">
           <span
             className={`text-xs truncate ${isCurrent ? 'text-white font-semibold' : canNavigate ? 'text-blue-300 font-medium' : 'text-slate-200 font-medium'}`}
@@ -140,6 +149,16 @@ function TreeNode({ node, depth, lang, currentBfe, currentDawaId, showOwnership 
           )}
         </div>
 
+        {/* BIZZ-2094: Ejer inline for søster-SFE'er */}
+        {node.niveau === 'soester-sfe' && node.ejer && (
+          <div className="mt-0.5">
+            <span className="text-slate-400 text-[10px]">
+              {da ? 'Ejer' : 'Owner'}:{' '}
+              <span className="text-slate-200 font-medium">{node.ejer}</span>
+            </span>
+          </div>
+        )}
+
         {/* Vurdering inline for hovedejendomme */}
         {node.niveau === 'hovedejendom' && vurdering != null && vurdering > 0 && (
           <div className="flex items-center gap-3 mt-0.5">
@@ -157,11 +176,19 @@ function TreeNode({ node, depth, lang, currentBfe, currentDawaId, showOwnership 
         )}
       </div>
 
-      {/* BIZZ-2011: Areal + købspris + købsdato for ejerlejligheder (ejerskab-mode).
-          Ejer + værelser skjult indtil batch-endpoint beriger dem (BIZZ-2010 Trin 2). */}
-      {showOwnership && node.niveau === 'ejerlejlighed' && (
+      {/* BIZZ-2060: Ejer + areal + købspris + købsdato for ejerlejligheder (ejerskab-mode).
+          BIZZ-2095: også på hovedejendom-rækker, så ejer/areal/pris er synlige hele vejen op */}
+      {showOwnership && (node.niveau === 'ejerlejlighed' || node.niveau === 'hovedejendom') && (
         <div className="flex items-center shrink-0 text-[10px] tabular-nums">
-          <span className="w-[45px] text-slate-400 text-right">
+          {/* BIZZ-2064: Venstrestillet + bredere ejer-kolonne med ombrydning,
+              så det fulde ejernavn altid kan læses (før: 140px truncate) */}
+          <span
+            className="w-[200px] text-slate-300 text-left whitespace-normal break-words leading-tight pr-2"
+            title={node.ejer ?? undefined}
+          >
+            {node.ejer ?? '–'}
+          </span>
+          <span className="w-[55px] text-slate-400 text-right">
             {node.areal != null && node.areal > 0 ? `${node.areal} m²` : '–'}
           </span>
           <span className="w-[100px] text-slate-300 text-right font-medium">
@@ -195,8 +222,10 @@ function TreeNode({ node, depth, lang, currentBfe, currentDawaId, showOwnership 
         </div>
       )}
 
-      {/* Summeret areal + child count for hovedejendomme/SFE */}
-      {hasChildren && (
+      {/* Summeret areal + child count for hovedejendomme/SFE.
+          BIZZ-2095: skjules i ejerskab-mode for hovedejendomme, hvor ejer-kolonnerne
+          allerede viser areal — ellers står arealet dobbelt og kolonnerne skrider */}
+      {hasChildren && !(showOwnership && node.niveau === 'hovedejendom') && (
         <div className="flex items-center gap-2 shrink-0">
           {node.areal != null && node.areal > 0 && (
             <span className="text-slate-400 text-[10px] tabular-nums">
@@ -336,9 +365,11 @@ export default function EjendomStrukturTree({
       {showOwnership && (
         <div className="flex items-center mb-1 text-[9px] text-slate-400 font-medium uppercase tracking-wide">
           <span className="flex-1" />
-          {/* BIZZ-2011: Ejer + Vær. skjult — vises igen når batch-endpoint er klar */}
+          {/* BIZZ-2060: Ejer-kolonne tilføjet nu batch-endpoint er klar */}
           <div className="flex items-center shrink-0">
-            <span className="w-[45px] text-right">{da ? 'Areal' : 'Area'}</span>
+            {/* BIZZ-2064: Ejer venstrestillet + bredere så fulde navne kan læses */}
+            <span className="w-[200px] text-left">{da ? 'Ejer' : 'Owner'}</span>
+            <span className="w-[55px] text-right">{da ? 'Areal' : 'Area'}</span>
             <span className="w-[100px] text-right">{da ? 'Købspris' : 'Price'}</span>
             <span className="w-[75px] text-right">{da ? 'Købsdato' : 'Date'}</span>
           </div>

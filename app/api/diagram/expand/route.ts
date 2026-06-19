@@ -17,6 +17,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { erVirksomhedsDeltager } from '@/app/lib/cvr/deltagerType';
 import type { DiagramNode, DiagramEdge } from '@/app/components/diagrams/DiagramData';
 
 /** Max ejendomme per ejer-node ved expand */
@@ -193,15 +194,22 @@ async function expandCompany(
     // BIZZ-1350: Hent faktiske navne for person-ejere via cvr_deltager
     // når ejer_navn er generisk ("Ukendt ejer" / "Person" etc.)
     const personNameMap = new Map<number, string>();
+    // BIZZ-2086: enhedstype per deltager til virksomheds-check ved node-oprettelse
+    const personEnhedstypeMap = new Map<number, string | null>();
     const enNumre = [...personEnMap.values()];
     if (enNumre.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: nameRows } = await (admin as any)
         .from('cvr_deltager')
-        .select('enhedsnummer, navn')
+        .select('enhedsnummer, navn, enhedstype')
         .in('enhedsnummer', enNumre.slice(0, 30));
-      for (const r of (nameRows ?? []) as Array<{ enhedsnummer: number; navn: string }>) {
+      for (const r of (nameRows ?? []) as Array<{
+        enhedsnummer: number;
+        navn: string;
+        enhedstype: string | null;
+      }>) {
         personNameMap.set(r.enhedsnummer, r.navn);
+        personEnhedstypeMap.set(r.enhedsnummer, r.enhedstype);
       }
     }
 
@@ -269,12 +277,18 @@ async function expandCompany(
           if (/^Ukendt ejer/.test(resolvedName)) {
             resolvedName = personEn ? `Person ${personEn}` : 'Person';
           }
+          // BIZZ-2086: Virksomheds-deltagere (enhedstype eller navne-heuristik)
+          // må aldrig oprettes som person-noder med /owners-link.
+          const erVirk = erVirksomhedsDeltager(
+            personEn ? (personEnhedstypeMap.get(personEn) ?? null) : null,
+            resolvedName
+          );
           newNodes.push({
             id: coId,
             label: resolvedName,
-            type: 'person',
+            type: erVirk ? 'company' : 'person',
             enhedsNummer: personEn,
-            link: personEn ? `/dashboard/owners/${personEn}` : undefined,
+            link: erVirk ? undefined : personEn ? `/dashboard/owners/${personEn}` : undefined,
           });
         }
         addedIds.add(coId);
@@ -473,16 +487,20 @@ async function expandCompany(
 
       if (candidateEnheder.length > 0) {
         // Check if any candidates are virksomheder (not persons)
+        // BIZZ-2086: enhedstype er historisk NULL på alle cachede rækker —
+        // fald tilbage til navne-heuristik så holdingselskaber i Ejerregisteret
+        // ikke oprettes som person-noder.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: deltagerTypeRows } = await (admin as any)
           .from('cvr_deltager')
-          .select('enhedsnummer, enhedstype')
+          .select('enhedsnummer, navn, enhedstype')
           .in('enhedsnummer', candidateEnheder.slice(0, 20));
         for (const r of (deltagerTypeRows ?? []) as Array<{
           enhedsnummer: number;
+          navn: string | null;
           enhedstype: string | null;
         }>) {
-          if (r.enhedstype === 'virksomhed') virksomhedEnheder.add(r.enhedsnummer);
+          if (erVirksomhedsDeltager(r.enhedstype, r.navn)) virksomhedEnheder.add(r.enhedsnummer);
         }
       }
 

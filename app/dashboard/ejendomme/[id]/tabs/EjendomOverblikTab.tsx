@@ -210,21 +210,44 @@ export default function EjendomOverblikTab({
                 : null;
           const kommunenavn =
             (dawaAdresse.kommunenavn || null) ?? dawaJordstykke?.kommune.navn ?? null;
+          // BIZZ-2177: Antal ejerlejligheder bruges til at give hovedejendoms-
+          // matriklen kontekst i stedet for et intetsigende "1".
+          const antalLej = lejligheder?.length ?? 0;
+          // BIZZ-2177: Skjul bebyggelsesprocent for store (typisk erhvervs-)
+          // matrikler. På fx en 34.790 m² grund med få bygninger er en lav
+          // procent normal, men "3% bebygget" antyder fejlagtigt en næsten tom
+          // grund. Grænse: 10.000 m².
+          const visBebyggPct = bebyggPct !== null && !(grundareal != null && grundareal > 10000);
           return (
             <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-2.5">
               <div className="flex items-baseline justify-between mb-1.5">
                 <div className="flex items-baseline gap-1">
-                  <span className="text-white font-bold text-lg">{erLejlighed ? '' : '1'}</span>
-                  <span className="text-slate-400 text-xs">
-                    {erLejlighed ? (da ? 'Lejlighed' : 'Apartment') : t.cadastre}
-                  </span>
-                  {erLejlighed && tinglysningData?.ejerlejlighedNr && (
-                    <span className="text-slate-400 text-xs ml-1">
-                      nr. {tinglysningData.ejerlejlighedNr}
+                  {erLejlighed ? (
+                    <>
+                      <span className="text-slate-400 text-xs">
+                        {da ? 'Lejlighed' : 'Apartment'}
+                      </span>
+                      {tinglysningData?.ejerlejlighedNr && (
+                        <span className="text-slate-400 text-xs ml-1">
+                          nr. {tinglysningData.ejerlejlighedNr}
+                        </span>
+                      )}
+                    </>
+                  ) : erModer ? (
+                    // BIZZ-2177: Hovedejendom — ingen counter-agtig "1", men en
+                    // ren info-header der nævner matriklen og antal ejerlejligheder.
+                    <span className="text-slate-300 text-xs font-medium">
+                      {da ? '1 matrikel' : '1 cadastre'}
+                      {antalLej > 0 && ` · ${antalLej} ${da ? 'ejerlejligheder' : 'condominiums'}`}
                     </span>
+                  ) : (
+                    <>
+                      <span className="text-white font-bold text-lg">1</span>
+                      <span className="text-slate-400 text-xs">{t.cadastre}</span>
+                    </>
                   )}
                 </div>
-                {bebyggPct !== null && (
+                {visBebyggPct && (
                   <span className="text-slate-400 text-xs font-medium">
                     {bebyggPct}% {t.builtUp}
                   </span>

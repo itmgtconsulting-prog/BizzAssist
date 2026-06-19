@@ -77,6 +77,13 @@ interface ChainNode {
 export const STATUS_TEKST_RE =
   /^\s*(opdelt i (ejerlejlighed(er)?|(ideel(le)? )?anpart(er)?)|del af samlet ejendom)\b/i;
 
+/**
+ * BIZZ-2111 (GDPR): labels for navne- og adressebeskyttede personer.
+ * Disse må aldrig navne-matches mod CVR-deltagere — et match ville linke
+ * en tilfældig rigtig person til den beskyttede ejer.
+ */
+const BESKYTTET_RE = /navne-?\s*og\s*adressebeskytt/i;
+
 interface ChainEdge {
   from: string;
   to: string;
@@ -463,7 +470,11 @@ export async function GET(req: NextRequest) {
 
       for (const row of cachedEjere as Array<Record<string, unknown>>) {
         const cvr = row.ejer_cvr as string | null;
-        const rawNavn = (row.ejer_navn as string) ?? 'Ukendt';
+        // BIZZ-2111: person uden navn fra EJF = navne- og adressebeskyttet —
+        // ikke "Ukendt". GDPR: navnet må ikke hentes fra andre kilder.
+        const rawNavn =
+          (row.ejer_navn as string) ??
+          ((row.ejer_type as string) === 'person' ? 'Navne- og adressebeskyttet' : 'Ukendt');
         const navn = cvr ? (cvrNameMap.get(cvr) ?? rawNavn) : rawNavn;
         const type = (row.ejer_type as string) ?? 'ukendt';
         const t = row.ejerandel_taeller as number | null;
@@ -615,12 +626,16 @@ export async function GET(req: NextRequest) {
                 koebesum: ejer.koebesum ?? null,
                 enhedsNummer: null,
               });
-              // Track node/detaljer indices so we can patch them after batch lookup
-              tlPersonsToResolve.push({
-                navn: ejer.navn,
-                nodeIdx: nodes.length - 1,
-                detaljeIdx: ejerDetaljer.length - 1,
-              });
+              // Track node/detaljer indices so we can patch them after batch lookup.
+              // BIZZ-2111 (GDPR): beskyttede labels må ALDRIG navne-matches mod
+              // CVR-deltagere — det ville linke en tilfældig rigtig person.
+              if (!BESKYTTET_RE.test(ejer.navn ?? '')) {
+                tlPersonsToResolve.push({
+                  navn: ejer.navn,
+                  nodeIdx: nodes.length - 1,
+                  detaljeIdx: ejerDetaljer.length - 1,
+                });
+              }
             }
           }
         }
@@ -843,16 +858,45 @@ export async function GET(req: NextRequest) {
                 label: ejer.personNavn,
                 type: 'person',
               });
-              // Only track for lookup when the node is newly added (deduplication guard)
-              ejfPersonsToResolve.push({
-                navn: ejer.personNavn,
-                nodeIdx: nodes.length - 1,
-                detaljeIdx: ejerDetaljer.length, // points to the entry we're about to push
-              });
+              // Only track for lookup when the node is newly added (deduplication guard).
+              // BIZZ-2111 (GDPR): beskyttede labels navne-matches aldrig mod CVR.
+              if (!BESKYTTET_RE.test(ejer.personNavn)) {
+                ejfPersonsToResolve.push({
+                  navn: ejer.personNavn,
+                  nodeIdx: nodes.length - 1,
+                  detaljeIdx: ejerDetaljer.length, // points to the entry we're about to push
+                });
+              }
             }
             edges.push({ from: id, to: mainId, ejerandel: andel });
             ejerDetaljer.push({
               navn: ejer.personNavn,
+              cvr: null,
+              enhedsNummer: null,
+              type: 'person',
+              andel: andel ?? null,
+              adresse: null,
+              overtagelsesdato: ejer.virkningFra ?? null,
+              adkomstType: null,
+              koebesum: null,
+            });
+          } else if (ejer.ejertype === 'person') {
+            // BIZZ-2111: personejer uden navn fra EJF = navne- og adressebeskyttet.
+            // Vi kender ejertype, andel og virkningsdato — kun navnet er beskyttet.
+            // GDPR: navnet må aldrig suppleres fra andre kilder (fx tinglysning).
+            const beskyttetLabel = 'Navne- og adressebeskyttet';
+            const id = `person-beskyttet-${nodes.length}`;
+            if (!seenIds.has(id)) {
+              seenIds.add(id);
+              nodes.push({
+                id,
+                label: beskyttetLabel,
+                type: 'person',
+              });
+            }
+            edges.push({ from: id, to: mainId, ejerandel: andel });
+            ejerDetaljer.push({
+              navn: beskyttetLabel,
               cvr: null,
               enhedsNummer: null,
               type: 'person',

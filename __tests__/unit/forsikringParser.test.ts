@@ -7,7 +7,13 @@
  */
 import { describe, it, expect } from 'vitest';
 import { stripMarkdownFences, canParseAsText } from '@/app/lib/forsikring/jsonHelpers';
-import { ParsedPolicySchema } from '@/app/lib/forsikring/types';
+import { oversigtEntryMatchesPolicy } from '@/app/lib/forsikring/parser';
+import {
+  COVERAGE_CODES,
+  COVERAGE_LABELS_DA,
+  ParsedCoverageSchema,
+  ParsedPolicySchema,
+} from '@/app/lib/forsikring/types';
 
 describe('stripMarkdownFences', () => {
   it('returnerer ren JSON uændret', () => {
@@ -179,5 +185,204 @@ describe('canParseAsText', () => {
 
   it('returnerer false for ukendt filtype', () => {
     expect(canParseAsText('msg')).toBe(false);
+  });
+});
+
+// BIZZ-2081: Salvage af afkortet oversigt-JSON
+import { salvageTruncatedOversigt } from '@/app/lib/forsikring/jsonHelpers';
+
+describe('salvageTruncatedOversigt', () => {
+  const policy = (n: number) =>
+    `{"policy_number":"P${n}","insurer_name":"Tryg","coverages":[{"coverage_code":"brand_el","is_covered":true}]}`;
+
+  it('redder komplette policer fra afkortet JSON', () => {
+    const truncated = `{"policies":[${policy(1)},${policy(2)},{"policy_number":"P3","insurer_na`;
+    const result = salvageTruncatedOversigt(truncated);
+    expect(result).not.toBeNull();
+    expect(result!.policies).toHaveLength(2);
+    expect((result!.policies[0] as { policy_number: string }).policy_number).toBe('P1');
+    expect(result!.notes).toContain('for lang');
+  });
+
+  it('håndterer afkortning midt i en streng med escapes og brackets', () => {
+    const truncated = `{"policies":[${policy(1)}],"broker_name":"RTM \\"a{b[c`;
+    // policies-arrayet er lukket korrekt — depth går under 0 ved ']' og scanningen stopper
+    const result = salvageTruncatedOversigt(truncated);
+    expect(result).not.toBeNull();
+    expect(result!.policies).toHaveLength(1);
+  });
+
+  it('returnerer null når intet komplet objekt findes', () => {
+    expect(salvageTruncatedOversigt('{"policies":[{"policy_number":"P1')).toBeNull();
+  });
+
+  it('returnerer null uden policies-array', () => {
+    expect(salvageTruncatedOversigt('{"broker_name":"RTM"')).toBeNull();
+  });
+
+  it('ignorerer brackets inde i strenge', () => {
+    const truncated = `{"policies":[{"policy_number":"P1","notes":"adresse {with} [brackets]"},{"poli`;
+    const result = salvageTruncatedOversigt(truncated);
+    expect(result).not.toBeNull();
+    expect(result!.policies).toHaveLength(1);
+  });
+});
+
+describe('oversigtEntryMatchesPolicy (BIZZ-2097)', () => {
+  it('matcher når både adresse og forsikringstype er ens', () => {
+    expect(
+      oversigtEntryMatchesPolicy(
+        { property_address: 'Hovedgaden 1', business_activity: 'Erhvervsansvar' },
+        { property_address: 'Hovedgaden 1', insurance_type: 'Erhvervsansvar' }
+      )
+    ).toBe(true);
+  });
+
+  it('matcher IKKE adresseløse entries med forskellig forsikringstype (null === null bug)', () => {
+    expect(
+      oversigtEntryMatchesPolicy(
+        { property_address: null, business_activity: 'Cyberforsikring' },
+        { property_address: null, insurance_type: 'Netbankforsikring' }
+      )
+    ).toBe(false);
+  });
+
+  it('matcher IKKE når adressen er forskellig', () => {
+    expect(
+      oversigtEntryMatchesPolicy(
+        { property_address: 'Hovedgaden 1', business_activity: 'Bygningsforsikring' },
+        { property_address: 'Hovedgaden 2', insurance_type: 'Bygningsforsikring' }
+      )
+    ).toBe(false);
+  });
+
+  it('normaliserer case og whitespace', () => {
+    expect(
+      oversigtEntryMatchesPolicy(
+        { property_address: ' Hovedgaden 1 ', business_activity: 'cyberforsikring' },
+        { property_address: 'hovedgaden 1', insurance_type: 'Cyberforsikring ' }
+      )
+    ).toBe(true);
+  });
+
+  it('behandler tom streng som null', () => {
+    expect(
+      oversigtEntryMatchesPolicy(
+        { property_address: '', business_activity: 'Driftstab' },
+        { property_address: null, insurance_type: 'Driftstab' }
+      )
+    ).toBe(true);
+  });
+
+  it('regression: 9 entries under samme aftalenr giver 9 policer (Topdanmark-mønster)', () => {
+    // Simulerer oversigts-loopet: hver entry sammenlignes mod allerede oprettede
+    // policer med samme aftalenummer — ingen må kollapses
+    const entries = [
+      { property_address: 'Roholmsvej 19', insurance_type: 'Bygningsforsikring' },
+      { property_address: null, insurance_type: 'Erhvervsansvar' },
+      { property_address: null, insurance_type: 'Cyberforsikring' },
+      { property_address: null, insurance_type: 'Netbankforsikring' },
+      { property_address: null, insurance_type: 'Driftstabsforsikring' },
+      { property_address: null, insurance_type: 'Kriminalitetsforsikring' },
+      { property_address: null, insurance_type: 'Løsøreforsikring' },
+      { property_address: null, insurance_type: 'Transportforsikring' },
+      { property_address: null, insurance_type: 'Arbejdsskadeforsikring' },
+    ];
+    const created: Array<{ property_address: string | null; business_activity: string | null }> =
+      [];
+    for (const entry of entries) {
+      const existing = created.find((p) => oversigtEntryMatchesPolicy(p, entry));
+      if (existing) continue;
+      created.push({
+        property_address: entry.property_address,
+        business_activity: entry.insurance_type,
+      });
+    }
+    expect(created).toHaveLength(9);
+  });
+
+  it('regression: identisk entry parses to gange → kun 1 police (dedup virker stadig)', () => {
+    const policy = { property_address: null, business_activity: 'Cyberforsikring' };
+    expect(
+      oversigtEntryMatchesPolicy(policy, {
+        property_address: null,
+        insurance_type: 'Cyberforsikring',
+      })
+    ).toBe(true);
+  });
+
+  it('BIZZ-2125: Ansvar (uden sted) + Ejendom (Stjernegade 17) under samme aftalenr giver 2 policer', () => {
+    // TOP-aftale 9417319074: en Ansvar-forsikring (virksomheden, ingen
+    // forsikringssted) + en Ejendom-forsikring (forsikringssted Stjernegade 17)
+    // må ALDRIG kollapses, selvom de deler aftalenummer — ellers tabes
+    // bygningsdækningen og ejendommen vises uforsikret.
+    const entries = [
+      { property_address: null, insurance_type: 'Erhvervsansvar' },
+      { property_address: 'Stjernegade 17, 3000 Helsingør', insurance_type: 'Ejendomsforsikring' },
+    ];
+    const created: Array<{ property_address: string | null; business_activity: string | null }> =
+      [];
+    for (const entry of entries) {
+      const existing = created.find((p) => oversigtEntryMatchesPolicy(p, entry));
+      if (existing) continue;
+      created.push({
+        property_address: entry.property_address,
+        business_activity: entry.insurance_type,
+      });
+    }
+    expect(created).toHaveLength(2);
+    expect(created[1].property_address).toBe('Stjernegade 17, 3000 Helsingør');
+  });
+});
+
+// ─── BIZZ-2098: Erhvervs-taksonomi for dækningskoder ─────────────────
+
+describe('COVERAGE_CODES erhvervs-taksonomi (BIZZ-2098)', () => {
+  const erhvervskoder = [
+    'loesoere',
+    'indbrudstyveri',
+    'ran_roeveri',
+    'oprydning',
+    'cyber',
+    'cyberdriftstab',
+    'notifikation',
+    'netbank',
+    'kriminalitet',
+    'transport',
+    'maskiner_itudstyr',
+    'it_meromkostninger',
+    'leverandoer_aftager',
+  ] as const;
+
+  it('indeholder alle nye erhvervskoder', () => {
+    for (const code of erhvervskoder) {
+      expect(COVERAGE_CODES).toContain(code);
+    }
+  });
+
+  it('har en dansk label for hver kanonisk kode', () => {
+    for (const code of COVERAGE_CODES) {
+      expect(COVERAGE_LABELS_DA[code]).toBeTruthy();
+    }
+  });
+
+  it('ParsedCoverageSchema accepterer cyber-dækning med sum og selvrisiko', () => {
+    const result = ParsedCoverageSchema.safeParse({
+      coverage_code: 'cyber',
+      coverage_label: 'Cyber',
+      is_covered: true,
+      sum_dkk: 1116693,
+      deductible_dkk: 25000,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('ParsedCoverageSchema afviser ukendt kode', () => {
+    const result = ParsedCoverageSchema.safeParse({
+      coverage_code: 'rumrejseforsikring',
+      coverage_label: 'Rumrejse',
+      is_covered: true,
+    });
+    expect(result.success).toBe(false);
   });
 });

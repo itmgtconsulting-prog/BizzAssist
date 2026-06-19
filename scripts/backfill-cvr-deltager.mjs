@@ -236,7 +236,7 @@ async function main() {
   let totalDeltagere = 0;
   let totalRelationer = 0;
   let searchAfter = null;
-  const BATCH = 200; // ES page size
+  const BATCH = 20; // ES page size — small to avoid PostgREST statement timeout
 
   while (totalFetched < LIMIT) {
     const esBody = {

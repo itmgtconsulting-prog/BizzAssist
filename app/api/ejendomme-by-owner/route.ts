@@ -34,6 +34,7 @@ import {
   DAWA_BASE_URL,
 } from '@/app/lib/serviceEndpoints';
 import { fetchDawa } from '@/app/lib/dawa';
+import { hentBfeAdresse } from '@/app/lib/bfeAdresse';
 
 /** Zod schema for /api/ejendomme-by-owner query params */
 const _querySchema = z.object({
@@ -759,118 +760,145 @@ const _bfeFetchInFlight = new Map<number, Promise<DawaBfeAdresse>>();
 async function hentDawaBfeData(bfe: number): Promise<DawaBfeAdresse> {
   const cached = _bfeFetchInFlight.get(bfe);
   if (cached) return cached;
-  const promise = _hentDawaBfeDataImpl(bfe).then(async (result) => {
-    // BIZZ-450: If DAWA returned no address, try BBR GraphQL as fallback.
-    // DAWA /bfe/{bfe} endpoint is being deprecated; BBR is the authoritative source.
-    if (!result.adresse) {
-      const vpResult = await _hentVPAdresseForBfe(bfe);
-      if (vpResult.adresse) return { ...result, ...vpResult };
+  const promise = (async (): Promise<DawaBfeAdresse> => {
+    // BIZZ-2092/BIZZ-2093: Fælles resolver først — cache-first for troværdige
+    // pr-BFE-kilder + valideret jordstykke-baseret live-fallback. Live-kæden
+    // nedenfor (VP/BBR) kan returnere SFE-gruppens hovedadresse for alle
+    // BFE'er i en gruppe (fx 4x "Gefionsvej 47A" på BELVEDERE), så den
+    // fælles resolver skal vinde når den finder en adresse.
+    try {
+      const faelles = await hentBfeAdresse(bfe);
+      if (faelles?.adresse) {
+        return {
+          adresse: faelles.adresse,
+          postnr: faelles.postnr,
+          by: faelles.by,
+          kommune: faelles.kommune,
+          kommuneKode: faelles.kommuneKode,
+          ejendomstype: faelles.ejendomstype,
+          dawaId: faelles.dawaId,
+          etage: faelles.etage,
+          doer: faelles.doer,
+        };
+      }
+    } catch {
+      /* fælles resolver non-critical — fortsæt til legacy-kæde */
     }
-    // Fallback 3: bbr_ejendom_status cache → DAWA adgangsadresse resolve.
-    // Catches BFE'er where both DAWA /bfe and VP return nothing but we have
-    // a cached adgangsadresse_id from prior BBR enrichment (46k+ rows).
-    if (!result.adresse) {
-      try {
-        const admin = createAdminClient();
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: row } = await (admin as any)
-          .from('bbr_ejendom_status')
-          .select('adgangsadresse_id, kommune_kode')
-          .eq('bfe_nummer', bfe)
-          .maybeSingle();
-        if (row?.adgangsadresse_id) {
-          const addrRes = await fetchDawa(
-            `${DAWA_BASE_URL}/adgangsadresser/${row.adgangsadresse_id}?struktur=mini`,
-            { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
-            { caller: 'ejendomme-by-owner.bbr-cache-fallback' }
-          );
-          if (addrRes.ok) {
-            const addr = (await addrRes.json()) as {
-              id?: string;
-              vejnavn?: string;
-              husnr?: string;
-              postnr?: string;
-              postnrnavn?: string;
-              kommunekode?: string;
-              kommunenavn?: string;
-            };
-            if (addr.vejnavn) {
-              return {
-                ...result,
-                adresse: `${addr.vejnavn} ${addr.husnr ?? ''}`.trim(),
-                postnr: addr.postnr ?? null,
-                by: addr.postnrnavn ?? null,
-                kommune: addr.kommunenavn ?? null,
-                kommuneKode: addr.kommunekode ?? null,
-                dawaId: addr.id ?? row.adgangsadresse_id,
+    // Uresolvet → legacy-kæde (DAWA → VP → BBR → cache som sidste udvej)
+    // med write-through af succesfulde resolves.
+    return _hentDawaBfeDataImpl(bfe).then(async (result) => {
+      // BIZZ-450: If DAWA returned no address, try BBR GraphQL as fallback.
+      // DAWA /bfe/{bfe} endpoint is being deprecated; BBR is the authoritative source.
+      if (!result.adresse) {
+        const vpResult = await _hentVPAdresseForBfe(bfe);
+        if (vpResult.adresse) return { ...result, ...vpResult };
+      }
+      // Fallback 3: bbr_ejendom_status cache → DAWA adgangsadresse resolve.
+      // Catches BFE'er where both DAWA /bfe and VP return nothing but we have
+      // a cached adgangsadresse_id from prior BBR enrichment (46k+ rows).
+      if (!result.adresse) {
+        try {
+          const admin = createAdminClient();
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: row } = await (admin as any)
+            .from('bbr_ejendom_status')
+            .select('adgangsadresse_id, kommune_kode')
+            .eq('bfe_nummer', bfe)
+            .maybeSingle();
+          if (row?.adgangsadresse_id) {
+            const addrRes = await fetchDawa(
+              `${DAWA_BASE_URL}/adgangsadresser/${row.adgangsadresse_id}?struktur=mini`,
+              { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+              { caller: 'ejendomme-by-owner.bbr-cache-fallback' }
+            );
+            if (addrRes.ok) {
+              const addr = (await addrRes.json()) as {
+                id?: string;
+                vejnavn?: string;
+                husnr?: string;
+                postnr?: string;
+                postnrnavn?: string;
+                kommunekode?: string;
+                kommunenavn?: string;
               };
+              if (addr.vejnavn) {
+                return {
+                  ...result,
+                  adresse: `${addr.vejnavn} ${addr.husnr ?? ''}`.trim(),
+                  postnr: addr.postnr ?? null,
+                  by: addr.postnrnavn ?? null,
+                  kommune: addr.kommunenavn ?? null,
+                  kommuneKode: addr.kommunekode ?? null,
+                  dawaId: addr.id ?? row.adgangsadresse_id,
+                };
+              }
             }
           }
+        } catch {
+          /* bbr cache fallback is non-critical */
         }
-      } catch {
-        /* bbr cache fallback is non-critical */
       }
-    }
-    // BIZZ-1670: Fallback 4 — bfe_adresse_cache (manuelt/backfill-populeret)
-    // Fanger BFE'er som DAWA /bfe, VP og bbr_ejendom_status ikke kender.
-    if (!result.adresse) {
-      try {
-        const admin = createAdminClient();
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: cached } = await (admin as any)
-          .from('bfe_adresse_cache')
-          .select(
-            'adresse, etage, doer, postnr, postnrnavn, kommune, kommune_kode, dawa_id, ejendomstype'
-          )
-          .eq('bfe_nummer', bfe)
-          .maybeSingle();
-        // Skip placeholder-adresser ("BFE 12345") — de er uløste
-        if (cached?.adresse && !/^BFE \d+$/.test(cached.adresse)) {
-          return {
-            adresse: cached.adresse,
-            postnr: cached.postnr ?? null,
-            by: cached.postnrnavn ?? null,
-            kommune: cached.kommune ?? null,
-            kommuneKode: cached.kommune_kode ?? null,
-            ejendomstype: cached.ejendomstype ?? null,
-            dawaId: cached.dawa_id ?? null,
-            etage: cached.etage ?? null,
-            doer: cached.doer ?? null,
-          };
+      // BIZZ-1670: Fallback 4 — bfe_adresse_cache (manuelt/backfill-populeret)
+      // Fanger BFE'er som DAWA /bfe, VP og bbr_ejendom_status ikke kender.
+      if (!result.adresse) {
+        try {
+          const admin = createAdminClient();
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: cached } = await (admin as any)
+            .from('bfe_adresse_cache')
+            .select(
+              'adresse, etage, doer, postnr, postnrnavn, kommune, kommune_kode, dawa_id, ejendomstype'
+            )
+            .eq('bfe_nummer', bfe)
+            .maybeSingle();
+          // Skip placeholder-adresser ("BFE 12345") — de er uløste
+          if (cached?.adresse && !/^BFE \d+$/.test(cached.adresse)) {
+            return {
+              adresse: cached.adresse,
+              postnr: cached.postnr ?? null,
+              by: cached.postnrnavn ?? null,
+              kommune: cached.kommune ?? null,
+              kommuneKode: cached.kommune_kode ?? null,
+              ejendomstype: cached.ejendomstype ?? null,
+              dawaId: cached.dawa_id ?? null,
+              etage: cached.etage ?? null,
+              doer: cached.doer ?? null,
+            };
+          }
+        } catch {
+          /* bfe_adresse_cache fallback non-critical */
         }
-      } catch {
-        /* bfe_adresse_cache fallback non-critical */
       }
-    }
-    // BIZZ-1670: Write-through — gem succesfuld resolve i bfe_adresse_cache
-    // så næste opslag er instant (fallback 1-3 kører ikke igen for denne BFE).
-    if (result.adresse) {
-      try {
-        const admin = createAdminClient();
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        void (admin as any).from('bfe_adresse_cache').upsert(
-          {
-            bfe_nummer: bfe,
-            adresse: result.adresse,
-            etage: result.etage ?? null,
-            doer: result.doer ?? null,
-            postnr: result.postnr ?? null,
-            postnrnavn: result.by ?? null,
-            kommune: result.kommune ?? null,
-            kommune_kode: result.kommuneKode ?? null,
-            dawa_id: result.dawaId ?? null,
-            ejendomstype: result.ejendomstype ?? null,
-            kilde: 'auto',
-            sidst_opdateret: new Date().toISOString(),
-          },
-          { onConflict: 'bfe_nummer' }
-        );
-      } catch {
-        /* write-through non-critical */
+      // BIZZ-1670: Write-through — gem succesfuld resolve i bfe_adresse_cache
+      // så næste opslag er instant (fallback 1-3 kører ikke igen for denne BFE).
+      if (result.adresse) {
+        try {
+          const admin = createAdminClient();
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          void (admin as any).from('bfe_adresse_cache').upsert(
+            {
+              bfe_nummer: bfe,
+              adresse: result.adresse,
+              etage: result.etage ?? null,
+              doer: result.doer ?? null,
+              postnr: result.postnr ?? null,
+              postnrnavn: result.by ?? null,
+              kommune: result.kommune ?? null,
+              kommune_kode: result.kommuneKode ?? null,
+              dawa_id: result.dawaId ?? null,
+              ejendomstype: result.ejendomstype ?? null,
+              kilde: 'auto',
+              sidst_opdateret: new Date().toISOString(),
+            },
+            { onConflict: 'bfe_nummer' }
+          );
+        } catch {
+          /* write-through non-critical */
+        }
       }
-    }
-    return result;
-  });
+      return result;
+    });
+  })();
   _bfeFetchInFlight.set(bfe, promise);
   void promise.finally(() => _bfeFetchInFlight.delete(bfe));
   return promise;
@@ -904,6 +932,108 @@ async function pMap<T, R>(
   const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
   await Promise.all(workers);
   return results;
+}
+
+// ─── BIZZ-1814: Admin-SFE → child-ejerlejlighed ekspansion ──────────────────
+
+/** Max antal admin-SFE'er der ekspanderes pr. request (beskytter maxDuration). */
+const MAX_ADMIN_SFE_EXPAND = 25;
+/** Max antal child-ejerlejligheder der tilføjes pr. admin-SFE. */
+const MAX_CHILDREN_PER_SFE = 300;
+
+/**
+ * BIZZ-1814: Find child-ejerlejligheder for en administreret SFE.
+ *
+ * `ejf_administrator` registrerer administration på SFE-niveau (fx en
+ * ejerforening på SFE-BFE 100077625). De underliggende ejerlejligheder vises
+ * ikke, fordi de har egne BFE'er uden FK til SFE'en. Vi resolver dem via:
+ *   SFE-BFE → DAWA jordstykke (ejerlavkode + matrikelnr)
+ *           → DAWA adgangsadresser på matriklen (vejnavn + husnr)
+ *           → bfe_adresse_cache rækker med etage/dør på de adresser = ejerlejligheder
+ *
+ * Rent DB-/DAWA-baseret (ingen mTLS-Tinglysning), så routens cache-model og
+ * 30s-budget bevares. Degraderer roligt: SFE'er hvor cachen mangler
+ * ejerlejligheder giver tom liste — aldrig dårligere end nuværende adfærd.
+ *
+ * @param sfeBfe - Den administrerede SFE's BFE-nummer
+ * @returns Liste af child-ejerlejligheds-BFE'er (ekskl. SFE'en selv), tom ved fejl
+ */
+async function hentAdminSfeChildren(sfeBfe: number): Promise<number[]> {
+  try {
+    // 1) SFE → matrikler (ejerlavkode + matrikelnr). En SFE kan spænde flere.
+    const jordRes = await fetchDawa(
+      `https://api.dataforsyningen.dk/jordstykker?bfenummer=${sfeBfe}&format=json`,
+      { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+      { caller: 'ejendomme-by-owner.admin-sfe-jordstykke' }
+    );
+    if (!jordRes.ok) return [];
+    const jordstykker = (await jordRes.json()) as Array<{
+      bfenummer?: number;
+      sfeejendomsnr?: number | string;
+      matrikelnr?: string;
+      ejerlav?: { kode?: number };
+    }>;
+    // Bekræft at BFE'en faktisk ER en SFE (ikke en enkelt ejerlejlighed):
+    // jordstykkets sfeejendomsnr/bfenummer skal pege på selve BFE'en.
+    const erSfe = jordstykker.some(
+      (j) => Number(j.sfeejendomsnr) === sfeBfe || j.bfenummer === sfeBfe
+    );
+    if (!erSfe) return [];
+
+    const matrikler = jordstykker
+      .map((j) => ({ ejerlavKode: j.ejerlav?.kode, matrikelnr: j.matrikelnr }))
+      .filter((m): m is { ejerlavKode: number; matrikelnr: string } =>
+        Boolean(m.ejerlavKode && m.matrikelnr)
+      );
+    if (matrikler.length === 0) return [];
+
+    // 2) Matrikler → adgangsadresser (vejnavn + husnr + postnr).
+    const adresser = new Set<string>();
+    const postnumre = new Set<string>();
+    for (const m of matrikler) {
+      const adgRes = await fetchDawa(
+        `https://api.dataforsyningen.dk/adgangsadresser?ejerlavkode=${m.ejerlavKode}&matrikelnr=${encodeURIComponent(m.matrikelnr)}&per_side=100&struktur=mini`,
+        { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+        { caller: 'ejendomme-by-owner.admin-sfe-adgangsadresse' }
+      );
+      if (!adgRes.ok) continue;
+      const adg = (await adgRes.json()) as Array<{
+        vejnavn?: string;
+        husnr?: string;
+        postnr?: string;
+      }>;
+      for (const a of adg) {
+        if (a.vejnavn && a.husnr) adresser.add(`${a.vejnavn} ${a.husnr}`);
+        if (a.postnr) postnumre.add(a.postnr);
+      }
+    }
+    if (adresser.size === 0) return [];
+
+    // 3) Adresser → ejerlejligheds-BFE'er via bfe_adresse_cache (etage/dør = enhed).
+    const admin = createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let query = (admin as any)
+      .from('bfe_adresse_cache')
+      .select('bfe_nummer')
+      .in('adresse', [...adresser])
+      .not('etage', 'is', null)
+      .neq('bfe_nummer', sfeBfe)
+      .limit(MAX_CHILDREN_PER_SFE);
+    if (postnumre.size > 0) query = query.in('postnr', [...postnumre]);
+    const { data: rows } = await query;
+
+    const børn = [
+      ...new Set(
+        ((rows ?? []) as Array<{ bfe_nummer: number }>)
+          .map((r) => r.bfe_nummer)
+          .filter((b) => b > 0)
+      ),
+    ];
+    return børn;
+  } catch {
+    /* best-effort — ekspansion er additiv, fejl må ikke vælte porteføljen */
+    return [];
+  }
 }
 
 // ─── Route handler ───────────────────────────────────────────────────────────
@@ -1478,6 +1608,13 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     }
   } // end !cacheFullHit
 
+  // BIZZ-1814: Snapshot af de BFE'er virksomheden selv EJER (fra ejf_ejerskab),
+  // taget FØR administrator-/verifikations-blokkene tilføjer flere. Bruges til at
+  // sikre at "ejet" status altid vinder over "administreret" — en ejerlejlighed
+  // virksomheden ejer må ikke reklassificeres som kun-administreret, blot fordi
+  // dens forælder-SFE også administreres (ellers forsvinder den fra ejet-listen).
+  const ejetBfeSet = new Set<number>(bfeTilCvr.keys());
+
   // BIZZ-1672: Administrerede ejendomme fra ejf_administrator.
   // For ejerforeninger (og andre virksomheder) — tilføj BFE'er de administrerer.
   const administreretByBfe = new Set<number>();
@@ -1509,6 +1646,35 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         if (addedCount > 0) {
           logger.log(
             `[ejendomme-by-owner] ejf_administrator: ${addedCount} administrerede BFE tilføjet`
+          );
+        }
+
+        // BIZZ-1814: Administration registreres på SFE-niveau — ekspandér hver
+        // administreret SFE til dens underliggende ejerlejligheder, så hele
+        // ejendommen vises i ejendomme-tabben (ikke kun SFE-rækken).
+        const adminSfeBfes = [
+          ...new Set((adminRows as Array<{ bfe_nummer: number }>).map((r) => r.bfe_nummer)),
+        ].slice(0, MAX_ADMIN_SFE_EXPAND);
+        let childCount = 0;
+        const childrenPerSfe = await pMap(adminSfeBfes, 5, async (sfeBfe) => ({
+          sfeBfe,
+          children: await hentAdminSfeChildren(sfeBfe),
+        }));
+        for (const { sfeBfe, children } of childrenPerSfe) {
+          const cvr = bfeTilCvr.get(sfeBfe);
+          if (!cvr) continue;
+          for (const childBfe of children) {
+            administreretByBfe.add(childBfe);
+            if (!bfeTilCvr.has(childBfe)) {
+              bfeTilCvr.set(childBfe, cvr);
+              aktivByBfe.set(childBfe, true);
+              childCount++;
+            }
+          }
+        }
+        if (childCount > 0) {
+          logger.log(
+            `[ejendomme-by-owner] BIZZ-1814: ${childCount} child-ejerlejligheder tilføjet under administrerede SFE'er`
           );
         }
       }
@@ -1546,6 +1712,14 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     } catch {
       /* AI-verified lookup non-fatal */
     }
+  }
+
+  // BIZZ-1814: Ejet status vinder over administreret. Fjern enhver ejet BFE fra
+  // administreret-sættet, så ejerlejligheder virksomheden selv ejer bliver i
+  // ejet-listen — selv hvis de også er børn af en administreret SFE (fx Familien
+  // Petersen, der ejer Strandgade-lejlighederne OG administrerer deres SFE).
+  for (const bfe of ejetBfeSet) {
+    administreretByBfe.delete(bfe);
   }
 
   try {

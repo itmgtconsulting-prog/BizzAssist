@@ -937,10 +937,26 @@ export default function BoligprisClient(): React.ReactElement {
                           </option>
                         )}
                       </select>
+                      {/* BIZZ-2183: paginering også øverst, så man kan blade uden
+                          at scrolle til bunden af en lang liste. */}
+                      {data.handlerTotal !== undefined && data.handlerTotal > handlerPageSize && (
+                        <div className="flex items-center gap-2 ml-1 pl-2 border-l border-slate-700/40">
+                          <HandlerPagination
+                            page={handlerPage}
+                            pageSize={handlerPageSize}
+                            total={data.handlerTotal}
+                            onPrev={() => handlePageChange(handlerPage - 1)}
+                            onNext={() => handlePageChange(handlerPage + 1)}
+                          />
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  <div className="overflow-x-auto">
+                  {/* BIZZ-2183: tabel-viewport med egen scroll, så lange lister
+                      scroller internt og paginerings-bjælken kan sidde sticky i
+                      bunden af viewporten (i stedet for at flyde midt i listen). */}
+                  <div className="overflow-auto max-h-[60vh]">
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="text-slate-400 border-b border-slate-700/50">
@@ -1047,36 +1063,22 @@ export default function BoligprisClient(): React.ReactElement {
                         })}
                       </tbody>
                     </table>
-                  </div>
 
-                  {/* Paginering — sticky så den altid er synlig */}
-                  {data.handlerTotal !== undefined && data.handlerTotal > handlerPageSize && (
-                    <div className="flex items-center justify-between mt-4 pt-4 pb-2 border-t border-slate-700/30 sticky bottom-0 bg-[#0a1628]">
-                      <span className="text-sm text-slate-400">
-                        {handlerPage * handlerPageSize + 1}–
-                        {Math.min((handlerPage + 1) * handlerPageSize, data.handlerTotal)} af{' '}
-                        {data.handlerTotal.toLocaleString('da-DK')}
-                      </span>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => handlePageChange(handlerPage - 1)}
-                          disabled={handlerPage === 0}
-                          className="p-1.5 rounded-lg bg-slate-700/40 text-slate-300 hover:bg-slate-600/40 disabled:opacity-30 disabled:cursor-not-allowed"
-                          aria-label="Forrige side"
-                        >
-                          <ChevronLeft className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handlePageChange(handlerPage + 1)}
-                          disabled={(handlerPage + 1) * handlerPageSize >= data.handlerTotal}
-                          className="p-1.5 rounded-lg bg-slate-700/40 text-slate-300 hover:bg-slate-600/40 disabled:opacity-30 disabled:cursor-not-allowed"
-                          aria-label="Næste side"
-                        >
-                          <ChevronRight className="w-4 h-4" />
-                        </button>
+                    {/* BIZZ-2183: paginerings-bjælke sticky i bunden af tabel-
+                        viewporten — altid efter sidste række, aldrig midt i
+                        listen. */}
+                    {data.handlerTotal !== undefined && data.handlerTotal > handlerPageSize && (
+                      <div className="flex items-center justify-between mt-2 pt-3 pb-1 px-1 border-t border-slate-700/30 sticky bottom-0 bg-[#0a1628]">
+                        <HandlerPagination
+                          page={handlerPage}
+                          pageSize={handlerPageSize}
+                          total={data.handlerTotal}
+                          onPrev={() => handlePageChange(handlerPage - 1)}
+                          onNext={() => handlePageChange(handlerPage + 1)}
+                        />
                       </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -1146,6 +1148,54 @@ function KpiCard({ icon, label, value, color }: KpiCardProps) {
         <p className="text-white text-lg font-semibold mt-0.5">{value}</p>
       </div>
     </div>
+  );
+}
+
+/* ---------- Paginerings-kontrol ---------- */
+
+/** Props for HandlerPagination. */
+interface HandlerPaginationProps {
+  page: number;
+  pageSize: number;
+  total: number;
+  onPrev: () => void;
+  onNext: () => void;
+}
+
+/**
+ * Interval-tekst (x–y af total) + forrige/næste-knapper til handler-listen.
+ * Renderes som fragment, så forælderen styrer wrapperen (kompakt øverst vs.
+ * sticky bjælke nederst). BIZZ-2183.
+ *
+ * @param page - Nuværende side (0-indekseret)
+ * @param pageSize - Antal rækker per side
+ * @param total - Samlet antal handler
+ * @param onPrev - Kaldes ved klik på "forrige side"
+ * @param onNext - Kaldes ved klik på "næste side"
+ */
+function HandlerPagination({ page, pageSize, total, onPrev, onNext }: HandlerPaginationProps) {
+  const btn =
+    'p-1.5 rounded-lg bg-slate-700/40 text-slate-300 hover:bg-slate-600/40 disabled:opacity-30 disabled:cursor-not-allowed';
+  return (
+    <>
+      <span className="text-sm text-slate-400 whitespace-nowrap">
+        {page * pageSize + 1}–{Math.min((page + 1) * pageSize, total)} af{' '}
+        {total.toLocaleString('da-DK')}
+      </span>
+      <div className="flex gap-2">
+        <button onClick={onPrev} disabled={page === 0} className={btn} aria-label="Forrige side">
+          <ChevronLeft className="w-4 h-4" />
+        </button>
+        <button
+          onClick={onNext}
+          disabled={(page + 1) * pageSize >= total}
+          className={btn}
+          aria-label="Næste side"
+        >
+          <ChevronRight className="w-4 h-4" />
+        </button>
+      </div>
+    </>
   );
 }
 

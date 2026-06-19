@@ -197,17 +197,26 @@ export default function BoligprisClient(): React.ReactElement {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [exporting, setExporting] = useState(false);
 
-  /* --- Dato-beregning: brugerdefineret interval har forrang over preset --- */
-  const customActive = customFra !== '' && customTil !== '';
+  /* --- Dato-beregning: brugerdefineret interval har forrang over preset ---
+     BIZZ-2180: et ENKELT brugersat datofelt skal også virke. Tidligere krævede
+     customActive BEGGE felter, så fx kun en startdato (uden slutdato) blev
+     stiltiende ignoreret og preset-perioden brugt — brugeren oplevede at
+     dato-ændringer "ikke virkede". Nu overstyrer hvert sat felt sin side af
+     preset-intervallet uafhængigt. */
+  const customActive = customFra !== '' || customTil !== '';
   const { fra, til } = useMemo(() => {
-    // Når brugeren har sat begge datoer, vinder det manuelle interval.
-    if (customFra && customTil) return { fra: customFra, til: customTil };
     const now = new Date();
     const tilStr = now.toISOString().slice(0, 10);
     const months = PERIODER[periodeIdx].months;
-    if (months === 0) return { fra: '2000-01-01', til: tilStr };
-    const fraDate = new Date(now.getFullYear(), now.getMonth() - months, 1);
-    return { fra: fraDate.toISOString().slice(0, 10), til: tilStr };
+    // Preset-baseline for den/de side(r) brugeren IKKE har sat manuelt.
+    const presetFra =
+      months === 0
+        ? '2000-01-01'
+        : new Date(now.getFullYear(), now.getMonth() - months, 1).toISOString().slice(0, 10);
+    return {
+      fra: customFra || presetFra,
+      til: customTil || tilStr,
+    };
   }, [periodeIdx, customFra, customTil]);
 
   /* --- Dynamiske side-størrelser til "Vis"-dropdownen ---

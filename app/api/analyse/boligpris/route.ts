@@ -12,6 +12,8 @@
  *   - postnumre: kommasepareret postnumre (e.g. "2100,2200") — BIZZ-2046
  *   - areal_min/areal_max, byggear_min/byggear_max: BBR-filtre (BIZZ-2051)
  *   - etager_min/etager_max, vaerelser_min/vaerelser_max: BBR-filtre (BIZZ-2070)
+ *   - pris_min/pris_max: købspris-interval i kroner (BIZZ-2186) — 0kr-handler
+ *     ekskluderes automatisk når et prisfilter er sat
  *   - handler: "true" for at inkludere individuelle handler
  *   - limit: antal handler (default 50, max 500)
  *   - offset: handler offset (default 0)
@@ -123,6 +125,9 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
     const etagerMax = Number(sp.get('etager_max')) || 0;
     const vaerelserMin = Number(sp.get('vaerelser_min')) || 0;
     const vaerelserMax = Number(sp.get('vaerelser_max')) || 0;
+    // BIZZ-2186: pris-filter i kroner (samlet_koebesum er bigint). 0 = ikke sat.
+    const prisMin = Number(sp.get('pris_min')) || 0;
+    const prisMax = Number(sp.get('pris_max')) || 0;
     // BBR-filtre sendes til RPC-funktionen
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -184,7 +189,9 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
       etagerMin !== 0 ||
       etagerMax !== 0 ||
       vaerelserMin !== 0 ||
-      vaerelserMax !== 0;
+      vaerelserMax !== 0 ||
+      prisMin !== 0 ||
+      prisMax !== 0;
     const useAggregat = bbrFilterActive || (postnrStrings !== null && postnrStrings.length > 0);
 
     // --- Tidsserier (pagineret — PostgREST capper ved 1000 rows) ---
@@ -212,6 +219,8 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
             p_etager_max: etagerMax,
             p_vaerelser_min: vaerelserMin,
             p_vaerelser_max: vaerelserMax,
+            p_pris_min: prisMin,
+            p_pris_max: prisMax,
             p_postnumre: postnrStrings,
           })
           .order('maaned', { ascending: true })
@@ -414,6 +423,8 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
           p_etager_max: etagerMax,
           p_vaerelser_min: vaerelserMin,
           p_vaerelser_max: vaerelserMax,
+          p_pris_min: prisMin,
+          p_pris_max: prisMax,
           // BIZZ-2112: eksakt postnr-efterfiltrering i RPC'en (join mod
           // bfe_adresse_cache) — kommune-prefiltret ovenfor afgrænser fortsat
           // index-scanningen, men kun rækker med matchende postnr returneres.
@@ -475,6 +486,8 @@ export async function GET(req: NextRequest): Promise<NextResponse | Response> {
               p_etager_max: etagerMax,
               p_vaerelser_min: vaerelserMin,
               p_vaerelser_max: vaerelserMax,
+              p_pris_min: prisMin,
+              p_pris_max: prisMax,
               p_postnumre: postnrStrings,
             });
             if (!cntErr && typeof cntData === 'number') {

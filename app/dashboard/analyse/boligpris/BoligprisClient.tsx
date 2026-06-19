@@ -30,6 +30,7 @@ import {
   Calendar,
   Layers,
   BedDouble,
+  Banknote,
 } from 'lucide-react';
 
 import ResizableDivider from '@/app/components/ResizableDivider';
@@ -155,6 +156,20 @@ function fmtDkk(v: number): string {
   return v.toLocaleString('da-DK');
 }
 
+/**
+ * Konverterer et pris-input i mio. kr ("2" eller "2,5") til hele kroner som
+ * streng til API'et (BIZZ-2186). Accepterer både komma og punktum som decimal-
+ * separator. Returnerer null for tom/ugyldig værdi, så feltet udelades.
+ *
+ * @param mio - Råt input fra pris-feltet (mio. kr)
+ * @returns Pris i kroner som streng, eller null
+ */
+function prisMioTilKroner(mio: string): string | null {
+  const n = parseFloat(mio.trim().replace(',', '.'));
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return String(Math.round(n * 1_000_000));
+}
+
 /** Formatér dato til dansk kort-format. */
 function fmtDato(iso: string): string {
   const d = new Date(iso);
@@ -186,6 +201,9 @@ export default function BoligprisClient(): React.ReactElement {
   const [etagerMax, setEtagerMax] = useState('');
   const [vaerelserMin, setVaerelserMin] = useState('');
   const [vaerelserMax, setVaerelserMax] = useState('');
+  // BIZZ-2186: pris-filter angives i mio. kr (fx "2" = 2.000.000 kr).
+  const [prisMin, setPrisMin] = useState('');
+  const [prisMax, setPrisMax] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ApiResponse | null>(null);
@@ -257,6 +275,10 @@ export default function BoligprisClient(): React.ReactElement {
         if (etagerMax) params.set('etager_max', etagerMax);
         if (vaerelserMin) params.set('vaerelser_min', vaerelserMin);
         if (vaerelserMax) params.set('vaerelser_max', vaerelserMax);
+        const prisMinKr = prisMioTilKroner(prisMin);
+        const prisMaxKr = prisMioTilKroner(prisMax);
+        if (prisMinKr) params.set('pris_min', prisMinKr);
+        if (prisMaxKr) params.set('pris_max', prisMaxKr);
         if (includeHandler) {
           params.set('handler', 'true');
           params.set('limit', String(limit));
@@ -292,6 +314,8 @@ export default function BoligprisClient(): React.ReactElement {
       etagerMax,
       vaerelserMin,
       vaerelserMax,
+      prisMin,
+      prisMax,
     ]
   );
 
@@ -438,6 +462,10 @@ export default function BoligprisClient(): React.ReactElement {
       if (etagerMax) params.set('etager_max', etagerMax);
       if (vaerelserMin) params.set('vaerelser_min', vaerelserMin);
       if (vaerelserMax) params.set('vaerelser_max', vaerelserMax);
+      const prisMinKr = prisMioTilKroner(prisMin);
+      const prisMaxKr = prisMioTilKroner(prisMax);
+      if (prisMinKr) params.set('pris_min', prisMinKr);
+      if (prisMaxKr) params.set('pris_max', prisMaxKr);
       params.set('handler', 'true');
       params.set('export', 'true');
       const res = await fetch(`/api/analyse/boligpris?${params.toString()}`);
@@ -505,6 +533,8 @@ export default function BoligprisClient(): React.ReactElement {
     etagerMax,
     vaerelserMin,
     vaerelserMax,
+    prisMin,
+    prisMax,
   ]);
 
   return (
@@ -721,6 +751,34 @@ export default function BoligprisClient(): React.ReactElement {
                 placeholder="Værelser max"
                 className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-2 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 w-28"
                 aria-label="Maksimum antal værelser"
+              />
+            </div>
+            {/* BIZZ-2186: pris-filter (mio. kr) — 0kr-handler ekskluderes
+                automatisk når et prisinterval er sat. */}
+            <div className="flex items-center gap-1.5 text-xs">
+              <Banknote className="w-3.5 h-3.5 text-slate-400" />
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.1"
+                min="0"
+                value={prisMin}
+                onChange={(e) => setPrisMin(e.target.value)}
+                placeholder="Pris min (mio)"
+                className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-2 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 w-28"
+                aria-label="Minimum købspris i millioner kroner"
+              />
+              <span className="text-slate-500">–</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.1"
+                min="0"
+                value={prisMax}
+                onChange={(e) => setPrisMax(e.target.value)}
+                placeholder="Pris max (mio)"
+                className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-2 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 w-28"
+                aria-label="Maksimum købspris i millioner kroner"
               />
             </div>
           </div>

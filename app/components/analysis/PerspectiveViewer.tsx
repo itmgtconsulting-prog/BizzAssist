@@ -13,14 +13,7 @@
  * @module PerspectiveViewer
  */
 
-import {
-  useRef,
-  useEffect,
-  useCallback,
-  forwardRef,
-  useImperativeHandle,
-  useState,
-} from 'react';
+import { useRef, useEffect, useCallback, forwardRef, useImperativeHandle, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -142,7 +135,10 @@ const PerspectiveViewer = forwardRef<PerspectiveViewerHandle, PerspectiveViewerP
         if (!clientRef.current || !viewerRef.current) return;
 
         // Delete previous table if it exists
-        if (tableRef.current && typeof (tableRef.current as { delete?: () => Promise<void> }).delete === 'function') {
+        if (
+          tableRef.current &&
+          typeof (tableRef.current as { delete?: () => Promise<void> }).delete === 'function'
+        ) {
           await (tableRef.current as { delete: () => Promise<void> }).delete();
         }
 
@@ -171,9 +167,7 @@ const PerspectiveViewer = forwardRef<PerspectiveViewerHandle, PerspectiveViewerP
 
     return (
       <div className="flex flex-col h-full">
-        {title && (
-          <div className="text-sm font-medium text-slate-300 mb-2">{title}</div>
-        )}
+        {title && <div className="text-sm font-medium text-slate-300 mb-2">{title}</div>}
         <div className="flex-1 min-h-[400px] relative rounded-xl overflow-hidden border border-white/8">
           {loading && (
             <div className="absolute inset-0 flex items-center justify-center bg-[#0f172a]">

@@ -77,7 +77,9 @@ const ALL_CRONS = [
   { path: '/api/cron/refresh-data-catalog',        interval: 1440 },
   { path: '/api/cron/backfill-ejerandel',          interval: 1440 },
   { path: '/api/cron/backfill-ejerskifte-historik', interval: 1440 },
-  { path: '/api/cron/backfill-ejerskifte-handel',   interval: 1440 },
+  // backfill-ejerskifte-handel: kun på develop, ikke merget til main → 404 i prod.
+  // Genaktivér efter næste develop→main merge.
+  // { path: '/api/cron/backfill-ejerskifte-handel',   interval: 1440 },
   { path: '/api/cron/backfill-tinglysning-handler', interval: 1440 },
   { path: '/api/cron/gap-fill-cvr',                interval: 1440 },
   { path: '/api/cron/gap-fill-cvr-deltager',       interval: 1440 },

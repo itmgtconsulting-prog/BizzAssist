@@ -39,7 +39,7 @@ import { resolve } from 'path';
 const args = process.argv.slice(2);
 const envTarget = args.find((a) => a.startsWith('--env='))?.split('=')[1] ?? 'test';
 const postnrArg = args.find((a) => a.startsWith('--postnr='))?.split('=')[1] ?? null;
-const limit = parseInt(args.find((a) => a.startsWith('--limit='))?.split('=')[1] ?? '200000', 10);
+const limit = parseInt(args.find((a) => a.startsWith('--limit='))?.split('=')[1] ?? '500000', 10);
 const concurrency = parseInt(
   args.find((a) => a.startsWith('--concurrency='))?.split('=')[1] ?? '8',
   10
@@ -228,105 +228,150 @@ function parseAddr(adresse) {
   return { vejnavn: m[1], husnr: m[2] };
 }
 
-// ── 1) Kandidater: etageboliger m/ handel + NULL antal_vaerelser ──
+// ── 1) Kandidater: ejerlejligheder m/ handel + NULL antal_vaerelser ──
+// BIZZ-2179: Den oprindelige `byg021_anvendelse = 140`-filter ramte SAMLET FAST
+// EJENDOM (hele etageboliger ejet som ét BFE), IKKE ejerlejligheder. Verificeret
+// 2026-06-22 via BBR_Ejendomsrelation: ægte ejerlejligheder har byg021 = NULL
+// (de mapper til en BBR_Enhed, ikke en bygning). Den autoritative forudsætning for
+// resolveren er at enhedsadressen (etage/dør) findes i cachen — derfor selekteres
+// nu på `a.etage IS NOT NULL` + reel adresse (ikke "BFE <n>"-placeholder), uanset
+// byg021. Resolveren er selv-validerende: skriver kun værelser hvor BBR_Enhed
+// returnerer enh031AntalVaerelser > 0 for netop den enhedsadresse, så ikke-
+// ejerlejligheder uden enhedsadresse-træffer springes automatisk over.
 const postnrFilter = postnrArg ? `AND a.postnr = '${String(postnrArg).padStart(4, '0')}'` : '';
-const candidates = await runSql(`
-  SELECT DISTINCT b.bfe_nummer, a.adresse, a.etage, a.doer, a.postnr
-  FROM bbr_ejendom_status b
-  JOIN v_ejerskifte_handel h
-    ON h.bfe_nummer = b.bfe_nummer AND h.samlet_koebesum > 0 AND h.overtagelsesdato IS NOT NULL
-  JOIN bfe_adresse_cache a ON a.bfe_nummer = b.bfe_nummer
-  WHERE b.antal_vaerelser IS NULL
-    AND b.byg021_anvendelse = 140
-    AND a.etage IS NOT NULL
-    AND a.adresse IS NOT NULL
-    ${postnrFilter}
-  ORDER BY b.bfe_nummer
-  LIMIT ${limit};
-`);
-console.log(
-  `[${envTarget}] ${candidates.length} kandidat-BFE'er (etagebolig, NULL antal_vaerelser, har handel${postnrArg ? `, postnr ${postnrArg}` : ''})`
-);
-if (candidates.length === 0) process.exit(0);
-
-// ── 2) Resolve værelser + bygnings-UUID pr. BFE (concurrency-pool) ──
-const resolvedRows = []; // { bfe, vaerelser, bygningId }
+const PAGE = parseInt(args.find((a) => a.startsWith('--page='))?.split('=')[1] ?? '2000', 10);
 let processed = 0;
-let idx = 0;
-async function worker() {
-  while (idx < candidates.length) {
-    const c = candidates[idx++];
-    const parsed = parseAddr(c.adresse);
-    processed++;
-    if (parsed && c.postnr) {
-      const enhedsadresseId = await resolveEnhedsadresseId({
-        vejnavn: parsed.vejnavn,
-        husnr: parsed.husnr,
-        postnr: String(c.postnr),
-        etage: c.etage,
-        doer: c.doer,
-      });
-      if (enhedsadresseId) {
-        const data = await fetchEnhedData(enhedsadresseId);
-        if (data && data.vaerelser != null && data.vaerelser > 0) {
-          resolvedRows.push({
-            bfe: Number(c.bfe_nummer),
-            vaerelser: data.vaerelser,
-            bygningId: data.bygningId,
-          });
+let totalResolved = 0;
+let totalWritten = 0;
+
+/** Resolve værelser + bygnings-UUID for én side kandidater (concurrency-pool). */
+async function resolveBlock(block) {
+  const resolved = []; // { bfe, vaerelser, bygningId }
+  let bi = 0;
+  async function worker() {
+    while (bi < block.length) {
+      const c = block[bi++];
+      const parsed = parseAddr(c.adresse);
+      processed++;
+      if (parsed && c.postnr) {
+        const enhedsadresseId = await resolveEnhedsadresseId({
+          vejnavn: parsed.vejnavn,
+          husnr: parsed.husnr,
+          postnr: String(c.postnr),
+          etage: c.etage,
+          doer: c.doer,
+        });
+        if (enhedsadresseId) {
+          const data = await fetchEnhedData(enhedsadresseId);
+          if (data && data.vaerelser != null && data.vaerelser > 0) {
+            resolved.push({
+              bfe: Number(c.bfe_nummer),
+              vaerelser: data.vaerelser,
+              bygningId: data.bygningId,
+            });
+          }
         }
       }
     }
-    if (processed % 250 === 0) {
-      console.log(
-        `  behandlet ${processed}/${candidates.length}, løst værelser: ${resolvedRows.length}`
-      );
-    }
+  }
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+  return resolved;
+}
+
+/** Skriv én side resolved-rows (med etager) til bbr_ejendom_status. */
+async function writeBlock(resolved) {
+  const uniqueBygninger = [...new Set(resolved.map((r) => r.bygningId).filter(Boolean))];
+  const etagerByByg = await fetchEtagerForBygninger(uniqueBygninger);
+  const updates = resolved.map((r) => ({
+    bfe: r.bfe,
+    vaerelser: r.vaerelser,
+    etager: r.bygningId ? (etagerByByg.get(r.bygningId) ?? null) : null,
+  }));
+  const WRITE_BATCH = 500;
+  for (let i = 0; i < updates.length; i += WRITE_BATCH) {
+    const batch = updates.slice(i, i + WRITE_BATCH);
+    const values = batch
+      .map((u) => `(${u.bfe}, ${u.vaerelser}, ${u.etager === null ? 'NULL' : u.etager})`)
+      .join(',');
+    await runSql(`
+      UPDATE bbr_ejendom_status b
+      SET antal_vaerelser = v.vaerelser,
+          antal_etager = COALESCE(b.antal_etager, v.etager)
+      FROM (VALUES ${values}) AS v(bfe, vaerelser, etager)
+      WHERE b.bfe_nummer = v.bfe AND b.antal_vaerelser IS NULL;
+    `);
+    totalWritten += batch.length;
   }
 }
-await Promise.all(Array.from({ length: concurrency }, () => worker()));
-console.log(`Løste antal_vaerelser for ${resolvedRows.length}/${candidates.length} BFE'er.`);
 
-// ── 3) Resolve antal_etager (byg054) for de involverede bygninger ──
-const uniqueBygninger = [...new Set(resolvedRows.map((r) => r.bygningId).filter(Boolean))];
-console.log(`Henter byg054AntalEtager for ${uniqueBygninger.length} bygninger …`);
-const etagerByByg = await fetchEtagerForBygninger(uniqueBygninger);
-
-const updates = resolvedRows.map((r) => ({
-  bfe: r.bfe,
-  vaerelser: r.vaerelser,
-  etager: r.bygningId ? (etagerByByg.get(r.bygningId) ?? null) : null,
-}));
-const medEtager = updates.filter((u) => u.etager != null).length;
-console.log(`Heraf ${medEtager} med antal_etager.`);
-
-if (dryRun) {
-  console.log('DRY-RUN — ingen skrivning. Eksempel:', updates.slice(0, 10));
-  process.exit(0);
+// ── 2-5) Keyset-pagineret fetch → resolve → skriv (crash-resumable) ──
+// BIZZ-2179: Den nationale kandidat-forespørgsel (DISTINCT + ORDER BY over hele
+// bbr_ejendom_status × v_ejerskifte_handel × bfe_adresse_cache med LIMIT 500k)
+// overskred Supabase' 120s statement-timeout og crashede scriptet FØR første
+// skrivning. Nu hentes kandidaterne i bfe_nummer-keyset-sider (LIMIT PAGE), så hver
+// forespørgsel er afgrænset og hurtig. Da skrevne rækker får antal_vaerelser != NULL,
+// ekskluderer WHERE-klausulen dem automatisk — en gen-kørsel (cursor=0) genoptager
+// fra første uskrevne BFE uden at gen-behandle de allerede skrevne.
+let cursor = 0;
+let pageNo = 0;
+while (processed < limit) {
+  // Hele iterationen wrappes: en vedvarende side-fejl (fx statement-timeout efter
+  // runSql's interne retries) skal STOPPE pænt — ikke crashe — så delvist arbejde
+  // bevares. Gen-kørsel (cursor=0) genoptager automatisk fra første uskrevne BFE.
+  let page;
+  try {
+    page = await runSql(`
+      SELECT DISTINCT b.bfe_nummer, a.adresse, a.etage, a.doer, a.postnr
+      FROM bbr_ejendom_status b
+      JOIN v_ejerskifte_handel h
+        ON h.bfe_nummer = b.bfe_nummer AND h.samlet_koebesum > 0 AND h.overtagelsesdato IS NOT NULL
+      JOIN bfe_adresse_cache a ON a.bfe_nummer = b.bfe_nummer
+      WHERE b.antal_vaerelser IS NULL
+        AND a.etage IS NOT NULL
+        AND a.adresse IS NOT NULL
+        AND a.adresse NOT LIKE 'BFE %'
+        AND b.bfe_nummer > ${cursor}
+        ${postnrFilter}
+      ORDER BY b.bfe_nummer
+      LIMIT ${PAGE};
+    `);
+  } catch (err) {
+    console.error(`Side-fetch fejlede ved cursor ${cursor}: ${err.message}. Stopper pænt — re-kør for at fortsætte.`);
+    break;
+  }
+  if (page.length === 0) break;
+  cursor = Number(page[page.length - 1].bfe_nummer);
+  pageNo++;
+  const resolved = await resolveBlock(page);
+  totalResolved += resolved.length;
+  if (dryRun) {
+    console.log(`DRY-RUN side ${pageNo} (t.o.m. BFE ${cursor}): ${resolved.length}/${page.length} løst. Eksempel:`, resolved.slice(0, 5));
+    break; // dry-run: kun første side
+  }
+  try {
+    if (resolved.length > 0) await writeBlock(resolved);
+  } catch (err) {
+    console.error(`Skrivning fejlede ved cursor ${cursor}: ${err.message}. Stopper pænt — re-kør for at fortsætte.`);
+    break;
+  }
+  console.log(
+    `Side ${pageNo} (t.o.m. BFE ${cursor}): løst ${resolved.length}/${page.length}, behandlet ${processed}, total skrevet ${totalWritten}`
+  );
 }
+console.log(`Løste antal_vaerelser for ${totalResolved} BFE'er (behandlet ${processed}). Skrevet: ${totalWritten}.`);
 
-// ── 4) Skriv i batches via VALUES-join ──
-const WRITE_BATCH = 500;
-let written = 0;
-for (let i = 0; i < updates.length; i += WRITE_BATCH) {
-  const batch = updates.slice(i, i + WRITE_BATCH);
-  const values = batch
-    .map((u) => `(${u.bfe}, ${u.vaerelser}, ${u.etager === null ? 'NULL' : u.etager})`)
-    .join(',');
-  await runSql(`
-    UPDATE bbr_ejendom_status b
-    SET antal_vaerelser = v.vaerelser,
-        antal_etager = COALESCE(b.antal_etager, v.etager)
-    FROM (VALUES ${values}) AS v(bfe, vaerelser, etager)
-    WHERE b.bfe_nummer = v.bfe AND b.antal_vaerelser IS NULL;
-  `);
-  written += batch.length;
-  console.log(`  skrev ${written}/${updates.length}`);
-}
+if (dryRun) process.exit(0);
 
-// ── 4) Refresh MV ──
+// ── 5) Refresh MV ──
 if (!noRefresh) {
   console.log('Refresher mv_boligpris_handler …');
-  await runSql('REFRESH MATERIALIZED VIEW public.mv_boligpris_handler;');
+  try {
+    await runSql('REFRESH MATERIALIZED VIEW public.mv_boligpris_handler;');
+  } catch (err) {
+    console.error(
+      `MV-refresh fejlede (${err.message}). Data ER skrevet til bbr_ejendom_status — ` +
+        `kør REFRESH MATERIALIZED VIEW public.mv_boligpris_handler manuelt.`
+    );
+  }
 }
 console.log('Færdig.');

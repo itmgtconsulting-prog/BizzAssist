@@ -143,9 +143,11 @@ export interface TrackedEjendom {
 export interface EjendomNotifikation {
   /** Unik notifikations-ID */
   id: string;
-  /** Reference til tracked ejendom ID */
+  /** Reference til entitetens ID (BFE/DAWA, CVR eller enhedsNummer) */
   ejendomId: string;
-  /** Adresse for visning */
+  /** Entitetstype — styrer ikon og navigation (BIZZ-2195) */
+  entityType: 'property' | 'company' | 'person';
+  /** Adresse/navn for visning */
   adresse: string;
   /** Type af aendring */
   type: 'bbr' | 'vurdering' | 'ejerskifte' | 'energi' | 'plan' | 'generel';
@@ -273,9 +275,13 @@ function mapSupabaseToTracked(e: Record<string, unknown>): TrackedEjendom {
  * @returns Mapped EjendomNotifikation
  */
 function mapSupabaseToNotifikation(n: Record<string, unknown>): EjendomNotifikation {
+  const entityType = (n.entity_type as string) || 'property';
   return {
     id: n.id as string,
     ejendomId: n.entity_id as string,
+    entityType: (['property', 'company', 'person'].includes(entityType)
+      ? entityType
+      : 'property') as EjendomNotifikation['entityType'],
     adresse: n.title as string,
     type: ((n.notification_type as string) || 'generel') as EjendomNotifikation['type'],
     besked: n.message as string,

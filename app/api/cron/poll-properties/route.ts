@@ -142,14 +142,26 @@ async function detectChange(
 
   if (latest && latest.snapshot_hash === currentHash) return false; // ingen ændring
 
-  // Gem nyt snapshot
-  await db.from('property_snapshots').insert({
-    tenant_id: tenant.id,
-    entity_id: entity.entity_id,
-    snapshot_type: type,
-    snapshot_hash: currentHash,
-    snapshot_data: currentData,
-  });
+  // Gem/opdatér snapshot (én række pr. (tenant, entity, type) — se mig 189).
+  // Upsert så en detekteret ændring faktisk persisteres; ellers ville hver
+  // kørsel re-detektere og gen-notificere (BIZZ-2194).
+  const { error: snapErr } = await db.from('property_snapshots').upsert(
+    {
+      tenant_id: tenant.id,
+      entity_id: entity.entity_id,
+      snapshot_type: type,
+      snapshot_hash: currentHash,
+      snapshot_data: currentData,
+    },
+    { onConflict: 'tenant_id,entity_id,snapshot_type' }
+  );
+
+  // Kunne ikke gemme snapshot → undlad notifikation, så vi ikke gen-notificerer
+  // i en endeløs løkke ved gentagne kørsler.
+  if (snapErr) {
+    logger.warn(`[poll-properties] snapshot-upsert fejl (${type}):`, snapErr.message);
+    return false;
+  }
 
   if (!latest) return false; // første gang = baseline → ingen notifikation
 

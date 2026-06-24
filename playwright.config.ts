@@ -55,7 +55,7 @@ export default defineConfig({
     /* ── Public pages — no auth required ── */
     {
       name: 'chromium-public',
-      testMatch: /\/(homepage|login|navigation|support-chat)\.spec\.ts/,
+      testMatch: /\/(homepage|login|navigation|support-chat|tenant-provisioning)\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
     },
 
@@ -63,7 +63,7 @@ export default defineConfig({
     {
       name: 'chromium-auth',
       testMatch:
-        /\/(dashboard|settings-gdpr|ai-chat|ai-token-tracking|analyse|data-intelligence|data-intelligence-ui|ejendom-detail|virksomhed-detail|person-detail|billing|diagram|ejendomshierarki|forsikring|forsikring-kort|kort|notifikationer|pivot-analyse|search|salgshistorik-cache-verify|forsikring-debug|forsikring-belvedere-fix|forsikring-cvr-threshold|forsikring-portfolio-gaps|forsikring-1939-grundejeransvar|forsikring-sfe-struktur|forsikring-2160-restore|forsikring-2166-wizard-cleanup|forsikring-2162-bfe-adresse|forsikring-2167-kort-knap-historik|forsikring-2137-auto-match|forsikring-2144-dmr|_verify-ui-batch|virksomhed-bilbog-forklaring|person-ejendomme-cache|diagram-virksomhed-fallback|intelligence-width|intelligence-end-of-list|salgshistorik-saelger|finansieringsrapport-inline|ejerlejligheder-parity|bfe-adresse-parity)\.spec\.ts/,
+        /\/(dashboard|settings-gdpr|ai-chat|ai-token-tracking|analyse|data-intelligence|data-intelligence-ui|ejendom-detail|virksomhed-detail|person-detail|billing|diagram|ejendomshierarki|forsikring|forsikring-kort|kort|notifikationer|pivot-analyse|search|salgshistorik-cache-verify|forsikring-debug|forsikring-belvedere-fix|forsikring-cvr-threshold|forsikring-portfolio-gaps|forsikring-1939-grundejeransvar|forsikring-sfe-struktur|forsikring-2160-restore|forsikring-2166-wizard-cleanup|forsikring-2162-bfe-adresse|forsikring-2167-kort-knap-historik|forsikring-2137-auto-match|forsikring-2144-dmr|_verify-ui-batch|virksomhed-bilbog-forklaring|person-ejendomme-cache|diagram-virksomhed-fallback|intelligence-width|intelligence-end-of-list|salgshistorik-saelger|finansieringsrapport-inline|ejerlejligheder-parity|bfe-adresse-parity|boligpris-filter|ejerskab-opdelt-sfe)\.spec\.ts/,
       dependencies: ['auth setup'],
       use: {
         ...devices['Desktop Chrome'],

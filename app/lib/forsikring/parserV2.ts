@@ -56,17 +56,8 @@ function extractJsonArray(text: string): unknown[] {
   return [];
 }
 
-// ─── Step 0: PDF → Markdown ────────────────────────────────────────
+// ─── Token-forbrug (BIZZ-2190) ─────────────────────────────────────
 
-/**
- * Konverterer en PDF-buffer til Markdown via Claude Vision.
- * Sender hver side som billede og beder Claude transskribere indholdet.
- *
- * @param pdfBuffer - PDF-bytes
- * @param apiKey - Anthropic API-key
- * @param maxPages - Maks antal sider at konvertere (default 10)
- * @returns Markdown-tekst af hele dokumentet
- */
 /**
  * BIZZ-2190: Akkumulator for faktisk Anthropic-token-forbrug på tværs af de 5
  * pipeline-kald. Trådes (mutérbart) gennem hvert step så parse-route kan
@@ -87,6 +78,17 @@ export function addUsage(
   acc.outputTokens += response.usage?.output_tokens ?? 0;
 }
 
+// ─── Step 0: PDF → Markdown ────────────────────────────────────────
+
+/**
+ * Konverterer en PDF-buffer til Markdown via Claude Vision.
+ * Sender hver side som billede og beder Claude transskribere indholdet.
+ *
+ * @param pdfBuffer - PDF-bytes
+ * @param apiKey - Anthropic API-key
+ * @param usage - BIZZ-2190: valgfri token-forbrugs-akkumulator
+ * @returns Markdown-tekst af hele dokumentet
+ */
 export async function pdfToMarkdown(
   pdfBuffer: Buffer,
   apiKey: string,

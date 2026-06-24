@@ -188,6 +188,8 @@ export type Notification = {
   message: string;
   metadata: Record<string, unknown> | null;
   is_read: boolean;
+  /** Sat når notify-followers-cronen har afsendt e-mail om denne ændring (BIZZ-2194) */
+  email_sent_at: string | null;
   created_at: string;
 };
 

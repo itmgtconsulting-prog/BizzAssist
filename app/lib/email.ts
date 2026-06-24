@@ -707,3 +707,137 @@ export async function sendTeamInvitationEmail(params: TeamInvitationParams): Pro
     logger.error('[email] Failed to send team invitation email:', err);
   }
 }
+
+// ─── Followed-entity change notification ──────────────────────────────────────
+
+/** Hvilken slags fulgt entitet ændringen vedrører */
+export type EntityChangeKind = 'property' | 'company' | 'person';
+
+/** Parametre for "fulgt entitet ændret"-e-mailen */
+export interface EntityChangeEmailParams {
+  /** Modtagerens e-mailadresse (følgeren) */
+  to: string;
+  /** Entitetstype — styrer label, farve og ikon */
+  entityType: EntityChangeKind;
+  /** Visningsnavn: adresse (ejendom), firmanavn (virksomhed) eller personnavn */
+  entityLabel: string;
+  /** Kort overskrift på ændringen, fx "Ejerskifte registreret" */
+  changeTitle: string;
+  /** Uddybende sætning om ændringen */
+  changeMessage: string;
+  /** Dyb-link til entitetens detaljeside */
+  link: string;
+  /** Hvornår ændringen blev registreret (default: nu) */
+  changedAt?: Date;
+}
+
+/**
+ * Stil-konstanter pr. entitetstype (DA/EN-label + accent-farve).
+ * Farverne følger ejendoms-terminologien i app/lib/entityStyles.ts.
+ */
+const ENTITY_CHANGE_STYLE: Record<EntityChangeKind, { da: string; en: string; accent: string }> = {
+  property: { da: 'ejendom', en: 'property', accent: '#10b981' },
+  company: { da: 'virksomhed', en: 'company', accent: '#3b82f6' },
+  person: { da: 'person', en: 'person', accent: '#f59e0b' },
+};
+
+/**
+ * Send en notifikations-e-mail når en ejendom/virksomhed/person, som brugeren
+ * følger, er blevet ændret (fx ejerskifte, BBR-ændring, ny vurdering).
+ *
+ * Bilingual (dansk primær, engelsk sekundær) og dark-theme — matcher de øvrige
+ * transaktionsmails. Fejler stille (log-only) hvis RESEND_API_KEY ikke er sat.
+ *
+ * GDPR: e-mailens indhold persisteres ikke. `entityLabel` kan være PII (adresse/
+ * navn) og logges derfor ALDRIG — kun afsendelses-status logges. Selve
+ * change-notifikationen lever i tenant_*.notifications (retention styret af
+ * /api/cron/purge-old-data, max 12 mdr.).
+ *
+ * @param params - Modtager, entitetstype, ændringsbeskrivelse og link
+ */
+export async function sendEntityChangeEmail(params: EntityChangeEmailParams): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    logger.warn('[email] RESEND_API_KEY not set, skipping entity-change email');
+    return;
+  }
+
+  const { to, entityType, entityLabel, changeTitle, changeMessage, link } = params;
+  const style = ENTITY_CHANGE_STYLE[entityType];
+  const changedAt = params.changedAt ?? new Date();
+
+  const dateDa = changedAt.toLocaleDateString('da-DK', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+
+  // Escape brugerstyret tekst så et navn/adresse med < eller & ikke bryder HTML
+  const esc = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+  const safeLabel = esc(entityLabel);
+  const safeTitle = esc(changeTitle);
+  const safeMessage = esc(changeMessage);
+
+  // Bilingual email — Danish primary, English secondary
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; background: #0f172a; color: #e2e8f0; padding: 40px; border-radius: 12px;">
+      <h1 style="color: #ffffff; font-size: 24px; margin: 0 0 8px 0;">BizzAssist</h1>
+      <p style="color: #94a3b8; font-size: 12px; margin: 0 0 24px 0;">&AElig;ndring p&aring; en ${style.da} du f&oslash;lger</p>
+
+      <h2 style="color: ${style.accent}; font-size: 18px; margin: 0 0 16px 0;">${safeTitle}</h2>
+
+      <p style="margin: 0 0 4px 0; font-size: 14px;">${safeMessage}</p>
+      <p style="margin: 0 0 20px 0; font-size: 13px; color: #94a3b8;">A ${style.en} you follow has been updated.</p>
+
+      <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+        <tr>
+          <td style="padding: 10px 0; color: #94a3b8; font-size: 13px; border-bottom: 1px solid #1e293b; width: 40%;">${style.da.charAt(0).toUpperCase() + style.da.slice(1)}</td>
+          <td style="padding: 10px 0; text-align: right; font-size: 13px; border-bottom: 1px solid #1e293b;">${safeLabel}</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px 0; color: #94a3b8; font-size: 13px; border-bottom: 1px solid #1e293b;">&AElig;ndring / Change</td>
+          <td style="padding: 10px 0; text-align: right; font-size: 13px; border-bottom: 1px solid #1e293b;">${safeTitle}</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px 0; color: #94a3b8; font-size: 13px;">Registreret / Registered</td>
+          <td style="padding: 10px 0; text-align: right; font-size: 13px;">${dateDa}</td>
+        </tr>
+      </table>
+
+      <a href="${link}" style="display: inline-block; background: ${style.accent}; color: #0f172a; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-size: 14px; font-weight: 600; margin-top: 8px;">
+        Se &aelig;ndringen / View change &rarr;
+      </a>
+
+      <p style="margin: 28px 0 0 0; font-size: 12px; color: #94a3b8;">
+        Du modtager denne mail, fordi du f&oslash;lger denne ${style.da} i BizzAssist. Du kan altid stoppe med at f&oslash;lge fra entitetens side.
+      </p>
+
+      <hr style="border: none; border-top: 1px solid #1e293b; margin: 30px 0;" />
+      <p style="color: #475569; font-size: 11px; margin: 0;">${companyInfo.legalLineHtml}</p>
+    </div>
+  `;
+
+  try {
+    const res = await fetch(RESEND_ENDPOINT, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: FROM_ADDRESS,
+        to,
+        subject: `${changeTitle} – BizzAssist`,
+        html,
+      }),
+    });
+    if (!res.ok) {
+      // Log kun status — aldrig modtager eller entitets-PII
+      const body = await res.text();
+      logger.error('[email] Entity-change email error:', res.status, body);
+    } else {
+      logger.log('[email] Entity-change email sent');
+    }
+  } catch (err) {
+    logger.error('[email] Failed to send entity-change email:', err);
+  }
+}

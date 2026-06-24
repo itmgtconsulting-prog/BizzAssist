@@ -29,6 +29,7 @@ import type { SnapshotType, NotificationType } from '@/lib/db/tenant';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
+import { dispatchFollowerEmails } from '@/app/lib/notifyFollowers';
 
 export const maxDuration = 300;
 
@@ -427,10 +428,23 @@ export async function GET(request: NextRequest) {
         }
       }
 
+      // BIZZ-2194: Afsend e-mails for de change-notifikationer denne (og
+      // pull-bbr-events-) kørsel har oprettet. Kører som tail-kald her i stedet
+      // for som separat Vercel-cron, da der er en hård grænse på ≤39 crons.
+      // Idempotent via email_sent_at, så intet dobbelt-afsendes.
+      let emailsSent = 0;
+      try {
+        const dispatch = await dispatchFollowerEmails();
+        emailsSent = dispatch.sent;
+      } catch (err) {
+        errors.push(`notify-followers: ${err}`);
+      }
+
       return NextResponse.json({
         ok: true,
         processed: totalProcessed,
         changes: totalChanges,
+        emailsSent,
         errors: errors.length,
         ...(errors.length > 0 ? { errorDetails: errors.slice(0, 10) } : {}),
       });

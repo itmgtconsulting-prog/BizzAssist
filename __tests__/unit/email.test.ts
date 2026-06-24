@@ -19,6 +19,7 @@ import {
   sendPaymentConfirmationEmail,
   sendApprovalEmail,
   sendRecurringPaymentEmail,
+  sendEntityChangeEmail,
 } from '@/app/lib/email';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -245,5 +246,107 @@ describe('sendRecurringPaymentEmail', () => {
     global.fetch = vi.fn().mockRejectedValue(new Error('timeout'));
 
     await expect(sendRecurringPaymentEmail(params)).resolves.not.toThrow();
+  });
+});
+
+// ─── sendEntityChangeEmail ────────────────────────────────────────────────────
+
+describe('sendEntityChangeEmail', () => {
+  const baseParams = {
+    to: 'follower@example.com',
+    entityType: 'property' as const,
+    entityLabel: 'Testvej 1, 1000 København',
+    changeTitle: 'Ejerskifte registreret',
+    changeMessage: 'Ejerskifte registreret på Testvej 1, 1000 København',
+    link: 'https://bizzassist.dk/dashboard/ejendomme/abc-123',
+    changedAt: new Date('2026-06-22T10:00:00Z'),
+  };
+
+  /** Parse the JSON body of the single fetch call. */
+  function lastBody() {
+    const [, options] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    return JSON.parse(options.body as string) as { to: string; subject: string; html: string };
+  }
+
+  it('does not call fetch when RESEND_API_KEY is absent', async () => {
+    delete process.env.RESEND_API_KEY;
+    await sendEntityChangeEmail(baseParams);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('POSTs to the Resend endpoint with the follower as recipient', async () => {
+    await sendEntityChangeEmail(baseParams);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    const [url] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://api.resend.com/emails');
+    expect(lastBody().to).toBe('follower@example.com');
+  });
+
+  it('includes the change title in subject and the title + message in the HTML', async () => {
+    await sendEntityChangeEmail(baseParams);
+    const body = lastBody();
+    expect(body.subject).toContain('Ejerskifte registreret');
+    expect(body.subject).toContain('BizzAssist');
+    expect(body.html).toContain('Ejerskifte registreret');
+    expect(body.html).toContain('Ejerskifte registreret på Testvej 1, 1000 København');
+    expect(body.html).toContain('Testvej 1, 1000 København');
+    expect(body.html).toContain(baseParams.link);
+  });
+
+  it('is bilingual (Danish primary + English secondary)', async () => {
+    await sendEntityChangeEmail(baseParams);
+    const html = lastBody().html;
+    expect(html).toContain('Se &aelig;ndringen / View change');
+    expect(html).toContain('A property you follow has been updated.');
+  });
+
+  it('renders the correct label + accent colour per entity type', async () => {
+    // property → emerald
+    await sendEntityChangeEmail(baseParams);
+    expect(lastBody().html).toContain('#10b981');
+    vi.clearAllMocks();
+    global.fetch = vi.fn().mockResolvedValue(makeFetchResponse(true));
+
+    // company → blue + "virksomhed"
+    await sendEntityChangeEmail({ ...baseParams, entityType: 'company', entityLabel: 'Acme ApS' });
+    let html = lastBody().html;
+    expect(html).toContain('#3b82f6');
+    expect(html).toContain('virksomhed');
+    expect(html).toContain('A company you follow has been updated.');
+    vi.clearAllMocks();
+    global.fetch = vi.fn().mockResolvedValue(makeFetchResponse(true));
+
+    // person → amber + "person"
+    await sendEntityChangeEmail({
+      ...baseParams,
+      entityType: 'person',
+      entityLabel: 'Jens Jensen',
+    });
+    html = lastBody().html;
+    expect(html).toContain('#f59e0b');
+    expect(html).toContain('A person you follow has been updated.');
+  });
+
+  it('escapes HTML in the entity label to prevent injection', async () => {
+    await sendEntityChangeEmail({
+      ...baseParams,
+      entityLabel: '<script>alert(1)</script>',
+    });
+    const html = lastBody().html;
+    expect(html).not.toContain('<script>alert(1)</script>');
+    expect(html).toContain('&lt;script&gt;');
+  });
+
+  it('handles a non-ok Resend response without throwing', async () => {
+    global.fetch = vi.fn().mockResolvedValue(makeFetchResponse(false, 'Bad request'));
+    await expect(sendEntityChangeEmail(baseParams)).resolves.not.toThrow();
+  });
+
+  it('handles a network error without throwing', async () => {
+    global.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
+    await expect(sendEntityChangeEmail(baseParams)).resolves.not.toThrow();
   });
 });

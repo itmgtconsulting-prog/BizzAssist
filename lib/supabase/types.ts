@@ -441,6 +441,8 @@ export type NotificationRow = {
   message: string;
   metadata: Record<string, unknown> | null;
   is_read: boolean;
+  /** Sat når notify-followers har afsendt e-mail om denne ændring (BIZZ-2194) */
+  email_sent_at: string | null;
   created_at: string;
 };
 
@@ -669,7 +671,10 @@ type TenantSchemaShape = {
     };
     notifications: {
       Row: NotificationRow;
-      Insert: Omit<NotificationRow, 'id' | 'created_at' | 'is_read'> & { is_read?: boolean };
+      Insert: Omit<NotificationRow, 'id' | 'created_at' | 'is_read' | 'email_sent_at'> & {
+        is_read?: boolean;
+        email_sent_at?: string | null;
+      };
       Update: Partial<NotificationRow>;
       Relationships: [];
     };

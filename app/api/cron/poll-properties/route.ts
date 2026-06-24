@@ -30,6 +30,7 @@ import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
 import { dispatchFollowerEmails } from '@/app/lib/notifyFollowers';
+import { fetchBbrPollSnapshot, fetchOwnershipPollSnapshot } from '@/app/lib/propertyPollData';
 
 export const maxDuration = 300;
 
@@ -69,90 +70,6 @@ async function hashData(data: unknown): Promise<string> {
     .join('');
 }
 
-/**
- * Henter BBR-data for en ejendom via intern API.
- * Returnerer et forenklet objekt med de felter vi overvåger.
- */
-async function fetchBBR(
-  entityId: string,
-  baseUrl: string
-): Promise<Record<string, unknown> | null> {
-  try {
-    const res = await fetch(`${baseUrl}/api/ejendom?id=${entityId}&inkluder=bbr`, {
-      signal: AbortSignal.timeout(15000),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    // Udtræk monitorerbare felter
-    return {
-      bygninger:
-        data?.bbr?.bygninger?.map((b: Record<string, unknown>) => ({
-          id: b.id,
-          status: b.status,
-          areal: b.bygningsareal,
-          etager: b.etager,
-          opfoerelsesaar: b.opfoerelsesaar,
-          anvendelse: b.anvendelse,
-        })) ?? [],
-      grunde:
-        data?.bbr?.grunde?.map((g: Record<string, unknown>) => ({
-          id: g.id,
-          grundareal: g.grundareal,
-        })) ?? [],
-    };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Henter vurderingsdata for en ejendom via intern API.
- */
-async function fetchVurdering(
-  entityId: string,
-  baseUrl: string
-): Promise<Record<string, unknown> | null> {
-  try {
-    const res = await fetch(`${baseUrl}/api/vurdering?id=${entityId}`, {
-      signal: AbortSignal.timeout(15000),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return {
-      ejendomsvaerdi: data?.ejendomsvaerdi ?? null,
-      grundvaerdi: data?.grundvaerdi ?? null,
-      vurderingsaar: data?.vurderingsaar ?? null,
-    };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Henter ejerskabsdata for en ejendom via intern API.
- */
-async function fetchEjerskab(
-  entityId: string,
-  baseUrl: string
-): Promise<Record<string, unknown> | null> {
-  try {
-    const res = await fetch(`${baseUrl}/api/ejerskab?id=${entityId}`, {
-      signal: AbortSignal.timeout(15000),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return {
-      ejere:
-        data?.ejere?.map((e: Record<string, unknown>) => ({
-          navn: e.navn,
-          ejerandel: e.ejerandel,
-        })) ?? [],
-    };
-  } catch {
-    return null;
-  }
-}
-
 /** Mapping fra snapshot-type til notifikationstype */
 const SNAPSHOT_TO_NOTIFICATION: Record<SnapshotType, NotificationType> = {
   bbr: 'bbr_change',
@@ -190,14 +107,83 @@ function delay(ms: number): Promise<void> {
 }
 
 /**
- * Poller en enkelt ejendom for ændringer i BBR, vurdering og ejerskab.
+ * Detekterer ændring for én datatype: hasher data, sammenligner med seneste
+ * snapshot, gemmer nyt snapshot, og opretter notifikation til alle tenant-brugere
+ * hvis der allerede fandtes en baseline (første kørsel = baseline → ingen
+ * notifikation, så vi ikke spammer ved første polling).
  *
- * Henter alle tre datatyper parallelt, sammenligner SHA-256 hashes med
- * seneste snapshot, og opretter nye snapshots + notifikationer ved ændringer.
+ * @param type - Snapshot-type (bbr/ejerskab)
+ * @param currentData - De aktuelle overvågede data
+ * @param entity - Den fulgte ejendom
+ * @param tenant - Tenant-info
+ * @param db - Supabase-klient scopet til tenant-schema
+ * @param userIds - Bruger-IDs der skal notificeres
+ * @returns true hvis en ændring blev detekteret og notifikation oprettet
+ */
+async function detectChange(
+  type: SnapshotType,
+  currentData: Record<string, unknown>,
+  entity: { entity_id: string; label: string },
+  tenant: { id: string; schema_name: string },
+  db: TenantDb,
+  userIds: string[]
+): Promise<boolean> {
+  const currentHash = await hashData(currentData);
+
+  const { data: latest } = await db
+    .from('property_snapshots')
+    .select('snapshot_hash')
+    .eq('tenant_id', tenant.id)
+    .eq('entity_id', entity.entity_id)
+    .eq('snapshot_type', type)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (latest && latest.snapshot_hash === currentHash) return false; // ingen ændring
+
+  // Gem nyt snapshot
+  await db.from('property_snapshots').insert({
+    tenant_id: tenant.id,
+    entity_id: entity.entity_id,
+    snapshot_type: type,
+    snapshot_hash: currentHash,
+    snapshot_data: currentData,
+  });
+
+  if (!latest) return false; // første gang = baseline → ingen notifikation
+
+  const adresse = entity.label || entity.entity_id;
+  const title = CHANGE_TITLES[type];
+  const message = `${title} på ${adresse}`;
+
+  for (const userId of userIds) {
+    await db.from('notifications').insert({
+      tenant_id: tenant.id,
+      user_id: userId,
+      entity_id: entity.entity_id,
+      entity_type: 'property',
+      notification_type: SNAPSHOT_TO_NOTIFICATION[type],
+      title,
+      message,
+      metadata: { previous_hash: latest.snapshot_hash, current_hash: currentHash },
+    });
+  }
+  return true;
+}
+
+/**
+ * Poller en enkelt ejendom for ændringer i BBR og ejerskab.
+ *
+ * BIZZ-2194: Læser data direkte via service-role (fetchBbrForAddress +
+ * backfill-tabellen ejf_ejerskab) i stedet for de auth-beskyttede HTTP-routes,
+ * der ikke kan kaldes uden brugersession. BBR-opslaget giver også BFE-nummeret,
+ * som ejerskab-opslaget kræver. (Vurdering overvåges ikke her endnu — den
+ * eksisterende /api/vurdering har kun en in-memory cache uden persistent kilde
+ * cronen kan læse; spores som separat opgave.)
  *
  * @param entity - Den fulgte ejendom fra saved_entities
  * @param tenant - Tenant-info med id og schema_name
- * @param baseUrl - Base-URL for interne API-kald
  * @param db - Supabase-klient scopet til tenant-schema
  * @param userIds - Bruger-IDs i tenanten (til notifikationer)
  * @returns Antal ændringer fundet og eventuelle fejl
@@ -205,93 +191,29 @@ function delay(ms: number): Promise<void> {
 async function pollSingleProperty(
   entity: { entity_id: string; label: string },
   tenant: { id: string; schema_name: string },
-  baseUrl: string,
   db: TenantDb,
   userIds: string[]
 ): Promise<PropertyPollResult> {
   let changes = 0;
   const errors: string[] = [];
 
-  // Definer hvilke datapunkter der overvåges
-  const checks: {
-    type: SnapshotType;
-    fetcher: () => Promise<Record<string, unknown> | null>;
-  }[] = [
-    { type: 'bbr', fetcher: () => fetchBBR(entity.entity_id, baseUrl) },
-    { type: 'vurdering', fetcher: () => fetchVurdering(entity.entity_id, baseUrl) },
-    { type: 'ejerskab', fetcher: () => fetchEjerskab(entity.entity_id, baseUrl) },
-  ];
+  try {
+    // BBR + BFE i ét service-role-kald
+    const bbrSnap = await fetchBbrPollSnapshot(entity.entity_id);
+    if (bbrSnap) {
+      if (await detectChange('bbr', bbrSnap.monitored, entity, tenant, db, userIds)) changes++;
 
-  // Hent alle 3 datatyper parallelt for denne ejendom
-  const fetchResults = await Promise.allSettled(
-    checks.map((check) => check.fetcher().then((data) => ({ check, data })))
-  );
-
-  for (const result of fetchResults) {
-    if (result.status === 'rejected') {
-      errors.push(`${tenant.schema_name}/${entity.entity_id}: ${result.reason}`);
-      continue;
-    }
-
-    const { check, data: currentData } = result.value;
-
-    try {
-      if (!currentData) continue; // API-fejl — spring over
-
-      const currentHash = await hashData(currentData);
-
-      // Hent seneste snapshot
-      const { data: latest } = await db
-        .from('property_snapshots')
-        .select('snapshot_hash')
-        .eq('tenant_id', tenant.id)
-        .eq('entity_id', entity.entity_id)
-        .eq('snapshot_type', check.type)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (latest && latest.snapshot_hash === currentHash) {
-        continue; // Ingen ændring
-      }
-
-      // Opret nyt snapshot
-      await db.from('property_snapshots').insert({
-        tenant_id: tenant.id,
-        entity_id: entity.entity_id,
-        snapshot_type: check.type,
-        snapshot_hash: currentHash,
-        snapshot_data: currentData,
-      });
-
-      // Kun opret notifikation hvis der fandtes et tidligere snapshot
-      // (første gang er baseline — ingen notifikation)
-      if (latest) {
-        changes++;
-        const adresse = entity.label || entity.entity_id;
-        const title = CHANGE_TITLES[check.type];
-        const message = `${title} på ${adresse}`;
-
-        // Opret notifikation for alle brugere i tenant'en
-        for (const userId of userIds) {
-          await db.from('notifications').insert({
-            tenant_id: tenant.id,
-            user_id: userId,
-            entity_id: entity.entity_id,
-            entity_type: 'property',
-            notification_type: SNAPSHOT_TO_NOTIFICATION[check.type],
-            title,
-            message,
-            metadata: {
-              previous_hash: latest.snapshot_hash,
-              current_hash: currentHash,
-            },
-          });
+      // Ejerskab fra backfill-tabellen (kræver BFE fra BBR-opslaget)
+      if (bbrSnap.bfe != null) {
+        const own = await fetchOwnershipPollSnapshot(bbrSnap.bfe);
+        if (own) {
+          const ownData = { ejere: own.ejere };
+          if (await detectChange('ejerskab', ownData, entity, tenant, db, userIds)) changes++;
         }
       }
-    } catch (err) {
-      errors.push(`${tenant.schema_name}/${entity.entity_id}/${check.type}: ${err}`);
     }
+  } catch (err) {
+    errors.push(`${tenant.schema_name}/${entity.entity_id}: ${err}`);
   }
 
   return { changes, errors };
@@ -306,7 +228,6 @@ async function pollSingleProperty(
  *
  * @param entities - Array af fulgte ejendomme
  * @param tenant - Tenant-info med id og schema_name
- * @param baseUrl - Base-URL for interne API-kald
  * @param db - Supabase-klient scopet til tenant-schema
  * @param userIds - Bruger-IDs i tenanten (til notifikationer)
  * @returns Samlet antal ændringer og fejl
@@ -314,7 +235,6 @@ async function pollSingleProperty(
 async function processEntitiesInBatches(
   entities: { entity_id: string; label: string }[],
   tenant: { id: string; schema_name: string },
-  baseUrl: string,
   db: TenantDb,
   userIds: string[]
 ): Promise<PropertyPollResult> {
@@ -326,7 +246,7 @@ async function processEntitiesInBatches(
 
     // Kør hele batch'en parallelt med Promise.allSettled
     const results = await Promise.allSettled(
-      batch.map((entity) => pollSingleProperty(entity, tenant, baseUrl, db, userIds))
+      batch.map((entity) => pollSingleProperty(entity, tenant, db, userIds))
     );
 
     for (const result of results) {
@@ -367,7 +287,6 @@ export async function GET(request: NextRequest) {
   return withCronMonitor(
     { jobName: 'poll-properties', schedule: '0 3 * * *', intervalMinutes: 1440 },
     async () => {
-      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
       const admin = createAdminClient();
 
       // Hent alle tenants
@@ -415,7 +334,6 @@ export async function GET(request: NextRequest) {
           const result = await processEntitiesInBatches(
             monitored as { entity_id: string; label: string }[],
             tenant,
-            baseUrl,
             db,
             userIds
           );

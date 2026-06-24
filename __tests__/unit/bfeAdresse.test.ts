@@ -95,6 +95,17 @@ describe('erTrovaerdigCacheRaekke', () => {
     expect(erTrovaerdigCacheRaekke({ adresse: null, kilde: 'manual' })).toBe(false);
     expect(erTrovaerdigCacheRaekke(null)).toBe(false);
   });
+
+  it('afviser VP-backfill-kilder med bogus dawa_id (BIZZ-2188)', () => {
+    // Adressen er korrekt, men dawa_id'et er en bogus VP-GUID → ikke troværdig
+    // som-den-er; skal re-resolves via adresse-strengen.
+    expect(
+      erTrovaerdigCacheRaekke({ adresse: 'Hammerholmen 44E', kilde: 'backfill_1850_vp' })
+    ).toBe(false);
+    expect(erTrovaerdigCacheRaekke({ adresse: 'X 1', kilde: 'backfill_vp' })).toBe(false);
+    expect(erTrovaerdigCacheRaekke({ adresse: 'X 1', kilde: 'backfill_1856_vp' })).toBe(false);
+    expect(erTrovaerdigCacheRaekke({ adresse: 'X 1', kilde: 'cron_vp' })).toBe(false);
+  });
 });
 
 describe('formatBfeLabel', () => {
@@ -328,6 +339,64 @@ describe('hentBfeAdresser', () => {
     expect(res.get(300)?.doer).toBe('th');
     expect(res.get(300)?.dawaId).toBe('enh-uuid');
     expect(res.get(300)?.kilde).toBe('auto_vp');
+  });
+
+  it('BIZZ-2188: re-resolver bogus VP-dawa_id fra adresse-strengen (ikke via jordstykke/VP)', async () => {
+    const { upsert } = mockCache([
+      cacheRow({
+        bfe_nummer: 221050,
+        adresse: 'Hammerholmen 44E',
+        postnr: '2650',
+        dawa_id: '677cbbf2-bogus-vp-guid',
+        etage: 'st',
+        doer: 'tv',
+        kilde: 'backfill_1850_vp',
+      }),
+    ]);
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      // Adresse-streng-opslaget returnerer den KORREKTE adgangsadresse
+      if (url.includes('/adgangsadresser') && url.includes('vejnavn='))
+        return { ok: true, status: 200, json: async () => [{ id: '0a3f507c-c88d-korrekt' }] };
+      // jordstykke/VP må IKKE rammes for denne række
+      return { ok: false, status: 404, json: async () => null };
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const res = await hentBfeAdresser([221050]);
+    const r = res.get(221050);
+    expect(r?.adresse).toBe('Hammerholmen 44E'); // adresse bevaret
+    expect(r?.dawaId).toBe('0a3f507c-c88d-korrekt'); // dawa_id rettet
+    expect(r?.etage).toBe('st'); // etage/dør bevaret
+    expect(r?.doer).toBe('tv');
+    expect(r?.kilde).toBe('addr_reresolve');
+    // Ingen jordstykke-/VP-kald
+    const calledUrls = fetchSpy.mock.calls.map((c) => String(c[0]));
+    expect(calledUrls.some((u) => u.includes('/jordstykker'))).toBe(false);
+    expect(calledUrls.some((u) => u.includes('vurderingsportalen'))).toBe(false);
+    // Selvhealende writeback
+    expect(upsert).toHaveBeenCalledTimes(1);
+    expect(upsert.mock.calls[0][0]).toMatchObject({
+      bfe_nummer: 221050,
+      dawa_id: '0a3f507c-c88d-korrekt',
+      kilde: 'addr_reresolve',
+    });
+  });
+
+  it('BIZZ-2188: bogus VP-række hvis adresse ikke kan resolves falder igennem til live', async () => {
+    mockCache([
+      cacheRow({
+        bfe_nummer: 221051,
+        adresse: 'Ukendtvej 999',
+        postnr: '9999',
+        dawa_id: 'bogus',
+        kilde: 'backfill_1850_vp',
+      }),
+    ]);
+    // Hverken adresse-opslag, jordstykke eller VP finder noget
+    mockFetch(() => null);
+    const res = await hentBfeAdresser([221051]);
+    expect(res.has(221051)).toBe(false);
   });
 
   it('udelader BFE-numre der ikke kan resolves', async () => {

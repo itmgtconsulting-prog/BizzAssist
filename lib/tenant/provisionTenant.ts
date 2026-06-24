@@ -16,6 +16,8 @@
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
+import { findMissingTenantTables } from '@/lib/tenant/verifyTenantSchema';
+import { sendCriticalAlert } from '@/app/lib/service-manager-alerts';
 
 /**
  * Derives the per-tenant Postgres schema name from a user's email.
@@ -270,6 +272,40 @@ export async function provisionTenantForUser(
       }
     } catch (featureErr) {
       logger.error('[provisionTenant] feature provisioning error:', featureErr);
+    }
+
+    // 6. BIZZ-2196: Verificér at schemaet er KOMPLET (alle kerne-tabeller). Hvis
+    // noget mangler (provisionerings-fejl), forsøg ÉN idempotent auto-reparation
+    // via orkestratoren — og alarmér service manager hvis det stadig fejler. Så
+    // ingen bruger (signup ELLER admin-oprettet) efterlades ufuldstændig i stilhed.
+    try {
+      let missing = await findMissingTenantTables(schemaName);
+      if (missing && missing.length > 0) {
+        logger.warn(
+          `[provisionTenant] ufuldstændigt schema ${schemaName} — mangler: ${missing.join(', ')}. Forsøger auto-reparation.`
+        );
+        await fetch(`https://api.supabase.com/v1/projects/${projectRef}/database/query`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query: `SELECT public.provision_tenant_all_features('${schemaName}', '${tenantId}'::uuid)`,
+          }),
+          signal: AbortSignal.timeout(30000),
+        }).catch((e) => logger.error('[provisionTenant] auto-reparation kald fejlede:', e));
+        missing = await findMissingTenantTables(schemaName);
+      }
+      if (missing && missing.length > 0) {
+        // Stadig ufuldstændig efter reparation → kræver menneskelig handling.
+        await sendCriticalAlert({
+          description: `Ny tenant provisioneret ufuldstændigt: ${schemaName}`,
+          affectedPath: 'lib/tenant/provisionTenant.ts',
+          scanId: `provision-${tenantId}`,
+          issueType: 'config_error',
+          context: `Manglende kerne-tabeller efter auto-reparation: ${missing.join(', ')}. Bruger oprettet men kan ikke bruge berørte features (fx AI-forbrug/billing, audit-log). Kør public.provision_tenant_all_features('${schemaName}','${tenantId}') manuelt og undersøg root cause.`,
+        });
+      }
+    } catch (verifyErr) {
+      logger.error('[provisionTenant] post-provision verifikation fejlede:', verifyErr);
     }
 
     return tenantId;

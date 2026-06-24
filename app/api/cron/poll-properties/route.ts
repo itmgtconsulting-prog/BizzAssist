@@ -300,7 +300,7 @@ export async function GET(request: NextRequest) {
 
   // BIZZ-621 + BIZZ-624: heartbeat + Sentry cron-monitoring.
   return withCronMonitor(
-    { jobName: 'poll-properties', schedule: '0 3 * * *', intervalMinutes: 1440 },
+    { jobName: 'poll-properties', schedule: '30 6 * * *', intervalMinutes: 1440 },
     async () => {
       const admin = createAdminClient();
 

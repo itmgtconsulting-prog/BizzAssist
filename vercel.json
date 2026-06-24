@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/cron/poll-properties",
-      "schedule": "0 3 * * *"
+      "schedule": "30 6 * * *"
     },
     {
       "path": "/api/cron/pull-bbr-events",

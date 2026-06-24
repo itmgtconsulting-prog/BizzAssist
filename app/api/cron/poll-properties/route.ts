@@ -189,7 +189,7 @@ async function detectChange(
  * @returns Antal ændringer fundet og eventuelle fejl
  */
 async function pollSingleProperty(
-  entity: { entity_id: string; label: string },
+  entity: { entity_id: string; label: string; bfe?: number | null },
   tenant: { id: string; schema_name: string },
   db: TenantDb,
   userIds: string[]
@@ -198,18 +198,21 @@ async function pollSingleProperty(
   const errors: string[] = [];
 
   try {
-    // BBR + BFE i ét service-role-kald
+    // BBR (best-effort) — giver også BFE hvis vi ikke kender det i forvejen
     const bbrSnap = await fetchBbrPollSnapshot(entity.entity_id);
     if (bbrSnap) {
       if (await detectChange('bbr', bbrSnap.monitored, entity, tenant, db, userIds)) changes++;
+    }
 
-      // Ejerskab fra backfill-tabellen (kræver BFE fra BBR-opslaget)
-      if (bbrSnap.bfe != null) {
-        const own = await fetchOwnershipPollSnapshot(bbrSnap.bfe);
-        if (own) {
-          const ownData = { ejere: own.ejere };
-          if (await detectChange('ejerskab', ownData, entity, tenant, db, userIds)) changes++;
-        }
+    // BFE: brug det kendte fra saved_entities (sat ved follow-tid) hvis muligt,
+    // ellers fra BBR-opslaget. Ejerskab-detektering virker dermed også selvom
+    // BBR-opslaget fejler, så længe BFE er kendt.
+    const bfe = entity.bfe ?? bbrSnap?.bfe ?? null;
+    if (bfe != null) {
+      const own = await fetchOwnershipPollSnapshot(bfe);
+      if (own) {
+        const ownData = { ejere: own.ejere };
+        if (await detectChange('ejerskab', ownData, entity, tenant, db, userIds)) changes++;
       }
     }
   } catch (err) {
@@ -233,7 +236,7 @@ async function pollSingleProperty(
  * @returns Samlet antal ændringer og fejl
  */
 async function processEntitiesInBatches(
-  entities: { entity_id: string; label: string }[],
+  entities: { entity_id: string; label: string; bfe?: number | null }[],
   tenant: { id: string; schema_name: string },
   db: TenantDb,
   userIds: string[]
@@ -323,6 +326,24 @@ export async function GET(request: NextRequest) {
 
           if (!monitored || monitored.length === 0) continue;
 
+          // Udtræk kendt BFE fra entity_data (sat ved follow-tid) hvis muligt
+          const monitoredEntities = (
+            monitored as Array<{
+              entity_id: string;
+              label: string;
+              entity_data?: Record<string, unknown> | null;
+            }>
+          ).map((m) => {
+            const ed = m.entity_data ?? {};
+            const rawBfe = ed.bfe ?? ed.bfeNummer ?? ed.bfe_nummer;
+            const bfe = typeof rawBfe === 'number' ? rawBfe : Number(rawBfe);
+            return {
+              entity_id: m.entity_id,
+              label: m.label,
+              bfe: Number.isFinite(bfe) ? bfe : null,
+            };
+          });
+
           // Hent alle membership user_ids for notifikationer
           const { data: members } = await admin
             .from('tenant_memberships')
@@ -331,12 +352,7 @@ export async function GET(request: NextRequest) {
           const userIds = (members ?? []).map((m: { user_id: string }) => m.user_id);
 
           // BIZZ-177: Processer ejendomme i parallelle batches
-          const result = await processEntitiesInBatches(
-            monitored as { entity_id: string; label: string }[],
-            tenant,
-            db,
-            userIds
-          );
+          const result = await processEntitiesInBatches(monitoredEntities, tenant, db, userIds);
 
           totalProcessed += monitored.length;
           totalChanges += result.changes;

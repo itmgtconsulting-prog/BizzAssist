@@ -67,7 +67,31 @@ function extractJsonArray(text: string): unknown[] {
  * @param maxPages - Maks antal sider at konvertere (default 10)
  * @returns Markdown-tekst af hele dokumentet
  */
-export async function pdfToMarkdown(pdfBuffer: Buffer, apiKey: string): Promise<string> {
+/**
+ * BIZZ-2190: Akkumulator for faktisk Anthropic-token-forbrug på tværs af de 5
+ * pipeline-kald. Trådes (mutérbart) gennem hvert step så parse-route kan
+ * registrere det reelle forbrug mod brugerens månedskvote — ikke et estimat.
+ */
+export interface ParseTokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/** Læg et Anthropic-responses usage til akkumulatoren (no-op hvis acc mangler). */
+export function addUsage(
+  acc: ParseTokenUsage | undefined,
+  response: { usage?: { input_tokens?: number; output_tokens?: number } }
+): void {
+  if (!acc) return;
+  acc.inputTokens += response.usage?.input_tokens ?? 0;
+  acc.outputTokens += response.usage?.output_tokens ?? 0;
+}
+
+export async function pdfToMarkdown(
+  pdfBuffer: Buffer,
+  apiKey: string,
+  usage?: ParseTokenUsage
+): Promise<string> {
   const client = new Anthropic({ apiKey, timeout: 180_000 });
   const base64 = pdfBuffer.toString('base64');
 
@@ -117,6 +141,8 @@ Returnér KUN Markdown — ingen forklaring eller kommentarer.`,
     ],
   });
 
+  addUsage(usage, response);
+
   const textBlock = response.content.find((b) => b.type === 'text');
   if (!textBlock || textBlock.type !== 'text') {
     throw new Error('Claude returnerede intet output for PDF');
@@ -146,7 +172,8 @@ export interface IdentifiedInsurance {
  */
 export async function step1Identify(
   markdown: string,
-  apiKey: string
+  apiKey: string,
+  usage?: ParseTokenUsage
 ): Promise<IdentifiedInsurance[]> {
   const client = new Anthropic({ apiKey, timeout: 60_000 });
 
@@ -183,6 +210,8 @@ ${markdown.slice(0, 30000)}`,
       },
     ],
   });
+
+  addUsage(usage, response);
 
   const text = response.content.find((b) => b.type === 'text')?.text ?? '[]';
   try {
@@ -233,7 +262,8 @@ export interface InsuredEntity {
 export async function step2Entities(
   markdown: string,
   insurance: IdentifiedInsurance,
-  apiKey: string
+  apiKey: string,
+  usage?: ParseTokenUsage
 ): Promise<InsuredEntity[]> {
   const client = new Anthropic({ apiKey, timeout: 60_000 });
 
@@ -268,6 +298,8 @@ ${markdown.slice(0, 30000)}`,
       },
     ],
   });
+
+  addUsage(usage, response);
 
   const text = response.content.find((b) => b.type === 'text')?.text ?? '[]';
   try {
@@ -307,7 +339,8 @@ export async function step3Coverages(
   markdown: string,
   insurance: IdentifiedInsurance,
   entity: InsuredEntity,
-  apiKey: string
+  apiKey: string,
+  usage?: ParseTokenUsage
 ): Promise<Coverage[]> {
   const client = new Anthropic({ apiKey, timeout: 60_000 });
 
@@ -342,6 +375,8 @@ ${markdown.slice(0, 30000)}`,
     ],
   });
 
+  addUsage(usage, response);
+
   const text = response.content.find((b) => b.type === 'text')?.text ?? '[]';
   try {
     const result = extractJsonArray(text) as unknown[];
@@ -373,7 +408,8 @@ export interface ConditionReference {
  */
 export async function step4Conditions(
   markdown: string,
-  apiKey: string
+  apiKey: string,
+  usage?: ParseTokenUsage
 ): Promise<ConditionReference[]> {
   const client = new Anthropic({ apiKey, timeout: 60_000 });
 
@@ -408,6 +444,8 @@ ${markdown.slice(0, 30000)}`,
     ],
   });
 
+  addUsage(usage, response);
+
   const text = response.content.find((b) => b.type === 'text')?.text ?? '[]';
   try {
     const result = extractJsonArray(text) as unknown[];
@@ -434,6 +472,12 @@ export interface V2ParseResult {
     }>;
   }>;
   conditions: ConditionReference[];
+  /**
+   * BIZZ-2190: Faktisk Anthropic-token-forbrug for hele pipelinen. Altid sat af
+   * parseV2; optional så eksisterende test-fixtures (korriger*-tests) ikke skal
+   * konstruere den.
+   */
+  usage?: ParseTokenUsage;
 }
 
 /**
@@ -565,24 +609,27 @@ export function korrigerErhvervsforsikring(result: V2ParseResult): V2ParseResult
  * @returns Komplet parse-resultat
  */
 export async function parseV2(pdfBuffer: Buffer, apiKey: string): Promise<V2ParseResult> {
+  // BIZZ-2190: akkumulér faktisk token-forbrug på tværs af alle pipeline-kald.
+  const usage: ParseTokenUsage = { inputTokens: 0, outputTokens: 0 };
+
   // Step 0: PDF → Markdown
   logger.log('[parserV2] Step 0: Konverterer PDF til Markdown...');
-  const markdown = await pdfToMarkdown(pdfBuffer, apiKey);
+  const markdown = await pdfToMarkdown(pdfBuffer, apiKey, usage);
 
   // Step 1: Identificér forsikringstyper
   logger.log('[parserV2] Step 1: Identificerer forsikringstyper...');
-  const identifications = await step1Identify(markdown, apiKey);
+  const identifications = await step1Identify(markdown, apiKey, usage);
 
   // Step 2+3: For hver forsikringstype → enheder → dækninger
   const insurances: V2ParseResult['insurances'] = [];
   for (const id of identifications) {
     logger.log(`[parserV2] Step 2: Finder enheder for ${id.type}...`);
-    const entities = await step2Entities(markdown, id, apiKey);
+    const entities = await step2Entities(markdown, id, apiKey, usage);
 
     const entitiesWithCoverages: V2ParseResult['insurances'][0]['entities'] = [];
     for (const entity of entities) {
       logger.log(`[parserV2] Step 3: Finder dækninger for ${entity.label}...`);
-      const coverages = await step3Coverages(markdown, id, entity, apiKey);
+      const coverages = await step3Coverages(markdown, id, entity, apiKey, usage);
       entitiesWithCoverages.push({ entity, coverages });
     }
 
@@ -591,7 +638,7 @@ export async function parseV2(pdfBuffer: Buffer, apiKey: string): Promise<V2Pars
 
   // Step 4: Betingelser
   logger.log('[parserV2] Step 4: Finder betingelsesreferencer...');
-  const conditions = await step4Conditions(markdown, apiKey);
+  const conditions = await step4Conditions(markdown, apiKey, usage);
 
   logger.log(
     `[parserV2] Pipeline komplet: ${identifications.length} typer, ` +
@@ -603,5 +650,7 @@ export async function parseV2(pdfBuffer: Buffer, apiKey: string): Promise<V2Pars
   // BIZZ-2157/2138: Deterministisk korrektion af fejlklassificerede policer —
   // bilforsikringer (type → "Bilforsikring", forsikringssted → null, reg.nr
   // udfyldt) og erhvervsforsikringer (løsøre-policer fejlmærket som ejendom).
-  return korrigerErhvervsforsikring(korrigerBilforsikring({ markdown, insurances, conditions }));
+  return korrigerErhvervsforsikring(
+    korrigerBilforsikring({ markdown, insurances, conditions, usage })
+  );
 }

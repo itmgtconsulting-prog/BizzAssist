@@ -72,6 +72,29 @@ export const UNTRUSTED_CACHE_KILDER = new Set([
   'cache_dar',
   'unresolvable',
   'backfill_1831_cvr_addr',
+  // BIZZ-2188: VP-discovery-backfills skrev VP-interne GUID'er i dawa_id (ikke
+  // DAWA-UUID'er) → link gav "Adresse ikke fundet". Adressen ER korrekt, men
+  // dawa_id'et skal re-resolves (se BOGUS_DAWAID_KILDER).
+  'backfill_1850_vp',
+  'backfill_vp',
+  'backfill_1856_vp',
+  'cron_vp',
+]);
+
+/**
+ * BIZZ-2188: Kilder hvor ADRESSEN er korrekt, men dawa_id'et er en bogus
+ * VP-intern GUID. I modsætning til cache_dar/backfill_1831_cvr_addr (hvor selve
+ * adressen er upålidelig og kræver pr-BFE jordstykke-resolution) skal disse
+ * rækker IKKE live-resolves fra bunden — vi re-resolver kun dawa_id'et fra
+ * rækkens egen (korrekte) adresse-streng via DAWA /adgangsadresser. Det dækker
+ * også ejerlejligheder, som hverken jordstykke- eller VP-stien kan rette
+ * pålideligt (VP er netop kilden til de bogus GUID'er).
+ */
+export const BOGUS_DAWAID_KILDER = new Set([
+  'backfill_1850_vp',
+  'backfill_vp',
+  'backfill_1856_vp',
+  'cron_vp',
 ]);
 
 /** Maks samtidige live-opslag mod DAWA/VP */
@@ -408,6 +431,67 @@ async function resolveLive(
 }
 
 /**
+ * BIZZ-2188: Re-resolve et korrekt DAWA-adgangsadresse-UUID fra en adresse-
+ * streng ("Vejnavn 12B") + postnr via DAWA /adgangsadresser. Bruges til rækker
+ * i BOGUS_DAWAID_KILDER hvor adressen er korrekt men dawa_id'et er bogus.
+ *
+ * @param adresse - Adresse-streng (vejnavn + husnr), fx "Hammerholmen 44E"
+ * @param postnr - Postnummer
+ * @returns DAWA adgangsadresse-UUID, eller null hvis adressen ikke kunne parses/findes
+ */
+async function resolveDawaIdFraAdresse(
+  adresse: string | null,
+  postnr: string | null
+): Promise<string | null> {
+  const m = adresse?.match(/^(.*?)[,]?\s+(\d+[A-Za-z]?)\s*$/);
+  if (!m || !postnr) return null;
+  const vejnavn = m[1].trim();
+  const husnr = m[2].trim();
+  if (!vejnavn) return null;
+  const arr = (await dawaJson(
+    `${DAWA_BASE_URL}/adgangsadresser?vejnavn=${encodeURIComponent(vejnavn)}&husnr=${encodeURIComponent(husnr)}&postnr=${encodeURIComponent(postnr)}&format=json&struktur=mini&per_side=1`
+  )) as Array<{ id?: string }> | null;
+  return Array.isArray(arr) && arr[0]?.id ? arr[0].id : null;
+}
+
+/**
+ * Guarded writeback af en resolvet adresse til bfe_adresse_cache.
+ * Non-kritisk — fejl sluges. onConflict på bfe_nummer (self-healing).
+ *
+ * @param admin - Supabase admin-klient
+ * @param bfe - BFE-nummer
+ * @param res - Resolvet adresse
+ */
+async function writebackCache(
+  admin: ReturnType<typeof createAdminClient>,
+  bfe: number,
+  res: BfeAdresse
+): Promise<void> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (admin as any).from('bfe_adresse_cache').upsert(
+      {
+        bfe_nummer: bfe,
+        adresse: res.adresse,
+        postnr: res.postnr,
+        postnrnavn: res.by,
+        kommune: res.kommune,
+        kommune_kode: res.kommuneKode,
+        dawa_id: res.dawaId,
+        ejendomstype: res.ejendomstype,
+        etage: res.etage,
+        doer: res.doer,
+        kilde: res.kilde,
+        sidst_opdateret: new Date().toISOString(),
+      },
+      { onConflict: 'bfe_nummer' }
+    );
+  } catch {
+    /* writeback non-kritisk */
+  }
+}
+
+/**
  * Map en troværdig cache-række til BfeAdresse.
  *
  * @param row - Cache-række
@@ -443,6 +527,7 @@ export async function hentBfeAdresser(bfes: number[]): Promise<Map<number, BfeAd
   const admin = createAdminClient();
 
   // Trin 1: Cache-first — kun troværdige rækker bruges direkte
+  const bogusDawaIdRows: CacheRow[] = [];
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: cached } = await (admin as any)
@@ -453,9 +538,34 @@ export async function hentBfeAdresser(bfes: number[]): Promise<Map<number, BfeAd
       .in('bfe_nummer', unique);
     for (const row of (cached ?? []) as CacheRow[]) {
       if (erTrovaerdigCacheRaekke(row)) out.set(row.bfe_nummer, mapCacheRow(row));
+      // BIZZ-2188: korrekt adresse men bogus VP-GUID i dawa_id → re-resolv i Trin 1b
+      else if (
+        BOGUS_DAWAID_KILDER.has(row.kilde ?? '') &&
+        row.adresse &&
+        !/^BFE \d+$/.test(row.adresse)
+      ) {
+        bogusDawaIdRows.push(row);
+      }
     }
   } catch {
     /* cache-læsning non-kritisk — fortsæt til live */
+  }
+
+  // Trin 1b (BIZZ-2188): Re-resolv dawa_id fra rækkens egen (korrekte) adresse-
+  // streng for BOGUS_DAWAID_KILDER. Bevarer adresse + etage/dør; retter kun
+  // dawa_id'et. Selvhealende writeback (kilde=addr_reresolve → fremover troværdig).
+  // Misser (adresse kan ikke resolves) falder igennem til Trin 2 (live).
+  for (let i = 0; i < bogusDawaIdRows.length; i += LIVE_CONCURRENCY) {
+    const chunk = bogusDawaIdRows.slice(i, i + LIVE_CONCURRENCY);
+    await Promise.all(
+      chunk.map(async (row) => {
+        const dawaId = await resolveDawaIdFraAdresse(row.adresse, row.postnr);
+        if (!dawaId) return;
+        const res: BfeAdresse = { ...mapCacheRow(row), dawaId, kilde: 'addr_reresolve' };
+        out.set(row.bfe_nummer, res);
+        await writebackCache(admin, row.bfe_nummer, res);
+      })
+    );
   }
 
   // Trin 2: Live-resolve misses med begrænset samtidighed
@@ -470,28 +580,7 @@ export async function hentBfeAdresser(bfes: number[]): Promise<Map<number, BfeAd
       out.set(bfe, res);
       // Trin 3: Writeback — kun for misses/utroværdige rækker (vi resolver
       // aldrig live for troværdige rækker, så upsert kan ikke overskrive dem).
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (admin as any).from('bfe_adresse_cache').upsert(
-          {
-            bfe_nummer: bfe,
-            adresse: res.adresse,
-            postnr: res.postnr,
-            postnrnavn: res.by,
-            kommune: res.kommune,
-            kommune_kode: res.kommuneKode,
-            dawa_id: res.dawaId,
-            ejendomstype: res.ejendomstype,
-            etage: res.etage,
-            doer: res.doer,
-            kilde: res.kilde,
-            sidst_opdateret: new Date().toISOString(),
-          },
-          { onConflict: 'bfe_nummer' }
-        );
-      } catch {
-        /* writeback non-kritisk */
-      }
+      await writebackCache(admin, bfe, res);
     }
   }
 

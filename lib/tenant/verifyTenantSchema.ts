@@ -4,7 +4,9 @@
  * Kontrollerer at et tenant-schema har ALLE forventede kerne-tabeller. Bruges til:
  *   1. Post-provisionerings-tjek i provisionTenantForUser (alarmér hvis en ny bruger
  *      oprettes ufuldstændigt — BIZZ-2196).
- *   2. Periodisk cron-sweep (/api/cron/verify-tenant-schemas) der fanger drift.
+ *   2. Periodisk sweep foldet ind i watchdog-cronen (hvert 30. min) der fanger drift
+ *      og alarmerer service manager — den separate verify-tenant-schemas-cron blev
+ *      fjernet for at holde os under Vercels 40-cron-grænse (BIZZ-2203).
  *
  * Bruger Supabase Management API (SUPABASE_ACCESS_TOKEN) til at læse
  * information_schema — samme adgang som selve provisioneringen.

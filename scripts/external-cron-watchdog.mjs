@@ -54,7 +54,11 @@ const ALL_CRONS = [
   { path: '/api/cron/monitor-email',              interval: 5 },
   { path: '/api/cron/watchdog',                    interval: 30 },
   { path: '/api/cron/service-scan',                interval: 60 },
-  { path: '/api/cron/generate-sitemap?phase=cycle', interval: 15 },
+  // generate-sitemap-cyklussen roterer gennem 4 sub-jobs (-companies/-properties/
+  // -render-xml/-vp-properties), hver med sit EGET heartbeat — der findes intet
+  // "generate-sitemap"-heartbeat. Match derfor på prefix, ellers rapporterer
+  // watchdog fejlagtigt "aldrig kørt" hver kørsel.
+  { path: '/api/cron/generate-sitemap?phase=cycle', interval: 15, heartbeatPrefix: 'generate-sitemap' },
   { path: '/api/cron/purge-ai-files',              interval: 60 },
   // ── Daily data sync (03:00-06:00 window) ──
   { path: '/api/cron/pull-cvr-aendringer',         interval: 1440 },
@@ -112,6 +116,26 @@ function log(msg) {
  */
 function jobNameFromPath(path) {
   return path.replace('/api/cron/', '').split('?')[0];
+}
+
+/**
+ * Find the freshest heartbeat whose job_name starts with the given prefix.
+ * Bruges til crons der logger under flere sub-job-navne (fx generate-sitemap-
+ * cyklussen), hvor der ikke findes ét heartbeat under selve rod-navnet.
+ *
+ * @param {Array<{job_name: string, last_run_at: string}>} rows - alle heartbeats
+ * @param {string} prefix - job_name-prefix at matche på
+ * @returns {{job_name: string, last_run_at: string}|undefined} friskeste match
+ */
+function freshestByPrefix(rows, prefix) {
+  let best;
+  for (const r of rows) {
+    if (!r.job_name.startsWith(prefix)) continue;
+    if (!best || new Date(r.last_run_at).getTime() > new Date(best.last_run_at).getTime()) {
+      best = r;
+    }
+  }
+  return best;
 }
 
 /**
@@ -232,7 +256,11 @@ async function main() {
 
   for (const cron of ALL_CRONS) {
     const jobName = jobNameFromPath(cron.path);
-    const hb = heartbeatMap.get(jobName);
+    // Crons med heartbeatPrefix logger under roterende sub-job-navne — resolvér
+    // via friskeste prefix-match i stedet for et direkte (ikke-eksisterende) opslag.
+    const hb = cron.heartbeatPrefix
+      ? freshestByPrefix(rows, cron.heartbeatPrefix)
+      : heartbeatMap.get(jobName);
 
     if (!hb) {
       // No heartbeat entry — job has never run, trigger it

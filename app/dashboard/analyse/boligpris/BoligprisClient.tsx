@@ -30,6 +30,7 @@ import {
   Calendar,
   Layers,
   BedDouble,
+  Banknote,
 } from 'lucide-react';
 
 import ResizableDivider from '@/app/components/ResizableDivider';
@@ -155,6 +156,20 @@ function fmtDkk(v: number): string {
   return v.toLocaleString('da-DK');
 }
 
+/**
+ * Konverterer et pris-input i mio. kr ("2" eller "2,5") til hele kroner som
+ * streng til API'et (BIZZ-2186). Accepterer både komma og punktum som decimal-
+ * separator. Returnerer null for tom/ugyldig værdi, så feltet udelades.
+ *
+ * @param mio - Råt input fra pris-feltet (mio. kr)
+ * @returns Pris i kroner som streng, eller null
+ */
+function prisMioTilKroner(mio: string): string | null {
+  const n = parseFloat(mio.trim().replace(',', '.'));
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return String(Math.round(n * 1_000_000));
+}
+
 /** Formatér dato til dansk kort-format. */
 function fmtDato(iso: string): string {
   const d = new Date(iso);
@@ -186,6 +201,9 @@ export default function BoligprisClient(): React.ReactElement {
   const [etagerMax, setEtagerMax] = useState('');
   const [vaerelserMin, setVaerelserMin] = useState('');
   const [vaerelserMax, setVaerelserMax] = useState('');
+  // BIZZ-2186: pris-filter angives i mio. kr (fx "2" = 2.000.000 kr).
+  const [prisMin, setPrisMin] = useState('');
+  const [prisMax, setPrisMax] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ApiResponse | null>(null);
@@ -197,17 +215,26 @@ export default function BoligprisClient(): React.ReactElement {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [exporting, setExporting] = useState(false);
 
-  /* --- Dato-beregning: brugerdefineret interval har forrang over preset --- */
-  const customActive = customFra !== '' && customTil !== '';
+  /* --- Dato-beregning: brugerdefineret interval har forrang over preset ---
+     BIZZ-2180: et ENKELT brugersat datofelt skal også virke. Tidligere krævede
+     customActive BEGGE felter, så fx kun en startdato (uden slutdato) blev
+     stiltiende ignoreret og preset-perioden brugt — brugeren oplevede at
+     dato-ændringer "ikke virkede". Nu overstyrer hvert sat felt sin side af
+     preset-intervallet uafhængigt. */
+  const customActive = customFra !== '' || customTil !== '';
   const { fra, til } = useMemo(() => {
-    // Når brugeren har sat begge datoer, vinder det manuelle interval.
-    if (customFra && customTil) return { fra: customFra, til: customTil };
     const now = new Date();
     const tilStr = now.toISOString().slice(0, 10);
     const months = PERIODER[periodeIdx].months;
-    if (months === 0) return { fra: '2000-01-01', til: tilStr };
-    const fraDate = new Date(now.getFullYear(), now.getMonth() - months, 1);
-    return { fra: fraDate.toISOString().slice(0, 10), til: tilStr };
+    // Preset-baseline for den/de side(r) brugeren IKKE har sat manuelt.
+    const presetFra =
+      months === 0
+        ? '2000-01-01'
+        : new Date(now.getFullYear(), now.getMonth() - months, 1).toISOString().slice(0, 10);
+    return {
+      fra: customFra || presetFra,
+      til: customTil || tilStr,
+    };
   }, [periodeIdx, customFra, customTil]);
 
   /* --- Dynamiske side-størrelser til "Vis"-dropdownen ---
@@ -248,6 +275,10 @@ export default function BoligprisClient(): React.ReactElement {
         if (etagerMax) params.set('etager_max', etagerMax);
         if (vaerelserMin) params.set('vaerelser_min', vaerelserMin);
         if (vaerelserMax) params.set('vaerelser_max', vaerelserMax);
+        const prisMinKr = prisMioTilKroner(prisMin);
+        const prisMaxKr = prisMioTilKroner(prisMax);
+        if (prisMinKr) params.set('pris_min', prisMinKr);
+        if (prisMaxKr) params.set('pris_max', prisMaxKr);
         if (includeHandler) {
           params.set('handler', 'true');
           params.set('limit', String(limit));
@@ -283,6 +314,8 @@ export default function BoligprisClient(): React.ReactElement {
       etagerMax,
       vaerelserMin,
       vaerelserMax,
+      prisMin,
+      prisMax,
     ]
   );
 
@@ -429,6 +462,10 @@ export default function BoligprisClient(): React.ReactElement {
       if (etagerMax) params.set('etager_max', etagerMax);
       if (vaerelserMin) params.set('vaerelser_min', vaerelserMin);
       if (vaerelserMax) params.set('vaerelser_max', vaerelserMax);
+      const prisMinKr = prisMioTilKroner(prisMin);
+      const prisMaxKr = prisMioTilKroner(prisMax);
+      if (prisMinKr) params.set('pris_min', prisMinKr);
+      if (prisMaxKr) params.set('pris_max', prisMaxKr);
       params.set('handler', 'true');
       params.set('export', 'true');
       const res = await fetch(`/api/analyse/boligpris?${params.toString()}`);
@@ -496,6 +533,8 @@ export default function BoligprisClient(): React.ReactElement {
     etagerMax,
     vaerelserMin,
     vaerelserMax,
+    prisMin,
+    prisMax,
   ]);
 
   return (
@@ -714,6 +753,34 @@ export default function BoligprisClient(): React.ReactElement {
                 aria-label="Maksimum antal værelser"
               />
             </div>
+            {/* BIZZ-2186: pris-filter (mio. kr) — 0kr-handler ekskluderes
+                automatisk når et prisinterval er sat. */}
+            <div className="flex items-center gap-1.5 text-xs">
+              <Banknote className="w-3.5 h-3.5 text-slate-400" />
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.1"
+                min="0"
+                value={prisMin}
+                onChange={(e) => setPrisMin(e.target.value)}
+                placeholder="Pris min (mio)"
+                className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-2 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 w-28"
+                aria-label="Minimum købspris i millioner kroner"
+              />
+              <span className="text-slate-500">–</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.1"
+                min="0"
+                value={prisMax}
+                onChange={(e) => setPrisMax(e.target.value)}
+                placeholder="Pris max (mio)"
+                className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-2 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 w-28"
+                aria-label="Maksimum købspris i millioner kroner"
+              />
+            </div>
           </div>
 
           {/* Erhverv-underfilter — vises kun når Erhverv-chippen er valgt.
@@ -817,9 +884,17 @@ export default function BoligprisClient(): React.ReactElement {
                       : '–'
                   }
                   color={
-                    data.noegletal.yoy_pct !== null && data.noegletal.yoy_pct >= 0
-                      ? 'emerald'
-                      : 'red'
+                    data.noegletal.yoy_pct === null
+                      ? 'blue'
+                      : data.noegletal.yoy_pct >= 0
+                        ? 'emerald'
+                        : 'red'
+                  }
+                  // BIZZ-2182: forklar hvorfor YoY mangler i stedet for bare en streg
+                  hint={
+                    data.noegletal.yoy_pct === null
+                      ? 'For få handler til YoY-sammenligning'
+                      : undefined
                   }
                 />
               </div>
@@ -928,10 +1003,26 @@ export default function BoligprisClient(): React.ReactElement {
                           </option>
                         )}
                       </select>
+                      {/* BIZZ-2183: paginering også øverst, så man kan blade uden
+                          at scrolle til bunden af en lang liste. */}
+                      {data.handlerTotal !== undefined && data.handlerTotal > handlerPageSize && (
+                        <div className="flex items-center gap-2 ml-1 pl-2 border-l border-slate-700/40">
+                          <HandlerPagination
+                            page={handlerPage}
+                            pageSize={handlerPageSize}
+                            total={data.handlerTotal}
+                            onPrev={() => handlePageChange(handlerPage - 1)}
+                            onNext={() => handlePageChange(handlerPage + 1)}
+                          />
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  <div className="overflow-x-auto">
+                  {/* BIZZ-2183: tabel-viewport med egen scroll, så lange lister
+                      scroller internt og paginerings-bjælken kan sidde sticky i
+                      bunden af viewporten (i stedet for at flyde midt i listen). */}
+                  <div className="overflow-auto max-h-[60vh]">
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="text-slate-400 border-b border-slate-700/50">
@@ -1038,36 +1129,22 @@ export default function BoligprisClient(): React.ReactElement {
                         })}
                       </tbody>
                     </table>
-                  </div>
 
-                  {/* Paginering — sticky så den altid er synlig */}
-                  {data.handlerTotal !== undefined && data.handlerTotal > handlerPageSize && (
-                    <div className="flex items-center justify-between mt-4 pt-4 pb-2 border-t border-slate-700/30 sticky bottom-0 bg-[#0a1628]">
-                      <span className="text-sm text-slate-400">
-                        {handlerPage * handlerPageSize + 1}–
-                        {Math.min((handlerPage + 1) * handlerPageSize, data.handlerTotal)} af{' '}
-                        {data.handlerTotal.toLocaleString('da-DK')}
-                      </span>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => handlePageChange(handlerPage - 1)}
-                          disabled={handlerPage === 0}
-                          className="p-1.5 rounded-lg bg-slate-700/40 text-slate-300 hover:bg-slate-600/40 disabled:opacity-30 disabled:cursor-not-allowed"
-                          aria-label="Forrige side"
-                        >
-                          <ChevronLeft className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handlePageChange(handlerPage + 1)}
-                          disabled={(handlerPage + 1) * handlerPageSize >= data.handlerTotal}
-                          className="p-1.5 rounded-lg bg-slate-700/40 text-slate-300 hover:bg-slate-600/40 disabled:opacity-30 disabled:cursor-not-allowed"
-                          aria-label="Næste side"
-                        >
-                          <ChevronRight className="w-4 h-4" />
-                        </button>
+                    {/* BIZZ-2183: paginerings-bjælke sticky i bunden af tabel-
+                        viewporten — altid efter sidste række, aldrig midt i
+                        listen. */}
+                    {data.handlerTotal !== undefined && data.handlerTotal > handlerPageSize && (
+                      <div className="flex items-center justify-between mt-2 pt-3 pb-1 px-1 border-t border-slate-700/30 sticky bottom-0 bg-[#0a1628]">
+                        <HandlerPagination
+                          page={handlerPage}
+                          pageSize={handlerPageSize}
+                          total={data.handlerTotal}
+                          onPrev={() => handlePageChange(handlerPage - 1)}
+                          onNext={() => handlePageChange(handlerPage + 1)}
+                        />
                       </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -1113,6 +1190,8 @@ interface KpiCardProps {
   label: string;
   value: string;
   color: 'blue' | 'emerald' | 'amber' | 'red';
+  /** Valgfri forklarende undertekst (fx hvorfor en værdi mangler). */
+  hint?: string;
 }
 
 const COLOR_MAP: Record<string, string> = {
@@ -1125,9 +1204,9 @@ const COLOR_MAP: Record<string, string> = {
 /**
  * KPI summary card med ikon og farvet accent.
  *
- * @param props - Ikon, label, formateret værdi og farve
+ * @param props - Ikon, label, formateret værdi, farve og valgfri hint-tekst
  */
-function KpiCard({ icon, label, value, color }: KpiCardProps) {
+function KpiCard({ icon, label, value, color, hint }: KpiCardProps) {
   const cls = COLOR_MAP[color] ?? COLOR_MAP.blue;
   return (
     <div className="bg-slate-800/40 rounded-xl p-4 flex items-start gap-3">
@@ -1135,8 +1214,57 @@ function KpiCard({ icon, label, value, color }: KpiCardProps) {
       <div>
         <p className="text-slate-400 text-xs uppercase tracking-wider">{label}</p>
         <p className="text-white text-lg font-semibold mt-0.5">{value}</p>
+        {hint && <p className="text-slate-400 text-xs mt-0.5 leading-tight">{hint}</p>}
       </div>
     </div>
+  );
+}
+
+/* ---------- Paginerings-kontrol ---------- */
+
+/** Props for HandlerPagination. */
+interface HandlerPaginationProps {
+  page: number;
+  pageSize: number;
+  total: number;
+  onPrev: () => void;
+  onNext: () => void;
+}
+
+/**
+ * Interval-tekst (x–y af total) + forrige/næste-knapper til handler-listen.
+ * Renderes som fragment, så forælderen styrer wrapperen (kompakt øverst vs.
+ * sticky bjælke nederst). BIZZ-2183.
+ *
+ * @param page - Nuværende side (0-indekseret)
+ * @param pageSize - Antal rækker per side
+ * @param total - Samlet antal handler
+ * @param onPrev - Kaldes ved klik på "forrige side"
+ * @param onNext - Kaldes ved klik på "næste side"
+ */
+function HandlerPagination({ page, pageSize, total, onPrev, onNext }: HandlerPaginationProps) {
+  const btn =
+    'p-1.5 rounded-lg bg-slate-700/40 text-slate-300 hover:bg-slate-600/40 disabled:opacity-30 disabled:cursor-not-allowed';
+  return (
+    <>
+      <span className="text-sm text-slate-400 whitespace-nowrap">
+        {page * pageSize + 1}–{Math.min((page + 1) * pageSize, total)} af{' '}
+        {total.toLocaleString('da-DK')}
+      </span>
+      <div className="flex gap-2">
+        <button onClick={onPrev} disabled={page === 0} className={btn} aria-label="Forrige side">
+          <ChevronLeft className="w-4 h-4" />
+        </button>
+        <button
+          onClick={onNext}
+          disabled={(page + 1) * pageSize >= total}
+          className={btn}
+          aria-label="Næste side"
+        >
+          <ChevronRight className="w-4 h-4" />
+        </button>
+      </div>
+    </>
   );
 }
 

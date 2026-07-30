@@ -19,6 +19,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
 import { buildChainCacheKey, getCached, setCached } from '@/app/lib/ejerskab/cache';
+import { erOpdeltSfePlaceholder, type EjfEjerRow } from '@/app/lib/ejerskab/opdeltPlaceholder';
 import { fetchEjfEjereDirekt } from '@/app/lib/ejerskab/fetchEjfEjereDirekt';
 import { fetchTlEjereDirekt } from '@/app/lib/tinglysning/fetchTlEjere';
 import { logger } from '@/app/lib/logger';
@@ -422,6 +423,10 @@ export async function GET(req: NextRequest) {
     if (cachedEjere && cachedEjere.length > 0) {
       usedCachePath = true;
 
+      // BIZZ-2193: er hele den gældende ejer-liste blot EJF's opdelt-SFE
+      // "Ukendt" 1/1-placeholder? (beregnes én gang — bruges i row-løkken nedenfor)
+      const opdeltPlaceholder = erOpdeltSfePlaceholder(cachedEjere as EjfEjerRow[]);
+
       // Hent købesum fra ejf_ejerskifte + handelsoplysninger (parallel)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: ejerskifter } = await (admin as any)
@@ -475,12 +480,24 @@ export async function GET(req: NextRequest) {
         const rawNavn =
           (row.ejer_navn as string) ??
           ((row.ejer_type as string) === 'person' ? 'Navne- og adressebeskyttet' : 'Ukendt');
-        const navn = cvr ? (cvrNameMap.get(cvr) ?? rawNavn) : rawNavn;
-        const type = (row.ejer_type as string) ?? 'ukendt';
+        let navn = cvr ? (cvrNameMap.get(cvr) ?? rawNavn) : rawNavn;
+        let type = (row.ejer_type as string) ?? 'ukendt';
         const t = row.ejerandel_taeller as number | null;
         const n = row.ejerandel_naevner as number | null;
-        const andel = t != null && n != null && n > 0 ? `${Math.round((t / n) * 100)}%` : null;
+        let andel = t != null && n != null && n > 0 ? `${Math.round((t / n) * 100)}%` : null;
         const enhNr = row.ejer_enheds_nummer as number | null;
+
+        // BIZZ-2193: Opdelt SFE/hovedejendom — EJF repræsenterer SFE-niveauets
+        // ejer som en navnløs "Ukendt" 1/1-placeholder (cvr=null), fordi det
+        // reelle ejerskab ligger på de underliggende ejerlejligheder. Vis den
+        // IKKE som "Ukendt 100%". Map til samme status-tekst som Tinglysning
+        // returnerer for opdelte ejendomme ("Opdelt i ejerlejligheder"), så den
+        // behandles som status-node (ikke en reel ejer) i hele kæden + UI.
+        if (opdeltPlaceholder) {
+          navn = 'Opdelt i ejerlejligheder';
+          type = 'status';
+          andel = null;
+        }
 
         if (cvr) {
           const id = `cvr-${cvr}`;

@@ -23,7 +23,7 @@
  * @returns SSE stream
  */
 
-import { NextRequest } from 'next/server';
+import { NextRequest, after } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import * as Sentry from '@sentry/nextjs';
 import { checkRateLimit, aiRateLimit } from '@/app/lib/rateLimit';
@@ -2620,14 +2620,17 @@ async function isTenantMonthlyBudgetExceeded(
  * @param tokensIn    - Input tokens consumed in this Claude API call
  * @param tokensOut   - Output tokens consumed in this Claude API call
  */
+// BIZZ-2205: Returnerer en Promise så kaldere (i after()) kan AWAITE skrivningen.
+// Tidligere void/fire-and-forget → inserts efter stream-close blev skåret bort af
+// Vercel og audit-tabellen (tenant.ai_token_usage) forblev tom.
 function recordTenantTokenUsage(
   adminClient: SupabaseClient<Database>,
   tenantId: string,
   userId: string,
   tokensIn: number,
   tokensOut: number
-): void {
-  void (async () => {
+): Promise<void> {
+  return (async () => {
     try {
       const db: TenantDb = adminClient.schema('tenant');
       await db.from('ai_token_usage').insert({
@@ -2667,8 +2670,10 @@ function persistChatMessages(
   // beskedens content JSONB som `generatedFiles`-felt så klienten kan
   // re-rendre download-chips efter reload eller login på ny device.
   generatedFiles: GeneratedFileRef[] = []
-): void {
-  void (async () => {
+): Promise<void> {
+  // BIZZ-2205: Returnerer Promise så after() kan awaite — chat-historik blev ellers
+  // tabt fordi persisteringen skete fire-and-forget efter stream-close.
+  return (async () => {
     try {
       // Resolve user's tenant schema så vi skriver til rigtig tabel
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -3404,59 +3409,48 @@ export async function POST(request: NextRequest): Promise<Response> {
             stopHeartbeat();
             controller.close();
 
-            // Fire-and-forget: persist token usage so quota check works next request
-            // BIZZ-643: Allocation beregnet ovenfor — genbruges her.
-            adminClient.auth.admin
-              .updateUserById(userId, {
-                app_metadata: {
-                  ...freshUser?.user?.app_metadata,
-                  subscription: { ...sub, ...allocation },
-                },
-              })
-              .catch(() => {}); // non-critical — best-effort tracking
-
-            // BIZZ-1687: Persist til ai_token_usage tabel for audit + rapportering
-            void import('@/app/lib/aiTracking').then(({ recordAiUsage }) =>
-              recordAiUsage({
-                userId,
-                tenantId: resolvedTenantId ?? null,
-                route: 'ai.chat',
-                inputTokens: totalInputTokens,
-                outputTokens: totalOutputTokens,
-                model: 'claude-sonnet-4-6',
-              })
-            );
-
-            // Fire-and-forget: record in tenant.ai_token_usage for auditable per-tenant billing
-            if (resolvedTenantId) {
-              recordTenantTokenUsage(
-                adminClient,
-                resolvedTenantId,
-                userId,
-                totalInputTokens,
-                totalOutputTokens
-              );
-            }
-
-            // BIZZ-819: Fire-and-forget — persistér user-prompt +
-            // assistant-svar til ai_chat_messages hvis klienten sendte
-            // session_id. Holder chat-historik server-side så brugeren
-            // kan tilgå den på tværs af devices (BIZZ-820 UI-layer).
-            if (sessionId && resolvedTenantId) {
-              persistChatMessages(
-                adminClient,
-                sessionId,
-                userId,
-                messages,
-                text,
-                totalInputTokens,
-                totalOutputTokens,
-                // BIZZ-869 part 2: Lad assistant-beskeden indeholde de
-                // filer vi har genereret i denne turn, så download-chippen
-                // kommer tilbage efter reload + cross-device.
-                turnGeneratedFiles
-              );
-            }
+            // BIZZ-2205: Persistér token-forbrug + chat-historik via after() så
+            // skrivningerne GARANTERET fuldfører efter stream-close. Tidligere skete
+            // alt fire-and-forget EFTER controller.close() uden waitUntil → Vercel
+            // termineret funktionen → audit-inserts (tenant.ai_token_usage) +
+            // chat-historik blev konsekvent skåret bort. Konsolideret til ÉN
+            // counter (allocation, BIZZ-643) + ÉN audit (recordTenantTokenUsage).
+            // Den redundante recordAiUsage (double-count af counter + duplikat-audit)
+            // er fjernet.
+            after(async () => {
+              try {
+                await adminClient.auth.admin.updateUserById(userId, {
+                  app_metadata: {
+                    ...freshUser?.user?.app_metadata,
+                    subscription: { ...sub, ...allocation },
+                  },
+                });
+              } catch {
+                // non-critical — best-effort tracking
+              }
+              if (resolvedTenantId) {
+                await recordTenantTokenUsage(
+                  adminClient,
+                  resolvedTenantId,
+                  userId,
+                  totalInputTokens,
+                  totalOutputTokens
+                );
+              }
+              // BIZZ-819/820: chat-historik server-side (cross-device).
+              if (sessionId && resolvedTenantId) {
+                await persistChatMessages(
+                  adminClient,
+                  sessionId,
+                  userId,
+                  messages,
+                  text,
+                  totalInputTokens,
+                  totalOutputTokens,
+                  turnGeneratedFiles
+                );
+              }
+            });
 
             return;
           }
@@ -3559,7 +3553,8 @@ export async function POST(request: NextRequest): Promise<Response> {
                 const fee = FEE_BY_FORMAT[fileResult.format] ?? 500;
                 totalOutputTokens += fee;
                 if (resolvedTenantId) {
-                  recordTenantTokenUsage(adminClient, resolvedTenantId, userId, 0, fee);
+                  // Mid-stream (funktionen er i live) — fire-and-forget er ok her.
+                  void recordTenantTokenUsage(adminClient, resolvedTenantId, userId, 0, fee);
                 }
                 Sentry.addBreadcrumb({
                   category: 'ai.tool_success',
@@ -3703,26 +3698,29 @@ export async function POST(request: NextRequest): Promise<Response> {
         stopHeartbeat();
         controller.close();
 
-        // Fire-and-forget: persist token usage so quota check works next request
-        adminClient.auth.admin
-          .updateUserById(userId, {
-            app_metadata: {
-              ...freshUser?.user?.app_metadata,
-              subscription: { ...sub, ...allocation },
-            },
-          })
-          .catch(() => {}); // non-critical — best-effort tracking
-
-        // Fire-and-forget: record in tenant.ai_token_usage for auditable per-tenant billing
-        if (resolvedTenantId) {
-          recordTenantTokenUsage(
-            adminClient,
-            resolvedTenantId,
-            userId,
-            totalInputTokens,
-            totalOutputTokens
-          );
-        }
+        // BIZZ-2205: Persistér counter + audit via after() så de fuldfører efter
+        // stream-close (samme rod-årsag som hovedstien ovenfor).
+        after(async () => {
+          try {
+            await adminClient.auth.admin.updateUserById(userId, {
+              app_metadata: {
+                ...freshUser?.user?.app_metadata,
+                subscription: { ...sub, ...allocation },
+              },
+            });
+          } catch {
+            // non-critical — best-effort tracking
+          }
+          if (resolvedTenantId) {
+            await recordTenantTokenUsage(
+              adminClient,
+              resolvedTenantId,
+              userId,
+              totalInputTokens,
+              totalOutputTokens
+            );
+          }
+        });
       } catch (err) {
         // Capture unexpected errors (not routine Claude API errors) in Sentry
         if (!(err instanceof Anthropic.APIError)) {

@@ -21,8 +21,8 @@ dotenv.config({ path: join(__dirname, '..', '.env.local') });
 // Preview/test environment (rlkjmqjxmkxuclehbrnl)
 const SUPABASE_URL = 'https://rlkjmqjxmkxuclehbrnl.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJsa2ptcWp4bWt4dWNsZWhicm5sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2NTM5MDUsImV4cCI6MjA5MTIyOTkwNX0.D8LCO5Lez3YWoupUqs3G6I6XYkGhZnUTCYptEYKLvDg';
-const TEST_EMAIL = 'jjrchefen@gmail.com';
-const TEST_PASSWORD = 'Kongen72';
+const TEST_EMAIL = process.env.E2E_TEST_EMAIL;
+const TEST_PASSWORD = process.env.E2E_TEST_PASS;
 const BASE_URL = 'https://test.bizzassist.dk';
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {

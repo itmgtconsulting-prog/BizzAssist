@@ -47,7 +47,7 @@ const eslintConfig = defineConfig([
           selector:
             "CallExpression[callee.property.name='from'][arguments.0.type='Literal'][arguments.0.value=/^domain_/]",
           message:
-            'Direct supabase.from(\'domain_*\') is forbidden. Use domainScopedQuery(), domainEmbedding helpers, or domainStorage — they enforce mandatory domain_id filtering (BIZZ-722).',
+            "Direct supabase.from('domain_*') is forbidden. Use domainScopedQuery(), domainEmbedding helpers, or domainStorage — they enforce mandatory domain_id filtering (BIZZ-722).",
         },
       ],
     },

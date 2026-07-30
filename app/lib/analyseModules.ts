@@ -188,7 +188,7 @@ export const ANALYSE_MODULES: AnalyseModuleConfig[] = [
     labelEn: 'Property price dashboard',
     icon: 'TrendingUp',
     path: '/dashboard/analyse/boligpris',
-    enabled: { dev: true, preview: true, prod: false },
+    enabled: { dev: true, preview: true, prod: true },
     requiredPlan: 'professionel',
     description:
       'Prisudvikling og gennemsnitspriser pr. kommune med BBR-filtre og interaktivt kort',

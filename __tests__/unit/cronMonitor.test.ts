@@ -15,6 +15,19 @@ import { NextResponse } from 'next/server';
 
 // Mocks skal hoistes FØR import af modulet under test så vi rammer vi.mock-
 // replacement i stedet for de rigtige implementationer.
+// `after()` kræver en Next request-scope i prod; i unit-test erstatter vi den
+// med en pass-through (heartbeat-promiset er allerede startet når det gives til
+// after(), så assertions på recordHeartbeat holder uændret).
+vi.mock('next/server', async (importActual) => {
+  const actual = await importActual<typeof import('next/server')>();
+  return {
+    ...actual,
+    after: vi.fn((task: unknown) => {
+      if (typeof task === 'function') (task as () => void)();
+    }),
+  };
+});
+
 vi.mock('@sentry/nextjs', () => ({
   withMonitor: vi.fn((_name: string, fn: () => unknown) => {
     // Kør handleren direkte — Sentry-wrapperen er transparent i prod.
@@ -35,6 +48,7 @@ vi.mock('@/app/lib/logger', () => ({
 }));
 
 import * as Sentry from '@sentry/nextjs';
+import { after } from 'next/server';
 import { recordHeartbeat } from '@/app/lib/cronHeartbeat';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
 
@@ -66,6 +80,27 @@ describe('withCronMonitor', () => {
     expect(typeof call[2]).toBe('number'); // durationMs
     expect(call[2]).toBeGreaterThanOrEqual(0);
     expect(call[3]).toBe(1440); // intervalMinutes
+  });
+
+  // BIZZ-2205-mønster: heartbeat SKAL flushes via after() — ikke fire-and-forget
+  // void — ellers taber Vercel skrivningen når serverless-instansen suspenderer på
+  // en hurtig-return (fx backfill der indsætter 0 rækker), og watchdog tror jobbet
+  // er stumt. Denne test låser wiringen på både success- og error-stien.
+  it("wire'er heartbeat gennem after() på både success- og error-stien", async () => {
+    await withCronMonitor(
+      { jobName: 'fast-job', schedule: '0 * * * *', intervalMinutes: 60 },
+      async () => NextResponse.json({ ok: true })
+    );
+    expect(after).toHaveBeenCalledTimes(1);
+
+    vi.clearAllMocks();
+
+    await expect(
+      withCronMonitor({ jobName: 'boom', schedule: '0 * * * *', intervalMinutes: 60 }, async () => {
+        throw new Error('boom');
+      })
+    ).rejects.toThrow('boom');
+    expect(after).toHaveBeenCalledTimes(1);
   });
 
   it('kalder recordHeartbeat med status=error + fejlmeddelelse når handler kaster', async () => {

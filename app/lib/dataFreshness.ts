@@ -214,9 +214,7 @@ async function checkDomain(
  */
 export async function checkAllDataFreshness(): Promise<DomainFreshness[]> {
   const admin = createAdminClient();
-  const results = await Promise.all(
-    DOMAIN_CONFIGS.map((config) => checkDomain(admin, config))
-  );
+  const results = await Promise.all(DOMAIN_CONFIGS.map((config) => checkDomain(admin, config)));
   return results;
 }
 

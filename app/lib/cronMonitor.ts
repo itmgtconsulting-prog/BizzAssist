@@ -24,7 +24,7 @@
  */
 
 import * as Sentry from '@sentry/nextjs';
-import { NextResponse } from 'next/server';
+import { NextResponse, after } from 'next/server';
 import { recordHeartbeat } from '@/app/lib/cronHeartbeat';
 import { logger } from '@/app/lib/logger';
 
@@ -46,6 +46,29 @@ export interface CronMonitorConfig {
    * Default 1 — skulle matcher crontab-nøjagtighed.
    */
   checkinMargin?: number;
+}
+
+/**
+ * Flush en observability-write så den garanteret fuldfører EFTER responsen uden
+ * at forsinke den.
+ *
+ * I prod kaldes cron-routes altid som HTTP-requests, så after() (next/server)
+ * kører i request-scope og holder serverless-instansen i live til skrivningen er
+ * flushet — modsat fire-and-forget void, som Vercel skar bort ved suspend.
+ *
+ * Uden for request-scope (unit/integration-tests der kalder handleren direkte)
+ * kaster after() synkront; dér falder vi tilbage til at lade promiset køre
+ * detached, så testene ikke afhænger af en Next request-kontekst.
+ *
+ * @param write - Det allerede-startede heartbeat-promise der skal flushes.
+ */
+function flushAfterResponse(write: Promise<void>): void {
+  try {
+    after(write);
+  } catch {
+    // Ingen request-scope (test-kontekst) — promiset resolver detached.
+    void write;
+  }
 }
 
 /**
@@ -72,14 +95,20 @@ export async function withCronMonitor(
       try {
         const response = await handler();
         const durationMs = Date.now() - startedAt;
-        // Fire-and-forget: vi venter ikke på heartbeat-write
-        void recordHeartbeat(jobName, 'success', durationMs, intervalMinutes);
+        // BIZZ-2205-mønster: heartbeat-write flushes via after(), IKKE fire-and-forget
+        // void. Hurtigt-returnerende crons (fx backfill der indsætter 0 rækker) fik
+        // serverless-instansen suspenderet før void-promiset flushede, så heartbeaten
+        // blev tabt og watchdog troede jobbet var stumt. after() holder instansen i
+        // live til skrivningen er fuldført, uden at forsinke responsen.
+        flushAfterResponse(recordHeartbeat(jobName, 'success', durationMs, intervalMinutes));
         return response;
       } catch (err) {
         const durationMs = Date.now() - startedAt;
         const msg = err instanceof Error ? err.message : String(err);
         logger.error(`[cron:${jobName}] fejl efter ${durationMs}ms:`, msg);
-        void recordHeartbeat(jobName, 'error', durationMs, intervalMinutes, msg);
+        // Samme after()-garanti på fejl-stien — ellers blev error-heartbeaten tabt
+        // når funktionen terminerede på throw, og watchdog så aldrig fejlen.
+        flushAfterResponse(recordHeartbeat(jobName, 'error', durationMs, intervalMinutes, msg));
         // Re-throw så Sentry.withMonitor markerer check-in som error + captures
         // exception. Vercel får 500-response som swap dermed passer gennem.
         throw err;

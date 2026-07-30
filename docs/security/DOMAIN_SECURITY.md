@@ -93,7 +93,7 @@ return 403 / 404, never leak cross-domain data.
 - [ ] **API header injection:** craft request with `X-Domain-Id: <domain-B>`
       — expect 404, `assertDomainMember` uses route params not headers.
 - [ ] **JWT replay:** reuse Domain A session JWT against `/api/domain/<B>/
-    cases` — expect 403 from `assertDomainMember`.
+cases` — expect 403 from `assertDomainMember`.
 - [ ] **Crafted case-ID across domains:** POST case-doc upload to
       `/api/domain/<A>/cases/<case-from-B>/docs` — expect 404 (verifyCaseInDomain).
 - [ ] **Storage path traversal:** `GET /api/domain/<A>/.../docs/<doc-id>`

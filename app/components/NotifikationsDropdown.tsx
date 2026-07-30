@@ -14,7 +14,16 @@
 
 import { useState, useRef, useEffect, useCallback, memo } from 'react';
 import { useRouter } from 'next/navigation';
-import { Bell, BellOff, Building2, CheckCheck, ChevronRight, X } from 'lucide-react';
+import {
+  Bell,
+  BellOff,
+  Briefcase,
+  Building2,
+  CheckCheck,
+  ChevronRight,
+  User,
+  X,
+} from 'lucide-react';
 import {
   hentTrackedEjendommeCache,
   hentNotifikationerCache,
@@ -32,6 +41,45 @@ import {
 interface NotifikationsDropdownProps {
   /** Sprog — 'da' eller 'en' */
   lang: 'da' | 'en';
+}
+
+/** Entitetstype for en notifikation */
+type NotifEntityType = 'property' | 'company' | 'person';
+
+/**
+ * Bygger dyb-link til den entitet en notifikation drejer sig om (BIZZ-2195).
+ *
+ * @param entityType - property/company/person
+ * @param id - entitetens id (BFE/DAWA, CVR eller enhedsNummer)
+ * @returns Sti til detaljesiden
+ */
+export function entityHref(entityType: NotifEntityType, id: string): string {
+  switch (entityType) {
+    case 'company':
+      return `/dashboard/companies/${id}`;
+    case 'person':
+      return `/dashboard/owners/${id}`;
+    default:
+      return `/dashboard/ejendomme/${id}`;
+  }
+}
+
+/**
+ * Vælger ikon-komponent + farve for en entitetstype, så notifikationslisten
+ * visuelt skelner ejendom/virksomhed/person.
+ *
+ * @param entityType - property/company/person
+ * @returns Lucide-ikon + Tailwind-farveklasse
+ */
+function entityIcon(entityType: NotifEntityType): { Icon: typeof Building2; color: string } {
+  switch (entityType) {
+    case 'company':
+      return { Icon: Briefcase, color: 'text-blue-400' };
+    case 'person':
+      return { Icon: User, color: 'text-amber-400' };
+    default:
+      return { Icon: Building2, color: 'text-emerald-400' };
+  }
 }
 
 /**
@@ -105,12 +153,12 @@ function NotifikationsDropdown({ lang }: NotifikationsDropdownProps) {
     router.push(`/dashboard/ejendomme/${id}`);
   };
 
-  /** Haandter klik paa en notifikation — markerer som laest via Supabase */
+  /** Haandter klik paa en notifikation — markerer som laest + navigerer til enheden */
   const handleNotifClick = async (notif: EjendomNotifikation) => {
     await markerSomLaest(notif.id);
     await refresh();
     setOpen(false);
-    router.push(`/dashboard/ejendomme/${notif.ejendomId}`);
+    router.push(entityHref(notif.entityType, notif.ejendomId));
   };
 
   /** Stop tracking fra dropdown — fjerner fra Supabase og cache */
@@ -252,6 +300,10 @@ function NotifikationsDropdown({ lang }: NotifikationsDropdownProps) {
                         {!n.laest && (
                           <span className="mt-1.5 w-2 h-2 bg-blue-500 rounded-full flex-shrink-0" />
                         )}
+                        {(() => {
+                          const { Icon, color } = entityIcon(n.entityType);
+                          return <Icon size={14} className={`mt-0.5 flex-shrink-0 ${color}`} />;
+                        })()}
                         <div className="min-w-0 flex-1">
                           <p className="text-white text-sm font-medium truncate">{n.adresse}</p>
                           <p className="text-slate-300 text-xs mt-0.5">{n.besked}</p>

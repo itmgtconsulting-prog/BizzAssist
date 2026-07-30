@@ -26,7 +26,7 @@ import { assertAiAllowed } from '@/app/lib/aiGate';
 import { logger } from '@/app/lib/logger';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getInsuranceApi } from '@/lib/db/insurance';
-import { getTenantSchemaName } from '@/lib/db/tenant';
+import { recordAiUsage } from '@/app/lib/aiTracking';
 import { normalizePolicyNumber } from '@/app/lib/forsikring/parser';
 import { addressesMatch } from '@/app/lib/forsikring/assetMatcher';
 import { parseV2, type V2ParseResult } from '@/app/lib/forsikring/parserV2';
@@ -34,35 +34,6 @@ import { resolveFileType } from '@/app/lib/domainFileTypes';
 
 /** Storage bucket name (matcher upload-route) */
 const BUCKET = 'forsikring-documents';
-
-/**
- * BIZZ-1404: Record AI token usage for forsikring parse operations.
- * Fire-and-forget — failures silently swallowed.
- */
-function recordParseTokens(
-  tenantId: string,
-  userId: string,
-  tokensIn: number,
-  tokensOut: number
-): void {
-  if (tokensIn === 0 && tokensOut === 0) return;
-  void (async () => {
-    try {
-      const schemaName = await getTenantSchemaName(tenantId);
-      const admin = createAdminClient();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (admin as any).schema(schemaName).from('ai_token_usage').insert({
-        tenant_id: tenantId,
-        user_id: userId,
-        tokens_in: tokensIn,
-        tokens_out: tokensOut,
-        model: 'claude-sonnet-4-6',
-      });
-    } catch {
-      // Non-critical — best-effort tracking
-    }
-  })();
-}
 
 /**
  * BIZZ-2081: Øget 120 → 300s — store forsikringsoversigter kan kræve op til
@@ -427,8 +398,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // Token usage tracking
-    recordParseTokens(auth.tenantId, auth.userId, v2Result.markdown.length, 0);
+    // BIZZ-2190: Registrér FAKTISK token-forbrug (sum af de 5 Claude-kald) mod
+    // brugerens månedskvote via recordAiUsage — som standard-docs-routerne. Den
+    // gamle recordParseTokens estimerede input fra markdown-længde, satte output=0
+    // og opdaterede ALDRIG app_metadata.tokensUsedThisMonth (billing-læk: parse
+    // skubbede aldrig brugeren over kvoten).
+    void recordAiUsage({
+      userId: auth.userId,
+      tenantId: auth.tenantId,
+      route: 'ai.forsikring-parse',
+      inputTokens: v2Result.usage?.inputTokens ?? 0,
+      outputTokens: v2Result.usage?.outputTokens ?? 0,
+      model: 'claude-sonnet-4-6',
+    });
 
     await insurance.documents.updateParseStatus(doc.id, 'parsed', {
       extractedText: v2Result.markdown.slice(0, 5000),

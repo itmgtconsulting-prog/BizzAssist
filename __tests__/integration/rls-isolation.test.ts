@@ -43,16 +43,16 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { config } from 'dotenv';
+
+// Load local credentials from .env.local — never hardcode secrets (ISO 27001 A.9).
+config({ path: '.env.local' });
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const SUPABASE_URL = 'https://wkzwxfhyfmvglrqtmebw.supabase.co';
-
-const ANON_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indrend4Zmh5Zm12Z2xycXRtZWJ3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2NjY1NzUsImV4cCI6MjA5MTI0MjU3NX0.X27mMiNGMCXr7O7mM6ANrueTRafW8NXp6oWokh3JbPQ';
-
-const SERVICE_ROLE_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indrend4Zmh5Zm12Z2xycXRtZWJ3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTY2NjU3NSwiZXhwIjoyMDkxMjQyNTc1fQ.j9McWuGVDL9gDN9ZebjOqQOd89E7m4CA1AMqnmy5Je0';
+const SUPABASE_URL = process.env['NEXT_PUBLIC_SUPABASE_URL'] || '';
+const ANON_KEY = process.env['NEXT_PUBLIC_SUPABASE_ANON_KEY'] || '';
+const SERVICE_ROLE_KEY = process.env['SUPABASE_SERVICE_ROLE_KEY'] || '';
 
 /**
  * Tenant A — the existing dev tenant.
@@ -99,6 +99,9 @@ const SEED_RECENT_B_ID = 'rls-test-recent-b-only';
  */
 const runRls =
   process.env['RLS_TEST'] === 'true' &&
+  !!SUPABASE_URL &&
+  !!ANON_KEY &&
+  !!SERVICE_ROLE_KEY &&
   !!process.env['RLS_TEST_EMAIL_1'] &&
   !!process.env['RLS_TEST_PASSWORD_1'] &&
   !!process.env['RLS_TEST_EMAIL_2'] &&

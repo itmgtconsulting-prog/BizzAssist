@@ -20,6 +20,8 @@ import { logger } from '@/app/lib/logger';
 import { recordHeartbeat } from '@/app/lib/cronHeartbeat';
 import { RESEND_ENDPOINT } from '@/app/lib/serviceEndpoints';
 import { companyInfo } from '@/app/lib/companyInfo';
+import { findIncompleteTenants } from '@/lib/tenant/verifyTenantSchema';
+import { sendCriticalAlert } from '@/app/lib/service-manager-alerts';
 import * as Sentry from '@sentry/nextjs';
 
 export const maxDuration = 300;
@@ -334,6 +336,33 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       checkDataFreshness(),
     ]);
 
+    // BIZZ-2196/2203: Tenant-schema-komplethed foldet ind her (detect + alarmér)
+    // i stedet for en separat cron — Vercel-scheduleren stopper ved 40 crons
+    // (BIZZ-2203). Watchdog kører hvert 30. min, hvilket er en bedre kadence end
+    // den tidligere daglige verify-tenant-schemas-cron. Auto-reparation sker
+    // fortsat i provisionTenantForUser (post-provision); her alarmeres service
+    // manager hvis en eksisterende tenant er drevet ufuldstændig.
+    let incompleteSchemas: string[] = [];
+    try {
+      const incomplete = await findIncompleteTenants();
+      if (incomplete && incomplete.length > 0) {
+        incompleteSchemas = incomplete.map((t) => t.schemaName);
+        await sendCriticalAlert({
+          description: `${incomplete.length} tenant-schema(er) ufuldstændige`,
+          affectedPath: 'app/api/cron/watchdog/route.ts',
+          scanId: 'watchdog-tenant-schemas',
+          issueType: 'config_error',
+          context: `Manglende kerne-tabeller pr. tenant: ${incomplete
+            .map((t) => `${t.schemaName}(${t.missing.join('/')})`)
+            .join(
+              '; '
+            )}. Kør public.provision_tenant_all_features('<schema>','<tenant_uuid>') for at reparere.`,
+        });
+      }
+    } catch (schemaErr) {
+      logger.error('[watchdog] tenant-schema-tjek fejlede:', schemaErr);
+    }
+
     const totalIssues = heartbeatIssues.length + freshnessIssues.length;
 
     // Send alert email only if there are issues
@@ -368,6 +397,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       issues: totalIssues,
       heartbeat: heartbeatIssues,
       freshness: freshnessIssues,
+      incompleteSchemas,
       emailSent,
       durationMs,
     });

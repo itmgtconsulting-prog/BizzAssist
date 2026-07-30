@@ -13,3 +13,5 @@ public/manifest.json
 # Ad-hoc ops/verification scripts — one-off tools, not production code.
 # Linting and formatting would block PRs for throwaway stubs. Matches eslint.config.mjs.
 scripts/
+# Large GeoJSON data files — generated/source data, not hand-edited code.
+public/geo/

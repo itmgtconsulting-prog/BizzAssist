@@ -28,6 +28,7 @@ import { getCertOAuthToken, isCertAuthConfigured } from '@/app/lib/dfCertAuth';
 import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { parseQuery } from '@/app/lib/validate';
+import { erOpdeltSfePlaceholder, type EjfEjerRow } from '@/app/lib/ejerskab/opdeltPlaceholder';
 import { logger } from '@/app/lib/logger';
 import { hentCvrStatusBatch } from '@/app/lib/cvrStatus';
 import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
@@ -357,29 +358,36 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjerskabRe
       const isFresh = Date.now() - freshest < EJF_STALE_MS;
 
       if (isFresh) {
-        const ejere: EjerData[] = (
-          cached as Array<{
-            ejer_navn: string | null;
-            ejer_cvr: string | null;
-            ejer_type: string | null;
-            ejerandel_taeller: number | null;
-            ejerandel_naevner: number | null;
-            virkning_fra: string | null;
-          }>
-        ).map((row) => ({
-          cvr: row.ejer_cvr,
-          personNavn: row.ejer_type === 'person' ? row.ejer_navn : null,
-          ejerandel_taeller: row.ejerandel_taeller,
-          ejerandel_naevner: row.ejerandel_naevner,
-          ejerforholdskode: null,
-          ejertype: (row.ejer_type === 'selskab'
-            ? 'selskab'
-            : row.ejer_type === 'person'
-              ? 'person'
-              : 'ukendt') as EjerData['ejertype'],
-          virkningFra: row.virkning_fra,
-          virksomhedsnavn: row.ejer_type === 'selskab' ? row.ejer_navn : null,
-        }));
+        // BIZZ-2193: Opdelt SFE/hovedejendom — EJF lister SFE-niveauets ejer som
+        // en navnløs "Ukendt" 1/1-placeholder (cvr=null); det reelle ejerskab
+        // ligger på ejerlejlighederne. Returnér ingen direkte ejer frem for at
+        // vise misvisende "Ukendt 100%". Kun den ENESTE gældende ejer med fuld
+        // andel konverteres — partiel/ideel-anpart med ukendt medejer bevares.
+        const ejere: EjerData[] = erOpdeltSfePlaceholder(cached as EjfEjerRow[])
+          ? []
+          : (
+              cached as Array<{
+                ejer_navn: string | null;
+                ejer_cvr: string | null;
+                ejer_type: string | null;
+                ejerandel_taeller: number | null;
+                ejerandel_naevner: number | null;
+                virkning_fra: string | null;
+              }>
+            ).map((row) => ({
+              cvr: row.ejer_cvr,
+              personNavn: row.ejer_type === 'person' ? row.ejer_navn : null,
+              ejerandel_taeller: row.ejerandel_taeller,
+              ejerandel_naevner: row.ejerandel_naevner,
+              ejerforholdskode: null,
+              ejertype: (row.ejer_type === 'selskab'
+                ? 'selskab'
+                : row.ejer_type === 'person'
+                  ? 'person'
+                  : 'ukendt') as EjerData['ejertype'],
+              virkningFra: row.virkning_fra,
+              virksomhedsnavn: row.ejer_type === 'selskab' ? row.ejer_navn : null,
+            }));
 
         logger.log(`[ejerskab] Cache hit: ${ejere.length} gældende ejere for BFE ${bfeNummer}`);
         return NextResponse.json(

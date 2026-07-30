@@ -260,7 +260,13 @@ async function processBfe(bfe, db) {
 // ── Main ────────────────────────────────────────────────────────────
 async function main() {
   console.log(`[1881-all-ejf] Start (offset=${OFFSET}, limit=${LIMIT}, concurrency=${CONCURRENCY}, dry-run=${DRY_RUN})`);
-  const pool = new pg.Pool({ connectionString: PROD_DB_URL, max: CONCURRENCY + 2, statement_timeout: 600000 });
+  const pool = new pg.Pool({
+    connectionString: PROD_DB_URL,
+    max: CONCURRENCY + 2,
+    statement_timeout: 600000,
+    connectionTimeoutMillis: 30000,   // 30s max wait for a connection from pool
+    idle_in_transaction_session_timeout: 60000,
+  });
 
   console.log('[1881-all-ejf] Henter candidates (kan tage 1-2 min)...');
   console.time('query');
@@ -284,11 +290,30 @@ async function main() {
   console.log(`[1881-all-ejf] ${bfes.length} BFEer at processere`);
 
   let processed = 0, ok = 0, noUuid = 0, noTlData = 0, errors = 0, totalHandler = 0, totalHaeftelser = 0;
+  // BIZZ-1881: tidsbaseret heartbeat-grænse. Watchdog'en (watchdog-tl-backfill.sh)
+  // dræber kørslen hvis log-filen ikke vokser i STALL_SECS (600s). Hvis de første 100
+  // BFEer er langsomme (45s hard-timeout eller 429-backoff med Retry-After) når vi
+  // aldrig %100-log-linjen i tide og en SUND kørsel dræbes fejlagtigt. Vi logger derfor
+  // også når der er gået >120s siden sidste linje. En ÆGTE hængt proces fuldfører ingen
+  // batch og når aldrig hertil → watchdog dræber den stadig korrekt.
+  const HEARTBEAT_MS = 120000;
+  let lastLogAt = Date.now();
 
   for (let i = 0; i < bfes.length; i += CONCURRENCY) {
     const batch = bfes.slice(i, i + CONCURRENCY);
     const results = await Promise.all(batch.map(async b => {
-      const c = await pool.connect();
+      // Guard mod pool.connect()-hang: race med en 30s timeout.
+      // pg's connectionTimeoutMillis dækker pool-ventetid, men TLS-handshake
+      // på en zombie-forbindelse kan hænge permanent — denne timer fanger det.
+      let c;
+      try {
+        c = await Promise.race([
+          pool.connect(),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('PoolConnectTimeout')), 30000)),
+        ]);
+      } catch (err) {
+        return { bfe: b, status: 'exception', error: `connect: ${err.message}` };
+      }
       try { return await processBfe(b, c); }
       catch (err) { return { bfe: b, status: 'exception', error: err.message }; }
       finally { c.release(); }
@@ -313,8 +338,9 @@ async function main() {
         } catch { /* probed-bogføring er non-fatal — BFEen genprobes næste kørsel */ }
       }
     }
-    if (processed % 100 === 0 || processed === bfes.length) {
+    if (processed % 100 === 0 || processed === bfes.length || Date.now() - lastLogAt > HEARTBEAT_MS) {
       console.log(`[1881-all-ejf] processed=${processed}/${bfes.length}, ok=${ok}, no-uuid=${noUuid}, no-tl=${noTlData}, errors=${errors}, handler=${totalHandler}, haeftelser=${totalHaeftelser}, delay=${baseDelayMs}ms, 429s=${total429}`);
+      lastLogAt = Date.now();
     }
     // Adaptiv throttle: pause mellem hver BFE-batch så vi holder os under rate-limit
     if (baseDelayMs > 0) await sleep(baseDelayMs);

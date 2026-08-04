@@ -51,11 +51,11 @@ for t in "${TABLES[@]}"; do
   # rækker) ikke dræbes af DB'ens default-timeout. FK-refererede tabeller fejler
   # på TRUNCATE og springes sikkert over (ingen CASCADE — undgår util. data-tab
   # på test). Skema-drift-tabeller springes ligeledes over.
-  if psql "$PROD_DB_URL" -v ON_ERROR_STOP=1 \
-         -c "SET statement_timeout = 0;" \
+  # statement_timeout=0 sættes via PGOPTIONS (IKKE -c "SET ...", da SET-output
+  # ellers forurener den pipede COPY-stdout og får hver tabel til at fejle).
+  if PGOPTIONS='-c statement_timeout=0' psql "$PROD_DB_URL" -v ON_ERROR_STOP=1 \
          -c "\copy public.$t TO STDOUT" \
-     | psql "$TEST_DB_URL" -v ON_ERROR_STOP=1 --single-transaction \
-         -c "SET statement_timeout = 0;" \
+     | PGOPTIONS='-c statement_timeout=0' psql "$TEST_DB_URL" -v ON_ERROR_STOP=1 --single-transaction \
          -c "SET session_replication_role = replica;" \
          -c "TRUNCATE public.$t;" \
          -c "\copy public.$t FROM STDIN"; then

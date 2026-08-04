@@ -18,12 +18,21 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
 import * as Sentry from '@sentry/nextjs';
+import { DATA_SOURCES, type DataSource } from '@/app/lib/cron/registry';
 
-/** Status levels for a data domain's freshness. */
-export type FreshnessStatus = 'ok' | 'warning' | 'critical';
+/**
+ * Status levels for a data domain's freshness.
+ * `config_error` = the check itself is misconfigured (table/column doesn't
+ * exist). BIZZ-2209: this used to be swallowed as a silent skip in the
+ * watchdog, which is exactly how a wrong column name hid 81 days of stale
+ * cache. It is now a distinct, loud status the watchdog escalates as critical.
+ */
+export type FreshnessStatus = 'ok' | 'warning' | 'critical' | 'config_error';
 
 /** Result of a freshness check for a single data domain. */
 export interface DomainFreshness {
+  /** Stable source key (= DataSource.sourceName / data_sync_status.source_name). */
+  sourceName: string;
   /** Human-readable domain name (e.g. 'CVR Virksomheder'). */
   domain: string;
   /** Database table checked. */
@@ -46,94 +55,15 @@ export interface DomainFreshness {
   error?: string;
 }
 
-/** Configuration for a single data domain check. */
-interface DomainConfig {
-  domain: string;
-  table: string;
-  timestampColumn: string;
-  /** Hours after which status becomes 'warning'. */
-  warningHours: number;
-  /** Hours after which status becomes 'critical'. */
-  criticalHours: number;
-}
+/** Configuration for a single data domain check (derived from the registry). */
+type DomainConfig = DataSource;
 
 /**
- * All data domains with active cron sync and their freshness thresholds.
- *
- * Thresholds are set based on the cron schedule:
- *   - Daily crons: warning at 36h, critical at 72h (allows 1 missed run + margin)
- *   - Weekly crons: warning at 10d, critical at 21d
- *   - Hourly crons: warning at 4h, critical at 12h
+ * All data domains — derived from the canonical registry (DATA_SOURCES) so the
+ * freshness config can no longer drift from the cron/data-source definitions.
+ * Thresholds live in app/lib/cron/registry.ts.
  */
-const DOMAIN_CONFIGS: DomainConfig[] = [
-  // ── CVR domain ──────────────────────────────────────────────────────────────
-  {
-    domain: 'CVR Virksomheder',
-    table: 'cvr_virksomhed',
-    timestampColumn: 'sidst_opdateret',
-    warningHours: 36,
-    criticalHours: 72,
-  },
-  {
-    domain: 'CVR Deltager-berigelse',
-    table: 'cvr_deltager',
-    timestampColumn: 'berigelse_sidst',
-    warningHours: 36,
-    criticalHours: 72,
-  },
-  // ── BBR domain ──────────────────────────────────────────────────────────────
-  {
-    domain: 'BBR Cache',
-    table: 'cache_bbr',
-    timestampColumn: 'synced_at',
-    warningHours: 36,
-    criticalHours: 72,
-  },
-  {
-    domain: 'BBR Ejendomsstatus',
-    table: 'bbr_ejendom_status',
-    timestampColumn: 'status_last_checked_at',
-    warningHours: 10 * 24, // Weekly cron — 10 days warning
-    criticalHours: 21 * 24, // 21 days critical
-  },
-  // ── Tinglysning + EJF ───────────────────────────────────────────────────────
-  {
-    domain: 'Tinglysning (delta-sync)',
-    table: 'tinglysning_aendring_cursor',
-    timestampColumn: 'updated_at',
-    warningHours: 36,
-    criticalHours: 72,
-  },
-  {
-    domain: 'EJF Ejerskab',
-    table: 'ejf_ejerskab',
-    timestampColumn: 'sidst_opdateret',
-    warningHours: 36,
-    criticalHours: 72,
-  },
-  // ── Cache tables ────────────────────────────────────────────────────────────
-  {
-    domain: 'CVR Cache',
-    table: 'cache_cvr',
-    timestampColumn: 'synced_at',
-    warningHours: 36,
-    criticalHours: 72,
-  },
-  {
-    domain: 'DAR Adresser',
-    table: 'cache_dar',
-    timestampColumn: 'synced_at',
-    warningHours: 10 * 24, // Less frequently updated
-    criticalHours: 30 * 24,
-  },
-  {
-    domain: 'VUR Vurderinger',
-    table: 'cache_vur',
-    timestampColumn: 'synced_at',
-    warningHours: 14 * 24, // Weekly cron planned
-    criticalHours: 30 * 24,
-  },
-];
+const DOMAIN_CONFIGS: DomainConfig[] = DATA_SOURCES;
 
 /**
  * Checks a single data domain for freshness.
@@ -147,7 +77,8 @@ async function checkDomain(
   config: DomainConfig
 ): Promise<DomainFreshness> {
   const base: DomainFreshness = {
-    domain: config.domain,
+    sourceName: config.sourceName,
+    domain: config.label,
     table: config.table,
     timestampColumn: config.timestampColumn,
     rowCount: null,
@@ -172,6 +103,21 @@ async function checkDomain(
         .order(config.timestampColumn, { ascending: false })
         .limit(1),
     ]);
+
+    // BIZZ-2209: A missing table/column is a CONFIG ERROR, not "no data" — it
+    // means the freshness check itself is broken. Surface it loudly so the
+    // watchdog escalates it (the wrong-column bug hid 81 days of stale cache).
+    const qErr = latestResult.error ?? countResult.error;
+    if (qErr) {
+      const m = String(qErr.message ?? qErr);
+      if (/does not exist|column|relation|schema cache|could not find/i.test(m)) {
+        base.status = 'config_error';
+        base.error = `Fejl-konfigureret friskhedstjek (${config.table}.${config.timestampColumn}): ${m}`;
+        return base;
+      }
+      base.error = m;
+      return base;
+    }
 
     base.rowCount = countResult.count ?? null;
 
@@ -228,7 +174,12 @@ export async function checkFreshnessWithAlerts(): Promise<DomainFreshness[]> {
   const results = await checkAllDataFreshness();
 
   for (const r of results) {
-    if (r.status === 'critical') {
+    if (r.status === 'config_error') {
+      Sentry.captureMessage(
+        `Data-freshness CONFIG-FEJL: ${r.domain} (${r.table}) — ${r.error}`,
+        'error'
+      );
+    } else if (r.status === 'critical') {
       Sentry.captureMessage(
         `Data-freshness CRITICAL: ${r.domain} (${r.table}) — ` +
           (r.error
@@ -259,6 +210,7 @@ export function summarizeFreshness(results: DomainFreshness[]): {
   ok: number;
   warning: number;
   critical: number;
+  configError: number;
   problems: DomainFreshness[];
 } {
   return {
@@ -266,6 +218,7 @@ export function summarizeFreshness(results: DomainFreshness[]): {
     ok: results.filter((r) => r.status === 'ok').length,
     warning: results.filter((r) => r.status === 'warning').length,
     critical: results.filter((r) => r.status === 'critical').length,
+    configError: results.filter((r) => r.status === 'config_error').length,
     problems: results.filter((r) => r.status !== 'ok'),
   };
 }

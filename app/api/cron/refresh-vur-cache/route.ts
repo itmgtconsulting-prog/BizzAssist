@@ -18,6 +18,9 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
+import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
+import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
+import { recordSyncStatus } from '@/app/lib/dataSyncStatus';
 import crypto from 'crypto';
 
 export const maxDuration = 300;
@@ -75,16 +78,25 @@ interface VurNode {
  */
 async function fetchVurForBfe(
   bfe: number,
-  authHeader: string
+  token: string
 ): Promise<{ vurderinger: VurNode[] } | null> {
   try {
+    // BIZZ-2209: Datafordeler VUR/v2 kræver OAuth Bearer + df-proxy (cert/IP-
+    // allowlist). Tidligere kaldte cronen endpointet DIREKTE med Basic-auth →
+    // 401 for hver BFE → cache_vur frøs i 82 dage. Bruger nu samme mønster som
+    // /api/vurdering (proxyUrl + Bearer token).
+    const gqlHeaders = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      ...proxyHeaders(),
+    };
     // Step 1: Krydsreference
     const krydsQuery = `{ VUR_BFEKrydsreference(first: 100, where: { BFEnummer: { eq: ${bfe} } }) { nodes { fkEjendomsvurderingID } } }`;
-    const krydsRes = await fetch(VUR_GQL, {
+    const krydsRes = await fetch(proxyUrl(VUR_GQL), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Basic ${authHeader}` },
+      headers: gqlHeaders,
       body: JSON.stringify({ query: krydsQuery }),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(proxyTimeout()),
     });
     if (!krydsRes.ok) return null;
 
@@ -101,11 +113,11 @@ async function fetchVurForBfe(
     // Step 2: Vurderinger
     const ids = vurIds.map((id) => `"${id}"`).join(',');
     const vurQuery = `{ VUR_Ejendomsvurdering(first: 100, where: { id: { in: [${ids}] } }) { nodes { id aar ejendomvaerdiBeloeb grundvaerdiBeloeb vurderetAreal benyttelseKode juridiskKategoriTekst } } }`;
-    const vurRes = await fetch(VUR_GQL, {
+    const vurRes = await fetch(proxyUrl(VUR_GQL), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Basic ${authHeader}` },
+      headers: gqlHeaders,
       body: JSON.stringify({ query: vurQuery }),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(proxyTimeout()),
     });
     if (!vurRes.ok) return null;
 
@@ -137,126 +149,144 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const dfUser = process.env.DATAFORDELER_USER;
-  const dfPass = process.env.DATAFORDELER_PASS;
-  if (!dfUser || !dfPass) {
-    logger.warn('[refresh-vur-cache] DATAFORDELER_USER/PASS not set — skipping');
-    return NextResponse.json({ error: 'Credentials missing' }, { status: 200 });
-  }
-  const authHeader = Buffer.from(`${dfUser}:${dfPass}`).toString('base64');
+  return withCronMonitor('refresh-vur-cache', async () => {
+    const admin = createAdminClient();
+    const startTime = Date.now();
 
-  return withCronMonitor(
-    { jobName: 'refresh-vur-cache', schedule: '0 3 * * 0', intervalMinutes: 10080 },
-    async () => {
-      const admin = createAdminClient();
-      const startTime = Date.now();
-      const staleCutoff = new Date(Date.now() - STALE_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    // OAuth Bearer token (df-proxy) — samme auth som /api/vurdering.
+    const token = await getSharedOAuthToken();
+    if (!token) {
+      logger.warn('[refresh-vur-cache] Ingen DF OAuth-token — kan ikke hente VUR');
+      return {
+        response: NextResponse.json(
+          { error: 'DF OAuth utilgængelig', refreshed: 0 },
+          { status: 200 }
+        ),
+        metrics: { itemsProcessed: 0, itemsWritten: 0 },
+        degraded: 'Datafordeler OAuth-token utilgængelig',
+      };
+    }
+    const staleCutoff = new Date(Date.now() - STALE_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-      // Find BFEs that need refresh: either not in cache_vur, or synced_at is stale
-      // Strategy: get BFEs from bbr_ejendom_status that are stale in cache_vur
-      // Using raw SQL via admin RPC would be ideal, but we can do a left-join approach:
-      // 1. Get stale/missing BFEs via a simple approach
-      const { data: staleBfes, error: staleErr } = await (
-        admin as unknown as {
-          from: (t: string) => {
-            select: (c: string) => {
-              lt: (
+    // Find BFEs that need refresh: either not in cache_vur, or synced_at is stale
+    // Strategy: get BFEs from bbr_ejendom_status that are stale in cache_vur
+    // Using raw SQL via admin RPC would be ideal, but we can do a left-join approach:
+    // 1. Get stale/missing BFEs via a simple approach
+    const { data: staleBfes, error: staleErr } = await (
+      admin as unknown as {
+        from: (t: string) => {
+          select: (c: string) => {
+            lt: (
+              col: string,
+              val: string
+            ) => {
+              order: (
                 col: string,
-                val: string
+                opts: { ascending: boolean }
               ) => {
-                order: (
-                  col: string,
-                  opts: { ascending: boolean }
-                ) => {
-                  limit: (n: number) => Promise<{
-                    data: Array<{ bfe_nummer: number }> | null;
-                    error: { message: string } | null;
-                  }>;
-                };
+                limit: (n: number) => Promise<{
+                  data: Array<{ bfe_nummer: number }> | null;
+                  error: { message: string } | null;
+                }>;
               };
             };
           };
-        }
-      )
-        .from('cache_vur')
-        .select('bfe_nummer')
-        .lt('synced_at', staleCutoff)
-        .order('synced_at', { ascending: true })
-        .limit(MAX_PER_RUN);
+        };
+      }
+    )
+      .from('cache_vur')
+      .select('bfe_nummer')
+      .lt('synced_at', staleCutoff)
+      .order('synced_at', { ascending: true })
+      .limit(MAX_PER_RUN);
 
-      if (staleErr) {
-        logger.error('[refresh-vur-cache] Failed to query stale BFEs:', staleErr.message);
-        return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 200 });
+    if (staleErr) {
+      logger.error('[refresh-vur-cache] Failed to query stale BFEs:', staleErr.message);
+      return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 200 });
+    }
+
+    const bfesToRefresh = (staleBfes ?? []).map((r: { bfe_nummer: number }) => r.bfe_nummer);
+    logger.log(`[refresh-vur-cache] Found ${bfesToRefresh.length} stale BFEs to refresh`);
+
+    let refreshed = 0;
+    let errors = 0;
+
+    for (const bfe of bfesToRefresh) {
+      // Time budget check
+      if (Date.now() - startTime > maxDuration * 1000 - 30_000) {
+        logger.log(`[refresh-vur-cache] Time budget reached after ${refreshed} BFEs`);
+        break;
       }
 
-      const bfesToRefresh = (staleBfes ?? []).map((r: { bfe_nummer: number }) => r.bfe_nummer);
-      logger.log(`[refresh-vur-cache] Found ${bfesToRefresh.length} stale BFEs to refresh`);
-
-      let refreshed = 0;
-      let errors = 0;
-
-      for (const bfe of bfesToRefresh) {
-        // Time budget check
-        if (Date.now() - startTime > maxDuration * 1000 - 30_000) {
-          logger.log(`[refresh-vur-cache] Time budget reached after ${refreshed} BFEs`);
-          break;
-        }
-
-        try {
-          const data = await fetchVurForBfe(bfe, authHeader);
-          if (data) {
-            const rawJson = JSON.stringify(data);
-            const hash = crypto.createHash('sha256').update(rawJson).digest('hex');
-            const { error: upsertErr } = await (
-              admin as unknown as {
-                from: (t: string) => {
-                  upsert: (
-                    v: Record<string, unknown>,
-                    o: { onConflict: string }
-                  ) => Promise<{ error: { message: string } | null }>;
-                };
-              }
-            )
-              .from('cache_vur')
-              .upsert(
-                {
-                  bfe_nummer: bfe,
-                  raw_data: data,
-                  source_hash: hash,
-                  synced_at: new Date().toISOString(),
-                },
-                { onConflict: 'bfe_nummer' }
-              );
-
-            if (upsertErr) {
-              logger.warn(`[refresh-vur-cache] Upsert failed for BFE ${bfe}:`, upsertErr.message);
-              errors++;
-            } else {
-              refreshed++;
+      try {
+        const data = await fetchVurForBfe(bfe, token);
+        if (data) {
+          const rawJson = JSON.stringify(data);
+          const hash = crypto.createHash('sha256').update(rawJson).digest('hex');
+          const { error: upsertErr } = await (
+            admin as unknown as {
+              from: (t: string) => {
+                upsert: (
+                  v: Record<string, unknown>,
+                  o: { onConflict: string }
+                ) => Promise<{ error: { message: string } | null }>;
+              };
             }
-          } else {
+          )
+            .from('cache_vur')
+            .upsert(
+              {
+                bfe_nummer: bfe,
+                raw_data: data,
+                source_hash: hash,
+                synced_at: new Date().toISOString(),
+              },
+              { onConflict: 'bfe_nummer' }
+            );
+
+          if (upsertErr) {
+            logger.warn(`[refresh-vur-cache] Upsert failed for BFE ${bfe}:`, upsertErr.message);
             errors++;
+          } else {
+            refreshed++;
           }
-        } catch {
+        } else {
           errors++;
         }
-
-        // Rate limit
-        await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
+      } catch {
+        errors++;
       }
 
-      const durationMs = Date.now() - startTime;
-      logger.log(
-        `[refresh-vur-cache] Done: ${refreshed} refreshed, ${errors} errors, ${durationMs}ms`
-      );
+      // Rate limit
+      await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
+    }
 
-      return NextResponse.json({
+    const durationMs = Date.now() - startTime;
+    logger.log(
+      `[refresh-vur-cache] Done: ${refreshed} refreshed, ${errors} errors, ${durationMs}ms`
+    );
+
+    // Degraded hvis der var stale kandidater men intet blev opfrisket (alle
+    // VUR-kald fejlede) — dét fanger den døde auth før BIZZ-2209.
+    const degraded =
+      bfesToRefresh.length > 0 && refreshed === 0 ? `${errors} VUR-kald fejlede` : undefined;
+
+    await recordSyncStatus('cache_vur', {
+      rowsSynced: refreshed,
+      durationMs,
+      error: degraded,
+    });
+
+    return {
+      response: NextResponse.json({
         ok: true,
         staleBfes: bfesToRefresh.length,
         refreshed,
         errors,
         durationMs,
-      });
-    }
-  );
+      }),
+      metrics: { itemsProcessed: bfesToRefresh.length, itemsWritten: refreshed },
+      degraded,
+    };
+  });
 }

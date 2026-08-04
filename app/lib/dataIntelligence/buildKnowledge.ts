@@ -83,3 +83,25 @@ export async function buildAndUpsertKnowledge(rpc?: SqlRunner): Promise<{
 
   return { results };
 }
+
+/** Alle topic-navne — bruges til at enqueue per-topic jobs (BIZZ-2208). */
+export const TOPIC_NAMES: string[] = ALL_TOPICS.map((t) => t.name);
+
+/**
+ * Bygger og upsert'er ét enkelt topic. Bruges af job-kø-workeren så tunge
+ * knowledge-builds køres per-topic (hvert langt under 300s) i stedet for
+ * monolitisk (som timeoutede — BIZZ-2208).
+ *
+ * @param name - Topic-navnet (skal findes i ALL_TOPICS)
+ * @param rpc  - Valgfri SqlRunner (default: Management-API-runner)
+ * @returns Antal upsert'ede rækker
+ * @throws hvis topic-navnet er ukendt eller builderen fejler
+ */
+export async function buildAndUpsertSingleTopic(name: string, rpc?: SqlRunner): Promise<number> {
+  const topic = ALL_TOPICS.find((t) => t.name === name);
+  if (!topic) throw new Error(`Ukendt knowledge-topic: ${name}`);
+  const runner = rpc ?? createDefaultSqlRunner();
+  const rows = await topic.build(runner);
+  await upsertTopic(runner, topic.name, rows);
+  return rows.length;
+}

@@ -1,9 +1,10 @@
 /**
  * Cron: Knowledge Cache Refresh — /api/cron/refresh-knowledge-cache
  *
- * BIZZ-1419: Natlig opdatering af dataintel.analytics_knowledge. Kører alle
- * topic-builders i topics.ts (BIZZ-1413..1418). Fejl i én topic stopper ikke
- * andre.
+ * BIZZ-1419 / BIZZ-2208: Natlig opdatering af dataintel.analytics_knowledge.
+ * Bygger IKKE længere alle topics synkront (det timeoutede monolitisk >300s →
+ * 504). I stedet enqueues ét job pr. topic i den durable job-kø; workeren
+ * (process-job-queue) bygger dem ét ad gangen, hvert langt under 300s.
  *
  * Schedule: 30 3 * * * UTC (dagligt 03:30 — efter catalog 03:00).
  *
@@ -15,11 +16,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
-import { buildAndUpsertKnowledge } from '@/app/lib/dataIntelligence/buildKnowledge';
+import { TOPIC_NAMES } from '@/app/lib/dataIntelligence/buildKnowledge';
+import { enqueue } from '@/app/lib/jobQueue';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
 
 export const runtime = 'nodejs';
-export const maxDuration = 300;
+export const maxDuration = 60;
 
 /** Verificér CRON_SECRET + (i prod) Vercel cron-header. */
 function verifyCronSecret(request: NextRequest): boolean {
@@ -42,40 +44,26 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // BIZZ-1971: heartbeat + Sentry cron-monitoring
-  return withCronMonitor(
-    { jobName: 'refresh-knowledge-cache', schedule: '30 3 * * *', intervalMinutes: 1440 },
-    async () => {
-      const start = Date.now();
-      try {
-        const { results } = await buildAndUpsertKnowledge();
-        const totalRows = results.reduce((sum, r) => sum + r.rows, 0);
-        const failed = results.filter((r) => r.error).length;
-        const durationMs = Date.now() - start;
-
-        logger.log('[cron/refresh-knowledge-cache]', {
-          topics: results.length,
-          totalRows,
-          failed,
-          durationMs,
-        });
-
-        return NextResponse.json({
-          ok: failed === 0,
-          topics: results.length,
-          totalRows,
-          failed,
-          durationMs,
-          results,
-        });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Ukendt fejl';
-        logger.error('[cron/refresh-knowledge-cache] fatal:', msg);
-        return NextResponse.json(
-          { ok: false, error: 'Ekstern API fejl', durationMs: Date.now() - start },
-          { status: 500 }
-        );
-      }
+  // BIZZ-2208: enqueue ét job pr. topic; workeren bygger dem asynkront.
+  return withCronMonitor('refresh-knowledge-cache', async () => {
+    let enqueued = 0;
+    let skipped = 0;
+    for (const topic of TOPIC_NAMES) {
+      // dedupe_key sikrer at et endnu-ikke-kørt topic-job fra i går ikke
+      // dubleres; når det er done kan topic'et enqueues igen.
+      const added = await enqueue('knowledge-topic', {
+        topic,
+        dedupe_key: `knowledge-topic:${topic}`,
+      });
+      if (added) enqueued++;
+      else skipped++;
     }
-  );
+
+    logger.log(`[cron/refresh-knowledge-cache] enqueued=${enqueued} skipped=${skipped}`);
+
+    return {
+      response: NextResponse.json({ ok: true, enqueued, skipped, topics: TOPIC_NAMES.length }),
+      metrics: { itemsProcessed: TOPIC_NAMES.length, itemsWritten: enqueued },
+    };
+  });
 }

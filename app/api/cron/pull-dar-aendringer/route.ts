@@ -21,6 +21,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
+import { recordSyncStatus } from '@/app/lib/dataSyncStatus';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -96,151 +97,147 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  return withCronMonitor(
-    {
-      jobName: 'pull-dar-aendringer',
-      schedule: '0 5 * * *',
-      intervalMinutes: 24 * 60,
-      maxRuntimeMinutes: 5,
-    },
-    async () => {
-      const startTime = Date.now();
-      const admin = createAdminClient();
+  return withCronMonitor('pull-dar-aendringer', async () => {
+    const startTime = Date.now();
+    const admin = createAdminClient();
 
-      // 1. Hent sidst-hentet sekvensnummer fra cursor
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: cursorData } = await (admin as any)
-        .from('dar_sync_cursor')
-        .select('sekvensnummer')
-        .eq('id', 'default')
-        .single();
+    // 1. Hent sidst-hentet sekvensnummer fra cursor
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: cursorData } = await (admin as any)
+      .from('dar_sync_cursor')
+      .select('sekvensnummer')
+      .eq('id', 'default')
+      .single();
 
-      let sekvensnummer = (cursorData?.sekvensnummer as number) ?? 0;
+    let sekvensnummer = (cursorData?.sekvensnummer as number) ?? 0;
 
-      // Hvis ingen cursor, hent seneste sekvensnummer fra DAWA
-      if (sekvensnummer === 0) {
-        try {
-          const seneste = await fetch(`${DAWA_BASE}/replikering/senestesekvensnummer`, {
-            signal: AbortSignal.timeout(10_000),
-          });
-          if (seneste.ok) {
-            const data = await seneste.json();
-            // Start fra 1000 hændelser før seneste for at fange nylige ændringer
-            sekvensnummer = Math.max(0, (data.sekvensnummer as number) - 1000);
-          }
-        } catch {
-          logger.warn('[dar-delta] Kunne ikke hente seneste sekvensnummer');
+    // Hvis ingen cursor, hent seneste sekvensnummer fra DAWA
+    if (sekvensnummer === 0) {
+      try {
+        const seneste = await fetch(`${DAWA_BASE}/replikering/senestesekvensnummer`, {
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (seneste.ok) {
+          const data = await seneste.json();
+          // Start fra 1000 hændelser før seneste for at fange nylige ændringer
+          sekvensnummer = Math.max(0, (data.sekvensnummer as number) - 1000);
         }
+      } catch {
+        logger.warn('[dar-delta] Kunne ikke hente seneste sekvensnummer');
+      }
+    }
+
+    logger.log(`[dar-delta] Starter fra sekvensnummer ${sekvensnummer}`);
+
+    // 2. Hent hændelser fra DAWA
+    let totalEvents = 0;
+    let upserted = 0;
+    let deleted = 0;
+    let lastSekvensnummer = sekvensnummer;
+    let pagesFetched = 0;
+
+    while (pagesFetched < MAX_PAGES) {
+      if (Date.now() - startTime > maxDuration * 1000 - SAFETY_MARGIN_MS) {
+        logger.warn('[dar-delta] Safety margin ramt');
+        break;
       }
 
-      logger.log(`[dar-delta] Starter fra sekvensnummer ${sekvensnummer}`);
-
-      // 2. Hent hændelser fra DAWA
-      let totalEvents = 0;
-      let upserted = 0;
-      let deleted = 0;
-      let lastSekvensnummer = sekvensnummer;
-      let pagesFetched = 0;
-
-      while (pagesFetched < MAX_PAGES) {
-        if (Date.now() - startTime > maxDuration * 1000 - SAFETY_MARGIN_MS) {
-          logger.warn('[dar-delta] Safety margin ramt');
-          break;
-        }
-
-        let events: Record<string, unknown>[];
-        try {
-          const res = await fetch(
-            `${DAWA_BASE}/replikering/adgangsadresser/haendelser?sekvensnummerfra=${lastSekvensnummer + 1}&sekvensnummertil=${lastSekvensnummer + EVENT_PAGE_SIZE}`,
-            { signal: AbortSignal.timeout(30_000) }
-          );
-          if (!res.ok) {
-            logger.error(`[dar-delta] DAWA HTTP ${res.status}`);
-            break;
-          }
-          events = (await res.json()) as Record<string, unknown>[];
-        } catch (err) {
-          logger.error('[dar-delta] DAWA fetch error:', err instanceof Error ? err.message : err);
-          break;
-        }
-
-        if (events.length === 0) break;
-        pagesFetched++;
-        totalEvents += events.length;
-
-        // Gruppe: upserts (oprettet/ændret) og deletes (nedlagt)
-        const upsertBatch: DarCacheRow[] = [];
-        const deleteIds: string[] = [];
-
-        for (const evt of events) {
-          const sekvens = evt.sekvensnummer as number;
-          if (sekvens > lastSekvensnummer) lastSekvensnummer = sekvens;
-
-          const operation = evt.operation as string;
-          const data = evt.data as Record<string, unknown> | undefined;
-
-          if (operation === 'delete' || operation === 'nedlæg') {
-            const id = (data?.id as string) ?? (evt.id as string);
-            if (id) deleteIds.push(id);
-          } else if (data) {
-            const row = mapAdresseToRow(data);
-            if (row) upsertBatch.push(row);
-          }
-        }
-
-        // Batch upsert
-        if (upsertBatch.length > 0) {
-          for (let i = 0; i < upsertBatch.length; i += UPSERT_BATCH_SIZE) {
-            const batch = upsertBatch.slice(i, i + UPSERT_BATCH_SIZE);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const { error } = await (admin as any)
-              .from('cache_dar')
-              .upsert(batch, { onConflict: 'id' });
-            if (error) {
-              logger.error('[dar-delta] Upsert fejl:', error.message);
-            } else {
-              upserted += batch.length;
-            }
-          }
-        }
-
-        // Batch delete
-        if (deleteIds.length > 0) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { error } = await (admin as any).from('cache_dar').delete().in('id', deleteIds);
-          if (error) {
-            logger.error('[dar-delta] Delete fejl:', error.message);
-          } else {
-            deleted += deleteIds.length;
-          }
-        }
-
-        // Færre events end page size = vi er ajour
-        if (events.length < EVENT_PAGE_SIZE) break;
-      }
-
-      // 3. Opdater cursor
-      {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { error: cursorErr } = await (admin as any).from('dar_sync_cursor').upsert(
-          {
-            id: 'default',
-            sekvensnummer: lastSekvensnummer,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'id' }
+      let events: Record<string, unknown>[];
+      try {
+        const res = await fetch(
+          `${DAWA_BASE}/replikering/adgangsadresser/haendelser?sekvensnummerfra=${lastSekvensnummer + 1}&sekvensnummertil=${lastSekvensnummer + EVENT_PAGE_SIZE}`,
+          { signal: AbortSignal.timeout(30_000) }
         );
-        if (cursorErr) {
-          logger.error('[dar-delta] Cursor update fejl:', cursorErr.message);
+        if (!res.ok) {
+          logger.error(`[dar-delta] DAWA HTTP ${res.status}`);
+          break;
+        }
+        events = (await res.json()) as Record<string, unknown>[];
+      } catch (err) {
+        logger.error('[dar-delta] DAWA fetch error:', err instanceof Error ? err.message : err);
+        break;
+      }
+
+      if (events.length === 0) break;
+      pagesFetched++;
+      totalEvents += events.length;
+
+      // Gruppe: upserts (oprettet/ændret) og deletes (nedlagt)
+      const upsertBatch: DarCacheRow[] = [];
+      const deleteIds: string[] = [];
+
+      for (const evt of events) {
+        const sekvens = evt.sekvensnummer as number;
+        if (sekvens > lastSekvensnummer) lastSekvensnummer = sekvens;
+
+        const operation = evt.operation as string;
+        const data = evt.data as Record<string, unknown> | undefined;
+
+        if (operation === 'delete' || operation === 'nedlæg') {
+          const id = (data?.id as string) ?? (evt.id as string);
+          if (id) deleteIds.push(id);
+        } else if (data) {
+          const row = mapAdresseToRow(data);
+          if (row) upsertBatch.push(row);
         }
       }
 
-      const durationMs = Date.now() - startTime;
-      logger.log(
-        `[dar-delta] Done: ${totalEvents} events, ${upserted} upserted, ${deleted} deleted, ${durationMs}ms`
-      );
+      // Batch upsert
+      if (upsertBatch.length > 0) {
+        for (let i = 0; i < upsertBatch.length; i += UPSERT_BATCH_SIZE) {
+          const batch = upsertBatch.slice(i, i + UPSERT_BATCH_SIZE);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { error } = await (admin as any)
+            .from('cache_dar')
+            .upsert(batch, { onConflict: 'id' });
+          if (error) {
+            logger.error('[dar-delta] Upsert fejl:', error.message);
+          } else {
+            upserted += batch.length;
+          }
+        }
+      }
 
-      return NextResponse.json({
+      // Batch delete
+      if (deleteIds.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error } = await (admin as any).from('cache_dar').delete().in('id', deleteIds);
+        if (error) {
+          logger.error('[dar-delta] Delete fejl:', error.message);
+        } else {
+          deleted += deleteIds.length;
+        }
+      }
+
+      // Færre events end page size = vi er ajour
+      if (events.length < EVENT_PAGE_SIZE) break;
+    }
+
+    // 3. Opdater cursor
+    {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: cursorErr } = await (admin as any).from('dar_sync_cursor').upsert(
+        {
+          id: 'default',
+          sekvensnummer: lastSekvensnummer,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'id' }
+      );
+      if (cursorErr) {
+        logger.error('[dar-delta] Cursor update fejl:', cursorErr.message);
+      }
+    }
+
+    const durationMs = Date.now() - startTime;
+    logger.log(
+      `[dar-delta] Done: ${totalEvents} events, ${upserted} upserted, ${deleted} deleted, ${durationMs}ms`
+    );
+
+    await recordSyncStatus('cache_dar', { rowsSynced: upserted, durationMs });
+
+    return {
+      response: NextResponse.json({
         ok: true,
         sekvensnummerFrom: sekvensnummer,
         sekvensnummerTo: lastSekvensnummer,
@@ -249,7 +246,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         deleted,
         pagesFetched,
         durationMs,
-      });
-    }
-  );
+      }),
+      // itemsProcessed = events set (0 events på en rolig dag = healthy, ikke
+      // degraded — DAR-delta har ofte 0 ændringer). itemsWritten = upserts.
+      metrics: { itemsProcessed: totalEvents, itemsWritten: upserted },
+    };
+  });
 }

@@ -22,6 +22,7 @@ import { RESEND_ENDPOINT } from '@/app/lib/serviceEndpoints';
 import { companyInfo } from '@/app/lib/companyInfo';
 import { findIncompleteTenants } from '@/lib/tenant/verifyTenantSchema';
 import { sendCriticalAlert } from '@/app/lib/service-manager-alerts';
+import { checkAllDataFreshness, type DomainFreshness } from '@/app/lib/dataFreshness';
 import * as Sentry from '@sentry/nextjs';
 
 export const maxDuration = 300;
@@ -29,27 +30,10 @@ export const maxDuration = 300;
 const FROM_ADDRESS = `BizzAssist Watchdog <${companyInfo.noreplyEmail}>`;
 const TO_ADDRESS = companyInfo.supportEmail;
 
-// ── Data-freshness thresholds (hours) ────────────────────────────────────────
-
-interface FreshnessCheck {
-  /** Human-readable label */
-  label: string;
-  /** Table to check */
-  table: string;
-  /** Column with the last-updated timestamp */
-  column: string;
-  /** Max allowed age in hours before warning */
-  maxHours: number;
-}
-
-const FRESHNESS_CHECKS: FreshnessCheck[] = [
-  { label: 'CVR Virksomheder', table: 'cvr_virksomhed', column: 'sidst_hentet', maxHours: 48 },
-  { label: 'BBR Ejendomsstatus', table: 'cache_bbr', column: 'updated_at', maxHours: 48 },
-  { label: 'EJF Ejerskab', table: 'ejf_ejerskab', column: 'updated_at', maxHours: 48 },
-  { label: 'CVR Deltagere', table: 'cvr_deltager', column: 'berigelse_sidst', maxHours: 48 },
-  { label: 'DAR Adresser', table: 'cache_dar', column: 'updated_at', maxHours: 168 }, // 7 days
-  { label: 'VUR Vurderinger', table: 'cache_vur', column: 'updated_at', maxHours: 336 }, // 14 days
-];
+// Data-freshness thresholds live in the canonical registry (app/lib/cron/
+// registry.ts → DATA_SOURCES) and are evaluated by checkAllDataFreshness().
+// BIZZ-2209: the watchdog no longer keeps its own inline column list — that
+// duplicate drifted (wrong column names) and silently no-op'd for 5/6 tables.
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
@@ -73,7 +57,7 @@ function verifyCronSecret(request: NextRequest): boolean {
 
 interface HeartbeatIssue {
   jobName: string;
-  kind: 'overdue' | 'error';
+  kind: 'overdue' | 'error' | 'degraded';
   detail: string;
 }
 
@@ -98,6 +82,7 @@ async function checkHeartbeats(): Promise<HeartbeatIssue[]> {
               last_duration_ms: number;
               expected_interval_minutes: number;
               last_error: string | null;
+              last_degraded_reason: string | null;
             }> | null;
             error: { message: string } | null;
           }>;
@@ -124,6 +109,14 @@ async function checkHeartbeats(): Promise<HeartbeatIssue[]> {
           jobName: row.job_name,
           kind: 'error',
           detail: `Last run failed: ${row.last_error ?? 'unknown error'}`,
+        });
+      } else if (row.last_status === 'degraded') {
+        // BIZZ-2209: ran without throwing but did no useful work / a dependency
+        // failed — the signal that catches a silently no-op'ing cron.
+        issues.push({
+          jobName: row.job_name,
+          kind: 'degraded',
+          detail: `Degraded: ${row.last_degraded_reason ?? row.last_error ?? 'intet nyttigt arbejde udført'}`,
         });
       }
 
@@ -158,84 +151,36 @@ interface FreshnessIssue {
 }
 
 /**
- * Check data-freshness thresholds for critical cache tables.
- * Uses Supabase Management API to avoid type issues with dynamic tables.
+ * Evaluate all registered data sources' freshness via checkAllDataFreshness()
+ * (the single, schema-correct freshness engine). `config_error` results
+ * (missing table/column) are separated so they can be escalated as critical —
+ * a broken check is worse than stale data because it hides real staleness.
  *
- * @returns Array of stale data issues
+ * @returns Stale-data issues + any misconfigured checks
  */
-async function checkDataFreshness(): Promise<FreshnessIssue[]> {
-  const admin = createAdminClient();
+async function checkDataFreshness(): Promise<{
+  issues: FreshnessIssue[];
+  configErrors: DomainFreshness[];
+}> {
+  const results = await checkAllDataFreshness();
   const issues: FreshnessIssue[] = [];
+  const configErrors: DomainFreshness[] = [];
 
-  for (const check of FRESHNESS_CHECKS) {
-    try {
-      // Check if table exists and get latest timestamp + count
-      const { data, error } = await (
-        admin as unknown as {
-          from: (t: string) => {
-            select: (
-              c: string,
-              o: { count: string; head: boolean }
-            ) => {
-              order: (
-                col: string,
-                opts: { ascending: boolean }
-              ) => {
-                limit: (n: number) => Promise<{
-                  data: Array<Record<string, unknown>> | null;
-                  error: { message: string } | null;
-                  count: number | null;
-                }>;
-              };
-            };
-          };
-        }
-      )
-        .from(check.table)
-        .select(check.column, { count: 'exact', head: false })
-        .order(check.column, { ascending: false })
-        .limit(1);
-
-      if (error) {
-        // Table might not exist yet — not an issue per se
-        logger.warn(`[watchdog] Freshness check skipped for ${check.table}:`, error.message);
-        continue;
-      }
-
-      const rowCount = (data as unknown as { count?: number })?.count ?? data?.length ?? 0;
-      if (rowCount === 0) {
-        issues.push({
-          label: check.label,
-          table: check.table,
-          ageHours: null,
-          maxHours: check.maxHours,
-          rowCount: 0,
-        });
-        continue;
-      }
-
-      const latestRow = data?.[0];
-      const latestTs = latestRow?.[check.column] as string | null;
-      if (!latestTs) continue;
-
-      const ageMs = Date.now() - new Date(latestTs).getTime();
-      const ageHours = Math.floor(ageMs / 3600000);
-
-      if (ageHours > check.maxHours) {
-        issues.push({
-          label: check.label,
-          table: check.table,
-          ageHours,
-          maxHours: check.maxHours,
-          rowCount: typeof rowCount === 'number' ? rowCount : 0,
-        });
-      }
-    } catch (e) {
-      logger.warn(`[watchdog] Freshness check failed for ${check.table}:`, e);
+  for (const r of results) {
+    if (r.status === 'config_error') {
+      configErrors.push(r);
+    } else if (r.status === 'warning' || r.status === 'critical') {
+      issues.push({
+        label: r.domain,
+        table: r.table,
+        ageHours: r.hoursSinceUpdate,
+        maxHours: r.status === 'critical' ? r.criticalThresholdHours : r.warningThresholdHours,
+        rowCount: r.rowCount ?? 0,
+      });
     }
   }
 
-  return issues;
+  return { issues, configErrors };
 }
 
 // ── Email alert ─────────────────────────────────────────────────────────────
@@ -331,10 +276,37 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const startedAt = Date.now();
 
   try {
-    const [heartbeatIssues, freshnessIssues] = await Promise.all([
+    const [heartbeatIssues, freshness] = await Promise.all([
       checkHeartbeats(),
       checkDataFreshness(),
     ]);
+    const freshnessIssues = freshness.issues;
+
+    // BIZZ-2209: A misconfigured freshness check (missing table/column) is a
+    // CRITICAL config bug — it silently hid 81 days of stale cache before. Alert
+    // service-manager immediately + include in the email as fake "issues".
+    if (freshness.configErrors.length > 0) {
+      const detail = freshness.configErrors
+        .map((c) => `${c.table}.${c.timestampColumn}`)
+        .join(', ');
+      logger.error('[watchdog] Friskheds-config-fejl:', detail);
+      await sendCriticalAlert({
+        description: `${freshness.configErrors.length} data-friskhedstjek fejl-konfigureret`,
+        affectedPath: 'app/lib/cron/registry.ts',
+        scanId: 'watchdog-freshness-config',
+        issueType: 'config_error',
+        context: `Datakilder med ikke-eksisterende tabel/kolonne: ${detail}. Ret DATA_SOURCES i registeret.`,
+      }).catch((e) => logger.error('[watchdog] config-alert fejlede:', e));
+      for (const c of freshness.configErrors) {
+        freshnessIssues.push({
+          label: `⚠ CONFIG-FEJL: ${c.domain}`,
+          table: c.table,
+          ageHours: null,
+          maxHours: 0,
+          rowCount: 0,
+        });
+      }
+    }
 
     // BIZZ-2196/2203: Tenant-schema-komplethed foldet ind her (detect + alarmér)
     // i stedet for en separat cron — Vercel-scheduleren stopper ved 40 crons

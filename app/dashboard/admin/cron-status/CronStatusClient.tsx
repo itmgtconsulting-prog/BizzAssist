@@ -26,23 +26,49 @@ import { AdminNavTabs } from '../AdminNavTabs';
 import { useLanguage } from '@/app/context/LanguageContext';
 
 /** Status per cron — direct copy fra API-kontrakten */
-type CronStatus = 'ok' | 'error' | 'overdue' | 'missing';
+type CronStatus = 'ok' | 'degraded' | 'error' | 'overdue' | 'missing';
 
 interface CronRow {
   jobName: string;
   schedule: string;
   intervalMinutes: number;
+  category: string;
   description: string;
   lastRunAt: string | null;
-  lastStatus: 'success' | 'error' | null;
+  lastStatus: 'success' | 'error' | 'degraded' | null;
   lastDurationMs: number | null;
   lastError: string | null;
+  itemsProcessed: number | null;
+  itemsWritten: number | null;
+  degradedReason: string | null;
   status: CronStatus;
 }
 
+/** BIZZ-2209: one data-source freshness result. */
+interface FreshnessSource {
+  sourceName: string;
+  domain: string;
+  table: string;
+  timestampColumn: string;
+  hoursSinceUpdate: number | null;
+  status: 'ok' | 'warning' | 'critical' | 'config_error';
+  error?: string;
+}
+
 interface CronStatusResponse {
-  summary: { total: number; ok: number; error: number; overdue: number; missing: number };
+  summary: {
+    total: number;
+    ok: number;
+    degraded: number;
+    error: number;
+    overdue: number;
+    missing: number;
+  };
   crons: CronRow[];
+  freshness?: {
+    summary: { total: number; ok: number; warning: number; critical: number; configError: number };
+    sources: FreshnessSource[];
+  } | null;
   /** BIZZ-621: Heartbeat-query fejl (fx missing table) — null hvis alt OK */
   heartbeatError?: string | null;
 }
@@ -96,6 +122,13 @@ function statusConfig(s: CronStatus, da: boolean) {
         color: 'text-emerald-400',
         bg: 'bg-emerald-500/10 border-emerald-500/30',
         label: da ? 'OK' : 'OK',
+      };
+    case 'degraded':
+      return {
+        Icon: AlertTriangle,
+        color: 'text-orange-400',
+        bg: 'bg-orange-500/10 border-orange-500/30',
+        label: da ? 'Degraderet' : 'Degraded',
       };
     case 'error':
       return {
@@ -197,8 +230,8 @@ export default function CronStatusClient() {
             <p className="text-slate-400 text-sm mt-0.5">
               {data
                 ? da
-                  ? `${data.summary.ok}/${data.summary.total} OK${data.summary.error > 0 ? ` · ${data.summary.error} fejl` : ''}${data.summary.overdue > 0 ? ` · ${data.summary.overdue} forsinket` : ''}${data.summary.missing > 0 ? ` · ${data.summary.missing} uden data` : ''}`
-                  : `${data.summary.ok}/${data.summary.total} OK${data.summary.error > 0 ? ` · ${data.summary.error} errors` : ''}${data.summary.overdue > 0 ? ` · ${data.summary.overdue} overdue` : ''}${data.summary.missing > 0 ? ` · ${data.summary.missing} no data` : ''}`
+                  ? `${data.summary.ok}/${data.summary.total} OK${data.summary.degraded > 0 ? ` · ${data.summary.degraded} degraderet` : ''}${data.summary.error > 0 ? ` · ${data.summary.error} fejl` : ''}${data.summary.overdue > 0 ? ` · ${data.summary.overdue} forsinket` : ''}${data.summary.missing > 0 ? ` · ${data.summary.missing} uden data` : ''}`
+                  : `${data.summary.ok}/${data.summary.total} OK${data.summary.degraded > 0 ? ` · ${data.summary.degraded} degraded` : ''}${data.summary.error > 0 ? ` · ${data.summary.error} errors` : ''}${data.summary.overdue > 0 ? ` · ${data.summary.overdue} overdue` : ''}${data.summary.missing > 0 ? ` · ${data.summary.missing} no data` : ''}`
                 : da
                   ? 'Henter status…'
                   : 'Loading status…'}
@@ -225,7 +258,7 @@ export default function CronStatusClient() {
 
         {/* BIZZ-739: KPI stats-cards — matches /dashboard/admin/users + /billing */}
         {data && !error && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-5">
             <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
               <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
                 <CheckCircle2 size={14} className="text-emerald-400" />
@@ -237,6 +270,13 @@ export default function CronStatusClient() {
                   / {data.summary.total}
                 </span>
               </p>
+            </div>
+            <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
+                <AlertTriangle size={14} className="text-orange-400" />
+                {da ? 'Degraderet' : 'Degraded'}
+              </div>
+              <p className="text-2xl font-bold text-white">{data.summary.degraded}</p>
             </div>
             <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
               <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
@@ -258,6 +298,51 @@ export default function CronStatusClient() {
                 {da ? 'Ingen data' : 'No data'}
               </div>
               <p className="text-2xl font-bold text-white">{data.summary.missing}</p>
+            </div>
+          </div>
+        )}
+
+        {/* BIZZ-2209: Data-source freshness SLOs (registry-driven) */}
+        {data?.freshness && !error && (
+          <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4 mb-5">
+            <div className="flex items-center gap-2 mb-3 text-slate-300 text-sm font-semibold">
+              {da ? 'Datakilde-friskhed' : 'Data-source freshness'}
+              <span className="text-slate-400 text-xs font-normal">
+                {data.freshness.summary.ok}/{data.freshness.summary.total} OK
+                {data.freshness.summary.configError > 0
+                  ? ` · ${data.freshness.summary.configError} config-fejl`
+                  : ''}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {data.freshness.sources.map((s) => {
+                const color =
+                  s.status === 'ok'
+                    ? 'text-emerald-400'
+                    : s.status === 'warning'
+                      ? 'text-amber-400'
+                      : s.status === 'config_error'
+                        ? 'text-fuchsia-400'
+                        : 'text-red-400';
+                const age =
+                  s.hoursSinceUpdate == null
+                    ? '—'
+                    : s.hoursSinceUpdate < 48
+                      ? `${Math.round(s.hoursSinceUpdate)}t`
+                      : `${Math.round(s.hoursSinceUpdate / 24)}d`;
+                return (
+                  <div
+                    key={s.sourceName}
+                    className="flex items-center justify-between gap-2 bg-slate-800/40 border border-slate-700/40 rounded-lg px-3 py-2"
+                    title={s.error ?? `${s.table}.${s.timestampColumn}`}
+                  >
+                    <span className="text-slate-300 text-xs truncate">{s.domain}</span>
+                    <span className={`text-xs font-semibold ${color} shrink-0`}>
+                      {s.status === 'config_error' ? (da ? 'CONFIG' : 'CONFIG') : age}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
@@ -285,6 +370,7 @@ export default function CronStatusClient() {
             >
               <option value="all">{da ? 'Alle statusser' : 'All statuses'}</option>
               <option value="ok">{da ? 'OK' : 'OK'}</option>
+              <option value="degraded">{da ? 'Degraderet' : 'Degraded'}</option>
               <option value="error">{da ? 'Fejl' : 'Errors'}</option>
               <option value="overdue">{da ? 'Forsinket' : 'Overdue'}</option>
               <option value="missing">{da ? 'Ingen data' : 'No data'}</option>

@@ -21,8 +21,8 @@ import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
-import { fetchDawa } from '@/app/lib/dawa';
-import { DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
+import { hentBfeAdresse } from '@/app/lib/bfeAdresse';
+import { recordSyncStatus } from '@/app/lib/dataSyncStatus';
 import crypto from 'crypto';
 
 export const maxDuration = 300;
@@ -88,24 +88,18 @@ async function fetchBfeToWarm(): Promise<number[]> {
 /**
  * Resolve BFE → DAWA adgangsadresse-id (nødvendigt for fetchBbrForAddress).
  *
+ * BIZZ-2209: Brugte tidligere DAWA's nedlagte `/bfe/{bfe}`-endpoint (nedlagt
+ * ~maj 2026), hvilket fik hver resolve til at returnere null → warm-bbr-cache
+ * skrev 0 rækker i 81 dage (cache_bbr frøs). Bruger nu den fælles, fungerende
+ * BFE→adresse-resolver (jordstykker→adgangsadresser), jf. bfeAdresse.ts.
+ *
  * @param bfe - BFE-nummer
  * @returns DAWA adgangsadresse UUID eller null
  */
 async function resolveDawaId(bfe: number): Promise<string | null> {
   try {
-    const res = await fetchDawa(
-      `${DAWA_BASE_URL}/bfe/${bfe}`,
-      { signal: AbortSignal.timeout(8000), next: { revalidate: 86400 } },
-      { caller: 'warm-bbr-cache.bfe-resolve' }
-    );
-    if (!res.ok) return null;
-
-    const json = (await res.json()) as {
-      beliggenhedsadresse?: { id?: string };
-      jordstykker?: Array<{ husnumre?: Array<{ id?: string }> }>;
-    };
-
-    return json.beliggenhedsadresse?.id ?? json.jordstykker?.[0]?.husnumre?.[0]?.id ?? null;
+    const adr = await hentBfeAdresse(bfe);
+    return adr?.dawaId ?? null;
   } catch {
     return null;
   }
@@ -122,94 +116,116 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  return withCronMonitor(
-    { jobName: 'warm-bbr-cache', schedule: '30 4 * * *', intervalMinutes: 1440 },
-    async () => {
-      const admin = createAdminClient();
-      const bfeList = await fetchBfeToWarm();
+  const startedAt = Date.now();
+  return withCronMonitor('warm-bbr-cache', async () => {
+    const admin = createAdminClient();
+    const bfeList = await fetchBfeToWarm();
 
-      if (bfeList.length === 0) {
-        return NextResponse.json({
+    if (bfeList.length === 0) {
+      // expectsWork-job uden kandidater → auto-degraderes af withCronMonitor.
+      await recordSyncStatus('cache_bbr', { rowsSynced: 0, durationMs: Date.now() - startedAt });
+      return {
+        response: NextResponse.json({
           warmed: 0,
           skipped: 0,
           errors: 0,
           message: 'Ingen BFE at cache',
-        });
-      }
-
-      let warmed = 0;
-      let skipped = 0;
-      let errors = 0;
-
-      for (const bfe of bfeList) {
-        try {
-          // Tjek om cache allerede er frisk
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { data: existing } = await (admin as any)
-            .from('cache_bbr')
-            .select('synced_at')
-            .eq('bfe_nummer', bfe)
-            .single();
-
-          if (existing?.synced_at) {
-            const age = Date.now() - new Date(existing.synced_at).getTime();
-            if (age < STALE_MS) {
-              skipped++;
-              continue;
-            }
-          }
-
-          // Resolve DAWA id
-          const dawaId = await resolveDawaId(bfe);
-          if (!dawaId) {
-            errors++;
-            continue;
-          }
-
-          // Hent BBR data
-          const result = await fetchBbrForAddress(dawaId);
-          if (!result) {
-            errors++;
-            continue;
-          }
-
-          // Gem i cache_bbr
-          const rawJson = JSON.stringify(result);
-          const hash = crypto.createHash('sha256').update(rawJson).digest('hex');
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await (admin as any).from('cache_bbr').upsert(
-            {
-              bfe_nummer: bfe,
-              raw_data: result,
-              source_hash: hash,
-              synced_at: new Date().toISOString(),
-            },
-            { onConflict: 'bfe_nummer' }
-          );
-
-          warmed++;
-
-          // Throttle
-          if (warmed % 10 === 0) {
-            await new Promise((resolve) => setTimeout(resolve, THROTTLE_MS));
-          }
-        } catch (err) {
-          logger.warn(
-            `[warm-bbr-cache] BFE ${bfe} fejl:`,
-            err instanceof Error ? err.message : err
-          );
-          errors++;
-        }
-      }
-
-      logger.log(`[warm-bbr-cache] Færdig: warmed=${warmed}, skipped=${skipped}, errors=${errors}`);
-
-      return NextResponse.json({
-        warmed,
-        skipped,
-        errors,
-        total: bfeList.length,
-      });
+        }),
+        metrics: { itemsProcessed: 0, itemsWritten: 0 },
+      };
     }
-  );
+
+    let warmed = 0;
+    let skipped = 0;
+    let errors = 0;
+
+    // Tidsbudget: stop før maxDuration (300s). BIZZ-2209: da BFE-resolveren nu
+    // faktisk virker (før returnerede den instant null pga. nedlagt DAWA /bfe),
+    // laver hver BFE to reelle eksterne kald — 200 stk. kan overskride 300s.
+    // Vi warmer så mange vi kan pr. kørsel; næste kørsel fortsætter med resten.
+    const deadline = startedAt + 250_000;
+
+    for (const bfe of bfeList) {
+      if (Date.now() > deadline) {
+        logger.log(`[warm-bbr-cache] Tidsbudget nået efter ${warmed} warmed`);
+        break;
+      }
+      try {
+        // Tjek om cache allerede er frisk
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: existing } = await (admin as any)
+          .from('cache_bbr')
+          .select('synced_at')
+          .eq('bfe_nummer', bfe)
+          .single();
+
+        if (existing?.synced_at) {
+          const age = Date.now() - new Date(existing.synced_at).getTime();
+          if (age < STALE_MS) {
+            skipped++;
+            continue;
+          }
+        }
+
+        // Resolve DAWA id
+        const dawaId = await resolveDawaId(bfe);
+        if (!dawaId) {
+          errors++;
+          continue;
+        }
+
+        // Hent BBR data
+        const result = await fetchBbrForAddress(dawaId);
+        if (!result) {
+          errors++;
+          continue;
+        }
+
+        // Gem i cache_bbr
+        const rawJson = JSON.stringify(result);
+        const hash = crypto.createHash('sha256').update(rawJson).digest('hex');
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (admin as any).from('cache_bbr').upsert(
+          {
+            bfe_nummer: bfe,
+            raw_data: result,
+            source_hash: hash,
+            synced_at: new Date().toISOString(),
+          },
+          { onConflict: 'bfe_nummer' }
+        );
+
+        warmed++;
+
+        // Throttle
+        if (warmed % 10 === 0) {
+          await new Promise((resolve) => setTimeout(resolve, THROTTLE_MS));
+        }
+      } catch (err) {
+        logger.warn(`[warm-bbr-cache] BFE ${bfe} fejl:`, err instanceof Error ? err.message : err);
+        errors++;
+      }
+    }
+
+    logger.log(`[warm-bbr-cache] Færdig: warmed=${warmed}, skipped=${skipped}, errors=${errors}`);
+
+    // Degraded hvis alt fejlede og intet blev warmet trods stale kandidater —
+    // dét fanger en broken afhængighed (fx den nedlagte DAWA /bfe før BIZZ-2209).
+    // (Alle kandidater friske → warmed=0, errors=0 = healthy, ikke degraded.)
+    const degraded = warmed === 0 && errors > 0 ? `${errors} BFE-resolves fejlede` : undefined;
+
+    await recordSyncStatus('cache_bbr', {
+      rowsSynced: warmed,
+      durationMs: Date.now() - startedAt,
+      error: degraded,
+    });
+
+    return {
+      response: NextResponse.json({ warmed, skipped, errors, total: bfeList.length }),
+      // itemsProcessed = kandidater undersøgt (ikke kun warmed+errors), så en
+      // kørsel hvor alt var frisk ikke fejlagtigt tælles som "intet arbejde".
+      metrics: { itemsProcessed: bfeList.length, itemsWritten: warmed },
+      degraded,
+    };
+  });
 }

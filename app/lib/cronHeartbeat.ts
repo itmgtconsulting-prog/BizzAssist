@@ -16,60 +16,105 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
 
+/** Outcome of a cron run. `degraded` = ran without throwing but did no useful
+ * work when work was expected, or an external dependency failed. */
+export type CronStatus = 'success' | 'error' | 'degraded';
+
+/** Work-done metrics reported by a cron handler (BIZZ-2209). */
+export interface CronMetrics {
+  /** Candidate/input items the run looked at. */
+  itemsProcessed?: number;
+  /** Items actually written/upserted. */
+  itemsWritten?: number;
+  /** Why the run is degraded (set when status === 'degraded'). */
+  degradedReason?: string;
+}
+
 export interface HeartbeatRecord {
   job_name: string;
   last_run_at: string;
-  last_status: 'success' | 'error';
+  last_status: CronStatus;
   last_duration_ms: number;
   expected_interval_minutes: number;
   last_error?: string;
+  last_items_processed?: number | null;
+  last_items_written?: number | null;
+  last_degraded_reason?: string | null;
 }
 
 /**
- * Records a cron job heartbeat. Call at the end of each cron handler.
+ * Records a cron job heartbeat AND appends a cron_run_history time-series row.
+ * Call at the end of each cron handler (withCronMonitor does this automatically).
  *
  * @param jobName - Unique job identifier (e.g. 'service-scan', 'daily-report')
- * @param status - Whether the job succeeded or failed
+ * @param status - success | error | degraded
  * @param durationMs - Execution duration in milliseconds
  * @param expectedIntervalMinutes - How often this job should run (for watchdog)
  * @param error - Error message if status is 'error'
+ * @param metrics - Optional work-done metrics (items processed/written, degraded reason)
  */
 export async function recordHeartbeat(
   jobName: string,
-  status: 'success' | 'error',
+  status: CronStatus,
   durationMs: number,
   expectedIntervalMinutes: number,
-  error?: string
+  error?: string,
+  metrics?: CronMetrics
 ): Promise<void> {
   try {
     const admin = createAdminClient();
+    const nowIso = new Date().toISOString();
+    const itemsProcessed = metrics?.itemsProcessed ?? null;
+    const itemsWritten = metrics?.itemsWritten ?? null;
+    const degradedReason = metrics?.degradedReason ?? null;
+
     // cron_heartbeats is not in generated Supabase types — cast to bypass type check.
     // Supabase client returns { error } instead of throwing — must check explicitly.
-    const result = await (
-      admin as unknown as {
-        from: (t: string) => {
-          upsert: (
-            v: Record<string, unknown>,
-            o: { onConflict: string }
-          ) => Promise<{ error: { message: string; code?: string } | null }>;
-        };
-      }
-    )
-      .from('cron_heartbeats')
-      .upsert(
-        {
-          job_name: jobName,
-          last_run_at: new Date().toISOString(),
-          last_status: status,
-          last_duration_ms: durationMs,
-          expected_interval_minutes: expectedIntervalMinutes,
-          last_error: error ?? null,
-        },
-        { onConflict: 'job_name' }
-      );
+    const a = admin as unknown as {
+      from: (t: string) => {
+        upsert: (
+          v: Record<string, unknown>,
+          o?: { onConflict: string }
+        ) => Promise<{ error: { message: string; code?: string } | null }>;
+        insert: (v: Record<string, unknown>) => Promise<{ error: { message: string } | null }>;
+      };
+    };
 
+    // 1. Upsert the latest-state heartbeat (one row per job).
+    const result = await a.from('cron_heartbeats').upsert(
+      {
+        job_name: jobName,
+        last_run_at: nowIso,
+        last_status: status,
+        last_duration_ms: durationMs,
+        expected_interval_minutes: expectedIntervalMinutes,
+        last_error: error ?? null,
+        last_items_processed: itemsProcessed,
+        last_items_written: itemsWritten,
+        last_degraded_reason: degradedReason,
+      },
+      { onConflict: 'job_name' }
+    );
     if (result.error) {
       logger.error(`[heartbeat] Supabase upsert failed for ${jobName}:`, result.error.message);
+    }
+
+    // 2. Append an immutable time-series row for trends + "0 work for N days".
+    const hist = await a.from('cron_run_history').insert({
+      job_name: jobName,
+      run_at: nowIso,
+      status,
+      duration_ms: durationMs,
+      items_processed: itemsProcessed,
+      items_written: itemsWritten,
+      degraded_reason: degradedReason,
+      error: error ?? null,
+    });
+    if (hist.error) {
+      logger.error(
+        `[heartbeat] cron_run_history insert failed for ${jobName}:`,
+        hist.error.message
+      );
     }
   } catch (e) {
     logger.error(`[heartbeat] Failed to record heartbeat for ${jobName}:`, e);

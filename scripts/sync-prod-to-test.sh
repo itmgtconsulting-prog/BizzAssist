@@ -39,9 +39,15 @@ for t in "${TABLES[@]}"; do
   echo "── sync public.$t ──"
   start=$(date +%s)
   # Stream prod → test. TRUNCATE + COPY i én transaktion pr. tabel; FK-triggers
-  # deaktiveret for load. Hvis pipen fejler, springes tabellen over.
-  if psql "$PROD_DB_URL" -v ON_ERROR_STOP=1 -c "\copy public.$t TO STDOUT" \
+  # deaktiveret for load. statement_timeout=0 så store tabeller (millioner
+  # rækker) ikke dræbes af DB'ens default-timeout. FK-refererede tabeller fejler
+  # på TRUNCATE og springes sikkert over (ingen CASCADE — undgår util. data-tab
+  # på test). Skema-drift-tabeller springes ligeledes over.
+  if psql "$PROD_DB_URL" -v ON_ERROR_STOP=1 \
+         -c "SET statement_timeout = 0;" \
+         -c "\copy public.$t TO STDOUT" \
      | psql "$TEST_DB_URL" -v ON_ERROR_STOP=1 --single-transaction \
+         -c "SET statement_timeout = 0;" \
          -c "SET session_replication_role = replica;" \
          -c "TRUNCATE public.$t;" \
          -c "\copy public.$t FROM STDIN"; then

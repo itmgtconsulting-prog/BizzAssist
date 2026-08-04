@@ -33,8 +33,16 @@ TABLES=(
 : "${PROD_DB_URL:?PROD_DB_URL mangler}"
 : "${TEST_DB_URL:?TEST_DB_URL mangler}"
 
+# Kritiske tabeller = de frosne caches der ER problemet. Fejler én af dem, er
+# sync'en degraderet (test-cache forbliver stale). Core-tabeller (cvr/ejf/
+# bbr_status) må gerne springes over pga. FK/skema-drift uden at alarmere.
+CRITICAL="cache_bbr cache_cvr cache_dar cache_vur"
+
+run_started=$(date +%s)
 ok=0
 fail=0
+failed_list=""
+critical_failed=0
 for t in "${TABLES[@]}"; do
   echo "── sync public.$t ──"
   start=$(date +%s)
@@ -56,9 +64,44 @@ for t in "${TABLES[@]}"; do
   else
     echo "   ✗ $t FEJLEDE — springer over"
     fail=$((fail + 1))
+    failed_list="$failed_list $t"
+    case " $CRITICAL " in *" $t "*) critical_failed=1 ;; esac
   fi
 done
 
 echo "── sync færdig: $ok ok, $fail fejlet ──"
-# Fejl kun hvis ALT fejlede (delvis sync er stadig nyttig).
-[ "$ok" -gt 0 ] || exit 1
+
+# ── Self-monitorering (BIZZ-2210) ────────────────────────────────────────────
+# Skriv en heartbeat til PROD's cron_heartbeats, så den EKSISTERENDE watchdog
+# overvåger sync'en: alarmerer hvis den fejler, degraderer, eller holder op med
+# at køre (overdue > 2× uge). Uden dette ville en delvis fejl gå lydløst.
+if [ "$ok" -eq 0 ]; then
+  status="error"
+elif [ "$critical_failed" -eq 1 ]; then
+  status="degraded"
+else
+  status="success"
+fi
+dur_ms=$(((($(date +%s) - run_started)) * 1000))
+note=$(printf '%s' "${failed_list# }" | sed "s/'/''/g")
+psql "$PROD_DB_URL" -v ON_ERROR_STOP=1 -c "
+  INSERT INTO public.cron_heartbeats
+    (job_name, last_run_at, last_status, last_duration_ms, expected_interval_minutes,
+     last_error, last_items_processed, last_items_written, last_degraded_reason)
+  VALUES ('sync-prod-to-test', now(), '$status', $dur_ms, 10080,
+     $([ -n "$note" ] && echo "'fejlede: $note'" || echo NULL),
+     $((ok + fail)), $ok,
+     $([ "$status" = degraded ] && echo "'kritisk cache-tabel sprang over: $note'" || echo NULL))
+  ON CONFLICT (job_name) DO UPDATE SET
+     last_run_at = EXCLUDED.last_run_at, last_status = EXCLUDED.last_status,
+     last_duration_ms = EXCLUDED.last_duration_ms,
+     expected_interval_minutes = EXCLUDED.expected_interval_minutes,
+     last_error = EXCLUDED.last_error, last_items_processed = EXCLUDED.last_items_processed,
+     last_items_written = EXCLUDED.last_items_written,
+     last_degraded_reason = EXCLUDED.last_degraded_reason;
+" && echo "heartbeat skrevet: status=$status" || echo "WARN: heartbeat-skrivning fejlede"
+
+# Exit non-zero (→ GitHub-fejlmail) hvis intet synkede eller en kritisk cache fejlede.
+[ "$status" = "error" ] && exit 1
+[ "$critical_failed" -eq 1 ] && exit 1
+exit 0

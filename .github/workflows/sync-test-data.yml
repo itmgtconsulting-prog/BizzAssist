@@ -1,0 +1,39 @@
+name: Sync prod data to test
+
+# BIZZ-2210: Vercel-crons kører kun på prod, så test.bizzassist.dk får aldrig
+# friske data. Dette workflow kopierer nøgletabeller prod → test ugentligt via
+# streaming psql \COPY (scripts/sync-prod-to-test.sh).
+#
+# Kræver GitHub Actions secrets:
+#   SUPABASE_PROD_DB_URL  — postgresql://postgres:<pw>@db.xsyldjqcntiygrtfcszm.supabase.co:5432/postgres
+#   SUPABASE_TEST_DB_URL  — postgresql://postgres:<pw>@db.rlkjmqjxmkxuclehbrnl.supabase.co:5432/postgres
+# (Test-DB-password findes i Supabase-dashboardet → Project settings → Database.)
+
+on:
+  schedule:
+    # Hver mandag 02:00 UTC — uden for prod-crons tunge 03–06-vindue.
+    - cron: '0 2 * * 1'
+  workflow_dispatch: {} # manuel kørsel fra Actions-fanen
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install postgresql-client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+
+      - name: Sync prod → test
+        env:
+          PROD_DB_URL: ${{ secrets.SUPABASE_PROD_DB_URL }}
+          TEST_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
+        run: |
+          if [ -z "$TEST_DB_URL" ]; then
+            echo "::error::SUPABASE_TEST_DB_URL secret mangler — tilføj den i repo-settings for at aktivere test-sync."
+            exit 1
+          fi
+          bash scripts/sync-prod-to-test.sh

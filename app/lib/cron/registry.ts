@@ -260,7 +260,6 @@ export const CRON_JOBS: CronJob[] = [
     intervalMinutes: DAY,
     category: 'cache',
     description: 'Opdaterer cache_cvr',
-    dataSource: 'cache_cvr',
   },
   {
     jobName: 'refresh-cvr-ejerskab',
@@ -277,7 +276,6 @@ export const CRON_JOBS: CronJob[] = [
     intervalMinutes: DAY,
     category: 'cache',
     description: 'Beriger cvr_deltager',
-    dataSource: 'cvr_deltager_berigelse',
   },
   {
     jobName: 'refresh-tinglysning-cache',
@@ -458,13 +456,15 @@ export const DATA_SOURCES: DataSource[] = [
     producedByJob: 'pull-cvr-aendringer',
   },
   {
-    sourceName: 'cvr_deltager_berigelse',
-    label: 'CVR Deltager-berigelse',
+    // BIZZ-2210: bruger sidst_opdateret (frisk, indekseret) i stedet for
+    // berigelse_sidst (sparsom enrichment-kolonne der stod frossen → falsk kritisk).
+    sourceName: 'cvr_deltager',
+    label: 'CVR Deltagere',
     table: 'cvr_deltager',
-    timestampColumn: 'berigelse_sidst',
+    timestampColumn: 'sidst_opdateret',
     warningHours: 36,
     criticalHours: 72,
-    producedByJob: 'refresh-deltager-berigelse',
+    producedByJob: 'pull-cvr-deltager-aendringer',
   },
   {
     sourceName: 'cache_bbr',
@@ -502,15 +502,9 @@ export const DATA_SOURCES: DataSource[] = [
     criticalHours: 72,
     producedByJob: 'sync-ejf-all',
   },
-  {
-    sourceName: 'cache_cvr',
-    label: 'CVR Cache',
-    table: 'cache_cvr',
-    timestampColumn: 'synced_at',
-    warningHours: 36,
-    criticalHours: 72,
-    producedByJob: 'refresh-cvr-cache',
-  },
+  // BIZZ-2210: cache_cvr fjernet fra friskheds-overvågning — tabellen er tom/
+  // ubrugt i både prod og test (CVR-data lever i cvr_virksomhed), så den gav
+  // en permanent falsk "critical (ingen data)".
   {
     sourceName: 'cache_dar',
     label: 'DAR Adresser',

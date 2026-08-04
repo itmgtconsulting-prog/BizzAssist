@@ -139,7 +139,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     let skipped = 0;
     let errors = 0;
 
+    // Tidsbudget: stop før maxDuration (300s). BIZZ-2209: da BFE-resolveren nu
+    // faktisk virker (før returnerede den instant null pga. nedlagt DAWA /bfe),
+    // laver hver BFE to reelle eksterne kald — 200 stk. kan overskride 300s.
+    // Vi warmer så mange vi kan pr. kørsel; næste kørsel fortsætter med resten.
+    const deadline = startedAt + 250_000;
+
     for (const bfe of bfeList) {
+      if (Date.now() > deadline) {
+        logger.log(`[warm-bbr-cache] Tidsbudget nået efter ${warmed} warmed`);
+        break;
+      }
       try {
         // Tjek om cache allerede er frisk
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

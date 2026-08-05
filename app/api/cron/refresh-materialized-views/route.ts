@@ -60,53 +60,64 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  // BIZZ-1971: heartbeat + Sentry cron-monitoring
-  return withCronMonitor(
-    { jobName: 'refresh-materialized-views', schedule: '0 5 * * *', intervalMinutes: 1440 },
-    async () => {
-      const admin = createAdminClient();
-      const results: Array<{ view: string; ok: boolean; durationMs: number; error?: string }> = [];
+  // BIZZ-1971 + BIZZ-2209: heartbeat + degraded-rapportering ved refresh-fejl.
+  return withCronMonitor('refresh-materialized-views', async () => {
+    const admin = createAdminClient();
+    const results: Array<{ view: string; ok: boolean; durationMs: number; error?: string }> = [];
 
-      for (const view of VIEWS) {
-        const start = Date.now();
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { error } = await (admin as any).rpc('refresh_materialized_view', {
-            view_name: view,
-          });
-          if (error) {
-            // Fallback: direct SQL (kræver supabase admin med SQL-adgang)
-            logger.warn(`[refresh-mv] RPC fejl for ${view}:`, error.message);
-            results.push({ view, ok: false, durationMs: Date.now() - start, error: error.message });
-          } else {
-            results.push({ view, ok: true, durationMs: Date.now() - start });
-          }
-        } catch (err) {
-          results.push({
-            view,
-            ok: false,
-            durationMs: Date.now() - start,
-            error: err instanceof Error ? err.message : 'unknown',
-          });
-        }
-
-        // Opdater sync-status
+    for (const view of VIEWS) {
+      const start = Date.now();
+      try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { error: syncErr } = await (admin as any).from('data_sync_status').upsert(
-          {
-            source_name: view,
-            last_sync_at: new Date().toISOString(),
-            last_success: results[results.length - 1].ok ? new Date().toISOString() : undefined,
-            sync_duration_ms: results[results.length - 1].durationMs,
-            last_error: results[results.length - 1].error ?? null,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'source_name' }
-        );
-        if (syncErr) logger.warn('[mv-refresh] Sync status update fejl:', syncErr.message);
+        const { error } = await (admin as any).rpc('refresh_materialized_view', {
+          view_name: view,
+        });
+        if (error) {
+          // Fallback: direct SQL (kræver supabase admin med SQL-adgang)
+          logger.warn(`[refresh-mv] RPC fejl for ${view}:`, error.message);
+          results.push({ view, ok: false, durationMs: Date.now() - start, error: error.message });
+        } else {
+          results.push({ view, ok: true, durationMs: Date.now() - start });
+        }
+      } catch (err) {
+        results.push({
+          view,
+          ok: false,
+          durationMs: Date.now() - start,
+          error: err instanceof Error ? err.message : 'unknown',
+        });
       }
 
-      return NextResponse.json({ ok: true, results });
+      // Opdater sync-status
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: syncErr } = await (admin as any).from('data_sync_status').upsert(
+        {
+          source_name: view,
+          last_sync_at: new Date().toISOString(),
+          last_success: results[results.length - 1].ok ? new Date().toISOString() : undefined,
+          sync_duration_ms: results[results.length - 1].durationMs,
+          last_error: results[results.length - 1].error ?? null,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'source_name' }
+      );
+      if (syncErr) logger.warn('[mv-refresh] Sync status update fejl:', syncErr.message);
     }
-  );
+
+    // BIZZ-2209: rapportér degraded/error når MV-refreshes fejler, så watchdoggen
+    // fanger det (før returnerede cronen altid ok:true → frysning gik 63 dage
+    // uopdaget). failed>0 = degraded; alle fejlet = error (via throw i wrapper).
+    const failed = results.filter((r) => !r.ok);
+    const okCount = results.length - failed.length;
+    const degraded =
+      failed.length > 0
+        ? `${failed.length}/${results.length} MV-refresh fejlede: ${failed.map((f) => f.view).join(', ')}`
+        : undefined;
+
+    return {
+      response: NextResponse.json({ ok: failed.length === 0, results }),
+      metrics: { itemsProcessed: results.length, itemsWritten: okCount },
+      degraded,
+    };
+  });
 }

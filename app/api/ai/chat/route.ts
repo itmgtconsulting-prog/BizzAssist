@@ -23,7 +23,7 @@
  * @returns SSE stream
  */
 
-import { NextRequest, after } from 'next/server';
+import { NextRequest } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import * as Sentry from '@sentry/nextjs';
 import { checkRateLimit, aiRateLimit } from '@/app/lib/rateLimit';
@@ -3405,52 +3405,52 @@ export async function POST(request: NextRequest): Promise<Response> {
               })
             );
 
+            // BIZZ-2205: Persistér token-forbrug + chat-historik FØR stream-close.
+            // after() blev tidligere kaldt INDE i stream-controlleren EFTER
+            // controller.close() — dér er request-scopet returneret, så after()-
+            // callbacken registrerede/eksekverede ikke pålideligt på Vercel →
+            // audit-inserts (tenant.ai_token_usage) + chat-historik blev konsekvent
+            // tabt (ai_token_usage stod tom trods massivt forbrug). Ved at await'e
+            // skrivningerne før [DONE]+close() garanteres de mens funktionen kører.
+            // SSE-heartbeaten kører fortsat (stoppes først bagefter), så
+            // forbindelsen ikke idle-timeouter under skrivningen. Konsolideret til
+            // ÉN counter (allocation, BIZZ-643) + ÉN audit (recordTenantTokenUsage).
+            try {
+              await adminClient.auth.admin.updateUserById(userId, {
+                app_metadata: {
+                  ...freshUser?.user?.app_metadata,
+                  subscription: { ...sub, ...allocation },
+                },
+              });
+            } catch {
+              // non-critical — best-effort tracking
+            }
+            if (resolvedTenantId) {
+              await recordTenantTokenUsage(
+                adminClient,
+                resolvedTenantId,
+                userId,
+                totalInputTokens,
+                totalOutputTokens
+              );
+            }
+            // BIZZ-819/820: chat-historik server-side (cross-device).
+            if (sessionId && resolvedTenantId) {
+              await persistChatMessages(
+                adminClient,
+                sessionId,
+                userId,
+                messages,
+                text,
+                totalInputTokens,
+                totalOutputTokens,
+                turnGeneratedFiles
+              );
+            }
+
             sse(controller, '[DONE]');
             stopHeartbeat();
             controller.close();
-
-            // BIZZ-2205: Persistér token-forbrug + chat-historik via after() så
-            // skrivningerne GARANTERET fuldfører efter stream-close. Tidligere skete
-            // alt fire-and-forget EFTER controller.close() uden waitUntil → Vercel
-            // termineret funktionen → audit-inserts (tenant.ai_token_usage) +
-            // chat-historik blev konsekvent skåret bort. Konsolideret til ÉN
-            // counter (allocation, BIZZ-643) + ÉN audit (recordTenantTokenUsage).
-            // Den redundante recordAiUsage (double-count af counter + duplikat-audit)
-            // er fjernet.
-            after(async () => {
-              try {
-                await adminClient.auth.admin.updateUserById(userId, {
-                  app_metadata: {
-                    ...freshUser?.user?.app_metadata,
-                    subscription: { ...sub, ...allocation },
-                  },
-                });
-              } catch {
-                // non-critical — best-effort tracking
-              }
-              if (resolvedTenantId) {
-                await recordTenantTokenUsage(
-                  adminClient,
-                  resolvedTenantId,
-                  userId,
-                  totalInputTokens,
-                  totalOutputTokens
-                );
-              }
-              // BIZZ-819/820: chat-historik server-side (cross-device).
-              if (sessionId && resolvedTenantId) {
-                await persistChatMessages(
-                  adminClient,
-                  sessionId,
-                  userId,
-                  messages,
-                  text,
-                  totalInputTokens,
-                  totalOutputTokens,
-                  turnGeneratedFiles
-                );
-              }
-            });
 
             return;
           }
@@ -3694,33 +3694,31 @@ export async function POST(request: NextRequest): Promise<Response> {
             },
           })
         );
+        // BIZZ-2205: Persistér counter + audit FØR stream-close (samme rod-årsag
+        // som hovedstien: after() efter controller.close() eksekverede ikke).
+        try {
+          await adminClient.auth.admin.updateUserById(userId, {
+            app_metadata: {
+              ...freshUser?.user?.app_metadata,
+              subscription: { ...sub, ...allocation },
+            },
+          });
+        } catch {
+          // non-critical — best-effort tracking
+        }
+        if (resolvedTenantId) {
+          await recordTenantTokenUsage(
+            adminClient,
+            resolvedTenantId,
+            userId,
+            totalInputTokens,
+            totalOutputTokens
+          );
+        }
+
         sse(controller, '[DONE]');
         stopHeartbeat();
         controller.close();
-
-        // BIZZ-2205: Persistér counter + audit via after() så de fuldfører efter
-        // stream-close (samme rod-årsag som hovedstien ovenfor).
-        after(async () => {
-          try {
-            await adminClient.auth.admin.updateUserById(userId, {
-              app_metadata: {
-                ...freshUser?.user?.app_metadata,
-                subscription: { ...sub, ...allocation },
-              },
-            });
-          } catch {
-            // non-critical — best-effort tracking
-          }
-          if (resolvedTenantId) {
-            await recordTenantTokenUsage(
-              adminClient,
-              resolvedTenantId,
-              userId,
-              totalInputTokens,
-              totalOutputTokens
-            );
-          }
-        });
       } catch (err) {
         // Capture unexpected errors (not routine Claude API errors) in Sentry
         if (!(err instanceof Anthropic.APIError)) {

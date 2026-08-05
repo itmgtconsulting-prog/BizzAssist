@@ -34,6 +34,8 @@ import {
   fetchBbrPollSnapshot,
   fetchOwnershipPollSnapshot,
   fetchVurderingPollSnapshot,
+  fetchCompanyPollSnapshot,
+  fetchPersonPollSnapshot,
 } from '@/app/lib/propertyPollData';
 
 export const maxDuration = 300;
@@ -130,7 +132,10 @@ async function detectChange(
   entity: { entity_id: string; label: string },
   tenant: { id: string; schema_name: string },
   db: TenantDb,
-  userIds: string[]
+  userIds: string[],
+  // BIZZ-2201: property | company | person — så mail + dropdown-navigation
+  // router korrekt for fulgte virksomheder/personer (default property).
+  entityType: 'property' | 'company' | 'person' = 'property'
 ): Promise<boolean> {
   const currentHash = await hashData(currentData);
 
@@ -178,7 +183,7 @@ async function detectChange(
       tenant_id: tenant.id,
       user_id: userId,
       entity_id: entity.entity_id,
-      entity_type: 'property',
+      entity_type: entityType,
       notification_type: SNAPSHOT_TO_NOTIFICATION[type],
       title,
       message,
@@ -253,6 +258,68 @@ async function pollSingleProperty(
     errors.push(`${tenant.schema_name}/${entity.entity_id}: ${err}`);
   }
 
+  return { changes, errors };
+}
+
+/**
+ * BIZZ-2201: Poller en enkelt fulgt virksomhed for CVR-stamdata-ændringer.
+ * entity_id = CVR-nummer. Læser cvr_virksomhed (service-role) og bruger samme
+ * snapshot/hash-detektor som ejendomme, med entity_type='company' så mail +
+ * dropdown-navigation virker uden ændringer.
+ *
+ * @param entity - Den fulgte virksomhed (entity_id = CVR)
+ * @param tenant - Tenant-info
+ * @param db - Tenant-scopet klient
+ * @param userIds - Bruger-IDs i tenanten
+ * @returns Antal ændringer + fejl
+ */
+async function pollSingleCompany(
+  entity: { entity_id: string; label: string },
+  tenant: { id: string; schema_name: string },
+  db: TenantDb,
+  userIds: string[]
+): Promise<PropertyPollResult> {
+  let changes = 0;
+  const errors: string[] = [];
+  try {
+    const snap = await fetchCompanyPollSnapshot(entity.entity_id);
+    if (snap) {
+      if (await detectChange('cvr', snap.monitored, entity, tenant, db, userIds, 'company'))
+        changes++;
+    }
+  } catch (err) {
+    errors.push(`${tenant.schema_name}/company/${entity.entity_id}: ${err}`);
+  }
+  return { changes, errors };
+}
+
+/**
+ * BIZZ-2201: Poller en enkelt fulgt person for rolle-/ejerskabs-ændringer.
+ * entity_id = enhedsnummer. Læser cvr_deltager (service-role); entity_type='person'.
+ *
+ * @param entity - Den fulgte person (entity_id = enhedsnummer)
+ * @param tenant - Tenant-info
+ * @param db - Tenant-scopet klient
+ * @param userIds - Bruger-IDs i tenanten
+ * @returns Antal ændringer + fejl
+ */
+async function pollSinglePerson(
+  entity: { entity_id: string; label: string },
+  tenant: { id: string; schema_name: string },
+  db: TenantDb,
+  userIds: string[]
+): Promise<PropertyPollResult> {
+  let changes = 0;
+  const errors: string[] = [];
+  try {
+    const snap = await fetchPersonPollSnapshot(entity.entity_id);
+    if (snap) {
+      if (await detectChange('cvr', snap.monitored, entity, tenant, db, userIds, 'person'))
+        changes++;
+    }
+  } catch (err) {
+    errors.push(`${tenant.schema_name}/person/${entity.entity_id}: ${err}`);
+  }
   return { changes, errors };
 }
 
@@ -358,39 +425,85 @@ export async function GET(request: NextRequest) {
             .eq('is_monitored', true)
             .limit(MAX_PER_RUN - totalProcessed);
 
-          if (!monitored || monitored.length === 0) continue;
-
-          // Udtræk kendt BFE fra entity_data (sat ved follow-tid) hvis muligt
-          const monitoredEntities = (
-            monitored as Array<{
-              entity_id: string;
-              label: string;
-              entity_data?: Record<string, unknown> | null;
-            }>
-          ).map((m) => {
-            const ed = m.entity_data ?? {};
-            const rawBfe = ed.bfe ?? ed.bfeNummer ?? ed.bfe_nummer;
-            const bfe = typeof rawBfe === 'number' ? rawBfe : Number(rawBfe);
-            return {
-              entity_id: m.entity_id,
-              label: m.label,
-              bfe: Number.isFinite(bfe) ? bfe : null,
-            };
-          });
-
-          // Hent alle membership user_ids for notifikationer
+          // BIZZ-2201: hent membership user_ids TIDLIGT — bruges til både ejendoms-
+          // og virksomheds-notifikationer. (Tidligere continue'ede vi ved 0 fulgte
+          // ejendomme, hvilket sprang fulgte virksomheder over for tenanten.)
           const { data: members } = await admin
             .from('tenant_memberships')
             .select('user_id')
             .eq('tenant_id', tenant.id);
           const userIds = (members ?? []).map((m: { user_id: string }) => m.user_id);
 
-          // BIZZ-177: Processer ejendomme i parallelle batches
-          const result = await processEntitiesInBatches(monitoredEntities, tenant, db, userIds);
+          // Ejendomme (hvis nogen er fulgt)
+          if (monitored && monitored.length > 0) {
+            // Udtræk kendt BFE fra entity_data (sat ved follow-tid) hvis muligt
+            const monitoredEntities = (
+              monitored as Array<{
+                entity_id: string;
+                label: string;
+                entity_data?: Record<string, unknown> | null;
+              }>
+            ).map((m) => {
+              const ed = m.entity_data ?? {};
+              const rawBfe = ed.bfe ?? ed.bfeNummer ?? ed.bfe_nummer;
+              const bfe = typeof rawBfe === 'number' ? rawBfe : Number(rawBfe);
+              return {
+                entity_id: m.entity_id,
+                label: m.label,
+                bfe: Number.isFinite(bfe) ? bfe : null,
+              };
+            });
 
-          totalProcessed += monitored.length;
-          totalChanges += result.changes;
-          errors.push(...result.errors);
+            // BIZZ-177: Processer ejendomme i parallelle batches
+            const result = await processEntitiesInBatches(monitoredEntities, tenant, db, userIds);
+            totalProcessed += monitored.length;
+            totalChanges += result.changes;
+            errors.push(...result.errors);
+          }
+
+          // BIZZ-2201: Poll fulgte VIRKSOMHEDER (CVR-stamdata-ændringer).
+          if (totalProcessed < MAX_PER_RUN) {
+            const { data: companies } = await db
+              .from('saved_entities')
+              .select('entity_id, label')
+              .eq('tenant_id', tenant.id)
+              .eq('entity_type', 'company')
+              .eq('is_monitored', true)
+              .limit(MAX_PER_RUN - totalProcessed);
+            for (const c of (companies ?? []) as Array<{ entity_id: string; label: string }>) {
+              const r = await pollSingleCompany(
+                { entity_id: c.entity_id, label: c.label },
+                tenant,
+                db,
+                userIds
+              );
+              totalChanges += r.changes;
+              errors.push(...r.errors);
+            }
+            totalProcessed += companies?.length ?? 0;
+          }
+
+          // BIZZ-2201: Poll fulgte PERSONER (rolle-/ejerskabs-ændringer).
+          if (totalProcessed < MAX_PER_RUN) {
+            const { data: persons } = await db
+              .from('saved_entities')
+              .select('entity_id, label')
+              .eq('tenant_id', tenant.id)
+              .eq('entity_type', 'person')
+              .eq('is_monitored', true)
+              .limit(MAX_PER_RUN - totalProcessed);
+            for (const p of (persons ?? []) as Array<{ entity_id: string; label: string }>) {
+              const r = await pollSinglePerson(
+                { entity_id: p.entity_id, label: p.label },
+                tenant,
+                db,
+                userIds
+              );
+              totalChanges += r.changes;
+              errors.push(...r.errors);
+            }
+            totalProcessed += persons?.length ?? 0;
+          }
         } catch (err) {
           errors.push(`tenant ${tenant.schema_name}: ${err}`);
         }

@@ -58,14 +58,35 @@ const STYLES = {
 
 type MapStyle = keyof typeof STYLES;
 
-/** Alle matrikelparceller — usynligt fyld-lag til hover-detektion via queryRenderedFeatures */
+/**
+ * Alle matrikelparceller — fyld-lag til hover-detektion via queryRenderedFeatures.
+ * BIZZ-2189: hover-highlightet tegnes nu via feature-state (ikke ved at kopiere
+ * geometrien fra queryRenderedFeatures til et separat lag — den er tile-KLIPPET
+ * og gav en "sjov form"). feature-state gælder ALLE tiles en parcel spænder
+ * over → fuld, korrekt geometri.
+ */
 const matrikelFillLayer: FillLayerSpecification = {
   id: 'matrikel-fill',
   type: 'fill',
   source: 'matrikel',
   paint: {
     'fill-color': '#3b82f6',
-    'fill-opacity': 0,
+    'fill-opacity': ['case', ['boolean', ['feature-state', 'hover'], false], 0.3, 0],
+  },
+};
+
+/**
+ * Matrikel-grænselinje — kun synlig for den hover'ede parcel (via feature-state).
+ * BIZZ-2189: giver også nabomatrikler en grænselinje når musen føres hen over dem.
+ */
+const matrikelLineLayer: LineLayerSpecification = {
+  id: 'matrikel-line',
+  type: 'line',
+  source: 'matrikel',
+  paint: {
+    'line-color': '#93c5fd',
+    'line-width': 2.5,
+    'line-opacity': ['case', ['boolean', ['feature-state', 'hover'], false], 1, 0],
   },
 };
 
@@ -722,6 +743,8 @@ function PropertyMap({
   const [hoverData, setHoverData] = useState<GeoJSONSourceSpecification['data']>(EMPTY_GEOJSON);
   /** Debounce-timer ref til hover-kald — forhindrer for mange API-kald */
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // BIZZ-2189: id på den p.t. hover'ede matrikel-feature (til feature-state).
+  const hoveredMatrikelId = useRef<string | number | null>(null);
 
   /**
    * Styrer om EL/AB ejendomstype-badges vises på bygningsmarkørerne.
@@ -846,16 +869,24 @@ function PropertyMap({
       const map = mapRef.current?.getMap();
       if (!map) return;
 
-      // Forsøg at finde matrikelparcel under cursoren via allerede-rendererede features
+      // BIZZ-2189: Find matrikel under cursoren og highlight via feature-state
+      // (ikke ved at kopiere den tile-klippede queryRenderedFeatures-geometri).
+      // queryRenderedFeatures bruges KUN til at identificere feature-id'et;
+      // feature-state påføres kilde-featuren og tegnes med fuld geometri.
       if (map.getLayer('matrikel-fill')) {
         const features = map.queryRenderedFeatures(e.point, { layers: ['matrikel-fill'] });
-        if (features.length > 0) {
-          setHoverData({
-            type: 'FeatureCollection',
-            features: [features[0].toJSON()],
-          } as GeoJSONSourceSpecification['data']);
-        } else {
-          setHoverData(EMPTY_GEOJSON);
+        const id = features.length > 0 ? (features[0].id ?? null) : null;
+        if (id !== hoveredMatrikelId.current) {
+          if (hoveredMatrikelId.current != null) {
+            map.setFeatureState(
+              { source: 'matrikel', id: hoveredMatrikelId.current },
+              { hover: false }
+            );
+          }
+          hoveredMatrikelId.current = id;
+          if (id != null) {
+            map.setFeatureState({ source: 'matrikel', id }, { hover: true });
+          }
         }
         return;
       }
@@ -875,6 +906,12 @@ function PropertyMap({
   const handleMouseLeave = useCallback(() => {
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
     setHoverData(EMPTY_GEOJSON);
+    // BIZZ-2189: ryd feature-state-hover når musen forlader kortet.
+    const map = mapRef.current?.getMap();
+    if (map && hoveredMatrikelId.current != null) {
+      map.setFeatureState({ source: 'matrikel', id: hoveredMatrikelId.current }, { hover: false });
+      hoveredMatrikelId.current = null;
+    }
   }, []);
 
   /**
@@ -1206,8 +1243,9 @@ function PropertyMap({
 
         {/* Alle matrikelparceller — usynligt fyld-lag til hover/klik-detektion */}
         {visOverlay.matrikel && (
-          <Source id="matrikel" type="geojson" data={matrikelData}>
+          <Source id="matrikel" type="geojson" data={matrikelData} generateId>
             <Layer {...matrikelFillLayer} />
+            <Layer {...matrikelLineLayer} />
           </Source>
         )}
 

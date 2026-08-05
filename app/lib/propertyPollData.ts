@@ -127,3 +127,63 @@ export async function fetchOwnershipPollSnapshot(
     return null;
   }
 }
+
+/** Et overvåget vurderings-snapshot: offentlige ejendoms-/grundværdier for et BFE */
+export interface VurderingPollSnapshot {
+  vurderinger: Array<{
+    aar: number | null;
+    grundvaerdi: number | null;
+    ejendomvaerdi: number | null;
+  }>;
+}
+
+/**
+ * Henter de overvågede vurderings-felter for et BFE direkte fra den persistente
+ * VUR-cache public.cache_vur (service-role). BIZZ-2202: poll-properties kunne
+ * ikke overvåge vurdering før, fordi /api/vurdering kun har en in-memory LRU
+ * uden persistent kilde cronen kan læse. cache_vur (vedligeholdt af
+ * refresh-vur-cache) er netop den kilde.
+ *
+ * @param bfe - BFE-nummer
+ * @returns Sorteret liste af (år, grundværdi, ejendomsværdi), eller null
+ */
+export async function fetchVurderingPollSnapshot(
+  bfe: number
+): Promise<VurderingPollSnapshot | null> {
+  try {
+    const admin = createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (admin as any)
+      .from('cache_vur')
+      .select('raw_data')
+      .eq('bfe_nummer', bfe)
+      .maybeSingle();
+
+    if (error) {
+      logger.warn('[propertyPollData] cache_vur opslag fejl:', error.message);
+      return null;
+    }
+    if (!data?.raw_data) return null;
+
+    const raw = data.raw_data as {
+      vurderinger?: Array<{
+        aar?: number | null;
+        grundvaerdiBeloeb?: number | null;
+        ejendomvaerdiBeloeb?: number | null;
+      }>;
+    };
+    const vurderinger = (raw.vurderinger ?? [])
+      .map((v) => ({
+        aar: v.aar ?? null,
+        grundvaerdi: v.grundvaerdiBeloeb ?? null,
+        ejendomvaerdi: v.ejendomvaerdiBeloeb ?? null,
+      }))
+      // Deterministisk rækkefølge (år) → stabil hash uafhængigt af DB-rækkefølge
+      .sort((a, b) => (a.aar ?? 0) - (b.aar ?? 0));
+
+    return { vurderinger };
+  } catch (err) {
+    logger.warn('[propertyPollData] fetchVurderingPollSnapshot fejl:', err);
+    return null;
+  }
+}

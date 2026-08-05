@@ -30,7 +30,11 @@ import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
 import { dispatchFollowerEmails } from '@/app/lib/notifyFollowers';
-import { fetchBbrPollSnapshot, fetchOwnershipPollSnapshot } from '@/app/lib/propertyPollData';
+import {
+  fetchBbrPollSnapshot,
+  fetchOwnershipPollSnapshot,
+  fetchVurderingPollSnapshot,
+} from '@/app/lib/propertyPollData';
 
 export const maxDuration = 300;
 
@@ -225,6 +229,24 @@ async function pollSingleProperty(
       if (own) {
         const ownData = { ejere: own.ejere };
         if (await detectChange('ejerskab', ownData, entity, tenant, db, userIds)) changes++;
+      }
+
+      // BIZZ-2202: vurdering fra den persistente cache_vur (mappings fandtes
+      // allerede i CHANGE_TITLES/SNAPSHOT_TO_NOTIFICATION). Ny ejendoms-/
+      // grundværdi → notifikation + follower-mail.
+      const vur = await fetchVurderingPollSnapshot(bfe);
+      if (vur && vur.vurderinger.length > 0) {
+        if (
+          await detectChange(
+            'vurdering',
+            { vurderinger: vur.vurderinger },
+            entity,
+            tenant,
+            db,
+            userIds
+          )
+        )
+          changes++;
       }
     }
   } catch (err) {

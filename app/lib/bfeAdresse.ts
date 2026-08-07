@@ -97,6 +97,24 @@ export const BOGUS_DAWAID_KILDER = new Set([
   'cron_vp',
 ]);
 
+/** Lowercase DAWA adgangsadresse-UUID (v4-format som DAWA returnerer). */
+const DAWA_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * BIZZ-2188: Kilde-uafhængig detektion af bogus dawa_id. DAWA-UUID'er er altid
+ * lowercase hex; VP-interne GUID'er (fra diverse backfills — backfill_1850_vp,
+ * backfill_1886_vp, fix_2188_kept, manual, m.fl.) er uppercase og fejler derfor
+ * DAWA-lookup ("Adresse ikke fundet"). At blackliste kilder er whack-a-mole, så
+ * vi validerer FORMATET: en dawa_id der ikke matcher DAWA-UUID-mønsteret er
+ * bogus og skal re-resolves fra rækkens (korrekte) adresse-streng.
+ *
+ * @param dawaId - dawa_id fra cache-rækken
+ * @returns true hvis værdien er sat men ikke et gyldigt DAWA-UUID
+ */
+export function isBogusDawaId(dawaId: string | null | undefined): boolean {
+  return Boolean(dawaId) && !DAWA_UUID_RE.test(dawaId as string);
+}
+
 /** Maks samtidige live-opslag mod DAWA/VP */
 const LIVE_CONCURRENCY = 5;
 
@@ -537,13 +555,19 @@ export async function hentBfeAdresser(bfes: number[]): Promise<Map<number, BfeAd
       )
       .in('bfe_nummer', unique);
     for (const row of (cached ?? []) as CacheRow[]) {
-      if (erTrovaerdigCacheRaekke(row)) out.set(row.bfe_nummer, mapCacheRow(row));
-      // BIZZ-2188: korrekt adresse men bogus VP-GUID i dawa_id → re-resolv i Trin 1b
-      else if (
-        BOGUS_DAWAID_KILDER.has(row.kilde ?? '') &&
+      // BIZZ-2188: en bogus-format dawa_id (uppercase VP-GUID) må ALDRIG bruges
+      // direkte, uanset kilde — ellers linker ejendomsstrukturen til en ugyldig
+      // dawa_id → "Adresse ikke fundet". Format-checken fanger nye bogus-kilder
+      // (fix_2188_kept, backfill_1886_vp, manual, …) uden kilde-whack-a-mole.
+      const bogusDawaId = isBogusDawaId(row.dawa_id);
+      if (erTrovaerdigCacheRaekke(row) && !bogusDawaId) {
+        out.set(row.bfe_nummer, mapCacheRow(row));
+      } else if (
+        (BOGUS_DAWAID_KILDER.has(row.kilde ?? '') || bogusDawaId) &&
         row.adresse &&
         !/^BFE \d+$/.test(row.adresse)
       ) {
+        // korrekt adresse men bogus dawa_id → re-resolv i Trin 1b
         bogusDawaIdRows.push(row);
       }
     }

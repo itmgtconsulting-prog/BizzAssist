@@ -65,7 +65,7 @@ const cacheRow = (over: Record<string, unknown> = {}) => ({
   postnrnavn: 'Helsingør',
   kommune: 'Helsingør',
   kommune_kode: '0217',
-  dawa_id: 'uuid-1',
+  dawa_id: '0a3f5000-0000-0000-0000-000000000001',
   ejendomstype: null,
   etage: null,
   doer: null,

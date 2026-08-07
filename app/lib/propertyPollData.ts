@@ -127,3 +127,159 @@ export async function fetchOwnershipPollSnapshot(
     return null;
   }
 }
+
+/** Et overvåget vurderings-snapshot: offentlige ejendoms-/grundværdier for et BFE */
+export interface VurderingPollSnapshot {
+  vurderinger: Array<{
+    aar: number | null;
+    grundvaerdi: number | null;
+    ejendomvaerdi: number | null;
+  }>;
+}
+
+/**
+ * Henter de overvågede vurderings-felter for et BFE direkte fra den persistente
+ * VUR-cache public.cache_vur (service-role). BIZZ-2202: poll-properties kunne
+ * ikke overvåge vurdering før, fordi /api/vurdering kun har en in-memory LRU
+ * uden persistent kilde cronen kan læse. cache_vur (vedligeholdt af
+ * refresh-vur-cache) er netop den kilde.
+ *
+ * @param bfe - BFE-nummer
+ * @returns Sorteret liste af (år, grundværdi, ejendomsværdi), eller null
+ */
+export async function fetchVurderingPollSnapshot(
+  bfe: number
+): Promise<VurderingPollSnapshot | null> {
+  try {
+    const admin = createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (admin as any)
+      .from('cache_vur')
+      .select('raw_data')
+      .eq('bfe_nummer', bfe)
+      .maybeSingle();
+
+    if (error) {
+      logger.warn('[propertyPollData] cache_vur opslag fejl:', error.message);
+      return null;
+    }
+    if (!data?.raw_data) return null;
+
+    const raw = data.raw_data as {
+      vurderinger?: Array<{
+        aar?: number | null;
+        grundvaerdiBeloeb?: number | null;
+        ejendomvaerdiBeloeb?: number | null;
+      }>;
+    };
+    const vurderinger = (raw.vurderinger ?? [])
+      .map((v) => ({
+        aar: v.aar ?? null,
+        grundvaerdi: v.grundvaerdiBeloeb ?? null,
+        ejendomvaerdi: v.ejendomvaerdiBeloeb ?? null,
+      }))
+      // Deterministisk rækkefølge (år) → stabil hash uafhængigt af DB-rækkefølge
+      .sort((a, b) => (a.aar ?? 0) - (b.aar ?? 0));
+
+    return { vurderinger };
+  } catch (err) {
+    logger.warn('[propertyPollData] fetchVurderingPollSnapshot fejl:', err);
+    return null;
+  }
+}
+
+/** Overvåget CVR-snapshot: stamdata der ændrer sig ved en virksomheds-opdatering */
+export interface CompanyPollSnapshot {
+  monitored: Record<string, unknown>;
+}
+
+/**
+ * Henter de overvågede CVR-stamdata for en virksomhed direkte fra
+ * public.cvr_virksomhed (service-role). BIZZ-2201: giver følgere af en
+ * virksomhed notifikation + mail ved ændringer i navn/status/form/branche/ophør.
+ *
+ * @param cvr - CVR-nummer (entity_id i saved_entities for entity_type=company)
+ * @returns Stabil projektion af overvågede felter, eller null
+ */
+export async function fetchCompanyPollSnapshot(cvr: string): Promise<CompanyPollSnapshot | null> {
+  try {
+    const admin = createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (admin as any)
+      .from('cvr_virksomhed')
+      .select('navn, status, virksomhedsform, branche_kode, branche_tekst, ophoert')
+      .eq('cvr', cvr)
+      .maybeSingle();
+
+    if (error) {
+      logger.warn('[propertyPollData] cvr_virksomhed opslag fejl:', error.message);
+      return null;
+    }
+    if (!data) return null;
+
+    const r = data as Record<string, unknown>;
+    return {
+      monitored: {
+        navn: r.navn ?? null,
+        status: r.status ?? null,
+        virksomhedsform: r.virksomhedsform ?? null,
+        branche_kode: r.branche_kode ?? null,
+        branche_tekst: r.branche_tekst ?? null,
+        ophoert: r.ophoert ?? null,
+      },
+    };
+  } catch (err) {
+    logger.warn('[propertyPollData] fetchCompanyPollSnapshot fejl:', err);
+    return null;
+  }
+}
+
+/** Overvåget person-snapshot: personens aktive roller (ændres ved rolle-skift) */
+export interface PersonPollSnapshot {
+  monitored: Record<string, unknown>;
+}
+
+/**
+ * Henter de overvågede felter for en person direkte fra public.cvr_deltager
+ * (service-role). BIZZ-2201: giver følgere af en person notifikation + mail når
+ * personens aktive roller/ejerskab ændrer sig (nye/ophørte roller).
+ *
+ * @param enhedsnummer - CVR-deltager-enhedsnummer (entity_id for entity_type=person)
+ * @returns Stabil projektion af aktive roller + rolle-antal, eller null
+ */
+export async function fetchPersonPollSnapshot(
+  enhedsnummer: string
+): Promise<PersonPollSnapshot | null> {
+  try {
+    const admin = createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (admin as any)
+      .from('cvr_deltager')
+      .select('navn, aktive_roller_json, role_typer, totalt_antal_roller')
+      .eq('enhedsnummer', enhedsnummer)
+      .maybeSingle();
+
+    if (error) {
+      logger.warn('[propertyPollData] cvr_deltager opslag fejl:', error.message);
+      return null;
+    }
+    if (!data) return null;
+
+    const r = data as Record<string, unknown>;
+    // role_typer kan være et array — sortér for deterministisk hash.
+    const roleTyper = Array.isArray(r.role_typer)
+      ? [...(r.role_typer as unknown[])].map(String).sort()
+      : (r.role_typer ?? null);
+    return {
+      monitored: {
+        navn: r.navn ?? null,
+        aktive_roller: r.aktive_roller_json ?? null,
+        role_typer: roleTyper,
+        totalt_antal_roller: r.totalt_antal_roller ?? null,
+      },
+    };
+  } catch (err) {
+    logger.warn('[propertyPollData] fetchPersonPollSnapshot fejl:', err);
+    return null;
+  }
+}

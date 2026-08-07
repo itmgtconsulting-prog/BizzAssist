@@ -258,6 +258,53 @@ async function sendAlertEmail(
   }
 }
 
+// ── Alert-cooldown ────────────────────────────────────────────────────────────
+
+/** Cooldown for gentagne alerts om det SAMME issue-sæt (BIZZ-2209). */
+const ALERT_COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4 timer
+
+/**
+ * Afgør om der skal sendes alert-mail nu, med cooldown så et VEDVARENDE issue
+ * (fx en degraderet cron der venter på ekstern fix) ikke mailer hver 30. min.
+ * State gemmes i public.data_sync_status (source_name='watchdog_alert'):
+ * last_success = seneste mail-tid, last_error = seneste issue-signatur. Mailer
+ * straks ved en NY signatur; re-mailer et uændret sæt højst hver ALERT_COOLDOWN_MS.
+ *
+ * @param signature - Stabil signatur over de aktuelle issues
+ * @returns true hvis der skal sendes mail nu (og state opdateres)
+ */
+async function shouldSendAlert(signature: string): Promise<boolean> {
+  try {
+    const admin = createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const a = admin as any;
+    const { data } = await a
+      .from('data_sync_status')
+      .select('last_success, last_error')
+      .eq('source_name', 'watchdog_alert')
+      .maybeSingle();
+
+    const now = Date.now();
+    const sameIssues = data?.last_error === signature;
+    const lastMs = data?.last_success ? new Date(data.last_success).getTime() : 0;
+    if (sameIssues && now - lastMs < ALERT_COOLDOWN_MS) return false; // samme sæt, i cooldown
+
+    await a.from('data_sync_status').upsert(
+      {
+        source_name: 'watchdog_alert',
+        last_success: new Date().toISOString(),
+        last_error: signature,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'source_name' }
+    );
+    return true;
+  } catch (e) {
+    logger.warn('[watchdog] alert-cooldown-tjek fejlede — sender alligevel:', e);
+    return true;
+  }
+}
+
 // ── Main handler ────────────────────────────────────────────────────────────
 
 /**
@@ -337,10 +384,21 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const totalIssues = heartbeatIssues.length + freshnessIssues.length;
 
-    // Send alert email only if there are issues
+    // Send alert email only if there are issues — men med cooldown (BIZZ-2209):
+    // watchdoggen kører hvert 30. min, og et VEDVARENDE issue (fx en degraderet
+    // cron eller stale cache der venter på ekstern fix) må ikke maile hver 30.
+    // min → 48 mails/dag. Vi mailer straks ved et NYT issue-sæt, og re-mailer et
+    // uændret sæt højst hver 4. time.
     let emailSent = false;
     if (totalIssues > 0) {
-      emailSent = await sendAlertEmail(heartbeatIssues, freshnessIssues);
+      const issueSignature = [
+        ...heartbeatIssues.map((i) => `${i.jobName}:${i.kind}`),
+        ...freshnessIssues.map((i) => `fresh:${i.table}`),
+      ]
+        .sort()
+        .join('|');
+      const shouldAlert = await shouldSendAlert(issueSignature);
+      emailSent = shouldAlert ? await sendAlertEmail(heartbeatIssues, freshnessIssues) : false;
 
       // Escalate critical issues to Sentry (3+ heartbeat issues = critical)
       const criticalCount = heartbeatIssues.filter((i) => i.kind === 'overdue').length;

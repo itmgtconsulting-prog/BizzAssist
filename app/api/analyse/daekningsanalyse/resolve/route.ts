@@ -72,7 +72,8 @@ interface MatrikelGroup {
   ejerlav: string;
   kommunekode: string;
   postnr: string;
-  kundeAdgangsIds: Set<string>;
+  /** Unikke kunde-enhedsadresse-id'er (unit-niveau) på matriklen — coverage-tæller */
+  kundeEnhedIds: Set<string>;
   koordinat: { lat: number; lng: number } | null;
   /** Map of vejnavn → Set of husnumre */
   vejHusnumre: Map<string, Set<string>>;
@@ -117,7 +118,11 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
   const { adresser } = parsed.data;
 
   try {
-    // Step 1: DAWA datavask — resolve each address string to adgangsadresse-id
+    // Step 1: DAWA datavask — resolve each address string to BÅDE enhedsadresse-id
+    // (unit-niveau, etage/dør) og adgangsadresse-id (bygning/opgang). Vi grupperer
+    // matrikler via adgangsadressen, men TÆLLER kunder på enhedsniveau (adresse.id),
+    // så flere kundeenheder i samme opgang ikke kollapser til 1 (Falkoner Alle 128:
+    // 4 enheder deler 1 adgangsadresse → skal give 4 kunder, ikke 1).
     const vaskTasks = adresser.map((addr) => async () => {
       try {
         const url = `https://api.dataforsyningen.dk/datavask/adresser?betegnelse=${encodeURIComponent(addr)}`;
@@ -125,16 +130,29 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
         if (!res.ok) return null;
         const data: DawaVaskResult = await res.json();
         if (data.resultater.length === 0) return null;
-        return data.resultater[0].adresse.adgangsadresseid;
+        const a = data.resultater[0].adresse;
+        // Fald tilbage til adgangsadressen hvis enhedsadresse-id mangler (husnr-only match)
+        return { enhedId: a.id ?? a.adgangsadresseid, adgangsadresseid: a.adgangsadresseid };
       } catch {
         return null;
       }
     });
 
-    const adgangsIds = await runConcurrent(vaskTasks, DAWA_CONCURRENCY);
+    const vaskResults = (await runConcurrent(vaskTasks, DAWA_CONCURRENCY)).filter(Boolean) as {
+      enhedId: string;
+      adgangsadresseid: string;
+    }[];
 
-    // Deduplicate resolved adgangsadresse IDs
-    const uniqueIds = [...new Set(adgangsIds.filter(Boolean) as string[])];
+    // Map adgangsadresse → sæt af unikke kunde-enhedsadresser på den adgangsadresse.
+    // Bruges i grupperingen til at tælle kunder på enhedsniveau pr. matrikel.
+    const adgToEnhed = new Map<string, Set<string>>();
+    for (const v of vaskResults) {
+      if (!adgToEnhed.has(v.adgangsadresseid)) adgToEnhed.set(v.adgangsadresseid, new Set());
+      adgToEnhed.get(v.adgangsadresseid)!.add(v.enhedId);
+    }
+
+    // Unikke adgangsadresse-IDs (til matrikel-opslag i Step 2)
+    const uniqueIds = [...adgToEnhed.keys()];
     if (uniqueIds.length === 0) {
       return NextResponse.json([]);
     }
@@ -172,14 +190,17 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
           ejerlav: aa.jordstykke.ejerlav.navn,
           kommunekode: aa.kommune?.kode ?? '',
           postnr: aa.postnummer?.nr ?? aa.postnr ?? '',
-          kundeAdgangsIds: new Set(),
+          kundeEnhedIds: new Set(),
           koordinat: coords ? { lat: coords[1], lng: coords[0] } : null,
           vejHusnumre: new Map(),
         });
       }
 
       const group = matrikelMap.get(key)!;
-      group.kundeAdgangsIds.add(aa.id);
+      // Tæl kunder på enhedsniveau: tilføj alle kunde-enhedsadresser der resolvede
+      // til denne adgangsadresse (flere units i samme opgang tælles hver for sig).
+      const enhedIds = adgToEnhed.get(aa.id);
+      if (enhedIds) for (const eid of enhedIds) group.kundeEnhedIds.add(eid);
       // Nestet format: vejstykke.navn; flat format: vejnavn
       const vejnavn = aa.vejstykke?.navn || aa.vejnavn || 'Ukendt';
       if (!group.vejHusnumre.has(vejnavn)) group.vejHusnumre.set(vejnavn, new Set());
@@ -239,7 +260,7 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
     // Build results
     const results = matrikelKeys.map(([, group], i) => {
       const totalEnheder = totalCounts[i];
-      const kundeAntal = group.kundeAdgangsIds.size;
+      const kundeAntal = group.kundeEnhedIds.size;
       const daekningPct = totalEnheder > 0 ? (kundeAntal / totalEnheder) * 100 : 0;
 
       // Build address label: "Vejnavn husnumre" per line

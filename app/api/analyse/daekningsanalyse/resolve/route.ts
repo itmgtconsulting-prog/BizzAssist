@@ -314,8 +314,12 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
         // match sker i JS (accent/mellemrum-uafhængigt). virksomhedsform + navne-
         // præfikser fanger ejer-/andels-/boligforeninger.
         const patterns = [...new Set(streets.map((s) => `%${longestStreetWord(s)}%`))];
-        const inList = patterns.map((p) => `'${p.replace(/'/g, "''")}'`).join(',');
-        const sql = `SELECT navn, cvr FROM cvr_virksomhed WHERE lower(navn) LIKE ANY (ARRAY[${inList}]) AND (virksomhedsform IN ('FFO','FOR','ABA','FMA') OR lower(navn) LIKE 'e/f%' OR lower(navn) LIKE 'a/b%' OR lower(navn) LIKE '%ejerforening%' OR lower(navn) LIKE '%andelsbolig%' OR lower(navn) LIKE '%boligforening%') LIMIT 8000`;
+        // Per-gade `navn ILIKE ... OR ...` (IKKE lower()/LIKE ANY): så kan pg_trgm-
+        // GIN-indekset på navn bruges → ~0,5-1s i stedet for ~14s fuld-scan der
+        // ramte timeouten (og gav tom ejerforening-kolonne). ILIKE er selv
+        // case-insensitiv, så lower() er unødvendig.
+        const streetOr = patterns.map((p) => `navn ILIKE '${p.replace(/'/g, "''")}'`).join(' OR ');
+        const sql = `SELECT navn, cvr FROM cvr_virksomhed WHERE (${streetOr}) AND (virksomhedsform IN ('FFO','FOR','ABA','FMA') OR navn ILIKE 'e/f%' OR navn ILIKE 'a/b%' OR navn ILIKE '%ejerforening%' OR navn ILIKE '%andelsbolig%' OR navn ILIKE '%boligforening%') LIMIT 8000`;
         const res = await fetch(
           `https://api.supabase.com/v1/projects/${projectRef}/database/query`,
           {

@@ -14,7 +14,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requireModuleAccess } from '@/app/lib/serverModuleAccess';
-import { createAdminClient } from '@/lib/supabase/admin';
+import {
+  parseLabelLine,
+  longestStreetWord,
+  buildForeningIndex,
+  matchForening,
+  type ForeningCandidate,
+} from '@/app/lib/daekningsanalyse/ejerforeningMatch';
 import { parseBody } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
 
@@ -285,73 +291,65 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
       };
     });
 
-    // Step 6: EJF enrichment — look up ejerforening for each matrikel via BFE
-    // Match adresser → bfe_adresse_cache → ejf_ejerskab (virksomhed with forening/E/F/A/B in name)
+    // Step 6: Ejerforening-berigelse via CVR (BIZZ-2215). Ejerforeninger er IKKE
+    // ejere i ejf_ejerskab, og deres beliggenhedsadresse peger typisk på
+    // administrator — men foreningens NAVN indeholder ejendommens vej+husnr
+    // ("E/F Falkoner Alle 54"). Vi henter forenings-kandidater fra cvr_virksomhed
+    // for analysens gader og matcher på vej+husnr (se ejerforeningMatch). Best-
+    // effort: fyldes hvor en CVR-registreret forening findes, ellers null.
     try {
-      const admin = createAdminClient();
-      // Get BFEs for the addresses we resolved (use koordinat to match in bfe_adresse_cache)
-      const adresseLabels = results
-        .map((r) => r.adresserLabel.split('\n')[0]?.trim())
-        .filter(Boolean);
-      if (adresseLabels.length > 0) {
-        // Query bfe_adresse_cache for matching addresses
-        const { data: bfeRows } = (await admin
-          .from('bfe_adresse_cache')
-          .select('bfe_nummer, adresse')
-          .or(
-            adresseLabels
-              .map((a) => `adresse.ilike.%${a.split(' ').slice(0, 2).join(' ')}%`)
-              .join(',')
-          )
-          .limit(200)) as { data: { bfe_nummer: number; adresse: string }[] | null };
-
-        if (bfeRows?.length) {
-          const bfeNums = [...new Set(bfeRows.map((r) => r.bfe_nummer))];
-          // Look up ejerforeninger (virksomhed-type with forening/E-F/A-B in name)
-          const { data: ejfRows } = (await admin
-            .from('ejf_ejerskab')
-            .select('bfe_nummer, ejer_navn, ejer_cvr')
-            .in('bfe_nummer', bfeNums.slice(0, 100))
-            .eq('status', 'Aktiv')
-            .eq('ejer_type', 'virksomhed')
-            .or(
-              'ejer_navn.ilike.%forening%,ejer_navn.ilike.%E/F%,ejer_navn.ilike.%A/B%,ejer_navn.ilike.%andel%'
-            )
-            .limit(100)) as {
-            data: { bfe_nummer: number; ejer_navn: string; ejer_cvr: string | null }[] | null;
-          };
-
-          if (ejfRows?.length) {
-            // Map BFE → ejerforening
-            const bfeToEjf = new Map<number, { navn: string; cvr: string | null }>();
-            for (const row of ejfRows) {
-              if (!bfeToEjf.has(row.bfe_nummer)) {
-                bfeToEjf.set(row.bfe_nummer, { navn: row.ejer_navn, cvr: row.ejer_cvr });
-              }
-            }
-            // Map adresse → BFE → ejerforening back to results
-            for (const result of results) {
-              const firstAddr = result.adresserLabel.split('\n')[0]?.trim() ?? '';
-              const matchBfe = bfeRows.find((r) =>
-                firstAddr
-                  .split(' ')
-                  .slice(0, 2)
-                  .every((w) => r.adresse?.includes(w))
-              );
-              if (matchBfe) {
-                const ejf = bfeToEjf.get(matchBfe.bfe_nummer);
-                if (ejf) {
-                  result.ejerforening = ejf.navn;
-                  result.ejerforeningCvr = ejf.cvr;
-                }
+      const accessToken = process.env.SUPABASE_ACCESS_TOKEN;
+      const projectRef = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').match(/\/\/([^.]+)/)?.[1];
+      // Distinkte gader fra alle matrikel-labels
+      const streets = [
+        ...new Set(
+          results
+            .flatMap((r) => r.adresserLabel.split('\n'))
+            .map((line) => parseLabelLine(line)?.vej)
+            .filter((v): v is string => !!v)
+        ),
+      ];
+      if (accessToken && projectRef && streets.length > 0) {
+        // Groft ILIKE-net på det mest distinktive ord pr. gade; præcis vej+husnr-
+        // match sker i JS (accent/mellemrum-uafhængigt). virksomhedsform + navne-
+        // præfikser fanger ejer-/andels-/boligforeninger.
+        const patterns = [...new Set(streets.map((s) => `%${longestStreetWord(s)}%`))];
+        const inList = patterns.map((p) => `'${p.replace(/'/g, "''")}'`).join(',');
+        const sql = `SELECT navn, cvr FROM cvr_virksomhed WHERE lower(navn) LIKE ANY (ARRAY[${inList}]) AND (virksomhedsform IN ('FFO','FOR','ABA','FMA') OR lower(navn) LIKE 'e/f%' OR lower(navn) LIKE 'a/b%' OR lower(navn) LIKE '%ejerforening%' OR lower(navn) LIKE '%andelsbolig%' OR lower(navn) LIKE '%boligforening%') LIMIT 8000`;
+        const res = await fetch(
+          `https://api.supabase.com/v1/projects/${projectRef}/database/query`,
+          {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: sql }),
+            signal: AbortSignal.timeout(15000),
+          }
+        ).then((r) => r.json());
+        const candidates: ForeningCandidate[] = Array.isArray(res)
+          ? res.map((row: { navn: string; cvr: string | number | null }) => ({
+              navn: String(row.navn),
+              cvr: row.cvr != null ? String(row.cvr) : null,
+            }))
+          : [];
+        if (candidates.length > 0) {
+          const idx = buildForeningIndex(candidates, streets);
+          for (const result of results) {
+            for (const line of result.adresserLabel.split('\n')) {
+              const parsed = parseLabelLine(line);
+              if (!parsed) continue;
+              const forening = matchForening(parsed.vej, parsed.husnumre, idx);
+              if (forening) {
+                result.ejerforening = forening.navn;
+                result.ejerforeningCvr = forening.cvr;
+                break;
               }
             }
           }
         }
       }
     } catch (ejfErr) {
-      // Non-fatal — ejerforening is optional enrichment
-      logger.warn('[daekningsanalyse/resolve] EJF enrichment failed:', ejfErr);
+      // Non-fatal — ejerforening er valgfri berigelse
+      logger.warn('[daekningsanalyse/resolve] Ejerforening-berigelse fejlede:', ejfErr);
     }
 
     // BIZZ-2022: Find ALL matrikler on the same streets — add uncovered ones as grey (0%)

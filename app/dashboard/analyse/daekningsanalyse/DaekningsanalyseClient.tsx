@@ -32,6 +32,11 @@ import {
 import dynamic from 'next/dynamic';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { createClient } from '@/lib/supabase/client';
+import {
+  parseRawKvhxRows,
+  buildSelectedAddresses,
+  type RawKvhxDataset,
+} from '@/app/lib/daekningsanalyse/rawKvhx';
 
 // ─── Lazy Mapbox ────────────────────────────────────────────────────────────
 
@@ -126,6 +131,12 @@ export default function DaekningsanalyseClient() {
   const [file, setFile] = useState<File | null>(null);
   const [parsedAddresses, setParsedAddresses] = useState<string[]>([]);
   const [parseError, setParseError] = useState<string | null>(null);
+
+  // Rå KVHX-datasæt (før-split-format) + postnr/gade-valg (BIZZ-2214)
+  const [rawDataset, setRawDataset] = useState<RawKvhxDataset | null>(null);
+  const [selectedPostnr, setSelectedPostnr] = useState<number | null>(null);
+  const [selectedStreet, setSelectedStreet] = useState<string>('');
+  const [buildingAddrs, setBuildingAddrs] = useState(false);
 
   // Analysis state
   const [loading, setLoading] = useState(false);
@@ -357,6 +368,43 @@ export default function DaekningsanalyseClient() {
   }
 
   /**
+   * Byg adresse-listen for et valgt postnr (+ evt. gade) fra et rå KVHX-datasæt.
+   * Slår by-navn op i DAWA for det valgte postnr — nødvendigt for at datavask
+   * matcher på enhedsniveau (kategori A) så kunder tælles korrekt pr. enhed.
+   *
+   * @param ds - Parset rå-datasæt
+   * @param postnr - Valgt postnr (obligatorisk)
+   * @param street - Valgt gade (tom = alle gader i postnummeret)
+   */
+  const applyRawSelection = useCallback(
+    async (ds: RawKvhxDataset, postnr: number, street: string) => {
+      setBuildingAddrs(true);
+      setParseError(null);
+      try {
+        let by = '';
+        try {
+          const r = await fetch(`https://api.dataforsyningen.dk/postnumre/${postnr}`, {
+            signal: AbortSignal.timeout(8000),
+          });
+          if (r.ok) by = ((await r.json()) as { navn?: string }).navn ?? '';
+        } catch {
+          // by-navn er valgfrit for datavask, men forbedrer match-kvaliteten
+        }
+        const addrs = buildSelectedAddresses(ds, postnr, by, street || undefined);
+        setParsedAddresses(addrs);
+        if (addrs.length === 0) {
+          setParseError(
+            da ? 'Ingen adresser i det valgte udvalg.' : 'No addresses in the selection.'
+          );
+        }
+      } finally {
+        setBuildingAddrs(false);
+      }
+    },
+    [da]
+  );
+
+  /**
    * Parse uploaded file — structured files (xlsx/csv) parsed directly,
    * other formats (PDF, Word, TXT, images) sent to AI for extraction.
    *
@@ -370,6 +418,9 @@ export default function DaekningsanalyseClient() {
       setResults([]);
       setAnalysed(false);
       setAiTokensUsed(0);
+      setRawDataset(null);
+      setSelectedPostnr(null);
+      setSelectedStreet('');
 
       // Non-structured files → AI extraction
       if (needsAiExtraction(f.name)) {
@@ -424,9 +475,47 @@ export default function DaekningsanalyseClient() {
         } else {
           const buf = await f.arrayBuffer();
           await wb.xlsx.load(buf);
+
+          // Prøv rå KVHX-format på tværs af ALLE ark (fx en "Rådata"-fane der ikke
+          // er ark #1). Genkendes på kolonnerne address_street_name/address_postcode
+          // + en KVHX-nøgle. Matcher det → byg adresser fra husnr/etage/dør og lad
+          // brugeren vælge postnr (obligatorisk) + gade (valgfri) før analyse.
+          let rawDs: RawKvhxDataset | null = null;
+          for (const sheet of wb.worksheets) {
+            const rows: (string | number | null)[][] = [];
+            sheet.eachRow((row) => {
+              const vals = Array.isArray(row.values) ? row.values.slice(1) : [];
+              rows.push(
+                vals.map((v) =>
+                  v != null && typeof v === 'object'
+                    ? ((v as { text?: string; result?: unknown }).text ??
+                      String((v as { result?: unknown }).result ?? ''))
+                    : (v as string | number | null)
+                )
+              );
+            });
+            rawDs = parseRawKvhxRows(rows);
+            if (rawDs) break;
+          }
+
+          if (rawDs) {
+            setRawDataset(rawDs);
+            const firstPc = rawDs.postnumre[0];
+            setSelectedPostnr(firstPc);
+            setSelectedStreet('');
+            const multiPostnr = rawDs.postnumre.length > 1;
+            const multiStreet = rawDs.postnumre.some((pc) => rawDs!.streetsByPostnr[pc].length > 1);
+            // Flere postnr/gader → vis valg-panel (parsedAddresses forbliver tom
+            // indtil brugeren anvender sit valg). Ellers byg direkte.
+            if (!multiPostnr && !multiStreet) {
+              await applyRawSelection(rawDs, firstPc, '');
+            }
+            return;
+          }
+
+          // Ikke rå-format → eksisterende adresse-kolonne-parsing (ark #1, kolonne 1)
           const ws = wb.worksheets[0];
           if (!ws) throw new Error('Ingen ark fundet i filen');
-
           ws.eachRow((row, rowNum) => {
             if (rowNum === 1) return;
             const val = row.getCell(1).text?.trim();
@@ -472,7 +561,7 @@ export default function DaekningsanalyseClient() {
         );
       }
     },
-    [da]
+    [da, applyRawSelection]
   );
 
   /** Handle file drop */
@@ -533,6 +622,9 @@ export default function DaekningsanalyseClient() {
     setResults([]);
     setAnalysed(false);
     setError(null);
+    setRawDataset(null);
+    setSelectedPostnr(null);
+    setSelectedStreet('');
     if (fileRef.current) fileRef.current.value = '';
   }, []);
 
@@ -1043,12 +1135,97 @@ export default function DaekningsanalyseClient() {
 
               {parseError && <p className="text-red-400 text-sm">{parseError}</p>}
 
+              {/* Rå-datasæt: vælg postnr (påkrævet) + gade (valgfri) før analyse */}
+              {rawDataset && parsedAddresses.length === 0 && !aiExtracting && (
+                <div className="space-y-3 max-w-md mx-auto text-left">
+                  <p className="text-slate-300 text-sm">
+                    {da
+                      ? `Rå-datasæt genkendt: ${rawDataset.customerRows.toLocaleString('da-DK')} kunde-adresser${rawDataset.hasHomeInternetColumn ? ' (HomeInternet ≥ 1)' : ''}. Vælg hvad analysen skal køre på:`
+                      : `Raw dataset detected: ${rawDataset.customerRows.toLocaleString()} customer addresses. Choose what to analyse:`}
+                  </p>
+                  <label className="block">
+                    <span className="text-xs text-slate-400">
+                      {da ? 'Postnummer (påkrævet)' : 'Postcode (required)'}
+                    </span>
+                    <select
+                      value={selectedPostnr ?? ''}
+                      onChange={(e) => {
+                        setSelectedPostnr(Number(e.target.value));
+                        setSelectedStreet('');
+                      }}
+                      className="mt-1 w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+                    >
+                      {rawDataset.postnumre.map((pc) => (
+                        <option key={pc} value={pc} className="bg-slate-800">
+                          {pc} ({rawDataset.records.filter((r) => r.postnr === pc).length}{' '}
+                          {da ? 'adr.' : 'addr.'})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="text-xs text-slate-400">
+                      {da ? 'Gade (valgfri)' : 'Street (optional)'}
+                    </span>
+                    <select
+                      value={selectedStreet}
+                      onChange={(e) => setSelectedStreet(e.target.value)}
+                      className="mt-1 w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+                    >
+                      <option value="" className="bg-slate-800">
+                        {da ? 'Alle gader' : 'All streets'}
+                      </option>
+                      {(selectedPostnr
+                        ? (rawDataset.streetsByPostnr[selectedPostnr] ?? [])
+                        : []
+                      ).map((s) => (
+                        <option key={s} value={s} className="bg-slate-800">
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    disabled={selectedPostnr == null || buildingAddrs}
+                    onClick={() => {
+                      if (rawDataset && selectedPostnr != null)
+                        applyRawSelection(rawDataset, selectedPostnr, selectedStreet);
+                    }}
+                    className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-semibold py-2 px-5 rounded-xl transition-colors inline-flex items-center gap-2"
+                  >
+                    {buildingAddrs ? (
+                      <>
+                        <Loader2 size={16} className="animate-spin" />
+                        {da ? 'Bygger adresser…' : 'Building…'}
+                      </>
+                    ) : da ? (
+                      'Anvend valg'
+                    ) : (
+                      'Apply selection'
+                    )}
+                  </button>
+                </div>
+              )}
+
               {parsedAddresses.length > 0 && (
                 <>
                   <p className="text-slate-400 text-sm">
                     {da
                       ? `${parsedAddresses.length} adresser fundet${aiTokensUsed > 0 ? ` (AI: ${aiTokensUsed.toLocaleString('da-DK')} tokens)` : ''}`
                       : `${parsedAddresses.length} addresses found${aiTokensUsed > 0 ? ` (AI: ${aiTokensUsed.toLocaleString()} tokens)` : ''}`}
+                    {rawDataset && (
+                      <>
+                        {' — '}
+                        <button
+                          type="button"
+                          onClick={() => setParsedAddresses([])}
+                          className="text-blue-400 hover:text-blue-300 underline"
+                        >
+                          {da ? 'skift postnr/gade' : 'change postcode/street'}
+                        </button>
+                      </>
+                    )}
                   </p>
                   {/* Preview first 5 */}
                   <div className="bg-white/5 rounded-lg p-3 max-w-md mx-auto">

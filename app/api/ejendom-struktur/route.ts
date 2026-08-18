@@ -1563,13 +1563,38 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
       if (alleNoder.length > 0) {
         const alleBfes = [...new Set(alleNoder.map((n) => n.bfe))];
         const supabase = createAdminClient();
-        const [ejerMap, arealRes] = await Promise.all([
+        const [ejerMap, arealRes, handelRes] = await Promise.all([
           fetchEjerskabBatch(alleBfes),
           supabase
             .from('bbr_ejendom_status')
             .select('bfe_nummer, samlet_boligareal, samlet_erhvervsareal, bebygget_areal')
             .in('bfe_nummer', alleBfes),
+          // BIZZ-2219: købspris/-dato fra lokal ejendomshandel — TL ejdsummarisk er
+          // ufuldstændig (og cache-ejerlejligheder har ingen pris), men handlerne
+          // ligger komplet lokalt. Seneste handel pr. BFE vinder.
+          supabase
+            .from('ejendomshandel')
+            .select('bfe_nummer, samlet_koebesum, koebesum, dato, tinglyst_dato')
+            .in('bfe_nummer', alleBfes)
+            .order('dato', { ascending: false, nullsFirst: false }),
         ]);
+        // Seneste handel pr. BFE (rækkerne er sorteret dato DESC → første vinder)
+        const prisMap = new Map<number, { koebspris: number | null; koebsdato: string | null }>();
+        for (const r of (handelRes.data ?? []) as Array<{
+          bfe_nummer: number;
+          samlet_koebesum: number | string | null;
+          koebesum: number | string | null;
+          dato: string | null;
+          tinglyst_dato: string | null;
+        }>) {
+          if (prisMap.has(r.bfe_nummer)) continue;
+          const raw = r.samlet_koebesum ?? r.koebesum;
+          const pris = raw != null ? Math.round(Number(raw)) : null;
+          prisMap.set(r.bfe_nummer, {
+            koebspris: pris != null && Number.isFinite(pris) && pris > 0 ? pris : null,
+            koebsdato: r.dato ?? r.tinglyst_dato ?? null,
+          });
+        }
         const arealMap = new Map<number, number>();
         for (const r of (arealRes.data ?? []) as Array<{
           bfe_nummer: number;
@@ -1589,9 +1614,15 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
           if (node.areal == null) {
             node.areal = arealMap.get(node.bfe) ?? null;
           }
+          // BIZZ-2219: udfyld købspris/-dato fra ejendomshandel hvor TL ikke gav dem
+          const pris = prisMap.get(node.bfe);
+          if (pris) {
+            if (node.koebspris == null && pris.koebspris != null) node.koebspris = pris.koebspris;
+            if (node.koebsdato == null && pris.koebsdato != null) node.koebsdato = pris.koebsdato;
+          }
         }
         logger.log(
-          `[ejendom-struktur] Berigelse: ${ejerMap.size}/${alleBfes.length} med ejer, ${arealMap.size} med areal`
+          `[ejendom-struktur] Berigelse: ${ejerMap.size}/${alleBfes.length} med ejer, ${arealMap.size} med areal, ${prisMap.size} med handelspris`
         );
       }
     }

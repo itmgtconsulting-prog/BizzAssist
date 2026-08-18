@@ -30,6 +30,7 @@ import {
   Save,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { createClient } from '@/lib/supabase/client';
 import {
@@ -59,6 +60,8 @@ interface MatrikelResult {
   koordinat: { lat: number; lng: number } | null;
   geometry: GeoJsonGeometry | null;
   adresserLabel: string;
+  /** DAWA adgangsadresse-id → link til ejendomssiden (BIZZ-2217) */
+  dawaId?: string | null;
   ejerforening?: string | null;
   ejerforeningCvr?: string | null;
 }
@@ -118,6 +121,18 @@ const STATUS_LABELS = {
 } as const;
 
 /**
+ * In-memory snapshot af sidste analyse. Bevarer resultater + scroll-position når
+ * brugeren klikker ind på en ejendom og navigerer TILBAGE — client-side SPA-nav
+ * bevarer modul-scope, så vi undgår at re-uploade/re-analysere. Ryddes ved fuld
+ * genindlæsning eller "Ny analyse" (BIZZ-2217).
+ */
+let analysisSnapshot: {
+  parsedAddresses: string[];
+  results: MatrikelResult[];
+  scrollTop: number;
+} | null = null;
+
+/**
  * DaekningsanalyseClient — main component for coverage analysis module.
  *
  * @returns Upload zone → results (map + table)
@@ -126,6 +141,8 @@ export default function DaekningsanalyseClient() {
   const { lang } = useLanguage();
   const da = lang === 'da';
   const fileRef = useRef<HTMLInputElement>(null);
+  // Scroll-container for resultat-tabellen (BIZZ-2217: gendan scroll ved retur)
+  const resultsScrollRef = useRef<HTMLDivElement>(null);
 
   // Upload state
   const [file, setFile] = useState<File | null>(null);
@@ -143,6 +160,21 @@ export default function DaekningsanalyseClient() {
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<MatrikelResult[]>([]);
   const [analysed, setAnalysed] = useState(false);
+
+  // BIZZ-2217: gendan sidste analyse + scroll når man vender tilbage fra en ejendom.
+  // Kører kun ved mount; snapshot lever i modul-scope på tværs af client-side nav.
+  useEffect(() => {
+    if (analysisSnapshot && analysisSnapshot.results.length > 0) {
+      setResults(analysisSnapshot.results);
+      setParsedAddresses(analysisSnapshot.parsedAddresses);
+      setAnalysed(true);
+      const top = analysisSnapshot.scrollTop;
+      // Gendan scroll efter tabellen er malet
+      requestAnimationFrame(() => {
+        if (resultsScrollRef.current) resultsScrollRef.current.scrollTop = top;
+      });
+    }
+  }, []);
 
   // Threshold config (BIZZ-1999) — red max and green min; yellow is the gap
   // Persisted in Supabase user_metadata.daekningsanalyse_thresholds
@@ -603,6 +635,8 @@ export default function DaekningsanalyseClient() {
       const data: MatrikelResult[] = await res.json();
       setResults(data);
       setAnalysed(true);
+      // BIZZ-2217: gem snapshot så analysen kan gendannes ved retur fra en ejendom
+      analysisSnapshot = { parsedAddresses, results: data, scrollTop: 0 };
     } catch (err) {
       setError(
         da
@@ -625,6 +659,7 @@ export default function DaekningsanalyseClient() {
     setRawDataset(null);
     setSelectedPostnr(null);
     setSelectedStreet('');
+    analysisSnapshot = null; // BIZZ-2217: "Ny analyse" rydder gemt snapshot
     if (fileRef.current) fileRef.current.value = '';
   }, []);
 
@@ -877,7 +912,14 @@ export default function DaekningsanalyseClient() {
               </div>
 
               {/* Table — scrollable */}
-              <div className="flex-1 overflow-auto">
+              <div
+                ref={resultsScrollRef}
+                onScroll={(e) => {
+                  // BIZZ-2217: hold snapshot'ets scroll-position ajour
+                  if (analysisSnapshot) analysisSnapshot.scrollTop = e.currentTarget.scrollTop;
+                }}
+                className="flex-1 overflow-auto"
+              >
                 <table className="w-full text-xs">
                   <thead className="sticky top-0 bg-[#0f172a] z-10">
                     <tr className="border-b border-white/10">
@@ -915,11 +957,33 @@ export default function DaekningsanalyseClient() {
                           key={r.matrikelnr + r.ejerlavskode}
                           className="border-b border-white/5 hover:bg-white/[0.03]"
                         >
-                          <td className="px-2 py-1.5 text-white font-mono">{r.matrikelnr}</td>
-                          <td className="px-2 py-1.5 text-slate-300 max-w-[180px]">
-                            <div className="text-xs leading-relaxed whitespace-pre-line">
-                              {r.adresserLabel}
-                            </div>
+                          <td className="px-2 py-1.5 font-mono">
+                            {r.dawaId ? (
+                              <Link
+                                href={`/dashboard/ejendomme/${r.dawaId}`}
+                                className="text-blue-400 hover:text-blue-300 hover:underline"
+                                title={da ? 'Åbn ejendom for udvidet analyse' : 'Open property'}
+                              >
+                                {r.matrikelnr}
+                              </Link>
+                            ) : (
+                              <span className="text-white">{r.matrikelnr}</span>
+                            )}
+                          </td>
+                          <td className="px-2 py-1.5 max-w-[180px]">
+                            {r.dawaId ? (
+                              <Link
+                                href={`/dashboard/ejendomme/${r.dawaId}`}
+                                className="block text-xs leading-relaxed whitespace-pre-line text-slate-300 hover:text-blue-300 hover:underline"
+                                title={da ? 'Åbn ejendom for udvidet analyse' : 'Open property'}
+                              >
+                                {r.adresserLabel}
+                              </Link>
+                            ) : (
+                              <div className="text-xs leading-relaxed whitespace-pre-line text-slate-300">
+                                {r.adresserLabel}
+                              </div>
+                            )}
                           </td>
                           <td className="px-2 py-1.5 text-white tabular-nums">{r.totalEnheder}</td>
                           <td className="px-2 py-1.5 text-white tabular-nums">{r.kundeAntal}</td>

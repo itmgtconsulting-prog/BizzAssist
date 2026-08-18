@@ -81,6 +81,8 @@ interface MatrikelGroup {
   /** Unikke kunde-enhedsadresse-id'er (unit-niveau) på matriklen — coverage-tæller */
   kundeEnhedIds: Set<string>;
   koordinat: { lat: number; lng: number } | null;
+  /** Repræsentativ DAWA adgangsadresse-id → link til ejendomssiden (BIZZ-2217) */
+  dawaId: string | null;
   /** Map of vejnavn → Set of husnumre */
   vejHusnumre: Map<string, Set<string>>;
 }
@@ -198,6 +200,7 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
           postnr: aa.postnummer?.nr ?? aa.postnr ?? '',
           kundeEnhedIds: new Set(),
           koordinat: coords ? { lat: coords[1], lng: coords[0] } : null,
+          dawaId: aa.id,
           vejHusnumre: new Map(),
         });
       }
@@ -286,6 +289,7 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
         koordinat: group.koordinat,
         geometry: geometries[i],
         adresserLabel: adresserLines.join('\n'),
+        dawaId: group.dawaId,
         ejerforening: null as string | null,
         ejerforeningCvr: null as string | null,
       };
@@ -391,6 +395,7 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
           ejerlav: string;
           kommunekode: string;
           koordinat: { lat: number; lng: number } | null;
+          dawaId: string | null;
           vejHusnumre: Map<string, Set<string>>;
         }
       >();
@@ -409,6 +414,7 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
               ejerlav: aa.jordstykke.ejerlav.navn,
               kommunekode: aa.kommune?.kode ?? '',
               koordinat: coords ? { lat: coords[1], lng: coords[0] } : null,
+              dawaId: aa.id,
               vejHusnumre: new Map(),
             });
           }
@@ -468,6 +474,7 @@ export async function POST(req: NextRequest): Promise<NextResponse | Response> {
           koordinat: g.koordinat,
           geometry: uncovGeos[i],
           adresserLabel: adresserLines.join('\n'),
+          dawaId: g.dawaId,
           ejerforening: null as string | null,
           ejerforeningCvr: null as string | null,
         });

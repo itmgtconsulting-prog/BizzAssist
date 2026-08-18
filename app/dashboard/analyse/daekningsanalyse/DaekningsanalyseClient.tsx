@@ -1030,7 +1030,7 @@ export default function DaekningsanalyseClient() {
         </p>
         <label className="flex items-center gap-3">
           <span className="text-sm text-emerald-400 w-10">{da ? 'Grøn' : 'Green'}</span>
-          <span className="text-xs text-slate-400">≥</span>
+          <span className="text-xs text-slate-400 w-3 text-center">≥</span>
           <input
             type="range"
             min={0}
@@ -1043,10 +1043,10 @@ export default function DaekningsanalyseClient() {
         </label>
         <label className="flex items-center gap-3">
           <span className="text-sm text-red-400 w-10">{da ? 'Rød' : 'Red'}</span>
-          <span className="text-xs text-slate-400">&lt;</span>
+          <span className="text-xs text-slate-400 w-3 text-center">&lt;</span>
           <input
             type="range"
-            min={5}
+            min={0}
             max={80}
             value={redMax}
             onChange={(e) => setRedMax(Number(e.target.value))}

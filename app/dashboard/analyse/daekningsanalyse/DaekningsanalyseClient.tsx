@@ -169,10 +169,20 @@ export default function DaekningsanalyseClient() {
       setParsedAddresses(analysisSnapshot.parsedAddresses);
       setAnalysed(true);
       const top = analysisSnapshot.scrollTop;
-      // Gendan scroll efter tabellen er malet
-      requestAnimationFrame(() => {
-        if (resultsScrollRef.current) resultsScrollRef.current.scrollTop = top;
-      });
+      // Gendan scroll — retry over flere frames indtil containeren er udlagt højt
+      // nok (ellers clampes scrollTop til 0 mens tabel+kort stadig renderer).
+      if (top > 0) {
+        let tries = 0;
+        const restore = () => {
+          const el = resultsScrollRef.current;
+          if (el && el.scrollHeight > el.clientHeight) {
+            el.scrollTop = top;
+            if (Math.abs(el.scrollTop - top) < 2) return;
+          }
+          if (tries++ < 30) requestAnimationFrame(restore);
+        };
+        requestAnimationFrame(restore);
+      }
     }
   }, []);
 

@@ -673,6 +673,16 @@ export default function DaekningsanalyseClient() {
     if (fileRef.current) fileRef.current.value = '';
   }, []);
 
+  /**
+   * BIZZ-2217: fang resultat-listens scroll-position lige før man navigerer ind
+   * på en ejendom, så den kan gendannes ved retur (mere pålideligt end onScroll).
+   */
+  const saveScrollPos = useCallback(() => {
+    if (analysisSnapshot && resultsScrollRef.current) {
+      analysisSnapshot.scrollTop = resultsScrollRef.current.scrollTop;
+    }
+  }, []);
+
   /** Classified results with status */
   const classified = useMemo(
     () =>
@@ -924,6 +934,7 @@ export default function DaekningsanalyseClient() {
               {/* Table — scrollable */}
               <div
                 ref={resultsScrollRef}
+                data-testid="daekning-results-scroll"
                 onScroll={(e) => {
                   // BIZZ-2217: hold snapshot'ets scroll-position ajour
                   if (analysisSnapshot) analysisSnapshot.scrollTop = e.currentTarget.scrollTop;
@@ -971,6 +982,7 @@ export default function DaekningsanalyseClient() {
                             {r.dawaId ? (
                               <Link
                                 href={`/dashboard/ejendomme/${r.dawaId}`}
+                                onClick={saveScrollPos}
                                 className="text-blue-400 hover:text-blue-300 hover:underline"
                                 title={da ? 'Åbn ejendom for udvidet analyse' : 'Open property'}
                               >
@@ -984,6 +996,7 @@ export default function DaekningsanalyseClient() {
                             {r.dawaId ? (
                               <Link
                                 href={`/dashboard/ejendomme/${r.dawaId}`}
+                                onClick={saveScrollPos}
                                 className="block text-xs leading-relaxed whitespace-pre-line text-slate-300 hover:text-blue-300 hover:underline"
                                 title={da ? 'Åbn ejendom for udvidet analyse' : 'Open property'}
                               >

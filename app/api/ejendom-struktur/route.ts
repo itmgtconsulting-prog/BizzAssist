@@ -442,6 +442,138 @@ async function fetchEjerskabBatch(bfeList: number[]): Promise<Map<number, EjerIn
   return result;
 }
 
+// ─── Ejerlejlighed-fallback fra lokal cache (BIZZ-2218) ─────────────────────
+
+/**
+ * BIZZ-2218: Enumererer ejerlejligheder for et sæt adgangsadresser fra
+ * bfe_adresse_cache (lokal data). Alle BFE'er i én bygning deler samme dawa_id
+ * (adgangsadressen) i cachen; ejerlejlighederne er rækkerne MED etage/dør, og
+ * SFE/hovedejendom er rækken uden. Bruges som fallback/supplement når
+ * Tinglysning ikke leverer ejerlejlighederne (fx test-Tinglysning uden de rigtige
+ * ejendomme, eller TL-udfald), så opdelte ejendomme viser deres struktur
+ * pålideligt. Beriges med gældende ejer fra ejf_ejerskab.
+ *
+ * @param adgangsadresseIds - DAWA adgangsadresse-id'er (dawa_id) for matriklen
+ * @returns Map fra adgangsadresse-id → sorterede ejerlejlighed-StrukturNoder
+ */
+async function byggEjerlejlighedNoderFraCache(
+  adgangsadresseIds: string[]
+): Promise<Map<string, StrukturNode[]>> {
+  const map = new Map<string, StrukturNode[]>();
+  const ids = [...new Set(adgangsadresseIds.filter(Boolean))];
+  if (ids.length === 0) return map;
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin
+      .from('bfe_adresse_cache')
+      .select('bfe_nummer, adresse, etage, doer, dawa_id')
+      .in('dawa_id', ids)
+      .or('etage.not.is.null,doer.not.is.null')
+      .limit(2000);
+    const rows = (data ?? []) as Array<{
+      bfe_nummer: number;
+      adresse: string | null;
+      etage: string | null;
+      doer: string | null;
+      dawa_id: string | null;
+    }>;
+    if (rows.length === 0) return map;
+
+    const ejerMap = await fetchEjerskabBatch([...new Set(rows.map((r) => r.bfe_nummer))]);
+    // Rang til sortering: kælder < stuen < 1. < 2. …; derefter dør alfanumerisk.
+    const etageRank = (e: string | null): number =>
+      e === 'kl'
+        ? -1
+        : e === 'st'
+          ? 0
+          : Number.isFinite(parseInt(e ?? '', 10))
+            ? parseInt(e!, 10)
+            : 99;
+    const sorted = [...rows].sort(
+      (a, b) =>
+        etageRank(a.etage) - etageRank(b.etage) ||
+        String(a.doer ?? '').localeCompare(String(b.doer ?? ''), 'da', { numeric: true })
+    );
+
+    for (const r of sorted) {
+      const etageLabel =
+        r.etage === 'st' ? 'st.' : r.etage === 'kl' ? 'kl.' : r.etage ? `${r.etage}.` : '';
+      const mid = [etageLabel, r.doer ?? ''].filter(Boolean).join(' ');
+      const adr = `${r.adresse ?? `BFE ${r.bfe_nummer}`}${mid ? `, ${mid}` : ''}`;
+      const ejl = ejerMap.get(r.bfe_nummer);
+      const node: StrukturNode = {
+        bfe: r.bfe_nummer,
+        adresse: adr,
+        niveau: 'ejerlejlighed',
+        dawaId: r.dawa_id,
+        ejendomsvaerdi: null,
+        grundvaerdi: null,
+        vurderingsaar: null,
+        tlVurdering: null,
+        areal: null,
+        vaerelser: null,
+        ejer: ejl?.ejerNavn ?? null,
+        ejertype: ejl?.ejerType ?? null,
+        koebspris: null,
+        koebsdato: null,
+        children: [],
+      };
+      const key = r.dawa_id ?? '';
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(node);
+    }
+    return map;
+  } catch (err) {
+    logger.warn('[ejendom-struktur] ejerlejlighed-cache-fallback fejlede:', err);
+    return map;
+  }
+}
+
+/**
+ * BIZZ-2218: Tilføjer cache-ejerlejligheder til træet. Hver ejerlejlighed-gruppe
+ * (nøglet på adgangsadresse-id) hænges under den node hvis dawaId matcher
+ * (hovedejendom/SFE med samme adgangsadresse); grupper uden match hænges under
+ * root. Deduplikerer på BFE så eksisterende TL-ejerlejligheder ikke dobles.
+ *
+ * @param root - Rod-SFE-noden (muteres)
+ * @param ejlMap - Map fra adgangsadresse-id → ejerlejlighed-noder
+ */
+function tilfoejEjerlejligheder(root: StrukturNode, ejlMap: Map<string, StrukturNode[]>): void {
+  if (ejlMap.size === 0) return;
+  const brugte = new Set<string>();
+  const eksisterendeBfe = new Set<number>();
+  const collectBfe = (n: StrukturNode): void => {
+    if (n.bfe > 0) eksisterendeBfe.add(n.bfe);
+    n.children.forEach(collectBfe);
+  };
+  collectBfe(root);
+
+  const attach = (n: StrukturNode): void => {
+    if (n.dawaId && n.niveau !== 'ejerlejlighed' && ejlMap.has(n.dawaId)) {
+      for (const ejl of ejlMap.get(n.dawaId)!) {
+        if (!eksisterendeBfe.has(ejl.bfe)) {
+          n.children.push(ejl);
+          eksisterendeBfe.add(ejl.bfe);
+        }
+      }
+      brugte.add(n.dawaId);
+    }
+    n.children.forEach(attach);
+  };
+  attach(root);
+
+  // Grupper hvis adgangsadresse ikke matchede nogen node → hæng under root
+  for (const [key, noder] of ejlMap) {
+    if (brugte.has(key)) continue;
+    for (const ejl of noder) {
+      if (!eksisterendeBfe.has(ejl.bfe)) {
+        root.children.push(ejl);
+        eksisterendeBfe.add(ejl.bfe);
+      }
+    }
+  }
+}
+
 // ─── Søster-SFE'er (BIZZ-2094) ──────────────────────────────────────────────
 
 /**
@@ -892,6 +1024,15 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
                 children: [],
               })),
             };
+            // BIZZ-2218: supplér DAWA-fallback-træet med ejerlejligheder fra
+            // lokal cache, så opdelte ejendomme viser deres struktur selv når TL
+            // ikke leverede noget (fx test-Tinglysning uden de rigtige ejendomme).
+            try {
+              const ejlMap = await byggEjerlejlighedNoderFraCache(adgangsadresser.map((a) => a.id));
+              tilfoejEjerlejligheder(sfeNode, ejlMap);
+            } catch {
+              /* ejerlejlighed-supplement non-fatal */
+            }
             logger.log(
               `[ejendom-struktur] DAWA fallback: ${adgangsadresser.length} adgangsadresser for ejerlav ${ejerlavKode} matr. ${matrikelnr}`
             );
@@ -1367,6 +1508,22 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
       }
     }
 
+    // ── BIZZ-2218: Supplér med ejerlejligheder fra lokal cache ──
+    // Opdelte ejendomme får ikke altid deres ejerlejligheder fra Tinglysning
+    // (fx test-Tinglysning uden de rigtige ejendomme, eller TL-udfald). De ligger
+    // dog lokalt i bfe_adresse_cache (samme dawa_id som adgangsadressen). Vi
+    // enumererer dem for træets adgangsadresser og hænger de manglende på.
+    {
+      const dawaIds: string[] = [];
+      const saml = (n: StrukturNode): void => {
+        if (n.dawaId) dawaIds.push(n.dawaId);
+        n.children.forEach(saml);
+      };
+      saml(root);
+      const ejlMap = await byggEjerlejlighedNoderFraCache(dawaIds);
+      tilfoejEjerlejligheder(root, ejlMap);
+    }
+
     // ── BIZZ-2094: Søster-SFE'er — samme gældende ejer + samme ejerlav ──
     // Resights' struktur omfatter hele vurderingsejendommen, som kan spænde
     // over flere SFE'er (fx Fenrisvej 15/19 under Gefionsvej 47A). VUR
@@ -1406,13 +1563,38 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
       if (alleNoder.length > 0) {
         const alleBfes = [...new Set(alleNoder.map((n) => n.bfe))];
         const supabase = createAdminClient();
-        const [ejerMap, arealRes] = await Promise.all([
+        const [ejerMap, arealRes, handelRes] = await Promise.all([
           fetchEjerskabBatch(alleBfes),
           supabase
             .from('bbr_ejendom_status')
             .select('bfe_nummer, samlet_boligareal, samlet_erhvervsareal, bebygget_areal')
             .in('bfe_nummer', alleBfes),
+          // BIZZ-2219: købspris/-dato fra lokal ejendomshandel — TL ejdsummarisk er
+          // ufuldstændig (og cache-ejerlejligheder har ingen pris), men handlerne
+          // ligger komplet lokalt. Seneste handel pr. BFE vinder.
+          supabase
+            .from('ejendomshandel')
+            .select('bfe_nummer, samlet_koebesum, koebesum, dato, tinglyst_dato')
+            .in('bfe_nummer', alleBfes)
+            .order('dato', { ascending: false, nullsFirst: false }),
         ]);
+        // Seneste handel pr. BFE (rækkerne er sorteret dato DESC → første vinder)
+        const prisMap = new Map<number, { koebspris: number | null; koebsdato: string | null }>();
+        for (const r of (handelRes.data ?? []) as Array<{
+          bfe_nummer: number;
+          samlet_koebesum: number | string | null;
+          koebesum: number | string | null;
+          dato: string | null;
+          tinglyst_dato: string | null;
+        }>) {
+          if (prisMap.has(r.bfe_nummer)) continue;
+          const raw = r.samlet_koebesum ?? r.koebesum;
+          const pris = raw != null ? Math.round(Number(raw)) : null;
+          prisMap.set(r.bfe_nummer, {
+            koebspris: pris != null && Number.isFinite(pris) && pris > 0 ? pris : null,
+            koebsdato: r.dato ?? r.tinglyst_dato ?? null,
+          });
+        }
         const arealMap = new Map<number, number>();
         for (const r of (arealRes.data ?? []) as Array<{
           bfe_nummer: number;
@@ -1432,9 +1614,15 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendomStr
           if (node.areal == null) {
             node.areal = arealMap.get(node.bfe) ?? null;
           }
+          // BIZZ-2219: udfyld købspris/-dato fra ejendomshandel hvor TL ikke gav dem
+          const pris = prisMap.get(node.bfe);
+          if (pris) {
+            if (node.koebspris == null && pris.koebspris != null) node.koebspris = pris.koebspris;
+            if (node.koebsdato == null && pris.koebsdato != null) node.koebsdato = pris.koebsdato;
+          }
         }
         logger.log(
-          `[ejendom-struktur] Berigelse: ${ejerMap.size}/${alleBfes.length} med ejer, ${arealMap.size} med areal`
+          `[ejendom-struktur] Berigelse: ${ejerMap.size}/${alleBfes.length} med ejer, ${arealMap.size} med areal, ${prisMap.size} med handelspris`
         );
       }
     }

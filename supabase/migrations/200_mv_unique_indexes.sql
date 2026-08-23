@@ -22,17 +22,31 @@
 -- → separat follow-up-ticket.
 -- ============================================================
 
-CREATE UNIQUE INDEX IF NOT EXISTS ux_mv_ejendom_master_bfe
-  ON public.mv_ejendom_master (bfe_nummer);
+-- to_regclass-guard: dev har ikke alle 11 MV'er (kun de MV'er miljøet faktisk
+-- har får et index). IF NOT EXISTS på indexet dækker ikke manglende TABEL, så
+-- vi tjekker MV'ens eksistens eksplicit før CREATE.
+DO $$
+BEGIN
+  IF to_regclass('public.mv_ejendom_master') IS NOT NULL THEN
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_mv_ejendom_master_bfe
+      ON public.mv_ejendom_master (bfe_nummer);
+  END IF;
 
-CREATE UNIQUE INDEX IF NOT EXISTS ux_mv_virksomhedshandel_kandidater_key
-  ON public.mv_virksomhedshandel_kandidater
-     (deltager_enhedsnummer, virksomhed_cvr, gyldig_fra, signal_type);
+  IF to_regclass('public.mv_virksomhedshandel_kandidater') IS NOT NULL THEN
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_mv_virksomhedshandel_kandidater_key
+      ON public.mv_virksomhedshandel_kandidater
+         (deltager_enhedsnummer, virksomhed_cvr, gyldig_fra, signal_type);
+  END IF;
 
-CREATE UNIQUE INDEX IF NOT EXISTS ux_mv_deltager_beriget_key
-  ON public.mv_deltager_beriget
-     (virksomhed_cvr, deltager_enhedsnummer, relation_type, gyldig_fra);
+  IF to_regclass('public.mv_deltager_beriget') IS NOT NULL THEN
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_mv_deltager_beriget_key
+      ON public.mv_deltager_beriget
+         (virksomhed_cvr, deltager_enhedsnummer, relation_type, gyldig_fra);
+  END IF;
 
-CREATE UNIQUE INDEX IF NOT EXISTS ux_mv_virksomhed_struktur_key
-  ON public.mv_virksomhed_struktur
-     (ejer_cvr, ejet_cvr, gyldig_fra, gyldig_til);
+  IF to_regclass('public.mv_virksomhed_struktur') IS NOT NULL THEN
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_mv_virksomhed_struktur_key
+      ON public.mv_virksomhed_struktur
+         (ejer_cvr, ejet_cvr, gyldig_fra, gyldig_til);
+  END IF;
+END $$;

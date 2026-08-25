@@ -2225,7 +2225,7 @@ async function resolvePersonGraph(
       ejerandel_naevner: number | null;
     }> = [];
 
-    // BIZZ-2221: hent op til 200 (ikke bare 16) + det EKSAKTE antal, så vi kan vise
+    // BIZZ-2223: hent op til 200 (ikke bare 16) + det EKSAKTE antal, så vi kan vise
     // 15 direkte + en korrekt "+N ejendomme"-overflow-node (som company-noder og
     // expand allerede gør). Tidligere .limit(MAX_PROPS_PER_OWNER + 1) skjulte at
     // personen ejer fx 128 ejendomme og viste kun 16 uden overflow.
@@ -2281,7 +2281,7 @@ async function resolvePersonGraph(
       });
     }
 
-    // BIZZ-2221: overflow-node for de resterende personlige ejendomme.
+    // BIZZ-2223: overflow-node for de resterende personlige ejendomme.
     const overflowCount = personTotal - shownProps.length;
     if (overflowCount > 0) {
       const overflowId = `props-overflow-${mainId}`;

@@ -24,7 +24,7 @@
  */
 
 import * as Sentry from '@sentry/nextjs';
-import { NextResponse, after } from 'next/server';
+import { NextResponse } from 'next/server';
 import { recordHeartbeat, type CronMetrics, type CronStatus } from '@/app/lib/cronHeartbeat';
 import { getCronJob } from '@/app/lib/cron/registry';
 import { logger } from '@/app/lib/logger';
@@ -47,29 +47,6 @@ export interface CronMonitorConfig {
    * Default 1 — skulle matcher crontab-nøjagtighed.
    */
   checkinMargin?: number;
-}
-
-/**
- * Flush en observability-write så den garanteret fuldfører EFTER responsen uden
- * at forsinke den.
- *
- * I prod kaldes cron-routes altid som HTTP-requests, så after() (next/server)
- * kører i request-scope og holder serverless-instansen i live til skrivningen er
- * flushet — modsat fire-and-forget void, som Vercel skar bort ved suspend.
- *
- * Uden for request-scope (unit/integration-tests der kalder handleren direkte)
- * kaster after() synkront; dér falder vi tilbage til at lade promiset køre
- * detached, så testene ikke afhænger af en Next request-kontekst.
- *
- * @param write - Det allerede-startede heartbeat-promise der skal flushes.
- */
-function flushAfterResponse(write: Promise<void>): void {
-  try {
-    after(write);
-  } catch {
-    // Ingen request-scope (test-kontekst) — promiset resolver detached.
-    void write;
-  }
 }
 
 /**
@@ -121,7 +98,8 @@ function resolveConfig(
 
 /**
  * Wrapper for Next.js cron route handlers.
- * Kører handleren inde i Sentry.withMonitor + recordHeartbeat (via after()-flush).
+ * Kører handleren inde i Sentry.withMonitor + recordHeartbeat (skrevet synkront
+ * før respons, BIZZ-2220 — så heartbeaten ikke tabes ved serverless-suspend).
  *
  * Status udledes: exception → `error`; eksplicit degraded eller (expectsWork &&
  * itemsProcessed===0) → `degraded`; ellers `success`. Arbejds-metrikker gemmes
@@ -163,20 +141,23 @@ export async function withCronMonitor(
           degradedReason = 'ingen kandidater behandlet — mulig broken afhængighed';
         }
 
-        // BIZZ-2205: heartbeat-write flushes via after() (ikke fire-and-forget void),
-        // så hurtigt-returnerende crons ikke taber skrivningen ved suspend.
-        flushAfterResponse(
-          recordHeartbeat(jobName, status, durationMs, intervalMinutes, undefined, {
-            ...metrics,
-            degradedReason: degradedReason ?? metrics?.degradedReason,
-          })
-        );
+        // BIZZ-2220: skriv heartbeat SYNKRONT (awaited) før respons. after()/fire-
+        // and-forget blev tabt ved serverless-suspend → frosne heartbeats gav
+        // falske stale-alarmer i watchdog OG kunne maskere ægte fejl. recordHeartbeat
+        // er et direkte DB-upsert (~ms); en heartbeat-fejl må aldrig vælte cronen.
+        await recordHeartbeat(jobName, status, durationMs, intervalMinutes, undefined, {
+          ...metrics,
+          degradedReason: degradedReason ?? metrics?.degradedReason,
+        }).catch((e) => logger.warn(`[cron:${jobName}] heartbeat-write fejlede:`, e));
         return response;
       } catch (err) {
         const durationMs = Date.now() - startedAt;
         const msg = err instanceof Error ? err.message : String(err);
         logger.error(`[cron:${jobName}] fejl efter ${durationMs}ms:`, msg);
-        flushAfterResponse(recordHeartbeat(jobName, 'error', durationMs, intervalMinutes, msg));
+        // BIZZ-2220: awaited heartbeat-write så error-status ikke tabes ved suspend.
+        await recordHeartbeat(jobName, 'error', durationMs, intervalMinutes, msg).catch((e) =>
+          logger.warn(`[cron:${jobName}] heartbeat-write (error) fejlede:`, e)
+        );
         // Re-throw så Sentry.withMonitor markerer check-in som error + captures.
         throw err;
       }

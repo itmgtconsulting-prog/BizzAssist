@@ -82,16 +82,18 @@ describe('withCronMonitor', () => {
     expect(call[3]).toBe(1440); // intervalMinutes
   });
 
-  // BIZZ-2205-mønster: heartbeat SKAL flushes via after() — ikke fire-and-forget
-  // void — ellers taber Vercel skrivningen når serverless-instansen suspenderer på
-  // en hurtig-return (fx backfill der indsætter 0 rækker), og watchdog tror jobbet
-  // er stumt. Denne test låser wiringen på både success- og error-stien.
-  it("wire'er heartbeat gennem after() på både success- og error-stien", async () => {
+  // BIZZ-2220: heartbeat skrives SYNKRONT (awaited) — IKKE via after(). after()/
+  // fire-and-forget blev tabt når serverless-instansen suspenderede på en hurtig-
+  // return, så heartbeaten frøs og watchdog gav falske stale-alarmer (samt kunne
+  // maskere ægte fejl). Denne test låser at recordHeartbeat kaldes på begge stier
+  // og at after() IKKE længere bruges.
+  it('skriver heartbeat synkront (ikke via after()) på både success- og error-stien', async () => {
     await withCronMonitor(
       { jobName: 'fast-job', schedule: '0 * * * *', intervalMinutes: 60 },
       async () => NextResponse.json({ ok: true })
     );
-    expect(after).toHaveBeenCalledTimes(1);
+    expect(recordHeartbeat).toHaveBeenCalledTimes(1);
+    expect(after).not.toHaveBeenCalled();
 
     vi.clearAllMocks();
 
@@ -100,7 +102,32 @@ describe('withCronMonitor', () => {
         throw new Error('boom');
       })
     ).rejects.toThrow('boom');
-    expect(after).toHaveBeenCalledTimes(1);
+    expect(recordHeartbeat).toHaveBeenCalledTimes(1);
+    expect(after).not.toHaveBeenCalled();
+  });
+
+  // BIZZ-2220: withCronMonitor må ikke resolve før heartbeat-skrivningen er
+  // fuldført — beviser at den awaited'es (og dermed ikke tabes ved suspend).
+  it('afventer heartbeat-skrivningen før respons returneres', async () => {
+    let resolveHb: () => void = () => {};
+    (recordHeartbeat as unknown as Mock).mockImplementationOnce(
+      () => new Promise<void>((r) => (resolveHb = r))
+    );
+    let monitorSettled = false;
+    const p = withCronMonitor(
+      { jobName: 'slow-hb', schedule: '0 * * * *', intervalMinutes: 60 },
+      async () => NextResponse.json({ ok: true })
+    ).then((r) => {
+      monitorSettled = true;
+      return r;
+    });
+    // Lad microtasks køre; monitoren må stadig vente på heartbeat-promiset
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(monitorSettled).toBe(false);
+    resolveHb();
+    await p;
+    expect(monitorSettled).toBe(true);
   });
 
   it('kalder recordHeartbeat med status=error + fejlmeddelelse når handler kaster', async () => {

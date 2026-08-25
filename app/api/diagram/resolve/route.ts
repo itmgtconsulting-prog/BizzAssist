@@ -2245,7 +2245,16 @@ async function resolvePersonGraph(
       personProps = byEnheds;
       personTotal = enhedsCount ?? byEnheds.length;
     } else if (personName && !personName.startsWith('Person ')) {
-      // Fallback: navn-match (BIZZ-1259 original approach)
+      // BIZZ-2224: HÆRDET navne-match. Almindelige navne (fx "Thomas Rasmussen")
+      // deles af flere personer; en bar ejer_navn-match ville aggregere DERES
+      // ejendomme og over-tælle. Vi medtager derfor kun records UDEN et andet
+      // præcist enheds-link — dvs. ejer_enheds_nummer IS NULL (ambiguøst denne
+      // persons) ELLER netop denne persons enhedsNummer. Records med et ANDET
+      // (ikke-null) enheds_nummer = en anden person og ekskluderes.
+      const enNum = Number(enhedsNummer);
+      const orClause = Number.isFinite(enNum)
+        ? `ejer_enheds_nummer.is.null,ejer_enheds_nummer.eq.${enNum}`
+        : 'ejer_enheds_nummer.is.null';
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: byNavn, count: navnCount } = await (admin as any)
         .from('ejf_ejerskab')
@@ -2253,6 +2262,7 @@ async function resolvePersonGraph(
         .eq('ejer_navn', personName)
         .eq('ejer_type', 'person')
         .eq('status', 'gældende')
+        .or(orClause)
         .limit(PROP_FETCH_CAP);
       personProps = byNavn ?? [];
       personTotal = navnCount ?? personProps.length;

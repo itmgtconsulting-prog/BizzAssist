@@ -149,10 +149,6 @@
       "schedule": "30 4 * * *"
     },
     {
-      "path": "/api/cron/backfill-ejerskifte-handel",
-      "schedule": "20 6 * * *"
-    },
-    {
       "path": "/api/cron/sync-tinglysning-detail",
       "schedule": "45 3 * * *"
     },
@@ -163,10 +159,6 @@
     {
       "path": "/api/cron/process-job-queue",
       "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/cron/purge-cron-history",
-      "schedule": "20 2 * * *"
     }
   ]
 }

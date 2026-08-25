@@ -5,6 +5,10 @@
       "schedule": "*/15 * * * *"
     },
     {
+      "path": "/api/cron/process-job-queue",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/poll-properties",
       "schedule": "30 6 * * *"
     },
@@ -155,10 +159,6 @@
     {
       "path": "/api/cron/sync-ejf-all",
       "schedule": "0 5 * * *"
-    },
-    {
-      "path": "/api/cron/process-job-queue",
-      "schedule": "*/5 * * * *"
     }
   ]
 }

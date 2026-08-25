@@ -2225,31 +2225,41 @@ async function resolvePersonGraph(
       ejerandel_naevner: number | null;
     }> = [];
 
+    // BIZZ-2223: hent op til 200 (ikke bare 16) + det EKSAKTE antal, så vi kan vise
+    // 15 direkte + en korrekt "+N ejendomme"-overflow-node (som company-noder og
+    // expand allerede gør). Tidligere .limit(MAX_PROPS_PER_OWNER + 1) skjulte at
+    // personen ejer fx 128 ejendomme og viste kun 16 uden overflow.
+    const PROP_FETCH_CAP = 200;
+    let personTotal = 0;
+
     // BIZZ-1273: Præcist link via ejer_enheds_nummer (populeret af backfill)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: byEnheds } = await (admin as any)
+    const { data: byEnheds, count: enhedsCount } = await (admin as any)
       .from('ejf_ejerskab')
-      .select('bfe_nummer, ejerandel_taeller, ejerandel_naevner')
+      .select('bfe_nummer, ejerandel_taeller, ejerandel_naevner', { count: 'exact' })
       .eq('ejer_enheds_nummer', Number(enhedsNummer))
       .eq('status', 'gældende')
-      .limit(MAX_PROPS_PER_OWNER + 1);
+      .limit(PROP_FETCH_CAP);
 
     if (byEnheds && byEnheds.length > 0) {
       personProps = byEnheds;
+      personTotal = enhedsCount ?? byEnheds.length;
     } else if (personName && !personName.startsWith('Person ')) {
       // Fallback: navn-match (BIZZ-1259 original approach)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: byNavn } = await (admin as any)
+      const { data: byNavn, count: navnCount } = await (admin as any)
         .from('ejf_ejerskab')
-        .select('bfe_nummer, ejerandel_taeller, ejerandel_naevner')
+        .select('bfe_nummer, ejerandel_taeller, ejerandel_naevner', { count: 'exact' })
         .eq('ejer_navn', personName)
         .eq('ejer_type', 'person')
         .eq('status', 'gældende')
-        .limit(MAX_PROPS_PER_OWNER + 1);
+        .limit(PROP_FETCH_CAP);
       personProps = byNavn ?? [];
+      personTotal = navnCount ?? personProps.length;
     }
 
-    for (const pp of personProps) {
+    const shownProps = personProps.slice(0, MAX_PROPS_PER_OWNER);
+    for (const pp of shownProps) {
       const propId = `bfe-${pp.bfe_nummer}`;
       if (!nodeIds.has(propId)) {
         nodes.push({
@@ -2269,6 +2279,26 @@ async function resolvePersonGraph(
         personallyOwned: true,
         ownerPersonId: mainId,
       });
+    }
+
+    // BIZZ-2223: overflow-node for de resterende personlige ejendomme.
+    const overflowCount = personTotal - shownProps.length;
+    if (overflowCount > 0) {
+      const overflowId = `props-overflow-${mainId}`;
+      if (!nodeIds.has(overflowId)) {
+        nodes.push({
+          id: overflowId,
+          label: `+${overflowCount} ejendomme`,
+          type: 'status',
+          layoutSection: 'personal-property',
+          // Adresser beriges klient-side via enrichPropertyNodes (BIZZ-1647)
+          overflowItems: personProps
+            .slice(MAX_PROPS_PER_OWNER)
+            .map((p) => ({ label: `BFE ${p.bfe_nummer}`, bfeNummer: p.bfe_nummer })),
+        });
+        nodeIds.add(overflowId);
+        edges.push({ from: mainId, to: overflowId });
+      }
     }
   }
 

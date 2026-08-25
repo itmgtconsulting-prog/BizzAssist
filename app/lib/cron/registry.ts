@@ -48,6 +48,14 @@ export interface CronJob {
    * `jobName` (the sitemap cycle), match the freshest heartbeat by this prefix.
    */
   heartbeatPrefix?: string;
+  /**
+   * Which scheduler triggers the job. `vercel` (default) → must be in
+   * vercel.json crons. `pgcron` → scheduled in-DB via pg_cron (migration),
+   * NOT in vercel.json (bypasses Vercel's ~40-cron execution cap, BIZZ-2221).
+   * The pg_cron job writes its own cron_heartbeats row so the watchdog still
+   * monitors it via this registry entry.
+   */
+  scheduler?: 'vercel' | 'pgcron';
 }
 
 /** A continuously-synced data domain with a freshness SLO. */
@@ -118,7 +126,10 @@ export const CRON_JOBS: CronJob[] = [
     schedule: '20 2 * * *',
     intervalMinutes: DAY,
     category: 'maintenance',
-    description: 'Beskærer cron_run_history ældre end 90 dage',
+    description: 'Beskærer cron_run_history ældre end 90 dage (pg_cron, mig 201)',
+    // BIZZ-2221: flyttet fra Vercel til pg_cron (frigør Vercel-cron-slot). Pure
+    // SQL DELETE; pg_cron-jobbet skriver selv heartbeat.
+    scheduler: 'pgcron',
   },
   {
     jobName: 'purge-ai-files',
@@ -359,7 +370,10 @@ export const CRON_JOBS: CronJob[] = [
     schedule: '20 6 * * *',
     intervalMinutes: DAY,
     category: 'backfill',
-    description: 'Backfiller ejerskifte-handel (flyttet ud af 03–06-vinduet, BIZZ-2209)',
+    description: 'Backfiller ejerskifte-handel (pg_cron, mig 201 — BIZZ-2221)',
+    // BIZZ-2221: Vercel fyrede den ikke (>40-cron-cap). Flyttet til pg_cron;
+    // pure DB→DB INSERT-SQL kører in-DB og skriver selv heartbeat.
+    scheduler: 'pgcron',
   },
   {
     jobName: 'gap-fill-cvr',

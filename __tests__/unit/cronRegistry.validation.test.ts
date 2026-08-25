@@ -21,9 +21,13 @@ interface VercelCron {
 }
 const vercelCrons: VercelCron[] = JSON.parse(readFileSync(join(ROOT, 'vercel.json'), 'utf8')).crons;
 
+// BIZZ-2221: pg_cron-schedulerede jobs ligger IKKE i vercel.json (de køres
+// in-DB via migration). Kun Vercel-schedulerede jobs indgår i bijektionen.
+const vercelScheduledJobs = CRON_JOBS.filter((c) => c.scheduler !== 'pgcron');
+
 describe('cron registry ⇔ vercel.json', () => {
   it('is a bijection on path (every cron registered, no extras)', () => {
-    const registryPaths = new Set(CRON_JOBS.map((c) => c.path));
+    const registryPaths = new Set(vercelScheduledJobs.map((c) => c.path));
     const vercelPaths = new Set(vercelCrons.map((c) => c.path));
 
     const missingFromRegistry = [...vercelPaths].filter((p) => !registryPaths.has(p));
@@ -40,7 +44,7 @@ describe('cron registry ⇔ vercel.json', () => {
 
   it('schedules match vercel.json exactly', () => {
     const vercelByPath = new Map(vercelCrons.map((c) => [c.path, c.schedule]));
-    for (const job of CRON_JOBS) {
+    for (const job of vercelScheduledJobs) {
       expect(job.schedule, `schedule-mismatch for ${job.jobName}`).toBe(vercelByPath.get(job.path));
     }
   });

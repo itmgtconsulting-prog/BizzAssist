@@ -99,8 +99,8 @@ function gyldigNu(arr: Record<string, unknown>[]): Record<string, unknown> | nul
   return arr.find((x) => periode(x).gyldigTil == null) ?? arr[arr.length - 1];
 }
 
-/** Normaliserer rollenavn fra CVR FUNKTION-attribut */
-function normalizeRolle(raw: string): string | null {
+/** Normaliserer rollenavn fra CVR FUNKTION-attribut. Eksporteret for unit-test (bizz-2234). */
+export function normalizeRolle(raw: string): string | null {
   if (!raw) return null;
   const low = raw.toLowerCase();
   if (low.includes('direktør') || low.includes('adm.')) return 'direktør';
@@ -140,7 +140,7 @@ interface RelationRow {
  * @param hit - ES search hit
  * @returns Deltager + relationer, eller null ved ugyldige data
  */
-function mapDeltagerHit(hit: Record<string, unknown>): {
+export function mapDeltagerHit(hit: Record<string, unknown>): {
   deltager: DeltagerRow;
   relationer: RelationRow[];
 } | null {
@@ -185,6 +185,11 @@ function mapDeltagerHit(hit: Record<string, unknown>): {
         // bruges som sidst_opdateret (INDRAPPORTERET) på register-rækker i
         // stedet for deltager-niveau del.sidstOpdateret.
         let ejerandelSidstOpdateret: string | null = null;
+        // BIZZ-2234: perioden for ejerandel-værdien bruges som gyldig_fra/til på
+        // den syntetiske register-række nedenfor (ejerregister-signalet har ingen
+        // FUNKTION-periode i medlemsData — se emission efter FUNKTION-loopet).
+        let ejerandelGyldigFra: string | null = null;
+        let ejerandelGyldigTil: string | null = null;
         const ejerAttr = (attrs as Record<string, unknown>[]).find(
           (a) => a.type === 'EJERANDEL' || a.type === 'EJERANDEL_PROCENT'
         );
@@ -199,6 +204,9 @@ function mapDeltagerHit(hit: Record<string, unknown>): {
             const raw = parseFloat(gyldigEjer.vaerdi as string);
             ejerandelPct = raw <= 1 ? raw * 100 : raw;
             ejerandelSidstOpdateret = (gyldigEjer.sidstOpdateret as string) ?? null;
+            const ejerPeriode = gyldigEjer.periode as Record<string, unknown> | undefined;
+            ejerandelGyldigFra = ((ejerPeriode?.gyldigFra as string) ?? '').slice(0, 10) || null;
+            ejerandelGyldigTil = ((ejerPeriode?.gyldigTil as string) ?? '').slice(0, 10) || null;
           }
         }
 
@@ -233,6 +241,29 @@ function mapDeltagerHit(hit: Record<string, unknown>): {
               sidst_hentet_fra_cvr: new Date().toISOString(),
             });
           }
+        }
+
+        // BIZZ-2234: emit ejerregister-signalet. En REGISTER-hovedtype org bærer
+        // ejerandelen i medlemsData.attributter (EJERANDEL_PROCENT, parset ovenfor),
+        // mens selve ejerregister-rollen ligger som FUNKTION='EJERREGISTER' på
+        // ORG-niveau (org.attributter) — IKKE i medlemsData. FUNKTION-loopet ovenfor
+        // ser kun medlemsData, så register-signalet + ejerandel_pct tabtes helt, og
+        // mv_virksomhedshandel_kandidater (M&A-radar) filtrerer netop på
+        // type='register' AND ejerandel_pct IS NOT NULL → radaren stod tom.
+        // Vi spejler backfill-cvr-ejerskab-v3-logikken: hovedtype==='REGISTER' +
+        // en parset ejerandel ⇒ én type='register'-relation med ejerandel_pct og
+        // ejerandel-periodens gyldig_fra/til. Additivt; påvirker ikke øvrige roller.
+        if (hovedtype === 'REGISTER' && ejerandelPct !== null) {
+          relationer.push({
+            virksomhed_cvr: String(cvr),
+            deltager_enhedsnummer: enhedsNummer,
+            type: 'register',
+            ejerandel_pct: ejerandelPct,
+            gyldig_fra: ejerandelGyldigFra ?? '1900-01-01',
+            gyldig_til: ejerandelGyldigTil,
+            sidst_opdateret: ejerandelSidstOpdateret,
+            sidst_hentet_fra_cvr: new Date().toISOString(),
+          });
         }
       }
 

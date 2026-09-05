@@ -23,11 +23,12 @@ const vercelCrons: VercelCron[] = JSON.parse(readFileSync(join(ROOT, 'vercel.jso
 
 // BIZZ-2221: pg_cron-schedulerede jobs ligger IKKE i vercel.json (de køres
 // in-DB via migration). 'internal'-jobs drives in-process fra en anden cron
-// (watchdog piggyback) og er heller ikke i vercel.json. Kun Vercel-schedulerede
-// jobs indgår i bijektionen.
-const vercelScheduledJobs = CRON_JOBS.filter(
-  (c) => c.scheduler !== 'pgcron' && c.scheduler !== 'internal'
-);
+// (watchdog piggyback) og er heller ikke i vercel.json. BIZZ-2238: 'local'-jobs
+// køres uden for Vercel (GitHub Actions / dev-server-script) og har hverken
+// vercel.json-entry eller route.ts. Kun Vercel-schedulerede jobs indgår i
+// bijektionen + route-checket.
+const NON_VERCEL: ReadonlyArray<string> = ['pgcron', 'internal', 'local'];
+const vercelScheduledJobs = CRON_JOBS.filter((c) => !NON_VERCEL.includes(c.scheduler ?? 'vercel'));
 
 describe('cron registry ⇔ vercel.json', () => {
   it('is a bijection on path (every cron registered, no extras)', () => {
@@ -61,7 +62,11 @@ describe('cron registry integrity', () => {
   });
 
   it('every cron path resolves to a route.ts file', () => {
+    // BIZZ-2238: 'local'-jobs (GitHub Actions / dev-server-script) har ingen
+    // route.ts — deres path peger på scriptet. pgcron/internal beholder route.ts
+    // (manuel trigger), så kun 'local' undtages her.
     for (const job of CRON_JOBS) {
+      if (job.scheduler === 'local') continue;
       const rel = job.path.replace(/\?.*$/, '').replace(/^\//, '');
       const routeFile = join(ROOT, 'app', rel, 'route.ts');
       expect(existsSync(routeFile), `mangler route: ${routeFile}`).toBe(true);

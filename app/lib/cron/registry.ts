@@ -54,8 +54,12 @@ export interface CronJob {
    * NOT in vercel.json (bypasses Vercel's ~40-cron execution cap, BIZZ-2221).
    * The pg_cron job writes its own cron_heartbeats row so the watchdog still
    * monitors it via this registry entry.
+   * `local` → kørt uden for Vercel (GitHub Actions eller dev-server-script),
+   * IKKE i vercel.json og har ingen route.ts. Skriver selv sin cron_heartbeats-
+   * række (via psql) så watchdog + service-scan overvåger den som alt andet
+   * (BIZZ-2238 — lukker hullet der lod weekly-sync stå stille i ~2 uger).
    */
-  scheduler?: 'vercel' | 'pgcron' | 'internal';
+  scheduler?: 'vercel' | 'pgcron' | 'internal' | 'local';
 }
 
 /** A continuously-synced data domain with a freshness SLO. */
@@ -459,6 +463,30 @@ export const CRON_JOBS: CronJob[] = [
     intervalMinutes: DAY,
     category: 'report',
     description: 'Daglig admin-rapport via email',
+  },
+  // ── Lokale jobs (BIZZ-2238) — uden for Vercel, ingen route.ts. Skriver selv
+  //    heartbeat via psql. Ekskluderet fra vercel.json-bijektion + route-check
+  //    i registry.validation.test.ts via scheduler==='local'.
+  {
+    jobName: 'sync-prod-to-test',
+    path: 'scripts/sync-prod-to-test.sh',
+    schedule: '0 2 * * 1', // GitHub Actions: mandag 02:00 UTC (.github/workflows/sync-test-data.yml)
+    intervalMinutes: WEEK,
+    category: 'ingest',
+    description:
+      'Ugentlig prod→test data-sync (GitHub Actions). Skriver heartbeat sidst i sync-prod-to-test.sh: error hvis intet synkede, degraded hvis kritisk cache sprang over.',
+    expectsWork: true,
+    scheduler: 'local',
+  },
+  {
+    jobName: 'tl-backfill-ejf',
+    path: 'scripts/watchdog-tl-backfill.sh',
+    schedule: '@stall-runner', // dev-server supervisor-loop (ensure-backfill-watchdog.sh), ikke crontab
+    intervalMinutes: DAY,
+    category: 'backfill',
+    description:
+      'BIZZ-1881 TL-backfill af ejf-BFEer (stall-resistent watchdog på dev-server). Skriver heartbeat pr. supervisions-cyklus så et dødt/hængende backfill fanges.',
+    scheduler: 'local',
   },
 ];
 

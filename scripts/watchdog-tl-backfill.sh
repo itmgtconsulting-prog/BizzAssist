@@ -31,7 +31,32 @@ start() {
   echo $!
 }
 
+# ── Self-monitorering (BIZZ-2238) ────────────────────────────────────────────
+# Skriv cron_heartbeats-række til PROD så watchdog + service-scan overvåger dette
+# lokale backfill: hvis supervisoren dør/hænger, går heartbeatet overdue → alarm.
+# Bruger samme SUPABASE_PROD_DB_URL som backfill-scriptet (verificeret virker).
+PROD_DB_URL=$(grep -E '^SUPABASE_PROD_DB_URL=' /root/BizzAssist/.env.local 2>/dev/null | cut -d= -f2-)
+HB_INTERVAL_MIN=30   # forventet heartbeat-kadence; overdue efter 2× = 60 min
+write_heartbeat() {
+  # $1=status (success|degraded|error) $2=note $3=expected_interval_min
+  [ -z "$PROD_DB_URL" ] && return 0
+  local status="$1" note ival
+  note=$(printf '%s' "$2" | sed "s/'/''/g")
+  ival="${3:-$HB_INTERVAL_MIN}"
+  psql "$PROD_DB_URL" -v ON_ERROR_STOP=1 -c "
+    INSERT INTO public.cron_heartbeats
+      (job_name, last_run_at, last_status, expected_interval_minutes, last_degraded_reason)
+    VALUES ('tl-backfill-ejf', now(), '$status', $ival,
+      $([ "$status" = success ] && echo NULL || echo "'$note'"))
+    ON CONFLICT (job_name) DO UPDATE SET
+      last_run_at = EXCLUDED.last_run_at, last_status = EXCLUDED.last_status,
+      expected_interval_minutes = EXCLUDED.expected_interval_minutes,
+      last_degraded_reason = EXCLUDED.last_degraded_reason;
+  " >/dev/null 2>&1 || echo "[watchdog $(date -Is)] WARN: heartbeat-skrivning fejlede" >> "$LOG"
+}
+
 PID=""
+LAST_HB=0
 while true; do
   if [ -z "$PID" ] || ! kill -0 "$PID" 2>/dev/null; then
     echo "[watchdog $(date -Is)] starter backfill (offset=$OFFSET conc=$CONC)" >> "$LOG"
@@ -40,6 +65,7 @@ while true; do
     NOW=$(date +%s); MT=$(stat -c %Y "$LOG" 2>/dev/null || echo "$NOW")
     if [ $(( NOW - MT )) -gt $STALL_SECS ]; then
       echo "[watchdog $(date -Is)] STALL $(( NOW - MT ))s -> dræber $PID og genstarter" >> "$LOG"
+      write_heartbeat degraded "stall $(( NOW - MT ))s -> genstart"
       kill -9 "$PID" 2>/dev/null
       sleep 5
       PID=$(start)
@@ -47,8 +73,17 @@ while true; do
     # Stop watchdog når slice er færdig (scriptet printer 'DONE —')
     if tail -3 "$LOG" 2>/dev/null | grep -q '\[1881-all-ejf\] DONE'; then
       echo "[watchdog $(date -Is)] DONE registreret -> watchdog stopper" >> "$LOG"
+      # Lang forventet-interval så et FÆRDIGT backfill ikke fejl-alarmerer den
+      # kommende uge (tid til at afregistrere det midlertidige job).
+      write_heartbeat success "backfill færdig" 10080
       exit 0
     fi
+  fi
+  # Throttlet sund-heartbeat ~hver HB_INTERVAL_MIN mens jobbet kører.
+  NOW=$(date +%s)
+  if [ $(( NOW - LAST_HB )) -ge $(( HB_INTERVAL_MIN * 60 )) ]; then
+    write_heartbeat success "kører"
+    LAST_HB=$NOW
   fi
   sleep $POLL
 done

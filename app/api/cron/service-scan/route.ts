@@ -43,6 +43,9 @@ import { logger } from '@/app/lib/logger';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
 import { companyInfo } from '@/app/lib/companyInfo';
 import { RESEND_ENDPOINT } from '@/app/lib/serviceEndpoints';
+import { checkHeartbeats } from '@/app/lib/cronHeartbeat';
+import { checkAllDataFreshness } from '@/app/lib/dataFreshness';
+import { getCronJob } from '@/app/lib/cron/registry';
 
 /** Vercel Cron max duration (seconds) — Pro plan allows up to 300s */
 export const maxDuration = 300;
@@ -81,10 +84,19 @@ const BLOCKED_DIFF_PATTERNS: RegExp[] = [
 
 /** A single issue found during a scan — mirrors ScanIssue from service-manager/route.ts */
 interface ScanIssue {
-  type: 'build_error' | 'runtime_error' | 'type_error' | 'config_error';
+  // BIZZ-2237: udvidet med drift-typer (overdue cron, silent no-op, stale datakilde).
+  type:
+    | 'build_error'
+    | 'runtime_error'
+    | 'type_error'
+    | 'config_error'
+    | 'cron_overdue'
+    | 'cron_degraded'
+    | 'stale_data';
   severity: 'error' | 'warning';
   message: string;
-  source: 'vercel_build' | 'vercel_logs' | 'static';
+  // BIZZ-2237: nye kilder for heartbeat- + freshness-checks.
+  source: 'vercel_build' | 'vercel_logs' | 'static' | 'cron_heartbeat' | 'data_freshness';
   context?: string;
 }
 
@@ -225,14 +237,121 @@ async function getDeploymentErrors(deploymentId: string): Promise<VercelEvent[]>
  *
  * @returns Object with issues array and human-readable summary.
  */
+/**
+ * BIZZ-2237: Drift-checks der forbruger den eksisterende overvaagnings-infra
+ * (cron_heartbeats) i stedet for kun Vercel. Flager:
+ *  - overdue jobs (ingen heartbeat inden for 2x forventet kadence)
+ *  - failed heartbeats (last_status='error')
+ *  - silent no-op / degraded: last_status='degraded', ELLER expectsWork-jobs der
+ *    rapporterer success men itemsProcessed=0 (fanger jobs der "koerte" men intet lavede)
+ *
+ * @returns ScanIssues for cron-heartbeat-problemer
+ */
+export async function checkCronHeartbeatIssues(): Promise<ScanIssue[]> {
+  const issues: ScanIssue[] = [];
+  const heartbeats = await checkHeartbeats();
+  for (const hb of heartbeats) {
+    const job = getCronJob(hb.job_name);
+    if (hb.is_overdue) {
+      issues.push({
+        type: 'cron_overdue',
+        severity: 'error',
+        message: `Cron '${hb.job_name}' er overdue (~${hb.minutes_overdue} min uden heartbeat)`,
+        source: 'cron_heartbeat',
+        context: [
+          `Forventet kadence: hver ${hb.expected_interval_minutes} min`,
+          `Sidste koersel: ${hb.last_run_at}`,
+          job?.description ? `Job: ${job.description}` : null,
+        ]
+          .filter(Boolean)
+          .join(' · '),
+      });
+      continue; // overdue overskygger status-checks (data er per definition forældet)
+    }
+    if (hb.last_status === 'error') {
+      issues.push({
+        type: 'cron_degraded',
+        severity: 'error',
+        message: `Cron '${hb.job_name}' fejlede sidste koersel`,
+        source: 'cron_heartbeat',
+        context: hb.last_error ?? undefined,
+      });
+      continue;
+    }
+    // Silent no-op: enten eksplicit degraded, eller et expectsWork-job der "lykkedes"
+    // men intet behandlede (defense-in-depth hvis cronMonitor ikke naaede at markere degraded).
+    const silentNoop =
+      job?.expectsWork === true && hb.last_status === 'success' && hb.last_items_processed === 0;
+    if (hb.last_status === 'degraded' || silentNoop) {
+      issues.push({
+        type: 'cron_degraded',
+        severity: 'warning',
+        message: `Cron '${hb.job_name}' koerte uden at behandle noget (silent no-op / degraded)`,
+        source: 'cron_heartbeat',
+        context:
+          hb.last_degraded_reason ??
+          (silentNoop ? 'expectsWork=true men items_processed=0' : undefined),
+      });
+    }
+  }
+  return issues;
+}
+
+/**
+ * BIZZ-2237: Freshness-checks mod data_sync_status/DATA_SOURCES-SLOerne.
+ * Flager datakilder der er aeldre end warning/criticalHours.
+ *
+ * @returns ScanIssues for stale datakilder
+ */
+export async function checkDataFreshnessIssues(): Promise<ScanIssue[]> {
+  const issues: ScanIssue[] = [];
+  const freshness = await checkAllDataFreshness();
+  for (const f of freshness) {
+    if (f.status !== 'warning' && f.status !== 'critical') continue;
+    const ageTxt =
+      f.hoursSinceUpdate != null
+        ? `${Math.round(f.hoursSinceUpdate)}t siden opdatering`
+        : 'ukendt alder';
+    issues.push({
+      type: 'stale_data',
+      severity: f.status === 'critical' ? 'error' : 'warning',
+      message: `Datakilde '${f.sourceName}' er forældet (${ageTxt})`,
+      source: 'data_freshness',
+      context: [
+        `Tabel: ${f.table}`,
+        `Traerskel: advarsel ${f.warningThresholdHours}t / kritisk ${f.criticalThresholdHours}t`,
+        f.error ?? null,
+      ]
+        .filter(Boolean)
+        .join(' · '),
+    });
+  }
+  return issues;
+}
+
 async function runScan(): Promise<{ issues: ScanIssue[]; summary: string }> {
   const issues: ScanIssue[] = [];
+
+  // ── 0. Drift-checks (heartbeats + freshness) — koerer UAFHAENGIGT af Vercel ──
+  // BIZZ-2237: disse skal altid koere, selv hvis Vercel-creds mangler (de tabte
+  // tre ting i BIZZ-2236 var netop ikke-Vercel-jobs). Kaldes foerst saa de indgaar
+  // i issues uanset Vercel-grenens early-returns nedenfor.
+  try {
+    issues.push(...(await checkCronHeartbeatIssues()));
+    issues.push(...(await checkDataFreshnessIssues()));
+  } catch (e) {
+    logger.error('[service-scan] drift-checks fejlede:', e);
+  }
 
   // ── 1. Check credentials ──────────────────────────────────────────────────
   const hasVercelToken = !!process.env.VERCEL_API_TOKEN;
   const hasProjectId = !!process.env.VERCEL_PROJECT_ID;
 
-  if (!hasVercelToken || !hasProjectId) {
+  // BIZZ-2237: manglende Vercel-creds afbryder ikke laengere hele scannet — drift-
+  // checks (heartbeats/freshness) er allerede koert ovenfor. Vi flager blot config
+  // og springer den Vercel-specifikke gren over.
+  const vercelConfigured = hasVercelToken && hasProjectId;
+  if (!vercelConfigured) {
     issues.push({
       type: 'config_error',
       severity: 'warning',
@@ -245,17 +364,12 @@ async function runScan(): Promise<{ issues: ScanIssue[]; summary: string }> {
         .filter(Boolean)
         .join(', '),
     });
-    return {
-      issues,
-      summary:
-        'Scan afbrudt: manglende Vercel-konfiguration. Tilføj VERCEL_API_TOKEN og VERCEL_PROJECT_ID i miljøvariabler.',
-    };
   }
 
   // ── 2. Check recent deployments for build failures ────────────────────────
-  const deployments = await getDeployments();
+  const deployments = vercelConfigured ? await getDeployments() : null;
 
-  if (!deployments) {
+  if (vercelConfigured && !deployments) {
     issues.push({
       type: 'config_error',
       severity: 'warning',
@@ -263,7 +377,7 @@ async function runScan(): Promise<{ issues: ScanIssue[]; summary: string }> {
       source: 'vercel_build',
       context: 'Vercel API returnerede fejl. Tjek at VERCEL_API_TOKEN er gyldigt.',
     });
-  } else {
+  } else if (deployments) {
     const failedBuilds = deployments.filter((d) => d.state === 'ERROR');
     for (const d of failedBuilds) {
       issues.push({

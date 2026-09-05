@@ -33,10 +33,16 @@ export async function resolveTenantId(): Promise<AuthContext | null> {
     } = await supabase.auth.getUser();
     if (!user) return null;
 
+    // BIZZ-2192.4 (ADR-0011): deterministisk tenant-valg. Tidligere plukkede
+    // .limit(1) et VILKÅRLIGT membership for multi-tenant-brugere (ustabilt
+    // skrive-mål). Vi ordner nu på created_at ASC → ældste (personlige) tenant
+    // vælges konsistent. For single-membership-brugere (langt de fleste) er
+    // resultatet uændret. Minimal ændring bevidst — funktionen er deploy-følsom.
     const { data } = (await supabase
       .from('tenant_memberships')
       .select('tenant_id')
       .eq('user_id', user.id)
+      .order('created_at', { ascending: true })
       .limit(1)
       .single()) as { data: { tenant_id: string } | null };
     if (!data?.tenant_id) return null;

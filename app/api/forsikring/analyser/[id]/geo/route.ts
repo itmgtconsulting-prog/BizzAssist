@@ -13,7 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { getTenantSchemaName } from '@/lib/db/tenant';
+import { getDomainLinkedTenants } from '@/app/lib/domainFederation';
 import { logger } from '@/app/lib/logger';
 import { resolveSfeForAdresse } from '@/app/lib/forsikring/sfeStruktur';
 import { bygAnvendelseTekst } from '@/app/lib/bbrKoder';
@@ -205,10 +205,35 @@ export async function GET(
   }
 
   const admin = createAdminClient();
-  const schemaName = await getTenantSchemaName(auth.tenantId);
-  if (!schemaName) {
-    return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+
+  // BIZZ-2192.2c: Domæne-federation (ADR-0011) — resolv ejer-schemaet (egen ∪
+  // co-domæne-medlemmers, query-tid) for analysen. Kun federations-schemaer
+  // søges → ikke-medlem får 404 (ingen læk).
+  const federatedSchemas = await getDomainLinkedTenants(auth.userId);
+  let schemaName: string | null = null;
+  let ownerTenantId: string | null = null;
+  for (const s of federatedSchemas) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data } = await (admin as any)
+        .schema(s)
+        .from('forsikring_analyser')
+        .select('tenant_id')
+        .eq('id', id)
+        .maybeSingle();
+      if (data) {
+        schemaName = s;
+        ownerTenantId = (data as { tenant_id: string }).tenant_id;
+        break;
+      }
+    } catch {
+      // schema ikke eksponeret / mangler tabel → spring sikkert over
+    }
   }
+  if (!schemaName || !ownerTenantId) {
+    return NextResponse.json({ error: 'Analyse ikke fundet' }, { status: 404 });
+  }
+  const scopeTenantId = ownerTenantId;
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -220,13 +245,13 @@ export async function GET(
         .from('forsikring_aktiver')
         .select('id, type, label, bfe, cvr, adresse, matched_policy_id, raw_data')
         .eq('analyse_id', id)
-        .eq('tenant_id', auth.tenantId)
+        .eq('tenant_id', scopeTenantId)
         .in('type', ['ejendom', 'virksomhed']),
       db
         .from('forsikring_gaps')
         .select('aktiv_id, severity')
         .eq('analyse_id', id)
-        .eq('tenant_id', auth.tenantId),
+        .eq('tenant_id', scopeTenantId),
     ]);
 
     const aktiver = (aktiverResult.data ?? []) as Array<{
@@ -323,7 +348,7 @@ export async function GET(
         .from('forsikring_policies')
         .select('id, raw_metadata')
         .in('id', [...new Set(matchedPolicyIds)])
-        .eq('tenant_id', auth.tenantId);
+        .eq('tenant_id', scopeTenantId);
       for (const row of (policyRows ?? []) as Array<{
         id: string;
         raw_metadata: { bygninger?: PoliceBygning[] } | null;

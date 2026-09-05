@@ -156,6 +156,12 @@ function DanishPrivacy() {
             sker på grundlag af standardkontraktbestemmelser (SCC).
           </li>
           <li>
+            <strong className="text-white">Atlassian Pty Ltd (Jira)</strong> (Australien / EU) —
+            Sagsstyring for fejlrapporter og support. Modtager kun de oplysninger du selv indsender
+            i en fejlrapport eller support-henvendelse (evt. e-mail, fritekst og skærmbillede).
+            Overførsel sker på grundlag af standardkontraktbestemmelser (SCC).
+          </li>
+          <li>
             <strong className="text-white">Mapbox Inc.</strong> (USA) — Kortvisning og
             geodata-tjenester. Behandler: ejendomskoordinater, kortvisningsområde og IP-adresse.
             Overførsel sker på grundlag af standardkontraktbestemmelser (SCC).
@@ -405,6 +411,12 @@ function EnglishPrivacy() {
           </li>
           <li>
             <strong className="text-white">Twilio Inc.</strong> (USA) — SMS messaging. Transfer is
+            based on Standard Contractual Clauses (SCC).
+          </li>
+          <li>
+            <strong className="text-white">Atlassian Pty Ltd (Jira)</strong> (Australia / EU) —
+            Issue tracking for bug reports and support. Receives only the information you submit in
+            a bug report or support request (optional email, free text and screenshot). Transfer is
             based on Standard Contractual Clauses (SCC).
           </li>
           <li>

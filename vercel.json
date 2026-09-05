@@ -5,10 +5,6 @@
       "schedule": "*/15 * * * *"
     },
     {
-      "path": "/api/cron/process-job-queue",
-      "schedule": "*/5 * * * *"
-    },
-    {
       "path": "/api/cron/poll-properties",
       "schedule": "30 6 * * *"
     },
@@ -71,10 +67,6 @@
     {
       "path": "/api/cron/refresh-data-catalog",
       "schedule": "0 3 * * *"
-    },
-    {
-      "path": "/api/cron/refresh-knowledge-cache",
-      "schedule": "30 3 * * *"
     },
     {
       "path": "/api/cron/refresh-intel-scorecards",

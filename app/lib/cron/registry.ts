@@ -55,7 +55,7 @@ export interface CronJob {
    * The pg_cron job writes its own cron_heartbeats row so the watchdog still
    * monitors it via this registry entry.
    */
-  scheduler?: 'vercel' | 'pgcron';
+  scheduler?: 'vercel' | 'pgcron' | 'internal';
 }
 
 /** A continuously-synced data domain with a freshness SLO. */
@@ -114,11 +114,15 @@ export const CRON_JOBS: CronJob[] = [
   {
     jobName: 'process-job-queue',
     path: '/api/cron/process-job-queue',
-    schedule: '*/5 * * * *',
-    intervalMinutes: 5,
+    schedule: '*/30 * * * *',
+    intervalMinutes: 30,
     category: 'maintenance',
     description:
-      'Durable-kø-worker: claimer og kører batches af lange jobs (>300s) inden for tidsbudget',
+      'Durable-kø-worker: claimer og kører batches af lange jobs (>300s). BIZZ-2221: piggybacked på watchdog (Vercel scheduler ikke denne cron) — drainJobQueue kaldes hver watchdog-kørsel; route bevaret til manuel trigger.',
+    // BIZZ-2221: Vercel fyrede aldrig denne cron (over ~38-cap). Drives nu
+    // in-process fra watchdog (hver 30. min) via jobDrain.drainJobQueue → IKKE
+    // i vercel.json (frigør slot så de øvrige 38 fyrer).
+    scheduler: 'internal',
   },
   {
     jobName: 'purge-cron-history',
@@ -405,11 +409,14 @@ export const CRON_JOBS: CronJob[] = [
   {
     jobName: 'refresh-knowledge-cache',
     path: '/api/cron/refresh-knowledge-cache',
-    schedule: '30 3 * * *',
-    intervalMinutes: DAY,
+    schedule: '*/30 * * * *',
+    intervalMinutes: 30,
     category: 'intel',
     description:
-      'Enqueuer 12 per-topic knowledge-builds til job-køen (tidligere monolitisk 504-timeout, BIZZ-2208)',
+      'Enqueuer per-topic knowledge-builds til job-køen. BIZZ-2221: piggybacked på watchdog (enqueueKnowledgeTopicsIfDue, dagligt guard) — route bevaret til manuel trigger.',
+    // BIZZ-2221: Vercel fyrede aldrig denne cron. Drives nu in-process fra
+    // watchdog (hver 30. min tjekker den daglig-due-guard) → IKKE i vercel.json.
+    scheduler: 'internal',
   },
   {
     jobName: 'refresh-intel-scorecards',

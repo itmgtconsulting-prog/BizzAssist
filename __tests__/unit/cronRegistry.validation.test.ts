@@ -22,8 +22,12 @@ interface VercelCron {
 const vercelCrons: VercelCron[] = JSON.parse(readFileSync(join(ROOT, 'vercel.json'), 'utf8')).crons;
 
 // BIZZ-2221: pg_cron-schedulerede jobs ligger IKKE i vercel.json (de køres
-// in-DB via migration). Kun Vercel-schedulerede jobs indgår i bijektionen.
-const vercelScheduledJobs = CRON_JOBS.filter((c) => c.scheduler !== 'pgcron');
+// in-DB via migration). 'internal'-jobs drives in-process fra en anden cron
+// (watchdog piggyback) og er heller ikke i vercel.json. Kun Vercel-schedulerede
+// jobs indgår i bijektionen.
+const vercelScheduledJobs = CRON_JOBS.filter(
+  (c) => c.scheduler !== 'pgcron' && c.scheduler !== 'internal'
+);
 
 describe('cron registry ⇔ vercel.json', () => {
   it('is a bijection on path (every cron registered, no extras)', () => {

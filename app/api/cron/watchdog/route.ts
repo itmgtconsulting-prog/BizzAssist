@@ -18,6 +18,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { recordHeartbeat } from '@/app/lib/cronHeartbeat';
+import { drainJobQueue, enqueueKnowledgeTopicsIfDue } from '@/app/lib/jobDrain';
 import { RESEND_ENDPOINT } from '@/app/lib/serviceEndpoints';
 import { companyInfo } from '@/app/lib/companyInfo';
 import { findIncompleteTenants } from '@/lib/tenant/verifyTenantSchema';
@@ -417,6 +418,38 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const durationMs = Date.now() - startedAt;
     // Write own heartbeat directly (no withCronMonitor to avoid circular dep)
     void recordHeartbeat('watchdog', 'success', durationMs, 30);
+
+    // BIZZ-2221: piggyback den durable job-kø + knowledge-refresh på watchdog,
+    // da Vercel ikke scheduler process-job-queue/refresh-knowledge-cache (over
+    // cap). Watchdog fyrer pålideligt hver 30. min. Wrapped i try/catch så
+    // kø-drift ALDRIG bryder watchdogs kerne-overvågning. Egne heartbeats skrives
+    // så overdue-detektering + dashboard stadig ser dem "køre".
+    try {
+      const drainStart = Date.now();
+      const kn = await enqueueKnowledgeTopicsIfDue(20); // dagligt: enqueue knowledge-topics
+      const drain = await drainJobQueue(200_000); // drain kø inden for tidsbudget
+      const drainMs = Date.now() - drainStart;
+      void recordHeartbeat(
+        'process-job-queue',
+        drain.processed === 0 && drain.failed > 0 ? 'degraded' : 'success',
+        drainMs,
+        35,
+        drain.failed > 0 ? `${drain.failed} jobs fejlede` : undefined,
+        { itemsProcessed: drain.processed + drain.failed, itemsWritten: drain.processed }
+      );
+      void recordHeartbeat('refresh-knowledge-cache', 'success', drainMs, 35, undefined, {
+        itemsProcessed: kn.due ? kn.enqueued + kn.skipped : 0,
+        itemsWritten: kn.enqueued,
+      });
+      logger.log(
+        `[watchdog] piggyback: knowledge due=${kn.due} enqueued=${kn.enqueued}; drain processed=${drain.processed} failed=${drain.failed} reclaimed=${drain.reclaimed}`
+      );
+    } catch (e) {
+      logger.error(
+        '[watchdog] piggyback (job-kø/knowledge) fejl:',
+        e instanceof Error ? e.message : e
+      );
+    }
 
     logger.log(
       `[watchdog] Check complete: ${totalIssues} issues (${heartbeatIssues.length} heartbeat, ${freshnessIssues.length} freshness), email=${emailSent}, ${durationMs}ms`

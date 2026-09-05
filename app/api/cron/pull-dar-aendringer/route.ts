@@ -148,16 +148,61 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     let lastSekvensnummer = sekvensnummer;
     let pagesFetched = 0;
 
-    while (pagesFetched < MAX_PAGES) {
-      if (Date.now() - startTime > maxDuration * 1000 - SAFETY_MARGIN_MS) {
-        logger.warn('[dar-delta] Safety margin ramt');
-        break;
-      }
+    // BIZZ-2233: DAWA's sekvensnummer er GLOBALT på tværs af alle registre, så
+    // et adgangsadresse-hændelsesvindue kan være tomt uden at vi er ajour. Den
+    // gamle kode `break`ede på tomt vindue (og på events.length < PAGE_SIZE) →
+    // cronen stod permanent stille lige før tusindvis af ægte ændringer i
+    // senere vinduer. Vi scanner nu op til `seneste` og springer tomme vinduer
+    // over (rykker frem til vinduets top), i stedet for at stoppe.
+    let seneste = lastSekvensnummer + MAX_PAGES * EVENT_PAGE_SIZE;
+    try {
+      const sres = await fetch(`${DAWA_BASE}/replikering/senestesekvensnummer`, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (sres.ok) seneste = ((await sres.json()).sekvensnummer as number) ?? seneste;
+    } catch {
+      logger.warn('[dar-delta] Kunne ikke hente seneste sekvensnummer — bruger bounded scan');
+    }
 
+    // Flush-buffer: cursor rykkes KUN frem forbi events hvis tilhørende rækker
+    // faktisk er skrevet (safeSeq), så en tidsbudget-afbrydelse midt i et vindue
+    // ikke springer uskrevne ændringer over (det var en del af 111-dages-tabet).
+    let safeSeq = lastSekvensnummer;
+    let pendingRows: DarCacheRow[] = [];
+    let pendingDeletes: string[] = [];
+    let pendingSeq = lastSekvensnummer;
+    const flush = async () => {
+      if (pendingRows.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error } = await (admin as any)
+          .from('cache_dar')
+          .upsert(pendingRows, { onConflict: 'adresse_id' });
+        if (error) logger.error('[dar-delta] Upsert fejl:', error.message);
+        else upserted += pendingRows.length;
+        pendingRows = [];
+      }
+      if (pendingDeletes.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error } = await (admin as any)
+          .from('cache_dar')
+          .delete()
+          .in('adresse_id', pendingDeletes);
+        if (error) logger.error('[dar-delta] Delete fejl:', error.message);
+        else deleted += pendingDeletes.length;
+        pendingDeletes = [];
+      }
+      safeSeq = pendingSeq;
+    };
+
+    let budgetHit = false;
+    while (pagesFetched < MAX_PAGES && lastSekvensnummer < seneste && !budgetHit) {
+      if (Date.now() - startTime > maxDuration * 1000 - SAFETY_MARGIN_MS) break;
+
+      const windowTil = Math.min(lastSekvensnummer + EVENT_PAGE_SIZE, seneste);
       let events: Record<string, unknown>[];
       try {
         const res = await fetch(
-          `${DAWA_BASE}/replikering/adgangsadresser/haendelser?sekvensnummerfra=${lastSekvensnummer + 1}&sekvensnummertil=${lastSekvensnummer + EVENT_PAGE_SIZE}`,
+          `${DAWA_BASE}/replikering/adgangsadresser/haendelser?sekvensnummerfra=${lastSekvensnummer + 1}&sekvensnummertil=${windowTil}`,
           { signal: AbortSignal.timeout(30_000) }
         );
         if (!res.ok) {
@@ -169,81 +214,44 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         logger.error('[dar-delta] DAWA fetch error:', err instanceof Error ? err.message : err);
         break;
       }
-
-      if (events.length === 0) break;
       pagesFetched++;
       totalEvents += events.length;
 
-      // Gruppe: ændrede/oprettede adresse-ids (dedup) og nedlagte (delete)
-      const changedIds = new Set<string>();
-      const deleteIds: string[] = [];
+      // Behandl events i sekvens-rækkefølge så cursor kan rykkes sikkert frem.
+      const ordered = events
+        .map((e) => ({
+          seq: e.sekvensnummer as number,
+          op: e.operation as string,
+          id: ((e.data as Record<string, unknown> | undefined)?.id as string) ?? (e.id as string),
+        }))
+        .filter((e) => e.id)
+        .sort((a, b) => a.seq - b.seq);
 
-      for (const evt of events) {
-        const sekvens = evt.sekvensnummer as number;
-        if (sekvens > lastSekvensnummer) lastSekvensnummer = sekvens;
-
-        const operation = evt.operation as string;
-        const data = evt.data as Record<string, unknown> | undefined;
-        const id = (data?.id as string) ?? (evt.id as string);
-        if (!id) continue;
-
-        if (operation === 'delete' || operation === 'nedlæg') {
-          deleteIds.push(id);
-        } else {
-          changedIds.add(id);
-        }
-      }
-
-      // Gen-hent hver ændret adresse i mini-struktur og byg cache-rows.
-      // Vi henter enkeltvis (DAWA-lookup) i stedet for at bruge hændelsens rå
-      // data, så raw_data får samme berigede form som backfill/cachedLookup.
-      const upsertBatch: DarCacheRow[] = [];
-      for (const id of changedIds) {
+      for (const e of ordered) {
         if (Date.now() - startTime > maxDuration * 1000 - SAFETY_MARGIN_MS) {
-          logger.warn('[dar-delta] Safety margin ramt under gen-hentning');
+          budgetHit = true;
           break;
         }
-        const adr = await fetchAdresseMini(id);
-        if (!adr) {
-          skipped++;
-          continue;
-        }
-        const row = buildDarRow(adr);
-        if (row) upsertBatch.push(row);
-      }
-
-      // Batch upsert
-      if (upsertBatch.length > 0) {
-        for (let i = 0; i < upsertBatch.length; i += UPSERT_BATCH_SIZE) {
-          const batch = upsertBatch.slice(i, i + UPSERT_BATCH_SIZE);
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { error } = await (admin as any)
-            .from('cache_dar')
-            .upsert(batch, { onConflict: 'adresse_id' });
-          if (error) {
-            logger.error('[dar-delta] Upsert fejl:', error.message);
+        if (e.op === 'delete' || e.op === 'nedlæg') {
+          pendingDeletes.push(e.id);
+        } else {
+          // Gen-hent i mini-struktur (beriget form = samme som backfill).
+          const adr = await fetchAdresseMini(e.id);
+          if (!adr) {
+            skipped++;
           } else {
-            upserted += batch.length;
+            const row = buildDarRow(adr);
+            if (row) pendingRows.push(row);
           }
         }
+        pendingSeq = e.seq;
+        if (pendingRows.length + pendingDeletes.length >= UPSERT_BATCH_SIZE) await flush();
       }
+      await flush();
 
-      // Batch delete
-      if (deleteIds.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { error } = await (admin as any)
-          .from('cache_dar')
-          .delete()
-          .in('adresse_id', deleteIds);
-        if (error) {
-          logger.error('[dar-delta] Delete fejl:', error.message);
-        } else {
-          deleted += deleteIds.length;
-        }
-      }
-
-      // Færre events end page size = vi er ajour
-      if (events.length < EVENT_PAGE_SIZE) break;
+      // Fuldt behandlet vindue → ryk forbi hele vinduet (også tomme). Afbrudt
+      // af tidsbudget → kun frem til sidst skrevne event (safeSeq).
+      lastSekvensnummer = budgetHit ? safeSeq : windowTil;
     }
 
     // 3. Opdater cursor

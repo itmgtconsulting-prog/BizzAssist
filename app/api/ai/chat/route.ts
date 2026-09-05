@@ -29,7 +29,7 @@ import * as Sentry from '@sentry/nextjs';
 import { checkRateLimit, aiRateLimit } from '@/app/lib/rateLimit';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
 import { resolveTenantId } from '@/lib/api/auth';
-import { createAdminClient, tenantDb, type TenantDb } from '@/lib/supabase/admin';
+import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/lib/supabase/types';
 import { logActivity } from '@/app/lib/activityLog';
@@ -2588,22 +2588,15 @@ async function isTenantMonthlyBudgetExceeded(
 ): Promise<boolean> {
   if (!tenantId) return false;
   try {
-    const monthStart = new Date();
-    monthStart.setDate(1);
-    monthStart.setHours(0, 0, 0, 0);
-
-    const db: TenantDb = adminClient.schema('tenant');
-    const { data: usageData } = await db
-      .from('ai_token_usage')
-      .select('tokens_in, tokens_out')
-      .eq('tenant_id', tenantId)
-      .gte('created_at', monthStart.toISOString());
-
-    const monthlyTokens = (usageData ?? []).reduce(
-      (sum, r) => sum + (r.tokens_in ?? 0) + (r.tokens_out ?? 0),
-      0
-    );
-    return monthlyTokens >= TENANT_MONTHLY_TOKEN_LIMIT;
+    // BIZZ-2205: via public SECURITY DEFINER RPC. Det delte `tenant`-schema er
+    // ikke eksponeret til PostgREST (kun public + udvalgte tenant_*), så en
+    // direkte .schema('tenant')-query gav PGRST106 → fail-open (budget-gaten
+    // var reelt død). RPC'en summerer tokens siden månedens start.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (adminClient as any).rpc('tenant_monthly_token_sum', {
+      p_tenant_id: tenantId,
+    });
+    return Number(data ?? 0) >= TENANT_MONTHLY_TOKEN_LIMIT;
   } catch {
     // Fail-open: do not block request on DB error
     return false;
@@ -2632,16 +2625,27 @@ function recordTenantTokenUsage(
 ): Promise<void> {
   return (async () => {
     try {
-      const db: TenantDb = adminClient.schema('tenant');
-      await db.from('ai_token_usage').insert({
-        tenant_id: tenantId,
-        user_id: userId,
-        tokens_in: tokensIn,
-        tokens_out: tokensOut,
-        model: 'claude-sonnet-4-6',
+      // BIZZ-2205: via public SECURITY DEFINER RPC (record_ai_token_usage).
+      // Direkte .schema('tenant').insert gav PGRST106 (schema ikke eksponeret)
+      // og blev slugt af catch{} → Forbrugshistorik var altid tom. Fejl logges
+      // nu i stedet for at forsvinde tavst.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error } = await (adminClient as any).rpc('record_ai_token_usage', {
+        p_tenant_id: tenantId,
+        p_user_id: userId,
+        p_tokens_in: tokensIn,
+        p_tokens_out: tokensOut,
+        p_model: 'claude-sonnet-4-6',
+        p_route: '/api/ai/chat',
       });
-    } catch {
-      // Non-critical — best-effort tracking
+      if (error) {
+        logger.warn('[ai/chat] recordTenantTokenUsage RPC-fejl:', error.message);
+      }
+    } catch (err) {
+      logger.warn(
+        '[ai/chat] recordTenantTokenUsage fejl:',
+        err instanceof Error ? err.message : String(err)
+      );
     }
   })();
 }

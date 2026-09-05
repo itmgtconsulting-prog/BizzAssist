@@ -24,6 +24,7 @@ import { companyInfo } from '@/app/lib/companyInfo';
 import { findIncompleteTenants } from '@/lib/tenant/verifyTenantSchema';
 import { sendCriticalAlert } from '@/app/lib/service-manager-alerts';
 import { checkAllDataFreshness, type DomainFreshness } from '@/app/lib/dataFreshness';
+import { syncDriftTicket } from '@/app/lib/cron/driftTicketBridge';
 import * as Sentry from '@sentry/nextjs';
 
 export const maxDuration = 300;
@@ -306,6 +307,83 @@ async function shouldSendAlert(signature: string): Promise<boolean> {
   }
 }
 
+// ── Vedvarende-overdue-eskalering (BIZZ-2241) ─────────────────────────────────
+
+/**
+ * Antal på hinanden følgende watchdog-kørsler et job skal være overdue før det
+ * eskaleres til en JIRA-ticket. 3 × 30 min = ~90 min vedvarende overdue — giver
+ * auto-trigger + transient recovery tid, så vi kun ticketer NÅR trigger ikke
+ * bringer jobbet tilbage (undgår alarm-støj).
+ */
+const ESCALATE_AFTER = 3;
+
+/**
+ * Optæl på-hinanden-følgende overdue-observationer pr. job og eskalér til en
+ * (dedupliceret) JIRA-ticket via drift-broen når tærsklen krydses. Jobs der er
+ * kommet tilbage nulstilles (falder ud af tælle-state). Signatur-labelen matcher
+ * service-scans (samme type+source+dedupKey), så der ikke oprettes dobbelt-tickets
+ * uanset hvem der eskalerer først.
+ *
+ * State gemmes i data_sync_status (source_name='watchdog_escalation', last_error =
+ * JSON {jobName: count}) — samme mønster som alert-cooldown.
+ *
+ * @param overdue - aktuelt overdue jobs (jobName + detail)
+ * @returns antal nyoprettede tickets
+ */
+export async function escalatePersistentOverdue(
+  overdue: { jobName: string; detail: string }[]
+): Promise<number> {
+  try {
+    const admin = createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const a = admin as any;
+    const { data } = await a
+      .from('data_sync_status')
+      .select('last_error')
+      .eq('source_name', 'watchdog_escalation')
+      .maybeSingle();
+
+    let prev: Record<string, number> = {};
+    try {
+      prev = data?.last_error ? (JSON.parse(data.last_error) as Record<string, number>) : {};
+    } catch {
+      prev = {};
+    }
+
+    const next: Record<string, number> = {};
+    let escalated = 0;
+    for (const o of overdue) {
+      const count = (prev[o.jobName] ?? 0) + 1;
+      next[o.jobName] = count;
+      if (count >= ESCALATE_AFTER) {
+        const r = await syncDriftTicket({
+          type: 'cron_overdue',
+          severity: 'error',
+          source: 'cron_heartbeat',
+          dedupKey: o.jobName,
+          message: `Cron '${o.jobName}' vedvarende overdue (${count} watchdog-cyklusser)`,
+          context: `${o.detail}. Auto-trigger bragte ikke jobbet tilbage inden for ~${count * 30} min → eskaleret til ticket.`,
+        });
+        if (r.action === 'created') escalated++;
+      }
+    }
+
+    await a.from('data_sync_status').upsert(
+      {
+        source_name: 'watchdog_escalation',
+        last_error: JSON.stringify(next),
+        last_success: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'source_name' }
+    );
+    return escalated;
+  } catch (e) {
+    logger.error('[watchdog] vedvarende-overdue-eskalering fejlede:', e);
+    return 0;
+  }
+}
+
 // ── Main handler ────────────────────────────────────────────────────────────
 
 /**
@@ -384,6 +462,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
 
     const totalIssues = heartbeatIssues.length + freshnessIssues.length;
+
+    // BIZZ-2241: optæl vedvarende-overdue + eskalér til (dedup) ticket når
+    // auto-trigger ikke bringer jobbet tilbage. Kaldes UBETINGET så tælleren
+    // nulstilles for jobs der er kommet tilbage (tom overdue-liste → tom state).
+    const overdueForEscalation = heartbeatIssues
+      .filter((i) => i.kind === 'overdue')
+      .map((i) => ({ jobName: i.jobName, detail: i.detail }));
+    const escalatedTickets = await escalatePersistentOverdue(overdueForEscalation);
+    if (escalatedTickets > 0) {
+      logger.log(`[watchdog] eskalerede ${escalatedTickets} vedvarende-overdue jobs til tickets`);
+    }
 
     // Send alert email only if there are issues — men med cooldown (BIZZ-2209):
     // watchdoggen kører hvert 30. min, og et VEDVARENDE issue (fx en degraderet

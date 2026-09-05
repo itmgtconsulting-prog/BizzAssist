@@ -7,8 +7,12 @@
  * scheduled schema-parity.yml workflow.
  */
 import { describe, it, expect } from 'vitest';
-// @ts-expect-error — plain ESM .mjs helper, no type declarations
-import {
+// Plain ESM .mjs helper with no type declarations — cast the module to a loose
+// record so tsc doesn't try (and fail) to infer types from the JS source.
+import * as parityModule from '../../scripts/check-schema-parity.mjs';
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const {
   onlyIn,
   crossEnvTableDrift,
   crossEnvColumnDrift,
@@ -16,7 +20,8 @@ import {
   tenantTemplateDrift,
   summarize,
   ALLOWLIST,
-} from '../../scripts/check-schema-parity.mjs';
+} = parityModule as unknown as Record<string, any>;
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
 describe('onlyIn', () => {
   it('returns sorted elements of a missing from b', () => {
@@ -44,7 +49,7 @@ describe('crossEnvTableDrift', () => {
   it('reports full parity as empty arrays', () => {
     const s = { prod: ['public.a'], test: ['public.a'], dev: ['public.a'] };
     const { missingByEnv } = crossEnvTableDrift(s);
-    expect(Object.values(missingByEnv).every((a) => a.length === 0)).toBe(true);
+    expect(Object.values(missingByEnv).every((a) => (a as string[]).length === 0)).toBe(true);
   });
 });
 

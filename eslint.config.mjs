@@ -60,6 +60,9 @@ const eslintConfig = defineConfig([
       'app/lib/domainEmbedding.ts',
       'app/lib/domainStorage.ts',
       'app/lib/domainAuth.ts',
+      // BIZZ-2192.1: ADR-0011 federation helper — reads domain_member scoped by
+      // the caller's own user_id, analogous to domainAuth.resolveDomainId.
+      'app/lib/domainFederation.ts',
       'app/lib/domainEmbeddingWorker.ts',
       'app/lib/domainPromptBuilder.ts',
       'app/lib/domainEnrichEntities.ts',

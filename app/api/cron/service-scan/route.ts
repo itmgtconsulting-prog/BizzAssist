@@ -46,6 +46,7 @@ import { RESEND_ENDPOINT } from '@/app/lib/serviceEndpoints';
 import { checkHeartbeats } from '@/app/lib/cronHeartbeat';
 import { checkAllDataFreshness } from '@/app/lib/dataFreshness';
 import { getCronJob } from '@/app/lib/cron/registry';
+import { runPostConditions } from '@/app/lib/cron/postConditions';
 
 /** Vercel Cron max duration (seconds) — Pro plan allows up to 300s */
 export const maxDuration = 300;
@@ -92,11 +93,19 @@ interface ScanIssue {
     | 'config_error'
     | 'cron_overdue'
     | 'cron_degraded'
-    | 'stale_data';
+    | 'stale_data'
+    // BIZZ-2239: job rapporterede success men output er brudt (fx sitemap-huller).
+    | 'output_error';
   severity: 'error' | 'warning';
   message: string;
-  // BIZZ-2237: nye kilder for heartbeat- + freshness-checks.
-  source: 'vercel_build' | 'vercel_logs' | 'static' | 'cron_heartbeat' | 'data_freshness';
+  // BIZZ-2237/2239: nye kilder for heartbeat-, freshness- + post-condition-checks.
+  source:
+    | 'vercel_build'
+    | 'vercel_logs'
+    | 'static'
+    | 'cron_heartbeat'
+    | 'data_freshness'
+    | 'post_condition';
   context?: string;
 }
 
@@ -329,16 +338,40 @@ export async function checkDataFreshnessIssues(): Promise<ScanIssue[]> {
   return issues;
 }
 
+/**
+ * BIZZ-2239: Output-korrektheds-checks (post-conditions). Koerer de registrerede
+ * per-job assertions (fx sitemap-kontinuitet) og omsætter fejl til ScanIssues.
+ * Fanger jobs der rapporterer success men producerer brudt output.
+ *
+ * @returns ScanIssues for fejlede post-conditions
+ */
+async function checkPostConditionIssues(): Promise<ScanIssue[]> {
+  const issues: ScanIssue[] = [];
+  const runs = await runPostConditions();
+  for (const { jobName, result } of runs) {
+    if (result.ok) continue;
+    issues.push({
+      type: 'output_error',
+      severity: 'error',
+      message: `Job '${jobName}' producerede brudt output`,
+      source: 'post_condition',
+      context: result.message,
+    });
+  }
+  return issues;
+}
+
 async function runScan(): Promise<{ issues: ScanIssue[]; summary: string }> {
   const issues: ScanIssue[] = [];
 
-  // ── 0. Drift-checks (heartbeats + freshness) — koerer UAFHAENGIGT af Vercel ──
-  // BIZZ-2237: disse skal altid koere, selv hvis Vercel-creds mangler (de tabte
-  // tre ting i BIZZ-2236 var netop ikke-Vercel-jobs). Kaldes foerst saa de indgaar
-  // i issues uanset Vercel-grenens early-returns nedenfor.
+  // ── 0. Drift-checks (heartbeats + freshness + post-conditions) ──────────────
+  // BIZZ-2237/2239: disse skal altid koere, selv hvis Vercel-creds mangler (de
+  // tabte ting i BIZZ-2236 var netop ikke-Vercel-jobs). Kaldes foerst saa de
+  // indgaar i issues uanset Vercel-grenens early-returns nedenfor.
   try {
     issues.push(...(await checkCronHeartbeatIssues()));
     issues.push(...(await checkDataFreshnessIssues()));
+    issues.push(...(await checkPostConditionIssues()));
   } catch (e) {
     logger.error('[service-scan] drift-checks fejlede:', e);
   }

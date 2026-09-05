@@ -134,7 +134,7 @@
     },
     {
       "path": "/api/cron/refresh-vur-cache",
-      "schedule": "0 3 * * 0"
+      "schedule": "0 3 * * *"
     },
     {
       "path": "/api/cron/refresh-tinglysning-cache",

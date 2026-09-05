@@ -307,10 +307,11 @@ export const CRON_JOBS: CronJob[] = [
   {
     jobName: 'refresh-vur-cache',
     path: '/api/cron/refresh-vur-cache',
-    schedule: '0 3 * * 0',
-    intervalMinutes: WEEK,
+    schedule: '0 3 * * *',
+    intervalMinutes: DAY,
     category: 'cache',
-    description: 'Ugentlig VUR-vurderings-refresh → cache_vur',
+    description:
+      'Daglig VUR-vurderings-refresh → cache_vur (BIZZ-2232: dagligt indtil backlog drænet; cap 300/kørsel)',
     dataSource: 'cache_vur',
   },
   {

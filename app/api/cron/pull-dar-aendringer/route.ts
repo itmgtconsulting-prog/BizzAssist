@@ -17,6 +17,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { createHash } from 'node:crypto';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
@@ -43,47 +44,57 @@ function verifyCronSecret(request: NextRequest): boolean {
   return safeCompare(auth, `Bearer ${secret}`);
 }
 
+/**
+ * cache_dar-row: adresse_id (PK) + raw_data (hele DAWA mini-objektet) +
+ * source_hash (sha256 af raw_data) + synced_at. Skal matche det skema
+ * backfill-dar-cache.mjs og cachedLookup.ts skriver, så delta-opdaterede
+ * rækker har præcis samme form som de backfillede.
+ */
 interface DarCacheRow {
-  id: string;
-  vejnavn: string | null;
-  husnr: string | null;
-  postnr: string | null;
-  postnrnavn: string | null;
-  kommunekode: string | null;
-  kommunenavn: string | null;
-  x: number | null;
-  y: number | null;
-  status: number | null;
-  updated_at: string;
+  adresse_id: string;
+  raw_data: Record<string, unknown>;
+  source_hash: string;
+  synced_at: string;
 }
 
 /**
- * Mapper en DAWA adgangsadresse til cache_dar row.
+ * Bygger en cache_dar-row fra en DAWA adgangsadresse (struktur=mini).
  *
- * @param data - DAWA adgangsadresse data
- * @returns Cache row
+ * @param adr - DAWA adgangsadresse i mini-struktur
+ * @returns Cache row, eller null hvis id mangler
  */
-function mapAdresseToRow(data: Record<string, unknown>): DarCacheRow | null {
-  const id = data.id as string;
+function buildDarRow(adr: Record<string, unknown>): DarCacheRow | null {
+  const id = adr.id as string;
   if (!id) return null;
 
+  const rawJson = JSON.stringify(adr);
   return {
-    id,
-    vejnavn: (data.vejnavn as string) ?? null,
-    husnr: (data.husnr as string) ?? null,
-    postnr: ((data.postnr as Record<string, unknown>)?.nr as string) ?? null,
-    postnrnavn: ((data.postnr as Record<string, unknown>)?.navn as string) ?? null,
-    kommunekode: ((data.kommune as Record<string, unknown>)?.kode as string) ?? null,
-    kommunenavn: ((data.kommune as Record<string, unknown>)?.navn as string) ?? null,
-    x: (data.adgangspunkt as Record<string, unknown>)?.koordinater
-      ? ((data.adgangspunkt as Record<string, unknown>).koordinater as number[])[0]
-      : null,
-    y: (data.adgangspunkt as Record<string, unknown>)?.koordinater
-      ? ((data.adgangspunkt as Record<string, unknown>).koordinater as number[])[1]
-      : null,
-    status: (data.status as number) ?? null,
-    updated_at: new Date().toISOString(),
+    adresse_id: id,
+    raw_data: adr,
+    source_hash: createHash('sha256').update(rawJson).digest('hex'),
+    synced_at: new Date().toISOString(),
   };
+}
+
+/**
+ * Gen-henter en enkelt adgangsadresse fra DAWA i mini-struktur — den berigede
+ * form (vejnavn, postnrnavn, x/y, betegnelse) som consumers læser fra
+ * cache_dar.raw_data. Replikerings-hændelsernes rå `data` mangler disse felter,
+ * så vi gemmer IKKE hændelses-data direkte (ville give blandet raw_data-form).
+ *
+ * @param id - DAWA adgangsadresse-UUID
+ * @returns Mini-adresseobjekt, eller null ved 404/fejl (nedlagt/ukendt)
+ */
+async function fetchAdresseMini(id: string): Promise<Record<string, unknown> | null> {
+  try {
+    const res = await fetch(`${DAWA_BASE}/adgangsadresser/${id}?struktur=mini`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -133,6 +144,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     let totalEvents = 0;
     let upserted = 0;
     let deleted = 0;
+    let skipped = 0;
     let lastSekvensnummer = sekvensnummer;
     let pagesFetched = 0;
 
@@ -162,8 +174,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       pagesFetched++;
       totalEvents += events.length;
 
-      // Gruppe: upserts (oprettet/ændret) og deletes (nedlagt)
-      const upsertBatch: DarCacheRow[] = [];
+      // Gruppe: ændrede/oprettede adresse-ids (dedup) og nedlagte (delete)
+      const changedIds = new Set<string>();
       const deleteIds: string[] = [];
 
       for (const evt of events) {
@@ -172,14 +184,32 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
         const operation = evt.operation as string;
         const data = evt.data as Record<string, unknown> | undefined;
+        const id = (data?.id as string) ?? (evt.id as string);
+        if (!id) continue;
 
         if (operation === 'delete' || operation === 'nedlæg') {
-          const id = (data?.id as string) ?? (evt.id as string);
-          if (id) deleteIds.push(id);
-        } else if (data) {
-          const row = mapAdresseToRow(data);
-          if (row) upsertBatch.push(row);
+          deleteIds.push(id);
+        } else {
+          changedIds.add(id);
         }
+      }
+
+      // Gen-hent hver ændret adresse i mini-struktur og byg cache-rows.
+      // Vi henter enkeltvis (DAWA-lookup) i stedet for at bruge hændelsens rå
+      // data, så raw_data får samme berigede form som backfill/cachedLookup.
+      const upsertBatch: DarCacheRow[] = [];
+      for (const id of changedIds) {
+        if (Date.now() - startTime > maxDuration * 1000 - SAFETY_MARGIN_MS) {
+          logger.warn('[dar-delta] Safety margin ramt under gen-hentning');
+          break;
+        }
+        const adr = await fetchAdresseMini(id);
+        if (!adr) {
+          skipped++;
+          continue;
+        }
+        const row = buildDarRow(adr);
+        if (row) upsertBatch.push(row);
       }
 
       // Batch upsert
@@ -189,7 +219,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const { error } = await (admin as any)
             .from('cache_dar')
-            .upsert(batch, { onConflict: 'id' });
+            .upsert(batch, { onConflict: 'adresse_id' });
           if (error) {
             logger.error('[dar-delta] Upsert fejl:', error.message);
           } else {
@@ -201,7 +231,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       // Batch delete
       if (deleteIds.length > 0) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { error } = await (admin as any).from('cache_dar').delete().in('id', deleteIds);
+        const { error } = await (admin as any)
+          .from('cache_dar')
+          .delete()
+          .in('adresse_id', deleteIds);
         if (error) {
           logger.error('[dar-delta] Delete fejl:', error.message);
         } else {
@@ -231,7 +264,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const durationMs = Date.now() - startTime;
     logger.log(
-      `[dar-delta] Done: ${totalEvents} events, ${upserted} upserted, ${deleted} deleted, ${durationMs}ms`
+      `[dar-delta] Done: ${totalEvents} events, ${upserted} upserted, ${deleted} deleted, ${skipped} skipped, ${durationMs}ms`
     );
 
     await recordSyncStatus('cache_dar', { rowsSynced: upserted, durationMs });
@@ -244,6 +277,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         totalEvents,
         upserted,
         deleted,
+        skipped,
         pagesFetched,
         durationMs,
       }),

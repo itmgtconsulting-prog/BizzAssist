@@ -59,7 +59,7 @@ function verifyCronSecret(request: NextRequest): boolean {
 
 /** Raw vurdering node from Datafordeler GraphQL */
 interface VurNode {
-  id: string;
+  id: number;
   aar: number | null;
   ejendomvaerdiBeloeb: number | null;
   grundvaerdiBeloeb: number | null;
@@ -98,20 +98,29 @@ async function fetchVurForBfe(
       body: JSON.stringify({ query: krydsQuery }),
       signal: AbortSignal.timeout(proxyTimeout()),
     });
-    if (!krydsRes.ok) return null;
+    if (!krydsRes.ok) {
+      // BIZZ-2211: log den faktiske status så en død VUR-auth/query ikke er tavs.
+      logger.warn(
+        `[refresh-vur-cache] kryds(${bfe}) HTTP ${krydsRes.status}: ${(await krydsRes.text()).slice(0, 200)}`
+      );
+      return null;
+    }
 
     const krydsData = (await krydsRes.json()) as {
       data?: {
-        VUR_BFEKrydsreference?: { nodes: { fkEjendomsvurderingID: string }[] };
+        VUR_BFEKrydsreference?: { nodes: { fkEjendomsvurderingID: number }[] };
       };
     };
     const vurIds = (krydsData.data?.VUR_BFEKrydsreference?.nodes ?? [])
       .map((n) => n.fkEjendomsvurderingID)
-      .filter(Boolean);
+      .filter((id) => id != null);
     if (vurIds.length === 0) return { vurderinger: [] };
 
-    // Step 2: Vurderinger
-    const ids = vurIds.map((id) => `"${id}"`).join(',');
+    // Step 2: Vurderinger. BIZZ-2211: VUR_Ejendomsvurdering.id er GraphQL-type
+    // [Long!] — IDs SKAL sendes som tal, ikke quotes. Tidligere wrappede cronen
+    // dem i "..." → HTTP 400 ("value type does not match field type [Long!]") →
+    // hvert BFE-kald fejlede → cache_vur frøs (auth var fin, syntaksen var død).
+    const ids = vurIds.join(',');
     const vurQuery = `{ VUR_Ejendomsvurdering(first: 100, where: { id: { in: [${ids}] } }) { nodes { id aar ejendomvaerdiBeloeb grundvaerdiBeloeb vurderetAreal benyttelseKode juridiskKategoriTekst } } }`;
     const vurRes = await fetch(proxyUrl(VUR_GQL), {
       method: 'POST',
@@ -119,11 +128,23 @@ async function fetchVurForBfe(
       body: JSON.stringify({ query: vurQuery }),
       signal: AbortSignal.timeout(proxyTimeout()),
     });
-    if (!vurRes.ok) return null;
+    if (!vurRes.ok) {
+      logger.warn(
+        `[refresh-vur-cache] vur(${bfe}) HTTP ${vurRes.status}: ${(await vurRes.text()).slice(0, 200)}`
+      );
+      return null;
+    }
 
     const vurData = (await vurRes.json()) as {
       data?: { VUR_Ejendomsvurdering?: { nodes: VurNode[] } };
+      errors?: unknown[];
     };
+    if (vurData.errors?.length) {
+      logger.warn(
+        `[refresh-vur-cache] vur(${bfe}) GraphQL-fejl: ${JSON.stringify(vurData.errors).slice(0, 200)}`
+      );
+      return null;
+    }
     return { vurderinger: vurData.data?.VUR_Ejendomsvurdering?.nodes ?? [] };
   } catch (err) {
     logger.warn(

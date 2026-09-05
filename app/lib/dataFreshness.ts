@@ -93,23 +93,30 @@ async function checkDomain(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const a = admin as any;
 
-    // Run count and max-timestamp queries concurrently
-    const [countResult, latestResult] = await Promise.all([
-      a.from(config.table).select('*', { count: 'exact', head: true }),
+    // Run count and max-timestamp queries concurrently. The timestamp query is
+    // the SOURCE OF TRUTH for freshness status; the count is informational only.
+    //
+    // BIZZ-2226: the count MUST be 'estimated' (planner reltuples, instant), not
+    // 'exact'. An exact count on multi-million-row tables blows the PostgREST 8s
+    // role statement-timeout (cvr_deltager count(*) = ~110s) → the query errors →
+    // the whole check was discarded and reported a FALSE "NO DATA" alarm, even
+    // though the 1ms indexed timestamp query proved the data was fresh.
+    const [latestResult, countResult] = await Promise.all([
       a
         .from(config.table)
         .select(config.timestampColumn)
         .not(config.timestampColumn, 'is', null)
         .order(config.timestampColumn, { ascending: false })
         .limit(1),
+      a.from(config.table).select('*', { count: 'estimated', head: true }),
     ]);
 
     // BIZZ-2209: A missing table/column is a CONFIG ERROR, not "no data" — it
     // means the freshness check itself is broken. Surface it loudly so the
     // watchdog escalates it (the wrong-column bug hid 81 days of stale cache).
-    const qErr = latestResult.error ?? countResult.error;
-    if (qErr) {
-      const m = String(qErr.message ?? qErr);
+    // Only the timestamp query gates the verdict; a count failure is non-fatal.
+    if (latestResult.error) {
+      const m = String(latestResult.error.message ?? latestResult.error);
       if (/does not exist|column|relation|schema cache|could not find/i.test(m)) {
         base.status = 'config_error';
         base.error = `Fejl-konfigureret friskhedstjek (${config.table}.${config.timestampColumn}): ${m}`;
@@ -119,7 +126,8 @@ async function checkDomain(
       return base;
     }
 
-    base.rowCount = countResult.count ?? null;
+    // Best-effort row count — never let a count error void a valid freshness read.
+    base.rowCount = countResult.error ? null : (countResult.count ?? null);
 
     const latestRow = latestResult.data?.[0];
     if (!latestRow || !latestRow[config.timestampColumn]) {

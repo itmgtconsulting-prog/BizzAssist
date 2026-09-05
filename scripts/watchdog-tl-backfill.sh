@@ -17,7 +17,10 @@ OFFSET=0           # BIZZ-1881: probede BFEer falder nu ud af kandidat-sættet
                    # (tinglysning_backfill_probed), så vi starter altid fra laveste
                    # u-probede BFE i stedet for at springe et fast antal over.
 CONC=1
-DELAY_MS=800       # langsom start; scriptet hæver selv ved 429
+DELAY_MS=4000      # BIZZ-1881 2026-09-05: hævet fra 800 → 4000 for ~2x throughput vs.
+                   # den ratchet-fastlåste 8000ms-effektive delay (nul 429 i uger). Loftet
+                   # MAX_DELAY_MS er stadig default 8000, så 429/timeouts auto-bremser
+                   # tilbage til det gamle sikre tempo som sikkerhedsnet.
 STALL_SECS=600     # 10 min uden log-vækst = stall. Med hård 45s fetch-timeout i scriptet
                    # logger en sund kørsel hvert ~100-150s; 10 min er rigeligt margin (selv
                    # under 429-backoff) og genopretter 3x hurtigere end de gamle 30 min.

@@ -1,0 +1,26 @@
+name: Schema parity check
+
+# BIZZ-2196: Weekly structural schema-parity gate across the three Supabase
+# environments (test/dev/prod). Unlike the migration-drift check (which trusts
+# supabase_migrations tracking), this introspects the ACTUAL current structure
+# via information_schema/pg_catalog and diffs base tables, columns, non-extension
+# functions and tenant_* template uniformity. A failing run is the drift alert;
+# this is intentionally NOT wired into PR CI (not a merge blocker).
+
+on:
+  schedule:
+    - cron: '30 6 * * 1' # Every Monday 06:30 UTC (just after migration-drift)
+  workflow_dispatch: {} # Allow manual run
+
+jobs:
+  parity-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Run schema-parity check
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: node scripts/check-schema-parity.mjs

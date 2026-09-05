@@ -47,6 +47,7 @@ import { checkHeartbeats } from '@/app/lib/cronHeartbeat';
 import { checkAllDataFreshness } from '@/app/lib/dataFreshness';
 import { getCronJob } from '@/app/lib/cron/registry';
 import { runPostConditions } from '@/app/lib/cron/postConditions';
+import { syncDriftTickets } from '@/app/lib/cron/driftTicketBridge';
 
 /** Vercel Cron max duration (seconds) — Pro plan allows up to 300s */
 export const maxDuration = 300;
@@ -107,6 +108,8 @@ interface ScanIssue {
     | 'data_freshness'
     | 'post_condition';
   context?: string;
+  /** BIZZ-2240: stabil dedup-identifikator (jobName/sourceName) til auto-ticketing. */
+  dedupKey?: string;
 }
 
 /** A Vercel deployment record — minimal shape used by this cron */
@@ -267,6 +270,7 @@ export async function checkCronHeartbeatIssues(): Promise<ScanIssue[]> {
         severity: 'error',
         message: `Cron '${hb.job_name}' er overdue (~${hb.minutes_overdue} min uden heartbeat)`,
         source: 'cron_heartbeat',
+        dedupKey: hb.job_name,
         context: [
           `Forventet kadence: hver ${hb.expected_interval_minutes} min`,
           `Sidste koersel: ${hb.last_run_at}`,
@@ -283,6 +287,7 @@ export async function checkCronHeartbeatIssues(): Promise<ScanIssue[]> {
         severity: 'error',
         message: `Cron '${hb.job_name}' fejlede sidste koersel`,
         source: 'cron_heartbeat',
+        dedupKey: hb.job_name,
         context: hb.last_error ?? undefined,
       });
       continue;
@@ -297,6 +302,7 @@ export async function checkCronHeartbeatIssues(): Promise<ScanIssue[]> {
         severity: 'warning',
         message: `Cron '${hb.job_name}' koerte uden at behandle noget (silent no-op / degraded)`,
         source: 'cron_heartbeat',
+        dedupKey: hb.job_name,
         context:
           hb.last_degraded_reason ??
           (silentNoop ? 'expectsWork=true men items_processed=0' : undefined),
@@ -326,6 +332,7 @@ export async function checkDataFreshnessIssues(): Promise<ScanIssue[]> {
       severity: f.status === 'critical' ? 'error' : 'warning',
       message: `Datakilde '${f.sourceName}' er forældet (${ageTxt})`,
       source: 'data_freshness',
+      dedupKey: f.sourceName,
       context: [
         `Tabel: ${f.table}`,
         `Traerskel: advarsel ${f.warningThresholdHours}t / kritisk ${f.criticalThresholdHours}t`,
@@ -355,6 +362,7 @@ async function checkPostConditionIssues(): Promise<ScanIssue[]> {
       severity: 'error',
       message: `Job '${jobName}' producerede brudt output`,
       source: 'post_condition',
+      dedupKey: jobName,
       context: result.message,
     });
   }
@@ -920,6 +928,24 @@ export async function GET(request: NextRequest) {
         error_count: issues.filter((i) => i.severity === 'error').length,
         warning_count: issues.filter((i) => i.severity === 'warning').length,
       });
+
+      // ── 2b. Auto-ticketing bridge (BIZZ-2240) ─────────────────────────────────
+      // Opret dedupliceret JIRA-ticket for error-severity drift-issues (overdue
+      // cron, stale kilde, brudt output). Vercel-build/runtime haandteres af
+      // fix-flowet nedenfor. Fejler blødt — maa aldrig vaelte scannet.
+      try {
+        const ticketResults = await syncDriftTickets(issues);
+        const created = ticketResults.filter((r) => r.action === 'created');
+        if (created.length > 0) {
+          logger.log(
+            `[service-scan] auto-oprettede ${created.length} drift-tickets: ${created
+              .map((r) => r.jiraKey)
+              .join(', ')}`
+          );
+        }
+      } catch (bridgeErr) {
+        logger.error('[service-scan] drift-ticket-bridge fejlede:', bridgeErr);
+      }
 
       // ── 3. Propose fixes for new error-severity issues ────────────────────────
       const errorIssues = issues.filter((i) => i.severity === 'error');

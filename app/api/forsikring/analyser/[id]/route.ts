@@ -10,7 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { getTenantSchemaName } from '@/lib/db/tenant';
+import { getDomainLinkedTenants } from '@/app/lib/domainFederation';
 import { logger } from '@/app/lib/logger';
 import { bygAnvendelseTekst } from '@/app/lib/bbrKoder';
 
@@ -36,10 +36,40 @@ export async function GET(
   }
 
   const admin = createAdminClient();
-  const schemaName = await getTenantSchemaName(auth.tenantId);
-  if (!schemaName) {
-    return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+
+  // BIZZ-2192.2b: Domæne-federation (ADR-0011). Find hvilket federations-schema
+  // (egen ∪ nuværende co-domæne-medlemmers, query-tid/ingen cache) der EJER
+  // analysen. Kun schemaer getDomainLinkedTenants returnerer søges → co-
+  // membership håndhæves inhærent: en bruger uden for domænet finder ikke
+  // analysen og får 404 (ingen læk). Relaterede tabeller læses fra ejer-
+  // schemaet med ejerens tenant_id.
+  const federatedSchemas = await getDomainLinkedTenants(auth.userId);
+  let schemaName: string | null = null;
+  let ownerTenantId: string | null = null;
+  for (const s of federatedSchemas) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data } = await (admin as any)
+        .schema(s)
+        .from('forsikring_analyser')
+        .select('tenant_id')
+        .eq('id', id)
+        .maybeSingle();
+      if (data) {
+        schemaName = s;
+        ownerTenantId = (data as { tenant_id: string }).tenant_id;
+        break;
+      }
+    } catch {
+      // schema ikke PostgREST-eksponeret / mangler tabel → spring sikkert over
+    }
   }
+  if (!schemaName || !ownerTenantId) {
+    return NextResponse.json({ error: 'Analyse ikke fundet' }, { status: 404 });
+  }
+  // Alle underforespørgsler scopes til ejerens tenant_id (håndterer også delte
+  // schemaer korrekt indtil per-bruger-migrationen i 2192.7).
+  const scopeTenantId = ownerTenantId;
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -51,19 +81,19 @@ export async function GET(
         .from('forsikring_analyser')
         .select('*')
         .eq('id', id)
-        .eq('tenant_id', auth.tenantId)
+        .eq('tenant_id', scopeTenantId)
         .maybeSingle(),
       db
         .from('forsikring_aktiver')
         .select('*')
         .eq('analyse_id', id)
-        .eq('tenant_id', auth.tenantId)
+        .eq('tenant_id', scopeTenantId)
         .order('type', { ascending: true }),
       db
         .from('forsikring_analyse_documents')
         .select('document_id, source')
         .eq('analyse_id', id)
-        .eq('tenant_id', auth.tenantId),
+        .eq('tenant_id', scopeTenantId),
     ]);
 
     if (analyseResult.error || !analyseResult.data) {
@@ -85,12 +115,12 @@ export async function GET(
           .from('forsikring_documents')
           .select('id, original_name, parse_status, parse_error, created_at')
           .in('id', docIds)
-          .eq('tenant_id', auth.tenantId),
+          .eq('tenant_id', scopeTenantId),
         db
           .from('forsikring_policies')
           .select('*')
           .in('document_id', docIds)
-          .eq('tenant_id', auth.tenantId)
+          .eq('tenant_id', scopeTenantId)
           .order('created_at', { ascending: false }),
       ]);
 
@@ -119,7 +149,7 @@ export async function GET(
         .from('forsikring_policies')
         .select('*')
         .in('id', missingPolicyIds)
-        .eq('tenant_id', auth.tenantId);
+        .eq('tenant_id', scopeTenantId);
       if (extraPolicies && extraPolicies.length > 0) {
         policies = [...policies, ...extraPolicies];
         // Hent også kildedokument-navne for de ekstra policer, så UI'et kan
@@ -136,7 +166,7 @@ export async function GET(
             .from('forsikring_documents')
             .select('id, original_name, parse_status, parse_error, created_at')
             .in('id', extraDocIds)
-            .eq('tenant_id', auth.tenantId);
+            .eq('tenant_id', scopeTenantId);
           documents = [
             ...documents,
             ...(extraDocs ?? []).map((d: Record<string, unknown>) => ({
@@ -193,7 +223,7 @@ export async function GET(
       const { data: allTenantPolicies } = await db
         .from('forsikring_policies')
         .select('*')
-        .eq('tenant_id', auth.tenantId);
+        .eq('tenant_id', scopeTenantId);
       const hoererTilKoncern = (p: {
         policyholder_cvr: string | null;
         policyholder_name: string | null;
@@ -241,7 +271,7 @@ export async function GET(
       .from('forsikring_gaps')
       .select('*')
       .eq('analyse_id', id)
-      .eq('tenant_id', auth.tenantId)
+      .eq('tenant_id', scopeTenantId)
       .order('severity', { ascending: true });
 
     if (scopedGaps && scopedGaps.length > 0) {
@@ -252,7 +282,7 @@ export async function GET(
         .from('forsikring_gaps')
         .select('*')
         .in('policy_id', [...new Set(matchedPolicyIds)])
-        .eq('tenant_id', auth.tenantId)
+        .eq('tenant_id', scopeTenantId)
         .order('severity', { ascending: true });
       gaps = legacyGaps ?? [];
     }
@@ -272,7 +302,7 @@ export async function GET(
           'policy_id, coverage_code, coverage_label, is_covered, sum_dkk, deductible_dkk, conditions_ref'
         )
         .in('policy_id', coveragePolicyIds)
-        .eq('tenant_id', auth.tenantId)
+        .eq('tenant_id', scopeTenantId)
         .order('coverage_label', { ascending: true });
       coverages = coverageRows ?? [];
     }

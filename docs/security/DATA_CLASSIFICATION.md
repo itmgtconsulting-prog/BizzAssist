@@ -118,3 +118,23 @@ The following fields are considered PII under GDPR:
 | Audit logs               | 12 months                | Rolling — auto-purge at 12 months      |
 | Sentry error events      | 90 days                  | Sentry auto-purge setting              |
 | AI conversation history  | Configurable per tenant  | Tenant-controlled (default: 12 months) |
+
+## Domæne-federation af forsikrings-analyser (ADR-0011)
+
+Forsikrings-analyser, -dokumenter, -sager og -bibliotek er **Confidential** og
+ejes personligt i brugerens egen tenant. De deles inden for et **domæne** som en
+revocable læse-federation:
+
+- **Delings-enhed:** domænet. Medlemskab af et domæne (`domain_member`) udgør
+  brugerens **samtykke** til at dele sine forsikrings-data med de øvrige nuværende
+  domæne-medlemmer.
+- **Tilbagekald:** fjernelse af `domain_member`-rækken **tilbagekalder** samtykket
+  øjeblikkeligt — federationen beregnes på query-tid (ingen cache), så den anden
+  brugers adgang forsvinder med det samme. Data kopieres/flyttes aldrig; de er
+  personlige igen.
+- **Isolation:** cross-tenant LÆSNING er app-gated gennem én federations-grænse
+  (`getDomainLinkedTenants`), dækket af en læk-regressionstest. Skrivning sker
+  altid kun til brugerens egen tenant. Brugere uden fælles domæne kan aldrig se
+  hinandens forsikrings-data.
+- **Bibliotek:** delte standard-dokumenter scopes pr. domæne via `visibility` +
+  `added_by_domain` + RLS (BIZZ-1907).

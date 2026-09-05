@@ -200,6 +200,42 @@ async function saveProgress(
   await admin.from('ai_settings').upsert({ key, value: value ?? 0 }, { onConflict: 'key' });
 }
 
+/** UUID-v4-ish matcher for sitemap_entries.id-cursors. */
+const RENDER_CURSOR_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Parser render-xml-progress-cursoren (BIZZ-2268). Formater:
+ *  - "<pageId>|<uuid>" → composite (nyt, deterministisk): genoptag page_id direkte.
+ *  - "<uuid>"          → legacy: genberegn page_id én gang fra entry-antal.
+ *  - "0" / null        → fresh: start fra page 0.
+ *  - alt andet         → invalid: start forfra (logges).
+ *
+ * Ren funktion (ingen DB) saa den kan unit-testes — det er her huller/omnummerering
+ * opstod da page_id blev genberegnet fra et flygtigt count pr. koersel.
+ *
+ * @param raw - raa cursor-vaerdi fra ai_settings
+ * @returns diskrimineret union med page_id/afterId hvor relevant
+ */
+export function parseRenderCursor(
+  raw: string | null
+):
+  | { kind: 'composite'; pageId: number; afterId: string }
+  | { kind: 'legacy'; afterId: string }
+  | { kind: 'fresh' }
+  | { kind: 'invalid'; raw: string } {
+  if (!raw || raw === '0') return { kind: 'fresh' };
+  if (raw.includes('|')) {
+    const [pStr, uuid] = raw.split('|');
+    const p = Number.parseInt(pStr, 10);
+    if (Number.isFinite(p) && p >= 0 && RENDER_CURSOR_UUID_RE.test(uuid)) {
+      return { kind: 'composite', pageId: p, afterId: uuid };
+    }
+    return { kind: 'invalid', raw };
+  }
+  if (RENDER_CURSOR_UUID_RE.test(raw)) return { kind: 'legacy', afterId: raw };
+  return { kind: 'invalid', raw };
+}
+
 // ─── Phase: companies (DB-first) ──────────────────────────────────────────────
 
 /**
@@ -573,27 +609,36 @@ async function phaseRenderXml(
   // stedet for UUID). Hvis værdien IKKE ligner en UUID, log warning og
   // restart fra begyndelsen i stedet for at .lt('id', '40') som returnerer
   // 0 rows og fanger routen i en infinite no-progress loop.
-  const cursor = await getProgress(admin, RENDER_XML_PROGRESS_KEY);
-  const isValidUuid =
-    cursor && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cursor);
-  if (cursor && cursor !== '0' && !isValidUuid) {
-    logger.warn(
-      `[generate-sitemap] render-xml cursor er ikke en valid UUID (got "${cursor}") — restarter fra begyndelsen`
-    );
-  }
-  const afterId = isValidUuid ? cursor : null;
-
-  // Track pages: if resuming, figure out which page_id we're on
-  // by counting how many entries come before our cursor.
+  // BIZZ-2268: progress-cursor er nu KOMPOSIT "<pageId>|<uuid>" saa page_id
+  // persisteres monotont pr. side og IKKE genberegnes fra et flygtigt entry-antal.
+  // Den gamle genberegning (pageId = floor(count(id<cursor)/PAGE_SIZE)) drev naar
+  // entries blev tilfoejet/purged mellem de budget-begraensede koersler → samme
+  // cursor mappede til forskellige page_ids → huller + omnummerering (66 sider men
+  // max page_id 95). Ved at gemme+genoptage page_id direkte bliver nummereringen
+  // deterministisk og kontinuert (0..N-1).
+  const parsed = parseRenderCursor(await getProgress(admin, RENDER_XML_PROGRESS_KEY));
   let pageId = 0;
-  if (afterId) {
+  let afterId: string | null = null;
+
+  if (parsed.kind === 'composite') {
+    // Nyt format — genoptag page_id direkte (ingen genberegning → ingen drift).
+    pageId = parsed.pageId;
+    afterId = parsed.afterId;
+  } else if (parsed.kind === 'legacy') {
+    // Legacy bare-UUID-cursor: engangs-fallback — genberegn pageId én gang;
+    // derefter gemmes komposit-formatet fremover.
     const { count } = await admin
       .from('sitemap_entries')
       .select('*', { count: 'exact', head: true })
-      .lt('id', afterId);
-    const entriesBefore = (count ?? 0) + STATIC_COUNT;
-    pageId = Math.floor(entriesBefore / PAGE_SIZE);
+      .lt('id', parsed.afterId);
+    pageId = Math.floor(((count ?? 0) + STATIC_COUNT) / PAGE_SIZE);
+    afterId = parsed.afterId;
+  } else if (parsed.kind === 'invalid') {
+    logger.warn(
+      `[generate-sitemap] render-xml cursor ugyldig ("${parsed.raw}") — restarter fra begyndelsen`
+    );
   }
+  // parsed.kind === 'fresh' → pageId=0, afterId=null (defaults)
 
   let pagesRendered = 0;
   let lastId = afterId;
@@ -686,9 +731,10 @@ async function phaseRenderXml(
       logger.log(`[generate-sitemap] render-xml page ${pageId}: ${urlElements.length} URLs`);
     }
 
-    // Save cursor after each page
-    await saveProgress(admin, RENDER_XML_PROGRESS_KEY, lastId ?? '0');
+    // BIZZ-2268: naeste side = pageId+1; gem KOMPOSIT "<naeste pageId>|<uuid>" saa
+    // genoptagelse fortsaetter monotont (ingen count-baseret drift → ingen huller).
     pageId++;
+    await saveProgress(admin, RENDER_XML_PROGRESS_KEY, `${pageId}|${lastId ?? '0'}`);
 
     if (globalDone) break;
   }

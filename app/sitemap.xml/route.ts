@@ -26,35 +26,43 @@ const BASE_URL = (process.env.NEXT_PUBLIC_APP_URL ?? 'https://bizzassist.dk')
  * @returns XML sitemap index response
  */
 export async function GET(): Promise<NextResponse> {
-  let pageCount = 1;
+  let pageIds: number[] = [0];
   try {
     const admin = createAdminClient();
 
-    // Count cached pages — only list pages that are actually pre-rendered
-    const { count } = await admin
+    // BIZZ-2235: List the ACTUAL cached page_ids (ordered), not 0..count-1.
+    // Render-cursoren efterlader huller (ikke-sammenhængende page_ids), så det
+    // gamle count→0..count-1 listede manglende sider (→ Google 404) OG udelod
+    // eksisterende sider over count (→ ~830k URLs usynlige). Nu annonceres kun
+    // sider der faktisk findes i cachen.
+    const { data } = await admin
       .from('sitemap_xml_cache')
-      .select('*', { count: 'exact', head: true });
+      .select('page_id')
+      .order('page_id', { ascending: true });
 
-    if (count && count > 0) {
-      pageCount = count;
+    const ids = (data ?? []).map((r) => (r as { page_id: number }).page_id);
+    if (ids.length > 0) {
+      pageIds = ids;
     } else {
-      // Fallback: if cache is empty, estimate from sitemap_entries
+      // Fallback: cache tom → estimér sammenhængende sider fra sitemap_entries
       const { count: entryCount } = await admin
         .from('sitemap_entries')
         .select('*', { count: 'exact', head: true });
       const total = (entryCount ?? 0) + 4; // +4 static pages
-      pageCount = Math.max(1, Math.ceil(total / 50_000));
+      const n = Math.max(1, Math.ceil(total / 50_000));
+      pageIds = Array.from({ length: n }, (_, i) => i);
     }
   } catch (err) {
-    logger.error('[sitemap.xml] count failed:', err instanceof Error ? err.message : err);
+    logger.error('[sitemap.xml] page_id lookup failed:', err instanceof Error ? err.message : err);
   }
 
   const today = new Date().toISOString().split('T')[0];
-  const entries = Array.from(
-    { length: pageCount },
-    (_, i) =>
-      `<sitemap><loc>${BASE_URL}/sitemap/${i}.xml</loc><lastmod>${today}</lastmod></sitemap>`
-  ).join('\n');
+  const entries = pageIds
+    .map(
+      (id) =>
+        `<sitemap><loc>${BASE_URL}/sitemap/${id}.xml</loc><lastmod>${today}</lastmod></sitemap>`
+    )
+    .join('\n');
 
   const xml =
     `<?xml version="1.0" encoding="UTF-8"?>\n` +

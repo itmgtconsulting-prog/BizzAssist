@@ -429,7 +429,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       const kn = await enqueueKnowledgeTopicsIfDue(20); // dagligt: enqueue knowledge-topics
       const drain = await drainJobQueue(200_000); // drain kø inden for tidsbudget
       const drainMs = Date.now() - drainStart;
-      void recordHeartbeat(
+      // AWAIT (ikke void): disse heartbeats ligger sidst før return, og i
+      // serverless flushes en void-promise ikke paalideligt naar responsen
+      // returneres straks efter. Overdue-detektering afhaenger af dem.
+      await recordHeartbeat(
         'process-job-queue',
         drain.processed === 0 && drain.failed > 0 ? 'degraded' : 'success',
         drainMs,
@@ -437,7 +440,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         drain.failed > 0 ? `${drain.failed} jobs fejlede` : undefined,
         { itemsProcessed: drain.processed + drain.failed, itemsWritten: drain.processed }
       );
-      void recordHeartbeat('refresh-knowledge-cache', 'success', drainMs, 35, undefined, {
+      await recordHeartbeat('refresh-knowledge-cache', 'success', drainMs, 35, undefined, {
         itemsProcessed: kn.due ? kn.enqueued + kn.skipped : 0,
         itemsWritten: kn.enqueued,
       });

@@ -22,6 +22,7 @@ import PDFDocument from 'pdfkit';
 import { z } from 'zod';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { parseQuery } from '@/app/lib/validate';
 import { DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
 import { fetchDawa } from '@/app/lib/dawa';
@@ -647,6 +648,9 @@ async function genererPdf(
 // ─── Route handler ─────────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest): Promise<Response> {
+  // BIZZ-2245: rate-limit bulk data-endpoint (60/min/IP, delt limiter).
+  const limited = await checkRateLimit(request, rateLimit);
+  if (limited) return limited;
   const auth = await resolveTenantId();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 

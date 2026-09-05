@@ -54,7 +54,7 @@ Incident response: `docs/security/INCIDENT_RESPONSE.md`
 - **No `eval()` or dynamic code execution**
 - **No cross-tenant queries** — every DB call must be scoped to a single verified tenant_id
 - **HTTP security headers** applied to all responses (managed in `next.config.ts`)
-- **Rate limiting** on all public API routes (managed in `middleware.ts`)
+- **Rate limiting** on public/abuse-prone API routes — enforced **per-route** via `checkRateLimit(req, rateLimit)` from `app/lib/rateLimit.ts` (shared limiter: 60 req/min/IP; the public `v1` API uses its own per-token limiter). There is no `middleware.ts` (BIZZ-2245). New public data endpoints MUST call `checkRateLimit` at the top of the handler.
 - **Dependencies** — run `npm audit` before any new package is added; no packages with critical CVEs
 - See `docs/security/` for full ISMS, data classification, access control, and incident response policies
 

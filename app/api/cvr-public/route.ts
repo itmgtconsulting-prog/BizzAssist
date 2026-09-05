@@ -18,6 +18,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { parseQuery } from '@/app/lib/validate';
 import { resolveTenantId } from '@/lib/api/auth';
+import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logActivity } from '@/app/lib/activityLog';
 import { logger } from '@/app/lib/logger';
@@ -1359,6 +1360,9 @@ async function fetchProduktionsenheder(
  * @returns CVRPublicData eller fejlbesked
  */
 export async function GET(req: NextRequest): Promise<NextResponse<CVRPublicData | CVRPublicError>> {
+  // BIZZ-2245: rate-limit bulk data-endpoint (60/min/IP, delt limiter).
+  const limited = await checkRateLimit(req, rateLimit);
+  if (limited) return limited as NextResponse<CVRPublicError>;
   const parsed = parseQuery(req, querySchema);
   if (!parsed.success) return parsed.response as NextResponse<CVRPublicError>;
   const { vat = '', name = '', enhedsNummer: enhedsNr = '' } = parsed.data;

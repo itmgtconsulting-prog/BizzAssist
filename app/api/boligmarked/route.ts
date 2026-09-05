@@ -11,6 +11,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
+import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
 
 /** API response */
@@ -51,6 +52,9 @@ function kommuneTilOmraade(kommunekode: number): string {
 export async function GET(
   request: NextRequest
 ): Promise<NextResponse<BoligmarkedData | { fejl: string }>> {
+  // BIZZ-2245: rate-limit bulk data-endpoint (60/min/IP, delt limiter).
+  const limited = await checkRateLimit(request, rateLimit);
+  if (limited) return limited as NextResponse<{ fejl: string }>;
   const auth = await resolveTenantId();
   if (!auth) {
     return NextResponse.json({ error: 'Unauthorized' } as unknown as { fejl: string }, {

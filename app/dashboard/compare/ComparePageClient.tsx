@@ -374,7 +374,12 @@ export default function ComparePageClient() {
           {/* Property headers with remove buttons */}
           <div
             className="grid border-b border-white/8"
-            style={{ gridTemplateColumns: `200px repeat(${properties.length}, 1fr)` }}
+            style={{
+              // BIZZ-2255: label-kolonne krymper til 96px på smal skærm (mere plads til
+              // entiteterne på mobil); forbliver 200px på desktop (min-content-loft).
+              // minmax(0,1fr) lader entitets-kolonnerne krympe uden at overflyde.
+              gridTemplateColumns: `minmax(96px, 200px) repeat(${properties.length}, minmax(0, 1fr))`,
+            }}
           >
             <div className="px-4 py-3 bg-white/3" />
             {properties.map((p) => (
@@ -408,7 +413,12 @@ export default function ComparePageClient() {
             <div
               key={row.label}
               className={`grid ${i % 2 === 0 ? 'bg-white/[0.02]' : ''}`}
-              style={{ gridTemplateColumns: `200px repeat(${properties.length}, 1fr)` }}
+              style={{
+                // BIZZ-2255: label-kolonne krymper til 96px på smal skærm (mere plads til
+                // entiteterne på mobil); forbliver 200px på desktop (min-content-loft).
+                // minmax(0,1fr) lader entitets-kolonnerne krympe uden at overflyde.
+                gridTemplateColumns: `minmax(96px, 200px) repeat(${properties.length}, minmax(0, 1fr))`,
+              }}
             >
               <div className="px-4 py-2.5 text-xs font-medium text-slate-400">{row.label}</div>
               {row.values.map((val, j) => (

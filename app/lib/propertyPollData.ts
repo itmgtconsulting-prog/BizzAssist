@@ -218,6 +218,48 @@ export async function fetchCompanyPollSnapshot(cvr: string): Promise<CompanyPoll
     if (!data) return null;
 
     const r = data as Record<string, unknown>;
+
+    // BIZZ-2265/2266: overvåg også virksomhedens ejerskaber, så følgere alarmeres
+    // ved får/mister/ændret ejerskab. NB (verificeret 2026-09-06): ticketernes
+    // kilde cvr_deltagerrelation.ejer_cvr er tom for aktive rækker — company↔company-
+    // ejerskab ligger i cvr_virksomhed_ejerskab (ejer_cvr/ejet_cvr), person-ejere i
+    // cvr_deltagerrelation type='register'. Vi projicerer de aktive relationer til
+    // stabilt-sorterede "modpart:andel"-lister; enhver ændring i sættet ændrer hashen
+    // → detectChange fyrer cvr-notifikation. Tomt sæt = stabil hash (ingen falsk alarm).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const a = admin as any;
+    const CAP = 1000;
+    // BIZZ-2265 (udgående): virksomheder DENNE virksomhed ejer
+    const { data: udg } = await a
+      .from('cvr_virksomhed_ejerskab')
+      .select('ejet_cvr, ejerandel_pct')
+      .eq('ejer_cvr', cvr)
+      .is('gyldig_til', null)
+      .order('ejet_cvr', { ascending: true })
+      .limit(CAP);
+    // BIZZ-2266 (indgående): virksomheds-ejere af DENNE virksomhed
+    const { data: indgVirk } = await a
+      .from('cvr_virksomhed_ejerskab')
+      .select('ejer_cvr, ejerandel_pct')
+      .eq('ejet_cvr', cvr)
+      .is('gyldig_til', null)
+      .order('ejer_cvr', { ascending: true })
+      .limit(CAP);
+    // BIZZ-2266 (indgående): person/register-ejere af DENNE virksomhed
+    const { data: indgPers } = await a
+      .from('cvr_deltagerrelation')
+      .select('deltager_enhedsnummer, ejerandel_pct')
+      .eq('virksomhed_cvr', cvr)
+      .eq('type', 'register')
+      .is('gyldig_til', null)
+      .not('ejerandel_pct', 'is', null)
+      .order('deltager_enhedsnummer', { ascending: true })
+      .limit(CAP);
+
+    /** Projicér relationer til stabile "modpart:andel"-strenge (deterministisk hash). */
+    const proj = (rows: Record<string, unknown>[] | null, key: string): string[] =>
+      (rows ?? []).map((row) => `${row[key] ?? ''}:${row.ejerandel_pct ?? ''}`);
+
     return {
       monitored: {
         navn: r.navn ?? null,
@@ -226,6 +268,11 @@ export async function fetchCompanyPollSnapshot(cvr: string): Promise<CompanyPoll
         branche_kode: r.branche_kode ?? null,
         branche_tekst: r.branche_tekst ?? null,
         ophoert: r.ophoert ?? null,
+        // BIZZ-2265: udgående ejerskaber (ejet_cvr:andel)
+        ejer_af: proj(udg, 'ejet_cvr'),
+        // BIZZ-2266: indgående ejerkreds — virksomheds-ejere + person/register-ejere
+        ejet_af_virksomheder: proj(indgVirk, 'ejer_cvr'),
+        ejet_af_personer: proj(indgPers, 'deltager_enhedsnummer'),
       },
     };
   } catch (err) {

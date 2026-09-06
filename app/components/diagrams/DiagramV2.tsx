@@ -289,18 +289,19 @@ export default function DiagramV2({
   return (
     <div className="relative">
       {/* BIZZ-2013: Layout toggle */}
-      <div className="absolute top-2 left-2 z-10 flex bg-slate-800/90 border border-white/10 rounded-lg overflow-hidden text-[10px]">
+      {/* BIZZ-2251: større touch-targets på mobil (text-xs + px-3 py-2); PC uændret via lg: */}
+      <div className="absolute top-2 left-2 z-10 flex bg-slate-800/90 border border-white/10 rounded-lg overflow-hidden text-xs lg:text-[10px]">
         <button
           type="button"
           onClick={() => setLayoutMode('force')}
-          className={`px-2.5 py-1 font-medium transition-colors ${layoutMode === 'force' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
+          className={`px-3 py-2 lg:px-2.5 lg:py-1 font-medium transition-colors ${layoutMode === 'force' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
         >
           {da ? 'Interaktiv' : 'Interactive'}
         </button>
         <button
           type="button"
           onClick={() => setLayoutMode('dagre')}
-          className={`px-2.5 py-1 font-medium transition-colors ${layoutMode === 'dagre' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
+          className={`px-3 py-2 lg:px-2.5 lg:py-1 font-medium transition-colors ${layoutMode === 'dagre' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
         >
           {da ? 'Hierarkisk' : 'Hierarchical'}
         </button>

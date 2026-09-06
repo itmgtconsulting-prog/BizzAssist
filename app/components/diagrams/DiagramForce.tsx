@@ -1983,6 +1983,93 @@ function DiagramForce({
     return () => el.removeEventListener('wheel', handler);
   }, [isFullscreen]);
 
+  // ── BIZZ-2251: Touch-gestures (mobil) — én-finger-pan + to-finger-pinch-zoom ──
+  // Tilføjet som native listeners (som wheel) via refs, så mus-stien er UÆNDRET
+  // (PC uberørt). touch-action: none på containeren (sat i style) forhindrer at
+  // browseren stjæler gesten til side-scroll/zoom. preventDefault kun under aktiv
+  // pan/pinch (i touchmove) så taps/klik på noder+knapper stadig virker.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    // Lokal geste-state (touch er altid enten pan ELLER pinch — aldrig node-drag).
+    let mode: 'none' | 'pan' | 'pinch' = 'none';
+    let panStartX = 0;
+    let panStartY = 0;
+    let panBaseX = 0;
+    let panBaseY = 0;
+    let pinchStartDist = 0;
+    let pinchMidX = 0;
+    let pinchMidY = 0;
+    let pinchBaseZoom = 1;
+    let pinchBasePanX = 0;
+    let pinchBasePanY = 0;
+
+    const dist = (a: Touch, b: Touch) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+
+    const onStart = (e: TouchEvent) => {
+      const rect = el.getBoundingClientRect();
+      if (e.touches.length === 1) {
+        mode = 'pan';
+        panStartX = e.touches[0].clientX;
+        panStartY = e.touches[0].clientY;
+        panBaseX = panOffsetRef.current.x;
+        panBaseY = panOffsetRef.current.y;
+      } else if (e.touches.length >= 2) {
+        mode = 'pinch';
+        pinchStartDist = dist(e.touches[0], e.touches[1]) || 1;
+        pinchMidX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
+        pinchMidY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top;
+        pinchBaseZoom = zoomRef.current;
+        pinchBasePanX = panOffsetRef.current.x;
+        pinchBasePanY = panOffsetRef.current.y;
+      }
+    };
+
+    const onMove = (e: TouchEvent) => {
+      if (mode === 'pan' && e.touches.length === 1) {
+        e.preventDefault();
+        const dx = e.touches[0].clientX - panStartX;
+        const dy = e.touches[0].clientY - panStartY;
+        setPanOffset({ x: panBaseX + dx, y: panBaseY + dy });
+      } else if (mode === 'pinch' && e.touches.length >= 2) {
+        e.preventDefault();
+        const d = dist(e.touches[0], e.touches[1]) || 1;
+        const newZoom = Math.min(Math.max(pinchBaseZoom * (d / pinchStartDist), 0.1), 3);
+        // Hold indholdet under pinch-midtpunktet fast (samme matematik som zoomToPoint).
+        const scale = newZoom / pinchBaseZoom;
+        setPanOffset({
+          x: pinchMidX - scale * (pinchMidX - pinchBasePanX),
+          y: pinchMidY - scale * (pinchMidY - pinchBasePanY),
+        });
+        setZoom(newZoom);
+      }
+    };
+
+    const onEnd = (e: TouchEvent) => {
+      if (e.touches.length === 0) {
+        mode = 'none';
+      } else if (e.touches.length === 1) {
+        // Gik fra pinch → pan: re-baseline så panoreringen ikke hopper.
+        mode = 'pan';
+        panStartX = e.touches[0].clientX;
+        panStartY = e.touches[0].clientY;
+        panBaseX = panOffsetRef.current.x;
+        panBaseY = panOffsetRef.current.y;
+      }
+    };
+
+    el.addEventListener('touchstart', onStart, { passive: false });
+    el.addEventListener('touchmove', onMove, { passive: false });
+    el.addEventListener('touchend', onEnd);
+    el.addEventListener('touchcancel', onEnd);
+    return () => {
+      el.removeEventListener('touchstart', onStart);
+      el.removeEventListener('touchmove', onMove);
+      el.removeEventListener('touchend', onEnd);
+      el.removeEventListener('touchcancel', onEnd);
+    };
+  }, [isFullscreen]);
+
   // ── Double-click on background to zoom in, centered on click position ──
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
     // Check if the click target is a node element (text, rect with fill, circle, g)
@@ -3538,6 +3625,9 @@ function DiagramForce({
         minHeight: isFullscreen ? undefined : '500px',
         maxHeight: isFullscreen ? undefined : '85vh',
         cursor: 'grab',
+        // BIZZ-2251: lad diagrammet håndtere touch-pan/pinch selv (browseren må
+        // ikke stjæle gesten til side-scroll/zoom). Ingen effekt på mus → PC uændret.
+        touchAction: 'none',
       }}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}

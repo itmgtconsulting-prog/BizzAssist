@@ -2,13 +2,13 @@
 
 ## Overview
 
-| Parameter       | Value                                                 |
-| --------------- | ----------------------------------------------------- |
-| **Database**    | Supabase PostgreSQL (EU West — Frankfurt)             |
-| **Backup Type** | Automated daily + 7-day Point-in-Time Recovery (PITR) |
-| **RTO Target**  | 4 hours                                               |
-| **RPO Target**  | 24 hours                                              |
-| **Responsible** | Jakob Juul Rasmussen (CTO)                            |
+| Parameter       | Value                                                                   |
+| --------------- | ----------------------------------------------------------------------- |
+| **Database**    | Supabase PostgreSQL (EU West — Frankfurt)                               |
+| **Backup Type** | Automated daily backups (PITR ⚠️ IKKE aktiveret pt. — se §6, BIZZ-2249) |
+| **RTO Target**  | 4 hours                                                                 |
+| **RPO Target**  | 24 hours                                                                |
+| **Responsible** | Jakob Juul Rasmussen (CTO)                                              |
 
 ## 1. Full Database Restore (from daily backup)
 
@@ -102,8 +102,8 @@ SELECT count(*) FROM auth.users;
 
 ## 6. Prevention
 
-- **Daily backups**: Automated by Supabase
-- **PITR**: Enabled with 7-day retention
+- **Daily backups**: Automated by Supabase (verificeret 2026-09-06: 8 daglige backups til stede, WAL-G aktiveret)
+- **PITR**: ⚠️ **IKKE aktiveret på prod pt.** (verificeret 2026-09-06 via Management API: `pitr_enabled: false`, BIZZ-2249). Den faktiske RPO er derfor ~24t (kun daglige backups), IKKE near-zero som 7-dages-PITR ville give. **Operatør-handling:** aktivér PITR-add-on på prod-projektet (Settings → Add-ons) hvis en strammere RPO end 24t kræves — ellers ret RPO-målet + tabellen øverst til at afspejle daglig-backup-only.
 - **Migration safety**: All migrations are reversible (per DBA checklist)
 - **Pre-deploy testing**: CI runs tests before merge to main
 - **Monitoring**: daily-status cron checks DB connectivity + cert expiry

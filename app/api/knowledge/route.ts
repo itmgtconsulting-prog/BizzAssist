@@ -20,6 +20,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
+import { tenantUserDb } from '@/lib/db/tenant';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
@@ -74,7 +75,7 @@ interface _CreateKnowledgeBody {
  */
 async function resolveTenantMembership(
   userId: string
-): Promise<{ tenantId: string; role: string } | null> {
+): Promise<{ tenantId: string; role: string; schemaName: string } | null> {
   const adminClient = createAdminClient();
 
   const { data } = await adminClient
@@ -85,7 +86,21 @@ async function resolveTenantMembership(
     .single();
 
   if (!data?.tenant_id) return null;
-  return { tenantId: data.tenant_id as string, role: data.role as string };
+
+  // BIZZ-2275: opslå det FAKTISKE schema-navn. Tidligere blev tenant-UUID sendt til
+  // tenantDb() (som forventer et schema-navn) → admin.schema('<uuid>') → PGRST106 → 500.
+  const { data: tenant } = await adminClient
+    .from('tenants')
+    .select('schema_name')
+    .eq('id', data.tenant_id)
+    .single();
+  if (!tenant?.schema_name) return null;
+
+  return {
+    tenantId: data.tenant_id as string,
+    role: data.role as string,
+    schemaName: tenant.schema_name as string,
+  };
 }
 
 // ─── GET /api/knowledge ───────────────────────────────────────────────────────
@@ -116,7 +131,8 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const { data, error } = await tenantDb(membership.tenantId)
+    // BIZZ-2275 fix + BIZZ-2271: korrekt schema-navn + RLS-håndhævet read (user-klient).
+    const { data, error } = await tenantUserDb(supabase, membership.schemaName)
       .from('tenant_knowledge')
       .select('id, tenant_id, title, content, source_type, created_by, created_at, updated_at')
       .eq('tenant_id', membership.tenantId)
@@ -187,7 +203,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const { data, error } = await tenantDb(membership.tenantId)
+    // BIZZ-2275: write bruger korrekt schema-navn (admin/service_role, jf. bizz-2272).
+    const { data, error } = await tenantDb(membership.schemaName)
       .from('tenant_knowledge')
       .insert({
         tenant_id: membership.tenantId,
@@ -267,7 +284,8 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const { error } = await tenantDb(membership.tenantId)
+    // BIZZ-2275: write bruger korrekt schema-navn (admin/service_role).
+    const { error } = await tenantDb(membership.schemaName)
       .from('tenant_knowledge')
       .delete()
       .eq('tenant_id', membership.tenantId)

@@ -290,6 +290,31 @@ function tenantDb(admin: ReturnType<typeof createAdminClient>, schemaName: strin
   return admin.schema(schemaName as 'tenant');
 }
 
+/**
+ * BIZZ-2271/2243: Returns the USER-JWT client scoped to a tenant schema, so
+ * queries run as the `authenticated` role and Row Level Security is ENFORCED
+ * (unlike `tenantDb(admin, …)` which uses service_role + BYPASSRLS).
+ *
+ * This is the defense-in-depth read path: `is_tenant_member(auth.uid())` policies
+ * gate the query, so an app-layer tenant-scoping bug can no longer leak another
+ * tenant's rows (verified in dev: member sees rows, non-member sees 0). Use for
+ * OWN-tenant user-facing reads where the caller has already verified membership.
+ *
+ * NOT for domain-federated reads (ADR-0011 reads OTHER tenants' data via
+ * getDomainLinkedTenants — per-user RLS would block those; they stay on the admin
+ * client). NOT for crons/admin/provisioning (no user JWT — keep service_role).
+ *
+ * @param userClient - the user-JWT server client (createServerClient())
+ * @param schemaName - validated tenant schema name (tenant_[a-z0-9]+)
+ * @returns PostgREST client scoped to the schema, with RLS enforced
+ */
+export function tenantUserDb(
+  userClient: Awaited<ReturnType<typeof createServerClient>>,
+  schemaName: string
+): TenantDb {
+  return userClient.schema(schemaName as 'tenant') as unknown as TenantDb;
+}
+
 // ---------------------------------------------------------------------------
 // Access verification
 // ---------------------------------------------------------------------------

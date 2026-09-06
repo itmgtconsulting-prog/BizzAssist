@@ -211,6 +211,23 @@ function DanishPrivacy() {
           styrelsens CVR, Tinglysning.dk, BBR og DAWA. Disse kilder leverer offentligt tilgængelige
           data og betragtes ikke som databehandlere for personlige data om dig som bruger.
         </p>
+        <h3 className="text-lg font-semibold text-white mt-4 mb-2">
+          Deling af forsikringsdata inden for et domæne
+        </h3>
+        <p className="text-slate-400 text-sm">
+          Dine forsikrings-analyser, -dokumenter og -sager ejes personligt i din egen konto. Hvis du
+          er medlem af et <strong className="text-white">domæne</strong> (fx din organisations
+          e-maildomæne), fungerer medlemskabet som dit{' '}
+          <strong className="text-white">samtykke</strong> (GDPR art. 6, stk. 1, litra a) til at
+          dele disse data som en <strong className="text-white">læse-adgang</strong> med de øvrige
+          nuværende medlemmer af samme domæne. Data kopieres eller flyttes aldrig — de forbliver i
+          din konto, og andre medlemmer får kun adgang til at læse dem. Du kan{' '}
+          <strong className="text-white">tilbagekalde samtykket</strong> ved at forlade domænet
+          (eller ved at en administrator fjerner dit medlemskab): adgangen ophører øjeblikkeligt, da
+          delingen beregnes ved hvert opslag og aldrig caches. Brugere uden fælles domæne kan aldrig
+          se hinandens data. Se ADR-0011 og docs/security/DATA_CLASSIFICATION.md for den tekniske
+          model.
+        </p>
       </section>
 
       <section>
@@ -469,6 +486,22 @@ function EnglishPrivacy() {
           Authority&apos;s CVR register, Tinglysning.dk, BBR and DAWA. These sources provide
           publicly available data and are not considered processors of personal data about you as a
           user.
+        </p>
+        <h3 className="text-lg font-semibold text-white mt-4 mb-2">
+          Sharing insurance data within a domain
+        </h3>
+        <p className="text-slate-400 text-sm">
+          Your insurance analyses, documents and cases are owned personally in your own account. If
+          you are a member of a <strong className="text-white">domain</strong> (e.g. your
+          organisation&apos;s email domain), that membership constitutes your{' '}
+          <strong className="text-white">consent</strong> (GDPR Art. 6(1)(a)) to share this data as{' '}
+          <strong className="text-white">read access</strong> with the other current members of the
+          same domain. Data is never copied or moved — it stays in your account and other members
+          only gain read access. You can <strong className="text-white">withdraw consent</strong> by
+          leaving the domain (or by an administrator removing your membership): access ends
+          immediately, as the sharing is computed on every lookup and never cached. Users without a
+          shared domain can never see each other&apos;s data. See ADR-0011 and
+          docs/security/DATA_CLASSIFICATION.md for the technical model.
         </p>
       </section>
 

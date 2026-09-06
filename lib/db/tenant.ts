@@ -473,7 +473,8 @@ export async function getTenantContext(tenantId: string): Promise<TenantContext>
   // ── Saved Searches ─────────────────────────────────────────
   const savedSearches: SavedSearchesApi = {
     async list() {
-      const { data, error } = await tenantDb(admin, schemaName)
+      // BIZZ-2271: RLS-håndhævet read (tenant-scoped policy → uændret synlighed).
+      const { data, error } = await userDb
         .from('saved_searches')
         .select('*')
         .eq('tenant_id', tenantId)
@@ -505,7 +506,8 @@ export async function getTenantContext(tenantId: string): Promise<TenantContext>
   // ── Reports ────────────────────────────────────────────────
   const reports: ReportsApi = {
     async list({ entity_type } = {}) {
-      let q = tenantDb(admin, schemaName)
+      // BIZZ-2271: RLS-håndhævet read (tenant-scoped policy → uændret synlighed).
+      let q = userDb
         .from('reports')
         .select('*')
         .eq('tenant_id', tenantId)
@@ -517,7 +519,8 @@ export async function getTenantContext(tenantId: string): Promise<TenantContext>
     },
 
     async get(id) {
-      const { data, error } = await tenantDb(admin, schemaName)
+      // BIZZ-2271: RLS-håndhævet read (tenant-scoped policy → uændret synlighed).
+      const { data, error } = await userDb
         .from('reports')
         .select('*')
         .eq('id', id)
@@ -560,6 +563,11 @@ export async function getTenantContext(tenantId: string): Promise<TenantContext>
   };
 
   // ── AI Conversations ───────────────────────────────────────
+  // BIZZ-2271: BEVIDST på admin (ikke userDb). ai_conversations har en USER-scopet
+  // RLS-policy (is_tenant_member AND created_by = auth.uid()), så en migrering ville
+  // ÆNDRE synligheden (bruger ville kun se EGNE samtaler, ikke alle tenant-medlemmers).
+  // Det er muligvis den korrekte adfærd, men skal være en bevidst beslutning — ikke en
+  // bivirkning af RLS-backstop-migreringen. Udskudt til separat vurdering.
   const aiConversations: AiConversationsApi = {
     async list() {
       const { data, error } = await tenantDb(admin, schemaName)
@@ -615,7 +623,8 @@ export async function getTenantContext(tenantId: string): Promise<TenantContext>
     },
 
     async getMessages(conversationId) {
-      const { data, error } = await tenantDb(admin, schemaName)
+      // BIZZ-2271: RLS-håndhævet read (ai_messages er tenant-scoped → uændret synlighed).
+      const { data, error } = await userDb
         .from('ai_messages')
         .select('*')
         .eq('conversation_id', conversationId)
@@ -638,7 +647,8 @@ export async function getTenantContext(tenantId: string): Promise<TenantContext>
   // ── Property Snapshots ──────────────────────────────────────
   const propertySnapshots: PropertySnapshotsApi = {
     async getLatest(entityId, snapshotType) {
-      const { data, error } = await tenantDb(admin, schemaName)
+      // BIZZ-2271: RLS-håndhævet read (tenant-scoped policy → uændret synlighed).
+      const { data, error } = await userDb
         .from('property_snapshots')
         .select('*')
         .eq('tenant_id', tenantId)
@@ -665,7 +675,8 @@ export async function getTenantContext(tenantId: string): Promise<TenantContext>
   // ── Notifications ──────────────────────────────────────────
   const notifications: NotificationsApi = {
     async list({ unread_only, limit = 50 } = {}) {
-      let q = tenantDb(admin, schemaName)
+      // BIZZ-2271: RLS-håndhævet read (tenant-scoped policy + eksplicit user_id-filter → uændret).
+      let q = userDb
         .from('notifications')
         .select('*')
         .eq('tenant_id', tenantId)
@@ -692,7 +703,8 @@ export async function getTenantContext(tenantId: string): Promise<TenantContext>
       } = await supabase.auth.getUser();
       if (!user) return 0;
 
-      const { count, error } = await tenantDb(admin, schemaName)
+      // BIZZ-2271: RLS-håndhævet read (tenant-scoped + user_id-filter → uændret).
+      const { count, error } = await userDb
         .from('notifications')
         .select('*', { count: 'exact', head: true })
         .eq('tenant_id', tenantId)

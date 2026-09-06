@@ -413,10 +413,18 @@ export async function getTenantContext(tenantId: string): Promise<TenantContext>
   // explicit tenant_id filters as defence-in-depth.
   const admin = createAdminClient();
 
+  // BIZZ-2271/2243: RLS-håndhævet læse-klient (authenticated-rollen). Egen-tenant
+  // READS routes gennem denne så is_tenant_member(auth.uid())-policies er en reel
+  // backstop mod app-lags-scoping-bugs (verificeret: medlem ser data, ikke-medlem
+  // ser 0). WRITES + audit forbliver på admin (service_role) — de håndteres i
+  // bizz-2272 og audit må aldrig RLS-blokeres. userDb er kun sikker for OWN-tenant
+  // (medlemskab verificeret i step 1); federerede reads bruger fortsat admin.
+  const userDb = tenantUserDb(await createServerClient(), schemaName);
+
   // ── Saved Entities ─────────────────────────────────────────
   const savedEntities: SavedEntitiesApi = {
     async list({ entity_type, monitored_only } = {}) {
-      let q = tenantDb(admin, schemaName)
+      let q = userDb
         .from('saved_entities')
         .select('*')
         .eq('tenant_id', tenantId)
@@ -429,7 +437,7 @@ export async function getTenantContext(tenantId: string): Promise<TenantContext>
     },
 
     async get(id) {
-      const { data, error } = await tenantDb(admin, schemaName)
+      const { data, error } = await userDb
         .from('saved_entities')
         .select('*')
         .eq('id', id)

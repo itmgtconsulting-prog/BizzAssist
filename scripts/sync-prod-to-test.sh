@@ -65,8 +65,25 @@ for t in "${TABLES[@]}"; do
          -c "SET session_replication_role = replica;" \
          -c "TRUNCATE public.$t;" \
          -c "\copy public.$t FROM STDIN"; then
-    echo "   ✓ $t ($(($(date +%s) - start))s)"
-    ok=$((ok + 1))
+    # BIZZ-2212: række-antals-verifikation. --single-transaction committer det den
+    # LÆSER fra STDIN — en prod-side stream-drop (EOF midt i) ligner "færdig" og
+    # committer et PARTIELT TRUNCATE+COPY (fx ejf_ejerskab endte på 46%). pipefail
+    # fanger prod-siden POST-hoc, men test er allerede erstattet. Vi verificerer
+    # derfor test-count mod prod-count og markerer tabellen fejlet ved afvigelse
+    # (>1% under prod, ud over samtidig prod-vækst), så delvis-load ikke rapporteres
+    # som success.
+    prod_n=$(PGOPTIONS='-c statement_timeout=0' psql "$PROD_DB_URL" -tAc "SELECT count(*) FROM public.$t" 2>/dev/null)
+    test_n=$(PGOPTIONS='-c statement_timeout=0' psql "$TEST_DB_URL" -tAc "SELECT count(*) FROM public.$t" 2>/dev/null)
+    if [ -n "$prod_n" ] && [ -n "$test_n" ] && [ "$prod_n" -gt 0 ] \
+       && [ "$test_n" -lt "$(( prod_n - prod_n / 100 ))" ]; then
+      echo "   ✗ $t UFULDSTÆNDIG: test=$test_n < prod=$prod_n (partiel load) — markeret fejlet"
+      fail=$((fail + 1))
+      failed_list="$failed_list $t(partiel:$test_n/$prod_n)"
+      case " $CRITICAL " in *" $t "*) critical_failed=1 ;; esac
+    else
+      echo "   ✓ $t (test=$test_n/prod=$prod_n, $(($(date +%s) - start))s)"
+      ok=$((ok + 1))
+    fi
   else
     echo "   ✗ $t FEJLEDE — springer over"
     fail=$((fail + 1))

@@ -1772,11 +1772,13 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
             </div>
           </div>
 
-          {/* Tab bar */}
-          <div className="flex gap-1 -mb-px overflow-x-auto scrollbar-hide">
+          {/* Tab bar — BIZZ-2257/WCAG: role=tablist/tab/aria-selected (matcher EjendomHeader) */}
+          <div role="tablist" className="flex gap-1 -mb-px overflow-x-auto scrollbar-hide">
             {tabOrder.map((tabId) => (
               <button
                 key={tabId}
+                role="tab"
+                aria-selected={aktivTab === tabId}
                 onClick={() => setAktivTab(tabId)}
                 className={`flex items-center gap-1 px-2 py-1.5 text-xs font-medium border-b-2 transition-all whitespace-nowrap ${
                   aktivTab === tabId

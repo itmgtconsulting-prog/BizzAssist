@@ -283,12 +283,12 @@ async function renderVirksomhed() {
  * then clicks it to activate the financials section.
  *
  * Note: the tab buttons in VirksomhedDetaljeClient are plain <button> elements
- * without role="tab" — we locate them by exact text content "Regnskab".
+ * BIZZ-2257: fanerne har nu role="tab" (WCAG) — vi lokaliserer via role="tab".
  */
 async function clickRegnskabTab() {
   // findByRole with a 8-second timeout handles slow promise chains in the test environment.
-  // The button label comes from translations.da.company.tabs.financials = 'Regnskab'.
-  const tab = await screen.findByRole('button', { name: /^regnskab$/i }, { timeout: 8000 });
+  // The tab label comes from translations.da.company.tabs.financials = 'Regnskab'.
+  const tab = await screen.findByRole('tab', { name: /^regnskab$/i }, { timeout: 8000 });
   await act(async () => {
     fireEvent.click(tab);
     await new Promise<void>((resolve) => setTimeout(resolve, 0));

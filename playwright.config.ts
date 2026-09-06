@@ -70,6 +70,20 @@ export default defineConfig({
         storageState: AUTH_STATE_PATH,
       },
     },
+
+    /* ── Mobil-responsivitet (BIZZ-2257) — 375px iPhone-viewport, auth ── */
+    {
+      name: 'chromium-mobile',
+      testMatch: /mobil-responsivitet\.spec\.ts/,
+      dependencies: ['auth setup'],
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 375, height: 812 },
+        isMobile: false, // Chromium understøtter ikke isMobile; 375px-viewport er nok til overflow-check
+        hasTouch: true,
+        storageState: AUTH_STATE_PATH,
+      },
+    },
   ],
 
   /* Start the Next.js dev server automatically before tests.

@@ -2954,15 +2954,24 @@ export async function POST(request: NextRequest): Promise<Response> {
   let recentEntitiesContext = '';
   /** Formatted tenant knowledge base context injected into the system prompt. */
   let knowledgeContext = '';
+
+  // Resolve the tenant's physical schema name once (per-tenant tenant_<slug>).
+  // Both the recent-entities and knowledge-base context reads target that schema.
+  let tenantSchemaName: string | undefined;
   try {
     const { data: tenantRow } = await adminClient
       .from('tenants')
       .select('schema_name')
       .eq('id', resolvedTenantId)
       .single();
+    tenantSchemaName = tenantRow?.schema_name ?? undefined;
+  } catch {
+    // Non-critical — AI still works without tenant-schema context
+  }
 
-    if (tenantRow?.schema_name) {
-      const db = tenantDb(tenantRow.schema_name);
+  try {
+    if (tenantSchemaName) {
+      const db = tenantDb(tenantSchemaName);
       const { data: recents } = await db
         .from('recent_entities')
         .select('entity_type, entity_id, display_name, visited_at')
@@ -3012,37 +3021,15 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   // ── Tenant knowledge base context injection ───────────────────────────────
-  // Fetches the 5 most recent knowledge items for the tenant and appends them
-  // to the system prompt so the AI can reference company-specific information
-  // without the user having to repeat it.
-  // Max 2000 chars per item to keep token usage predictable.
+  // Fetches the 5 most recent knowledge items from the per-tenant
+  // tenant_<slug>.tenant_knowledge table (BIZZ-2277/2279) and appends them to
+  // the system prompt so the AI can reference company-specific information.
+  // Previously used .schema('tenant') → PGRST106 (schema not exposed to
+  // PostgREST), so the AI silently received no knowledge. Max 2000 chars/item.
   // Non-critical — failures are silently swallowed.
-  if (resolvedTenantId) {
+  if (tenantSchemaName) {
     try {
-      const { data: knowledgeItems } = await (
-        adminClient as unknown as {
-          schema: (s: string) => {
-            from: (t: string) => {
-              select: (cols: string) => {
-                eq: (
-                  col: string,
-                  val: string
-                ) => {
-                  order: (
-                    col: string,
-                    opts: { ascending: boolean }
-                  ) => {
-                    limit: (n: number) => Promise<{
-                      data: Array<{ title: string; content: string }> | null;
-                    }>;
-                  };
-                };
-              };
-            };
-          };
-        }
-      )
-        .schema('tenant')
+      const { data: knowledgeItems } = await tenantDb(tenantSchemaName)
         .from('tenant_knowledge')
         .select('title, content')
         .eq('tenant_id', resolvedTenantId)
@@ -3050,7 +3037,7 @@ export async function POST(request: NextRequest): Promise<Response> {
         .limit(5);
 
       if (knowledgeItems && knowledgeItems.length > 0) {
-        const formatted = knowledgeItems
+        const formatted = (knowledgeItems as Array<{ title: string; content: string }>)
           .map((k) => `[VIDEN: ${k.title}]\n${k.content.slice(0, 2000)}`)
           .join('\n\n');
         knowledgeContext = `## Organisationens videnbase\n${formatted}`;

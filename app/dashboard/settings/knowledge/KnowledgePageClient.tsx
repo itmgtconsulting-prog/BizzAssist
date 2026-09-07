@@ -23,6 +23,7 @@ import {
   ArrowLeft,
   BookOpen,
   Plus,
+  Pencil,
   Trash2,
   Loader2,
   AlertTriangle,
@@ -76,25 +77,35 @@ function sourceTypeLabel(sourceType: string): string {
   }
 }
 
-// ─── Add modal ────────────────────────────────────────────────────────────────
+// ─── Add / edit modal ───────────────────────────────────────────────────────
 
-interface AddModalProps {
+interface KnowledgeModalProps {
+  /**
+   * When provided, the modal opens in edit mode: fields are pre-filled and the
+   * form submits a PATCH to /api/knowledge/[id]. When null/undefined, the modal
+   * creates a new item via POST /api/knowledge.
+   */
+  editItem?: KnowledgeItem | null;
   /** Called when the modal should close (cancelled or successfully submitted). */
   onClose: () => void;
-  /** Called with the newly created item after a successful API call. */
-  onCreated: (item: KnowledgeItem) => void;
+  /** Called with the created or updated item after a successful API call. */
+  onSaved: (item: KnowledgeItem) => void;
 }
 
 /**
- * Modal dialog for adding a new knowledge item.
- * Handles form state, character counting, validation, and the POST request.
+ * Modal dialog for adding a new knowledge item or editing an existing one.
+ * Handles form state, character counting, validation, and the POST/PATCH
+ * request. Edit mode (editItem set) exposes the PATCH route (BIZZ-2281) that
+ * previously existed only in the API.
  *
- * @param onClose   - Close callback (no item created)
- * @param onCreated - Success callback, receives the created KnowledgeItem
+ * @param editItem - Item to edit, or null/undefined to create a new one
+ * @param onClose  - Close callback (no change persisted)
+ * @param onSaved  - Success callback, receives the created/updated KnowledgeItem
  */
-function AddModal({ onClose, onCreated }: AddModalProps) {
-  const [title, setTitle] = useState('');
-  const [content, setContent] = useState('');
+function KnowledgeModal({ editItem, onClose, onSaved }: KnowledgeModalProps) {
+  const isEdit = !!editItem;
+  const [title, setTitle] = useState(editItem?.title ?? '');
+  const [content, setContent] = useState(editItem?.content ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const titleRef = useRef<HTMLInputElement>(null);
@@ -114,7 +125,8 @@ function AddModal({ onClose, onCreated }: AddModalProps) {
   }, [onClose]);
 
   /**
-   * Submits the form to POST /api/knowledge.
+   * Submits the form. Creates via POST /api/knowledge, or updates via
+   * PATCH /api/knowledge/[id] when in edit mode.
    * Validates length constraints before sending.
    */
   const handleSubmit = useCallback(async () => {
@@ -139,14 +151,14 @@ function AddModal({ onClose, onCreated }: AddModalProps) {
 
     setSaving(true);
     try {
-      const res = await fetch('/api/knowledge', {
-        method: 'POST',
+      const res = await fetch(isEdit ? `/api/knowledge/${editItem!.id}` : '/api/knowledge', {
+        method: isEdit ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: title.trim(),
-          content: content.trim(),
-          source_type: 'manual',
-        }),
+        body: JSON.stringify(
+          isEdit
+            ? { title: title.trim(), content: content.trim() }
+            : { title: title.trim(), content: content.trim(), source_type: 'manual' }
+        ),
       });
 
       if (!res.ok) {
@@ -156,13 +168,13 @@ function AddModal({ onClose, onCreated }: AddModalProps) {
       }
 
       const item = (await res.json()) as KnowledgeItem;
-      onCreated(item);
+      onSaved(item);
     } catch {
       setError('Netværksfejl — prøv igen.');
     } finally {
       setSaving(false);
     }
-  }, [title, content, onCreated]);
+  }, [title, content, onSaved, isEdit, editItem]);
 
   const contentRemaining = MAX_CONTENT_CHARS - content.length;
   const contentNearLimit = contentRemaining < 5_000;
@@ -180,7 +192,7 @@ function AddModal({ onClose, onCreated }: AddModalProps) {
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
           <h2 id="add-knowledge-title" className="text-white font-semibold text-base">
-            Tilføj viden
+            {isEdit ? 'Rediger viden' : 'Tilføj viden'}
           </h2>
           <button
             onClick={onClose}
@@ -276,6 +288,11 @@ function AddModal({ onClose, onCreated }: AddModalProps) {
                 <Loader2 size={14} className="animate-spin" />
                 Gemmer…
               </>
+            ) : isEdit ? (
+              <>
+                <Pencil size={14} />
+                Gem ændringer
+              </>
             ) : (
               <>
                 <Plus size={14} />
@@ -306,6 +323,8 @@ export default function KnowledgePageClient() {
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
+  /** Item currently being edited (null = not editing). Opens the modal in edit mode. */
+  const [editItem, setEditItem] = useState<KnowledgeItem | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -339,14 +358,20 @@ export default function KnowledgePageClient() {
   }, [fetchItems]);
 
   /**
-   * Handles successful creation of a new knowledge item.
-   * Prepends the item to the list without a full refetch.
+   * Handles a successful create or update. Upserts the item into the list
+   * (replaces on matching id, otherwise prepends) so both POST and PATCH results
+   * are reflected without a full refetch. Closes whichever modal was open.
    *
-   * @param item - The newly created KnowledgeItem
+   * @param item - The created or updated KnowledgeItem
    */
-  const handleCreated = useCallback((item: KnowledgeItem) => {
-    setItems((prev) => [item, ...prev]);
+  const handleSaved = useCallback((item: KnowledgeItem) => {
+    setItems((prev) =>
+      prev.some((i) => i.id === item.id)
+        ? prev.map((i) => (i.id === item.id ? item : i))
+        : [item, ...prev]
+    );
     setShowAddModal(false);
+    setEditItem(null);
     setSuccessMsg('Viden gemt!');
     setTimeout(() => setSuccessMsg(null), 4000);
   }, []);
@@ -591,18 +616,27 @@ export default function KnowledgePageClient() {
                     <h3 className="text-white font-medium text-sm leading-snug truncate">
                       {item.title}
                     </h3>
-                    <button
-                      onClick={() => void handleDelete(item.id)}
-                      disabled={deletingId === item.id}
-                      aria-label={`Slet "${item.title}"`}
-                      className="shrink-0 text-slate-400 hover:text-red-400 transition-colors p-1 rounded opacity-0 group-hover:opacity-100 focus:opacity-100"
-                    >
-                      {deletingId === item.id ? (
-                        <Loader2 size={14} className="animate-spin" />
-                      ) : (
-                        <Trash2 size={14} />
-                      )}
-                    </button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        onClick={() => setEditItem(item)}
+                        aria-label={`Rediger "${item.title}"`}
+                        className="text-slate-400 hover:text-blue-400 transition-colors p-1 rounded opacity-0 group-hover:opacity-100 focus:opacity-100"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                      <button
+                        onClick={() => void handleDelete(item.id)}
+                        disabled={deletingId === item.id}
+                        aria-label={`Slet "${item.title}"`}
+                        className="text-slate-400 hover:text-red-400 transition-colors p-1 rounded opacity-0 group-hover:opacity-100 focus:opacity-100"
+                      >
+                        {deletingId === item.id ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : (
+                          <Trash2 size={14} />
+                        )}
+                      </button>
+                    </div>
                   </div>
 
                   {/* Preview */}
@@ -632,9 +666,17 @@ export default function KnowledgePageClient() {
         )}
       </div>
 
-      {/* ─── Add modal ─── */}
-      {showAddModal && (
-        <AddModal onClose={() => setShowAddModal(false)} onCreated={handleCreated} />
+      {/* ─── Add / edit modal ─── */}
+      {(showAddModal || editItem) && (
+        <KnowledgeModal
+          key={editItem?.id ?? 'new'}
+          editItem={editItem}
+          onClose={() => {
+            setShowAddModal(false);
+            setEditItem(null);
+          }}
+          onSaved={handleSaved}
+        />
       )}
     </div>
   );

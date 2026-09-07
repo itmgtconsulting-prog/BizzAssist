@@ -83,72 +83,38 @@ function extractTxt(buf: Buffer): string {
 }
 
 /**
- * Extracts printable text from a PDF buffer using a simple byte-scan approach.
+ * Extracts the text layer from a PDF buffer using the `pdf-parse` library
+ * (a proper PDF parser, already declared in next.config serverExternalPackages).
  *
- * This does NOT use a full PDF parser — it scans for runs of printable ASCII
- * characters inside the raw PDF stream data. Accuracy is lower than a proper
- * parser but requires no additional dependencies and handles the common case
- * of text-layer PDFs well enough for a knowledge-base upload feature.
+ * This replaces the previous regex byte-scan heuristic (BIZZ-2281): pdf-parse
+ * decodes the content streams correctly, so multi-line text, word spacing and
+ * encodings survive instead of being reconstructed by pattern-matching.
  *
- * If pdfjs-dist is added in the future, replace this implementation.
+ * Loaded via dynamic import so the (heavy) parser is only pulled in when a PDF
+ * is actually uploaded. Image-only/scanned PDFs yield empty text — the caller
+ * then returns a 422 "no searchable text" message. A parse failure is caught
+ * and downgraded to empty text (never a 500) so a single malformed file cannot
+ * crash the request.
  *
  * @param buf - Raw PDF file buffer
- * @returns Extracted text (may include some noise from PDF structure tokens)
+ * @returns Extracted plain text (empty string if the PDF has no text layer)
  */
-function extractPdf(buf: Buffer): string {
-  // Decode the PDF bytes and scan for BT...ET (Begin Text...End Text) blocks.
-  // Inside those blocks, extract string literals surrounded by () or <>.
-  const raw = buf.toString('latin1');
-  const parts: string[] = [];
-
-  // Match PDF string literals inside text blocks: (some text) or <hex>
-  const btEtPattern = /BT([\s\S]*?)ET/g;
-  let btMatch: RegExpExecArray | null;
-
-  while ((btMatch = btEtPattern.exec(raw)) !== null) {
-    const block = btMatch[1];
-    // Extract literal strings: (...)
-    const litPattern = /\(([^)\\]*(?:\\.[^)\\]*)*)\)/g;
-    let litMatch: RegExpExecArray | null;
-    while ((litMatch = litPattern.exec(block)) !== null) {
-      // Unescape basic PDF escape sequences
-      const text = litMatch[1]
-        .replace(/\\n/g, '\n')
-        .replace(/\\r/g, '\r')
-        .replace(/\\t/g, '\t')
-        .replace(/\\\\/g, '\\')
-        .replace(/\\\(/g, '(')
-        .replace(/\\\)/g, ')');
-      // Only keep runs with at least 2 printable characters
-      if (/[\x20-\x7E]{2,}/.test(text)) {
-        parts.push(text);
-      }
-    }
+async function extractPdf(buf: Buffer): Promise<string> {
+  try {
+    const { PDFParse } = await import('pdf-parse');
+    const parser = new PDFParse({ data: new Uint8Array(buf) });
+    const result = await parser.getText();
+    return (
+      (result.text ?? '')
+        // pdf-parse appends "-- N of M --" page separators — strip them.
+        .replace(/^-- \d+ of \d+ --$/gm, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim()
+    );
+  } catch (err) {
+    logger.error('[knowledge/upload] pdf-parse fejlede:', err);
+    return '';
   }
-
-  if (parts.length > 0) {
-    return parts
-      .join(' ')
-      .replace(/\s{2,}/g, ' ')
-      .trim();
-  }
-
-  // Fallback: extract all printable ASCII runs ≥ 4 chars from the raw bytes.
-  const fallbackParts: string[] = [];
-  const runPattern = /[\x20-\x7E]{4,}/g;
-  let runMatch: RegExpExecArray | null;
-  while ((runMatch = runPattern.exec(raw)) !== null) {
-    const run = runMatch[0].trim();
-    // Skip PDF structure tokens that are clearly not human text
-    if (/^(obj|endobj|stream|endstream|xref|trailer|startxref|<<|>>|\d+ \d+ R)$/.test(run)) {
-      continue;
-    }
-    if (run.length >= 4) fallbackParts.push(run);
-  }
-  return fallbackParts
-    .join(' ')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
 }
 
 /**
@@ -267,7 +233,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (isTxt) {
       extracted = extractTxt(buf);
     } else if (isPdf) {
-      extracted = extractPdf(buf);
+      extracted = await extractPdf(buf);
     } else {
       // DOCX
       extracted = await extractDocx(buf);

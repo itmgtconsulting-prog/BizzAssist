@@ -38,12 +38,16 @@ const MAX_CONTENT_CHARS = 50_000;
 /**
  * Resolves the authenticated user's tenant_id and role.
  *
+ * Also resolves the physical schema name (e.g. `tenant_abc123`) for the
+ * per-tenant tenant_knowledge table (BIZZ-2277) — the PostgREST `.schema()`
+ * API needs the schema name, not the tenant UUID.
+ *
  * @param userId - Supabase Auth user UUID
- * @returns { tenantId, role } or null if no membership found
+ * @returns { tenantId, role, schemaName } or null if no membership found
  */
 async function resolveTenantMembership(
   userId: string
-): Promise<{ tenantId: string; role: string } | null> {
+): Promise<{ tenantId: string; role: string; schemaName: string } | null> {
   const adminClient = createAdminClient();
   const { data } = await adminClient
     .from('tenant_memberships')
@@ -52,7 +56,19 @@ async function resolveTenantMembership(
     .limit(1)
     .single();
   if (!data?.tenant_id) return null;
-  return { tenantId: data.tenant_id as string, role: data.role as string };
+
+  const { data: tenant } = await adminClient
+    .from('tenants')
+    .select('schema_name')
+    .eq('id', data.tenant_id)
+    .single();
+  if (!tenant?.schema_name) return null;
+
+  return {
+    tenantId: data.tenant_id as string,
+    role: data.role as string,
+    schemaName: tenant.schema_name as string,
+  };
 }
 
 /**
@@ -279,7 +295,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   // ── Persist ──────────────────────────────────────────────────────────────────
   try {
-    const { data, error } = await tenantDb(membership.tenantId)
+    const { data, error } = await tenantDb(membership.schemaName)
       .from('tenant_knowledge')
       .insert({
         tenant_id: membership.tenantId,

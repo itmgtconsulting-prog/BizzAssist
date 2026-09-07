@@ -134,6 +134,16 @@ test.describe('Videnbase (knowledge base) — BIZZ-2276/2280', () => {
       expect(manual.source_type).toBe('manual');
       createdIds.push(manual.id);
 
+      // (b2) update via PATCH — locks the KB.5 edit path (route + per-tenant schema)
+      const patchRes = await request.patch(`/api/knowledge/${manual.id}`, {
+        data: { title: `${PREFIX} manuel note (redigeret)` },
+      });
+      expect(patchRes.status()).toBe(200);
+      expect((await patchRes.json()) as KnowledgeRow).toMatchObject({
+        id: manual.id,
+        title: `${PREFIX} manuel note (redigeret)`,
+      });
+
       // (c) uploads — each extractor must actually recover its marker text
       const uploads: Array<{ name: string; mime: string; buf: Buffer; marker: string }> = [
         {

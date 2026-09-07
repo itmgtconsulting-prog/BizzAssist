@@ -12,6 +12,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { tenantDb } from '@/lib/supabase/admin';
+import { getTenantSchemaName } from '@/lib/db/tenant';
 
 /** Response shape from Google's token endpoint */
 interface GoogleTokenResponse {
@@ -111,8 +112,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const userInfo = (await userRes.json()) as GoogleUserInfo;
 
-    // Store in DB
-    const { error: dbError } = await tenantDb(tenantId)
+    // Store in DB — email_integrations is per-tenant (BIZZ-2275); resolve the
+    // schema name from the tenant UUID carried in the validated OAuth state.
+    const schemaName = await getTenantSchemaName(tenantId);
+    const { error: dbError } = await tenantDb(schemaName)
       .from('email_integrations')
       .upsert(
         {

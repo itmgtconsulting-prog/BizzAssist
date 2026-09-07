@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
+import { getTenantSchemaName } from '@/lib/db/tenant';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { parseBody } from '@/app/lib/validate';
 
@@ -114,6 +115,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const { tenantId, userId } = auth;
 
+  // email_integrations lives in the per-tenant tenant_<slug> schema (BIZZ-2275).
+  let schemaName: string;
+  try {
+    schemaName = await getTenantSchemaName(tenantId);
+  } catch {
+    return NextResponse.json({ error: 'DB error' }, { status: 500 });
+  }
+
   const parsed = await parseBody(request, gmailSendSchema);
   if (!parsed.success) return parsed.response;
   const { to, subject, body: emailBody, isHtml } = parsed.data;
@@ -121,7 +130,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const admin = createAdminClient();
 
   // Fetch stored tokens
-  const { data: integration, error: fetchError } = await tenantDb(tenantId)
+  const { data: integration, error: fetchError } = await tenantDb(schemaName)
     .from('email_integrations')
     .select('access_token, refresh_token, token_expires_at')
     .eq('user_id', userId)
@@ -146,7 +155,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
     accessToken = refreshed.access_token;
     // Update stored token
-    await tenantDb(tenantId)
+    await tenantDb(schemaName)
       .from('email_integrations')
       .update({
         access_token: accessToken,
@@ -175,7 +184,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const result = (await gmailRes.json()) as GmailSendResponse;
 
     // Update last_used_at
-    await tenantDb(tenantId)
+    await tenantDb(schemaName)
       .from('email_integrations')
       .update({ last_used_at: new Date().toISOString() })
       .eq('user_id', userId)

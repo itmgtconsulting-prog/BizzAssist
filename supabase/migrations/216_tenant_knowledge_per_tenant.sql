@@ -213,37 +213,27 @@ $function$;
 
 
 -- ──────────────────────────────────────────────────────────────
--- PART 3: Backfill every existing tenant schema
---   Only tenants whose schema still physically exists and that are
---   not offboarded (closed_at IS NULL). Grants the new table +
---   sequence so PostgREST roles can reach it immediately.
+-- PART 3: Backfill every physically-existing tenant schema
+--   Provisions into EVERY tenant_<slug> schema that actually exists
+--   and has a matching public.tenants row (needed for tenant_id).
+--   We deliberately do NOT filter on closed_at: an offboarded tenant
+--   has its schema DROPPED, so it simply won't appear here — while a
+--   schema that still exists may be actively queried (e.g. the E2E
+--   tenant on test is flagged closed_at but is live), and leaving it
+--   without the table breaks those queries. Adding an empty table to
+--   a not-yet-dropped schema is harmless (no PII). This also avoids
+--   referencing closed_at, which is absent on prod (BIZZ-2199).
 -- ──────────────────────────────────────────────────────────────
 
 DO $backfill$
 DECLARE
   r record;
-  has_closed_at boolean;
 BEGIN
-  -- public.tenants.closed_at exists on dev/test but NOT prod (schema
-  -- drift, BIZZ-2199). Detect it so the offboarded-tenant filter is
-  -- applied where possible and simply omitted where the column is
-  -- absent (a stale schema still gets an empty table — harmless, and
-  -- the schemata-existence guard prevents errors for dropped schemas).
-  SELECT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'tenants'
-      AND column_name = 'closed_at'
-  ) INTO has_closed_at;
-
-  FOR r IN EXECUTE format(
-    'SELECT t.schema_name, t.id'
-    '  FROM public.tenants t'
-    ' WHERE t.schema_name IS NOT NULL'
-    '   %s'
-    '   AND EXISTS (SELECT 1 FROM information_schema.schemata s'
-    '               WHERE s.schema_name = t.schema_name)',
-    CASE WHEN has_closed_at THEN 'AND t.closed_at IS NULL' ELSE '' END
-  )
+  FOR r IN
+    SELECT t.schema_name, t.id
+    FROM information_schema.schemata s
+    JOIN public.tenants t ON t.schema_name = s.schema_name
+    WHERE s.schema_name LIKE 'tenant\_%'
   LOOP
     BEGIN
       PERFORM public.provision_tenant_knowledge(r.schema_name, r.id);

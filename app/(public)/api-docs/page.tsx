@@ -18,7 +18,11 @@ export const metadata: Metadata = {
   title: 'API Documentation | BizzAssist Enterprise',
   description:
     'REST API documentation for the BizzAssist Enterprise API v1. Covers authentication, endpoints, rate limits, and code examples.',
-  robots: { index: true, follow: true },
+  // BIZZ-2275: Enterprise v1-API'et er PARKERET (ikke provisioneret i prod —
+  // api_tokens-subsystemet mangler, så token-udstedelse + auth virker ikke).
+  // noindex så vi ikke markedsfører en ikke-funktionel feature. Sæt tilbage til
+  // index:true når feature'en unparkes + provisioneres.
+  robots: { index: false, follow: false },
 };
 
 // ─── Types ───────────────────────────────────────────────────────────────────

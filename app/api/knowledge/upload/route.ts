@@ -6,7 +6,7 @@
  *
  * Supported MIME types:
  *  - text/plain                                          — read UTF-8 directly
- *  - application/pdf                                     — extract text layer via pdf-parse
+ *  - application/pdf                                     — extract text layer via unpdf
  *  - application/vnd.openxmlformats-officedocument.wordprocessingml.document (DOCX)
  *                                                        — extract text from XML parts using JSZip
  *
@@ -83,36 +83,31 @@ function extractTxt(buf: Buffer): string {
 }
 
 /**
- * Extracts the text layer from a PDF buffer using the `pdf-parse` library
- * (a proper PDF parser, already declared in next.config serverExternalPackages).
+ * Extracts the text layer from a PDF buffer using `unpdf` — a serverless-native
+ * PDF text extractor that bundles its own pdf.js build and needs no worker file.
  *
- * This replaces the previous regex byte-scan heuristic (BIZZ-2281): pdf-parse
- * decodes the content streams correctly, so multi-line text, word spacing and
- * encodings survive instead of being reconstructed by pattern-matching.
+ * This replaces the previous regex byte-scan heuristic (BIZZ-2281): unpdf decodes
+ * the content streams correctly, so multi-line text and word spacing survive
+ * instead of being reconstructed by pattern-matching. `unpdf` is used rather than
+ * `pdf-parse`/`pdfjs-dist` because the latter's worker fails to load on Vercel's
+ * serverless runtime (returns empty text), whereas unpdf runs in any JS runtime.
  *
- * Loaded via dynamic import so the (heavy) parser is only pulled in when a PDF
- * is actually uploaded. Image-only/scanned PDFs yield empty text — the caller
- * then returns a 422 "no searchable text" message. A parse failure is caught
- * and downgraded to empty text (never a 500) so a single malformed file cannot
- * crash the request.
+ * Loaded via dynamic import so the parser is only pulled in when a PDF is actually
+ * uploaded. Image-only/scanned PDFs yield empty text — the caller then returns a
+ * 422 "no searchable text" message. A parse failure is caught and downgraded to
+ * empty text (never a 500) so a single malformed file cannot crash the request.
  *
  * @param buf - Raw PDF file buffer
  * @returns Extracted plain text (empty string if the PDF has no text layer)
  */
 async function extractPdf(buf: Buffer): Promise<string> {
   try {
-    const { PDFParse } = await import('pdf-parse');
-    const parser = new PDFParse({ data: new Uint8Array(buf) });
-    const result = await parser.getText();
-    return (
-      (result.text ?? '')
-        // pdf-parse appends "-- N of M --" page separators — strip them.
-        .replace(/^-- \d+ of \d+ --$/gm, '')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim()
-    );
+    const { extractText, getDocumentProxy } = await import('unpdf');
+    const pdf = await getDocumentProxy(new Uint8Array(buf));
+    const { text } = await extractText(pdf, { mergePages: true });
+    return (text ?? '').replace(/\n{3,}/g, '\n\n').trim();
   } catch (err) {
-    logger.error('[knowledge/upload] pdf-parse fejlede:', err);
+    logger.error('[knowledge/upload] unpdf fejlede:', err);
     return '';
   }
 }

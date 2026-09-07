@@ -6,7 +6,7 @@
  *
  * Supported MIME types:
  *  - text/plain                                          — read UTF-8 directly
- *  - application/pdf                                     — extract printable ASCII text from buffer
+ *  - application/pdf                                     — extract text layer via pdf-parse
  *  - application/vnd.openxmlformats-officedocument.wordprocessingml.document (DOCX)
  *                                                        — extract text from XML parts using JSZip
  *

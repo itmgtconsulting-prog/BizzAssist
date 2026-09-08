@@ -19,6 +19,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
+import { getTenantSchemaName } from '@/lib/db/tenant';
 import { logger } from '@/app/lib/logger';
 import { parseQuery } from '@/app/lib/validate';
 
@@ -52,7 +53,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const { type: typeFilter, limit } = parsed.data;
 
   try {
-    let query = tenantDb('tenant')
+    // ai_feedback_log lives in the per-tenant tenant_<slug> schema (BIZZ-2288).
+    const schemaName = await getTenantSchemaName(auth.tenantId);
+    let query = tenantDb(schemaName)
       .from('ai_feedback_log')
       .select(
         'id, feedback_type, question_text, ai_response_snippet, page_context, jira_ticket_id, created_at'

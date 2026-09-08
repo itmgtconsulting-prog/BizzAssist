@@ -5,7 +5,8 @@
  * Combines activity_log events, AI chat sessions, token usage, and feedback.
  *
  * Auth: super-admin only (isAdmin flag in app_metadata).
- * This is a platform-wide admin view — intentionally cross-tenant.
+ * Platform-wide admin view: any user may be inspected; the user's activity is
+ * read from their own per-tenant schema (resolved from their primary membership).
  *
  * @param params.id - Supabase Auth user UUID
  * @returns JSON with activity statistics and timeline
@@ -13,7 +14,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
 
 /** Activity event from tenant.activity_log */
@@ -87,10 +88,41 @@ export async function GET(
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
+    // activity_log / ai_chat_sessions / ai_token_usage live in the target user's
+    // per-tenant tenant_<slug> schema (BIZZ-2288 — the shared 'tenant' schema is
+    // not PostgREST-exposed). Resolve the user's primary (oldest) membership,
+    // matching resolveTenantId's deterministic choice.
+    const { data: membership } = await admin
+      .from('tenant_memberships')
+      .select('tenant_id')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    const { data: tenantRow } = membership?.tenant_id
+      ? await admin.from('tenants').select('schema_name').eq('id', membership.tenant_id).single()
+      : { data: null };
+    const schemaName = (tenantRow as { schema_name?: string } | null)?.schema_name ?? null;
+
+    // User with no resolvable tenant schema → empty activity (never 500).
+    if (!schemaName) {
+      const empty: UserActivityResponse = {
+        eventCounts: {},
+        timeline: [],
+        chatSessionCount: 0,
+        aiTokensUsed: 0,
+        recentChats: [],
+        activeDays7: 0,
+        activeDays30: 0,
+      };
+      return NextResponse.json(empty);
+    }
+
+    const db = tenantDb(schemaName);
+
     // Fetch activity_log events (last 30 days)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: events } = await (admin as any)
-      .schema('tenant')
+    const { data: events } = await db
       .from('activity_log')
       .select('event_type, payload, created_at')
       .eq('user_id', userId)
@@ -115,9 +147,7 @@ export async function GET(
     );
 
     // AI chat sessions (last 30 days)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: chatSessions } = await (admin as any)
-      .schema('tenant')
+    const { data: chatSessions } = await db
       .from('ai_chat_sessions')
       .select('id, title, created_at')
       .eq('user_id', userId)
@@ -132,9 +162,7 @@ export async function GET(
     }>;
 
     // AI token usage (last 30 days)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: tokenRows } = await (admin as any)
-      .schema('tenant')
+    const { data: tokenRows } = await db
       .from('ai_token_usage')
       .select('tokens_in, tokens_out')
       .eq('user_id', userId)

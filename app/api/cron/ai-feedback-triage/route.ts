@@ -15,7 +15,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { tenantDb } from '@/lib/supabase/admin';
+import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
 
@@ -99,33 +99,66 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       try {
         const since = new Date(Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-        // Fetch recent feedback entries without JIRA tickets
-        const { data: entries, error } = await tenantDb('tenant')
-          .from('ai_feedback_log')
-          .select('id, question_text, feedback_type')
-          .is('jira_ticket_id', null)
-          .gte('created_at', since)
-          .order('created_at', { ascending: false })
-          .limit(500);
+        // ai_feedback_log er per-tenant (tenant_<slug>-schema, BIZZ-2288/2289).
+        // Iterér alle tenant-schemaer, saml entries uden JIRA-ticket, og aggregér
+        // moenstre paa tvaers af tenants. Fejl-isoleret pr. tenant, saa én tenants
+        // fejl ikke vaelter hele triagen.
+        const admin = createAdminClient();
+        const { data: tenantRows } = await admin
+          .from('tenants')
+          .select('schema_name')
+          .not('schema_name', 'is', null);
+        const schemaNames = Array.from(
+          new Set(
+            ((tenantRows ?? []) as Array<{ schema_name: string | null }>)
+              .map((t) => t.schema_name)
+              .filter((s): s is string => !!s)
+          )
+        );
 
-        if (error) {
-          logger.error('[ai-feedback-triage] Query error:', error);
-          return NextResponse.json({ error: 'Query failed' }, { status: 500 });
-        }
+        type Entry = {
+          schemaName: string;
+          id: number;
+          question_text: string;
+          feedback_type: string;
+        };
+        const perSchema = await Promise.all(
+          schemaNames.map(async (schemaName): Promise<Entry[]> => {
+            try {
+              const { data } = await tenantDb(schemaName)
+                .from('ai_feedback_log')
+                .select('id, question_text, feedback_type')
+                .is('jira_ticket_id', null)
+                .gte('created_at', since)
+                .order('created_at', { ascending: false })
+                .limit(500);
+              return (
+                (data ?? []) as Array<{ id: number; question_text: string; feedback_type: string }>
+              ).map((e) => ({ ...e, schemaName }));
+            } catch (err) {
+              logger.error(`[ai-feedback-triage] Query error for ${schemaName}:`, err);
+              return [];
+            }
+          })
+        );
+        const entries = perSchema.flat();
 
-        if (!entries || entries.length === 0) {
+        if (entries.length === 0) {
           return NextResponse.json({ ok: true, ticketsCreated: 0 });
         }
 
-        // Group by first 50 chars of question (simple pattern matching)
-        const patterns: Record<string, { count: number; ids: number[]; sample: string }> = {};
-        for (const e of entries as { id: number; question_text: string; feedback_type: string }[]) {
+        // Group by first 50 chars of question (simple pattern matching), across tenants.
+        const patterns: Record<
+          string,
+          { count: number; refs: Array<{ schemaName: string; id: number }>; sample: string }
+        > = {};
+        for (const e of entries) {
           const key = e.question_text.slice(0, 50).toLowerCase().trim();
           if (!patterns[key]) {
-            patterns[key] = { count: 0, ids: [], sample: e.question_text };
+            patterns[key] = { count: 0, refs: [], sample: e.question_text };
           }
           patterns[key].count++;
-          patterns[key].ids.push(e.id);
+          patterns[key].refs.push({ schemaName: e.schemaName, id: e.id });
         }
 
         // Filter patterns with 3+ occurrences
@@ -134,17 +167,24 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         let ticketsCreated = 0;
         for (const pattern of recurring) {
           const summary = `[AI Gap] Brugere spoerger om: ${pattern.sample.slice(0, 80)}`;
-          const description = `${pattern.count} forekomster i de seneste ${LOOKBACK_DAYS} dage.\n\nEksempel: "${pattern.sample}"\n\nFeedback entry IDs: ${pattern.ids.join(', ')}\n\nAuto-oprettet af ai-feedback-triage cron.`;
+          const description = `${pattern.count} forekomster i de seneste ${LOOKBACK_DAYS} dage.\n\nEksempel: "${pattern.sample}"\n\nAntal beroerte entries: ${pattern.refs.length}\n\nAuto-oprettet af ai-feedback-triage cron.`;
 
           const ticketKey = await createJiraTicket(summary, description);
 
           if (ticketKey) {
-            // Update feedback entries with the JIRA ticket ID
-            for (const id of pattern.ids) {
-              await tenantDb('tenant')
-                .from('ai_feedback_log')
-                .update({ jira_ticket_id: ticketKey })
-                .eq('id', id);
+            // Update each entry's jira_ticket_id in its own tenant schema.
+            for (const ref of pattern.refs) {
+              try {
+                await tenantDb(ref.schemaName)
+                  .from('ai_feedback_log')
+                  .update({ jira_ticket_id: ticketKey })
+                  .eq('id', ref.id);
+              } catch (err) {
+                logger.error(
+                  `[ai-feedback-triage] Update error for ${ref.schemaName}#${ref.id}:`,
+                  err
+                );
+              }
             }
             ticketsCreated++;
           }

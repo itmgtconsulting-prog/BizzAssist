@@ -36,7 +36,9 @@ test.describe('AI-feedback routes (BIZZ-2288)', () => {
     const post = await request.post('/api/ai/feedback', {
       data: { questionText: marker, feedbackType: 'missing_capability' },
     });
-    expect(post.status(), 'ai/feedback POST må ikke være 500').toBe(200);
+    // 201 Created on success — the write reaching the per-tenant table is the fix
+    // (was 500/PGRST106 before). Assert it is not a server error.
+    expect(post.status(), 'ai/feedback POST må ikke være 500').toBe(201);
 
     // Read back via the admin list (tenant_admin) and confirm our entry is there.
     const list = await request.get('/api/admin/ai-feedback?type=missing_capability&limit=200');

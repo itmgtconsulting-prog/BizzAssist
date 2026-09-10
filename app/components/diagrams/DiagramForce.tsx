@@ -729,6 +729,9 @@ function DiagramForce({
 
   /** BIZZ-479: Modal-state — hvilken overflow-node der i øjeblikket vises i modal */
   const [overflowModalNode, setOverflowModalNode] = useState<DiagramNode | null>(null);
+  // BIZZ-2270: På mobil er adresse-teksten på ejendoms-noder ulæselig ved
+  // fit-zoom. Tap på en ejendoms-node åbner en læsbar detalje-popover.
+  const [detailNode, setDetailNode] = useState<DiagramNode | null>(null);
 
   /** BIZZ-427: Toggle visibility of ceased/historical owners */
   const [showCeased, setShowCeased] = useState(false);
@@ -3042,10 +3045,21 @@ function DiagramForce({
         return (
           <g
             key={node.id}
+            data-node-type={node.type}
             style={{ cursor: node.link ? 'pointer' : 'grab' }}
             onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
             onClick={() => {
               if (!dragRef.current.didMove) {
+                // BIZZ-2270: På mobil er ejendoms-adresser ulæselige ved fit-zoom.
+                // Tap på en ejendoms-node åbner en læsbar detalje-popover i stedet
+                // for straks at navigere væk (adressen kan læses fuldt ud, og en
+                // "Åbn"-knap bevarer den oprindelige handling). PC uændret.
+                const isMobile =
+                  typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches;
+                if (isMobile && node.type === 'property') {
+                  setDetailNode(node);
+                  return;
+                }
                 if (onNodeClick) {
                   // BIZZ-368: caller-controlled navigation (e.g. switch tab instead of navigate)
                   onNodeClick(node);
@@ -3823,6 +3837,79 @@ function DiagramForce({
     </div>
   ) : null;
 
+  // BIZZ-2270: Mobil detalje-popover for en ejendoms-node — viser den fulde,
+  // læsbare adresse (uafhængigt af diagram-zoom) + en knap der bevarer den
+  // oprindelige node-handling.
+  const detailModal = detailNode
+    ? (() => {
+        const raw = detailNode.label.startsWith('BFE ')
+          ? lang === 'da'
+            ? 'Uden officiel adresse'
+            : 'No official address'
+          : detailNode.label;
+        const parts = raw.split(',').map((s) => s.trim());
+        const street = parts[0] ?? raw;
+        const postBy = parts.slice(1).join(', ');
+        const activeNode = detailNode;
+        return (
+          <div
+            className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-slate-950/80 p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="node-detail-title"
+            onClick={() => setDetailNode(null)}
+          >
+            <div
+              className="bg-slate-900 border border-slate-700/50 rounded-2xl shadow-2xl w-full max-w-sm"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-5 py-3 border-b border-slate-700/40">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Home size={15} className="text-emerald-400 shrink-0" />
+                  <h2 id="node-detail-title" className="text-white text-sm font-medium truncate">
+                    {lang === 'da' ? 'Ejendom' : 'Property'}
+                  </h2>
+                </div>
+                <button
+                  onClick={() => setDetailNode(null)}
+                  className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800/50"
+                  aria-label={lang === 'da' ? 'Luk' : 'Close'}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="px-5 py-4 space-y-1">
+                <p className="text-slate-100 text-base font-medium leading-snug">{street}</p>
+                {postBy && <p className="text-emerald-200/90 text-sm">{postBy}</p>}
+                {activeNode.bfeNummer && (
+                  <p className="text-emerald-300/70 text-xs mt-1">
+                    BFE {activeNode.bfeNummer.toLocaleString('da-DK')}
+                  </p>
+                )}
+              </div>
+              {(activeNode.link || onNodeClick) && (
+                <div className="px-5 pb-4">
+                  <button
+                    onClick={() => {
+                      setDetailNode(null);
+                      if (onNodeClick) {
+                        onNodeClick(activeNode);
+                      } else if (activeNode.link) {
+                        window.location.href = activeNode.link;
+                      }
+                    }}
+                    className="w-full text-center px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
+                  >
+                    {lang === 'da' ? 'Åbn ejendom' : 'Open property'}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()
+    : null;
+
   // ── Fullscreen overlay (BIZZ-248: topbar with close button) ──
   // BIZZ-850: Portal til document.body saa overlay ikke bliver trapped
   // i <main>.z-0 stacking context. <header> i dashboard-layout er z-10
@@ -3855,6 +3942,7 @@ function DiagramForce({
           </div>
         </div>
         {overflowModal}
+        {detailModal}
       </div>
     );
     // createPortal kun i browser-kontekst — SSR render returnerer null
@@ -3872,6 +3960,7 @@ function DiagramForce({
         {diagramLegend}
       </div>
       {overflowModal}
+      {detailModal}
     </div>
   );
 }

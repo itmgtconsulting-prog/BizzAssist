@@ -74,7 +74,7 @@ export default defineConfig({
     /* ── Mobil-responsivitet (BIZZ-2257) — 375px iPhone-viewport, auth ── */
     {
       name: 'chromium-mobile',
-      testMatch: /mobil-responsivitet\.spec\.ts/,
+      testMatch: /(mobil-responsivitet|diagram-mobil-adresse)\.spec\.ts/,
       dependencies: ['auth setup'],
       use: {
         ...devices['Desktop Chrome'],

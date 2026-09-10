@@ -35,6 +35,7 @@ import type { Database } from '@/lib/supabase/types';
 import { logActivity } from '@/app/lib/activityLog';
 import { logger } from '@/app/lib/logger';
 import { assertAiAllowed } from '@/app/lib/aiGate';
+import { detectFileIntent } from '@/app/lib/fileIntent';
 import {
   generateDocx,
   generateXlsx,
@@ -3268,7 +3269,23 @@ export async function POST(request: NextRequest): Promise<Response> {
       // BIZZ-939: Start SSE heartbeat for at holde forbindelsen åben
       startHeartbeat(controller);
       try {
-        const MAX_TOOL_ROUNDS = 15;
+        // BIZZ-2290: 15 var for faa til store batch-forespoergsler (fx ~46
+        // adresser) — data-hentningen opbrugte runde-budgettet foer en ren
+        // generate_document-runde kunne naas.
+        const MAX_TOOL_ROUNDS = 20;
+        // BIZZ-2290: 4096 var for lavt. Et generate_document tool_use med en stor
+        // scratch.rows-JSON (mange raekker x felter) blev trunkeret ved
+        // stop_reason=max_tokens, saa tool-kaldet blev malformet og aldrig
+        // dispatchet ("lover fil, leverer aldrig"). Sonnet 4.6 understoetter langt
+        // hoejere output; 16384 rummer realistiske tabeller. Kun et loft — det
+        // oeger ikke omkostningen medmindre modellen faktisk genererer mere.
+        const MAX_OUTPUT_TOKENS = 16384;
+        // BIZZ-2290: Fil-intent i sidste bruger-besked → bruges til aerlig
+        // fallback hvis turnen slutter uden at generate_document leverede en fil.
+        const lastUserMessage = messages[messages.length - 1];
+        const fileIntent = detectFileIntent(
+          typeof lastUserMessage?.content === 'string' ? lastUserMessage.content : ''
+        );
         // BIZZ-590: Soft time-budget. Vercel hard-kill ved maxDuration (120s)
         // afbryder streamen uden at nå MAX_TOOL_ROUNDS-exit branch, og brugeren
         // får 0 chars output. Når vi rammer SOFT_DEADLINE_MS giver vi Claude
@@ -3323,7 +3340,7 @@ export async function POST(request: NextRequest): Promise<Response> {
           // men amortiseres efter blot 2 requests.
           const response = await client.messages.create({
             model: 'claude-sonnet-4-6',
-            max_tokens: 4096,
+            max_tokens: MAX_OUTPUT_TOKENS,
             system: [
               {
                 type: 'text',
@@ -3351,6 +3368,17 @@ export async function POST(request: NextRequest): Promise<Response> {
             (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use'
           );
 
+          // BIZZ-2290: Hvis modellen ramte max_tokens MENS den emitterede et
+          // tool_use, er tool-inputtet sandsynligvis trunkeret/malformet (fx en
+          // for stor generate_document scratch.rows). Den hoejere MAX_OUTPUT_TOKENS
+          // goer det sjaeldent — log til Sentry for observability hvis det sker.
+          if (response.stop_reason === 'max_tokens' && toolUseBlocks.length > 0) {
+            Sentry.captureMessage('ai.tool_use.truncated_max_tokens', {
+              level: 'warning',
+              extra: { round, tools: toolUseBlocks.map((b) => b.name) },
+            });
+          }
+
           if (toolUseBlocks.length === 0) {
             // ── Final text response — stream it to client ──
             let text = response.content
@@ -3362,6 +3390,15 @@ export async function POST(request: NextRequest): Promise<Response> {
             if (response.stop_reason === 'max_tokens') {
               text +=
                 '\n\n---\n*Svaret blev afbrudt fordi det overskred max-længden. Start gerne en ny samtale for at fortsætte.*';
+            }
+
+            // BIZZ-2290: Ærlig fallback. Brugeren bad om en fil, men turnen sluttede
+            // uden at generate_document leverede en (typisk for stort datasæt til ét
+            // kald). Undgå den tavse "lover fil, leverer aldrig"-UX ved at fortælle
+            // det i stedet for at streame modellens tomme løfte.
+            if (fileIntent && turnGeneratedFiles.length === 0) {
+              text +=
+                '\n\n---\n*Bemærk: jeg kunne ikke færdiggøre selve fil-genereringen denne gang — datasættet var sandsynligvis for stort til ét kald. Prøv med færre rækker ad gangen (fx 10–15 adresser), eller bed om dataene som en tabel her i chatten.*';
             }
 
             // Stream in chunks — 200 chars reduces SSE overhead vs. perceived smoothness
@@ -3656,10 +3693,16 @@ export async function POST(request: NextRequest): Promise<Response> {
         }
 
         // If we exhausted tool rounds, send what we have + usage
+        // BIZZ-2290: hvis brugeren bad om en fil men ingen blev genereret, giv
+        // ærlig, handlingsrettet besked i stedet for kun det generiske svar.
         sse(
           controller,
           JSON.stringify({
-            t: 'Jeg nåede max antal data-opslag. Her er hvad jeg fandt — stil gerne et opfølgende spørgsmål.',
+            t:
+              'Jeg nåede max antal data-opslag. Her er hvad jeg fandt — stil gerne et opfølgende spørgsmål.' +
+              (fileIntent && turnGeneratedFiles.length === 0
+                ? ' For at få en fil: prøv en mindre batch (fx 10–15 ad gangen), så kan jeg nå at generere Excel/CSV.'
+                : ''),
           })
         );
         const totalTokens = totalInputTokens + totalOutputTokens;

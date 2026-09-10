@@ -54,4 +54,37 @@ test.describe('Kort opmålingsværktøj (BIZZ-2285)', () => {
 
     await page.screenshot({ path: `.playwright/2285-opmaaling-${vp.width}.png` });
   });
+
+  test('areal-tilstand: tegn polygon → areal vises', async ({ page }) => {
+    test.setTimeout(90_000);
+
+    await page.goto('/dashboard/kort');
+    await page.waitForLoadState('networkidle');
+    await expect(page.locator('.mapboxgl-canvas')).toBeVisible({ timeout: 30_000 });
+    await page.waitForTimeout(2500);
+
+    await page
+      .getByRole('button', { name: /Opmål|Measure tool/i })
+      .first()
+      .click();
+    // Skift til Areal-tilstand.
+    await page.getByRole('tab', { name: /Areal|Area/ }).click();
+
+    // Tre punkter → lukket polygon → areal.
+    const vp = page.viewportSize() ?? { width: 1280, height: 720 };
+    const pts = [
+      { x: Math.round(vp.width * 0.48), y: Math.round(vp.height * 0.42) },
+      { x: Math.round(vp.width * 0.64), y: Math.round(vp.height * 0.46) },
+      { x: Math.round(vp.width * 0.58), y: Math.round(vp.height * 0.6) },
+    ];
+    for (const p of pts) {
+      await page.mouse.click(p.x, p.y);
+      await page.waitForTimeout(350);
+    }
+
+    // Et areal (m²/ha) skal fremgå.
+    await expect(page.getByText(/\d+([.,]\d+)?\s?(m²|m2|ha)\b/).first()).toBeVisible({
+      timeout: 10_000,
+    });
+  });
 });

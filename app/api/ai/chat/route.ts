@@ -36,7 +36,13 @@ import { logActivity } from '@/app/lib/activityLog';
 import { logger } from '@/app/lib/logger';
 import { assertAiAllowed } from '@/app/lib/aiGate';
 import { detectFileIntent } from '@/app/lib/fileIntent';
-import { lineDistanceMeters, formatDistance, type LngLat } from '@/app/lib/geo/measure';
+import {
+  lineDistanceMeters,
+  polygonAreaM2,
+  formatDistance,
+  formatArea,
+  type LngLat,
+} from '@/app/lib/geo/measure';
 import {
   generateDocx,
   generateXlsx,
@@ -738,6 +744,33 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['punkter'],
     },
   },
+  // BIZZ-2287: Geodesisk areal af en matrikel/BFE eller en tegnet polygon.
+  {
+    name: 'beregn_areal',
+    description:
+      'Beregn det geometriske (geodesiske) areal i m²/ha af enten en matrikel/ejendom (via BFE-nummer) ' +
+      'eller en eksplicit polygon (liste af [lng,lat]-punkter, fx en tegnet figur på kortet). For et BFE ' +
+      'returneres OGSÅ det registrerede grundareal fra matrikeldata til sammenligning. Brug til spørgsmål ' +
+      'som "hvor stort er arealet af matrikel/BFE X" eller til at måle en tegnet figur.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        bfe: { type: 'number', description: 'BFE-nummer for en ejendom/matrikel' },
+        polygon: {
+          type: 'array',
+          description:
+            'En lukket ring af [lng,lat]-punkter (WGS84). Bruges når brugeren har tegnet en figur ' +
+            'eller angivet konkrete hjørnepunkter.',
+          items: {
+            type: 'array',
+            items: { type: 'number' },
+            minItems: 2,
+            maxItems: 2,
+          },
+        },
+      },
+    },
+  },
 ];
 
 // ─── Tool labels (for status messages) ──────────────────────────────────────
@@ -782,6 +815,8 @@ const TOOL_STATUS: Record<string, string> = {
   generate_document: 'Genererer fil…',
   // BIZZ-2286
   beregn_afstand: 'Beregner afstand…',
+  // BIZZ-2287
+  beregn_areal: 'Beregner areal…',
   // BIZZ-1697
   data_intelligence: 'Kører data-analyse…',
 };
@@ -929,6 +964,11 @@ Når brugerens forespørgsel kan fortolkes på flere måder, STIL et kort afklar
 - Hvert punkt kan være en adresse (streng), et BFE-nummer, eller koordinater {lng,lat}. Har du allerede koordinater fra en tidligere adresse-detalje, så genbrug dem direkte.
 - Det er geodesisk afstand (fugleflugt), IKKE køre-/vejafstand — sig det hvis relevant. Svar med den formatterede afstand (m/km).
 - Hvis et punkt ikke kan opklares (advarsel-felt), bed brugeren præcisere den adresse.
+
+## Opmåling — areal (BIZZ-2287)
+- Når brugeren spørger "hvor stort er arealet af matrikel/BFE X" → kald beregn_areal med bfe.
+- Værktøjet returnerer BÅDE det geometriske (geodesiske) areal OG det registrerede grundareal. Nævn begge i svaret, og nævn afvigelsen hvis den er nævneværdig (registreret grundareal er den officielle, autoritative værdi).
+- Når brugeren har tegnet en figur / angivet hjørnepunkter → kald beregn_areal med polygon ([lng,lat]-liste). Svar med m² og ha.
 
 ## Tab-kontekst og dokument-generering (BIZZ-874)
 Konteksten kan indeholde \`activeTab\` + \`pageType\` der angiver hvad brugeren ser. Når brugeren refererer til "oversigt tab", "ejendomme tab", "det her tab" osv.:
@@ -1228,6 +1268,106 @@ async function resolveLocationToCoord(
   return null;
 }
 
+/** Ray-casting point-in-ring test (ring is a closed [lng,lat] array). */
+function pointInRing(point: LngLat, ring: LngLat[]): boolean {
+  const [px, py] = point;
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    const intersect =
+      yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi + Number.EPSILON) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+/** Extracts the outer ring of a GeoJSON Polygon/MultiPolygon geometry. */
+function outerRing(geometry: unknown): LngLat[] | null {
+  const g = geometry as { type?: string; coordinates?: unknown };
+  if (!g || !Array.isArray(g.coordinates)) return null;
+  const coords = g.coordinates as unknown[];
+  const ring =
+    g.type === 'MultiPolygon' ? ((coords[0] as unknown[])?.[0] as unknown) : (coords[0] as unknown);
+  if (!Array.isArray(ring)) return null;
+  const out: LngLat[] = [];
+  for (const c of ring as unknown[]) {
+    if (Array.isArray(c) && typeof c[0] === 'number' && typeof c[1] === 'number') {
+      out.push([c[0], c[1]]);
+    }
+  }
+  return out.length >= 3 ? out : null;
+}
+
+/**
+ * Resolves a BFE to its registered ground area and (best-effort) its geometric
+ * area from the matrikel polygon (BIZZ-2287).
+ *
+ * Registered area comes from the authoritative jordstykke lookup. Geometric area
+ * is derived from the matrikel polygon in a small bbox around the parcel's
+ * representative point (matched by bfenummer property, else point-in-polygon).
+ *
+ * @returns { registreretAreal, geometricAreaM2 } — either may be null
+ */
+async function resolveBfeArea(
+  bfe: number | string,
+  baseUrl: string,
+  fetchOpts: RequestInit
+): Promise<{ registreretAreal: number | null; geometricAreaM2: number | null }> {
+  let registreretAreal: number | null = null;
+  let geometricAreaM2: number | null = null;
+
+  // Authoritative registered ground area.
+  try {
+    const jsRes = await fetch(
+      `${baseUrl}/api/adresse/jordstykke?bfe=${encodeURIComponent(String(bfe))}`,
+      fetchOpts
+    );
+    if (jsRes.ok) {
+      const js = (await jsRes.json()) as { registreretAreal?: number | null } | null;
+      if (js && typeof js.registreretAreal === 'number') registreretAreal = js.registreretAreal;
+    }
+  } catch {
+    /* non-fatal */
+  }
+
+  // Geometric area from the matrikel polygon (best-effort).
+  try {
+    const point = await resolveLocationToCoord({ bfe }, baseUrl, fetchOpts);
+    if (point) {
+      const [lng, lat] = point;
+      const d = 0.005; // ~±550 m bbox around the parcel's address point
+      const bboxRes = await fetch(
+        `${baseUrl}/api/matrikel/bbox?w=${lng - d}&s=${lat - d}&e=${lng + d}&n=${lat + d}`,
+        fetchOpts
+      );
+      if (bboxRes.ok) {
+        const fc = (await bboxRes.json()) as {
+          features?: Array<{ properties?: Record<string, unknown>; geometry?: unknown }>;
+        };
+        const features = Array.isArray(fc.features) ? fc.features : [];
+        const bfeNum = Number(bfe);
+        // Prefer a feature whose bfenummer matches; else the one containing the point.
+        const match =
+          features.find((f) => {
+            const p = f.properties ?? {};
+            return Number(p.bfenummer ?? p.BFEnummer ?? p.bfeNummer) === bfeNum;
+          }) ??
+          features.find((f) => {
+            const ring = outerRing(f.geometry);
+            return ring ? pointInRing(point, ring) : false;
+          });
+        const ring = match ? outerRing(match.geometry) : null;
+        if (ring) geometricAreaM2 = polygonAreaM2(ring);
+      }
+    }
+  } catch {
+    /* non-fatal — registered area may still be returned */
+  }
+
+  return { registreretAreal, geometricAreaM2 };
+}
+
 async function executeTool(
   name: string,
   input: Record<string, string>,
@@ -1367,6 +1507,76 @@ async function executeTool(
             ? { advarsel: `Kunne ikke opklare: ${uopklarede.join(', ')}` }
             : {}),
         };
+        break;
+      }
+
+      // BIZZ-2287: Geometrisk (geodesisk) areal af en polygon eller en BFE/matrikel.
+      case 'beregn_areal': {
+        const parsedInput = input as unknown as { polygon?: unknown; bfe?: number | string };
+
+        // Explicit drawn polygon takes precedence.
+        const rawPolygon = parsedInput.polygon;
+        if (Array.isArray(rawPolygon) && rawPolygon.length >= 3) {
+          const ring: LngLat[] = [];
+          for (const c of rawPolygon as unknown[]) {
+            if (Array.isArray(c) && typeof c[0] === 'number' && typeof c[1] === 'number') {
+              ring.push([c[0], c[1]]);
+            }
+          }
+          if (ring.length < 3) {
+            result = { fejl: 'Polygonen skal have mindst tre gyldige [lng,lat]-punkter.' };
+            break;
+          }
+          const m2 = polygonAreaM2(ring);
+          result = {
+            areal_m2: Math.round(m2),
+            areal_formatteret: formatArea(m2),
+            kilde: 'tegnet polygon',
+            metode: 'geodesisk',
+          };
+          break;
+        }
+
+        // BFE/matrikel → geometric area + authoritative registered area.
+        if (parsedInput.bfe != null && String(parsedInput.bfe).trim()) {
+          const { registreretAreal, geometricAreaM2 } = await resolveBfeArea(
+            parsedInput.bfe,
+            baseUrl,
+            internalFetchOpts
+          );
+          if (registreretAreal == null && geometricAreaM2 == null) {
+            result = {
+              fejl: `Kunne ikke finde areal for BFE ${parsedInput.bfe}. Tjek BFE-nummeret, eller angiv en polygon.`,
+            };
+            break;
+          }
+          result = {
+            bfe: Number(parsedInput.bfe),
+            ...(geometricAreaM2 != null
+              ? {
+                  geometrisk_areal_m2: Math.round(geometricAreaM2),
+                  geometrisk_areal_formatteret: formatArea(geometricAreaM2),
+                }
+              : { geometrisk_areal: 'ikke tilgængeligt (matrikel-polygon kunne ikke hentes)' }),
+            ...(registreretAreal != null
+              ? {
+                  registreret_grundareal_m2: registreretAreal,
+                  registreret_grundareal_formatteret: formatArea(registreretAreal),
+                }
+              : {}),
+            ...(geometricAreaM2 != null && registreretAreal
+              ? {
+                  afvigelse_pct:
+                    Math.round(((geometricAreaM2 - registreretAreal) / registreretAreal) * 1000) /
+                    10,
+                }
+              : {}),
+            metode: 'geodesisk',
+          };
+          break;
+        }
+
+        result = { fejl: 'Angiv enten et BFE-nummer eller en polygon ([lng,lat]-punkter).' };
         break;
       }
 

@@ -50,9 +50,14 @@ test.describe('AI beregn_areal (BIZZ-2287)', () => {
     });
     expect(res.status()).toBe(200);
 
-    const answer = assistantText(await res.text());
-    // ~1.236e6 m² → ~123.6 ha. Answer should cite hectares in the low 120s.
-    expect(answer, `svar skulle nævne areal i ha, fik: ${answer.slice(0, 300)}`).toMatch(/ha/i);
-    expect(answer).toMatch(/12[0-9]/);
+    const body = await res.text();
+    // The beregn_areal tool must actually fire (deterministic status event) —
+    // that is the regression. The exact number is validated by the geo-measure
+    // unit test; the LLM's phrasing/number-format is not asserted (avoids flake).
+    expect(body, 'beregn_areal-værktøjet skulle være kaldt').toContain('Beregner areal');
+    const answer = assistantText(body);
+    expect(answer, `svar skulle nævne et areal, fik: ${answer.slice(0, 300)}`).toMatch(
+      /ha|m²|m2|hektar|kvadratmeter/i
+    );
   });
 });

@@ -51,9 +51,14 @@ test.describe('AI beregn_afstand (BIZZ-2286)', () => {
     });
     expect(res.status()).toBe(200);
 
-    const answer = assistantText(await res.text());
-    // Great-circle CPH↔Aarhus ≈ 156.7 km — the answer should cite ~156/157 km.
-    expect(answer, `svar skulle nævne km-afstand, fik: ${answer.slice(0, 300)}`).toMatch(/km/i);
-    expect(answer).toMatch(/15[678]/);
+    const body = await res.text();
+    // The beregn_afstand tool must actually fire (deterministic status event) —
+    // that is the regression. The exact number (~157 km) is validated by the
+    // geo-measure unit test; the LLM's phrasing is not asserted (avoids flake).
+    expect(body, 'beregn_afstand-værktøjet skulle være kaldt').toContain('Beregner afstand');
+    const answer = assistantText(body);
+    expect(answer, `svar skulle nævne afstand, fik: ${answer.slice(0, 300)}`).toMatch(
+      /km|meter|\bm\b/i
+    );
   });
 });

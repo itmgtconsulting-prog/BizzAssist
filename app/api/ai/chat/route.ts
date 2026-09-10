@@ -771,6 +771,31 @@ const TOOLS: Anthropic.Tool[] = [
       },
     },
   },
+  // BIZZ-2291: Batch-hent BBR for MANGE adresser i ét kald (sparer tool-runder).
+  {
+    name: 'hent_bbr_batch',
+    description:
+      'Hent BBR-bygningsdata for MANGE ejendomme i ÉT kald. Brug dette i stedet for hent_bbr_data ' +
+      'én-ad-gangen når brugeren beder om data for en LISTE af adresser (fx til en Excel/tabel med ' +
+      'flere ejendomme) — det geokoder og henter BBR for alle på én gang og sparer mange tool-runder. ' +
+      'Returnerer ét kompakt BBR-resumé pr. adresse (arrays summeres som antal).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        adresser: {
+          type: 'array',
+          description:
+            'Liste af adresse-strenge (fx ["Vestergade 10, 8000 Aarhus", ...]). Maks 60.',
+          items: { type: 'string' },
+        },
+        dawaIds: {
+          type: 'array',
+          description: 'Alternativt/supplerende: liste af DAWA adgangsadresse-UUID(er). Maks 60.',
+          items: { type: 'string' },
+        },
+      },
+    },
+  },
 ];
 
 // ─── Tool labels (for status messages) ──────────────────────────────────────
@@ -817,6 +842,8 @@ const TOOL_STATUS: Record<string, string> = {
   beregn_afstand: 'Beregner afstand…',
   // BIZZ-2287
   beregn_areal: 'Beregner areal…',
+  // BIZZ-2291
+  hent_bbr_batch: 'Henter BBR for flere adresser…',
   // BIZZ-1697
   data_intelligence: 'Kører data-analyse…',
 };
@@ -964,6 +991,10 @@ Når brugerens forespørgsel kan fortolkes på flere måder, STIL et kort afklar
 - Hvert punkt kan være en adresse (streng), et BFE-nummer, eller koordinater {lng,lat}. Har du allerede koordinater fra en tidligere adresse-detalje, så genbrug dem direkte.
 - Det er geodesisk afstand (fugleflugt), IKKE køre-/vejafstand — sig det hvis relevant. Svar med den formatterede afstand (m/km).
 - Hvis et punkt ikke kan opklares (advarsel-felt), bed brugeren præcisere den adresse.
+
+## Mange adresser / batch-BBR (BIZZ-2291)
+- Når brugeren beder om BBR-data for en LISTE af adresser (fx en Excel/tabel med mange ejendomme) → brug hent_bbr_batch(adresser[]) i ÉT kald i stedet for at kalde hent_bbr_data én adresse ad gangen. Det geokoder + henter BBR for alle på én gang og sparer mange tool-runder, så du når at generere filen inden for tids-/runde-budgettet.
+- Resultatet er ét kompakt resumé pr. ejendom (arrays er summeret som antal). Brug disse rækker direkte i generate_document (scratch.rows).
 
 ## Opmåling — areal (BIZZ-2287)
 - Når brugeren spørger "hvor stort er arealet af matrikel/BFE X" → kald beregn_areal med bfe.
@@ -1266,6 +1297,23 @@ async function resolveLocationToCoord(
     // Non-fatal — treat as unresolved.
   }
   return null;
+}
+
+/**
+ * Compacts a rich BBR/property response into a summary suitable for batch
+ * results (BIZZ-2291). Scalars and small objects are kept; arrays are replaced
+ * with a `<key>_antal` count so 40+ properties don't blow up the context.
+ */
+function compactBbr(data: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(data)) {
+    if (Array.isArray(v)) {
+      out[`${k}_antal`] = v.length;
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
 }
 
 /** Ray-casting point-in-ring test (ring is a closed [lng,lat] array). */
@@ -1577,6 +1625,72 @@ async function executeTool(
         }
 
         result = { fejl: 'Angiv enten et BFE-nummer eller en polygon ([lng,lat]-punkter).' };
+        break;
+      }
+
+      // BIZZ-2291: Batch-hent BBR for mange adresser i ét kald (sparer runder).
+      case 'hent_bbr_batch': {
+        const bi = input as unknown as { adresser?: string[]; dawaIds?: string[] };
+        const adresser = Array.isArray(bi.adresser)
+          ? bi.adresser.filter((a) => typeof a === 'string' && a.trim())
+          : [];
+        const directIds = Array.isArray(bi.dawaIds)
+          ? bi.dawaIds.filter((d) => typeof d === 'string' && d.trim())
+          : [];
+        if (adresser.length === 0 && directIds.length === 0) {
+          result = { fejl: 'Angiv mindst én adresse eller ét dawaId.' };
+          break;
+        }
+        const MAX = 60;
+        const totalRequested = adresser.length + directIds.length;
+        type Item = { label: string; adresse?: string; dawaId?: string };
+        const items: Item[] = [
+          ...directIds.map((d) => ({ label: d, dawaId: d })),
+          ...adresser.map((a) => ({ label: a, adresse: a })),
+        ].slice(0, MAX);
+
+        // Geokod adresser → dawaId og hent BBR i chunks (undgår at overvælde
+        // eksterne API'er), men i ÉN tool-runde i stedet for én pr. adresse.
+        const CHUNK = 8;
+        const rows: Array<Record<string, unknown>> = [];
+        for (let i = 0; i < items.length; i += CHUNK) {
+          const chunkRows = await Promise.all(
+            items.slice(i, i + CHUNK).map(async (it): Promise<Record<string, unknown>> => {
+              try {
+                let dawaId = it.dawaId;
+                if (!dawaId && it.adresse) {
+                  const acRes = await fetch(
+                    `${baseUrl}/api/adresse/autocomplete?q=${encodeURIComponent(it.adresse)}`,
+                    internalFetchOpts
+                  );
+                  if (acRes.ok) {
+                    const ac = (await acRes.json()) as Array<{ adresse?: { id?: string } }>;
+                    dawaId = ac?.[0]?.adresse?.id;
+                  }
+                }
+                if (!dawaId) return { input: it.label, fejl: 'kunne ikke geokodes' };
+                const bbr = await fetchBbrForAddress(dawaId);
+                return {
+                  input: it.label,
+                  dawaId,
+                  ...compactBbr(bbr as unknown as Record<string, unknown>),
+                };
+              } catch {
+                return { input: it.label, fejl: 'hentning fejlede' };
+              }
+            })
+          );
+          rows.push(...chunkRows);
+        }
+        const fejlAntal = rows.filter((r) => 'fejl' in r).length;
+        result = {
+          antal: rows.length,
+          ...(fejlAntal > 0 ? { antal_fejl: fejlAntal } : {}),
+          ...(totalRequested > MAX
+            ? { advarsel: `Kun de første ${MAX} af ${totalRequested} adresser blev hentet.` }
+            : {}),
+          ejendomme: rows,
+        };
         break;
       }
 

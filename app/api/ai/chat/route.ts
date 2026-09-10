@@ -36,6 +36,7 @@ import { logActivity } from '@/app/lib/activityLog';
 import { logger } from '@/app/lib/logger';
 import { assertAiAllowed } from '@/app/lib/aiGate';
 import { detectFileIntent } from '@/app/lib/fileIntent';
+import { lineDistanceMeters, formatDistance, type LngLat } from '@/app/lib/geo/measure';
 import {
   generateDocx,
   generateXlsx,
@@ -704,6 +705,39 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['prompt'],
     },
   },
+  // BIZZ-2286: Geodesisk afstand mellem to eller flere lokationer.
+  {
+    name: 'beregn_afstand',
+    description:
+      'Beregn den geodesiske afstand (fugleflugt, ikke køreafstand) mellem to eller flere lokationer. ' +
+      'Hver lokation kan være en adresse-streng, et BFE-nummer, eller koordinater {lng,lat}. Brug til ' +
+      'spørgsmål som "hvor langt er der fra A til B". Angiv punkterne i rækkefølge; for en flerpunkts-rute ' +
+      'angives flere punkter. Returnerer afstand i meter + en formatteret streng (m/km).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        punkter: {
+          type: 'array',
+          description:
+            'Mindst 2 lokationer i rækkefølge. Hver lokation angives med ÉN af: adresse (streng), ' +
+            'bfe (nummer), eller lng+lat (koordinater i WGS84).',
+          items: {
+            type: 'object',
+            properties: {
+              adresse: {
+                type: 'string',
+                description: 'Adresse-streng, fx "Vestergade 10, 8000 Aarhus"',
+              },
+              bfe: { type: 'number', description: 'BFE-nummer for en ejendom' },
+              lng: { type: 'number', description: 'Længdegrad (WGS84)' },
+              lat: { type: 'number', description: 'Breddegrad (WGS84)' },
+            },
+          },
+        },
+      },
+      required: ['punkter'],
+    },
+  },
 ];
 
 // ─── Tool labels (for status messages) ──────────────────────────────────────
@@ -746,6 +780,8 @@ const TOOL_STATUS: Record<string, string> = {
   hent_ejendomme_for_person: 'Henter personens ejendomme…',
   // BIZZ-813
   generate_document: 'Genererer fil…',
+  // BIZZ-2286
+  beregn_afstand: 'Beregner afstand…',
   // BIZZ-1697
   data_intelligence: 'Kører data-analyse…',
 };
@@ -887,6 +923,12 @@ Når brugerens forespørgsel kan fortolkes på flere måder, STIL et kort afklar
 - VIRKER UDEN CPR-nummer — EJF returnerer BFE direkte via enhedsNummer-filter. Sig ALDRIG at det kræver CPR/Tingbog.
 - På /dashboard/owners/[enhedsNummer] har du enhedsNummer i kontekst — brug det direkte uden at spørge brugeren.
 - For fuldt billede af en persons ejendomsportefølje: kald både hent_ejendomme_for_person (personligt ejede) OG hent_person_virksomheder + hent_ejendomme_for_virksomhed (via selskaber) parallelt.
+
+## Opmåling — afstand (BIZZ-2286)
+- Når brugeren spørger "hvor langt er der fra A til B" (eller en flerpunkts-rute) → kald beregn_afstand med punkter[] i rækkefølge.
+- Hvert punkt kan være en adresse (streng), et BFE-nummer, eller koordinater {lng,lat}. Har du allerede koordinater fra en tidligere adresse-detalje, så genbrug dem direkte.
+- Det er geodesisk afstand (fugleflugt), IKKE køre-/vejafstand — sig det hvis relevant. Svar med den formatterede afstand (m/km).
+- Hvis et punkt ikke kan opklares (advarsel-felt), bed brugeren præcisere den adresse.
 
 ## Tab-kontekst og dokument-generering (BIZZ-874)
 Konteksten kan indeholde \`activeTab\` + \`pageType\` der angiver hvad brugeren ser. Når brugeren refererer til "oversigt tab", "ejendomme tab", "det her tab" osv.:
@@ -1110,6 +1152,82 @@ function toolErrorMessage(apiName: string, status: number): string {
  * @param baseUrl - Base URL for internal API routes (e.g. http://localhost:3000)
  * @returns JSON-serialisable result object
  */
+/** A location the beregn_afstand tool can resolve to a coordinate. */
+interface MeasureLocation {
+  adresse?: string;
+  bfe?: number | string;
+  lng?: number;
+  lat?: number;
+}
+
+/**
+ * Resolves a beregn_afstand location to a [lng, lat] coordinate (BIZZ-2286).
+ *
+ * Resolution order: explicit coordinates → address (DAWA autocomplete → lookup)
+ * → BFE (jordstykke → adgangsadresse → lookup). Returns null if the location
+ * cannot be geocoded (never throws — the caller reports unresolved locations).
+ *
+ * @param loc - The location (address string, BFE number, or lng/lat)
+ * @param baseUrl - Base URL for internal API calls
+ * @param fetchOpts - Fetch options (forwarded auth cookies + timeout)
+ * @returns [lng, lat] in WGS84, or null if unresolved
+ */
+async function resolveLocationToCoord(
+  loc: MeasureLocation,
+  baseUrl: string,
+  fetchOpts: RequestInit
+): Promise<LngLat | null> {
+  // 1. Explicit coordinates.
+  if (
+    typeof loc.lng === 'number' &&
+    typeof loc.lat === 'number' &&
+    Number.isFinite(loc.lng) &&
+    Number.isFinite(loc.lat)
+  ) {
+    return [loc.lng, loc.lat];
+  }
+
+  /** Looks up a DAR address/adgangsadresse UUID → [lng, lat] via x/y. */
+  const lookupCoord = async (id: string): Promise<LngLat | null> => {
+    const res = await fetch(
+      `${baseUrl}/api/adresse/lookup?id=${encodeURIComponent(id)}`,
+      fetchOpts
+    );
+    if (!res.ok) return null;
+    const d = (await res.json()) as { x?: number; y?: number } | null;
+    if (d && typeof d.x === 'number' && typeof d.y === 'number') return [d.x, d.y];
+    return null;
+  };
+
+  try {
+    // 2. Address → autocomplete → first match id → lookup.
+    if (loc.adresse && loc.adresse.trim()) {
+      const acRes = await fetch(
+        `${baseUrl}/api/adresse/autocomplete?q=${encodeURIComponent(loc.adresse)}`,
+        fetchOpts
+      );
+      if (!acRes.ok) return null;
+      const ac = (await acRes.json()) as Array<{ adresse?: { id?: string } }>;
+      const id = ac?.[0]?.adresse?.id;
+      return id ? await lookupCoord(id) : null;
+    }
+
+    // 3. BFE → jordstykke → adgangsadresse → lookup.
+    if (loc.bfe != null && String(loc.bfe).trim()) {
+      const jsRes = await fetch(
+        `${baseUrl}/api/adresse/jordstykke?bfe=${encodeURIComponent(String(loc.bfe))}`,
+        fetchOpts
+      );
+      if (!jsRes.ok) return null;
+      const js = (await jsRes.json()) as { adgangsadresseId?: string | null } | null;
+      return js?.adgangsadresseId ? await lookupCoord(js.adgangsadresseId) : null;
+    }
+  } catch {
+    // Non-fatal — treat as unresolved.
+  }
+  return null;
+}
+
 async function executeTool(
   name: string,
   input: Record<string, string>,
@@ -1212,6 +1330,42 @@ async function executeTool(
           ejerlavkode: d.ejerlavskode,
           ejerlavnavn: d.ejerlavsnavn,
           bfeNummer,
+        };
+        break;
+      }
+
+      // BIZZ-2286: Geodesisk afstand mellem to eller flere lokationer.
+      case 'beregn_afstand': {
+        const punkter = (input as unknown as { punkter?: MeasureLocation[] }).punkter;
+        if (!Array.isArray(punkter) || punkter.length < 2) {
+          result = { fejl: 'Angiv mindst to lokationer (adresse, BFE eller koordinater).' };
+          break;
+        }
+        const coords: LngLat[] = [];
+        const uopklarede: string[] = [];
+        for (const p of punkter) {
+          const c = await resolveLocationToCoord(p, baseUrl, internalFetchOpts);
+          if (c) {
+            coords.push(c);
+          } else {
+            uopklarede.push(p.adresse ?? (p.bfe != null ? `BFE ${p.bfe}` : 'ukendt punkt'));
+          }
+        }
+        if (coords.length < 2) {
+          result = {
+            fejl: `Kunne ikke finde koordinater for: ${uopklarede.join(', ') || 'de angivne punkter'}. Præcisér adressen eller angiv koordinater.`,
+          };
+          break;
+        }
+        const meter = lineDistanceMeters(coords);
+        result = {
+          afstand_meter: Math.round(meter),
+          afstand_formatteret: formatDistance(meter),
+          antal_punkter: coords.length,
+          metode: 'geodesisk fugleflugt (ikke køreafstand)',
+          ...(uopklarede.length > 0
+            ? { advarsel: `Kunne ikke opklare: ${uopklarede.join(', ')}` }
+            : {}),
         };
         break;
       }

@@ -22,6 +22,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
+import { getTenantSchemaName } from '@/lib/db/tenant';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 
 /** LinkedIn profile data stored in email_integrations */
@@ -60,7 +61,14 @@ export async function GET(
   if (!auth) return NextResponse.json({ error: 'Unauthenticated' }, { status: 401 });
 
   const { tenantId, userId } = auth;
-  const { data, error } = await tenantDb(tenantId)
+  // email_integrations lives in the per-tenant tenant_<slug> schema (BIZZ-2275).
+  let schemaName: string;
+  try {
+    schemaName = await getTenantSchemaName(tenantId);
+  } catch {
+    return NextResponse.json({ error: 'DB error' }, { status: 500 });
+  }
+  const { data, error } = await tenantDb(schemaName)
     .from('email_integrations')
     .select('email_address, connected_at, token_expires_at, scopes')
     .eq('user_id', userId)
@@ -105,8 +113,15 @@ export async function DELETE(
   const { tenantId, userId } = auth;
   const admin = createAdminClient();
 
+  let schemaName: string;
+  try {
+    schemaName = await getTenantSchemaName(tenantId);
+  } catch {
+    return NextResponse.json({ error: 'DB error' }, { status: 500 });
+  }
+
   // Fetch token for revocation
-  const { data } = await tenantDb(tenantId)
+  const { data } = await tenantDb(schemaName)
     .from('email_integrations')
     .select('access_token')
     .eq('user_id', userId)
@@ -136,7 +151,7 @@ export async function DELETE(
     }
   }
 
-  const { error } = await tenantDb(tenantId)
+  const { error } = await tenantDb(schemaName)
     .from('email_integrations')
     .delete()
     .eq('user_id', userId)

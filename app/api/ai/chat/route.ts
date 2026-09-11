@@ -29,12 +29,20 @@ import * as Sentry from '@sentry/nextjs';
 import { checkRateLimit, aiRateLimit } from '@/app/lib/rateLimit';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
 import { resolveTenantId } from '@/lib/api/auth';
-import { createAdminClient, tenantDb, type TenantDb } from '@/lib/supabase/admin';
+import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/lib/supabase/types';
 import { logActivity } from '@/app/lib/activityLog';
 import { logger } from '@/app/lib/logger';
 import { assertAiAllowed } from '@/app/lib/aiGate';
+import { detectFileIntent } from '@/app/lib/fileIntent';
+import {
+  lineDistanceMeters,
+  polygonAreaM2,
+  formatDistance,
+  formatArea,
+  type LngLat,
+} from '@/app/lib/geo/measure';
 import {
   generateDocx,
   generateXlsx,
@@ -703,6 +711,91 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['prompt'],
     },
   },
+  // BIZZ-2286: Geodesisk afstand mellem to eller flere lokationer.
+  {
+    name: 'beregn_afstand',
+    description:
+      'Beregn den geodesiske afstand (fugleflugt, ikke køreafstand) mellem to eller flere lokationer. ' +
+      'Hver lokation kan være en adresse-streng, et BFE-nummer, eller koordinater {lng,lat}. Brug til ' +
+      'spørgsmål som "hvor langt er der fra A til B". Angiv punkterne i rækkefølge; for en flerpunkts-rute ' +
+      'angives flere punkter. Returnerer afstand i meter + en formatteret streng (m/km).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        punkter: {
+          type: 'array',
+          description:
+            'Mindst 2 lokationer i rækkefølge. Hver lokation angives med ÉN af: adresse (streng), ' +
+            'bfe (nummer), eller lng+lat (koordinater i WGS84).',
+          items: {
+            type: 'object',
+            properties: {
+              adresse: {
+                type: 'string',
+                description: 'Adresse-streng, fx "Vestergade 10, 8000 Aarhus"',
+              },
+              bfe: { type: 'number', description: 'BFE-nummer for en ejendom' },
+              lng: { type: 'number', description: 'Længdegrad (WGS84)' },
+              lat: { type: 'number', description: 'Breddegrad (WGS84)' },
+            },
+          },
+        },
+      },
+      required: ['punkter'],
+    },
+  },
+  // BIZZ-2287: Geodesisk areal af en matrikel/BFE eller en tegnet polygon.
+  {
+    name: 'beregn_areal',
+    description:
+      'Beregn det geometriske (geodesiske) areal i m²/ha af enten en matrikel/ejendom (via BFE-nummer) ' +
+      'eller en eksplicit polygon (liste af [lng,lat]-punkter, fx en tegnet figur på kortet). For et BFE ' +
+      'returneres OGSÅ det registrerede grundareal fra matrikeldata til sammenligning. Brug til spørgsmål ' +
+      'som "hvor stort er arealet af matrikel/BFE X" eller til at måle en tegnet figur.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        bfe: { type: 'number', description: 'BFE-nummer for en ejendom/matrikel' },
+        polygon: {
+          type: 'array',
+          description:
+            'En lukket ring af [lng,lat]-punkter (WGS84). Bruges når brugeren har tegnet en figur ' +
+            'eller angivet konkrete hjørnepunkter.',
+          items: {
+            type: 'array',
+            items: { type: 'number' },
+            minItems: 2,
+            maxItems: 2,
+          },
+        },
+      },
+    },
+  },
+  // BIZZ-2291: Batch-hent BBR for MANGE adresser i ét kald (sparer tool-runder).
+  {
+    name: 'hent_bbr_batch',
+    description:
+      'Hent BBR-bygningsdata for MANGE ejendomme i ÉT kald. Brug dette i stedet for hent_bbr_data ' +
+      'én-ad-gangen når brugeren beder om data for en LISTE af adresser (fx til en Excel/tabel med ' +
+      'flere ejendomme) — det geokoder og henter BBR for alle på én gang og sparer mange tool-runder. ' +
+      'Returnerer ét kompakt BBR-resumé pr. adresse (arrays summeres som antal).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        adresser: {
+          type: 'array',
+          description:
+            'Liste af adresse-strenge (fx ["Vestergade 10, 8000 Aarhus", ...]). Maks 60.',
+          items: { type: 'string' },
+        },
+        dawaIds: {
+          type: 'array',
+          description: 'Alternativt/supplerende: liste af DAWA adgangsadresse-UUID(er). Maks 60.',
+          items: { type: 'string' },
+        },
+      },
+    },
+  },
 ];
 
 // ─── Tool labels (for status messages) ──────────────────────────────────────
@@ -745,6 +838,12 @@ const TOOL_STATUS: Record<string, string> = {
   hent_ejendomme_for_person: 'Henter personens ejendomme…',
   // BIZZ-813
   generate_document: 'Genererer fil…',
+  // BIZZ-2286
+  beregn_afstand: 'Beregner afstand…',
+  // BIZZ-2287
+  beregn_areal: 'Beregner areal…',
+  // BIZZ-2291
+  hent_bbr_batch: 'Henter BBR for flere adresser…',
   // BIZZ-1697
   data_intelligence: 'Kører data-analyse…',
 };
@@ -886,6 +985,21 @@ Når brugerens forespørgsel kan fortolkes på flere måder, STIL et kort afklar
 - VIRKER UDEN CPR-nummer — EJF returnerer BFE direkte via enhedsNummer-filter. Sig ALDRIG at det kræver CPR/Tingbog.
 - På /dashboard/owners/[enhedsNummer] har du enhedsNummer i kontekst — brug det direkte uden at spørge brugeren.
 - For fuldt billede af en persons ejendomsportefølje: kald både hent_ejendomme_for_person (personligt ejede) OG hent_person_virksomheder + hent_ejendomme_for_virksomhed (via selskaber) parallelt.
+
+## Opmåling — afstand (BIZZ-2286)
+- Når brugeren spørger "hvor langt er der fra A til B" (eller en flerpunkts-rute) → kald beregn_afstand med punkter[] i rækkefølge.
+- Hvert punkt kan være en adresse (streng), et BFE-nummer, eller koordinater {lng,lat}. Har du allerede koordinater fra en tidligere adresse-detalje, så genbrug dem direkte.
+- Det er geodesisk afstand (fugleflugt), IKKE køre-/vejafstand — sig det hvis relevant. Svar med den formatterede afstand (m/km).
+- Hvis et punkt ikke kan opklares (advarsel-felt), bed brugeren præcisere den adresse.
+
+## Mange adresser / batch-BBR (BIZZ-2291)
+- Når brugeren beder om BBR-data for en LISTE af adresser (fx en Excel/tabel med mange ejendomme) → brug hent_bbr_batch(adresser[]) i ÉT kald i stedet for at kalde hent_bbr_data én adresse ad gangen. Det geokoder + henter BBR for alle på én gang og sparer mange tool-runder, så du når at generere filen inden for tids-/runde-budgettet.
+- Resultatet er ét kompakt resumé pr. ejendom (arrays er summeret som antal). Brug disse rækker direkte i generate_document (scratch.rows).
+
+## Opmåling — areal (BIZZ-2287)
+- Når brugeren spørger "hvor stort er arealet af matrikel/BFE X" → kald beregn_areal med bfe.
+- Værktøjet returnerer BÅDE det geometriske (geodesiske) areal OG det registrerede grundareal. Nævn begge i svaret, og nævn afvigelsen hvis den er nævneværdig (registreret grundareal er den officielle, autoritative værdi).
+- Når brugeren har tegnet en figur / angivet hjørnepunkter → kald beregn_areal med polygon ([lng,lat]-liste). Svar med m² og ha.
 
 ## Tab-kontekst og dokument-generering (BIZZ-874)
 Konteksten kan indeholde \`activeTab\` + \`pageType\` der angiver hvad brugeren ser. Når brugeren refererer til "oversigt tab", "ejendomme tab", "det her tab" osv.:
@@ -1109,6 +1223,199 @@ function toolErrorMessage(apiName: string, status: number): string {
  * @param baseUrl - Base URL for internal API routes (e.g. http://localhost:3000)
  * @returns JSON-serialisable result object
  */
+/** A location the beregn_afstand tool can resolve to a coordinate. */
+interface MeasureLocation {
+  adresse?: string;
+  bfe?: number | string;
+  lng?: number;
+  lat?: number;
+}
+
+/**
+ * Resolves a beregn_afstand location to a [lng, lat] coordinate (BIZZ-2286).
+ *
+ * Resolution order: explicit coordinates → address (DAWA autocomplete → lookup)
+ * → BFE (jordstykke → adgangsadresse → lookup). Returns null if the location
+ * cannot be geocoded (never throws — the caller reports unresolved locations).
+ *
+ * @param loc - The location (address string, BFE number, or lng/lat)
+ * @param baseUrl - Base URL for internal API calls
+ * @param fetchOpts - Fetch options (forwarded auth cookies + timeout)
+ * @returns [lng, lat] in WGS84, or null if unresolved
+ */
+async function resolveLocationToCoord(
+  loc: MeasureLocation,
+  baseUrl: string,
+  fetchOpts: RequestInit
+): Promise<LngLat | null> {
+  // 1. Explicit coordinates.
+  if (
+    typeof loc.lng === 'number' &&
+    typeof loc.lat === 'number' &&
+    Number.isFinite(loc.lng) &&
+    Number.isFinite(loc.lat)
+  ) {
+    return [loc.lng, loc.lat];
+  }
+
+  /** Looks up a DAR address/adgangsadresse UUID → [lng, lat] via x/y. */
+  const lookupCoord = async (id: string): Promise<LngLat | null> => {
+    const res = await fetch(
+      `${baseUrl}/api/adresse/lookup?id=${encodeURIComponent(id)}`,
+      fetchOpts
+    );
+    if (!res.ok) return null;
+    const d = (await res.json()) as { x?: number; y?: number } | null;
+    if (d && typeof d.x === 'number' && typeof d.y === 'number') return [d.x, d.y];
+    return null;
+  };
+
+  try {
+    // 2. Address → autocomplete → first match id → lookup.
+    if (loc.adresse && loc.adresse.trim()) {
+      const acRes = await fetch(
+        `${baseUrl}/api/adresse/autocomplete?q=${encodeURIComponent(loc.adresse)}`,
+        fetchOpts
+      );
+      if (!acRes.ok) return null;
+      const ac = (await acRes.json()) as Array<{ adresse?: { id?: string } }>;
+      const id = ac?.[0]?.adresse?.id;
+      return id ? await lookupCoord(id) : null;
+    }
+
+    // 3. BFE → jordstykke → adgangsadresse → lookup.
+    if (loc.bfe != null && String(loc.bfe).trim()) {
+      const jsRes = await fetch(
+        `${baseUrl}/api/adresse/jordstykke?bfe=${encodeURIComponent(String(loc.bfe))}`,
+        fetchOpts
+      );
+      if (!jsRes.ok) return null;
+      const js = (await jsRes.json()) as { adgangsadresseId?: string | null } | null;
+      return js?.adgangsadresseId ? await lookupCoord(js.adgangsadresseId) : null;
+    }
+  } catch {
+    // Non-fatal — treat as unresolved.
+  }
+  return null;
+}
+
+/**
+ * Compacts a rich BBR/property response into a summary suitable for batch
+ * results (BIZZ-2291). Scalars and small objects are kept; arrays are replaced
+ * with a `<key>_antal` count so 40+ properties don't blow up the context.
+ */
+function compactBbr(data: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(data)) {
+    if (Array.isArray(v)) {
+      out[`${k}_antal`] = v.length;
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+/** Ray-casting point-in-ring test (ring is a closed [lng,lat] array). */
+function pointInRing(point: LngLat, ring: LngLat[]): boolean {
+  const [px, py] = point;
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    const intersect =
+      yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi + Number.EPSILON) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+/** Extracts the outer ring of a GeoJSON Polygon/MultiPolygon geometry. */
+function outerRing(geometry: unknown): LngLat[] | null {
+  const g = geometry as { type?: string; coordinates?: unknown };
+  if (!g || !Array.isArray(g.coordinates)) return null;
+  const coords = g.coordinates as unknown[];
+  const ring =
+    g.type === 'MultiPolygon' ? ((coords[0] as unknown[])?.[0] as unknown) : (coords[0] as unknown);
+  if (!Array.isArray(ring)) return null;
+  const out: LngLat[] = [];
+  for (const c of ring as unknown[]) {
+    if (Array.isArray(c) && typeof c[0] === 'number' && typeof c[1] === 'number') {
+      out.push([c[0], c[1]]);
+    }
+  }
+  return out.length >= 3 ? out : null;
+}
+
+/**
+ * Resolves a BFE to its registered ground area and (best-effort) its geometric
+ * area from the matrikel polygon (BIZZ-2287).
+ *
+ * Registered area comes from the authoritative jordstykke lookup. Geometric area
+ * is derived from the matrikel polygon in a small bbox around the parcel's
+ * representative point (matched by bfenummer property, else point-in-polygon).
+ *
+ * @returns { registreretAreal, geometricAreaM2 } — either may be null
+ */
+async function resolveBfeArea(
+  bfe: number | string,
+  baseUrl: string,
+  fetchOpts: RequestInit
+): Promise<{ registreretAreal: number | null; geometricAreaM2: number | null }> {
+  let registreretAreal: number | null = null;
+  let geometricAreaM2: number | null = null;
+
+  // Authoritative registered ground area.
+  try {
+    const jsRes = await fetch(
+      `${baseUrl}/api/adresse/jordstykke?bfe=${encodeURIComponent(String(bfe))}`,
+      fetchOpts
+    );
+    if (jsRes.ok) {
+      const js = (await jsRes.json()) as { registreretAreal?: number | null } | null;
+      if (js && typeof js.registreretAreal === 'number') registreretAreal = js.registreretAreal;
+    }
+  } catch {
+    /* non-fatal */
+  }
+
+  // Geometric area from the matrikel polygon (best-effort).
+  try {
+    const point = await resolveLocationToCoord({ bfe }, baseUrl, fetchOpts);
+    if (point) {
+      const [lng, lat] = point;
+      const d = 0.005; // ~±550 m bbox around the parcel's address point
+      const bboxRes = await fetch(
+        `${baseUrl}/api/matrikel/bbox?w=${lng - d}&s=${lat - d}&e=${lng + d}&n=${lat + d}`,
+        fetchOpts
+      );
+      if (bboxRes.ok) {
+        const fc = (await bboxRes.json()) as {
+          features?: Array<{ properties?: Record<string, unknown>; geometry?: unknown }>;
+        };
+        const features = Array.isArray(fc.features) ? fc.features : [];
+        const bfeNum = Number(bfe);
+        // Prefer a feature whose bfenummer matches; else the one containing the point.
+        const match =
+          features.find((f) => {
+            const p = f.properties ?? {};
+            return Number(p.bfenummer ?? p.BFEnummer ?? p.bfeNummer) === bfeNum;
+          }) ??
+          features.find((f) => {
+            const ring = outerRing(f.geometry);
+            return ring ? pointInRing(point, ring) : false;
+          });
+        const ring = match ? outerRing(match.geometry) : null;
+        if (ring) geometricAreaM2 = polygonAreaM2(ring);
+      }
+    }
+  } catch {
+    /* non-fatal — registered area may still be returned */
+  }
+
+  return { registreretAreal, geometricAreaM2 };
+}
+
 async function executeTool(
   name: string,
   input: Record<string, string>,
@@ -1211,6 +1518,178 @@ async function executeTool(
           ejerlavkode: d.ejerlavskode,
           ejerlavnavn: d.ejerlavsnavn,
           bfeNummer,
+        };
+        break;
+      }
+
+      // BIZZ-2286: Geodesisk afstand mellem to eller flere lokationer.
+      case 'beregn_afstand': {
+        const punkter = (input as unknown as { punkter?: MeasureLocation[] }).punkter;
+        if (!Array.isArray(punkter) || punkter.length < 2) {
+          result = { fejl: 'Angiv mindst to lokationer (adresse, BFE eller koordinater).' };
+          break;
+        }
+        const coords: LngLat[] = [];
+        const uopklarede: string[] = [];
+        for (const p of punkter) {
+          const c = await resolveLocationToCoord(p, baseUrl, internalFetchOpts);
+          if (c) {
+            coords.push(c);
+          } else {
+            uopklarede.push(p.adresse ?? (p.bfe != null ? `BFE ${p.bfe}` : 'ukendt punkt'));
+          }
+        }
+        if (coords.length < 2) {
+          result = {
+            fejl: `Kunne ikke finde koordinater for: ${uopklarede.join(', ') || 'de angivne punkter'}. Præcisér adressen eller angiv koordinater.`,
+          };
+          break;
+        }
+        const meter = lineDistanceMeters(coords);
+        result = {
+          afstand_meter: Math.round(meter),
+          afstand_formatteret: formatDistance(meter),
+          antal_punkter: coords.length,
+          metode: 'geodesisk fugleflugt (ikke køreafstand)',
+          ...(uopklarede.length > 0
+            ? { advarsel: `Kunne ikke opklare: ${uopklarede.join(', ')}` }
+            : {}),
+        };
+        break;
+      }
+
+      // BIZZ-2287: Geometrisk (geodesisk) areal af en polygon eller en BFE/matrikel.
+      case 'beregn_areal': {
+        const parsedInput = input as unknown as { polygon?: unknown; bfe?: number | string };
+
+        // Explicit drawn polygon takes precedence.
+        const rawPolygon = parsedInput.polygon;
+        if (Array.isArray(rawPolygon) && rawPolygon.length >= 3) {
+          const ring: LngLat[] = [];
+          for (const c of rawPolygon as unknown[]) {
+            if (Array.isArray(c) && typeof c[0] === 'number' && typeof c[1] === 'number') {
+              ring.push([c[0], c[1]]);
+            }
+          }
+          if (ring.length < 3) {
+            result = { fejl: 'Polygonen skal have mindst tre gyldige [lng,lat]-punkter.' };
+            break;
+          }
+          const m2 = polygonAreaM2(ring);
+          result = {
+            areal_m2: Math.round(m2),
+            areal_formatteret: formatArea(m2),
+            kilde: 'tegnet polygon',
+            metode: 'geodesisk',
+          };
+          break;
+        }
+
+        // BFE/matrikel → geometric area + authoritative registered area.
+        if (parsedInput.bfe != null && String(parsedInput.bfe).trim()) {
+          const { registreretAreal, geometricAreaM2 } = await resolveBfeArea(
+            parsedInput.bfe,
+            baseUrl,
+            internalFetchOpts
+          );
+          if (registreretAreal == null && geometricAreaM2 == null) {
+            result = {
+              fejl: `Kunne ikke finde areal for BFE ${parsedInput.bfe}. Tjek BFE-nummeret, eller angiv en polygon.`,
+            };
+            break;
+          }
+          result = {
+            bfe: Number(parsedInput.bfe),
+            ...(geometricAreaM2 != null
+              ? {
+                  geometrisk_areal_m2: Math.round(geometricAreaM2),
+                  geometrisk_areal_formatteret: formatArea(geometricAreaM2),
+                }
+              : { geometrisk_areal: 'ikke tilgængeligt (matrikel-polygon kunne ikke hentes)' }),
+            ...(registreretAreal != null
+              ? {
+                  registreret_grundareal_m2: registreretAreal,
+                  registreret_grundareal_formatteret: formatArea(registreretAreal),
+                }
+              : {}),
+            ...(geometricAreaM2 != null && registreretAreal
+              ? {
+                  afvigelse_pct:
+                    Math.round(((geometricAreaM2 - registreretAreal) / registreretAreal) * 1000) /
+                    10,
+                }
+              : {}),
+            metode: 'geodesisk',
+          };
+          break;
+        }
+
+        result = { fejl: 'Angiv enten et BFE-nummer eller en polygon ([lng,lat]-punkter).' };
+        break;
+      }
+
+      // BIZZ-2291: Batch-hent BBR for mange adresser i ét kald (sparer runder).
+      case 'hent_bbr_batch': {
+        const bi = input as unknown as { adresser?: string[]; dawaIds?: string[] };
+        const adresser = Array.isArray(bi.adresser)
+          ? bi.adresser.filter((a) => typeof a === 'string' && a.trim())
+          : [];
+        const directIds = Array.isArray(bi.dawaIds)
+          ? bi.dawaIds.filter((d) => typeof d === 'string' && d.trim())
+          : [];
+        if (adresser.length === 0 && directIds.length === 0) {
+          result = { fejl: 'Angiv mindst én adresse eller ét dawaId.' };
+          break;
+        }
+        const MAX = 60;
+        const totalRequested = adresser.length + directIds.length;
+        type Item = { label: string; adresse?: string; dawaId?: string };
+        const items: Item[] = [
+          ...directIds.map((d) => ({ label: d, dawaId: d })),
+          ...adresser.map((a) => ({ label: a, adresse: a })),
+        ].slice(0, MAX);
+
+        // Geokod adresser → dawaId og hent BBR i chunks (undgår at overvælde
+        // eksterne API'er), men i ÉN tool-runde i stedet for én pr. adresse.
+        const CHUNK = 8;
+        const rows: Array<Record<string, unknown>> = [];
+        for (let i = 0; i < items.length; i += CHUNK) {
+          const chunkRows = await Promise.all(
+            items.slice(i, i + CHUNK).map(async (it): Promise<Record<string, unknown>> => {
+              try {
+                let dawaId = it.dawaId;
+                if (!dawaId && it.adresse) {
+                  const acRes = await fetch(
+                    `${baseUrl}/api/adresse/autocomplete?q=${encodeURIComponent(it.adresse)}`,
+                    internalFetchOpts
+                  );
+                  if (acRes.ok) {
+                    const ac = (await acRes.json()) as Array<{ adresse?: { id?: string } }>;
+                    dawaId = ac?.[0]?.adresse?.id;
+                  }
+                }
+                if (!dawaId) return { input: it.label, fejl: 'kunne ikke geokodes' };
+                const bbr = await fetchBbrForAddress(dawaId);
+                return {
+                  input: it.label,
+                  dawaId,
+                  ...compactBbr(bbr as unknown as Record<string, unknown>),
+                };
+              } catch {
+                return { input: it.label, fejl: 'hentning fejlede' };
+              }
+            })
+          );
+          rows.push(...chunkRows);
+        }
+        const fejlAntal = rows.filter((r) => 'fejl' in r).length;
+        result = {
+          antal: rows.length,
+          ...(fejlAntal > 0 ? { antal_fejl: fejlAntal } : {}),
+          ...(totalRequested > MAX
+            ? { advarsel: `Kun de første ${MAX} af ${totalRequested} adresser blev hentet.` }
+            : {}),
+          ejendomme: rows,
         };
         break;
       }
@@ -2588,22 +3067,15 @@ async function isTenantMonthlyBudgetExceeded(
 ): Promise<boolean> {
   if (!tenantId) return false;
   try {
-    const monthStart = new Date();
-    monthStart.setDate(1);
-    monthStart.setHours(0, 0, 0, 0);
-
-    const db: TenantDb = adminClient.schema('tenant');
-    const { data: usageData } = await db
-      .from('ai_token_usage')
-      .select('tokens_in, tokens_out')
-      .eq('tenant_id', tenantId)
-      .gte('created_at', monthStart.toISOString());
-
-    const monthlyTokens = (usageData ?? []).reduce(
-      (sum, r) => sum + (r.tokens_in ?? 0) + (r.tokens_out ?? 0),
-      0
-    );
-    return monthlyTokens >= TENANT_MONTHLY_TOKEN_LIMIT;
+    // BIZZ-2205: via public SECURITY DEFINER RPC. Det delte `tenant`-schema er
+    // ikke eksponeret til PostgREST (kun public + udvalgte tenant_*), så en
+    // direkte .schema('tenant')-query gav PGRST106 → fail-open (budget-gaten
+    // var reelt død). RPC'en summerer tokens siden månedens start.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (adminClient as any).rpc('tenant_monthly_token_sum', {
+      p_tenant_id: tenantId,
+    });
+    return Number(data ?? 0) >= TENANT_MONTHLY_TOKEN_LIMIT;
   } catch {
     // Fail-open: do not block request on DB error
     return false;
@@ -2632,16 +3104,27 @@ function recordTenantTokenUsage(
 ): Promise<void> {
   return (async () => {
     try {
-      const db: TenantDb = adminClient.schema('tenant');
-      await db.from('ai_token_usage').insert({
-        tenant_id: tenantId,
-        user_id: userId,
-        tokens_in: tokensIn,
-        tokens_out: tokensOut,
-        model: 'claude-sonnet-4-6',
+      // BIZZ-2205: via public SECURITY DEFINER RPC (record_ai_token_usage).
+      // Direkte .schema('tenant').insert gav PGRST106 (schema ikke eksponeret)
+      // og blev slugt af catch{} → Forbrugshistorik var altid tom. Fejl logges
+      // nu i stedet for at forsvinde tavst.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error } = await (adminClient as any).rpc('record_ai_token_usage', {
+        p_tenant_id: tenantId,
+        p_user_id: userId,
+        p_tokens_in: tokensIn,
+        p_tokens_out: tokensOut,
+        p_model: 'claude-sonnet-4-6',
+        p_route: '/api/ai/chat',
       });
-    } catch {
-      // Non-critical — best-effort tracking
+      if (error) {
+        logger.warn('[ai/chat] recordTenantTokenUsage RPC-fejl:', error.message);
+      }
+    } catch (err) {
+      logger.warn(
+        '[ai/chat] recordTenantTokenUsage fejl:',
+        err instanceof Error ? err.message : String(err)
+      );
     }
   })();
 }
@@ -2950,15 +3433,24 @@ export async function POST(request: NextRequest): Promise<Response> {
   let recentEntitiesContext = '';
   /** Formatted tenant knowledge base context injected into the system prompt. */
   let knowledgeContext = '';
+
+  // Resolve the tenant's physical schema name once (per-tenant tenant_<slug>).
+  // Both the recent-entities and knowledge-base context reads target that schema.
+  let tenantSchemaName: string | undefined;
   try {
     const { data: tenantRow } = await adminClient
       .from('tenants')
       .select('schema_name')
       .eq('id', resolvedTenantId)
       .single();
+    tenantSchemaName = tenantRow?.schema_name ?? undefined;
+  } catch {
+    // Non-critical — AI still works without tenant-schema context
+  }
 
-    if (tenantRow?.schema_name) {
-      const db = tenantDb(tenantRow.schema_name);
+  try {
+    if (tenantSchemaName) {
+      const db = tenantDb(tenantSchemaName);
       const { data: recents } = await db
         .from('recent_entities')
         .select('entity_type, entity_id, display_name, visited_at')
@@ -3008,37 +3500,15 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   // ── Tenant knowledge base context injection ───────────────────────────────
-  // Fetches the 5 most recent knowledge items for the tenant and appends them
-  // to the system prompt so the AI can reference company-specific information
-  // without the user having to repeat it.
-  // Max 2000 chars per item to keep token usage predictable.
+  // Fetches the 5 most recent knowledge items from the per-tenant
+  // tenant_<slug>.tenant_knowledge table (BIZZ-2277/2279) and appends them to
+  // the system prompt so the AI can reference company-specific information.
+  // Previously used .schema('tenant') → PGRST106 (schema not exposed to
+  // PostgREST), so the AI silently received no knowledge. Max 2000 chars/item.
   // Non-critical — failures are silently swallowed.
-  if (resolvedTenantId) {
+  if (tenantSchemaName) {
     try {
-      const { data: knowledgeItems } = await (
-        adminClient as unknown as {
-          schema: (s: string) => {
-            from: (t: string) => {
-              select: (cols: string) => {
-                eq: (
-                  col: string,
-                  val: string
-                ) => {
-                  order: (
-                    col: string,
-                    opts: { ascending: boolean }
-                  ) => {
-                    limit: (n: number) => Promise<{
-                      data: Array<{ title: string; content: string }> | null;
-                    }>;
-                  };
-                };
-              };
-            };
-          };
-        }
-      )
-        .schema('tenant')
+      const { data: knowledgeItems } = await tenantDb(tenantSchemaName)
         .from('tenant_knowledge')
         .select('title, content')
         .eq('tenant_id', resolvedTenantId)
@@ -3046,7 +3516,7 @@ export async function POST(request: NextRequest): Promise<Response> {
         .limit(5);
 
       if (knowledgeItems && knowledgeItems.length > 0) {
-        const formatted = knowledgeItems
+        const formatted = (knowledgeItems as Array<{ title: string; content: string }>)
           .map((k) => `[VIDEN: ${k.title}]\n${k.content.slice(0, 2000)}`)
           .join('\n\n');
         knowledgeContext = `## Organisationens videnbase\n${formatted}`;
@@ -3277,7 +3747,23 @@ export async function POST(request: NextRequest): Promise<Response> {
       // BIZZ-939: Start SSE heartbeat for at holde forbindelsen åben
       startHeartbeat(controller);
       try {
-        const MAX_TOOL_ROUNDS = 15;
+        // BIZZ-2290: 15 var for faa til store batch-forespoergsler (fx ~46
+        // adresser) — data-hentningen opbrugte runde-budgettet foer en ren
+        // generate_document-runde kunne naas.
+        const MAX_TOOL_ROUNDS = 20;
+        // BIZZ-2290: 4096 var for lavt. Et generate_document tool_use med en stor
+        // scratch.rows-JSON (mange raekker x felter) blev trunkeret ved
+        // stop_reason=max_tokens, saa tool-kaldet blev malformet og aldrig
+        // dispatchet ("lover fil, leverer aldrig"). Sonnet 4.6 understoetter langt
+        // hoejere output; 16384 rummer realistiske tabeller. Kun et loft — det
+        // oeger ikke omkostningen medmindre modellen faktisk genererer mere.
+        const MAX_OUTPUT_TOKENS = 16384;
+        // BIZZ-2290: Fil-intent i sidste bruger-besked → bruges til aerlig
+        // fallback hvis turnen slutter uden at generate_document leverede en fil.
+        const lastUserMessage = messages[messages.length - 1];
+        const fileIntent = detectFileIntent(
+          typeof lastUserMessage?.content === 'string' ? lastUserMessage.content : ''
+        );
         // BIZZ-590: Soft time-budget. Vercel hard-kill ved maxDuration (120s)
         // afbryder streamen uden at nå MAX_TOOL_ROUNDS-exit branch, og brugeren
         // får 0 chars output. Når vi rammer SOFT_DEADLINE_MS giver vi Claude
@@ -3332,7 +3818,7 @@ export async function POST(request: NextRequest): Promise<Response> {
           // men amortiseres efter blot 2 requests.
           const response = await client.messages.create({
             model: 'claude-sonnet-4-6',
-            max_tokens: 4096,
+            max_tokens: MAX_OUTPUT_TOKENS,
             system: [
               {
                 type: 'text',
@@ -3360,6 +3846,17 @@ export async function POST(request: NextRequest): Promise<Response> {
             (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use'
           );
 
+          // BIZZ-2290: Hvis modellen ramte max_tokens MENS den emitterede et
+          // tool_use, er tool-inputtet sandsynligvis trunkeret/malformet (fx en
+          // for stor generate_document scratch.rows). Den hoejere MAX_OUTPUT_TOKENS
+          // goer det sjaeldent — log til Sentry for observability hvis det sker.
+          if (response.stop_reason === 'max_tokens' && toolUseBlocks.length > 0) {
+            Sentry.captureMessage('ai.tool_use.truncated_max_tokens', {
+              level: 'warning',
+              extra: { round, tools: toolUseBlocks.map((b) => b.name) },
+            });
+          }
+
           if (toolUseBlocks.length === 0) {
             // ── Final text response — stream it to client ──
             let text = response.content
@@ -3371,6 +3868,15 @@ export async function POST(request: NextRequest): Promise<Response> {
             if (response.stop_reason === 'max_tokens') {
               text +=
                 '\n\n---\n*Svaret blev afbrudt fordi det overskred max-længden. Start gerne en ny samtale for at fortsætte.*';
+            }
+
+            // BIZZ-2290: Ærlig fallback. Brugeren bad om en fil, men turnen sluttede
+            // uden at generate_document leverede en (typisk for stort datasæt til ét
+            // kald). Undgå den tavse "lover fil, leverer aldrig"-UX ved at fortælle
+            // det i stedet for at streame modellens tomme løfte.
+            if (fileIntent && turnGeneratedFiles.length === 0) {
+              text +=
+                '\n\n---\n*Bemærk: jeg kunne ikke færdiggøre selve fil-genereringen denne gang — datasættet var sandsynligvis for stort til ét kald. Prøv med færre rækker ad gangen (fx 10–15 adresser), eller bed om dataene som en tabel her i chatten.*';
             }
 
             // Stream in chunks — 200 chars reduces SSE overhead vs. perceived smoothness
@@ -3665,10 +4171,16 @@ export async function POST(request: NextRequest): Promise<Response> {
         }
 
         // If we exhausted tool rounds, send what we have + usage
+        // BIZZ-2290: hvis brugeren bad om en fil men ingen blev genereret, giv
+        // ærlig, handlingsrettet besked i stedet for kun det generiske svar.
         sse(
           controller,
           JSON.stringify({
-            t: 'Jeg nåede max antal data-opslag. Her er hvad jeg fandt — stil gerne et opfølgende spørgsmål.',
+            t:
+              'Jeg nåede max antal data-opslag. Her er hvad jeg fandt — stil gerne et opfølgende spørgsmål.' +
+              (fileIntent && turnGeneratedFiles.length === 0
+                ? ' For at få en fil: prøv en mindre batch (fx 10–15 ad gangen), så kan jeg nå at generere Excel/CSV.'
+                : ''),
           })
         );
         const totalTokens = totalInputTokens + totalOutputTokens;

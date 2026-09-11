@@ -285,22 +285,30 @@ async function fetchBbrStatusForBfeBatch(bfeNumre) {
   const allGrundIds = [...new Set([...ejdToGrund.values()].flatMap((e) => e.grundIds))];
   let bygNodes = [];
   if (allGrundIds.length > 0) {
-    try {
-      const gidList = allGrundIds.map((id) => `"${id}"`).join(',');
-      bygNodes = await queryBBR(
-        `{ BBR_Bygning(first: 500, virkningstid: "${vt}", where: { grund: { in: [${gidList}] } }) {
-            nodes {
-              id_lokalId status grund
-              byg038SamletBygningsareal
-              byg039BygningensSamledeBoligAreal
-              byg026Opfoerelsesaar
-              byg021BygningensAnvendelse
-            }
-        } }`
-      );
-    } catch (err) {
-      console.error(`[bbr] step 3 error:`, err?.message ?? err);
-      // Fortsæt med tomme bygninger → BFE'er gemmes som "ingen bygninger"
+    // FIX: BBR 'in'-listen må maks indeholde 100 elementer, ellers HTTP 400.
+    // 50 BFE'er kan tilsammen have >100 grunde → tidligere fejlede hele step 3
+    // og skrev null på ALLE BFE'er i batchen (overskrev eksisterende felter).
+    // Chunk grund-ID'erne i ≤100 og akkumulér.
+    const GRUND_CHUNK = 100;
+    for (let gi = 0; gi < allGrundIds.length; gi += GRUND_CHUNK) {
+      const chunk = allGrundIds.slice(gi, gi + GRUND_CHUNK);
+      try {
+        const gidList = chunk.map((id) => `"${id}"`).join(',');
+        const nodes = await queryBBR(
+          `{ BBR_Bygning(first: 500, virkningstid: "${vt}", where: { grund: { in: [${gidList}] } }) {
+              nodes {
+                id_lokalId status grund
+                byg038SamletBygningsareal
+                byg039BygningensSamledeBoligAreal
+                byg026Opfoerelsesaar
+                byg021BygningensAnvendelse
+              }
+          } }`
+        );
+        bygNodes.push(...nodes);
+      } catch (err) {
+        console.error(`[bbr] step 3 error (chunk ${gi}-${gi + chunk.length}):`, err?.message ?? err);
+      }
     }
   }
 

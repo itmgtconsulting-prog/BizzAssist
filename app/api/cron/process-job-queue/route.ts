@@ -18,16 +18,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
-import { claimBatch, completeJob, failJob, reclaimStale } from '@/app/lib/jobQueue';
-import { runJob } from '@/app/lib/jobHandlers';
+import { drainJobQueue } from '@/app/lib/jobDrain';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
 
 /** Stop claiming new work once we're this close to the function limit. */
 const TIME_BUDGET_MS = 250_000;
-/** Jobs claimed per DB round-trip. */
-const BATCH_SIZE = 4;
 
 /**
  * Verify CRON_SECRET bearer + (in prod) Vercel cron header.
@@ -57,32 +54,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 
   return withCronMonitor('process-job-queue', async () => {
-    const workerId = `worker-${Date.now()}`;
-    const deadline = Date.now() + TIME_BUDGET_MS;
-    let processed = 0;
-    let failed = 0;
-
-    const reclaimed = await reclaimStale().catch((e) => {
-      logger.error('[process-job-queue] reclaimStale fejl:', e);
-      return 0;
-    });
-
-    while (Date.now() < deadline) {
-      const jobs = await claimBatch(workerId, BATCH_SIZE);
-      if (jobs.length === 0) break; // queue empty
-      for (const job of jobs) {
-        try {
-          const result = await runJob(job);
-          await completeJob(job.id, result);
-          processed++;
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          logger.error(`[process-job-queue] job ${job.id} (${job.job_type}) fejlede:`, msg);
-          await failJob(job, msg);
-          failed++;
-        }
-      }
-    }
+    // BIZZ-2221: drain-logikken deles nu med watchdog (piggyback) via jobDrain.
+    const { processed, failed, reclaimed } = await drainJobQueue(TIME_BUDGET_MS);
 
     logger.log(
       `[process-job-queue] reclaimed=${reclaimed} processed=${processed} failed=${failed}`

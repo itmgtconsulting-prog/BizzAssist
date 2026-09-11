@@ -20,6 +20,8 @@ function mockMembershipChain(data: unknown) {
   const chain = {
     select: vi.fn().mockReturnThis(),
     eq: vi.fn().mockReturnThis(),
+    // BIZZ-2192.4: resolveTenantId ordner nu deterministisk på created_at.
+    order: vi.fn().mockReturnThis(),
     limit: vi.fn().mockReturnThis(),
     single: vi.fn().mockResolvedValue({ data }),
   };

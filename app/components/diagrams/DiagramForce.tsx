@@ -729,6 +729,9 @@ function DiagramForce({
 
   /** BIZZ-479: Modal-state — hvilken overflow-node der i øjeblikket vises i modal */
   const [overflowModalNode, setOverflowModalNode] = useState<DiagramNode | null>(null);
+  // BIZZ-2270: På mobil er adresse-teksten på ejendoms-noder ulæselig ved
+  // fit-zoom. Tap på en ejendoms-node åbner en læsbar detalje-popover.
+  const [detailNode, setDetailNode] = useState<DiagramNode | null>(null);
 
   /** BIZZ-427: Toggle visibility of ceased/historical owners */
   const [showCeased, setShowCeased] = useState(false);
@@ -1983,6 +1986,93 @@ function DiagramForce({
     return () => el.removeEventListener('wheel', handler);
   }, [isFullscreen]);
 
+  // ── BIZZ-2251: Touch-gestures (mobil) — én-finger-pan + to-finger-pinch-zoom ──
+  // Tilføjet som native listeners (som wheel) via refs, så mus-stien er UÆNDRET
+  // (PC uberørt). touch-action: none på containeren (sat i style) forhindrer at
+  // browseren stjæler gesten til side-scroll/zoom. preventDefault kun under aktiv
+  // pan/pinch (i touchmove) så taps/klik på noder+knapper stadig virker.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    // Lokal geste-state (touch er altid enten pan ELLER pinch — aldrig node-drag).
+    let mode: 'none' | 'pan' | 'pinch' = 'none';
+    let panStartX = 0;
+    let panStartY = 0;
+    let panBaseX = 0;
+    let panBaseY = 0;
+    let pinchStartDist = 0;
+    let pinchMidX = 0;
+    let pinchMidY = 0;
+    let pinchBaseZoom = 1;
+    let pinchBasePanX = 0;
+    let pinchBasePanY = 0;
+
+    const dist = (a: Touch, b: Touch) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+
+    const onStart = (e: TouchEvent) => {
+      const rect = el.getBoundingClientRect();
+      if (e.touches.length === 1) {
+        mode = 'pan';
+        panStartX = e.touches[0].clientX;
+        panStartY = e.touches[0].clientY;
+        panBaseX = panOffsetRef.current.x;
+        panBaseY = panOffsetRef.current.y;
+      } else if (e.touches.length >= 2) {
+        mode = 'pinch';
+        pinchStartDist = dist(e.touches[0], e.touches[1]) || 1;
+        pinchMidX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
+        pinchMidY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top;
+        pinchBaseZoom = zoomRef.current;
+        pinchBasePanX = panOffsetRef.current.x;
+        pinchBasePanY = panOffsetRef.current.y;
+      }
+    };
+
+    const onMove = (e: TouchEvent) => {
+      if (mode === 'pan' && e.touches.length === 1) {
+        e.preventDefault();
+        const dx = e.touches[0].clientX - panStartX;
+        const dy = e.touches[0].clientY - panStartY;
+        setPanOffset({ x: panBaseX + dx, y: panBaseY + dy });
+      } else if (mode === 'pinch' && e.touches.length >= 2) {
+        e.preventDefault();
+        const d = dist(e.touches[0], e.touches[1]) || 1;
+        const newZoom = Math.min(Math.max(pinchBaseZoom * (d / pinchStartDist), 0.1), 3);
+        // Hold indholdet under pinch-midtpunktet fast (samme matematik som zoomToPoint).
+        const scale = newZoom / pinchBaseZoom;
+        setPanOffset({
+          x: pinchMidX - scale * (pinchMidX - pinchBasePanX),
+          y: pinchMidY - scale * (pinchMidY - pinchBasePanY),
+        });
+        setZoom(newZoom);
+      }
+    };
+
+    const onEnd = (e: TouchEvent) => {
+      if (e.touches.length === 0) {
+        mode = 'none';
+      } else if (e.touches.length === 1) {
+        // Gik fra pinch → pan: re-baseline så panoreringen ikke hopper.
+        mode = 'pan';
+        panStartX = e.touches[0].clientX;
+        panStartY = e.touches[0].clientY;
+        panBaseX = panOffsetRef.current.x;
+        panBaseY = panOffsetRef.current.y;
+      }
+    };
+
+    el.addEventListener('touchstart', onStart, { passive: false });
+    el.addEventListener('touchmove', onMove, { passive: false });
+    el.addEventListener('touchend', onEnd);
+    el.addEventListener('touchcancel', onEnd);
+    return () => {
+      el.removeEventListener('touchstart', onStart);
+      el.removeEventListener('touchmove', onMove);
+      el.removeEventListener('touchend', onEnd);
+      el.removeEventListener('touchcancel', onEnd);
+    };
+  }, [isFullscreen]);
+
   // ── Double-click on background to zoom in, centered on click position ──
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
     // Check if the click target is a node element (text, rect with fill, circle, g)
@@ -2955,10 +3045,21 @@ function DiagramForce({
         return (
           <g
             key={node.id}
+            data-node-type={node.type}
             style={{ cursor: node.link ? 'pointer' : 'grab' }}
             onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
             onClick={() => {
               if (!dragRef.current.didMove) {
+                // BIZZ-2270: På mobil er ejendoms-adresser ulæselige ved fit-zoom.
+                // Tap på en ejendoms-node åbner en læsbar detalje-popover i stedet
+                // for straks at navigere væk (adressen kan læses fuldt ud, og en
+                // "Åbn"-knap bevarer den oprindelige handling). PC uændret.
+                const isMobile =
+                  typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches;
+                if (isMobile && node.type === 'property') {
+                  setDetailNode(node);
+                  return;
+                }
                 if (onNodeClick) {
                   // BIZZ-368: caller-controlled navigation (e.g. switch tab instead of navigate)
                   onNodeClick(node);
@@ -3538,6 +3639,9 @@ function DiagramForce({
         minHeight: isFullscreen ? undefined : '500px',
         maxHeight: isFullscreen ? undefined : '85vh',
         cursor: 'grab',
+        // BIZZ-2251: lad diagrammet håndtere touch-pan/pinch selv (browseren må
+        // ikke stjæle gesten til side-scroll/zoom). Ingen effekt på mus → PC uændret.
+        touchAction: 'none',
       }}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
@@ -3733,6 +3837,79 @@ function DiagramForce({
     </div>
   ) : null;
 
+  // BIZZ-2270: Mobil detalje-popover for en ejendoms-node — viser den fulde,
+  // læsbare adresse (uafhængigt af diagram-zoom) + en knap der bevarer den
+  // oprindelige node-handling.
+  const detailModal = detailNode
+    ? (() => {
+        const raw = detailNode.label.startsWith('BFE ')
+          ? lang === 'da'
+            ? 'Uden officiel adresse'
+            : 'No official address'
+          : detailNode.label;
+        const parts = raw.split(',').map((s) => s.trim());
+        const street = parts[0] ?? raw;
+        const postBy = parts.slice(1).join(', ');
+        const activeNode = detailNode;
+        return (
+          <div
+            className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-slate-950/80 p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="node-detail-title"
+            onClick={() => setDetailNode(null)}
+          >
+            <div
+              className="bg-slate-900 border border-slate-700/50 rounded-2xl shadow-2xl w-full max-w-sm"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-5 py-3 border-b border-slate-700/40">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Home size={15} className="text-emerald-400 shrink-0" />
+                  <h2 id="node-detail-title" className="text-white text-sm font-medium truncate">
+                    {lang === 'da' ? 'Ejendom' : 'Property'}
+                  </h2>
+                </div>
+                <button
+                  onClick={() => setDetailNode(null)}
+                  className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800/50"
+                  aria-label={lang === 'da' ? 'Luk' : 'Close'}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="px-5 py-4 space-y-1">
+                <p className="text-slate-100 text-base font-medium leading-snug">{street}</p>
+                {postBy && <p className="text-emerald-200/90 text-sm">{postBy}</p>}
+                {activeNode.bfeNummer && (
+                  <p className="text-emerald-300/70 text-xs mt-1">
+                    BFE {activeNode.bfeNummer.toLocaleString('da-DK')}
+                  </p>
+                )}
+              </div>
+              {(activeNode.link || onNodeClick) && (
+                <div className="px-5 pb-4">
+                  <button
+                    onClick={() => {
+                      setDetailNode(null);
+                      if (onNodeClick) {
+                        onNodeClick(activeNode);
+                      } else if (activeNode.link) {
+                        window.location.href = activeNode.link;
+                      }
+                    }}
+                    className="w-full text-center px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
+                  >
+                    {lang === 'da' ? 'Åbn ejendom' : 'Open property'}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()
+    : null;
+
   // ── Fullscreen overlay (BIZZ-248: topbar with close button) ──
   // BIZZ-850: Portal til document.body saa overlay ikke bliver trapped
   // i <main>.z-0 stacking context. <header> i dashboard-layout er z-10
@@ -3765,6 +3942,7 @@ function DiagramForce({
           </div>
         </div>
         {overflowModal}
+        {detailModal}
       </div>
     );
     // createPortal kun i browser-kontekst — SSR render returnerer null
@@ -3782,6 +3960,7 @@ function DiagramForce({
         {diagramLegend}
       </div>
       {overflowModal}
+      {detailModal}
     </div>
   );
 }

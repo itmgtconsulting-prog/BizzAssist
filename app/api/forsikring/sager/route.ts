@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getTenantSchemaName } from '@/lib/db/tenant';
+import { getDomainLinkedTenants } from '@/app/lib/domainFederation';
 import { logger } from '@/app/lib/logger';
 
 /**
@@ -23,59 +24,66 @@ export async function GET(): Promise<NextResponse> {
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const admin = createAdminClient();
-  const schemaName = await getTenantSchemaName(auth.tenantId);
-  if (!schemaName) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+
+  // BIZZ-2192.3: Domæne-federation (ADR-0011). Sager læses fra egen tenant ∪
+  // co-domæne-medlemmers tenants (getDomainLinkedTenants, query-tid). Hvert
+  // federations-schema beriges for sig (police-/analyse-count er schema-lokale)
+  // og merges. Kun federations-schemaer læses → ingen læk; schemaer der fejler
+  // (ikke eksponeret) springes sikkert over.
+  const schemas = await getDomainLinkedTenants(auth.userId);
+  if (schemas.length === 0) return NextResponse.json({ sager: [] });
+
+  /** Henter + beriger sager for ét federations-schema. */
+  const fetchEnrichedSagerForSchema = async (
+    schema: string
+  ): Promise<Array<Record<string, unknown> & { updated_at?: string }>> => {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const db = (admin as any).schema(schema);
+      const { data: sager, error } = await db
+        .from('forsikring_sager')
+        .select('*')
+        .order('updated_at', { ascending: false })
+        .limit(50);
+      if (error) {
+        logger.warn(`[forsikring/sager] federation skip ${schema}: ${error.message}`);
+        return [];
+      }
+      const sagIds = (sager ?? []).map((s: { id: string }) => s.id);
+      const policeCounts = new Map<string, number>();
+      const analyseCounts = new Map<string, number>();
+      if (sagIds.length > 0) {
+        const { data: polRows } = await db
+          .from('forsikring_policies')
+          .select('sag_id')
+          .in('sag_id', sagIds);
+        for (const r of (polRows ?? []) as Array<{ sag_id: string }>) {
+          policeCounts.set(r.sag_id, (policeCounts.get(r.sag_id) ?? 0) + 1);
+        }
+        const { data: anaRows } = await db.from('forsikring_analyser').select('id, kunde_id');
+        for (const sag of (sager ?? []) as Array<{ id: string; kunde_id: string }>) {
+          const count = (anaRows ?? []).filter(
+            (a: { kunde_id: string }) => a.kunde_id === sag.kunde_id
+          ).length;
+          if (count > 0) analyseCounts.set(sag.id, count);
+        }
+      }
+      return (sager ?? []).map((s: Record<string, unknown>) => ({
+        ...s,
+        police_count: policeCounts.get(s.id as string) ?? 0,
+        analyse_count: analyseCounts.get(s.id as string) ?? 0,
+      }));
+    } catch {
+      return [];
+    }
+  };
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const db = (admin as any).schema(schemaName);
-
-    // Hent sager med antal policer + analyser
-    const { data: sager, error } = await db
-      .from('forsikring_sager')
-      .select('*')
-      .eq('tenant_id', auth.tenantId)
-      .order('updated_at', { ascending: false })
-      .limit(50);
-
-    if (error) {
-      logger.error('[forsikring/sager GET]', error.message);
-      return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
-    }
-
-    // Berig med police-count og analyse-count per sag
-    const sagIds = (sager ?? []).map((s: { id: string }) => s.id);
-    const policeCounts = new Map<string, number>();
-    const analyseCounts = new Map<string, number>();
-
-    if (sagIds.length > 0) {
-      const { data: polRows } = await db
-        .from('forsikring_policies')
-        .select('sag_id')
-        .in('sag_id', sagIds);
-      for (const r of (polRows ?? []) as Array<{ sag_id: string }>) {
-        policeCounts.set(r.sag_id, (policeCounts.get(r.sag_id) ?? 0) + 1);
-      }
-
-      const { data: anaRows } = await db
-        .from('forsikring_analyser')
-        .select('id, kunde_id')
-        .eq('tenant_id', auth.tenantId);
-      // Match analyser til sager via kunde_id
-      for (const sag of (sager ?? []) as Array<{ id: string; kunde_id: string }>) {
-        const count = (anaRows ?? []).filter(
-          (a: { kunde_id: string }) => a.kunde_id === sag.kunde_id
-        ).length;
-        if (count > 0) analyseCounts.set(sag.id, count);
-      }
-    }
-
-    const enriched = (sager ?? []).map((s: Record<string, unknown>) => ({
-      ...s,
-      police_count: policeCounts.get(s.id as string) ?? 0,
-      analyse_count: analyseCounts.get(s.id as string) ?? 0,
-    }));
-
+    const perSchema = await Promise.all(schemas.map(fetchEnrichedSagerForSchema));
+    const enriched = perSchema
+      .flat()
+      .sort((a, b) => new Date(b.updated_at ?? 0).getTime() - new Date(a.updated_at ?? 0).getTime())
+      .slice(0, 50);
     return NextResponse.json({ sager: enriched });
   } catch (err) {
     logger.error('[forsikring/sager GET]', err);

@@ -47,22 +47,23 @@ export async function GET(request: NextRequest) {
 
   const admin = createAdminClient();
 
+  // BIZZ-2205: læs via public SECURITY DEFINER RPC'er. Det delte `tenant`-schema
+  // er ikke eksponeret til PostgREST (kun public + udvalgte tenant_*), så en
+  // direkte admin.schema('tenant')-query gav PGRST106 → Forbrugshistorik altid tom.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const db = admin.schema('tenant') as any;
+  const rpc = admin as any;
 
   const [dataRes, countRes] = await Promise.all([
-    db
-      .from('ai_token_usage')
-      .select('id, route, tokens_in, tokens_out, model, created_at')
-      .eq('tenant_id', auth.tenantId)
-      .eq('user_id', auth.userId)
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1),
-    db
-      .from('ai_token_usage')
-      .select('id', { count: 'exact', head: true })
-      .eq('tenant_id', auth.tenantId)
-      .eq('user_id', auth.userId),
+    rpc.rpc('get_ai_token_usage', {
+      p_tenant_id: auth.tenantId,
+      p_user_id: auth.userId,
+      p_limit: limit,
+      p_offset: offset,
+    }),
+    rpc.rpc('get_ai_token_usage_total', {
+      p_tenant_id: auth.tenantId,
+      p_user_id: auth.userId,
+    }),
   ]);
 
   if (dataRes.error) {
@@ -71,6 +72,6 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({
     rows: (dataRes.data ?? []) as UsageHistoryRow[],
-    total: countRes.count ?? 0,
+    total: Number(countRes.data ?? 0),
   });
 }

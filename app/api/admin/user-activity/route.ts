@@ -10,7 +10,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { createClient } from '@/lib/supabase/server';
 import { logger } from '@/app/lib/logger';
 
@@ -76,13 +76,44 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       (users?.users ?? []).map((u: { id: string; email: string }) => [u.id, u.email ?? 'ukendt'])
     );
 
-    // Hent activity_log aggregeringer
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: activityRows } = await (admin as any)
-      .from('activity_log')
-      .select('user_id, event_type, created_at')
-      .gte('created_at', since)
-      .limit(5000);
+    // activity_log er per-tenant (tenant_<slug>-schema, BIZZ-2288/2289). Slå
+    // schema-navne op for de tenants brugerne tilhoerer, og aggregér activity_log
+    // pr. schema. Fejl-isoleret: én tenants fejl vælter ikke hele oversigten.
+    const tenantIds = Array.from(
+      new Set((memberships as Array<{ tenant_id: string }>).map((m) => m.tenant_id).filter(Boolean))
+    );
+    const { data: tenantRows } = await admin
+      .from('tenants')
+      .select('schema_name')
+      .in('id', tenantIds);
+    const schemaNames = Array.from(
+      new Set(
+        ((tenantRows ?? []) as Array<{ schema_name: string | null }>)
+          .map((t) => t.schema_name)
+          .filter((s): s is string => !!s)
+      )
+    );
+
+    const perSchema = await Promise.all(
+      schemaNames.map(async (schemaName) => {
+        try {
+          const { data } = await tenantDb(schemaName)
+            .from('activity_log')
+            .select('user_id, event_type, created_at')
+            .gte('created_at', since)
+            .limit(5000);
+          return (data ?? []) as Array<{
+            user_id: string;
+            event_type: string;
+            created_at: string;
+          }>;
+        } catch (err) {
+          logger.error(`[admin/user-activity] activity_log fejl for ${schemaName}:`, err);
+          return [];
+        }
+      })
+    );
+    const activityRows = perSchema.flat();
 
     // Aggregér per bruger
     const userMap = new Map<string, UserActivity>();

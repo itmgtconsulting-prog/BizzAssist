@@ -5,8 +5,8 @@
  * Auth: authenticated user with active tenant membership required.
  * Admin role required for PATCH.
  * The item must belong to the caller's tenant — cross-tenant access is blocked
- * both by the RLS policy on tenant.tenant_knowledge and by the explicit
- * tenant_id filter in application code.
+ * both by the RLS policy on the per-tenant tenant_knowledge table (BIZZ-2277)
+ * and by the explicit tenant_id filter in application code.
  *
  * @module api/knowledge/[id]
  */
@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
+import { tenantUserDb } from '@/lib/db/tenant';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
@@ -36,14 +37,16 @@ const MAX_TITLE_CHARS = 200;
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
- * Resolves the authenticated user's tenant_id and role from the public schema.
+ * Resolves the authenticated user's tenant_id, role, and physical schema name.
+ * The schema name (e.g. `tenant_abc123`), not the UUID, is what the PostgREST
+ * `.schema()` API expects for the per-tenant tenant_knowledge table (BIZZ-2277).
  *
  * @param userId - Authenticated Supabase user UUID
- * @returns Object with tenantId and role, or null if not found
+ * @returns Object with tenantId, role, and schemaName, or null if not found
  */
 async function resolveTenantMembership(
   userId: string
-): Promise<{ tenantId: string; role: string } | null> {
+): Promise<{ tenantId: string; role: string; schemaName: string } | null> {
   const adminClient = createAdminClient();
 
   const { data } = await adminClient
@@ -54,7 +57,20 @@ async function resolveTenantMembership(
     .single();
 
   if (!data?.tenant_id) return null;
-  return { tenantId: data.tenant_id as string, role: data.role as string };
+
+  const { data: tenant } = await adminClient
+    .from('tenants')
+    .select('schema_name')
+    .eq('id', data.tenant_id)
+    .single();
+
+  if (!tenant?.schema_name) return null;
+
+  return {
+    tenantId: data.tenant_id as string,
+    role: data.role as string,
+    schemaName: tenant.schema_name as string,
+  };
 }
 
 // ─── Route params type ────────────────────────────────────────────────────────
@@ -97,7 +113,8 @@ export async function GET(request: NextRequest, { params }: RouteParams): Promis
   }
 
   try {
-    const { data, error } = await tenantDb(membership.tenantId)
+    // Read via user-JWT client so RLS (is_tenant_member) gates it (BIZZ-2271).
+    const { data, error } = await tenantUserDb(supabase, membership.schemaName)
       .from('tenant_knowledge')
       .select('id, tenant_id, title, content, source_type, created_by, created_at, updated_at')
       .eq('tenant_id', membership.tenantId)
@@ -212,7 +229,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams): Prom
   }
 
   try {
-    const { data, error } = await tenantDb(membership.tenantId)
+    const { data, error } = await tenantDb(membership.schemaName)
       .from('tenant_knowledge')
       .update(patch)
       .eq('tenant_id', membership.tenantId)

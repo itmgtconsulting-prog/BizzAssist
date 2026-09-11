@@ -6,7 +6,9 @@
  * Auth: authenticated user with an active tenant membership required for all verbs.
  * Admin role required for POST and DELETE (write operations).
  *
- * Storage: tenant.tenant_knowledge in the shared "tenant" Supabase schema.
+ * Storage: tenant_knowledge in the per-tenant `tenant_<slug>` schema (BIZZ-2277).
+ * Reads go through the user-JWT client (RLS-enforced); writes through the
+ * service_role admin client (role check enforced in-route).
  * Content max: 50 000 characters (enforced here and in the DB CHECK constraint).
  * Title max: 200 characters.
  *
@@ -20,6 +22,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
+import { tenantUserDb } from '@/lib/db/tenant';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
@@ -66,15 +69,20 @@ interface _CreateKnowledgeBody {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
- * Resolves the authenticated user's tenant_id and role from the public schema.
+ * Resolves the authenticated user's tenant_id, role, and physical schema name.
  * Returns null if the user is not authenticated or has no tenant membership.
  *
+ * The schema name (e.g. `tenant_abc123`) — NOT the tenant UUID — is what the
+ * PostgREST `.schema()` API expects. tenant_knowledge lives in the per-tenant
+ * `tenant_<slug>` schema (BIZZ-2277), so both reads and writes must target the
+ * resolved schema name, never the UUID.
+ *
  * @param userId - The authenticated Supabase user UUID
- * @returns Object with tenantId and role, or null
+ * @returns Object with tenantId, role, and schemaName, or null
  */
 async function resolveTenantMembership(
   userId: string
-): Promise<{ tenantId: string; role: string } | null> {
+): Promise<{ tenantId: string; role: string; schemaName: string } | null> {
   const adminClient = createAdminClient();
 
   const { data } = await adminClient
@@ -85,7 +93,20 @@ async function resolveTenantMembership(
     .single();
 
   if (!data?.tenant_id) return null;
-  return { tenantId: data.tenant_id as string, role: data.role as string };
+
+  const { data: tenant } = await adminClient
+    .from('tenants')
+    .select('schema_name')
+    .eq('id', data.tenant_id)
+    .single();
+
+  if (!tenant?.schema_name) return null;
+
+  return {
+    tenantId: data.tenant_id as string,
+    role: data.role as string,
+    schemaName: tenant.schema_name as string,
+  };
 }
 
 // ─── GET /api/knowledge ───────────────────────────────────────────────────────
@@ -116,7 +137,9 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const { data, error } = await tenantDb(membership.tenantId)
+    // Read via the user-JWT client so RLS (is_tenant_member) gates the query —
+    // the BIZZ-2271 defense-in-depth backstop for the `authenticated` role.
+    const { data, error } = await tenantUserDb(supabase, membership.schemaName)
       .from('tenant_knowledge')
       .select('id, tenant_id, title, content, source_type, created_by, created_at, updated_at')
       .eq('tenant_id', membership.tenantId)
@@ -187,7 +210,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const { data, error } = await tenantDb(membership.tenantId)
+    const { data, error } = await tenantDb(membership.schemaName)
       .from('tenant_knowledge')
       .insert({
         tenant_id: membership.tenantId,
@@ -267,7 +290,7 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const { error } = await tenantDb(membership.tenantId)
+    const { error } = await tenantDb(membership.schemaName)
       .from('tenant_knowledge')
       .delete()
       .eq('tenant_id', membership.tenantId)

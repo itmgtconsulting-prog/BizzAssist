@@ -1,5 +1,6 @@
 import type { NextConfig } from 'next';
 import { withSentryConfig } from '@sentry/nextjs';
+import { PUBLIC_STATIC_CSP, PUBLIC_CSP_SOURCES } from './app/lib/security/publicCsp';
 
 /**
  * Bundle analyzer — enabled when ANALYZE=true is set in the environment.
@@ -17,8 +18,14 @@ const withBundleAnalyzer =
  * HTTP security headers applied to all responses.
  * Implements ISO 27001 A.13 (Communications Security) and A.14 (Secure Development).
  *
- * Content-Security-Policy is NOT here — it is set dynamically per request in
- * middleware.ts with a unique nonce (BIZZ-209). Only static headers remain.
+ * Content-Security-Policy for APP-routes (dashboard/login/api/…) saettes dynamisk
+ * pr. request med unik nonce i proxy.ts (BIZZ-209). Public/SEO-routes (forside,
+ * /ejendom/*, /virksomhed/*, /privacy, /terms) springes bevidst over af proxy.ts
+ * for at forblive ISR-cachebare (en per-request nonce ville tvinge dynamisk
+ * render → no-store → ingen Google-indeksering). De fik derfor SLET ingen CSP
+ * (BIZZ-2244). Vi giver dem en STATISK CSP her (nonce er umulig i en statisk
+ * header) — svagere paa scripts ('unsafe-inline' i stedet for nonce) men ISR-sikker
+ * og lukker "ingen CSP paa forsiden"-hullet med reelle clickjacking-/injection-vaern.
  *
  * Strict-Transport-Security: enforces HTTPS for 2 years including subdomains.
  * X-Frame-Options: prevents clickjacking by disallowing iframes.
@@ -80,13 +87,20 @@ const nextConfig: NextConfig = {
         process.env.NEXT_PUBLIC_APP_URL.includes('bizzassist.dk') &&
         !process.env.NEXT_PUBLIC_APP_URL.includes('test.bizzassist.dk'));
 
-    // CSP is handled dynamically in middleware.ts (BIZZ-209 — nonce-based).
-    // Only static security headers are applied here.
+    // App-route-CSP saettes dynamisk (nonce) i proxy.ts (BIZZ-209). Her: statiske
+    // security-headers overalt + statisk CSP paa de public/SEO-routes proxy.ts
+    // springer over (BIZZ-2244).
     const headers: { source: string; headers: { key: string; value: string }[] }[] = [
       {
         source: '/(.*)',
         headers: securityHeaders,
       },
+      // Statisk CSP kun paa public-routes (ingen overlap med proxy-matchede routes
+      // → ingen dobbelt-header).
+      ...PUBLIC_CSP_SOURCES.map((source) => ({
+        source,
+        headers: [{ key: 'Content-Security-Policy', value: PUBLIC_STATIC_CSP }],
+      })),
     ];
 
     // På non-prod (test, preview, localhost): tilføj X-Robots-Tag: noindex

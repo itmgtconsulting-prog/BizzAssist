@@ -5,10 +5,6 @@
       "schedule": "*/15 * * * *"
     },
     {
-      "path": "/api/cron/process-job-queue",
-      "schedule": "*/5 * * * *"
-    },
-    {
       "path": "/api/cron/poll-properties",
       "schedule": "30 6 * * *"
     },
@@ -73,10 +69,6 @@
       "schedule": "0 3 * * *"
     },
     {
-      "path": "/api/cron/refresh-knowledge-cache",
-      "schedule": "30 3 * * *"
-    },
-    {
       "path": "/api/cron/refresh-intel-scorecards",
       "schedule": "0 4 * * *"
     },
@@ -134,7 +126,7 @@
     },
     {
       "path": "/api/cron/refresh-vur-cache",
-      "schedule": "0 3 * * 0"
+      "schedule": "0 3 * * *"
     },
     {
       "path": "/api/cron/refresh-tinglysning-cache",

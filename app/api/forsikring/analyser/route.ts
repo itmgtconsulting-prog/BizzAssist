@@ -15,6 +15,7 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { filterAllowedStandardDocIds } from '@/app/lib/forsikring/standardDocVisibility';
 import { getTenantSchemaName } from '@/lib/db/tenant';
+import { getDomainLinkedTenants } from '@/app/lib/domainFederation';
 import { getInsuranceApi } from '@/lib/db/insurance';
 import { walkKoncern } from '@/app/lib/forsikring/koncernWalk';
 import * as Sentry from '@sentry/nextjs';
@@ -1497,33 +1498,50 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const kundeId = request.nextUrl.searchParams.get('kunde_id');
 
   const admin = createAdminClient();
-  const schemaName = await getTenantSchemaName(auth.tenantId);
-  if (!schemaName) {
-    return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+
+  // BIZZ-2192.2: Domæne-federation (ADR-0011). Læsning = egen tenant ∪ nuværende
+  // co-domæne-medlemmers tenants, beregnet på query-tid (getDomainLinkedTenants,
+  // ingen cache → øjeblikkelig revocation). Vi læser hvert federations-schema og
+  // merger i JS. Federationen er isolations-grænsen: kun schemaer helperen
+  // returnerer læses (aldrig bredere). Skemaer der fejler (ikke PostgREST-
+  // eksponeret endnu) springes over — under-deling er sikkert, læk er ikke.
+  const schemas = await getDomainLinkedTenants(auth.userId);
+  if (schemas.length === 0) {
+    return NextResponse.json({ analyser: [] });
   }
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let query = (admin as any)
-      .schema(schemaName)
-      .from('forsikring_analyser')
-      .select('*')
-      .eq('tenant_id', auth.tenantId)
-      .order('created_at', { ascending: false })
-      .limit(50);
+    const perSchema = await Promise.all(
+      schemas.map(async (schema) => {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          let query = (admin as any)
+            .schema(schema)
+            .from('forsikring_analyser')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(50);
+          if (kundeId) {
+            query = query.eq('kunde_id', kundeId);
+          }
+          const { data, error } = await query;
+          if (error) {
+            logger.warn(`[forsikring/analyser] federation skip ${schema}: ${error.message}`);
+            return [] as Array<{ created_at: string }>;
+          }
+          return (data ?? []) as Array<{ created_at: string }>;
+        } catch {
+          return [] as Array<{ created_at: string }>;
+        }
+      })
+    );
 
-    if (kundeId) {
-      query = query.eq('kunde_id', kundeId);
-    }
+    const merged = perSchema
+      .flat()
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .slice(0, 50);
 
-    const { data, error } = await query;
-
-    if (error) {
-      logger.error('[forsikring/analyser] List fejl:', error);
-      return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
-    }
-
-    return NextResponse.json({ analyser: data ?? [] });
+    return NextResponse.json({ analyser: merged });
   } catch (err) {
     logger.error('[forsikring/analyser] Fejl:', err);
     return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });

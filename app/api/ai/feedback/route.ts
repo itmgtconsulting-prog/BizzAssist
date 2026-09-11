@@ -25,6 +25,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { resolveTenantId } from '@/lib/api/auth';
 import { tenantDb } from '@/lib/supabase/admin';
+import { getTenantSchemaName } from '@/lib/db/tenant';
 import { parseBody } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
 import { writeAuditLog } from '@/app/lib/auditLog';
@@ -50,8 +51,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!parsed.success) return parsed.response;
 
   try {
-    // Insert into tenant-schema ai_feedback_log via typed tenant helper.
-    const { error } = await tenantDb('tenant')
+    // ai_feedback_log lives in the per-tenant tenant_<slug> schema (BIZZ-2288);
+    // the shared 'tenant' schema is not PostgREST-exposed (PGRST106).
+    const schemaName = await getTenantSchemaName(auth.tenantId);
+    const { error } = await tenantDb(schemaName)
       .from('ai_feedback_log')
       .insert({
         tenant_id: auth.tenantId,

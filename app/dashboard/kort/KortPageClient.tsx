@@ -23,11 +23,20 @@ import { useState, useCallback, useRef, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Map, {
   Marker,
+  Source,
+  Layer,
   NavigationControl,
   GeolocateControl,
   type MapRef,
   type MapMouseEvent,
 } from 'react-map-gl/mapbox';
+import {
+  lineDistanceMeters,
+  polygonAreaM2,
+  formatDistance,
+  formatArea,
+  type LngLat,
+} from '@/app/lib/geo/measure';
 import type { GeoJSONSource } from 'mapbox-gl';
 import {
   Search,
@@ -40,6 +49,8 @@ import {
   Navigation,
   Layers,
   Building2,
+  Ruler,
+  Trash2,
 } from 'lucide-react';
 
 import { useRouter } from 'next/navigation';
@@ -821,6 +832,10 @@ function KortInner() {
   /** Valgt virksomhed-popup */
   const [virksomhedPopup, setVirksomhedPopup] = useState<VirksomhedMarkør | null>(null);
 
+  // BIZZ-2285: Opmålings-tilstand. 'line' = afstand, 'area' = polygon-areal.
+  const [measureMode, setMeasureMode] = useState<'off' | 'line' | 'area'>('off');
+  const [measurePoints, setMeasurePoints] = useState<Array<{ lng: number; lat: number }>>([]);
+
   const visLagRef = useRef<LagSynlighed>(LAG_START);
   const lagPanelRef = useRef<HTMLDivElement>(null);
 
@@ -1447,6 +1462,15 @@ function KortInner() {
     async (e: MapMouseEvent) => {
       const map = mapRef.current?.getMap();
       if (!map) return;
+
+      // BIZZ-2285: I opmålings-tilstand placerer et klik/tap et målepunkt i
+      // stedet for at åbne matrikel-popup. Virker ens på desktop (klik) og
+      // mobil (tap), da Mapbox oversætter tap til click.
+      if (measureMode !== 'off') {
+        setMeasurePoints((prev) => [...prev, { lng: e.lngLat.lng, lat: e.lngLat.lat }]);
+        return;
+      }
+
       const features = map.queryRenderedFeatures(e.point, { layers: ['matrikel-fill'] });
       if (features.length === 0) {
         setPopup(null);
@@ -1477,13 +1501,85 @@ function KortInner() {
       if (geo)
         setPopup((prev) => (prev ? { ...prev, adresse: geo.adresse, dawaId: geo.id } : null));
     },
-    [setPopup]
+    [setPopup, measureMode]
   );
+
+  /**
+   * BIZZ-2285: Nulstil/afslut opmåling. clear() rydder punkter; exit() slår
+   * tilstanden helt fra. Esc rydder (eller afslutter hvis intet er tegnet).
+   */
+  const clearMeasure = useCallback(() => setMeasurePoints([]), []);
+  const exitMeasure = useCallback(() => {
+    setMeasureMode('off');
+    setMeasurePoints([]);
+  }, []);
+
+  useEffect(() => {
+    if (measureMode === 'off') return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') {
+        setMeasurePoints((prev) => {
+          if (prev.length > 0) return [];
+          setMeasureMode('off');
+          return prev;
+        });
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [measureMode]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
   const matrikelAktiv = zoom >= MIN_ZOOM_MATRIKEL;
   const husnrAktiv = zoom >= MIN_ZOOM_HUSNR;
+
+  // ── BIZZ-2285: Opmålings-geometri + resultat afledt af placerede punkter ──
+  const measureCoords: LngLat[] = measurePoints.map((p) => [p.lng, p.lat]);
+  const measureFeatures: GeoJSON.Feature[] = [];
+  if (measureMode === 'area' && measureCoords.length >= 3) {
+    measureFeatures.push({
+      type: 'Feature',
+      properties: {},
+      geometry: { type: 'Polygon', coordinates: [[...measureCoords, measureCoords[0]]] },
+    });
+  }
+  if (measureCoords.length >= 2) {
+    const lineCoords =
+      measureMode === 'area' && measureCoords.length >= 3
+        ? [...measureCoords, measureCoords[0]]
+        : measureCoords;
+    measureFeatures.push({
+      type: 'Feature',
+      properties: {},
+      geometry: { type: 'LineString', coordinates: lineCoords },
+    });
+  }
+  for (const c of measureCoords) {
+    measureFeatures.push({
+      type: 'Feature',
+      properties: {},
+      geometry: { type: 'Point', coordinates: c },
+    });
+  }
+  const measureGeoJSON: GeoJSON.FeatureCollection = {
+    type: 'FeatureCollection',
+    features: measureFeatures,
+  };
+
+  let measureLabel: { text: string; lng: number; lat: number } | null = null;
+  if (measureMode === 'line' && measureCoords.length >= 2) {
+    const last = measureCoords[measureCoords.length - 1];
+    measureLabel = {
+      text: formatDistance(lineDistanceMeters(measureCoords)),
+      lng: last[0],
+      lat: last[1],
+    };
+  } else if (measureMode === 'area' && measureCoords.length >= 3) {
+    const cx = measureCoords.reduce((s, c) => s + c[0], 0) / measureCoords.length;
+    const cy = measureCoords.reduce((s, c) => s + c[1], 0) / measureCoords.length;
+    measureLabel = { text: formatArea(polygonAreaM2(measureCoords)), lng: cx, lat: cy };
+  }
 
   return (
     <div className="relative w-full h-full overflow-hidden">
@@ -1514,6 +1610,46 @@ function KortInner() {
         <GeolocateControl position="bottom-right" trackUserLocation showUserHeading />
 
         {/* GeoJSON sources og layers tilføjes imperativt i handleMapLoad — ingen <Source>/<Layer> her */}
+
+        {/* BIZZ-2285: Opmålings-overlay — deklarativ source/layers drevet af state */}
+        {measureMode !== 'off' && measureFeatures.length > 0 && (
+          <Source id="opmaaling" type="geojson" data={measureGeoJSON}>
+            {measureMode === 'area' && (
+              <Layer
+                id="opmaaling-fill"
+                type="fill"
+                filter={['==', ['geometry-type'], 'Polygon']}
+                paint={{ 'fill-color': '#38bdf8', 'fill-opacity': 0.18 }}
+              />
+            )}
+            <Layer
+              id="opmaaling-line"
+              type="line"
+              filter={['==', ['geometry-type'], 'LineString']}
+              paint={{ 'line-color': '#38bdf8', 'line-width': 2.5, 'line-dasharray': [2, 1] }}
+            />
+            <Layer
+              id="opmaaling-points"
+              type="circle"
+              filter={['==', ['geometry-type'], 'Point']}
+              paint={{
+                'circle-radius': 4,
+                'circle-color': '#0ea5e9',
+                'circle-stroke-color': '#ffffff',
+                'circle-stroke-width': 1.5,
+              }}
+            />
+          </Source>
+        )}
+
+        {/* BIZZ-2285: Resultat-label (afstand/areal) på kortet */}
+        {measureLabel && (
+          <Marker longitude={measureLabel.lng} latitude={measureLabel.lat} anchor="bottom">
+            <span className="mb-2 inline-block rounded-md bg-slate-900/90 border border-sky-400/60 px-2 py-1 text-xs font-semibold text-sky-200 shadow-lg pointer-events-none select-none whitespace-nowrap">
+              {measureLabel.text}
+            </span>
+          </Marker>
+        )}
 
         {søgtMarkør && (
           <Marker longitude={søgtMarkør.lng} latitude={søgtMarkør.lat} anchor="bottom">
@@ -1669,6 +1805,20 @@ function KortInner() {
             </button>
           ))}
         </div>
+        {/* Højre: Opmål-knap (BIZZ-2285) */}
+        <button
+          onClick={() => (measureMode === 'off' ? setMeasureMode('line') : exitMeasure())}
+          aria-label={da ? 'Opmålingsværktøj' : 'Measure tool'}
+          aria-pressed={measureMode !== 'off'}
+          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium shadow-lg transition-all shrink-0 ${
+            measureMode !== 'off'
+              ? 'bg-sky-600 text-white'
+              : 'bg-[#0f172a]/90 text-slate-300 hover:bg-slate-800 border border-white/10'
+          }`}
+        >
+          <Ruler size={13} />
+          {da ? 'Opmål' : 'Measure'}
+        </button>
         {/* Højre: Lag-knap */}
         <button
           onClick={() => setLagPanel((p) => !p)}
@@ -1682,6 +1832,76 @@ function KortInner() {
           {mt.layers}
         </button>
       </div>
+
+      {/* ── Opmålings-panel (BIZZ-2285) ──────────────────────────────────── */}
+      {measureMode !== 'off' && (
+        <div className="absolute left-3 bottom-24 z-20 w-60 rounded-xl bg-[#0f172a]/95 border border-white/10 shadow-xl p-3 text-slate-200">
+          <div className="flex items-center justify-between mb-2">
+            <span className="flex items-center gap-1.5 text-xs font-semibold text-white">
+              <Ruler size={13} className="text-sky-400" />
+              {da ? 'Opmåling' : 'Measure'}
+            </span>
+            <button
+              onClick={exitMeasure}
+              aria-label={da ? 'Luk opmåling' : 'Close measure'}
+              className="text-slate-400 hover:text-white p-0.5 rounded hover:bg-white/10"
+            >
+              <X size={14} />
+            </button>
+          </div>
+          {/* Tilstands-vælger: Linje / Areal */}
+          <div className="grid grid-cols-2 gap-1.5 mb-2" role="tablist">
+            {(['line', 'area'] as const).map((m) => (
+              <button
+                key={m}
+                role="tab"
+                aria-selected={measureMode === m}
+                onClick={() => {
+                  setMeasureMode(m);
+                  setMeasurePoints([]);
+                }}
+                className={`px-2 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  measureMode === m
+                    ? 'bg-sky-600 text-white'
+                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                }`}
+              >
+                {m === 'line' ? (da ? 'Afstand' : 'Distance') : da ? 'Areal' : 'Area'}
+              </button>
+            ))}
+          </div>
+          {/* Resultat-readout */}
+          <div className="rounded-lg bg-slate-800/60 px-2.5 py-2 mb-2 min-h-[2.25rem] flex items-center">
+            {measureLabel ? (
+              <span className="text-sm font-semibold text-sky-200">{measureLabel.text}</span>
+            ) : (
+              <span className="text-xs text-slate-400">
+                {measureMode === 'line'
+                  ? da
+                    ? 'Klik ≥2 punkter for afstand'
+                    : 'Click ≥2 points for distance'
+                  : da
+                    ? 'Klik ≥3 punkter for areal'
+                    : 'Click ≥3 points for area'}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-slate-400">
+              {da ? 'Klik/tap for at måle · Esc rydder' : 'Click/tap to measure · Esc clears'}
+            </span>
+            <button
+              onClick={clearMeasure}
+              disabled={measurePoints.length === 0}
+              aria-label={da ? 'Ryd måling' : 'Clear measurement'}
+              className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-slate-300 hover:text-white hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Trash2 size={12} />
+              {da ? 'Ryd' : 'Clear'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Lag-panel (højre side) ───────────────────────────────────────── */}
       {lagPanel && (

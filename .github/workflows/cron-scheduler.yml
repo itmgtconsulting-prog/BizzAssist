@@ -1,0 +1,58 @@
+name: External cron scheduler
+
+# BIZZ-2248 (solution A): fjerner single-point-of-failure. Den de-facto scheduler
+# for Vercel-crons (external-cron-watchdog.mjs) kørte KUN som crontab på én 4GB
+# dev-server (65.21.2.204) — server-død = alle crons stopper tavst. Dette workflow
+# kører samme script som en redundant, managed GitHub Actions-cron.
+#
+# Overgang: kør begge (dev-server + GH Actions) indtil verificeret; de koordinerer
+# via heartbeat-gating (en trigger opdaterer PROD-heartbeat → den anden ser jobbet
+# friskt og springer over → ingen dobbelt-fyring). Derefter fjernes crontab-entryen
+# på dev-serveren.
+#
+# Kræver GitHub Actions secrets (SUPABASE_PROD_DB_URL findes allerede fra
+# sync-test-data.yml; tilføj de øvrige hvis de mangler):
+#   SUPABASE_PROD_DB_URL  — postgresql://…@db.xsyldjqcntiygrtfcszm.supabase.co:5432/postgres
+#   CRON_SECRET           — bearer-token til /api/cron/*-endpoints
+#   RESEND_API_KEY        — (valgfri) alert-emails ved 3+ overdue crons
+#
+# NB: schedulerede GitHub-workflows fyrer kun fra default-branch (main). GitHub kan
+# forsinke schedulerede runs under load (typisk 5-15 min) — acceptabelt for en
+# heartbeat-gated watchdog der blot trigger OVERDUE jobs.
+
+on:
+  schedule:
+    - cron: '*/15 * * * *' # hver 15. min (matcher dev-serverens crontab-kadence)
+  workflow_dispatch: {} # manuel kørsel fra Actions-fanen
+
+# Undgå overlappende runs hvis ét trigger-pass tager længere end 15 min.
+concurrency:
+  group: cron-scheduler
+  cancel-in-progress: false
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Scriptet importerer kun fs/https (indbygget) + pg — installér kun pg (hurtigt).
+      - name: Install pg
+        run: npm install pg --no-save --no-audit --no-fund
+
+      - name: Run external cron watchdog (+trigger)
+        env:
+          SUPABASE_PROD_DB_URL: ${{ secrets.SUPABASE_PROD_DB_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+        run: |
+          if [ -z "$SUPABASE_PROD_DB_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::error::SUPABASE_PROD_DB_URL og/eller CRON_SECRET secret mangler — tilføj dem i repo-settings."
+            exit 1
+          fi
+          node scripts/external-cron-watchdog.mjs --trigger

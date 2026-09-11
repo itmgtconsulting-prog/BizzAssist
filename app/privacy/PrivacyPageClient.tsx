@@ -156,6 +156,12 @@ function DanishPrivacy() {
             sker på grundlag af standardkontraktbestemmelser (SCC).
           </li>
           <li>
+            <strong className="text-white">Atlassian Pty Ltd (Jira)</strong> (Australien / EU) —
+            Sagsstyring for fejlrapporter og support. Modtager kun de oplysninger du selv indsender
+            i en fejlrapport eller support-henvendelse (evt. e-mail, fritekst og skærmbillede).
+            Overførsel sker på grundlag af standardkontraktbestemmelser (SCC).
+          </li>
+          <li>
             <strong className="text-white">Mapbox Inc.</strong> (USA) — Kortvisning og
             geodata-tjenester. Behandler: ejendomskoordinater, kortvisningsområde og IP-adresse.
             Overførsel sker på grundlag af standardkontraktbestemmelser (SCC).
@@ -204,6 +210,23 @@ function DanishPrivacy() {
           BizzAssist henter data fra offentlige danske registre — Datafordeler.dk, Erhvervs-
           styrelsens CVR, Tinglysning.dk, BBR og DAWA. Disse kilder leverer offentligt tilgængelige
           data og betragtes ikke som databehandlere for personlige data om dig som bruger.
+        </p>
+        <h3 className="text-lg font-semibold text-white mt-4 mb-2">
+          Deling af forsikringsdata inden for et domæne
+        </h3>
+        <p className="text-slate-400 text-sm">
+          Dine forsikrings-analyser, -dokumenter og -sager ejes personligt i din egen konto. Hvis du
+          er medlem af et <strong className="text-white">domæne</strong> (fx din organisations
+          e-maildomæne), fungerer medlemskabet som dit{' '}
+          <strong className="text-white">samtykke</strong> (GDPR art. 6, stk. 1, litra a) til at
+          dele disse data som en <strong className="text-white">læse-adgang</strong> med de øvrige
+          nuværende medlemmer af samme domæne. Data kopieres eller flyttes aldrig — de forbliver i
+          din konto, og andre medlemmer får kun adgang til at læse dem. Du kan{' '}
+          <strong className="text-white">tilbagekalde samtykket</strong> ved at forlade domænet
+          (eller ved at en administrator fjerner dit medlemskab): adgangen ophører øjeblikkeligt, da
+          delingen beregnes ved hvert opslag og aldrig caches. Brugere uden fælles domæne kan aldrig
+          se hinandens data. Se ADR-0011 og docs/security/DATA_CLASSIFICATION.md for den tekniske
+          model.
         </p>
       </section>
 
@@ -408,6 +431,12 @@ function EnglishPrivacy() {
             based on Standard Contractual Clauses (SCC).
           </li>
           <li>
+            <strong className="text-white">Atlassian Pty Ltd (Jira)</strong> (Australia / EU) —
+            Issue tracking for bug reports and support. Receives only the information you submit in
+            a bug report or support request (optional email, free text and screenshot). Transfer is
+            based on Standard Contractual Clauses (SCC).
+          </li>
+          <li>
             <strong className="text-white">Mapbox Inc.</strong> (USA) — Map display and geodata
             services. Processes: property coordinates, map viewport and IP address. Transfer is
             based on Standard Contractual Clauses (SCC).
@@ -457,6 +486,22 @@ function EnglishPrivacy() {
           Authority&apos;s CVR register, Tinglysning.dk, BBR and DAWA. These sources provide
           publicly available data and are not considered processors of personal data about you as a
           user.
+        </p>
+        <h3 className="text-lg font-semibold text-white mt-4 mb-2">
+          Sharing insurance data within a domain
+        </h3>
+        <p className="text-slate-400 text-sm">
+          Your insurance analyses, documents and cases are owned personally in your own account. If
+          you are a member of a <strong className="text-white">domain</strong> (e.g. your
+          organisation&apos;s email domain), that membership constitutes your{' '}
+          <strong className="text-white">consent</strong> (GDPR Art. 6(1)(a)) to share this data as{' '}
+          <strong className="text-white">read access</strong> with the other current members of the
+          same domain. Data is never copied or moved — it stays in your account and other members
+          only gain read access. You can <strong className="text-white">withdraw consent</strong> by
+          leaving the domain (or by an administrator removing your membership): access ends
+          immediately, as the sharing is computed on every lookup and never cached. Users without a
+          shared domain can never see each other&apos;s data. See ADR-0011 and
+          docs/security/DATA_CLASSIFICATION.md for the technical model.
         </p>
       </section>
 

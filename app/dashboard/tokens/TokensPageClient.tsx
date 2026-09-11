@@ -664,7 +664,13 @@ export default function TokensPageClient() {
   const searchParams = useSearchParams();
 
   // ── Tab state ──
-  const initialTab: ActiveTab = searchParams.get('tab') === 'api' ? 'api' : 'ai';
+  // BIZZ-2275: Enterprise API-nøgle-fanen er PARKERET (api_tokens-subsystemet er ikke
+  // provisioneret i prod → /api/tokens 500'er). Tab-knappen blev fjernet i BIZZ-1022;
+  // her lukkes også ?tab=api-deeplinket, så den brudte sektion ikke kan nås. Fjern
+  // denne parkering (tillad 'api' igen) når feature'en unparkes + provisioneres.
+  const ENTERPRISE_API_ENABLED = false;
+  const initialTab: ActiveTab =
+    ENTERPRISE_API_ENABLED && searchParams.get('tab') === 'api' ? 'api' : 'ai';
   const [activeTab, setActiveTab] = useState<ActiveTab>(initialTab);
 
   // ── AI token state ──

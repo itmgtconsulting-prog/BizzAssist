@@ -63,10 +63,24 @@ export default defineConfig({
     {
       name: 'chromium-auth',
       testMatch:
-        /\/(dashboard|settings-gdpr|ai-chat|ai-token-tracking|analyse|data-intelligence|data-intelligence-ui|ejendom-detail|virksomhed-detail|person-detail|billing|diagram|ejendomshierarki|forsikring|forsikring-kort|kort|notifikationer|pivot-analyse|search|salgshistorik-cache-verify|forsikring-debug|forsikring-belvedere-fix|forsikring-cvr-threshold|forsikring-portfolio-gaps|forsikring-1939-grundejeransvar|forsikring-sfe-struktur|forsikring-2160-restore|forsikring-2166-wizard-cleanup|forsikring-2162-bfe-adresse|forsikring-2167-kort-knap-historik|forsikring-2137-auto-match|forsikring-2144-dmr|_verify-ui-batch|virksomhed-bilbog-forklaring|person-ejendomme-cache|diagram-virksomhed-fallback|intelligence-width|intelligence-end-of-list|salgshistorik-saelger|finansieringsrapport-inline|ejerlejligheder-parity|bfe-adresse-parity|boligpris-filter|ejerskab-opdelt-sfe)\.spec\.ts/,
+        /\/(dashboard|settings-gdpr|ai-chat|ai-token-tracking|ai-feedback|ai-document|ai-afstand|ai-areal|ai-bbr-batch|kort-opmaaling|analyse|data-intelligence|data-intelligence-ui|ejendom-detail|virksomhed-detail|person-detail|billing|diagram|ejendomshierarki|forsikring|forsikring-kort|kort|knowledge|integrations|user-activity|notifikationer|pivot-analyse|search|salgshistorik-cache-verify|forsikring-debug|forsikring-belvedere-fix|forsikring-cvr-threshold|forsikring-portfolio-gaps|forsikring-1939-grundejeransvar|forsikring-sfe-struktur|forsikring-2160-restore|forsikring-2166-wizard-cleanup|forsikring-2162-bfe-adresse|forsikring-2167-kort-knap-historik|forsikring-2137-auto-match|forsikring-2144-dmr|forsikring-federation-leak|_verify-ui-batch|virksomhed-bilbog-forklaring|person-ejendomme-cache|diagram-virksomhed-fallback|intelligence-width|intelligence-end-of-list|salgshistorik-saelger|finansieringsrapport-inline|ejerlejligheder-parity|bfe-adresse-parity|boligpris-filter|ejerskab-opdelt-sfe)\.spec\.ts/,
       dependencies: ['auth setup'],
       use: {
         ...devices['Desktop Chrome'],
+        storageState: AUTH_STATE_PATH,
+      },
+    },
+
+    /* ── Mobil-responsivitet (BIZZ-2257) — 375px iPhone-viewport, auth ── */
+    {
+      name: 'chromium-mobile',
+      testMatch: /(mobil-responsivitet|diagram-mobil-adresse|kort-opmaaling)\.spec\.ts/,
+      dependencies: ['auth setup'],
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 375, height: 812 },
+        isMobile: false, // Chromium understøtter ikke isMobile; 375px-viewport er nok til overflow-check
+        hasTouch: true,
         storageState: AUTH_STATE_PATH,
       },
     },

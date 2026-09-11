@@ -23,6 +23,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
+import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { requireModuleAccess } from '@/app/lib/serverModuleAccess';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
@@ -70,6 +71,9 @@ function parseNumList(raw: string | null): number[] | undefined {
 }
 
 export async function GET(req: NextRequest): Promise<NextResponse | Response> {
+  // BIZZ-2245: rate-limit bulk data-endpoint (60/min/IP, delt limiter).
+  const limited = await checkRateLimit(req, rateLimit);
+  if (limited) return limited;
   // 1. Modul-adgang
   const blocked = await requireModuleAccess('boligpris');
   if (blocked) return blocked;

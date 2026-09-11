@@ -16,6 +16,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { tenantDb } from '@/lib/supabase/admin';
+import { getTenantSchemaName } from '@/lib/db/tenant';
 
 /** Response shape from LinkedIn's token endpoint */
 interface LinkedInTokenResponse {
@@ -168,7 +169,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // ── Step 4: Upsert into email_integrations ────────────────────────────────
     // refresh_token is not issued by LinkedIn standard OAuth — store empty string.
     // Name is preserved in the scopes array as "name:<fullName>" for retrieval.
-    const { error: dbError } = await tenantDb(tenantId)
+    // email_integrations is per-tenant (BIZZ-2275); resolve the schema name from
+    // the tenant UUID carried in the validated OAuth state.
+    const schemaName = await getTenantSchemaName(tenantId);
+    const { error: dbError } = await tenantDb(schemaName)
       .from('email_integrations')
       .upsert(
         {

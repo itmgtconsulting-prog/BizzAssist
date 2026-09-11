@@ -25,8 +25,11 @@ import crypto from 'crypto';
 
 export const maxDuration = 300;
 
-/** Max BFE per cron-kørsel */
-const MAX_PER_RUN = 200;
+/** Max BFE per cron-kørsel. BIZZ-2232: 200→300 (200 BFE tog ~162s; 300 ≈ 243s,
+ * under maxDuration-tidsbudgettet på 270s — og time-budget-guarden i loopet
+ * stopper alligevel sikkert før 300s). Dagligt schedule (mig: registry) dræner
+ * så backloggen ~7× hurtigere; engangs-drænet tages af scripts/backfill-vur-cache.mjs. */
+const MAX_PER_RUN = 300;
 
 /** Batch-size for Datafordeler kald */
 const BATCH_DELAY_MS = 300;

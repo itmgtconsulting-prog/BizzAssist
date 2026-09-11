@@ -30,6 +30,11 @@ export type ActivityEventType =
  * This is a fire-and-forget call — it does NOT block the caller.
  * Never surfaces errors to the user; all failures are silently swallowed.
  *
+ * activity_log lives in the per-tenant `tenant_<slug>` schema (BIZZ-2288). The
+ * shared `tenant` schema is NOT exposed to PostgREST, so the previous
+ * `.schema('tenant')` write failed with PGRST106 and silently logged nothing.
+ * We resolve the tenant's schema name from public.tenants and write there.
+ *
  * @param supabase  - Supabase admin client (service role) with full schema access
  * @param tenantId  - Tenant UUID — must come from a validated auth session, never user input
  * @param userId    - User UUID — must come from a validated auth session, never user input
@@ -48,8 +53,18 @@ export function logActivity(
   // wrap in an async IIFE to safely suppress errors without blocking the caller.
   void (async () => {
     try {
+      // Resolve the per-tenant schema name (the shared 'tenant' schema is not
+      // PostgREST-exposed — writing there fails with PGRST106).
+      const { data: tenant } = await supabase
+        .from('tenants')
+        .select('schema_name')
+        .eq('id', tenantId)
+        .single();
+      const schemaName = (tenant as { schema_name?: string } | null)?.schema_name;
+      if (!schemaName) return;
+
       await supabase
-        .schema('tenant')
+        .schema(schemaName as 'tenant')
         .from('activity_log')
         .insert({ tenant_id: tenantId, user_id: userId, event_type: eventType, payload });
     } catch {

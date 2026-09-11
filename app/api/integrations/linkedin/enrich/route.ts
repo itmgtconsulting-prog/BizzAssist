@@ -23,6 +23,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { resolveTenantId } from '@/lib/api/auth';
 import { tenantDb } from '@/lib/supabase/admin';
+import { getTenantSchemaName } from '@/lib/db/tenant';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { parseBody } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
@@ -93,8 +94,10 @@ export async function POST(
     const body = parsed.data;
 
     const { tenantId, userId } = auth;
+    // email_integrations is per-tenant (BIZZ-2275); resolve schema from the UUID.
+    const schemaName = await getTenantSchemaName(tenantId);
     // Verify user has LinkedIn connected
-    const { data: integration } = await tenantDb(tenantId)
+    const { data: integration } = await tenantDb(schemaName)
       .from('email_integrations')
       .select('id')
       .eq('user_id', userId)

@@ -413,12 +413,19 @@ export async function getTenantContext(tenantId: string): Promise<TenantContext>
   // explicit tenant_id filters as defence-in-depth.
   const admin = createAdminClient();
 
-  // BIZZ-2271/2243: RLS-håndhævet læse-klient (authenticated-rollen). Egen-tenant
-  // READS routes gennem denne så is_tenant_member(auth.uid())-policies er en reel
-  // backstop mod app-lags-scoping-bugs (verificeret: medlem ser data, ikke-medlem
-  // ser 0). WRITES + audit forbliver på admin (service_role) — de håndteres i
-  // bizz-2272 og audit må aldrig RLS-blokeres. userDb er kun sikker for OWN-tenant
-  // (medlemskab verificeret i step 1); federerede reads bruger fortsat admin.
+  // BIZZ-2271/2272/2243: RLS-håndhævet klient (authenticated-rollen). Egen-tenant
+  // READS (2271) OG de WRITES hvis RLS-policy er medlems-baseret (2272) routes
+  // gennem denne, så is_tenant_member(auth.uid())-policies er en reel backstop mod
+  // app-lags-scoping-bugs (verificeret: medlem ser/skriver data, ikke-medlem ser 0).
+  //
+  // BLIVER bevidst på admin (service_role) — ikke muligt/ønskeligt via authenticated:
+  //   • Alle DELETEs: policy er "admin delete" (is_tenant_admin) → medlem RLS-blokeres.
+  //   • notifications/property_snapshots INSERT+UPDATE: policy er "service write".
+  //   • ai_conversations: USER-scopet policy (created_by) → migrering ændrer synlighed.
+  //   • audit_log: må ALDRIG RLS-blokeres (ISO 27001 A.12).
+  // Isolation for de admin-stier opretholdes app-lags via eksplicit tenant_id-filter.
+  // userDb er kun sikker for OWN-tenant (medlemskab verificeret i step 1);
+  // federerede reads (ADR-0011) bruger fortsat admin.
   const userDb = tenantUserDb(await createServerClient(), schemaName);
 
   // ── Saved Entities ─────────────────────────────────────────
@@ -448,7 +455,11 @@ export async function getTenantContext(tenantId: string): Promise<TenantContext>
     },
 
     async upsert(payload) {
-      const { data, error } = await tenantDb(admin, schemaName)
+      // BIZZ-2272: RLS-håndhævet write (authenticated-rolle). saved_entities har
+      // både INSERT- og UPDATE-policy "members write/update" (is_tenant_member),
+      // så upsert (INSERT ... ON CONFLICT DO UPDATE) passerer for et medlem — og
+      // RLS bliver en reel backstop mod cross-tenant-skrivning.
+      const { data, error } = await userDb
         .from('saved_entities')
         .upsert(
           { ...payload, tenant_id: tenantId },
@@ -461,6 +472,9 @@ export async function getTenantContext(tenantId: string): Promise<TenantContext>
     },
 
     async delete(id) {
+      // BIZZ-2272: BLIVER på service_role. DELETE-policy er "admin delete"
+      // (is_tenant_admin), så et almindeligt medlem ville RLS-blokeres via
+      // authenticated. Isolation opretholdes app-lags via tenant_id+id-filter.
       const { error } = await tenantDb(admin, schemaName)
         .from('saved_entities')
         .delete()
@@ -484,7 +498,9 @@ export async function getTenantContext(tenantId: string): Promise<TenantContext>
     },
 
     async create(payload) {
-      const { data, error } = await tenantDb(admin, schemaName)
+      // BIZZ-2272: RLS-håndhævet write. saved_searches INSERT-policy = "members
+      // write" (is_tenant_member) → medlem kan oprette via authenticated-rollen.
+      const { data, error } = await userDb
         .from('saved_searches')
         .insert({ ...payload, tenant_id: tenantId })
         .select()
@@ -531,7 +547,8 @@ export async function getTenantContext(tenantId: string): Promise<TenantContext>
     },
 
     async create(payload) {
-      const { data, error } = await tenantDb(admin, schemaName)
+      // BIZZ-2272: RLS-håndhævet write. reports INSERT-policy = "members write".
+      const { data, error } = await userDb
         .from('reports')
         .insert({ ...payload, tenant_id: tenantId, is_exported: false })
         .select()
@@ -541,7 +558,8 @@ export async function getTenantContext(tenantId: string): Promise<TenantContext>
     },
 
     async update(id, updates) {
-      const { data, error } = await tenantDb(admin, schemaName)
+      // BIZZ-2272: RLS-håndhævet write. reports UPDATE-policy = "members update".
+      const { data, error } = await userDb
         .from('reports')
         .update(updates)
         .eq('id', id)
@@ -715,7 +733,8 @@ export async function getTenantContext(tenantId: string): Promise<TenantContext>
     },
 
     async markAsRead(id) {
-      const { error } = await tenantDb(admin, schemaName)
+      // BIZZ-2272: RLS-håndhævet write. notifications UPDATE-policy = "members update".
+      const { error } = await userDb
         .from('notifications')
         .update({ is_read: true })
         .eq('id', id)
@@ -730,7 +749,8 @@ export async function getTenantContext(tenantId: string): Promise<TenantContext>
       } = await supabase.auth.getUser();
       if (!user) return;
 
-      const { error } = await tenantDb(admin, schemaName)
+      // BIZZ-2272: RLS-håndhævet write. notifications UPDATE-policy = "members update".
+      const { error } = await userDb
         .from('notifications')
         .update({ is_read: true })
         .eq('tenant_id', tenantId)

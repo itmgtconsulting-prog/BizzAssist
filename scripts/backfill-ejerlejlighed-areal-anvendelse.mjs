@@ -44,6 +44,7 @@
 
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
+import pg from 'pg';
 
 // ── Args ───────────────────────────────────────────────────────
 const args = process.argv.slice(2);
@@ -52,6 +53,10 @@ const postnrArg = args.find((a) => a.startsWith('--postnr='))?.split('=')[1] ?? 
 const limit = parseInt(args.find((a) => a.startsWith('--limit='))?.split('=')[1] ?? '20000', 10);
 const dryRun = args.includes('--dry-run');
 const noRefresh = args.includes('--no-refresh');
+// --pg: kør al SQL over en direkte Postgres-forbindelse (SUPABASE_<ENV>_DB_URL) i
+// stedet for Supabase Management API. Nødvendigt for store nationale kørsler:
+// Management API throttler (429 ThrottlerException) ved de mange skrive-batches.
+const usePg = args.includes('--pg');
 
 // ── .env.local ─────────────────────────────────────────────────
 const envContent = readFileSync(resolve(process.cwd(), '.env.local'), 'utf8');
@@ -73,9 +78,34 @@ const MAT_V2 = `https://graphql.datafordeler.dk/MAT/v2?apiKey=${env.DATAFORDELER
 const MAT_CHUNK = 100; // DAF-GQL-0016: 'in'-lister maks 100 elementer
 const nowTs = new Date().toISOString();
 
-/** Kør SQL via Supabase Management API (retry på transiente 5xx). */
+// ── Direkte Postgres-klient (kun ved --pg) ─────────────────────
+// Bruger SUPABASE_<ENV>_DB_URL. Åbnes lazy ved første runSql-kald.
+const PG_URL = env[`SUPABASE_${envTarget.toUpperCase()}_DB_URL`];
+let pgClient = null;
+if (usePg && !PG_URL) throw new Error(`--pg kræver SUPABASE_${envTarget.toUpperCase()}_DB_URL i .env.local`);
+async function getPgClient() {
+  if (!pgClient) {
+    pgClient = new pg.Client({ connectionString: PG_URL, statement_timeout: 120000 });
+    await pgClient.connect();
+  }
+  return pgClient;
+}
+
+/**
+ * Kør SQL — enten over en direkte Postgres-forbindelse (--pg) eller via Supabase
+ * Management API. Management-API-stien retryer transiente 5xx OG 429 (throttling)
+ * med voksende backoff, så store nationale kørsler ikke dør på et enkelt 429.
+ *
+ * @param sql - SQL-strengen der køres
+ * @returns Array af rækker (tomt array ved skrive-statements)
+ */
 async function runSql(sql) {
-  for (let attempt = 1; attempt <= 4; attempt++) {
+  if (usePg) {
+    const client = await getPgClient();
+    const res = await client.query(sql);
+    return res.rows ?? [];
+  }
+  for (let attempt = 1; attempt <= 6; attempt++) {
     try {
       const res = await fetch(`https://api.supabase.com/v1/projects/${REF}/database/query`, {
         method: 'POST',
@@ -88,14 +118,17 @@ async function runSql(sql) {
       });
       if (!res.ok) {
         const txt = await res.text();
-        if (res.status < 500) throw new Error(`Supabase API ${res.status}: ${txt.slice(0, 300)}`);
+        // 429 (throttling) og 5xx er transiente → retry med backoff. Øvrige 4xx er fatale.
+        if (res.status !== 429 && res.status < 500) {
+          throw new Error(`Supabase API ${res.status}: ${txt.slice(0, 300)}`);
+        }
         throw Object.assign(new Error(`Supabase API ${res.status}`), { transient: true });
       }
       const raw = await res.json();
       return Array.isArray(raw) ? raw : (raw.result ?? raw.rows ?? []);
     } catch (err) {
       const transient = err.transient || err.name === 'TimeoutError' || err.code === 'ECONNRESET';
-      if (!transient || attempt === 4) throw err;
+      if (!transient || attempt === 6) throw err;
       await new Promise((r) => setTimeout(r, 3000 * attempt));
     }
   }
@@ -204,10 +237,10 @@ for (let i = 0; i < updates.length; i += WRITE_BATCH) {
   await runSql(`
     UPDATE bbr_ejendom_status b
     SET byg021_anvendelse = 140,
-        samlet_boligareal = v.areal,
-        kommune_kode = COALESCE(v.kk, b.kommune_kode)
+        samlet_boligareal = v.areal::numeric,
+        kommune_kode = COALESCE(v.kk::int, b.kommune_kode)
     FROM (VALUES ${values}) AS v(bfe, areal, kk)
-    WHERE b.bfe_nummer = v.bfe AND b.byg021_anvendelse IS NULL;
+    WHERE b.bfe_nummer = v.bfe::bigint AND b.byg021_anvendelse IS NULL;
   `);
   written += batch.length;
   console.log(`  skrev ${written}/${updates.length}`);
@@ -219,3 +252,4 @@ if (!noRefresh) {
   await runSql('REFRESH MATERIALIZED VIEW public.mv_boligpris_handler;');
 }
 console.log('Færdig.');
+await pgClient?.end();

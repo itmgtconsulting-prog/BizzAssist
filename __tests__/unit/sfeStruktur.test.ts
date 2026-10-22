@@ -236,7 +236,9 @@ describe('applySfeArv — søster-SFE (BIZZ-2128 fjerner dækning, BIZZ-2130 ann
     ]);
     const policySfe: PolicySfeMap = new Map([[SFE_BFE, policyEntry(policy)]]);
 
-    const { inherited } = await applySfeArv(matches, aktivSfe, policySfe);
+    // BIZZ-2134: adjacency injiceres (matriklerne er tilstødende) — polygon-I/O
+    // ligger i berigMedSfeStruktur, så denne rene regel testes uden netværk.
+    const { inherited } = applySfeArv(matches, aktivSfe, policySfe, () => true);
 
     // Kun det direkte SFE-aktiv arver dækning
     expect(inherited).toBe(1);
@@ -249,6 +251,24 @@ describe('applySfeArv — søster-SFE (BIZZ-2128 fjerner dækning, BIZZ-2130 ann
     expect(soester?.sfe_bfe).toBe(SFE_BFE);
     expect(soester?.sfe_adresse).toBe('Gefionsvej 47A, 3000 Helsingør');
     expect(matches[1].aktiv.rawData?.daekket_via_sfe).toBeUndefined();
+  });
+
+  it('annoterer IKKE søster-SFE når matriklerne ikke er tilstødende (BIZZ-2134)', () => {
+    // Samme ejerlav + samme ejer som den dækkede SFE, men adjacency-prædikatet
+    // siger ikke-tilstødende (adskilt af vej) → ingen søster-SFE-annotering.
+    const matches: MatchResult[] = [
+      unmatched(makeAktiv(123456, 'Bramstræde 5, 3000 Helsingør', EJER)),
+      unmatched(makeAktiv(ANDEN_SFE, 'Stengade 8G, 3000 Helsingør', EJER)),
+    ];
+    const aktivSfe: AktivSfeMap = new Map([
+      [0, { sfeBfe: SFE_BFE, ejerlavKode: EJERLAV }],
+      [1, { sfeBfe: ANDEN_SFE, ejerlavKode: EJERLAV }],
+    ]);
+    const policySfe: PolicySfeMap = new Map([[SFE_BFE, policyEntry(makePolicy())]]);
+
+    applySfeArv(matches, aktivSfe, policySfe, () => false);
+
+    expect(matches[1].aktiv.rawData?.soester_sfe).toBeUndefined();
   });
 
   it('annoterer IKKE søster-SFE når ejeren afviger', async () => {

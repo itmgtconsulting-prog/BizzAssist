@@ -260,11 +260,21 @@ function ejerCvrAf(m: MatchResult): string | null {
  * @param policySfe - SFE-BFE → dækkende police
  * @returns Antal nedarvede dækninger + policy-IDs forankret i porteføljen
  */
-export async function applySfeArv(
+export function applySfeArv(
   matches: MatchResult[],
   aktivSfe: AktivSfeMap,
-  policySfe: PolicySfeMap
-): Promise<SfeArvResultat> {
+  policySfe: PolicySfeMap,
+  /**
+   * BIZZ-2134 (genindført ren invariant): Prædikat der afgør om to SFE-BFE'er
+   * er fysisk tilstødende (deler matrikelgrænse). Injiceres af {@link
+   * berigMedSfeStruktur}, som gør polygon-opslagene FØR denne rene regel kaldes
+   * — så arve-reglen forbliver netværksfri og unit-testbar (jf. fil-docstring).
+   * Default `() => false`: uden adjacency-data annoteres ingen søster-SFE
+   * (fejler lukket — konservativt). Erstatter det tidligere skjulte DAWA-kald
+   * inde i denne funktion, der brød "ren"-kontrakten og fejlede da DAWA lukkede.
+   */
+  erTilstoedende: (sfeBfeA: number, sfeBfeB: number) => boolean = () => false
+): SfeArvResultat {
   // BIZZ-2130: Ejere pr. SFE — til søster-SFE-annoteringen kræves samme ejer
   // på begge sider (ellers ville hele ejerlav-fæller blive flaget).
   const sfeEjere = new Map<number, Set<string>>();
@@ -333,16 +343,10 @@ export async function applySfeArv(
       if (entry.ejerlavKode !== opslag.ejerlavKode || polSfeBfe === opslag.sfeBfe) continue;
       if (!sfeEjere.get(polSfeBfe)?.has(aktivEjer)) continue;
 
-      // BIZZ-2134: Polygon adjacency check — kun tilstødende matrikler
-      try {
-        const [polyAktiv, polyPol] = await Promise.all([
-          fetchPolygon(opslag.sfeBfe),
-          fetchPolygon(polSfeBfe),
-        ]);
-        if (!polyAktiv || !polyPol || !arePolygonsAdjacent(polyAktiv, polyPol)) continue;
-      } catch {
-        continue; // Ved fejl: skip (konservativt)
-      }
+      // BIZZ-2134: Polygon adjacency check — kun tilstødende matrikler.
+      // Opslaget er flyttet ud til berigMedSfeStruktur (injiceret prædikat), så
+      // denne regel er netværksfri og unit-testbar.
+      if (!erTilstoedende(opslag.sfeBfe, polSfeBfe)) continue;
 
       m.aktiv.rawData = {
         ...m.aktiv.rawData,
@@ -442,6 +446,50 @@ export async function berigMedSfeStruktur(
     })
   );
 
-  // 3. Ren arve-regel
-  return await applySfeArv(matches, aktivSfe, policySfe);
+  // 3. Pre-beregn søster-SFE adjacency. Polygon-opslagene isoleres HER (I/O-laget)
+  //    så den rene arve-regel applySfeArv forbliver netværksfri og unit-testbar.
+  const tilstoedende = await beregnTilstoedende(aktivSfe, policySfe);
+
+  // 4. Ren arve-regel
+  return applySfeArv(matches, aktivSfe, policySfe, (a, b) => tilstoedende.has(adjKey(a, b)));
+}
+
+/** Kanonisk nøgle for et uordnet SFE-BFE-par (til adjacency-sæt). */
+function adjKey(a: number, b: number): string {
+  return a < b ? `${a}:${b}` : `${b}:${a}`;
+}
+
+/**
+ * Pre-beregn hvilke (aktiv-SFE, police-SFE)-par der er fysisk tilstødende.
+ *
+ * Kandidat-par: en aktiv-SFE i SAMME ejerlav som en police-SFE, men forskelligt
+ * SFE-BFE. Henter jordstykke-polygoner (cached) og tjekker matrikelgrænse-afstand.
+ * Best-effort: polygon-opslag der fejler udelades (søster-SFE'et annoteres ikke).
+ *
+ * @param aktivSfe - Aktiv-index → SFE-opslag
+ * @param policySfe - SFE-BFE → dækkende police
+ * @returns Sæt af {@link adjKey}-nøgler for tilstødende par
+ */
+async function beregnTilstoedende(
+  aktivSfe: AktivSfeMap,
+  policySfe: PolicySfeMap
+): Promise<Set<string>> {
+  const result = new Set<string>();
+  const kandidater = new Map<string, [number, number]>();
+  for (const opslag of aktivSfe.values()) {
+    if (opslag.ejerlavKode == null) continue;
+    for (const [polSfeBfe, entry] of policySfe) {
+      if (entry.ejerlavKode !== opslag.ejerlavKode || polSfeBfe === opslag.sfeBfe) continue;
+      kandidater.set(adjKey(opslag.sfeBfe, polSfeBfe), [opslag.sfeBfe, polSfeBfe]);
+    }
+  }
+  for (const [key, [a, b]] of kandidater) {
+    try {
+      const [polyA, polyB] = await Promise.all([fetchPolygon(a), fetchPolygon(b)]);
+      if (polyA && polyB && arePolygonsAdjacent(polyA, polyB)) result.add(key);
+    } catch {
+      /* best-effort: fejler lukket */
+    }
+  }
+  return result;
 }

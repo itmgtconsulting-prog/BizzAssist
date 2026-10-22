@@ -918,7 +918,6 @@ export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
           postnummer
           kommuneinddeling
           supplerendeBynavn
-          navngivenVejKommunedel
         }
       }
     }`;

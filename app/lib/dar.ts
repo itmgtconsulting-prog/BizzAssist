@@ -5,7 +5,7 @@
  * Bruger Datafordelerens GraphQL-endpoint med API-nøgle.
  *
  * Auth: process.env.DATAFORDELER_API_KEY (query-param)
- * Endpoint: https://graphql.datafordeler.dk/DAR/v1
+ * Endpoint: https://graphql.datafordeler.dk/DAR/v2 (v1 nedlagt — se serviceEndpoints.ts)
  *
  * darHentAdresse: Ren DAR GraphQL — henter Husnummer, Adgangspunkt (koordinater),
  * Postnummer og NavngivenVej via parallelle queries. DAWA fallback hvis DAR fejler.
@@ -68,6 +68,14 @@ const MAT_WFS_ENDPOINT = 'https://services.datafordeler.dk/Matrikel/MatGaeld662/
  * (reverse geocoding) that DAR GraphQL does not support.
  */
 const DAR_WFS_ENDPOINT = 'https://services.datafordeler.dk/DAR/DAR/1/WFS';
+
+/**
+ * Moderniseret entitetsbaseret DAR WFS (wfs.datafordeler.dk, apiKey, GeoJSON).
+ * Den gamle DAR_WFS_ENDPOINT (services.datafordeler.dk) er nedlagt (404). Den
+ * nye WFS eksponerer KUN vej-geometri (dar_v001:navngivenvej_current) — ikke
+ * husnummer-punkter — så husnummer-koordinater hentes via DAR GraphQL.
+ */
+const DAR_WFS_V2 = 'https://wfs.datafordeler.dk/DAR/DAR_WFS/1.0.0/WFS';
 
 /**
  * BIZZ-505: Datafordeler MAT GraphQL endpoint for jordstykke BFE lookup.
@@ -918,7 +926,6 @@ export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
           postnummer
           kommuneinddeling
           supplerendeBynavn
-          navngivenVejKommunedel
         }
       }
     }`;
@@ -1253,65 +1260,110 @@ export async function darHusnumreBbox(
   }
 
   try {
-    // WFS 2.0 standard: bbox filter as "minx,miny,maxx,maxy,srsName".
-    // srsName ensures the coordinates are interpreted as WGS84 regardless
-    // of server default.
-    const params = new URLSearchParams({
+    // Den moderniserede DAR WFS har ingen husnummer-punkt-geometri (kun veje),
+    // og DAWA /adgangsadresser (der før gav punkter) er nedlagt (410). Pipeline:
+    //   1) veje i bbox (dar_v001:navngivenvej_current WFS)
+    //   2) husnumre pr. vej (DAR_Husnummer GraphQL, navngivenVej IN)
+    //   3) koordinater (DAR_Adressepunkt GraphQL, id_lokalId IN → WKT EPSG:25832)
+    const chunk = <T>(a: T[], size: number): T[][] => {
+      const o: T[][] = [];
+      for (let i = 0; i < a.length; i += size) o.push(a.slice(i, i + size));
+      return o;
+    };
+
+    // ── 1) Veje i bbox ──────────────────────────────────────────────────────
+    const vejParams = new URLSearchParams({
       service: 'WFS',
       version: '2.0.0',
       request: 'GetFeature',
-      typeNames: 'DAR:Husnummer_Gaeldende',
+      typeNames: 'dar_v001:navngivenvej_current',
       srsName: 'EPSG:4326',
-      bbox: `${w},${s},${e},${n},EPSG:4326`,
-      outputFormat: 'json',
-      count: String(maxFeatures),
+      bbox: `${s},${w},${n},${e},urn:ogc:def:crs:EPSG::4326`,
+      outputFormat: 'application/json',
+      count: '300',
       apiKey,
     });
-
-    const res = await fetch(proxyUrl(`${DAR_WFS_ENDPOINT}?${params.toString()}`), {
+    const vejRes = await fetch(proxyUrl(`${DAR_WFS_V2}?${vejParams.toString()}`), {
       headers: { ...proxyHeaders() },
       signal: AbortSignal.timeout(proxyTimeout()),
     });
-
-    if (!res.ok) {
-      logger.warn(`darHusnumreBbox DAR WFS fejl: ${res.status} ${res.statusText}`);
+    if (!vejRes.ok) {
+      logger.warn(`darHusnumreBbox DAR WFS (veje) fejl: ${vejRes.status} ${vejRes.statusText}`);
       return null;
     }
-
-    const geojson = (await res.json()) as {
-      features?: Array<{
-        properties?: Record<string, unknown>;
-        geometry?: { type?: string; coordinates?: unknown };
-      }>;
+    const vejJson = (await vejRes.json()) as {
+      features?: Array<{ properties?: { id_lokalId?: unknown } | null }>;
     };
+    // Cap antal veje for at bounde latency (husnr-laget vises kun ved høj zoom).
+    const vejIds = [
+      ...new Set(
+        (vejJson.features ?? [])
+          .map((f) => f.properties?.id_lokalId)
+          .filter((v): v is string => typeof v === 'string' && v.length > 0)
+      ),
+    ].slice(0, 120);
+    if (vejIds.length === 0) return { type: 'FeatureCollection', features: [] };
 
-    if (!Array.isArray(geojson.features)) return null;
+    const ts = nowTs();
 
-    const features: DarHusnumreFeatureCollection['features'] = [];
-    for (const f of geojson.features) {
-      const coords = f.geometry?.coordinates;
-      // Accept only Point geometries with numeric [lng, lat]
-      if (
-        f.geometry?.type !== 'Point' ||
-        !Array.isArray(coords) ||
-        typeof coords[0] !== 'number' ||
-        typeof coords[1] !== 'number'
-      ) {
-        continue;
+    // ── 2) Husnumre pr. vej (dedup på adgangspunkt) ────────────────────────
+    const husnumre: Array<{ husnr: string; ap: string }> = [];
+    const seenAp = new Set<string>();
+    for (const ids of chunk(vejIds, 25)) {
+      if (husnumre.length >= maxFeatures) break;
+      const inList = ids.map((i) => `"${i}"`).join(',');
+      const data = await darQuery<{
+        DAR_Husnummer?: { nodes?: Array<{ husnummertekst?: string; adgangspunkt?: string }> };
+      }>(`{
+        DAR_Husnummer(first: 1000 virkningstid: "${ts}" registreringstid: "${ts}"
+          where: { navngivenVej: { in: [${inList}] } }) {
+          nodes { husnummertekst adgangspunkt }
+        }
+      }`);
+      for (const h of data?.DAR_Husnummer?.nodes ?? []) {
+        if (h.adgangspunkt && !seenAp.has(h.adgangspunkt)) {
+          seenAp.add(h.adgangspunkt);
+          husnumre.push({ husnr: h.husnummertekst ?? '', ap: h.adgangspunkt });
+        }
       }
-      const husnr = String(
-        f.properties?.husnummertekst ?? f.properties?.husnummer ?? f.properties?.husnr ?? ''
-      );
-      features.push({
-        type: 'Feature',
-        geometry: { type: 'Point', coordinates: [coords[0], coords[1]] },
-        properties: { husnr },
-      });
     }
 
+    // ── 3) Koordinater for hvert adgangspunkt (WKT EPSG:25832) ─────────────
+    const posById = new Map<string, string>();
+    for (const ids of chunk(
+      husnumre.map((h) => h.ap),
+      100
+    )) {
+      const inList = ids.map((i) => `"${i}"`).join(',');
+      const data = await darQuery<{
+        DAR_Adressepunkt?: { nodes?: Array<{ id_lokalId?: string; position?: { wkt?: string } }> };
+      }>(`{
+        DAR_Adressepunkt(first: 1000 virkningstid: "${ts}" registreringstid: "${ts}"
+          where: { id_lokalId: { in: [${inList}] } }) {
+          nodes { id_lokalId position { wkt } }
+        }
+      }`);
+      for (const a of data?.DAR_Adressepunkt?.nodes ?? []) {
+        if (a.id_lokalId && a.position?.wkt) posById.set(a.id_lokalId, a.position.wkt);
+      }
+    }
+
+    // ── 4) Byg Point-features (WKT → WGS84 [lng,lat]) ──────────────────────
+    const features: DarHusnumreFeatureCollection['features'] = [];
+    for (const h of husnumre) {
+      const wkt = posById.get(h.ap);
+      if (!wkt) continue;
+      const c = parseWktPoint(wkt);
+      if (!c) continue;
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [c[0], c[1]] },
+        properties: { husnr: h.husnr },
+      });
+    }
     return { type: 'FeatureCollection', features };
   } catch (err) {
-    logger.error('darHusnumreBbox DAR WFS fetch failed:', err instanceof Error ? err.message : err);
+    logger.error('darHusnumreBbox fetch failed:', err instanceof Error ? err.message : err);
     return null;
   }
 }

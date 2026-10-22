@@ -15,8 +15,17 @@ export const DATAFORDELER_TOKEN_URL =
   process.env.DATAFORDELER_TOKEN_URL ??
   'https://auth.datafordeler.dk/realms/distribution/protocol/openid-connect/token';
 
-/** Datafordeler DAR GraphQL endpoint */
-export const DAR_ENDPOINT = process.env.DAR_ENDPOINT ?? 'https://graphql.datafordeler.dk/DAR/v1';
+/**
+ * Datafordeler DAR GraphQL endpoint.
+ *
+ * DAR GraphQL er flyttet fra /DAR/v1 (returnerer nu HTTP 404 med gyldig apiKey —
+ * uden nøgle svarer gatewayen stadig 401, så en nøgleløs probe ser den fejlagtigt
+ * som "reachable") til /DAR/v2 — verificeret live 2026-10-22. Samme mønster som
+ * MAT/v1→v2 (BIZZ-2061). Uden dette fejler adresse-autocomplete (darAutocomplete)
+ * med 0 resultater og falder tilbage til DAWA, som også er nedlagt → ingen
+ * ejendoms-søgeresultater. DAR_Husnummer + DAR_Adresse-felterne er uændrede i v2.
+ */
+export const DAR_ENDPOINT = process.env.DAR_ENDPOINT ?? 'https://graphql.datafordeler.dk/DAR/v2';
 
 /** Datafordeler BBR GraphQL endpoint */
 export const BBR_GQL_ENDPOINT =

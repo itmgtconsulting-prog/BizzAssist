@@ -194,7 +194,15 @@ export async function GET(request: NextRequest): Promise<NextResponse<HealthStat
       } satisfies RequestInit;
       const apiProbes = await Promise.all([
         probeApi('bbr', 'https://graphql.datafordeler.dk/BBR/v2', gqlIntrospect),
-        probeApi('dar', 'https://graphql.datafordeler.dk/DAR/v1', gqlIntrospect),
+        // DAR GraphQL flyttet /DAR/v1 → /DAR/v2 (v1 svarer nu 404 med gyldig
+        // apiKey). Proben sender apiKey'en med, så en fremtidig nedlæggelse
+        // giver 404 (= down) i stedet for at en nøgleløs 401 skjuler den som
+        // "reachable" — den blinde vinkel der lod v1-nedlæggelsen passere.
+        probeApi(
+          'dar',
+          `https://graphql.datafordeler.dk/DAR/v2?apiKey=${process.env.DATAFORDELER_API_KEY ?? ''}`,
+          gqlIntrospect
+        ),
         // BIZZ-2062: MAT/v1 er nedlagt (404) — probe v2 (svarer 401 uden
         // apiKey, hvilket probeApi tæller som reachable).
         probeApi('mat', 'https://graphql.datafordeler.dk/MAT/v2', gqlIntrospect),

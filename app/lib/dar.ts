@@ -5,7 +5,7 @@
  * Bruger Datafordelerens GraphQL-endpoint med API-nøgle.
  *
  * Auth: process.env.DATAFORDELER_API_KEY (query-param)
- * Endpoint: https://graphql.datafordeler.dk/DAR/v1
+ * Endpoint: https://graphql.datafordeler.dk/DAR/v2 (v1 nedlagt — se serviceEndpoints.ts)
  *
  * darHentAdresse: Ren DAR GraphQL — henter Husnummer, Adgangspunkt (koordinater),
  * Postnummer og NavngivenVej via parallelle queries. DAWA fallback hvis DAR fejler.

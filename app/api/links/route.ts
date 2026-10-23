@@ -14,7 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
 import { parseBody } from '@/app/lib/validate';
-import { writeAuditLog } from '@/app/lib/auditLog';
+import { writeSystemAuditLog } from '@/app/lib/auditLog';
 import { logger } from '@/app/lib/logger';
 
 /** Zod schema for POST /api/links request body */
@@ -261,7 +261,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Audit: link verified (fire-and-forget — ISO 27001 A.12.4)
-    void writeAuditLog({
+    void writeSystemAuditLog({
       action: 'link_verified',
       resource_type: 'link',
       resource_id: linkId,
@@ -330,7 +330,7 @@ export async function POST(req: NextRequest) {
       .eq('id', linkIdToVerify);
 
     // Audit: link verified after add (fire-and-forget — ISO 27001 A.12.4)
-    void writeAuditLog({
+    void writeSystemAuditLog({
       action: 'link_verified',
       resource_type: 'link',
       resource_id: linkIdToVerify,

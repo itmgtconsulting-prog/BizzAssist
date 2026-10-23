@@ -56,7 +56,7 @@ export async function POST(request: NextRequest, { params }: RouteParams): Promi
     );
 
     // Fire-and-forget: record the message write for the audit trail (ISO 27001 A.12.4).
-    void writeAuditLog({
+    void writeAuditLog(auth.tenantId, {
       action: 'ai_message_sent',
       resource_type: 'ai_conversation',
       resource_id: id,

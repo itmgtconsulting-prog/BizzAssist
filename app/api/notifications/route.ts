@@ -129,7 +129,7 @@ export async function POST(request: NextRequest) {
     }
 
     // BIZZ-289: Audit log for notification write operations
-    writeAuditLog({
+    writeAuditLog(tenantId, {
       action: `notification.${action}`,
       resource_type: 'notification',
       resource_id: body.id ?? 'all',

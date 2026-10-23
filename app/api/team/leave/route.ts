@@ -50,7 +50,7 @@ export async function POST(): Promise<NextResponse> {
       return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
     }
 
-    void writeAuditLog({
+    void writeAuditLog(ctx.tenantId, {
       action: 'team.leave',
       resource_type: 'tenant_membership',
       resource_id: ctx.userId,

@@ -25,7 +25,7 @@ import { stripe } from '@/app/lib/stripe';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { sendRecurringPaymentEmail, sendPaymentFailedEmail } from '@/app/lib/email';
 import { logger } from '@/app/lib/logger';
-import { writeAuditLog } from '@/app/lib/auditLog';
+import { writeSystemAuditLog } from '@/app/lib/auditLog';
 import { syncDomainSubscription } from '@/app/lib/domainStripeSync';
 
 /**
@@ -186,7 +186,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     // BIZZ-314: Log webhook processing time for monitoring
     const durationMs = Date.now() - startMs;
-    writeAuditLog({
+    writeSystemAuditLog({
       action: 'stripe.webhook_processed',
       resource_type: 'webhook',
       resource_id: event.id,
@@ -196,7 +196,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ received: true });
   } catch (err) {
     // BIZZ-314: Log failed webhook processing
-    writeAuditLog({
+    writeSystemAuditLog({
       action: 'stripe.webhook_failed',
       resource_type: 'webhook',
       resource_id: event.id,
@@ -975,7 +975,7 @@ async function handlePaymentFailed(invoice: Stripe.Invoice): Promise<void> {
 
       // BIZZ-540 AC: audit_log entry with user_id + event_type.
       // Do NOT include the email address — only user_id — per GDPR / ISO 27001.
-      writeAuditLog({
+      writeSystemAuditLog({
         action: 'payment_failed_email_sent',
         resource_type: 'user',
         resource_id: userId,
@@ -1140,7 +1140,7 @@ async function handleChargeFailed(charge: Stripe.Charge): Promise<void> {
 
   // ── Audit log — failure_code is the key value for dunning analysis ─────────
   // No PII (email / name / address) in metadata, only IDs + decline metadata.
-  writeAuditLog({
+  writeSystemAuditLog({
     action: 'stripe.charge_failed',
     resource_type: 'charge',
     resource_id: charge.id ?? 'unknown',

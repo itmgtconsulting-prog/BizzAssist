@@ -73,7 +73,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // Fire-and-forget: record the feedback submission for the audit trail (ISO 27001 A.12.4).
-    void writeAuditLog({
+    void writeAuditLog(auth.tenantId, {
       action: 'ai_feedback_submitted',
       resource_type: 'ai_feedback',
       resource_id: parsed.data.conversationId ?? auth.userId,

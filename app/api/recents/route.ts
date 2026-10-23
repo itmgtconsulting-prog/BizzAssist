@@ -236,7 +236,7 @@ export async function POST(request: NextRequest) {
     }
 
     // BIZZ-289: Audit log for recent entity tracking
-    writeAuditLog({
+    writeAuditLog(auth.tenantId, {
       action: 'recent_entity.upsert',
       resource_type: body.entity_type,
       resource_id: body.entity_id ?? 'unknown',
@@ -275,7 +275,7 @@ export async function DELETE(request: NextRequest) {
       .eq('user_id', auth.userId)
       .eq('entity_type', entityType);
 
-    writeAuditLog({
+    writeAuditLog(auth.tenantId, {
       action: 'recent_entity.delete',
       resource_type: entityType,
       resource_id: 'all',

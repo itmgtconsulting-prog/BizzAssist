@@ -192,7 +192,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         ? `ejendomsrapport-${data.bfeNummer ?? 'unknown'}.pdf`
         : `virksomhedsrapport-${data.vat ?? 'unknown'}.pdf`;
 
-    writeAuditLog({
+    writeAuditLog(auth.tenantId, {
       action: 'export.pdf',
       resource_type: type,
       resource_id: String(data.bfeNummer ?? data.vat ?? 'unknown'),

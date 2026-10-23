@@ -181,7 +181,7 @@ export async function POST(
     touchLastUsed(row.id);
 
     // Audit: api token used (fire-and-forget — ISO 27001 A.12.4)
-    void writeAuditLog({
+    void writeAuditLog(row.tenant_id, {
       action: 'api_token_used',
       resource_type: 'api_token',
       resource_id: String(row.id),

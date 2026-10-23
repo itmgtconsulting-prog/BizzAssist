@@ -156,7 +156,7 @@ export async function PUT(req: NextRequest) {
     }
 
     // Audit: link alternatives upserted (fire-and-forget — ISO 27001 A.12.4)
-    void writeAuditLog({
+    void writeAuditLog(auth.tenantId, {
       action: 'link_alternative_updated',
       resource_type: 'link_alternative',
       resource_id: cvr,

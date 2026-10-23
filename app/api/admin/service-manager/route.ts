@@ -30,7 +30,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import type { ServiceManagerScan } from '@/lib/supabase/types';
 import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
-import { writeAuditLog } from '@/app/lib/auditLog';
+import { writeSystemAuditLog } from '@/app/lib/auditLog';
 
 /** Zod schema for POST /api/admin/service-manager request body */
 const serviceManagerPostSchema = z
@@ -225,7 +225,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // Audit: service scan created (fire-and-forget — ISO 27001 A.12.4)
-    void writeAuditLog({
+    void writeSystemAuditLog({
       action: 'service_scan_created',
       resource_type: 'service_manager',
       resource_id: scan.id,

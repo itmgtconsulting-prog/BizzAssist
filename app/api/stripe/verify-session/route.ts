@@ -18,7 +18,7 @@ import { stripe } from '@/app/lib/stripe';
 import { resolvePlan } from '@/app/lib/subscriptions';
 import { sendPaymentConfirmationEmail } from '@/app/lib/email';
 import { logger } from '@/app/lib/logger';
-import { writeAuditLog } from '@/app/lib/auditLog';
+import { writeAuditLogByUser } from '@/app/lib/auditLog';
 
 /** Zod schema for verify-session request body. */
 const verifySessionSchema = z.object({
@@ -84,7 +84,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     });
 
     // Fire-and-forget: record the subscription activation for the audit trail (ISO 27001 A.12.4).
-    void writeAuditLog({
+    void writeAuditLogByUser(user.id, {
       action: 'subscription_verified',
       resource_type: 'subscription',
       resource_id: user.id,

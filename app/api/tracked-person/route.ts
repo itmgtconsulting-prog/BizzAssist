@@ -87,7 +87,7 @@ export async function POST(request: NextRequest) {
       created_by: auth.userId,
     });
 
-    void writeAuditLog({
+    void writeAuditLog(auth.tenantId, {
       action: 'person_tracked',
       resource_type: 'person',
       resource_id: enhedsNummer,
@@ -127,7 +127,7 @@ export async function DELETE(request: NextRequest) {
       created_by: auth.userId,
     });
 
-    void writeAuditLog({
+    void writeAuditLog(auth.tenantId, {
       action: 'person_untracked',
       resource_type: 'person',
       resource_id: enhedsNummer,

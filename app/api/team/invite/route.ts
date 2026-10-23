@@ -131,7 +131,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       expiresAt,
     });
 
-    void writeAuditLog({
+    void writeAuditLog(ctx.tenantId, {
       action: 'team.invite_sent',
       resource_type: 'tenant_invitation',
       resource_id: inviteRow.id,

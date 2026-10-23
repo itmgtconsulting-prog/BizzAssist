@@ -13,7 +13,7 @@ import { parseBody } from '@/app/lib/validate';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
-import { writeAuditLog } from '@/app/lib/auditLog';
+import { writeAuditLogByUser } from '@/app/lib/auditLog';
 
 /**
  * POST /api/subscription/track-tokens — increment token usage.
@@ -70,7 +70,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Failed to update' }, { status: 500 });
     }
 
-    writeAuditLog({
+    writeAuditLogByUser(user.id, {
       action: 'ai_token.track',
       resource_type: 'ai_token_usage',
       resource_id: 'unknown',

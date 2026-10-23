@@ -32,7 +32,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import type { ScanIssue, VercelDeployment } from '../route';
 import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
-import { writeAuditLog } from '@/app/lib/auditLog';
+import { writeSystemAuditLog } from '@/app/lib/auditLog';
 
 /** Zod schema for POST /api/admin/service-manager/scan request body */
 const scanBodySchema = z
@@ -317,7 +317,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // Audit: service scan updated with results (fire-and-forget — ISO 27001 A.12.4)
-    void writeAuditLog({
+    void writeSystemAuditLog({
       action: 'service_scan_updated',
       resource_type: 'service_manager',
       resource_id: scanId,

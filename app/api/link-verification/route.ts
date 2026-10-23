@@ -138,7 +138,11 @@ export async function GET(req: NextRequest) {
       user_verdict: userVerdicts.get(c.link_url) ?? null,
     }));
 
-    writeAuditLog({ action: 'link.verify', resource_type: 'link', resource_id: 'unknown' });
+    writeAuditLog(auth.tenantId, {
+      action: 'link.verify',
+      resource_type: 'link',
+      resource_id: 'unknown',
+    });
     return NextResponse.json(result);
   } catch (err) {
     logger.error('[link-verification GET] uventet fejl:', err);

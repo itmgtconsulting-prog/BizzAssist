@@ -58,7 +58,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const conversation = await db.aiConversations.create({
       title: parsed.data.title || undefined,
     });
-    writeAuditLog({
+    writeAuditLog(auth.tenantId, {
       action: 'ai_conversation.create',
       resource_type: 'ai_conversation',
       resource_id: conversation.id,

@@ -460,7 +460,7 @@ Afslør IKKE oplysningerne medmindre brugeren spørger direkte til dem.`;
               .insert({ tenant_id: tenantId, user_id: user.id, tokens_used: totalTokens });
 
             // Fire-and-forget audit log entry for the support chat session (ISO 27001 A.12.4).
-            void writeAuditLog({
+            void writeAuditLog(tenantId, {
               action: 'support_chat_started',
               resource_type: 'support_chat',
               resource_id: user.id,

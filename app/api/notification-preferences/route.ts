@@ -18,7 +18,7 @@ import { z } from 'zod';
 import { parseBody } from '@/app/lib/validate';
 import { createClient } from '@/lib/supabase/server';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
-import { writeAuditLog } from '@/app/lib/auditLog';
+import { writeAuditLogByUser } from '@/app/lib/auditLog';
 import { logger } from '@/app/lib/logger';
 
 /** Default notification preferences — all enabled */
@@ -96,7 +96,7 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Kunne ikke gemme præferencer' }, { status: 500 });
     }
 
-    writeAuditLog({
+    writeAuditLogByUser(user.id, {
       action: 'notification_preferences.update',
       resource_type: 'user_preferences',
       resource_id: user.id,

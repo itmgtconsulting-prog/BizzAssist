@@ -58,7 +58,7 @@ export async function DELETE(_req: NextRequest, context: RouteContext): Promise<
       return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
     }
 
-    void writeAuditLog({
+    void writeAuditLog(ctx.tenantId, {
       action: 'team.invite_revoked',
       resource_type: 'tenant_invitation',
       resource_id: id,

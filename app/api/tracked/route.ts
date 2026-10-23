@@ -315,7 +315,7 @@ export async function DELETE(request: NextRequest) {
       ).catch(() => {});
     }
 
-    writeAuditLog({
+    writeAuditLog(auth.tenantId, {
       action: 'tracked_property.toggle',
       resource_type: 'property',
       resource_id: 'unknown',

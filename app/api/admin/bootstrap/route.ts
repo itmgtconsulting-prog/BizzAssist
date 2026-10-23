@@ -18,7 +18,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
-import { writeAuditLog } from '@/app/lib/auditLog';
+import { writeSystemAuditLog } from '@/app/lib/auditLog';
 
 /** Zod schema for POST /api/admin/bootstrap request body */
 const bootstrapPostSchema = z
@@ -71,7 +71,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     });
 
     // Fire-and-forget: record that admin privileges were granted. Critical security event (ISO 27001 A.9.2.3).
-    void writeAuditLog({
+    void writeSystemAuditLog({
       action: 'admin_bootstrap',
       resource_type: 'user',
       resource_id: targetUser.id,

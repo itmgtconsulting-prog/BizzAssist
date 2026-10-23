@@ -19,7 +19,7 @@ import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
-import { writeAuditLog } from '@/app/lib/auditLog';
+import { writeSystemAuditLog } from '@/app/lib/auditLog';
 import { invalidateConfig, type SystemConfigRow } from '@/app/lib/systemConfig';
 
 /**
@@ -172,7 +172,7 @@ export async function PATCH(req: NextRequest): Promise<NextResponse> {
     invalidateConfig(key);
 
     // Audit log — fire-and-forget
-    void writeAuditLog({
+    void writeSystemAuditLog({
       action: 'system_config.update',
       resource_type: 'system_config',
       resource_id: key,

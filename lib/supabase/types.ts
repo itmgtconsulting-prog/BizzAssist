@@ -990,6 +990,24 @@ export type Database = {
         Update: Record<string, never>;
         Relationships: [];
       };
+      system_audit_log: {
+        Row: {
+          id: string;
+          action: string;
+          resource_type: string;
+          resource_id: string | null;
+          metadata: Record<string, unknown> | null;
+          created_at: string;
+        };
+        Insert: {
+          action: string;
+          resource_type: string;
+          resource_id?: string | null;
+          metadata?: Record<string, unknown> | null;
+        };
+        Update: Record<string, never>;
+        Relationships: [];
+      };
       recent_entities: {
         Row: RecentEntity;
         Insert: {

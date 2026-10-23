@@ -101,7 +101,7 @@ export async function PATCH(req: NextRequest, context: RouteContext): Promise<Ne
       return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
     }
 
-    void writeAuditLog({
+    void writeAuditLog(ctx.tenantId, {
       action: 'team.role_changed',
       resource_type: 'tenant_membership',
       resource_id: existing.id,
@@ -167,7 +167,7 @@ export async function DELETE(_req: NextRequest, context: RouteContext): Promise<
       return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
     }
 
-    void writeAuditLog({
+    void writeAuditLog(ctx.tenantId, {
       action: 'team.member_removed',
       resource_type: 'tenant_membership',
       resource_id: existing.id,

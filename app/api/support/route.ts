@@ -24,7 +24,7 @@ import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
 import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
-import { writeAuditLog } from '@/app/lib/auditLog';
+import { writeSystemAuditLog } from '@/app/lib/auditLog';
 import { companyInfo } from '@/app/lib/companyInfo';
 
 /** Zod schema for POST /api/support request body */
@@ -296,7 +296,7 @@ export async function POST(request: NextRequest) {
           : `The bug report could not be created. Please contact ${companyInfo.supportEmail} instead.`;
 
       // Audit: support question created via ticket action (fire-and-forget — ISO 27001 A.12.4)
-      void writeAuditLog({
+      void writeSystemAuditLog({
         action: 'support_question_created',
         resource_type: 'support',
         resource_id: issueKey ?? 'ticket',
@@ -340,7 +340,7 @@ export async function POST(request: NextRequest) {
     logSupportQuestion(message ?? '', reply, !!kbEntry, lang, context?.page).catch(() => {});
 
     // Audit: support question created (fire-and-forget — ISO 27001 A.12.4)
-    void writeAuditLog({
+    void writeSystemAuditLog({
       action: 'support_question_created',
       resource_type: 'support',
       resource_id: 'question',

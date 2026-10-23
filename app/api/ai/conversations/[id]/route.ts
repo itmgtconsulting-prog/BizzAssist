@@ -74,7 +74,7 @@ export async function DELETE(
   try {
     const db = await getTenantContext(auth.tenantId);
     await db.aiConversations.delete(id);
-    writeAuditLog({
+    writeAuditLog(auth.tenantId, {
       action: 'ai_conversation.delete',
       resource_type: 'ai_conversation',
       resource_id: id,

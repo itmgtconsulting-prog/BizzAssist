@@ -110,7 +110,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       .update({ accepted_at: new Date().toISOString() })
       .eq('id', invite.id);
 
-    void writeAuditLog({
+    void writeAuditLog(invite.tenant_id, {
       action: 'team.invite_accepted',
       resource_type: 'tenant_invitation',
       resource_id: invite.id,

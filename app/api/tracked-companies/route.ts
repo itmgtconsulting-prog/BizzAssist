@@ -136,7 +136,7 @@ export async function DELETE(request: NextRequest) {
       });
     }
 
-    writeAuditLog({
+    writeAuditLog(auth.tenantId, {
       action: 'tracked_company.toggle',
       resource_type: 'company',
       resource_id: 'unknown',

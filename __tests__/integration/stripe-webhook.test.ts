@@ -111,11 +111,17 @@ vi.mock('@/app/lib/stripe', () => ({
 
 // ── Audit log mock (BIZZ-542: charge.failed audit entries are asserted) ─────
 
-/** Spy on writeAuditLog calls so charge.failed tests can assert failure_code landed */
+/** Spy on audit calls so charge.failed tests can assert failure_code landed.
+ * Webhook events are system-level (no tenant) → routed to writeSystemAuditLog
+ * (BIZZ-2293/2297). */
 const mockWriteAuditLog = vi.fn();
+const mockWriteSystemAuditLog = vi.fn();
+const mockWriteAuditLogByUser = vi.fn();
 
 vi.mock('@/app/lib/auditLog', () => ({
   writeAuditLog: (...args: unknown[]) => mockWriteAuditLog(...args),
+  writeSystemAuditLog: (...args: unknown[]) => mockWriteSystemAuditLog(...args),
+  writeAuditLogByUser: (...args: unknown[]) => mockWriteAuditLogByUser(...args),
 }));
 
 // ── Sentry mock ───────────────────────────────────────────────────────────────
@@ -713,7 +719,7 @@ describe('POST /api/stripe/webhook', () => {
     expect(mockUpdateUserById).not.toHaveBeenCalled();
 
     // Find the charge_failed audit entry (webhook_processed is also called)
-    const auditEntries = mockWriteAuditLog.mock.calls
+    const auditEntries = mockWriteSystemAuditLog.mock.calls
       .map((c) => c[0] as { action?: string; metadata?: string })
       .filter((e) => e.action === 'stripe.charge_failed');
     expect(auditEntries).toHaveLength(1);
@@ -765,7 +771,7 @@ describe('POST /api/stripe/webhook', () => {
     // No status update for top-up failures — correct
     expect(mockUpdateUserById).not.toHaveBeenCalled();
 
-    const auditEntries = mockWriteAuditLog.mock.calls
+    const auditEntries = mockWriteSystemAuditLog.mock.calls
       .map((c) => c[0] as { action?: string; metadata?: string })
       .filter((e) => e.action === 'stripe.charge_failed');
     expect(auditEntries).toHaveLength(1);
@@ -838,7 +844,7 @@ describe('POST /api/stripe/webhook', () => {
 
     expect(res.status).toBe(200);
     expect(mockSentryCaptureMessage).toHaveBeenCalledOnce();
-    const auditEntries = mockWriteAuditLog.mock.calls
+    const auditEntries = mockWriteSystemAuditLog.mock.calls
       .map((c) => c[0] as { action?: string })
       .filter((e) => e.action === 'stripe.charge_failed');
     expect(auditEntries).toHaveLength(0);

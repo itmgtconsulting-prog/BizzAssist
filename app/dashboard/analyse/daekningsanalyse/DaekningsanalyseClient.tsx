@@ -425,10 +425,11 @@ export default function DaekningsanalyseClient() {
       try {
         let by = '';
         try {
-          const r = await fetch(`https://api.dataforsyningen.dk/postnumre/${postnr}`, {
+          // BIZZ-2301: DAWA /postnumre er nedlagt (410) — via server-rute (DAR/v2).
+          const r = await fetch(`/api/adresse/postnr?nr=${postnr}`, {
             signal: AbortSignal.timeout(8000),
           });
-          if (r.ok) by = ((await r.json()) as { navn?: string }).navn ?? '';
+          if (r.ok) by = ((await r.json()) as { by?: string }).by ?? '';
         } catch {
           // by-navn er valgfrit for datavask, men forbedrer match-kvaliteten
         }

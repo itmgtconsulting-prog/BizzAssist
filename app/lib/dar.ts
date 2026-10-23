@@ -63,12 +63,76 @@ export function __clearDarCachesForTests(): void {
  * Constants
  * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 const MAT_WFS_ENDPOINT = 'https://services.datafordeler.dk/Matrikel/MatGaeld662/1/WFS';
-/**
- * BIZZ-503: Datafordeler DAR WFS endpoint. Used for spatial queries
- * (reverse geocoding) that DAR GraphQL does not support.
- */
-const DAR_WFS_ENDPOINT = 'https://services.datafordeler.dk/DAR/DAR/1/WFS';
 
+/**
+ * Moderniseret entitetsbaseret MAT WFS (apiKey, GeoJSON). services.datafordeler.dk
+ * MatGaeld662 er nedlagt (404). Koordinat-opslag bruger `mat_v001:lodflade_current`
+ * via en lille bbox + point-in-polygon (CQL INTERSECTS kræver POINT i native
+ * EPSG:25832 og fejler med WGS84-koordinater).
+ */
+const MAT_WFS_V2 = 'https://wfs.datafordeler.dk/MAT/MAT_WFS/1.0.0/WFS';
+
+/**
+ * Koordinat (WGS84) → jordstykke-id via moderniseret MAT WFS.
+ * Lille bbox om punktet + point-in-polygon (ray-casting) finder det jordstykke
+ * der indeholder punktet (fallback: første i bbox'en).
+ *
+ * @param lng - Længdegrad (WGS84)
+ * @param lat - Breddegrad (WGS84)
+ * @param apiKey - Datafordeler apiKey
+ * @returns jordstykke id_lokalId eller null
+ */
+async function jordstykkeIdForCoord(
+  lng: number,
+  lat: number,
+  apiKey: string
+): Promise<string | null> {
+  const D = 0.0005; // ~55 m
+  const bbox = `${lat - D},${lng - D},${lat + D},${lng + D},urn:ogc:def:crs:EPSG::4326`;
+  const params = new URLSearchParams({
+    service: 'WFS',
+    version: '2.0.0',
+    request: 'GetFeature',
+    typeNames: 'mat_v001:lodflade_current',
+    srsName: 'EPSG:4326',
+    bbox,
+    outputFormat: 'application/json',
+    count: '25',
+    apiKey,
+  });
+  try {
+    const res = await fetch(proxyUrl(`${MAT_WFS_V2}?${params.toString()}`), {
+      headers: { ...proxyHeaders() },
+      signal: AbortSignal.timeout(proxyTimeout()),
+    });
+    if (!res.ok) return null;
+    const gj = (await res.json()) as {
+      features?: Array<{
+        geometry?: { coordinates?: Array<Array<[number, number]>> } | null;
+        properties?: { jordstykkeLokalId?: string } | null;
+      }>;
+    };
+    const feats = gj.features ?? [];
+    const contains = (ring: Array<[number, number]>): boolean => {
+      let inside = false;
+      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const [xi, yi] = ring[i];
+        const [xj, yj] = ring[j];
+        if (yi > lat !== yj > lat && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) {
+          inside = !inside;
+        }
+      }
+      return inside;
+    };
+    for (const f of feats) {
+      const ring = f.geometry?.coordinates?.[0];
+      if (ring && contains(ring)) return f.properties?.jordstykkeLokalId ?? null;
+    }
+    return feats[0]?.properties?.jordstykkeLokalId ?? null;
+  } catch {
+    return null;
+  }
+}
 /**
  * Moderniseret entitetsbaseret DAR WFS (wfs.datafordeler.dk, apiKey, GeoJSON).
  * Den gamle DAR_WFS_ENDPOINT (services.datafordeler.dk) er nedlagt (404). Den
@@ -1127,76 +1191,74 @@ export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
  */
 export async function darHentJordstykke(lng: number, lat: number): Promise<DawaJordstykke | null> {
   const apiKey = process.env.DATAFORDELER_API_KEY;
+  if (!apiKey) return null;
 
-  // Forsøg 1: Datafordeler MAT WFS
-  if (apiKey) {
-    try {
-      const cql = `INTERSECTS(geometri,POINT(${lng} ${lat}))`;
-      const params = new URLSearchParams({
-        service: 'WFS',
-        request: 'GetFeature',
-        typeName: 'mat:Jordstykke_Gaeldende',
-        srsName: 'EPSG:4326',
-        CQL_FILTER: cql,
-        outputFormat: 'json',
-        apiKey,
-      });
-
-      const res = await fetch(proxyUrl(`${MAT_WFS_ENDPOINT}?${params.toString()}`), {
-        headers: { ...proxyHeaders() },
-        signal: AbortSignal.timeout(proxyTimeout()),
-      });
-
-      if (res.ok) {
-        const geojson = (await res.json()) as {
-          features?: Array<{
-            properties?: Record<string, unknown>;
-            geometry?: { coordinates?: unknown };
-          }>;
-        };
-
-        const feature = geojson.features?.[0];
-        if (feature?.properties) {
-          const p = feature.properties;
-
-          // Matrikelnummer: "matrikelnummer" eller "matrnr"
-          const matrikelnr = (p.matrikelnummer ?? p.matrnr ?? p.matrikelnr ?? '') as string;
-
-          // Ejerlavsnavn og -kode
-          const ejerlavsnavn = (p.ejerlavsnavn ?? p.ejerlavsNavn ?? '') as string;
-          const ejerlavskode = Number(p.ejerlavskode ?? p.ejerlavsKode ?? 0) || 0;
-
-          // Registreret areal
-          const areal = Number(p.registreretareal ?? p.registreretAreal ?? p.areal ?? 0) || 0;
-
-          // Kommune
-          const kommunekode = String(p.kommunekode ?? p.kommuneKode ?? '').padStart(4, '0');
-          const kommunenavn = (p.kommunenavn ?? KOMMUNE_NAVN[kommunekode] ?? '') as string;
-
-          // Visuelt center — forsøg at beregne fra geometri centroid eller brug koordinaterne
-          const visueltcenter: [number, number] = [lng, lat];
-
-          return {
-            matrikelnr,
-            ejerlav: { navn: ejerlavsnavn, kode: ejerlavskode },
-            areal_m2: areal,
-            kommune: { navn: kommunenavn, kode: Number(kommunekode) || 0 },
-            visueltcenter,
-          };
-        }
-      } else {
-        logger.warn(`darHentJordstykke MAT WFS fejl: ${res.status} ${res.statusText}`);
-      }
-    } catch (err) {
-      logger.error('darHentJordstykke MAT WFS fejl:', err);
-    }
-  }
-
-  // Forsøg 2: DAWA fallback (virker indtil 1. juli 2026)
   try {
-    return await _dawaHentJordstykke(lng, lat);
+    // 1) Koordinat → jordstykke-id (moderniseret MAT WFS, bbox + point-in-polygon).
+    const jsId = await jordstykkeIdForCoord(lng, lat, apiKey);
+    if (!jsId) return null;
+
+    const nowIso = nowTs();
+    const gqlUrl = `${MAT_GQL_URL}?apiKey=${encodeURIComponent(apiKey)}`;
+    const gql = async <T extends object>(query: string): Promise<T | null> => {
+      try {
+        const res = await fetch(proxyUrl(gqlUrl), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...proxyHeaders() },
+          body: JSON.stringify({ query }),
+          signal: AbortSignal.timeout(proxyTimeout()),
+        });
+        if (!res.ok) return null;
+        const json = (await res.json()) as { data?: T; errors?: unknown[] };
+        if (json.errors?.length) return null;
+        return json.data ?? null;
+      } catch {
+        return null;
+      }
+    };
+
+    // 2) Jordstykke-attributter (matrikelnr, areal, ejerlav-id, kommunekode).
+    const jd = await gql<{
+      MAT_Jordstykke?: {
+        nodes?: Array<{
+          matrikelnummer?: string;
+          registreretAreal?: number;
+          ejerlavLokalId?: string;
+          kommuneLokalId?: string;
+        }>;
+      };
+    }>(
+      `{ MAT_Jordstykke(first: 1 virkningstid: "${nowIso}" registreringstid: "${nowIso}" where: { id_lokalId: { eq: "${jsId}" } }) { nodes { matrikelnummer registreretAreal ejerlavLokalId kommuneLokalId } } }`
+    );
+    const js = jd?.MAT_Jordstykke?.nodes?.[0];
+    if (!js) return null;
+
+    // 3) Ejerlav-navn (best-effort).
+    let ejerlavKode = 0;
+    let ejerlavNavn = '';
+    if (js.ejerlavLokalId) {
+      const ed = await gql<{
+        MAT_Ejerlav?: { nodes?: Array<{ ejerlavskode?: number | string; ejerlavsnavn?: string }> };
+      }>(
+        `{ MAT_Ejerlav(first: 1 virkningstid: "${nowIso}" registreringstid: "${nowIso}" where: { id_lokalId: { eq: "${js.ejerlavLokalId}" } }) { nodes { ejerlavskode ejerlavsnavn } } }`
+      );
+      const er = ed?.MAT_Ejerlav?.nodes?.[0];
+      if (er) {
+        ejerlavKode = Number(er.ejerlavskode) || 0;
+        ejerlavNavn = typeof er.ejerlavsnavn === 'string' ? er.ejerlavsnavn : '';
+      }
+    }
+
+    const kommunekode = String(js.kommuneLokalId ?? '').padStart(4, '0');
+    return {
+      matrikelnr: String(js.matrikelnummer ?? ''),
+      ejerlav: { navn: ejerlavNavn, kode: ejerlavKode },
+      areal_m2: typeof js.registreretAreal === 'number' ? js.registreretAreal : 0,
+      kommune: { navn: KOMMUNE_NAVN[kommunekode] ?? '', kode: Number(kommunekode) || 0 },
+      visueltcenter: [lng, lat],
+    };
   } catch (err) {
-    logger.error('darHentJordstykke DAWA fallback fejl:', err);
+    logger.error('darHentJordstykke fejl:', err instanceof Error ? err.message : err);
     return null;
   }
 }
@@ -1416,67 +1478,32 @@ export async function darReverseGeocode(
   }
 
   try {
-    // DWITHIN with 50m radius. Denmark's address density is such that any
-    // address this close is effectively "the one" the user clicked. If no
-    // feature is returned we return null and the caller falls back to DAWA.
-    const cql = `DWITHIN(husnummer/position,POINT(${lng} ${lat}),50,meters)`;
-    const params = new URLSearchParams({
-      service: 'WFS',
-      version: '2.0.0',
-      request: 'GetFeature',
-      typeNames: 'DAR:Husnummer_Gaeldende',
-      srsName: 'EPSG:4326',
-      CQL_FILTER: cql,
-      outputFormat: 'json',
-      count: '1',
-      apiKey,
-    });
+    // Den moderniserede DAR WFS har ingen husnummer-geometri længere (kun veje),
+    // så DWITHIN(husnummer/position,…) er ikke muligt. I stedet: find jordstykket
+    // punktet ligger på (MAT WFS) og returnér en adresse på det jordstykke
+    // (DAR_Husnummer.jordstykke) — i praksis "hvilken ejendom klikkede brugeren".
+    const jsId = await jordstykkeIdForCoord(lng, lat, apiKey);
+    if (!jsId) return null;
 
-    const res = await fetch(proxyUrl(`${DAR_WFS_ENDPOINT}?${params.toString()}`), {
-      headers: { ...proxyHeaders() },
-      signal: AbortSignal.timeout(proxyTimeout()),
-    });
+    const ts = nowTs();
+    const data = await darQuery<{
+      DAR_Husnummer?: { nodes?: Array<{ adgangsadressebetegnelse?: string; id_lokalId?: string }> };
+    }>(`{
+      DAR_Husnummer(
+        first: 1
+        virkningstid: "${ts}"
+        registreringstid: "${ts}"
+        where: { jordstykke: { eq: "${jsId}" } }
+      ) {
+        nodes { adgangsadressebetegnelse id_lokalId }
+      }
+    }`);
 
-    if (!res.ok) {
-      logger.warn(`darReverseGeocode DAR WFS fejl: ${res.status} ${res.statusText}`);
-      return null;
-    }
-
-    const geojson = (await res.json()) as {
-      features?: Array<{
-        properties?: Record<string, unknown>;
-        id?: string;
-      }>;
-    };
-
-    const feature = geojson.features?.[0];
-    if (!feature?.properties) return null;
-
-    const p = feature.properties;
-    // DAR exposes husnummer + adresseUuid under slightly varying names depending
-    // on output format version. Guard all three common casings.
-    const vejnavn = (p.vejnavn ?? p.vejNavn ?? '') as string;
-    const husnr = (p.husnummertekst ?? p.husnummer ?? p.husnr ?? '') as string;
-    const postnr = String(p.postnummer ?? p.postnr ?? '').trim();
-    const postnrnavn = (p.postdistriktnavn ?? p.postnrnavn ?? '') as string;
-    const id =
-      (p.adresseUuid as string | null) ??
-      (p.husnummerUuid as string | null) ??
-      (feature.id as string | null) ??
-      null;
-
-    const adresseParts = [`${vejnavn} ${husnr}`.trim()];
-    if (postnr) adresseParts.push(`${postnr} ${postnrnavn}`.trim());
-    const adresse = adresseParts.filter(Boolean).join(', ');
-
-    if (!adresse) return null;
-
-    return { adresse, id };
+    const hn = data?.DAR_Husnummer?.nodes?.[0];
+    if (!hn?.adgangsadressebetegnelse) return null;
+    return { adresse: rensAdresseStreng(hn.adgangsadressebetegnelse), id: hn.id_lokalId ?? null };
   } catch (err) {
-    logger.error(
-      'darReverseGeocode DAR WFS fetch failed:',
-      err instanceof Error ? err.message : err
-    );
+    logger.error('darReverseGeocode fejl:', err instanceof Error ? err.message : err);
     return null;
   }
 }

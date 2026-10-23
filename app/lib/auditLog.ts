@@ -9,16 +9,19 @@
  *
  * History (BIZZ-2293/2297): this module previously did
  * `admin.from('audit_log').insert(...)` against the public schema, but no
- * `public.audit_log` table exists — so every audit write failed silently and
- * no event was ever recorded. It now resolves the tenant schema (admin client,
- * no session cookies required) and checks the insert error.
+ * `public.audit_log` table exists — so every audit write failed silently.
+ * Compounding it, callers invoke these helpers fire-and-forget (not awaited),
+ * so on Vercel's serverless runtime the insert was abandoned when the function
+ * froze after the response. Both are fixed: writes target the correct schema
+ * AND run inside `after()`, which Vercel keeps alive past the response.
  *
- * Fire-and-forget — never throws; failures are logged (no PII) but do not break
- * the main operation.
+ * Never throws; insert failures are logged (no PII) but do not break the
+ * main operation.
  *
  * @module app/lib/auditLog
  */
 
+import { after } from 'next/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { createClient as createServerClient } from '@/lib/supabase/server';
 import { logger } from '@/app/lib/logger';
@@ -40,7 +43,7 @@ export interface AuditEntry {
  * invalid JSON degrades gracefully (never throws).
  *
  * @param metadata - JSON string, or undefined
- * @returns Parsed object (or a wrapper) suitable for a jsonb column, or null
+ * @returns Parsed object (or a wrapper) for a jsonb column, or null
  */
 function parseMetadata(metadata?: string): Record<string, unknown> | null {
   if (!metadata) return null;
@@ -55,12 +58,32 @@ function parseMetadata(metadata?: string): Record<string, unknown> | null {
 }
 
 /**
- * Resolve a tenant's PostgreSQL schema name via the admin client. Uses the
- * service-role client (no session cookies) so it works in fire-and-forget
- * contexts. Returns null if the tenant is unknown.
+ * Schedule an audit-write promise so it reliably completes.
  *
- * @param tenantId - Verified tenant UUID (never derived from raw user input)
- * @returns The tenant schema name (e.g. `tenant_abc123`) or null
+ * Callers invoke the audit helpers fire-and-forget. On Vercel's serverless
+ * runtime the function can freeze once the response is sent, abandoning any
+ * un-awaited work. `after()` registers the promise so the platform keeps the
+ * invocation alive until it settles. Outside a request context (where
+ * `after()` is unavailable) the promise still runs — it is started eagerly.
+ *
+ * @param work - The already-started audit-write promise
+ * @returns The same promise (so awaiting callers can still await it)
+ */
+function schedule(work: Promise<void>): Promise<void> {
+  const guarded = work.catch((e: unknown) =>
+    logger.error('[audit] Failed to insert audit log:', e)
+  );
+  try {
+    after(() => guarded);
+  } catch {
+    /* ikke i request-kontekst — promisen kører alligevel (startet eager) */
+  }
+  return guarded;
+}
+
+/**
+ * Resolve a tenant's PostgreSQL schema name via the admin client (service-role,
+ * no session cookies). Returns null if the tenant is unknown.
  */
 async function resolveSchema(tenantId: string): Promise<string | null> {
   const admin = createAdminClient();
@@ -76,9 +99,60 @@ async function resolveSchema(tenantId: string): Promise<string | null> {
   return data.schema_name;
 }
 
+/** Core tenant-audit insert (awaitable; no scheduling). */
+async function insertTenantAudit(
+  tenantId: string,
+  entry: AuditEntry,
+  userId: string | null
+): Promise<void> {
+  const schemaName = await resolveSchema(tenantId);
+  if (!schemaName) return;
+  // Best-effort: resolve the acting user from the session when not supplied
+  // (the column is nullable). Mirrors the proven tenant-context audit writer.
+  let actingUserId = userId;
+  if (actingUserId === null) {
+    try {
+      const supabase = await createServerClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      actingUserId = user?.id ?? null;
+    } catch {
+      /* ingen session-kontekst — user_id forbliver null */
+    }
+  }
+  const { error } = await tenantDb(schemaName)
+    .from('audit_log')
+    .insert({
+      tenant_id: tenantId,
+      user_id: actingUserId,
+      action: entry.action,
+      resource_type: entry.resource_type,
+      resource_id: entry.resource_id ?? null,
+      metadata: parseMetadata(entry.metadata),
+    });
+  if (error) {
+    logger.error('[AUDIT LOG FAILURE]', error.message, entry.action);
+  }
+}
+
+/** Core system-audit insert (awaitable; no scheduling). */
+async function insertSystemAudit(entry: AuditEntry): Promise<void> {
+  const admin = createAdminClient();
+  const { error } = await admin.from('system_audit_log').insert({
+    action: entry.action,
+    resource_type: entry.resource_type,
+    resource_id: entry.resource_id ?? null,
+    metadata: parseMetadata(entry.metadata),
+  });
+  if (error) {
+    logger.error('[SYSTEM AUDIT FAILURE]', error.message, entry.action);
+  }
+}
+
 /**
- * Writes a tenant-scoped audit entry into the tenant's OWN `audit_log` table.
- * Fire-and-forget — never throws; errors are logged (no PII).
+ * Writes a tenant-scoped audit entry into the tenant's OWN `audit_log`.
+ * Reliable fire-and-forget (runs inside `after()`); never throws.
  *
  * @param tenantId - Verified tenant UUID (from the auth session, never raw input)
  * @param entry - Audit fields
@@ -89,95 +163,47 @@ export async function writeAuditLog(
   entry: AuditEntry,
   userId: string | null = null
 ): Promise<void> {
-  try {
-    const schemaName = await resolveSchema(tenantId);
-    if (!schemaName) return;
-    // Best-effort: resolve the acting user from the session when the caller did
-    // not supply one (the column is nullable). Mirrors the proven
-    // tenant-context audit writer. In a torn-down fire-and-forget context the
-    // session read may fail — we tolerate that and leave user_id null.
-    let actingUserId = userId;
-    if (actingUserId === null) {
-      try {
-        const supabase = await createServerClient();
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        actingUserId = user?.id ?? null;
-      } catch {
-        /* ingen session-kontekst — user_id forbliver null */
-      }
-    }
-    const { error } = await tenantDb(schemaName)
-      .from('audit_log')
-      .insert({
-        tenant_id: tenantId,
-        user_id: actingUserId,
-        action: entry.action,
-        resource_type: entry.resource_type,
-        resource_id: entry.resource_id ?? null,
-        metadata: parseMetadata(entry.metadata),
-      });
-    if (error) {
-      // Audit failures must not be silently swallowed, but must not throw.
-      logger.error('[AUDIT LOG FAILURE]', error.message, entry.action);
-    }
-  } catch (e: unknown) {
-    logger.error('[audit] Failed to insert audit log:', e);
-  }
+  return schedule(insertTenantAudit(tenantId, entry, userId));
 }
 
 /**
  * Writes a tenant-scoped audit entry, resolving the tenant from a user UUID.
- * For routes that authenticate via `supabase.auth.getUser()` and do not hold a
- * tenant id in scope. Fire-and-forget — never throws.
+ * For routes that authenticate via `supabase.auth.getUser()` and hold no tenant
+ * id. Reliable fire-and-forget (runs inside `after()`); never throws.
  *
  * @param userId - Acting user UUID
  * @param entry - Audit fields
  */
 export async function writeAuditLogByUser(userId: string, entry: AuditEntry): Promise<void> {
-  try {
-    const admin = createAdminClient();
-    // Deterministic tenant selection (oldest membership) — mirrors
-    // resolveTenantId() so audit lands in the same schema the route writes to.
-    const { data, error } = await admin
-      .from('tenant_memberships')
-      .select('tenant_id')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: true })
-      .limit(1)
-      .maybeSingle<{ tenant_id: string }>();
-    if (error || !data?.tenant_id) {
-      logger.error('[audit] kunne ikke slå tenant op for bruger');
-      return;
-    }
-    await writeAuditLog(data.tenant_id, entry, userId);
-  } catch (e: unknown) {
-    logger.error('[audit] Failed to insert audit log (by user):', e);
-  }
+  return schedule(
+    (async () => {
+      const admin = createAdminClient();
+      // Deterministic tenant selection (oldest membership) — mirrors
+      // resolveTenantId() so audit lands in the schema the route writes to.
+      const { data, error } = await admin
+        .from('tenant_memberships')
+        .select('tenant_id')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle<{ tenant_id: string }>();
+      if (error || !data?.tenant_id) {
+        logger.error('[audit] kunne ikke slå tenant op for bruger');
+        return;
+      }
+      await insertTenantAudit(data.tenant_id, entry, userId);
+    })()
+  );
 }
 
 /**
  * Writes a system-level audit entry (no single tenant) to
  * `public.system_audit_log` — e.g. Stripe webhooks, super-admin service
  * management, bootstrap, anonymous consent, support-ticket creation.
- * Fire-and-forget — never throws.
+ * Reliable fire-and-forget (runs inside `after()`); never throws.
  *
  * @param entry - Audit fields
  */
 export async function writeSystemAuditLog(entry: AuditEntry): Promise<void> {
-  try {
-    const admin = createAdminClient();
-    const { error } = await admin.from('system_audit_log').insert({
-      action: entry.action,
-      resource_type: entry.resource_type,
-      resource_id: entry.resource_id ?? null,
-      metadata: parseMetadata(entry.metadata),
-    });
-    if (error) {
-      logger.error('[SYSTEM AUDIT FAILURE]', error.message, entry.action);
-    }
-  } catch (e: unknown) {
-    logger.error('[audit] Failed to insert system audit log:', e);
-  }
+  return schedule(insertSystemAudit(entry));
 }

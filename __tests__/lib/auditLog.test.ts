@@ -9,6 +9,12 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// ── next/server after() mock ────────────────────────────────────────────────
+// The helpers register their write with after() so Vercel keeps the serverless
+// invocation alive past the response. The write promise is started eagerly and
+// returned, so tests just await the helper; after() is a no-op here.
+vi.mock('next/server', () => ({ after: (fn: () => unknown) => void fn() }));
+
 // ── Supabase admin + tenantDb mocks ─────────────────────────────────────────
 
 /** Insert spy for the per-tenant audit_log (via tenantDb). */

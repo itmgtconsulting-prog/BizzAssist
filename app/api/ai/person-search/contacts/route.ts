@@ -23,6 +23,7 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { assertAiAllowed } from '@/app/lib/aiGate';
 import { recordAiUsage } from '@/app/lib/aiTracking';
 import { BRAVE_SEARCH_ENDPOINT } from '@/app/lib/serviceEndpoints';
+import { getCompanyContact } from '@/app/lib/cvr/companyContact';
 import { logger } from '@/app/lib/logger';
 
 export const runtime = 'nodejs';
@@ -112,6 +113,43 @@ function rolePriority(role?: string): number {
   if (r.includes('bestyrelsesformand')) return 2;
   if (r.includes('bestyrelsesmedlem')) return 3;
   return 4;
+}
+
+/**
+ * Henter autoritativ offentlig virksomheds-kontakt (adresse/telefon/email) fra
+ * CVR for personens vigtigste selskaber og mapper til ContactResult. Vises før
+ * web-fundne kontakter, fordi web-søgning sjældent finder kontakt for danske
+ * privatpersoner — kontakten ligger i selskaberne. BIZZ-2303.
+ *
+ * @param companies - Personens tilknyttede selskaber (cvr + navn + rolle)
+ * @returns ContactResult-liste (tom hvis intet fundet)
+ */
+async function fetchCvrCompanyContacts(
+  companies: Array<{ cvr: number | string; name: string; role?: string }>
+): Promise<ContactResult[]> {
+  const top = [...companies]
+    .sort((a, b) => rolePriority(a.role) - rolePriority(b.role))
+    .slice(0, 5);
+  const settled = await Promise.allSettled(
+    top.map(async (c) => {
+      const cvrNum = Number(c.cvr);
+      const contact = await getCompanyContact(cvrNum);
+      if (!contact) return null;
+      return {
+        address: contact.adresse ?? undefined,
+        phone: contact.telefon ?? undefined,
+        email: contact.email ?? undefined,
+        source: `CVR · ${contact.navn ?? c.name}`,
+        sourceUrl: `https://datacvr.virk.dk/enhed/virksomhed/${cvrNum}`,
+        confidence: 95,
+        reason: `Virksomhedskontakt (Erhvervsstyrelsen)${c.role ? ` — ${c.role}` : ''}`,
+      } as ContactResult;
+    })
+  );
+  return settled
+    .filter((r): r is PromiseFulfilledResult<ContactResult | null> => r.status === 'fulfilled')
+    .map((r) => r.value)
+    .filter((v): v is ContactResult => v !== null);
 }
 
 /**
@@ -358,17 +396,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!personName?.trim())
     return NextResponse.json({ error: 'personName er påkrævet' }, { status: 400 });
 
+  // BIZZ-2303: Autoritativ CVR-selskabskontakt hentes parallelt med web-søgningen.
+  const cvrContactsPromise: Promise<ContactResult[]> =
+    companies.length > 0 ? fetchCvrCompanyContacts(companies) : Promise.resolve([]);
+
   // ── Brave-søgning ──
   // Brave contact results cached 24h in Supabase search_cache to reduce API usage.
-  let braveContactResults: ArticleResult[];
+  let braveContactResults: ArticleResult[] = [];
   try {
     braveContactResults = await withBraveCache(
       `ps_contacts|${personName.toLowerCase()}|${city ?? ''}`,
       () => searchBravePersonContacts(braveKey, personName, city, companies)
     );
   } catch (err) {
-    logger.error('[person-search/contacts] Initialiseringsfejl:', err);
-    return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 502 });
+    // BIZZ-2303: Brave-fejl er ikke fatal — CVR-selskabskontakter kan stadig returneres.
+    logger.error('[person-search/contacts] Brave-fejl (fortsætter med CVR):', err);
   }
 
   // ── Byg Claude-besked ──
@@ -419,6 +461,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       .join('');
 
     contacts = parseContactsResponse(finalText);
+    // BIZZ-2303: Flet autoritative CVR-selskabskontakter ind FØR web-resultater.
+    const cvrContacts = await cvrContactsPromise;
+    if (cvrContacts.length > 0) contacts = [...cvrContacts, ...contacts];
     // personName omitted from log — PII
     await recordAiUsage({
       userId: auth.userId,
@@ -430,8 +475,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
   } catch (err) {
     logger.error('[person-search/contacts] Claude fejl:', err);
-    // Returner tomt resultat frem for fejl — kontakter er nice-to-have
-    return NextResponse.json({ contacts: [], tokensUsed: 0, source: 'brave+claude' });
+    // BIZZ-2303: Claude-fejl er ikke fatal — returnér stadig CVR-selskabskontakter.
+    const cvrContacts = await cvrContactsPromise.catch(() => []);
+    return NextResponse.json({ contacts: cvrContacts, tokensUsed: 0, source: 'cvr' });
   }
 
   // ── Sekundær telefon-søgning hvis adresse fundet men ikke telefon ──

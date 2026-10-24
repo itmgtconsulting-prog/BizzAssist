@@ -1005,8 +1005,26 @@ export default function UniversalSearchPageClient() {
                   personFilters
                 )
               );
+              // BIZZ-2304: Default-filteret "Kun aktive" (rollestatus=aktive)
+              // skjuler personer uden aktive roller. Tidligere gav det et
+              // misvisende "Ingen resultater" selvom personen fandtes (fx en
+              // person hvis eneste selskab er ophørt). Vis i stedet en klikbar
+              // hint der afslører de skjulte og kan slå filteret fra.
+              const hiddenCount = people.length - filteredPeople.length;
+              const da = lang === 'da';
               return (
                 <div role="tabpanel" aria-label={t.tabPeople}>
+                  {hiddenCount > 0 && !loadingPeople && (
+                    <button
+                      type="button"
+                      onClick={() => setFilter('rollestatus', 'alle')}
+                      className="mb-3 w-full rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-left text-xs font-medium text-amber-300 transition-colors hover:bg-amber-500/20"
+                    >
+                      {da
+                        ? `${hiddenCount} ${hiddenCount === 1 ? 'person' : 'personer'} med kun ophørte roller er skjult af filteret "Kun aktive". Vis alle →`
+                        : `${hiddenCount} ${hiddenCount === 1 ? 'person' : 'people'} with only ceased roles hidden by the "Active only" filter. Show all →`}
+                    </button>
+                  )}
                   {loadingPeople ? (
                     <SkeletonList count={6} />
                   ) : filteredPeople.length > 0 ? (
@@ -1016,7 +1034,8 @@ export default function UniversalSearchPageClient() {
                       ))}
                     </div>
                   ) : (
-                    searched && (
+                    searched &&
+                    hiddenCount === 0 && (
                       <EmptyState
                         query={query}
                         message={`${t.noResultsFor} "${query.trim()}"`}

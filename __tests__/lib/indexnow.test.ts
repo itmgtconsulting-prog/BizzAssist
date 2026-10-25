@@ -63,7 +63,7 @@ describe('submitToIndexNow', () => {
     const body = JSON.parse((fetchMock.mock.calls[0][1] as { body: string }).body);
     expect(body.host).toBe('bizzassist.dk');
     expect(body.key).toBe('test-key-123');
-    expect(body.keyLocation).toBe('https://bizzassist.dk/api/indexnow/key');
+    expect(body.keyLocation).toBe('https://bizzassist.dk/indexnow/key');
     expect(body.urlList).toHaveLength(2);
   });
 

@@ -53,7 +53,9 @@ export async function submitToIndexNow(urls: string[], baseUrl: string): Promise
 
   const base = baseUrl.trim().replace(/\/$/, '');
   const host = base.replace(/^https?:\/\//, '');
-  const keyLocation = `${base}/api/indexnow/key`;
+  // Nøglen ligger på /indexnow/key (IKKE /api/, som robots.txt blokerer) så
+  // IndexNow's robots-honorerende verifier kan hente den.
+  const keyLocation = `${base}/indexnow/key`;
 
   let allOk = true;
   for (let i = 0; i < urls.length; i += MAX_PER_REQUEST) {

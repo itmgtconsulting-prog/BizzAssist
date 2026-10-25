@@ -1,9 +1,14 @@
 /**
- * GET /api/indexnow/key — serverer IndexNow-nøglen som text/plain.
+ * GET /indexnow/key — serverer IndexNow-nøglen som text/plain.
  *
  * IndexNow-søgemaskinerne (Bing, Yandex) henter denne URL (keyLocation) og
- * sammenligner indholdet med `key` i indsendelsen for at bekræfte at vi ejer
- * domænet. Nøglen er PUBLIC pr. design — ikke en hemmelighed.
+ * sammenligner indholdet med `key` i indsendelsen for at bekræfte domæne-ejerskab.
+ * Nøglen er PUBLIC pr. design — ikke en hemmelighed.
+ *
+ * VIGTIGT: Ruten ligger bevidst IKKE under /api/ (som robots.txt blokerer).
+ * IndexNow's verifier honorerer robots.txt, så keyLocation SKAL være crawlbar —
+ * robots.ts tillader derfor /indexnow/ eksplicit. (Tidl. /api/indexnow/key gav
+ * 422 "URLs not related to verified site" fordi keyLocation var blokeret.)
  *
  * Returnerer 404 hvis INDEXNOW_KEY ikke er konfigureret.
  *

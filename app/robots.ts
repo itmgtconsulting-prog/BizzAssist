@@ -26,9 +26,11 @@ export default function robots(): MetadataRoute.Robots {
       !process.env.NEXT_PUBLIC_APP_URL.includes('test.bizzassist.dk'));
 
   if (!isProduction) {
-    // Test / preview: Bloker ALT fra indeksering
+    // Test / preview: Bloker ALT fra indeksering — men tillad /indexnow/ så
+    // IndexNow's verifier kan hente keyLocation (nøglen er public; alt øvrigt
+    // preview-indhold er stadig blokeret af Disallow: /).
     return {
-      rules: { userAgent: '*', disallow: '/' },
+      rules: { userAgent: '*', allow: '/indexnow/', disallow: '/' },
     };
   }
 
@@ -48,7 +50,7 @@ export default function robots(): MetadataRoute.Robots {
     rules: [
       {
         userAgent: '*',
-        allow: ['/ejendom/', '/virksomhed/'],
+        allow: ['/ejendom/', '/virksomhed/', '/indexnow/'],
         disallow: ['/dashboard/', '/api/', '/login/', '/auth/', '/admin/'],
       },
     ],

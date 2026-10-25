@@ -1225,10 +1225,11 @@ export async function darHentJordstykke(lng: number, lat: number): Promise<DawaJ
           registreretAreal?: number;
           ejerlavLokalId?: string;
           kommuneLokalId?: string;
+          samletFastEjendomLokalId?: string;
         }>;
       };
     }>(
-      `{ MAT_Jordstykke(first: 1 virkningstid: "${nowIso}" registreringstid: "${nowIso}" where: { id_lokalId: { eq: "${jsId}" } }) { nodes { matrikelnummer registreretAreal ejerlavLokalId kommuneLokalId } } }`
+      `{ MAT_Jordstykke(first: 1 virkningstid: "${nowIso}" registreringstid: "${nowIso}" where: { id_lokalId: { eq: "${jsId}" } }) { nodes { matrikelnummer registreretAreal ejerlavLokalId kommuneLokalId samletFastEjendomLokalId } } }`
     );
     const js = jd?.MAT_Jordstykke?.nodes?.[0];
     if (!js) return null;
@@ -1250,12 +1251,19 @@ export async function darHentJordstykke(lng: number, lat: number): Promise<DawaJ
     }
 
     const kommunekode = String(js.kommuneLokalId ?? '').padStart(4, '0');
+    // BFE udledes fra jordstykkets samletFastEjendomLokalId (MAT v2) — dette er
+    // det manglende led der lod adresse→BFE-opslaget fejle (ejerskab/vurdering/
+    // ejendomsadmin kunne ikke kaldes uden BFE). Null hvis feltet mangler.
+    const bfenummer = js.samletFastEjendomLokalId
+      ? Number(js.samletFastEjendomLokalId) || null
+      : null;
     return {
       matrikelnr: String(js.matrikelnummer ?? ''),
       ejerlav: { navn: ejerlavNavn, kode: ejerlavKode },
       areal_m2: typeof js.registreretAreal === 'number' ? js.registreretAreal : 0,
       kommune: { navn: KOMMUNE_NAVN[kommunekode] ?? '', kode: Number(kommunekode) || 0 },
       visueltcenter: [lng, lat],
+      bfenummer,
     };
   } catch (err) {
     logger.error('darHentJordstykke fejl:', err instanceof Error ? err.message : err);

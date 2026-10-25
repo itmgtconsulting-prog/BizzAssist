@@ -184,6 +184,13 @@ export interface DawaJordstykke {
   areal_m2: number;
   kommune: { navn: string; kode: number };
   visueltcenter?: [number, number];
+  /**
+   * BFE-nummer (Bestemt Fast Ejendom) for den samlede faste ejendom jordstykket
+   * tilhører — udledt fra koordinat via MAT. Bruges af adresse→BFE-opslaget
+   * (fx AI-chattens dawa_adresse_detaljer) til at kæde videre til ejerskab,
+   * vurdering og ejendomsadministrator. Null hvis MAT ikke kunne udlede den.
+   */
+  bfenummer?: number | null;
 }
 
 /**

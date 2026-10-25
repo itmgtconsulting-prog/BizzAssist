@@ -192,7 +192,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'hent_ejerskab',
     description:
-      'Hent ejerskabsdata (ejertype, ejerforholdskode, ejerandel som brøk, CVR for selskaber, ejerskab-startdato) fra Datafordeler. Kræver BFE-nummer. Hvis svaret har opdeltIEjerlejligheder=true er ejendommen opdelt i ejerlejligheder (ejes individuelt pr. lejlighed) — sig da "opdelt i ejerlejligheder, ejes individuelt" og foreslå opslag på den konkrete lejlighed; sig IKKE "ukendt ejer".',
+      'Hent ejerskabsdata (ejertype, ejerforholdskode, ejerandel som brøk, CVR for selskaber, ejerskab-startdato) fra Datafordeler. Kræver BFE-nummer. Hvis svaret har opdeltIEjerlejligheder=true er ejendommen opdelt i ejerlejligheder (ejes individuelt pr. lejlighed) — sig da "opdelt i ejerlejligheder, ejes individuelt" og foreslå opslag på den konkrete lejlighed. Hvis en ejer hverken har navn eller CVR (ejerforholdskode 99 / navnløs node), så sig "ejer ikke oplyst i Ejerfortegnelsen" — IKKE "ukendt ejer".',
     input_schema: {
       type: 'object' as const,
       properties: {

@@ -338,15 +338,22 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           }>;
           opdeltIEjerlejligheder?: boolean;
         };
-        const ejere: Ejer[] = (data.ejere ?? []).map((e) => ({
-          navn: e.personNavn ?? e.virksomhedsnavn ?? null,
-          cvr: e.cvr,
-          ejertype: e.ejertype,
-          ejerandel:
-            e.ejerandel_taeller != null && e.ejerandel_naevner
-              ? `${Math.round((e.ejerandel_taeller / e.ejerandel_naevner) * 100)}%`
-              : null,
-        }));
+        const ejere: Ejer[] = (data.ejere ?? []).map((e) => {
+          const navn = e.personNavn ?? e.virksomhedsnavn ?? null;
+          // Navnløs node uden CVR = EJF har ingen identificerbar ejer (typisk
+          // ejerforholdskode 99, dødsbo/fond/registrerings-hul). Vis ærligt
+          // "Ejer ikke oplyst" frem for blank/"ukendt" (BIZZ-2308).
+          const uoplyst = !navn && !e.cvr;
+          return {
+            navn: navn ?? (uoplyst ? 'Ejer ikke oplyst i Ejerfortegnelsen' : null),
+            cvr: e.cvr,
+            ejertype: uoplyst ? 'uoplyst' : e.ejertype,
+            ejerandel:
+              e.ejerandel_taeller != null && e.ejerandel_naevner
+                ? `${Math.round((e.ejerandel_taeller / e.ejerandel_naevner) * 100)}%`
+                : null,
+          };
+        });
         const adrList = (adresserByBfe.get(bfe) ?? []).sort();
         return {
           adresse: adrList[0] ?? String(bfe),

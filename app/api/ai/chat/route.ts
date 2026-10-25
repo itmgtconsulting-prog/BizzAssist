@@ -202,6 +202,27 @@ const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'hent_ejere_paa_vej',
+    description:
+      'Find ALLE ejendomme på en vej og deres offentlige ejere (person- eller virksomhedsnavn, ejerandel) i ÉT kald. Brug til "hvem ejer ejendommene på <vej>?" eller til at finde en navngiven (også privat) ejer på en vej via ejernavn-filteret. Returnerer liste af ejendomme med adresse, BFE-nummer og ejere.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        vej: { type: 'string', description: 'Vejnavn, fx "Dansborg Allé"' },
+        postnr: {
+          type: 'string',
+          description: '4-cifret postnummer (anbefales — afgrænser vejen til ét område)',
+        },
+        ejernavn: {
+          type: 'string',
+          description:
+            'Valgfrit: vis kun ejendomme hvor en ejer matcher dette navn (fx "Smollerup")',
+        },
+      },
+      required: ['vej'],
+    },
+  },
+  {
     name: 'hent_salgshistorik',
     description:
       'Hent salgshistorik (købesum, overtagelsesdato, overdragelsesmåde) fra Datafordeler. Kræver BFE-nummer.',
@@ -1821,6 +1842,20 @@ async function executeTool(
         );
         if (!res.ok) {
           result = { fejl: toolErrorMessage('Ejerskabs-API', res.status) };
+          break;
+        }
+        result = await res.json();
+        break;
+      }
+
+      // BIZZ-2305: Alle ejendomme på en vej + deres offentlige ejere i ét kald.
+      case 'hent_ejere_paa_vej': {
+        const p = new URLSearchParams({ vej: input.vej });
+        if (input.postnr) p.set('postnr', input.postnr);
+        if (input.ejernavn) p.set('ejernavn', input.ejernavn);
+        const res = await fetch(`${baseUrl}/api/ejere-paa-vej?${p.toString()}`, internalFetchOpts);
+        if (!res.ok) {
+          result = { fejl: toolErrorMessage('Ejere-på-vej-API', res.status) };
           break;
         }
         result = await res.json();

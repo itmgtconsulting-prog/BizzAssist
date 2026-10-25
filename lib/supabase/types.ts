@@ -1008,6 +1008,62 @@ export type Database = {
         Update: Record<string, never>;
         Relationships: [];
       };
+      lejemaal_observation: {
+        Row: {
+          id: string;
+          postnr: number;
+          kommune: string;
+          erhvervstype: string;
+          areal_bucket: string;
+          leje_kr_m2_aar: number;
+          first_seen: string;
+          last_seen: string;
+          dedup_hash: string;
+          created_at: string;
+        };
+        Insert: {
+          postnr: number;
+          kommune: string;
+          erhvervstype: string;
+          areal_bucket: string;
+          leje_kr_m2_aar: number;
+          first_seen: string;
+          last_seen: string;
+          dedup_hash: string;
+        };
+        Update: {
+          last_seen?: string;
+          leje_kr_m2_aar?: number;
+        };
+        Relationships: [];
+      };
+      lejemaal_omraade_statistik: {
+        Row: {
+          kommune: string;
+          postnr: number;
+          erhvervstype: string;
+          periode: string;
+          antal_udbud: number;
+          median_kr_m2_aar: number | null;
+          p25_kr_m2_aar: number | null;
+          p75_kr_m2_aar: number | null;
+          median_liggetid_dage: number | null;
+          opdateret: string;
+        };
+        Insert: {
+          kommune: string;
+          postnr: number;
+          erhvervstype: string;
+          periode: string;
+          antal_udbud: number;
+          median_kr_m2_aar?: number | null;
+          p25_kr_m2_aar?: number | null;
+          p75_kr_m2_aar?: number | null;
+          median_liggetid_dage?: number | null;
+        };
+        Update: Record<string, never>;
+        Relationships: [];
+      };
       recent_entities: {
         Row: RecentEntity;
         Insert: {

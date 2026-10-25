@@ -223,6 +223,24 @@ const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'hent_lejemaal',
+    description:
+      'Hent AGGREGEREDE erhvervslejeniveauer for et område (ikke enkelt-lejemål): median/p25/p75 udbudsleje i kr/m²/år + median liggetid, pr. periode. Brug til "hvad koster erhvervsleje i <kommune/postnr>?" eller "lejeniveau for kontor i 2650". Angiv mindst kommune ELLER postnr. Data vises kun for områder med mindst 5 udbud (privathensyn) og kan ikke føres tilbage til et konkret lejemål.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        kommune: { type: 'string', description: 'Kommunenavn, fx "Hvidovre"' },
+        postnr: { type: 'string', description: '4-cifret postnummer, fx "2650"' },
+        erhvervstype: {
+          type: 'string',
+          description:
+            'Valgfri type: kontor, butik, lager, produktion, restaurant, klinik, showroom eller andet',
+        },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'hent_salgshistorik',
     description:
       'Hent salgshistorik (købesum, overtagelsesdato, overdragelsesmåde) fra Datafordeler. Kræver BFE-nummer.',
@@ -867,6 +885,10 @@ const TOOL_STATUS: Record<string, string> = {
   hent_bbr_batch: 'Henter BBR for flere adresser…',
   // BIZZ-1697
   data_intelligence: 'Kører data-analyse…',
+  // BIZZ-2305
+  hent_ejere_paa_vej: 'Finder ejendomme og ejere på vejen…',
+  // BIZZ-2306
+  hent_lejemaal: 'Henter lejeniveauer for området…',
 };
 
 // ─── System prompt ──────────────────────────────────────────────────────────
@@ -1856,6 +1878,29 @@ async function executeTool(
         const res = await fetch(`${baseUrl}/api/ejere-paa-vej?${p.toString()}`, internalFetchOpts);
         if (!res.ok) {
           result = { fejl: toolErrorMessage('Ejere-på-vej-API', res.status) };
+          break;
+        }
+        result = await res.json();
+        break;
+      }
+
+      // BIZZ-2306: Aggregerede erhvervslejeniveauer for et område (kun k>=5-grupper,
+      // ingen enkelt-lejemål — jf. ADR 0013).
+      case 'hent_lejemaal': {
+        const p = new URLSearchParams();
+        if (input.kommune) p.set('kommune', input.kommune);
+        if (input.postnr) p.set('postnr', input.postnr);
+        if (input.erhvervstype) p.set('erhvervstype', input.erhvervstype);
+        if (!input.kommune && !input.postnr) {
+          result = { fejl: 'Angiv mindst kommune eller postnr for lejeniveauer' };
+          break;
+        }
+        const res = await fetch(
+          `${baseUrl}/api/lejemaal/omraade?${p.toString()}`,
+          internalFetchOpts
+        );
+        if (!res.ok) {
+          result = { fejl: toolErrorMessage('Lejemåls-API', res.status) };
           break;
         }
         result = await res.json();

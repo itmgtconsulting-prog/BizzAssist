@@ -52,6 +52,39 @@ Fire hensyn skal afklares, før data indsamles systematisk:
 
 Scraping-implementering (fase 2+) **blokeres** indtil A/B/C er afklaret.
 
+## Fase 0 — Kildekortlægning (empirisk, 2026-10-25)
+
+Verificeret via robots.txt + API-probing. **ToS-teksterne er client-renderede
+(SPA) og IKKE verificeret** — skal læses manuelt/juridisk før man stoler på dem.
+
+| Kilde                                                                            | robots.txt (verificeret)                                                                                | API/feed                                                                                                                        | Vurdering                                                                |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| **Lokalebasen.dk** (= **MatchOffice.dk**, samme firma — identisk robots+sitemap) | Tillader annonce-sider (blokerer kun `/api/`, `/admin/`, sessions)                                      | Nej (offentlige sider)                                                                                                          | Afgrænset indsamling teknisk mulig; ToS skal læses                       |
+| **Ejendomstorvet.dk**                                                            | **Blokerer AI-crawlere eksplicit** (ClaudeBot, anthropic-ai, GPTbot, CCBot, Perplexity → `Disallow: /`) | `/api/v2` (OpenAPI). `GET /listings` er uden auth men **ustabil for anonym brug** (HTTP 500); `/queryable-data` **kræver auth** | Partner-API/dataaftale er oplagt; **anonym scraping frarådes** (AI-blok) |
+| **Lokaler.dk**                                                                   | **WAF blokerer bots** ("455 Security Incident")                                                         | —                                                                                                                               | Aktiv anti-scraping → undgå                                              |
+| **EDC Erhverv** (edc.dk)                                                         | Tillader alt (undt. `/umbraco`, `/swagger`)                                                             | Swagger (intern/301)                                                                                                            | Mægler-annoncer; indsamling teknisk muligt                               |
+| **Oline.dk / Nybolig Erhverv**                                                   | Ingen/tom robots                                                                                        | —                                                                                                                               | Undersøg ToS nærmere                                                     |
+
+**Juridiske begrænsninger (uafhængigt af at data er offentligt synligt):**
+
+1. **Databasebeskyttelse** (Ophavsretslov §71 / EU-databasedirektiv) — rammer selve
+   _udtrækket_ af væsentlige dele; den tungeste begrænsning.
+2. **ToS/brugsbetingelser** — kan kontraktligt forbyde automatisk indsamling
+   (ikke verificeret pga. SPA).
+3. **robots.txt** — Ejendomstorvet blokerer eksplicit AI/Claude; Lokaler.dk har WAF.
+4. **Markedsføringsloven §3/§22** (snylteri) + **GDPR** (mægler-kontakt = PII).
+
+Aggregat-only + ingen sporbarhed fjerner _output_-/republicerings-risikoen, men
+**ikke** §71-_udtræks_-risikoen.
+
+**Konklusion Fase 0:** der er ingen generel lov der forbyder at samle offentlige
+fakta, men det er **ikke automatisk tilladt** — det afhænger af hver kildes ToS +
+§71 + metode. Den reneste vej er **API/dataaftale** (Ejendomstorvets `/api/v2`
+kræver i praksis en partner-/dataaftale; feed-aftale med Lokalebasen/MatchOffice).
+Hvor det ikke findes: respektfuld, rate-limited indsamling **kun** hvor både
+robots OG ToS tillader det, aggregat-only. **Juridisk sign-off før kommerciel
+lancering.** Dette afsnit er **ikke juridisk rådgivning**.
+
 ## Beslutning (forslag)
 
 Fasedelt, så vi ikke investerer i teknik før juraen er på plads:

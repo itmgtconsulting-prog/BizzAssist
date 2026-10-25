@@ -267,6 +267,10 @@ async function phaseCompanies(
       .select('cvr, navn')
       .gt('cvr', afterCvr)
       .not('navn', 'is', null)
+      // BIZZ-2309 (SEO-beskæring): udelad ophørte virksomheder fra sitemap.
+      // ~1,4 mio. af 2,27 mio. CVR-enheder er ophørte — tynde "Ophørt"-sider
+      // der spilder Googles crawl budget. Kun aktive (ophoert IS NULL) indekseres.
+      .is('ophoert', null)
       .order('cvr', { ascending: true })
       .limit(CVR_BATCH_SIZE);
 

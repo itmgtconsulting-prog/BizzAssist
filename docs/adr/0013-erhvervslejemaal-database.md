@@ -89,32 +89,59 @@ Fasedelt, så vi ikke investerer i teknik før juraen er på plads:
 [UI "Lejemål"-modul  +  AI-værktøj hent_lejemaal]
 ```
 
+## Design-princip: KUN aggregater, ingen sporbarhed (besluttet)
+
+Produktet viser **aldrig det enkelte lejemål**. Brugeren vælger et **område** og
+får **aggregerede nøgletal** (gennemsnit/median leje kr/m²/år, antal udbud,
+liggetid, omkostninger) pr. område, erhvervstype og periode. Der gemmes og vises
+**ingen kilde-URL, annonce-id, annoncetekst, billeder eller mægler-kontakt** —
+så der er **ingen vej tilbage til den oprindelige annonce/kilde**.
+
+Juridisk effekt: vi re-publicerer ikke en andens database; vi udstiller afledte
+fakta/statistik. Det fjerner det primære sui-generis-/ophavsrets-hensyn på
+_output_-siden. (Indsamlings-/udtræks-siden styres stadig af kildernes ToS +
+sui-generis — derfor Fase 0.)
+
 ## Datamodel (skitse)
 
 ```sql
-create table public.erhvervslejemaal_udbud (
-  id               uuid primary key default gen_random_uuid(),
-  kilde            text not null,                 -- fx 'portalX' (godkendt kilde)
-  kilde_listing_id text not null,                 -- portalens annonce-id (dedup)
-  adresse          text,
-  postnr           integer,
-  kommune          text,
-  bfe_nummer       integer,                       -- match til BizzAssist-ejendom
-  areal_m2         integer,
-  erhvervstype     text,                          -- kontor/lager/butik/produktion …
-  leje_kr_aar      integer,
-  leje_kr_m2_aar   numeric(10,2),                 -- afledt nøgletal (moaten)
-  status           text,                          -- 'udbudt' | 'udlejet' | 'trukket'
-  first_seen       date not null,
-  last_seen        date not null,
-  price_history    jsonb not null default '[]',   -- [{dato, leje_kr_m2_aar}] tidsserie
-  kilde_hash       text,                          -- change-detection
-  unique (kilde, kilde_listing_id)
+-- INTERN observations-tabel (eksponeres ALDRIG via UI/API). Bruges kun til at
+-- beregne aggregater + dedup/liggetid. Ingen kilde-URL/annonce-id/annoncetekst
+-- → ingen sporbarhed tilbage til kilden. Rå annoncedata gemmes ikke.
+create table public.lejemaal_observation (
+  id             uuid primary key default gen_random_uuid(),
+  postnr         integer not null,
+  kommune        text,
+  erhvervstype   text,                     -- kontor/lager/butik/produktion …
+  areal_bucket   text,                     -- '<200','200-500','500-1000','1000+'
+  leje_kr_m2_aar numeric(10,2) not null,   -- afledt nøgletal
+  first_seen     date not null,
+  last_seen      date not null,            -- til liggetid
+  dedup_hash     text not null,            -- hash(postnr+type+areal+prisniveau)
+  unique (dedup_hash)                      -- IKKE kilde-id/URL
+);
+
+-- EKSPONERET aggregat (materialiseret, opdateres ugentligt) — DET ENESTE
+-- brugeren/AI-værktøjet ser.
+create table public.lejemaal_omraade_statistik (
+  kommune              text,
+  postnr               integer,
+  erhvervstype         text,
+  periode              date,               -- måned/kvartal
+  antal_udbud          integer,
+  median_kr_m2_aar     numeric(10,2),
+  p25_kr_m2_aar        numeric(10,2),
+  p75_kr_m2_aar        numeric(10,2),
+  median_liggetid_dage integer,
+  primary key (kommune, postnr, erhvervstype, periode)
 );
 ```
 
-Vi gemmer **afledte felter + tidsserie**, ikke fulde annoncekopier (jf. jura).
-Mægler-kontaktpersoner gemmes ikke (GDPR-minimering).
+- Eksakt adresse bruges KUN transient til område-/BFE-tildeling under ingest og
+  gemmes ikke i observations-tabellen (kun postnr/kommune bevares).
+- **Re-identifikations-spærre:** aggregater udstilles kun når `antal_udbud >= k`
+  (fx k=5) pr. gruppe, så et enkelt udbud ikke kan udledes af statistikken.
+- Mægler-kontaktpersoner gemmes aldrig (GDPR-minimering).
 
 ## Konsekvenser
 

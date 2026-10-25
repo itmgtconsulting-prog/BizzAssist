@@ -60,12 +60,14 @@ Fasedelt, så vi ikke investerer i teknik før juraen er på plads:
   tilladt via feed/API/aftale (A), eller kræver afgrænset indsamling (B) med
   robots/ToS-gennemgang. Kort ekstern juridisk vurdering. Output: godkendt
   kildeliste + indsamlingsregler.
-- **Fase 1 — Datamodel + manuel/seed-import.** Opret `erhvervslejemaal_udbud`
-  (+ `price_history`), geokodning og BFE-match (genbruger adresse→BFE-pipelinen
-  fra BIZZ-2305). Seed med data fra en godkendt kilde for ét område.
+- **Fase 1 — Datamodel + manuel/seed-import.** Opret `lejemaal_observation`
+  (intern) + `lejemaal_omraade_statistik` (eksponeret). Geokod adresse → område
+  (postnr/kommune) transient under ingest (genbruger adresse→område-pipelinen fra
+  BIZZ-2305); adressen gemmes ikke. Seed fra en godkendt kilde for ét område.
 - **Fase 2 — Ugentlig ingest-cron (kun godkendte kilder).** Per kilde/område:
-  hent → parse → normalisér → upsert med `first_seen`/`last_seen` +
-  `price_history`. Overhold rate-limits.
+  hent → parse → normalisér → upsert i `lejemaal_observation` (dedup_hash,
+  first_seen/last_seen) → genberegn `lejemaal_omraade_statistik`. Rå annoncedata
+  gemmes ikke. Overhold rate-limits.
 - **Fase 3 — Produkt.** "Lejemål"-modul + område-analytics (median kr/m²/år,
   liggetid, udbudsmængde over tid) + AI-værktøj `hent_lejemaal`.
 
@@ -76,17 +78,17 @@ Fasedelt, så vi ikke investerer i teknik før juraen er på plads:
         │  (ugentlig Vercel-cron, rate-limited, robots-venlig)
         ▼
 [Parser pr. kilde] → normaliseret lejemål
-        │  (adresse, areal m², leje kr/år + kr/m²/år, type, status)
+        │  (areal m² → bucket, leje kr/m²/år, type; adresse KUN transient)
         ▼
-[Geokod → BFE-match]  (genbruger /api/ejere-paa-vej-pipelinen: DAR→MAT)
+[Geokod → område]  (postnr/kommune; adressen gemmes ikke)
         ▼
-[Upsert erhvervslejemaal_udbud]
-        │  dedup på (kilde, kilde_listing_id); opdatér last_seen;
-        │  ved pris-ændring: append til price_history
+[Upsert lejemaal_observation]  (intern — eksponeres ALDRIG)
+        │  dedup på dedup_hash; opdatér last_seen; ingen kilde-id/URL/adresse
         ▼
-[Analytics-views]  median/percentiler pr. kommune/postnr/type over tid
+[Genberegn lejemaal_omraade_statistik]  median/percentiler/liggetid
+        │  pr. kommune/postnr/type over tid; udstilles kun hvis antal ≥ k
         ▼
-[UI "Lejemål"-modul  +  AI-værktøj hent_lejemaal]
+[UI "Lejemål"-modul  +  AI-værktøj hent_lejemaal]  (KUN aggregater)
 ```
 
 ## Design-princip: KUN aggregater, ingen sporbarhed (besluttet)

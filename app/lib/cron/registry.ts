@@ -182,6 +182,14 @@ export const CRON_JOBS: CronJob[] = [
     description: 'Sitemap-cyklus (companies/properties/vp/render-xml) — logger under sub-navne',
     heartbeatPrefix: 'generate-sitemap',
   },
+  {
+    jobName: 'indexnow',
+    path: '/api/cron/indexnow',
+    schedule: '0 5 * * *',
+    intervalMinutes: DAY,
+    category: 'seo',
+    description: 'IndexNow-push af nye/ændrede URLs til Bing/Yandex',
+  },
 
   // ── Ingest / delta-sync ───────────────────────────────────────────────────
   {

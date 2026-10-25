@@ -5,6 +5,10 @@
       "schedule": "*/15 * * * *"
     },
     {
+      "path": "/api/cron/indexnow",
+      "schedule": "0 5 * * *"
+    },
+    {
       "path": "/api/cron/poll-properties",
       "schedule": "30 6 * * *"
     },

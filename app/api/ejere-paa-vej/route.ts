@@ -59,6 +59,13 @@ interface EjendomMedEjere {
   adresse: string;
   bfeNummer: number;
   ejere: Ejer[];
+  /**
+   * true hvis ejendommen er opdelt i ejerlejligheder (ejes individuelt pr.
+   * lejlighed). I så fald er `ejere` tom — ejeren er ikke "ukendt", men skal
+   * slås op pr. lejlighed. Forbrugere bør vise "Opdelt i ejerlejligheder"
+   * frem for "ukendt ejer" (BIZZ-2308).
+   */
+  opdeltIEjerlejligheder?: boolean;
 }
 
 /** DAR GraphQL POST (best-effort). */
@@ -329,6 +336,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             ejerandel_naevner: number | null;
             virksomhedsnavn?: string | null;
           }>;
+          opdeltIEjerlejligheder?: boolean;
         };
         const ejere: Ejer[] = (data.ejere ?? []).map((e) => ({
           navn: e.personNavn ?? e.virksomhedsnavn ?? null,
@@ -340,7 +348,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
               : null,
         }));
         const adrList = (adresserByBfe.get(bfe) ?? []).sort();
-        return { adresse: adrList[0] ?? String(bfe), bfeNummer: bfe, ejere };
+        return {
+          adresse: adrList[0] ?? String(bfe),
+          bfeNummer: bfe,
+          ejere,
+          opdeltIEjerlejligheder: data.opdeltIEjerlejligheder ?? false,
+        };
       } catch {
         return null;
       }

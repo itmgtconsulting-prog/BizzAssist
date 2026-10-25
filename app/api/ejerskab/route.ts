@@ -91,6 +91,14 @@ export interface EjerskabResponse {
   manglerNoegle: boolean;
   /** true hvis Datafordeler returnerer 403 — Dataadgang-ansøgning mangler */
   manglerAdgang: boolean;
+  /**
+   * true hvis ejendommen er en SFE/hovedejendom OPDELT i ejerlejligheder:
+   * EJF har kun en navnløs "Ukendt" 1/1-placeholder på SFE-niveau, og det
+   * reelle ejerskab ligger på de enkelte ejerlejligheder. `ejere` er tom i
+   * dette tilfælde — forbrugere skal vise "Opdelt i ejerlejligheder (ejes
+   * individuelt)" i stedet for misvisende "ukendt ejer" (BIZZ-2308).
+   */
+  opdeltIEjerlejligheder?: boolean;
 }
 
 // ─── Datafordeler EJF GraphQL ────────────────────────────────────────────────
@@ -363,7 +371,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjerskabRe
         // ligger på ejerlejlighederne. Returnér ingen direkte ejer frem for at
         // vise misvisende "Ukendt 100%". Kun den ENESTE gældende ejer med fuld
         // andel konverteres — partiel/ideel-anpart med ukendt medejer bevares.
-        const ejere: EjerData[] = erOpdeltSfePlaceholder(cached as EjfEjerRow[])
+        const opdeltIEjerlejligheder = erOpdeltSfePlaceholder(cached as EjfEjerRow[]);
+        const ejere: EjerData[] = opdeltIEjerlejligheder
           ? []
           : (
               cached as Array<{
@@ -391,7 +400,14 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjerskabRe
 
         logger.log(`[ejerskab] Cache hit: ${ejere.length} gældende ejere for BFE ${bfeNummer}`);
         return NextResponse.json(
-          { bfeNummer, ejere, fejl: null, manglerNoegle: false, manglerAdgang: false },
+          {
+            bfeNummer,
+            ejere,
+            fejl: null,
+            manglerNoegle: false,
+            manglerAdgang: false,
+            opdeltIEjerlejligheder,
+          },
           {
             status: 200,
             headers: {

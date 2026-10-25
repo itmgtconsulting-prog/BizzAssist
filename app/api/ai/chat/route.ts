@@ -192,7 +192,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'hent_ejerskab',
     description:
-      'Hent ejerskabsdata (ejertype, ejerforholdskode, ejerandel som brøk, CVR for selskaber, ejerskab-startdato) fra Datafordeler. Kræver BFE-nummer.',
+      'Hent ejerskabsdata (ejertype, ejerforholdskode, ejerandel som brøk, CVR for selskaber, ejerskab-startdato) fra Datafordeler. Kræver BFE-nummer. Hvis svaret har opdeltIEjerlejligheder=true er ejendommen opdelt i ejerlejligheder (ejes individuelt pr. lejlighed) — sig da "opdelt i ejerlejligheder, ejes individuelt" og foreslå opslag på den konkrete lejlighed; sig IKKE "ukendt ejer".',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -204,7 +204,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'hent_ejere_paa_vej',
     description:
-      'Find ALLE ejendomme på en vej og deres offentlige ejere (person- eller virksomhedsnavn, ejerandel) i ÉT kald. Brug til "hvem ejer ejendommene på <vej>?" eller til at finde en navngiven (også privat) ejer på en vej via ejernavn-filteret. Returnerer liste af ejendomme med adresse, BFE-nummer og ejere.',
+      'Find ALLE ejendomme på en vej og deres offentlige ejere (person- eller virksomhedsnavn, ejerandel) i ÉT kald. Brug til "hvem ejer ejendommene på <vej>?" eller til at finde en navngiven (også privat) ejer på en vej via ejernavn-filteret. Returnerer liste af ejendomme med adresse, BFE-nummer og ejere. En ejendom med opdeltIEjerlejligheder=true er opdelt i ejerlejligheder (ejes individuelt) og har tom ejere-liste — præsentér den som "opdelt i ejerlejligheder", ikke som "ukendt ejer".',
     input_schema: {
       type: 'object' as const,
       properties: {

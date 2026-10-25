@@ -147,6 +147,48 @@ function chunk<T>(arr: T[], size: number): T[][] {
 }
 
 /**
+ * Folder FREMMED-accenter (é→e, ü→u, ö→o …) men BEVARER danske æ/ø/å.
+ * DAR gemmer ofte vejnavne uden fremmed-accent (fx "Alle" for "Allé"), så vi
+ * prøver også denne variant når brugeren skriver med accent.
+ *
+ * @param s - Vejnavn fra brugeren
+ * @returns Accent-foldet vejnavn (æøå uændret)
+ */
+function foldForeignDiacritics(s: string): string {
+  const map: Record<string, string> = {
+    é: 'e',
+    è: 'e',
+    ê: 'e',
+    ë: 'e',
+    á: 'a',
+    à: 'a',
+    â: 'a',
+    ä: 'a',
+    ã: 'a',
+    ö: 'o',
+    ô: 'o',
+    ò: 'o',
+    ó: 'o',
+    õ: 'o',
+    ü: 'u',
+    ù: 'u',
+    û: 'u',
+    ú: 'u',
+    ï: 'i',
+    î: 'i',
+    ì: 'i',
+    í: 'i',
+    ç: 'c',
+    ñ: 'n',
+    ý: 'y',
+  };
+  return s.replace(/[éèêëáàâäãöôòóõüùûúïîìíçñý]/gi, (ch) => {
+    const folded = map[ch.toLowerCase()] ?? ch;
+    return ch === ch.toUpperCase() ? folded.toUpperCase() : folded;
+  });
+}
+
+/**
  * GET-handler — ejendomme + ejere på en vej.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -164,24 +206,29 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   if (!key) return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 502 });
 
   const ts = new Date().toISOString();
-  // Betegnelsen er "<vejnavn> <husnr>, <postnr> <by>" — startsWith matcher KUN
-  // vejnavnet; postnr filtreres separat på hvert husnummer nedenfor.
-  const betegnelsePrefix = vej;
 
   // ── 1) Husnumre på vejen → adgangspunkt-UUIDs ──
-  const hnData = await dar<{
-    DAR_Husnummer?: {
-      nodes?: Array<{ adgangsadressebetegnelse: string; adgangspunkt?: string | null }>;
-    };
-  }>(
-    `{ DAR_Husnummer(first: ${Math.min(max * 2, 200)} virkningstid: "${ts}" registreringstid: "${ts}" where: { adgangsadressebetegnelse: { startsWith: "${betegnelsePrefix.replace(/"/g, '')}" } }) { nodes { adgangsadressebetegnelse adgangspunkt } } }`,
-    key
-  );
-  const husnumre = (hnData?.DAR_Husnummer?.nodes ?? [])
-    .filter(
-      (n) => n.adgangspunkt && (!postnr || n.adgangsadressebetegnelse.includes(`, ${postnr} `))
-    )
-    .slice(0, max);
+  // Betegnelsen er "<vejnavn> <husnr>, <postnr> <by>". startsWith matcher KUN
+  // vejnavnet (postnr filtreres separat). Prøv også en accent-foldet variant
+  // (fx "Alle" for "Allé") hvis den oprindelige ikke giver hits. BIZZ-2305.
+  const prefixVarianter = [...new Set([vej, foldForeignDiacritics(vej)])];
+  let husnumre: Array<{ adgangsadressebetegnelse: string; adgangspunkt?: string | null }> = [];
+  for (const prefix of prefixVarianter) {
+    const hnData = await dar<{
+      DAR_Husnummer?: {
+        nodes?: Array<{ adgangsadressebetegnelse: string; adgangspunkt?: string | null }>;
+      };
+    }>(
+      `{ DAR_Husnummer(first: ${Math.min(max * 2, 200)} virkningstid: "${ts}" registreringstid: "${ts}" where: { adgangsadressebetegnelse: { startsWith: "${prefix.replace(/"/g, '')}" } }) { nodes { adgangsadressebetegnelse adgangspunkt } } }`,
+      key
+    );
+    husnumre = (hnData?.DAR_Husnummer?.nodes ?? [])
+      .filter(
+        (n) => n.adgangspunkt && (!postnr || n.adgangsadressebetegnelse.includes(`, ${postnr} `))
+      )
+      .slice(0, max);
+    if (husnumre.length > 0) break;
+  }
   if (husnumre.length === 0) {
     return NextResponse.json({ vej, postnr: postnr ?? null, antalEjendomme: 0, ejendomme: [] });
   }
